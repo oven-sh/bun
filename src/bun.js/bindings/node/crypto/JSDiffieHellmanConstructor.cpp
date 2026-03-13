@@ -25,6 +25,7 @@ JSC_DEFINE_HOST_FUNCTION(callDiffieHellman, (JSC::JSGlobalObject * lexicalGlobal
     ArgList args = ArgList(callFrame);
     auto callData = JSC::getConstructData(constructor);
     JSC::JSValue result = JSC::construct(globalObject, constructor, callData, args);
+    RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(result);
 }
 
@@ -159,7 +160,7 @@ JSC_DEFINE_HOST_FUNCTION(constructDiffieHellman, (JSC::JSGlobalObject * globalOb
             }
         }
 
-        dh = ncrypto::DHPointer::New(WTFMove(bn_p), WTFMove(bn_g));
+        dh = ncrypto::DHPointer::New(WTF::move(bn_p), WTF::move(bn_g));
         if (!dh) {
             return JSValue::encode(createError(globalObject, ErrorCode::ERR_INVALID_ARG_VALUE, "Invalid DH parameters"_s));
         }
@@ -169,7 +170,7 @@ JSC_DEFINE_HOST_FUNCTION(constructDiffieHellman, (JSC::JSGlobalObject * globalOb
     auto* zigGlobalObject = defaultGlobalObject(globalObject);
     JSC::Structure* structure = zigGlobalObject->m_JSDiffieHellmanClassStructure.get(zigGlobalObject);
 
-    return JSC::JSValue::encode(JSDiffieHellman::create(vm, structure, globalObject, WTFMove(dh)));
+    return JSC::JSValue::encode(JSDiffieHellman::create(vm, structure, globalObject, WTF::move(dh)));
 }
 
 } // namespace Bun

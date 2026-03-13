@@ -1,3 +1,5 @@
+const EVP = @This();
+
 ctx: BoringSSL.EVP_MD_CTX = undefined,
 md: *const BoringSSL.EVP_MD = undefined,
 algorithm: Algorithm,
@@ -19,6 +21,7 @@ pub const Algorithm = enum {
     // @"ecdsa-with-SHA1",
     blake2b256,
     blake2b512,
+    blake2s256,
     md4,
     md5,
     ripemd160,
@@ -67,6 +70,7 @@ pub const Algorithm = enum {
     pub const map = bun.ComptimeStringMap(Algorithm, .{
         .{ "blake2b256", .blake2b256 },
         .{ "blake2b512", .blake2b512 },
+        .{ "blake2s256", .blake2s256 },
         .{ "ripemd160", .ripemd160 },
         .{ "rmd160", .ripemd160 },
         .{ "md4", .md4 },
@@ -188,7 +192,7 @@ pub fn byNameAndEngine(engine: *BoringSSL.ENGINE, name: []const u8) ?EVP {
     return null;
 }
 
-pub fn byName(name: ZigString, global: *JSC.JSGlobalObject) ?EVP {
+pub fn byName(name: ZigString, global: *jsc.JSGlobalObject) ?EVP {
     var name_str = name.toSlice(global.allocator());
     defer name_str.deinit();
     return byNameAndEngine(global.bunVM().rareData().boringEngine(), name_str.slice());
@@ -204,10 +208,11 @@ pub const PBKDF2 = @import("./PBKDF2.zig");
 pub const pbkdf2 = PBKDF2.pbkdf2;
 
 const std = @import("std");
+
 const bun = @import("bun");
 const strings = bun.strings;
-const JSC = bun.JSC;
-const ZigString = JSC.ZigString;
-const JSGlobalObject = JSC.JSGlobalObject;
-const EVP = @This();
 const BoringSSL = bun.BoringSSL.c;
+
+const jsc = bun.jsc;
+const JSGlobalObject = jsc.JSGlobalObject;
+const ZigString = jsc.ZigString;

@@ -69,8 +69,11 @@ static HashMap<ScriptExecutionContextIdentifier, ScriptExecutionContext*>& allSc
 
 ScriptExecutionContext* ScriptExecutionContext::getScriptExecutionContext(ScriptExecutionContextIdentifier identifier)
 {
+    if (identifier == 0) {
+        return nullptr;
+    }
     Locker locker { allScriptExecutionContextsMapLock };
-    return allScriptExecutionContextsMap().get(identifier);
+    return allScriptExecutionContextsMap().getOptional(identifier).value_or(nullptr);
 }
 
 template<bool SSL, bool isServer>
@@ -134,7 +137,7 @@ ScriptExecutionContext::~ScriptExecutionContext()
     m_inScriptExecutionContextDestructor = true;
 #endif // ASSERT_ENABLED
 
-    auto postMessageCompletionHandlers = WTFMove(m_processMessageWithMessagePortsSoonHandlers);
+    auto postMessageCompletionHandlers = WTF::move(m_processMessageWithMessagePortsSoonHandlers);
     for (auto& completionHandler : postMessageCompletionHandlers)
         completionHandler();
 
@@ -154,7 +157,7 @@ bool ScriptExecutionContext::postTaskTo(ScriptExecutionContextIdentifier identif
     if (!context)
         return false;
 
-    context->postTaskConcurrently(WTFMove(task));
+    context->postTaskConcurrently(WTF::move(task));
     return true;
 }
 
@@ -198,7 +201,7 @@ bool ScriptExecutionContext::ensureOnContextThread(ScriptExecutionContextIdentif
             return false;
 
         if (!context->isContextThread()) {
-            context->postTaskConcurrently(WTFMove(task));
+            context->postTaskConcurrently(WTF::move(task));
             return true;
         }
     }
@@ -215,7 +218,7 @@ bool ScriptExecutionContext::ensureOnMainThread(Function<void(ScriptExecutionCon
         return false;
     }
 
-    context->postTaskConcurrently(WTFMove(task));
+    context->postTaskConcurrently(WTF::move(task));
     return true;
 }
 
@@ -228,7 +231,7 @@ ScriptExecutionContext* ScriptExecutionContext::getMainThreadScriptExecutionCont
 void ScriptExecutionContext::processMessageWithMessagePortsSoon(CompletionHandler<void()>&& completionHandler)
 {
     ASSERT(isContextThread());
-    m_processMessageWithMessagePortsSoonHandlers.append(WTFMove(completionHandler));
+    m_processMessageWithMessagePortsSoonHandlers.append(WTF::move(completionHandler));
 
     if (m_willProcessMessageWithMessagePortsSoon) {
         return;
@@ -365,30 +368,19 @@ ScriptExecutionContext* executionContext(JSC::JSGlobalObject* globalObject)
 
 void ScriptExecutionContext::postTaskConcurrently(Function<void(ScriptExecutionContext&)>&& lambda)
 {
-    auto* task = new EventLoopTask(WTFMove(lambda));
-    reinterpret_cast<Zig::GlobalObject*>(m_globalObject)->queueTaskConcurrently(task);
+    auto* task = new EventLoopTask(WTF::move(lambda));
+    static_cast<Zig::GlobalObject*>(m_globalObject)->queueTaskConcurrently(task);
 }
 // Executes the task on context's thread asynchronously.
 void ScriptExecutionContext::postTask(Function<void(ScriptExecutionContext&)>&& lambda)
 {
-    auto* task = new EventLoopTask(WTFMove(lambda));
-    reinterpret_cast<Zig::GlobalObject*>(m_globalObject)->queueTask(task);
+    auto* task = new EventLoopTask(WTF::move(lambda));
+    static_cast<Zig::GlobalObject*>(m_globalObject)->queueTask(task);
 }
 // Executes the task on context's thread asynchronously.
 void ScriptExecutionContext::postTask(EventLoopTask* task)
 {
-    reinterpret_cast<Zig::GlobalObject*>(m_globalObject)->queueTask(task);
-}
-// Executes the task on context's thread asynchronously.
-void ScriptExecutionContext::postTaskOnTimeout(EventLoopTask* task, Seconds timeout)
-{
-    reinterpret_cast<Zig::GlobalObject*>(m_globalObject)->queueTaskOnTimeout(task, static_cast<int>(timeout.milliseconds()));
-}
-// Executes the task on context's thread asynchronously.
-void ScriptExecutionContext::postTaskOnTimeout(Function<void(ScriptExecutionContext&)>&& lambda, Seconds timeout)
-{
-    auto* task = new EventLoopTask(WTFMove(lambda));
-    postTaskOnTimeout(task, timeout);
+    static_cast<Zig::GlobalObject*>(m_globalObject)->queueTask(task);
 }
 
 // Zig bindings

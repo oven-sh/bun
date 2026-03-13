@@ -3014,7 +3014,12 @@
         {
           "id": "TestStatus",
           "type": "string",
-          "enum": ["pass", "fail", "timeout", "skip", "todo"]
+          "enum": ["pass", "fail", "timeout", "skip", "todo", "skipped_because_label"]
+        },
+        {
+          "id": "TestType",
+          "type": "string",
+          "enum": ["test", "describe"]
         }
       ],
       "commands": [
@@ -3057,6 +3062,18 @@
               "name": "name",
               "type": "string",
               "description": "Name of the test that started.",
+              "optional": true
+            },
+            {
+              "name": "type",
+              "$ref": "TestType",
+              "description": "Type of the item found (test or describe block).",
+              "optional": true
+            },
+            {
+              "name": "parentId",
+              "type": "integer",
+              "description": "ID of the parent describe block, if any.",
               "optional": true
             }
           ]

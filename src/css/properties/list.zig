@@ -1,6 +1,3 @@
-const std = @import("std");
-const ArrayList = std.ArrayListUnmanaged;
-
 pub const css = @import("../css_parser.zig");
 
 const CustomIdent = css.css_values.ident.CustomIdent;
@@ -62,3 +59,6 @@ pub const ListStyle = @compileError(css.todo_stuff.depth);
 
 /// A value for the [marker-side](https://www.w3.org/TR/2020/WD-css-lists-3-20201117/#marker-side) property.
 pub const MarkerSide = css.DefineEnumProperty(@compileError(css.todo_stuff.depth));
+
+const std = @import("std");
+const ArrayList = std.ArrayListUnmanaged;

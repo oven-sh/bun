@@ -83,7 +83,7 @@ pub fn processExtractedTarballPackage(
                     ) catch |err| {
                         if (log_level != .silent) {
                             const string_buf = manager.lockfile.buffers.string_bytes.items;
-                            Output.err(err, "failed to parse package.json for <b>{}<r>", .{
+                            Output.err(err, "failed to parse package.json for <b>{f}<r>", .{
                                 resolution.fmtURL(string_buf),
                             });
                         }
@@ -121,7 +121,7 @@ pub fn processExtractedTarballPackage(
                     builder.count(new_name);
                     resolver.count(*Lockfile.StringBuilder, &builder, undefined);
 
-                    builder.allocate() catch bun.outOfMemory();
+                    bun.handleOom(builder.allocate());
 
                     const name = builder.append(ExternalString, new_name);
                     pkg.name = name.value;
@@ -133,11 +133,17 @@ pub fn processExtractedTarballPackage(
                 break :package pkg;
             };
 
+            // Store the tarball integrity hash so the lockfile can pin the
+            // exact content downloaded from the remote (GitHub) server.
+            if (data.integrity.tag.isSupported()) {
+                package.meta.integrity = data.integrity;
+            }
+
             package = manager.lockfile.appendPackage(package) catch unreachable;
             package_id.* = package.meta.id;
 
             if (package.dependencies.len > 0) {
-                manager.lockfile.scratch.dependency_list_queue.writeItem(package.dependencies) catch bun.outOfMemory();
+                bun.handleOom(manager.lockfile.scratch.dependency_list_queue.writeItem(package.dependencies));
             }
 
             return package;
@@ -167,7 +173,7 @@ pub fn processExtractedTarballPackage(
             ) catch |err| {
                 if (log_level != .silent) {
                     const string_buf = manager.lockfile.buffers.string_bytes.items;
-                    Output.prettyErrorln("<r><red>error:<r> expected package.json in <b>{any}<r> to be a JSON file: {s}\n", .{
+                    Output.prettyErrorln("<r><red>error:<r> expected package.json in <b>{f}<r> to be a JSON file: {s}\n", .{
                         resolution.fmtURL(string_buf),
                         @errorName(err),
                     });
@@ -187,12 +193,15 @@ pub fn processExtractedTarballPackage(
             };
 
             package.meta.setHasInstallScript(has_scripts);
+            if (data.integrity.tag.isSupported()) {
+                package.meta.integrity = data.integrity;
+            }
 
             package = manager.lockfile.appendPackage(package) catch unreachable;
             package_id.* = package.meta.id;
 
             if (package.dependencies.len > 0) {
-                manager.lockfile.scratch.dependency_list_queue.writeItem(package.dependencies) catch bun.outOfMemory();
+                bun.handleOom(manager.lockfile.scratch.dependency_list_queue.writeItem(package.dependencies));
             }
 
             return package;
@@ -211,7 +220,7 @@ pub fn processExtractedTarballPackage(
             ) catch |err| {
                 if (log_level != .silent) {
                     const string_buf = manager.lockfile.buffers.string_bytes.items;
-                    Output.prettyErrorln("<r><red>error:<r> expected package.json in <b>{any}<r> to be a JSON file: {s}\n", .{
+                    Output.prettyErrorln("<r><red>error:<r> expected package.json in <b>{f}<r> to be a JSON file: {s}\n", .{
                         resolution.fmtURL(string_buf),
                         @errorName(err),
                     });
@@ -291,8 +300,8 @@ pub fn processPeerDependencyList(
 pub fn processDependencyList(
     this: *PackageManager,
     dep_list: TaskCallbackList,
-    comptime Context: type,
-    ctx: Context,
+    comptime Ctx: type,
+    ctx: Ctx,
     comptime callbacks: anytype,
     install_peer: bool,
 ) !void {
@@ -313,20 +322,19 @@ pub fn processDependencyList(
     }
 }
 
-// @sortImports
+const string = []const u8;
 
 const std = @import("std");
 
 const bun = @import("bun");
 const Environment = bun.Environment;
 const Global = bun.Global;
-const JSAst = bun.JSAst;
-const JSON = bun.JSON;
+const JSAst = bun.ast;
+const JSON = bun.json;
 const Output = bun.Output;
 const Path = bun.path;
 const Syscall = bun.sys;
 const logger = bun.logger;
-const string = bun.string;
 
 const Semver = bun.Semver;
 const ExternalString = Semver.ExternalString;

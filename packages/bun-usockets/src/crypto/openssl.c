@@ -45,7 +45,7 @@ void *sni_find(void *sni, const char *hostname);
 #endif
 
 #include "./root_certs_header.h"
-
+#include "./default_ciphers.h"
 struct loop_ssl_data {
   char *ssl_read_input, *ssl_read_output;
   unsigned int ssl_read_input_length;
@@ -315,6 +315,15 @@ int us_internal_ssl_socket_is_closed(struct us_internal_ssl_socket_t *s) {
   return us_socket_is_closed(0, &s->s);
 }
 
+int us_internal_ssl_socket_is_handshake_finished(struct us_internal_ssl_socket_t *s) {
+  if (!s || !s->ssl) return 0;
+  return SSL_is_init_finished(s->ssl);
+}
+
+int us_internal_ssl_socket_handshake_callback_has_fired(struct us_internal_ssl_socket_t *s) {
+  if (!s) return 0;
+  return s->handshake_state == HANDSHAKE_COMPLETED;
+}
 
 void us_internal_trigger_handshake_callback_econnreset(struct us_internal_ssl_socket_t *s) {
   struct us_internal_ssl_socket_context_t *context =
@@ -346,6 +355,7 @@ us_internal_ssl_socket_close(struct us_internal_ssl_socket_t *s, int code,
 
   // check if we are already closed
   if (us_internal_ssl_socket_is_closed(s)) return s;
+  us_internal_set_loop_ssl_data(s);
   us_internal_update_handshake(s);
 
   if (s->handshake_state != HANDSHAKE_COMPLETED) {
@@ -395,7 +405,7 @@ void us_internal_update_handshake(struct us_internal_ssl_socket_t *s) {
   }
 
   int result = SSL_do_handshake(s->ssl);
-
+  
   if (SSL_get_shutdown(s->ssl) & SSL_RECEIVED_SHUTDOWN) {
     us_internal_ssl_socket_close(s, 0, NULL);
     return;
@@ -416,7 +426,7 @@ void us_internal_update_handshake(struct us_internal_ssl_socket_t *s) {
     }
     s->handshake_state = HANDSHAKE_PENDING;
     s->ssl_write_wants_read = 1;
-
+    s->s.flags.last_write_failed = 1;
     return;
   }
   // success
@@ -433,6 +443,7 @@ ssl_on_close(struct us_internal_ssl_socket_t *s, int code, void *reason) {
   struct us_internal_ssl_socket_t * ret = context->on_close(s, code, reason);
   SSL_free(s->ssl); // free SSL after on_close
   s->ssl = NULL; // set to NULL
+
   return ret;
 }
 
@@ -634,7 +645,7 @@ ssl_on_writable(struct us_internal_ssl_socket_t *s) {
         (struct us_internal_ssl_socket_context_t *)us_socket_context(0, &s->s);
 
     // if this one fails to write data, it sets ssl_read_wants_write again
-    s = (struct us_internal_ssl_socket_t *)context->sc.on_data(&s->s, 0,
+    s = (struct us_internal_ssl_socket_t *)context->sc.on_data(&s->s, "",
                                                                0); // cast here!
   }
   // Do not call on_writable if the socket is closed.
@@ -848,21 +859,24 @@ create_ssl_context_from_options(struct us_socket_context_options_t options) {
       return NULL;
     }
 
-    /* OWASP Cipher String 'A+'
-     * (https://www.owasp.org/index.php/TLS_Cipher_String_Cheat_Sheet) */
-    if (SSL_CTX_set_cipher_list(
-            ssl_context,
-            "DHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-"
-            "AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256") != 1) {
+    if (!SSL_CTX_set_cipher_list(ssl_context, DEFAULT_CIPHER_LIST)) {
       free_ssl_context(ssl_context);
       return NULL;
     }
   }
 
   if (options.ssl_ciphers) {
-    if (SSL_CTX_set_cipher_list(ssl_context, options.ssl_ciphers) != 1) {
-      free_ssl_context(ssl_context);
-      return NULL;
+    if (!SSL_CTX_set_cipher_list(ssl_context, options.ssl_ciphers)) {
+      unsigned long ssl_err = ERR_get_error(); 
+      if (!(strlen(options.ssl_ciphers) == 0 && ERR_GET_REASON(ssl_err) == SSL_R_NO_CIPHER_MATCH)) {
+        // TLS1.2 ciphers were deliberately cleared, so don't consider
+        // SSL_R_NO_CIPHER_MATCH to be an error (this is how _set_cipher_suites()
+        // works). If the user actually sets a value (like "no-such-cipher"), then
+        // that's actually an error.
+        free_ssl_context(ssl_context);
+        return NULL;
+      }
+      ERR_clear_error();
     }
   }
 
@@ -880,6 +894,7 @@ int us_ssl_ctx_use_privatekey_content(SSL_CTX *ctx, const char *content,
   int reason_code, ret = 0;
   BIO *in;
   EVP_PKEY *pkey = NULL;
+  if (content == NULL) return 0;
   in = BIO_new_mem_buf(content, strlen(content));
   if (in == NULL) {
     OPENSSL_PUT_ERROR(SSL, ERR_R_BUF_LIB);
@@ -916,6 +931,7 @@ int add_ca_cert_to_ctx_store(SSL_CTX *ctx, const char *content,
   X509 *x = NULL;
   ERR_clear_error(); // clear error stack for SSL_CTX_use_certificate()
   int count = 0;
+  if (content == NULL) return 0;
   BIO *in = BIO_new_mem_buf(content, strlen(content));
   if (in == NULL) {
     OPENSSL_PUT_ERROR(SSL, ERR_R_BUF_LIB);
@@ -949,6 +965,7 @@ int us_ssl_ctx_use_certificate_chain(SSL_CTX *ctx, const char *content) {
 
   ERR_clear_error(); // clear error stack for SSL_CTX_use_certificate()
 
+  if (content == NULL) return 0;
   in = BIO_new_mem_buf(content, strlen(content));
   if (in == NULL) {
     OPENSSL_PUT_ERROR(SSL, ERR_R_BUF_LIB);
@@ -1288,21 +1305,27 @@ SSL_CTX *create_ssl_context_from_bun_options(
       return NULL;
     }
 
-    /* OWASP Cipher String 'A+'
-     * (https://www.owasp.org/index.php/TLS_Cipher_String_Cheat_Sheet) */
-    if (SSL_CTX_set_cipher_list(
-            ssl_context,
-            "DHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-"
-            "AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256") != 1) {
+    if (!SSL_CTX_set_cipher_list(ssl_context, DEFAULT_CIPHER_LIST)) {
       free_ssl_context(ssl_context);
       return NULL;
     }
   }
 
   if (options.ssl_ciphers) {
-    if (SSL_CTX_set_cipher_list(ssl_context, options.ssl_ciphers) != 1) {
-      free_ssl_context(ssl_context);
-      return NULL;
+    if (!SSL_CTX_set_cipher_list(ssl_context, options.ssl_ciphers)) {
+      unsigned long ssl_err = ERR_get_error(); 
+      if (!(strlen(options.ssl_ciphers) == 0 && ERR_GET_REASON(ssl_err) == SSL_R_NO_CIPHER_MATCH)) {
+        char error_msg[256];
+        ERR_error_string_n(ERR_peek_last_error(), error_msg, sizeof(error_msg));
+        // TLS1.2 ciphers were deliberately cleared, so don't consider
+        // SSL_R_NO_CIPHER_MATCH to be an error (this is how _set_cipher_suites()
+        // works). If the user actually sets a value (like "no-such-cipher"), then
+        // that's actually an error.
+        *err = CREATE_BUN_SOCKET_ERROR_INVALID_CIPHERS;  
+        free_ssl_context(ssl_context);
+        return NULL;
+      }
+      ERR_clear_error();
     }
   }
 
@@ -1845,15 +1868,16 @@ void us_internal_ssl_socket_shutdown(struct us_internal_ssl_socket_t *s) {
 
 struct us_internal_ssl_socket_t *us_internal_ssl_socket_context_adopt_socket(
     struct us_internal_ssl_socket_context_t *context,
-    struct us_internal_ssl_socket_t *s, int ext_size) {
+    struct us_internal_ssl_socket_t *s, int old_ext_size, int ext_size) {
   // todo: this is completely untested
+  int new_old_ext_size = sizeof(struct us_internal_ssl_socket_t) - sizeof(struct us_socket_t) + old_ext_size;
   int new_ext_size = ext_size;
   if (ext_size != -1) {
     new_ext_size = sizeof(struct us_internal_ssl_socket_t) - sizeof(struct us_socket_t) + ext_size;
   }
   return (struct us_internal_ssl_socket_t *)us_socket_context_adopt_socket(
       0, &context->sc, &s->s,
-      new_ext_size);
+      new_old_ext_size, new_ext_size);
 }
 
 struct us_internal_ssl_socket_t *
@@ -1910,10 +1934,11 @@ ssl_wrapped_context_on_data(struct us_internal_ssl_socket_t *s, char *data,
   struct us_wrapped_socket_context_t *wrapped_context =
       (struct us_wrapped_socket_context_t *)us_internal_ssl_socket_context_ext(
           context);
-  // raw data if needed
+          // raw data if needed
   if (wrapped_context->old_events.on_data) {
     wrapped_context->old_events.on_data((struct us_socket_t *)s, data, length);
   }
+  
   // ssl wrapped data
   return ssl_on_data(s, data, length);
 }
@@ -2018,7 +2043,7 @@ us_internal_ssl_socket_open(struct us_internal_ssl_socket_t *s, int is_client,
   // already opened
   if (s->ssl)
     return s;
-
+  
   // start SSL open
   return ssl_on_open(s, is_client, ip, ip_length, NULL);
 }
@@ -2030,6 +2055,7 @@ struct us_socket_t *us_socket_upgrade_to_tls(us_socket_r s, us_socket_context_r 
   struct us_internal_ssl_socket_t *socket =
       (struct us_internal_ssl_socket_t *)us_socket_context_adopt_socket(
           0, new_context, s,
+          sizeof(void*),
           (sizeof(struct us_internal_ssl_socket_t) - sizeof(struct us_socket_t)) + sizeof(void*));
   socket->ssl = NULL;
   socket->ssl_write_wants_read = 0;
@@ -2048,7 +2074,7 @@ struct us_socket_t *us_socket_upgrade_to_tls(us_socket_r s, us_socket_context_r 
 
 struct us_internal_ssl_socket_t *us_internal_ssl_socket_wrap_with_tls(
     struct us_socket_t *s, struct us_bun_socket_context_options_t options,
-    struct us_socket_events_t events, int socket_ext_size) {
+    struct us_socket_events_t events, int old_socket_ext_size, int socket_ext_size) {
   /* Cannot wrap a closed socket */
   if (us_socket_is_closed(0, s)) {
     return NULL;
@@ -2153,6 +2179,7 @@ us_socket_context_on_socket_connect_error(
   struct us_internal_ssl_socket_t *socket =
       (struct us_internal_ssl_socket_t *)us_socket_context_adopt_socket(
           0, context, s,
+          old_socket_ext_size,
           sizeof(struct us_internal_ssl_socket_t) - sizeof(struct us_socket_t) +
               socket_ext_size);
   socket->ssl = NULL;

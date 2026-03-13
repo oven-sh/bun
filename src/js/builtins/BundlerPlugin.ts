@@ -7,6 +7,7 @@ type AnyFunction = (...args: any[]) => any;
 interface BundlerPlugin {
   onLoad: Map<string, [RegExp, OnLoadCallback][]>;
   onResolve: Map<string, [RegExp, OnResolveCallback][]>;
+  onEndCallbacks: Array<(build: Bun.BuildOutput) => void | Promise<void>> | undefined;
   /** Binding to `JSBundlerPlugin__onLoadAsync` */
   onLoadAsync(
     internalID,
@@ -103,6 +104,46 @@ export function loadAndResolvePluginsForServe(
   })(plugins, bunfig_folder, runSetupFn, bundlerPlugin);
 
   return promiseResult;
+}
+
+export function runOnEndCallbacks(
+  this: BundlerPlugin,
+  promise: Promise<Bun.BuildOutput>,
+  buildResult: Bun.BuildOutput,
+  buildRejection: AggregateError | undefined,
+): Promise<void> | void {
+  const callbacks = this.onEndCallbacks;
+  if (!callbacks) return;
+  const promises: PromiseLike<unknown>[] = [];
+
+  for (const callback of callbacks) {
+    try {
+      const result = callback(buildResult);
+
+      if (result && $isPromise(result)) {
+        $arrayPush(promises, result);
+      }
+    } catch (e) {
+      $arrayPush(promises, Promise.$reject(e));
+    }
+  }
+
+  if (promises.length > 0) {
+    // we return the promise here because detecting if the promise was handled or not
+    // in bundle_v2.zig is done by checking if this function did not return undefined
+    return Promise.all(promises).then(
+      () => {
+        if (buildRejection !== undefined) {
+          $rejectPromise(promise, buildRejection);
+        } else {
+          $resolvePromise(promise, buildResult);
+        }
+      },
+      e => {
+        $rejectPromise(promise, e);
+      },
+    );
+  }
 }
 
 /**
@@ -222,6 +263,16 @@ export function runSetupFunction(
     return this;
   }
 
+  function onEnd(this: PluginBuilder, callback: Function): PluginBuilder {
+    if (!$isCallable(callback)) throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
+
+    if (!self.onEndCallbacks) self.onEndCallbacks = [];
+
+    $arrayPush(self.onEndCallbacks, callback);
+
+    return this;
+  }
+
   const processSetupResult = () => {
     var anyOnLoad = false,
       anyOnResolve = false;
@@ -290,7 +341,7 @@ export function runSetupFunction(
   var setupResult = setup({
     config: config,
     onDispose: notImplementedIssueFn(2771, "On-dispose callbacks"),
-    onEnd: notImplementedIssueFn(2771, "On-end callbacks"),
+    onEnd,
     onLoad,
     onResolve,
     onBeforeParse,
@@ -379,8 +430,12 @@ export function runOnResolvePlugins(this: BundlerPlugin, specifier, inputNamespa
         }
 
         var { path, namespace: userNamespace = inputNamespace, external } = result;
-        if (!(typeof path === "string") || !(typeof userNamespace === "string")) {
-          throw new TypeError("onResolve plugins must return an object with a string 'path' and string 'loader' field");
+        if (path !== undefined && typeof path !== "string") {
+          throw new TypeError("onResolve plugins 'path' field must be a string if provided");
+        }
+
+        if (result.namespace !== undefined && typeof result.namespace !== "string") {
+          throw new TypeError("onResolve plugins 'namespace' field must be a string if provided");
         }
 
         if (!path) {

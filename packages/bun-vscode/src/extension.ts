@@ -4,7 +4,7 @@ import { registerDiagnosticsSocket } from "./features/diagnostics/diagnostics";
 import { registerBunlockEditor } from "./features/lockfile";
 import { registerPackageJsonProviders } from "./features/tasks/package.json";
 import { registerTaskProvider } from "./features/tasks/tasks";
-import { registerTestCodeLens, registerTestRunner } from "./features/tests";
+import { registerTests } from "./features/tests";
 
 async function runUnsavedCode() {
   const editor = vscode.window.activeTextEditor;
@@ -47,8 +47,7 @@ export function activate(context: vscode.ExtensionContext) {
   registerTaskProvider(context);
   registerPackageJsonProviders(context);
   registerDiagnosticsSocket(context);
-  registerTestRunner(context);
-  registerTestCodeLens(context);
+  registerTests(context);
 
   // Only register for text editors
   context.subscriptions.push(vscode.commands.registerTextEditorCommand("extension.bun.runUnsavedCode", runUnsavedCode));

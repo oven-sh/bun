@@ -339,7 +339,7 @@ const codes = {}; // exported from errors.js
     ErrorCaptureStackTrace(err);
     Error.stackTraceLimit = userStackTraceLimit; // Reset the limit
     err.name = `${TypeError.name} [${sym}]`; // Add the error code to the name to include it in the stack trace.
-    err.stack; // Access the stack to generate the error message including the error code from the name.
+    void err.stack; // Access the stack to generate the error message including the error code from the name.
     delete err.name; // Reset the name to the actual name.
     error.code = sym;
     return error;
@@ -987,7 +987,7 @@ function initializeWellKnownPrototypes() {
 function getConstructorName(obj, ctx, recurseTimes, protoProps) {
   let firstProto;
   const tmp = obj;
-  wellKnownPrototypes ?? initializeWellKnownPrototypes();
+  if (!wellKnownPrototypes) initializeWellKnownPrototypes();
   while (obj || isUndetectableObject(obj)) {
     const wellKnownPrototypeNameAndConstructor = wellKnownPrototypes.get(obj);
     if (wellKnownPrototypeNameAndConstructor != null) {
@@ -2643,7 +2643,7 @@ function formatWithOptionsInternal(inspectOptions, args) {
   }
   return str;
 }
-
+const stripANSI = Bun.stripANSI;
 const internalGetStringWidth = $newZigFunction("string.zig", "String.jsGetStringWidth", 1);
 /**
  * Returns the number of columns required to display the given string.
@@ -2654,24 +2654,9 @@ function getStringWidth(str, removeControlChars = true) {
   return internalGetStringWidth(str);
 }
 
-// Regex used for ansi escape code splitting
-// Ref: https://github.com/chalk/ansi-regex/blob/f338e1814144efb950276aac84135ff86b72dc8e/index.js
-// License: MIT by Sindre Sorhus <sindresorhus@gmail.com>
-// Matches all ansi escape code sequences in a string
-const ansiPattern = new RegExp(
-  "[\\u001B\\u009B][[\\]()#;?]*" +
-    "(?:(?:(?:(?:;[-a-zA-Z\\d\\/\\#&.:=?%@~_]+)*" +
-    "|[a-zA-Z\\d]+(?:;[-a-zA-Z\\d\\/\\#&.:=?%@~_]*)*)?" +
-    "(?:\\u0007|\\u001B\\u005C|\\u009C))" +
-    "|(?:(?:\\d{1,4}(?:;\\d{0,4})*)?" +
-    "[\\dA-PR-TZcf-nq-uy=><~]))",
-  "g",
-);
-const ansi = new RegExp(ansiPattern, "g");
-/** Remove all VT control characters. Use to estimate displayed string width. */
 function stripVTControlCharacters(str) {
   if (typeof str !== "string") throw new codes.ERR_INVALID_ARG_TYPE("str", "string", str);
-  return RegExpPrototypeSymbolReplace(ansi, str, "");
+  return stripANSI(str);
 }
 
 // utils

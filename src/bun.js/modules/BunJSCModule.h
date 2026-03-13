@@ -58,6 +58,8 @@
 #endif
 #endif
 
+extern "C" size_t Bun__Feature__heap_snapshot;
+
 using namespace JSC;
 using namespace WTF;
 using namespace WebCore;
@@ -77,11 +79,13 @@ JSC_DEFINE_HOST_FUNCTION(functionStartRemoteDebugger,
     JSC::JSValue hostValue = callFrame->argument(0);
     JSC::JSValue portValue = callFrame->argument(1);
     const char* host = defaultHost;
+    WTF::CString hostCString;
     if (hostValue.isString()) {
 
         auto str = hostValue.toWTFString(globalObject);
+        hostCString = toCString(str);
         if (!str.isEmpty())
-            host = toCString(str).span().data();
+            host = hostCString.span().data();
     } else if (!hostValue.isUndefined()) {
         throwVMError(globalObject, scope,
             createTypeError(globalObject, "host must be a string"_s));
@@ -113,7 +117,7 @@ JSC_DEFINE_HOST_FUNCTION(functionStartRemoteDebugger,
             globalObject, scope,
             createError(globalObject,
                 makeString("Failed to start server \""_s,
-                    reinterpret_cast<const unsigned char*>(host),
+                    String::fromLatin1(host),
                     ":"_s, port, "\". Is port already in use?"_s)));
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
@@ -225,10 +229,10 @@ JSC_DEFINE_HOST_FUNCTION(functionMemoryUsageStatistics,
     }
 
     const auto createdSortedTypeCounts =
-        [&](JSC::TypeCountSet* typeCounts) -> JSC::JSValue {
+        [&](JSC::TypeCountSet const& typeCounts) -> JSC::JSValue {
         WTF::Vector<std::pair<Identifier, unsigned>> counts;
-        counts.reserveInitialCapacity(typeCounts->size());
-        for (auto& it : *typeCounts) {
+        counts.reserveInitialCapacity(typeCounts.size());
+        for (auto& it : typeCounts) {
             if (it.value > 0)
                 counts.append(
                     std::make_pair(Identifier::fromString(vm, it.key), it.value));
@@ -264,8 +268,8 @@ JSC_DEFINE_HOST_FUNCTION(functionMemoryUsageStatistics,
         return objectTypeCounts;
     };
 
-    JSValue objectTypeCounts = createdSortedTypeCounts(vm.heap.objectTypeCounts().get());
-    JSValue protectedCounts = createdSortedTypeCounts(vm.heap.protectedObjectTypeCounts().get());
+    JSValue objectTypeCounts = createdSortedTypeCounts(vm.heap.objectTypeCounts());
+    JSValue protectedCounts = createdSortedTypeCounts(vm.heap.protectedObjectTypeCounts());
 
     JSObject* object = constructEmptyObject(globalObject);
     object->putDirect(vm, Identifier::fromString(vm, "objectTypeCounts"_s),
@@ -343,7 +347,7 @@ JSC_DEFINE_HOST_FUNCTION(functionMemoryUsageStatistics,
 
         auto* zoneSizesObject = constructEmptyObject(globalObject);
         for (auto& it : zoneSizes) {
-            zoneSizesObject->putDirect(vm, it.first, jsDoubleNumber(it.second));
+            zoneSizesObject->putDirect(vm, it.first, jsNumber(it.second));
         }
 
         object->putDirect(vm, Identifier::fromString(vm, "zones"_s),
@@ -644,9 +648,7 @@ JSC_DEFINE_HOST_FUNCTION(functionRunProfiler, (JSGlobalObject * globalObject, Ca
 
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     if (callbackValue.isUndefinedOrNull() || !callbackValue.isCallable()) {
-        throwException(
-            globalObject, throwScope,
-            createTypeError(globalObject, "First argument must be a function."_s));
+        throwException(globalObject, throwScope, createTypeError(globalObject, "First argument must be a function."_s));
         return JSValue::encode(JSValue {});
     }
 
@@ -654,8 +656,11 @@ JSC_DEFINE_HOST_FUNCTION(functionRunProfiler, (JSGlobalObject * globalObject, Ca
 
     if (sampleValue.isNumber()) {
         unsigned sampleInterval = sampleValue.toUInt32(globalObject);
-        samplingProfiler.setTimingInterval(
-            Seconds::fromMicroseconds(sampleInterval));
+        samplingProfiler.setTimingInterval(Seconds::fromMicroseconds(sampleInterval));
+    } else {
+        // Reset to default interval (1000 microseconds) to ensure each profile()
+        // call is independent of previous calls
+        samplingProfiler.setTimingInterval(Seconds::fromMicroseconds(1000));
     }
 
     const auto report = [](JSC::VM& vm,
@@ -669,26 +674,30 @@ JSC_DEFINE_HOST_FUNCTION(functionRunProfiler, (JSGlobalObject * globalObject, Ca
         StringPrintStream byteCodes;
         samplingProfiler.reportTopBytecodes(byteCodes);
 
-        JSValue stackTraces = JSONParse(
-            globalObject, samplingProfiler.stackTracesAsJSON()->toJSONString());
+        JSValue stackTraces = JSONParse(globalObject, samplingProfiler.stackTracesAsJSON()->toJSONString());
 
-        samplingProfiler.shutdown();
+        // Use pause() instead of shutdown() to allow the profiler to be restarted
+        // shutdown() sets m_isShutDown=true which is never reset, making the profiler unusable
+        {
+            auto& lock = samplingProfiler.getLock();
+            WTF::Locker locker { lock };
+            samplingProfiler.pause();
+            samplingProfiler.clearData();
+        }
         RETURN_IF_EXCEPTION(throwScope, {});
 
         JSObject* result = constructEmptyObject(globalObject, globalObject->objectPrototype(), 3);
-        result->putDirect(vm, Identifier::fromString(vm, "functions"_s),
-            jsString(vm, topFunctions.toString()));
-        result->putDirect(vm, Identifier::fromString(vm, "bytecodes"_s),
-            jsString(vm, byteCodes.toString()));
-        result->putDirect(vm, Identifier::fromString(vm, "stackTraces"_s),
-            stackTraces);
+        result->putDirect(vm, Identifier::fromString(vm, "functions"_s), jsString(vm, topFunctions.toString()));
+        result->putDirect(vm, Identifier::fromString(vm, "bytecodes"_s), jsString(vm, byteCodes.toString()));
+        result->putDirect(vm, Identifier::fromString(vm, "stackTraces"_s), stackTraces);
 
         return result;
     };
     const auto reportFailure = [](JSC::VM& vm) -> JSC::JSValue {
         if (auto* samplingProfiler = vm.samplingProfiler()) {
+            auto& lock = samplingProfiler->getLock();
+            WTF::Locker locker { lock };
             samplingProfiler->pause();
-            samplingProfiler->shutdown();
             samplingProfiler->clearData();
         }
 
@@ -711,9 +720,11 @@ JSC_DEFINE_HOST_FUNCTION(functionRunProfiler, (JSGlobalObject * globalObject, Ca
 
         JSNativeStdFunction* resolve = JSNativeStdFunction::create(
             vm, globalObject, 0, "resolve"_s,
-            [report](JSGlobalObject* globalObject, CallFrame* callFrame) {
-                return JSValue::encode(JSPromise::resolvedPromise(
-                    globalObject, report(globalObject->vm(), globalObject)));
+            [report](JSGlobalObject* globalObject, CallFrame* callFrame) -> JSC::EncodedJSValue {
+                auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+                JSValue result = report(globalObject->vm(), globalObject);
+                RETURN_IF_EXCEPTION(scope, {});
+                RELEASE_AND_RETURN(scope, JSValue::encode(JSPromise::resolvedPromise(globalObject, result)));
             });
         JSNativeStdFunction* reject = JSNativeStdFunction::create(
             vm, globalObject, 0, "reject"_s,
@@ -724,12 +735,13 @@ JSC_DEFINE_HOST_FUNCTION(functionRunProfiler, (JSGlobalObject * globalObject, Ca
                 throwException(globalObject, scope, error.value());
                 return JSValue::encode({});
             });
-        promise->performPromiseThen(globalObject, resolve, reject,
-            afterOngoingPromiseCapability);
+        promise->performPromiseThen(vm, globalObject, resolve, reject, afterOngoingPromiseCapability);
+        RETURN_IF_EXCEPTION(throwScope, {});
         return JSValue::encode(afterOngoingPromiseCapability);
     }
 
-    return JSValue::encode(report(vm, globalObject));
+    JSValue result = report(vm, globalObject);
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
 }
 
 JSC_DECLARE_HOST_FUNCTION(functionGenerateHeapSnapshotForDebugging);
@@ -740,6 +752,9 @@ JSC_DEFINE_HOST_FUNCTION(functionGenerateHeapSnapshotForDebugging,
     JSLockHolder lock(vm);
     DeferTermination deferScope(vm);
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+    Bun__Feature__heap_snapshot += 1;
+
     String jsonString;
     {
         DeferGCForAWhile deferGC(vm); // Prevent concurrent GC from interfering with
@@ -754,7 +769,7 @@ JSC_DEFINE_HOST_FUNCTION(functionGenerateHeapSnapshotForDebugging,
     }
     scope.releaseAssertNoException();
 
-    return JSValue::encode(JSONParse(globalObject, WTFMove(jsonString)));
+    return JSValue::encode(JSONParse(globalObject, WTF::move(jsonString)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionSerialize,
@@ -785,8 +800,8 @@ JSC_DEFINE_HOST_FUNCTION(functionSerialize,
 
     Vector<JSC::Strong<JSC::JSObject>> transferList;
     Vector<RefPtr<MessagePort>> dummyPorts;
-    ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*globalObject, value, WTFMove(transferList), dummyPorts);
-
+    ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*globalObject, value, WTF::move(transferList), dummyPorts, SerializationForStorage::Yes);
+    EXCEPTION_ASSERT(serialized.hasException() == !!throwScope.exception());
     if (serialized.hasException()) {
         WebCore::propagateException(*globalObject, throwScope, serialized.releaseException());
         RELEASE_AND_RETURN(throwScope, {});
@@ -798,21 +813,16 @@ JSC_DEFINE_HOST_FUNCTION(functionSerialize,
     if (asNodeBuffer) {
         size_t byteLength = arrayBuffer->byteLength();
         auto* subclassStructure = globalObject->JSBufferSubclassStructure();
-        JSC::JSUint8Array* uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, WTFMove(arrayBuffer), 0, byteLength);
+        JSC::JSUint8Array* uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, WTF::move(arrayBuffer), 0, byteLength);
         RETURN_IF_EXCEPTION(throwScope, {});
         return JSValue::encode(uint8Array);
     }
 
     if (arrayBuffer->isShared()) {
-        return JSValue::encode(
-            JSArrayBuffer::create(vm,
-                globalObject->arrayBufferStructureWithSharingMode<
-                    ArrayBufferSharingMode::Shared>(),
-                WTFMove(arrayBuffer)));
+        return JSValue::encode(JSArrayBuffer::create(vm, globalObject->arrayBufferStructureWithSharingMode<ArrayBufferSharingMode::Shared>(), WTF::move(arrayBuffer)));
     }
 
-    return JSValue::encode(JSArrayBuffer::create(
-        vm, globalObject->arrayBufferStructure(), WTFMove(arrayBuffer)));
+    return JSValue::encode(JSArrayBuffer::create(vm, globalObject->arrayBufferStructure(), WTF::move(arrayBuffer)));
 }
 JSC_DEFINE_HOST_FUNCTION(functionDeserialize, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
@@ -823,17 +833,12 @@ JSC_DEFINE_HOST_FUNCTION(functionDeserialize, (JSGlobalObject * globalObject, Ca
     JSValue result;
 
     if (auto* jsArrayBuffer = jsDynamicCast<JSArrayBuffer*>(value)) {
-        result = SerializedScriptValue::fromArrayBuffer(
-            *globalObject, globalObject, jsArrayBuffer->impl(), 0,
-            jsArrayBuffer->impl()->byteLength());
+        result = SerializedScriptValue::fromArrayBuffer(*globalObject, globalObject, jsArrayBuffer->impl(), 0, jsArrayBuffer->impl()->byteLength());
     } else if (auto* view = jsDynamicCast<JSArrayBufferView*>(value)) {
         auto arrayBuffer = view->possiblySharedImpl()->possiblySharedBuffer();
-        result = SerializedScriptValue::fromArrayBuffer(
-            *globalObject, globalObject, arrayBuffer.get(), view->byteOffset(),
-            view->byteLength());
+        result = SerializedScriptValue::fromArrayBuffer(*globalObject, globalObject, arrayBuffer.get(), view->byteOffset(), view->byteLength());
     } else {
-        throwTypeError(globalObject, throwScope,
-            "First argument must be an ArrayBuffer"_s);
+        throwTypeError(globalObject, throwScope, "First argument must be an ArrayBuffer"_s);
         return {};
     }
 
@@ -900,7 +905,7 @@ JSC_DEFINE_HOST_FUNCTION(functionEstimateDirectMemoryUsageOf, (JSGlobalObject * 
     if (value.isCell()) {
         auto& vm = JSC::getVM(globalObject);
         EnsureStillAliveScope alive = value;
-        return JSValue::encode(jsDoubleNumber(alive.value().asCell()->estimatedSizeInBytes(vm)));
+        return JSValue::encode(jsNumber(alive.value().asCell()->estimatedSizeInBytes(vm)));
     }
 
     return JSValue::encode(jsNumber(0));

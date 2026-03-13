@@ -1,10 +1,4 @@
-import {
-  readableStreamToArrayBuffer,
-  readableStreamToBlob,
-  readableStreamToBytes,
-  readableStreamToJSON,
-  readableStreamToText,
-} from "bun";
+import { readableStreamToArrayBuffer, readableStreamToBlob, readableStreamToBytes, readableStreamToText } from "bun";
 import { describe, expect, test } from "bun:test";
 
 describe("ByteBlobLoader", () => {
@@ -46,7 +40,7 @@ describe("ByteBlobLoader", () => {
   test("json", async () => {
     const blob = new Blob(['"Hello, world!"'], { type: "application/json" });
     const stream = blob.stream();
-    const result = readableStreamToJSON(stream);
+    const result = stream.json();
     expect(result.then).toBeFunction();
     const awaited = await result;
     expect(awaited).toStrictEqual(await new Response(blob).json());
@@ -55,7 +49,7 @@ describe("ByteBlobLoader", () => {
   test("returns a rejected Promise for invalid JSON", async () => {
     const blob = new Blob(["I AM NOT JSON!"], { type: "application/json" });
     const stream = blob.stream();
-    const result = readableStreamToJSON(stream);
+    const result = stream.json();
     expect(result.then).toBeFunction();
     expect(async () => await result).toThrow();
   });

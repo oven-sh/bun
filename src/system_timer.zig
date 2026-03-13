@@ -1,6 +1,3 @@
-const Environment = @import("./env.zig");
-const std = @import("std");
-
 fn NewTimer() type {
     if (Environment.isWasm) {
         return struct {
@@ -25,3 +22,6 @@ fn NewTimer() type {
     return std.time.Timer;
 }
 pub const Timer = NewTimer();
+
+const Environment = @import("./env.zig");
+const std = @import("std");

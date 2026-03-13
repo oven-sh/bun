@@ -242,7 +242,16 @@ extern "C" __attribute__((used)) char __libc_single_threaded = 0;
 #include <cstdio>
 #include "headers.h"
 
-void std::__libcpp_verbose_abort(char const* format, ...)
+// Check if the stdlib declaration already has noexcept by looking at the header
+#ifdef _LIBCPP___VERBOSE_ABORT
+#if __has_include(<__verbose_abort>)
+#include <__verbose_abort>
+#endif
+#endif
+
+// Provide our implementation
+// LLVM 20 used _LIBCPP_VERBOSE_ABORT_NOEXCEPT, LLVM 21+ uses _NOEXCEPT (always noexcept).
+void std::__libcpp_verbose_abort(char const* format, ...) noexcept
 {
     va_list list;
     va_start(list, format);
@@ -252,6 +261,8 @@ void std::__libcpp_verbose_abort(char const* format, ...)
 
     Bun__panic(buffer, len);
 }
+
+#undef BUN_VERBOSE_ABORT_NOEXCEPT
 
 #endif
 
@@ -265,3 +276,5 @@ extern "C" bool icu_hasBinaryProperty(UChar32 cp, unsigned int prop)
 {
     return u_hasBinaryProperty(cp, static_cast<UProperty>(prop));
 }
+
+extern "C" __attribute__((weak)) void mi_thread_set_in_threadpool() {}

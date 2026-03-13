@@ -163,8 +163,6 @@ describe("bundler", () => {
     run: true,
   });
   itBundled("extra/TypeofRequireESM", {
-    // we do not have require defined in target browser
-    todo: true,
     files: {
       "in.js": `check(typeof require)`,
       "runtime.js": `
@@ -1006,7 +1004,6 @@ describe("bundler", () => {
       run: true,
     });
     itBundled(`extra/${minify.label || "NoMinify"}CatchScope2`, {
-      todo: true,
       files: {
         "in.js": `
           let y
@@ -1642,6 +1639,7 @@ describe("bundler", () => {
     run: true,
   });
   itBundled(`extra/FunctionHoistingKeepNames1`, {
+    todo: true, // keepNames requires Object.defineProperty implementation
     files: {
       "in.js": `
       var f
@@ -1653,6 +1651,7 @@ describe("bundler", () => {
     run: true,
   });
   itBundled(`extra/FunctionHoistingKeepNames2`, {
+    todo: true, // keepNames requires Object.defineProperty implementation
     files: {
       "in.js": `
       var f

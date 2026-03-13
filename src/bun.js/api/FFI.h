@@ -39,7 +39,7 @@ typedef _Bool bool;
 #define false 0
 
 #ifndef SRC_JS_NATIVE_API_TYPES_H_
-typedef struct napi_env__ *napi_env;
+typedef struct NapiEnv *napi_env;
 typedef int64_t napi_value;
 typedef enum {
   napi_ok,
@@ -67,7 +67,7 @@ typedef enum {
 } napi_status;
 BUN_FFI_IMPORT void* NapiHandleScope__open(void* napi_env, bool detached);
 BUN_FFI_IMPORT void NapiHandleScope__close(void* napi_env, void* handleScope);
-BUN_FFI_IMPORT extern struct napi_env__ Bun__thisFFIModuleNapiEnv;
+BUN_FFI_IMPORT extern struct NapiEnv Bun__thisFFIModuleNapiEnv;
 #endif
 
 
@@ -225,23 +225,26 @@ static void* JSVALUE_TO_PTR(EncodedJSValue val) {
     return 0;
 
   if (JSCELL_IS_TYPED_ARRAY(val)) {
-      return JSVALUE_TO_TYPED_ARRAY_VECTOR(val);
+    return JSVALUE_TO_TYPED_ARRAY_VECTOR(val);
   }
 
+  if (JSVALUE_IS_INT32(val)) {
+    return (void*)(uintptr_t)JSVALUE_TO_INT32(val);
+  }
+
+  // Assume the JSValue is a double
   val.asInt64 -= DoubleEncodeOffset;
-  size_t ptr = (size_t)val.asDouble;
-  return (void*)ptr;
+  return (void*)(uintptr_t)val.asDouble;
 }
 
 static EncodedJSValue PTR_TO_JSVALUE(void* ptr) {
   EncodedJSValue val;
-  if (ptr == 0)
-  {
-      val.asInt64 = TagValueNull;
-      return val;
+  if (ptr == 0) {
+    val.asInt64 = TagValueNull;
+    return val;
   }
 
-  val.asDouble = (double)(size_t)ptr;
+  val.asDouble = (double)(uintptr_t)ptr;
   val.asInt64 += DoubleEncodeOffset;
   return val;
 }

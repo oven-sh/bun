@@ -1,7 +1,7 @@
 import { $ } from "bun";
 import { expect, test } from "bun:test";
 import "harness";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot } from "harness";
 import { join } from "node:path";
 
 test("name property is used for function calls in Error.stack", () => {
@@ -78,7 +78,7 @@ test("err.line and err.column are set", () => {
         line: 3,
         column: 17,
         originalLine: 1,
-        originalColumn: 22,
+        originalColumn: 18,
       },
       null,
       2,
@@ -120,4 +120,33 @@ test("throwing inside an error suppresses the error and continues printing prope
     code: "ENOENT"
 `);
   expect(exitCode).toBe(1);
+});
+
+test("Async functions frame should be included in stack trace", async () => {
+  async function foo() {
+    return await bar();
+  }
+  async function bar() {
+    return await baz();
+  }
+  async function baz() {
+    await 1;
+    return await qux();
+  }
+  async function qux() {
+    return new Error("error from qux");
+  }
+
+  const error = await foo();
+
+  console.log(error.stack);
+
+  expect(normalizeBunSnapshot(error.stack!)).toMatchInlineSnapshot(`
+    "Error: error from qux
+        at qux (file:NN:NN)
+        at baz (file:NN:NN)
+        at async bar (file:NN:NN)
+        at async foo (file:NN:NN)
+        at async <anonymous> (file:NN:NN)"
+  `);
 });

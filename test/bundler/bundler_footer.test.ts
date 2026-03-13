@@ -4,6 +4,7 @@ import { itBundled } from "./expectBundled";
 describe("bundler", () => {
   itBundled("footer/CommentFooter", {
     footer: "// developed with love in SF",
+    backend: "cli",
     files: {
       "/a.js": `console.log("Hello, world!")`,
     },
@@ -16,6 +17,7 @@ describe("bundler", () => {
  * This is copyright of [...] ${new Date().getFullYear()}
  * do not redistribute without consent of [...]
 */`,
+    backend: "cli",
     files: {
       "index.js": `console.log("Hello, world!")`,
     },

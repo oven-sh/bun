@@ -1,6 +1,6 @@
 # Bun
 
-Bun is a fast all-in-one JavaScript runtime. https://bun.sh
+Bun is a fast all-in-one JavaScript runtime. https://bun.com
 
 ### Install
 
@@ -22,8 +22,9 @@ bun upgrade
 - [Linux, arm64](https://www.npmjs.com/package/@oven/bun-linux-aarch64)
 - [Linux, x64](https://www.npmjs.com/package/@oven/bun-linux-x64)
 - [Linux, x64 (without AVX2 instructions)](https://www.npmjs.com/package/@oven/bun-linux-x64-baseline)
-- [Windows](https://www.npmjs.com/package/@oven/bun-windows-x64)
-- [Windows (without AVX2 instructions)](https://www.npmjs.com/package/@oven/bun-windows-x64-baseline)
+- [Windows, x64](https://www.npmjs.com/package/@oven/bun-windows-x64)
+- [Windows, x64 (without AVX2 instructions)](https://www.npmjs.com/package/@oven/bun-windows-x64-baseline)
+- [Windows ARM64](https://www.npmjs.com/package/@oven/bun-windows-aarch64)
 
 ### Future Platforms
 

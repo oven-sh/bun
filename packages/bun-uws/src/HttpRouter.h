@@ -33,13 +33,13 @@
 
 namespace uWS {
 
-template <class USERDATA>
+template <typename UserDataType>
 struct HttpRouter {
     static constexpr std::string_view ANY_METHOD_TOKEN = "*";
     static constexpr uint32_t HIGH_PRIORITY = 0xd0000000, MEDIUM_PRIORITY = 0xe0000000, LOW_PRIORITY = 0xf0000000;
 
 private:
-    USERDATA userData;
+    UserDataType userData;
     static const unsigned int MAX_URL_SEGMENTS = 100;
 
     /* Handler ids are 32-bit */
@@ -60,8 +60,8 @@ private:
         std::vector<uint32_t> handlers = {};
         bool isHighPriority = false;
 
-        Node(std::string name) : name(std::move(name)) {}
-    } root = {"rootNode"};
+        explicit constexpr Node(std::string name) noexcept : name(std::move(name)) {}
+    } root {"rootNode"};
 
     /* Sort wildcards after alphanum */
     int lexicalOrder(std::string_view name) {
@@ -78,7 +78,7 @@ private:
     }
 
     /* Advance from parent to child, adding child if necessary */
-    Node *getNode(Node *parent, std::string child, bool isHighPriority) {
+    Node *getNode(Node *parent, std::string_view child, bool isHighPriority) {
         for (const std::unique_ptr<Node> &node : parent->children) {
             if (node->name == child && node->isHighPriority == isHighPriority) {
                 return node.get();
@@ -86,7 +86,7 @@ private:
         }
 
         /* Insert sorted, but keep order if parent is root (we sort methods by priority elsewhere) */
-        std::unique_ptr<Node> newNode(new Node(child));
+        auto newNode = std::make_unique<Node>(std::string(child));
         newNode->isHighPriority = isHighPriority;
         auto iter = std::upper_bound(parent->children.begin(), parent->children.end(), newNode, [parent, this](auto &a, auto &b) {
             if (a->isHighPriority != b->isHighPriority) {
@@ -120,7 +120,7 @@ private:
     } routeParameters;
 
     /* Set URL for router. Will reset any URL cache */
-    inline void setUrl(std::string_view url) {
+    void setUrl(std::string_view url) {
 
         /* Todo: URL may also start with "http://domain/" or "*", not only "/" */
 
@@ -130,7 +130,7 @@ private:
     }
 
     /* Lazily parse or read from cache */
-    inline std::pair<std::string_view, bool> getUrlSegment(int urlSegment) {
+    std::pair<std::string_view, bool> getUrlSegment(int urlSegment) {
         if (urlSegment > urlSegmentTop) {
             /* Signal as STOP when we have no more URL or stack space */
             if (!currentUrl.length() || urlSegment > int(MAX_URL_SEGMENTS - 1)) {
@@ -164,7 +164,7 @@ private:
     }
 
     /* Executes as many handlers it can */
-    bool executeHandlers(Node *parent, int urlSegment, USERDATA &userData) {
+    bool executeHandlers(Node *parent, int urlSegment, UserDataType &userData) {
 
         auto [segment, isStop] = getUrlSegment(urlSegment);
 
@@ -248,7 +248,7 @@ public:
         return {routeParameters.paramsTop, routeParameters.params};
     }
 
-    USERDATA &getUserData() {
+    UserDataType &getUserData() {
         return userData;
     }
 
@@ -278,11 +278,11 @@ public:
     }
 
     /* Adds the corresponding entires in matching tree and handler list */
-    void add(const std::span<const std::string> &methods, std::string_view pattern, MoveOnlyFunction<bool(HttpRouter *)> &&handler, uint32_t priority = MEDIUM_PRIORITY) {
+    void add(std::span<const std::string_view> methods, std::string_view pattern, MoveOnlyFunction<bool(HttpRouter *)> &&handler, uint32_t priority = MEDIUM_PRIORITY) {
         /* First remove existing handler */
         remove(methods[0], pattern, priority);
 
-        for (const std::string &method : methods) {
+        for (const std::string_view method : methods) {
             /* Lookup method */
             Node *node = getNode(&root, method, false);
             /* Iterate over all segments */

@@ -12,7 +12,7 @@ if(NOT ENABLE_LLVM)
   return()
 endif()
 
-set(DEFAULT_LLVM_VERSION "19.1.7")
+set(DEFAULT_LLVM_VERSION "21.1.8")
 
 optionx(LLVM_VERSION STRING "The version of LLVM to use" DEFAULT ${DEFAULT_LLVM_VERSION})
 
@@ -21,6 +21,8 @@ if(USE_LLVM_VERSION)
   set(LLVM_VERSION_MAJOR ${CMAKE_MATCH_1})
   set(LLVM_VERSION_MINOR ${CMAKE_MATCH_2})
   set(LLVM_VERSION_PATCH ${CMAKE_MATCH_3})
+  # Accept any LLVM version within the same major.minor range (e.g. Alpine 3.23 ships 21.1.2)
+  set(LLVM_VERSION_RANGE ">=${LLVM_VERSION_MAJOR}.${LLVM_VERSION_MINOR}.0 <${LLVM_VERSION_MAJOR}.${LLVM_VERSION_MINOR}.99")
 endif()
 
 set(LLVM_PATHS)
@@ -46,6 +48,11 @@ if(APPLE)
   endif()
 
   list(APPEND LLVM_PATHS ${HOMEBREW_PREFIX}/opt/llvm/bin)
+endif()
+
+if(WIN32)
+  # Prefer standalone LLVM over VS-bundled
+  list(APPEND LLVM_PATHS "C:/Program Files/LLVM/bin")
 endif()
 
 if(UNIX)
@@ -77,7 +84,7 @@ macro(find_llvm_command variable command)
     VERSION_VARIABLE LLVM_VERSION
     COMMAND ${commands}
     PATHS ${LLVM_PATHS}
-    VERSION >=${LLVM_VERSION_MAJOR}.1.0
+    VERSION "${LLVM_VERSION_RANGE}"
   )
   list(APPEND CMAKE_ARGS -D${variable}=${${variable}})
 endmacro()
@@ -129,6 +136,9 @@ else()
   find_llvm_command(CMAKE_RANLIB llvm-ranlib)
   if(LINUX)
     find_llvm_command(LLD_PROGRAM ld.lld)
+    # Ensure vendor dependencies use lld instead of ld
+    list(APPEND CMAKE_ARGS -DCMAKE_EXE_LINKER_FLAGS=--ld-path=${LLD_PROGRAM})
+    list(APPEND CMAKE_ARGS -DCMAKE_SHARED_LINKER_FLAGS=--ld-path=${LLD_PROGRAM})
   endif()
   if(APPLE)
     find_llvm_command(CMAKE_DSYMUTIL dsymutil)

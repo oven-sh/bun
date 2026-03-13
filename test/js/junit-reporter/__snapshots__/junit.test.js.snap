@@ -1,0 +1,139 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`junit reporter more scenarios 1`] = `
+"<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="22" assertions="16" failures="1" skipped="6">
+  <testsuite name="comprehensive.test.js" file="comprehensive.test.js" tests="22" assertions="16" failures="1" skipped="6">
+    <testsuite name="comprehensive test suite" file="comprehensive.test.js" line="4" tests="22" assertions="16" failures="1" skipped="6">
+      <testsuite name="division suite 10 / 5" file="comprehensive.test.js" line="8" tests="1" assertions="1" failures="0" skipped="0">
+        <testcase name="should divide correctly" classname="division suite 10 / 5 &amp;gt; comprehensive test suite" file="comprehensive.test.js" line="9" assertions="1" />
+      </testsuite>
+      <testsuite name="division suite 20 / 10" file="comprehensive.test.js" line="8" tests="1" assertions="1" failures="0" skipped="0">
+        <testcase name="should divide correctly" classname="division suite 20 / 10 &amp;gt; comprehensive test suite" file="comprehensive.test.js" line="9" assertions="1" />
+      </testsuite>
+      <testsuite name="conditional describe that runs" file="comprehensive.test.js" line="14" tests="1" assertions="1" failures="0" skipped="0">
+        <testcase name="nested test in conditional describe" classname="conditional describe that runs &amp;gt; comprehensive test suite" file="comprehensive.test.js" line="15" assertions="1" />
+      </testsuite>
+      <testsuite name="conditional describe that skips" file="comprehensive.test.js" line="20" tests="1" assertions="0" failures="0" skipped="1">
+        <testcase name="nested test that gets skipped" classname="conditional describe that skips &amp;gt; comprehensive test suite" file="comprehensive.test.js" line="21" assertions="0">
+          <skipped />
+        </testcase>
+      </testsuite>
+      <testcase name="basic passing test" classname="comprehensive test suite" file="comprehensive.test.js" line="26" assertions="1" />
+      <testcase name="basic failing test" classname="comprehensive test suite" file="comprehensive.test.js" line="30" assertions="1">
+        <failure type="AssertionError" />
+      </testcase>
+      <testcase name="basic skipped test" classname="comprehensive test suite" file="comprehensive.test.js" line="34" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="basic todo test" classname="comprehensive test suite" file="comprehensive.test.js" line="38" assertions="0">
+        <skipped message="TODO" />
+      </testcase>
+      <testcase name="addition 1 + 2 = 3" classname="comprehensive test suite" file="comprehensive.test.js" line="44" assertions="1" />
+      <testcase name="addition 2 + 3 = 5" classname="comprehensive test suite" file="comprehensive.test.js" line="44" assertions="1" />
+      <testcase name="addition 4 + 5 = 9" classname="comprehensive test suite" file="comprehensive.test.js" line="44" assertions="1" />
+      <testcase name="string concat hello + world = helloworld" classname="comprehensive test suite" file="comprehensive.test.js" line="51" assertions="1" />
+      <testcase name="string concat foo + bar = foobar" classname="comprehensive test suite" file="comprehensive.test.js" line="51" assertions="1" />
+      <testcase name="conditional test that runs" classname="comprehensive test suite" file="comprehensive.test.js" line="55" assertions="1" />
+      <testcase name="conditional test that skips" classname="comprehensive test suite" file="comprehensive.test.js" line="59" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="skip if true" classname="comprehensive test suite" file="comprehensive.test.js" line="63" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="skip if false" classname="comprehensive test suite" file="comprehensive.test.js" line="67" assertions="1" />
+      <testcase name="todo if true" classname="comprehensive test suite" file="comprehensive.test.js" line="71" assertions="0">
+        <skipped message="TODO" />
+      </testcase>
+      <testcase name="todo if false" classname="comprehensive test suite" file="comprehensive.test.js" line="73" assertions="1" />
+      <testcase name="test marked as failing" classname="comprehensive test suite" file="comprehensive.test.js" line="77" assertions="1" />
+      <testcase name="should match this test" classname="comprehensive test suite" file="comprehensive.test.js" line="81" assertions="1" />
+      <testcase name="should not be matched by filter" classname="comprehensive test suite" file="comprehensive.test.js" line="85" assertions="1" />
+    </testsuite>
+  </testsuite>
+</testsuites>
+"
+`;
+
+exports[`junit reporter more scenarios 2`] = `
+"<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="22" assertions="1" failures="0" skipped="21">
+  <testsuite name="comprehensive.test.js" file="comprehensive.test.js" tests="22" assertions="1" failures="0" skipped="21">
+    <testsuite name="comprehensive test suite" file="comprehensive.test.js" line="4" tests="22" assertions="1" failures="0" skipped="21">
+      <testsuite name="division suite 10 / 5" file="comprehensive.test.js" line="8" tests="1" assertions="0" failures="0" skipped="1">
+        <testcase name="should divide correctly" classname="division suite 10 / 5 &amp;gt; comprehensive test suite" file="comprehensive.test.js" line="9" assertions="0">
+          <skipped />
+        </testcase>
+      </testsuite>
+      <testsuite name="division suite 20 / 10" file="comprehensive.test.js" line="8" tests="1" assertions="0" failures="0" skipped="1">
+        <testcase name="should divide correctly" classname="division suite 20 / 10 &amp;gt; comprehensive test suite" file="comprehensive.test.js" line="9" assertions="0">
+          <skipped />
+        </testcase>
+      </testsuite>
+      <testsuite name="conditional describe that runs" file="comprehensive.test.js" line="14" tests="1" assertions="0" failures="0" skipped="1">
+        <testcase name="nested test in conditional describe" classname="conditional describe that runs &amp;gt; comprehensive test suite" file="comprehensive.test.js" line="15" assertions="0">
+          <skipped />
+        </testcase>
+      </testsuite>
+      <testsuite name="conditional describe that skips" file="comprehensive.test.js" line="20" tests="1" assertions="0" failures="0" skipped="1">
+        <testcase name="nested test that gets skipped" classname="conditional describe that skips &amp;gt; comprehensive test suite" file="comprehensive.test.js" line="21" assertions="0">
+          <skipped />
+        </testcase>
+      </testsuite>
+      <testcase name="basic passing test" classname="comprehensive test suite" file="comprehensive.test.js" line="26" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="basic failing test" classname="comprehensive test suite" file="comprehensive.test.js" line="30" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="basic skipped test" classname="comprehensive test suite" file="comprehensive.test.js" line="34" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="basic todo test" classname="comprehensive test suite" file="comprehensive.test.js" line="38" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="addition 1 + 2 = 3" classname="comprehensive test suite" file="comprehensive.test.js" line="44" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="addition 2 + 3 = 5" classname="comprehensive test suite" file="comprehensive.test.js" line="44" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="addition 4 + 5 = 9" classname="comprehensive test suite" file="comprehensive.test.js" line="44" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="string concat hello + world = helloworld" classname="comprehensive test suite" file="comprehensive.test.js" line="51" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="string concat foo + bar = foobar" classname="comprehensive test suite" file="comprehensive.test.js" line="51" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="conditional test that runs" classname="comprehensive test suite" file="comprehensive.test.js" line="55" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="conditional test that skips" classname="comprehensive test suite" file="comprehensive.test.js" line="59" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="skip if true" classname="comprehensive test suite" file="comprehensive.test.js" line="63" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="skip if false" classname="comprehensive test suite" file="comprehensive.test.js" line="67" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="todo if true" classname="comprehensive test suite" file="comprehensive.test.js" line="71" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="todo if false" classname="comprehensive test suite" file="comprehensive.test.js" line="73" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="test marked as failing" classname="comprehensive test suite" file="comprehensive.test.js" line="77" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="should match this test" classname="comprehensive test suite" file="comprehensive.test.js" line="81" assertions="1" />
+      <testcase name="should not be matched by filter" classname="comprehensive test suite" file="comprehensive.test.js" line="85" assertions="0">
+        <skipped />
+      </testcase>
+    </testsuite>
+  </testsuite>
+</testsuites>
+"
+`;

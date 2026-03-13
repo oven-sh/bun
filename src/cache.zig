@@ -1,22 +1,3 @@
-const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const StoredFileDescriptorType = bun.StoredFileDescriptorType;
-const Global = bun.Global;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const MutableString = bun.MutableString;
-const FeatureFlags = bun.FeatureFlags;
-const default_allocator = bun.default_allocator;
-
-const js_ast = bun.JSAst;
-const logger = bun.logger;
-const js_parser = bun.js_parser;
-const json_parser = bun.JSON;
-const Define = @import("./defines.zig").Define;
-const std = @import("std");
-const fs = @import("./fs.zig");
-
 pub const Set = struct {
     js: JavaScript,
     fs: Fs,
@@ -33,7 +14,7 @@ pub const Set = struct {
         };
     }
 };
-const debug = Output.scoped(.fs, false);
+const debug = Output.scoped(.fs, .visible);
 pub const Fs = struct {
     pub const Entry = struct {
         contents: string,
@@ -44,7 +25,7 @@ pub const Fs = struct {
 
         pub const ExternalFreeFunction = struct {
             ctx: ?*anyopaque,
-            function: ?*const fn (?*anyopaque) callconv(.C) void,
+            function: ?*const fn (?*anyopaque) callconv(.c) void,
 
             pub const none: ExternalFreeFunction = .{ .ctx = null, .function = null };
 
@@ -159,7 +140,7 @@ pub const Fs = struct {
         comptime use_shared_buffer: bool,
         _file_handle: ?StoredFileDescriptorType,
     ) !Entry {
-        return c.readFileWithAllocator(bun.fs_allocator, _fs, path, dirname_fd, use_shared_buffer, _file_handle);
+        return c.readFileWithAllocator(bun.default_allocator, _fs, path, dirname_fd, use_shared_buffer, _file_handle);
     }
 
     pub fn readFileWithAllocator(
@@ -182,7 +163,7 @@ pub const Fs = struct {
                         error.ENOENT => {
                             const handle = try bun.openFile(path, .{ .mode = .read_only });
                             Output.prettyErrorln(
-                                "<r><d>Internal error: directory mismatch for directory \"{s}\", fd {}<r>. You don't need to do anything, but this indicates a bug.",
+                                "<r><d>Internal error: directory mismatch for directory \"{s}\", fd {f}<r>. You don't need to do anything, but this indicates a bug.",
                                 .{ path, dirname_fd },
                             );
                             break :brk bun.FD.fromStdFile(handle);
@@ -198,12 +179,12 @@ pub const Fs = struct {
         }
 
         if (comptime !Environment.isWindows) // skip on Windows because NTCreateFile will do it.
-            debug("openat({}, {s}) = {}", .{ dirname_fd, path, bun.FD.fromStdFile(file_handle) });
+            debug("openat({f}, {s}) = {f}", .{ dirname_fd, path, bun.FD.fromStdFile(file_handle) });
 
         const will_close = rfs.needToCloseFiles() and _file_handle == null;
         defer {
             if (will_close) {
-                debug("readFileWithAllocator close({d})", .{file_handle.handle});
+                debug("readFileWithAllocator close({f})", .{bun.fs.printHandle(file_handle.handle)});
                 file_handle.close();
             }
         }
@@ -331,3 +312,23 @@ pub const Json = struct {
         return try parse(cache, log, source, allocator, json_parser.parseTSConfig, true);
     }
 };
+
+const string = []const u8;
+
+const fs = @import("./fs.zig");
+const std = @import("std");
+const Define = @import("./defines.zig").Define;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const FeatureFlags = bun.FeatureFlags;
+const Global = bun.Global;
+const MutableString = bun.MutableString;
+const Output = bun.Output;
+const StoredFileDescriptorType = bun.StoredFileDescriptorType;
+const default_allocator = bun.default_allocator;
+const js_ast = bun.ast;
+const js_parser = bun.js_parser;
+const json_parser = bun.json;
+const logger = bun.logger;
+const strings = bun.strings;

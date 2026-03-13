@@ -17,8 +17,8 @@
 const { chmod, copyFile, lstat, mkdir, opendir, readlink, stat, symlink, unlink, utimes } = require("node:fs/promises");
 const { dirname, isAbsolute, join, parse, resolve, sep } = require("node:path");
 
-const PromisePrototypeThen = Promise.prototype.then;
-const PromiseReject = Promise.reject;
+const PromisePrototypeThen = $Promise.prototype.$then;
+const PromiseReject = Promise.$reject;
 const ArrayPrototypeFilter = Array.prototype.filter;
 const StringPrototypeSplit = String.prototype.split;
 const ArrayPrototypeEvery = Array.prototype.every;

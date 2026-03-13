@@ -38,7 +38,7 @@ InspectorHTTPServerAgent::~InspectorHTTPServerAgent()
     }
 }
 
-void InspectorHTTPServerAgent::didCreateFrontendAndBackend(FrontendRouter*, BackendDispatcher*)
+void InspectorHTTPServerAgent::didCreateFrontendAndBackend()
 {
 }
 
@@ -132,7 +132,7 @@ void InspectorHTTPServerAgent::serverRoutesUpdated(int serverId, int hotReloadId
         return;
     }
 
-    this->m_frontendDispatcher->serverRoutesUpdated(serverId, hotReloadId, WTFMove(routes));
+    this->m_frontendDispatcher->serverRoutesUpdated(serverId, hotReloadId, WTF::move(routes));
 }
 void InspectorHTTPServerAgent::requestWillBeSent(Ref<Protocol::HTTPServer::Request>&& request)
 {
@@ -140,7 +140,7 @@ void InspectorHTTPServerAgent::requestWillBeSent(Ref<Protocol::HTTPServer::Reque
         return;
     }
 
-    this->m_frontendDispatcher->requestWillBeSent(WTFMove(request));
+    this->m_frontendDispatcher->requestWillBeSent(WTF::move(request));
 }
 void InspectorHTTPServerAgent::responseReceived(Ref<Protocol::HTTPServer::Response>&& response)
 {
@@ -148,7 +148,7 @@ void InspectorHTTPServerAgent::responseReceived(Ref<Protocol::HTTPServer::Respon
         return;
     }
 
-    this->m_frontendDispatcher->responseReceived(WTFMove(response));
+    this->m_frontendDispatcher->responseReceived(WTF::move(response));
 }
 void InspectorHTTPServerAgent::bodyChunkReceived(Ref<Protocol::HTTPServer::BodyChunk>&& chunk)
 {
@@ -156,7 +156,7 @@ void InspectorHTTPServerAgent::bodyChunkReceived(Ref<Protocol::HTTPServer::BodyC
         return;
     }
 
-    this->m_frontendDispatcher->bodyChunkReceived(WTFMove(chunk));
+    this->m_frontendDispatcher->bodyChunkReceived(WTF::move(chunk));
 }
 void InspectorHTTPServerAgent::requestFinished(int requestId, int serverId, double timestamp, std::optional<double>&& opt_duration)
 {
@@ -164,7 +164,7 @@ void InspectorHTTPServerAgent::requestFinished(int requestId, int serverId, doub
         return;
     }
 
-    this->m_frontendDispatcher->requestFinished(requestId, serverId, timestamp, WTFMove(opt_duration));
+    this->m_frontendDispatcher->requestFinished(requestId, serverId, timestamp, WTF::move(opt_duration));
 }
 void InspectorHTTPServerAgent::requestHandlerException(Ref<Protocol::HTTPServer::RequestHandlerError>&& error)
 {
@@ -172,7 +172,7 @@ void InspectorHTTPServerAgent::requestHandlerException(Ref<Protocol::HTTPServer:
         return;
     }
 
-    this->m_frontendDispatcher->requestHandlerException(WTFMove(error));
+    this->m_frontendDispatcher->requestHandlerException(WTF::move(error));
 }
 
 }
@@ -182,13 +182,18 @@ extern "C" {
 
 // Functions for Zig to call to notify about HTTP server events
 
-void Bun__HTTPServerAgent__notifyServerStarted(Inspector::InspectorHTTPServerAgent* agent, int serverId, int hotReloadId, BunString* address, double startTime, void* serverInstance)
+typedef int ServerId;
+typedef int HotReloadId;
+typedef int RouteId;
+typedef int RequestId;
+
+[[ZIG_EXPORT(nothrow)]] void Bun__HTTPServerAgent__notifyServerStarted(Inspector::InspectorHTTPServerAgent* agent, ServerId serverId, HotReloadId hotReloadId, const BunString* address, double startTime, void* serverInstance)
 {
 
     agent->serverStarted(serverId, address->toWTFString(), startTime, serverInstance);
 }
 
-void Bun__HTTPServerAgent__notifyServerStopped(Inspector::InspectorHTTPServerAgent* agent, int serverId, double timestamp)
+[[ZIG_EXPORT(nothrow)]] void Bun__HTTPServerAgent__notifyServerStopped(Inspector::InspectorHTTPServerAgent* agent, ServerId serverId, double timestamp)
 {
 
     agent->serverStopped(serverId, timestamp);
@@ -214,7 +219,7 @@ struct Route {
     BunString script_url;
 };
 
-void Bun__HTTPServerAgent__notifyServerRoutesUpdated(Inspector::InspectorHTTPServerAgent* agent, int serverId, int hotReloadId,
+[[ZIG_EXPORT(nothrow)]] void Bun__HTTPServerAgent__notifyServerRoutesUpdated(Inspector::InspectorHTTPServerAgent* agent, ServerId serverId, HotReloadId hotReloadId,
     Route* routes_ptr, size_t routes_len)
 {
 
@@ -253,9 +258,9 @@ void Bun__HTTPServerAgent__notifyServerRoutesUpdated(Inspector::InspectorHTTPSer
             object->setScriptUrl(route.script_url.toWTFString());
         }
 
-        routes->addItem(WTFMove(object));
+        routes->addItem(WTF::move(object));
     }
 
-    agent->serverRoutesUpdated(serverId, hotReloadId, WTFMove(routes));
+    agent->serverRoutesUpdated(serverId, hotReloadId, WTF::move(routes));
 }
 }

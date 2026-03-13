@@ -1,4 +1,4 @@
-import { Card, CardContent } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { APITester } from "./APITester";
 import "./index.css";
 
@@ -20,15 +20,15 @@ export function App() {
           className="h-36 p-6 transition-all duration-300 hover:drop-shadow-[0_0_2em_#61dafbaa] [animation:spin_20s_linear_infinite]"
         />
       </div>
-
-      <Card className="bg-card/50 backdrop-blur-sm border-muted">
-        <CardContent className="pt-6">
-          <h1 className="text-5xl font-bold my-4 leading-tight">Bun + React</h1>
-          <p>
-            Edit{" "}
-            <code className="relative rounded bg-muted px-[0.3rem] py-[0.2rem] font-mono text-sm">src/App.tsx</code> and
-            save to test HMR
-          </p>
+      <Card>
+        <CardHeader className="gap-4">
+          <CardTitle className="text-3xl font-bold">Bun + React</CardTitle>
+          <CardDescription>
+            Edit <code className="rounded bg-muted px-[0.3rem] py-[0.2rem] font-mono">src/App.tsx</code> and save to
+            test HMR
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
           <APITester />
         </CardContent>
       </Card>

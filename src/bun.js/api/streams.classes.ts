@@ -72,6 +72,10 @@ function source(name) {
               fn: "setRawModeFromJS",
               length: 1,
             },
+            setFlowing: {
+              fn: "setFlowingFromJS",
+              length: 1,
+            },
           }
         : {}),
     },

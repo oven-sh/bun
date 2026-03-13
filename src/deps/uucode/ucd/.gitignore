@@ -1,0 +1,86 @@
+# We use explicit ignore instead of a blanket ignore rule
+# plus un-ignoring needed files because `fd` doesn't seem
+# to list un-ignored files correctly
+
+ArabicShaping.txt
+# BidiBrackets.txt (used)
+BidiCharacterTest.txt
+BidiMirroring.txt
+BidiTest.txt
+# Blocks.txt (used)
+CJKRadicals.txt
+# CaseFolding.txt (used)
+CompositionExclusions.txt
+DerivedAge.txt
+# DerivedCoreProperties.txt (used)
+DerivedNormalizationProps.txt
+DoNotEmit.txt
+EastAsianWidth.txt
+EmojiSources.txt
+EquivalentUnifiedIdeograph.txt
+HangulSyllableType.txt
+Index.txt
+IndicPositionalCategory.txt
+IndicSyllabicCategory.txt
+Jamo.txt
+LineBreak.txt
+NameAliases.txt
+NamedSequences.txt
+NamedSequencesProv.txt
+NamesList.html
+NamesList.txt
+NormalizationCorrections.txt
+NormalizationTest.txt
+NushuSources.txt
+PropList.txt
+PropertyAliases.txt
+PropertyValueAliases.txt
+ReadMe.txt
+ScriptExtensions.txt
+Scripts.txt
+# SpecialCasing.txt (used)
+StandardizedVariants.txt
+TangutSources.txt
+USourceData.txt
+USourceGlyphs.pdf
+USourceRSChart.pdf
+# UnicodeData.txt (used)
+Unihan/Unihan_DictionaryIndices.txt
+Unihan/Unihan_DictionaryLikeData.txt
+Unihan/Unihan_IRGSources.txt
+Unihan/Unihan_NumericValues.txt
+Unihan/Unihan_OtherMappings.txt
+Unihan/Unihan_RadicalStrokeCounts.txt
+Unihan/Unihan_Readings.txt
+Unihan/Unihan_Variants.txt
+Unikemet.txt
+VerticalOrientation.txt
+# auxiliary/GraphemeBreakProperty.txt (used)
+auxiliary/GraphemeBreakTest.html
+# auxiliary/GraphemeBreakTest.txt
+auxiliary/LineBreakTest.html
+auxiliary/LineBreakTest.txt
+auxiliary/SentenceBreakProperty.txt
+auxiliary/SentenceBreakTest.html
+auxiliary/SentenceBreakTest.txt
+auxiliary/WordBreakProperty.txt
+auxiliary/WordBreakTest.html
+auxiliary/WordBreakTest.txt
+emoji/ReadMe.txt
+# emoji/emoji-data.txt (used)
+emoji/emoji-sequences.txt
+emoji/emoji-test.txt
+# emoji/emoji-variation-sequences.txt (used)
+# emoji/emoji-zwj-sequences.txt (for reference)
+# extracted/DerivedBidiClass.txt (used)
+extracted/DerivedBinaryProperties.txt
+extracted/DerivedCombiningClass.txt
+extracted/DerivedDecompositionType.txt
+# extracted/DerivedEastAsianWidth.txt (used)
+# extracted/DerivedGeneralCategory.txt (unused, but useful for reference)
+extracted/DerivedJoiningGroup.txt
+extracted/DerivedJoiningType.txt
+extracted/DerivedLineBreak.txt
+extracted/DerivedName.txt
+extracted/DerivedNumericType.txt
+extracted/DerivedNumericValues.txt

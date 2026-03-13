@@ -1,19 +1,21 @@
 /*
-
-  This file does not declare any global types.
-
-  That should only happen in [./globals.d.ts](./globals.d.ts)
-  so that our documentation generator can pick it up, as it
-  expects all globals to be declared in one file.
-
+ * This file does not declare any global types.
+ *
+ * That should only happen in [./globals.d.ts](./globals.d.ts)
+ * so that our documentation generator can pick it up, as it
+ * expects all globals to be declared in one file.
+ *
+ * This may change in the future, which would be
+ * a nice thing as it would allow us to split up
+ * relevant types into their own files.
  */
-
 declare module "bun" {
   type HeadersInit = string[][] | Record<string, string | ReadonlyArray<string>> | Headers;
   type BodyInit =
     | ReadableStream
     | Bun.XMLHttpRequestBodyInit
-    | URLSearchParams
+    // Extras that Bun supports:
+    | AsyncIterable<string | ArrayBuffer | ArrayBufferView>
     | AsyncGenerator<string | ArrayBuffer | ArrayBufferView>
     | (() => AsyncGenerator<string | ArrayBuffer | ArrayBufferView>);
 
@@ -26,7 +28,7 @@ declare module "bun" {
       ? {}
       : Omit<import("undici-types").RequestInit, "body" | "headers"> & {
           body?: Bun.BodyInit | null | undefined;
-          headers?: Bun.HeadersInit;
+          headers?: Bun.HeadersInit | undefined;
         };
 
     interface BunHeadersOverride extends LibOrFallbackHeaders {

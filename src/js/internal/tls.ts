@@ -1,11 +1,5 @@
 const { isTypedArray, isArrayBuffer } = require("node:util/types");
 
-const DEFAULT_CIPHERS =
-  "DHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256";
-
-const DEFAULT_CIPHERS_LIST = DEFAULT_CIPHERS.split(":");
-const DEFAULT_CIPHERS_SET = new Set([...DEFAULT_CIPHERS_LIST.map(c => c.toLowerCase()), ...DEFAULT_CIPHERS_LIST]);
-
 function isPemObject(obj: unknown): obj is { pem: unknown } {
   return $isObject(obj) && "pem" in obj;
 }
@@ -54,24 +48,6 @@ function isValidTLSArray(obj: unknown) {
   return false;
 }
 
-function validateCiphers(ciphers: string) {
-  const requested = ciphers.split(":");
-  for (const r of requested) {
-    if (!DEFAULT_CIPHERS_SET.has(r)) {
-      throw $ERR_SSL_NO_CIPHER_MATCH();
-    }
-  }
-}
-
 const VALID_TLS_ERROR_MESSAGE_TYPES = "string or an instance of Buffer, TypedArray, DataView, or BunFile";
 
-export {
-  DEFAULT_CIPHERS,
-  DEFAULT_CIPHERS_LIST,
-  DEFAULT_CIPHERS_SET,
-  VALID_TLS_ERROR_MESSAGE_TYPES,
-  isValidTLSArray,
-  isValidTLSItem,
-  throwOnInvalidTLSArray,
-  validateCiphers,
-};
+export { VALID_TLS_ERROR_MESSAGE_TYPES, isValidTLSArray, isValidTLSItem, throwOnInvalidTLSArray };

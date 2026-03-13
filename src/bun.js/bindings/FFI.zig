@@ -1,8 +1,6 @@
 // This is zig translate-c run on ffi.h
 // it turns out: FFI.h is faster than our implementation that calls into C++ bindings
 // so we just use this in some cases
-const bun = @import("bun");
-const jsc = bun.jsc;
 pub const @"bool" = bool;
 pub const JSCell = ?*anyopaque;
 const struct_unnamed_1 = extern struct {
@@ -101,16 +99,6 @@ pub inline fn BOOLEAN_TO_JSVALUE(arg_val: @"bool") EncodedJSValue {
     var res: EncodedJSValue = undefined;
     res.asInt64 = @as(i64, @bitCast(@as(c_longlong, if (@as(c_int, @intFromBool(val)) != 0) (@as(c_int, 2) | @as(c_int, 4)) | @as(c_int, 1) else (@as(c_int, 2) | @as(c_int, 4)) | @as(c_int, 0))));
     return res;
-}
-pub inline fn PTR_TO_JSVALUE(arg_ptr: ?*anyopaque) EncodedJSValue {
-    const ptr = arg_ptr;
-    var val: EncodedJSValue = undefined;
-    val.asInt64 = @as(i64, @intCast(@intFromPtr(ptr))) + (@as(c_longlong, 1) << @as(@import("std").math.Log2Int(c_longlong), @intCast(49)));
-    return val;
-}
-pub inline fn JSVALUE_TO_PTR(arg_val: EncodedJSValue) ?*anyopaque {
-    const val = arg_val;
-    return @as(?*anyopaque, @ptrFromInt(val.asInt64 - (@as(c_longlong, 1) << @as(@import("std").math.Log2Int(c_longlong), @intCast(49)))));
 }
 pub inline fn JSVALUE_TO_INT32(arg_val: EncodedJSValue) i32 {
     const val = arg_val;
@@ -537,3 +525,6 @@ pub const NotCellMask = NumberTag | OtherTag;
 pub const MAX_INT32 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 2147483648, .decimal);
 pub const MAX_INT52 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 9007199254740991, .decimal);
 pub const NumberTag = @import("std").zig.c_translation.promoteIntLiteral(c_longlong, 0xfffe000000000000, .hex);
+
+const bun = @import("bun");
+const jsc = bun.jsc;

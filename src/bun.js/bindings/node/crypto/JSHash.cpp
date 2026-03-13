@@ -232,11 +232,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHashProtoFuncDigest, (JSC::JSGlobalObject * lexicalGl
 
     if (hash->m_zigHasher) {
         if (hash->m_digestBuffer.size() > 0 || len == 0) {
-            return StringBytes::encode(
-                lexicalGlobalObject,
-                scope,
-                hash->m_digestBuffer.span().subspan(0, hash->m_mdLen),
-                encoding);
+            RELEASE_AND_RETURN(scope, StringBytes::encode(lexicalGlobalObject, scope, hash->m_digestBuffer.span().subspan(0, hash->m_mdLen), encoding));
         }
 
         uint32_t maxDigestLen = std::max((uint32_t)EVP_MAX_MD_SIZE, len);
@@ -250,26 +246,12 @@ JSC_DEFINE_HOST_FUNCTION(jsHashProtoFuncDigest, (JSC::JSGlobalObject * lexicalGl
         hash->m_finalized = finalized;
         hash->m_mdLen = std::min(len, totalDigestLen);
 
-        auto result = StringBytes::encode(
-            lexicalGlobalObject,
-            scope,
-            hash->m_digestBuffer.span().subspan(0, hash->m_mdLen),
-            encoding);
-
-        return result;
+        RELEASE_AND_RETURN(scope, StringBytes::encode(lexicalGlobalObject, scope, hash->m_digestBuffer.span().subspan(0, hash->m_mdLen), encoding));
     }
 
     // Only compute the digest if it hasn't been cached yet
     if (!hash->m_digest && len > 0) {
-
-        const EVP_MD* md = hash->m_ctx.getDigest();
-        uint32_t bufLen = len;
-        if (md == EVP_sha512_224()) {
-            // SHA-512/224 expects buffer length of length % 8. can be truncated afterwards
-            bufLen = SHA512_224_DIGEST_BUFFER_LENGTH;
-        }
-
-        auto data = hash->m_ctx.digestFinal(bufLen);
+        auto data = hash->m_ctx.digestFinal(len);
         if (!data) {
             throwCryptoError(lexicalGlobalObject, scope, ERR_get_error(), "Failed to finalize digest"_s);
             return {};
@@ -305,8 +287,7 @@ JSC_DEFINE_HOST_FUNCTION(constructHash, (JSC::JSGlobalObject * globalObject, JSC
 
         auto* functionGlobalObject = defaultGlobalObject(getFunctionRealm(globalObject, newTarget.getObject()));
         RETURN_IF_EXCEPTION(scope, {});
-        structure = InternalFunction::createSubclassStructure(
-            globalObject, newTarget.getObject(), functionGlobalObject->m_JSHashClassStructure.get(functionGlobalObject));
+        structure = InternalFunction::createSubclassStructure(globalObject, newTarget.getObject(), functionGlobalObject->m_JSHashClassStructure.get(functionGlobalObject));
         RETURN_IF_EXCEPTION(scope, {});
     }
 
@@ -336,7 +317,7 @@ JSC_DEFINE_HOST_FUNCTION(constructHash, (JSC::JSGlobalObject * globalObject, JSC
         WTF::String algorithm = algorithmOrHashInstanceValue.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
 
-        md = ncrypto::getDigestByName(algorithm, true);
+        md = ncrypto::getDigestByName(algorithm);
         if (!md) {
             zigHasher = ExternZigHash::getByName(zigGlobalObject, algorithm);
         }

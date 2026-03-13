@@ -1,7 +1,7 @@
 import { describe, expect } from "bun:test";
 import { itBundled } from "./expectBundled";
 
-describe("bundler", () => {
+describe.concurrent("bundler", () => {
   // Test HTML import manifest with enhanced metadata
   itBundled("html-import/manifest-with-metadata", {
     outdir: "out/",
@@ -103,11 +103,11 @@ console.log(favicon);
             "files": [
               {
                 "input": "client.html",
-                "path": "./client-5y90hwq3.js",
+                "path": "./client-sjg7egv9.js",
                 "loader": "js",
                 "isEntry": true,
                 "headers": {
-                  "etag": "xGxKikG0dN0",
+                  "etag": "14Q4Q7Mm8TM",
                   "content-type": "text/javascript;charset=utf-8"
                 }
               },
@@ -149,9 +149,68 @@ console.log(favicon);
     },
   });
 
+  // Test that non-JS/CSS assets referenced directly in HTML (favicon, images)
+  // are included in the manifest files array (regression test for #27820)
+  itBundled("html-import/html-referenced-assets-in-manifest", {
+    outdir: "out/",
+    files: {
+      "/server.js": `
+import html from "./index.html";
+
+// Verify the favicon asset is in the manifest files array
+const faviconEntry = html.files.find(f => f.path.includes("favicon") && f.path.endsWith(".svg"));
+if (!faviconEntry) {
+  throw new Error("favicon.svg not found in manifest files: " + JSON.stringify(html.files.map(f => f.path)));
+}
+
+console.log(JSON.stringify(html, null, 2));
+`,
+      "/index.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+    <title>Test</title>
+  </head>
+  <body>
+    <h1>Favicon Test</h1>
+    <script type="module" src="./app.ts"></script>
+  </body>
+</html>`,
+      "/app.ts": `console.log("app loaded");`,
+      "/favicon.svg": `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">T</text></svg>`,
+    },
+    entryPoints: ["/server.js"],
+    target: "bun",
+
+    run: {
+      validate({ stdout }) {
+        const manifest = JSON.parse(stdout);
+        // Verify manifest has a favicon entry with correct metadata
+        const favicon = manifest.files.find((f: any) => f.path.includes("favicon"));
+        expect(favicon).toBeDefined();
+        expect(favicon.loader).toBe("file");
+        expect(favicon.headers["content-type"]).toBe("image/svg+xml");
+      },
+    },
+
+    onAfterBundle(api) {
+      const serverCode = api.readFile("out/server.js");
+      const match = serverCode.match(/__jsonParse\("(.+?)"\)/s);
+      expect(match).not.toBeNull();
+      const manifest = JSON.parse(JSON.parse('"' + match![1] + '"'));
+      // The favicon.svg should be in the files array
+      const faviconFile = manifest.files.find((f: any) => f.path.includes("favicon"));
+      expect(faviconFile).toBeDefined();
+      expect(faviconFile.loader).toBe("file");
+      expect(faviconFile.headers["content-type"]).toBe("image/svg+xml");
+    },
+  });
+
   // Test manifest with multiple HTML imports
   itBundled("html-import/multiple-manifests", {
     outdir: "out/",
+    backend: "cli",
     files: {
       "/server.js": `
 import homeHtml from "./home.html";
@@ -228,12 +287,12 @@ console.log("About manifest:", aboutHtml);
               {
                 "headers": {
                   "content-type": "text/javascript;charset=utf-8",
-                  "etag": "DLJP98vzFzQ",
+                  "etag": "18fAEMlKmOw",
                 },
                 "input": "home.html",
                 "isEntry": true,
                 "loader": "js",
-                "path": "./home-5f8tg1jd.js",
+                "path": "./home-4688280z.js",
               },
               {
                 "headers": {
@@ -263,12 +322,12 @@ console.log("About manifest:", aboutHtml);
               {
                 "headers": {
                   "content-type": "text/javascript;charset=utf-8",
-                  "etag": "t8rrkgPylZo",
+                  "etag": "-3e3gOCTAZg",
                 },
                 "input": "about.html",
                 "isEntry": true,
                 "loader": "js",
-                "path": "./about-e59abjgr.js",
+                "path": "./about-0jghy87f.js",
               },
               {
                 "headers": {
@@ -301,6 +360,7 @@ console.log("About manifest:", aboutHtml);
   // Test that import with {type: 'file'} still works as a file import
   itBundled("html-import/with-type-file-attribute", {
     outdir: "out/",
+    backend: "cli",
     files: {
       "/entry.js": `
 import htmlUrl from "./page.html" with { type: 'file' };

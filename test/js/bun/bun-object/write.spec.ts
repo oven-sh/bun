@@ -42,13 +42,16 @@ describe("Bun.write()", () => {
 });
 
 describe("Bun.write() on file paths", () => {
+  console.log("%%BUNWRITE ON FILE PATHS%%");
   let dir: string;
 
   beforeAll(() => {
+    console.log("%%BUNWRITE ON FILE PATHS%% BEFORE ALL");
     dir = tmpdirSync("bun-write");
   });
 
   afterAll(async () => {
+    console.log("%%BUNWRITE ON FILE PATHS%% AFTER ALL");
     await fs.rmdir(dir, { recursive: true });
   });
 
@@ -105,8 +108,10 @@ describe("Bun.write() on file paths", () => {
   }); // </Given a path to a file in an existing directory>
 
   describe("Given a path to a file in a non-existent directory", () => {
+    console.log("%%BUNWRITE ON FILE PATHS%% GIVEN A PATH TO A FILE IN A NON-EXISTENT DIRECTORY");
     let filepath: string;
-    const rootdir = path.join(dir, "foo");
+    let rootdir: string;
+    beforeAll(() => (rootdir = path.join(dir, "foo")));
 
     beforeEach(async () => {
       filepath = path.join(rootdir, "bar/baz", "test-file.txt");

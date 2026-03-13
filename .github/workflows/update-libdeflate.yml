@@ -80,7 +80,7 @@ jobs:
 
       - name: Create Pull Request
         if: success() && steps.check-version.outputs.current != steps.check-version.outputs.latest
-        uses: peter-evans/create-pull-request@v4
+        uses: peter-evans/create-pull-request@v7
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           add-paths: |
@@ -88,7 +88,7 @@ jobs:
           commit-message: "deps: update libdeflate to ${{ steps.check-version.outputs.tag }} (${{ steps.check-version.outputs.latest }})"
           title: "deps: update libdeflate to ${{ steps.check-version.outputs.tag }}"
           delete-branch: true
-          branch: deps/update-libdeflate-${{ github.run_number }}
+          branch: deps/update-libdeflate
           body: |
             ## What does this PR do?
 

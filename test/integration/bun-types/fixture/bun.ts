@@ -50,3 +50,32 @@ import * as tsd from "./utilities";
 }
 
 DOMException;
+
+tsd
+  .expectType(
+    Bun.secrets.get({
+      service: "hey",
+      name: "hey",
+    }),
+  )
+  .is<Promise<string | null>>();
+
+tsd
+  .expectType(
+    Bun.secrets.set({
+      service: "hey",
+      name: "hey",
+      value: "hey",
+      allowUnrestrictedAccess: true,
+    }),
+  )
+  .is<Promise<void>>();
+
+tsd
+  .expectType(
+    Bun.secrets.delete({
+      service: "hey",
+      name: "hey",
+    }),
+  )
+  .is<Promise<boolean>>();

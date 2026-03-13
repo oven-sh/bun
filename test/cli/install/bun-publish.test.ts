@@ -36,8 +36,8 @@ export async function publish(
     env,
   });
 
-  const out = await Bun.readableStreamToText(stdout);
-  const err = stderrForInstall(await Bun.readableStreamToText(stderr));
+  const out = await stdout.text();
+  const err = stderrForInstall(await stderr.text());
   const exitCode = await exited;
   return { out, err, exitCode };
 }
@@ -356,7 +356,7 @@ for (const info of [
   { user: "bin3", directories: { bin: "bins" } },
 ]) {
   test(`can publish and install binaries with ${JSON.stringify(info)}`, async () => {
-    const { packageDir, packageJson } = await registry.createTestDir({ saveTextLockfile: false });
+    const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { saveTextLockfile: false } });
     const publishDir = tmpdirSync();
     const bunfig = await registry.authBunfig("binaries-" + info.user);
 
@@ -652,6 +652,43 @@ postpack: \${fs.existsSync("postpack.txt")}\`)`;
   });
 });
 
+test("prepublishOnly modifying version publishes correct version (#17195)", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir();
+  const bunfig = await registry.authBunfig("version-update");
+  const updateScript = `const fs = require("fs");
+    const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
+    pkg.version = "9.9.9";
+    fs.writeFileSync("package.json", JSON.stringify(pkg, null, 2));`;
+
+  await Promise.all([
+    rm(join(registry.packagesPath, "publish-version-update"), { recursive: true, force: true }),
+    write(
+      packageJson,
+      JSON.stringify({
+        name: "publish-version-update",
+        version: "1.0.0",
+        scripts: {
+          prepublishOnly: `${bunExe()} update-version.js`,
+        },
+        dependencies: {
+          "publish-version-update": "9.9.9",
+        },
+      }),
+    ),
+    write(join(packageDir, "update-version.js"), updateScript),
+    write(join(packageDir, "bunfig.toml"), bunfig),
+  ]);
+
+  const { out, err, exitCode } = await publish(env, packageDir);
+  expect(err).not.toContain("error:");
+  expect(exitCode).toBe(0);
+
+  // Should be able to install the package at the UPDATED version (9.9.9), not the original (1.0.0)
+  await runBunInstall(env, packageDir);
+  const installedPkg = await file(join(packageDir, "node_modules", "publish-version-update", "package.json")).json();
+  expect(installedPkg.version).toBe("9.9.9");
+});
+
 test("attempting to publish a private package should fail", async () => {
   const { packageDir, packageJson } = await registry.createTestDir();
   const bunfig = await registry.authBunfig("privatepackage");
@@ -847,4 +884,86 @@ it("$npm_lifecycle_event is accurate during publish", async () => {
     ``,
   ]);
   expect(exitCode).toBe(0);
+});
+
+describe("--tolerate-republish", async () => {
+  test("republishing normally fails", async () => {
+    const { packageDir, packageJson } = await registry.createTestDir();
+    const bunfig = await registry.authBunfig("republish-fail");
+    const pkgJson = {
+      name: "republish-test-1",
+      version: "1.0.0",
+    };
+
+    await Promise.all([
+      rm(join(registry.packagesPath, "republish-test-1"), { recursive: true, force: true }),
+      write(join(packageDir, "bunfig.toml"), bunfig),
+      write(packageJson, JSON.stringify(pkgJson)),
+    ]);
+
+    // First publish should succeed
+    let { out, err, exitCode } = await publish(env, packageDir);
+    expect(exitCode).toBe(0);
+    expect(out).toContain("+ republish-test-1@1.0.0");
+
+    // Second publish should fail
+    ({ out, err, exitCode } = await publish(env, packageDir));
+    expect(exitCode).toBe(1);
+    expect(err).toMatch(/403|409|already exists|already present|cannot publish/);
+  });
+
+  test("republishing with --tolerate-republish skips when version exists", async () => {
+    const { packageDir, packageJson } = await registry.createTestDir();
+    const bunfig = await registry.authBunfig("republish-tolerate");
+    const pkgJson = {
+      name: "republish-test-2",
+      version: "1.0.0",
+    };
+
+    await Promise.all([
+      rm(join(registry.packagesPath, "republish-test-2"), { recursive: true, force: true }),
+      write(join(packageDir, "bunfig.toml"), bunfig),
+      write(packageJson, JSON.stringify(pkgJson)),
+    ]);
+
+    // First publish should succeed
+    let { out, err, exitCode } = await publish(env, packageDir);
+    expect(exitCode).toBe(0);
+    expect(out).toContain("+ republish-test-2@1.0.0");
+
+    // Second publish with --tolerate-republish should skip
+    ({ out, err, exitCode } = await publish(env, packageDir, "--tolerate-republish"));
+    expect(exitCode).toBe(0);
+    expect(err).toBe("warn: Registry already knows about version 1.0.0; skipping.\n");
+    expect(err).not.toContain("error:");
+  });
+
+  test("republishing tarball with --tolerate-republish skips when version exists", async () => {
+    const { packageDir, packageJson } = await registry.createTestDir();
+    const bunfig = await registry.authBunfig("republish-tarball");
+    const pkgJson = {
+      name: "republish-test-3",
+      version: "1.0.0",
+    };
+
+    await Promise.all([
+      rm(join(registry.packagesPath, "republish-test-3"), { recursive: true, force: true }),
+      write(join(packageDir, "bunfig.toml"), bunfig),
+      write(packageJson, JSON.stringify(pkgJson)),
+    ]);
+
+    // Create tarball
+    await pack(packageDir, env);
+
+    // First publish should succeed
+    let { out, err, exitCode } = await publish(env, packageDir, "./republish-test-3-1.0.0.tgz");
+    expect(exitCode).toBe(0);
+    expect(out).toContain("+ republish-test-3@1.0.0");
+
+    // Second publish with --tolerate-republish should skip
+    ({ out, err, exitCode } = await publish(env, packageDir, "./republish-test-3-1.0.0.tgz", "--tolerate-republish"));
+    expect(exitCode).toBe(0);
+    expect(err).toBe("warn: Registry already knows about version 1.0.0; skipping.\n");
+    expect(err).not.toContain("error:");
+  });
 });

@@ -1,10 +1,3 @@
-const fs = bun.fs;
-const bun = @import("bun");
-const logger = bun.logger;
-const std = @import("std");
-const Index = @import("ast/base.zig").Index;
-const Api = @import("./api/schema.zig").Api;
-
 pub const ImportKind = enum(u8) {
     /// An entry point provided to `bun run` or `bun`
     entry_point_run = 0,
@@ -90,16 +83,16 @@ pub const ImportKind = enum(u8) {
         return k == .at_conditional or k == .at or k == .url or k == .composes;
     }
 
-    pub fn toAPI(k: ImportKind) Api.ImportKind {
+    pub fn toAPI(k: ImportKind) api.ImportKind {
         return switch (k) {
-            ImportKind.entry_point => Api.ImportKind.entry_point,
-            ImportKind.stmt => Api.ImportKind.stmt,
-            ImportKind.require => Api.ImportKind.require,
-            ImportKind.dynamic => Api.ImportKind.dynamic,
-            ImportKind.require_resolve => Api.ImportKind.require_resolve,
-            ImportKind.at => Api.ImportKind.at,
-            ImportKind.url => Api.ImportKind.url,
-            else => Api.ImportKind.internal,
+            ImportKind.entry_point => api.ImportKind.entry_point,
+            ImportKind.stmt => api.ImportKind.stmt,
+            ImportKind.require => api.ImportKind.require,
+            ImportKind.dynamic => api.ImportKind.dynamic,
+            ImportKind.require_resolve => api.ImportKind.require_resolve,
+            ImportKind.at => api.ImportKind.at,
+            ImportKind.url => api.ImportKind.url,
+            else => api.ImportKind.internal,
         };
     }
 };
@@ -113,65 +106,78 @@ pub const ImportRecord = struct {
     tag: Tag = .none,
     loader: ?bun.options.Loader = null,
 
-    source_index: bun.JSAst.Index = .invalid,
+    source_index: bun.ast.Index = .invalid,
 
-    /// True for the following cases:
-    ///
-    ///   try { require('x') } catch { handle }
-    ///   try { await import('x') } catch { handle }
-    ///   try { require.resolve('x') } catch { handle }
-    ///   import('x').catch(handle)
-    ///   import('x').then(_, handle)
-    ///
-    /// In these cases we shouldn't generate an error if the path could not be
-    /// resolved.
-    handles_import_errors: bool = false,
+    /// The original import specifier as written in source code (e.g., "./foo.js").
+    /// This is preserved before resolution overwrites `path` with the resolved path.
+    /// Used for metafile generation.
+    original_path: []const u8 = "",
 
-    is_internal: bool = false,
+    /// Pack all boolean flags into 2 bytes to reduce padding overhead.
+    /// Previously 15 separate bool fields caused ~14-16 bytes of padding waste.
+    flags: Flags = .{},
 
-    /// Sometimes the parser creates an import record and decides it isn't needed.
-    /// For example, TypeScript code may have import statements that later turn
-    /// out to be type-only imports after analyzing the whole file.
-    is_unused: bool = false,
+    pub const Flags = packed struct(u16) {
+        /// True for the following cases:
+        ///
+        ///   try { require('x') } catch { handle }
+        ///   try { await import('x') } catch { handle }
+        ///   try { require.resolve('x') } catch { handle }
+        ///   import('x').catch(handle)
+        ///   import('x').then(_, handle)
+        ///
+        /// In these cases we shouldn't generate an error if the path could not be
+        /// resolved.
+        handles_import_errors: bool = false,
 
-    /// If this is true, the import contains syntax like "* as ns". This is used
-    /// to determine whether modules that have no exports need to be wrapped in a
-    /// CommonJS wrapper or not.
-    contains_import_star: bool = false,
+        is_internal: bool = false,
 
-    /// If this is true, the import contains an import for the alias "default",
-    /// either via the "import x from" or "import {default as x} from" syntax.
-    contains_default_alias: bool = false,
+        /// Sometimes the parser creates an import record and decides it isn't needed.
+        /// For example, TypeScript code may have import statements that later turn
+        /// out to be type-only imports after analyzing the whole file.
+        is_unused: bool = false,
 
-    contains_es_module_alias: bool = false,
+        /// If this is true, the import contains syntax like "* as ns". This is used
+        /// to determine whether modules that have no exports need to be wrapped in a
+        /// CommonJS wrapper or not.
+        contains_import_star: bool = false,
 
-    /// If true, this "export * from 'path'" statement is evaluated at run-time by
-    /// calling the "__reExport()" helper function
-    calls_runtime_re_export_fn: bool = false,
+        /// If this is true, the import contains an import for the alias "default",
+        /// either via the "import x from" or "import {default as x} from" syntax.
+        contains_default_alias: bool = false,
 
-    /// True for require calls like this: "try { require() } catch {}". In this
-    /// case we shouldn't generate an error if the path could not be resolved.
-    is_inside_try_body: bool = false,
+        contains_es_module_alias: bool = false,
 
-    /// If true, this was originally written as a bare "import 'file'" statement
-    was_originally_bare_import: bool = false,
+        /// If true, this "export * from 'path'" statement is evaluated at run-time by
+        /// calling the "__reExport()" helper function
+        calls_runtime_re_export_fn: bool = false,
 
-    was_originally_require: bool = false,
+        /// True for require calls like this: "try { require() } catch {}". In this
+        /// case we shouldn't generate an error if the path could not be resolved.
+        is_inside_try_body: bool = false,
 
-    /// If a macro used <import>, it will be tracked here.
-    was_injected_by_macro: bool = false,
+        /// If true, this was originally written as a bare "import 'file'" statement
+        was_originally_bare_import: bool = false,
 
-    /// If true, this import can be removed if it's unused
-    is_external_without_side_effects: bool = false,
+        was_originally_require: bool = false,
 
-    /// Tell the printer to print the record as "foo:my-path" instead of "path"
-    /// where "foo" is the namespace
-    ///
-    /// Used to prevent running resolve plugins multiple times for the same path
-    print_namespace_in_path: bool = false,
+        /// If a macro used <import>, it will be tracked here.
+        was_injected_by_macro: bool = false,
 
-    wrap_with_to_esm: bool = false,
-    wrap_with_to_commonjs: bool = false,
+        /// If true, this import can be removed if it's unused
+        is_external_without_side_effects: bool = false,
+
+        /// Tell the printer to print the record as "foo:my-path" instead of "path"
+        /// where "foo" is the namespace
+        ///
+        /// Used to prevent running resolve plugins multiple times for the same path
+        print_namespace_in_path: bool = false,
+
+        wrap_with_to_esm: bool = false,
+        wrap_with_to_commonjs: bool = false,
+
+        _padding: u1 = 0,
+    };
 
     pub const List = bun.BabyList(ImportRecord);
 
@@ -180,8 +186,6 @@ pub const ImportRecord = struct {
         none,
         /// An import to 'bun'
         bun,
-        /// An import to 'bun:test'
-        bun_test,
         /// A builtin module, such as `node:fs` or `bun:sqlite`
         builtin,
         /// An import to the internal runtime
@@ -211,3 +215,11 @@ pub const ImportRecord = struct {
         napi_module,
     };
 };
+
+const std = @import("std");
+
+const bun = @import("bun");
+const fs = bun.fs;
+const logger = bun.logger;
+const Index = bun.ast.Index;
+const api = bun.schema.api;

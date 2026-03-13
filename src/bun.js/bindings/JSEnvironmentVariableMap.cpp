@@ -345,6 +345,7 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
                     JSValue value = jsString(vm, Zig::toStringCopy(valueString));
                     RETURN_IF_EXCEPTION(scope, {});
                     object->putDirectIndex(globalObject, *index, value, 0, PutDirectIndexLikePutDirect);
+                    RETURN_IF_EXCEPTION(scope, {});
                 }
                 continue;
             }

@@ -18,6 +18,7 @@ pub const CopyFile = struct {
     globalThis: *JSGlobalObject,
 
     mkdirp_if_not_exists: bool = false,
+    destination_mode: ?bun.Mode = null,
 
     pub const ResultType = anyerror!SizeType;
 
@@ -31,7 +32,8 @@ pub const CopyFile = struct {
         max_len: SizeType,
         globalThis: *JSGlobalObject,
         mkdirp_if_not_exists: bool,
-    ) !*CopyFilePromiseTask {
+        destination_mode: ?bun.Mode,
+    ) *CopyFilePromiseTask {
         const read_file = bun.new(CopyFile, CopyFile{
             .store = store,
             .source_store = source_store,
@@ -41,10 +43,11 @@ pub const CopyFile = struct {
             .destination_file_store = store.data.file,
             .source_file_store = source_store.data.file,
             .mkdirp_if_not_exists = mkdirp_if_not_exists,
+            .destination_mode = destination_mode,
         });
         store.ref();
         source_store.ref();
-        return CopyFilePromiseTask.createOnJSThread(allocator, globalThis, read_file) catch bun.outOfMemory();
+        return CopyFilePromiseTask.createOnJSThread(allocator, globalThis, read_file);
     }
 
     const linux = std.os.linux;
@@ -61,11 +64,11 @@ pub const CopyFile = struct {
         bun.destroy(this);
     }
 
-    pub fn reject(this: *CopyFile, promise: *JSC.JSPromise) void {
+    pub fn reject(this: *CopyFile, promise: *jsc.JSPromise) bun.JSTerminated!void {
         const globalThis = this.globalThis;
         var system_error: SystemError = this.system_error orelse SystemError{ .message = .empty };
         if (this.source_file_store.pathlike == .path and system_error.path.isEmpty()) {
-            system_error.path = bun.String.createUTF8(this.source_file_store.pathlike.path.slice());
+            system_error.path = bun.String.cloneUTF8(this.source_file_store.pathlike.path.slice());
         }
 
         if (system_error.message.isEmpty()) {
@@ -76,18 +79,18 @@ pub const CopyFile = struct {
         if (this.store) |store| {
             store.deref();
         }
-        promise.reject(globalThis, instance);
+        try promise.reject(globalThis, instance);
     }
 
-    pub fn then(this: *CopyFile, promise: *JSC.JSPromise) void {
+    pub fn then(this: *CopyFile, promise: *jsc.JSPromise) bun.JSTerminated!void {
         this.source_store.?.deref();
 
         if (this.system_error != null) {
-            this.reject(promise);
+            try this.reject(promise);
             return;
         }
 
-        promise.resolve(this.globalThis, JSC.JSValue.jsNumberFromUint64(this.read_len));
+        try promise.resolve(this.globalThis, .jsNumberFromUint64(this.read_len));
     }
 
     pub fn run(this: *CopyFile) void {
@@ -97,6 +100,24 @@ pub const CopyFile = struct {
     pub fn doClose(this: *CopyFile) void {
         const close_input = this.destination_file_store.pathlike != .fd and this.destination_fd != bun.invalid_fd;
         const close_output = this.source_file_store.pathlike != .fd and this.source_fd != bun.invalid_fd;
+
+        // Apply destination mode using fchmod before closing (for POSIX platforms)
+        // This ensures mode is applied even when overwriting existing files, since
+        // open()'s mode argument only affects newly created files.
+        // On macOS clonefile path, chmod is called separately after clonefile.
+        // On Windows, this is handled via async uv_fs_chmod.
+        if (comptime !Environment.isWindows) {
+            if (this.destination_mode) |mode| {
+                if (this.destination_fd != bun.invalid_fd and this.system_error == null) {
+                    switch (bun.sys.fchmod(this.destination_fd, mode)) {
+                        .err => |err| {
+                            this.system_error = err.toSystemError();
+                        },
+                        .result => {},
+                    }
+                }
+            }
+        }
 
         if (close_input and close_output) {
             this.doCloseFile(.both);
@@ -155,10 +176,11 @@ pub const CopyFile = struct {
         if (which == .both or which == .destination) {
             while (true) {
                 const dest = this.destination_file_store.pathlike.path.sliceZ(&path_buf1);
+                const mode = this.destination_mode orelse jsc.Node.fs.default_permission;
                 this.destination_fd = switch (bun.sys.open(
                     dest,
                     open_destination_flags,
-                    JSC.Node.fs.default_permission,
+                    mode,
                 )) {
                     .result => |result| switch (result.makeLibUVOwnedForSyscall(.open, .close_on_fail)) {
                         .result => |result_fd| result_fd,
@@ -234,7 +256,7 @@ pub const CopyFile = struct {
         // If they can't use copy_file_range, they probably also can't
         // use sendfile() or splice()
         if (!bun.canUseCopyFileRangeSyscall()) {
-            switch (JSC.Node.fs.NodeFS.copyFileUsingReadWriteLoop("", "", src_fd, dest_fd, if (unknown_size) 0 else remain, &total_written)) {
+            switch (jsc.Node.fs.NodeFS.copyFileUsingReadWriteLoop("", "", src_fd, dest_fd, if (unknown_size) 0 else remain, &total_written)) {
                 .err => |err| {
                     this.system_error = err.toSystemError();
                     return bun.errnoToZigErr(err.errno);
@@ -257,9 +279,12 @@ pub const CopyFile = struct {
             switch (bun.sys.getErrno(written)) {
                 .SUCCESS => {},
 
-                .NOSYS, .XDEV => {
+                // XDEV: cross-device copy not supported
+                // NOSYS: syscall not available
+                // OPNOTSUPP: filesystem doesn't support this operation
+                .NOSYS, .XDEV, .OPNOTSUPP => {
                     // TODO: this should use non-blocking I/O.
-                    switch (JSC.Node.fs.NodeFS.copyFileUsingReadWriteLoop("", "", src_fd, dest_fd, if (unknown_size) 0 else remain, &total_written)) {
+                    switch (jsc.Node.fs.NodeFS.copyFileUsingReadWriteLoop("", "", src_fd, dest_fd, if (unknown_size) 0 else remain, &total_written)) {
                         .err => |err| {
                             this.system_error = err.toSystemError();
                             return bun.errnoToZigErr(err.errno);
@@ -271,6 +296,8 @@ pub const CopyFile = struct {
                     }
                 },
 
+                // EINVAL: eCryptfs and other filesystems may not support copy_file_range.
+                // Also returned when the file descriptor is incompatible with the syscall.
                 .INVAL => {
                     if (comptime clear_append_if_invalid) {
                         if (!has_unset_append) {
@@ -287,12 +314,12 @@ pub const CopyFile = struct {
                     }
 
                     // If the Linux machine doesn't support
-                    // copy_file_range or the file descrpitor is
+                    // copy_file_range or the file descriptor is
                     // incompatible with the chosen syscall, fall back
                     // to a read/write loop
                     if (total_written == 0) {
                         // TODO: this should use non-blocking I/O.
-                        switch (JSC.Node.fs.NodeFS.copyFileUsingReadWriteLoop("", "", src_fd, dest_fd, if (unknown_size) 0 else remain, &total_written)) {
+                        switch (jsc.Node.fs.NodeFS.copyFileUsingReadWriteLoop("", "", src_fd, dest_fd, if (unknown_size) 0 else remain, &total_written)) {
                             .err => |err| {
                                 this.system_error = err.toSystemError();
                                 return bun.errnoToZigErr(err.errno);
@@ -339,7 +366,7 @@ pub const CopyFile = struct {
                         var total_written: u64 = 0;
 
                         // TODO: this should use non-blocking I/O.
-                        switch (JSC.Node.fs.NodeFS.copyFileUsingReadWriteLoop("", "", this.source_fd, this.destination_fd, 0, &total_written)) {
+                        switch (jsc.Node.fs.NodeFS.copyFileUsingReadWriteLoop("", "", this.source_fd, this.destination_fd, 0, &total_written)) {
                             .err => |err| {
                                 this.system_error = err.toSystemError();
                                 return bun.errnoToZigErr(err.errno);
@@ -440,6 +467,16 @@ pub const CopyFile = struct {
                                 this.read_len = @as(SizeType, @intCast(this.max_length));
                             } else {
                                 this.read_len = @as(SizeType, @intCast(stat_.?.size));
+                            }
+                            // Apply destination mode if specified (clonefile copies source permissions)
+                            if (this.destination_mode) |mode| {
+                                switch (bun.sys.chmod(this.destination_file_store.pathlike.path.sliceZ(&path_buf), mode)) {
+                                    .err => |err| {
+                                        this.system_error = err.toSystemError();
+                                        return;
+                                    },
+                                    .result => {},
+                                }
                             }
                             return;
                         } else |_| {
@@ -571,11 +608,15 @@ pub const CopyFileWindows = struct {
     source_file_store: *Store,
 
     io_request: libuv.fs_t = std.mem.zeroes(libuv.fs_t),
-    promise: JSC.JSPromise.Strong = .{},
+    promise: jsc.JSPromise.Strong = .{},
     mkdirp_if_not_exists: bool = false,
-    event_loop: *JSC.EventLoop,
+    destination_mode: ?bun.Mode = null,
+    event_loop: *jsc.EventLoop,
 
     size: Blob.SizeType = Blob.max_size,
+
+    /// Bytes written, stored for use after async chmod completes
+    written_bytes: usize = 0,
 
     /// For mkdirp
     err: ?bun.sys.Error = null,
@@ -589,16 +630,16 @@ pub const CopyFileWindows = struct {
         destination_fd: bun.FileDescriptor = bun.invalid_fd,
         must_close_destination_fd: bool = false,
         written: usize = 0,
-        read_buf: std.ArrayList(u8) = std.ArrayList(u8).init(bun.default_allocator),
+        read_buf: std.array_list.Managed(u8) = std.array_list.Managed(u8).init(bun.default_allocator),
         uv_buf: libuv.uv_buf_t = .{ .base = undefined, .len = 0 },
 
-        pub fn start(read_write_loop: *ReadWriteLoop, this: *CopyFileWindows) JSC.Maybe(void) {
-            read_write_loop.read_buf.ensureTotalCapacityPrecise(64 * 1024) catch bun.outOfMemory();
+        pub fn start(read_write_loop: *ReadWriteLoop, this: *CopyFileWindows) bun.sys.Maybe(void) {
+            bun.handleOom(read_write_loop.read_buf.ensureTotalCapacityPrecise(64 * 1024));
 
             return read(read_write_loop, this);
         }
 
-        pub fn read(read_write_loop: *ReadWriteLoop, this: *CopyFileWindows) JSC.Maybe(void) {
+        pub fn read(read_write_loop: *ReadWriteLoop, this: *CopyFileWindows) bun.sys.Maybe(void) {
             read_write_loop.read_buf.items.len = 0;
             read_write_loop.uv_buf = libuv.uv_buf_t.init(read_write_loop.read_buf.allocatedSlice());
             const loop = this.event_loop.virtual_machine.event_loop_handle.?;
@@ -622,10 +663,10 @@ pub const CopyFileWindows = struct {
                 return .{ .err = err };
             }
 
-            return .{ .result = {} };
+            return .success;
         }
 
-        fn onRead(req: *libuv.fs_t) callconv(.C) void {
+        fn onRead(req: *libuv.fs_t) callconv(.c) void {
             var this: *CopyFileWindows = @fieldParentPtr("io_request", req);
             bun.assert(req.data == @as(?*anyopaque, @ptrCast(this)));
 
@@ -637,7 +678,7 @@ pub const CopyFileWindows = struct {
 
             const rc = req.result;
 
-            bun.sys.syslog("uv_fs_read({}, {d}) = {d}", .{ source_fd, read_buf.len, rc.int() });
+            bun.sys.syslog("uv_fs_read({f}, {d}) = {d}", .{ source_fd, read_buf.len, rc.int() });
             if (rc.toError(.read)) |err| {
                 this.err = err;
                 this.onReadWriteLoopComplete();
@@ -673,7 +714,7 @@ pub const CopyFileWindows = struct {
             }
         }
 
-        fn onWrite(req: *libuv.fs_t) callconv(.C) void {
+        fn onWrite(req: *libuv.fs_t) callconv(.c) void {
             var this: *CopyFileWindows = @fieldParentPtr("io_request", req);
             bun.assert(req.data == @as(?*anyopaque, @ptrCast(this)));
             const buf = &this.read_write_loop.read_buf.items;
@@ -682,7 +723,7 @@ pub const CopyFileWindows = struct {
 
             const rc = req.result;
 
-            bun.sys.syslog("uv_fs_write({}, {d}) = {d}", .{ destination_fd, buf.len, rc.int() });
+            bun.sys.syslog("uv_fs_write({f}, {d}) = {d}", .{ destination_fd, buf.len, rc.int() });
 
             if (rc.toError(.write)) |err| {
                 this.err = err;
@@ -783,19 +824,21 @@ pub const CopyFileWindows = struct {
     pub fn init(
         destination_file_store: *Store,
         source_file_store: *Store,
-        event_loop: *JSC.EventLoop,
+        event_loop: *jsc.EventLoop,
         mkdirp_if_not_exists: bool,
         size_: Blob.SizeType,
-    ) JSC.JSValue {
+        destination_mode: ?bun.Mode,
+    ) jsc.JSValue {
         destination_file_store.ref();
         source_file_store.ref();
         const result = CopyFileWindows.new(.{
             .destination_file_store = destination_file_store,
             .source_file_store = source_file_store,
-            .promise = JSC.JSPromise.Strong.init(event_loop.global),
+            .promise = jsc.JSPromise.Strong.init(event_loop.global),
             .io_request = std.mem.zeroes(libuv.fs_t),
             .event_loop = event_loop,
             .mkdirp_if_not_exists = mkdirp_if_not_exists,
+            .destination_mode = destination_mode,
             .size = size_,
         });
         const promise = result.promise.value();
@@ -807,7 +850,7 @@ pub const CopyFileWindows = struct {
         return promise;
     }
 
-    fn preparePathlike(pathlike: *JSC.Node.PathOrFileDescriptor, must_close: *bool, is_reading: bool) JSC.Maybe(bun.FileDescriptor) {
+    fn preparePathlike(pathlike: *jsc.Node.PathOrFileDescriptor, must_close: *bool, is_reading: bool) bun.sys.Maybe(bun.FileDescriptor) {
         if (pathlike.* == .path) {
             const fd = switch (bun.sys.openatWindowsT(
                 u8,
@@ -881,7 +924,7 @@ pub const CopyFileWindows = struct {
 
     fn copyfile(this: *CopyFileWindows) void {
         // This is for making it easier for us to test this code path
-        if (bun.getRuntimeFeatureFlag(.BUN_FEATURE_FLAG_DISABLE_UV_FS_COPYFILE)) {
+        if (bun.feature_flag.BUN_FEATURE_FLAG_DISABLE_UV_FS_COPYFILE.get()) {
             this.prepareReadWriteLoop();
             return;
         }
@@ -1003,10 +1046,10 @@ pub const CopyFileWindows = struct {
         event_loop.enter();
         defer event_loop.exit();
         this.deinit();
-        promise.reject(globalThis, err_instance);
+        promise.reject(globalThis, err_instance) catch {}; // TODO: properly propagate exception upwards
     }
 
-    fn onCopyFile(req: *libuv.fs_t) callconv(.C) void {
+    fn onCopyFile(req: *libuv.fs_t) callconv(.c) void {
         var this: *CopyFileWindows = @fieldParentPtr("io_request", req);
         bun.assert(req.data == @as(?*anyopaque, @ptrCast(this)));
 
@@ -1014,7 +1057,7 @@ pub const CopyFileWindows = struct {
         event_loop.unrefConcurrently();
         const rc = req.result;
 
-        bun.sys.syslog("uv_fs_copyfile() = {}", .{rc});
+        bun.sys.syslog("uv_fs_copyfile() = {f}", .{rc});
         if (rc.errEnum()) |errno| {
             if (this.mkdirp_if_not_exists and errno == .NOENT) {
                 req.deinit();
@@ -1050,6 +1093,66 @@ pub const CopyFileWindows = struct {
             this.truncate();
             written = @intCast(this.size);
         }
+
+        // Apply destination mode if specified (async)
+        if (this.destination_mode) |mode| {
+            if (this.destination_file_store.data.file.pathlike == .path) {
+                this.written_bytes = written;
+                var pathbuf: bun.PathBuffer = undefined;
+                const path = this.destination_file_store.data.file.pathlike.path.sliceZ(&pathbuf);
+                const loop = this.event_loop.virtual_machine.event_loop_handle.?;
+                this.io_request.deinit();
+                this.io_request = std.mem.zeroes(libuv.fs_t);
+                this.io_request.data = @ptrCast(this);
+
+                const rc = libuv.uv_fs_chmod(
+                    loop,
+                    &this.io_request,
+                    path,
+                    @intCast(mode),
+                    &onChmod,
+                );
+
+                if (rc.errno()) |errno| {
+                    // chmod failed to start - reject the promise to report the error
+                    var err = bun.sys.Error.fromCode(@enumFromInt(errno), .chmod);
+                    const destination = &this.destination_file_store.data.file;
+                    if (destination.pathlike == .path) {
+                        err = err.withPath(destination.pathlike.path.slice());
+                    }
+                    this.throw(err);
+                    return;
+                }
+                this.event_loop.refConcurrently();
+                return;
+            }
+        }
+
+        this.resolvePromise(written);
+    }
+
+    fn onChmod(req: *libuv.fs_t) callconv(.c) void {
+        var this: *CopyFileWindows = @fieldParentPtr("io_request", req);
+        bun.assert(req.data == @as(?*anyopaque, @ptrCast(this)));
+
+        var event_loop = this.event_loop;
+        event_loop.unrefConcurrently();
+
+        const rc = req.result;
+        if (rc.errEnum()) |errno| {
+            var err = bun.sys.Error.fromCode(errno, .chmod);
+            const destination = &this.destination_file_store.data.file;
+            if (destination.pathlike == .path) {
+                err = err.withPath(destination.pathlike.path.slice());
+            }
+            this.throw(err);
+            return;
+        }
+
+        this.resolvePromise(this.written_bytes);
+    }
+
+    fn resolvePromise(this: *CopyFileWindows, written: usize) void {
         const globalThis = this.event_loop.global;
         const promise = this.promise.swap();
         var event_loop = this.event_loop;
@@ -1057,14 +1160,14 @@ pub const CopyFileWindows = struct {
         defer event_loop.exit();
 
         this.deinit();
-        promise.resolve(globalThis, JSC.JSValue.jsNumberFromUint64(written));
+        promise.resolve(globalThis, jsc.JSValue.jsNumberFromUint64(written)) catch {}; // TODO: properly propagate exception upwards
     }
 
     fn truncate(this: *CopyFileWindows) void {
         // TODO: optimize this
         @branchHint(.cold);
 
-        var node_fs: JSC.Node.fs.NodeFS = .{};
+        var node_fs: jsc.Node.fs.NodeFS = .{};
         _ = node_fs.truncate(
             .{
                 .path = this.destination_file_store.data.file.pathlike,
@@ -1098,7 +1201,7 @@ pub const CopyFileWindows = struct {
         }
 
         this.event_loop.refConcurrently();
-        JSC.Node.fs.Async.AsyncMkdirp.new(.{
+        jsc.Node.fs.Async.AsyncMkdirp.new(.{
             .completion = @ptrCast(&onMkdirpCompleteConcurrent),
             .completion_ctx = this,
             .path = bun.Dirname.dirname(u8, destination.pathlike.path.slice())
@@ -1120,11 +1223,11 @@ pub const CopyFileWindows = struct {
         this.copyfile();
     }
 
-    fn onMkdirpCompleteConcurrent(this: *CopyFileWindows, err_: JSC.Maybe(void)) void {
+    fn onMkdirpCompleteConcurrent(this: *CopyFileWindows, err_: bun.sys.Maybe(void)) void {
         bun.sys.syslog("mkdirp complete", .{});
         assert(this.err == null);
         this.err = if (err_ == .err) err_.err else null;
-        this.event_loop.enqueueTaskConcurrent(JSC.ConcurrentTask.create(JSC.ManagedTask.New(CopyFileWindows, onMkdirpComplete).init(this)));
+        this.event_loop.enqueueTaskConcurrent(jsc.ConcurrentTask.create(jsc.ManagedTask.New(CopyFileWindows, onMkdirpComplete).init(this)));
     }
 };
 
@@ -1145,21 +1248,22 @@ const unsupported_non_regular_file_error = SystemError{
     .syscall = bun.String.static("fstat"),
 };
 
-pub const CopyFilePromiseTask = JSC.ConcurrentPromiseTask(CopyFile);
+pub const CopyFilePromiseTask = jsc.ConcurrentPromiseTask(CopyFile);
 pub const CopyFilePromiseTaskEventLoopTask = CopyFilePromiseTask.EventLoopTask;
 
 const std = @import("std");
+
 const bun = @import("bun");
 const Environment = bun.Environment;
 const assert = bun.assert;
+const webcore = bun.webcore;
 const libuv = bun.windows.libuv;
 
-const webcore = bun.webcore;
-const Blob = webcore.Blob;
-const Store = Blob.Store;
-const SizeType = Blob.SizeType;
+const jsc = bun.jsc;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSValue = jsc.JSValue;
+const SystemError = jsc.SystemError;
 
-const JSC = bun.jsc;
-const SystemError = JSC.SystemError;
-const JSGlobalObject = JSC.JSGlobalObject;
-const JSValue = JSC.JSValue;
+const Blob = webcore.Blob;
+const SizeType = Blob.SizeType;
+const Store = Blob.Store;

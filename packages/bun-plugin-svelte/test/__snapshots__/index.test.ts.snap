@@ -1,4 +1,4 @@
-// Bun Snapshot v1, https://goo.gl/fbAQLP
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
 
 exports[`Bun.plugin using { forceSide: 'server' } allows for imported components to be SSR'd: foo.svelte - head 1`] = `""`;
 

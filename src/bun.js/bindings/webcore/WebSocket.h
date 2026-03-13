@@ -40,6 +40,10 @@
 #include "FetchHeaders.h"
 #include "WebSocketErrorCode.h"
 
+namespace WebCore {
+class JSBlob;
+}
+
 namespace uWS {
 template<bool, bool, typename>
 struct WebSocket;
@@ -52,7 +56,7 @@ class ArrayBufferView;
 
 namespace WebCore {
 
-// class Blob;
+class Blob;
 class WebSocket final : public RefCounted<WebSocket>, public EventTargetWithInlineData, public ContextDestructionObserver {
     WTF_MAKE_TZONE_ALLOCATED(WebSocket);
 
@@ -64,6 +68,9 @@ public:
     static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext&, const String& url, const Vector<String>& protocols);
     static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext&, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&&);
     static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext& context, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&& headers, bool rejectUnauthorized);
+    // With proxy support
+    static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext&, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&&, const String& proxyUrl, std::optional<FetchHeaders::Init>&& proxyHeaders, void* sslConfig);
+    static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext& context, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&& headers, bool rejectUnauthorized, const String& proxyUrl, std::optional<FetchHeaders::Init>&& proxyHeaders, void* sslConfig);
     ~WebSocket();
 
     enum State {
@@ -87,30 +94,43 @@ public:
         Clean = 1,
     };
 
+    // Tracks the connection type for both the upgrade client and the connected websocket.
+    // This replaces separate m_isSecure and m_proxyIsHTTPS bools.
+    enum class ConnectionType : uint8_t {
+        Plain, // ws:// direct connection
+        TLS, // wss:// direct connection
+        ProxyPlain, // ws:// or wss:// through HTTP proxy (plain socket to proxy)
+        ProxyTLS // ws:// or wss:// through HTTPS proxy (TLS socket to proxy)
+    };
+
     ExceptionOr<void> connect(const String& url);
     ExceptionOr<void> connect(const String& url, const String& protocol);
     ExceptionOr<void> connect(const String& url, const Vector<String>& protocols);
     ExceptionOr<void> connect(const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&&);
+    // Internal connect with proxy config (used by create() with proxy support)
+    ExceptionOr<void> connect(const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&&, std::optional<struct ProxyConfig>&&);
 
     ExceptionOr<void> send(const String& message);
     ExceptionOr<void> send(JSC::ArrayBuffer&);
     ExceptionOr<void> send(JSC::ArrayBufferView&);
-    // ExceptionOr<void> send(Blob&);
+    ExceptionOr<void> send(JSBlob*);
 
     ExceptionOr<void> ping();
     ExceptionOr<void> ping(const String& message);
     ExceptionOr<void> ping(JSC::ArrayBuffer&);
     ExceptionOr<void> ping(JSC::ArrayBufferView&);
-    // ExceptionOr<void> ping(Blob&);
+    ExceptionOr<void> ping(JSBlob*);
 
     ExceptionOr<void> pong();
     ExceptionOr<void> pong(const String& message);
     ExceptionOr<void> pong(JSC::ArrayBuffer&);
     ExceptionOr<void> pong(JSC::ArrayBufferView&);
-    // ExceptionOr<void> ping(Blob&);
+    ExceptionOr<void> pong(JSBlob*);
 
     ExceptionOr<void> close(std::optional<unsigned short> code, const String& reason);
     ExceptionOr<void> terminate();
+
+    void setProtocol(const String& protocol);
 
     const URL& url() const;
     State readyState() const;
@@ -129,7 +149,8 @@ public:
     void didConnect();
     void disablePendingActivity();
     void didClose(unsigned unhandledBufferedAmount, unsigned short code, const String& reason);
-    void didConnect(us_socket_t* socket, char* bufferedData, size_t bufferedDataSize, const PerMessageDeflateParams* deflate_params);
+    void didConnect(us_socket_t* socket, char* bufferedData, size_t bufferedDataSize, const PerMessageDeflateParams* deflate_params, void* customSSLCtx);
+    void didConnectWithTunnel(void* tunnel, char* bufferedData, size_t bufferedDataSize, const PerMessageDeflateParams* deflate_params);
     void didFailWithErrorCode(Bun::WebSocketErrorCode code);
 
     void didReceiveMessage(String&& message);
@@ -150,6 +171,16 @@ public:
     bool rejectUnauthorized() const
     {
         return m_rejectUnauthorized;
+    }
+
+    void setSSLConfig(void* config)
+    {
+        m_sslConfig = config;
+    }
+
+    void* sslConfig() const
+    {
+        return m_sslConfig;
     }
 
     void incPendingActivityCount()
@@ -197,6 +228,7 @@ private:
 
     void sendWebSocketString(const String& message, const Opcode opcode);
     void sendWebSocketData(const char* data, size_t length, const Opcode opcode);
+    void setExtensionsFromDeflateParams(const PerMessageDeflateParams* deflate_params);
 
     enum class BinaryType { Blob,
         ArrayBuffer,
@@ -216,11 +248,14 @@ private:
     String m_subprotocol;
     String m_extensions;
     void* m_upgradeClient { nullptr };
-    bool m_isSecure { false };
+    ConnectionType m_connectionType { ConnectionType::Plain };
     bool m_rejectUnauthorized { false };
     AnyWebSocket m_connectedWebSocket { nullptr };
     ConnectedWebSocketKind m_connectedWebSocketKind { ConnectedWebSocketKind::None };
     size_t m_pendingActivityCount { 0 };
+
+    // TLS options (SSLConfig pointer from Zig - ownership transferred to Zig)
+    void* m_sslConfig { nullptr };
 
     bool m_dispatchedErrorEvent { false };
     // RefPtr<PendingActivity<WebSocket>> m_pendingActivity;

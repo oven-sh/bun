@@ -40,9 +40,13 @@ class GlobalInternals;
 } // namespace shim
 } // namespace v8
 
+namespace node {
+struct node_module;
+} // namespace node
+
 #include "root.h"
 #include "headers-handwritten.h"
-#include <JavaScriptCore/CatchScope.h>
+#include <JavaScriptCore/TopExceptionScope.h>
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/JSTypeInfo.h>
 #include <JavaScriptCore/Structure.h>
@@ -54,9 +58,12 @@ class GlobalInternals;
 #include "headers-handwritten.h"
 #include "BunCommonStrings.h"
 #include "BunHttp2CommonStrings.h"
+#include "BunMarkdownTagStrings.h"
 #include "BunGlobalScope.h"
 #include <js_native_api.h>
 #include <node_api.h>
+#include "BakeAdditionsToGlobalObject.h"
+#include "WriteBarrierList.h"
 
 namespace Bun {
 class JSCommonJSExtensions;
@@ -168,7 +175,6 @@ public:
     WebCore::ScriptExecutionContext* scriptExecutionContext() const;
 
     void queueTask(WebCore::EventLoopTask* task);
-    void queueTaskOnTimeout(WebCore::EventLoopTask* task, int timeout);
     void queueTaskConcurrently(WebCore::EventLoopTask* task);
 
     JSDOMStructureMap& structures() WTF_REQUIRES_LOCK(m_gcLock) { return m_structures; }
@@ -184,8 +190,6 @@ public:
 
     void clearDOMGuardedObjects();
 
-    static void createCallSitesFromFrames(Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, JSCStackTrace& stackTrace, MarkedArgumentBuffer& callSites);
-
     static void reportUncaughtExceptionAtEventLoop(JSGlobalObject*, JSC::Exception*);
     static JSGlobalObject* deriveShadowRealmGlobalObject(JSGlobalObject* globalObject);
     static JSC::JSInternalPromise* moduleLoaderImportModule(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSString* moduleNameValue, JSC::JSValue parameters, const JSC::SourceOrigin&);
@@ -193,6 +197,8 @@ public:
     static JSC::JSInternalPromise* moduleLoaderFetch(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSValue key, JSC::JSValue parameters, JSC::JSValue script);
     static JSC::JSObject* moduleLoaderCreateImportMetaProperties(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSValue key, JSC::JSModuleRecord*, JSC::JSValue val);
     static JSC::JSValue moduleLoaderEvaluate(JSGlobalObject*, JSC::JSModuleLoader*, JSValue key, JSValue moduleRecordValue, JSValue scriptFetcher, JSValue sentValue, JSValue resumeMode);
+    static JSC::JSPromise* compileStreaming(JSGlobalObject*, JSC::JSValue source);
+    static JSC::JSPromise* instantiateStreaming(JSGlobalObject*, JSC::JSValue source, JSC::JSObject* importObject);
 
     static ScriptExecutionStatus scriptExecutionStatus(JSGlobalObject*, JSObject*);
     static void promiseRejectionTracker(JSGlobalObject*, JSC::JSPromise*, JSC::JSPromiseRejectionOperation);
@@ -266,13 +272,14 @@ public:
 
     JSC::JSObject* performanceObject() const { return m_performanceObject.getInitializedOnMainThread(this); }
 
-    JSC::JSFunction* performMicrotaskFunction() const { return m_performMicrotaskFunction.getInitializedOnMainThread(this); }
     JSC::JSFunction* performMicrotaskVariadicFunction() const { return m_performMicrotaskVariadicFunction.getInitializedOnMainThread(this); }
 
     JSC::Structure* utilInspectOptionsStructure() const { return m_utilInspectOptionsStructure.getInitializedOnMainThread(this); }
     JSC::JSFunction* utilInspectFunction() const { return m_utilInspectFunction.getInitializedOnMainThread(this); }
     JSC::JSFunction* utilInspectStylizeColorFunction() const { return m_utilInspectStylizeColorFunction.getInitializedOnMainThread(this); }
     JSC::JSFunction* utilInspectStylizeNoColorFunction() const { return m_utilInspectStylizeNoColorFunction.getInitializedOnMainThread(this); }
+
+    JSC::JSFunction* wasmStreamingConsumeStreamFunction() const { return m_wasmStreamingConsumeStreamFunction.getInitializedOnMainThread(this); }
 
     JSObject* requireFunctionUnbound() const { return m_requireFunctionUnbound.getInitializedOnMainThread(this); }
     JSObject* requireResolveFunctionUnbound() const { return m_requireResolveFunctionUnbound.getInitializedOnMainThread(this); }
@@ -289,11 +296,16 @@ public:
     JSC::JSFunction* requireESMFromHijackedExtension() const { return m_commonJSRequireESMFromHijackedExtensionFunction.getInitializedOnMainThread(this); }
 
     Structure* NodeVMGlobalObjectStructure() const { return m_cachedNodeVMGlobalObjectStructure.getInitializedOnMainThread(this); }
+    Structure* NodeVMSpecialSandboxStructure() const { return m_cachedNodeVMSpecialSandboxStructure.getInitializedOnMainThread(this); }
     Structure* globalProxyStructure() const { return m_cachedGlobalProxyStructure.getInitializedOnMainThread(this); }
     JSObject* lazyTestModuleObject() const { return m_lazyTestModuleObject.getInitializedOnMainThread(this); }
-    JSObject* lazyPreloadTestModuleObject() const { return m_lazyPreloadTestModuleObject.getInitializedOnMainThread(this); }
     Structure* CommonJSModuleObjectStructure() const { return m_commonJSModuleObjectStructure.getInitializedOnMainThread(this); }
     Structure* JSSocketAddressDTOStructure() const { return m_JSSocketAddressDTOStructure.getInitializedOnMainThread(this); }
+    Structure* JSReactElementStructure() const { return m_JSReactElementStructure.getInitializedOnMainThread(this); }
+    Structure* JSMarkdownListItemMetaStructure() const { return m_JSMarkdownListItemMetaStructure.getInitializedOnMainThread(this); }
+    Structure* JSMarkdownListMetaStructure() const { return m_JSMarkdownListMetaStructure.getInitializedOnMainThread(this); }
+    Structure* JSMarkdownCellMetaStructure() const { return m_JSMarkdownCellMetaStructure.getInitializedOnMainThread(this); }
+    Structure* JSMarkdownLinkMetaStructure() const { return m_JSMarkdownLinkMetaStructure.getInitializedOnMainThread(this); }
     Structure* ImportMetaObjectStructure() const { return m_importMetaObjectStructure.getInitializedOnMainThread(this); }
     Structure* ImportMetaBakeObjectStructure() const { return m_importMetaBakeObjectStructure.getInitializedOnMainThread(this); }
     Structure* AsyncContextFrameStructure() const { return m_asyncBoundFunctionStructure.getInitializedOnMainThread(this); }
@@ -309,6 +321,8 @@ public:
 
     v8::shim::GlobalInternals* V8GlobalInternals() const { return m_V8GlobalInternals.getInitializedOnMainThread(this); }
 
+    Bun::BakeAdditionsToGlobalObject& bakeAdditions() { return m_bakeAdditions; }
+
     bool hasProcessObject() const { return m_processObject.isInitialized(); }
 
     RefPtr<WebCore::Performance> performance();
@@ -317,7 +331,7 @@ public:
     JSC::JSObject* processEnvObject() const { return m_processEnvObject.getInitializedOnMainThread(this); }
     JSC::JSObject* bunObject() const { return m_bunObject.getInitializedOnMainThread(this); }
 
-    void drainMicrotasks();
+    uint8_t drainMicrotasks();
 
     void handleRejectedPromises();
     ALWAYS_INLINE void initGeneratedLazyClasses();
@@ -366,8 +380,8 @@ public:
         Bun__HTTPRequestContextDebugTLS__onResolveStream,
         jsFunctionOnLoadObjectResultResolve,
         jsFunctionOnLoadObjectResultReject,
-        Bun__TestScope__onReject,
-        Bun__TestScope__onResolve,
+        Bun__TestScope__Describe2__bunTestThen,
+        Bun__TestScope__Describe2__bunTestCatch,
         Bun__BodyValueBufferer__onRejectStream,
         Bun__BodyValueBufferer__onResolveStream,
         Bun__onResolveEntryPointResult,
@@ -446,6 +460,8 @@ public:
     //   a new overload of `visitGlobalObjectMember` so it understands your type.
 
 #define FOR_EACH_GLOBALOBJECT_GC_MEMBER(V)                                                                   \
+    V(public, Bun::BakeAdditionsToGlobalObject, m_bakeAdditions)                                             \
+                                                                                                             \
     /* TODO: these should use LazyProperty */                                                                \
     V(private, WriteBarrier<JSFunction>, m_assignToStream)                                                   \
     V(private, WriteBarrier<JSFunction>, m_assignStreamToResumableSink)                                      \
@@ -461,6 +477,8 @@ public:
     V(public, LazyPropertyOfGlobalObject<JSFunction>, m_modulePrototypeUnderscoreCompileFunction)            \
     V(public, LazyPropertyOfGlobalObject<JSFunction>, m_commonJSRequireESMFromHijackedExtensionFunction)     \
     V(public, LazyPropertyOfGlobalObject<JSObject>, m_nodeModuleConstructor)                                 \
+    V(public, LazyPropertyOfGlobalObject<Structure>, m_nodeModuleSourceMapEntryStructure)                    \
+    V(public, LazyPropertyOfGlobalObject<Structure>, m_nodeModuleSourceMapOriginStructure)                   \
                                                                                                              \
     V(public, WriteBarrier<Bun::JSNextTickQueue>, m_nextTickQueue)                                           \
                                                                                                              \
@@ -512,6 +530,7 @@ public:
     V(private, std::unique_ptr<WebCore::DOMConstructors>, m_constructors)                                    \
     V(private, Bun::CommonStrings, m_commonStrings)                                                          \
     V(private, Bun::Http2CommonStrings, m_http2CommonStrings)                                                \
+    V(private, Bun::MarkdownTagStrings, m_markdownTagStrings)                                                \
                                                                                                              \
     /* JSC's hashtable code-generator tries to access these properties, so we make them public. */           \
     /* However, we'd like it better if they could be protected. */                                           \
@@ -550,14 +569,16 @@ public:
     V(public, LazyClassStructure, m_JSConnectionsListClassStructure)                                         \
     V(public, LazyClassStructure, m_JSHTTPParserClassStructure)                                              \
                                                                                                              \
+    V(private, LazyPropertyOfGlobalObject<Structure>, m_jsonlParseResultStructure)                           \
+    V(private, LazyPropertyOfGlobalObject<Structure>, m_pathParsedObjectStructure)                           \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_pendingVirtualModuleResultStructure)                 \
-    V(private, LazyPropertyOfGlobalObject<JSFunction>, m_performMicrotaskFunction)                           \
     V(private, LazyPropertyOfGlobalObject<JSFunction>, m_nativeMicrotaskTrampoline)                          \
     V(private, LazyPropertyOfGlobalObject<JSFunction>, m_performMicrotaskVariadicFunction)                   \
     V(private, LazyPropertyOfGlobalObject<JSFunction>, m_utilInspectFunction)                                \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_utilInspectOptionsStructure)                         \
     V(private, LazyPropertyOfGlobalObject<JSFunction>, m_utilInspectStylizeColorFunction)                    \
     V(private, LazyPropertyOfGlobalObject<JSFunction>, m_utilInspectStylizeNoColorFunction)                  \
+    V(private, LazyPropertyOfGlobalObject<JSFunction>, m_wasmStreamingConsumeStreamFunction)                 \
     V(private, LazyPropertyOfGlobalObject<JSMap>, m_lazyReadableStreamPrototypeMap)                          \
     V(private, LazyPropertyOfGlobalObject<JSMap>, m_requireMap)                                              \
     V(private, LazyPropertyOfGlobalObject<JSMap>, m_esmRegistryMap)                                          \
@@ -573,12 +594,17 @@ public:
     V(public, LazyPropertyOfGlobalObject<JSObject>, m_lazyRequireCacheObject)                                \
     V(public, LazyPropertyOfGlobalObject<Bun::JSCommonJSExtensions>, m_lazyRequireExtensionsObject)          \
     V(private, LazyPropertyOfGlobalObject<JSObject>, m_lazyTestModuleObject)                                 \
-    V(private, LazyPropertyOfGlobalObject<JSObject>, m_lazyPreloadTestModuleObject)                          \
     V(public, LazyPropertyOfGlobalObject<JSObject>, m_testMatcherUtilsObject)                                \
     V(public, LazyPropertyOfGlobalObject<Structure>, m_cachedNodeVMGlobalObjectStructure)                    \
+    V(public, LazyPropertyOfGlobalObject<Structure>, m_cachedNodeVMSpecialSandboxStructure)                  \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_cachedGlobalProxyStructure)                          \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_commonJSModuleObjectStructure)                       \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_JSSocketAddressDTOStructure)                         \
+    V(private, LazyPropertyOfGlobalObject<Structure>, m_JSReactElementStructure)                             \
+    V(private, LazyPropertyOfGlobalObject<Structure>, m_JSMarkdownListItemMetaStructure)                     \
+    V(private, LazyPropertyOfGlobalObject<Structure>, m_JSMarkdownListMetaStructure)                         \
+    V(private, LazyPropertyOfGlobalObject<Structure>, m_JSMarkdownCellMetaStructure)                         \
+    V(private, LazyPropertyOfGlobalObject<Structure>, m_JSMarkdownLinkMetaStructure)                         \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_memoryFootprintStructure)                            \
     V(private, LazyPropertyOfGlobalObject<JSObject>, m_requireFunctionUnbound)                               \
     V(private, LazyPropertyOfGlobalObject<JSObject>, m_requireResolveFunctionUnbound)                        \
@@ -613,11 +639,15 @@ public:
     V(public, LazyPropertyOfGlobalObject<Structure>, m_JSBunRequestStructure)                                \
     V(public, LazyPropertyOfGlobalObject<JSObject>, m_JSBunRequestParamsPrototype)                           \
                                                                                                              \
+    V(public, LazyPropertyOfGlobalObject<JSObject>, m_bunStdin)                                              \
+    V(public, LazyPropertyOfGlobalObject<JSObject>, m_bunStderr)                                             \
+    V(public, LazyPropertyOfGlobalObject<JSObject>, m_bunStdout)                                             \
+                                                                                                             \
     V(public, LazyPropertyOfGlobalObject<Structure>, m_JSNodeHTTPServerSocketStructure)                      \
-    V(public, LazyPropertyOfGlobalObject<JSFloat64Array>, m_statValues)                                      \
-    V(public, LazyPropertyOfGlobalObject<JSBigInt64Array>, m_bigintStatValues)                               \
-    V(public, LazyPropertyOfGlobalObject<JSFloat64Array>, m_statFsValues)                                    \
-    V(public, LazyPropertyOfGlobalObject<JSBigInt64Array>, m_bigintStatFsValues)
+    V(public, LazyPropertyOfGlobalObject<Symbol>, m_nodeVMDontContextify)                                    \
+    V(public, LazyPropertyOfGlobalObject<Symbol>, m_nodeVMUseMainContextDefaultLoader)                       \
+    V(public, LazyPropertyOfGlobalObject<JSFunction>, m_ipcSerializeFunction)                                \
+    V(public, LazyPropertyOfGlobalObject<JSFunction>, m_ipcParseHandleFunction)
 
 #define DECLARE_GLOBALOBJECT_GC_MEMBER(visibility, T, name) \
     visibility:                                             \
@@ -637,7 +667,24 @@ public:
     // We will add it to the resulting napi value.
     void* m_pendingNapiModuleDlopenHandle = nullptr;
 
+    // Store ALL napi module structs to defer calling nm_register_func until after dlopen completes
+    // A single .node file can register multiple modules during static constructors
+    WTF::Vector<napi_module> m_pendingNapiModules;
+
+    // Temporary storage for current NAPI module being executed
+    // Used by executePendingNapiModule to execute one module at a time
+    std::optional<napi_module> m_pendingNapiModule = {};
+
+    // Store ALL V8 C++ module pointers to defer execution until after dlopen completes
+    // A single .node file can register multiple V8 modules during static constructors
+    WTF::Vector<node::node_module*> m_pendingV8Modules;
+
     JSObject* nodeErrorCache() const { return m_nodeErrorCache.getInitializedOnMainThread(this); }
+
+    // LazyProperty accessors for stdin/stderr/stdout
+    JSC::JSObject* bunStdin() const { return m_bunStdin.getInitializedOnMainThread(this); }
+    JSC::JSObject* bunStderr() const { return m_bunStderr.getInitializedOnMainThread(this); }
+    JSC::JSObject* bunStdout() const { return m_bunStdout.getInitializedOnMainThread(this); }
 
     Structure* memoryFootprintStructure()
     {
@@ -650,9 +697,6 @@ public:
     String agentClusterID() const;
     static String defaultAgentClusterID();
 
-    void trackFFIFunction(JSC::JSFunction* function);
-    bool untrackFFIFunction(JSC::JSFunction* function);
-
     BunPlugin::OnLoad onLoadPlugins {};
     BunPlugin::OnResolve onResolvePlugins {};
 
@@ -664,6 +708,8 @@ public:
 
     void reload();
 
+    JSC::Structure* jsonlParseResultStructure() { return m_jsonlParseResultStructure.get(this); }
+    JSC::Structure* pathParsedObjectStructure() { return m_pathParsedObjectStructure.get(this); }
     JSC::Structure* pendingVirtualModuleResultStructure() { return m_pendingVirtualModuleResultStructure.get(this); }
 
     // We need to know if the napi module registered itself or we registered it.
@@ -680,6 +726,7 @@ public:
 
     Bun::CommonStrings& commonStrings() { return m_commonStrings; }
     Bun::Http2CommonStrings& http2CommonStrings() { return m_http2CommonStrings; }
+    Bun::MarkdownTagStrings& markdownTagStrings() { return m_markdownTagStrings; }
 #include "ZigGeneratedClasses+lazyStructureHeader.h"
 
     void finishCreation(JSC::VM&);
@@ -702,8 +749,8 @@ public:
     // De-optimization once `require("module").runMain` is written to
     bool hasOverriddenModuleRunMain = false;
 
-    WTF::Vector<std::unique_ptr<napi_env__>> m_napiEnvs;
-    napi_env makeNapiEnv(const napi_module&);
+    WTF::Vector<WTF::Ref<NapiEnv>> m_napiEnvs;
+    Ref<NapiEnv> makeNapiEnv(const napi_module&);
     napi_env makeNapiEnvForFFI();
     bool hasNapiFinalizers() const;
 
@@ -711,8 +758,7 @@ private:
     DOMGuardedObjectSet m_guardedObjects WTF_GUARDED_BY_LOCK(m_gcLock);
     WebCore::SubtleCrypto* m_subtleCrypto = nullptr;
 
-    WTF::Vector<JSC::Strong<JSC::JSPromise>> m_aboutToBeNotifiedRejectedPromises;
-    WTF::Vector<JSC::Strong<JSC::JSFunction>> m_ffiFunctions;
+    Bun::WriteBarrierList<JSC::JSPromise> m_aboutToBeNotifiedRejectedPromises;
 };
 
 class EvalGlobalObject : public GlobalObject {
@@ -728,10 +774,7 @@ public:
 
 } // namespace Zig
 
-// TODO: move this
 namespace Bun {
-
-String formatStackTrace(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, const WTF::String& name, const WTF::String& message, OrdinalNumber& line, OrdinalNumber& column, WTF::String& sourceURL, Vector<JSC::StackFrame>& stackTrace, JSC::JSObject* errorInstance);
 
 ALWAYS_INLINE void* vm(Zig::GlobalObject* globalObject)
 {

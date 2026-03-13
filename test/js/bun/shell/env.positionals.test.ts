@@ -27,11 +27,11 @@ test("$ argv: standalone", async () => {
   });
 
   expect(stderr).toBeDefined();
-  const err = await new Response(stderr).text();
+  const err = await stderr.text();
   expect(err).toBeEmpty();
 
   expect(stdout).toBeDefined();
-  const out = await new Response(stdout).text();
+  const out = await stdout.text();
   expect(out.split("\n")).toEqual([script, "a", "bb", ""]);
 });
 
@@ -46,11 +46,11 @@ test("$ argv: standalone: not enough args", async () => {
   });
 
   expect(stderr).toBeDefined();
-  const err = await new Response(stderr).text();
+  const err = await stderr.text();
   expect(err).toBeEmpty();
 
   expect(stdout).toBeDefined();
-  const out = await new Response(stdout).text();
+  const out = await stdout.text();
   expect(out.split("\n")).toEqual([script, "", "", ""]);
 });
 
@@ -65,11 +65,11 @@ test("$ argv: standalone: only 10", async () => {
   });
 
   expect(stderr).toBeDefined();
-  const err = await new Response(stderr).text();
+  const err = await stderr.text();
   expect(err).toBeEmpty();
 
   expect(stdout).toBeDefined();
-  const out = await new Response(stdout).text();
+  const out = await stdout.text();
   expect(out.split("\n")).toEqual([script, "a", "bb", "c", "d", "e", "f", "g", "h", "i", "a0", ""]);
 });
 
@@ -84,10 +84,10 @@ test("$ argv: standalone: non-ascii", async () => {
   });
 
   expect(stderr).toBeDefined();
-  const err = await new Response(stderr).text();
+  const err = await stderr.text();
   expect(err).toBeEmpty();
 
   expect(stdout).toBeDefined();
-  const out = await new Response(stdout).text();
+  const out = await stdout.text();
   expect(out.split("\n")).toEqual([script, "キ", "テテ", "ィ", "・", "ホ", "ワ", "イ", "ト", "", "キ0", ""]);
 });

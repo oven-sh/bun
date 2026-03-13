@@ -274,6 +274,7 @@ describe("bundler", () => {
       "/entry.js": /* js */ `console.log(1)`,
     },
     outdir: "/out",
+    backend: "cli",
     loader: {
       ".cool": "wtf",
     },
@@ -1112,7 +1113,7 @@ describe("bundler", () => {
     snapshotSourceMap: {
       "entry.js.map": {
         files: ["../node_modules/react/index.js", "../entry.js"],
-        mappingsExactMatch: "qYACA,WAAW,IAAQ,EAAE,ICDrB,eACA,QAAQ,IAAI,CAAK",
+        mappingsExactMatch: "miBACA,WAAW,IAAQ,EAAE,ICDrB,eACA,QAAQ,IAAI,CAAK",
       },
     },
   });
@@ -2071,6 +2072,7 @@ describe("bundler", () => {
   });
 
   itBundled("edgecase/OutWithTwoFiles", {
+    backend: "cli",
     files: {
       "/entry.ts": `
         import index from './index.html' with { type: 'file' }

@@ -136,7 +136,7 @@ describe("transpiler cache", () => {
 
     for (const proc of processes) {
       expect(proc.exitCode).toBe(0);
-      expect(await Bun.readableStreamToText(proc.stdout)).toBe("b\n");
+      expect(await proc.stdout.text()).toBe("b\n");
     }
   }, 99999999);
   test("works if the cache is not user-readable", () => {
@@ -185,5 +185,43 @@ describe("transpiler cache", () => {
     const b = bunRun(join(temp_dir, "a.js"), { ...env, NODE_ENV: "production", HELLO: "5" });
     expect(b.stdout == "production 5");
     expect(newCacheCount()).toBe(0);
+  });
+  test("--feature flag invalidates cache", () => {
+    // feature() can only appear in an if/ternary, so wrap it
+    const code = `import { feature } from "bun:bundle";\nif (feature("SUPER_SECRET")) console.log("enabled"); else console.log("disabled");`;
+    const filler = Buffer.alloc((50 * 1024 * 1.5) | 0, "/").toString();
+    writeFileSync(join(temp_dir, "a.js"), code + "\n//" + filler);
+
+    const run = (extra: string[]) => {
+      const result = Bun.spawnSync({
+        cmd: [bunExe(), ...extra, "a.js"],
+        cwd: temp_dir,
+        env,
+      });
+      if (!result.success) throw new Error(result.stderr.toString());
+      return result.stdout.toString().trim();
+    };
+
+    // First run with flag: cache miss, write entry
+    expect(run(["--feature=SUPER_SECRET"])).toBe("enabled");
+    expect(newCacheCount()).toBe(1);
+
+    // Same flag: cache hit
+    expect(run(["--feature=SUPER_SECRET"])).toBe("enabled");
+    expect(newCacheCount()).toBe(0);
+
+    // No flag: features_hash differs -> old entry deleted, new entry written
+    expect(run([])).toBe("disabled");
+    expect(newCacheCount()).toBe(0); // deleted + written = net 0
+
+    // Flag again: another delete + write
+    expect(run(["--feature=SUPER_SECRET"])).toBe("enabled");
+    expect(newCacheCount()).toBe(0);
+
+    // Multiple flags, different order: same hash, cache hit
+    expect(run(["--feature=SUPER_SECRET", "--feature=OTHER"])).toBe("enabled");
+    expect(newCacheCount()).toBe(0); // delete + write
+    expect(run(["--feature=OTHER", "--feature=SUPER_SECRET"])).toBe("enabled");
+    expect(newCacheCount()).toBe(0); // cache hit, order doesn't matter
   });
 });

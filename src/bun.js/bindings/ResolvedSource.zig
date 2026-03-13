@@ -1,7 +1,3 @@
-const bun = @import("bun");
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
-
 pub const ResolvedSource = extern struct {
     /// Specifier's lifetime is the caller from C++
     /// https://github.com/oven-sh/bun/issues/9521
@@ -28,8 +24,21 @@ pub const ResolvedSource = extern struct {
     /// This is for source_code
     source_code_needs_deref: bool = true,
     already_bundled: bool = false,
+
+    // -- Bytecode cache fields --
     bytecode_cache: ?[*]u8 = null,
     bytecode_cache_size: usize = 0,
+    module_info: ?*anyopaque = null,
+    /// The file path used as the source origin for bytecode cache validation.
+    /// JSC validates bytecode by checking if the origin URL matches exactly what
+    /// was used at build time. If empty, the origin is derived from source_url.
+    /// This is converted to a file:// URL on the C++ side.
+    bytecode_origin_path: bun.String = bun.String.empty,
 
     pub const Tag = @import("ResolvedSourceTag").ResolvedSourceTag;
 };
+
+const bun = @import("bun");
+
+const jsc = bun.jsc;
+const JSValue = jsc.JSValue;

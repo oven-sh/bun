@@ -1,10 +1,10 @@
 import { spawn, spawnSync } from "bun";
 import { beforeAll, describe, expect, it } from "bun:test";
 import { readdirSync } from "fs";
-import { bunEnv, bunExe, isCI, isMacOS, isMusl, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isCI, isMacOS, isMusl, isWindows, tempDirWithFiles } from "harness";
 import { join } from "path";
 
-describe("napi", () => {
+describe.concurrent("napi", () => {
   beforeAll(() => {
     // build gyp
     console.time("Building node-gyp");
@@ -260,6 +260,34 @@ describe("napi", () => {
     it("allows creating a handle scope in the finalizer", async () => {
       await checkSameOutput("test_napi_handle_scope_finalizer", []);
     });
+    it("prevents underflow when unref called on zero refcount", async () => {
+      // This tests the fix for napi_reference_unref underflow protection
+      await checkSameOutput("test_ref_unref_underflow", []);
+    });
+  });
+
+  describe("napi_create_external_buffer", () => {
+    it("handles empty/null data without throwing", async () => {
+      const result = await checkSameOutput("test_napi_create_external_buffer_empty", []);
+      expect(result).toContain("PASS: napi_create_external_buffer with nullptr and zero length");
+      expect(result).toContain("PASS: napi_create_external_buffer with non-null data and zero length");
+      expect(result).toContain("PASS: napi_create_external_buffer with nullptr finalizer");
+      expect(result).not.toContain("FAIL");
+    });
+
+    it("finalize_cb is tied to the ArrayBuffer lifetime, not the Buffer view", async () => {
+      const result = await checkSameOutput("test_external_buffer_data_lifetime", []);
+      expect(result).toContain("PASS: external buffer data intact through ArrayBuffer after GC");
+      expect(result).not.toContain("FAIL");
+    });
+
+    it("empty buffer returns null pointer and 0 length from napi_get_buffer_info and napi_get_typedarray_info", async () => {
+      const result = await checkSameOutput("test_napi_empty_buffer_info", []);
+      expect(result).toContain("PASS: napi_get_buffer_info returns null pointer and 0 length for empty buffer");
+      expect(result).toContain("PASS: napi_get_typedarray_info returns null pointer and 0 length for empty buffer");
+      expect(result).toContain("PASS: napi_is_detached_arraybuffer returns true for empty buffer's arraybuffer");
+      expect(result).not.toContain("FAIL");
+    });
   });
 
   describe("napi_async_work", () => {
@@ -398,6 +426,13 @@ describe("napi", () => {
     });
   });
 
+  describe("napi_create_object", () => {
+    // https://github.com/oven-sh/bun/issues/25658
+    it("result is clonable with structuredClone", async () => {
+      await checkSameOutput("test_napi_create_object_structured_clone", []);
+    });
+  });
+
   // TODO(@190n) test allocating in a finalizer from a napi module with the right version
 
   describe("napi_wrap", () => {
@@ -473,6 +508,12 @@ describe("napi", () => {
     it("works", async () => {
       await checkSameOutput("test_create_bigint_words", []);
     });
+
+    it("returns correct word count with small buffer", async () => {
+      // This tests the fix for the BigInt word count bug
+      // When buffer is smaller than needed, word_count should still return actual words needed
+      await checkSameOutput("test_bigint_word_count", []);
+    });
   });
 
   describe("napi_get_last_error_info", () => {
@@ -512,6 +553,132 @@ describe("napi", () => {
   it("works when the module register function throws", async () => {
     expect(() => require("./napi-app/build/Debug/throw_addon.node")).toThrow(new Error("oops!"));
   });
+
+  it("runs the napi_module_register callback after dlopen finishes", async () => {
+    await checkSameOutput("test_constructor_order", []);
+  });
+
+  it("behaves as expected when performing operations with an exception pending", async () => {
+    await checkSameOutput("test_deferred_exceptions", []);
+  });
+
+  it("behaves as expected when performing operations with numeric string keys", async () => {
+    await checkSameOutput("test_napi_numeric_string_keys", []);
+  });
+
+  it("napi_get_named_property copies utf8 string data", async () => {
+    // Must spawn bun directly (not via checkSameOutput/main.js) because the
+    // bug only reproduces when global property names like "Response" haven't
+    // been pre-atomized. Loading through main.js → module.js pre-initializes
+    // globals, masking the use-after-free in the atom string table.
+    const addonPath = join(__dirname, "napi-app", "build", "Debug", "napitests.node");
+    await using proc = spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const addon = require(${JSON.stringify(addonPath)}); addon.test_napi_get_named_property_copied_string(() => { Bun.gc(true); });`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+
+    expect(stderr).toBe("");
+    expect(stdout).toInclude("PASS");
+    expect(exitCode).toBe(0);
+  });
+
+  it("behaves as expected when performing operations with default values", async () => {
+    await checkSameOutput("test_napi_get_default_values", []);
+  });
+
+  it("NAPI finalizer iterator invalidation crash prevention", () => {
+    // This test verifies that the DeferGCForAWhile fix prevents iterator invalidation
+    // during NAPI finalizer cleanup. While we couldn't reproduce the exact crash
+    // conditions, this test ensures the addon loads and runs without issues.
+
+    const addon = require("./napi-app/build/Debug/test_finalizer_iterator_invalidation.node");
+
+    // Create objects with finalizers (should not crash)
+    const objects = addon.createProblematicObjects(5);
+    expect(objects).toHaveLength(5);
+
+    // Clear references
+    objects.length = 0;
+
+    // Get initial count
+    const count = addon.getFinalizeCount();
+    expect(typeof count).toBe("number");
+  });
+
+  it("napi_reference_unref can be called from finalizers in regular modules", async () => {
+    // This test ensures that napi_reference_unref can be called during GC
+    // without triggering the NAPI_CHECK_ENV_NOT_IN_GC assertion for regular modules.
+    // This was causing crashes with packages like rolldown-vite when used with Nuxt.
+    // See: https://github.com/oven-sh/bun/issues/22596
+    const result = await checkSameOutput("test_reference_unref_in_finalizer", []);
+    expect(result).toContain("Created 100 objects with finalizers");
+    expect(result).toContain("Finalizers called:");
+    expect(result).toContain("Unrefs succeeded:");
+    expect(result).toContain("SUCCESS: napi_reference_unref worked in finalizers without crashing");
+    expect(result).toContain("Test completed:");
+  }, 10_000);
+
+  it.todoIf(
+    // The test does not properly avoid the non-zero exit code on Windows.
+    isWindows,
+  )(
+    "napi_reference_unref is blocked from finalizers in experimental modules",
+    async () => {
+      // Experimental NAPI modules should NOT be able to call napi_reference_unref from finalizers
+      // The process should crash/abort when this is attempted
+      // This matches Node.js behavior for experimental modules
+
+      // Note: Node.js may not enforce this check for manually-registered experimental modules
+      // (ones that set nm_version to NAPI_VERSION_EXPERIMENTAL manually)
+      // But Bun should still enforce it for safety
+
+      // Test with Bun - should crash
+      // Use the wrapper script that kills the process after seeing the crash messages
+      // to avoid hanging on llvm-symbolizer
+      const { BUN_INSPECT_CONNECT_TO: _, ASAN_OPTIONS, ...rest } = bunEnv;
+      const bunProc = spawn({
+        cmd: [bunExe(), join(__dirname, "napi-app/test_experimental_with_timeout.js")],
+        env: {
+          ...rest,
+          BUN_INTERNAL_SUPPRESS_CRASH_ON_NAPI_ABORT: "1",
+          // Override ASAN_OPTIONS to disable coredump and symbolization for this specific test
+          // Otherwise ASAN will hang trying to create a core dump or symbolize
+          ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=1:symbolize=0",
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [bunStdout, bunStderr, bunExitCode] = await Promise.all([
+        bunProc.stdout.text(),
+        bunProc.stderr.text(),
+        bunProc.exited,
+      ]);
+
+      // The wrapper script should exit with 0 if the test passed
+      expect(bunExitCode).toBe(0);
+      expect(bunStdout + bunStderr).toContain("Loading experimental module");
+      expect(bunStdout + bunStderr).toContain("Created");
+      expect(bunStderr).toContain("FATAL ERROR");
+      expect(bunStdout + bunStderr).toContain("TEST PASSED: Process crashed as expected");
+
+      // The error message should NOT contain "Did not crash"
+      expect(bunStdout + bunStderr).not.toContain("ERROR: Did not crash");
+    },
+    25_000,
+  );
 });
 
 async function checkSameOutput(test: string, args: any[] | string, envArgs: Record<string, string> = {}) {
@@ -531,10 +698,7 @@ async function checkSameOutput(test: string, args: any[] | string, envArgs: Reco
 }
 
 async function runOn(executable: string, test: string, args: any[] | string, envArgs: Record<string, string> = {}) {
-  // when the inspector runs (can be due to VSCode extension), there is
-  // a bug that in debug modes the console logs extra stuff
-  const { BUN_INSPECT_CONNECT_TO: _, ...rest } = bunEnv;
-  const env = { ...rest, ...envArgs };
+  const env = { ...bunEnv, ...envArgs };
   const exec = spawn({
     cmd: [
       executable,
@@ -560,3 +724,148 @@ async function runOn(executable: string, test: string, args: any[] | string, env
   expect(result).toBe(0);
   return stdout;
 }
+
+async function checkBothFail(test: string, args: any[] | string, envArgs: Record<string, string> = {}) {
+  const [node, bun] = await Promise.all(
+    ["node", bunExe()].map(async executable => {
+      const { BUN_INSPECT_CONNECT_TO: _, ...rest } = bunEnv;
+      const env = { ...rest, BUN_INTERNAL_SUPPRESS_CRASH_ON_NAPI_ABORT: "1", ...envArgs };
+      const exec = spawn({
+        cmd: [
+          executable,
+          "--expose-gc",
+          join(__dirname, "napi-app/main.js"),
+          test,
+          typeof args == "string" ? args : JSON.stringify(args),
+        ],
+        env,
+        stdout: Bun.version_with_sha.includes("debug") ? "inherit" : "pipe",
+        stderr: Bun.version_with_sha.includes("debug") ? "inherit" : "pipe",
+        stdin: "inherit",
+      });
+      const exitCode = await exec.exited;
+      return { exitCode, signalCode: exec.signalCode };
+    }),
+  );
+  expect(node.exitCode || node.signalCode).toBeTruthy();
+  expect(!!node.exitCode).toEqual(!!bun.exitCode);
+  expect(!!node.signalCode).toEqual(!!bun.signalCode);
+}
+
+describe("cleanup hooks", () => {
+  describe("execution order", () => {
+    it("executes in reverse insertion order like Node.js", async () => {
+      // Test that cleanup hooks execute in reverse insertion order (LIFO)
+      await checkSameOutput("test_cleanup_hook_order", []);
+    });
+  });
+
+  describe("napi_strict_equals", () => {
+    it("should match JavaScript === operator behavior", async () => {
+      const output = await checkSameOutput("test_napi_strict_equals", []);
+      expect(output).toContain("PASS: NaN !== NaN");
+      expect(output).toContain("PASS: -0 === 0");
+      expect(output).toContain("PASS: 42 === 42");
+      expect(output).toContain("PASS: 42 !== 43");
+      expect(output).not.toContain("FAIL");
+    });
+  });
+
+  describe("napi_call_function", () => {
+    it("should handle null recv parameter consistently", async () => {
+      const output = await checkSameOutput("test_napi_call_function_recv_null", []);
+      expect(output).toContain("PASS");
+      expect(output).toContain("napi_call_function with valid recv succeeded");
+      expect(output).not.toContain("FAIL");
+    });
+  });
+
+  describe("napi_create_array_with_length", () => {
+    it("should handle boundary values consistently", async () => {
+      const output = await checkSameOutput("test_napi_create_array_boundary", []);
+      expect(output).toContain("PASS");
+      expect(output).toContain("napi_create_array_with_length(10) created array with correct length");
+      expect(output).not.toContain("FAIL");
+    });
+  });
+
+  describe("napi_create_dataview", () => {
+    it("should validate bounds and provide consistent error messages", async () => {
+      const output = await checkSameOutput("test_napi_dataview_bounds_errors", []);
+      expect(output).toContain("napi_create_dataview");
+      // Check for proper bounds validation
+    });
+  });
+
+  describe("napi_typeof", () => {
+    it("should handle empty/invalid values", async () => {
+      const output = await checkSameOutput("test_napi_typeof_empty_value", []);
+      // This test explores edge cases with empty/invalid napi_values
+      // Bun has special handling for isEmpty() that Node doesn't have
+      expect(output).toContain("napi_typeof");
+    });
+
+    it("should return napi_function for AsyncContextFrame in threadsafe callback", async () => {
+      // Test for https://github.com/oven-sh/bun/issues/25933
+      // When a threadsafe function is created inside AsyncLocalStorage.run(),
+      // the callback gets wrapped in AsyncContextFrame. napi_typeof must
+      // report it as napi_function, not napi_object.
+      const output = await checkSameOutput("test_napi_typeof_async_context_frame", []);
+      expect(output).toContain("PASS: napi_typeof returned napi_function");
+    });
+
+    it("should handle AsyncContextFrame in napi_make_callback", async () => {
+      // When a threadsafe function's call_js_cb receives an AsyncContextFrame
+      // as js_callback and passes it to napi_make_callback, it should succeed.
+      const output = await checkSameOutput("test_make_callback_with_async_context", []);
+      expect(output).toContain("PASS: napi_make_callback succeeded");
+    });
+
+    it("should accept AsyncContextFrame in napi_create_threadsafe_function with null call_js_cb", async () => {
+      // When a threadsafe function's call_js_cb receives an AsyncContextFrame
+      // and passes it to a second napi_create_threadsafe_function with
+      // call_js_cb=NULL, it should not reject with function_expected.
+      const output = await checkSameOutput("test_create_tsfn_with_async_context", []);
+      expect(output).toContain("PASS: napi_create_threadsafe_function accepted AsyncContextFrame");
+    });
+
+    it("should return napi_object for boxed primitives (String, Number, Boolean)", async () => {
+      // Regression test for https://github.com/oven-sh/bun/issues/25351
+      // napi_typeof was incorrectly returning napi_string for String objects (new String("hello"))
+      // when it should return napi_object (matching JavaScript's typeof behavior)
+      const output = await checkSameOutput("test_napi_typeof_boxed_primitives", []);
+      expect(output).toContain("PASS: primitive string returns napi_string");
+      expect(output).toContain("PASS: String object returns napi_object");
+      expect(output).toContain("PASS: Number object returns napi_object");
+      expect(output).toContain("PASS: Boolean object returns napi_object");
+      expect(output).toContain("All boxed primitive tests passed!");
+    });
+  });
+
+  describe("napi_object_freeze and napi_object_seal", () => {
+    it("should handle arrays with indexed properties", async () => {
+      const output = await checkSameOutput("test_napi_freeze_seal_indexed", []);
+      // Bun has a check for indexed properties that Node.js doesn't have
+      // This might cause different behavior when freezing/sealing arrays
+      expect(output).toContain("freeze");
+    });
+  });
+
+  describe("error handling", () => {
+    it("removing non-existent env cleanup hook should not crash", async () => {
+      // Test that removing non-existent hooks doesn't crash the process
+      await checkSameOutput("test_cleanup_hook_remove_nonexistent", []);
+    });
+
+    it("removing non-existent async cleanup hook should not crash", async () => {
+      // Test that removing non-existent async hooks doesn't crash
+      await checkSameOutput("test_async_cleanup_hook_remove_nonexistent", []);
+    });
+  });
+
+  describe("duplicate prevention", () => {
+    it("should crash on duplicate hooks", async () => {
+      await checkBothFail("test_cleanup_hook_duplicates", []);
+    }, 10_000);
+  });
+});

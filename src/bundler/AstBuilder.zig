@@ -101,7 +101,7 @@ pub const AstBuilder = struct {
             .source_index = p.source_index,
             .tag = .symbol,
         };
-        try p.current_scope.generated.push(p.allocator, ref);
+        try p.current_scope.generated.append(p.allocator, ref);
         try p.declared_symbols.append(p.allocator, .{
             .ref = ref,
             .is_top_level = p.scopes.items.len == 0 or p.current_scope == p.scopes.items[0],
@@ -260,16 +260,16 @@ pub const AstBuilder = struct {
 
         parts.mut(1).declared_symbols = p.declared_symbols;
         parts.mut(1).scopes = p.scopes.items;
-        parts.mut(1).import_record_indices = BabyList(u32).fromList(p.import_records_for_current_part);
+        parts.mut(1).import_record_indices = BabyList(u32).moveFromList(&p.import_records_for_current_part);
 
         return .{
             .parts = parts,
             .module_scope = module_scope.*,
-            .symbols = js_ast.Symbol.List.fromList(p.symbols),
+            .symbols = js_ast.Symbol.List.moveFromList(&p.symbols),
             .exports_ref = Ref.None,
             .wrapper_ref = Ref.None,
             .module_ref = p.module_ref,
-            .import_records = ImportRecord.List.fromList(p.import_records),
+            .import_records = ImportRecord.List.moveFromList(&p.import_records),
             .export_star_import_records = &.{},
             .approximate_newline_count = 1,
             .exports_kind = .esm,
@@ -290,7 +290,7 @@ pub const AstBuilder = struct {
     // stub methods for ImportScanner duck typing
 
     pub fn generateTempRef(ab: *AstBuilder, name: ?[]const u8) Ref {
-        return ab.newSymbol(.other, name orelse "temp") catch bun.outOfMemory();
+        return bun.handleOom(ab.newSymbol(.other, name orelse "temp"));
     }
 
     pub fn recordExport(p: *AstBuilder, _: Logger.Loc, alias: []const u8, ref: Ref) !void {
@@ -339,33 +339,37 @@ pub const AstBuilder = struct {
     }
 };
 
-const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const strings = bun.strings;
+pub const Ref = bun.ast.Ref;
 
-const std = @import("std");
-const Logger = @import("../logger.zig");
-const options = @import("../options.zig");
-const js_parser = bun.js_parser;
-const Part = js_ast.Part;
-const js_ast = @import("../js_ast.zig");
-pub const Ref = @import("../ast/base.zig").Ref;
-const BabyList = @import("../baby_list.zig").BabyList;
-const ImportRecord = bun.ImportRecord;
-const ImportKind = bun.ImportKind;
-
-pub const Index = @import("../ast/base.zig").Index;
-const Symbol = js_ast.Symbol;
-const Stmt = js_ast.Stmt;
-const Expr = js_ast.Expr;
-const E = js_ast.E;
-const S = js_ast.S;
-const Binding = js_ast.Binding;
-const renamer = bun.renamer;
-const Scope = js_ast.Scope;
-const Loc = Logger.Loc;
+pub const Index = bun.ast.Index;
 
 pub const DeferredBatchTask = bun.bundle_v2.DeferredBatchTask;
 pub const ThreadPool = bun.bundle_v2.ThreadPool;
 pub const ParseTask = bun.bundle_v2.ParseTask;
+
+const string = []const u8;
+
+const options = @import("../options.zig");
+const std = @import("std");
+
+const Logger = @import("../logger.zig");
+const Loc = Logger.Loc;
+
+const bun = @import("bun");
+const ImportKind = bun.ImportKind;
+const ImportRecord = bun.ImportRecord;
+const Output = bun.Output;
+const js_parser = bun.js_parser;
+const renamer = bun.renamer;
+const strings = bun.strings;
+const BabyList = bun.collections.BabyList;
+
+const js_ast = bun.ast;
+const Binding = js_ast.Binding;
+const E = js_ast.E;
+const Expr = js_ast.Expr;
+const Part = js_ast.Part;
+const S = js_ast.S;
+const Scope = js_ast.Scope;
+const Stmt = js_ast.Stmt;
+const Symbol = js_ast.Symbol;

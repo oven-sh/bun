@@ -55,12 +55,10 @@ pub const UseDirective = enum(u2) {
     }
 };
 
-// @sortImports
-
 const std = @import("std");
 
 const bun = @import("bun");
 const strings = bun.strings;
 
-const js_ast = bun.js_ast;
+const js_ast = bun.ast;
 const Flags = js_ast.Flags;

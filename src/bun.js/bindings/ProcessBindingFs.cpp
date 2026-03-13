@@ -6,19 +6,21 @@
 namespace Bun {
 using namespace JSC;
 
-#define PROCESS_BINDING_NOT_IMPLEMENTED(str)                                                                                                      \
-    JSC_DEFINE_HOST_FUNCTION(ProcessBinding_Fs_##str, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame * callFrame))                    \
-    {                                                                                                                                             \
-        {                                                                                                                                         \
-            auto& vm = JSC::getVM(lexicalGlobalObject);                                                                                           \
-            auto throwScope = DECLARE_THROW_SCOPE(vm);                                                                                            \
-            auto prelude = "process.binding('fs')."_s;                                                                                            \
-            auto name = #str##_s;                                                                                                                 \
-            auto finale = " is not implemented in Bun. If that breaks something, please file an issue and include a reproducible code sample."_s; \
-            auto message = makeString(prelude, name, finale);                                                                                     \
-            throwScope.throwException(lexicalGlobalObject, createError(lexicalGlobalObject, message));                                            \
-            return {};                                                                                                                            \
-        }                                                                                                                                         \
+static WTF::String makeNotImplementedError(const ASCIILiteral name)
+{
+    return makeString("process.binding('fs')."_s, name, " is not implemented in Bun. If that breaks something, please file an issue and include a reproducible code sample."_s);
+}
+
+#define PROCESS_BINDING_NOT_IMPLEMENTED(str)                                                                                   \
+    JSC_DEFINE_HOST_FUNCTION(ProcessBinding_Fs_##str, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame * callFrame)) \
+    {                                                                                                                          \
+        {                                                                                                                      \
+            auto& vm = JSC::getVM(lexicalGlobalObject);                                                                        \
+            auto throwScope = DECLARE_THROW_SCOPE(vm);                                                                         \
+            auto message = makeNotImplementedError(#str##_s);                                                                  \
+            throwScope.throwException(lexicalGlobalObject, createError(lexicalGlobalObject, message));                         \
+            return {};                                                                                                         \
+        }                                                                                                                      \
     }
 
 PROCESS_BINDING_NOT_IMPLEMENTED(access)
@@ -109,12 +111,35 @@ PROCESS_BINDING_NOT_IMPLEMENTED(writeFileUtf8)
 
 PROCESS_BINDING_NOT_IMPLEMENTED(writeString)
 
-// FileHandle: [Function: FileHandle],
-// FSReqCallback: [Function: FSReqCallback],
+static JSValue ProcessBindingFs_statValues(VM& vm, JSObject* object)
+{
+    auto* globalObject = object->globalObject();
+    return JSC::JSFloat64Array::create(globalObject, globalObject->m_typedArrayFloat64.get(globalObject), 36);
+}
+
+static JSValue ProcessBindingFs_bigintStatValues(VM& vm, JSObject* object)
+{
+    auto* globalObject = object->globalObject();
+    return JSC::JSBigInt64Array::create(globalObject, globalObject->m_typedArrayBigInt64.get(globalObject), 36);
+}
+
+static JSValue ProcessBindingFs_statFsValues(VM& vm, JSObject* object)
+{
+    auto* globalObject = object->globalObject();
+    return JSC::JSFloat64Array::create(globalObject, globalObject->m_typedArrayFloat64.get(globalObject), 7);
+}
+
+static JSValue ProcessBindingFs_bigintStatFsValues(VM& vm, JSObject* object)
+{
+    auto* globalObject = object->globalObject();
+    return JSC::JSBigInt64Array::create(globalObject, globalObject->m_typedArrayBigInt64.get(globalObject), 7);
+}
 
 /* Source for ProcessBindingFs.lut.h
 @begin processBindingFsTable
     access                          ProcessBinding_Fs_access                        Function 1
+    bigintStatFsValues              ProcessBindingFs_bigintStatFsValues             PropertyCallback
+    bigintStatValues                ProcessBindingFs_bigintStatValues               PropertyCallback
     chmod                           ProcessBinding_Fs_chmod                         Function 1
     chown                           ProcessBinding_Fs_chown                         Function 1
     close                           ProcessBinding_Fs_close                         Function 1
@@ -130,6 +155,7 @@ PROCESS_BINDING_NOT_IMPLEMENTED(writeString)
     futimes                         ProcessBinding_Fs_futimes                       Function 1
     getFormatOfExtensionlessFile    ProcessBinding_Fs_getFormatOfExtensionlessFile  Function 1
     internalModuleStat              ProcessBinding_Fs_internalModuleStat            Function 1
+    kFsStatsFieldsNumber            18                                              ConstantInteger
     lchown                          ProcessBinding_Fs_lchown                        Function 1
     legacyMainResolve               ProcessBinding_Fs_legacyMainResolve             Function 1
     link                            ProcessBinding_Fs_link                          Function 1
@@ -150,6 +176,8 @@ PROCESS_BINDING_NOT_IMPLEMENTED(writeString)
     rmSync                          ProcessBinding_Fs_rmSync                        Function 1
     stat                            ProcessBinding_Fs_stat                          Function 1
     statfs                          ProcessBinding_Fs_statfs                        Function 1
+    statFsValues                    ProcessBindingFs_statFsValues                   PropertyCallback
+    statValues                      ProcessBindingFs_statValues                     PropertyCallback
     StatWatcher                     ProcessBinding_Fs_StatWatcher                   Function 1
     symlink                         ProcessBinding_Fs_symlink                       Function 1
     unlink                          ProcessBinding_Fs_unlink                        Function 1
@@ -178,27 +206,9 @@ Structure* ProcessBindingFs::createStructure(VM& vm, JSGlobalObject* globalObjec
 
 void ProcessBindingFs::finishCreation(JSC::VM& vm)
 {
+    auto scope = DECLARE_THROW_SCOPE(vm);
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
-
-    auto* globalObject = this->globalObject();
-    auto* zigGlobal = defaultGlobalObject(globalObject);
-
-    putDirect(vm, Identifier::fromString(vm, "kFsStatsFieldsNumber"_s), jsNumber(18), 0);
-    putDirect(vm, Identifier::fromString(vm, "statValues"_s), zigGlobal->m_statValues.get(zigGlobal), 0);
-    putDirect(vm, Identifier::fromString(vm, "bigintStatValues"_s), zigGlobal->m_bigintStatValues.get(zigGlobal), 0);
-    putDirect(vm, Identifier::fromString(vm, "statFsValues"_s), zigGlobal->m_statFsValues.get(zigGlobal), 0);
-    putDirect(vm, Identifier::fromString(vm, "bigintStatFsValues"_s), zigGlobal->m_bigintStatFsValues.get(zigGlobal), 0);
 }
-
-template<typename Visitor>
-void ProcessBindingFs::visitChildrenImpl(JSCell* cell, Visitor& visitor)
-{
-    ProcessBindingFs* thisObject = jsCast<ProcessBindingFs*>(cell);
-    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
-    Base::visitChildren(thisObject, visitor);
-}
-
-DEFINE_VISIT_CHILDREN(ProcessBindingFs);
 
 } // namespace Bun

@@ -1,0 +1,322 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`pnpm comprehensive migration tests large single package with many dependencies: large-single-package 1`] = `
+"{
+  "lockfileVersion": 1,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "large-app",
+      "dependencies": {
+        "@emotion/react": "^11.11.3",
+        "@emotion/styled": "^11.11.0",
+        "@experimental/super-long-scoped-package-name-with-many-words": "0.0.0-experimental-abcdef123456-20250812-build.9876543210",
+        "@tanstack/react-query": "^5.17.9",
+        "axios": "^1.6.5",
+        "date-fns": "^3.2.0",
+        "express": "^4.18.2",
+        "lodash": "^4.17.21",
+        "next": "^14.0.4",
+        "react": "^18.2.0",
+        "react-dom": "^18.2.0",
+        "some-very-long-package-name-that-is-really-really-long": "1.2.3-beta.4.5.6.7.8.9.10.11.12.13.14.15.16.17.18.19.20",
+        "zod": "^3.22.4",
+      },
+      "devDependencies": {
+        "@types/node": "^20.10.8",
+        "@types/react": "^18.2.47",
+        "eslint": "^8.56.0",
+        "prettier": "^3.1.1",
+        "typescript": "^5.3.3",
+        "vitest": "^1.1.3",
+      },
+      "optionalDependencies": {
+        "fsevents": "^2.3.3",
+      },
+    },
+  },
+  "packages": {
+    "@emotion/react": ["@emotion/react@11.11.3", "", { "peerDependencies": { "react": "18.2.0" } }, ""],
+
+    "@emotion/styled": ["@emotion/styled@11.11.0", "", { "peerDependencies": { "@emotion/react": "11.11.3", "react": "18.2.0" } }, ""],
+
+    "@experimental/super-long-scoped-package-name-with-many-words": ["@experimental/super-long-scoped-package-name-with-many-words@0.0.0-experimental-abcdef123456-20250812-build.9876543210", "", {}, "sha512-experimentalAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="],
+
+    "@tanstack/react-query": ["@tanstack/react-query@5.17.9", "", { "peerDependencies": { "react": "18.2.0" } }, "sha512-tanstackAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="],
+
+    "@types/node": ["@types/node@20.10.8", "", {}, ""],
+
+    "@types/react": ["@types/react@18.2.47", "", {}, ""],
+
+    "accepts": ["accepts@1.3.8", "", { "dependencies": { "mime-types": "2.1.35", "negotiator": "0.6.3" } }, "sha512-acceptsAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="],
+
+    "axios": ["axios@1.6.5", "", {}, ""],
+
+    "date-fns": ["date-fns@3.2.0", "", {}, ""],
+
+    "eslint": ["eslint@8.56.0", "", { "bin": { "eslint": "bin/eslint.js" } }, ""],
+
+    "express": ["express@4.18.2", "", { "dependencies": { "accepts": "1.3.8" } }, "sha512-expressAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="],
+
+    "fsevents": ["fsevents@2.3.3", "", { "os": "darwin" }, "sha512-fseventsAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="],
+
+    "js-tokens": ["js-tokens@4.0.0", "", {}, ""],
+
+    "lodash": ["lodash@4.17.21", "", {}, ""],
+
+    "loose-envify": ["loose-envify@1.4.0", "", { "dependencies": { "js-tokens": "4.0.0" }, "bin": { "loose-envify": "cli.js" } }, ""],
+
+    "mime-types": ["mime-types@2.1.35", "", {}, ""],
+
+    "negotiator": ["negotiator@0.6.3", "", {}, ""],
+
+    "next": ["next@14.0.4", "", { "peerDependencies": { "react": "18.2.0", "react-dom": "18.2.0" }, "bin": { "next": "dist/bin/next" } }, "sha512-nextAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="],
+
+    "prettier": ["prettier@3.1.1", "", { "bin": { "prettier": "bin/prettier.cjs" } }, "sha512-prettierAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="],
+
+    "react": ["react@18.2.0", "", { "dependencies": { "loose-envify": "1.4.0" } }, ""],
+
+    "react-dom": ["react-dom@18.2.0", "", { "dependencies": { "scheduler": "0.23.0" }, "peerDependencies": { "react": "18.2.0" } }, ""],
+
+    "scheduler": ["scheduler@0.23.0", "", { "dependencies": { "loose-envify": "1.4.0" } }, ""],
+
+    "some-very-long-package-name-that-is-really-really-long": ["some-very-long-package-name-that-is-really-really-long@1.2.3-beta.4.5.6.7.8.9.10.11.12.13.14.15.16.17.18.19.20", "", {}, ""],
+
+    "typescript": ["typescript@5.3.3", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, ""],
+
+    "vitest": ["vitest@1.1.3", "", { "bin": { "vitest": "vitest.mjs" } }, ""],
+
+    "zod": ["zod@3.22.4", "", {}, ""],
+  }
+}
+"
+`;
+
+exports[`pnpm comprehensive migration tests complex monorepo with cross-dependencies: complex-monorepo 1`] = `
+"{
+  "lockfileVersion": 1,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "monorepo-root",
+      "devDependencies": {
+        "prettier": "^3.1.1",
+        "turbo": "^1.11.2",
+      },
+    },
+    "apps/api": {
+      "name": "@company/api",
+      "version": "1.0.0",
+      "dependencies": {
+        "@company/utils": "workspace:*",
+        "cors": "^2.8.5",
+        "dotenv": "^16.3.1",
+        "express": "^4.18.2",
+      },
+      "devDependencies": {
+        "@company/config": "workspace:*",
+        "@types/cors": "^2.8.17",
+        "@types/express": "^4.17.21",
+        "nodemon": "^3.0.2",
+      },
+    },
+    "apps/web": {
+      "name": "@company/web",
+      "version": "1.0.0",
+      "dependencies": {
+        "@company/ui": "workspace:*",
+        "@company/utils": "workspace:*",
+        "next": "^14.0.4",
+        "react": "^18.2.0",
+        "react-dom": "^18.2.0",
+      },
+      "devDependencies": {
+        "@company/config": "workspace:*",
+        "@types/node": "^20.10.8",
+        "@types/react": "^18.2.47",
+        "typescript": "^5.3.3",
+      },
+    },
+    "packages/config": {
+      "name": "@company/config",
+      "version": "1.0.0",
+      "devDependencies": {
+        "@company/utils": "workspace:*",
+      },
+    },
+    "packages/ui": {
+      "name": "@company/ui",
+      "version": "1.0.0",
+      "dependencies": {
+        "@radix-ui/react-dialog": "^1.0.5",
+        "class-variance-authority": "^0.7.0",
+        "clsx": "^2.1.0",
+        "react": "^18.2.0",
+      },
+      "devDependencies": {
+        "@types/react": "^18.2.47",
+      },
+      "peerDependencies": {
+        "react": ">=16.8.0",
+      },
+    },
+    "packages/utils": {
+      "name": "@company/utils",
+      "version": "1.0.0",
+      "dependencies": {
+        "date-fns": "^3.2.0",
+        "zod": "^3.22.4",
+      },
+    },
+    "tools/cli": {
+      "name": "@company/cli",
+      "version": "1.0.0",
+      "bin": {
+        "company-cli": "./bin/cli.js",
+      },
+      "dependencies": {
+        "@company/utils": "workspace:*",
+        "chalk": "^5.3.0",
+        "commander": "^11.1.0",
+      },
+    },
+  },
+  "packages": {
+    "@company/api": ["@company/api@workspace:apps/api"],
+
+    "@company/cli": ["@company/cli@workspace:tools/cli"],
+
+    "@company/config": ["@company/config@workspace:packages/config"],
+
+    "@company/ui": ["@company/ui@workspace:packages/ui"],
+
+    "@company/utils": ["@company/utils@workspace:packages/utils"],
+
+    "@company/web": ["@company/web@workspace:apps/web"],
+
+    "@radix-ui/react-dialog": ["@radix-ui/react-dialog@1.0.5", "", { "peerDependencies": { "react": "18.2.0", "react-dom": "18.2.0" } }, ""],
+
+    "@types/cors": ["@types/cors@2.8.17", "", {}, ""],
+
+    "@types/express": ["@types/express@4.17.21", "", {}, ""],
+
+    "@types/node": ["@types/node@20.10.8", "", {}, ""],
+
+    "@types/react": ["@types/react@18.2.47", "", {}, ""],
+
+    "chalk": ["chalk@5.3.0", "", {}, ""],
+
+    "class-variance-authority": ["class-variance-authority@0.7.0", "", {}, ""],
+
+    "clsx": ["clsx@2.1.0", "", {}, "sha512-clsxAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="],
+
+    "commander": ["commander@11.1.0", "", {}, ""],
+
+    "cors": ["cors@2.8.5", "", {}, "sha512-corsAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="],
+
+    "date-fns": ["date-fns@3.2.0", "", {}, ""],
+
+    "dotenv": ["dotenv@16.3.1", "", {}, ""],
+
+    "express": ["express@4.18.2", "", {}, "sha512-expressAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="],
+
+    "js-tokens": ["js-tokens@4.0.0", "", {}, ""],
+
+    "loose-envify": ["loose-envify@1.4.0", "", { "dependencies": { "js-tokens": "4.0.0" }, "bin": { "loose-envify": "cli.js" } }, ""],
+
+    "next": ["next@14.0.4", "", { "peerDependencies": { "react": "18.2.0", "react-dom": "18.2.0" }, "bin": { "next": "dist/bin/next" } }, "sha512-nextAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="],
+
+    "nodemon": ["nodemon@3.0.2", "", { "bin": { "nodemon": "bin/nodemon.js" } }, ""],
+
+    "prettier": ["prettier@3.1.1", "", { "bin": { "prettier": "bin/prettier.cjs" } }, "sha512-prettierAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="],
+
+    "react": ["react@18.2.0", "", { "dependencies": { "loose-envify": "1.4.0" } }, ""],
+
+    "react-dom": ["react-dom@18.2.0", "", { "dependencies": { "scheduler": "0.23.0" }, "peerDependencies": { "react": "18.2.0" } }, ""],
+
+    "scheduler": ["scheduler@0.23.0", "", { "dependencies": { "loose-envify": "1.4.0" } }, ""],
+
+    "turbo": ["turbo@1.11.2", "", { "bin": { "turbo": "bin/turbo" } }, ""],
+
+    "typescript": ["typescript@5.3.3", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, ""],
+
+    "zod": ["zod@3.22.4", "", {}, ""],
+  }
+}
+"
+`;
+
+exports[`pnpm comprehensive migration tests pnpm with patches and overrides: patches-overrides 1`] = `
+"{
+  "lockfileVersion": 1,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "patches-test",
+      "dependencies": {
+        "express": "^4.18.2",
+        "is-number": "^7.0.0",
+      },
+    },
+  },
+  "patchedDependencies": {
+    "express@4.18.2": "patches/express@4.18.2.patch",
+  },
+  "overrides": {
+    "mime-types": "2.1.33",
+    "negotiator@>0.6.0": "0.6.2",
+  },
+  "packages": {
+    "accepts": ["accepts@1.3.8", "", { "dependencies": { "mime-types": "2.1.33", "negotiator": "0.6.2" } }, "sha512-acceptsAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="],
+
+    "array-flatten": ["array-flatten@1.1.1", "", {}, ""],
+
+    "express": ["express@4.18.2", "", { "dependencies": { "accepts": "1.3.8", "array-flatten": "1.1.1" } }, "sha512-expressAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="],
+
+    "is-number": ["is-number@7.0.0", "", {}, ""],
+
+    "mime-db": ["mime-db@1.50.0", "", {}, ""],
+
+    "mime-types": ["mime-types@2.1.33", "", { "dependencies": { "mime-db": "1.50.0" } }, ""],
+
+    "negotiator": ["negotiator@0.6.2", "", {}, ""],
+  }
+}
+"
+`;
+
+exports[`pnpm comprehensive migration tests pnpm with peer dependencies and auto-install-peers: peer-deps-auto-install 1`] = `
+"{
+  "lockfileVersion": 1,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "peer-deps-test",
+      "dependencies": {
+        "@angular/animations": "^17.0.0",
+        "@angular/common": "^17.0.0",
+        "@angular/core": "^17.0.0",
+      },
+      "optionalDependencies": {
+        "rxjs": "^6.5.3 || ^7.4.0",
+        "tslib": "^2.3.0",
+        "zone.js": "~0.14.0",
+      },
+    },
+  },
+  "packages": {
+    "@angular/animations": ["@angular/animations@17.0.8", "", { "dependencies": { "tslib": "2.6.2" }, "peerDependencies": { "@angular/core": "17.0.8" } }, ""],
+
+    "@angular/common": ["@angular/common@17.0.8", "", { "dependencies": { "tslib": "2.6.2" }, "peerDependencies": { "@angular/core": "17.0.8", "rxjs": "7.8.1" } }, ""],
+
+    "@angular/core": ["@angular/core@17.0.8", "", { "dependencies": { "tslib": "2.6.2" }, "peerDependencies": { "rxjs": "7.8.1", "zone.js": "0.14.2" } }, ""],
+
+    "rxjs": ["rxjs@7.8.1", "", { "dependencies": { "tslib": "2.6.2" } }, "sha512-rxjsAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="],
+
+    "tslib": ["tslib@2.6.2", "", {}, ""],
+
+    "zone.js": ["zone.js@0.14.2", "", {}, "sha512-zoneAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="],
+  }
+}
+"
+`;

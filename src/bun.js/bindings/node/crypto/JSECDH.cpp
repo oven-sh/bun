@@ -91,7 +91,7 @@ EncodedJSValue JSECDH::getPublicKey(JSGlobalObject* globalObject, ThrowScope& sc
     std::span<const uint8_t> resultSpan(static_cast<const uint8_t*>(result->data()), bufLen);
 
     // Return the encoded result
-    return StringBytes::encode(globalObject, scope, resultSpan, encodingType);
+    RELEASE_AND_RETURN(scope, StringBytes::encode(globalObject, scope, resultSpan, encodingType));
 }
 
 DEFINE_VISIT_CHILDREN(JSECDH);

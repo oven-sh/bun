@@ -67,6 +67,9 @@ JSC_HOST_CALL_ATTRIBUTES JSC::EncodedJSValue NapiClass_ConstructorFunction(JSC::
 
     JSValue ret = toJS(napi->constructor()(napi->env(), frame.toNapi()));
     napi_set_last_error(napi->env(), napi_ok);
+    if (napi->env()->throwPendingException()) {
+        return {};
+    }
     RETURN_IF_EXCEPTION(scope, {});
     if (ret.isEmpty()) {
         ret = jsUndefined();
@@ -104,7 +107,7 @@ void NapiClass::finishCreation(VM& vm, NativeExecutable* executable, const Strin
     Base::finishCreation(vm, executable, 0, name);
     ASSERT(inherits(info()));
     this->m_constructor = constructor;
-    auto globalObject = reinterpret_cast<Zig::GlobalObject*>(this->globalObject());
+    auto globalObject = static_cast<Zig::GlobalObject*>(this->globalObject());
 
     this->putDirect(vm, vm.propertyNames->name, jsString(vm, name), JSC::PropertyAttribute::DontEnum | 0);
 

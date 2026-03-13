@@ -140,7 +140,7 @@ export function write(this: Console, input) {
 // to do extra work at startup, since most people do not need `console.Console`.
 // TODO: probably could extract `getStringWidth`; probably make that a native function. note how it is copied from `readline.js`
 export function createConsoleConstructor(console: typeof globalThis.console) {
-  const { inspect, formatWithOptions, stripVTControlCharacters } = require("node:util");
+  const { inspect, formatWithOptions } = require("node:util");
   const { isBuffer } = require("node:buffer");
 
   const { validateObject, validateInteger, validateArray, validateOneOf } = require("internal/validators");
@@ -155,7 +155,6 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
   const StringPrototypePadStart = String.prototype.padStart;
   const StringPrototypeSplit = String.prototype.split;
   const NumberPrototypeToFixed = Number.prototype.toFixed;
-  const StringPrototypeNormalize = String.prototype.normalize;
   const ArrayPrototypeMap = Array.prototype.map;
   const ArrayPrototypeJoin = Array.prototype.join;
   const ArrayPrototypePush = Array.prototype.push;
@@ -172,10 +171,7 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
    * Returns the number of columns required to display the given string.
    */
   var getStringWidth = function getStringWidth(str, removeControlChars = true) {
-    if (removeControlChars) str = stripVTControlCharacters(str);
-    str = StringPrototypeNormalize.$call(str, "NFC");
-
-    return internalGetStringWidth(str);
+    return internalGetStringWidth(str, removeControlChars);
   };
 
   const tableChars = {
@@ -266,13 +262,11 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
   const kUseStderr = Symbol("kUseStderr");
 
   const optionsMap = new WeakMap<any, any>();
-  function Console(this: any, options /* or: stdout, stderr, ignoreErrors = true */) {
+  function Console(this: any, options /* or: stdout, stderr, ignoreErrors = true */): void {
     // We have to test new.target here to see if this function is called
     // with new, because we need to define a custom instanceof to accommodate
     // the global console.
-    if (new.target === undefined) {
-      return Reflect.construct(Console, arguments);
-    }
+    if (new.target === undefined) return new Console(...arguments);
 
     if (!options || typeof options.write === "function") {
       options = {
@@ -709,7 +703,7 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
         return final([iterKey, valuesKey], [getIndexArray(length), values]);
       }
 
-      const map = { __proto__: null };
+      const map = Object.create(null);
       let hasPrimitives = false;
       const valuesKeyArray: any = [];
       const indexKeyArray = Object.keys(tabularData);

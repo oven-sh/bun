@@ -222,6 +222,7 @@ const regular = {
     "fixtures/**/{nested,file.md}/*",
 
     "./fixtures/*",
+    "../.",
   ],
   cwd: [
     { pattern: "*", cwd: "fixtures" },
@@ -661,6 +662,78 @@ describe("absolute path pattern", async () => {
     await Bun.$`mkdir -p hello/friends; touch hello/friends/lol.json; echo ${tmpdir}`.cwd(tmpdir);
     const glob = new Glob(`${tmpdir}/hello/friends/nice.json`);
     console.log(Array.from(glob.scanSync({ cwd: tmpdir })));
+  });
+});
+
+// https://github.com/oven-sh/bun/issues/24936
+describe("glob scan should not escape cwd boundary", () => {
+  test("pattern .*/* should not match parent directory via ..", async () => {
+    // Create a directory structure where we can verify paths don't escape cwd
+    const tempdir = tempDirWithFiles("glob-cwd-escape", {
+      ".hidden": {
+        "file.txt": "hidden file content",
+      },
+      ".dotfile": "dot file",
+      "regular": {
+        "file.txt": "regular file",
+      },
+    });
+
+    const glob = new Glob(".*/*");
+    const entries = await Array.fromAsync(
+      glob.scan({
+        cwd: tempdir,
+        onlyFiles: false,
+        dot: true, // Need dot:true to match dotfiles/directories
+      }),
+    );
+
+    // All entries should be within the cwd - none should start with ../
+    for (const entry of entries) {
+      expect(entry.startsWith("../")).toBe(false);
+      expect(entry.startsWith("..\\")).toBe(false);
+      expect(entry.includes("/../")).toBe(false);
+      expect(entry.includes("\\..\\")).toBe(false);
+    }
+
+    // Should match .hidden/file.txt but not escape to parent
+    expect(entries.sort()).toEqual([`.hidden${path.sep}file.txt`].sort());
+  });
+
+  test("pattern .*/**/*.ts should not escape cwd", async () => {
+    const tempdir = tempDirWithFiles("glob-cwd-escape-ts", {
+      ".config": {
+        "settings.ts": "export default {}",
+        "nested": {
+          "deep.ts": "export const x = 1",
+        },
+      },
+      "src": {
+        "index.ts": "console.log('hi')",
+      },
+    });
+
+    const glob = new Glob(".*/**/*.ts");
+    const entries = await Array.fromAsync(
+      glob.scan({
+        cwd: tempdir,
+        onlyFiles: true,
+        dot: true, // Need dot:true to match dotfiles/directories
+      }),
+    );
+
+    // All entries should be within the cwd
+    for (const entry of entries) {
+      expect(entry.startsWith("../")).toBe(false);
+      expect(entry.startsWith("..\\")).toBe(false);
+      expect(entry.includes("/../")).toBe(false);
+      expect(entry.includes("\\..\\")).toBe(false);
+    }
+
+    // Should match files in .config but not escape to parent
+    expect(entries.sort()).toEqual(
+      [`.config${path.sep}settings.ts`, `.config${path.sep}nested${path.sep}deep.ts`].sort(),
+    );
   });
 });
 

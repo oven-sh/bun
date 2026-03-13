@@ -25,7 +25,7 @@ public:
     virtual ~InspectorLifecycleAgent();
 
     // InspectorAgentBase
-    virtual void didCreateFrontendAndBackend(FrontendRouter*, BackendDispatcher*) final;
+    virtual void didCreateFrontendAndBackend() final;
     virtual void willDestroyFrontendAndBackend(DisconnectReason) final;
 
     // LifecycleReporterBackendDispatcherHandler

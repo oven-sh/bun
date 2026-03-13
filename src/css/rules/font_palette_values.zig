@@ -1,8 +1,5 @@
-const std = @import("std");
 pub const css = @import("../css_parser.zig");
-const bun = @import("bun");
 const Result = css.Result;
-const ArrayList = std.ArrayListUnmanaged;
 const Printer = css.Printer;
 const Maybe = css.Maybe;
 const PrintErr = css.PrintErr;
@@ -44,19 +41,19 @@ pub const FontPaletteValuesRule = struct {
         } };
     }
 
-    pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
+    pub fn toCss(this: *const This, dest: *Printer) PrintErr!void {
         // #[cfg(feature = "sourcemap")]
         // dest.add_mapping(self.loc);
 
         try dest.writeStr("@font-palette-values ");
-        try css.css_values.ident.DashedIdentFns.toCss(&this.name, W, dest);
+        try css.css_values.ident.DashedIdentFns.toCss(&this.name, dest);
         try dest.whitespace();
         try dest.writeChar('{');
         dest.indent();
         const len = this.properties.items.len;
         for (this.properties.items, 0..) |*prop, i| {
             try dest.newline();
-            try prop.toCss(W, dest);
+            try prop.toCss(dest);
             if (i != len - 1 or !dest.minify) {
                 try dest.writeChar(';');
             }
@@ -89,27 +86,27 @@ pub const FontPaletteValuesProperty = union(enum) {
     /// See [FontPaletteValuesRule](FontPaletteValuesRule).
     const This = @This();
 
-    pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
+    pub fn toCss(this: *const This, dest: *Printer) PrintErr!void {
         switch (this.*) {
             .font_family => |*f| {
                 try dest.writeStr("font-family");
                 try dest.delim(':', false);
-                try f.toCss(W, dest);
+                try f.toCss(dest);
             },
             .base_palette => |*b| {
                 try dest.writeStr("base-palette");
                 try dest.delim(':', false);
-                try b.toCss(W, dest);
+                try b.toCss(dest);
             },
             .override_colors => |*o| {
                 try dest.writeStr("override-colors");
                 try dest.delim(':', false);
-                try css.to_css.fromList(OverrideColors, o.items, W, dest);
+                try css.to_css.fromList(OverrideColors, o.items, dest);
             },
             .custom => |*custom| {
                 try dest.writeStr(custom.name.asStr());
                 try dest.delim(':', false);
-                try custom.value.toCss(W, dest, true);
+                try custom.value.toCss(dest, true);
             },
         }
     }
@@ -149,10 +146,10 @@ pub const OverrideColors = struct {
         };
     }
 
-    pub fn toCss(this: *const OverrideColors, comptime W: type, dest: *Printer(W)) PrintErr!void {
-        try css.CSSIntegerFns.toCss(&@as(i32, @intCast(this.index)), W, dest);
+    pub fn toCss(this: *const OverrideColors, dest: *Printer) PrintErr!void {
+        try css.CSSIntegerFns.toCss(&@as(i32, @intCast(this.index)), dest);
         try dest.writeChar(' ');
-        try this.color.toCss(W, dest);
+        try this.color.toCss(dest);
     }
 
     pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
@@ -190,11 +187,11 @@ pub const BasePalette = union(enum) {
         } else return .{ .err = location.newUnexpectedTokenError(.{ .ident = ident }) };
     }
 
-    pub fn toCss(this: *const BasePalette, comptime W: type, dest: *Printer(W)) PrintErr!void {
+    pub fn toCss(this: *const BasePalette, dest: *Printer) PrintErr!void {
         switch (this.*) {
             .light => try dest.writeStr("light"),
             .dark => try dest.writeStr("dark"),
-            .integer => try css.CSSIntegerFns.toCss(&@as(i32, @intCast(this.integer)), W, dest),
+            .integer => try css.CSSIntegerFns.toCss(&@as(i32, @intCast(this.integer)), dest),
         }
     }
 
@@ -290,3 +287,8 @@ pub const FontPaletteValuesDeclarationParser = struct {
         }
     };
 };
+
+const bun = @import("bun");
+
+const std = @import("std");
+const ArrayList = std.ArrayListUnmanaged;

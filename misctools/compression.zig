@@ -42,14 +42,14 @@ const CompressionFramework = struct {
             }
         }
     };
-    const compression_encode_scratch_buffer_size_type = fn (algorithm: compression_algorithm) callconv(.C) usize;
-    const compression_encode_buffer_type = fn (noalias dst_buffer: [*]u8, dst_size: usize, noalias src_buffer: ?[*]const u8, src_size: usize, noalias scratch_buffer: ?*anyopaque, algorithm: compression_algorithm) callconv(.C) usize;
-    const compression_decode_scratch_buffer_size_type = fn (algorithm: compression_algorithm) callconv(.C) usize;
-    const compression_decode_buffer_type = fn (noalias dst_buffer: [*]u8, dst_size: usize, noalias src_buffer: ?[*]const u8, src_size: usize, noalias scratch_buffer: ?*anyopaque, algorithm: compression_algorithm) callconv(.C) usize;
+    const compression_encode_scratch_buffer_size_type = fn (algorithm: compression_algorithm) callconv(.c) usize;
+    const compression_encode_buffer_type = fn (noalias dst_buffer: [*]u8, dst_size: usize, noalias src_buffer: ?[*]const u8, src_size: usize, noalias scratch_buffer: ?*anyopaque, algorithm: compression_algorithm) callconv(.c) usize;
+    const compression_decode_scratch_buffer_size_type = fn (algorithm: compression_algorithm) callconv(.c) usize;
+    const compression_decode_buffer_type = fn (noalias dst_buffer: [*]u8, dst_size: usize, noalias src_buffer: ?[*]const u8, src_size: usize, noalias scratch_buffer: ?*anyopaque, algorithm: compression_algorithm) callconv(.c) usize;
 
-    const compression_stream_init_type = fn (stream: *compression_stream, operation: compression_stream_operation, algorithm: compression_algorithm) callconv(.C) compression_status;
-    const compression_stream_process_type = fn (stream: *compression_stream, flags: c_int) callconv(.C) compression_status;
-    const compression_stream_destroy_type = fn (stream: *compression_stream) callconv(.C) compression_status;
+    const compression_stream_init_type = fn (stream: *compression_stream, operation: compression_stream_operation, algorithm: compression_algorithm) callconv(.c) compression_status;
+    const compression_stream_process_type = fn (stream: *compression_stream, flags: c_int) callconv(.c) compression_status;
+    const compression_stream_destroy_type = fn (stream: *compression_stream) callconv(.c) compression_status;
 
     var compression_encode_scratch_buffer_size: *const compression_encode_scratch_buffer_size_type = undefined;
     var compression_encode_buffer: *const compression_encode_buffer_type = undefined;

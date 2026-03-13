@@ -22,7 +22,7 @@ test("req.url doesn't leak memory", async () => {
 
   let maxRSS = 0;
 
-  for (let i = 0; i < 512; i++) {
+  for (let i = 0; i < 256; i++) {
     const batchSize = 64;
     const promises = [];
     for (let j = 0; j < batchSize; j++) {
@@ -40,8 +40,9 @@ test("req.url doesn't leak memory", async () => {
     await Promise.all(promises);
   }
 
-  console.log("RSS", maxRSS);
+  console.log("Max RSS", (maxRSS / 1024 / 1024) | 0, "MB");
 
-  // 557 MB on Bun 1.2
-  expect(maxRSS).toBeLessThan(1024 * 1024 * 256);
+  // 297 MB on Bun 1.2
+  //  44 MB on Bun 1.3
+  expect(maxRSS).toBeLessThan(1024 * 1024 * 150);
 }, 10_000);

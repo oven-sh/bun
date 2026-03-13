@@ -1,4 +1,3 @@
-const std = @import("std");
 pub const css = @import("../css_parser.zig");
 const Printer = css.Printer;
 const PrintErr = css.PrintErr;
@@ -24,7 +23,7 @@ pub fn ScopeRule(comptime R: type) type {
 
         const This = @This();
 
-        pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
+        pub fn toCss(this: *const This, dest: *Printer) PrintErr!void {
             // #[cfg(feature = "sourcemap")]
             // dest.add_mapping(self.loc);
 
@@ -32,8 +31,8 @@ pub fn ScopeRule(comptime R: type) type {
             try dest.whitespace();
             if (this.scope_start) |*scope_start| {
                 try dest.writeChar('(');
-                // try scope_start.toCss(W, dest);
-                try css.selector.serialize.serializeSelectorList(scope_start.v.slice(), W, dest, dest.context(), false);
+                // try scope_start.toCss(dest);
+                try css.selector.serialize.serializeSelectorList(scope_start.v.slice(), dest, dest.context(), false);
                 try dest.writeChar(')');
                 try dest.whitespace();
             }
@@ -46,12 +45,12 @@ pub fn ScopeRule(comptime R: type) type {
                 // https://drafts.csswg.org/css-nesting/#nesting-at-scope
                 if (this.scope_start) |*scope_start| {
                     try dest.withContext(scope_start, scope_end, struct {
-                        pub fn toCssFn(scope_end_: *const css.selector.parser.SelectorList, comptime WW: type, d: *Printer(WW)) PrintErr!void {
-                            return css.selector.serialize.serializeSelectorList(scope_end_.v.slice(), WW, d, d.context(), false);
+                        pub fn toCssFn(scope_end_: *const css.selector.parser.SelectorList, d: *Printer) PrintErr!void {
+                            return css.selector.serialize.serializeSelectorList(scope_end_.v.slice(), d, d.context(), false);
                         }
                     }.toCssFn);
                 } else {
-                    return css.selector.serialize.serializeSelectorList(scope_end.v.slice(), W, dest, dest.context(), false);
+                    return css.selector.serialize.serializeSelectorList(scope_end.v.slice(), dest, dest.context(), false);
                 }
                 try dest.writeChar(')');
                 try dest.whitespace();
@@ -73,3 +72,5 @@ pub fn ScopeRule(comptime R: type) type {
         }
     };
 }
+
+const std = @import("std");

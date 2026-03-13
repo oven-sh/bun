@@ -68,8 +68,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDomainToASCII, (JSC::JSGlobalObject * globalObject, J
     if (U_SUCCESS(error) && !(processingDetails.errors & ~allowedNameToASCIIErrors) && numCharactersConverted) {
         return JSC::JSValue::encode(JSC::jsString(vm, WTF::String(std::span { hostnameBuffer, static_cast<unsigned int>(numCharactersConverted) })));
     }
-    throwTypeError(globalObject, scope, "domainToASCII failed"_s);
-    return {};
+    return JSC::JSValue::encode(jsEmptyString(vm));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsDomainToUnicode, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -139,8 +138,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDomainToUnicode, (JSC::JSGlobalObject * globalObject,
     if (U_SUCCESS(error) && !(processingDetails.errors & ~allowedNameToUnicodeErrors) && numCharactersConverted) {
         return JSC::JSValue::encode(JSC::jsString(vm, WTF::String(std::span { hostnameBuffer, static_cast<unsigned int>(numCharactersConverted) })));
     }
-    throwTypeError(globalObject, scope, "domainToUnicode failed"_s);
-    return {};
+    return JSC::JSValue::encode(jsEmptyString(vm));
 }
 
 JSC::JSValue createNodeURLBinding(Zig::GlobalObject* globalObject)

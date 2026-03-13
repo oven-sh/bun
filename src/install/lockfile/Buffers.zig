@@ -1,3 +1,5 @@
+const Buffers = @This();
+
 trees: Tree.List = .{},
 hoisted_dependencies: DependencyIDList = .{},
 /// This is the underlying buffer used for the `resolutions` external slices inside of `Package`
@@ -178,7 +180,7 @@ pub fn writeArray(comptime StreamType: type, stream: StreamType, comptime Writer
 
 pub fn save(
     lockfile: *Lockfile,
-    verbose_log: bool,
+    options: *const PackageManager.Options,
     allocator: Allocator,
     comptime StreamType: type,
     stream: StreamType,
@@ -187,7 +189,7 @@ pub fn save(
 ) !void {
     const buffers = lockfile.buffers;
     inline for (sizes.names) |name| {
-        if (verbose_log) {
+        if (options.log_level.isVerbose()) {
             Output.prettyErrorln("Saving {d} {s}", .{ @field(buffers, name).items.len, name });
         }
 
@@ -373,30 +375,32 @@ pub fn load(stream: *Stream, allocator: Allocator, log: *logger.Log, pm_: ?*Pack
     return this;
 }
 
-const Buffers = @This();
 const std = @import("std");
+const Allocator = std.mem.Allocator;
+
 const bun = @import("bun");
-const Dependency = bun.install.Dependency;
-const Lockfile = bun.install.Lockfile;
-const PackageManager = bun.install.PackageManager;
-const String = bun.Semver.String;
+const Environment = bun.Environment;
+const Output = bun.Output;
+const assert = bun.assert;
 const logger = bun.logger;
 const strings = bun.strings;
-const Output = bun.Output;
-const Environment = bun.Environment;
-const install = bun.install;
-const Tree = Lockfile.Tree;
 const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
-const PackageID = install.PackageID;
+const String = bun.Semver.String;
+
+const install = bun.install;
+const Aligner = install.Aligner;
+const Dependency = bun.install.Dependency;
 const DependencyID = install.DependencyID;
+const PackageID = install.PackageID;
+const PackageManager = bun.install.PackageManager;
+const invalid_package_id = install.invalid_package_id;
+
+const Lockfile = bun.install.Lockfile;
 const DependencyIDList = Lockfile.DependencyIDList;
-const PackageIDList = Lockfile.PackageIDList;
 const DependencyList = Lockfile.DependencyList;
 const ExternalStringBuffer = Lockfile.ExternalStringBuffer;
-const StringBuffer = Lockfile.StringBuffer;
-const assertNoUninitializedPadding = Lockfile.assertNoUninitializedPadding;
-const Aligner = install.Aligner;
-const invalid_package_id = install.invalid_package_id;
+const PackageIDList = Lockfile.PackageIDList;
 const Stream = Lockfile.Stream;
-const Allocator = std.mem.Allocator;
-const assert = bun.assert;
+const StringBuffer = Lockfile.StringBuffer;
+const Tree = Lockfile.Tree;
+const assertNoUninitializedPadding = Lockfile.assertNoUninitializedPadding;

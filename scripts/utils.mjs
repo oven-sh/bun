@@ -16,7 +16,7 @@ import {
 } from "node:fs";
 import { connect } from "node:net";
 import { hostname, homedir as nodeHomedir, tmpdir as nodeTmpdir, release, userInfo } from "node:os";
-import { dirname, join, relative, resolve } from "node:path";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import { normalize as normalizeWindows } from "node:path/win32";
 
 export const isWindows = process.platform === "win32";
@@ -1370,13 +1370,16 @@ export async function getLastSuccessfulBuild() {
 }
 
 /**
- * @param {string} filename
- * @param {string} [cwd]
+ * @param {string} filename Absolute path to file to upload
  */
-export async function uploadArtifact(filename, cwd) {
+export async function uploadArtifact(filename) {
   if (isBuildkite) {
-    const relativePath = relative(cwd ?? process.cwd(), filename);
-    await spawnSafe(["buildkite-agent", "artifact", "upload", relativePath], { cwd, stdio: "inherit" });
+    await spawnSafe(["buildkite-agent", "artifact", "upload", basename(filename)], {
+      cwd: dirname(filename),
+      stdio: "inherit",
+    });
+  } else {
+    console.warn(`not in buildkite. artifact ${filename} not uploaded.`);
   }
 }
 
@@ -1834,6 +1837,13 @@ export function getTailscale() {
     }
   }
 
+  if (isWindows) {
+    const tailscaleExe = "C:\\Program Files\\Tailscale\\tailscale.exe";
+    if (existsSync(tailscaleExe)) {
+      return tailscaleExe;
+    }
+  }
+
   return "tailscale";
 }
 
@@ -1897,23 +1907,18 @@ export function getUsernameForDistro(distro) {
   if (/windows/i.test(distro)) {
     return "administrator";
   }
-
   if (/alpine|centos/i.test(distro)) {
     return "root";
   }
-
   if (/debian/i.test(distro)) {
     return "admin";
   }
-
   if (/ubuntu/i.test(distro)) {
     return "ubuntu";
   }
-
   if (/amazon|amzn|al\d+|rhel/i.test(distro)) {
     return "ec2-user";
   }
-
   throw new Error(`Unsupported distro: ${distro}`);
 }
 
@@ -2045,7 +2050,7 @@ export function getShell() {
 }
 
 /**
- * @typedef {"aws" | "google"} Cloud
+ * @typedef {"aws" | "google" | "azure"} Cloud
  */
 
 /** @type {Cloud | undefined} */
@@ -2139,6 +2144,37 @@ export async function isGoogleCloud() {
 }
 
 /**
+ * @returns {Promise<boolean | undefined>}
+ */
+export async function isAzure() {
+  if (typeof detectedCloud === "string") {
+    return detectedCloud === "azure";
+  }
+
+  async function detectAzure() {
+    // Azure IMDS (Instance Metadata Service) — the official way to detect Azure VMs.
+    // https://learn.microsoft.com/en-us/azure/virtual-machines/instance-metadata-service
+    const { error, body } = await curl("http://169.254.169.254/metadata/instance?api-version=2021-02-01", {
+      headers: { "Metadata": "true" },
+      retries: 1,
+    });
+    if (!error && body) {
+      try {
+        const metadata = JSON.parse(body);
+        if (metadata?.compute?.azEnvironment) {
+          return true;
+        }
+      } catch {}
+    }
+  }
+
+  if (await detectAzure()) {
+    detectedCloud = "azure";
+    return true;
+  }
+}
+
+/**
  * @returns {Promise<Cloud | undefined>}
  */
 export async function getCloud() {
@@ -2152,6 +2188,10 @@ export async function getCloud() {
 
   if (await isGoogleCloud()) {
     return "google";
+  }
+
+  if (await isAzure()) {
+    return "azure";
   }
 }
 
@@ -2177,6 +2217,10 @@ export async function getCloudMetadata(name, cloud) {
   } else if (cloud === "google") {
     url = new URL(name, "http://metadata.google.internal/computeMetadata/v1/instance/");
     headers = { "Metadata-Flavor": "Google" };
+  } else if (cloud === "azure") {
+    // Azure IMDS uses a single JSON endpoint; individual fields are extracted by the caller.
+    url = new URL("http://169.254.169.254/metadata/instance?api-version=2021-02-01");
+    headers = { "Metadata": "true" };
   } else {
     throw new Error(`Unsupported cloud: ${inspect(cloud)}`);
   }
@@ -2195,7 +2239,25 @@ export async function getCloudMetadata(name, cloud) {
  * @param {Cloud} [cloud]
  * @returns {Promise<string | undefined>}
  */
-export function getCloudMetadataTag(tag, cloud) {
+export async function getCloudMetadataTag(tag, cloud) {
+  cloud ??= await getCloud();
+
+  if (cloud === "azure") {
+    // Azure IMDS returns all tags in a single JSON response.
+    // Tags are in compute.tagsList as [{name, value}, ...].
+    const body = await getCloudMetadata("", cloud);
+    if (!body) return;
+    try {
+      const metadata = JSON.parse(body);
+      const tags = metadata?.compute?.tagsList;
+      if (Array.isArray(tags)) {
+        const entry = tags.find(t => t.name === tag);
+        return entry?.value;
+      }
+    } catch {}
+    return;
+  }
+
   const metadata = {
     "aws": `tags/instance/${tag}`,
     "google": `labels/${tag.replace(":", "-")}`,
@@ -2489,7 +2551,7 @@ export function formatAnnotationToHtml(annotation, options = {}) {
  * @param {AnnotationOptions} [options]
  * @returns {AnnotationResult}
  */
-export function parseAnnotations(content, options = {}) {
+export function parseAnnotations(content) {
   /** @type {Annotation[]} */
   const annotations = [];
 
@@ -2699,7 +2761,14 @@ export function reportAnnotationToBuildKite({ context, label, content, style = "
     source: "buildkite",
     level: "error",
   });
-  reportAnnotationToBuildKite({ label: `${label}-error`, content: errorContent, attempt: attempt + 1 });
+  reportAnnotationToBuildKite({
+    context,
+    label: `${label}-error`,
+    content: errorContent,
+    style,
+    priority,
+    attempt: attempt + 1,
+  });
 }
 
 /**
@@ -2742,10 +2811,24 @@ export function toYaml(obj, indent = 0) {
         value.includes("#") ||
         value.includes("'") ||
         value.includes('"') ||
+        value.includes("\\") ||
         value.includes("\n") ||
-        value.includes("*"))
+        value.includes("*") ||
+        value.includes("&") ||
+        value.includes("!") ||
+        value.includes("|") ||
+        value.includes(">") ||
+        value.includes("%") ||
+        value.includes("@") ||
+        value.includes("`") ||
+        value.includes("{") ||
+        value.includes("}") ||
+        value.includes("[") ||
+        value.includes("]") ||
+        value.includes(",") ||
+        value.includes(";"))
     ) {
-      result += `${spaces}${key}: "${value.replace(/"/g, '\\"')}"\n`;
+      result += `${spaces}${key}: "${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"\n`;
       continue;
     }
     result += `${spaces}${key}: ${value}\n`;
@@ -2798,6 +2881,8 @@ export function endGroup() {
   } else {
     console.groupEnd();
   }
+  // when a file exits with an ASAN error, there is no trailing newline so we add one here to make sure `console.group()` detection doesn't get broken in CI.
+  console.log();
 }
 
 export function printEnvironment() {
@@ -2828,7 +2913,7 @@ export function printEnvironment() {
 
   if (isCI) {
     startGroup("Environment", () => {
-      for (const [key, value] of Object.entries(process.env)) {
+      for (const [key, value] of Object.entries(process.env).toSorted()) {
         console.log(`${key}:`, value);
       }
     });
@@ -2847,11 +2932,33 @@ export function printEnvironment() {
         }
       });
     }
+    if (isLinux) {
+      startGroup("Memory", () => {
+        const shell = which(["sh", "bash"]);
+        if (shell) {
+          spawnSync([shell, "-c", "free -m -w"], { stdio: "inherit" });
+        }
+      });
+      startGroup("Docker", () => {
+        const shell = which(["sh", "bash"]);
+        if (shell) {
+          spawnSync([shell, "-c", "docker ps"], { stdio: "inherit" });
+        }
+      });
+    }
     if (isWindows) {
       startGroup("Disk (win)", () => {
         const shell = which(["pwsh"]);
         if (shell) {
           spawnSync([shell, "-c", "get-psdrive"], { stdio: "inherit" });
+        }
+      });
+      startGroup("Memory", () => {
+        const shell = which(["pwsh"]);
+        if (shell) {
+          spawnSync([shell, "-c", "Get-Counter '\\Memory\\Available MBytes'"], { stdio: "inherit" });
+          console.log();
+          spawnSync([shell, "-c", "Get-CimInstance Win32_PhysicalMemory"], { stdio: "inherit" });
         }
       });
     }
@@ -2950,6 +3057,8 @@ const emojiMap = {
   gear: ["⚙️", "gear"],
   clipboard: ["📋", "clipboard"],
   rocket: ["🚀", "rocket"],
+  openbsd: ["🐡", "openbsd"],
+  netbsd: ["🚩", "netbsd"],
 };
 
 /**

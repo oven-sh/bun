@@ -1,9 +1,13 @@
-declare var jest: typeof import("bun:test").jest;
-declare var describe: typeof import("bun:test").describe;
-declare var test: typeof import("bun:test").test;
-declare var expect: typeof import("bun:test").expect;
-declare var it: typeof import("bun:test").it;
-declare var beforeEach: typeof import("bun:test").beforeEach;
-declare var afterEach: typeof import("bun:test").afterEach;
-declare var beforeAll: typeof import("bun:test").beforeAll;
-declare var afterAll: typeof import("bun:test").afterAll;
+/// <reference path="../../../../packages/bun-types/test-globals.d.ts" />
+
+// Eventually move these to @types/bun somehow
+interface ReadableStream {
+  text(): Promise<string>;
+  json(): Promise<unknown>;
+  blob(): Promise<Blob>;
+  bytes(): Promise<Uint8Array<ArrayBuffer>>;
+}
+
+declare module "bun" {
+  function jest(path: string): typeof import("bun:test");
+}

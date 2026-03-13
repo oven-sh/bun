@@ -8,12 +8,25 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
             port: u16 = 0,
             /// If you set `rejectUnauthorized` to `false`, the connection fails to verify,
             did_have_handshaking_error_while_reject_unauthorized_is_false: bool = false,
+            /// The interned SSLConfig this socket was created with (null = default context).
+            /// Owns a strong ref while the socket is in the keepalive pool.
+            ssl_config: ?SSLConfig.SharedPtr = null,
+            /// The context that owns this pooled socket's memory (for returning to correct pool).
+            owner: *Context,
         };
 
-        pub fn markSocketAsDead(socket: HTTPSocket) void {
-            if (socket.ext(**anyopaque)) |ctx| {
-                ctx.* = bun.cast(**anyopaque, ActiveSocket.init(&dead_socket).ptr());
+        pub fn markTaggedSocketAsDead(socket: HTTPSocket, tagged: ActiveSocket) void {
+            if (tagged.is(PooledSocket)) {
+                Handler.addMemoryBackToPool(tagged.as(PooledSocket));
             }
+
+            if (socket.ext(**anyopaque)) |ctx| {
+                ctx.* = bun.cast(**anyopaque, ActiveSocket.init(dead_socket).ptr());
+            }
+        }
+
+        pub fn markSocketAsDead(socket: HTTPSocket) void {
+            markTaggedSocketAsDead(socket, getTaggedFromSocket(socket));
         }
 
         pub fn terminateSocket(socket: HTTPSocket) void {
@@ -34,7 +47,7 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
             if (socket.ext(anyopaque)) |ctx| {
                 return getTagged(ctx);
             }
-            return ActiveSocket.init(&dead_socket);
+            return ActiveSocket.init(dead_socket);
         }
 
         pub const PooledSocketHiveAllocator = bun.HiveArray(PooledSocket, pool_size);
@@ -54,7 +67,7 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
         }
 
         const ActiveSocket = TaggedPointerUnion(.{
-            *DeadSocket,
+            DeadSocket,
             HTTPClient,
             PooledSocket,
         });
@@ -71,6 +84,26 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
         }
 
         pub fn deinit(this: *@This()) void {
+            // Replace callbacks with no-ops first to avoid UAF when closing sockets.
+            this.us_socket_context.cleanCallbacks(ssl);
+
+            // Drain pooled keepalive sockets: deref their ssl_config and force-close.
+            // Must force-close (code != 0) because SSL clean shutdown (code=0) requires a
+            // shutdown handshake with the peer, which won't complete during eviction.
+            // Without force-close, the socket stays linked and the context refcount never
+            // reaches 0, leaking the SSL_CTX.
+            if (comptime ssl) {
+                var iter = this.pending_sockets.used.iterator(.{ .kind = .set });
+                while (iter.next()) |idx| {
+                    const pooled = this.pending_sockets.at(@intCast(idx));
+                    if (pooled.ssl_config) |*s| s.deinit();
+                    pooled.ssl_config = null;
+                    pooled.http_socket.close(.failure);
+                }
+            }
+
+            // Use deferred free pattern (via nextTick) to avoid freeing the uSockets
+            // context while close callbacks may still reference it.
             this.us_socket_context.deinit(ssl);
             bun.default_allocator.destroy(this);
         }
@@ -79,9 +112,7 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
             if (!comptime ssl) {
                 @compileError("ssl only");
             }
-            var opts = client.tls_props.?.asUSockets();
-            opts.request_cert = 1;
-            opts.reject_unauthorized = 0;
+            const opts = client.tls_props.?.get().asUSocketsForClientVerification();
             try this.initWithOpts(&opts);
         }
 
@@ -155,8 +186,8 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
         /// If `did_have_handshaking_error_while_reject_unauthorized_is_false`
         /// is set, then we can only reuse the socket for HTTP Keep Alive if
         /// `reject_unauthorized` is set to `false`.
-        pub fn releaseSocket(this: *@This(), socket: HTTPSocket, did_have_handshaking_error_while_reject_unauthorized_is_false: bool, hostname: []const u8, port: u16) void {
-            // log("releaseSocket(0x{})", .{bun.fmt.hexIntUpper(@intFromPtr(socket.socket))});
+        pub fn releaseSocket(this: *@This(), socket: HTTPSocket, did_have_handshaking_error_while_reject_unauthorized_is_false: bool, hostname: []const u8, port: u16, ssl_config: ?SSLConfig.SharedPtr) void {
+            // log("releaseSocket(0x{f})", .{bun.fmt.hexIntUpper(@intFromPtr(socket.socket))});
 
             if (comptime Environment.allow_assert) {
                 assert(!socket.isClosed());
@@ -180,6 +211,10 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                     @memcpy(pending.hostname_buf[0..hostname.len], hostname);
                     pending.hostname_len = @as(u8, @truncate(hostname.len));
                     pending.port = port;
+                    pending.owner = this;
+                    // Clone a strong ref for the keepalive pool; the caller retains
+                    // its own ref via HTTPClient.tls_props.
+                    pending.ssl_config = if (ssl_config) |s| s.clone() else null;
 
                     log("Keep-Alive release {s}:{d}", .{
                         hostname,
@@ -206,11 +241,6 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                         terminateSocket(socket);
                         return;
                     }
-                }
-
-                if (active.get(PooledSocket)) |pooled| {
-                    addMemoryBackToPool(pooled);
-                    return;
                 }
 
                 log("Unexpected open on unknown socket", .{});
@@ -268,9 +298,6 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
 
                 if (socket.isClosed()) {
                     markSocketAsDead(socket);
-                    if (active.get(PooledSocket)) |pooled| {
-                        addMemoryBackToPool(pooled);
-                    }
 
                     return;
                 }
@@ -282,10 +309,6 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                         socket.setTimeoutMinutes(5);
                         return;
                     }
-                }
-
-                if (active.get(PooledSocket)) |pooled| {
-                    addMemoryBackToPool(pooled);
                 }
 
                 terminateSocket(socket);
@@ -302,16 +325,12 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                 if (tagged.get(HTTPClient)) |client| {
                     return client.onClose(comptime ssl, socket);
                 }
-
-                if (tagged.get(PooledSocket)) |pooled| {
-                    addMemoryBackToPool(pooled);
-                }
-
-                return;
             }
 
             fn addMemoryBackToPool(pooled: *PooledSocket) void {
-                assert(context().pending_sockets.put(pooled));
+                if (pooled.ssl_config) |*s| s.deinit();
+                pooled.ssl_config = null;
+                assert(pooled.owner.pending_sockets.put(pooled));
             }
 
             pub fn onData(
@@ -324,7 +343,7 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                     return client.onData(
                         comptime ssl,
                         buf,
-                        if (comptime ssl) &bun.http.http_thread.https_context else &bun.http.http_thread.http_context,
+                        client.getSslCtx(ssl),
                         socket,
                     );
                 } else if (tagged.is(PooledSocket)) {
@@ -366,10 +385,6 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                 const tagged = getTagged(ptr);
                 if (tagged.get(HTTPClient)) |client| {
                     return client.onTimeout(comptime ssl, socket);
-                } else if (tagged.get(PooledSocket)) |pooled| {
-                    // If a socket has been sitting around for 5 minutes
-                    // Let's close it and remove it from the pool.
-                    addMemoryBackToPool(pooled);
                 }
 
                 terminateSocket(socket);
@@ -380,16 +395,14 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                 _: c_int,
             ) void {
                 const tagged = getTagged(ptr);
-                markSocketAsDead(socket);
+                markTaggedSocketAsDead(socket, tagged);
                 if (tagged.get(HTTPClient)) |client| {
                     client.onConnectError();
-                } else if (tagged.get(PooledSocket)) |pooled| {
-                    addMemoryBackToPool(pooled);
                 }
                 // us_connecting_socket_close is always called internally by uSockets
             }
             pub fn onEnd(
-                _: *anyopaque,
+                ptr: *anyopaque,
                 socket: HTTPSocket,
             ) void {
                 // TCP fin must be closed, but we must keep the original tagged
@@ -399,11 +412,18 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                 // 1. HTTP Keep-Alive socket: it must be removed from the pool
                 // 2. HTTP Client socket: it might need to be retried
                 // 3. Dead socket: it is already marked as dead
+                const tagged = getTagged(ptr);
+                markTaggedSocketAsDead(socket, tagged);
                 socket.close(.failure);
+
+                if (tagged.get(HTTPClient)) |client| {
+                    client.onClose(comptime ssl, socket);
+                    return;
+                }
             }
         };
 
-        fn existingSocket(this: *@This(), reject_unauthorized: bool, hostname: []const u8, port: u16) ?HTTPSocket {
+        fn existingSocket(this: *@This(), reject_unauthorized: bool, hostname: []const u8, port: u16, ssl_config: ?*SSLConfig) ?HTTPSocket {
             if (hostname.len > MAX_KEEPALIVE_HOSTNAME)
                 return null;
 
@@ -415,13 +435,17 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                     continue;
                 }
 
+                // Match ssl_config by pointer equality (interned configs)
+                if (SSLConfig.rawPtr(socket.ssl_config) != ssl_config) {
+                    continue;
+                }
+
                 if (socket.did_have_handshaking_error_while_reject_unauthorized_is_false and reject_unauthorized) {
                     continue;
                 }
 
                 if (strings.eqlLong(socket.hostname_buf[0..socket.hostname_len], hostname, true)) {
                     const http_socket = socket.http_socket;
-                    assert(context().pending_sockets.put(socket));
 
                     if (http_socket.isClosed()) {
                         markSocketAsDead(http_socket);
@@ -433,6 +457,10 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                         continue;
                     }
 
+                    // Release the pool's strong ref (caller has its own via tls_props)
+                    if (socket.ssl_config) |*s| s.deinit();
+                    socket.ssl_config = null;
+                    assert(this.pending_sockets.put(socket));
                     log("+ Keep-Alive reuse {s}:{d}", .{ hostname, port });
                     return http_socket;
                 }
@@ -463,7 +491,7 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
             client.connected_url.hostname = hostname;
 
             if (client.isKeepAlivePossible()) {
-                if (this.existingSocket(client.flags.reject_unauthorized, hostname, port)) |sock| {
+                if (this.existingSocket(client.flags.reject_unauthorized, hostname, port, SSLConfig.rawPtr(client.tls_props))) |sock| {
                     if (sock.ext(**anyopaque)) |ctx| {
                         ctx.* = bun.cast(**anyopaque, ActiveSocket.init(client).ptr());
                     }
@@ -488,19 +516,29 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
         }
     };
 }
+
+const DeadSocket = struct {
+    garbage: u8 = 0,
+    /// Must be aligned to `@alignOf(usize)` so that tagged pointer values
+    /// embedding this address pass the `@alignCast` in `bun.cast`.
+    pub var dead_socket: DeadSocket align(@alignOf(usize)) = .{};
+};
+
+var dead_socket = &DeadSocket.dead_socket;
+const log = bun.Output.scoped(.HTTPContext, .hidden);
+
+const HTTPCertError = @import("./HTTPCertError.zig");
+const HTTPThread = @import("./HTTPThread.zig");
+const TaggedPointerUnion = @import("../ptr.zig").TaggedPointerUnion;
+
 const bun = @import("bun");
-const uws = bun.uws;
-const BoringSSL = bun.BoringSSL.c;
-const strings = bun.strings;
 const Environment = bun.Environment;
 const FeatureFlags = bun.FeatureFlags;
 const assert = bun.assert;
-const HTTPThread = @import("./HTTPThread.zig");
-const HTTPCertError = @import("./HTTPCertError.zig");
+const strings = bun.strings;
+const uws = bun.uws;
+const BoringSSL = bun.BoringSSL.c;
+const SSLConfig = bun.api.server.ServerConfig.SSLConfig;
+
 const HTTPClient = bun.http;
 const InitError = HTTPClient.InitError;
-const TaggedPointerUnion = @import("../ptr.zig").TaggedPointerUnion;
-
-const DeadSocket = opaque {};
-var dead_socket = @as(*DeadSocket, @ptrFromInt(1));
-const log = bun.Output.scoped(.HTTPContext, true);

@@ -1,11 +1,3 @@
-const bun = @import("bun");
-const JSC = bun.JSC;
-const JSHostFn = JSC.JSHostFn;
-const ZigString = JSC.ZigString;
-const String = bun.String;
-const JSGlobalObject = JSC.JSGlobalObject;
-const JSValue = JSC.JSValue;
-
 pub const JSFunction = opaque {
     const ImplementationVisibility = enum(u8) {
         public,
@@ -38,7 +30,7 @@ pub const JSFunction = opaque {
     pub fn create(
         global: *JSGlobalObject,
         fn_name: anytype,
-        comptime implementation: JSC.JSHostFnZig,
+        comptime implementation: anytype,
         function_length: u32,
         options: CreateJSFunctionOptions,
     ) JSValue {
@@ -48,7 +40,11 @@ pub const JSFunction = opaque {
                 bun.String => fn_name,
                 else => bun.String.init(fn_name),
             },
-            JSC.toJSHostFn(implementation),
+            switch (@TypeOf(implementation)) {
+                jsc.JSHostFnZig => jsc.toJSHostFn(implementation),
+                jsc.JSHostFn => implementation,
+                else => @compileError("unexpected function type"),
+            },
             function_length,
             options.implementation_visibility,
             options.intrinsic,
@@ -68,3 +64,12 @@ pub const JSFunction = opaque {
         return if (JSC__JSFunction__getSourceCode(value, &str)) bun.String.init(str) else null;
     }
 };
+
+const bun = @import("bun");
+const String = bun.String;
+
+const jsc = bun.jsc;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSHostFn = jsc.JSHostFn;
+const JSValue = jsc.JSValue;
+const ZigString = jsc.ZigString;

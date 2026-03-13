@@ -1,10 +1,10 @@
 import { expect, test } from "bun:test";
 import { ChildProcess, spawn } from "child_process";
-import { bunEnv, bunExe, isBroken, isMacOS } from "harness";
+import { bunEnv, bunExe, isASAN, isBroken, isMacOS } from "harness";
 import { join } from "path";
 
-const REQUESTS_COUNT = 50000;
-const BATCH_SIZE = 50;
+const REQUESTS_COUNT = isASAN ? 5_000 : 50_000;
+const BATCH_SIZE = isASAN ? 10 : 50;
 
 interface ServerInfo {
   host: string;

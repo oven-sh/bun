@@ -1,7 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const Allocator = std.mem.Allocator;
-
 pub const css = @import("../css_parser.zig");
 
 const SmallList = css.SmallList;
@@ -88,28 +84,28 @@ pub const BoxShadow = struct {
         } };
     }
 
-    pub fn toCss(this: *const @This(), comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
+    pub fn toCss(this: *const @This(), dest: *css.Printer) css.PrintErr!void {
         if (this.inset) {
             try dest.writeStr("inset ");
         }
 
-        try this.x_offset.toCss(W, dest);
+        try this.x_offset.toCss(dest);
         try dest.writeChar(' ');
-        try this.y_offset.toCss(W, dest);
+        try this.y_offset.toCss(dest);
 
         if (!this.blur.eql(&Length.zero()) or !this.spread.eql(&Length.zero())) {
             try dest.writeChar(' ');
-            try this.blur.toCss(W, dest);
+            try this.blur.toCss(dest);
 
             if (!this.spread.eql(&Length.zero())) {
                 try dest.writeChar(' ');
-                try this.spread.toCss(W, dest);
+                try this.spread.toCss(dest);
             }
         }
 
         if (!this.color.eql(&CssColor{ .current_color = {} })) {
             try dest.writeChar(' ');
-            try this.color.toCss(W, dest);
+            try this.color.toCss(dest);
         }
     }
 
@@ -169,7 +165,7 @@ pub const BoxShadowHandler = struct {
 
                     var unparsed = unp.deepClone(context.allocator);
                     context.addUnparsedFallbacks(&unparsed);
-                    dest.append(context.allocator, .{ .unparsed = unparsed }) catch bun.outOfMemory();
+                    bun.handleOom(dest.append(context.allocator, .{ .unparsed = unparsed }));
                     this.flushed = true;
                 } else return false;
             },
@@ -212,7 +208,7 @@ pub const BoxShadowHandler = struct {
                     }
                 }
 
-                dest.append(context.allocator, .{ .@"box-shadow" = .{ rgb, prefixes } }) catch bun.outOfMemory();
+                bun.handleOom(dest.append(context.allocator, .{ .@"box-shadow" = .{ rgb, prefixes } }));
                 if (prefixes.none) {
                     prefixes = VendorPrefix.NONE;
                 } else {
@@ -232,7 +228,7 @@ pub const BoxShadowHandler = struct {
                         @field(output, field.name) = css.generic.deepClone(field.type, &@field(input, field.name), context.allocator);
                     }
                 }
-                dest.append(context.allocator, .{ .@"box-shadow" = .{ p3, VendorPrefix.NONE } }) catch bun.outOfMemory();
+                bun.handleOom(dest.append(context.allocator, .{ .@"box-shadow" = .{ p3, VendorPrefix.NONE } }));
             }
 
             if (fallbacks.lab) {
@@ -246,14 +242,18 @@ pub const BoxShadowHandler = struct {
                         @field(output, field.name) = css.generic.deepClone(field.type, &@field(input, field.name), context.allocator);
                     }
                 }
-                dest.append(context.allocator, .{ .@"box-shadow" = .{ lab, VendorPrefix.NONE } }) catch bun.outOfMemory();
+                bun.handleOom(dest.append(context.allocator, .{ .@"box-shadow" = .{ lab, VendorPrefix.NONE } }));
             } else {
-                dest.append(context.allocator, .{ .@"box-shadow" = .{ box_shadows, prefixes } }) catch bun.outOfMemory();
+                bun.handleOom(dest.append(context.allocator, .{ .@"box-shadow" = .{ box_shadows, prefixes } }));
             }
         } else {
-            dest.append(context.allocator, .{ .@"box-shadow" = .{ box_shadows, prefixes2 } }) catch bun.outOfMemory();
+            bun.handleOom(dest.append(context.allocator, .{ .@"box-shadow" = .{ box_shadows, prefixes2 } }));
         }
 
         this.flushed = true;
     }
 };
+
+const bun = @import("bun");
+const std = @import("std");
+const Allocator = std.mem.Allocator;

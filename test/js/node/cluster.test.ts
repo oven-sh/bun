@@ -30,7 +30,7 @@ if (cluster.isPrimary) {
 }
 `,
   });
-  bunRun(joinP(dir, "index.ts"), bunEnv);
+  bunRun(joinP(dir, "index.ts"), bunEnv, true);
 });
 
 test("cloneable and non-transferable not-equals (BunFile)", () => {
@@ -49,6 +49,11 @@ if (cluster.isPrimary) {
   worker.on("online", function () {
     worker.send({ file });
   });
+  worker.on("exit", function (code, signal) {
+    if (code !== 0) {
+      process.exit(code);
+    }
+  });
   worker.on("message", function (data) {
     worker.kill();
     const { file } = data;
@@ -63,10 +68,14 @@ if (cluster.isPrimary) {
     console.log("W", msg);
     process.send!(msg);
   });
+  process.on("uncaughtExceptionMonitor", (error) => {
+    console.error(error);
+    process.exit(1);
+  });
 }
 `,
   });
-  bunRun(joinP(dir, "index.ts"), bunEnv);
+  bunRun(joinP(dir, "index.ts"), bunEnv, true);
 });
 
 test("cloneable and non-transferable not-equals (net.BlockList)", () => {
@@ -84,6 +93,11 @@ if (cluster.isPrimary) {
   worker.on("online", function () {
     worker.send({ blocklist });
   });
+  worker.on("exit", function (code, signal) {
+    if (code !== 0) {
+      process.exit(code);
+    }
+  });
   worker.on("message", function (data) {
     worker.kill();
     const { blocklist } = data;
@@ -95,10 +109,14 @@ if (cluster.isPrimary) {
 } else {
   process.on("message", msg => {
     console.log("W", msg);
-    process.send!(msg);
+    process.send!(msg); 
+  });
+  process.on("uncaughtExceptionMonitor", (error) => {
+    console.error(error);
+    process.exit(1);
   });
 }
 `,
   });
-  bunRun(joinP(dir, "index.ts"), bunEnv);
+  bunRun(joinP(dir, "index.ts"), bunEnv, true);
 });

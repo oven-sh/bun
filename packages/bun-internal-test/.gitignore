@@ -1,5 +1,0 @@
-.DS_Store
-.env
-node_modules
-failing-tests.txt
-packages/

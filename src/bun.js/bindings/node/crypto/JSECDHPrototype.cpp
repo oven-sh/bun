@@ -136,7 +136,7 @@ JSC_DEFINE_HOST_FUNCTION(jsECDHProtoFuncComputeSecret, (JSC::JSGlobalObject * gl
     RETURN_IF_EXCEPTION(scope, {});
 
     // Return the encoded result
-    return StringBytes::encode(globalObject, scope, secret.span(), outputEncodingType);
+    RELEASE_AND_RETURN(scope, StringBytes::encode(globalObject, scope, secret.span(), outputEncodingType));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsECDHProtoFuncGetPublicKey, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -203,7 +203,7 @@ JSC_DEFINE_HOST_FUNCTION(jsECDHProtoFuncGetPrivateKey, (JSC::JSGlobalObject * gl
     std::span<const uint8_t> resultSpan(static_cast<const uint8_t*>(result->data()), byteLength);
 
     // Return the encoded result
-    return StringBytes::encode(globalObject, scope, resultSpan, encodingType);
+    RELEASE_AND_RETURN(scope, StringBytes::encode(globalObject, scope, resultSpan, encodingType));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsECDHProtoFuncSetPublicKey, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -346,7 +346,7 @@ JSC_DEFINE_HOST_FUNCTION(jsECDHProtoFuncSetPrivateKey, (JSC::JSGlobalObject * gl
     }
 
     // Replace the old key with the new one
-    ecdh->m_key = WTFMove(newKey);
+    ecdh->m_key = WTF::move(newKey);
     ecdh->m_group = ecdh->m_key.getGroup();
 
     // Return this for chaining

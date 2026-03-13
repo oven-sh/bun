@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isASAN } from "harness";
 
 test("sleep should saturate timeout values", async () => {
   const fixturesThatShouldTimeout = [
@@ -17,6 +17,7 @@ test("sleep should saturate timeout values", async () => {
     "-999999999999999",
     "-999999999999999.999999999999999",
   ];
+  const ASAN_MULTIPLIER = isASAN ? 2 : 1;
 
   const toKill = fixturesThatShouldTimeout.map(timeout => {
     const proc = Bun.spawn({
@@ -41,7 +42,7 @@ test("sleep should saturate timeout values", async () => {
       cwd: import.meta.dir,
     });
     expect(await proc.exited).toBe(0);
-    expect(performance.now() - start).toBeLessThan(1000);
+    expect(performance.now() - start).toBeLessThan(1000 * ASAN_MULTIPLIER);
   });
 
   await Promise.all(toWait);
@@ -70,5 +71,5 @@ test("sleep should keep the event loop alive", async () => {
   });
   await proc.exited;
   expect(proc.exitCode).toBe(0);
-  expect(await new Response(proc.stdout).text()).toContain("event loop was not killed");
+  expect(await proc.stdout.text()).toContain("event loop was not killed");
 });

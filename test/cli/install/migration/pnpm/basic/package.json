@@ -1,0 +1,15 @@
+{
+    "name": "worky3",
+    "dependencies": {
+        "no-deps": "~1.0.0"
+    },
+    "devDependencies": {
+        "a-dep-b": "1.0.0"
+    },
+    "optionalDependencies": {
+        "b-dep-a": "1.0.0"
+    },
+    "peerDependencies": {
+        "a-dep": "1.0.1"
+    }
+}

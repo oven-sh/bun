@@ -16,14 +16,23 @@ pub fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chu
     defer arena.deinit();
 
     // Also generate the cross-chunk binding code
-    var cross_chunk_prefix: []u8 = &.{};
-    var cross_chunk_suffix: []u8 = &.{};
+    var cross_chunk_prefix: js_printer.PrintResult = undefined;
+    var cross_chunk_suffix: js_printer.PrintResult = undefined;
 
     var runtime_scope: *Scope = &c.graph.ast.items(.module_scope)[c.graph.files.items(.input_file)[Index.runtime.value].get()];
     var runtime_members = &runtime_scope.members;
     const toCommonJSRef = c.graph.symbols.follow(runtime_members.get("__toCommonJS").?.ref);
     const toESMRef = c.graph.symbols.follow(runtime_members.get("__toESM").?.ref);
     const runtimeRequireRef = if (c.options.output_format == .cjs) null else c.graph.symbols.follow(runtime_members.get("__require").?.ref);
+
+    // Create ModuleInfo for ESM bytecode in --compile builds
+    const generate_module_info = c.options.generate_bytecode_cache and c.options.output_format == .esm and c.options.compile;
+    const loader = c.parse_graph.input_files.items(.loader)[chunk.entry_point.source_index];
+    const is_typescript = loader.isTypeScript();
+    const module_info: ?*analyze_transpiled_module.ModuleInfo = if (generate_module_info)
+        analyze_transpiled_module.ModuleInfo.create(bun.default_allocator, is_typescript) catch null
+    else
+        null;
 
     {
         const print_options = js_printer.Options{
@@ -39,11 +48,12 @@ pub fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chu
             .target = c.options.target,
             .print_dce_annotations = c.options.emit_dce_annotations,
             .mangled_props = &c.mangled_props,
+            .module_info = module_info,
             // .const_values = c.graph.const_values,
         };
 
         var cross_chunk_import_records = ImportRecord.List.initCapacity(worker.allocator, chunk.cross_chunk_imports.len) catch unreachable;
-        defer cross_chunk_import_records.deinitWithAllocator(worker.allocator);
+        defer cross_chunk_import_records.deinit(worker.allocator);
         for (chunk.cross_chunk_imports.slice()) |import_record| {
             cross_chunk_import_records.appendAssumeCapacity(
                 .{
@@ -68,7 +78,7 @@ pub fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chu
             },
             chunk.renamer,
             false,
-        ).result.code;
+        );
         cross_chunk_suffix = js_printer.print(
             worker.allocator,
             c.resolver.opts.target,
@@ -81,10 +91,131 @@ pub fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chu
             },
             chunk.renamer,
             false,
-        ).result.code;
+        );
     }
 
-    // Generate the exports for the entry point, if there are any
+    // Populate ModuleInfo with declarations collected during parallel printing,
+    // external import records from the original AST, and wrapper refs.
+    if (module_info) |mi| {
+        // 1. Add declarations collected by DeclCollector during parallel part printing.
+        // These come from the CONVERTED statements (after convertStmtsForChunk transforms
+        // export default → var, strips exports, etc.), so they match what's actually printed.
+        for (chunk.compile_results_for_chunk) |cr| {
+            const decls = switch (cr) {
+                .javascript => |js| js.decls,
+                else => continue,
+            };
+            for (decls) |decl| {
+                const var_kind: analyze_transpiled_module.ModuleInfo.VarKind = switch (decl.kind) {
+                    .declared => .declared,
+                    .lexical => .lexical,
+                };
+                const string_id = mi.str(decl.name) catch continue;
+                mi.addVar(string_id, var_kind) catch continue;
+            }
+        }
+
+        // 1b. Check if any source in this chunk uses import.meta. The per-part
+        // parallel printer does not have module_info, so the printer cannot set
+        // this flag during per-part printing. We derive it from the AST instead.
+        // Note: the runtime source (index 0) also uses import.meta (e.g.
+        // `import.meta.require`), so we must not skip it.
+        {
+            const all_ast_flags = c.graph.ast.items(.flags);
+            for (chunk.content.javascript.parts_in_chunk_in_order) |part_range| {
+                if (all_ast_flags[part_range.source_index.get()].has_import_meta) {
+                    mi.flags.contains_import_meta = true;
+                    break;
+                }
+            }
+        }
+
+        // 2. Collect truly-external imports from the original AST. Bundled imports
+        // (where source_index is valid) are removed by convertStmtsForChunk and
+        // re-created as cross-chunk imports — those are already captured by the
+        // printer when it prints cross_chunk_prefix_stmts above. Only truly-external
+        // imports (node built-ins, etc.) survive as s_import in per-file parts and
+        // need recording here.
+        const all_parts = c.graph.ast.items(.parts);
+        const all_flags = c.graph.meta.items(.flags);
+        const all_import_records = c.graph.ast.items(.import_records);
+        for (chunk.content.javascript.parts_in_chunk_in_order) |part_range| {
+            if (all_flags[part_range.source_index.get()].wrap == .cjs) continue;
+            const source_parts = all_parts[part_range.source_index.get()].slice();
+            const source_import_records = all_import_records[part_range.source_index.get()].slice();
+            var part_i = part_range.part_index_begin;
+            while (part_i < part_range.part_index_end) : (part_i += 1) {
+                for (source_parts[part_i].stmts) |stmt| {
+                    switch (stmt.data) {
+                        .s_import => |s| {
+                            const record = &source_import_records[s.import_record_index];
+                            if (record.path.is_disabled) continue;
+                            if (record.tag == .bun) continue;
+                            // Skip bundled imports — these are converted to cross-chunk
+                            // imports by the linker. The printer already recorded them
+                            // when printing cross_chunk_prefix_stmts.
+                            if (record.source_index.isValid()) continue;
+                            // Skip barrel-optimized-away imports — marked is_unused by
+                            // barrel_imports.zig. Never resolved (source_index invalid),
+                            // and removed by convertStmtsForChunk. Not in emitted code.
+                            if (record.flags.is_unused) continue;
+
+                            const import_path = record.path.text;
+                            const irp_id = mi.str(import_path) catch continue;
+                            mi.requestModule(irp_id, .none) catch continue;
+
+                            if (s.default_name) |name| {
+                                if (name.ref) |name_ref| {
+                                    const local_name = chunk.renamer.nameForSymbol(name_ref);
+                                    const local_name_id = mi.str(local_name) catch continue;
+                                    mi.addVar(local_name_id, .lexical) catch continue;
+                                    mi.addImportInfoSingle(irp_id, mi.str("default") catch continue, local_name_id, false) catch continue;
+                                }
+                            }
+
+                            for (s.items) |item| {
+                                if (item.name.ref) |name_ref| {
+                                    const local_name = chunk.renamer.nameForSymbol(name_ref);
+                                    const local_name_id = mi.str(local_name) catch continue;
+                                    mi.addVar(local_name_id, .lexical) catch continue;
+                                    mi.addImportInfoSingle(irp_id, mi.str(item.alias) catch continue, local_name_id, false) catch continue;
+                                }
+                            }
+
+                            if (record.flags.contains_import_star) {
+                                const local_name = chunk.renamer.nameForSymbol(s.namespace_ref);
+                                const local_name_id = mi.str(local_name) catch continue;
+                                mi.addVar(local_name_id, .lexical) catch continue;
+                                mi.addImportInfoNamespace(irp_id, local_name_id) catch continue;
+                            }
+                        },
+                        else => {},
+                    }
+                }
+            }
+        }
+
+        // 3. Add wrapper-generated declarations (init_xxx, require_xxx) that are
+        // not in any part statement.
+        const all_wrapper_refs = c.graph.ast.items(.wrapper_ref);
+        for (chunk.content.javascript.parts_in_chunk_in_order) |part_range| {
+            const source_index = part_range.source_index.get();
+            if (all_flags[source_index].wrap != .none) {
+                const wrapper_ref = all_wrapper_refs[source_index];
+                if (!wrapper_ref.isEmpty()) {
+                    const name = chunk.renamer.nameForSymbol(wrapper_ref);
+                    if (name.len > 0) {
+                        const string_id = mi.str(name) catch continue;
+                        mi.addVar(string_id, .declared) catch continue;
+                    }
+                }
+            }
+        }
+    }
+
+    // Generate the exports for the entry point, if there are any.
+    // This must happen before module_info serialization so the printer
+    // can populate export entries in module_info.
     const entry_point_tail = brk: {
         if (chunk.isEntryPoint()) {
             break :brk generateEntryPointTailJS(
@@ -95,11 +226,20 @@ pub fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chu
                 worker.allocator,
                 arena.allocator(),
                 chunk.renamer,
+                module_info,
             );
         }
 
         break :brk CompileResult.empty;
     };
+
+    // Store unserialized ModuleInfo on the chunk. Serialization is deferred to
+    // generateChunksInParallel after final chunk paths are computed, so that
+    // cross-chunk import specifiers (which use unique_key placeholders during
+    // printing) can be resolved to actual paths.
+    if (module_info) |mi| {
+        chunk.content.javascript.module_info = mi;
+    }
 
     var j = StringJoiner{
         .allocator = worker.allocator,
@@ -107,58 +247,77 @@ pub fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chu
             .input = chunk.unique_key,
         },
     };
+    errdefer j.deinit();
     const output_format = c.options.output_format;
 
-    var line_offset: bun.sourcemap.LineColumnOffset.Optional = if (c.options.source_maps != .none) .{ .value = .{} } else .{ .null = {} };
+    var line_offset: bun.SourceMap.LineColumnOffset.Optional = if (c.options.source_maps != .none) .{ .value = .{} } else .{ .null = {} };
 
     // Concatenate the generated JavaScript chunks together
 
     var newline_before_comment = false;
     var is_executable = false;
 
-    // Start with the hashbang if there is one. This must be done before the
-    // banner because it only works if it's literally the first character.
-    if (chunk.isEntryPoint()) {
-        const is_bun = ctx.c.graph.ast.items(.target)[chunk.entry_point.source_index].isBun();
-        const hashbang = c.graph.ast.items(.hashbang)[chunk.entry_point.source_index];
+    // Extract hashbang and banner for entry points
+    const hashbang, const banner = if (chunk.isEntryPoint()) brk: {
+        const source_hashbang = c.graph.ast.items(.hashbang)[chunk.entry_point.source_index];
 
-        if (hashbang.len > 0) {
-            j.pushStatic(hashbang);
-            j.pushStatic("\n");
-            line_offset.advance(hashbang);
-            line_offset.advance("\n");
-            newline_before_comment = true;
-            is_executable = true;
+        // If source file has a hashbang, use it
+        if (source_hashbang.len > 0) {
+            break :brk .{ source_hashbang, c.options.banner };
         }
 
-        if (is_bun) {
-            const cjs_entry_chunk = "(function(exports, require, module, __filename, __dirname) {";
-            if (ctx.c.options.generate_bytecode_cache and output_format == .cjs) {
-                const input = "// @bun @bytecode @bun-cjs\n" ++ cjs_entry_chunk;
-                j.pushStatic(input);
-                line_offset.advance(input);
-            } else if (ctx.c.options.generate_bytecode_cache) {
-                j.pushStatic("// @bun @bytecode\n");
-                line_offset.advance("// @bun @bytecode\n");
-            } else if (output_format == .cjs) {
-                j.pushStatic("// @bun @bun-cjs\n" ++ cjs_entry_chunk);
-                line_offset.advance("// @bun @bun-cjs\n" ++ cjs_entry_chunk);
-            } else {
-                j.pushStatic("// @bun\n");
-                line_offset.advance("// @bun\n");
-            }
+        // Otherwise check if banner starts with hashbang
+        if (c.options.banner.len > 0 and strings.hasPrefixComptime(c.options.banner, "#!")) {
+            const newline_pos = strings.indexOfChar(c.options.banner, '\n') orelse c.options.banner.len;
+            const banner_hashbang = c.options.banner[0..newline_pos];
+
+            break :brk .{ banner_hashbang, std.mem.trimLeft(u8, c.options.banner[newline_pos..], "\r\n") };
+        }
+
+        // No hashbang anywhere
+        break :brk .{ "", c.options.banner };
+    } else .{ "", c.options.banner };
+
+    // Start with the hashbang if there is one. This must be done before the
+    // banner because it only works if it's literally the first character.
+    if (hashbang.len > 0) {
+        j.pushStatic(hashbang);
+        j.pushStatic("\n");
+        line_offset.advance(hashbang);
+        line_offset.advance("\n");
+        newline_before_comment = true;
+        is_executable = true;
+    }
+
+    // Add @bun comments and CJS wrapper start for each chunk when targeting Bun.
+    const is_bun = c.graph.ast.items(.target)[chunk.entry_point.source_index].isBun();
+    if (is_bun) {
+        const cjs_entry_chunk = "(function(exports, require, module, __filename, __dirname) {";
+        if (ctx.c.options.generate_bytecode_cache and output_format == .cjs) {
+            const input = "// @bun @bytecode @bun-cjs\n" ++ cjs_entry_chunk;
+            j.pushStatic(input);
+            line_offset.advance(input);
+        } else if (ctx.c.options.generate_bytecode_cache) {
+            j.pushStatic("// @bun @bytecode\n");
+            line_offset.advance("// @bun @bytecode\n");
+        } else if (output_format == .cjs) {
+            j.pushStatic("// @bun @bun-cjs\n" ++ cjs_entry_chunk);
+            line_offset.advance("// @bun @bun-cjs\n" ++ cjs_entry_chunk);
+        } else {
+            j.pushStatic("// @bun\n");
+            line_offset.advance("// @bun\n");
         }
     }
 
-    if (c.options.banner.len > 0) {
-        if (newline_before_comment) {
+    // Add the banner (excluding any hashbang part) for all chunks
+    if (banner.len > 0) {
+        j.pushStatic(banner);
+        line_offset.advance(banner);
+        if (!strings.endsWithChar(banner, '\n')) {
             j.pushStatic("\n");
             line_offset.advance("\n");
         }
-        j.pushStatic(ctx.c.options.banner);
-        line_offset.advance(ctx.c.options.banner);
-        j.pushStatic("\n");
-        line_offset.advance("\n");
+        newline_before_comment = true;
     }
 
     // Add the top-level directive if present (but omit "use strict" in ES
@@ -199,17 +358,17 @@ pub fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chu
         else => {}, // no wrapper
     }
 
-    if (cross_chunk_prefix.len > 0) {
+    if (cross_chunk_prefix.result.code.len > 0) {
         newline_before_comment = true;
-        line_offset.advance(cross_chunk_prefix);
-        j.push(cross_chunk_prefix, bun.default_allocator);
+        line_offset.advance(cross_chunk_prefix.result.code);
+        j.push(cross_chunk_prefix.result.code, worker.allocator);
     }
 
     // Concatenate the generated JavaScript chunks together
     var prev_filename_comment: Index.Int = 0;
 
     var compile_results_for_source_map: std.MultiArrayList(CompileResultForSourceMap) = .{};
-    compile_results_for_source_map.setCapacity(worker.allocator, compile_results.len) catch bun.outOfMemory();
+    bun.handleOom(compile_results_for_source_map.setCapacity(worker.allocator, compile_results.len));
 
     const show_comments = c.options.mode == .bundle and
         !c.options.minify_whitespace;
@@ -322,16 +481,16 @@ pub fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chu
         // Stick the entry point tail at the end of the file. Deliberately don't
         // include any source mapping information for this because it's automatically
         // generated and doesn't correspond to a location in the input file.
-        j.push(tail_code, bun.default_allocator);
+        j.push(tail_code, worker.allocator);
     }
 
     // Put the cross-chunk suffix inside the IIFE
-    if (cross_chunk_suffix.len > 0) {
+    if (cross_chunk_suffix.result.code.len > 0) {
         if (newline_before_comment) {
             j.pushStatic("\n");
         }
 
-        j.push(cross_chunk_suffix, bun.default_allocator);
+        j.push(cross_chunk_suffix.result.code, worker.allocator);
     }
 
     switch (output_format) {
@@ -354,7 +513,7 @@ pub fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chu
             {
                 const input = c.parse_graph.input_files.items(.source)[chunk.entry_point.source_index].path;
                 var buf = MutableString.initEmpty(worker.allocator);
-                js_printer.quoteForJSONBuffer(input.pretty, &buf, true) catch bun.outOfMemory();
+                bun.handleOom(js_printer.quoteForJSON(input.pretty, &buf, true));
                 const str = buf.slice(); // worker.allocator is an arena
                 j.pushStatic(str);
                 line_offset.advance(str);
@@ -371,12 +530,9 @@ pub fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chu
             }
         },
         .cjs => {
-            if (chunk.isEntryPoint()) {
-                const is_bun = ctx.c.graph.ast.items(.target)[chunk.entry_point.source_index].isBun();
-                if (is_bun) {
-                    j.pushStatic("})\n");
-                    line_offset.advance("})\n");
-                }
+            if (is_bun) {
+                j.pushStatic("})\n");
+                line_offset.advance("})\n");
             }
         },
         else => {},
@@ -405,7 +561,7 @@ pub fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chu
     // TODO: meta contents
 
     chunk.isolated_hash = c.generateIsolatedHash(chunk);
-    chunk.is_executable = is_executable;
+    chunk.flags.is_executable = is_executable;
 
     if (c.options.source_maps != .none) {
         const can_have_shifts = chunk.intermediate_output == .pieces;
@@ -419,6 +575,37 @@ pub fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chu
     }
 }
 
+/// Recursively walk a binding and add all declared names to `ModuleInfo`.
+/// Handles `b_identifier`, `b_array`, `b_object`, and `b_missing`.
+fn addBindingVarsToModuleInfo(
+    mi: *analyze_transpiled_module.ModuleInfo,
+    binding: Binding,
+    var_kind: analyze_transpiled_module.ModuleInfo.VarKind,
+    r: renamer.Renamer,
+    symbols: *const js_ast.Symbol.Map,
+) void {
+    switch (binding.data) {
+        .b_identifier => |b| {
+            const name = r.nameForSymbol(symbols.follow(b.ref));
+            if (name.len > 0) {
+                const str_id = mi.str(name) catch return;
+                mi.addVar(str_id, var_kind) catch {};
+            }
+        },
+        .b_array => |b| {
+            for (b.items) |item| {
+                addBindingVarsToModuleInfo(mi, item.binding, var_kind, r, symbols);
+            }
+        },
+        .b_object => |b| {
+            for (b.properties) |prop| {
+                addBindingVarsToModuleInfo(mi, prop.value, var_kind, r, symbols);
+            }
+        },
+        .b_missing => {},
+    }
+}
+
 pub fn generateEntryPointTailJS(
     c: *LinkerContext,
     toCommonJSRef: Ref,
@@ -427,9 +614,10 @@ pub fn generateEntryPointTailJS(
     allocator: std.mem.Allocator,
     temp_allocator: std.mem.Allocator,
     r: renamer.Renamer,
+    module_info: ?*analyze_transpiled_module.ModuleInfo,
 ) CompileResult {
     const flags: JSMeta.Flags = c.graph.meta.items(.flags)[source_index];
-    var stmts = std.ArrayList(Stmt).init(temp_allocator);
+    var stmts = std.array_list.Managed(Stmt).init(temp_allocator);
     defer stmts.deinit();
     const ast: JSAst = c.graph.ast.get(source_index);
 
@@ -525,7 +713,7 @@ pub fn generateEntryPointTailJS(
                         // entry point is a CommonJS-style module, since that would generate an ES6
                         // export statement that's not top-level. Instead, we will export the CommonJS
                         // exports as a default export later on.
-                        var items = std.ArrayList(js_ast.ClauseItem).init(temp_allocator);
+                        var items = std.array_list.Managed(js_ast.ClauseItem).init(temp_allocator);
                         const cjs_export_copies = c.graph.meta.items(.cjs_export_copies)[source_index];
 
                         var had_default_export = false;
@@ -809,13 +997,29 @@ pub fn generateEntryPointTailJS(
         },
     }
 
+    // Add generated local declarations from entry point tail to module_info.
+    // This captures vars like `var export_foo = cjs.foo` for CJS export copies.
+    if (module_info) |mi| {
+        for (stmts.items) |stmt| {
+            switch (stmt.data) {
+                .s_local => |s| {
+                    const var_kind: analyze_transpiled_module.ModuleInfo.VarKind = if (s.kind == .k_var) .declared else .lexical;
+                    for (s.decls.slice()) |decl| {
+                        addBindingVarsToModuleInfo(mi, decl.binding, var_kind, r, &c.graph.symbols);
+                    }
+                },
+                else => {},
+            }
+        }
+    }
+
     if (stmts.items.len == 0) {
         return .{
             .javascript = .{
                 .source_index = source_index,
-                .result = .{ .result = .{
-                    .code = "",
-                } },
+                .result = .{
+                    .result = .{ .code = "" },
+                },
             },
         };
     }
@@ -834,6 +1038,7 @@ pub fn generateEntryPointTailJS(
         .print_dce_annotations = c.options.emit_dce_annotations,
         .minify_syntax = c.options.minify_syntax,
         .mangled_props = &c.mangled_props,
+        .module_info = module_info,
         // .const_values = c.graph.const_values,
     };
 
@@ -859,43 +1064,41 @@ pub fn generateEntryPointTailJS(
     };
 }
 
-const bun = @import("bun");
-const strings = bun.strings;
-const LinkerContext = bun.bundle_v2.LinkerContext;
-const Index = bun.bundle_v2.Index;
-const ImportRecord = bun.ImportRecord;
-const Part = bun.bundle_v2.Part;
+const analyze_transpiled_module = @import("../../analyze_transpiled_module.zig");
 const std = @import("std");
 
-const JSMeta = bun.bundle_v2.JSMeta;
-const JSAst = bun.bundle_v2.JSAst;
-const js_ast = bun.bundle_v2.js_ast;
-const Ref = bun.bundle_v2.js_ast.Ref;
-const ResolvedExports = bun.bundle_v2.ResolvedExports;
+const bun = @import("bun");
+const ImportRecord = bun.ImportRecord;
 const Logger = bun.logger;
-const RefImportData = bun.bundle_v2.RefImportData;
+const MutableString = bun.MutableString;
+const StringJoiner = bun.StringJoiner;
 const options = bun.options;
+const strings = bun.strings;
+
+const Chunk = bun.bundle_v2.Chunk;
+const CompileResult = bun.bundle_v2.CompileResult;
+const CompileResultForSourceMap = bun.bundle_v2.CompileResultForSourceMap;
+const Fs = bun.bundle_v2.Fs;
+const Index = bun.bundle_v2.Index;
+const JSAst = bun.bundle_v2.JSAst;
+const JSMeta = bun.bundle_v2.JSMeta;
+const Part = bun.bundle_v2.Part;
+const RefImportData = bun.bundle_v2.RefImportData;
+const ResolvedExports = bun.bundle_v2.ResolvedExports;
+const ThreadPool = bun.bundle_v2.ThreadPool;
 const js_printer = bun.bundle_v2.js_printer;
 const renamer = bun.bundle_v2.renamer;
-const Chunk = bun.bundle_v2.Chunk;
 
-const Stmt = js_ast.Stmt;
-const Expr = js_ast.Expr;
-const E = js_ast.E;
-const S = js_ast.S;
-const G = js_ast.G;
-const B = js_ast.B;
-
-const Binding = js_ast.Binding;
-
+const LinkerContext = bun.bundle_v2.LinkerContext;
 const GenerateChunkCtx = bun.bundle_v2.LinkerContext.GenerateChunkCtx;
-const ThreadPool = bun.bundle_v2.ThreadPool;
 
+const js_ast = bun.bundle_v2.js_ast;
+const B = js_ast.B;
+const Binding = js_ast.Binding;
+const E = js_ast.E;
+const Expr = js_ast.Expr;
+const G = js_ast.G;
+const Ref = bun.bundle_v2.js_ast.Ref;
+const S = js_ast.S;
 const Scope = js_ast.Scope;
-const Fs = bun.bundle_v2.Fs;
-const CompileResult = bun.bundle_v2.CompileResult;
-const StringJoiner = bun.StringJoiner;
-
-const CompileResultForSourceMap = bun.bundle_v2.CompileResultForSourceMap;
-
-const MutableString = bun.MutableString;
+const Stmt = js_ast.Stmt;

@@ -1,6 +1,3 @@
-const bun = @import("bun");
-const std = @import("std");
-
 pub const Ctx = union(enum) {
     disabled: Disabled,
     enabled: switch (bun.Environment.os) {
@@ -22,13 +19,13 @@ pub const Ctx = union(enum) {
 var is_enabled_once = std.once(isEnabledOnce);
 var is_enabled = std.atomic.Value(bool).init(false);
 fn isEnabledOnMacOSOnce() void {
-    if (bun.getenvZ("DYLD_ROOT_PATH") != null or bun.getRuntimeFeatureFlag(.BUN_INSTRUMENTS)) {
+    if (bun.env_var.DYLD_ROOT_PATH.get() != null or bun.feature_flag.BUN_INSTRUMENTS.get()) {
         is_enabled.store(true, .seq_cst);
     }
 }
 
 fn isEnabledOnLinuxOnce() void {
-    if (bun.getRuntimeFeatureFlag(.BUN_TRACE)) {
+    if (bun.feature_flag.BUN_TRACE.get()) {
         is_enabled.store(true, .seq_cst);
     }
 }
@@ -51,8 +48,6 @@ pub fn isEnabled() bool {
     is_enabled_once.call();
     return is_enabled.load(.seq_cst);
 }
-
-const PerfEvent = @import("./generated_perf_trace_events.zig").PerfEvent;
 
 /// Trace an event using the system profiler (Instruments).
 ///
@@ -145,7 +140,7 @@ pub const Linux = struct {
 
     pub fn init(event: PerfEvent) @This() {
         return .{
-            .start_time = bun.timespec.now().ns(),
+            .start_time = bun.timespec.now(.force_real_time).ns(),
             .event = event,
         };
     }
@@ -153,8 +148,12 @@ pub const Linux = struct {
     pub fn end(this: *const @This()) void {
         if (!isSupported()) return;
 
-        const duration = bun.timespec.now().ns() -| this.start_time;
+        const duration = bun.timespec.now(.force_real_time).ns() -| this.start_time;
 
         _ = Bun__linux_trace_emit(@tagName(this.event).ptr, @intCast(duration));
     }
 };
+
+const bun = @import("bun");
+const std = @import("std");
+const PerfEvent = @import("./generated_perf_trace_events.zig").PerfEvent;

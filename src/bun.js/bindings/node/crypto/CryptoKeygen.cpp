@@ -32,7 +32,7 @@ void SecretKeyJobCtx::runTask(JSGlobalObject* lexicalGlobalObject)
         return;
     }
 
-    m_result = WTFMove(key);
+    m_result = WTF::move(key);
 }
 
 extern "C" void Bun__SecretKeyJobCtx__runFromJS(SecretKeyJobCtx* ctx, JSGlobalObject* lexicalGlobalObject, JSC::JSValue callback)
@@ -51,10 +51,10 @@ void SecretKeyJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject, JSC::JSValu
         return;
     }
 
-    KeyObject keyObject = KeyObject::create(WTFMove(*m_result));
+    KeyObject keyObject = KeyObject::create(WTF::move(*m_result));
 
     Structure* structure = globalObject->m_JSSecretKeyObjectClassStructure.get(lexicalGlobalObject);
-    JSSecretKeyObject* secretKey = JSSecretKeyObject::create(vm, structure, lexicalGlobalObject, WTFMove(keyObject));
+    JSSecretKeyObject* secretKey = JSSecretKeyObject::create(vm, structure, lexicalGlobalObject, WTF::move(keyObject));
 
     Bun__EventLoop__runCallback2(lexicalGlobalObject,
         JSValue::encode(callback),
@@ -88,7 +88,7 @@ void SecretKeyJob::schedule()
 extern "C" void Bun__SecretKeyJob__createAndSchedule(JSC::JSGlobalObject*, SecretKeyJobCtx*, EncodedJSValue callback);
 void SecretKeyJob::createAndSchedule(JSC::JSGlobalObject* lexicalGlobalObject, SecretKeyJobCtx&& ctx, JSC::JSValue callback)
 {
-    SecretKeyJobCtx* ctxCopy = new SecretKeyJobCtx(WTFMove(ctx));
+    SecretKeyJobCtx* ctxCopy = new SecretKeyJobCtx(WTF::move(ctx));
     return Bun__SecretKeyJob__createAndSchedule(lexicalGlobalObject, ctxCopy, JSValue::encode(callback));
 }
 
@@ -147,10 +147,10 @@ JSC_DEFINE_HOST_FUNCTION(jsGenerateKey, (JSC::JSGlobalObject * lexicalGlobalObje
     RETURN_IF_EXCEPTION(scope, {});
 
     std::optional<SecretKeyJobCtx> ctx = SecretKeyJobCtx::fromJS(lexicalGlobalObject, scope, typeValue, optionsValue);
-    ASSERT(ctx.has_value() == !scope.exception());
+    EXCEPTION_ASSERT(ctx.has_value() == !scope.exception());
     RETURN_IF_EXCEPTION(scope, {});
 
-    SecretKeyJob::createAndSchedule(lexicalGlobalObject, WTFMove(ctx.value()), callbackValue);
+    SecretKeyJob::createAndSchedule(lexicalGlobalObject, WTF::move(ctx.value()), callbackValue);
 
     return JSValue::encode(jsUndefined());
 }
@@ -164,7 +164,7 @@ JSC_DEFINE_HOST_FUNCTION(jsGenerateKeySync, (JSC::JSGlobalObject * lexicalGlobal
     JSValue optionsValue = callFrame->argument(1);
 
     std::optional<SecretKeyJobCtx> ctx = SecretKeyJobCtx::fromJS(lexicalGlobalObject, scope, typeValue, optionsValue);
-    ASSERT(ctx.has_value() == !scope.exception());
+    EXCEPTION_ASSERT(ctx.has_value() == !scope.exception());
     RETURN_IF_EXCEPTION(scope, {});
 
     ctx->runTask(lexicalGlobalObject);
@@ -176,9 +176,9 @@ JSC_DEFINE_HOST_FUNCTION(jsGenerateKeySync, (JSC::JSGlobalObject * lexicalGlobal
     auto& result = ctx->m_result.value();
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
 
-    KeyObject keyObject = KeyObject::create(WTFMove(result));
+    KeyObject keyObject = KeyObject::create(WTF::move(result));
     Structure* structure = globalObject->m_JSSecretKeyObjectClassStructure.get(lexicalGlobalObject);
-    JSSecretKeyObject* secretKey = JSSecretKeyObject::create(vm, structure, lexicalGlobalObject, WTFMove(keyObject));
+    JSSecretKeyObject* secretKey = JSSecretKeyObject::create(vm, structure, lexicalGlobalObject, WTF::move(keyObject));
 
     return JSValue::encode(secretKey);
 }

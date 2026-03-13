@@ -46,7 +46,7 @@ it("should create selected template with @ prefix", async () => {
 
   await exited;
 
-  const err = await new Response(stderr).text();
+  const err = await stderr.text();
   expect(err.split(/\r?\n/)).toContain(
     `error: GET https://registry.npmjs.org/@quick-start%2fcreate-some-template - 404`,
   );
@@ -62,7 +62,7 @@ it("should create selected template with @ prefix implicit `/create`", async () 
     env,
   });
 
-  const err = await new Response(stderr).text();
+  const err = await stderr.text();
   expect(err.split(/\r?\n/)).toContain(`error: GET https://registry.npmjs.org/@second-quick-start%2fcreate - 404`);
   await exited;
 });
@@ -77,7 +77,7 @@ it("should create selected template with @ prefix implicit `/create` with versio
     env,
   });
 
-  const err = await new Response(stderr).text();
+  const err = await stderr.text();
   expect(err.split(/\r?\n/)).toContain(`error: GET https://registry.npmjs.org/@second-quick-start%2fcreate - 404`);
 
   await exited;
@@ -119,7 +119,7 @@ it("should not mention cd prompt when created in current directory", async () =>
 
   await exited;
 
-  const out = await Bun.readableStreamToText(stdout);
+  const out = await stdout.text();
 
   expect(out).toContain("bun dev");
   expect(out).not.toContain("\n\n  cd \n  bun dev\n\n");
@@ -135,12 +135,40 @@ for (const repo of ["https://github.com/dylan-conway/create-test", "github.com/d
       env,
     });
 
-    const err = await Bun.readableStreamToText(stderr);
+    const err = await stderr.text();
     expect(err).not.toContain("error:");
-    const out = await Bun.readableStreamToText(stdout);
+    const out = await stdout.text();
     expect(out).toContain("Success! dylan-conway/create-test loaded into create-test");
     expect(await exists(join(x_dir, "create-test", "node_modules", "jquery"))).toBe(true);
 
     expect(await exited).toBe(0);
   }, 20_000);
 }
+
+it("should not crash with --no-install and bun-create.postinstall starting with 'bun '", async () => {
+  const bunCreateDir = join(x_dir, "bun-create");
+  const testTemplate = "postinstall-test";
+
+  await Bun.write(
+    join(bunCreateDir, testTemplate, "package.json"),
+    JSON.stringify({
+      name: "test",
+      "bun-create": {
+        postinstall: "bun install",
+      },
+    }),
+  );
+
+  const { exited, stderr, stdout } = spawn({
+    cmd: [bunExe(), "create", testTemplate, join(x_dir, "dest"), "--no-install"],
+    cwd: x_dir,
+    stdout: "pipe",
+    stdin: "ignore",
+    stderr: "pipe",
+    env: { ...env, BUN_CREATE_DIR: bunCreateDir },
+  });
+
+  const [err, _out, exitCode] = await Promise.all([stderr.text(), stdout.text(), exited]);
+  expect(err).not.toContain("error:");
+  expect(exitCode).toBe(0);
+});

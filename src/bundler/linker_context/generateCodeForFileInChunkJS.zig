@@ -10,6 +10,7 @@ pub fn generateCodeForFileInChunkJS(
     stmts: *StmtList,
     allocator: std.mem.Allocator,
     temp_allocator: std.mem.Allocator,
+    decl_collector: ?*DeclCollector,
 ) js_printer.PrintResult {
     const parts: []Part = c.graph.ast.items(.parts)[part_range.source_index.get()].slice()[part_range.part_index_begin..part_range.part_index_end];
     const all_flags: []const JSMeta.Flags = c.graph.meta.items(.flags);
@@ -40,16 +41,16 @@ pub fn generateCodeForFileInChunkJS(
                 return .{ .err = err };
         }
 
-        const main_stmts_len = stmts.inside_wrapper_prefix.items.len + stmts.inside_wrapper_suffix.items.len;
+        const main_stmts_len = stmts.inside_wrapper_prefix.stmts.items.len + stmts.inside_wrapper_suffix.items.len;
         const all_stmts_len = main_stmts_len + stmts.outside_wrapper_prefix.items.len + 1;
 
-        stmts.all_stmts.ensureUnusedCapacity(all_stmts_len) catch bun.outOfMemory();
-        stmts.all_stmts.appendSliceAssumeCapacity(stmts.inside_wrapper_prefix.items);
+        bun.handleOom(stmts.all_stmts.ensureUnusedCapacity(stmts.allocator, all_stmts_len));
+        stmts.all_stmts.appendSliceAssumeCapacity(stmts.inside_wrapper_prefix.stmts.items);
         stmts.all_stmts.appendSliceAssumeCapacity(stmts.inside_wrapper_suffix.items);
 
         const inner = stmts.all_stmts.items[0..main_stmts_len];
 
-        var clousure_args = std.BoundedArray(G.Arg, 3).fromSlice(&.{
+        var clousure_args = bun.BoundedArray(G.Arg, 3).fromSlice(&.{
             .{ .binding = Binding.alloc(temp_allocator, B.Identifier{
                 .ref = hmr_api_ref,
             }, Logger.Loc.Empty) },
@@ -71,7 +72,7 @@ pub fn generateCodeForFileInChunkJS(
         }
 
         stmts.all_stmts.appendAssumeCapacity(Stmt.allocateExpr(temp_allocator, Expr.init(E.Function, .{ .func = .{
-            .args = temp_allocator.dupe(G.Arg, clousure_args.slice()) catch bun.outOfMemory(),
+            .args = bun.handleOom(temp_allocator.dupe(G.Arg, clousure_args.slice())),
             .body = .{
                 .stmts = inner,
                 .loc = Logger.Loc.Empty,
@@ -90,7 +91,7 @@ pub fn generateCodeForFileInChunkJS(
                 c.options.target,
                 c.resolver.fs.top_level_dir,
                 allocator,
-            ) catch bun.outOfMemory();
+            ) catch |err| bun.handleOom(err);
         }
 
         return c.printCodeForFileInChunkJS(
@@ -128,7 +129,7 @@ pub fn generateCodeForFileInChunkJS(
     // The top-level directive must come first (the non-wrapped case is handled
     // by the chunk generation code, although only for the entry point)
     if (flags.wrap != .none and ast.flags.has_explicit_use_strict_directive and !chunk.isEntryPoint() and !output_format.isAlwaysStrictMode()) {
-        stmts.inside_wrapper_prefix.append(Stmt.alloc(S.Directive, .{
+        stmts.inside_wrapper_prefix.appendNonDependency(Stmt.alloc(S.Directive, .{
             .value = "use strict",
         }, Logger.Loc.Empty)) catch unreachable;
     }
@@ -153,10 +154,10 @@ pub fn generateCodeForFileInChunkJS(
 
         switch (flags.wrap) {
             .esm => {
-                stmts.outside_wrapper_prefix.appendSlice(stmts.inside_wrapper_suffix.items) catch unreachable;
+                stmts.appendSlice(.outside_wrapper_prefix, stmts.inside_wrapper_suffix.items) catch unreachable;
             },
             else => {
-                stmts.inside_wrapper_prefix.appendSlice(stmts.inside_wrapper_suffix.items) catch unreachable;
+                stmts.inside_wrapper_prefix.appendNonDependencySlice(stmts.inside_wrapper_suffix.items) catch unreachable;
             },
         }
 
@@ -291,11 +292,11 @@ pub fn generateCodeForFileInChunkJS(
     // evaluated (well, except for cyclic import scenarios). We need to preserve
     // these semantics even when modules imported via ES6 import statements end
     // up being CommonJS modules.
-    stmts.all_stmts.ensureUnusedCapacity(stmts.inside_wrapper_prefix.items.len + stmts.inside_wrapper_suffix.items.len) catch unreachable;
-    stmts.all_stmts.appendSliceAssumeCapacity(stmts.inside_wrapper_prefix.items);
+    stmts.all_stmts.ensureUnusedCapacity(stmts.allocator, stmts.inside_wrapper_prefix.stmts.items.len + stmts.inside_wrapper_suffix.items.len) catch unreachable;
+    stmts.all_stmts.appendSliceAssumeCapacity(stmts.inside_wrapper_prefix.stmts.items);
     stmts.all_stmts.appendSliceAssumeCapacity(stmts.inside_wrapper_suffix.items);
-    stmts.inside_wrapper_prefix.items.len = 0;
-    stmts.inside_wrapper_suffix.items.len = 0;
+    stmts.inside_wrapper_prefix.reset();
+    stmts.inside_wrapper_suffix.clearRetainingCapacity();
 
     if (c.options.minify_syntax) {
         mergeAdjacentLocalStmts(&stmts.all_stmts, temp_allocator);
@@ -308,7 +309,7 @@ pub fn generateCodeForFileInChunkJS(
         switch (flags.wrap) {
             .cjs => {
                 // Only include the arguments that are actually used
-                var args = std.ArrayList(G.Arg).initCapacity(
+                var args = std.array_list.Managed(G.Arg).initCapacity(
                     temp_allocator,
                     if (ast.flags.uses_module_ref or ast.flags.uses_exports_ref) 2 else 0,
                 ) catch unreachable;
@@ -365,7 +366,7 @@ pub fn generateCodeForFileInChunkJS(
                             },
                             Logger.Loc.Empty,
                         ),
-                        .args = bun.BabyList(Expr).init(cjs_args),
+                        .args = bun.BabyList(Expr).fromOwnedSlice(cjs_args),
                     },
                     Logger.Loc.Empty,
                 );
@@ -384,11 +385,12 @@ pub fn generateCodeForFileInChunkJS(
                         .value = commonjs_wrapper_definition,
                     };
 
-                    stmts.outside_wrapper_prefix.append(
+                    stmts.append(
+                        .outside_wrapper_prefix,
                         Stmt.alloc(
                             S.Local,
                             S.Local{
-                                .decls = G.Decl.List.init(decls),
+                                .decls = G.Decl.List.fromOwnedSlice(decls),
                             },
                             Logger.Loc.Empty,
                         ),
@@ -419,7 +421,7 @@ pub fn generateCodeForFileInChunkJS(
                                 ),
                                 .value = null,
                             },
-                        ) catch bun.outOfMemory();
+                        ) catch |err| bun.handleOom(err);
 
                         return Expr.initIdentifier(ref, loc);
                     }
@@ -446,7 +448,7 @@ pub fn generateCodeForFileInChunkJS(
                                         if (can_be_moved) {
                                             // if the value can be moved, move the decl directly to preserve destructuring
                                             // ie `const { main } = class { static main() {} }` => `var {main} = class { static main() {} }`
-                                            hoist.decls.append(hoist.allocator, decl.*) catch bun.outOfMemory();
+                                            bun.handleOom(hoist.decls.append(hoist.allocator, decl.*));
                                         } else {
                                             // if the value cannot be moved, add every destructuring key separately
                                             // ie `var { append } = { append() {} }` => `var append; __esm(() => ({ append } = { append() {} }))`
@@ -468,12 +470,12 @@ pub fn generateCodeForFileInChunkJS(
                                 break :stmt Stmt.allocateExpr(temp_allocator, value);
                             },
                             .s_function => {
-                                stmts.outside_wrapper_prefix.append(stmt) catch bun.outOfMemory();
+                                bun.handleOom(stmts.append(.outside_wrapper_prefix, stmt));
                                 continue;
                             },
                             .s_class => |class| stmt: {
                                 if (class.class.canBeMoved()) {
-                                    stmts.outside_wrapper_prefix.append(stmt) catch bun.outOfMemory();
+                                    bun.handleOom(stmts.append(.outside_wrapper_prefix, stmt));
                                     continue;
                                 }
 
@@ -498,11 +500,12 @@ pub fn generateCodeForFileInChunkJS(
                 }
 
                 if (hoist.decls.items.len > 0) {
-                    stmts.outside_wrapper_prefix.append(
+                    stmts.append(
+                        .outside_wrapper_prefix,
                         Stmt.alloc(
                             S.Local,
                             S.Local{
-                                .decls = G.Decl.List.fromList(hoist.decls),
+                                .decls = G.Decl.List.moveFromList(&hoist.decls),
                             },
                             Logger.Loc.Empty,
                         ),
@@ -516,7 +519,7 @@ pub fn generateCodeForFileInChunkJS(
                     bun.assert(!ast.wrapper_ref.isEmpty()); // js_parser's needsWrapperRef thought wrapper was not needed
 
                     // "__esm(() => { ... })"
-                    var esm_args = temp_allocator.alloc(Expr, 1) catch bun.outOfMemory();
+                    var esm_args = bun.handleOom(temp_allocator.alloc(Expr, 1));
                     esm_args[0] = Expr.init(E.Arrow, .{
                         .args = &.{},
                         .is_async = is_async,
@@ -529,10 +532,10 @@ pub fn generateCodeForFileInChunkJS(
                     // "var init_foo = __esm(...);"
                     const value = Expr.init(E.Call, .{
                         .target = Expr.initIdentifier(c.esm_runtime_ref, Logger.Loc.Empty),
-                        .args = bun.BabyList(Expr).init(esm_args),
+                        .args = bun.BabyList(Expr).fromOwnedSlice(esm_args),
                     }, Logger.Loc.Empty);
 
-                    var decls = temp_allocator.alloc(G.Decl, 1) catch bun.outOfMemory();
+                    var decls = bun.handleOom(temp_allocator.alloc(G.Decl, 1));
                     decls[0] = G.Decl{
                         .binding = Binding.alloc(
                             temp_allocator,
@@ -544,11 +547,12 @@ pub fn generateCodeForFileInChunkJS(
                         .value = value,
                     };
 
-                    stmts.outside_wrapper_prefix.append(
+                    stmts.append(
+                        .outside_wrapper_prefix,
                         Stmt.alloc(S.Local, .{
-                            .decls = G.Decl.List.init(decls),
+                            .decls = G.Decl.List.fromOwnedSlice(decls),
                         }, Logger.Loc.Empty),
-                    ) catch bun.outOfMemory();
+                    ) catch |err| bun.handleOom(err);
                 } else {
                     // // If this fails, then there will be places we reference
                     // // `init_foo` without it actually existing.
@@ -577,7 +581,8 @@ pub fn generateCodeForFileInChunkJS(
                             },
                         }, Logger.Loc.Empty);
 
-                        stmts.outside_wrapper_prefix.append(
+                        stmts.append(
+                            .outside_wrapper_prefix,
                             Stmt.alloc(S.Local, .{
                                 .decls = G.Decl.List.fromSlice(temp_allocator, &.{.{
                                     .binding = Binding.alloc(
@@ -588,9 +593,9 @@ pub fn generateCodeForFileInChunkJS(
                                         Logger.Loc.Empty,
                                     ),
                                     .value = value,
-                                }}) catch bun.outOfMemory(),
+                                }}) catch |err| bun.handleOom(err),
                             }, Logger.Loc.Empty),
-                        ) catch bun.outOfMemory();
+                        ) catch |err| bun.handleOom(err);
                     }
                 }
             },
@@ -603,10 +608,19 @@ pub fn generateCodeForFileInChunkJS(
     if (out_stmts.len == 0) {
         return .{
             .result = .{
-                .code = &[_]u8{},
+                .code = "",
                 .source_map = null,
             },
         };
+    }
+
+    // Collect top-level declarations from the converted statements.
+    // This is done here (after convertStmtsForChunk) rather than in
+    // postProcessJSChunk, because convertStmtsForChunk transforms the AST
+    // (e.g. export default expr → var, export stripping) and the converted
+    // statements reflect what actually gets printed.
+    if (decl_collector) |dc| {
+        dc.collectFromStmts(out_stmts, r, c);
     }
 
     return c.printCodeForFileInChunkJS(
@@ -624,7 +638,78 @@ pub fn generateCodeForFileInChunkJS(
     );
 }
 
-fn mergeAdjacentLocalStmts(stmts: *std.ArrayList(Stmt), allocator: std.mem.Allocator) void {
+pub const DeclCollector = struct {
+    decls: std.ArrayListUnmanaged(CompileResult.DeclInfo) = .{},
+    allocator: std.mem.Allocator,
+
+    const CompileResult = bun.bundle_v2.CompileResult;
+
+    /// Collect top-level declarations from **converted** statements (after
+    /// `convertStmtsForChunk`). At that point, export statements have already
+    /// been transformed:
+    /// - `s_export_default` → `s_local` / `s_function` / `s_class`
+    /// - `s_export_clause` → removed entirely
+    /// - `s_export_from` / `s_export_star` → removed or converted to `s_import`
+    ///
+    /// Remaining `s_import` statements (external, non-bundled) don't need
+    /// handling here; their bindings are recorded separately in
+    /// `postProcessJSChunk` by scanning the original AST import records.
+    pub fn collectFromStmts(self: *DeclCollector, stmts: []const Stmt, r: renamer.Renamer, c: *LinkerContext) void {
+        for (stmts) |stmt| {
+            switch (stmt.data) {
+                .s_local => |s| {
+                    const kind: CompileResult.DeclInfo.Kind = if (s.kind == .k_var) .declared else .lexical;
+                    for (s.decls.slice()) |decl| {
+                        self.collectFromBinding(decl.binding, kind, r, c);
+                    }
+                },
+                .s_function => |s| {
+                    if (s.func.name) |name_loc_ref| {
+                        if (name_loc_ref.ref) |name_ref| {
+                            self.addRef(name_ref, .lexical, r, c);
+                        }
+                    }
+                },
+                .s_class => |s| {
+                    if (s.class.class_name) |class_name| {
+                        if (class_name.ref) |name_ref| {
+                            self.addRef(name_ref, .lexical, r, c);
+                        }
+                    }
+                },
+                else => {},
+            }
+        }
+    }
+
+    fn collectFromBinding(self: *DeclCollector, binding: Binding, kind: CompileResult.DeclInfo.Kind, r: renamer.Renamer, c: *LinkerContext) void {
+        switch (binding.data) {
+            .b_identifier => |b| {
+                self.addRef(b.ref, kind, r, c);
+            },
+            .b_array => |b| {
+                for (b.items) |item| {
+                    self.collectFromBinding(item.binding, kind, r, c);
+                }
+            },
+            .b_object => |b| {
+                for (b.properties) |prop| {
+                    self.collectFromBinding(prop.value, kind, r, c);
+                }
+            },
+            .b_missing => {},
+        }
+    }
+
+    fn addRef(self: *DeclCollector, ref: Ref, kind: CompileResult.DeclInfo.Kind, r: renamer.Renamer, c: *LinkerContext) void {
+        const followed = c.graph.symbols.follow(ref);
+        const name = r.nameForSymbol(followed);
+        if (name.len == 0) return;
+        self.decls.append(self.allocator, .{ .name = name, .kind = kind }) catch return;
+    }
+};
+
+fn mergeAdjacentLocalStmts(stmts: *std.ArrayListUnmanaged(Stmt), allocator: std.mem.Allocator) void {
     if (stmts.items.len == 0)
         return;
 
@@ -642,12 +727,12 @@ fn mergeAdjacentLocalStmts(stmts: *std.ArrayList(Stmt), allocator: std.mem.Alloc
                     if (did_merge_with_previous_local) {
                         // Avoid O(n^2) behavior for repeated variable declarations
                         // Appending to this decls list is safe because did_merge_with_previous_local is true
-                        before.decls.append(allocator, after.decls.slice()) catch unreachable;
+                        before.decls.appendSlice(allocator, after.decls.slice()) catch unreachable;
                     } else {
                         // Append the declarations to the previous variable statement
                         did_merge_with_previous_local = true;
 
-                        var clone = std.ArrayList(G.Decl).initCapacity(allocator, before.decls.len + after.decls.len) catch unreachable;
+                        var clone = bun.BabyList(G.Decl).initCapacity(allocator, before.decls.len + after.decls.len) catch unreachable;
                         clone.appendSliceAssumeCapacity(before.decls.slice());
                         clone.appendSliceAssumeCapacity(after.decls.slice());
                         // we must clone instead of overwrite in-place incase the same S.Local is used across threads
@@ -656,7 +741,7 @@ fn mergeAdjacentLocalStmts(stmts: *std.ArrayList(Stmt), allocator: std.mem.Alloc
                             allocator,
                             S.Local,
                             S.Local{
-                                .decls = BabyList(G.Decl).fromList(clone),
+                                .decls = clone,
                                 .is_export = before.is_export,
                                 .was_commonjs_export = before.was_commonjs_export,
                                 .was_ts_import_equals = before.was_ts_import_equals,
@@ -677,33 +762,33 @@ fn mergeAdjacentLocalStmts(stmts: *std.ArrayList(Stmt), allocator: std.mem.Alloc
     stmts.items.len = end;
 }
 
-const bun = @import("bun");
-const BabyList = bun.BabyList;
-const strings = bun.strings;
-const LinkerContext = bun.bundle_v2.LinkerContext;
-const Index = bun.bundle_v2.Index;
-const Part = bun.bundle_v2.Part;
 const std = @import("std");
 
-const JSMeta = bun.bundle_v2.JSMeta;
-const JSAst = bun.bundle_v2.JSAst;
-const js_ast = bun.bundle_v2.js_ast;
-const Ref = bun.bundle_v2.js_ast.Ref;
+const bun = @import("bun");
+const BabyList = bun.BabyList;
 const Logger = bun.logger;
 const options = bun.options;
+const strings = bun.strings;
+
+const Chunk = bun.bundle_v2.Chunk;
+const Index = bun.bundle_v2.Index;
+const JSAst = bun.bundle_v2.JSAst;
+const JSMeta = bun.bundle_v2.JSMeta;
+const Part = bun.bundle_v2.Part;
+const PartRange = bun.bundle_v2.PartRange;
+const genericPathWithPrettyInitialized = bun.bundle_v2.genericPathWithPrettyInitialized;
 const js_printer = bun.bundle_v2.js_printer;
 const renamer = bun.bundle_v2.renamer;
-const Chunk = bun.bundle_v2.Chunk;
-const PartRange = bun.bundle_v2.PartRange;
+
+const LinkerContext = bun.bundle_v2.LinkerContext;
 const StmtList = LinkerContext.StmtList;
 
-const Stmt = js_ast.Stmt;
-const Expr = js_ast.Expr;
-const E = js_ast.E;
-const S = js_ast.S;
-const G = js_ast.G;
+const js_ast = bun.bundle_v2.js_ast;
 const B = js_ast.B;
-
 const Binding = js_ast.Binding;
-
-const genericPathWithPrettyInitialized = bun.bundle_v2.genericPathWithPrettyInitialized;
+const E = js_ast.E;
+const Expr = js_ast.Expr;
+const G = js_ast.G;
+const Ref = bun.bundle_v2.js_ast.Ref;
+const S = js_ast.S;
+const Stmt = js_ast.Stmt;

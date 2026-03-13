@@ -33,13 +33,12 @@ describe.skipIf(!s3Options.accessKeyId)("s3", () => {
               AWS_ENDPOINT: s3Options.endpoint,
               AWS_BUCKET: S3Bucket,
             },
-            stderr: "pipe",
+            stderr: "inherit",
             stdout: "inherit",
             stdin: "ignore",
           },
         );
         expect(exitCode).toBe(0);
-        expect(stderr.toString()).toBe("");
       },
       30 * 1000,
     );

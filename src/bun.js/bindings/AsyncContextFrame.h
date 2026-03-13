@@ -57,8 +57,10 @@ public:
             [](auto& spaces, auto&& space) { spaces.m_subspaceForAsyncContextFrame = std::forward<decltype(space)>(space); });
     }
 
-    AsyncContextFrame(JSC::VM& vm, JSC::Structure* structure)
+    AsyncContextFrame(JSC::VM& vm, JSC::Structure* structure, JSC::JSValue callback_, JSC::JSValue context_)
         : JSNonFinalObject(vm, structure)
+        , callback(callback_, JSC::WriteBarrierEarlyInit)
+        , context(context_, JSC::WriteBarrierEarlyInit)
     {
     }
 };

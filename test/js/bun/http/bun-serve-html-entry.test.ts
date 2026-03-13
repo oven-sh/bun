@@ -38,7 +38,7 @@ async function getServerUrl(process: Subprocess) {
   return serverUrl;
 }
 
-test("bun ./index.html", async () => {
+test.concurrent("bun ./index.html", async () => {
   const dir = tempDirWithFiles("html-entry-test", {
     "index.html": /*html*/ `
       <!DOCTYPE html>
@@ -144,7 +144,7 @@ test("bun ./index.html", async () => {
   }
 });
 
-test("bun ./index.html ./about.html", async () => {
+test.concurrent("bun ./index.html ./about.html", async () => {
   const dir = tempDirWithFiles("html-multiple-entries-test", {
     "index.html": /*html*/ `
       <!DOCTYPE html>
@@ -294,7 +294,7 @@ env = "BUN_PUBLIC_*"
   }
 });
 
-test("bun *.html", async () => {
+test.concurrent("bun *.html", async () => {
   const dir = tempDirWithFiles("html-glob-test", {
     "index.html": /*html*/ `
       <!DOCTYPE html>
@@ -488,7 +488,7 @@ test("bun *.html", async () => {
   }
 });
 
-test("bun serve svg files with correct Content-Type", async () => {
+test.concurrent("bun serve svg files with correct Content-Type", async () => {
   const dir = tempDirWithFiles("svg-content-type-test", {
     "index.html": /*html*/ `
       <!DOCTYPE html>
@@ -544,7 +544,7 @@ test("bun serve svg files with correct Content-Type", async () => {
   }
 });
 
-test("bun serve files with correct Content-Type headers", async () => {
+test.concurrent("bun serve files with correct Content-Type headers", async () => {
   const dir = tempDirWithFiles("content-type-test", {
     "index.html": /*html*/ `
       <!DOCTYPE html>
@@ -633,4 +633,43 @@ test("bun serve files with correct Content-Type headers", async () => {
   } finally {
     // The process will be automatically cleaned up by 'await using'
   }
+});
+
+test("importing bun:main from HTML entry preload does not crash", async () => {
+  const dir = tempDirWithFiles("html-entry-bun-main", {
+    "index.html": /*html*/ `
+      <!DOCTYPE html>
+      <html>
+        <head><title>Test</title></head>
+        <body><h1>Hello</h1></body>
+      </html>
+    `,
+    "preload.mjs": /*js*/ `
+      try {
+        await import("bun:main");
+      } catch {}
+      // Signal that preload ran successfully without crashing
+      console.log("PRELOAD_OK");
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--preload", "./preload.mjs", "index.html", "--port=0"],
+    env: bunEnv,
+    cwd: dir,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const decoder = new TextDecoder();
+  let text = "";
+  for await (const chunk of proc.stdout) {
+    text += decoder.decode(chunk, { stream: true });
+    if (text.includes("http://")) break;
+  }
+
+  expect(text).toContain("PRELOAD_OK");
+
+  proc.kill();
+  await proc.exited;
 });

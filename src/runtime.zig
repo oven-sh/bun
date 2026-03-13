@@ -1,15 +1,3 @@
-const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const Environment = bun.Environment;
-const strings = bun.strings;
-
-const std = @import("std");
-const Schema = @import("./api/schema.zig");
-const Ref = @import("ast/base.zig").Ref;
-const JSAst = bun.JSAst;
-
-const Api = Schema.Api;
 fn embedDebugFallback(comptime msg: []const u8, comptime code: []const u8) []const u8 {
     const FallbackMessage = struct {
         pub var has_printed = false;
@@ -27,13 +15,13 @@ pub const Fallback = struct {
     pub const HTMLBackendTemplate = @embedFile("./fallback-backend.html");
 
     const Base64FallbackMessage = struct {
-        msg: *const Api.FallbackMessageContainer,
+        msg: *const api.FallbackMessageContainer,
         allocator: std.mem.Allocator,
-        pub fn format(this: Base64FallbackMessage, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-            var bb = std.ArrayList(u8).init(this.allocator);
+        pub fn format(this: Base64FallbackMessage, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+            var bb = std.array_list.Managed(u8).init(this.allocator);
             defer bb.deinit();
             const bb_writer = bb.writer();
-            const Encoder = Schema.Writer(@TypeOf(bb_writer));
+            const Encoder = schema.Writer(@TypeOf(bb_writer));
             var encoder = Encoder.init(bb_writer);
             this.msg.encode(&encoder) catch {};
 
@@ -97,7 +85,7 @@ pub const Fallback = struct {
 
     pub fn render(
         allocator: std.mem.Allocator,
-        msg: *const Api.FallbackMessageContainer,
+        msg: *const api.FallbackMessageContainer,
         preload: string,
         entry_point: string,
         comptime WriterType: type,
@@ -119,7 +107,7 @@ pub const Fallback = struct {
 
     pub fn renderBackend(
         allocator: std.mem.Allocator,
-        msg: *const Api.FallbackMessageContainer,
+        msg: *const api.FallbackMessageContainer,
         comptime WriterType: type,
         writer: WriterType,
     ) !void {
@@ -180,6 +168,9 @@ pub const Runtime = struct {
 
         minify_syntax: bool = false,
         minify_identifiers: bool = false,
+        /// Preserve function/class names during minification (CLI: --keep-names)
+        minify_keep_names: bool = false,
+        minify_whitespace: bool = false,
         dead_code_elimination: bool = true,
 
         set_breakpoint_on_first_line: bool = false,
@@ -210,15 +201,51 @@ pub const Runtime = struct {
         unwrap_commonjs_to_esm: bool = false,
 
         emit_decorator_metadata: bool = false,
+        standard_decorators: bool = false,
 
         /// If true and if the source is transpiled as cjs, don't wrap the module.
         /// This is used for `--print` entry points so we can get the result.
         remove_cjs_module_wrapper: bool = false,
 
-        runtime_transpiler_cache: ?*bun.JSC.RuntimeTranspilerCache = null,
+        runtime_transpiler_cache: ?*bun.jsc.RuntimeTranspilerCache = null,
 
         // TODO: make this a bitset of all unsupported features
         lower_using: bool = true,
+
+        /// Feature flags for dead-code elimination via `import { feature } from "bun:bundle"`
+        /// When `feature("FLAG_NAME")` is called, it returns true if FLAG_NAME is in this set.
+        bundler_feature_flags: *const bun.StringSet = &empty_bundler_feature_flags,
+
+        /// REPL mode: transforms code for interactive evaluation
+        /// - Wraps lone object literals `{...}` in parentheses
+        /// - Hoists variable declarations for REPL persistence
+        /// - Wraps last expression in { value: expr } for result capture
+        /// - Assigns functions to context for persistence
+        repl_mode: bool = false,
+
+        pub const empty_bundler_feature_flags: bun.StringSet = bun.StringSet.initComptime();
+
+        /// Initialize bundler feature flags for dead-code elimination via `import { feature } from "bun:bundle"`.
+        /// Returns a pointer to a StringSet containing the enabled flags, or the empty set if no flags are provided.
+        /// Keys are kept sorted so iteration order is deterministic (for RuntimeTranspilerCache hashing).
+        pub fn initBundlerFeatureFlags(allocator: std.mem.Allocator, feature_flags: []const []const u8) *const bun.StringSet {
+            if (feature_flags.len == 0) {
+                return &empty_bundler_feature_flags;
+            }
+
+            const set = bun.handleOom(allocator.create(bun.StringSet));
+            set.* = bun.StringSet.init(allocator);
+            for (feature_flags) |flag| {
+                bun.handleOom(set.insert(flag));
+            }
+            set.map.sort(struct {
+                keys: []const []const u8,
+                pub fn lessThan(ctx: @This(), a: usize, b: usize) bool {
+                    return std.mem.lessThan(u8, ctx.keys[a], ctx.keys[b]);
+                }
+            }{ .keys = set.map.keys() });
+            return set;
+        }
 
         const hash_fields_for_runtime_transpiler = .{
             .top_level_await,
@@ -228,13 +255,16 @@ pub const Runtime = struct {
             .commonjs_named_exports,
             .minify_syntax,
             .minify_identifiers,
+            .minify_keep_names,
             .dead_code_elimination,
             .set_breakpoint_on_first_line,
             .trim_unused_imports,
             .dont_bundle_twice,
             .commonjs_at_runtime,
             .emit_decorator_metadata,
+            .standard_decorators,
             .lower_using,
+            .repl_mode,
 
             // note that we do not include .inject_jest_globals, as we bail out of the cache entirely if this is true
         };
@@ -248,6 +278,15 @@ pub const Runtime = struct {
             }
 
             hasher.update(std.mem.asBytes(&bools));
+
+            // Hash --feature flags. These directly affect transpiled output via
+            // feature("NAME") replacement in visitExpr.zig. When empty, we add
+            // nothing to the hash so existing cache entries remain valid.
+            // Keys are sorted in initBundlerFeatureFlags so flag order on the CLI doesn't matter.
+            for (this.bundler_feature_flags.keys()) |flag| {
+                hasher.update(flag);
+                hasher.update("\x00");
+            }
         }
 
         pub fn shouldUnwrapRequire(this: *const Features, package_name: string) bool {
@@ -283,6 +322,15 @@ pub const Runtime = struct {
             /// - Ban "use server" functions since it is on the client-side
             client_side,
 
+            pub fn isServerSide(mode: ServerComponentsMode) bool {
+                return switch (mode) {
+                    .wrap_exports_for_server_reference,
+                    .wrap_anon_server_functions,
+                    => true,
+                    else => false,
+                };
+            }
+
             pub fn wrapsExports(mode: ServerComponentsMode) bool {
                 return switch (mode) {
                     .wrap_exports_for_client_reference,
@@ -312,10 +360,21 @@ pub const Runtime = struct {
         __legacyDecorateClassTS: ?Ref = null,
         __legacyDecorateParamTS: ?Ref = null,
         __legacyMetadataTS: ?Ref = null,
+        __publicField: ?Ref = null,
+        __privateIn: ?Ref = null,
+        __privateGet: ?Ref = null,
+        __privateAdd: ?Ref = null,
+        __privateSet: ?Ref = null,
+        __privateMethod: ?Ref = null,
+        __decoratorStart: ?Ref = null,
+        __decoratorMetadata: ?Ref = null,
+        __runInitializers: ?Ref = null,
+        __decorateElement: ?Ref = null,
         @"$$typeof": ?Ref = null,
         __using: ?Ref = null,
         __callDispose: ?Ref = null,
         __jsonParse: ?Ref = null,
+        __promiseAll: ?Ref = null,
 
         pub const all = [_][]const u8{
             "__name",
@@ -328,10 +387,21 @@ pub const Runtime = struct {
             "__legacyDecorateClassTS",
             "__legacyDecorateParamTS",
             "__legacyMetadataTS",
+            "__publicField",
+            "__privateIn",
+            "__privateGet",
+            "__privateAdd",
+            "__privateSet",
+            "__privateMethod",
+            "__decoratorStart",
+            "__decoratorMetadata",
+            "__runInitializers",
+            "__decorateElement",
             "$$typeof",
             "__using",
             "__callDispose",
             "__jsonParse",
+            "__promiseAll",
         };
         const all_sorted: [all.len]string = brk: {
             @setEvalBranchQuota(1000000);
@@ -348,6 +418,7 @@ pub const Runtime = struct {
         /// When generating the list of runtime imports, we sort it for determinism.
         /// This is a lookup table so we don't need to resort the strings each time
         pub const all_sorted_index = brk: {
+            @setEvalBranchQuota(1000000);
             var out: [all.len]usize = undefined;
             for (all, 0..) |name, i| {
                 for (all_sorted, 0..) |cmp, j| {
@@ -446,3 +517,18 @@ pub const Runtime = struct {
         }
     };
 };
+
+const string = []const u8;
+
+const std = @import("std");
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Output = bun.Output;
+const strings = bun.strings;
+
+const JSAst = bun.ast;
+const Ref = bun.ast.Ref;
+
+const schema = bun.schema;
+const api = schema.api;

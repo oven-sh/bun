@@ -336,7 +336,7 @@ pub const Map = struct {
             Output.prettyln("\n\n-- Source ID: {d} ({d} symbols) --\n\n", .{ i, symbols.len });
             for (symbols.slice(), 0..) |symbol, inner_index| {
                 Output.prettyln(
-                    " name: {s}\n  tag: {s}\n       {any}\n",
+                    " name: {s}\n  tag: {s}\n       {f}\n",
                     .{
                         symbol.original_name, @tagName(symbol.kind),
                         if (symbol.hasLink()) symbol.link else Ref{
@@ -412,7 +412,7 @@ pub const Map = struct {
     }
 
     pub fn initWithOneList(list: List) Map {
-        const baby_list = BabyList(List).init((&list)[0..1]);
+        const baby_list = BabyList(List).fromBorrowedSliceDangerous((&list)[0..1]);
         return initList(baby_list);
     }
 
@@ -468,7 +468,10 @@ pub inline fn isHoisted(self: *const Symbol) bool {
     return Symbol.isKindHoisted(self.kind);
 }
 
-// @sortImports
+pub const isKindFunction = Symbol.Kind.isFunction;
+pub const isKindHoisted = Symbol.Kind.isHoisted;
+pub const isKindHoistedOrFunction = Symbol.Kind.isHoistedOrFunction;
+pub const isKindPrivate = Symbol.Kind.isPrivate;
 
 const std = @import("std");
 
@@ -476,14 +479,9 @@ const bun = @import("bun");
 const BabyList = bun.BabyList;
 const Output = bun.Output;
 
-const js_ast = bun.js_ast;
+const js_ast = bun.ast;
 const DeclaredSymbol = js_ast.DeclaredSymbol;
 const G = js_ast.G;
 const ImportItemStatus = js_ast.ImportItemStatus;
 const Ref = js_ast.Ref;
 const Symbol = js_ast.Symbol;
-
-pub const isKindFunction = Symbol.Kind.isFunction;
-pub const isKindHoisted = Symbol.Kind.isHoisted;
-pub const isKindHoistedOrFunction = Symbol.Kind.isHoistedOrFunction;
-pub const isKindPrivate = Symbol.Kind.isPrivate;

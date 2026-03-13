@@ -357,7 +357,7 @@ function fromObject(obj) {
   }
 
   if (obj.length !== undefined) {
-    if (typeof obj.length !== "number" || numberIsNaN(obj.length)) {
+    if (typeof obj.length !== "number" || Number.isNaN(obj.length)) {
       return createBuffer(0);
     }
     return fromArrayLike(obj);
@@ -659,7 +659,7 @@ Buffer.prototype.equals = function equals(b) {
 
 Buffer.prototype.inspect = function inspect() {
   let str = "";
-  const max = exports.INSPECT_MAX_BYTES;
+  const max = INSPECT_MAX_BYTES;
   str = this.toString("hex", 0, max)
     .replace(/(.{2})/g, "$1 ")
     .trim();
@@ -886,7 +886,7 @@ function hexWrite(buf, string, offset, length) {
   let i;
   for (i = 0; i < length; ++i) {
     const parsed = parseInt(string.substr(i * 2, 2), 16);
-    if (numberIsNaN(parsed)) return i;
+    if (Number.isNaN(parsed)) return i;
     buf[offset + i] = parsed;
   }
   return i;

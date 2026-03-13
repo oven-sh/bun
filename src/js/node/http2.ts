@@ -51,9 +51,9 @@ type Http2ConnectOptions = {
 const TLSSocket = tls.TLSSocket;
 const Socket = net.Socket;
 const EventEmitter = require("node:events");
-const { Duplex } = require("node:stream");
-
+const { Duplex } = Stream;
 const { SafeArrayIterator, SafeSet } = require("internal/primordials");
+const { promisify } = require("internal/promisify");
 
 const RegExpPrototypeExec = RegExp.prototype.exec;
 const ObjectAssign = Object.assign;
@@ -64,6 +64,7 @@ const StringPrototypeTrim = String.prototype.trim;
 const ArrayPrototypePush = Array.prototype.push;
 const StringPrototypeToLowerCase = String.prototype.toLowerCase;
 const StringPrototypeIncludes = String.prototype.includes;
+const StringPrototypeStartsWith = String.prototype.startsWith;
 const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
 const DatePrototypeToUTCString = Date.prototype.toUTCString;
 const DatePrototypeGetMilliseconds = Date.prototype.getMilliseconds;
@@ -72,6 +73,7 @@ const H2FrameParser = $zig("h2_frame_parser.zig", "H2FrameParserConstructor");
 const assertSettings = $newZigFunction("h2_frame_parser.zig", "jsAssertSettings", 1);
 const getPackedSettings = $newZigFunction("h2_frame_parser.zig", "jsGetPackedSettings", 1);
 const getUnpackedSettings = $newZigFunction("h2_frame_parser.zig", "jsGetUnpackedSettings", 1);
+const { upgradeRawSocketToH2 } = require("node:_http2_upgrade");
 
 const sensitiveHeaders = Symbol.for("nodejs.http2.sensitiveHeaders");
 const bunHTTP2Native = Symbol.for("::bunhttp2native::");
@@ -470,8 +472,8 @@ class Http2ServerResponse extends Stream {
       sendDate: true,
       statusCode: HTTP_STATUS_OK,
     };
-    this[kHeaders] = { __proto__: null };
-    this[kTrailers] = { __proto__: null };
+    this[kHeaders] = Object.create(null);
+    this[kTrailers] = Object.create(null);
     this[kStream] = stream;
     stream[kResponse] = this;
     this.writable = true;
@@ -581,7 +583,7 @@ class Http2ServerResponse extends Stream {
   }
 
   getHeaders() {
-    const headers = { __proto__: null };
+    const headers = Object.create(null);
     return ObjectAssign(headers, this[kHeaders]);
   }
 
@@ -869,7 +871,7 @@ class Http2ServerResponse extends Stream {
 
   writeEarlyHints(hints) {
     validateObject(hints, "hints");
-    const headers = { __proto__: null };
+    const headers = Object.create(null);
     const linkHeaderValue = validateLinkHeaderValue(hints.link);
     for (const key of ObjectKeys(hints)) {
       if (key !== "link") {
@@ -1994,10 +1996,10 @@ class Http2Stream extends Duplex {
       typeof callback == "function" && callback();
       return;
     }
-    if (!chunk) {
-      chunk = Buffer.alloc(0);
-    }
     this[bunHTTP2StreamStatus] = status | StreamState.EndedCalled;
+    // Don't create an empty buffer for end() without data - let the Duplex stream
+    // handle it naturally (just calls _final without _write for empty data).
+    // Creating an empty buffer here causes an extra empty DATA frame to be sent.
     return super.end(chunk, encoding, callback);
   }
 
@@ -2725,11 +2727,9 @@ class ServerHttp2Session extends Http2Session {
       return -1;
     },
   };
-
   #onRead(data: Buffer) {
     this.#parser?.read(data);
   }
-
   #onClose() {
     const parser = this.#parser;
     if (parser) {
@@ -2739,11 +2739,9 @@ class ServerHttp2Session extends Http2Session {
     }
     this.close();
   }
-
   #onError(error: Error) {
     this.destroy(error);
   }
-
   #onTimeout() {
     const parser = this.#parser;
     if (parser) {
@@ -2751,14 +2749,12 @@ class ServerHttp2Session extends Http2Session {
     }
     this.emit("timeout");
   }
-
   #onDrain() {
     const parser = this.#parser;
     if (parser) {
       parser.flush();
     }
   }
-
   altsvc(alt: string, originOrStream) {
     const MAX_LENGTH = 16382;
     const parser = this.#parser;
@@ -2972,7 +2968,10 @@ class ServerHttp2Session extends Http2Session {
     return this.#parser?.setLocalWindowSize?.(windowSize);
   }
 
-  settings(settings: Settings, callback) {
+  settings(settings: Settings, callback?) {
+    if (callback !== undefined && typeof callback !== "function") {
+      throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
+    }
     this.#pendingSettingsAck = true;
     this.#parser?.settings(settings);
     if (typeof callback === "function") {
@@ -3044,6 +3043,7 @@ class ClientHttp2Session extends Http2Session {
   #socket_proxy: Proxy<TLSSocket | Socket>;
   #parser: typeof H2FrameParser | null;
   #url: URL;
+  #authority: string;
   #alpnProtocol: string | undefined = undefined;
   #localSettings: Settings | null = {
     headerTableSize: 4096,
@@ -3410,7 +3410,10 @@ class ClientHttp2Session extends Http2Session {
     return this.#parser?.getCurrentState();
   }
 
-  settings(settings: Settings, callback) {
+  settings(settings: Settings, callback?) {
+    if (callback !== undefined && typeof callback !== "function") {
+      throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
+    }
     this.#pendingSettingsAck = true;
     this.#parser?.settings(settings);
     if (typeof callback === "function") {
@@ -3460,6 +3463,19 @@ class ClientHttp2Session extends Http2Session {
       if (host[0] === "[") host = host.slice(1, -1);
     } else if (url.host) {
       host = url.host;
+    }
+
+    // Store computed authority like Node.js does (session[kAuthority] = `${host}:${port}`)
+    // Only include port if non-default (RFC 7540: omit default ports 443 for https, 80 for http)
+    const isDefaultPort = (protocol === "https:" && port === 443) || (protocol === "http:" && port === 80);
+    if (isDefaultPort) {
+      // IPv6 literals need brackets even without port (e.g., [::1])
+      const needsBrackets = StringPrototypeIncludes.$call(host, ":") && !StringPrototypeStartsWith.$call(host, "[");
+      this.#authority = needsBrackets ? `[${host}]` : host;
+    } else {
+      // IPv6 literals need brackets when appending port (e.g., [::1]:8080)
+      const needsBrackets = StringPrototypeIncludes.$call(host, ":") && !StringPrototypeStartsWith.$call(host, "[");
+      this.#authority = needsBrackets ? `[${host}]:${port}` : `${host}:${port}`;
     }
 
     function onConnect() {
@@ -3589,7 +3605,8 @@ class ClientHttp2Session extends Http2Session {
 
       let authority = headers[":authority"];
       if (!authority) {
-        authority = url.host;
+        // Use precomputed authority (like Node.js's session[kAuthority])
+        authority = this.#authority;
         if (!headers["host"]) {
           headers[":authority"] = authority;
         }
@@ -3789,7 +3806,7 @@ class Http2Server extends net.Server {
       options = {};
     }
     options = initializeOptions(options);
-    super(options, connectionListener);
+    super(options);
     this[kSessions] = new SafeSet();
 
     this.setMaxListeners(0);
@@ -3800,11 +3817,20 @@ class Http2Server extends net.Server {
     }
   }
 
+  emit(event: string, ...args: any[]) {
+    if (event === "connection") {
+      // TODO: implement this at net/tls level to allow to inject socket in the server
+      // this works for now for Http2Server
+      super.prependOnceListener("connection", connectionListener);
+    }
+    return super.emit(event, ...args);
+  }
   setTimeout(ms, callback) {
     this.timeout = ms;
     if (typeof callback === "function") {
       this.on("timeout", callback);
     }
+    return this;
   }
   updateSettings(settings) {
     assertSettings(settings);
@@ -3856,6 +3882,7 @@ Http2Server.prototype[EventEmitter.captureRejectionSymbol] = function (err, even
 function onErrorSecureServerSession(err, socket) {
   if (!this.emit("clientError", err, socket)) socket.destroy(err);
 }
+
 function emitFrameErrorEventNT(stream, frameType, errorCode) {
   stream.emit("frameError", frameType, errorCode);
 }
@@ -3893,11 +3920,21 @@ class Http2SecureServer extends tls.Server {
     }
     this.on("tlsClientError", onErrorSecureServerSession);
   }
+  emit(event: string, ...args: any[]) {
+    if (event === "connection") {
+      const socket = args[0];
+      if (socket && !(socket instanceof TLSSocket)) {
+        return upgradeRawSocketToH2(connectionListener, this, socket);
+      }
+    }
+    return super.emit(event, ...args);
+  }
   setTimeout(ms, callback) {
     this.timeout = ms;
     if (typeof callback === "function") {
       this.on("timeout", callback);
     }
+    return this;
   }
   updateSettings(settings) {
     assertSettings(settings);
@@ -3921,6 +3958,19 @@ function getDefaultSettings() {
   // return default settings
   return getUnpackedSettings();
 }
+
+Object.defineProperty(connect, promisify.custom, {
+  __proto__: null,
+  value: function (authority, options) {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    const server = connect(authority, options, () => {
+      server.removeListener("error", reject);
+      return resolve(server);
+    });
+    server.once("error", reject);
+    return promise;
+  },
+});
 
 export default {
   constants,

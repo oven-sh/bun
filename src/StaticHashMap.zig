@@ -1,13 +1,5 @@
 // https://github.com/lithdew/rheia/blob/162293d0f0e8d6572a8954c0add83f13f76b3cc6/hash_map.zig
 // Apache License 2.0
-const std = @import("std");
-
-const mem = std.mem;
-const math = std.math;
-const testing = std.testing;
-
-const bun = @import("bun");
-const assert = bun.assert;
 
 pub fn AutoHashMap(comptime K: type, comptime V: type, comptime max_load_percentage: comptime_int) type {
     return HashMap(K, V, std.hash_map.AutoContext(K), max_load_percentage);
@@ -35,10 +27,8 @@ pub fn StaticHashMap(comptime K: type, comptime V: type, comptime Context: type,
                 return self.hash == empty_hash;
             }
 
-            pub fn format(self: Entry, comptime layout: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-                _ = layout;
-                _ = options;
-                try std.fmt.format(writer, "(hash: {}, key: {}, value: {})", .{ self.hash, self.key, self.value });
+            pub fn format(self: Entry, writer: *std.Io.Writer) !void {
+                try writer.print("(hash: {}, key: {}, value: {})", .{ self.hash, self.key, self.value });
             }
         };
 
@@ -87,10 +77,8 @@ pub fn HashMap(comptime K: type, comptime V: type, comptime Context: type, compt
                 return self.hash == empty_hash;
             }
 
-            pub fn format(self: Entry, comptime layout: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-                _ = layout;
-                _ = options;
-                try std.fmt.format(writer, "(hash: {}, key: {}, value: {})", .{ self.hash, self.key, self.value });
+            pub fn format(self: Entry, writer: *std.Io.Writer) !void {
+                try writer.print("(hash: {}, key: {}, value: {})", .{ self.hash, self.key, self.value });
             }
         };
 
@@ -363,10 +351,8 @@ pub fn SortedHashMap(comptime V: type, comptime max_load_percentage: comptime_in
                 return cmp(self.hash, empty_hash) == .eq;
             }
 
-            pub fn format(self: Entry, comptime layout: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-                _ = layout;
-                _ = options;
-                try std.fmt.format(writer, "(hash: {}, value: {})", .{ std.fmt.fmtSliceHexLower(mem.asBytes(&self.hash)), self.value });
+            pub fn format(self: Entry, writer: *std.Io.Writer) !void {
+                try writer.print("(hash: {x}, value: {})", .{ mem.asBytes(&self.hash), self.value });
             }
         };
 
@@ -785,3 +771,11 @@ test "SortedHashMap: collision test" {
     try testing.expectEqual(@as(usize, 1), map.delete(prefix ++ [_]u8{1}).?);
     try testing.expectEqual(@as(usize, 2), map.delete(prefix ++ [_]u8{2}).?);
 }
+
+const bun = @import("bun");
+const assert = bun.assert;
+
+const std = @import("std");
+const math = std.math;
+const mem = std.mem;
+const testing = std.testing;

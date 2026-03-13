@@ -1,6 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-
 pub const css = @import("../css_parser.zig");
 
 const SmallList = css.SmallList;
@@ -151,29 +148,29 @@ pub const Animation = struct {
         };
     }
 
-    pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
+    pub fn toCss(this: *const @This(), dest: *Printer) PrintErr!void {
         switch (this.name) {
             .none => {},
             inline .ident, .string => |name| {
                 const name_str = if (this.name == .ident) name.v else name;
 
                 if (!this.duration.isZero() or !this.delay.isZero()) {
-                    try this.duration.toCss(W, dest);
+                    try this.duration.toCss(dest);
                     try dest.writeChar(' ');
                 }
 
                 if (!this.timing_function.isEase() or EasingFunction.isIdent(name_str)) {
-                    try this.timing_function.toCss(W, dest);
+                    try this.timing_function.toCss(dest);
                     try dest.writeChar(' ');
                 }
 
                 if (!this.delay.isZero()) {
-                    try this.delay.toCss(W, dest);
+                    try this.delay.toCss(dest);
                     try dest.writeChar(' ');
                 }
 
                 if (!this.iteration_count.eql(&AnimationIterationCount.default()) or bun.strings.eqlCaseInsensitiveASCII(name_str, "infinite")) {
-                    try this.iteration_count.toCss(W, dest);
+                    try this.iteration_count.toCss(dest);
                     try dest.writeChar(' ');
                 }
 
@@ -183,14 +180,14 @@ pub const Animation = struct {
                     name_str,
                     AnimationDirection.parse,
                 ).isOk()) {
-                    try this.direction.toCss(W, dest);
+                    try this.direction.toCss(dest);
                     try dest.writeChar(' ');
                 }
 
                 if (!this.fill_mode.eql(&AnimationFillMode.default()) or
                     (!bun.strings.eqlCaseInsensitiveASCII(name_str, "none") and css.parse_utility.parseString(dest.allocator, AnimationFillMode, name_str, AnimationFillMode.parse).isOk()))
                 {
-                    try this.fill_mode.toCss(W, dest);
+                    try this.fill_mode.toCss(dest);
                     try dest.writeChar(' ');
                 }
 
@@ -200,17 +197,17 @@ pub const Animation = struct {
                     name_str,
                     AnimationPlayState.parse,
                 ).isOk()) {
-                    try this.play_state.toCss(W, dest);
+                    try this.play_state.toCss(dest);
                     try dest.writeChar(' ');
                 }
             },
         }
 
-        try this.name.toCss(W, dest);
+        try this.name.toCss(dest);
 
         if (!this.name.eql(&AnimationName.none) and !this.timeline.eql(&AnimationTimeline.default())) {
             try dest.writeChar(' ');
-            try this.timeline.toCss(W, dest);
+            try this.timeline.toCss(dest);
         }
     }
 };
@@ -235,7 +232,7 @@ pub const AnimationName = union(enum) {
         return css.implementEql(@This(), lhs, rhs);
     }
 
-    pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
+    pub fn toCss(this: *const This, dest: *Printer) PrintErr!void {
         const css_module_animation_enabled = if (dest.css_module) |css_module|
             css_module.config.animation
         else
@@ -249,7 +246,7 @@ pub const AnimationName = union(enum) {
                         css_module.getReference(dest.allocator, s.v, dest.loc.source_index);
                     }
                 }
-                return s.toCssWithOptions(W, dest, css_module_animation_enabled);
+                return s.toCssWithOptions(dest, css_module_animation_enabled);
             },
             .string => |s| {
                 if (css_module_animation_enabled) {
@@ -513,3 +510,6 @@ pub const TimelineRangeName = enum {
     /// Represents the range during which the principal box crosses the start border edge.
     exit_crossing,
 };
+
+const bun = @import("bun");
+const std = @import("std");

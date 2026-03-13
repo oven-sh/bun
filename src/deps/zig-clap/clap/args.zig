@@ -1,10 +1,3 @@
-const std = @import("std");
-
-const debug = std.debug;
-const mem = std.mem;
-const process = std.process;
-const testing = std.testing;
-
 /// An example of what methods should be implemented on an arg iterator.
 pub const ExampleArgIterator = struct {
     const Error = error{};
@@ -47,7 +40,6 @@ test "SliceIterator" {
     }
 }
 
-const bun = @import("bun");
 /// An argument iterator which wraps the ArgIterator in ::std.
 /// On windows, this iterator allocates.
 pub const OsIterator = struct {
@@ -112,7 +104,7 @@ pub const ShellIterator = struct {
         // Whenever possible, this iterator will return slices into `str` instead of
         // allocating. Sometimes this is not possible, for example, escaped characters
         // have be be unescape, so we need to allocate in this case.
-        var list = std.ArrayList(u8).init(&iter.arena.allocator);
+        var list = std.array_list.Managed(u8).init(&iter.arena.allocator);
         var start: usize = 0;
         var state: enum {
             skip_whitespace,
@@ -259,7 +251,7 @@ pub const ShellIterator = struct {
         }
     }
 
-    fn result(iter: *ShellIterator, start: usize, end: usize, list: *std.ArrayList(u8)) Error!?[]const u8 {
+    fn result(iter: *ShellIterator, start: usize, end: usize, list: *std.array_list.Managed(u8)) Error!?[]const u8 {
         const res = iter.str[start..end];
 
         // If we already have something in `list` that means that we could not
@@ -346,3 +338,11 @@ test "ShellIterator" {
     testShellIteratorErr("\"a\\", error.QuoteNotClosed);
     testShellIteratorErr("a\\", error.DanglingEscape);
 }
+
+const bun = @import("bun");
+
+const std = @import("std");
+const debug = std.debug;
+const mem = std.mem;
+const process = std.process;
+const testing = std.testing;

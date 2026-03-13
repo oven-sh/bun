@@ -41,6 +41,23 @@ describe("bundler", () => {
     "zlib": "polyfill",
   };
 
+  itBundled("browser/NodeBuffer#21522", {
+    files: {
+      "/entry.js": /* js */ `
+        import { Buffer } from "node:buffer";
+        const x = Buffer.alloc(5);
+        x.write("68656c6c6f", "hex");
+        console.log(x);
+      `,
+    },
+    target: "browser",
+    run: {
+      stdout: "<Buffer 68 65 6c 6c 6f>",
+    },
+    onAfterBundle(api) {
+      api.expectFile("out.js").not.toInclude("import ");
+    },
+  });
   itBundled("browser/NodeBuffer#12272", {
     files: {
       "/entry.js": /* js */ `

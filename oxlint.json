@@ -78,6 +78,12 @@
         "no-empty-file": "off",
         "no-unnecessary-await": "off"
       }
+    },
+    {
+      "files": ["src/js/builtins/**"],
+      "rules": {
+        "no-unused-expressions": "off"
+      }
     }
   ]
 }

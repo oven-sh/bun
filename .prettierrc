@@ -19,6 +19,12 @@
       "options": {
         "printWidth": 80
       }
+    },
+    {
+      "files": ["src/codegen/bindgenv2/**/*.ts", "*.bindv2.ts"],
+      "options": {
+        "printWidth": 100
+      }
     }
   ]
 }

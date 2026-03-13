@@ -12,7 +12,7 @@ pub fn BodyReaderMixin(
     onError: fn (*Wrap) void,
 ) type {
     return struct {
-        body: std.ArrayList(u8),
+        body: std.array_list.Managed(u8),
 
         pub fn init(allocator: std.mem.Allocator) @This() {
             return .{ .body = .init(allocator) };
@@ -88,6 +88,7 @@ pub fn BodyReaderMixin(
     };
 }
 
+const std = @import("std");
+
 const bun = @import("bun");
 const uws = bun.uws;
-const std = @import("std");

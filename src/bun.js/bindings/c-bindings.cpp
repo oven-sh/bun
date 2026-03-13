@@ -73,7 +73,7 @@ extern "C" bool is_executable_file(const char* path)
 {
 #if defined(O_EXEC)
     // O_EXEC is macOS specific
-    int fd = open(path, O_EXEC | O_CLOEXEC, 0);
+    int fd = open(path, O_EXEC | O_CLOEXEC | O_NONBLOCK | O_NOCTTY, 0);
     if (fd < 0)
         return false;
     close(fd);
@@ -200,15 +200,19 @@ extern "C" void windows_enable_stdio_inheritance()
 #define CLOSE_RANGE_CLOEXEC (1U << 2)
 #endif
 
+#ifndef __NR_close_range
+// True for architectures we support:
+// - arch/arm64/include/asm/unistd32.h
+// - include/uapi/asm-generic/unistd.h
+// Not true for:
+// - DEC Alpha AXP (Alpha architecture)
+#define __NR_close_range 436
+#endif
+
 // close_range is glibc > 2.33, which is very new
 extern "C" ssize_t bun_close_range(unsigned int start, unsigned int end, unsigned int flags)
 {
-// https://github.com/oven-sh/bun/issues/9669
-#ifdef __NR_close_range
     return syscall(__NR_close_range, start, end, flags);
-#else
-    return ENOSYS;
-#endif
 }
 
 static void unset_cloexec(int fd)
@@ -562,7 +566,7 @@ extern "C" void bun_initialize_process()
     Bun__setCTRLHandler(1);
 #endif
 
-#if OS(DARWIN)
+#if OS(DARWIN) || ASAN_ENABLED
     atexit(Bun__onExit);
 #elif !OS(WINDOWS)
     at_quick_exit(Bun__onExit);
@@ -615,7 +619,7 @@ extern "C" int32_t open_as_nonblocking_tty(int32_t fd, int32_t mode)
 
 #endif
 
-extern "C" size_t Bun__ramSize()
+extern "C" [[ZIG_EXPORT(nothrow)]] size_t Bun__ramSize()
 {
     // This value is cached internally.
     return WTF::ramSize();
@@ -910,15 +914,67 @@ extern "C" void Bun__signpost_emit(os_log_t log, os_signpost_type_t type, os_sig
 
 extern "C" {
 struct BlobHeader {
-    uint32_t size;
+    uint64_t size; // 64-bit to ensure data[] starts at 8-byte aligned offset (required for bytecode cache)
     uint8_t data[];
 } __attribute__((aligned(BLOB_HEADER_ALIGNMENT)));
 }
 
 extern "C" BlobHeader __attribute__((section("__BUN,__bun"))) BUN_COMPILED = { 0, 0 };
 
-extern "C" uint32_t* Bun__getStandaloneModuleGraphMachoLength()
+extern "C" uint64_t* Bun__getStandaloneModuleGraphMachoLength()
 {
     return &BUN_COMPILED.size;
 }
+
+#elif defined(_WIN32)
+// Windows PE section handling
+#include <windows.h>
+#include <winnt.h>
+
+static uint64_t* pe_section_size = nullptr;
+static uint8_t* pe_section_data = nullptr;
+
+// Helper function to find and map the .bun section
+static bool initializePESection()
+{
+    if (pe_section_size != nullptr) return true;
+
+    HMODULE hModule = GetModuleHandleA(NULL);
+    if (!hModule) return false;
+
+    PIMAGE_DOS_HEADER dosHeader = (PIMAGE_DOS_HEADER)hModule;
+    if (dosHeader->e_magic != IMAGE_DOS_SIGNATURE) return false;
+
+    PIMAGE_NT_HEADERS ntHeaders = (PIMAGE_NT_HEADERS)((BYTE*)hModule + dosHeader->e_lfanew);
+    if (ntHeaders->Signature != IMAGE_NT_SIGNATURE) return false;
+
+    PIMAGE_SECTION_HEADER sectionHeader = IMAGE_FIRST_SECTION(ntHeaders);
+
+    for (int i = 0; i < ntHeaders->FileHeader.NumberOfSections; i++) {
+        if (strncmp((char*)sectionHeader->Name, ".bun", 4) == 0) {
+            // Found the .bun section
+            // Section format: 8 bytes size (uint64_t) + data
+            BYTE* sectionData = (BYTE*)hModule + sectionHeader->VirtualAddress;
+            pe_section_size = (uint64_t*)sectionData;
+            pe_section_data = sectionData + sizeof(uint64_t); // Skip size (8)
+            return true;
+        }
+        sectionHeader++;
+    }
+
+    return false;
+}
+
+extern "C" uint64_t Bun__getStandaloneModuleGraphPELength()
+{
+    if (!initializePESection()) return 0;
+    return pe_section_size ? *pe_section_size : 0;
+}
+
+extern "C" uint8_t* Bun__getStandaloneModuleGraphPEData()
+{
+    if (!initializePESection()) return nullptr;
+    return pe_section_data;
+}
+
 #endif

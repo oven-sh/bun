@@ -4,7 +4,16 @@ const string = Buffer.alloc(1024 * 1024, "zombo.com\n").toString();
 process.exitCode = 1;
 
 const proc = Bun.spawn({
-  cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
+  cmd: [
+    bunExe(),
+    "-e",
+    `
+let length = 0;
+process.stdin.on('data', (data) => length += data.length);
+process.once('beforeExit', () => console.error(length));
+process.stdin.pipe(process.stdout)
+    `,
+  ],
   stdio: ["pipe", "pipe", "inherit"],
 });
 

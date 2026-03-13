@@ -5,7 +5,7 @@
 // Normally, Readable.fromWeb will wrap the ReadableStream in JavaScript. In
 // Bun, `fromWeb` is able to check if the stream is backed by a native handle,
 // to which it will take this path.
-const Readable = require("node:stream").Readable;
+const Readable = require("internal/streams/readable");
 const transferToNativeReadable = $newCppFunction("ReadableStream.cpp", "jsFunctionTransferToNativeReadableStream", 1);
 const { errorOrDestroy } = require("internal/streams/destroy");
 
@@ -111,7 +111,7 @@ function ensureConstructed(this: NativeReadable, cb: null | (() => void)) {
 function getRemainingChunk(stream: NativeReadable, maxToRead?: number) {
   maxToRead ??= stream[kHighWaterMark] as number;
   var chunk = stream[kRemainingChunk];
-  if (chunk?.byteLength ?? 0 < MIN_BUFFER_SIZE) {
+  if ((chunk?.byteLength ?? 0) < MIN_BUFFER_SIZE) {
     var size = maxToRead > MIN_BUFFER_SIZE ? maxToRead : MIN_BUFFER_SIZE;
     stream[kRemainingChunk] = chunk = Buffer.alloc(size);
   }

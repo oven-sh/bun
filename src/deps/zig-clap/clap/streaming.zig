@@ -1,13 +1,3 @@
-const clap = @import("../clap.zig");
-const std = @import("std");
-const bun = @import("bun");
-const Output = bun.Output;
-
-const args = clap.args;
-const io = std.io;
-const mem = std.mem;
-const testing = std.testing;
-
 // Disabled because not all CLI arguments are parsed with Clap.
 pub var warn_on_unrecognized_flag = false;
 
@@ -71,9 +61,7 @@ pub fn StreamingClap(comptime Id: type, comptime ArgIterator: type) type {
                     const maybe_value = if (eql_index) |i| arg[i + 1 ..] else null;
 
                     for (parser.params) |*param| {
-                        const match = param.names.long orelse continue;
-
-                        if (!mem.eql(u8, name, match))
+                        if (!param.names.matchesLong(name))
                             continue;
 
                         if (param.takes_value == .none or param.takes_value == .one_optional) {
@@ -448,3 +436,14 @@ test "errors" {
     testErr(&params, &[_][]const u8{"-c"}, "The argument '-c' requires a value but none was supplied\n");
     testErr(&params, &[_][]const u8{"--cc"}, "The argument '--cc' requires a value but none was supplied\n");
 }
+
+const clap = @import("../clap.zig");
+const args = clap.args;
+
+const bun = @import("bun");
+const Output = bun.Output;
+
+const std = @import("std");
+const io = std.io;
+const mem = std.mem;
+const testing = std.testing;

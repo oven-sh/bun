@@ -1,4 +1,4 @@
-// Bun Snapshot v1, https://goo.gl/fbAQLP
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
 
 exports[`\`bun audit\` should exit code 1 when there are vulnerabilities: bun-audit-expect-vulnerabilities-found 1`] = `
 "minimist  <0.2.4

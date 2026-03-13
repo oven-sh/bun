@@ -40,4 +40,4 @@ vitest (node v18.11.0)
 
 > expect().toEqual() x 10000: 401.08ms
 
-This project was created using `bun init` in bun v0.3.0. [Bun](https://bun.sh) is a fast all-in-one JavaScript runtime.
+This project was created using `bun init` in bun v0.3.0. [Bun](https://bun.com) is a fast all-in-one JavaScript runtime.

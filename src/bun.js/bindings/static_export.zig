@@ -1,4 +1,3 @@
-const std = @import("std");
 Type: type,
 symbol_name: []const u8,
 local_name: []const u8,
@@ -12,3 +11,5 @@ pub fn Decl(comptime this: *const @This()) std.builtin.Type.Declaration {
 pub fn wrappedName(comptime this: *const @This()) []const u8 {
     return comptime "wrap" ++ this.symbol_name;
 }
+
+const std = @import("std");

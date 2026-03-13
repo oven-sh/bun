@@ -1,8 +1,3 @@
-const std = @import("std");
-const Allocator = std.mem.Allocator;
-const bun = @import("bun");
-const bits = bun.bits;
-
 pub const css = @import("../css_parser.zig");
 pub const Result = css.Result;
 
@@ -116,8 +111,7 @@ pub const CssColor = union(enum) {
 
     pub fn toCss(
         this: *const This,
-        comptime W: type,
-        dest: *Printer(W),
+        dest: *Printer,
     ) PrintErr!void {
         switch (this.*) {
             .current_color => try dest.writeStr("currentColor"),
@@ -149,7 +143,7 @@ pub const CssColor = union(enum) {
 
                             // Try first with two decimal places, then with three.
                             var rounded_alpha = @round(color.alphaF32() * 100.0) / 100.0;
-                            const clamped: u8 = @intFromFloat(@min(
+                            const clamped: u8 = bun.intFromFloat(u8, @min(
                                 @max(
                                     @round(rounded_alpha * 255.0),
                                     0.0,
@@ -160,7 +154,7 @@ pub const CssColor = union(enum) {
                                 rounded_alpha = @round(color.alphaF32() * 1000.0) / 1000.0;
                             }
 
-                            try CSSNumberFns.toCss(&rounded_alpha, W, dest);
+                            try CSSNumberFns.toCss(&rounded_alpha, dest);
                             try dest.writeChar(')');
                             return;
                         }
@@ -187,7 +181,6 @@ pub const CssColor = union(enum) {
                         lab.a,
                         lab.b,
                         lab.alpha,
-                        W,
                         dest,
                     ),
                     .lch => |*lch| writeComponents(
@@ -196,7 +189,6 @@ pub const CssColor = union(enum) {
                         lch.c,
                         lch.h,
                         lch.alpha,
-                        W,
                         dest,
                     ),
                     .oklab => |*oklab| writeComponents(
@@ -205,7 +197,6 @@ pub const CssColor = union(enum) {
                         oklab.a,
                         oklab.b,
                         oklab.alpha,
-                        W,
                         dest,
                     ),
                     .oklch => |*oklch| writeComponents(
@@ -214,39 +205,38 @@ pub const CssColor = union(enum) {
                         oklch.c,
                         oklch.h,
                         oklch.alpha,
-                        W,
                         dest,
                     ),
                 };
             },
-            .predefined => |predefined| return writePredefined(predefined, W, dest),
+            .predefined => |predefined| return writePredefined(predefined, dest),
             .float => |*float| {
                 // Serialize as hex.
                 const srgb = SRGB.fromFloatColor(float.*);
                 const as_css_color = srgb.intoCssColor(dest.allocator);
                 defer as_css_color.deinit(dest.allocator);
-                try as_css_color.toCss(W, dest);
+                try as_css_color.toCss(dest);
             },
             .light_dark => |*light_dark| {
                 if (!dest.targets.isCompatible(css.compat.Feature.light_dark)) {
                     try dest.writeStr("var(--buncss-light");
                     try dest.delim(',', false);
-                    try light_dark.light.toCss(W, dest);
+                    try light_dark.light.toCss(dest);
                     try dest.writeChar(')');
                     try dest.whitespace();
                     try dest.writeStr("var(--buncss-dark");
                     try dest.delim(',', false);
-                    try light_dark.dark.toCss(W, dest);
+                    try light_dark.dark.toCss(dest);
                     return dest.writeChar(')');
                 }
 
                 try dest.writeStr("light-dark(");
-                try light_dark.light.toCss(W, dest);
+                try light_dark.light.toCss(dest);
                 try dest.delim(',', false);
-                try light_dark.dark.toCss(W, dest);
+                try light_dark.dark.toCss(dest);
                 return dest.writeChar(')');
             },
-            .system => |*system| return system.toCss(W, dest),
+            .system => |*system| return system.toCss(dest),
         }
     }
 
@@ -387,17 +377,17 @@ pub const CssColor = union(enum) {
         }
 
         const check_converted = struct {
-            fn run(color: *const CssColor) bool {
-                bun.debugAssert(color.* != .light_dark and color.* != .current_color and color.* != .system);
+            fn run(color: *const CssColor) css.Result(bool) {
+                bun.debugAssert(color.* != .light_dark and color.* != .current_color);
                 return switch (color.*) {
-                    .rgba => T == RGBA,
-                    .lab => |lab| switch (lab.*) {
+                    .rgba => .{ .result = T == RGBA },
+                    .lab => |lab| .{ .result = switch (lab.*) {
                         .lab => T == LAB,
                         .lch => T == LCH,
                         .oklab => T == OKLAB,
                         .oklch => T == OKLCH,
-                    },
-                    .predefined => |pre| switch (pre.*) {
+                    } },
+                    .predefined => |pre| .{ .result = switch (pre.*) {
                         .srgb => T == SRGB,
                         .srgb_linear => T == SRGBLinear,
                         .display_p3 => T == P3,
@@ -406,21 +396,34 @@ pub const CssColor = union(enum) {
                         .rec2020 => T == Rec2020,
                         .xyz_d50 => T == XYZd50,
                         .xyz_d65 => T == XYZd65,
-                    },
-                    .float => |f| switch (f.*) {
+                    } },
+                    .float => |f| .{ .result = switch (f.*) {
                         .rgb => T == SRGB,
                         .hsl => T == HSL,
                         .hwb => T == HWB,
-                    },
-                    .system => bun.Output.panic("Unreachable code: system colors cannot be converted to a color.\n\nThis is a bug in Bun's CSS color parser. Please file a bug report at https://github.com/oven-sh/bun/issues/new/choose", .{}),
+                    } },
+                    // System colors cannot be converted to specific color spaces at parse time
+                    .system => .{ .err = css.ParseError(css.ParserError){
+                        .kind = .{ .custom = .{ .unexpected_value = .{
+                            .expected = "convertible color",
+                            .received = "system color",
+                        } } },
+                        .location = css.SourceLocation{ .line = 0, .column = 0 },
+                    } },
                     // We checked these above
                     .light_dark, .current_color => unreachable,
                 };
             }
         };
 
-        const converted_first = check_converted.run(this);
-        const converted_second = check_converted.run(other);
+        const converted_first = switch (check_converted.run(this)) {
+            .result => |v| v,
+            .err => return null,
+        };
+        const converted_second = switch (check_converted.run(other)) {
+            .result => |v| v,
+            .err => return null,
+        };
 
         // https://drafts.csswg.org/css-color-5/#color-mix-result
         var first_color = T.tryFromCssColor(this) orelse return null;
@@ -1142,9 +1145,9 @@ fn parseRgb(input: *css.Parser, parser: *ComponentParser) Result(CssColor) {
                 if (is_legacy) return .{
                     .result = .{
                         .rgba = RGBA.new(
-                            @intFromFloat(r),
-                            @intFromFloat(g),
-                            @intFromFloat(b),
+                            bun.intFromFloat(u8, r),
+                            bun.intFromFloat(u8, g),
+                            bun.intFromFloat(u8, b),
                             alpha,
                         ),
                     },
@@ -1420,7 +1423,7 @@ fn clamp_unit_f32(val: f32) u8 {
 }
 
 fn clamp_floor_256_f32(val: f32) u8 {
-    return @intFromFloat(@min(255.0, @max(0.0, @round(val))));
+    return bun.intFromFloat(u8, @min(255.0, @max(0.0, @round(val))));
     //   val.round().max(0.).min(255.) as u8
 }
 
@@ -1610,8 +1613,8 @@ pub const SystemColor = enum {
         return css.enum_property_util.parse(@This(), input);
     }
 
-    pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
-        return css.enum_property_util.toCss(@This(), this, W, dest);
+    pub fn toCss(this: *const @This(), dest: *Printer) PrintErr!void {
+        return css.enum_property_util.toCss(@This(), this, dest);
     }
 };
 
@@ -3037,8 +3040,8 @@ pub const ColorSpaceName = enum {
         return css.enum_property_util.parse(@This(), input);
     }
 
-    pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
-        return css.enum_property_util.toCss(@This(), this, W, dest);
+    pub fn toCss(this: *const @This(), dest: *Printer) PrintErr!void {
+        return css.enum_property_util.toCss(@This(), this, dest);
     }
 };
 
@@ -3137,8 +3140,8 @@ pub const HueInterpolationMethod = enum {
         return css.enum_property_util.parse(@This(), input);
     }
 
-    pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
-        return css.enum_property_util.toCss(@This(), this, W, dest);
+    pub fn toCss(this: *const @This(), dest: *Printer) PrintErr!void {
+        return css.enum_property_util.toCss(@This(), this, dest);
     }
 
     pub fn interpolate(
@@ -3530,39 +3533,37 @@ pub fn writeComponents(
     b: f32,
     c: f32,
     alpha: f32,
-    comptime W: type,
-    dest: *Printer(W),
+    dest: *Printer,
 ) PrintErr!void {
     try dest.writeStr(name);
     try dest.writeChar('(');
     if (std.math.isNan(a)) {
         try dest.writeStr("none");
     } else {
-        try (Percentage{ .v = a }).toCss(W, dest);
+        try (Percentage{ .v = a }).toCss(dest);
     }
     try dest.writeChar(' ');
-    try writeComponent(b, W, dest);
+    try writeComponent(b, dest);
     try dest.writeChar(' ');
-    try writeComponent(c, W, dest);
+    try writeComponent(c, dest);
     if (std.math.isNan(alpha) or @abs(alpha - 1.0) > std.math.floatEps(f32)) {
         try dest.delim('/', true);
-        try writeComponent(alpha, W, dest);
+        try writeComponent(alpha, dest);
     }
     return dest.writeChar(')');
 }
 
-pub fn writeComponent(c: f32, comptime W: type, dest: *Printer(W)) PrintErr!void {
+pub fn writeComponent(c: f32, dest: *Printer) PrintErr!void {
     if (std.math.isNan(c)) {
         return dest.writeStr("none");
     } else {
-        return CSSNumberFns.toCss(&c, W, dest);
+        return CSSNumberFns.toCss(&c, dest);
     }
 }
 
 pub fn writePredefined(
     predefined: *const PredefinedColor,
-    comptime W: type,
-    dest: *Printer(W),
+    dest: *Printer,
 ) PrintErr!void {
     const name, const a, const b, const c, const alpha = switch (predefined.*) {
         .srgb => |*rgb| .{ "srgb", rgb.r, rgb.g, rgb.b, rgb.alpha },
@@ -3579,15 +3580,15 @@ pub fn writePredefined(
     try dest.writeStr("color(");
     try dest.writeStr(name);
     try dest.writeChar(' ');
-    try writeComponent(a, W, dest);
+    try writeComponent(a, dest);
     try dest.writeChar(' ');
-    try writeComponent(b, W, dest);
+    try writeComponent(b, dest);
     try dest.writeChar(' ');
-    try writeComponent(c, W, dest);
+    try writeComponent(c, dest);
 
     if (std.math.isNan(alpha) or @abs(alpha - 1.0) > std.math.floatEps(f32)) {
         try dest.delim('/', true);
-        try writeComponent(alpha, W, dest);
+        try writeComponent(alpha, dest);
     }
 
     return dest.writeChar(')');
@@ -3681,7 +3682,6 @@ pub fn polarToRectangular(l: f32, c: f32, h: f32) struct { f32, f32, f32 } {
 const D50: []const f32 = &.{ @floatCast(@as(f64, 0.3457) / @as(f64, 0.3585)), 1.00000, @floatCast((@as(f64, 1.0) - @as(f64, 0.3457) - @as(f64, 0.3585)) / @as(f64, 0.3585)) };
 // const D50: []const f32 = &.{ 0.9642956, 1.0, 0.82510453 };
 
-const generated_color_conversions = @import("./color_generated.zig").generated_color_conversions;
 const color_conversions = struct {
     pub const convert_RGBA = struct {};
 
@@ -4707,3 +4707,10 @@ pub fn ImplementIntoCssColor(comptime T: type, space: ConvertTo) fn (*const T, A
     const ns = "convert_" ++ @tagName(space);
     return @field(color_conversions, ns).intoCssColor;
 }
+
+const std = @import("std");
+const generated_color_conversions = @import("./color_generated.zig").generated_color_conversions;
+const Allocator = std.mem.Allocator;
+
+const bun = @import("bun");
+const bits = bun.bits;

@@ -1,15 +1,8 @@
-const bun = @import("bun");
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
-const JSGlobalObject = JSC.JSGlobalObject;
-const VM = JSC.VM;
-const ZigString = JSC.ZigString;
-
 pub const DOMFormData = opaque {
     extern fn WebCore__DOMFormData__cast_(JSValue0: JSValue, arg1: *VM) ?*DOMFormData;
     extern fn WebCore__DOMFormData__create(arg0: *JSGlobalObject) JSValue;
     extern fn WebCore__DOMFormData__createFromURLQuery(arg0: *JSGlobalObject, arg1: *ZigString) JSValue;
-    extern fn WebCore__DOMFormData__toQueryString(arg0: *DOMFormData, arg1: *anyopaque, arg2: *const fn (arg0: *anyopaque, *ZigString) callconv(.C) void) void;
+    extern fn WebCore__DOMFormData__toQueryString(arg0: *DOMFormData, arg1: *anyopaque, arg2: *const fn (arg0: *anyopaque, *ZigString) callconv(.c) void) void;
     extern fn WebCore__DOMFormData__fromJS(JSValue0: JSValue) ?*DOMFormData;
     extern fn WebCore__DOMFormData__append(arg0: *DOMFormData, arg1: *ZigString, arg2: *ZigString) void;
     extern fn WebCore__DOMFormData__appendBlob(arg0: *DOMFormData, arg1: *JSGlobalObject, arg2: *ZigString, arg3: *anyopaque, arg4: *ZigString) void;
@@ -31,18 +24,18 @@ pub const DOMFormData = opaque {
     extern fn DOMFormData__toQueryString(
         *DOMFormData,
         ctx: *anyopaque,
-        callback: *const fn (ctx: *anyopaque, *ZigString) callconv(.C) void,
+        callback: *const fn (ctx: *anyopaque, *ZigString) callconv(.c) void,
     ) void;
 
     pub fn toQueryString(
         this: *DOMFormData,
         comptime Ctx: type,
         ctx: Ctx,
-        comptime callback: fn (ctx: Ctx, ZigString) callconv(.C) void,
+        comptime callback: fn (ctx: Ctx, ZigString) callconv(.c) void,
     ) void {
         const Wrapper = struct {
             const cb = callback;
-            pub fn run(c: *anyopaque, str: *ZigString) callconv(.C) void {
+            pub fn run(c: *anyopaque, str: *ZigString) callconv(.c) void {
                 cb(@as(Ctx, @ptrCast(c)), str.*);
             }
         };
@@ -64,7 +57,7 @@ pub const DOMFormData = opaque {
 
     pub fn appendBlob(
         this: *DOMFormData,
-        global: *JSC.JSGlobalObject,
+        global: *jsc.JSGlobalObject,
         name_: *ZigString,
         blob: *anyopaque,
         filename_: *ZigString,
@@ -84,13 +77,13 @@ pub const DOMFormData = opaque {
         value_ptr: *anyopaque,
         filename: ?*ZigString,
         is_blob: u8,
-    ) callconv(.C) void;
+    ) callconv(.c) void;
 
     extern fn DOMFormData__forEach(*DOMFormData, ?*anyopaque, ForEachFunction) void;
     pub const FormDataEntry = union(enum) {
         string: ZigString,
         file: struct {
-            blob: *JSC.WebCore.Blob,
+            blob: *jsc.WebCore.Blob,
             filename: ZigString,
         },
     };
@@ -108,14 +101,14 @@ pub const DOMFormData = opaque {
                 value_ptr: *anyopaque,
                 filename: ?*ZigString,
                 is_blob: u8,
-            ) callconv(.C) void {
+            ) callconv(.c) void {
                 const ctx_ = bun.cast(*Context, ctx_ptr.?);
                 const value = if (is_blob == 0)
                     FormDataEntry{ .string = bun.cast(*ZigString, value_ptr).* }
                 else
                     FormDataEntry{
                         .file = .{
-                            .blob = bun.cast(*JSC.WebCore.Blob, value_ptr),
+                            .blob = bun.cast(*jsc.WebCore.Blob, value_ptr),
                             .filename = (filename orelse &ZigString.Empty).*,
                         },
                     };
@@ -123,7 +116,15 @@ pub const DOMFormData = opaque {
                 wrapper(ctx_, name_.*, value);
             }
         };
-        JSC.markBinding(@src());
+        jsc.markBinding(@src());
         DOMFormData__forEach(this, ctx, Wrap.forEachWrapper);
     }
 };
+
+const bun = @import("bun");
+
+const jsc = bun.jsc;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSValue = jsc.JSValue;
+const VM = jsc.VM;
+const ZigString = jsc.ZigString;

@@ -177,9 +177,8 @@ JSC_DEFINE_HOST_FUNCTION(constructDirent, (JSC::JSGlobalObject * globalObject, J
 
         auto* functionGlobalObject = defaultGlobalObject(getFunctionRealm(globalObject, newTarget.getObject()));
         RETURN_IF_EXCEPTION(scope, {});
-        structure = InternalFunction::createSubclassStructure(
-            globalObject, newTarget.getObject(), functionGlobalObject->m_JSDirentClassStructure.get(functionGlobalObject));
-        scope.release();
+        structure = InternalFunction::createSubclassStructure(globalObject, newTarget.getObject(), functionGlobalObject->m_JSDirentClassStructure.get(functionGlobalObject));
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     auto* object = JSC::JSFinalObject::create(vm, structure);
@@ -278,7 +277,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDirentProtoFuncIsFIFO, (JSC::JSGlobalObject * globalO
     int32_t type = getType(vm, callFrame->thisValue(), defaultGlobalObject(globalObject));
     RETURN_IF_EXCEPTION(scope, {});
 
-    return JSValue::encode(jsBoolean(type == static_cast<int32_t>(DirEntType::NamedPipe) || type == static_cast<int32_t>(DirEntType::EventPort)));
+    return JSValue::encode(jsBoolean(type == static_cast<int32_t>(DirEntType::NamedPipe)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsDirentProtoFuncIsFile, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -350,14 +349,14 @@ extern "C" JSC::EncodedJSValue Bun__Dirent__toJS(Zig::GlobalObject* globalObject
 
     if (!pathValue) {
         auto pathString = path->transferToWTFString();
-        pathValue = jsString(vm, WTFMove(pathString));
+        pathValue = jsString(vm, WTF::move(pathString));
         if (previousPath) {
             *previousPath = pathValue;
         }
     }
 
     auto nameString = name->transferToWTFString();
-    auto nameValue = jsString(vm, WTFMove(nameString));
+    auto nameValue = jsString(vm, WTF::move(nameString));
     auto typeValue = jsNumber(type);
     object->putDirectOffset(vm, 0, nameValue);
     object->putDirectOffset(vm, 1, pathValue);

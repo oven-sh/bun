@@ -14,11 +14,11 @@ pub extern fn mi_reallocn(p: ?*anyopaque, count: usize, size: usize) ?*anyopaque
 pub extern fn mi_reallocf(p: ?*anyopaque, newsize: usize) ?*anyopaque;
 pub extern fn mi_usable_size(p: ?*const anyopaque) usize;
 pub extern fn mi_good_size(size: usize) usize;
-pub const mi_deferred_free_fun = *const fn (bool, c_ulonglong, ?*anyopaque) callconv(.C) void;
+pub const mi_deferred_free_fun = *const fn (bool, c_ulonglong, ?*anyopaque) callconv(.c) void;
 pub extern fn mi_register_deferred_free(deferred_free: ?mi_deferred_free_fun, arg: ?*anyopaque) void;
-pub const mi_output_fun = *const fn ([*:0]const u8, ?*anyopaque) callconv(.C) void;
+pub const mi_output_fun = *const fn ([*:0]const u8, ?*anyopaque) callconv(.c) void;
 pub extern fn mi_register_output(out: ?mi_output_fun, arg: ?*anyopaque) void;
-pub const mi_error_fun = *const fn (c_int, ?*anyopaque) callconv(.C) void;
+pub const mi_error_fun = *const fn (c_int, ?*anyopaque) callconv(.c) void;
 pub extern fn mi_register_error(fun: ?mi_error_fun, arg: ?*anyopaque) void;
 pub extern fn mi_collect(force: bool) void;
 pub extern fn mi_version() c_int;
@@ -50,10 +50,6 @@ pub const Heap = opaque {
 
     pub fn malloc(self: *Heap, size: usize) ?*anyopaque {
         return mi_heap_malloc(self, size);
-    }
-
-    pub fn backing(_: *Heap) *Heap {
-        return mi_heap_get_default();
     }
 
     pub fn calloc(self: *Heap, count: usize, size: usize) ?*anyopaque {
@@ -118,7 +114,7 @@ pub const struct_mi_heap_area_s = extern struct {
     full_block_size: usize,
 };
 pub const mi_heap_area_t = struct_mi_heap_area_s;
-pub const mi_block_visit_fun = *const fn (?*const Heap, [*c]const mi_heap_area_t, ?*anyopaque, usize, ?*anyopaque) callconv(.C) bool;
+pub const mi_block_visit_fun = *const fn (?*const Heap, [*c]const mi_heap_area_t, ?*anyopaque, usize, ?*anyopaque) callconv(.c) bool;
 pub extern fn mi_heap_visit_blocks(heap: ?*const Heap, visit_all_blocks: bool, visitor: ?mi_block_visit_fun, arg: ?*anyopaque) bool;
 pub extern fn mi_is_in_heap_region(p: ?*const anyopaque) bool;
 pub extern fn mi_is_redirected() bool;
@@ -127,39 +123,58 @@ pub extern fn mi_reserve_huge_os_pages_at(pages: usize, numa_node: c_int, timeou
 pub extern fn mi_reserve_os_memory(size: usize, commit: bool, allow_large: bool) c_int;
 pub extern fn mi_manage_os_memory(start: ?*anyopaque, size: usize, is_committed: bool, is_large: bool, is_zero: bool, numa_node: c_int) bool;
 pub extern fn mi_debug_show_arenas() void;
-pub const ArenaID = c_int;
-pub extern fn mi_arena_area(arena_id: ArenaID, size: [*c]usize) ?*anyopaque;
+pub const ArenaID = ?*anyopaque;
+pub extern fn mi_arena_area(arena_id: ArenaID, size: *usize) ?*anyopaque;
 pub extern fn mi_reserve_huge_os_pages_at_ex(pages: usize, numa_node: c_int, timeout_msecs: usize, exclusive: bool, arena_id: *ArenaID) c_int;
 pub extern fn mi_reserve_os_memory_ex(size: usize, commit: bool, allow_large: bool, exclusive: bool, arena_id: *ArenaID) c_int;
 pub extern fn mi_manage_os_memory_ex(start: ?*anyopaque, size: usize, is_committed: bool, is_large: bool, is_zero: bool, numa_node: c_int, exclusive: bool, arena_id: *ArenaID) bool;
 pub extern fn mi_heap_new_in_arena(arena_id: ArenaID) ?*Heap;
 pub extern fn mi_reserve_huge_os_pages(pages: usize, max_secs: f64, pages_reserved: [*c]usize) c_int;
+pub extern fn mi_thread_set_in_threadpool() void;
 pub const Option = enum(c_uint) {
     show_errors = 0,
     show_stats = 1,
     verbose = 2,
     eager_commit = 3,
-    deprecated_eager_region_commit = 4,
-    deprecated_reset_decommits = 5,
-    large_os_pages = 6,
+    arena_eager_commit = 4,
+    purge_decommits = 5,
+    allow_large_os_pages = 6,
     reserve_huge_os_pages = 7,
     reserve_huge_os_pages_at = 8,
     reserve_os_memory = 9,
     deprecated_segment_cache = 10,
-    page_reset = 11,
-    abandoned_page_decommit = 12,
+    deprecated_page_reset = 11,
+    abandoned_page_purge = 12,
     deprecated_segment_reset = 13,
     eager_commit_delay = 14,
-    decommit_delay = 15,
+    purge_delay = 15,
     use_numa_nodes = 16,
-    limit_os_alloc = 17,
+    disallow_os_alloc = 17,
     os_tag = 18,
     max_errors = 19,
     max_warnings = 20,
-    max_segment_reclaim = 21,
-    allow_decommit = 22,
-    segment_decommit_delay = 23,
-    decommit_extend_delay = 24,
+    deprecated_max_segment_reclaim = 21,
+    destroy_on_exit = 22,
+    arena_reserve = 23,
+    arena_purge_mult = 24,
+    deprecated_purge_extend_delay = 25,
+    disallow_arena_alloc = 26,
+    retry_on_oom = 27,
+    visit_abandoned = 28,
+    guarded_min = 29,
+    guarded_max = 30,
+    guarded_precise = 31,
+    guarded_sample_rate = 32,
+    guarded_sample_seed = 33,
+    generic_collect = 34,
+    page_reclaim_on_free = 35,
+    page_full_retain = 36,
+    page_max_candidates = 37,
+    max_vabits = 38,
+    pagemap_commit = 39,
+    page_commit_on_demand = 40,
+    page_max_reclaim = 41,
+    page_cross_thread_max_reclaim = 42,
 };
 pub extern fn mi_option_is_enabled(option: Option) bool;
 pub extern fn mi_option_enable(option: Option) void;
@@ -201,13 +216,13 @@ pub extern fn mi_new_reallocn(p: ?*anyopaque, newcount: usize, size: usize) ?*an
 pub const MI_SMALL_WSIZE_MAX = @as(c_int, 128);
 pub const MI_SMALL_SIZE_MAX = MI_SMALL_WSIZE_MAX * @import("std").zig.c_translation.sizeof(?*anyopaque);
 pub const MI_ALIGNMENT_MAX = (@as(c_int, 16) * @as(c_int, 1024)) * @as(c_ulong, 1024);
+pub const MI_MAX_ALIGN_SIZE = 16;
+
+pub fn mustUseAlignedAlloc(alignment: std.mem.Alignment) bool {
+    return alignment.toByteUnits() > MI_MAX_ALIGN_SIZE;
+}
+
+pub const mi_arena_id_t = ?*anyopaque;
+pub extern fn mi_heap_new_ex(heap_tag: c_int, allow_destroy: bool, arena_id: mi_arena_id_t) ?*Heap;
 
 const std = @import("std");
-pub fn canUseAlignedAlloc(len: usize, alignment: usize) bool {
-    return alignment > 0 and std.math.isPowerOfTwo(alignment) and !mi_malloc_satisfies_alignment(alignment, len);
-}
-const MI_MAX_ALIGN_SIZE = 16;
-inline fn mi_malloc_satisfies_alignment(alignment: usize, size: usize) bool {
-    return (alignment == @sizeOf(*anyopaque) or
-        (alignment == MI_MAX_ALIGN_SIZE and size >= (MI_MAX_ALIGN_SIZE / 2)));
-}

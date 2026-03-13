@@ -1,0 +1,24 @@
+name: Auto-label Claude PRs
+
+on:
+  pull_request:
+    types: [opened]
+
+jobs:
+  auto-label:
+    if: github.event.pull_request.user.login == 'robobun' || contains(github.event.pull_request.body, '🤖 Generated with')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Add claude label to PRs from robobun
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              labels: ['claude']
+            });

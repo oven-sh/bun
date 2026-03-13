@@ -32,8 +32,8 @@ pub const Meta = extern struct {
 
     /// Does the `cpu` arch and `os` match the requirements listed in the package?
     /// This is completely unrelated to "devDependencies", "peerDependencies", "optionalDependencies" etc
-    pub fn isDisabled(this: *const Meta) bool {
-        return !this.arch.isMatch() or !this.os.isMatch();
+    pub fn isDisabled(this: *const Meta, cpu: Npm.Architecture, os: Npm.OperatingSystem) bool {
+        return !this.arch.isMatch(cpu) or !this.os.isMatch(os);
     }
 
     pub fn hasInstallScript(this: *const Meta) bool {
@@ -69,11 +69,13 @@ pub const Meta = extern struct {
     }
 };
 
+const Integrity = @import("../../integrity.zig").Integrity;
+
 const bun = @import("bun");
+const String = bun.Semver.String;
+
 const install = bun.install;
 const Npm = install.Npm;
-const String = bun.Semver.String;
-const Integrity = @import("../../integrity.zig").Integrity;
 const Origin = install.Origin;
 const PackageID = install.PackageID;
 const invalid_package_id = install.invalid_package_id;

@@ -1,3 +1,5 @@
+const HMAC = @This();
+
 ctx: BoringSSL.HMAC_CTX,
 algorithm: EVP.Algorithm,
 
@@ -50,7 +52,6 @@ pub fn deinit(this: *HMAC) void {
 }
 
 const bun = @import("bun");
+const jsc = bun.jsc;
 const BoringSSL = bun.BoringSSL.c;
-const JSC = bun.JSC;
-const EVP = JSC.API.Bun.Crypto.EVP;
-const HMAC = @This();
+const EVP = jsc.API.Bun.Crypto.EVP;

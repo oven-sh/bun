@@ -1,14 +1,23 @@
 const WindowsNamedPipeContext = @This();
 
+ref_count: RefCount,
 named_pipe: uws.WindowsNamedPipe,
 socket: SocketType,
 
 // task used to deinit the context in the next tick, vm is used to enqueue the task
-vm: *JSC.VirtualMachine,
-globalThis: *JSC.JSGlobalObject,
-task: JSC.AnyTask,
+vm: *jsc.VirtualMachine,
+globalThis: *jsc.JSGlobalObject,
+task: jsc.AnyTask,
 task_event: EventState = .none,
 is_open: bool = false,
+
+const RefCount = bun.ptr.RefCount(@This(), "ref_count", scheduleDeinit, .{});
+pub const ref = RefCount.ref;
+pub const deref = RefCount.deref;
+
+fn scheduleDeinit(this: *WindowsNamedPipeContext) void {
+    this.deinitInNextTick();
+}
 
 pub const EventState = enum(u8) {
     deinit,
@@ -22,7 +31,7 @@ pub const SocketType = union(enum) {
 };
 
 pub const new = bun.TrivialNew(WindowsNamedPipeContext);
-const log = Output.scoped(.WindowsNamedPipeContext, false);
+const log = Output.scoped(.WindowsNamedPipeContext, .visible);
 
 fn onOpen(this: *WindowsNamedPipeContext) void {
     this.is_open = true;
@@ -57,11 +66,11 @@ fn onHandshake(this: *WindowsNamedPipeContext, success: bool, ssl_error: uws.us_
     switch (this.socket) {
         .tls => |tls| {
             const socket = TLSSocket.Socket.fromNamedPipe(&this.named_pipe);
-            tls.onHandshake(socket, @intFromBool(success), ssl_error);
+            tls.onHandshake(socket, @intFromBool(success), ssl_error) catch {};
         },
         .tcp => |tcp| {
             const socket = TCPSocket.Socket.fromNamedPipe(&this.named_pipe);
-            tcp.onHandshake(socket, @intFromBool(success), ssl_error);
+            tcp.onHandshake(socket, @intFromBool(success), ssl_error) catch {};
         },
         .none => {},
     }
@@ -99,20 +108,20 @@ fn onError(this: *WindowsNamedPipeContext, err: bun.sys.Error) void {
     if (this.is_open) {
         switch (this.socket) {
             .tls => |tls| {
-                tls.handleError(err.toJS(this.globalThis));
+                tls.handleError(err.toJS(this.globalThis) catch return);
             },
             .tcp => |tcp| {
-                tcp.handleError(err.toJS(this.globalThis));
+                tcp.handleError(err.toJS(this.globalThis) catch return);
             },
             else => {},
         }
     } else {
         switch (this.socket) {
             .tls => |tls| {
-                tls.handleConnectError(err.errno);
+                tls.handleConnectError(err.errno) catch {};
             },
             .tcp => |tcp| {
-                tcp.handleConnectError(err.errno);
+                tcp.handleConnectError(err.errno) catch {};
             },
             else => {},
         }
@@ -138,17 +147,17 @@ fn onClose(this: *WindowsNamedPipeContext) void {
     this.socket = .none;
     switch (socket) {
         .tls => |tls| {
-            tls.onClose(TLSSocket.Socket.fromNamedPipe(&this.named_pipe), 0, null);
+            tls.onClose(TLSSocket.Socket.fromNamedPipe(&this.named_pipe), 0, null) catch {};
             tls.deref();
         },
         .tcp => |tcp| {
-            tcp.onClose(TCPSocket.Socket.fromNamedPipe(&this.named_pipe), 0, null);
+            tcp.onClose(TCPSocket.Socket.fromNamedPipe(&this.named_pipe), 0, null) catch {};
             tcp.deref();
         },
         .none => {},
     }
 
-    this.deinitInNextTick();
+    this.deref();
 }
 
 fn runEvent(this: *WindowsNamedPipeContext) void {
@@ -163,12 +172,13 @@ fn runEvent(this: *WindowsNamedPipeContext) void {
 fn deinitInNextTick(this: *WindowsNamedPipeContext) void {
     bun.assert(this.task_event != .deinit);
     this.task_event = .deinit;
-    this.vm.enqueueTask(JSC.Task.init(&this.task));
+    this.vm.enqueueTask(jsc.Task.init(&this.task));
 }
 
-pub fn create(globalThis: *JSC.JSGlobalObject, socket: SocketType) *WindowsNamedPipeContext {
+pub fn create(globalThis: *jsc.JSGlobalObject, socket: SocketType) *WindowsNamedPipeContext {
     const vm = globalThis.bunVM();
     const this = WindowsNamedPipeContext.new(.{
+        .ref_count = .init(),
         .vm = vm,
         .globalThis = globalThis,
         .task = undefined,
@@ -177,8 +187,10 @@ pub fn create(globalThis: *JSC.JSGlobalObject, socket: SocketType) *WindowsNamed
     });
 
     // named_pipe owns the pipe (PipeWriter owns the pipe and will close and deinit it)
-    this.named_pipe = uws.WindowsNamedPipe.from(bun.default_allocator.create(uv.Pipe) catch bun.outOfMemory(), .{
+    this.named_pipe = uws.WindowsNamedPipe.from(bun.new(uv.Pipe, std.mem.zeroes(uv.Pipe)), .{
         .ctx = this,
+        .ref_ctx = @ptrCast(&WindowsNamedPipeContext.ref),
+        .deref_ctx = @ptrCast(&WindowsNamedPipeContext.deref),
         .onOpen = @ptrCast(&WindowsNamedPipeContext.onOpen),
         .onData = @ptrCast(&WindowsNamedPipeContext.onData),
         .onHandshake = @ptrCast(&WindowsNamedPipeContext.onHandshake),
@@ -188,7 +200,7 @@ pub fn create(globalThis: *JSC.JSGlobalObject, socket: SocketType) *WindowsNamed
         .onTimeout = @ptrCast(&WindowsNamedPipeContext.onTimeout),
         .onClose = @ptrCast(&WindowsNamedPipeContext.onClose),
     }, vm);
-    this.task = JSC.AnyTask.New(WindowsNamedPipeContext, WindowsNamedPipeContext.runEvent).init(this);
+    this.task = jsc.AnyTask.New(WindowsNamedPipeContext, WindowsNamedPipeContext.runEvent).init(this);
 
     switch (socket) {
         .tls => |tls| {
@@ -203,7 +215,7 @@ pub fn create(globalThis: *JSC.JSGlobalObject, socket: SocketType) *WindowsNamed
     return this;
 }
 
-pub fn open(globalThis: *JSC.JSGlobalObject, fd: bun.FileDescriptor, ssl_config: ?JSC.API.ServerConfig.SSLConfig, socket: SocketType) !*uws.WindowsNamedPipe {
+pub fn open(globalThis: *jsc.JSGlobalObject, fd: bun.FileDescriptor, ssl_config: ?jsc.API.ServerConfig.SSLConfig, socket: SocketType) !*uws.WindowsNamedPipe {
     // TODO: reuse the same context for multiple connections when possibles
 
     const this = WindowsNamedPipeContext.create(globalThis, socket);
@@ -211,34 +223,34 @@ pub fn open(globalThis: *JSC.JSGlobalObject, fd: bun.FileDescriptor, ssl_config:
     errdefer {
         switch (socket) {
             .tls => |tls| {
-                tls.handleConnectError(@intFromEnum(bun.sys.SystemErrno.ENOENT));
+                tls.handleConnectError(@intFromEnum(bun.sys.SystemErrno.ENOENT)) catch {};
             },
             .tcp => |tcp| {
-                tcp.handleConnectError(@intFromEnum(bun.sys.SystemErrno.ENOENT));
+                tcp.handleConnectError(@intFromEnum(bun.sys.SystemErrno.ENOENT)) catch {};
             },
             .none => {},
         }
-        this.deinitInNextTick();
+        this.deref();
     }
     try this.named_pipe.open(fd, ssl_config).unwrap();
     return &this.named_pipe;
 }
 
-pub fn connect(globalThis: *JSC.JSGlobalObject, path: []const u8, ssl_config: ?JSC.API.ServerConfig.SSLConfig, socket: SocketType) !*uws.WindowsNamedPipe {
+pub fn connect(globalThis: *jsc.JSGlobalObject, path: []const u8, ssl_config: ?jsc.API.ServerConfig.SSLConfig, socket: SocketType) !*uws.WindowsNamedPipe {
     // TODO: reuse the same context for multiple connections when possibles
 
     const this = WindowsNamedPipeContext.create(globalThis, socket);
     errdefer {
         switch (socket) {
             .tls => |tls| {
-                tls.handleConnectError(@intFromEnum(bun.sys.SystemErrno.ENOENT));
+                tls.handleConnectError(@intFromEnum(bun.sys.SystemErrno.ENOENT)) catch {};
             },
             .tcp => |tcp| {
-                tcp.handleConnectError(@intFromEnum(bun.sys.SystemErrno.ENOENT));
+                tcp.handleConnectError(@intFromEnum(bun.sys.SystemErrno.ENOENT)) catch {};
             },
             .none => {},
         }
-        this.deinitInNextTick();
+        this.deref();
     }
 
     if (path[path.len - 1] == 0) {
@@ -276,10 +288,13 @@ pub fn deinit(this: *WindowsNamedPipeContext) void {
     bun.destroy(this);
 }
 
+const std = @import("std");
+
+const bun = @import("bun");
+const Output = bun.Output;
+const jsc = bun.jsc;
 const uws = bun.uws;
 const uv = bun.windows.libuv;
-const bun = @import("bun");
-const JSC = bun.JSC;
-const Output = bun.Output;
-const TLSSocket = JSC.API.TLSSocket;
-const TCPSocket = JSC.API.TCPSocket;
+
+const TCPSocket = jsc.API.TCPSocket;
+const TLSSocket = jsc.API.TLSSocket;

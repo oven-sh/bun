@@ -1,8 +1,6 @@
-ARG LLVM_VERSION="19"
-ARG REPORTED_LLVM_VERSION="19.1.7"
+ARG LLVM_VERSION="21"
+ARG REPORTED_LLVM_VERSION="21.1.8"
 ARG OLD_BUN_VERSION="1.1.38"
-ARG DEFAULT_CFLAGS="-mno-omit-leaf-frame-pointer -fno-omit-frame-pointer -ffunction-sections -fdata-sections -faddrsig -fno-unwind-tables -fno-asynchronous-unwind-tables"
-ARG DEFAULT_CXXFLAGS="-flto=full -fwhole-program-vtables -fforce-emit-vtables"
 ARG BUILDKITE_AGENT_TAGS="queue=linux,os=linux,arch=${TARGETARCH}"
 
 FROM --platform=$BUILDPLATFORM ubuntu:20.04 as base-arm64
@@ -12,8 +10,6 @@ FROM base-$TARGETARCH as base
 ARG LLVM_VERSION
 ARG OLD_BUN_VERSION
 ARG TARGETARCH
-ARG DEFAULT_CXXFLAGS
-ARG DEFAULT_CFLAGS
 ARG REPORTED_LLVM_VERSION
 
 ENV DEBIAN_FRONTEND=noninteractive \
@@ -30,7 +26,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
    wget curl git python3 python3-pip ninja-build \
    software-properties-common apt-transport-https \
    ca-certificates gnupg lsb-release unzip \
-   libxml2-dev ruby ruby-dev bison gawk perl make golang \
+   libxml2-dev ruby ruby-dev bison gawk perl make golang ccache qemu-user-static \
    && add-apt-repository ppa:ubuntu-toolchain-r/test \
    && apt-get update \
    && apt-get install -y gcc-13 g++-13 libgcc-13-dev libstdc++-13-dev \
@@ -39,7 +35,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
    && wget https://apt.llvm.org/llvm.sh \
    && chmod +x llvm.sh \
    && ./llvm.sh ${LLVM_VERSION} all \
-   && rm llvm.sh
+   && rm llvm.sh \
+   && rm -rf /var/lib/apt/lists/*
 
 
 RUN --mount=type=tmpfs,target=/tmp \
@@ -64,9 +61,7 @@ RUN echo "ARCH_PATH=$([ "$TARGETARCH" = "arm64" ] && echo "aarch64-linux-gnu" ||
 ENV LD_LIBRARY_PATH=/usr/lib/gcc/${ARCH_PATH}/13:/usr/lib/${ARCH_PATH} \
    LIBRARY_PATH=/usr/lib/gcc/${ARCH_PATH}/13:/usr/lib/${ARCH_PATH} \
    CPLUS_INCLUDE_PATH=/usr/include/c++/13:/usr/include/${ARCH_PATH}/c++/13 \
-   C_INCLUDE_PATH=/usr/lib/gcc/${ARCH_PATH}/13/include \
-   CFLAGS=${DEFAULT_CFLAGS} \
-   CXXFLAGS="${DEFAULT_CFLAGS} ${DEFAULT_CXXFLAGS}"
+   C_INCLUDE_PATH=/usr/lib/gcc/${ARCH_PATH}/13/include
 
 RUN if [ "$TARGETARCH" = "arm64" ]; then \
        export ARCH_PATH="aarch64-linux-gnu"; \
@@ -116,20 +111,32 @@ ARG BUILDKITE_AGENT_TAGS
 
 
 # Install Rust nightly
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y \ 
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y \
     && export PATH=$HOME/.cargo/bin:$PATH \
     && rustup install nightly \
     && rustup default nightly
 
 
 RUN ARCH=$(if [ "$TARGETARCH" = "arm64" ]; then echo "arm64"; else echo "amd64"; fi) && \
-    echo "Downloading buildkite" && \ 
+    echo "Downloading buildkite" && \
     curl -fsSL "https://github.com/buildkite/agent/releases/download/v3.87.0/buildkite-agent-linux-${ARCH}-3.87.0.tar.gz" -o /tmp/buildkite-agent.tar.gz && \
     mkdir -p /tmp/buildkite-agent && \
     tar -xzf /tmp/buildkite-agent.tar.gz -C /tmp/buildkite-agent && \
     mv /tmp/buildkite-agent/buildkite-agent /usr/bin/buildkite-agent
 
 RUN mkdir -p /var/cache/buildkite-agent /var/log/buildkite-agent /var/run/buildkite-agent /etc/buildkite-agent /var/lib/buildkite-agent/cache/bun
+
+# The following is necessary to configure buildkite to use a stable
+# checkout directory for ccache to be effective.
+RUN mkdir -p -m 755 /var/lib/buildkite-agent/hooks && \
+    cat <<'EOF' > /var/lib/buildkite-agent/hooks/environment
+#!/bin/sh
+set -efu
+
+export BUILDKITE_BUILD_CHECKOUT_PATH=/var/lib/buildkite-agent/build
+EOF
+
+RUN chmod 744 /var/lib/buildkite-agent/hooks/environment
 
 COPY  ../*/agent.mjs /var/bun/scripts/
 
@@ -153,7 +160,7 @@ COPY . /workspace/bun
 
 
 # Install Rust nightly
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y \ 
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y \
     && export PATH=$HOME/.cargo/bin:$PATH \
     && rustup install nightly \
     && rustup default nightly

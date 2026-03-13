@@ -1,7 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const Allocator = std.mem.Allocator;
-
 pub const css = @import("../css_parser.zig");
 
 const Printer = css.Printer;
@@ -157,20 +153,20 @@ pub const DisplayPair = struct {
         return .{ .err = location.newUnexpectedTokenError(.{ .ident = ident }) };
     }
 
-    pub fn toCss(this: *const DisplayPair, comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
+    pub fn toCss(this: *const DisplayPair, dest: *css.Printer) css.PrintErr!void {
         if (this.outside == .@"inline" and this.inside == .flow_root and !this.is_list_item) {
             return dest.writeStr("inline-block");
         } else if (this.outside == .@"inline" and this.inside == .table and !this.is_list_item) {
             return dest.writeStr("inline-table");
         } else if (this.outside == .@"inline" and this.inside == .flex and !this.is_list_item) {
-            try this.inside.flex.toCss(W, dest);
+            try this.inside.flex.toCss(dest);
             if (this.inside.flex == css.VendorPrefix{ .ms = true }) {
                 return dest.writeStr("inline-flexbox");
             } else {
                 return dest.writeStr("inline-flex");
             }
         } else if (this.outside == .@"inline" and this.inside == .box and !this.is_list_item) {
-            try this.inside.box.toCss(W, dest);
+            try this.inside.box.toCss(dest);
             return dest.writeStr("inline-box");
         } else if (this.outside == .@"inline" and this.inside == .grid and !this.is_list_item) {
             return dest.writeStr("inline-grid");
@@ -182,7 +178,7 @@ pub const DisplayPair = struct {
 
             var needs_space = false;
             if (!this.outside.eql(&default_outside) or (this.inside.eql(&DisplayInside{ .flow = {} }) and !this.is_list_item)) {
-                try this.outside.toCss(W, dest);
+                try this.outside.toCss(dest);
                 needs_space = true;
             }
 
@@ -190,7 +186,7 @@ pub const DisplayPair = struct {
                 if (needs_space) {
                     try dest.writeChar(' ');
                 }
-                try this.inside.toCss(W, dest);
+                try this.inside.toCss(dest);
                 needs_space = true;
             }
 
@@ -259,13 +255,13 @@ pub const DisplayInside = union(enum) {
         return .{ .err = location.newUnexpectedTokenError(.{ .ident = ident }) };
     }
 
-    pub fn toCss(this: *const DisplayInside, comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
+    pub fn toCss(this: *const DisplayInside, dest: *css.Printer) css.PrintErr!void {
         switch (this.*) {
             .flow => try dest.writeStr("flow"),
             .flow_root => try dest.writeStr("flow-root"),
             .table => try dest.writeStr("table"),
             .flex => |prefix| {
-                try prefix.toCss(W, dest);
+                try prefix.toCss(dest);
                 if (prefix == css.VendorPrefix{ .ms = true }) {
                     try dest.writeStr("flexbox");
                 } else {
@@ -273,7 +269,7 @@ pub const DisplayInside = union(enum) {
                 }
             },
             .box => |prefix| {
-                try prefix.toCss(W, dest);
+                try prefix.toCss(dest);
                 try dest.writeStr("box");
             },
             .grid => try dest.writeStr("grid"),
@@ -285,3 +281,7 @@ pub const DisplayInside = union(enum) {
         return css.implementEql(@This(), lhs, rhs);
     }
 };
+
+const bun = @import("bun");
+const std = @import("std");
+const Allocator = std.mem.Allocator;

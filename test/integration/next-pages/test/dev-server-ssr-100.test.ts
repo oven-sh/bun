@@ -3,6 +3,7 @@ import { install_test_helpers } from "bun:internal-for-testing";
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { copyFileSync } from "fs";
 import { cp, rm } from "fs/promises";
+import PQueue from "p-queue";
 import { join } from "path";
 import { StringDecoder } from "string_decoder";
 import { bunEnv, bunExe, tmpdirSync, toMatchNodeModulesAt } from "../../../harness";
@@ -85,7 +86,7 @@ async function getDevServerURL() {
   return baseUrl;
 }
 
-beforeAll(async () => {
+async function startDevServer() {
   copyFileSync(join(root, "src/Counter1.txt"), join(root, "src/Counter.tsx"));
 
   const install = Bun.spawnSync([bunExe(), "i"], {
@@ -107,54 +108,65 @@ beforeAll(async () => {
     dev_server?.kill?.();
     dev_server = undefined;
   }
-});
+  return {
+    [Symbol.dispose]: () => {
+      stopDevServer();
+    },
+  };
+}
 
-afterAll(() => {
+function stopDevServer() {
   if (dev_server_pid) {
-    process?.kill?.(dev_server_pid);
+    const pid = dev_server_pid;
     dev_server_pid = undefined;
+    process?.kill?.(pid);
   }
-});
+}
+
+afterAll(stopDevServer);
 
 const timeout = Bun.version.includes("debug") ? 1_000_000 : 100_000;
 test(
   "ssr works for 100-ish requests",
   async () => {
+    using devServer = await startDevServer();
+    const { resolve, reject, promise } = Promise.withResolvers();
     expect(dev_server).not.toBeUndefined();
     expect(baseUrl).not.toBeUndefined();
     const lockfile = parseLockfile(root);
     expect(lockfile).toMatchNodeModulesAt(root);
     expect(lockfile).toMatchSnapshot();
+    const controller = new AbortController();
 
-    const batchSize = 16;
-    const promises = [];
-    for (let j = 0; j < 100; j += batchSize) {
-      for (let i = j; i < j + batchSize; i++) {
-        promises.push(
-          (async () => {
-            const x = await fetch(`${baseUrl}/?i=${i}`, {
-              headers: {
-                "Cache-Control": "private, no-cache, no-store, must-revalidate",
-              },
-            });
-            expect(x.status).toBe(200);
-            const text = await x.text();
-            console.count("Completed request");
-            expect(text).toContain(`>${Bun.version}</code>`);
-          })(),
-        );
-      }
-      await Promise.allSettled(promises);
+    // On an arm64 mac, it doesn't get faster if you increase it beyond 4 as of August, 2025.
+    const queue = new PQueue({ concurrency: 4 });
+
+    async function run(i: number) {
+      const x = await fetch(`${baseUrl}/?i=${i}`, {
+        headers: {
+          "Cache-Control": "private, no-cache, no-store, must-revalidate",
+        },
+        signal: controller.signal,
+      });
+      expect(x.status).toBe(200);
+      const text = await x.text();
+      console.count("Completed request");
+      expect(text).toContain(`>${Bun.version}</code>`);
     }
 
-    const x = await Promise.allSettled(promises);
-    const failing = x.filter(x => x.status === "rejected").map(x => x.reason!);
-    if (failing.length) {
-      throw new AggregateError(failing, failing.length + " requests failed", {});
+    for (let i = 0; i < 100; i++) {
+      queue.add(
+        async () => {
+          await run(i);
+        },
+        { signal: controller.signal },
+      );
     }
-    for (const y of x) {
-      expect(y.status).toBe("fulfilled");
-    }
+    queue.once("error", e => {
+      reject(e);
+    });
+    queue.onEmpty().then(resolve);
+    await promise;
   },
   timeout,
 );

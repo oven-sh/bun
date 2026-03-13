@@ -1,10 +1,3 @@
-const clap = @import("../clap.zig");
-const bun = @import("bun");
-const std = @import("std");
-
-const debug = std.debug;
-const mem = std.mem;
-
 /// Deprecated: Use `parseEx` instead
 pub fn ComptimeClap(
     comptime Id: type,
@@ -48,13 +41,13 @@ pub fn ComptimeClap(
 
         pub fn parse(iter: anytype, opt: clap.ParseOptions) !@This() {
             const allocator = opt.allocator;
-            var multis = [_]std.ArrayList([]const u8){undefined} ** multi_options;
+            var multis = [_]std.array_list.Managed([]const u8){undefined} ** multi_options;
             for (&multis) |*multi| {
-                multi.* = std.ArrayList([]const u8).init(allocator);
+                multi.* = std.array_list.Managed([]const u8).init(allocator);
             }
 
-            var pos = std.ArrayList([]const u8).init(allocator);
-            var passthrough_positionals = std.ArrayList([]const u8).init(allocator);
+            var pos = std.array_list.Managed([]const u8).init(allocator);
+            var passthrough_positionals = std.array_list.Managed([]const u8).init(allocator);
 
             var res = @This(){
                 .single_options = [_]?[]const u8{null} ** single_options,
@@ -163,6 +156,11 @@ pub fn ComptimeClap(
                         if (mem.eql(u8, name, "--" ++ l))
                             return true;
                     }
+                    // Check aliases
+                    for (param.names.long_aliases) |alias| {
+                        if (mem.eql(u8, name, "--" ++ alias))
+                            return true;
+                    }
                 }
 
                 return false;
@@ -180,6 +178,11 @@ pub fn ComptimeClap(
                         if (mem.eql(u8, name, "--" ++ l))
                             return param;
                     }
+                    // Check aliases
+                    for (param.names.long_aliases) |alias| {
+                        if (mem.eql(u8, name, "--" ++ alias))
+                            return param;
+                    }
                 }
 
                 @compileError(name ++ " is not a parameter.");
@@ -187,3 +190,10 @@ pub fn ComptimeClap(
         }
     };
 }
+
+const bun = @import("bun");
+const clap = @import("../clap.zig");
+
+const std = @import("std");
+const debug = std.debug;
+const mem = std.mem;

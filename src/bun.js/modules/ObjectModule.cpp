@@ -15,19 +15,19 @@ generateObjectModuleSourceCode(JSC::JSGlobalObject* globalObject,
         GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
         JSC::EnsureStillAliveScope stillAlive(object);
 
-        PropertyNameArray properties(vm, PropertyNameMode::Strings,
+        PropertyNameArrayBuilder properties(vm, PropertyNameMode::Strings,
             PrivateSymbolMode::Exclude);
         object->methodTable()->getOwnPropertyNames(object, globalObject, properties, DontEnumPropertiesMode::Exclude);
         RETURN_IF_EXCEPTION(throwScope, void());
         gcUnprotectNullTolerant(object);
 
-        for (auto& entry : properties) {
+        for (auto& entry : properties.releaseData()->propertyNameVector()) {
             exportNames.append(entry);
 
-            auto scope = DECLARE_CATCH_SCOPE(vm);
+            auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
             JSValue value = object->get(globalObject, entry);
             if (scope.exception()) [[unlikely]] {
-                scope.clearException();
+                (void)scope.tryClearException();
                 value = jsUndefined();
             }
             exportValues.append(value);
@@ -45,31 +45,28 @@ generateObjectModuleSourceCodeForJSON(JSC::JSGlobalObject* globalObject,
                Vector<JSC::Identifier, 4>& exportNames,
                JSC::MarkedArgumentBuffer& exportValues) -> void {
         auto& vm = JSC::getVM(lexicalGlobalObject);
+        auto scope = DECLARE_THROW_SCOPE(vm);
         GlobalObject* globalObject = reinterpret_cast<GlobalObject*>(lexicalGlobalObject);
         JSC::EnsureStillAliveScope stillAlive(object);
 
-        PropertyNameArray properties(vm, PropertyNameMode::Strings,
+        PropertyNameArrayBuilder properties(vm, PropertyNameMode::Strings,
             PrivateSymbolMode::Exclude);
-        object->getPropertyNames(globalObject, properties,
-            DontEnumPropertiesMode::Exclude);
+        object->getPropertyNames(globalObject, properties, DontEnumPropertiesMode::Exclude);
+        RETURN_IF_EXCEPTION(scope, {});
         gcUnprotectNullTolerant(object);
 
         exportNames.append(vm.propertyNames->defaultKeyword);
         exportValues.append(object);
 
-        for (auto& entry : properties) {
+        for (auto& entry : properties.releaseData()->propertyNameVector()) {
             if (entry == vm.propertyNames->defaultKeyword) {
                 continue;
             }
 
             exportNames.append(entry);
 
-            auto scope = DECLARE_CATCH_SCOPE(vm);
             JSValue value = object->get(globalObject, entry);
-            if (scope.exception()) [[unlikely]] {
-                scope.clearException();
-                value = jsUndefined();
-            }
+            RETURN_IF_EXCEPTION(scope, {});
             exportValues.append(value);
         }
     };

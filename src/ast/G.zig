@@ -32,6 +32,7 @@ pub const Class = struct {
     close_brace_loc: logger.Loc = logger.Loc.Empty,
     properties: []Property = &([_]Property{}),
     has_decorators: bool = false,
+    should_lower_standard_decorators: bool = false,
 
     pub fn canBeMoved(this: *const Class) bool {
         if (this.extends != null)
@@ -134,6 +135,7 @@ pub const Property = struct {
         declare,
         abstract,
         class_static_block,
+        auto_accessor,
 
         pub fn jsonStringify(self: @This(), writer: anytype) !void {
             return try writer.write(@tagName(self));
@@ -208,17 +210,16 @@ pub const Arg = struct {
     }
 };
 
-// @sortImports
+const string = []const u8;
 
 const std = @import("std");
 
 const bun = @import("bun");
 const BabyList = bun.BabyList;
 const logger = bun.logger;
-const string = bun.string;
 const TypeScript = bun.js_parser.TypeScript;
 
-const js_ast = bun.js_ast;
+const js_ast = bun.ast;
 const BindingNodeIndex = js_ast.BindingNodeIndex;
 const Expr = js_ast.Expr;
 const ExprNodeIndex = js_ast.ExprNodeIndex;

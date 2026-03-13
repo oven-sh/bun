@@ -1,0 +1,118 @@
+name: Update highway
+
+on:
+  schedule:
+    - cron: "0 4 * * 0"
+  workflow_dispatch:
+
+jobs:
+  check-update:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check highway version
+        id: check-version
+        run: |
+          set -euo pipefail
+
+          # Extract the commit hash from the line after COMMIT
+          CURRENT_VERSION=$(awk '/[[:space:]]*COMMIT[[:space:]]*$/{getline; gsub(/^[[:space:]]+|[[:space:]]+$/,"",$0); print}' cmake/targets/BuildHighway.cmake)
+
+          if [ -z "$CURRENT_VERSION" ]; then
+            echo "Error: Could not find COMMIT line in BuildHighway.cmake"
+            exit 1
+          fi
+
+          # Validate that it looks like a git hash
+          if ! [[ $CURRENT_VERSION =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Error: Invalid git hash format in BuildHighway.cmake"
+            echo "Found: $CURRENT_VERSION"
+            echo "Expected: 40 character hexadecimal string"
+            exit 1
+          fi
+
+          echo "current=$CURRENT_VERSION" >> $GITHUB_OUTPUT
+
+          LATEST_RELEASE=$(curl -sL https://api.github.com/repos/google/highway/releases/latest)
+          if [ -z "$LATEST_RELEASE" ]; then
+            echo "Error: Failed to fetch latest release from GitHub API"
+            exit 1
+          fi
+
+          LATEST_TAG=$(echo "$LATEST_RELEASE" | jq -r '.tag_name')
+          if [ -z "$LATEST_TAG" ] || [ "$LATEST_TAG" = "null" ]; then
+            echo "Error: Could not extract tag name from GitHub API response"
+            exit 1
+          fi
+
+          TAG_REF=$(curl -sL "https://api.github.com/repos/google/highway/git/refs/tags/$LATEST_TAG")
+          if [ -z "$TAG_REF" ]; then
+            echo "Error: Could not fetch tag reference for $LATEST_TAG"
+            exit 1
+          fi
+
+          TAG_OBJECT_SHA=$(echo "$TAG_REF" | jq -r '.object.sha')
+          TAG_OBJECT_TYPE=$(echo "$TAG_REF" | jq -r '.object.type')
+
+          if [ -z "$TAG_OBJECT_SHA" ] || [ "$TAG_OBJECT_SHA" = "null" ]; then
+            echo "Error: Could not fetch SHA for tag $LATEST_TAG"
+            exit 1
+          fi
+
+          # Handle both lightweight tags (type: commit) and annotated tags (type: tag)
+          if [ "$TAG_OBJECT_TYPE" = "commit" ]; then
+            # Lightweight tag - object.sha is already the commit SHA
+            LATEST_SHA="$TAG_OBJECT_SHA"
+          elif [ "$TAG_OBJECT_TYPE" = "tag" ]; then
+            # Annotated tag - need to fetch the tag object to get the commit SHA
+            LATEST_SHA=$(curl -sL "https://api.github.com/repos/google/highway/git/tags/$TAG_OBJECT_SHA" | jq -r '.object.sha')
+            if [ -z "$LATEST_SHA" ] || [ "$LATEST_SHA" = "null" ]; then
+              echo "Error: Could not fetch commit SHA for annotated tag $LATEST_TAG @ $TAG_OBJECT_SHA"
+              exit 1
+            fi
+          else
+            echo "Error: Unexpected tag object type: $TAG_OBJECT_TYPE"
+            exit 1
+          fi
+
+          if ! [[ $LATEST_SHA =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Error: Invalid SHA format received from GitHub"
+            echo "Found: $LATEST_SHA"
+            echo "Expected: 40 character hexadecimal string"
+            exit 1
+          fi
+
+          echo "latest=$LATEST_SHA" >> $GITHUB_OUTPUT
+          echo "tag=$LATEST_TAG" >> $GITHUB_OUTPUT
+
+      - name: Update version if needed
+        if: success() && steps.check-version.outputs.current != steps.check-version.outputs.latest
+        run: |
+          set -euo pipefail
+          # Handle multi-line format where COMMIT and its value are on separate lines
+          sed -i -E '/[[:space:]]*COMMIT[[:space:]]*$/{n;s/[[:space:]]*([0-9a-f]+)[[:space:]]*$/    ${{ steps.check-version.outputs.latest }}/}' cmake/targets/BuildHighway.cmake
+
+      - name: Create Pull Request
+        if: success() && steps.check-version.outputs.current != steps.check-version.outputs.latest
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          add-paths: |
+            cmake/targets/BuildHighway.cmake
+          commit-message: "deps: update highway to ${{ steps.check-version.outputs.tag }} (${{ steps.check-version.outputs.latest }})"
+          title: "deps: update highway to ${{ steps.check-version.outputs.tag }}"
+          delete-branch: true
+          branch: deps/update-highway
+          body: |
+            ## What does this PR do?
+
+            Updates highway to version ${{ steps.check-version.outputs.tag }}
+
+            Compare: https://github.com/google/highway/compare/${{ steps.check-version.outputs.current }}...${{ steps.check-version.outputs.latest }}
+
+            Auto-updated by [this workflow](https://github.com/oven-sh/bun/actions/workflows/update-highway.yml)

@@ -1,0 +1,147 @@
+language: en-US
+
+issue_enrichment:
+  auto_enrich:
+    enabled: false
+
+reviews:
+  profile: assertive
+  request_changes_workflow: false
+  high_level_summary: false
+  high_level_summary_placeholder: "@coderabbitai summary"
+  high_level_summary_in_walkthrough: true
+  auto_title_placeholder: "@coderabbitai"
+  review_status: false
+  commit_status: false
+  fail_commit_status: false
+  collapse_walkthrough: false
+  changed_files_summary: true
+  sequence_diagrams: false
+  estimate_code_review_effort: false
+  assess_linked_issues: true
+  related_issues: true
+  related_prs: true
+  suggested_labels: false
+  suggested_reviewers: true
+  in_progress_fortune: false
+  poem: false
+  abort_on_close: true
+
+  path_filters:
+    - "!test/js/node/test/"
+
+  auto_review:
+    enabled: true
+    auto_incremental_review: true
+    drafts: false
+
+  finishing_touches:
+    docstrings:
+      enabled: false
+    unit_tests:
+      enabled: false
+
+  pre_merge_checks:
+    docstrings:
+      mode: off
+    title:
+      mode: warning
+    description:
+      mode: warning
+    issue_assessment:
+      mode: warning
+
+  tools:
+    shellcheck:
+      enabled: true
+    ruff:
+      enabled: true
+    markdownlint:
+      enabled: true
+    github-checks:
+      enabled: true
+      timeout_ms: 90000
+    languagetool:
+      enabled: true
+      enabled_only: false
+      level: default
+    biome:
+      enabled: true
+    hadolint:
+      enabled: true
+    swiftlint:
+      enabled: true
+    phpstan:
+      enabled: true
+      level: default
+    phpmd:
+      enabled: true
+    phpcs:
+      enabled: true
+    golangci-lint:
+      enabled: true
+    yamllint:
+      enabled: true
+    gitleaks:
+      enabled: true
+    checkov:
+      enabled: true
+    detekt:
+      enabled: true
+    eslint:
+      enabled: true
+    flake8:
+      enabled: true
+    rubocop:
+      enabled: true
+    buf:
+      enabled: true
+    regal:
+      enabled: true
+    actionlint:
+      enabled: true
+    pmd:
+      enabled: true
+    clang:
+      enabled: true
+    cppcheck:
+      enabled: true
+    semgrep:
+      enabled: true
+    circleci:
+      enabled: true
+    clippy:
+      enabled: true
+    sqlfluff:
+      enabled: true
+    prismaLint:
+      enabled: true
+    pylint:
+      enabled: true
+    oxc:
+      enabled: true
+    shopifyThemeCheck:
+      enabled: true
+    luacheck:
+      enabled: true
+    brakeman:
+      enabled: true
+    dotenvLint:
+      enabled: true
+    htmlhint:
+      enabled: true
+    checkmake:
+      enabled: true
+    osvScanner:
+      enabled: true
+
+chat:
+  auto_reply: true
+
+knowledge_base:
+  opt_out: false
+  code_guidelines:
+    enabled: true
+    filePatterns:
+      - "**/.cursor/rules/*.mdc"
+      - "**/CLAUDE.md"

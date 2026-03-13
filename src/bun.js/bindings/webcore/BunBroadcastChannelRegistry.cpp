@@ -45,7 +45,7 @@ void BunBroadcastChannelRegistry::postMessageLocally(const String& name, Broadca
 
 void BunBroadcastChannelRegistry::postMessageToRemote(const String& name, MessageWithMessagePorts&& message)
 {
-    // auto callbackAggregator = CallbackAggregator::create(WTFMove(completionHandler));
+    // auto callbackAggregator = CallbackAggregator::create(WTF::move(completionHandler));
     // PartitionedSecurityOrigin origin { clientOrigin.topOrigin.securityOrigin(), clientOrigin.clientOrigin.securityOrigin() };
     // postMessageLocally(origin, name, std::nullopt, *message.message, callbackAggregator.copyRef());
 }

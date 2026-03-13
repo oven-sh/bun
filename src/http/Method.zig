@@ -1,7 +1,3 @@
-const bun = @import("bun");
-
-const std = @import("std");
-
 pub const Method = enum(u8) {
     ACL = 0,
     BIND = 1,
@@ -149,11 +145,11 @@ pub const Method = enum(u8) {
         return Map.get(str);
     }
 
-    extern "c" fn Bun__HTTPMethod__toJS(method: Method, globalObject: *JSC.JSGlobalObject) JSC.JSValue;
+    extern "c" fn Bun__HTTPMethod__toJS(method: Method, globalObject: *jsc.JSGlobalObject) jsc.JSValue;
 
     pub const toJS = Bun__HTTPMethod__toJS;
 
-    const JSC = bun.JSC;
+    const jsc = bun.jsc;
 
     pub const Optional = union(enum) {
         any: void,
@@ -192,3 +188,6 @@ export fn Bun__HTTPMethod__from(str: [*]const u8, len: usize) i16 {
 comptime {
     _ = Bun__HTTPMethod__from;
 }
+
+const bun = @import("bun");
+const std = @import("std");

@@ -1,7 +1,7 @@
 pub const TCCState = State;
-const TCCErrorFunc = ?*const fn (?*anyopaque, [*:0]const u8) callconv(.C) void;
+const TCCErrorFunc = ?*const fn (?*anyopaque, [*:0]const u8) callconv(.c) void;
 fn ErrorFunc(Ctx: type) type {
-    return fn (ctx: ?*Ctx, msg: [*:0]const u8) callconv(.C) void;
+    return fn (ctx: ?*Ctx, msg: [*:0]const u8) callconv(.c) void;
 }
 extern fn tcc_new() ?*TCCState;
 extern fn tcc_delete(s: *TCCState) void;
@@ -22,18 +22,14 @@ extern fn tcc_add_library(s: *TCCState, libraryname: [*:0]const u8) c_int;
 extern fn tcc_add_symbol(s: *TCCState, name: [*:0]const u8, val: *const anyopaque) c_int;
 extern fn tcc_output_file(s: *TCCState, filename: [*:0]const u8) c_int;
 extern fn tcc_run(s: *TCCState, argc: c_int, argv: [*c][*c]u8) c_int;
-extern fn tcc_relocate(s1: *TCCState, ptr: ?*anyopaque) c_int;
+extern fn tcc_relocate(s1: *TCCState) c_int;
 extern fn tcc_get_symbol(s: *TCCState, name: [*:0]const u8) ?*anyopaque;
-extern fn tcc_list_symbols(s: *TCCState, ctx: ?*anyopaque, symbol_cb: ?*const fn (?*anyopaque, [*:0]const u8, ?*const anyopaque) callconv(.C) void) void;
+extern fn tcc_list_symbols(s: *TCCState, ctx: ?*anyopaque, symbol_cb: ?*const fn (?*anyopaque, [*:0]const u8, ?*const anyopaque) callconv(.c) void) void;
 const TCC_OUTPUT_MEMORY = @as(c_int, 1);
 const TCC_OUTPUT_EXE = @as(c_int, 2);
 const TCC_OUTPUT_DLL = @as(c_int, 3);
 const TCC_OUTPUT_OBJ = @as(c_int, 4);
 const TCC_OUTPUT_PREPROCESS = @as(c_int, 5);
-const TCC_RELOCATE_AUTO: ?*anyopaque = @ptrCast(&1);
-
-const std = @import("std");
-const Allocator = std.mem.Allocator;
 
 pub const Error = error{
     InvalidOptions,
@@ -270,10 +266,10 @@ pub const State = opaque {
     /// ## Example
     /// ```zig
     /// const state = TCC.State.init() catch @panic("ahhh");
-    /// fn add(a: c_int, b: c_int) callconv(.C) c_int {
+    /// fn add(a: c_int, b: c_int) callconv(.c) c_int {
     ///     return a + b;
     /// }
-    /// extern "c" fn sub(a: c_int, b: c_int) callconv(.C) c_int;
+    /// extern "c" fn sub(a: c_int, b: c_int) callconv(.c) c_int;
     /// state.addSymbolsComptime(.{
     ///     .add = add,
     ///     .sub = sub,
@@ -302,18 +298,14 @@ pub const State = opaque {
     }
 
     /// Do all relocations (needed before using `getSymbol`)
-    ///
-    /// Possible values for `ptr`:
-    /// - `TCC_RELOCATE_AUTO`: Allocate and manage memory internally
-    /// - `NULL`: return required memory size for the step below
-    /// - memory address: copy code to memory passed by the caller
-    pub fn relocate(s: *State, ptr: ?*anyopaque) Error!usize {
-        const size = tcc_relocate(s, ptr);
-        if (size < 0) {
+    /// Memory is allocated and managed internally by TinyCC.
+    /// Returns 0 on success, error on failure.
+    pub fn relocate(s: *State) Error!void {
+        const ret = tcc_relocate(s);
+        if (ret < 0) {
             @branchHint(.unlikely);
             return error.RelocationError;
         }
-        return @intCast(size);
     }
 
     /// Return symbol value or NULL if not found
@@ -326,3 +318,6 @@ pub const State = opaque {
         tcc_list_symbols(s, ctx, symbolCb);
     }
 };
+
+const std = @import("std");
+const Allocator = std.mem.Allocator;

@@ -92,12 +92,12 @@ private:
 ExceptionOr<void> isolatedCopy(ExceptionOr<void>&&);
 
 template<typename ReturnType> inline ExceptionOr<ReturnType>::ExceptionOr(Exception&& exception)
-    : m_value(makeUnexpected(WTFMove(exception)))
+    : m_value(makeUnexpected(WTF::move(exception)))
 {
 }
 
 template<typename ReturnType> inline ExceptionOr<ReturnType>::ExceptionOr(ReturnType&& returnValue)
-    : m_value(WTFMove(returnValue))
+    : m_value(WTF::move(returnValue))
 {
 }
 
@@ -118,7 +118,7 @@ template<typename ReturnType> inline const Exception& ExceptionOr<ReturnType>::e
 
 template<typename ReturnType> inline Exception ExceptionOr<ReturnType>::releaseException()
 {
-    return WTFMove(m_value.error());
+    return WTF::move(m_value.error());
 }
 
 template<typename ReturnType> inline const ReturnType& ExceptionOr<ReturnType>::returnValue() const
@@ -128,11 +128,11 @@ template<typename ReturnType> inline const ReturnType& ExceptionOr<ReturnType>::
 
 template<typename ReturnType> inline ReturnType ExceptionOr<ReturnType>::releaseReturnValue()
 {
-    return WTFMove(m_value.value());
+    return WTF::move(m_value.value());
 }
 
 template<typename ReturnReferenceType> inline ExceptionOr<ReturnReferenceType&>::ExceptionOr(Exception&& exception)
-    : m_value(WTFMove(exception))
+    : m_value(WTF::move(exception))
 {
 }
 
@@ -167,7 +167,7 @@ template<typename ReturnReferenceType> inline ReturnReferenceType& ExceptionOr<R
 }
 
 inline ExceptionOr<void>::ExceptionOr(Exception&& exception)
-    : m_value(makeUnexpected(WTFMove(exception)))
+    : m_value(makeUnexpected(WTF::move(exception)))
 {
 }
 
@@ -183,7 +183,7 @@ inline const Exception& ExceptionOr<void>::exception() const
 
 inline Exception ExceptionOr<void>::releaseException()
 {
-    return WTFMove(m_value.error());
+    return WTF::move(m_value.error());
 }
 
 inline ExceptionOr<void> isolatedCopy(ExceptionOr<void>&& value)

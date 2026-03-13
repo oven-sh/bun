@@ -13,7 +13,7 @@ it("works", async () => {
     stderr: "pipe",
     env: bunEnv,
   });
-  let [code, err, out] = await Promise.all([exited, new Response(stderr).text(), new Response(stdout).text()]);
+  let [code, err, out] = await Promise.all([exited, stderr.text(), stdout.text()]);
   if (code !== 0) {
     expect(err).toBeEmpty();
   }

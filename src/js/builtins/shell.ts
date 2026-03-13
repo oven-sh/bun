@@ -149,7 +149,7 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
     cwd(newCwd?: string): this {
       this.#throwIfRunning();
       if (typeof newCwd === "undefined" || newCwd === "." || newCwd === "" || newCwd === "./") {
-        newCwd = defaultCwd;
+        newCwd = defaultCwd ?? process.cwd();
       }
       this.#args!.setCwd(newCwd);
       return this;
@@ -175,14 +175,14 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
       }
     }
 
-    #quiet(): this {
+    #quiet(isQuiet: boolean = true): this {
       this.#throwIfRunning();
-      this.#args!.setQuiet();
+      this.#args!.setQuiet(isQuiet);
       return this;
     }
 
-    quiet(): this {
-      return this.#quiet();
+    quiet(isQuiet: boolean | undefined): this {
+      return this.#quiet(isQuiet ?? true);
     }
 
     nothrow(): this {
@@ -196,17 +196,17 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
     }
 
     async text(encoding) {
-      const { stdout } = (await this.#quiet()) as ShellOutput;
+      const { stdout } = (await this.#quiet(true)) as ShellOutput;
       return stdout.toString(encoding);
     }
 
     async json() {
-      const { stdout } = (await this.#quiet()) as ShellOutput;
+      const { stdout } = (await this.#quiet(true)) as ShellOutput;
       return JSON.parse(stdout.toString());
     }
 
     async *lines() {
-      const { stdout } = (await this.#quiet()) as ShellOutput;
+      const { stdout } = (await this.#quiet(true)) as ShellOutput;
 
       if (process.platform === "win32") {
         yield* stdout.toString().split(/\r?\n/);
@@ -216,7 +216,7 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
     }
 
     async arrayBuffer() {
-      const { stdout } = (await this.#quiet()) as ShellOutput;
+      const { stdout } = (await this.#quiet(true)) as ShellOutput;
       return stdout.buffer;
     }
 
@@ -225,7 +225,7 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
     }
 
     async blob() {
-      const { stdout } = (await this.#quiet()) as ShellOutput;
+      const { stdout } = (await this.#quiet(true)) as ShellOutput;
       return new Blob([stdout]);
     }
 
@@ -277,7 +277,7 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
     cwd(newCwd: string | undefined) {
       if (typeof newCwd === "undefined" || typeof newCwd === "string") {
         if (newCwd === "." || newCwd === "" || newCwd === "./") {
-          newCwd = defaultCwd;
+          newCwd = defaultCwd ?? process.cwd();
         }
 
         this[cwdSymbol] = newCwd;

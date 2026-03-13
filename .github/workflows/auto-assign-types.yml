@@ -1,0 +1,19 @@
+name: Auto Assign Types Issues
+
+on:
+  issues:
+    types: [labeled]
+
+jobs:
+  auto-assign:
+    runs-on: ubuntu-latest
+    if: github.event.label.name == 'types'
+    permissions:
+      issues: write
+    steps:
+      - name: Assign to alii
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh issue edit ${{ github.event.issue.number }} --add-assignee alii

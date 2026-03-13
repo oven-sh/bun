@@ -11,7 +11,7 @@ public:
     using Base = JSDOMWrapper<CookieMap>;
     static JSCookieMap* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<CookieMap>&& impl)
     {
-        JSCookieMap* ptr = new (NotNull, JSC::allocateCell<JSCookieMap>(globalObject->vm())) JSCookieMap(structure, *globalObject, WTFMove(impl));
+        JSCookieMap* ptr = new (NotNull, JSC::allocateCell<JSCookieMap>(globalObject->vm())) JSCookieMap(structure, *globalObject, WTF::move(impl));
         ptr->finishCreation(globalObject->vm());
         return ptr;
     }

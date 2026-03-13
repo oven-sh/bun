@@ -25,8 +25,9 @@ static bool getNonIndexPropertySlotPrototypePollutionMitigation(JSC::VM& vm, JSO
     while (true) {
         Structure* structure = object->structureID().decode();
         if (!TypeInfo::overridesGetOwnPropertySlot(object->inlineTypeFlags())) [[likely]] {
-            if (object->getOwnNonIndexPropertySlot(vm, structure, propertyName, slot))
-                return true;
+            auto has = object->getOwnNonIndexPropertySlot(vm, structure, propertyName, slot);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (has) return true;
         } else {
             bool hasSlot = structure->classInfoForCells()->methodTable.getOwnPropertySlot(object, globalObject, propertyName, slot);
             RETURN_IF_EXCEPTION(scope, false);
@@ -84,13 +85,24 @@ JSC::JSValue getIfPropertyExistsPrototypePollutionMitigation(JSC::VM& vm, JSC::J
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto propertySlot = PropertySlot(object, PropertySlot::InternalMethodType::Get);
     auto isDefined = getNonIndexPropertySlotPrototypePollutionMitigation(vm, object, globalObject, name, propertySlot);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!isDefined) return JSC::jsUndefined();
+    JSValue value = propertySlot.getValue(globalObject, name);
+    RETURN_IF_EXCEPTION(scope, {});
+    return value;
+}
 
-    if (!isDefined) {
+JSC::JSValue getOwnPropertyIfExists(JSC::JSGlobalObject* globalObject, JSC::JSObject* object, const JSC::PropertyName& name)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    PropertySlot slot(object, PropertySlot::InternalMethodType::GetOwnProperty, nullptr);
+    if (!object->methodTable()->getOwnPropertySlot(object, globalObject, name, slot)) {
+        RETURN_IF_EXCEPTION(scope, {});
         return JSC::jsUndefined();
     }
-
-    scope.assertNoException();
-    JSValue value = propertySlot.getValue(globalObject, name);
+    RETURN_IF_EXCEPTION(scope, {});
+    JSValue value = slot.getValue(globalObject, name);
     RETURN_IF_EXCEPTION(scope, {});
     return value;
 }

@@ -151,8 +151,6 @@ public:
     ZlibContext *zlibContext = nullptr;
     InflationStream *inflationStream = nullptr;
     DeflationStream *deflationStream = nullptr;
-
-    us_timer_t *dateTimer;
 };
 
 }

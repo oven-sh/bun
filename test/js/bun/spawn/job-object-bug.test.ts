@@ -9,6 +9,6 @@ it("does not hang", async () => {
     env: bunEnv,
     stdio: ["ignore", "pipe", "pipe"],
   });
-  await Bun.readableStreamToText(subprocess.stdout);
+  await subprocess.stdout.text();
   expect(await subprocess.exited).toBe(0);
 });

@@ -1,5 +1,4 @@
 const HashedString = @This();
-const bun = @import("bun");
 
 ptr: [*]const u8,
 len: u32,
@@ -41,3 +40,5 @@ fn Eql(this: HashedString, comptime Other: type, other: Other) bool {
 pub fn str(this: HashedString) []const u8 {
     return this.ptr[0..this.len];
 }
+
+const bun = @import("bun");

@@ -28,6 +28,7 @@
 #include "StringAdaptors.h"
 #include <JavaScriptCore/HandleTypes.h>
 #include <JavaScriptCore/Strong.h>
+#include <type_traits>
 #include <variant>
 #include <wtf/Brigand.h>
 #include <wtf/Markable.h>
@@ -76,6 +77,7 @@ struct IDLType {
     static NullableType nullValue() { return std::nullopt; }
     static bool isNullValue(const NullableType& value) { return !value; }
     static ImplementationType extractValueFromNullable(const NullableType& value) { return value.value(); }
+    static ImplementationType extractValueFromNullable(NullableType&& value) { return std::move(value.value()); }
 
     template<typename Traits> using NullableTypeWithLessPadding = Markable<ImplementationType, Traits>;
     template<typename Traits>
@@ -84,6 +86,8 @@ struct IDLType {
     static bool isNullType(const NullableTypeWithLessPadding<Traits>& value) { return !value; }
     template<typename Traits>
     static ImplementationType extractValueFromNullable(const NullableTypeWithLessPadding<Traits>& value) { return value.value(); }
+    template<typename Traits>
+    static ImplementationType extractValueFromNullable(NullableTypeWithLessPadding<Traits>&& value) { return std::move(value.value()); }
 };
 
 // IDLUnsupportedType is a special type that serves as a base class for currently unsupported types.
@@ -94,8 +98,12 @@ struct IDLUnsupportedType : IDLType<void> {
 struct IDLNull : IDLType<std::nullptr_t> {
 };
 
+// See also: Bun::IDLRawAny, Bun::Bindgen::IDLStrongAny
 struct IDLAny : IDLType<JSC::Strong<JSC::Unknown>> {
-    using SequenceStorageType = JSC::JSValue;
+    // SequenceStorageType must be left as JSC::Strong<JSC::Unknown>; otherwise
+    // IDLSequence<IDLAny> would yield a Vector<JSC::JSValue>, whose contents
+    // are invisible to the GC.
+    // [do not uncomment] using SequenceStorageType = JSC::JSValue;
     using ParameterType = JSC::JSValue;
     using NullableParameterType = JSC::JSValue;
 
@@ -247,18 +255,23 @@ template<typename T> struct IDLNullable : IDLType<typename T::NullableType> {
     template<typename U> static inline auto extractValueFromNullable(U&& value) -> decltype(T::extractValueFromNullable(std::forward<U>(value))) { return T::extractValueFromNullable(std::forward<U>(value)); }
 };
 
-template<typename T> struct IDLSequence : IDLType<Vector<typename T::ImplementationType>> {
-    using InnerType = T;
-
-    using ParameterType = const Vector<typename T::InnerParameterType>&;
-    using NullableParameterType = const std::optional<Vector<typename T::InnerParameterType>>&;
+// Like `IDLNullable`, but does not permit `null`, only `undefined`.
+template<typename T> struct IDLOptional : IDLNullable<T> {
 };
 
-template<typename T> struct IDLFrozenArray : IDLType<Vector<typename T::ImplementationType>> {
+template<typename T, typename VectorType = Vector<typename T::SequenceStorageType>>
+struct IDLSequence : IDLType<VectorType> {
     using InnerType = T;
 
-    using ParameterType = const Vector<typename T::ImplementationType>&;
-    using NullableParameterType = const std::optional<Vector<typename T::ImplementationType>>&;
+    using ParameterType = const VectorType&;
+    using NullableParameterType = const std::optional<VectorType>&;
+};
+
+template<typename T> struct IDLFrozenArray : IDLType<Vector<typename T::SequenceStorageType>> {
+    using InnerType = T;
+
+    using ParameterType = const Vector<typename T::SequenceStorageType>&;
+    using NullableParameterType = const std::optional<Vector<typename T::SequenceStorageType>>&;
 };
 
 template<typename K, typename V> struct IDLRecord : IDLType<Vector<KeyValuePair<typename K::ImplementationType, typename V::ImplementationType>>> {
@@ -282,6 +295,31 @@ template<typename... Ts>
 struct IDLUnion : IDLType<std::variant<typename Ts::ImplementationType...>> {
     using TypeList = brigand::list<Ts...>;
 
+    // If `SequenceStorageType` and `ImplementationType` are different for any
+    // type in `Ts`, this union should not be allowed to be stored in a
+    // sequence. Sequence elements are stored on the heap (in a `Vector`), so
+    // if `SequenceStorageType` and `ImplementationType` differ for some type,
+    // this is an indication that the `ImplementationType` should not be stored
+    // on the heap (e.g., because it is or contains a raw `JSValue`). When this
+    // is the case, we indicate that the union itself should not be stored on
+    // the heap by defining its `SequenceStorageType` as void.
+    //
+    // Note that we cannot define `SequenceStorageType` as
+    // `std::variant<Ts::SequenceStorageType...>`, as this would cause
+    // sequence conversion to fail to compile, because
+    // `std::variant<Ts::ImplementationType...>` is not convertible to
+    // `std::variant<Ts::SequenceStorageType...>`.
+    //
+    // A potential avenue for future work would be to extend the IDL type
+    // traits interface to allow defining custom conversions from
+    // `ImplementationType` to `SequenceStorageType`, and to properly propagate
+    // `SequenceStorageType` in other types like `IDLDictionary`; however, one
+    // should keep in mind that some types may still disallow heap storage
+    // entirely by defining `SequenceStorageType` as void.
+    using SequenceStorageType = std::conditional_t<
+        (std::is_same_v<typename Ts::SequenceStorageType, typename Ts::ImplementationType> && ...),
+        std::variant<typename Ts::ImplementationType...>,
+        void>;
     using ParameterType = const std::variant<typename Ts::ImplementationType...>&;
     using NullableParameterType = const std::optional<std::variant<typename Ts::ImplementationType...>>&;
 };

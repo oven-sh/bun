@@ -52,7 +52,7 @@ ts_enums: Ast.TsEnumsMap = .{},
 
 flags: BundledAst.Flags = .{},
 
-pub const Flags = packed struct(u8) {
+pub const Flags = packed struct(u16) {
     // This is a list of CommonJS features. When a file uses CommonJS features,
     // it's not a candidate for "flat bundling" and must be wrapped in its own
     // closure.
@@ -65,6 +65,8 @@ pub const Flags = packed struct(u8) {
     has_lazy_export: bool = false,
     commonjs_module_exports_assigned_deoptimized: bool = false,
     has_explicit_use_strict_directive: bool = false,
+    has_import_meta: bool = false,
+    _padding: u7 = 0,
 };
 
 pub const empty = BundledAst.init(Ast.empty);
@@ -116,6 +118,7 @@ pub fn toAST(this: *const BundledAst) Ast {
         .has_lazy_export = this.flags.has_lazy_export,
         .commonjs_module_exports_assigned_deoptimized = this.flags.commonjs_module_exports_assigned_deoptimized,
         .directive = if (this.flags.has_explicit_use_strict_directive) "use strict" else null,
+        .has_import_meta = this.flags.has_import_meta,
     };
 }
 
@@ -168,6 +171,7 @@ pub fn init(ast: Ast) BundledAst {
             .has_lazy_export = ast.has_lazy_export,
             .commonjs_module_exports_assigned_deoptimized = ast.commonjs_module_exports_assigned_deoptimized,
             .has_explicit_use_strict_directive = strings.eqlComptime(ast.directive orelse "", "use strict"),
+            .has_import_meta = ast.has_import_meta,
         },
     };
 }
@@ -179,13 +183,14 @@ pub fn addUrlForCss(
     source: *const logger.Source,
     mime_type_: ?[]const u8,
     unique_key: ?[]const u8,
+    force_inline: bool,
 ) void {
     {
         const mime_type = if (mime_type_) |m| m else MimeType.byExtension(bun.strings.trimLeadingChar(std.fs.path.extension(source.path.text), '.')).value;
         const contents = source.contents;
         // TODO: make this configurable
         const COPY_THRESHOLD = 128 * 1024; // 128kb
-        const should_copy = contents.len >= COPY_THRESHOLD and unique_key != null;
+        const should_copy = !force_inline and contents.len >= COPY_THRESHOLD and unique_key != null;
         if (should_copy) return;
         this.url_for_css = url_for_css: {
 
@@ -193,7 +198,7 @@ pub fn addUrlForCss(
             const encode_len = bun.base64.encodeLen(contents);
             const data_url_prefix_len = "data:".len + mime_type.len + ";base64,".len;
             const total_buffer_len = data_url_prefix_len + encode_len;
-            var encoded = allocator.alloc(u8, total_buffer_len) catch bun.outOfMemory();
+            var encoded = bun.handleOom(allocator.alloc(u8, total_buffer_len));
             _ = std.fmt.bufPrint(encoded[0..data_url_prefix_len], "data:{s};base64,", .{mime_type}) catch unreachable;
             const len = bun.base64.encode(encoded[data_url_prefix_len..], contents);
             break :url_for_css encoded[0 .. data_url_prefix_len + len];
@@ -201,18 +206,24 @@ pub fn addUrlForCss(
     }
 }
 
-// @sortImports
+pub const CommonJSNamedExports = Ast.CommonJSNamedExports;
+pub const ConstValuesMap = Ast.ConstValuesMap;
+pub const NamedExports = Ast.NamedExports;
+pub const NamedImports = Ast.NamedImports;
+pub const TopLevelSymbolToParts = Ast.TopLevelSymbolToParts;
+
+const string = []const u8;
 
 const std = @import("std");
 
 const bun = @import("bun");
 const ImportRecord = bun.ImportRecord;
 const logger = bun.logger;
-const string = bun.string;
 const strings = bun.strings;
 const MimeType = bun.http.MimeType;
 
-const js_ast = bun.js_ast;
+const js_ast = bun.ast;
+const Ast = js_ast.Ast;
 const BundledAst = js_ast.BundledAst;
 const CharFreq = js_ast.CharFreq;
 const ExportsKind = js_ast.ExportsKind;
@@ -222,10 +233,3 @@ const Scope = js_ast.Scope;
 const SlotCounts = js_ast.SlotCounts;
 const Symbol = js_ast.Symbol;
 const TlaCheck = js_ast.TlaCheck;
-
-const Ast = js_ast.Ast;
-pub const CommonJSNamedExports = Ast.CommonJSNamedExports;
-pub const ConstValuesMap = Ast.ConstValuesMap;
-pub const NamedExports = Ast.NamedExports;
-pub const NamedImports = Ast.NamedImports;
-pub const TopLevelSymbolToParts = Ast.TopLevelSymbolToParts;

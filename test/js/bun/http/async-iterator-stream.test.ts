@@ -2,7 +2,7 @@ import { spawn } from "bun";
 import { describe, expect, mock, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
-describe("Streaming body via", () => {
+describe.concurrent("Streaming body via", () => {
   test("async generator function", async () => {
     using server = Bun.serve({
       port: 0,
@@ -43,7 +43,7 @@ describe("Streaming body via", () => {
       stderr: "pipe",
     });
 
-    let [exitCode, stderr] = await Promise.all([subprocess.exited, new Response(subprocess.stderr).text()]);
+    let [exitCode, stderr] = await Promise.all([subprocess.exited, subprocess.stderr.text()]);
     expect(exitCode).toBeInteger();
     expect(stderr).toContain("error: Oops");
     expect(onMessage).toHaveBeenCalledTimes(1);

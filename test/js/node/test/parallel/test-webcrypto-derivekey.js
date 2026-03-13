@@ -176,7 +176,7 @@ const { KeyObject } = require('crypto');
 }
 
 // Test X25519 and X448 key derivation
-if (!common.openSSLIsBoringSSL) {
+{
   async function test(name) {
     const [alice, bob] = await Promise.all([
       subtle.generateKey({ name }, true, ['deriveKey']),
@@ -206,6 +206,8 @@ if (!common.openSSLIsBoringSSL) {
     assert.deepStrictEqual(raw1, raw2);
   }
 
-  test('X25519').then(common.mustCall());
-  test('X448').then(common.mustCall());
+  if (!process.features.openssl_is_boringssl) {
+    test('X25519').then(common.mustCall());
+    test('X448').then(common.mustCall());
+  }
 }

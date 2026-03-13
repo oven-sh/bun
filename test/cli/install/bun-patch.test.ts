@@ -19,7 +19,7 @@ describe("bun patch <pkg>", async () => {
      */
     describe("inside workspace with hoisting", async () => {
       const args = [
-        ["node_modules/@types/ws", "node_modules/@types/ws"],
+        ["packages/eslint-config/node_modules/@types/ws", "packages/eslint-config/node_modules/@types/ws"],
         ["@types/ws@8.5.4", "node_modules/@types/ws"],
       ];
       for (const [arg, path] of args) {
@@ -574,12 +574,12 @@ module.exports = function isOdd(i) {
       });
 
       {
-        const { stderr } = await $`${bunExe()} i`.env(bunEnv).cwd(filedir);
+        const { stderr } = await $`${bunExe()} i --linker hoisted`.env(bunEnv).cwd(filedir);
         expect(stderr.toString()).not.toContain("error");
       }
 
       {
-        const { stderr, stdout } = await $`${bunExe()} patch ${patchArg}`.env(bunEnv).cwd(filedir);
+        const { stderr, stdout } = await $`${bunExe()} patch ${patchArg} --linker hoisted`.env(bunEnv).cwd(filedir);
         expect(stderr.toString()).not.toContain("error");
         expect(stdout.toString()).toContain(
           `To patch ${platformPath(expected.patchName)}, edit the following folder:
@@ -780,7 +780,7 @@ module.exports = function isEven() {
       });
 
       {
-        const { stderr } = await $`${bunExe()} i --backend hardlink`.env(bunEnv).cwd(filedir);
+        const { stderr } = await $`${bunExe()} i --backend hardlink --linker hoisted`.env(bunEnv).cwd(filedir);
         expect(stderr.toString()).toContain("Saved lockfile");
 
         const newCode = /* ts */ `
@@ -790,7 +790,7 @@ module.exports = function isOdd() {
 `;
 
         await $`ls -d node_modules/is-even/node_modules/is-odd`.cwd(filedir);
-        await $`${bunExe()} patch ${patchArg}`.env(bunEnv).cwd(filedir);
+        await $`${bunExe()} patch ${patchArg} --linker hoisted`.env(bunEnv).cwd(filedir);
         await $`echo ${newCode} > node_modules/is-even/node_modules/is-odd/index.js`.env(bunEnv).cwd(filedir);
       }
 

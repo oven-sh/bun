@@ -1,6 +1,7 @@
 //! This is the base header struct that all state nodes include in their layout.
 //!
 //! TODO: Is this still needed?
+
 const Base = @This();
 
 kind: StateKind,
@@ -52,7 +53,8 @@ const AllocScope = union(enum) {
     pub fn leakSlice(this: *AllocScope, memory: anytype) void {
         if (comptime bun.Environment.enableAllocScopes) {
             _ = @typeInfo(@TypeOf(memory)).pointer;
-            bun.assert(!this.scopedAllocator().trackExternalFree(memory, null));
+            this.scopedAllocator().trackExternalFree(memory, null) catch |err|
+                std.debug.panic("invalid free: {}", .{err});
         }
     }
 };
@@ -88,7 +90,7 @@ pub fn endScope(this: *Base) void {
     }
 }
 
-pub inline fn eventLoop(this: *const Base) JSC.EventLoopHandle {
+pub inline fn eventLoop(this: *const Base) jsc.EventLoopHandle {
     return this.interpreter.event_loop;
 }
 
@@ -126,12 +128,13 @@ pub fn leakSlice(this: *Base, memory: anytype) void {
 }
 
 const std = @import("std");
+
 const bun = @import("bun");
+const jsc = bun.jsc;
 
 const Interpreter = bun.shell.Interpreter;
+const IO = bun.shell.Interpreter.IO;
 const ShellExecEnv = Interpreter.ShellExecEnv;
+
 const StateKind = bun.shell.interpret.StateKind;
 const throwShellErr = bun.shell.interpret.throwShellErr;
-const IO = bun.shell.Interpreter.IO;
-
-const JSC = bun.JSC;

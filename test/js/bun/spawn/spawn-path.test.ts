@@ -18,7 +18,7 @@ echo "hello from script"`,
     },
   });
 
-  const output = await new Response(proc.stdout).text();
+  const output = await proc.stdout.text();
   expect(output.trim()).toBe("hello from script");
 
   const status = await proc.exited;

@@ -31,13 +31,11 @@ tree_shaking: bool = false,
 known_target: options.Target,
 module_type: options.ModuleType = .unknown,
 emit_decorator_metadata: bool = false,
+experimental_decorators: bool = false,
 ctx: *BundleV2,
 package_version: string = "",
+package_name: string = "",
 is_entry_point: bool = false,
-/// This is set when the file is an entrypoint, and it has an onLoad plugin.
-/// In this case we want to defer adding this to additional_files until after
-/// the onLoad plugin has finished.
-defer_copy_for_bundling: bool = false,
 
 const ParseTaskStage = union(enum) {
     needs_source_code: void,
@@ -87,6 +85,9 @@ pub const Result = struct {
         content_hash_for_additional_file: u64 = 0,
 
         loader: Loader,
+
+        /// The package name from package.json, used for barrel optimization.
+        package_name: string = "",
     };
 
     pub const Error = struct {
@@ -105,7 +106,7 @@ pub const Result = struct {
     };
 };
 
-const debug = Output.scoped(.ParseTask, true);
+const debug = Output.scoped(.ParseTask, .hidden);
 
 pub fn init(resolve_result: *const _resolver.Result, source_index: Index, ctx: *BundleV2) ParseTask {
     return .{
@@ -121,8 +122,10 @@ pub fn init(resolve_result: *const _resolver.Result, source_index: Index, ctx: *
         .jsx = resolve_result.jsx,
         .source_index = source_index,
         .module_type = resolve_result.module_type,
-        .emit_decorator_metadata = resolve_result.emit_decorator_metadata,
+        .emit_decorator_metadata = resolve_result.flags.emit_decorator_metadata,
+        .experimental_decorators = resolve_result.flags.experimental_decorators,
         .package_version = if (resolve_result.package_json) |package_json| package_json.version else "",
+        .package_name = if (resolve_result.package_json) |package_json| package_json.name else "",
         .known_target = ctx.transpiler.options.target,
     };
 }
@@ -347,10 +350,32 @@ fn getAST(
             defer trace.end();
             var temp_log = bun.logger.Log.init(allocator);
             defer {
-                temp_log.cloneToWithRecycled(log, true) catch bun.outOfMemory();
+                bun.handleOom(temp_log.cloneToWithRecycled(log, true));
                 temp_log.msgs.clearAndFree();
             }
             const root = try TOML.parse(source, &temp_log, allocator, false);
+            return JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, &temp_log, root, source, "")).?);
+        },
+        .yaml => {
+            const trace = bun.perf.trace("Bundler.ParseYAML");
+            defer trace.end();
+            var temp_log = bun.logger.Log.init(allocator);
+            defer {
+                bun.handleOom(temp_log.cloneToWithRecycled(log, true));
+                temp_log.msgs.clearAndFree();
+            }
+            const root = try YAML.parse(source, &temp_log, allocator);
+            return JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, &temp_log, root, source, "")).?);
+        },
+        .json5 => {
+            const trace = bun.perf.trace("Bundler.ParseJSON5");
+            defer trace.end();
+            var temp_log = bun.logger.Log.init(allocator);
+            defer {
+                bun.handleOom(temp_log.cloneToWithRecycled(log, true));
+                temp_log.msgs.clearAndFree();
+            }
+            const root = try JSON5.parse(source, &temp_log, allocator);
             return JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, &temp_log, root, source, "")).?);
         },
         .text => {
@@ -358,7 +383,23 @@ fn getAST(
                 .data = source.contents,
             }, Logger.Loc{ .start = 0 });
             var ast = JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, log, root, source, "")).?);
-            ast.addUrlForCss(allocator, source, "text/plain", null);
+            ast.addUrlForCss(allocator, source, "text/plain", null, transpiler.options.compile_to_standalone_html);
+            return ast;
+        },
+        .md => {
+            const html = bun.md.renderToHtml(source.contents, allocator) catch {
+                log.addError(
+                    source,
+                    Logger.Loc.Empty,
+                    "Failed to render markdown to HTML",
+                ) catch |err| bun.handleOom(err);
+                return error.ParserError;
+            };
+            const root = Expr.init(E.String, E.String{
+                .data = html,
+            }, Logger.Loc{ .start = 0 });
+            var ast = JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, log, root, source, "")).?);
+            ast.addUrlForCss(allocator, source, "text/html", null, transpiler.options.compile_to_standalone_html);
             return ast;
         },
 
@@ -368,14 +409,14 @@ fn getAST(
                     source,
                     Logger.Loc.Empty,
                     "To use the \"sqlite\" loader, set target to \"bun\"",
-                ) catch bun.outOfMemory();
+                ) catch |err| bun.handleOom(err);
                 return error.ParserError;
             }
 
             const path_to_use = brk: {
                 // Implements embedded sqlite
                 if (loader == .sqlite_embedded) {
-                    const embedded_path = std.fmt.allocPrint(allocator, "{any}A{d:0>8}", .{ bun.fmt.hexIntLower(unique_key_prefix), source.index.get() }) catch unreachable;
+                    const embedded_path = std.fmt.allocPrint(allocator, "{f}A{d:0>8}", .{ bun.fmt.hexIntLower(unique_key_prefix), source.index.get() }) catch unreachable;
                     unique_key_for_additional_file.* = .{
                         .key = embedded_path,
                         .content_hash = ContentHasher.run(source.contents),
@@ -412,12 +453,12 @@ fn getAST(
                 }, Logger.Loc{ .start = 0 }),
             };
             require_args[1] = Expr.init(E.Object, E.Object{
-                .properties = G.Property.List.init(object_properties),
+                .properties = G.Property.List.fromOwnedSlice(object_properties),
                 .is_single_line = true,
             }, Logger.Loc{ .start = 0 });
             const require_call = Expr.init(E.Call, E.Call{
                 .target = require_property,
-                .args = BabyList(Expr).init(require_args),
+                .args = BabyList(Expr).fromOwnedSlice(require_args),
             }, Logger.Loc{ .start = 0 });
 
             const root = Expr.init(E.Dot, E.Dot{
@@ -435,11 +476,11 @@ fn getAST(
                     source,
                     Logger.Loc.Empty,
                     "Loading .node files won't work in the browser. Make sure to set target to \"bun\" or \"node\"",
-                ) catch bun.outOfMemory();
+                ) catch |err| bun.handleOom(err);
                 return error.ParserError;
             }
 
-            const unique_key = std.fmt.allocPrint(allocator, "{any}A{d:0>8}", .{ bun.fmt.hexIntLower(unique_key_prefix), source.index.get() }) catch unreachable;
+            const unique_key = std.fmt.allocPrint(allocator, "{f}A{d:0>8}", .{ bun.fmt.hexIntLower(unique_key_prefix), source.index.get() }) catch unreachable;
             // This injects the following code:
             //
             // require(unique_key)
@@ -453,7 +494,7 @@ fn getAST(
 
             const root = Expr.init(E.Call, E.Call{
                 .target = .{ .data = .{ .e_require_call_target = {} }, .loc = .{ .start = 0 } },
-                .args = BabyList(Expr).init(require_args),
+                .args = BabyList(Expr).fromOwnedSlice(require_args),
             }, Logger.Loc{ .start = 0 });
 
             unique_key_for_additional_file.* = .{
@@ -518,7 +559,7 @@ fn getAST(
             const source_code = source.contents;
             var temp_log = bun.logger.Log.init(allocator);
             defer {
-                temp_log.appendToMaybeRecycled(log, source) catch bun.outOfMemory();
+                bun.handleOom(temp_log.appendToMaybeRecycled(log, source));
             }
 
             const css_module_suffix = ".module.css";
@@ -600,7 +641,7 @@ fn getAST(
             else
                 try std.fmt.allocPrint(
                     allocator,
-                    "{any}A{d:0>8}",
+                    "{f}A{d:0>8}",
                     .{ bun.fmt.hexIntLower(unique_key_prefix), source.index.get() },
                 );
             const root = Expr.init(E.String, .{ .data = unique_key }, .{ .start = 0 });
@@ -609,7 +650,7 @@ fn getAST(
                 .content_hash = content_hash,
             };
             var ast = JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, log, root, source, "")).?);
-            ast.addUrlForCss(allocator, source, null, unique_key);
+            ast.addUrlForCss(allocator, source, null, unique_key, transpiler.options.compile_to_standalone_html);
             return ast;
         },
     }
@@ -628,6 +669,16 @@ fn getCodeForParseTaskWithoutPlugins(
         .fd => |contents| brk: {
             const trace = bun.perf.trace("Bundler.readFile");
             defer trace.end();
+
+            // Check FileMap for in-memory files first
+            if (task.ctx.file_map) |file_map| {
+                if (file_map.get(file_path.text)) |file_contents| {
+                    break :brk .{
+                        .contents = file_contents,
+                        .fd = bun.invalid_fd,
+                    };
+                }
+            }
 
             if (strings.eqlComptime(file_path.namespace, "node")) lookup_builtin: {
                 if (task.ctx.framework) |f| {
@@ -668,7 +719,7 @@ fn getCodeForParseTaskWithoutPlugins(
                             source,
                             Logger.Loc.Empty,
                             allocator,
-                            "File not found {}",
+                            "File not found {f}",
                             .{bun.fmt.quote(file_path.text)},
                         ) catch {};
                         return error.FileNotFound;
@@ -678,7 +729,7 @@ fn getCodeForParseTaskWithoutPlugins(
                             source,
                             Logger.Loc.Empty,
                             allocator,
-                            "{s} reading file: {}",
+                            "{s} reading file: {f}",
                             .{ @errorName(err), bun.fmt.quote(file_path.text) },
                         ) catch {};
                     },
@@ -825,10 +876,9 @@ const OnBeforeParsePlugin = struct {
                 @max(this.line, -1),
                 @max(this.column, -1),
                 @max(this.column_end - this.column, 0),
-                if (source_line_text.len > 0) allocator.dupe(u8, source_line_text) catch bun.outOfMemory() else null,
-                null,
+                if (source_line_text.len > 0) bun.handleOom(allocator.dupe(u8, source_line_text)) else null,
             );
-            var msg = Logger.Msg{ .data = .{ .location = location, .text = allocator.dupe(u8, this.message()) catch bun.outOfMemory() } };
+            var msg = Logger.Msg{ .data = .{ .location = location, .text = bun.handleOom(allocator.dupe(u8, this.message())) } };
             switch (this.level) {
                 .err => msg.kind = .err,
                 .warn => msg.kind = .warn,
@@ -841,13 +891,13 @@ const OnBeforeParsePlugin = struct {
             } else if (msg.kind == .warn) {
                 log.warnings += 1;
             }
-            log.addMsg(msg) catch bun.outOfMemory();
+            bun.handleOom(log.addMsg(msg));
         }
 
         pub fn logFn(
             args_: ?*OnBeforeParseArguments,
             log_options_: ?*BunLogOptions,
-        ) callconv(.C) void {
+        ) callconv(.c) void {
             const args = args_ orelse return;
             const log_options = log_options_ orelse return;
             log_options.append(args.context.log, args.context.file_path.namespace);
@@ -869,15 +919,15 @@ const OnBeforeParsePlugin = struct {
         source_len: usize = 0,
         loader: Loader,
 
-        fetch_source_code_fn: *const fn (*OnBeforeParseArguments, *OnBeforeParseResult) callconv(.C) i32 = &fetchSourceCode,
+        fetch_source_code_fn: *const fn (*OnBeforeParseArguments, *OnBeforeParseResult) callconv(.c) i32 = &fetchSourceCode,
 
         user_context: ?*anyopaque = null,
-        free_user_context: ?*const fn (?*anyopaque) callconv(.C) void = null,
+        free_user_context: ?*const fn (?*anyopaque) callconv(.c) void = null,
 
         log: *const fn (
             args_: ?*OnBeforeParseArguments,
             log_options_: ?*BunLogOptions,
-        ) callconv(.C) void = &BunLogOptions.logFn,
+        ) callconv(.c) void = &BunLogOptions.logFn,
 
         pub fn getWrapper(result: *OnBeforeParseResult) *OnBeforeParseResultWrapper {
             const wrapper: *OnBeforeParseResultWrapper = @fieldParentPtr("result", result);
@@ -886,7 +936,7 @@ const OnBeforeParsePlugin = struct {
         }
     };
 
-    pub fn fetchSourceCode(args: *OnBeforeParseArguments, result: *OnBeforeParseResult) callconv(.C) i32 {
+    pub fn fetchSourceCode(args: *OnBeforeParseArguments, result: *OnBeforeParseResult) callconv(.c) i32 {
         debug("fetchSourceCode", .{});
         const this = args.context;
         if (this.log.errors > 0 or this.deferred_error != null or this.should_continue_running.* != 1) {
@@ -952,7 +1002,7 @@ const OnBeforeParsePlugin = struct {
         return 0;
     }
 
-    pub fn run(this: *OnBeforeParsePlugin, plugin: *JSC.API.JSBundler.Plugin, from_plugin: *bool) !CacheEntry {
+    pub fn run(this: *OnBeforeParsePlugin, plugin: *jsc.API.JSBundler.Plugin, from_plugin: *bool) !CacheEntry {
         var args = OnBeforeParseArguments{
             .context = this,
             .path_ptr = this.file_path.text.ptr,
@@ -1000,10 +1050,10 @@ const OnBeforeParsePlugin = struct {
                 var msg = Logger.Msg{ .data = .{ .location = null, .text = bun.default_allocator.dupe(
                     u8,
                     "Native plugin set the `free_plugin_source_code_context` field without setting the `plugin_source_code_context` field.",
-                ) catch bun.outOfMemory() } };
+                ) catch |err| bun.handleOom(err) } };
                 msg.kind = .err;
                 args.context.log.errors += 1;
-                args.context.log.addMsg(msg) catch bun.outOfMemory();
+                bun.handleOom(args.context.log.addMsg(msg));
                 return error.InvalidNativePlugin;
             }
 
@@ -1068,7 +1118,7 @@ fn runWithSourceCode(
 
     var transpiler = this.transpilerForTarget(task.known_target);
     errdefer transpiler.resetStore();
-    var resolver: *Resolver = &transpiler.resolver;
+    const resolver: *Resolver = &transpiler.resolver;
     const file_path = &task.path;
     const loader = task.loader orelse file_path.loader(&transpiler.options.loaders) orelse options.Loader.file;
 
@@ -1123,19 +1173,17 @@ fn runWithSourceCode(
     else
         .none;
 
-    if (
-    // separate_ssr_graph makes boundaries switch to client because the server file uses that generated file as input.
-    // this is not done when there is one server graph because it is easier for plugins to deal with.
-    (use_directive == .client and
+    if (use_directive == .client and
         task.known_target != .bake_server_components_ssr and
-        this.ctx.framework.?.server_components.?.separate_ssr_graph) or
+        this.ctx.framework != null and
+        this.ctx.framework.?.server_components.?.separate_ssr_graph or
         // set the target to the client when bundling client-side files
         ((transpiler.options.server_components or transpiler.options.dev_server != null) and
             task.known_target == .browser))
     {
-        transpiler = this.ctx.client_transpiler.?;
-        resolver = &transpiler.resolver;
-        bun.assert(transpiler.options.target == .browser);
+        // separate_ssr_graph makes boundaries switch to client because the server file uses that generated file as input.
+        // this is not done when there is one server graph because it is easier for plugins to deal with.
+        transpiler = this.transpilerForTarget(.browser);
     }
 
     const source = &Logger.Source{
@@ -1156,7 +1204,8 @@ fn runWithSourceCode(
     var opts = js_parser.Parser.Options.init(task.jsx, loader);
     opts.bundle = true;
     opts.warn_about_unbundled_modules = false;
-    opts.macro_context = &this.data.macro_context;
+    opts.allow_unresolved = &transpiler.options.allow_unresolved;
+    opts.macro_context = &transpiler.macro_context.?;
     opts.package_version = task.package_version;
 
     opts.features.allow_runtime = !source.index.isRuntime();
@@ -1168,12 +1217,18 @@ fn runWithSourceCode(
     opts.output_format = output_format;
     opts.features.minify_syntax = transpiler.options.minify_syntax;
     opts.features.minify_identifiers = transpiler.options.minify_identifiers;
-    opts.features.emit_decorator_metadata = transpiler.options.emit_decorator_metadata;
+    opts.features.minify_keep_names = transpiler.options.keep_names;
+    opts.features.minify_whitespace = transpiler.options.minify_whitespace;
+    opts.features.emit_decorator_metadata = task.emit_decorator_metadata;
+    // emitDecoratorMetadata implies legacy/experimental decorators, as it only
+    // makes sense with TypeScript's legacy decorator system (reflect-metadata).
+    // TC39 standard decorators have their own metadata mechanism.
+    opts.features.standard_decorators = !loader.isTypeScript() or !(task.experimental_decorators or task.emit_decorator_metadata);
     opts.features.unwrap_commonjs_packages = transpiler.options.unwrap_commonjs_packages;
+    opts.features.bundler_feature_flags = transpiler.options.bundler_feature_flags;
     opts.features.hot_module_reloading = output_format == .internal_bake_dev and !source.index.isRuntime();
     opts.features.auto_polyfill_require = output_format == .esm and !opts.features.hot_module_reloading;
-    opts.features.react_fast_refresh = target == .browser and
-        transpiler.options.react_fast_refresh and
+    opts.features.react_fast_refresh = transpiler.options.react_fast_refresh and
         loader.isJSX() and
         !source.path.isNodeModule();
 
@@ -1203,6 +1258,7 @@ fn runWithSourceCode(
     }
 
     opts.tree_shaking = if (source.index.isRuntime()) true else transpiler.options.tree_shaking;
+    opts.code_splitting = transpiler.options.code_splitting;
     opts.module_type = task.module_type;
 
     task.jsx.parse = loader.isJSX();
@@ -1247,6 +1303,7 @@ fn runWithSourceCode(
         .unique_key_for_additional_file = unique_key_for_additional_file.key,
         .side_effects = task.side_effects,
         .loader = loader,
+        .package_name = task.package_name,
 
         // Hash the files in here so that we do it in parallel.
         .content_hash_for_additional_file = if (loader.shouldCopyForBundling())
@@ -1297,7 +1354,7 @@ pub fn runFromThreadPool(this: *ParseTask) void {
                 } };
             }
 
-            if (this.ctx.graph.pool.usesIOPool()) {
+            if (ThreadPool.usesIOPool()) {
                 this.ctx.graph.pool.scheduleInsideThreadPool(this);
                 return;
             }
@@ -1337,7 +1394,7 @@ pub fn runFromThreadPool(this: *ParseTask) void {
         }
     };
 
-    const result = bun.default_allocator.create(Result) catch bun.outOfMemory();
+    const result = bun.handleOom(bun.default_allocator.create(Result));
 
     result.* = .{
         .ctx = this.ctx,
@@ -1352,7 +1409,7 @@ pub fn runFromThreadPool(this: *ParseTask) void {
 
     switch (worker.ctx.loop().*) {
         .js => |jsc_event_loop| {
-            jsc_event_loop.enqueueTaskConcurrent(JSC.ConcurrentTask.fromCallback(result, onComplete));
+            jsc_event_loop.enqueueTaskConcurrent(jsc.ConcurrentTask.fromCallback(result, onComplete));
         },
         .mini => |*mini| {
             mini.enqueueTaskConcurrentWithExtraCtx(
@@ -1370,56 +1427,64 @@ pub fn onComplete(result: *Result) void {
     BundleV2.onParseTaskComplete(result, result.ctx);
 }
 
-const Transpiler = bun.Transpiler;
+pub const Ref = bun.ast.Ref;
+
+pub const Index = bun.ast.Index;
+
+pub const DeferredBatchTask = bun.bundle_v2.DeferredBatchTask;
+pub const ThreadPool = bun.bundle_v2.ThreadPool;
+
+const string = []const u8;
+
+const Fs = @import("../fs.zig");
+const HTMLScanner = @import("../HTMLScanner.zig");
+const NodeFallbackModules = @import("../node_fallbacks.zig");
+const linker = @import("../linker.zig");
+const runtime = @import("../runtime.zig");
+const std = @import("std");
+const URL = @import("../url.zig").URL;
+const CacheEntry = @import("../cache.zig").Fs.Entry;
+
+const Logger = @import("../logger.zig");
+const Loc = Logger.Loc;
+
+const options = @import("../options.zig");
+const Loader = options.Loader;
+
+const _resolver = @import("../resolver/resolver.zig");
+const Resolver = _resolver.Resolver;
+
 const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
 const Environment = bun.Environment;
-const strings = bun.strings;
-const default_allocator = bun.default_allocator;
-const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const FeatureFlags = bun.FeatureFlags;
+const ImportRecord = bun.ImportRecord;
+const Output = bun.Output;
+const StoredFileDescriptorType = bun.StoredFileDescriptorType;
+const ThreadPoolLib = bun.ThreadPool;
+const Transpiler = bun.Transpiler;
+const bake = bun.bake;
+const base64 = bun.base64;
+const default_allocator = bun.default_allocator;
+const js_parser = bun.js_parser;
+const strings = bun.strings;
+const BabyList = bun.collections.BabyList;
+const JSON5 = bun.interchange.json5.JSON5Parser;
+const TOML = bun.interchange.toml.TOML;
+const YAML = bun.interchange.yaml.YAML;
+
+const js_ast = bun.ast;
+const E = js_ast.E;
+const Expr = js_ast.Expr;
+const G = js_ast.G;
+const JSAst = js_ast.BundledAst;
+const Part = js_ast.Part;
+const Symbol = js_ast.Symbol;
 
 const bundler = bun.bundle_v2;
 const BundleV2 = bundler.BundleV2;
-
 const ContentHasher = bundler.ContentHasher;
 const UseDirective = bundler.UseDirective;
 const targetFromHashbang = bundler.targetFromHashbang;
 
-const std = @import("std");
-const Logger = @import("../logger.zig");
-const options = @import("../options.zig");
-const js_parser = bun.js_parser;
-const Part = js_ast.Part;
-const js_ast = @import("../js_ast.zig");
-const linker = @import("../linker.zig");
-const base64 = bun.base64;
-pub const Ref = @import("../ast/base.zig").Ref;
-const ThreadPoolLib = @import("../thread_pool.zig");
-const BabyList = @import("../baby_list.zig").BabyList;
-const Fs = @import("../fs.zig");
-const _resolver = @import("../resolver/resolver.zig");
-const ImportRecord = bun.ImportRecord;
-const runtime = @import("../runtime.zig");
-
-const HTMLScanner = @import("../HTMLScanner.zig");
-const NodeFallbackModules = @import("../node_fallbacks.zig");
-const CacheEntry = @import("../cache.zig").Fs.Entry;
-const URL = @import("../url.zig").URL;
-const Resolver = _resolver.Resolver;
-const TOML = @import("../toml/toml_parser.zig").TOML;
-const JSAst = js_ast.BundledAst;
-const Loader = options.Loader;
-pub const Index = @import("../ast/base.zig").Index;
-const Symbol = js_ast.Symbol;
-const EventLoop = bun.JSC.AnyEventLoop;
-const Expr = js_ast.Expr;
-const E = js_ast.E;
-const G = js_ast.G;
-const JSC = bun.JSC;
-const Loc = Logger.Loc;
-const bake = bun.bake;
-
-pub const DeferredBatchTask = bun.bundle_v2.DeferredBatchTask;
-pub const ThreadPool = bun.bundle_v2.ThreadPool;
+const jsc = bun.jsc;
+const EventLoop = bun.jsc.AnyEventLoop;

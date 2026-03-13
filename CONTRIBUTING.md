@@ -1,8 +1,22 @@
 Configuring a development environment for Bun can take 10-30 minutes depending on your internet connection and computer speed. You will need ~10GB of free disk space for the repository and build artifacts.
 
-If you are using Windows, please refer to [this guide](https://bun.sh/docs/project/building-windows)
+If you are using Windows, please refer to [this guide](https://bun.com/docs/project/building-windows)
 
-## Install Dependencies
+## Using Nix (Alternative)
+
+A Nix flake is provided as an alternative to manual dependency installation:
+
+```bash
+nix develop
+# or explicitly use the pure shell
+# nix develop .#pure
+export CMAKE_SYSTEM_PROCESSOR=$(uname -m)
+bun bd
+```
+
+This provides all dependencies in an isolated, reproducible environment without requiring sudo.
+
+## Install Dependencies (Manual)
 
 Using your system's package manager, install Bun's dependencies:
 
@@ -13,15 +27,15 @@ $ brew install automake ccache cmake coreutils gnu-sed go icu4c libiconv libtool
 ```
 
 ```bash#Ubuntu/Debian
-$ sudo apt install curl wget lsb-release software-properties-common cargo ccache cmake git golang libtool ninja-build pkg-config rustc ruby-full xz-utils
+$ sudo apt install curl wget lsb-release software-properties-common cargo cmake git golang libtool ninja-build pkg-config rustc ruby-full xz-utils
 ```
 
 ```bash#Arch
-$ sudo pacman -S base-devel ccache cmake git go libiconv libtool make ninja pkg-config python rust sed unzip ruby
+$ sudo pacman -S base-devel cmake git go libiconv libtool make ninja pkg-config python rust sed unzip ruby
 ```
 
 ```bash#Fedora
-$ sudo dnf install cargo ccache cmake git golang libtool ninja-build pkg-config rustc ruby libatomic-static libstdc++-static sed unzip which libicu-devel 'perl(Math::BigInt)'
+$ sudo dnf install cargo clang21 llvm21 lld21 cmake git golang libtool ninja-build pkg-config rustc ruby libatomic-static libstdc++-static sed unzip which libicu-devel 'perl(Math::BigInt)'
 ```
 
 ```bash#openSUSE Tumbleweed
@@ -37,7 +51,7 @@ Before starting, you will need to already have a release build of Bun installed,
 {% codetabs %}
 
 ```bash#Native
-$ curl -fsSL https://bun.sh/install | bash
+$ curl -fsSL https://bun.com/install | bash
 ```
 
 ```bash#npm
@@ -51,19 +65,42 @@ $ brew install bun
 
 {% /codetabs %}
 
+### Optional: Install `ccache`
+
+ccache is used to cache compilation artifacts, significantly speeding up builds:
+
+```bash
+# For macOS
+$ brew install ccache
+
+# For Ubuntu/Debian
+$ sudo apt install ccache
+
+# For Arch
+$ sudo pacman -S ccache
+
+# For Fedora
+$ sudo dnf install ccache
+
+# For openSUSE
+$ sudo zypper install ccache
+```
+
+Our build scripts will automatically detect and use `ccache` if available. You can check cache statistics with `ccache --show-stats`.
+
 ## Install LLVM
 
-Bun requires LLVM 19 (`clang` is part of LLVM). This version requirement is to match WebKit (precompiled), as mismatching versions will cause memory allocation failures at runtime. In most cases, you can install LLVM through your system package manager:
+Bun requires LLVM 21.1.8 (`clang` is part of LLVM). This version is enforced by the build system — mismatching versions will cause memory allocation failures at runtime. In most cases, you can install LLVM through your system package manager:
 
 {% codetabs group="os" %}
 
 ```bash#macOS (Homebrew)
-$ brew install llvm@19
+$ brew install llvm@21
 ```
 
 ```bash#Ubuntu/Debian
 $ # LLVM has an automatic installation script that is compatible with all versions of Ubuntu
-$ wget https://apt.llvm.org/llvm.sh -O - | sudo bash -s -- 19 all
+$ wget https://apt.llvm.org/llvm.sh -O - | sudo bash -s -- 21 all
 ```
 
 ```bash#Arch
@@ -75,17 +112,17 @@ $ sudo dnf install llvm clang lld-devel
 ```
 
 ```bash#openSUSE Tumbleweed
-$ sudo zypper install clang19 lld19 llvm19
+$ sudo zypper install clang21 lld21 llvm21
 ```
 
 {% /codetabs %}
 
-If none of the above solutions apply, you will have to install it [manually](https://github.com/llvm/llvm-project/releases/tag/llvmorg-19.1.7).
+If none of the above solutions apply, you will have to install it [manually](https://github.com/llvm/llvm-project/releases/tag/llvmorg-21.1.8).
 
-Make sure Clang/LLVM 19 is in your path:
+Make sure Clang/LLVM 21 is in your path:
 
 ```bash
-$ which clang-19
+$ which clang-21
 ```
 
 If not, run this to manually add it:
@@ -94,13 +131,13 @@ If not, run this to manually add it:
 
 ```bash#macOS (Homebrew)
 # use fish_add_path if you're using fish
-# use path+="$(brew --prefix llvm@19)/bin" if you are using zsh
-$ export PATH="$(brew --prefix llvm@19)/bin:$PATH"
+# use path+="$(brew --prefix llvm@21)/bin" if you are using zsh
+$ export PATH="$(brew --prefix llvm@21)/bin:$PATH"
 ```
 
 ```bash#Arch
 # use fish_add_path if you're using fish
-$ export PATH="$PATH:/usr/lib/llvm19/bin"
+$ export PATH="$PATH:/usr/lib/llvm21/bin"
 ```
 
 {% /codetabs %}
@@ -149,7 +186,7 @@ Bun generally takes about 2.5 minutes to compile a debug build when there are Zi
 - Batch up your changes
 - Ensure zls is running with incremental watching for LSP errors (if you use VSCode and install Zig and run `bun run build` once to download Zig, this should just work)
 - Prefer using the debugger ("CodeLLDB" in VSCode) to step through the code.
-- Use debug logs. `BUN_DEBUG_<scope>=1` will enable debug logging for the corresponding `Output.scoped(.<scope>, false)` logs. You can also set `BUN_DEBUG_QUIET_LOGS=1` to disable all debug logging that isn't explicitly enabled. To dump debug lgos into a file, `BUN_DEBUG=<path-to-file>.log`. Debug logs are aggressively removed in release builds.
+- Use debug logs. `BUN_DEBUG_<scope>=1` will enable debug logging for the corresponding `Output.scoped(.<scope>, .hidden)` logs. You can also set `BUN_DEBUG_QUIET_LOGS=1` to disable all debug logging that isn't explicitly enabled. To dump debug logs into a file, `BUN_DEBUG=<path-to-file>.log`. Debug logs are aggressively removed in release builds.
 - src/js/\*\*.ts changes are pretty much instant to rebuild. C++ changes are a bit slower, but still much faster than the Zig code (Zig is one compilation unit, C++ is many).
 
 ## Code generation scripts
@@ -160,6 +197,7 @@ In particular, these are:
 
 - `./src/codegen/generate-jssink.ts` -- Generates `build/debug/codegen/JSSink.cpp`, `build/debug/codegen/JSSink.h` which implement various classes for interfacing with `ReadableStream`. This is internally how `FileSink`, `ArrayBufferSink`, `"type": "direct"` streams and other code related to streams works.
 - `./src/codegen/generate-classes.ts` -- Generates `build/debug/codegen/ZigGeneratedClasses*`, which generates Zig & C++ bindings for JavaScriptCore classes implemented in Zig. In `**/*.classes.ts` files, we define the interfaces for various classes, methods, prototypes, getters/setters etc which the code generator reads to generate boilerplate code implementing the JavaScript objects in C++ and wiring them up to Zig
+- `./src/codegen/cppbind.ts` -- Generates automatic Zig bindings for C++ functions marked with `[[ZIG_EXPORT]]` attributes.
 - `./src/codegen/bundle-modules.ts` -- Bundles built-in modules like `node:fs`, `bun:ffi` into files we can include in the final binary. In development, these can be reloaded without rebuilding Zig (you still need to run `bun run build`, but it re-reads the transpiled files from disk afterwards). In release builds, these are embedded into the binary.
 - `./src/codegen/bundle-functions.ts` -- Bundles globally-accessible functions implemented in JavaScript/TypeScript like `ReadableStream`, `WritableStream`, and a handful more. These are used similarly to the builtin modules, but the output more closely aligns with what WebKit/Safari does for Safari's built-in functions so that we can copy-paste the implementations from WebKit as a starting point.
 
@@ -221,18 +259,13 @@ $ git clone https://github.com/oven-sh/WebKit vendor/WebKit
 # Check out the commit hash specified in `set(WEBKIT_VERSION <commit_hash>)` in cmake/tools/SetupWebKit.cmake
 $ git -C vendor/WebKit checkout <commit_hash>
 
-# Make a debug build of JSC. This will output build artifacts in ./vendor/WebKit/WebKitBuild/Debug
-# Optionally, you can use `make jsc` for a release build
-$ make jsc-debug && rm vendor/WebKit/WebKitBuild/Debug/JavaScriptCore/DerivedSources/inspector/InspectorProtocolObjects.h
-
-# After an initial run of `make jsc-debug`, you can rebuild JSC with:
-$ cmake --build vendor/WebKit/WebKitBuild/Debug --target jsc && rm vendor/WebKit/WebKitBuild/Debug/JavaScriptCore/DerivedSources/inspector/InspectorProtocolObjects.h
-
-# Build bun with the local JSC build
+# Build bun with the local JSC build — this automatically configures and builds JSC
 $ bun run build:local
 ```
 
-Using `bun run build:local` will build Bun in the `./build/debug-local` directory (instead of `./build/debug`), you'll have to change a couple of places to use this new directory:
+`bun run build:local` handles everything: configuring JSC, building JSC, and building Bun. On subsequent runs, JSC will incrementally rebuild if any WebKit sources changed. `ninja -Cbuild/debug-local` also works after the first build, and will build Bun+JSC.
+
+The build output goes to `./build/debug-local` (instead of `./build/debug`), so you'll need to update a couple of places:
 
 - The first line in [`src/js/builtins.d.ts`](/src/js/builtins.d.ts)
 - The `CompilationDatabase` line in [`.clangd` config](/.clangd) should be `CompilationDatabase: build/debug-local`
@@ -243,7 +276,7 @@ Note that the WebKit folder, including build artifacts, is 8GB+ in size.
 
 If you are using a JSC debug build and using VScode, make sure to run the `C/C++: Select a Configuration` command to configure intellisense to find the debug headers.
 
-Note that if you change make changes to our [WebKit fork](https://github.com/oven-sh/WebKit), you will also have to change [`SetupWebKit.cmake`](/cmake/tools/SetupWebKit.cmake) to point to the commit hash.
+Note that if you make changes to our [WebKit fork](https://github.com/oven-sh/WebKit), you will also have to change [`SetupWebKit.cmake`](/cmake/tools/SetupWebKit.cmake) to point to the commit hash.
 
 ## Troubleshooting
 
@@ -266,7 +299,7 @@ The issue may manifest when initially running `bun setup` as Clang being unable 
 ```
 The C++ compiler
 
-  "/usr/bin/clang++-19"
+  "/usr/bin/clang++-21"
 
 is not able to compile a simple test program.
 ```
@@ -315,15 +348,6 @@ $ bun run build -DUSE_STATIC_LIBATOMIC=OFF
 ```
 
 The built version of Bun may not work on other systems if compiled this way.
-
-### ccache conflicts with building TinyCC on macOS
-
-If you run into issues with `ccache` when building TinyCC, try reinstalling ccache
-
-```bash
-brew uninstall ccache
-brew install ccache
-```
 
 ## Using bun-debug
 

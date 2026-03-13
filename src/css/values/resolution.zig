@@ -1,5 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
 pub const css = @import("../css_parser.zig");
 const Result = css.Result;
 const Printer = css.Printer;
@@ -67,7 +65,7 @@ pub const Resolution = union(enum) {
         }
     }
 
-    pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
+    pub fn toCss(this: *const This, dest: *Printer) PrintErr!void {
         const value, const unit = switch (this.*) {
             .dpi => |dpi| .{ dpi, "dpi" },
             .dpcm => |dpcm| .{ dpcm, "dpcm" },
@@ -77,7 +75,7 @@ pub const Resolution = union(enum) {
                 .{ dppx, "dppx" },
         };
 
-        return try css.serializer.serializeDimension(value, unit, W, dest);
+        return try css.serializer.serializeDimension(value, unit, dest);
     }
 
     pub fn addF32(this: This, _: std.mem.Allocator, other: f32) Resolution {
@@ -88,3 +86,6 @@ pub const Resolution = union(enum) {
         };
     }
 };
+
+const bun = @import("bun");
+const std = @import("std");

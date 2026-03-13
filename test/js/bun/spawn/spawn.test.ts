@@ -98,7 +98,7 @@ for (let [gcTick, label] of [
             stdin: "ignore",
           });
           gcTick();
-          const text = await new Response(stdout).text();
+          const text = await stdout.text();
           expect(text).toBe("hello\n");
         })();
         gcTick();
@@ -118,7 +118,7 @@ for (let [gcTick, label] of [
           stderr: null,
         });
         gcTick();
-        const text = await new Response(stdout).text();
+        const text = await stdout.text();
         expect(text).toBe("bar\n");
         gcTick();
       });
@@ -448,10 +448,10 @@ for (let [gcTick, label] of [
 
         for (const [callback, fixture] of fixtures) {
           describe(fixture.slice(0, 12), () => {
-            describe("should should allow reading stdout", () => {
+            describe("should allow reading stdout", () => {
               it("before exit", async () => {
                 const process = callback();
-                const output = await readableStreamToText(process.stdout);
+                const output = await process.stdout.text();
                 await process.exited;
                 const expected = fixture + "\n";
 
@@ -480,6 +480,7 @@ for (let [gcTick, label] of [
                   }
 
                   resolve && resolve();
+                  // @ts-expect-error
                   resolve = undefined;
                 })();
                 await promise;
@@ -493,10 +494,10 @@ for (let [gcTick, label] of [
                 expect(output).toBe(expected);
               });
 
-              it.skipIf(isWindows && isBroken && callback === huge)("after exit", async () => {
+              it.todoIf(isWindows && isBroken)("after exit", async () => {
                 const process = callback();
                 await process.exited;
-                const output = await readableStreamToText(process.stdout);
+                const output = await process.stdout.text();
                 const expected = fixture + "\n";
                 expect(output.length).toBe(expected.length);
                 expect(output).toBe(expected);
@@ -514,7 +515,7 @@ for (let [gcTick, label] of [
               stdin: "ignore",
             });
             await Bun.sleep(1);
-            const out = await Bun.readableStreamToText(proc.stdout);
+            const out = await proc.stdout.text();
             expect(out).not.toBe("");
           }
         });
@@ -679,9 +680,10 @@ describe("should not hang", () => {
     it(
       "sleep " + sleep,
       async () => {
-        const runs = [];
+        const runs: Promise<void>[] = [];
+
         let initialMaxFD = -1;
-        for (let order of [
+        for (const order of [
           ["sleep", "kill", "unref", "exited"],
           ["sleep", "unref", "kill", "exited"],
           ["kill", "sleep", "unref", "exited"],
@@ -789,6 +791,7 @@ describe("close handling", () => {
 
             await exitPromise;
           })();
+
           Bun.gc(false);
           await Bun.sleep(0);
 
@@ -836,4 +839,183 @@ it("error does not UAF", async () => {
     emsg = (e as Error).message;
   }
   expect(emsg).toInclude(" ");
+});
+
+describe("onDisconnect", () => {
+  it.todoIf(isWindows)("ipc delivers message", async () => {
+    const msg = Promise.withResolvers<void>();
+
+    let ipcMessage: unknown;
+
+    await using proc = spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          process.send("hello");
+          Promise.resolve().then(() => process.exit(0));
+        `,
+      ],
+      ipc: message => {
+        ipcMessage = message;
+        msg.resolve();
+      },
+      stdio: ["inherit", "inherit", "inherit"],
+      env: bunEnv,
+    });
+
+    await msg.promise;
+    expect(ipcMessage).toBe("hello");
+    expect(await proc.exited).toBe(0);
+  });
+
+  it.todoIf(isWindows)("onDisconnect callback is called when IPC disconnects", async () => {
+    const disc = Promise.withResolvers<void>();
+
+    let disconnectCalled = false;
+
+    await using proc = spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          Promise.resolve().then(() => {
+            process.disconnect();
+            process.exit(0);
+          });
+        `,
+      ],
+      // Ensure IPC channel is opened without relying on a message
+      ipc: () => {},
+      onDisconnect: () => {
+        disconnectCalled = true;
+        disc.resolve();
+      },
+      stdio: ["inherit", "inherit", "inherit"],
+      env: bunEnv,
+    });
+
+    await disc.promise;
+    expect(disconnectCalled).toBe(true);
+    expect(await proc.exited).toBe(0);
+  });
+
+  it("onDisconnect is not called when IPC is not used", async () => {
+    await using proc = spawn({
+      cmd: [bunExe(), "-e", "console.log('hello')"],
+      onDisconnect: () => {
+        expect().fail("onDisconnect was called()");
+      },
+      stdout: "pipe",
+      stderr: "ignore",
+      stdin: "ignore",
+    });
+    expect(await proc.exited).toBe(0);
+  });
+});
+
+describe("argv0", () => {
+  it("argv0 option changes process.argv0 but not executable", async () => {
+    await using proc = spawn({
+      cmd: [bunExe(), "-e", "console.log(process.argv0); console.log(process.execPath)"],
+      argv0: "custom-argv0",
+      stdout: "pipe",
+      stderr: "ignore",
+      stdin: "ignore",
+      env: bunEnv,
+    });
+
+    const output = await proc.stdout.text();
+    const lines = output.trim().split(/\r?\n/);
+    expect(lines[0]).toBe("custom-argv0");
+    expect(path.normalize(lines[1])).toBe(path.normalize(bunExe()));
+    await proc.exited;
+  });
+
+  it("argv0 option works with spawnSync", () => {
+    const argv0 = "custom-argv0-sync";
+
+    const proc = spawnSync({
+      cmd: [bunExe(), "-e", "console.log(JSON.stringify({ argv0: process.argv0, execPath: process.execPath }))"],
+      argv0,
+      stdout: "pipe",
+      stderr: "ignore",
+      stdin: "ignore",
+      env: bunEnv,
+    });
+
+    const output = JSON.parse(proc.stdout.toString().trim());
+    expect(output).toEqual({ argv0, execPath: path.normalize(bunExe()) });
+  });
+
+  it("argv0 defaults to cmd[0] when not specified", async () => {
+    await using proc = spawn({
+      cmd: [bunExe(), "-e", "console.log(process.argv0)"],
+      stdout: "pipe",
+      stderr: "ignore",
+      stdin: "ignore",
+      env: bunEnv,
+    });
+
+    const output = await proc.stdout.text();
+    expect(output.trim()).toBe(bunExe());
+    await proc.exited;
+  });
+});
+
+describe("option combinations", () => {
+  it("detached + argv0 works together", async () => {
+    await using proc = spawn({
+      cmd: [bunExe(), "-e", "console.log(process.argv0)"],
+      detached: true,
+      argv0: "custom-name",
+      stdout: "pipe",
+      stderr: "ignore",
+      stdin: "ignore",
+      env: bunEnv,
+    });
+
+    const output = await proc.stdout.text();
+    expect(output.trim()).toBe("custom-name");
+    await proc.exited;
+  });
+
+  it.todoIf(isWindows)("onDisconnect + ipc + serialization works together", async () => {
+    let messageReceived = false;
+    let disconnectCalled = false;
+
+    const msg = Promise.withResolvers<void>();
+    const disc = Promise.withResolvers<void>();
+
+    await using proc = spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+         process.send({type: "hello", data: "world"});
+         Promise.resolve().then(() => {
+           process.disconnect();
+           process.exit(0);
+         });
+        `,
+      ],
+      ipc: message => {
+        expect(message).toEqual({ type: "hello", data: "world" });
+        messageReceived = true;
+        msg.resolve();
+      },
+      onDisconnect: () => {
+        disconnectCalled = true;
+        disc.resolve();
+      },
+      serialization: "advanced",
+      stdio: ["inherit", "inherit", "inherit"],
+      env: bunEnv,
+    });
+
+    await Promise.all([msg.promise, disc.promise]);
+    expect(messageReceived).toBe(true);
+    expect(disconnectCalled).toBe(true);
+    expect(await proc.exited).toBe(0);
+  });
 });

@@ -1,8 +1,3 @@
-const std = @import("std");
-const strings = @import("../string_immutable.zig");
-const bun = @import("bun");
-const Fs = @import("../fs.zig");
-
 threadlocal var parser_join_input_buffer: [4096]u8 = undefined;
 threadlocal var parser_buffer: [1024]u8 = undefined;
 
@@ -40,6 +35,16 @@ inline fn nqlAtIndexCaseInsensitive(comptime string_count: comptime_int, index: 
     }
 
     return false;
+}
+
+/// The given string contains separators that match the platform's path separator style.
+pub fn hasPlatformPathSeparators(input_path: []const u8) bool {
+    if (bun.Environment.isWindows) {
+        // Windows accepts both forward and backward slashes as path separators
+        return bun.strings.indexOfAny(input_path, "\\/") != null;
+    } else {
+        return bun.strings.containsChar(input_path, '/');
+    }
 }
 
 const IsSeparatorFunc = fn (char: u8) bool;
@@ -492,7 +497,7 @@ pub fn dirname(str: []const u8, comptime platform: Platform) []const u8 {
             const separator = lastIndexOfSeparatorWindows(str) orelse return std.fs.path.diskDesignatorWindows(str);
             return str[0..separator];
         },
-        else => @compileError("not implemented"),
+        .nt => @compileError("not implemented"),
     }
 }
 
@@ -1239,6 +1244,14 @@ pub fn joinStringBufWZ(buf: []u16, parts: anytype, comptime platform: Platform) 
     return buf[start_offset..][0..joined.len :0];
 }
 
+pub fn joinStringBufZ(buf: []u8, parts: anytype, comptime platform: Platform) [:0]const u8 {
+    const joined = joinStringBufT(u8, buf[0 .. buf.len - 1], parts, platform);
+    assert(bun.isSliceInBufferT(u8, joined, buf));
+    const start_offset = @intFromPtr(joined.ptr) - @intFromPtr(buf.ptr);
+    buf[joined.len + start_offset] = 0;
+    return buf[start_offset..][0..joined.len :0];
+}
+
 pub fn joinStringBufT(comptime T: type, buf: []T, parts: anytype, comptime platform: Platform) []const T {
     var written: usize = 0;
     var temp_buf_: [4096]T = undefined;
@@ -1257,7 +1270,7 @@ pub fn joinStringBufT(comptime T: type, buf: []T, parts: anytype, comptime platf
     }
 
     if (count * 2 > temp_buf.len) {
-        temp_buf = bun.default_allocator.alloc(T, count * 2) catch bun.outOfMemory();
+        temp_buf = bun.handleOom(bun.default_allocator.alloc(T, count * 2));
         free_temp_buf = true;
     }
 
@@ -1289,8 +1302,57 @@ pub fn joinStringBufT(comptime T: type, buf: []T, parts: anytype, comptime platf
     return normalizeStringNodeT(T, temp_buf[0..written], buf, platform);
 }
 
+/// Inline `MAX_PATH_BYTES * 2` stack buffer that heap-allocates when the
+/// requested size exceeds it. Keeps `_joinAbsStringBuf`'s scratch buffer safe
+/// for arbitrarily long inputs while preserving zero-alloc behaviour for the
+/// common case.
+const JoinScratch = struct {
+    sfa: std.heap.StackFallbackAllocator(bun.MAX_PATH_BYTES * 2),
+    alloc: std.mem.Allocator,
+    buf: []u8,
+
+    pub fn init(self: *JoinScratch, base: usize, parts: []const []const u8) []u8 {
+        self.sfa = std.heap.stackFallback(bun.MAX_PATH_BYTES * 2, bun.default_allocator);
+        self.alloc = self.sfa.get();
+        var total = base + 2;
+        for (parts) |p| total += p.len + 1;
+        self.buf = bun.handleOom(self.alloc.alloc(u8, total));
+        return self.buf;
+    }
+
+    pub fn deinit(self: *JoinScratch) void {
+        self.alloc.free(self.buf);
+    }
+};
+
 pub fn joinAbsStringBuf(cwd: []const u8, buf: []u8, _parts: anytype, comptime platform: Platform) []const u8 {
     return _joinAbsStringBuf(false, []const u8, cwd, buf, _parts, platform);
+}
+
+/// Like `joinAbsStringBuf`, but returns null when the *normalized* result is
+/// too large for `buf`. Use this when `parts` may contain user-controlled
+/// input of arbitrary length. `..` segments are handled correctly: a path
+/// whose unnormalized length exceeds `buf.len` but normalizes down will still
+/// succeed.
+pub fn joinAbsStringBufChecked(cwd: []const u8, buf: []u8, parts: []const []const u8, comptime platform: Platform) ?[]const u8 {
+    comptime if (platform == .nt) @compileError("joinAbsStringBufChecked does not support .nt (the \\\\?\\ prefix is not accounted for in scratch sizing)");
+    // Fast path: size check only — don't allocate a JoinScratch here since the
+    // inner joinAbsStringBuf already has its own (avoids doubling stack usage).
+    var total: usize = cwd.len + 2;
+    for (parts) |p| total += p.len + 1;
+    if (total < buf.len) return joinAbsStringBuf(cwd, buf, parts, platform);
+
+    // Slow path: allocate a large scratch for the result. The inner
+    // joinAbsStringBuf will heap-allocate its own temp buffer for the concat
+    // since `total > MAX_PATH_BYTES * 2 > sfa inline size` is likely here.
+    var sfa = std.heap.stackFallback(bun.MAX_PATH_BYTES, bun.default_allocator);
+    const alloc = sfa.get();
+    const scratch = bun.handleOom(alloc.alloc(u8, total));
+    defer alloc.free(scratch);
+    const joined = joinAbsStringBuf(cwd, scratch, parts, platform);
+    if (joined.len > buf.len) return null;
+    bun.copy(u8, buf, joined);
+    return buf[0..joined.len];
 }
 
 pub fn joinAbsStringBufZ(cwd: []const u8, buf: []u8, _parts: anytype, comptime platform: Platform) [:0]const u8 {
@@ -1334,7 +1396,6 @@ fn _joinAbsStringBuf(comptime is_sentinel: bool, comptime ReturnType: type, _cwd
     }
 
     var parts: []const []const u8 = _parts;
-    var temp_buf: [bun.MAX_PATH_BYTES * 2]u8 = undefined;
     if (parts.len == 0) {
         if (comptime is_sentinel) {
             unreachable;
@@ -1373,7 +1434,11 @@ fn _joinAbsStringBuf(comptime is_sentinel: bool, comptime ReturnType: type, _cwd
         }
     }
 
-    bun.copy(u8, &temp_buf, cwd);
+    var scratch: JoinScratch = undefined;
+    const temp_buf = scratch.init(cwd.len, parts);
+    defer scratch.deinit();
+
+    bun.copy(u8, temp_buf, cwd);
     out = cwd.len;
 
     for (parts) |_part| {
@@ -1489,7 +1554,9 @@ fn _joinAbsStringBufWindows(
     if (set_cwd.len > 0)
         assert(isSepAny(set_cwd[0]));
 
-    var temp_buf: [bun.MAX_PATH_BYTES * 2]u8 = undefined;
+    var scratch: JoinScratch = undefined;
+    const temp_buf = scratch.init(root.len + set_cwd.len, parts[n_start..]);
+    defer scratch.deinit();
 
     @memcpy(temp_buf[0..root.len], root);
     @memcpy(temp_buf[root.len .. root.len + set_cwd.len], set_cwd);
@@ -1975,7 +2042,7 @@ pub const PosixToWinNormalizer = struct {
 /// Used in PathInlines.h
 /// gets cwd off of the global object
 export fn ResolvePath__joinAbsStringBufCurrentPlatformBunString(
-    globalObject: *bun.JSC.JSGlobalObject,
+    globalObject: *bun.jsc.JSGlobalObject,
     in: bun.String,
 ) bun.String {
     const str = in.toUTF8WithoutRef(bun.default_allocator);
@@ -1988,7 +2055,7 @@ export fn ResolvePath__joinAbsStringBufCurrentPlatformBunString(
         .auto,
     );
 
-    return bun.String.createUTF8(out_slice);
+    return bun.String.cloneUTF8(out_slice);
 }
 
 pub fn platformToPosixInPlace(comptime T: type, path_buffer: []T) void {
@@ -2053,4 +2120,9 @@ pub fn posixToPlatformInPlace(comptime T: type, path_buffer: []T) void {
     }
 }
 
+const Fs = @import("../fs.zig");
+const std = @import("std");
+
+const bun = @import("bun");
 const assert = bun.assert;
+const strings = bun.strings;

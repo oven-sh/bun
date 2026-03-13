@@ -39,6 +39,7 @@ JSC_DEFINE_HOST_FUNCTION(callECDH, (JSC::JSGlobalObject * lexicalGlobalObject, J
     ArgList args = ArgList(callFrame);
     auto callData = JSC::getConstructData(constructor);
     JSC::JSValue result = JSC::construct(globalObject, constructor, callData, args);
+    RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(result);
 }
 
@@ -71,7 +72,7 @@ JSC_DEFINE_HOST_FUNCTION(constructECDH, (JSC::JSGlobalObject * globalObject, JSC
     JSC::Structure* structure = zigGlobalObject->m_JSECDHClassStructure.get(zigGlobalObject);
 
     const EC_GROUP* group = key.getGroup();
-    return JSC::JSValue::encode(JSECDH::create(vm, structure, globalObject, WTFMove(key), group));
+    return JSC::JSValue::encode(JSECDH::create(vm, structure, globalObject, WTF::move(key), group));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsECDHConvertKey, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
@@ -136,7 +137,7 @@ JSC_DEFINE_HOST_FUNCTION(jsECDHConvertKey, (JSC::JSGlobalObject * lexicalGlobalO
     BufferEncodingType outEnc = getEncodingDefaultBuffer(lexicalGlobalObject, scope, outEncValue);
     RETURN_IF_EXCEPTION(scope, {});
 
-    return StringBytes::encode(lexicalGlobalObject, scope, buf.span(), outEnc);
+    RELEASE_AND_RETURN(scope, StringBytes::encode(lexicalGlobalObject, scope, buf.span(), outEnc));
 }
 
 } // namespace Bun

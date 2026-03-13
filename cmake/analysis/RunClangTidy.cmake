@@ -3,7 +3,7 @@
 set(CLANG_TIDY_SOURCES ${BUN_C_SOURCES} ${BUN_CXX_SOURCES})
 
 set(CLANG_TIDY_COMMAND ${CLANG_TIDY_PROGRAM}
-  -p ${BUILD_PATH}  
+  -p ${BUILD_PATH}
   --config-file=${CWD}/.clang-tidy
 )
 
@@ -39,27 +39,6 @@ register_command(
     ${BUILD_PATH}
   ALWAYS_RUN
 )
-
-if(GIT_CHANGED_SOURCES)
-  set(CLANG_TIDY_CHANGED_SOURCES)
-  foreach(source ${CLANG_TIDY_SOURCES})
-    list(FIND GIT_CHANGED_SOURCES ${source} index)
-    if(NOT ${index} EQUAL -1)
-      list(APPEND CLANG_TIDY_CHANGED_SOURCES ${source})
-    endif()
-  endforeach()
-endif()
-
-if(CLANG_TIDY_CHANGED_SOURCES)
-  set(CLANG_TIDY_DIFF_COMMAND ${CLANG_TIDY_PROGRAM}
-    ${CLANG_TIDY_CHANGED_SOURCES}
-    --fix
-    --fix-errors
-    --fix-notes
-  )
-else()
-  set(CLANG_TIDY_DIFF_COMMAND ${CMAKE_COMMAND} -E echo "No changed files for clang-tidy")
-endif()
 
 register_command(
   TARGET

@@ -378,3 +378,18 @@ it("works on classes", () => {
   expect.extend(new Foo());
   expect(123)._toBeBar();
 });
+
+describe("MatcherContext", () => {
+  describe("utils", () => {
+    test("RECEIVED_COLOR is a function", () => {
+      expect.extend({
+        toBeCustomColor(_actual, _expected) {
+          expect(this.utils.RECEIVED_COLOR).toBeFunction();
+          return { pass: true };
+        },
+      });
+
+      expect(123).toBeCustomColor(456);
+    });
+  });
+});

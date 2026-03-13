@@ -11,7 +11,7 @@ function translatePeerCertificate(c) {
   }
   if (c.infoAccess != null) {
     const info = c.infoAccess;
-    c.infoAccess = { __proto__: null };
+    c.infoAccess = Object.create(null);
 
     // XXX: More key validation?
     info.replace(/([^\n:]*):([^\n]*)(?:\n|$)/g, (all, key, val) => {

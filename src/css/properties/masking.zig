@@ -1,7 +1,3 @@
-const std = @import("std");
-const Allocator = std.mem.Allocator;
-const ArrayList = std.ArrayListUnmanaged;
-
 pub const css = @import("../css_parser.zig");
 
 const Printer = css.Printer;
@@ -274,14 +270,14 @@ pub const Mask = struct {
 
         while (true) {
             if (image == null) {
-                if (@call(.auto, @field(Image, "parse"), .{input}).asValue()) |value| {
+                if (input.tryParse(Image.parse, .{}).asValue()) |value| {
                     image = value;
                     continue;
                 }
             }
 
             if (position == null) {
-                if (Position.parse(input).asValue()) |value| {
+                if (input.tryParse(Position.parse, .{}).asValue()) |value| {
                     position = value;
                     size = input.tryParse(struct {
                         pub inline fn parseFn(i: *css.Parser) css.Result(BackgroundSize) {
@@ -294,35 +290,35 @@ pub const Mask = struct {
             }
 
             if (repeat == null) {
-                if (BackgroundRepeat.parse(input).asValue()) |value| {
+                if (input.tryParse(BackgroundRepeat.parse, .{}).asValue()) |value| {
                     repeat = value;
                     continue;
                 }
             }
 
             if (origin == null) {
-                if (GeometryBox.parse(input).asValue()) |value| {
+                if (input.tryParse(GeometryBox.parse, .{}).asValue()) |value| {
                     origin = value;
                     continue;
                 }
             }
 
             if (clip == null) {
-                if (MaskClip.parse(input).asValue()) |value| {
+                if (input.tryParse(MaskClip.parse, .{}).asValue()) |value| {
                     clip = value;
                     continue;
                 }
             }
 
             if (composite == null) {
-                if (MaskComposite.parse(input).asValue()) |value| {
+                if (input.tryParse(MaskComposite.parse, .{}).asValue()) |value| {
                     composite = value;
                     continue;
                 }
             }
 
             if (mode == null) {
-                if (MaskMode.parse(input).asValue()) |value| {
+                if (input.tryParse(MaskMode.parse, .{}).asValue()) |value| {
                     mode = value;
                     continue;
                 }
@@ -349,42 +345,42 @@ pub const Mask = struct {
         } };
     }
 
-    pub fn toCss(this: *const Mask, comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
-        try this.image.toCss(W, dest);
+    pub fn toCss(this: *const Mask, dest: *css.Printer) css.PrintErr!void {
+        try this.image.toCss(dest);
 
         if (!this.position.eql(&Position.default()) or !this.size.eql(&BackgroundSize.default())) {
             try dest.writeChar(' ');
-            try this.position.toCss(W, dest);
+            try this.position.toCss(dest);
 
             if (!this.size.eql(&BackgroundSize.default())) {
                 try dest.delim('/', true);
-                try this.size.toCss(W, dest);
+                try this.size.toCss(dest);
             }
         }
 
         if (!this.repeat.eql(&BackgroundRepeat.default())) {
             try dest.writeChar(' ');
-            try this.repeat.toCss(W, dest);
+            try this.repeat.toCss(dest);
         }
 
         if (!this.origin.eql(&GeometryBox.@"border-box") or !this.clip.eql(&GeometryBox.@"border-box".intoMaskClip())) {
             try dest.writeChar(' ');
-            try this.origin.toCss(W, dest);
+            try this.origin.toCss(dest);
 
             if (!this.clip.eql(&this.origin.intoMaskClip())) {
                 try dest.writeChar(' ');
-                try this.clip.toCss(W, dest);
+                try this.clip.toCss(dest);
             }
         }
 
         if (!this.composite.eql(&MaskComposite.default())) {
             try dest.writeChar(' ');
-            try this.composite.toCss(W, dest);
+            try this.composite.toCss(dest);
         }
 
         if (!this.mode.eql(&MaskMode.default())) {
             try dest.writeChar(' ');
-            try this.mode.toCss(W, dest);
+            try this.mode.toCss(dest);
         }
 
         return;
@@ -476,19 +472,18 @@ pub const MaskBorder = struct {
         }
     }
 
-    pub fn toCss(this: *const MaskBorder, comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
+    pub fn toCss(this: *const MaskBorder, dest: *css.Printer) css.PrintErr!void {
         try BorderImage.toCssInternal(
             &this.source,
             &this.slice,
             &this.width,
             &this.outset,
             &this.repeat,
-            W,
             dest,
         );
         if (!this.mode.eql(&MaskBorderMode.default())) {
             try dest.writeChar(' ');
-            try this.mode.toCss(W, dest);
+            try this.mode.toCss(dest);
         }
     }
 
@@ -571,3 +566,7 @@ pub fn getWebkitMaskProperty(property_id: *const css.PropertyId) ?css.PropertyId
         else => null,
     };
 }
+
+const std = @import("std");
+const ArrayList = std.ArrayListUnmanaged;
+const Allocator = std.mem.Allocator;

@@ -1,13 +1,9 @@
-const bun = @import("bun");
-const std = @import("std");
 pub const c = @import("./deps/brotli_c.zig");
 const BrotliDecoder = c.BrotliDecoder;
 const BrotliEncoder = c.BrotliEncoder;
 
-const mimalloc = bun.Mimalloc;
-
 pub const BrotliAllocator = struct {
-    pub fn alloc(_: ?*anyopaque, len: usize) callconv(.C) *anyopaque {
+    pub fn alloc(_: ?*anyopaque, len: usize) callconv(.c) *anyopaque {
         if (bun.heap_breakdown.enabled) {
             const zone = bun.heap_breakdown.getZone("brotli");
             return zone.malloc_zone_malloc(len) orelse bun.outOfMemory();
@@ -16,7 +12,7 @@ pub const BrotliAllocator = struct {
         return mimalloc.mi_malloc(len) orelse bun.outOfMemory();
     }
 
-    pub fn free(_: ?*anyopaque, data: ?*anyopaque) callconv(.C) void {
+    pub fn free(_: ?*anyopaque, data: ?*anyopaque) callconv(.c) void {
         if (bun.heap_breakdown.enabled) {
             const zone = bun.heap_breakdown.getZone("brotli");
             zone.malloc_zone_free(data);
@@ -162,9 +158,11 @@ pub const BrotliReaderArrayList = struct {
                     }
                     this.state = .Inflating;
                     if (is_done) {
+                        // Stream is truncated - we're at EOF but decoder needs more data
                         this.state = .Error;
+                        return error.BrotliDecompressionError;
                     }
-
+                    // Not at EOF - we can retry with more data
                     return error.ShortRead;
                 },
                 .needs_more_output => {
@@ -248,7 +246,7 @@ pub const BrotliCompressionStream = struct {
 
             const Self = @This();
             pub const WriteError = error{BrotliCompressionError} || InputWriter.Error;
-            pub const Writer = std.io.Writer(@This(), WriteError, Self.write);
+            pub const Writer = std.Io.GenericWriter(@This(), WriteError, Self.write);
 
             pub fn init(compressor: *BrotliCompressionStream, input_writer: InputWriter) Self {
                 return Self{
@@ -282,3 +280,8 @@ pub const BrotliCompressionStream = struct {
         return this.writerContext(writable).writer();
     }
 };
+
+const std = @import("std");
+
+const bun = @import("bun");
+const mimalloc = bun.mimalloc;

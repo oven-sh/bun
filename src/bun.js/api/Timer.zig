@@ -1,12 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const JSC = bun.JSC;
-const VirtualMachine = JSC.VirtualMachine;
-const JSValue = JSC.JSValue;
-const JSError = bun.JSError;
-const JSGlobalObject = JSC.JSGlobalObject;
-const Environment = bun.Environment;
-const uv = bun.windows.libuv;
 const Timer = @This();
 
 /// TimeoutMap is map of i32 to nullable Timeout structs
@@ -21,7 +12,7 @@ pub const TimeoutMap = std.AutoArrayHashMapUnmanaged(
     *EventLoopTimer,
 );
 
-const TimerHeap = heap.Intrusive(EventLoopTimer, void, EventLoopTimer.less);
+pub const TimerHeap = heap.Intrusive(EventLoopTimer, void, EventLoopTimer.less);
 
 pub const All = struct {
     last_id: i32 = 1,
@@ -40,6 +31,11 @@ pub const All = struct {
     immediate_ref_count: i32 = 0,
     uv_idle: if (Environment.isWindows) uv.uv_idle_t else void = if (Environment.isWindows) std.mem.zeroes(uv.uv_idle_t),
 
+    // Event loop delay monitoring (not exposed to JS)
+    event_loop_delay: EventLoopDelayMonitor = .{},
+
+    fake_timers: FakeTimers = .{},
+
     // We split up the map here to avoid storing an extra "repeat" boolean
     maps: struct {
         setTimeout: TimeoutMap = .{},
@@ -55,6 +51,9 @@ pub const All = struct {
         }
     } = .{},
 
+    /// Updates the "Date" header.
+    date_header_timer: DateHeaderTimer = .{},
+
     pub fn init() @This() {
         return .{
             .thread_id = std.Thread.getCurrentId(),
@@ -64,19 +63,39 @@ pub const All = struct {
     pub fn insert(this: *All, timer: *EventLoopTimer) void {
         this.lock.lock();
         defer this.lock.unlock();
-        this.timers.insert(timer);
-        timer.state = .ACTIVE;
+        this.insertLockHeld(timer);
+    }
 
-        if (Environment.isWindows) {
-            this.ensureUVTimer(@alignCast(@fieldParentPtr("timer", this)));
+    fn insertLockHeld(this: *All, timer: *EventLoopTimer) void {
+        if (Environment.ci_assert) bun.assert(this.lock.tryLock() == false);
+        if (this.fake_timers.isActive() and timer.tag.allowFakeTimers()) {
+            this.fake_timers.timers.insert(timer);
+            timer.state = .ACTIVE;
+            timer.in_heap = .fake;
+        } else {
+            this.timers.insert(timer);
+            timer.state = .ACTIVE;
+            timer.in_heap = .regular;
+
+            if (Environment.isWindows) {
+                this.ensureUVTimer(@alignCast(@fieldParentPtr("timer", this)));
+            }
         }
     }
 
     pub fn remove(this: *All, timer: *EventLoopTimer) void {
         this.lock.lock();
         defer this.lock.unlock();
-        this.timers.remove(timer);
-
+        this.removeLockHeld(timer);
+    }
+    fn removeLockHeld(this: *All, timer: *EventLoopTimer) void {
+        if (Environment.ci_assert) bun.assert(this.lock.tryLock() == false);
+        switch (timer.in_heap) {
+            .none => if (Environment.ci_assert) bun.assert(false), // can't remove a timer that was not inserted
+            .regular => this.timers.remove(timer),
+            .fake => this.fake_timers.timers.remove(timer),
+        }
+        timer.in_heap = .none;
         timer.state = .CANCELLED;
     }
 
@@ -85,26 +104,22 @@ pub const All = struct {
         this.lock.lock();
         defer this.lock.unlock();
         if (timer.state == .ACTIVE) {
-            this.timers.remove(timer);
+            this.removeLockHeld(timer);
         }
 
-        timer.state = .ACTIVE;
-        if (comptime Environment.isDebug) {
+        if (Environment.ci_assert) {
             if (&timer.next == time) {
                 @panic("timer.next == time. For threadsafety reasons, time and timer.next must always be a different pointer.");
             }
         }
 
         timer.next = time.*;
-        if (timer.jsTimerInternals()) |internals| {
+        if (timer.jsTimerInternalsFlags()) |flags| {
             this.epoch +%= 1;
-            internals.flags.epoch = this.epoch;
+            flags.epoch = this.epoch;
         }
 
-        this.timers.insert(timer);
-        if (Environment.isWindows) {
-            this.ensureUVTimer(@alignCast(@fieldParentPtr("timer", this)));
-        }
+        this.insertLockHeld(timer);
     }
 
     fn ensureUVTimer(this: *All, vm: *VirtualMachine) void {
@@ -116,7 +131,7 @@ pub const All = struct {
 
         if (this.timers.peek()) |timer| {
             uv.uv_update_time(vm.uvLoop());
-            const now = timespec.now();
+            const now = timespec.now(.force_real_time);
             const wait = if (timer.next.greater(&now))
                 timer.next.duration(&now)
             else
@@ -136,7 +151,7 @@ pub const All = struct {
         }
     }
 
-    pub fn onUVTimer(uv_timer_t: *uv.Timer) callconv(.C) void {
+    pub fn onUVTimer(uv_timer_t: *uv.Timer) callconv(.c) void {
         const all: *All = @fieldParentPtr("uv_timer", uv_timer_t);
         const vm: *VirtualMachine = @alignCast(@fieldParentPtr("timer", all));
         all.drainTimers(vm);
@@ -158,7 +173,7 @@ pub const All = struct {
 
                 // Matches Node.js behavior
                 this.uv_idle.start(struct {
-                    fn cb(_: *uv.uv_idle_t) callconv(.C) void {
+                    fn cb(_: *uv.uv_idle_t) callconv(.c) void {
                         // prevent libuv from polling forever
                     }
                 }.cb);
@@ -177,7 +192,7 @@ pub const All = struct {
     }
 
     pub fn incrementTimerRef(this: *All, delta: i32) void {
-        const vm: *JSC.VirtualMachine = @alignCast(@fieldParentPtr("timer", this));
+        const vm: *jsc.VirtualMachine = @alignCast(@fieldParentPtr("timer", this));
 
         const old = this.active_timer_count;
         const new = old + delta;
@@ -203,20 +218,47 @@ pub const All = struct {
         }
     }
 
-    pub fn getNextID() callconv(.C) i32 {
+    pub fn getNextID() callconv(.c) i32 {
         VirtualMachine.get().timer.last_id +%= 1;
         return VirtualMachine.get().timer.last_id;
     }
 
+    fn isDateTimerActive(this: *const All) bool {
+        return this.date_header_timer.event_loop_timer.state == .ACTIVE;
+    }
+
+    pub fn updateDateHeaderTimerIfNecessary(this: *All, loop: *const uws.Loop, vm: *VirtualMachine) void {
+        if (loop.shouldEnableDateHeaderTimer()) {
+            if (!this.isDateTimerActive()) {
+                this.date_header_timer.enable(
+                    vm,
+                    // Be careful to avoid adding extra calls to bun.timespec.now()
+                    // when it's not needed.
+                    &bun.timespec.now(.allow_mocked_time),
+                );
+            }
+        } else {
+            // don't un-schedule it here.
+            // it's better to wake up an extra 1 time after a second idle
+            // than to have to check a date potentially on every single HTTP request.
+        }
+    }
+
     pub fn getTimeout(this: *All, spec: *timespec, vm: *VirtualMachine) bool {
-        if (this.active_timer_count == 0) {
-            return false;
+        // On POSIX, if there are pending immediate tasks, use a zero timeout
+        // so epoll/kqueue returns immediately without the overhead of writing
+        // to the eventfd via wakeup().
+        if (comptime Environment.isPosix) {
+            if (vm.event_loop.immediate_tasks.items.len > 0) {
+                spec.* = .{ .nsec = 0, .sec = 0 };
+                return true;
+            }
         }
 
         var maybe_now: ?timespec = null;
         while (this.timers.peek()) |min| {
             const now = maybe_now orelse now: {
-                const real_now = timespec.now();
+                const real_now = timespec.now(.allow_mocked_time);
                 maybe_now = real_now;
                 break :now real_now;
             };
@@ -226,7 +268,7 @@ pub const All = struct {
                     // Side-effect: potentially call the StopIfNecessary timer.
                     if (min.tag == .WTFTimer) {
                         _ = this.timers.deleteMin();
-                        _ = min.fire(&now, vm);
+                        min.fire(&now, vm);
                         continue;
                     }
 
@@ -243,7 +285,7 @@ pub const All = struct {
         return false;
     }
 
-    export fn Bun__internal_drainTimers(vm: *VirtualMachine) callconv(.C) void {
+    export fn Bun__internal_drainTimers(vm: *VirtualMachine) callconv(.c) void {
         drainTimers(&vm.timer, vm);
     }
 
@@ -262,7 +304,7 @@ pub const All = struct {
 
         if (this.timers.peek()) |timer| {
             if (!has_set_now.*) {
-                now.* = timespec.now();
+                now.* = timespec.now(.allow_mocked_time);
                 has_set_now.* = true;
             }
             if (timer.next.greater(now)) {
@@ -283,10 +325,7 @@ pub const All = struct {
         var has_set_now: bool = false;
 
         while (this.next(&has_set_now, &now)) |t| {
-            switch (t.fire(&now, vm)) {
-                .disarm => {},
-                .rearm => {},
-            }
+            t.fire(&now, vm);
         }
     }
 
@@ -304,7 +343,7 @@ pub const All = struct {
                 bun.String.createFormat(
                     "{d} does not fit into a 32-bit signed integer" ++ suffix,
                     .{countdown},
-                ) catch bun.outOfMemory()
+                ) catch |err| bun.handleOom(err)
             else
                 // -Infinity is handled by TimeoutNegativeWarning
                 bun.String.ascii("Infinity does not fit into a 32-bit signed integer" ++ suffix),
@@ -312,7 +351,7 @@ pub const All = struct {
                 bun.String.createFormat(
                     "{d} is a negative number" ++ suffix,
                     .{countdown},
-                ) catch bun.outOfMemory()
+                ) catch |err| bun.handleOom(err)
             else
                 bun.String.ascii("-Infinity is a negative number" ++ suffix),
             // std.fmt gives us "nan" but Node.js wants "NaN".
@@ -322,13 +361,15 @@ pub const All = struct {
             },
         };
         var warning_type_string = bun.String.createAtomIfPossible(@tagName(warning_type));
-        // these arguments are valid so emitWarning won't throw
+        // Ignore errors from transferToJS since this is just a warning and shouldn't interrupt execution
+        const warning_js = warning_string.transferToJS(globalThis) catch return;
+        const warning_type_js = warning_type_string.transferToJS(globalThis) catch return;
         globalThis.emitWarning(
-            warning_string.transferToJS(globalThis),
-            warning_type_string.transferToJS(globalThis),
+            warning_js,
+            warning_type_js,
             .js_undefined,
             .js_undefined,
-        ) catch unreachable;
+        ) catch {};
     }
 
     const CountdownOverflowBehavior = enum(u8) {
@@ -378,7 +419,7 @@ pub const All = struct {
         promise: JSValue,
         countdown: JSValue,
     ) JSError!JSValue {
-        JSC.markBinding(@src());
+        jsc.markBinding(@src());
         bun.debugAssert(promise != .zero and countdown != .zero);
         const vm = global.bunVM();
         const id = vm.timer.last_id;
@@ -394,7 +435,7 @@ pub const All = struct {
         callback: JSValue,
         arguments: JSValue,
     ) JSError!JSValue {
-        JSC.markBinding(@src());
+        jsc.markBinding(@src());
         bun.debugAssert(callback != .zero and arguments != .zero);
         const vm = global.bunVM();
         const id = vm.timer.last_id;
@@ -410,7 +451,7 @@ pub const All = struct {
         arguments: JSValue,
         countdown: JSValue,
     ) JSError!JSValue {
-        JSC.markBinding(@src());
+        jsc.markBinding(@src());
         bun.debugAssert(callback != .zero and arguments != .zero and countdown != .zero);
         const vm = global.bunVM();
         const id = vm.timer.last_id;
@@ -426,7 +467,7 @@ pub const All = struct {
         arguments: JSValue,
         countdown: JSValue,
     ) JSError!JSValue {
-        JSC.markBinding(@src());
+        jsc.markBinding(@src());
         bun.debugAssert(callback != .zero and arguments != .zero and countdown != .zero);
         const vm = global.bunVM();
         const id = vm.timer.last_id;
@@ -448,7 +489,7 @@ pub const All = struct {
     }
 
     pub fn clearTimer(timer_id_value: JSValue, globalThis: *JSGlobalObject, kind: Kind) JSError!void {
-        JSC.markBinding(@src());
+        jsc.markBinding(@src());
 
         const vm = globalThis.bunVM();
 
@@ -511,7 +552,7 @@ pub const All = struct {
         globalThis: *JSGlobalObject,
         id: JSValue,
     ) JSError!JSValue {
-        JSC.markBinding(@src());
+        jsc.markBinding(@src());
         try clearTimer(id, globalThis, .setImmediate);
         return .js_undefined;
     }
@@ -519,7 +560,7 @@ pub const All = struct {
         globalThis: *JSGlobalObject,
         id: JSValue,
     ) JSError!JSValue {
-        JSC.markBinding(@src());
+        jsc.markBinding(@src());
         try clearTimer(id, globalThis, .setTimeout);
         return .js_undefined;
     }
@@ -527,19 +568,19 @@ pub const All = struct {
         globalThis: *JSGlobalObject,
         id: JSValue,
     ) JSError!JSValue {
-        JSC.markBinding(@src());
+        jsc.markBinding(@src());
         try clearTimer(id, globalThis, .setInterval);
         return .js_undefined;
     }
 
     comptime {
-        @export(&JSC.host_fn.wrap3(setImmediate), .{ .name = "Bun__Timer__setImmediate" });
-        @export(&JSC.host_fn.wrap3(sleep), .{ .name = "Bun__Timer__sleep" });
-        @export(&JSC.host_fn.wrap4(setTimeout), .{ .name = "Bun__Timer__setTimeout" });
-        @export(&JSC.host_fn.wrap4(setInterval), .{ .name = "Bun__Timer__setInterval" });
-        @export(&JSC.host_fn.wrap2(clearImmediate), .{ .name = "Bun__Timer__clearImmediate" });
-        @export(&JSC.host_fn.wrap2(clearTimeout), .{ .name = "Bun__Timer__clearTimeout" });
-        @export(&JSC.host_fn.wrap2(clearInterval), .{ .name = "Bun__Timer__clearInterval" });
+        @export(&jsc.host_fn.wrap3(setImmediate), .{ .name = "Bun__Timer__setImmediate" });
+        @export(&jsc.host_fn.wrap3(sleep), .{ .name = "Bun__Timer__sleep" });
+        @export(&jsc.host_fn.wrap4(setTimeout), .{ .name = "Bun__Timer__setTimeout" });
+        @export(&jsc.host_fn.wrap4(setInterval), .{ .name = "Bun__Timer__setInterval" });
+        @export(&jsc.host_fn.wrap2(clearImmediate), .{ .name = "Bun__Timer__clearImmediate" });
+        @export(&jsc.host_fn.wrap2(clearTimeout), .{ .name = "Bun__Timer__clearTimeout" });
+        @export(&jsc.host_fn.wrap2(clearInterval), .{ .name = "Bun__Timer__clearInterval" });
         @export(&getNextID, .{ .name = "Bun__Timer__getNextID" });
     }
 };
@@ -581,13 +622,12 @@ pub const ID = extern struct {
     }
 };
 
-const assert = bun.assert;
-const heap = bun.io.heap;
-
-const timespec = bun.timespec;
-
 /// A timer created by WTF code and invoked by Bun's event loop
-pub const WTFTimer = @import("../WTFTimer.zig");
+pub const WTFTimer = @import("./Timer/WTFTimer.zig");
+
+pub const DateHeaderTimer = @import("./Timer/DateHeaderTimer.zig");
+
+pub const EventLoopDelayMonitor = @import("./Timer/EventLoopDelayMonitor.zig");
 
 pub const internal_bindings = struct {
     /// Node.js has some tests that check whether timers fire at the right time. They check this
@@ -601,10 +641,27 @@ pub const internal_bindings = struct {
     /// thinking that the timing is wrong (this also happens when I run the modified test in
     /// Node.js). So the best course of action is for Bun to also expose a function that reveals the
     /// clock that is used to schedule timers.
-    pub fn timerClockMs(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSValue {
+    pub fn timerClockMs(globalThis: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame) bun.JSError!JSValue {
         _ = globalThis;
         _ = callFrame;
-        const now = timespec.now().ms();
+        const now = timespec.now(.allow_mocked_time).ms();
         return .jsNumberFromInt64(now);
     }
 };
+
+const std = @import("std");
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const JSError = bun.JSError;
+const assert = bun.assert;
+const timespec = bun.timespec;
+const uws = bun.uws;
+const heap = bun.io.heap;
+const uv = bun.windows.libuv;
+
+const jsc = bun.jsc;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSValue = jsc.JSValue;
+const VirtualMachine = jsc.VirtualMachine;
+const FakeTimers = bun.jsc.Jest.bun_test.FakeTimers;

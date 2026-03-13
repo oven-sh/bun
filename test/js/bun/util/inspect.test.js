@@ -1,8 +1,7 @@
 import { describe, expect, it } from "bun:test";
-import { tmpdirSync } from "harness";
+import { normalizeBunSnapshot, tmpdirSync } from "harness";
 import { join } from "path";
 import util from "util";
-
 it("prototype", () => {
   const prototypes = [
     Request.prototype,
@@ -348,6 +347,23 @@ it("inspect", () => {
   expect(Bun.inspect(new Map())).toBe("Map {}");
   expect(Bun.inspect(new Map([["foo", "bar"]]))).toBe('Map(1) {\n  "foo": "bar",\n}');
   expect(Bun.inspect(new Set(["bar"]))).toBe('Set(1) {\n  "bar",\n}');
+
+  // Regression test: Set/Map with overridden size property should not panic
+  const setWithOverriddenSize = new Set();
+  Object.defineProperty(setWithOverriddenSize, "size", {
+    writable: true,
+    enumerable: true,
+    value: Set,
+  });
+  expect(Bun.inspect(setWithOverriddenSize)).toBe("Set {}");
+
+  const mapWithOverriddenSize = new Map();
+  Object.defineProperty(mapWithOverriddenSize, "size", {
+    writable: true,
+    enumerable: true,
+    value: "not a number",
+  });
+  expect(Bun.inspect(mapWithOverriddenSize)).toBe("Map {}");
   expect(Bun.inspect(<div>foo</div>)).toBe("<div>foo</div>");
   expect(Bun.inspect(<div hello>foo</div>)).toBe("<div hello=true>foo</div>");
   expect(Bun.inspect(<div hello={1}>foo</div>)).toBe("<div hello=1>foo</div>");
@@ -606,4 +622,121 @@ it("console.log on null prototype", () => {
 it("Symbol", () => {
   expect(Bun.inspect(Symbol())).toBe("Symbol()");
   expect(Bun.inspect(Symbol(""))).toBe("Symbol()");
+});
+
+it("CloseEvent", () => {
+  const closeEvent = new CloseEvent("close", {
+    code: 1000,
+    reason: "Normal",
+  });
+  expect(Bun.inspect(closeEvent)).toMatchInlineSnapshot(`
+    "CloseEvent {
+      isTrusted: false,
+      wasClean: false,
+      code: 1000,
+      reason: "Normal",
+      type: "close",
+      target: null,
+      currentTarget: null,
+      eventPhase: 0,
+      cancelBubble: false,
+      bubbles: false,
+      cancelable: false,
+      defaultPrevented: false,
+      composed: false,
+      timeStamp: 0,
+      srcElement: null,
+      returnValue: true,
+      composedPath: [Function: composedPath],
+      stopPropagation: [Function: stopPropagation],
+      stopImmediatePropagation: [Function: stopImmediatePropagation],
+      preventDefault: [Function: preventDefault],
+      initEvent: [Function: initEvent],
+      NONE: 0,
+      CAPTURING_PHASE: 1,
+      AT_TARGET: 2,
+      BUBBLING_PHASE: 3,
+    }"
+  `);
+});
+
+it("ErrorEvent", () => {
+  const errorEvent = new ErrorEvent("error", {
+    message: "Something went wrong",
+    filename: "script.js",
+    lineno: 42,
+    colno: 10,
+    error: new Error("Test error"),
+  });
+  expect(normalizeBunSnapshot(Bun.inspect(errorEvent)).replace(/\d+ \| /gim, "NNN |")).toMatchInlineSnapshot(`
+    "ErrorEvent {
+      type: "error",
+      message: "Something went wrong",
+      error: NNN |  const errorEvent = new ErrorEvent("error", {
+    NNN |    message: "Something went wrong",
+    NNN |    filename: "script.js",
+    NNN |    lineno: 42,
+    NNN |    colno: 10,
+    NNN |    error: new Error("Test error"),
+                         ^
+    error: Test error
+        at <anonymous> (file:NN:NN)
+    ,
+    }"
+  `);
+});
+
+it("MessageEvent", () => {
+  const messageEvent = new MessageEvent("message", {
+    data: "Hello, world!",
+    origin: "https://example.com",
+    lastEventId: "123",
+    source: null,
+    ports: [],
+  });
+  expect(Bun.inspect(messageEvent)).toMatchInlineSnapshot(`
+    "MessageEvent {
+      type: "message",
+      data: "Hello, world!",
+    }"
+  `);
+});
+
+it("CustomEvent", () => {
+  const customEvent = new CustomEvent("custom", {
+    detail: { value: 42, name: "test" },
+    bubbles: true,
+    cancelable: true,
+  });
+  expect(Bun.inspect(customEvent)).toMatchInlineSnapshot(`
+    "CustomEvent {
+      isTrusted: false,
+      detail: {
+        value: 42,
+        name: "test",
+      },
+      initCustomEvent: [Function: initCustomEvent],
+      type: "custom",
+      target: null,
+      currentTarget: null,
+      eventPhase: 0,
+      cancelBubble: false,
+      bubbles: true,
+      cancelable: true,
+      defaultPrevented: false,
+      composed: false,
+      timeStamp: 0,
+      srcElement: null,
+      returnValue: true,
+      composedPath: [Function: composedPath],
+      stopPropagation: [Function: stopPropagation],
+      stopImmediatePropagation: [Function: stopImmediatePropagation],
+      preventDefault: [Function: preventDefault],
+      initEvent: [Function: initEvent],
+      NONE: 0,
+      CAPTURING_PHASE: 1,
+      AT_TARGET: 2,
+      BUBBLING_PHASE: 3,
+    }"
+  `);
 });

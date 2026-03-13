@@ -54,7 +54,7 @@ public:
         GlobalObjectHolder(const GlobalObjectHolder&) = delete;
         GlobalObjectHolder(GlobalObjectHolder&& other)
             : m_globalObject(std::exchange(other.m_globalObject, nullptr))
-            , m_receivers(WTFMove(other.m_receivers))
+            , m_receivers(WTF::move(other.m_receivers))
         {
         }
 
@@ -62,7 +62,7 @@ public:
         GlobalObjectHolder& operator=(GlobalObjectHolder&& other)
         {
             m_globalObject = std::exchange(other.m_globalObject, nullptr);
-            m_receivers = WTFMove(other.m_receivers);
+            m_receivers = WTF::move(other.m_receivers);
             return *this;
         }
 

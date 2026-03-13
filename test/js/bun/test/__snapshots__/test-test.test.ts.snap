@@ -1,4 +1,4 @@
-// Bun Snapshot v1, https://goo.gl/fbAQLP
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
 
 exports[`unhandled errors between tests are reported in beforeAll 1`] = `
 "
@@ -124,22 +124,6 @@ exports[`expect().toEqual() on objects with property indices doesn't print undef
 "expect(received).toEqual(expected)
 
   {
-+   "0": 0,
-+   "1": 1,
-+   "10": 10,
-+   "11": 11,
-+   "12": 12,
-+   "13": 13,
-+   "14": 14,
-+   "15": 15,
-+   "2": 2,
-+   "3": 3,
-+   "4": 4,
-+   "5": 5,
-+   "6": 6,
-+   "7": 7,
-+   "8": 8,
-+   "9": 9,
 -   "0": 123,
 -   "1": 123,
 -   "10": 123,
@@ -156,6 +140,64 @@ exports[`expect().toEqual() on objects with property indices doesn't print undef
 -   "7": 123,
 -   "8": 123,
 -   "9": 123,
++   "0": 0,
++   "1": 1,
++   "10": 10,
++   "11": 11,
++   "12": 12,
++   "13": 13,
++   "14": 14,
++   "15": 15,
++   "2": 2,
++   "3": 3,
++   "4": 4,
++   "5": 5,
++   "6": 6,
++   "7": 7,
++   "8": 8,
++   "9": 9,
+  }
+
+- Expected  - 16
++ Received  + 16"
+`;
+
+exports[`shouldn't crash when async test runner callback throws 1`] = `
+"expect(received).toEqual(expected)
+
+  {
+-   "0": 123,
+-   "1": 123,
+-   "10": 123,
+-   "11": 123,
+-   "12": 123,
+-   "13": 123,
+-   "14": 123,
+-   "15": 123,
+-   "2": 123,
+-   "3": 123,
+-   "4": 123,
+-   "5": 123,
+-   "6": 123,
+-   "7": 123,
+-   "8": 123,
+-   "9": 123,
++   "0": 0,
++   "1": 1,
++   "10": 10,
++   "11": 11,
++   "12": 12,
++   "13": 13,
++   "14": 14,
++   "15": 15,
++   "2": 2,
++   "3": 3,
++   "4": 4,
++   "5": 5,
++   "6": 6,
++   "7": 7,
++   "8": 8,
++   "9": 9,
   }
 
 - Expected  - 16

@@ -35,7 +35,7 @@
 namespace WebCore {
 
 class EventContext {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(EventContext);
 
 public:
     using EventInvokePhase = EventTarget::EventInvokePhase;
@@ -106,7 +106,7 @@ private:
 
 inline EventContext::EventContext(Type type, Node* node, RefPtr<EventTarget>&& currentTarget, EventTarget* origin, int closedShadowDepth, bool currentTargetIsInShadowTree)
     : m_node { node }
-    , m_currentTarget { WTFMove(currentTarget) }
+    , m_currentTarget { WTF::move(currentTarget) }
     , m_target { origin }
     , m_closedShadowDepth { closedShadowDepth }
     , m_currentTargetIsInShadowTree { currentTargetIsInShadowTree }

@@ -39,6 +39,7 @@ describe("crypto.hash", () => {
   [
     "blake2b256",
     "blake2b512",
+    "blake2s256",
     "ripemd160",
     "rmd160",
     "md4",

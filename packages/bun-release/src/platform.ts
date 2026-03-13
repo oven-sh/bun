@@ -62,7 +62,7 @@ export const platforms: Platform[] = [
   },
   {
     os: "linux",
-    arch: "aarch64",
+    arch: "arm64",
     abi: "musl",
     bin: "bun-linux-aarch64-musl",
     exe: "bin/bun",
@@ -93,6 +93,12 @@ export const platforms: Platform[] = [
     os: "win32",
     arch: "x64",
     bin: "bun-windows-x64-baseline",
+    exe: "bin/bun.exe",
+  },
+  {
+    os: "win32",
+    arch: "arm64",
+    bin: "bun-windows-aarch64",
     exe: "bin/bun.exe",
   },
 ];

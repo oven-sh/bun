@@ -2,7 +2,7 @@ const EventEmitter = require("node:events");
 
 const ObjectFreeze = Object.freeze;
 
-const kEmptyObject = ObjectFreeze({ __proto__: null });
+const kEmptyObject = ObjectFreeze(Object.create(null));
 
 function Worker(options) {
   if (!(this instanceof Worker)) return new Worker(options);

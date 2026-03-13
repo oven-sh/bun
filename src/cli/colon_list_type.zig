@@ -1,11 +1,3 @@
-const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const Global = bun.Global;
-const strings = bun.strings;
-
-const std = @import("std");
-
 pub fn ColonListType(comptime t: type, comptime value_resolver: anytype) type {
     return struct {
         pub fn init(allocator: std.mem.Allocator, count: usize) !@This() {
@@ -27,9 +19,9 @@ pub fn ColonListType(comptime t: type, comptime value_resolver: anytype) type {
                     return error.InvalidSeparator;
                 }
 
-                if (comptime t == bun.Schema.Api.Loader) {
+                if (comptime t == bun.schema.api.Loader) {
                     if (str[0..midpoint].len > 0 and str[0] != '.') {
-                        Output.prettyErrorln("<r><red>error<r><d>:<r> <b>file extension must start with a '.'<r> <d>(while mapping loader {s})<r>", .{bun.fmt.quote(str)});
+                        Output.prettyErrorln("<r><red>error<r><d>:<r> <b>file extension must start with a '.'<r> <d>(while mapping loader {f})<r>", .{bun.fmt.quote(str)});
                         Global.exit(1);
                     }
                 }
@@ -37,7 +29,7 @@ pub fn ColonListType(comptime t: type, comptime value_resolver: anytype) type {
                 self.keys[i] = str[0..midpoint];
                 self.values[i] = value_resolver(str[midpoint + 1 .. str.len]) catch |err| {
                     if (err == error.InvalidLoader) {
-                        Output.prettyErrorln("<r><red>error<r><d>:<r> <b>invalid loader {}<r>, expected one of:{}", .{ bun.fmt.quote(str[midpoint + 1 .. str.len]), bun.fmt.enumTagList(bun.options.Loader, .dash) });
+                        Output.prettyErrorln("<r><red>error<r><d>:<r> <b>invalid loader {f}<r>, expected one of:{f}", .{ bun.fmt.quote(str[midpoint + 1 .. str.len]), bun.fmt.enumTagList(bun.options.Loader, .dash) });
                         Global.exit(1);
                     }
                     return err;
@@ -59,3 +51,12 @@ pub fn ColonListType(comptime t: type, comptime value_resolver: anytype) type {
         }
     };
 }
+
+const string = []const u8;
+
+const std = @import("std");
+
+const bun = @import("bun");
+const Global = bun.Global;
+const Output = bun.Output;
+const strings = bun.strings;

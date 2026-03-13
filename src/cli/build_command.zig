@@ -1,31 +1,9 @@
-const std = @import("std");
-const Command = @import("../cli.zig").Command;
-const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const Global = bun.Global;
-const strings = bun.strings;
-const default_allocator = bun.default_allocator;
-
-const options = @import("../options.zig");
-
-const resolve_path = @import("../resolver/resolve_path.zig");
-const transpiler = bun.transpiler;
-
-const fs = @import("../fs.zig");
-const BundleV2 = @import("../bundler/bundle_v2.zig").BundleV2;
-
 pub const BuildCommand = struct {
-    const compile_define_keys = &.{
-        "process.platform",
-        "process.arch",
-        "process.versions.bun",
-    };
-
     pub fn exec(ctx: Command.Context, fetcher: ?*BundleV2.DependenciesScanner) !void {
         Global.configureAllocator(.{ .long_running = true });
         const allocator = ctx.allocator;
         var log = ctx.log;
+        const user_requested_browser_target = ctx.args.target != null and ctx.args.target.? == .browser;
         if (ctx.bundler_options.compile or ctx.bundler_options.bytecode) {
             // set this early so that externals are set up correctly and define is right
             ctx.args.target = .bun;
@@ -43,12 +21,14 @@ pub const BuildCommand = struct {
         const compile_target = &ctx.bundler_options.compile_target;
 
         if (ctx.bundler_options.compile) {
+            const compile_define_keys = compile_target.defineKeys();
             const compile_define_values = compile_target.defineValues();
+
             if (ctx.args.define) |*define| {
-                var keys = try std.ArrayList(string).initCapacity(bun.default_allocator, compile_define_keys.len + define.keys.len);
+                var keys = try std.array_list.Managed(string).initCapacity(bun.default_allocator, compile_define_keys.len + define.keys.len);
                 keys.appendSliceAssumeCapacity(compile_define_keys);
                 keys.appendSliceAssumeCapacity(define.keys);
-                var values = try std.ArrayList(string).initCapacity(bun.default_allocator, compile_define_values.len + define.values.len);
+                var values = try std.array_list.Managed(string).initCapacity(bun.default_allocator, compile_define_values.len + define.values.len);
                 values.appendSliceAssumeCapacity(compile_define_values);
                 values.appendSliceAssumeCapacity(define.values);
 
@@ -96,14 +76,18 @@ pub const BuildCommand = struct {
         this_transpiler.options.minify_syntax = ctx.bundler_options.minify_syntax;
         this_transpiler.options.minify_whitespace = ctx.bundler_options.minify_whitespace;
         this_transpiler.options.minify_identifiers = ctx.bundler_options.minify_identifiers;
+        this_transpiler.options.keep_names = ctx.bundler_options.keep_names;
         this_transpiler.options.emit_dce_annotations = ctx.bundler_options.emit_dce_annotations;
         this_transpiler.options.ignore_dce_annotations = ctx.bundler_options.ignore_dce_annotations;
 
         this_transpiler.options.banner = ctx.bundler_options.banner;
         this_transpiler.options.footer = ctx.bundler_options.footer;
         this_transpiler.options.drop = ctx.args.drop;
+        this_transpiler.options.bundler_feature_flags = Runtime.Features.initBundlerFeatureFlags(allocator, ctx.args.feature_flags);
 
+        this_transpiler.options.allow_unresolved = if (ctx.bundler_options.allow_unresolved) |a| options.AllowUnresolved.fromStrings(a) else .all;
         this_transpiler.options.css_chunking = ctx.bundler_options.css_chunking;
+        this_transpiler.options.metafile = ctx.bundler_options.metafile.len > 0 or ctx.bundler_options.metafile_md.len > 0;
 
         this_transpiler.options.output_dir = ctx.bundler_options.outdir;
         this_transpiler.options.output_format = ctx.bundler_options.output_format;
@@ -116,50 +100,86 @@ pub const BuildCommand = struct {
         var was_renamed_from_index = false;
 
         if (ctx.bundler_options.compile) {
-            if (ctx.bundler_options.code_splitting) {
-                Output.prettyErrorln("<r><red>error<r><d>:<r> cannot use --compile with --splitting", .{});
-                Global.exit(1);
-                return;
-            }
-
-            if (ctx.bundler_options.outdir.len > 0) {
-                Output.prettyErrorln("<r><red>error<r><d>:<r> cannot use --compile with --outdir", .{});
-                Global.exit(1);
-                return;
-            }
-
-            const base_public_path = bun.StandaloneModuleGraph.targetBasePublicPath(compile_target.os, "root/");
-
-            this_transpiler.options.public_path = base_public_path;
-
-            if (outfile.len == 0) {
-                outfile = std.fs.path.basename(this_transpiler.options.entry_points[0]);
-                const ext = std.fs.path.extension(outfile);
-                if (ext.len > 0) {
-                    outfile = outfile[0 .. outfile.len - ext.len];
-                }
-
-                if (strings.eqlComptime(outfile, "index")) {
-                    outfile = std.fs.path.basename(std.fs.path.dirname(this_transpiler.options.entry_points[0]) orelse "index");
-                    was_renamed_from_index = !strings.eqlComptime(outfile, "index");
-                }
-
-                if (strings.eqlComptime(outfile, "bun")) {
-                    outfile = std.fs.path.basename(std.fs.path.dirname(this_transpiler.options.entry_points[0]) orelse "bun");
-                }
-            }
-
-            // If argv[0] is "bun" or "bunx", we don't check if the binary is standalone
-            if (strings.eqlComptime(outfile, "bun") or strings.eqlComptime(outfile, "bunx")) {
-                Output.prettyErrorln("<r><red>error<r><d>:<r> cannot use --compile with an output file named 'bun' because bun won't realize it's a standalone executable. Please choose a different name for --outfile", .{});
-                Global.exit(1);
-                return;
-            }
-
             if (ctx.bundler_options.transform_only) {
                 Output.prettyErrorln("<r><red>error<r><d>:<r> --compile does not support --no-bundle", .{});
                 Global.exit(1);
                 return;
+            }
+
+            // Check if all entrypoints are HTML files for standalone HTML mode
+            const has_all_html_entrypoints = brk: {
+                if (this_transpiler.options.entry_points.len == 0) break :brk false;
+                for (this_transpiler.options.entry_points) |entry_point| {
+                    if (!strings.hasSuffixComptime(entry_point, ".html")) break :brk false;
+                }
+                break :brk true;
+            };
+
+            if (user_requested_browser_target and has_all_html_entrypoints) {
+                // --compile --target=browser with all HTML entrypoints: produce self-contained HTML
+                ctx.args.target = .browser;
+                if (ctx.bundler_options.code_splitting) {
+                    Output.prettyErrorln("<r><red>error<r><d>:<r> cannot use --compile --target browser with --splitting", .{});
+                    Global.exit(1);
+                    return;
+                }
+
+                this_transpiler.options.compile_to_standalone_html = true;
+                // This is not a bun executable compile - clear compile flags
+                this_transpiler.options.compile = false;
+                ctx.bundler_options.compile = false;
+
+                if (ctx.bundler_options.outdir.len == 0 and outfile.len == 0) {
+                    outfile = std.fs.path.basename(this_transpiler.options.entry_points[0]);
+                }
+
+                this_transpiler.options.supports_multiple_outputs = ctx.bundler_options.outdir.len > 0;
+            } else {
+                // Standard --compile: produce standalone bun executable
+                if (ctx.bundler_options.outdir.len > 0) {
+                    Output.prettyErrorln("<r><red>error<r><d>:<r> cannot use --compile with --outdir", .{});
+                    Global.exit(1);
+                    return;
+                }
+
+                const base_public_path = bun.StandaloneModuleGraph.targetBasePublicPath(compile_target.os, "root/");
+
+                this_transpiler.options.public_path = base_public_path;
+
+                if (outfile.len == 0) {
+                    outfile = std.fs.path.basename(this_transpiler.options.entry_points[0]);
+                    const ext = std.fs.path.extension(outfile);
+                    if (ext.len > 0) {
+                        outfile = outfile[0 .. outfile.len - ext.len];
+                    }
+
+                    if (strings.eqlComptime(outfile, "index")) {
+                        outfile = std.fs.path.basename(std.fs.path.dirname(this_transpiler.options.entry_points[0]) orelse "index");
+                        was_renamed_from_index = !strings.eqlComptime(outfile, "index");
+                    }
+
+                    if (strings.eqlComptime(outfile, "bun")) {
+                        outfile = std.fs.path.basename(std.fs.path.dirname(this_transpiler.options.entry_points[0]) orelse "bun");
+                    }
+                }
+
+                // If argv[0] is "bun" or "bunx", we don't check if the binary is standalone
+                if (strings.eqlComptime(outfile, "bun") or strings.eqlComptime(outfile, "bunx")) {
+                    Output.prettyErrorln("<r><red>error<r><d>:<r> cannot use --compile with an output file named 'bun' because bun won't realize it's a standalone executable. Please choose a different name for --outfile", .{});
+                    Global.exit(1);
+                    return;
+                }
+            }
+        }
+
+        if (ctx.bundler_options.transform_only) {
+            // Check if any entry point is an HTML file
+            for (this_transpiler.options.entry_points) |entry_point| {
+                if (strings.hasSuffixComptime(entry_point, ".html")) {
+                    Output.prettyErrorln("<r><red>error<r><d>:<r> HTML imports are only supported when bundling", .{});
+                    Global.exit(1);
+                    return;
+                }
             }
         }
 
@@ -191,13 +211,13 @@ pub const BuildCommand = struct {
             };
 
             var dir = bun.FD.fromStdDir(bun.openDirForPath(&(try std.posix.toPosixPath(path))) catch |err| {
-                Output.prettyErrorln("<r><red>{s}<r> opening root directory {}", .{ @errorName(err), bun.fmt.quote(path) });
+                Output.prettyErrorln("<r><red>{s}<r> opening root directory {f}", .{ @errorName(err), bun.fmt.quote(path) });
                 Global.exit(1);
             });
             defer dir.close();
 
             break :brk1 dir.getFdPath(&src_root_dir_buf) catch |err| {
-                Output.prettyErrorln("<r><red>{s}<r> resolving root directory {}", .{ @errorName(err), bun.fmt.quote(path) });
+                Output.prettyErrorln("<r><red>{s}<r> resolving root directory {f}", .{ @errorName(err), bun.fmt.quote(path) });
                 Global.exit(1);
             };
         };
@@ -216,18 +236,18 @@ pub const BuildCommand = struct {
         try this_transpiler.configureDefines();
         this_transpiler.configureLinker();
 
-        if (ctx.bundler_options.production) {
-            bun.assert(!this_transpiler.options.jsx.development);
-        }
-
         if (!this_transpiler.options.production) {
             try this_transpiler.options.conditions.appendSlice(&.{"development"});
         }
 
         this_transpiler.resolver.opts = this_transpiler.options;
         this_transpiler.resolver.env_loader = this_transpiler.env;
-        this_transpiler.options.jsx.development = !this_transpiler.options.production;
-        this_transpiler.resolver.opts.jsx.development = this_transpiler.options.jsx.development;
+
+        // Allow tsconfig.json overriding, but always set it to false if --production is passed.
+        if (ctx.bundler_options.production) {
+            this_transpiler.options.jsx.development = false;
+            this_transpiler.resolver.opts.jsx.development = false;
+        }
 
         switch (ctx.debug.macros) {
             .disable => {
@@ -256,6 +276,7 @@ pub const BuildCommand = struct {
                     try options.Define.Data.fromInput(try options.stringHashMapFromArrays(
                         options.defines.RawDefines,
                         allocator,
+                        user_defines.keys.len + 4,
                         user_defines.keys,
                         user_defines.values,
                     ), ctx.args.drop, log, allocator)
@@ -263,6 +284,7 @@ pub const BuildCommand = struct {
                     null,
                 null,
                 this_transpiler.options.define.drop_debugger,
+                this_transpiler.options.dead_code_elimination and this_transpiler.options.minify_syntax,
             );
 
             try bun.bake.addImportMetaDefines(allocator, this_transpiler.options.define, .development, .server);
@@ -320,10 +342,10 @@ pub const BuildCommand = struct {
                 this_transpiler.resolver.opts.entry_naming = this_transpiler.options.entry_naming;
             }
 
-            break :brk (BundleV2.generateFromCLI(
+            const build_result = BundleV2.generateFromCLI(
                 &this_transpiler,
                 allocator,
-                bun.JSC.AnyEventLoop.init(ctx.allocator),
+                bun.jsc.AnyEventLoop.init(ctx.allocator),
                 ctx.debug.hot_reload == .watch,
                 &reachable_file_count,
                 &minify_duration,
@@ -338,14 +360,70 @@ pub const BuildCommand = struct {
 
                 Output.flush();
                 exitOrWatch(1, ctx.debug.hot_reload == .watch);
-            }).items;
+            };
+
+            // Write metafile if requested
+            if (build_result.metafile) |metafile_json| {
+                if (ctx.bundler_options.metafile.len > 0) {
+                    // Use makeOpen which auto-creates parent directories on failure
+                    const file = switch (bun.sys.File.makeOpen(ctx.bundler_options.metafile, bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC, 0o664)) {
+                        .result => |f| f,
+                        .err => |err| {
+                            Output.err(err, "could not open metafile {f}", .{bun.fmt.quote(ctx.bundler_options.metafile)});
+                            exitOrWatch(1, ctx.debug.hot_reload == .watch);
+                            unreachable;
+                        },
+                    };
+                    defer file.close();
+
+                    switch (file.writeAll(metafile_json)) {
+                        .result => {},
+                        .err => |err| {
+                            Output.err(err, "could not write metafile {f}", .{bun.fmt.quote(ctx.bundler_options.metafile)});
+                            exitOrWatch(1, ctx.debug.hot_reload == .watch);
+                            unreachable;
+                        },
+                    }
+                }
+
+                // Write markdown metafile if requested
+                if (ctx.bundler_options.metafile_md.len > 0) {
+                    const metafile_md = MetafileBuilder.generateMarkdown(allocator, metafile_json) catch |err| blk: {
+                        Output.warn("Failed to generate markdown metafile: {s}", .{@errorName(err)});
+                        break :blk null;
+                    };
+                    if (metafile_md) |md_content| {
+                        defer allocator.free(md_content);
+                        const file = switch (bun.sys.File.makeOpen(ctx.bundler_options.metafile_md, bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC, 0o664)) {
+                            .result => |f| f,
+                            .err => |err| {
+                                Output.err(err, "could not open metafile-md {f}", .{bun.fmt.quote(ctx.bundler_options.metafile_md)});
+                                exitOrWatch(1, ctx.debug.hot_reload == .watch);
+                                unreachable;
+                            },
+                        };
+                        defer file.close();
+
+                        switch (file.writeAll(md_content)) {
+                            .result => {},
+                            .err => |err| {
+                                Output.err(err, "could not write metafile-md {f}", .{bun.fmt.quote(ctx.bundler_options.metafile_md)});
+                                exitOrWatch(1, ctx.debug.hot_reload == .watch);
+                                unreachable;
+                            },
+                        }
+                    }
+                }
+            }
+
+            break :brk build_result.output_files.items;
         };
         const bundled_end = std.time.nanoTimestamp();
 
         var had_err = false;
         dump: {
             defer Output.flush();
-            var writer = Output.writer();
+            var writer = Output.writerBuffered();
             var output_dir = this_transpiler.options.output_dir;
 
             const will_be_one_file =
@@ -391,7 +469,7 @@ pub const BuildCommand = struct {
                 std.fs.cwd()
             else
                 std.fs.cwd().makeOpenPath(root_path, .{}) catch |err| {
-                    Output.err(err, "could not open output directory {}", .{bun.fmt.quote(root_path)});
+                    Output.err(err, "could not open output directory {f}", .{bun.fmt.quote(root_path)});
                     exitOrWatch(1, ctx.debug.hot_reload == .watch);
                     unreachable;
                 };
@@ -411,7 +489,7 @@ pub const BuildCommand = struct {
                     @max(from_path.len, f.dest_path.len) + 2 - from_path.len,
                     max_path_len,
                 );
-                size_padding = @max(size_padding, std.fmt.count("{}", .{bun.fmt.size(f.size, .{})}));
+                size_padding = @max(size_padding, std.fmt.count("{f}", .{bun.fmt.size(f.size, .{})}));
             }
 
             if (ctx.bundler_options.compile) {
@@ -441,7 +519,7 @@ pub const BuildCommand = struct {
                     }
                 }
 
-                try bun.StandaloneModuleGraph.toExecutable(
+                const result = bun.StandaloneModuleGraph.toExecutable(
                     compile_target,
                     allocator,
                     output_files,
@@ -450,9 +528,76 @@ pub const BuildCommand = struct {
                     outfile,
                     this_transpiler.env,
                     this_transpiler.options.output_format,
-                    ctx.bundler_options.windows_hide_console,
-                    ctx.bundler_options.windows_icon,
-                );
+                    ctx.bundler_options.windows,
+                    ctx.bundler_options.compile_exec_argv orelse "",
+                    ctx.bundler_options.compile_executable_path,
+                    .{
+                        .disable_default_env_files = !ctx.bundler_options.compile_autoload_dotenv,
+                        .disable_autoload_bunfig = !ctx.bundler_options.compile_autoload_bunfig,
+                        .disable_autoload_tsconfig = !ctx.bundler_options.compile_autoload_tsconfig,
+                        .disable_autoload_package_json = !ctx.bundler_options.compile_autoload_package_json,
+                    },
+                ) catch |err| {
+                    Output.printErrorln("failed to create executable: {s}", .{@errorName(err)});
+                    Global.exit(1);
+                };
+
+                if (result != .success) {
+                    Output.printErrorln("{s}", .{result.err.slice()});
+                    Global.exit(1);
+                }
+
+                // Write external sourcemap files next to the compiled executable.
+                // With --splitting, there can be multiple .map files (one per chunk).
+                if (this_transpiler.options.source_map == .external) {
+                    for (output_files) |f| {
+                        if (f.output_kind == .sourcemap and f.value == .buffer) {
+                            const sourcemap_bytes = f.value.buffer.bytes;
+                            if (sourcemap_bytes.len == 0) continue;
+
+                            // Use the sourcemap's own dest_path basename if available,
+                            // otherwise fall back to {outfile}.map
+                            const map_basename = if (f.dest_path.len > 0)
+                                bun.path.basename(f.dest_path)
+                            else brk: {
+                                const exe_base = bun.path.basename(outfile);
+                                break :brk if (compile_target.os == .windows and !strings.hasSuffixComptime(exe_base, ".exe"))
+                                    try std.fmt.allocPrint(allocator, "{s}.exe.map", .{exe_base})
+                                else
+                                    try std.fmt.allocPrint(allocator, "{s}.map", .{exe_base});
+                            };
+
+                            // root_dir already points to the outfile's parent directory,
+                            // so use map_basename (not a path with directory components)
+                            // to avoid writing to a doubled directory path.
+                            var pathbuf: bun.PathBuffer = undefined;
+                            switch (bun.jsc.Node.fs.NodeFS.writeFileWithPathBuffer(
+                                &pathbuf,
+                                .{
+                                    .data = .{ .buffer = .{
+                                        .buffer = .{
+                                            .ptr = @constCast(sourcemap_bytes.ptr),
+                                            .len = @as(u32, @truncate(sourcemap_bytes.len)),
+                                            .byte_len = @as(u32, @truncate(sourcemap_bytes.len)),
+                                        },
+                                    } },
+                                    .encoding = .buffer,
+                                    .dirfd = .fromStdDir(root_dir),
+                                    .file = .{ .path = .{
+                                        .string = bun.PathString.init(map_basename),
+                                    } },
+                                },
+                            )) {
+                                .err => |err| {
+                                    Output.err(err, "failed to write sourcemap file '{s}'", .{map_basename});
+                                    had_err = true;
+                                },
+                                .result => {},
+                            }
+                        }
+                    }
+                }
+
                 const compiled_elapsed = @divTrunc(@as(i64, @truncate(std.time.nanoTimestamp() - bundled_end)), @as(i64, std.time.ns_per_ms));
                 const compiled_elapsed_digit_count: isize = switch (compiled_elapsed) {
                     0...9 => 3,
@@ -473,7 +618,7 @@ pub const BuildCommand = struct {
                 });
 
                 if (is_cross_compile) {
-                    Output.pretty(" <r><d>{s}<r>\n", .{compile_target});
+                    Output.pretty(" <r><d>{f}<r>\n", .{compile_target});
                 } else {
                     Output.pretty("\n", .{});
                 }
@@ -484,13 +629,13 @@ pub const BuildCommand = struct {
             if (log.errors == 0) {
                 if (this_transpiler.options.transform_only) {
                     Output.prettyln("<green>Transpiled file in {d}ms<r>", .{
-                        @divFloor(std.time.nanoTimestamp() - bun.CLI.start_time, std.time.ns_per_ms),
+                        @divFloor(std.time.nanoTimestamp() - bun.cli.start_time, std.time.ns_per_ms),
                     });
                 } else {
                     Output.prettyln("<green>Bundled {d} module{s} in {d}ms<r>", .{
                         reachable_file_count,
                         if (reachable_file_count == 1) "" else "s",
-                        @divFloor(std.time.nanoTimestamp() - bun.CLI.start_time, std.time.ns_per_ms),
+                        @divFloor(std.time.nanoTimestamp() - bun.cli.start_time, std.time.ns_per_ms),
                     });
                 }
                 Output.prettyln("\n", .{});
@@ -498,12 +643,12 @@ pub const BuildCommand = struct {
             }
 
             for (output_files) |f| {
-                size_padding = @max(size_padding, std.fmt.count("{}", .{bun.fmt.size(f.size, .{})}));
+                size_padding = @max(size_padding, std.fmt.count("{f}", .{bun.fmt.size(f.size, .{})}));
             }
 
             for (output_files) |f| {
                 f.writeToDisk(root_dir, from_path) catch |err| {
-                    Output.err(err, "failed to write file '{}'", .{bun.fmt.quote(f.dest_path)});
+                    Output.err(err, "failed to write file '{f}'", .{bun.fmt.quote(f.dest_path)});
                     had_err = true;
                     continue;
                 };
@@ -514,7 +659,7 @@ pub const BuildCommand = struct {
 
                 // Print summary
                 const padding_count = @max(2, @max(rel_path.len, max_path_len) - rel_path.len);
-                try writer.writeByteNTimes(' ', 2);
+                try writer.splatByteAll(' ', 2);
 
                 if (Output.enable_ansi_colors_stdout) try writer.writeAll(switch (f.output_kind) {
                     .@"entry-point" => Output.prettyFmt("<blue>", true),
@@ -522,6 +667,8 @@ pub const BuildCommand = struct {
                     .asset => Output.prettyFmt("<magenta>", true),
                     .sourcemap => Output.prettyFmt("<d>", true),
                     .bytecode => Output.prettyFmt("<d>", true),
+                    .module_info => Output.prettyFmt("<d>", true),
+                    .@"metafile-json", .@"metafile-markdown" => Output.prettyFmt("<green>", true),
                 });
 
                 try writer.writeAll(rel_path);
@@ -539,9 +686,9 @@ pub const BuildCommand = struct {
                     }
                 }
 
-                try writer.writeByteNTimes(' ', padding_count);
-                try writer.print("{s}  ", .{bun.fmt.size(f.size, .{})});
-                try writer.writeByteNTimes(' ', size_padding - std.fmt.count("{}", .{bun.fmt.size(f.size, .{})}));
+                try writer.splatByteAll(' ', padding_count);
+                try writer.print("{f}  ", .{bun.fmt.size(f.size, .{})});
+                try writer.splatByteAll(' ', size_padding - std.fmt.count("{f}", .{bun.fmt.size(f.size, .{})}));
 
                 if (Output.enable_ansi_colors_stdout) {
                     try writer.writeAll("\x1b[2m");
@@ -552,6 +699,9 @@ pub const BuildCommand = struct {
                     .asset => "asset",
                     .sourcemap => "source map",
                     .bytecode => "bytecode",
+                    .module_info => "module info",
+                    .@"metafile-json" => "metafile json",
+                    .@"metafile-markdown" => "metafile markdown",
                 }});
                 if (Output.enable_ansi_colors_stdout)
                     try writer.writeAll("\x1b[0m");
@@ -569,7 +719,7 @@ pub const BuildCommand = struct {
 fn exitOrWatch(code: u8, watch: bool) noreturn {
     if (watch) {
         // the watcher thread will exit the process
-        std.time.sleep(std.math.maxInt(u64) - 1);
+        std.Thread.sleep(std.math.maxInt(u64) - 1);
     }
     Global.exit(code);
 }
@@ -577,7 +727,7 @@ fn exitOrWatch(code: u8, watch: bool) noreturn {
 fn printSummary(bundled_end: i128, minify_duration: u64, minified: bool, input_code_length: usize, reachable_file_count: usize, output_files: []const options.OutputFile) void {
     const padding_buf = [_]u8{' '} ** 16;
 
-    const bundle_until_now = @divTrunc(@as(i64, @truncate(bundled_end - bun.CLI.start_time)), @as(i64, std.time.ns_per_ms));
+    const bundle_until_now = @divTrunc(@as(i64, @truncate(bundled_end - bun.cli.start_time)), @as(i64, std.time.ns_per_ms));
 
     const bundle_elapsed = if (minified)
         bundle_until_now - @as(i64, @intCast(@as(u63, @truncate(minify_duration))))
@@ -609,14 +759,14 @@ fn printSummary(bundled_end: i128, minify_duration: u64, minified: bool, input_c
         const delta: i64 = @as(i64, @truncate(@as(i65, @intCast(input_code_length)) - @as(i65, @intCast(output_size))));
         if (delta > 1024) {
             Output.prettyln(
-                "  <green>minify<r>  -{} <d>(estimate)<r>",
+                "  <green>minify<r>  -{f} <d>(estimate)<r>",
                 .{
                     bun.fmt.size(@as(usize, @intCast(delta)), .{}),
                 },
             );
         } else if (-delta > 1024) {
             Output.prettyln(
-                "  <b>minify<r>   +{} <d>(estimate)<r>",
+                "  <b>minify<r>   +{f} <d>(estimate)<r>",
                 .{
                     bun.fmt.size(@as(usize, @intCast(-delta)), .{}),
                 },
@@ -643,3 +793,21 @@ fn printSummary(bundled_end: i128, minify_duration: u64, minified: bool, input_c
         },
     );
 }
+
+const string = []const u8;
+
+const MetafileBuilder = @import("../bundler/linker_context/MetafileBuilder.zig");
+const fs = @import("../fs.zig");
+const options = @import("../options.zig");
+const resolve_path = @import("../resolver/resolve_path.zig");
+const std = @import("std");
+const BundleV2 = @import("../bundler/bundle_v2.zig").BundleV2;
+const Command = @import("../cli.zig").Command;
+const Runtime = @import("../runtime.zig").Runtime;
+
+const bun = @import("bun");
+const Global = bun.Global;
+const Output = bun.Output;
+const default_allocator = bun.default_allocator;
+const strings = bun.strings;
+const transpiler = bun.transpiler;

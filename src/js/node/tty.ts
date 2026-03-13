@@ -18,13 +18,34 @@ function ReadStream(fd): void {
   }
   fs.ReadStream.$apply(this, ["", { fd }]);
   this.isRaw = false;
-  this.isTTY = true;
+  // Only set isTTY to true if the fd is actually a TTY
+  this.isTTY = isatty(fd);
 }
 $toClass(ReadStream, "ReadStream", fs.ReadStream);
 
 Object.defineProperty(ReadStream, "prototype", {
   get() {
     const Prototype = Object.create(fs.ReadStream.prototype);
+
+    // Add ref/unref methods to make tty.ReadStream behave like Node.js
+    // where TTY streams have socket-like behavior
+    Prototype.ref = function () {
+      // Get the underlying native stream source if available
+      const source = this.$bunNativePtr;
+      if (source?.updateRef) {
+        source.updateRef(true);
+      }
+      return this;
+    };
+
+    Prototype.unref = function () {
+      // Get the underlying native stream source if available
+      const source = this.$bunNativePtr;
+      if (source?.updateRef) {
+        source.updateRef(false);
+      }
+      return this;
+    };
 
     Prototype.setRawMode = function (flag) {
       flag = !!flag;
@@ -155,6 +176,16 @@ Object.defineProperty(WriteStream, "prototype", {
 
     WriteStream.prototype.moveCursor = function (dx, dy, cb) {
       return require("node:readline").moveCursor(this, dx, dy, cb);
+    };
+
+    // Add Symbol.asyncIterator to make tty.WriteStream compatible with code
+    // that expects stdout/stderr to be async iterable (like in Node.js where they're Duplex)
+    WriteStream.prototype[Symbol.asyncIterator] = function () {
+      // Since WriteStream is write-only, we return an empty async iterator
+      // This matches the behavior of Node.js Duplex streams used for stdout/stderr
+      return (async function* () {
+        // stdout/stderr don't produce readable data, so yield nothing
+      })();
     };
 
     return Real;

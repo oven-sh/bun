@@ -30,4 +30,23 @@ inline Maybe<T> Just(const T& t)
     return Maybe<T>(t);
 }
 
+template<>
+class Maybe<void> {
+public:
+    Maybe()
+        : m_hasValue(false)
+    {
+    }
+    explicit Maybe(bool hasValue)
+        : m_hasValue(hasValue)
+    {
+    }
+    bool m_hasValue;
+};
+
+inline Maybe<void> JustVoid()
+{
+    return Maybe<void>(true);
+}
+
 } // namespace v8

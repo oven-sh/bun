@@ -237,6 +237,7 @@ describe("bundler", () => {
     },
   });
   itBundled("naming/NonexistantRoot", ({ root }) => ({
+    backend: "cli",
     files: {
       "/src/entry.js": /* js */ `
         import asset1 from "./asset1.file";

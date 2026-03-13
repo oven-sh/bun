@@ -2,7 +2,7 @@
 ///
 /// All getters return a `JSC::JSString`;
 pub const CommonStrings = struct {
-    globalObject: *JSC.JSGlobalObject,
+    globalObject: *jsc.JSGlobalObject,
 
     const CommonStringsForZig = enum(u8) {
         IPv4 = 0,
@@ -10,7 +10,7 @@ pub const CommonStrings = struct {
         IN4Loopback = 2,
         IN6Any = 3,
 
-        extern "c" fn Bun__CommonStringsForZig__toJS(commonString: CommonStringsForZig, globalObject: *JSC.JSGlobalObject) JSC.JSValue;
+        extern "c" fn Bun__CommonStringsForZig__toJS(commonString: CommonStringsForZig, globalObject: *jsc.JSGlobalObject) jsc.JSValue;
         pub const toJS = Bun__CommonStringsForZig__toJS;
     };
 
@@ -29,5 +29,6 @@ pub const CommonStrings = struct {
 };
 
 const bun = @import("bun");
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
+
+const jsc = bun.jsc;
+const JSValue = jsc.JSValue;

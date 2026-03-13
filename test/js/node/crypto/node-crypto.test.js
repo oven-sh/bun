@@ -255,7 +255,6 @@ describe("createHash", () => {
   };
 
   const unsupported = [
-    "blake2s256",
     "id-rsassa-pkcs1-v1_5-with-sha3-224",
     "id-rsassa-pkcs1-v1_5-with-sha3-256",
     "id-rsassa-pkcs1-v1_5-with-sha3-384",
@@ -265,16 +264,11 @@ describe("createHash", () => {
     "ripemd160withrsa",
     "rsa-md5",
     "rsa-ripemd160",
-    "rsa-sha1",
     "rsa-sha1-2",
-    "rsa-sha224",
-    "rsa-sha256",
     "rsa-sha3-224",
     "rsa-sha3-256",
     "rsa-sha3-384",
     "rsa-sha3-512",
-    "rsa-sha384",
-    "rsa-sha512",
     "rsa-sha512/224",
     "rsa-sha512/256",
     "rsa-sm3",
@@ -294,13 +288,14 @@ describe("createHash", () => {
   for (const name_ in nodeValues) {
     const name = name_.toLowerCase();
     const is_unsupported = unsupported.includes(name);
+    const v = nodeValues[name] || nodeValues[name_];
 
     it(`${name} - "Hello World"`, () => {
       if (is_unsupported) {
         expect(() => {
           const hash = crypto.createHash(name);
           hash.update("Hello World");
-          expect(hash.digest("hex")).toBe(nodeValues[name].value);
+          expect(hash.digest("hex")).toBe(v.value);
         }).toThrow(Error(`Digest method not supported`));
       } else {
         const hash = crypto.createHash(name);
@@ -309,8 +304,8 @@ describe("createHash", () => {
         // testing copy to be sure boringssl workarounds for blake2b256/512,
         // ripemd160, sha3-<n>, and shake128/256 are working.
         const copy = hash.copy();
-        expect(hash.digest("hex")).toBe(nodeValues[name].value);
-        expect(copy.digest("hex")).toBe(nodeValues[name].value);
+        expect(hash.digest("hex")).toBe(v.value);
+        expect(copy.digest("hex")).toBe(v.value);
 
         expect(() => {
           hash.copy();
@@ -326,12 +321,12 @@ describe("createHash", () => {
         expect(() => {
           const hash = crypto.createHash(name);
           hash.update("Hello World");
-          expect(hash.digest()).toEqual(Buffer.from(nodeValues[name].value, "hex"));
+          expect(hash.digest()).toEqual(Buffer.from(v.value, "hex"));
         }).toThrow(Error(`Digest method not supported`));
       } else {
         const hash = crypto.createHash(name);
         hash.update("Hello World");
-        expect(hash.digest()).toEqual(Buffer.from(nodeValues[name].value, "hex"));
+        expect(hash.digest()).toEqual(Buffer.from(v.value, "hex"));
       }
     });
   }
@@ -509,6 +504,110 @@ describe("Hash", () => {
     expect(hash.update.name).toBe("update");
     expect(hash.digest.name).toBe("digest");
     expect(hash.copy.name).toBe("copy");
+    expect(hash._transform.name).toBe("_transform");
+    expect(hash._flush.name).toBe("_flush");
+  });
+});
+
+describe("Hmac", () => {
+  it("should have correct method names", () => {
+    const hmac = crypto.createHmac("sha256", "key");
+    expect(hmac.update.name).toBe("update");
+    expect(hmac.digest.name).toBe("digest");
+    expect(hmac._transform.name).toBe("_transform");
+    expect(hmac._flush.name).toBe("_flush");
+  });
+});
+
+describe("Sign", () => {
+  it("should have correct method names", () => {
+    const sign = crypto.createSign("sha256");
+    expect(sign.update.name).toBe("update");
+    expect(sign.sign.name).toBe("sign");
+    expect(sign._write.name).toBe("_write");
+  });
+});
+
+describe("Verify", () => {
+  it("should have correct method names", () => {
+    const verify = crypto.createVerify("sha256");
+    expect(verify.update.name).toBe("update");
+    expect(verify.verify.name).toBe("verify");
+    expect(verify._write.name).toBe("_write");
+  });
+});
+
+describe("Cipheriv", () => {
+  it("should have correct method names", () => {
+    const cipher = crypto.createCipheriv("aes-256-cbc", Buffer.alloc(32), Buffer.alloc(16));
+    expect(cipher.update.name).toBe("update");
+    expect(cipher.final.name).toBe("final");
+    expect(cipher.setAutoPadding.name).toBe("setAutoPadding");
+    expect(cipher.getAuthTag.name).toBe("getAuthTag");
+    expect(cipher.setAAD.name).toBe("setAAD");
+    expect(cipher._transform.name).toBe("_transform");
+    expect(cipher._flush.name).toBe("_flush");
+  });
+});
+
+describe("Decipheriv", () => {
+  it("should have correct method names", () => {
+    const decipher = crypto.createDecipheriv("aes-256-cbc", Buffer.alloc(32), Buffer.alloc(16));
+    expect(decipher.update.name).toBe("update");
+    expect(decipher.final.name).toBe("final");
+    expect(decipher.setAutoPadding.name).toBe("setAutoPadding");
+    expect(decipher.setAuthTag.name).toBe("setAuthTag");
+    expect(decipher.setAAD.name).toBe("setAAD");
+    expect(decipher._transform.name).toBe("_transform");
+    expect(decipher._flush.name).toBe("_flush");
+  });
+});
+
+describe("DiffieHellman", () => {
+  it("should have correct method names", () => {
+    const dh = crypto.createDiffieHellman(512);
+    expect(dh.generateKeys.name).toBe("generateKeys");
+    expect(dh.computeSecret.name).toBe("computeSecret");
+    expect(dh.getPrime.name).toBe("getPrime");
+    expect(dh.getGenerator.name).toBe("getGenerator");
+    expect(dh.getPublicKey.name).toBe("getPublicKey");
+    expect(dh.getPrivateKey.name).toBe("getPrivateKey");
+    expect(dh.setPublicKey.name).toBe("setPublicKey");
+    expect(dh.setPrivateKey.name).toBe("setPrivateKey");
+  });
+});
+
+describe("ECDH", () => {
+  it("should have correct method names", () => {
+    const ecdh = crypto.createECDH("prime256v1");
+    expect(ecdh.generateKeys.name).toBe("generateKeys");
+    expect(ecdh.computeSecret.name).toBe("computeSecret");
+    expect(ecdh.getPublicKey.name).toBe("getPublicKey");
+    expect(ecdh.getPrivateKey.name).toBe("getPrivateKey");
+    expect(ecdh.setPublicKey.name).toBe("setPublicKey");
+    expect(ecdh.setPrivateKey.name).toBe("setPrivateKey");
+  });
+});
+
+describe("crypto module", () => {
+  it("should have correct factory function names", () => {
+    expect(crypto.createHash.name).toBe("createHash");
+    expect(crypto.createHmac.name).toBe("createHmac");
+    expect(crypto.createSign.name).toBe("createSign");
+    expect(crypto.createVerify.name).toBe("createVerify");
+    expect(crypto.createCipheriv.name).toBe("createCipheriv");
+    expect(crypto.createDecipheriv.name).toBe("createDecipheriv");
+    expect(crypto.createDiffieHellman.name).toBe("createDiffieHellman");
+    expect(crypto.createECDH.name).toBe("createECDH");
+    expect(crypto.hash.name).toBe("hash");
+    expect(crypto.pbkdf2.name).toBe("pbkdf2");
+  });
+
+  it("should have correct constructor names", () => {
+    expect(crypto.Hash.name).toBe("Hash");
+    expect(crypto.Hmac.name).toBe("Hmac");
+    expect(crypto.Sign.name).toBe("Sign");
+    expect(crypto.Verify.name).toBe("Verify");
   });
 });
 

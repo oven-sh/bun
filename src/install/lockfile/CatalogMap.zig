@@ -1,3 +1,5 @@
+const CatalogMap = @This();
+
 const Map = std.ArrayHashMapUnmanaged(String, Dependency, String.ArrayHashContext, true);
 
 default: Map = .{},
@@ -113,9 +115,11 @@ pub fn parseAppend(
     source: *const logger.Source,
     expr: Expr,
     builder: *Lockfile.StringBuilder,
-) OOM!void {
+) OOM!bool {
+    var found_any = false;
     if (expr.get("catalog")) |default_catalog| {
         const group = try this.getOrPutGroup(lockfile, .empty);
+        found_any = true;
         switch (default_catalog.data) {
             .e_object => |obj| {
                 for (obj.properties.slice()) |item| {
@@ -171,6 +175,7 @@ pub fn parseAppend(
     }
 
     if (expr.get("catalogs")) |catalogs| {
+        found_any = true;
         switch (catalogs.data) {
             .e_object => |catalog_names| {
                 for (catalog_names.properties.slice()) |catalog| {
@@ -233,6 +238,90 @@ pub fn parseAppend(
             },
             else => {},
         }
+    }
+
+    return found_any;
+}
+
+const FromPnpmLockfileError = OOM || error{InvalidPnpmLockfile};
+
+pub fn fromPnpmLockfile(
+    lockfile: *Lockfile,
+    allocator: std.mem.Allocator,
+    log: *logger.Log,
+    catalogs_obj: *bun.ast.E.Object,
+    string_buf: *String.Buf,
+) FromPnpmLockfileError!void {
+    for (catalogs_obj.properties.slice()) |prop| {
+        const group_name_str = prop.key.?.asString(allocator) orelse {
+            return error.InvalidPnpmLockfile;
+        };
+
+        if (!prop.value.?.isObject()) {
+            continue;
+        }
+
+        const entries_obj = prop.value.?.data.e_object;
+
+        if (strings.eqlComptime(group_name_str, "default")) {
+            try putEntriesFromPnpmLockfile(lockfile, allocator, log, &lockfile.catalogs.default, entries_obj, string_buf);
+        } else {
+            const group_name = try string_buf.append(group_name_str);
+            const group = try lockfile.catalogs.getOrPutGroup(lockfile, group_name);
+            try putEntriesFromPnpmLockfile(lockfile, allocator, log, group, entries_obj, string_buf);
+        }
+    }
+}
+
+fn putEntriesFromPnpmLockfile(
+    lockfile: *Lockfile,
+    allocator: std.mem.Allocator,
+    log: *logger.Log,
+    catalog_map: *Map,
+    entries_obj: *bun.ast.E.Object,
+    string_buf: *String.Buf,
+) FromPnpmLockfileError!void {
+    for (entries_obj.properties.slice()) |entry_prop| {
+        const dep_name_str = entry_prop.key.?.asString(allocator) orelse {
+            return error.InvalidPnpmLockfile;
+        };
+        const dep_name_hash = String.Builder.stringHash(dep_name_str);
+        const dep_name = try string_buf.appendWithHash(dep_name_str, dep_name_hash);
+
+        const version_str, _ = try entry_prop.value.?.getString(allocator, "specifier") orelse {
+            return error.InvalidPnpmLockfile;
+        };
+        const version_hash = String.Builder.stringHash(version_str);
+        const version = try string_buf.appendWithHash(version_str, version_hash);
+        const version_sliced = version.sliced(string_buf.bytes.items);
+
+        const dep: Dependency = .{
+            .name = dep_name,
+            .name_hash = dep_name_hash,
+            .version = Dependency.parse(
+                allocator,
+                dep_name,
+                dep_name_hash,
+                version_sliced.slice,
+                &version_sliced,
+                log,
+                null,
+            ) orelse {
+                return error.InvalidPnpmLockfile;
+            },
+        };
+
+        const entry = try catalog_map.getOrPutContext(
+            allocator,
+            dep_name,
+            String.arrayHashContext(lockfile, null),
+        );
+
+        if (entry.found_existing) {
+            return error.InvalidPnpmLockfile;
+        }
+
+        entry.value_ptr.* = dep;
     }
 }
 
@@ -365,15 +454,18 @@ pub fn clone(this: *CatalogMap, pm: *PackageManager, old: *Lockfile, new: *Lockf
     return new_catalog;
 }
 
-const CatalogMap = @This();
+const string = []const u8;
+
 const std = @import("std");
+const Allocator = std.mem.Allocator;
+
 const bun = @import("bun");
+const OOM = bun.OOM;
+const logger = bun.logger;
+const strings = bun.strings;
+const Expr = bun.ast.Expr;
+const String = bun.Semver.String;
+
 const Dependency = bun.install.Dependency;
 const Lockfile = bun.install.Lockfile;
 const PackageManager = bun.install.PackageManager;
-const String = bun.Semver.String;
-const Expr = bun.JSAst.Expr;
-const logger = bun.logger;
-const Allocator = std.mem.Allocator;
-const string = []const u8;
-const OOM = bun.OOM;

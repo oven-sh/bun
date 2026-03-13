@@ -36,7 +36,7 @@ using namespace JSC;
 
 Ref<WTF::ExternalStringImpl> toExternalStringImpl(ncrypto::BIOPointer& bio, std::span<const char> span)
 {
-    return WTF::ExternalStringImpl::create({ reinterpret_cast<const LChar*>(span.data()), span.size() }, bio.release(), [](void* context, void* ptr, unsigned len) {
+    return WTF::ExternalStringImpl::create({ reinterpret_cast<const Latin1Character*>(span.data()), span.size() }, bio.release(), [](void* context, void* ptr, unsigned len) {
         ncrypto::BIOPointer deleter = ncrypto::BIOPointer(static_cast<BIO*>(context));
     });
 }
@@ -49,7 +49,7 @@ WTF::String toWTFString(ncrypto::BIOPointer& bio)
     if (simdutf::validate_ascii(span.data(), span.size())) {
         return toExternalStringImpl(bio, span);
     }
-    return WTF::String::fromUTF8({ reinterpret_cast<const LChar*>(bptr->data), bptr->length });
+    return WTF::String::fromUTF8({ reinterpret_cast<const Latin1Character*>(bptr->data), bptr->length });
 }
 
 static JSC_DECLARE_HOST_FUNCTION(x509CertificateConstructorCall);
@@ -97,6 +97,7 @@ JSX509CertificateConstructor* JSX509CertificateConstructor::create(VM& vm, JSGlo
 void JSX509CertificateConstructor::finishCreation(VM& vm, JSGlobalObject* globalObject, JSObject* prototype)
 {
     Base::finishCreation(vm, 1, "X509Certificate"_s, PropertyAdditionMode::WithStructureTransition);
+    putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
 }
 static JSValue createX509Certificate(JSC::VM& vm, JSGlobalObject* globalObject, Structure* structure, JSValue arg)
 {
@@ -158,20 +159,18 @@ JSC_DEFINE_HOST_FUNCTION(x509CertificateConstructorConstruct, (JSGlobalObject * 
     Structure* structure = zigGlobalObject->m_JSX509CertificateClassStructure.get(zigGlobalObject);
     JSValue newTarget = callFrame->newTarget();
     if (zigGlobalObject->m_JSX509CertificateClassStructure.constructor(zigGlobalObject) != newTarget) [[unlikely]] {
-        auto scope = DECLARE_THROW_SCOPE(vm);
         if (!newTarget) {
-            throwTypeError(globalObject, scope, "Class constructor Script cannot be invoked without 'new'"_s);
+            throwTypeError(globalObject, scope, "Class constructor X509Certificate cannot be invoked without 'new'"_s);
             return {};
         }
 
         auto* functionGlobalObject = defaultGlobalObject(getFunctionRealm(globalObject, newTarget.getObject()));
         RETURN_IF_EXCEPTION(scope, {});
-        structure = InternalFunction::createSubclassStructure(
-            globalObject, newTarget.getObject(), functionGlobalObject->NodeVMScriptStructure());
-        scope.release();
+        structure = InternalFunction::createSubclassStructure(globalObject, newTarget.getObject(), functionGlobalObject->m_JSX509CertificateClassStructure.get(functionGlobalObject));
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
-    return JSValue::encode(createX509Certificate(vm, globalObject, structure, arg));
+    RELEASE_AND_RETURN(scope, JSValue::encode(createX509Certificate(vm, globalObject, structure, arg)));
 }
 
 const ClassInfo JSX509Certificate::s_info = { "X509Certificate"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSX509Certificate) };
@@ -185,7 +184,12 @@ void JSX509Certificate::finishCreation(VM& vm)
         init.set(init.owner->computeFingerprint(init.owner->view(), init.owner->globalObject()));
     });
     m_subject.initLater([](const JSC::LazyProperty<JSX509Certificate, JSString>::Initializer& init) {
+        auto scope = DECLARE_THROW_SCOPE(init.vm);
         auto value = init.owner->computeSubject(init.owner->view(), init.owner->globalObject(), false);
+        if (scope.exception()) [[unlikely]] {
+            (void)scope.tryClearException();
+            return init.set(jsEmptyString(init.vm));
+        }
         if (!value.isString()) {
             init.set(jsEmptyString(init.owner->vm()));
             return;
@@ -194,7 +198,12 @@ void JSX509Certificate::finishCreation(VM& vm)
         init.set(value.toString(init.owner->globalObject()));
     });
     m_issuer.initLater([](const JSC::LazyProperty<JSX509Certificate, JSString>::Initializer& init) {
+        auto scope = DECLARE_THROW_SCOPE(init.vm);
         JSValue value = init.owner->computeIssuer(init.owner->view(), init.owner->globalObject(), false);
+        if (scope.exception()) [[unlikely]] {
+            (void)scope.tryClearException();
+            return init.set(jsEmptyString(init.vm));
+        }
         if (value.isString()) {
             init.set(value.toString(init.owner->globalObject()));
         } else {
@@ -256,13 +265,13 @@ JSX509Certificate* JSX509Certificate::create(JSC::VM& vm, JSC::Structure* struct
         return nullptr;
     }
 
-    return create(vm, structure, globalObject, WTFMove(result.value));
+    return create(vm, structure, globalObject, WTF::move(result.value));
 }
 
 JSX509Certificate* JSX509Certificate::create(JSC::VM& vm, JSC::Structure* structure, JSC::JSGlobalObject* globalObject, ncrypto::X509Pointer&& cert)
 {
     auto* certificate = create(vm, structure);
-    certificate->m_x509 = WTFMove(cert);
+    certificate->m_x509 = WTF::move(cert);
     size_t size = i2d_X509(certificate->m_x509.get(), nullptr);
     certificate->m_extraMemorySizeForGC = size;
     vm.heap.reportExtraMemoryAllocated(certificate, size);
@@ -271,9 +280,6 @@ JSX509Certificate* JSX509Certificate::create(JSC::VM& vm, JSC::Structure* struct
 
 String JSX509Certificate::toPEMString() const
 {
-    VM& vm = globalObject()->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
     auto bio = view().toPEM();
     if (!bio) {
         return String();
@@ -567,7 +573,7 @@ JSUint8Array* JSX509Certificate::computeRaw(ncrypto::X509View view, JSGlobalObje
     Ref<JSC::ArrayBuffer> buffer = JSC::ArrayBuffer::createFromBytes(std::span(reinterpret_cast<uint8_t*>(bptr->data), bptr->length), createSharedTask<void(void*)>([](void* data) {
         ncrypto::BIOPointer free_me(static_cast<BIO*>(data));
     }));
-    RELEASE_AND_RETURN(scope, Bun::createBuffer(globalObject, WTFMove(buffer)));
+    RELEASE_AND_RETURN(scope, Bun::createBuffer(globalObject, WTF::move(buffer)));
 }
 
 bool JSX509Certificate::computeIsCA(ncrypto::X509View view, JSGlobalObject* globalObject)
@@ -1040,8 +1046,8 @@ JSValue JSX509Certificate::computePublicKey(ncrypto::X509View view, JSGlobalObje
         return {};
     }
 
-    auto handle = KeyObject::create(CryptoKeyType::Public, WTFMove(result.value));
-    return JSPublicKeyObject::create(vm, globalObject->m_JSPublicKeyObjectClassStructure.get(lexicalGlobalObject), lexicalGlobalObject, WTFMove(handle));
+    auto handle = KeyObject::create(CryptoKeyType::Public, WTF::move(result.value));
+    return JSPublicKeyObject::create(vm, globalObject->m_JSPublicKeyObjectClassStructure.get(lexicalGlobalObject), lexicalGlobalObject, WTF::move(handle));
 }
 
 JSValue JSX509Certificate::computeInfoAccess(ncrypto::X509View view, JSGlobalObject* globalObject, bool legacy)
@@ -1165,7 +1171,7 @@ extern "C" EncodedJSValue Bun__X509__toJS(X509* cert, JSGlobalObject* globalObje
 {
     ncrypto::X509Pointer cert_ptr(cert);
     auto* zigGlobalObject = defaultGlobalObject(globalObject);
-    return JSValue::encode(JSX509Certificate::create(zigGlobalObject->vm(), zigGlobalObject->m_JSX509CertificateClassStructure.get(zigGlobalObject), globalObject, WTFMove(cert_ptr)));
+    return JSValue::encode(JSX509Certificate::create(zigGlobalObject->vm(), zigGlobalObject->m_JSX509CertificateClassStructure.get(zigGlobalObject), globalObject, WTF::move(cert_ptr)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsIsX509Certificate, (JSGlobalObject * globalObject, CallFrame* callFrame))

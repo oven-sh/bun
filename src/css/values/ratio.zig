@@ -1,4 +1,3 @@
-const std = @import("std");
 pub const css = @import("../css_parser.zig");
 const Result = css.Result;
 const Printer = css.Printer;
@@ -39,11 +38,11 @@ pub const Ratio = struct {
         return .{ .result = Ratio{ .numerator = first, .denominator = second } };
     }
 
-    pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
-        try CSSNumberFns.toCss(&this.numerator, W, dest);
+    pub fn toCss(this: *const @This(), dest: *Printer) PrintErr!void {
+        try CSSNumberFns.toCss(&this.numerator, dest);
         if (this.denominator != 1.0) {
             try dest.delim('/', true);
-            try CSSNumberFns.toCss(&this.denominator, W, dest);
+            try CSSNumberFns.toCss(&this.denominator, dest);
         }
     }
 
@@ -55,3 +54,5 @@ pub const Ratio = struct {
         return css.implementEql(@This(), lhs, rhs);
     }
 };
+
+const std = @import("std");

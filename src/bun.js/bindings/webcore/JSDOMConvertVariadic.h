@@ -61,10 +61,10 @@ template<typename IDLType> FixedVector<typename VariadicConverter<IDLType>::Item
     size_t resultIndex = 0;
     for (size_t i = startIndex; i < length; ++i) {
         auto value = VariadicConverter<IDLType>::convert(lexicalGlobalObject, callFrame.uncheckedArgument(i));
-        EXCEPTION_ASSERT_UNUSED(scope, !!scope.exception() == !value);
+        ASSERT_UNUSED(scope, !!scope.exception() == !value);
         if (!value)
             return {};
-        result[resultIndex] = WTFMove(*value);
+        result[resultIndex] = WTF::move(*value);
         resultIndex++;
     }
 

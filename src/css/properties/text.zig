@@ -1,6 +1,3 @@
-const std = @import("std");
-const Allocator = std.mem.Allocator;
-
 pub const css = @import("../css_parser.zig");
 
 const Printer = css.Printer;
@@ -200,24 +197,24 @@ pub const TextShadow = struct {
         };
     }
 
-    pub fn toCss(this: *const @This(), comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
-        try this.x_offset.toCss(W, dest);
+    pub fn toCss(this: *const @This(), dest: *css.Printer) css.PrintErr!void {
+        try this.x_offset.toCss(dest);
         try dest.writeChar(' ');
-        try this.y_offset.toCss(W, dest);
+        try this.y_offset.toCss(dest);
 
         if (!this.blur.eql(&Length.zero()) or !this.spread.eql(&Length.zero())) {
             try dest.writeChar(' ');
-            try this.blur.toCss(W, dest);
+            try this.blur.toCss(dest);
 
             if (!this.spread.eql(&Length.zero())) {
                 try dest.writeChar(' ');
-                try this.spread.toCss(W, dest);
+                try this.spread.toCss(dest);
             }
         }
 
         if (!this.color.eql(&CssColor{ .current_color = {} })) {
             try dest.writeChar(' ');
-            try this.color.toCss(W, dest);
+            try this.color.toCss(dest);
         }
 
         return;
@@ -270,3 +267,6 @@ pub const UnicodeBidi = css.DefineEnumProperty(@compileError(css.todo_stuff.dept
 
 /// A value for the [box-decoration-break](https://www.w3.org/TR/css-break-3/#break-decoration) property.
 pub const BoxDecorationBreak = css.DefineEnumProperty(@compileError(css.todo_stuff.depth));
+
+const std = @import("std");
+const Allocator = std.mem.Allocator;

@@ -1,11 +1,7 @@
 //! Rope-like data structure for joining many small strings into one big string.
 //! Implemented as a linked list of potentially-owned slices and a length.
+
 const StringJoiner = @This();
-const std = @import("std");
-const bun = @import("bun");
-const Allocator = std.mem.Allocator;
-const NullableAllocator = bun.NullableAllocator;
-const assert = bun.assert;
 
 /// Temporary allocator used for nodes and duplicated strings.
 /// It is recommended to use a stack-fallback allocator for this.
@@ -26,7 +22,7 @@ const Node = struct {
     next: ?*Node = null,
 
     pub fn init(joiner_alloc: Allocator, slice: []const u8, slice_alloc: ?Allocator) *Node {
-        const node = joiner_alloc.create(Node) catch bun.outOfMemory();
+        const node = bun.handleOom(joiner_alloc.create(Node));
         node.* = .{
             .slice = slice,
             .allocator = NullableAllocator.init(slice_alloc),
@@ -55,7 +51,7 @@ pub fn pushStatic(this: *StringJoiner, data: []const u8) void {
 pub fn pushCloned(this: *StringJoiner, data: []const u8) void {
     if (data.len == 0) return;
     this.push(
-        this.allocator.dupe(u8, data) catch bun.outOfMemory(),
+        bun.handleOom(this.allocator.dupe(u8, data)),
         this.allocator,
     );
 }
@@ -106,6 +102,20 @@ pub fn done(this: *StringJoiner, allocator: Allocator) ![]u8 {
     bun.assert(remaining.len == 0);
 
     return slice;
+}
+
+pub fn deinit(this: *StringJoiner) void {
+    var current: ?*Node = this.head orelse {
+        assert(this.tail == null);
+        assert(this.len == 0);
+        return;
+    };
+
+    while (current) |node| {
+        const prev = node;
+        current = node.next;
+        prev.deinit(this.allocator);
+    }
 }
 
 /// Same as `.done`, but appends extra slice `end`
@@ -161,3 +171,10 @@ pub fn contains(this: *const StringJoiner, slice: []const u8) bool {
 
     return false;
 }
+
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+
+const bun = @import("bun");
+const NullableAllocator = bun.NullableAllocator;
+const assert = bun.assert;

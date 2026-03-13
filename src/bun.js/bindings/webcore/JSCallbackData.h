@@ -42,7 +42,7 @@ namespace WebCore {
 // (and synchronization would be slow).
 
 class JSCallbackData {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(JSCallbackData);
 
 public:
     enum class CallbackType { Function,

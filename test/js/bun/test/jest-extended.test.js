@@ -601,13 +601,13 @@ describe("jest-extended", () => {
     expect("abc").not.toIncludeRepeated("d", 1);
 
     // Any other number
-    expect("abc abc abc").toIncludeRepeated("abc", 1);
-    expect("abc abc abc").toIncludeRepeated("abc", 2);
+    expect("abc abc abc").not.toIncludeRepeated("abc", 1);
+    expect("abc abc abc").not.toIncludeRepeated("abc", 2);
     expect("abc abc abc").toIncludeRepeated("abc", 3);
     expect("abc abc abc").not.toIncludeRepeated("abc", 4);
 
     // Emojis/Unicode
-    expect("😘🥳😤😘🥳").toIncludeRepeated("😘", 1);
+    expect("😘🥳😤😘🥳").toIncludeRepeated("😘", 2);
     expect("😘🥳😤😘🥳").toIncludeRepeated("🥳", 2);
     expect("😘🥳😤😘🥳").not.toIncludeRepeated("😘", 3);
     expect("😘🥳😤😘🥳").not.toIncludeRepeated("😶‍🌫️", 1);

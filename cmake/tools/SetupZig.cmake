@@ -1,4 +1,4 @@
-if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|ARM64|aarch64|AARCH64")
   set(DEFAULT_ZIG_ARCH "aarch64")
 elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "amd64|x86_64|x64|AMD64")
   set(DEFAULT_ZIG_ARCH "x86_64")
@@ -20,7 +20,7 @@ else()
   unsupported(CMAKE_SYSTEM_NAME)
 endif()
 
-set(ZIG_COMMIT "0a0120fa92cd7f6ab244865688b351df634f0707")
+set(ZIG_COMMIT "c031cbebf5b063210473ff5204a24ebfb2492c72")
 optionx(ZIG_TARGET STRING "The zig target to use" DEFAULT ${DEFAULT_ZIG_TARGET})
 
 if(CMAKE_BUILD_TYPE STREQUAL "Release")
@@ -55,13 +55,14 @@ optionx(ZIG_OBJECT_FORMAT "obj|bc" "Output file format for Zig object files" DEF
 optionx(ZIG_LOCAL_CACHE_DIR FILEPATH "The path to local the zig cache directory" DEFAULT ${CACHE_PATH}/zig/local)
 optionx(ZIG_GLOBAL_CACHE_DIR FILEPATH "The path to the global zig cache directory" DEFAULT ${CACHE_PATH}/zig/global)
 
-if(CI)
-  set(ZIG_COMPILER_SAFE_DEFAULT ON)
+# The ReleaseSafe Zig compiler for Windows ARM64 has an LLVM SEH epilogue bug
+# (incorrect size for compiler_rt.rem_pio2_large epilogue). Use the default build instead.
+if(CI AND WIN32 AND DEFAULT_ZIG_ARCH STREQUAL "aarch64")
+  set(DEFAULT_ZIG_COMPILER_SAFE OFF)
 else()
-  set(ZIG_COMPILER_SAFE_DEFAULT OFF)
+  set(DEFAULT_ZIG_COMPILER_SAFE ${CI})
 endif()
-
-optionx(ZIG_COMPILER_SAFE BOOL "Download a ReleaseSafe build of the Zig compiler." DEFAULT ${ZIG_COMPILER_SAFE_DEFAULT})
+optionx(ZIG_COMPILER_SAFE BOOL "Download a ReleaseSafe build of the Zig compiler." DEFAULT ${DEFAULT_ZIG_COMPILER_SAFE})
 
 setenv(ZIG_LOCAL_CACHE_DIR ${ZIG_LOCAL_CACHE_DIR})
 setenv(ZIG_GLOBAL_CACHE_DIR ${ZIG_GLOBAL_CACHE_DIR})
@@ -90,6 +91,7 @@ register_command(
       -DZIG_PATH=${ZIG_PATH}
       -DZIG_COMMIT=${ZIG_COMMIT}
       -DENABLE_ASAN=${ENABLE_ASAN}
+      -DENABLE_VALGRIND=${ENABLE_VALGRIND}
       -DZIG_COMPILER_SAFE=${ZIG_COMPILER_SAFE}
       -P ${CWD}/cmake/scripts/DownloadZig.cmake
   SOURCES

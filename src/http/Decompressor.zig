@@ -105,16 +105,18 @@ pub const Decompressor = union(enum) {
 
     pub fn readAll(this: *Decompressor, is_done: bool) !void {
         switch (this.*) {
-            .zlib => |zlib| try zlib.readAll(),
+            .zlib => |zlib| try zlib.readAll(is_done),
             .brotli => |brotli| try brotli.readAll(is_done),
             .zstd => |reader| try reader.readAll(is_done),
             .none => {},
         }
     }
 };
-const bun = @import("bun");
-const MutableString = bun.MutableString;
+
 const Zlib = @import("../zlib.zig");
-const Brotli = bun.brotli;
-const zstd = bun.zstd;
 const Encoding = @import("./Encoding.zig").Encoding;
+
+const bun = @import("bun");
+const Brotli = bun.brotli;
+const MutableString = bun.MutableString;
+const zstd = bun.zstd;

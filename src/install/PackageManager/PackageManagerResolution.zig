@@ -15,9 +15,10 @@ pub fn formatLaterVersionInCache(
                 this.scopeForPackageName(package_name),
                 name_hash,
                 .load_from_memory,
+                this.options.minimum_release_age_ms != null,
             ) orelse return null;
 
-            if (manifest.findByDistTag("latest")) |*latest_version| {
+            if (manifest.findByDistTagWithFilter("latest", this.options.minimum_release_age_ms, this.options.minimum_release_age_excludes).unwrap()) |*latest_version| {
                 if (latest_version.version.order(
                     resolution.value.npm.version,
                     manifest.string_buf,
@@ -41,8 +42,8 @@ pub fn scopeForPackageName(this: *const PackageManager, name: string) *const Npm
     ) orelse &this.options.scope;
 }
 
-pub fn getInstalledVersionsFromDiskCache(this: *PackageManager, tags_buf: *std.ArrayList(u8), package_name: []const u8, allocator: std.mem.Allocator) !std.ArrayList(Semver.Version) {
-    var list = std.ArrayList(Semver.Version).init(allocator);
+pub fn getInstalledVersionsFromDiskCache(this: *PackageManager, tags_buf: *std.array_list.Managed(u8), package_name: []const u8, allocator: std.mem.Allocator) !std.array_list.Managed(Semver.Version) {
+    var list = std.array_list.Managed(Semver.Version).init(allocator);
     var dir = this.getCacheDirectory().openDir(package_name, .{
         .iterate = true,
     }) catch |err| switch (err) {
@@ -88,7 +89,7 @@ pub fn resolveFromDiskCache(this: *PackageManager, package_name: []const u8, ver
     const arena_alloc = arena.allocator();
     var stack_fallback = std.heap.stackFallback(4096, arena_alloc);
     const allocator = stack_fallback.get();
-    var tags_buf = std.ArrayList(u8).init(allocator);
+    var tags_buf = std.array_list.Managed(u8).init(allocator);
     const installed_versions = this.getInstalledVersionsFromDiskCache(&tags_buf, package_name, allocator) catch |err| {
         Output.debug("error getting installed versions from disk cache: {s}", .{bun.span(@errorName(err))});
         return null;
@@ -198,11 +199,11 @@ pub fn verifyResolutions(this: *PackageManager, log_level: PackageManager.Option
 
             if (log_level != .silent) {
                 if (failed_dep.name.isEmpty() or strings.eqlLong(failed_dep.name.slice(string_buf), failed_dep.version.literal.slice(string_buf), true)) {
-                    Output.errGeneric("<b>{}<r><d> failed to resolve<r>", .{
+                    Output.errGeneric("<b>{f}<r><d> failed to resolve<r>", .{
                         failed_dep.version.literal.fmt(string_buf),
                     });
                 } else {
-                    Output.errGeneric("<b>{s}<r><d>@<b>{}<r><d> failed to resolve<r>", .{
+                    Output.errGeneric("<b>{s}<r><d>@<b>{f}<r><d> failed to resolve<r>", .{
                         failed_dep.name.slice(string_buf),
                         failed_dep.version.literal.fmt(string_buf),
                     });
@@ -216,7 +217,7 @@ pub fn verifyResolutions(this: *PackageManager, log_level: PackageManager.Option
     if (any_failed) this.crash();
 }
 
-// @sortImports
+const string = []const u8;
 
 const std = @import("std");
 
@@ -224,7 +225,6 @@ const bun = @import("bun");
 const Environment = bun.Environment;
 const OOM = bun.OOM;
 const Output = bun.Output;
-const string = bun.string;
 const strings = bun.strings;
 
 const Semver = bun.Semver;

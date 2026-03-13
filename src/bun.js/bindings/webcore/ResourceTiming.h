@@ -42,7 +42,7 @@ class SecurityOrigin;
 DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(ResourceTiming);
 
 class ResourceTiming {
-    WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(ResourceTiming);
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(ResourceTiming, ResourceTiming);
 
 public:
     // static ResourceTiming fromMemoryCache(const URL&, const String& initiator const ResourceResponse&, const NetworkLoadMetrics&, const SecurityOrigin&);
@@ -66,11 +66,11 @@ public:
 private:
     ResourceTiming(const URL& url, const String& initiatorType, const NetworkLoadMetrics& networkLoadMetrics);
     ResourceTiming(URL&& url, String&& initiatorType, NetworkLoadMetrics&& networkLoadMetrics, Vector<ServerTiming>&& serverTiming)
-        : m_url(WTFMove(url))
-        , m_initiatorType(WTFMove(initiatorType))
+        : m_url(WTF::move(url))
+        , m_initiatorType(WTF::move(initiatorType))
         , m_resourceLoadTiming(ResourceLoadTiming())
-        , m_networkLoadMetrics(WTFMove(networkLoadMetrics))
-        , m_serverTiming(WTFMove(serverTiming))
+        , m_networkLoadMetrics(WTF::move(networkLoadMetrics))
+        , m_serverTiming(WTF::move(serverTiming))
     {
     }
 

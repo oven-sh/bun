@@ -1,8 +1,10 @@
 const http2 = require("http2");
 const fs = require("fs");
+const paddingStrategy = process.argv[3];
 const server = http2.createSecureServer({
   ...JSON.parse(process.argv[2]),
   rejectUnauthorized: false,
+  paddingStrategy: paddingStrategy ?? http2.constants.PADDING_STRATEGY_NONE,
 });
 const setCookie = ["a=b", "c=d; Wed, 21 Oct 2015 07:28:00 GMT; Secure; HttpOnly", "e=f"];
 
@@ -67,12 +69,12 @@ server.on("stream", (stream, headers, flags) => {
     });
   }
 });
-let baseurl = "https://localhost:";
+let baseurl = "https://127.0.0.1:";
 
-server.listen(0, "localhost");
+server.listen(0, "127.0.0.1");
 
 server.on("listening", () => {
   const { port, address, family } = server.address();
-  baseurl = `https://localhost:${port}`;
-  process.stdout.write(JSON.stringify({ port, address: "localhost", family: "IPv4" }));
+  baseurl = `https://127.0.0.1:${port}`;
+  process.stdout.write(JSON.stringify({ port, address: "127.0.0.1", family: "IPv4" }));
 });

@@ -1,8 +1,7 @@
-import { test, expect } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { expect, test } from "bun:test";
 import { mkdtempSync, realpathSync } from "fs";
-import { join } from "path";
 import { tmpdir } from "os";
+import { join } from "path";
 
 function makeTempDir() {
   return mkdtempSync(join(realpathSync.native(tmpdir()), "issue-13237-"));

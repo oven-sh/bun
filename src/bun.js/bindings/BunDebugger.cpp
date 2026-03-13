@@ -915,18 +915,27 @@ extern "C" bool Bun__shouldBreakAfterMessageDrain(JSC::VM& vm)
 // are processed first, setting the correct pause reason on the agent.
 extern "C" void Bun__drainQueuedCDPMessages(JSC::VM& vm)
 {
+    // Copy matching connections under the lock, then release it before
+    // dispatching messages. receiveMessagesOnInspectorThread can trigger
+    // JS execution that hits a breakpoint → breakProgram() → runWhilePaused(),
+    // which also acquires inspectorConnectionsLock. Holding the lock across
+    // the dispatch would deadlock since WTF::Lock is non-recursive.
+    Vector<BunInspectorConnection*, 8> connections;
     forEachConnectionForVM(vm, [&](BunInspectorConnection* connection) -> bool {
-        if (connection->status != ConnectionStatus::Connected)
-            return false;
+        if (connection->status == ConnectionStatus::Connected)
+            connections.append(connection);
+        return false;
+    });
+
+    for (auto* connection : connections) {
         auto* context = ScriptExecutionContext::getScriptExecutionContext(connection->scriptExecutionContextIdentifier);
         if (!context)
-            return false;
+            continue;
         // Clear the message delivery flag — messages are being drained now.
         connection->pauseFlags.fetch_and(~BunInspectorConnection::kMessageDeliveryPause);
         connection->receiveMessagesOnInspectorThread(
             *context, static_cast<Zig::GlobalObject*>(connection->globalObject), false);
-        return false;
-    });
+    }
 }
 
 // Schedule a debugger pause for connected sessions.

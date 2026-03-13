@@ -46,7 +46,14 @@ bool Semaphore::wait()
     uv_sem_wait(&m_semaphore);
     return true;
 #elif OS(DARWIN)
-    return semaphore_wait(m_semaphore) == KERN_SUCCESS;
+    // Retry on KERN_ABORTED — the Mach equivalent of EINTR.
+    // Signals like SIGCHLD or SIGWINCH can interrupt semaphore_wait.
+    kern_return_t result;
+    while ((result = semaphore_wait(m_semaphore)) != KERN_SUCCESS) {
+        if (result != KERN_ABORTED)
+            return false;
+    }
+    return true;
 #else
     // Retry on EINTR - sem_wait can be interrupted by any signal
     while (sem_wait(&m_semaphore) != 0) {

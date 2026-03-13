@@ -854,7 +854,7 @@ fn spawnCmdGeneric(comptime Self: type, this: *Self, argv: anytype, stdin_opt: b
     const envp: [*:null]?[*:0]const u8 = if (comptime bun.Environment.isPosix)
         @ptrCast(@constCast(std.c.environ))
     else
-        unreachable; // cron is POSIX-only
+        std.mem.zeroes([*:null]?[*:0]const u8); // null → libuv inherits parent env
     var spawned = (bun.spawn.spawnProcess(&spawn_options, @ptrCast(argv), envp) catch {
         this.setErr("Failed to spawn process", .{});
         this.finish();

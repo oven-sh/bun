@@ -4,7 +4,7 @@ const debug = Output.scoped(.LinkerGraph, .visible);
 
 files: File.List = .{},
 files_live: BitSet = undefined,
-live_dynamic_import_targets: BitSet = undefined,
+live_dynamic_import_targets: BitSet = .{},
 entry_points: EntryPoint.List = .{},
 symbols: js_ast.Symbol.Map = .{},
 

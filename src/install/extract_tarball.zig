@@ -324,7 +324,6 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
 
     // Now that we've extracted the archive, we rename.
     if (comptime Environment.isWindows) {
-        var did_retry = false;
         var path2_buf: bun.WPathBuffer = undefined;
         const path2 = bun.strings.toWPathNormalized(&path2_buf, folder_name);
         if (create_subdir) {
@@ -335,85 +334,98 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
 
         const path_to_use = path2;
 
-        while (true) {
-            const dir_to_move = bun.sys.openDirAtWindowsA(.fromStdDir(this.temp_dir), tmpname, .{
-                .can_rename_or_delete = true,
-                .iterable = false,
-                .read_only = true,
-            }).unwrap() catch |err| {
-                log.addErrorFmt(
-                    null,
-                    logger.Loc.Empty,
-                    bun.default_allocator,
-                    "moving \"{s}\" to cache dir failed\n{}\n From: {s}\n   To: {s}",
-                    .{ name, err, tmpname, folder_name },
-                ) catch unreachable;
-                return error.InstallFailed;
-            };
+        const dir_to_move = bun.sys.openDirAtWindowsA(.fromStdDir(this.temp_dir), tmpname, .{
+            .can_rename_or_delete = true,
+            .iterable = false,
+            .read_only = true,
+        }).unwrap() catch |err| {
+            log.addErrorFmt(
+                null,
+                logger.Loc.Empty,
+                bun.default_allocator,
+                "moving \"{s}\" to cache dir failed\n{}\n From: {s}\n   To: {s}",
+                .{ name, err, tmpname, folder_name },
+            ) catch unreachable;
+            return error.InstallFailed;
+        };
 
-            switch (bun.windows.moveOpenedFileAt(dir_to_move, .fromStdDir(cache_dir), path_to_use, true)) {
-                .err => |err| {
-                    if (!did_retry) {
-                        switch (err.getErrno()) {
-                            .NOTEMPTY, .PERM, .BUSY, .EXIST => {
-                                dir_to_move.close();
+        switch (bun.windows.moveOpenedFileAt(dir_to_move, .fromStdDir(cache_dir), path_to_use, true)) {
+            .err => |err| {
+                dir_to_move.close();
+                switch (err.getErrno()) {
+                    .NOTEMPTY, .PERM, .BUSY, .EXIST => {
+                        // The cache destination already exists. Check if it's
+                        // valid by probing for package.json. If valid, accept
+                        // it to avoid an ENOENT window that races with concurrent
+                        // installs. If corrupt/incomplete, fall back to the
+                        // rename-aside-and-retry approach.
+                        const cache_valid = blk: {
+                            var check_dir = cache_dir.openDir(folder_name, .{}) catch break :blk false;
+                            defer check_dir.close();
+                            check_dir.access("package.json", .{}) catch break :blk false;
+                            break :blk true;
+                        };
+                        if (cache_valid) {
+                            // Valid cache entry, likely placed by a concurrent
+                            // install of the same package@version. Clean up
+                            // our orphaned temp extraction.
+                            tmpdir.deleteTree(tmpname) catch {};
+                        } else {
+                            // Corrupt/incomplete cache entry. Rename it aside
+                            // and retry the move. This is the single-process
+                            // cache invalidation path.
+                            var tmpname_bytes = std.mem.asBytes(&tmpname_buf);
+                            const tmpname_len = tmpname.len;
 
-                                // Rename the existing cache entry aside so we can
-                                // retry the move. Unlike the previous approach, we
-                                // skip the expensive deleteTree here and defer it
-                                // to after the retry, minimizing the ENOENT window
-                                // for concurrent processes that already resolved
-                                // this cache path.
-                                var tmpname_bytes = std.mem.asBytes(&tmpname_buf);
-                                const tmpname_len = tmpname.len;
+                            tmpname_bytes[tmpname_len..][0..4].* = .{ 't', 'm', 'p', 0 };
+                            const tempdest = tmpname_bytes[0 .. tmpname_len + 3 :0];
+                            switch (bun.sys.renameat(
+                                .fromStdDir(cache_dir),
+                                folder_name,
+                                .fromStdDir(tmpdir),
+                                tempdest,
+                            )) {
+                                .err => {},
+                                .result => {
+                                    tmpdir.deleteTree(tempdest) catch {};
+                                },
+                            }
+                            tmpname_bytes[tmpname_len] = 0;
 
-                                tmpname_bytes[tmpname_len..][0..4].* = .{ 't', 'm', 'p', 0 };
-                                const tempdest = tmpname_bytes[0 .. tmpname_len + 3 :0];
-                                switch (bun.sys.renameat(
-                                    .fromStdDir(cache_dir),
-                                    folder_name,
-                                    .fromStdDir(tmpdir),
-                                    tempdest,
-                                )) {
-                                    .err => {},
-                                    .result => {},
-                                }
-                                tmpname_bytes[tmpname_len] = 0;
-                                did_retry = true;
-                                continue;
-                            },
-                            else => {},
+                            // Retry the move once.
+                            const retry_dir = bun.sys.openDirAtWindowsA(.fromStdDir(tmpdir), tmpname, .{
+                                .can_rename_or_delete = true,
+                                .iterable = false,
+                                .read_only = true,
+                            }).unwrap() catch {
+                                // Can't reopen temp dir, nothing we can do.
+                                return error.InstallFailed;
+                            };
+                            switch (bun.windows.moveOpenedFileAt(retry_dir, .fromStdDir(cache_dir), path_to_use, true)) {
+                                .err => {
+                                    retry_dir.close();
+                                },
+                                .result => {
+                                    retry_dir.close();
+                                },
+                            }
                         }
-                    }
-                    dir_to_move.close();
-                    log.addErrorFmt(
-                        null,
-                        logger.Loc.Empty,
-                        bun.default_allocator,
-                        "moving \"{s}\" to cache dir failed\n{f}\n  From: {s}\n    To: {s}",
-                        .{ name, err, tmpname, folder_name },
-                    ) catch unreachable;
-                    return error.InstallFailed;
-                },
-                .result => {
-                    dir_to_move.close();
-                },
-            }
-
-            break;
-        }
-
-        // Deferred cleanup: delete the renamed-aside old cache entry after
-        // the retry succeeded. This runs outside the retry loop so the
-        // ENOENT window (between rename-aside and successful move) is
-        // as short as possible.
-        if (did_retry) {
-            var tmpname_bytes = std.mem.asBytes(&tmpname_buf);
-            const tmpname_len = tmpname.len;
-            tmpname_bytes[tmpname_len..][0..4].* = .{ 't', 'm', 'p', 0 };
-            const tempdest = tmpname_bytes[0 .. tmpname_len + 3 :0];
-            tmpdir.deleteTree(tempdest) catch {};
-            tmpname_bytes[tmpname_len] = 0;
+                    },
+                    else => {
+                        log.addErrorFmt(
+                            null,
+                            logger.Loc.Empty,
+                            bun.default_allocator,
+                            "moving \"{s}\" to cache dir failed\n{f}\n  From: {s}\n    To: {s}",
+                            .{ name, err, tmpname, folder_name },
+                        ) catch unreachable;
+                        return error.InstallFailed;
+                    },
+                }
+            },
+            .result => {
+                dir_to_move.close();
+            },
         }
     } else {
         // Attempt to gracefully handle duplicate concurrent `bun install` calls

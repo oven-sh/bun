@@ -324,7 +324,6 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
 
     // Now that we've extracted the archive, we rename.
     if (comptime Environment.isWindows) {
-        var did_retry = false;
         var path2_buf: bun.WPathBuffer = undefined;
         const path2 = bun.strings.toWPathNormalized(&path2_buf, folder_name);
         if (create_subdir) {
@@ -354,42 +353,31 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
 
             switch (bun.windows.moveOpenedFileAt(dir_to_move, .fromStdDir(cache_dir), path_to_use, true)) {
                 .err => |err| {
-                    if (!did_retry) {
-                        switch (err.getErrno()) {
-                            .NOTEMPTY, .PERM, .BUSY, .EXIST => {
+                    switch (err.getErrno()) {
+                        .NOTEMPTY, .PERM, .BUSY, .EXIST => {
+                            dir_to_move.close();
 
-                                // before we attempt to delete the destination, let's close the source dir.
-                                dir_to_move.close();
-
-                                // We tried to move the folder over
-                                // but it didn't work!
-                                // so instead of just simply deleting the folder
-                                // we rename it back into the temp dir
-                                // and then delete that temp dir
-                                // The goal is to make it more difficult for an application to reach this folder
-                                var tmpname_bytes = std.mem.asBytes(&tmpname_buf);
-                                const tmpname_len = tmpname.len;
-
-                                tmpname_bytes[tmpname_len..][0..4].* = .{ 't', 'm', 'p', 0 };
-                                const tempdest = tmpname_bytes[0 .. tmpname_len + 3 :0];
-                                switch (bun.sys.renameat(
-                                    .fromStdDir(cache_dir),
-                                    folder_name,
-                                    .fromStdDir(tmpdir),
-                                    tempdest,
-                                )) {
-                                    .err => {},
-                                    .result => {
-                                        tmpdir.deleteTree(tempdest) catch {};
-                                    },
-                                }
-                                tmpname_bytes[tmpname_len] = 0;
-                                did_retry = true;
-                                continue;
-                            },
-                            else => {},
-                        }
+                            // The install cache is write-once. If another process already created this
+                            // directory, prefer the existing entry instead of deleting and replacing it.
+                            // Deleting it creates a race where another installer has already resolved the
+                            // version symlink but then observes ENOENT while opening the cache dir.
+                            var existing_dir = bun.openDirNoRenamingOrDeletingWindows(.fromStdDir(cache_dir), folder_name) catch |open_err| {
+                                log.addErrorFmt(
+                                    null,
+                                    logger.Loc.Empty,
+                                    bun.default_allocator,
+                                    "moving \"{s}\" to cache dir failed\n{f}\n  From: {s}\n    To: {s}\nfailed to reuse existing cache dir: {s}",
+                                    .{ name, err, tmpname, folder_name, @errorName(open_err) },
+                                ) catch unreachable;
+                                return error.InstallFailed;
+                            };
+                            existing_dir.close();
+                            tmpdir.deleteTree(tmpname) catch {};
+                            break;
+                        },
+                        else => {},
                     }
+
                     dir_to_move.close();
                     log.addErrorFmt(
                         null,

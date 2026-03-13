@@ -1,6 +1,6 @@
 // https://github.com/oven-sh/bun/issues/28024
 // Segfault in jsHashProtoFuncUpdate: missing null checks for invalid `this` and detached buffers
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 
 function getNativeHandle(hash: any) {

@@ -483,6 +483,25 @@ pub const Bunfig = struct {
                             },
                         }
                     }
+
+                    if (test_.get("testPathIgnorePatterns")) |expr| {
+                        if (try expr.asStringCloned(bun.default_allocator)) |pattern| {
+                            try this.ctx.test_options.ignore_patterns.append(pattern);
+                        } else if (expr.asArray()) |arr| {
+                            try this.ctx.test_options.ignore_patterns.ensureUnusedCapacity(arr.array.items.len);
+                            for (arr.array.items.slice()) |item| {
+                                if (try item.asStringCloned(bun.default_allocator)) |pattern| {
+                                    this.ctx.test_options.ignore_patterns.appendAssumeCapacity(pattern);
+                                } else {
+                                    try this.addError(item.loc, "testPathIgnorePatterns array must contain only strings");
+                                    return;
+                                }
+                            }
+                        } else {
+                            try this.addError(expr.loc, "testPathIgnorePatterns must be a string or array of strings");
+                            return;
+                        }
+                    }
                 }
             }
 

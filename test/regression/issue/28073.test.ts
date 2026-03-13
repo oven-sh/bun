@@ -1,6 +1,6 @@
 import { file } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunExe, bunEnv, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
 describe("issue #28073 - bun update preserves catalog references", () => {

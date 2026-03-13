@@ -359,7 +359,10 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
                         // it to avoid an ENOENT window that races with concurrent
                         // installs. If corrupt/incomplete, fall back to the
                         // rename-aside-and-retry approach.
+                        // GitHub dependencies may legitimately lack package.json,
+                        // so skip the probe for those resolutions.
                         const cache_valid = blk: {
+                            if (this.resolution.tag == .github) break :blk true;
                             var check_dir = cache_dir.openDir(folder_name, .{}) catch break :blk false;
                             defer check_dir.close();
                             check_dir.access("package.json", .{}) catch break :blk false;

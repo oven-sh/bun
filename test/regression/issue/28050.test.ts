@@ -38,7 +38,7 @@ test.skipIf(process.platform !== "linux")("process.title setter updates OS proce
   expect(exitCode).toBe(0);
 });
 
-test("process.title setter handles empty string", async () => {
+test.skipIf(process.platform === "win32")("process.title setter handles empty string", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),

@@ -19,7 +19,7 @@ export const DEBUG_CONFIGURATION: vscode.DebugConfiguration = {
   request: "launch",
   name: "Debug File",
   program: "${file}",
-  cwd: "${workspaceFolder}",
+  cwd: "${fileWorkspaceFolder}",
   stopOnEntry: false,
   watchMode: false,
 };
@@ -30,7 +30,7 @@ export const RUN_CONFIGURATION: vscode.DebugConfiguration = {
   request: "launch",
   name: "Run File",
   program: "${file}",
-  cwd: "${workspaceFolder}",
+  cwd: "${fileWorkspaceFolder}",
   noDebug: true,
   watchMode: false,
 };

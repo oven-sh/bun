@@ -296,6 +296,21 @@ pub fn editUpdateNoArgs(
                                         if (!manager.options.do.update_to_latest and npm_version.version.isExact()) break :updated;
                                     }
 
+                                    // For catalog dependencies, update the catalog section in
+                                    // package.json and preserve the "catalog:" reference.
+                                    if (strings.hasPrefixComptime(entry.value.original_version_literal, "catalog:")) {
+                                        try updateCatalogVersion(
+                                            current_package_json,
+                                            allocator,
+                                            dep_name,
+                                            entry.value.original_version_literal["catalog:".len..],
+                                            resolution.value.npm.version,
+                                            string_buf,
+                                            options.exact_versions,
+                                        );
+                                        break :updated;
+                                    }
+
                                     const new_version = new_version: {
                                         const version_fmt = resolution.value.npm.version.fmt(string_buf);
                                         if (options.exact_versions) {
@@ -772,6 +787,73 @@ pub fn edit(
                 else => try allocator.dupe(u8, request.version.literal.slice(request.version_buf)),
             };
         }
+    }
+}
+
+/// Updates a version entry in the "catalog" or "catalogs" section of a package.json.
+/// Used by `bun update` to update catalog versions while preserving "catalog:" references
+/// in dependency entries.
+fn updateCatalogVersion(
+    package_json: *Expr,
+    allocator: std.mem.Allocator,
+    dep_name: string,
+    catalog_group: string,
+    resolved_npm_version: Semver.Version,
+    buf: string,
+    exact_versions: bool,
+) !void {
+    const catalog_obj: *E.Object = if (catalog_group.len == 0) blk: {
+        // Default catalog: package.json#catalog
+        const prop = package_json.asProperty("catalog") orelse return;
+        if (prop.expr.data != .e_object) return;
+        break :blk prop.expr.data.e_object;
+    } else blk: {
+        // Named catalog: package.json#catalogs.{group}
+        const catalogs_prop = package_json.asProperty("catalogs") orelse return;
+        if (catalogs_prop.expr.data != .e_object) return;
+        for (catalogs_prop.expr.data.e_object.properties.slice()) |group_prop| {
+            const gk = group_prop.key orelse continue;
+            if (gk.data != .e_string) continue;
+            const gk_str = gk.asString(allocator) orelse continue;
+            if (!strings.eqlLong(gk_str, catalog_group, true)) continue;
+            const gv = group_prop.value orelse continue;
+            if (gv.data != .e_object) return;
+            break :blk gv.data.e_object;
+        }
+        return;
+    };
+
+    for (catalog_obj.properties.slice()) |*entry| {
+        const ek = entry.key orelse continue;
+        if (ek.data != .e_string) continue;
+        const ek_str = ek.asString(allocator) orelse continue;
+        if (!strings.eqlLong(ek_str, dep_name, true)) continue;
+
+        // Found the catalog entry — compute the new version using the
+        // catalog's current version literal to determine pinning.
+        const version_fmt = resolved_npm_version.fmt(buf);
+
+        if (exact_versions) {
+            entry.value = Expr.allocate(allocator, E.String, .{
+                .data = try std.fmt.allocPrint(allocator, "{f}", .{version_fmt}),
+            }, logger.Loc.Empty);
+            return;
+        }
+
+        const current_literal: ?string = if (entry.value) |v|
+            (if (v.data == .e_string) v.asString(allocator) else null)
+        else
+            null;
+
+        const pinned = Semver.Version.whichVersionIsPinned(current_literal orelse "^");
+        entry.value = Expr.allocate(allocator, E.String, .{
+            .data = try switch (pinned) {
+                .patch => std.fmt.allocPrint(allocator, "{f}", .{version_fmt}),
+                .minor => std.fmt.allocPrint(allocator, "~{f}", .{version_fmt}),
+                .major => std.fmt.allocPrint(allocator, "^{f}", .{version_fmt}),
+            },
+        }, logger.Loc.Empty);
+        return;
     }
 }
 

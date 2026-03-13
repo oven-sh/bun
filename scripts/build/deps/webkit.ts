@@ -57,7 +57,12 @@ function prebuiltSuffix(cfg: Config): string {
   // Linux amd64 (glibc + musl) and Windows amd64. No baseline variant for
   // arm64 or macOS. Suffix order matches the release asset names:
   // bun-webkit-linux-amd64-musl-baseline-lto.tar.gz
-  if (cfg.baseline && cfg.x64) s += "-baseline";
+  //
+  // Preview builds from WebKit PRs may not include baseline artifacts (the
+  // PR branch may predate the baseline CI matrix). Skip the baseline suffix
+  // for preview builds — the non-baseline artifact has identical headers/APIs,
+  // only the compiled code differs in -march flags.
+  if (cfg.baseline && cfg.x64 && !cfg.webkitVersion.includes("-preview-pr-")) s += "-baseline";
   if (cfg.debug) s += "-debug";
   else if (cfg.lto) s += "-lto";
   if (cfg.asan) s += "-asan";

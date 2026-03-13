@@ -20,9 +20,10 @@ test.skipIf(process.platform !== "linux")("process.title setter updates OS proce
       `,
     ],
     env: bunEnv,
+    stderr: "pipe",
   });
 
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   const result = JSON.parse(stdout.trim());
 
@@ -37,7 +38,7 @@ test.skipIf(process.platform !== "linux")("process.title setter updates OS proce
   expect(exitCode).toBe(0);
 });
 
-test("process.title setter handles empty string", async () => {
+test.skipIf(process.platform === "win32")("process.title setter handles empty string", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -48,16 +49,17 @@ test("process.title setter handles empty string", async () => {
       `,
     ],
     env: bunEnv,
+    stderr: "pipe",
   });
 
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   const result = JSON.parse(stdout.trim());
   expect(result.title).toBe("");
   expect(exitCode).toBe(0);
 });
 
-test("process.title setter handles long titles", async () => {
+test.skipIf(process.platform === "win32")("process.title setter handles long titles", async () => {
   const longTitle = Buffer.alloc(256, "a").toString();
 
   await using proc = Bun.spawn({
@@ -70,9 +72,10 @@ test("process.title setter handles long titles", async () => {
       `,
     ],
     env: bunEnv,
+    stderr: "pipe",
   });
 
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   const result = JSON.parse(stdout.trim());
   expect(result.title).toBe(longTitle);

@@ -51,8 +51,9 @@ describe("issue #28073 - bun update preserves catalog references", () => {
     // The catalog: reference in devDependencies must be preserved
     expect(rootPkg.devDependencies["is-odd"]).toBe("catalog:");
 
-    // The catalog section should be updated with the resolved version
-    expect(rootPkg.catalog["is-odd"]).toMatch(/^\^3\./);
+    // The catalog section should be updated with a valid semver pin, not the seeded value
+    expect(rootPkg.catalog["is-odd"]).not.toBe("^3.0.0");
+    expect(rootPkg.catalog["is-odd"]).toMatch(/^[~^]?\d+\./);
 
     // Sub-workspace catalog: references must also be preserved
     const appPkg = await file(join(String(dir), "packages", "app", "package.json")).json();
@@ -106,8 +107,9 @@ describe("issue #28073 - bun update preserves catalog references", () => {
     // The catalog:tools reference must be preserved
     expect(rootPkg.devDependencies["is-odd"]).toBe("catalog:tools");
 
-    // The named catalog section should be updated
-    expect(rootPkg.catalogs.tools["is-odd"]).toMatch(/^\^3\./);
+    // The named catalog section should be updated with a valid semver pin, not the seeded value
+    expect(rootPkg.catalogs.tools["is-odd"]).not.toBe("^3.0.0");
+    expect(rootPkg.catalogs.tools["is-odd"]).toMatch(/^[~^]?\d+\./);
 
     // Sub-workspace catalog: references must also be preserved
     const appPkg = await file(join(String(dir), "packages", "app", "package.json")).json();
@@ -159,8 +161,9 @@ describe("issue #28073 - bun update preserves catalog references", () => {
     // catalog: references must be preserved
     expect(rootPkg.devDependencies["is-odd"]).toBe("catalog:");
 
-    // The catalog section should be updated
-    expect(rootPkg.catalog["is-odd"]).toMatch(/^\^3\./);
+    // The catalog section should be updated with a valid semver pin, not the seeded value
+    expect(rootPkg.catalog["is-odd"]).not.toBe("^3.0.0");
+    expect(rootPkg.catalog["is-odd"]).toMatch(/^[~^]?\d+\./);
 
     // Sub-workspace must preserve catalog: references
     const appPkg = await file(join(String(dir), "packages", "app", "package.json")).json();

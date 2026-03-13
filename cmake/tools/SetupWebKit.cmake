@@ -9,9 +9,6 @@ if(NOT WEBKIT_VERSION)
   set(WEBKIT_VERSION autobuild-preview-pr-168-b58d7086)
 endif()
 
-# Use preview build URL for PR branches until merged to main
-set(WEBKIT_PREVIEW_PR 161)
-
 string(SUBSTRING ${WEBKIT_VERSION} 0 16 WEBKIT_VERSION_PREFIX)
 string(SUBSTRING ${WEBKIT_VERSION} 0 8 WEBKIT_VERSION_SHORT)
 
@@ -259,7 +256,25 @@ file(
   STATUS WEBKIT_DOWNLOAD_STATUS
 )
 if(NOT "${WEBKIT_DOWNLOAD_STATUS}" MATCHES "^0;")
-  message(FATAL_ERROR "Failed to download WebKit: ${WEBKIT_DOWNLOAD_STATUS}")
+  if(ENABLE_BASELINE AND WEBKIT_ARCH STREQUAL "amd64")
+    # Baseline WebKit artifact not available (e.g. preview builds from WebKit PRs
+    # that predate the baseline CI matrix). Fall back to the non-baseline artifact
+    # which has identical headers/APIs — only the compiled code differs in -march.
+    message(WARNING "Baseline WebKit not available, falling back to non-baseline: ${WEBKIT_DOWNLOAD_STATUS}")
+    string(REPLACE "-baseline" "" WEBKIT_FALLBACK_NAME "${WEBKIT_NAME}")
+    set(WEBKIT_FALLBACK_FILENAME ${WEBKIT_FALLBACK_NAME}.tar.gz)
+    set(WEBKIT_FALLBACK_URL https://github.com/oven-sh/WebKit/releases/download/${WEBKIT_TAG}/${WEBKIT_FALLBACK_FILENAME})
+    set(WEBKIT_FILENAME ${WEBKIT_FALLBACK_FILENAME})
+    file(
+      DOWNLOAD ${WEBKIT_FALLBACK_URL} ${CACHE_PATH}/${WEBKIT_FILENAME} SHOW_PROGRESS
+      STATUS WEBKIT_DOWNLOAD_STATUS
+    )
+    if(NOT "${WEBKIT_DOWNLOAD_STATUS}" MATCHES "^0;")
+      message(FATAL_ERROR "Failed to download WebKit (baseline and non-baseline): ${WEBKIT_DOWNLOAD_STATUS}")
+    endif()
+  else()
+    message(FATAL_ERROR "Failed to download WebKit: ${WEBKIT_DOWNLOAD_STATUS}")
+  endif()
 endif()
 
 file(ARCHIVE_EXTRACT INPUT ${CACHE_PATH}/${WEBKIT_FILENAME} DESTINATION ${CACHE_PATH} TOUCH)

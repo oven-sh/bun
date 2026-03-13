@@ -237,6 +237,10 @@ describe("fs.watchFile", () => {
       Bun.gc(true);
 
       console.log("OK");
+      // Watchers hold a strong self-ref (JSRef) and poll_ref while active, and
+      // we can't close() them (we nulled _handle). Exit explicitly — the test
+      // only needs to verify we survived the GC stress above without segfault.
+      process.exit(0);
     `;
 
     await using proc = Bun.spawn({

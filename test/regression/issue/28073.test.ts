@@ -11,7 +11,10 @@ async function runBun(cwd: string, ...args: string[]) {
     stdout: "pipe",
     stderr: "pipe",
   });
-  expect(await proc.exited).toBe(0);
+  const [stderr, exitCode] = await Promise.all([new Response(proc.stderr).text(), proc.exited]);
+  if (exitCode !== 0) {
+    throw new Error(`bun ${args.join(" ")} exited with code ${exitCode}:\n${stderr}`);
+  }
 }
 
 describe("issue #28073 - bun update preserves catalog references", () => {

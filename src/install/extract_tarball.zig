@@ -324,7 +324,6 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
 
     // Now that we've extracted the archive, we rename.
     if (comptime Environment.isWindows) {
-        var did_retry = false;
         var path2_buf: bun.WPathBuffer = undefined;
         const path2 = bun.strings.toWPathNormalized(&path2_buf, folder_name);
         if (create_subdir) {
@@ -335,77 +334,47 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
 
         const path_to_use = path2;
 
-        while (true) {
-            const dir_to_move = bun.sys.openDirAtWindowsA(.fromStdDir(this.temp_dir), tmpname, .{
-                .can_rename_or_delete = true,
-                .iterable = false,
-                .read_only = true,
-            }).unwrap() catch |err| {
-                // i guess we just
-                log.addErrorFmt(
-                    null,
-                    logger.Loc.Empty,
-                    bun.default_allocator,
-                    "moving \"{s}\" to cache dir failed\n{}\n From: {s}\n   To: {s}",
-                    .{ name, err, tmpname, folder_name },
-                ) catch unreachable;
-                return error.InstallFailed;
-            };
+        const dir_to_move = bun.sys.openDirAtWindowsA(.fromStdDir(this.temp_dir), tmpname, .{
+            .can_rename_or_delete = true,
+            .iterable = false,
+            .read_only = true,
+        }).unwrap() catch |err| {
+            log.addErrorFmt(
+                null,
+                logger.Loc.Empty,
+                bun.default_allocator,
+                "moving \"{s}\" to cache dir failed\n{}\n From: {s}\n   To: {s}",
+                .{ name, err, tmpname, folder_name },
+            ) catch unreachable;
+            return error.InstallFailed;
+        };
 
-            switch (bun.windows.moveOpenedFileAt(dir_to_move, .fromStdDir(cache_dir), path_to_use, true)) {
-                .err => |err| {
-                    if (!did_retry) {
-                        switch (err.getErrno()) {
-                            .NOTEMPTY, .PERM, .BUSY, .EXIST => {
-
-                                // before we attempt to delete the destination, let's close the source dir.
-                                dir_to_move.close();
-
-                                // We tried to move the folder over
-                                // but it didn't work!
-                                // so instead of just simply deleting the folder
-                                // we rename it back into the temp dir
-                                // and then delete that temp dir
-                                // The goal is to make it more difficult for an application to reach this folder
-                                var tmpname_bytes = std.mem.asBytes(&tmpname_buf);
-                                const tmpname_len = tmpname.len;
-
-                                tmpname_bytes[tmpname_len..][0..4].* = .{ 't', 'm', 'p', 0 };
-                                const tempdest = tmpname_bytes[0 .. tmpname_len + 3 :0];
-                                switch (bun.sys.renameat(
-                                    .fromStdDir(cache_dir),
-                                    folder_name,
-                                    .fromStdDir(tmpdir),
-                                    tempdest,
-                                )) {
-                                    .err => {},
-                                    .result => {
-                                        tmpdir.deleteTree(tempdest) catch {};
-                                    },
-                                }
-                                tmpname_bytes[tmpname_len] = 0;
-                                did_retry = true;
-                                continue;
-                            },
-                            else => {},
-                        }
-                    }
-                    dir_to_move.close();
-                    log.addErrorFmt(
-                        null,
-                        logger.Loc.Empty,
-                        bun.default_allocator,
-                        "moving \"{s}\" to cache dir failed\n{f}\n  From: {s}\n    To: {s}",
-                        .{ name, err, tmpname, folder_name },
-                    ) catch unreachable;
-                    return error.InstallFailed;
-                },
-                .result => {
-                    dir_to_move.close();
-                },
-            }
-
-            break;
+        switch (bun.windows.moveOpenedFileAt(dir_to_move, .fromStdDir(cache_dir), path_to_use, true)) {
+            .err => |err| {
+                dir_to_move.close();
+                switch (err.getErrno()) {
+                    .NOTEMPTY, .PERM, .BUSY, .EXIST => {
+                        // The cache destination already exists, most likely placed
+                        // by a concurrent install of the same package@version.
+                        // Accept the existing entry instead of deleting and retrying,
+                        // which would cause ENOENT for other processes/threads that
+                        // have already resolved this cache path.
+                    },
+                    else => {
+                        log.addErrorFmt(
+                            null,
+                            logger.Loc.Empty,
+                            bun.default_allocator,
+                            "moving \"{s}\" to cache dir failed\n{f}\n  From: {s}\n    To: {s}",
+                            .{ name, err, tmpname, folder_name },
+                        ) catch unreachable;
+                        return error.InstallFailed;
+                    },
+                }
+            },
+            .result => {
+                dir_to_move.close();
+            },
         }
     } else {
         // Attempt to gracefully handle duplicate concurrent `bun install` calls
@@ -443,15 +412,29 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
 
     // We return a resolved absolute absolute file path to the cache dir.
     // To get that directory, we open the directory again.
-    var final_dir = bun.openDir(cache_dir, folder_name) catch |err| {
-        log.addErrorFmt(
-            null,
-            logger.Loc.Empty,
-            bun.default_allocator,
-            "failed to verify cache dir for \"{s}\": {s}",
-            .{ name, @errorName(err) },
-        ) catch unreachable;
-        return error.InstallFailed;
+    var final_dir = open_cache_dir: {
+        // On Windows, a concurrent install may be moving a directory into this
+        // location at the same moment. Retry a few times to handle the brief
+        // window where the target is not yet visible after an atomic move.
+        if (comptime Environment.isWindows) {
+            var open_retries: u8 = 0;
+            while (open_retries < 3) : (open_retries += 1) {
+                break :open_cache_dir bun.openDir(cache_dir, folder_name) catch {
+                    std.time.sleep(100 * std.time.ns_per_ms);
+                    continue;
+                };
+            }
+        }
+        break :open_cache_dir bun.openDir(cache_dir, folder_name) catch |err| {
+            log.addErrorFmt(
+                null,
+                logger.Loc.Empty,
+                bun.default_allocator,
+                "failed to verify cache dir for \"{s}\": {s}",
+                .{ name, @errorName(err) },
+            ) catch unreachable;
+            return error.InstallFailed;
+        };
     };
     defer final_dir.close();
     // and get the fd path

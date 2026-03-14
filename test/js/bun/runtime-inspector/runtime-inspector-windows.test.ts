@@ -1,10 +1,10 @@
 import { spawn } from "bun";
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { join } from "path";
 
 // Inspector tests spawn subprocesses and wait for inspector activation — 5s default is too short.
 setDefaultTimeout(60_000);
-import { join } from "path";
 
 // Timeout for waiting on stream reader loops (30s matches runtime-inspector.test.ts)
 const STREAM_TIMEOUT_MS = 30_000;

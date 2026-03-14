@@ -709,9 +709,9 @@ fn attemptSecurityScanWithRetry(manager: *PackageManager, security_scanner: []co
         var new_code = std.array_list.Managed(u8).init(manager.allocator);
         try new_code.appendSlice(temp_source[0..index]);
         try new_code.appendSlice("JSON.parse(require(\"fs\").readFileSync(");
-        // Write the path as a JSON string to properly escape backslashes etc.
+        // Format the path as a JSON string to properly escape backslashes etc.
         const path_slice: []const u8 = std.mem.sliceTo(json_tmp_path, 0);
-        try std.json.stringify(path_slice, .{}, new_code.writer());
+        try new_code.writer().print("{f}", .{bun.fmt.formatJSONStringUTF8(path_slice, .{})});
         try new_code.appendSlice(",\"utf8\"))");
         code.deinit();
         code = new_code;

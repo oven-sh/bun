@@ -21,6 +21,7 @@ describe.if(isWindows)("bun completions on Git Bash", () => {
     expect(stderrText).not.toContain("8939");
     // Should either output bash completions (exit 0) or fail finding a dir (exit 1)
     // but NOT fail with the PowerShell-specific message
+    expect([0, 1]).toContain(exitCode);
     if (exitCode !== 0) {
       expect(stderrText).not.toContain("PowerShell");
     }

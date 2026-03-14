@@ -1,3 +1,5 @@
+import { file } from "bun";
+import { basename, join } from "path";
 import { bunEnv, runBunInstall } from "harness";
 import {
   dummyAfterAll,
@@ -680,4 +682,76 @@ describe("Package Resolution", () => {
       expect(out).toContain("Latest tag:");
     },
   });
+});
+
+describe("Large payload via IPC pipe", () => {
+  // Generate many package names so the JSON payload to the scanner exceeds
+  // the OS maximum argument length (~128KB on Linux). Each package entry in
+  // the JSON is ~120 bytes, so 1500 packages ≈ 180KB which is enough.
+  const NUM_PACKAGES = 1500;
+  const packageNames = Array.from({ length: NUM_PACKAGES }, (_, i) => `test-pkg-${i}`);
+
+  it(
+    "handles JSON data larger than max arg length",
+    async () => {
+      // Custom registry handler that serves bar-0.0.2.tgz for any package name
+      const barTgzPath = join(import.meta.dir, "bar-0.0.2.tgz");
+      setHandler(async (request: Request) => {
+        const url = request.url.replaceAll("%2f", "/");
+        if (url.endsWith(".tgz")) {
+          return new Response(file(barTgzPath));
+        }
+        // Extract package name from URL
+        const name = url.slice(url.indexOf("/", root_url.length) + 1);
+        return new Response(
+          JSON.stringify({
+            name,
+            versions: {
+              "0.0.2": {
+                name,
+                version: "0.0.2",
+                dist: { tarball: `${url}-0.0.2.tgz` },
+              },
+            },
+            "dist-tags": { latest: "0.0.2" },
+          }),
+        );
+      });
+
+      await write(
+        "./scanner.ts",
+        `export const scanner = {
+  version: "1",
+  scan: async ({ packages }) => {
+    const jsonSize = JSON.stringify(packages).length;
+    console.log("Received " + packages.length + " packages (" + jsonSize + " bytes)");
+    if (packages.length < ${NUM_PACKAGES}) {
+      throw new Error("Expected at least ${NUM_PACKAGES} packages, got " + packages.length);
+    }
+    return [];
+  },
+};`,
+      );
+
+      const bunfig = await read("./bunfig.toml").text();
+      await write("./bunfig.toml", `${bunfig}\n[install.security]\nscanner = "./scanner.ts"`);
+
+      await write("package.json", {
+        name: "my-app",
+        version: "1.0.0",
+        dependencies: Object.fromEntries(packageNames.map(name => [name, "0.0.2"])),
+      });
+
+      const { out, err } = await runBunInstall(bunEnv, package_dir, {
+        allowErrors: true,
+        allowWarnings: false,
+        savesLockfile: false,
+        expectedExitCode: 0,
+      });
+
+      expect(out).toContain("Received");
+      expect(out).toContain("packages");
+    },
+    { timeout: 60_000 },
+  );
 });

@@ -842,17 +842,23 @@ describe.skipIf(!hasLaunchctl)("cron removal (macOS)", () => {
 });
 
 describe.skipIf(!hasLaunchctl)("cron end-to-end (macOS)", () => {
-  test("force-triggered job produces output", async () => {
+  test("force-triggered job receives correct controller properties", async () => {
     using dir = tempDir("bun-cron-test", {
       "e2e-job.ts": `
         export default {
           scheduled(controller: any) {
-            console.log("E2E_FIRED:" + controller.type);
+            console.log(JSON.stringify({
+              type: controller.type,
+              cron: controller.cron,
+              scheduledTime: controller.scheduledTime,
+              keys: Object.keys(controller).sort(),
+            }));
           }
         };
       `,
     });
     try {
+      const before = Date.now();
       await Bun.cron(`${dir}/e2e-job.ts`, "0 0 * * *", "test-mac-e2e");
 
       // Force-trigger via launchctl kickstart
@@ -863,7 +869,7 @@ describe.skipIf(!hasLaunchctl)("cron end-to-end (macOS)", () => {
       });
       expect(kick.exitCode).toBe(0);
 
-      // Wait for the job to execute and write output (poll instead of fixed sleep)
+      // Poll for log output
       const logPath = "/tmp/bun.cron.test-mac-e2e.stdout.log";
       let logContent = "";
       for (let attempt = 0; attempt < 20; attempt++) {
@@ -871,9 +877,23 @@ describe.skipIf(!hasLaunchctl)("cron end-to-end (macOS)", () => {
         logContent = await Bun.file(logPath)
           .text()
           .catch(() => "");
-        if (logContent.includes("E2E_FIRED")) break;
+        if (logContent.includes("scheduled")) break;
       }
-      expect(logContent).toContain("E2E_FIRED:scheduled");
+      const after = Date.now();
+
+      // Find the JSON line in the output (may have debug noise)
+      const jsonLine = logContent.split("\n").find(l => l.startsWith("{"));
+      expect(jsonLine).toBeDefined();
+      const output = JSON.parse(jsonLine!);
+
+      // Verify all three controller properties
+      expect(output.type).toBe("scheduled");
+      expect(output.cron).toBe("0 0 * * *");
+      expect(typeof output.scheduledTime).toBe("number");
+      expect(output.scheduledTime).toBeGreaterThanOrEqual(before - 5000);
+      expect(output.scheduledTime).toBeLessThanOrEqual(after + 5000);
+      // Verify exactly these three keys, no extras
+      expect(output.keys).toEqual(["cron", "scheduledTime", "type"]);
     } finally {
       removeLaunchdJob("test-mac-e2e");
       try {
@@ -899,13 +919,15 @@ describe("cron execution mode", () => {
             console.log(JSON.stringify({
               type: controller.type,
               cron: controller.cron,
-              hasScheduledTime: typeof controller.scheduledTime === "number",
+              scheduledTime: controller.scheduledTime,
+              keys: Object.keys(controller).sort(),
             }));
           }
         };
       `,
     });
 
+    const before = Date.now();
     await using proc = Bun.spawn({
       cmd: [bunExe(), "run", "--cron-title=my-job", "--cron-period=30 2 * * 1", `${dir}/scheduled.ts`],
       env: bunEnv,
@@ -914,13 +936,18 @@ describe("cron execution mode", () => {
     });
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const after = Date.now();
 
     const output = JSON.parse(stdout.trim());
-    expect(output).toEqual({
-      type: "scheduled",
-      cron: "30 2 * * 1",
-      hasScheduledTime: true,
-    });
+    // Verify exact property names and types
+    expect(output.type).toBe("scheduled");
+    expect(output.cron).toBe("30 2 * * 1");
+    expect(typeof output.scheduledTime).toBe("number");
+    // scheduledTime should be close to now (within 5 seconds)
+    expect(output.scheduledTime).toBeGreaterThanOrEqual(before - 1000);
+    expect(output.scheduledTime).toBeLessThanOrEqual(after + 1000);
+    // Verify the controller has exactly these three keys
+    expect(output.keys).toEqual(["cron", "scheduledTime", "type"]);
     expect(exitCode).toBe(0);
   });
 

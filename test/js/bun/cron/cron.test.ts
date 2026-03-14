@@ -311,7 +311,7 @@ function deleteSchtask(title: string) {
 }
 
 describe.skipIf(!hasSchtasks)("cron registration (Windows)", () => {
-  test("registers a scheduled task via schtasks", async () => {
+  test("registers a scheduled task with correct task name", async () => {
     using dir = tempDir("bun-cron-test", {
       "job.ts": `export default { scheduled() {} };`,
     });
@@ -322,6 +322,36 @@ describe.skipIf(!hasSchtasks)("cron registration (Windows)", () => {
       expect(info).toContain("bun-cron-test-win-reg");
     } finally {
       deleteSchtask("test-win-reg");
+    }
+  });
+
+  test("task contains the bun command with cron flags", async () => {
+    using dir = tempDir("bun-cron-test", {
+      "job.ts": `export default { scheduled() {} };`,
+    });
+    try {
+      await Bun.cron(`${dir}/job.ts`, "30 2 * * 1", "test-win-cmd");
+      const info = querySchtask("test-win-cmd");
+      expect(info).not.toBeNull();
+      expect(info).toContain("--cron-title=test-win-cmd");
+      expect(info).toContain("--cron-period");
+    } finally {
+      deleteSchtask("test-win-cmd");
+    }
+  });
+
+  test("every-minute schedule uses MINUTE schedule type", async () => {
+    using dir = tempDir("bun-cron-test", {
+      "job.ts": `export default { scheduled() {} };`,
+    });
+    try {
+      await Bun.cron(`${dir}/job.ts`, "*/5 * * * *", "test-win-sched");
+      const info = querySchtask("test-win-sched");
+      expect(info).not.toBeNull();
+      // schtasks /query LIST format shows Schedule Type
+      expect(info).toContain("MINUTE");
+    } finally {
+      deleteSchtask("test-win-sched");
     }
   });
 
@@ -350,6 +380,22 @@ describe.skipIf(!hasSchtasks)("cron registration (Windows)", () => {
       deleteSchtask("test-win-replace");
     }
   });
+
+  test("registers multiple different tasks", async () => {
+    using dir = tempDir("bun-cron-test", {
+      "a.ts": `export default { scheduled() {} };`,
+      "b.ts": `export default { scheduled() {} };`,
+    });
+    try {
+      await Bun.cron(`${dir}/a.ts`, "0 * * * *", "test-win-multi-a");
+      await Bun.cron(`${dir}/b.ts`, "30 12 * * 5", "test-win-multi-b");
+      expect(querySchtask("test-win-multi-a")).not.toBeNull();
+      expect(querySchtask("test-win-multi-b")).not.toBeNull();
+    } finally {
+      deleteSchtask("test-win-multi-a");
+      deleteSchtask("test-win-multi-b");
+    }
+  });
 });
 
 describe.skipIf(!hasSchtasks)("cron removal (Windows)", () => {
@@ -367,6 +413,40 @@ describe.skipIf(!hasSchtasks)("cron removal (Windows)", () => {
   test("removing non-existent task resolves without error", async () => {
     const result = await Bun.cron.remove("test-win-nonexistent");
     expect(result).toBeUndefined();
+  });
+
+  test("removes only the targeted task", async () => {
+    using dir = tempDir("bun-cron-test", {
+      "a.ts": `export default { scheduled() {} };`,
+      "b.ts": `export default { scheduled() {} };`,
+    });
+    try {
+      await Bun.cron(`${dir}/a.ts`, "0 * * * *", "test-win-rm-keep");
+      await Bun.cron(`${dir}/b.ts`, "30 2 * * 1", "test-win-rm-del");
+
+      await Bun.cron.remove("test-win-rm-del");
+      expect(querySchtask("test-win-rm-keep")).not.toBeNull();
+      expect(querySchtask("test-win-rm-del")).toBeNull();
+    } finally {
+      deleteSchtask("test-win-rm-keep");
+      deleteSchtask("test-win-rm-del");
+    }
+  });
+
+  test("register after remove works", async () => {
+    using dir = tempDir("bun-cron-test", {
+      "job.ts": `export default { scheduled() {} };`,
+    });
+    try {
+      await Bun.cron(`${dir}/job.ts`, "0 * * * *", "test-win-reregister");
+      await Bun.cron.remove("test-win-reregister");
+      expect(querySchtask("test-win-reregister")).toBeNull();
+
+      await Bun.cron(`${dir}/job.ts`, "30 6 * * *", "test-win-reregister");
+      expect(querySchtask("test-win-reregister")).not.toBeNull();
+    } finally {
+      deleteSchtask("test-win-reregister");
+    }
   });
 });
 

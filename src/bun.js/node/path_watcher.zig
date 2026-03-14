@@ -781,12 +781,14 @@ pub const PathWatcherManager = struct {
         }
 
         if (main_watcher_exited) {
-            // Always let threadMain handle its own Watcher cleanup.
-            // We cannot safely read watchloop_handle here — it is written
-            // by the watcher thread without synchronization, making the
-            // concurrent read UB. Clear skip_thread_destroy so threadMain
-            // proceeds past the early-return check and destroys the Watcher.
-            this.main_watcher.skip_thread_destroy = false;
+            // Keep skip_thread_destroy true so threadMain early-returns without
+            // destroying the Watcher. We must NOT clear it to false here — a
+            // racing unregisterWatcher may still call main_watcher.remove()
+            // after releasing its mutex but before calling deinit(). Clearing
+            // skip_thread_destroy would let threadMain destroy the Watcher
+            // while those deferred remove() calls are pending (UAF).
+            // Instead, we destroy the Watcher ourselves at the end of deinit
+            // after all uses of main_watcher are complete.
         } else {
             // Normal shutdown: signal the watcher thread to stop.
             // deinit(false) sets running=false under main_watcher.mutex.
@@ -824,6 +826,15 @@ pub const PathWatcherManager = struct {
 
         // Release our own mutex before destroying ourselves.
         this.mutex.unlock();
+
+        if (main_watcher_exited) {
+            // The watcher thread has exited (via onError) and skip_thread_destroy
+            // is still true, so threadMain returned without cleaning up the Watcher.
+            // All deferred operations (hash removals, etc.) that reference
+            // main_watcher are now complete. Safe to destroy.
+            this.main_watcher.destroyFromOwner();
+        }
+
         bun.default_allocator.destroy(this);
     }
 };

@@ -704,15 +704,20 @@ pub const PathWatcherManager = struct {
             return;
         }
 
-        if (this.hasPendingTasks()) {
+        {
             this.mutex.lock();
-            defer this.mutex.unlock();
-            // deinit when all tasks are done
-            this.deinit_on_last_task = true;
-            return;
+            if (this.pending_tasks > 0) {
+                // deinit when all tasks are done
+                this.deinit_on_last_task = true;
+                this.mutex.unlock();
+                return;
+            }
+            this.mutex.unlock();
         }
 
-        this.main_watcher.deinit(false);
+        if (!this.main_watcher.skip_thread_cleanup) {
+            this.main_watcher.deinit(false);
+        }
 
         if (this.watcher_count > 0) {
             while (this.watchers.pop()) |watcher| {
@@ -926,17 +931,13 @@ pub const PathWatcher = struct {
     }
 
     pub fn deinit(this: *PathWatcher) void {
+        if (this.deinit_started.swap(true, .acq_rel)) return;
         this.setClosed();
         if (this.hasPendingDirectories()) {
             // will be freed on last directory
+            this.deinit_started.store(false, .release);
             return;
         }
-
-        // Guard against double-deinit: both the main thread (via detach/close)
-        // and the work pool (via unrefPendingDirectory) can reach this point
-        // when setClosed() and hasPendingDirectories() race (TOCTOU). The
-        // atomic swap ensures only one caller proceeds to destroy.
-        if (this.deinit_started.swap(true, .acq_rel)) return;
 
         if (this.manager) |manager| {
             if (comptime Environment.isMac) {

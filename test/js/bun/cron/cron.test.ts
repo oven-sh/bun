@@ -9,12 +9,33 @@ const hasSchtasks =
   isWindows &&
   (() => {
     try {
-      const r = Bun.spawnSync({
-        cmd: ["schtasks", "/query", "/tn", "bun-cron-probe-test"],
+      // Actually try creating and deleting a task — schtasks /query works
+      // even when /create fails (e.g. CI service accounts that can't
+      // resolve their identity to a Windows SID).
+      const create = Bun.spawnSync({
+        cmd: [
+          "schtasks",
+          "/create",
+          "/tn",
+          "bun-cron-probe",
+          "/tr",
+          "cmd /c echo probe",
+          "/sc",
+          "ONCE",
+          "/st",
+          "00:00",
+          "/f",
+        ],
         stdout: "pipe",
         stderr: "pipe",
       });
-      return r.exitCode === 0 || r.exitCode === 1;
+      if (create.exitCode !== 0) return false;
+      Bun.spawnSync({
+        cmd: ["schtasks", "/delete", "/tn", "bun-cron-probe", "/f"],
+        stdout: "ignore",
+        stderr: "ignore",
+      });
+      return true;
     } catch {
       return false;
     }

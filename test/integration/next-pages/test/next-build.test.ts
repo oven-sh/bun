@@ -197,6 +197,9 @@ test(
       // non-deterministic between bun and node builds
       "server/server-reference-manifest.json",
       "server/server-reference-manifest.js",
+      "build-manifest.json",
+      "server/build-manifest.json",
+      "client-build-manifest.json",
       // lock file created during build
       "lock",
     ];
@@ -207,6 +210,23 @@ test(
 
     console.log("Hashing files...");
     const [bunBuildHash, nodeBuildHash] = await Promise.all([hashAllFiles(bunBuildDir), hashAllFiles(nodeBuildDir)]);
+
+    // Remove non-deterministic file basenames from hash comparison.
+    // hashAllFiles uses file.name (basename) as key, so files at different
+    // paths with the same name collide. These turbopack outputs differ
+    // between bun and node runtimes.
+    const nonDeterministicNames = [
+      "build-manifest.json",
+      "client-build-manifest.json",
+      "pages-manifest.json",
+      "server-reference-manifest.json",
+      "server-reference-manifest.js",
+      "[turbopack]_runtime.js",
+    ];
+    for (const name of nonDeterministicNames) {
+      delete bunBuildHash[name];
+      delete nodeBuildHash[name];
+    }
 
     try {
       expect(bunBuildHash).toEqual(nodeBuildHash);

@@ -3851,6 +3851,11 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDebugProcess, (JSC::JSGlobalObject * gl
     int pid = callFrame->argument(0).toInt32(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
+    if (pid <= 0) {
+        throwVMError(globalObject, scope, "process._debugProcess requires a positive pid"_s);
+        return {};
+    }
+
     // posix we can just send SIGUSR1, on windows we map a file to `bun-debug-handler-<pid>` and send to that
 #if !OS(WINDOWS)
     int result = kill(pid, SIGUSR1);

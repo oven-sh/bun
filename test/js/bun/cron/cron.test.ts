@@ -3,20 +3,7 @@ import { bunEnv, bunExe, isLinux, isMacOS, isWindows, tempDir } from "harness";
 import { existsSync, readFileSync, unlinkSync, watch, writeFileSync } from "node:fs";
 import { basename } from "node:path";
 
-let crontabPath = Bun.which("crontab");
-if (!crontabPath && isLinux) {
-  // CI images may not have crontab installed — try to install it
-  const install = Bun.spawnSync({
-    cmd: [
-      "sh",
-      "-c",
-      "(command -v apt-get && apt-get update -qq && apt-get install -y -qq cron) || (command -v apk && apk add --no-cache busybox-suid) || true",
-    ],
-    stdout: "ignore",
-    stderr: "ignore",
-  });
-  crontabPath = Bun.which("crontab");
-}
+const crontabPath = Bun.which("crontab");
 const hasCrontab = !!crontabPath && isLinux;
 const hasSchtasks = isWindows;
 const hasLaunchctl =

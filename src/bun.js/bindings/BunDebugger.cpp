@@ -191,7 +191,30 @@ public:
         // deadlocks (target is in C++ pause loop, can't reach JS safe point,
         // debugger thread blocks in STW and can't deliver messages).
         if (runtimeInspectorActivated.load()) {
-            VMManager::requestStopAll(VMManager::StopReason::JSDebugger);
+            // If another connection on the same VM is already in the pause loop
+            // (runWhilePaused), skip requestStopAll to avoid deadlock — the target
+            // VM is in C++ code and can't reach a JS safe point, so STW would block
+            // forever. This mirrors the guard in interruptForMessageDelivery().
+            bool anyInPauseLoop = false;
+            {
+                Locker<Lock> locker(inspectorConnectionsLock);
+                if (inspectorConnections) {
+                    for (auto& entry : *inspectorConnections) {
+                        for (auto* connection : entry.value) {
+                            if (connection != this && connection->globalObject
+                                && &connection->globalObject->vm() == &this->globalObject->vm()
+                                && (connection->pauseFlags.load() & kInPauseLoop)) {
+                                anyInPauseLoop = true;
+                                break;
+                            }
+                        }
+                        if (anyInPauseLoop)
+                            break;
+                    }
+                }
+            }
+            if (!anyInPauseLoop)
+                VMManager::requestStopAll(VMManager::StopReason::JSDebugger);
         }
     }
 
@@ -1048,4 +1071,8 @@ extern "C" void VM__cancelStop(JSC::VM* vm)
 extern "C" void Bun__activateRuntimeInspectorMode()
 {
     Bun::runtimeInspectorActivated.store(true);
+    // Mark bootstrap as done so that reconnecting clients on the event loop
+    // path (where the STW callback may not set hasEverBootstrapped due to
+    // short-circuit evaluation) don't get a spurious bootstrap pause.
+    Bun::hasEverBootstrapped.store(true);
 }

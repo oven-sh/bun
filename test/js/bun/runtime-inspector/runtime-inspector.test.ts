@@ -1,6 +1,9 @@
 import { spawn } from "bun";
-import { describe, expect, test } from "bun:test";
+import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isWindows } from "harness";
+
+// Inspector tests spawn subprocesses and wait for inspector activation — 5s default is too short.
+setDefaultTimeout(60_000);
 
 /**
  * Reads from a stderr stream until the full Bun Inspector banner appears.
@@ -166,9 +169,20 @@ describe("Runtime inspector activation", () => {
       expect(debug2Stderr).toBe("");
       expect(await debug2.exited).toBe(0);
 
-      // Release the reader and kill the target
-      stderrReader.releaseLock();
+      // Kill process — the signal was delivered synchronously, so if a second banner
+      // were going to appear it would already be queued. Killing and reading remaining
+      // stderr is more reliable than sleeping.
       targetProc.kill();
+
+      // Read any remaining stderr until stream is done
+      while (true) {
+        const { value, done } = await stderrReader.read();
+        if (done) break;
+        stderr += stderrDecoder.decode(value, { stream: true });
+      }
+      stderr += stderrDecoder.decode();
+      stderrReader.releaseLock();
+
       await targetProc.exited;
 
       // Should only see one "Bun Inspector" banner (two occurrences of the text, for header and footer)

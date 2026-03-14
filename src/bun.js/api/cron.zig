@@ -1126,7 +1126,7 @@ fn cronToTaskXml(
     errdefer xml.deinit();
 
     try xml.appendSlice(
-        \\<?xml version="1.0" encoding="UTF-8"?>
+        \\<?xml version="1.0"?>
         \\<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
         \\  <Triggers>
         \\

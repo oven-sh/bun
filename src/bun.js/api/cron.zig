@@ -1148,20 +1148,15 @@ fn cronToTaskXml(
     };
 
     if (can_use_repetition) {
-        const minutes_expanded = expandBitfield(u64, cron.minutes, 0, 59) catch return error.InvalidCron;
-        defer allocator.free(minutes_expanded);
-        const hours_expanded = expandBitfield(u32, cron.hours, 0, 23) catch return error.InvalidCron;
-        defer allocator.free(hours_expanded);
-
-        const first_min = if (minutes_expanded.len > 0) @as(u32, @intCast(minutes_expanded[0])) else 0;
-        const first_hour = if (hours_expanded.len > 0) @as(u32, @intCast(hours_expanded[0])) else 0;
+        const first_min: u32 = @ctz(cron.minutes);
+        const first_hour: u32 = @ctz(cron.hours);
 
         var sb_buf: [32]u8 = undefined;
         const sb = std.fmt.bufPrint(&sb_buf, "2000-01-01T{d:0>2}:{d:0>2}:00", .{ first_hour, first_min }) catch return error.InvalidCron;
 
         try xml.appendSlice("    <CalendarTrigger>\n");
-        const sb_line = try std.fmt.allocPrint(allocator, "      <StartBoundary>{s}</StartBoundary>\n", .{sb});
-        defer allocator.free(sb_line);
+        var line_buf: [128]u8 = undefined;
+        const sb_line = std.fmt.bufPrint(&line_buf, "      <StartBoundary>{s}</StartBoundary>\n", .{sb}) catch return error.InvalidCron;
         try xml.appendSlice(sb_line);
 
         if (hours_count == 24) {
@@ -1170,16 +1165,14 @@ fn cronToTaskXml(
             if (m == 1) {
                 try xml.appendSlice("      <Repetition><Interval>PT1M</Interval></Repetition>\n");
             } else {
-                const rep = try std.fmt.allocPrint(allocator, "      <Repetition><Interval>PT{d}M</Interval></Repetition>\n", .{m});
-                defer allocator.free(rep);
+                const rep = std.fmt.bufPrint(&line_buf, "      <Repetition><Interval>PT{d}M</Interval></Repetition>\n", .{m}) catch return error.InvalidCron;
                 try xml.appendSlice(rep);
             }
         } else {
             // Case 2: hour-based repetition
             const h = hour_interval.?;
             if (h > 1) {
-                const rep = try std.fmt.allocPrint(allocator, "      <Repetition><Interval>PT{d}H</Interval></Repetition>\n", .{h});
-                defer allocator.free(rep);
+                const rep = std.fmt.bufPrint(&line_buf, "      <Repetition><Interval>PT{d}H</Interval></Repetition>\n", .{h}) catch return error.InvalidCron;
                 try xml.appendSlice(rep);
             }
         }
@@ -1189,18 +1182,19 @@ fn cronToTaskXml(
     } else {
         // Complex pattern: emit CalendarTriggers for each hour×minute pair.
         // Cap at 48 triggers (Task Scheduler limit).
-        const minutes_expanded = expandBitfield(u64, cron.minutes, 0, 59) catch return error.InvalidCron;
-        defer allocator.free(minutes_expanded);
-        const hours_expanded = expandBitfield(u32, cron.hours, 0, 23) catch return error.InvalidCron;
-        defer allocator.free(hours_expanded);
-
         const needs_or_split = !days_is_wild and !weekdays_is_wild;
         const triggers_per_time: u32 = if (needs_or_split) 2 else 1;
-        const total_triggers = @as(u32, @intCast(minutes_expanded.len)) * @as(u32, @intCast(hours_expanded.len)) * triggers_per_time;
+        const total_triggers = minutes_count * hours_count * triggers_per_time;
         if (total_triggers > 48) return error.InvalidCron;
 
-        for (hours_expanded) |h| {
-            for (minutes_expanded) |m| {
+        var hours_bits = cron.hours;
+        while (hours_bits != 0) {
+            const h: u32 = @ctz(hours_bits);
+            hours_bits &= hours_bits - 1;
+            var mins_bits = cron.minutes;
+            while (mins_bits != 0) {
+                const m: u32 = @ctz(mins_bits);
+                mins_bits &= mins_bits - 1;
                 var sb_buf: [32]u8 = undefined;
                 const sb = std.fmt.bufPrint(&sb_buf, "2000-01-01T{d:0>2}:{d:0>2}:00", .{
                     @as(u32, @intCast(h)), @as(u32, @intCast(m)),
@@ -1268,14 +1262,25 @@ fn cronToTaskXml(
     return xml.toOwnedSlice();
 }
 
+fn appendDaysOfMonthXml(xml: *std.array_list.Managed(u8), days: u32) !void {
+    try xml.appendSlice("        <DaysOfMonth>\n");
+    var buf: [32]u8 = undefined;
+    for (1..32) |day| {
+        if (days & (@as(u32, 1) << @intCast(day)) != 0) {
+            const line = std.fmt.bufPrint(&buf, "          <Day>{d}</Day>\n", .{day}) catch return error.InvalidCron;
+            try xml.appendSlice(line);
+        }
+    }
+    try xml.appendSlice("        </DaysOfMonth>\n");
+}
 fn appendMonthsXml(xml: *std.array_list.Managed(u8), months: u16) !void {
     const month_names = [_][]const u8{ "", "January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December" };
     try xml.appendSlice("        <Months>\n");
+    var buf: [32]u8 = undefined;
     for (1..13) |mo| {
         if (months & (@as(u16, 1) << @intCast(mo)) != 0) {
-            const mo_line = try std.fmt.allocPrint(bun.default_allocator, "          <{s}/>\n", .{month_names[mo]});
-            defer bun.default_allocator.free(mo_line);
-            try xml.appendSlice(mo_line);
+            const line = std.fmt.bufPrint(&buf, "          <{s}/>\n", .{month_names[mo]}) catch continue;
+            try xml.appendSlice(line);
         }
     }
     try xml.appendSlice("        </Months>\n");
@@ -1284,28 +1289,14 @@ fn appendMonthsXml(xml: *std.array_list.Managed(u8), months: u16) !void {
 fn appendDaysOfWeekXml(xml: *std.array_list.Managed(u8), weekdays: u8) !void {
     const day_names = [_][]const u8{ "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday" };
     try xml.appendSlice("        <DaysOfWeek>\n");
+    var buf: [32]u8 = undefined;
     for (0..7) |d| {
         if (weekdays & (@as(u8, 1) << @intCast(d)) != 0) {
-            const d_line = try std.fmt.allocPrint(bun.default_allocator, "          <{s}/>\n", .{day_names[d]});
-            defer bun.default_allocator.free(d_line);
-            try xml.appendSlice(d_line);
+            const line = std.fmt.bufPrint(&buf, "          <{s}/>\n", .{day_names[d]}) catch continue;
+            try xml.appendSlice(line);
         }
     }
     try xml.appendSlice("        </DaysOfWeek>\n");
-}
-
-/// Expand a bitfield into an array of set bit positions.
-fn expandBitfield(comptime T: type, bits: T, min: u7, max: u7) ![]u7 {
-    var result = std.array_list.Managed(u7).init(bun.default_allocator);
-    errdefer result.deinit();
-    var i: u7 = min;
-    while (i <= max) : (i += 1) {
-        if (bits & (@as(T, 1) << @intCast(i)) != 0) {
-            try result.append(i);
-        }
-        if (i == max) break;
-    }
-    return result.toOwnedSlice();
 }
 
 const ScheduleType = union(enum) {
@@ -1316,10 +1307,10 @@ const ScheduleType = union(enum) {
     by_month_all_days: u16, // months bitmask (daily with month restriction)
 };
 
-fn appendCalendarTriggerWithSchedule(xml: *std.array_list.Managed(u8), allocator: std.mem.Allocator, start_boundary: []const u8, sched: ScheduleType) !void {
+fn appendCalendarTriggerWithSchedule(xml: *std.array_list.Managed(u8), _: std.mem.Allocator, start_boundary: []const u8, sched: ScheduleType) !void {
     try xml.appendSlice("    <CalendarTrigger>\n");
-    const sb_line = try std.fmt.allocPrint(allocator, "      <StartBoundary>{s}</StartBoundary>\n", .{start_boundary});
-    defer allocator.free(sb_line);
+    var sb_buf: [80]u8 = undefined;
+    const sb_line = std.fmt.bufPrint(&sb_buf, "      <StartBoundary>{s}</StartBoundary>\n", .{start_boundary}) catch return error.OutOfMemory;
     try xml.appendSlice(sb_line);
 
     switch (sched) {
@@ -1334,15 +1325,7 @@ fn appendCalendarTriggerWithSchedule(xml: *std.array_list.Managed(u8), allocator
         },
         .by_month => |info| {
             try xml.appendSlice("      <ScheduleByMonth>\n");
-            try xml.appendSlice("        <DaysOfMonth>\n");
-            for (1..32) |day| {
-                if (info.cron.days & (@as(u32, 1) << @intCast(day)) != 0) {
-                    const day_line = try std.fmt.allocPrint(allocator, "          <Day>{d}</Day>\n", .{day});
-                    defer allocator.free(day_line);
-                    try xml.appendSlice(day_line);
-                }
-            }
-            try xml.appendSlice("        </DaysOfMonth>\n");
+            try appendDaysOfMonthXml(xml, info.cron.days);
             try appendMonthsXml(xml, info.cron.months);
             try xml.appendSlice("      </ScheduleByMonth>\n");
         },
@@ -1355,15 +1338,8 @@ fn appendCalendarTriggerWithSchedule(xml: *std.array_list.Managed(u8), allocator
             try xml.appendSlice("      </ScheduleByMonthDayOfWeek>\n");
         },
         .by_month_all_days => |months| {
-            // Daily schedule restricted to specific months
             try xml.appendSlice("      <ScheduleByMonth>\n");
-            try xml.appendSlice("        <DaysOfMonth>\n");
-            for (1..32) |day| {
-                const day_line = try std.fmt.allocPrint(allocator, "          <Day>{d}</Day>\n", .{day});
-                defer allocator.free(day_line);
-                try xml.appendSlice(day_line);
-            }
-            try xml.appendSlice("        </DaysOfMonth>\n");
+            try appendDaysOfMonthXml(xml, 0xFFFFFFFE);
             try appendMonthsXml(xml, months);
             try xml.appendSlice("      </ScheduleByMonth>\n");
         },
@@ -1373,14 +1349,24 @@ fn appendCalendarTriggerWithSchedule(xml: *std.array_list.Managed(u8), allocator
 }
 
 /// If all set bits are evenly spaced, return the step size. Otherwise null.
-fn computeStepInterval(comptime T: type, bits: T, min: u7, max: u7) ?u32 {
-    const expanded = expandBitfield(T, bits, min, max) catch return null;
-    defer bun.default_allocator.free(expanded);
-    if (expanded.len == 0) return null;
-    if (expanded.len == 1) return @as(u32, max - min + 1); // fires once per cycle
-    const step = expanded[1] - expanded[0];
-    for (1..expanded.len) |i| {
-        if (expanded[i] - expanded[i - 1] != step) return null;
+fn computeStepInterval(comptime T: type, bits: T, _: u7, max: u7) ?u32 {
+    if (bits == 0) return null;
+    const count = @popCount(bits);
+    if (count == 1) return @as(u32, max) + 1;
+    // Find first two set bits to determine step
+    var remaining = bits;
+    const first: u32 = @ctz(remaining);
+    remaining &= remaining - 1;
+    const second: u32 = @ctz(remaining);
+    const step = second - first;
+    // Verify all bits are evenly spaced
+    remaining &= remaining - 1;
+    var prev = second;
+    while (remaining != 0) {
+        const next: u32 = @ctz(remaining);
+        if (next - prev != step) return null;
+        prev = next;
+        remaining &= remaining - 1;
     }
     return step;
 }

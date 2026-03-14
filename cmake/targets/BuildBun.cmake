@@ -1265,11 +1265,13 @@ if(BUN_LINK_ONLY)
 endif()
 
 if(WIN32)
+  # Windows uses system malloc (USE_SYSTEM_MALLOC=ON in WebKit prebuilts) —
+  # bmalloc/libpas causes crashes under memory pressure during GC.
+  # See: https://github.com/oven-sh/bun/issues/28097
   if(DEBUG)
     target_link_libraries(${bun} PRIVATE
       ${WEBKIT_LIB_PATH}/WTF.lib
       ${WEBKIT_LIB_PATH}/JavaScriptCore.lib
-      ${WEBKIT_LIB_PATH}/bmalloc.lib
       ${WEBKIT_LIB_PATH}/sicudtd.lib
       ${WEBKIT_LIB_PATH}/sicuind.lib
       ${WEBKIT_LIB_PATH}/sicuucd.lib
@@ -1278,7 +1280,6 @@ if(WIN32)
     target_link_libraries(${bun} PRIVATE
       ${WEBKIT_LIB_PATH}/WTF.lib
       ${WEBKIT_LIB_PATH}/JavaScriptCore.lib
-      ${WEBKIT_LIB_PATH}/bmalloc.lib
       ${WEBKIT_LIB_PATH}/sicudt.lib
       ${WEBKIT_LIB_PATH}/sicuin.lib
       ${WEBKIT_LIB_PATH}/sicuuc.lib

@@ -297,6 +297,25 @@ coverageThreshold = {
 }
 ```
 
+### Collect Coverage From
+
+Specify glob patterns for source files that should be included in coverage reports, even if they are not imported by any test. This is equivalent to Jest's [`collectCoverageFrom`](https://jestjs.io/docs/configuration#collectcoveragefrom-array) option.
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+# Single pattern
+collectCoverageFrom = "src/**/*.ts"
+
+# Multiple patterns
+collectCoverageFrom = [
+  "src/**/*.ts",
+  "src/**/*.tsx",
+  "lib/**/*.js"
+]
+```
+
+Files matching these patterns that are not loaded during tests will appear in coverage reports with 0% coverage, making it easy to identify completely untested source files. See the [coverage documentation](/test/code-coverage#including-uncovered-files) for more details and examples.
+
 ### Coverage Path Ignore Patterns
 
 Exclude specific files or file patterns from coverage reports using glob patterns:
@@ -426,6 +445,10 @@ coverageReporter = ["text", "lcov"]
 coverageDir = "./coverage"
 coverageThreshold = { lines = 0.85, functions = 0.90, statements = 0.80 }
 coverageSkipTestFiles = true
+collectCoverageFrom = [
+  "src/**/*.ts",
+  "src/**/*.tsx"
+]
 coveragePathIgnorePatterns = [
   "**/*.spec.ts",
   "src/utils/**",

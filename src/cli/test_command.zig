@@ -990,15 +990,25 @@ pub const CommandLineReporter = struct {
             return;
         }
 
-        var map = coverage.ByteRangeMapping.map orelse return;
-        var iter = map.valueIterator();
-        var byte_ranges = try std.array_list.Managed(bun.SourceMap.coverage.ByteRangeMapping).initCapacity(bun.default_allocator, map.count());
+        var byte_ranges = brk: {
+            var map = coverage.ByteRangeMapping.map orelse {
+                // No coverage map exists at all. If collectCoverageFrom is set we still
+                // need to report uncovered files, so fall through with an empty slice.
+                if (opts.collect_coverage_from.len > 0) {
+                    break :brk std.array_list.Managed(bun.SourceMap.coverage.ByteRangeMapping).init(bun.default_allocator);
+                }
+                return;
+            };
+            var iter = map.valueIterator();
+            var list = try std.array_list.Managed(bun.SourceMap.coverage.ByteRangeMapping).initCapacity(bun.default_allocator, map.count());
+            while (iter.next()) |entry| {
+                list.appendAssumeCapacity(entry.*);
+            }
+            break :brk list;
+        };
+        defer byte_ranges.deinit();
 
-        while (iter.next()) |entry| {
-            byte_ranges.appendAssumeCapacity(entry.*);
-        }
-
-        if (byte_ranges.items.len == 0) {
+        if (byte_ranges.items.len == 0 and opts.collect_coverage_from.len == 0) {
             return;
         }
 
@@ -1037,6 +1047,22 @@ pub const CommandLineReporter = struct {
 
         const relative_dir = vm.transpiler.fs.top_level_dir;
 
+        // --- Collect uncovered files if collectCoverageFrom is set ---
+        const uncovered_files: []const string = if (opts.collect_coverage_from.len > 0)
+            findUncoveredFiles(
+                bun.default_allocator,
+                relative_dir,
+                opts,
+                byte_ranges,
+                &vm.transpiler.options,
+            ) catch &.{}
+        else
+            &.{};
+        defer {
+            for (uncovered_files) |p| bun.default_allocator.free(p);
+            if (uncovered_files.len > 0) bun.default_allocator.free(uncovered_files);
+        }
+
         // --- Text ---
         const max_filepath_length: usize = if (reporters.text) brk: {
             var len = "All files".len;
@@ -1060,6 +1086,11 @@ pub const CommandLineReporter = struct {
                 }
 
                 len = @max(relative_path.len, len);
+            }
+
+            // Also consider uncovered files for column width calculation
+            for (uncovered_files) |rel_path| {
+                len = @max(rel_path.len, len);
             }
 
             break :brk len;
@@ -1200,6 +1231,95 @@ pub const CommandLineReporter = struct {
             }
         }
 
+        // --- Process uncovered files from collectCoverageFrom patterns ---
+        for (uncovered_files) |rel_path| {
+            if (comptime reporters.text) {
+                const zero_fraction = bun.SourceMap.coverage.Fraction{
+                    .functions = 0.0,
+                    .lines = 0.0,
+                    .stmts = 0.0,
+                };
+                const failed = base_fraction.functions > 0.0 or base_fraction.lines > 0.0 or base_fraction.stmts > 0.0;
+
+                CodeCoverageReport.Text.writeFormatWithValues(
+                    rel_path,
+                    max_filepath_length,
+                    zero_fraction,
+                    base_fraction,
+                    failed,
+                    console_writer,
+                    true,
+                    enable_ansi_colors,
+                ) catch continue;
+
+                console_writer.writeAll(comptime Output.prettyFmt("<r><d> | <r>", enable_ansi_colors)) catch continue;
+                console_writer.writeAll(comptime Output.prettyFmt("<red>Not imported by tests<r>", enable_ansi_colors)) catch continue;
+                console_writer.writeAll("\n") catch continue;
+
+                avg_count += 1.0;
+                // functions and lines are 0.0, so avg sums stay the same
+                if (failed) {
+                    failing = true;
+                }
+            }
+
+            if (comptime reporters.lcov) {
+                lcov_writer.writeAll("TN:\n") catch continue;
+                lcov_writer.print("SF:{s}\n", .{rel_path}) catch continue;
+                lcov_writer.writeAll("FNF:0\nFNH:0\n") catch continue;
+
+                // NOTE: This counts physical lines and emits DA:LINE,0 for each, including
+                // comments and blank lines. A more accurate approach would feed uncovered
+                // files through JSC's source provider (via SourceProvider::create) to get
+                // proper source mapping of only executable lines. This is a known limitation.
+                const abs_uncovered = bun.path.joinAbsStringZ(
+                    relative_dir,
+                    &.{rel_path},
+                    .auto,
+                );
+                const line_count: usize = count_lines: {
+                    const file_for_lines = bun.sys.File.openat(
+                        .cwd(),
+                        abs_uncovered,
+                        bun.O.RDONLY | bun.O.CLOEXEC,
+                        0,
+                    );
+                    switch (file_for_lines) {
+                        .err => break :count_lines 0,
+                        .result => |f| {
+                            defer f.close();
+                            var count: usize = 0;
+                            var saw_any_bytes = false;
+                            var ends_with_newline = false;
+                            var read_buf: [4096]u8 = undefined;
+                            while (true) {
+                                const n = switch (f.read(&read_buf)) {
+                                    .result => |n| n,
+                                    .err => break :count_lines count,
+                                };
+                                if (n == 0) break;
+                                saw_any_bytes = true;
+                                for (read_buf[0..n]) |byte| {
+                                    if (byte == '\n') count += 1;
+                                }
+                                ends_with_newline = read_buf[n - 1] == '\n';
+                            }
+                            // Add 1 for the last line if the file has content but
+                            // doesn't end with a newline.
+                            if (saw_any_bytes and !ends_with_newline) count += 1;
+                            break :count_lines count;
+                        },
+                    }
+                };
+
+                for (1..line_count + 1) |line_num| {
+                    lcov_writer.print("DA:{d},0\n", .{line_num}) catch continue;
+                }
+                lcov_writer.print("LF:{d}\nLH:0\n", .{line_count}) catch continue;
+                lcov_writer.writeAll("end_of_record\n") catch continue;
+            }
+        }
+
         if (comptime reporters.text) {
             {
                 if (avg_count == 0) {
@@ -1263,6 +1383,124 @@ pub const CommandLineReporter = struct {
     }
 };
 
+/// Walk the project directory to find source files matching `collectCoverageFrom` glob
+/// patterns that were NOT imported by any test (i.e., not in the ByteRangeMapping).
+/// Returns a sorted list of heap-allocated relative path strings.
+fn findUncoveredFiles(
+    allocator: std.mem.Allocator,
+    root_dir: string,
+    opts: *const TestCommand.CodeCoverageOptions,
+    _: []const bun.SourceMap.coverage.ByteRangeMapping,
+    bundle_options: *const options.BundleOptions,
+) ![]const string {
+    // covered_map may be null when no files were imported by tests at all.
+    // In that case, every matching file is uncovered.
+    const covered_map = coverage.ByteRangeMapping.map;
+
+    var result = std.ArrayListUnmanaged(string){};
+    errdefer {
+        for (result.items) |p| allocator.free(p);
+        result.deinit(allocator);
+    }
+
+    // Stack-based directory traversal
+    var dir_stack = std.ArrayListUnmanaged(string){};
+    defer {
+        for (dir_stack.items) |p| allocator.free(p);
+        dir_stack.deinit(allocator);
+    }
+
+    try dir_stack.append(allocator, try allocator.dupe(u8, root_dir));
+
+    while (dir_stack.items.len > 0) {
+        const dir_path = dir_stack.pop();
+        defer allocator.free(dir_path);
+
+        var dir = bun.openDirAbsolute(dir_path) catch continue;
+        defer dir.close();
+
+        var iter = dir.iterate();
+        while (iter.next() catch null) |dir_entry| {
+            // Skip hidden files/directories
+            if (dir_entry.name.len > 0 and dir_entry.name[0] == '.') continue;
+
+            // Skip node_modules
+            if (strings.eqlComptime(dir_entry.name, "node_modules")) continue;
+
+            if (dir_entry.kind == .directory) {
+                const sub_path = allocator.dupe(u8, bun.path.join(&[_]string{ dir_path, dir_entry.name }, .auto)) catch continue;
+                dir_stack.append(allocator, sub_path) catch {
+                    allocator.free(sub_path);
+                    continue;
+                };
+                continue;
+            }
+
+            if (dir_entry.kind != .file) continue;
+
+            // Check if this is a JS/TS file
+            const ext = std.fs.path.extension(dir_entry.name);
+            if (!bundle_options.loader(ext).isJavaScriptLike()) continue;
+
+            // Build absolute path and compute relative path
+            const abs_path = allocator.dupe(u8, bun.path.join(&[_]string{ dir_path, dir_entry.name }, .auto)) catch continue;
+            defer allocator.free(abs_path);
+
+            const relative_path = bun.path.relative(root_dir, abs_path);
+
+            // Check if file matches any collectCoverageFrom pattern
+            var matches_collect = false;
+            for (opts.collect_coverage_from) |pattern| {
+                if (bun.glob.match(pattern, relative_path).matches()) {
+                    matches_collect = true;
+                    break;
+                }
+            }
+            if (!matches_collect) continue;
+
+            // Check if already covered (present in ByteRangeMapping)
+            if (covered_map) |cmap| {
+                const path_hash = bun.hash(abs_path);
+                if (cmap.contains(path_hash)) continue;
+            }
+
+            // Check if file should be ignored based on coveragePathIgnorePatterns
+            var should_ignore = false;
+            for (opts.ignore_patterns) |pattern| {
+                if (bun.glob.match(pattern, relative_path).matches()) {
+                    should_ignore = true;
+                    break;
+                }
+            }
+            if (should_ignore) continue;
+
+            // Check skip_test_files
+            if (opts.skip_test_files) {
+                const name_without_ext = dir_entry.name[0 .. dir_entry.name.len - ext.len];
+                var is_test_file = false;
+                inline for (Scanner.test_name_suffixes) |suffix| {
+                    if (strings.endsWithComptime(name_without_ext, suffix)) {
+                        is_test_file = true;
+                    }
+                }
+                if (is_test_file) continue;
+            }
+
+            // Add to results
+            try result.append(allocator, try allocator.dupe(u8, relative_path));
+        }
+    }
+
+    // Sort for consistent, deterministic output
+    std.sort.pdq(string, result.items, {}, struct {
+        fn lessThan(_: void, a: string, b: string) bool {
+            return bun.strings.order(a, b) == .lt;
+        }
+    }.lessThan);
+
+    return try result.toOwnedSlice(allocator);
+}
+
 export fn BunTest__shouldGenerateCodeCoverage(test_name_str: bun.String) callconv(.c) bool {
     var zig_slice: bun.jsc.ZigString.Slice = .{};
     defer zig_slice.deinit();
@@ -1312,6 +1550,10 @@ pub const TestCommand = struct {
         enabled: bool = false,
         fail_on_low_coverage: bool = false,
         ignore_patterns: []const string = &.{},
+        /// Glob patterns specifying which source files should be included in coverage
+        /// reports, even if they are not imported by any test. Similar to Jest's
+        /// `collectCoverageFrom` configuration option.
+        collect_coverage_from: []const string = &.{},
     };
     pub const Reporter = enum {
         text,

@@ -106,9 +106,9 @@ function bmallocLib(cfg: Config): string {
  * CI regression guard: assert that bmalloc is not linked on Windows.
  *
  * bmalloc/libpas causes crashes under memory pressure during GC on Windows.
- * Windows prebuilts are compiled with USE_SYSTEM_MALLOC=ON, so bmalloc must
- * not appear in the link inputs. Call this from tests or build validation to
- * prevent accidental re-introduction.
+ * Once oven-sh/WebKit prebuilts are rebuilt with -DUSE_SYSTEM_MALLOC=ON,
+ * activate this guard by calling it from provides() below and remove
+ * bmallocLib(cfg) from the Windows lib lists.
  *
  * See: https://github.com/oven-sh/bun/issues/28097
  */
@@ -270,23 +270,20 @@ export const webkit: Dependency = {
   },
 
   provides: cfg => {
-    // Windows uses system malloc (USE_SYSTEM_MALLOC=ON in WebKit prebuilts) —
-    // bmalloc/libpas causes crashes under memory pressure during GC.
-    // See: https://github.com/oven-sh/bun/issues/28097
-    const needsBmalloc = !cfg.windows;
-
     if (cfg.webkit === "prebuilt") {
       // Paths relative to prebuilt destDir — emitPrebuilt resolves them.
       //
       // bmalloc: some historical prebuilts rolled it into JSC. Current
-      // versions ship it separately on non-Windows platforms. Listed here so
+      // versions ship it separately on all platforms. Listed here so
       // emitPrebuilt declares it as an output — ninja knows fetch creates
       // it. If a future version drops libbmalloc.a, you'll get a clear
       // "file not found" at link time (not silent omission + cryptic
       // undefined symbols).
-      const libs = [...coreLibs(cfg), ...prebuiltIcuLibs(cfg)];
-      if (needsBmalloc) libs.push(bmallocLib(cfg));
-      assertNoBmallocOnWindows(cfg, libs);
+      //
+      // Once oven-sh/WebKit prebuilts are rebuilt with -DUSE_SYSTEM_MALLOC=ON,
+      // gate bmallocLib behind !cfg.windows and activate assertNoBmallocOnWindows.
+      // See: https://github.com/oven-sh/bun/issues/28097
+      const libs = [...coreLibs(cfg), ...prebuiltIcuLibs(cfg), bmallocLib(cfg)];
 
       const includes = ["include"];
       // Linux/windows: ICU headers under wtf/unicode. macOS: deleted by
@@ -309,9 +306,7 @@ export const webkit: Dependency = {
     // which source.ts appends to the resolved libs automatically. Listing
     // them here would make dep_build also claim to produce them (dup error).
     // Posix uses system ICU (linked via -licu* in bun.ts).
-    const libs = [...coreLibs(cfg)];
-    if (needsBmalloc) libs.push(bmallocLib(cfg));
-    assertNoBmallocOnWindows(cfg, libs);
+    const libs = [...coreLibs(cfg), bmallocLib(cfg)];
 
     const includes = [
       // ABSOLUTE — resolved here because they're in the build dir, not src.

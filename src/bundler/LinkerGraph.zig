@@ -4,6 +4,9 @@ const debug = Output.scoped(.LinkerGraph, .visible);
 
 files: File.List = .{},
 files_live: BitSet = undefined,
+/// Tracks which dynamic import targets are referenced by live import() calls.
+/// Used to demote dynamic-import entry points whose call sites are dead.
+live_dynamic_import_targets: BitSet = .{},
 entry_points: EntryPoint.List = .{},
 symbols: js_ast.Symbol.Map = .{},
 
@@ -39,6 +42,7 @@ pub fn init(allocator: std.mem.Allocator, file_count: usize) !LinkerGraph {
     return LinkerGraph{
         .allocator = allocator,
         .files_live = try BitSet.initEmpty(allocator, file_count),
+        .live_dynamic_import_targets = try BitSet.initEmpty(allocator, file_count),
     };
 }
 
@@ -232,6 +236,10 @@ pub fn load(
     try this.files.setCapacity(this.allocator, sources.len);
     this.files.zero();
     this.files_live = try BitSet.initEmpty(
+        this.allocator,
+        sources.len,
+    );
+    this.live_dynamic_import_targets = try BitSet.initEmpty(
         this.allocator,
         sources.len,
     );

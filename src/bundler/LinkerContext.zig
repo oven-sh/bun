@@ -582,8 +582,11 @@ pub const LinkerContext = struct {
             const trace2 = bun.perf.trace("Bundler.markFileLiveForTreeShaking");
             defer trace2.end();
 
-            // Tree shaking: Each entry point marks all files reachable from itself
+            // Tree shaking: Each entry point marks all files reachable from itself.
+            // Skip dynamic-import entry points — they should only become live if a
+            // live part actually contains an import() referencing them.
             for (entry_points) |entry_point| {
+                if (entry_point_kinds[entry_point] == .dynamic_import) continue;
                 c.markFileLiveForTreeShaking(
                     entry_point,
                     side_effects,
@@ -592,6 +595,16 @@ pub const LinkerContext = struct {
                     entry_point_kinds,
                     css_reprs,
                 );
+            }
+
+            // Demote dynamic-import entry points whose import() call sites were
+            // all in dead code. This prevents chunk generation for unreachable
+            // dynamic targets.
+            if (c.graph.code_splitting) {
+                for (entry_points) |ep| {
+                    if (entry_point_kinds[ep] == .dynamic_import and !c.graph.live_dynamic_import_targets.isSet(ep))
+                        entry_point_kinds[ep] = .none;
+                }
             }
         }
 
@@ -615,6 +628,7 @@ pub const LinkerContext = struct {
             // between live parts within the same file. All liveness has to be computed
             // first before determining which entry points can reach which files.
             for (entry_points, 0..) |entry_point, i| {
+                if (!entry_point_kinds[entry_point].isEntryPoint()) continue;
                 c.markFileReachableForCodeSplitting(
                     entry_point,
                     i,
@@ -1849,6 +1863,17 @@ pub const LinkerContext = struct {
                 entry_point_kinds,
                 css_reprs,
             );
+        }
+
+        // Follow dynamic imports: if this live part contains an import() call,
+        // the target file must also be live.
+        for (part.import_record_indices.slice()) |import_record_index| {
+            const record = import_records[source_index].at(import_record_index);
+            if (record.kind == .dynamic and record.source_index.isValid()) {
+                const target = record.source_index.get();
+                c.graph.live_dynamic_import_targets.set(target);
+                c.markFileLiveForTreeShaking(target, side_effects, parts, import_records, entry_point_kinds, css_reprs);
+            }
         }
     }
 

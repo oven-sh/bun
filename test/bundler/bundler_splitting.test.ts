@@ -1,5 +1,6 @@
-import { describe } from "bun:test";
+import { describe, expect } from "bun:test";
 import { bunEnv } from "harness";
+import { readdirSync } from "node:fs";
 import { itBundled } from "./expectBundled";
 
 const env = {
@@ -321,6 +322,170 @@ describe("bundler", () => {
       file: "/out/entry.js",
       env,
       stdout: "a.js executed\na loaded from entry\nb.js executed\nb.js imports a {}\nb loaded from entry, value: B",
+    },
+  });
+
+  // Orphan chunk DCE: when all `import()` call sites for a dynamic chunk are
+  // removed by tree-shaking, the chunk itself should not be emitted.
+
+  itBundled("splitting/OrphanChunkDCE_NeverCalled", {
+    files: {
+      "/entry.ts": /* ts */ `
+        async function dead() { return await import('./secret.ts') }
+        console.log('done')
+      `,
+      "/secret.ts": `export const SECRET = 'this_should_not_be_in_output'`,
+    },
+    entryPoints: ["/entry.ts"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    target: "bun",
+    minifySyntax: true,
+    treeShaking: true,
+    run: { stdout: "done" },
+    onAfterBundle(api) {
+      const files = readdirSync(api.outdir);
+      expect(files).toEqual(["entry.js"]);
+      expect(api.readFile("/out/entry.js")).not.toContain("this_should_not_be_in_output");
+    },
+  });
+
+  itBundled("splitting/OrphanChunkDCE_DefineFalse", {
+    files: {
+      "/entry.ts": /* ts */ `
+        async function loadSecret() { return await import('./secret.ts') }
+        if (process.env.GATE === 'on') {
+          const m = await loadSecret()
+          console.log(m.SECRET)
+        }
+        console.log('done')
+      `,
+      "/secret.ts": `export const SECRET = 'this_should_not_be_in_output'`,
+    },
+    entryPoints: ["/entry.ts"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    target: "bun",
+    minifySyntax: true,
+    treeShaking: true,
+    define: { "process.env.GATE": '"off"' },
+    run: { stdout: "done" },
+    onAfterBundle(api) {
+      const files = readdirSync(api.outdir);
+      expect(files).toEqual(["entry.js"]);
+      expect(api.readFile("/out/entry.js")).not.toContain("this_should_not_be_in_output");
+    },
+  });
+
+  itBundled("splitting/OrphanChunkDCE_DefineTrueKeepsChunk", {
+    files: {
+      "/entry.ts": /* ts */ `
+        async function loadSecret() { return await import('./secret.ts') }
+        if (process.env.GATE === 'on') {
+          const m = await loadSecret()
+          console.log(m.SECRET)
+        }
+        console.log('done')
+      `,
+      "/secret.ts": `export const SECRET = 'secret_value_present'`,
+    },
+    entryPoints: ["/entry.ts"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    target: "bun",
+    minifySyntax: true,
+    treeShaking: true,
+    define: { "process.env.GATE": '"on"' },
+    run: { stdout: "secret_value_present\ndone" },
+    onAfterBundle(api) {
+      const files = readdirSync(api.outdir).sort();
+      const secretChunk = files.find(f => f.startsWith("secret-"));
+      expect(secretChunk).toBeDefined();
+      expect(api.readFile("/out/entry.js")).toContain(`import("./${secretChunk}")`);
+    },
+  });
+
+  itBundled("splitting/OrphanChunkDCE_TransitiveChainDead", {
+    files: {
+      "/entry.ts": /* ts */ `
+        async function loadA() { return await import('./a.ts') }
+        console.log('done')
+      `,
+      "/a.ts": /* ts */ `
+        export async function loadB() { return await import('./b.ts') }
+        export const A = 'chain_a_value'
+      `,
+      "/b.ts": `export const B = 'chain_b_value'`,
+    },
+    entryPoints: ["/entry.ts"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    target: "bun",
+    minifySyntax: true,
+    treeShaking: true,
+    run: { stdout: "done" },
+    onAfterBundle(api) {
+      const files = readdirSync(api.outdir);
+      expect(files).toEqual(["entry.js"]);
+      const entry = api.readFile("/out/entry.js");
+      expect(entry).not.toContain("chain_a_value");
+      expect(entry).not.toContain("chain_b_value");
+    },
+  });
+
+  itBundled("splitting/OrphanChunkDCE_TransitiveChainLive", {
+    files: {
+      "/entry.ts": /* ts */ `
+        const a = await import('./a.ts')
+        const b = await a.loadB()
+        console.log(a.A, b.B)
+      `,
+      "/a.ts": /* ts */ `
+        export async function loadB() { return await import('./b.ts') }
+        export const A = 'chain_a_live'
+      `,
+      "/b.ts": `export const B = 'chain_b_live'`,
+    },
+    entryPoints: ["/entry.ts"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    target: "bun",
+    minifySyntax: true,
+    treeShaking: true,
+    run: { stdout: "chain_a_live chain_b_live" },
+    onAfterBundle(api) {
+      const files = readdirSync(api.outdir).sort();
+      expect(files.some(f => f.startsWith("a-"))).toBe(true);
+      expect(files.some(f => f.startsWith("b-"))).toBe(true);
+    },
+  });
+
+  itBundled("splitting/OrphanChunkDCE_StaticImportPlusDeadDynamic", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { SECRET } from './secret.ts'
+        async function dead() { return await import('./secret.ts') }
+        console.log(SECRET)
+      `,
+      "/secret.ts": `export const SECRET = 'inlined_secret'`,
+    },
+    entryPoints: ["/entry.ts"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    target: "bun",
+    minifySyntax: true,
+    treeShaking: true,
+    run: { stdout: "inlined_secret" },
+    onAfterBundle(api) {
+      const files = readdirSync(api.outdir);
+      expect(files).toEqual(["entry.js"]);
+      expect(api.readFile("/out/entry.js")).toContain("inlined_secret");
     },
   });
 });

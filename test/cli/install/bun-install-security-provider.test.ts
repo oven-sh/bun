@@ -1,4 +1,6 @@
-import { bunEnv, runBunInstall } from "harness";
+import { file } from "bun";
+import { join } from "path";
+import { bunEnv, bunExe, runBunInstall } from "harness";
 import {
   dummyAfterAll,
   dummyAfterEach,
@@ -30,13 +32,15 @@ function test(
     bunfigScanner?: string | false;
     packages?: string[];
     scannerFile?: string;
+    packageJson?: object;
+    customRegistry?: (urls: string[]) => any;
   },
 ) {
   it(
     name,
     async () => {
       const urls: string[] = [];
-      setHandler(dummyRegistry(urls));
+      setHandler(options.customRegistry ? options.customRegistry(urls) : dummyRegistry(urls));
 
       const scannerPath = options.scannerFile || "./scanner.ts";
       if (typeof options.scanner === "string") {
@@ -55,11 +59,14 @@ function test(
         await write("./bunfig.toml", `${bunfig}\n[install.security]\nscanner = "${scannerPath}"`);
       }
 
-      await write("package.json", {
-        name: "my-app",
-        version: "1.0.0",
-        dependencies: {},
-      });
+      await write(
+        "package.json",
+        options.packageJson ?? {
+          name: "my-app",
+          version: "1.0.0",
+          dependencies: {},
+        },
+      );
 
       const expectedExitCode = options.expectedExitCode ?? (options.fails ? 1 : 0);
       const packages = options.packages ?? ["bar"];
@@ -680,4 +687,84 @@ describe("Package Resolution", () => {
       expect(out).toContain("Latest tag:");
     },
   });
+});
+
+describe("Large payload via IPC pipe", () => {
+  // Regression test for https://github.com/oven-sh/bun/issues/23607
+  // When the number of packages is large enough, the JSON payload exceeds OS arg length limits.
+  // The fix sends package data via an IPC pipe (fd 4) instead of embedding it inline.
+
+  function manyPackagesRegistry(urls: string[]) {
+    const barTarball = join(import.meta.dir, "bar-0.0.2.tgz");
+    return async (request: Request) => {
+      urls.push(request.url);
+      const url = request.url.replaceAll("%2f", "/");
+
+      if (url.endsWith(".tgz")) {
+        return new Response(file(barTarball));
+      }
+
+      const name = url.slice(url.indexOf("/", root_url.length) + 1);
+      return new Response(
+        JSON.stringify({
+          name,
+          versions: {
+            "0.0.2": {
+              name,
+              version: "0.0.2",
+              dist: {
+                tarball: `${url}-0.0.2.tgz`,
+              },
+            },
+          },
+          "dist-tags": { latest: "0.0.2" },
+        }),
+      );
+    };
+  }
+
+  it(
+    "handles 1000+ packages without hitting arg length limits",
+    async () => {
+      const urls: string[] = [];
+      setHandler(manyPackagesRegistry(urls));
+
+      const scannerCode = `export const scanner = {
+  version: "1",
+  scan: async ({ packages }) => {
+    if (packages.length < 900) {
+      throw new Error("Expected at least 900 packages, got " + packages.length);
+    }
+    return [];
+  },
+};`;
+      await write("./scanner.ts", scannerCode);
+
+      const bunfig = await read("./bunfig.toml").text();
+      await write("./bunfig.toml", `${bunfig}\n[install.security]\nscanner = "./scanner.ts"`);
+
+      const dependencies: Record<string, string> = {};
+      for (let i = 0; i < 1000; i++) {
+        dependencies[`test-pkg-${i}`] = "0.0.2";
+      }
+      await write("package.json", {
+        name: "my-app",
+        version: "1.0.0",
+        dependencies,
+      });
+
+      const { stdout, stderr, exited } = Bun.spawn({
+        cmd: [bunExe(), "install"],
+        cwd: package_dir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env: bunEnv,
+      });
+
+      const exitCode = await exited;
+      expect(exitCode).toBe(0);
+    },
+    { timeout: 120_000 },
+  );
 });

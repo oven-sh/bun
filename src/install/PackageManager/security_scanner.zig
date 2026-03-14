@@ -673,17 +673,6 @@ fn attemptSecurityScanWithRetry(manager: *PackageManager, security_scanner: []co
         temp_source = code.items;
     }
 
-    const packages_placeholder = "__PACKAGES_JSON__";
-    if (std.mem.indexOf(u8, temp_source, packages_placeholder)) |index| {
-        var new_code = std.array_list.Managed(u8).init(manager.allocator);
-        try new_code.appendSlice(temp_source[0..index]);
-        try new_code.appendSlice(json_data);
-        try new_code.appendSlice(temp_source[index + packages_placeholder.len ..]);
-        code.deinit();
-        code = new_code;
-        temp_source = code.items;
-    }
-
     const suppress_placeholder = "__SUPPRESS_ERROR__";
     if (std.mem.indexOf(u8, temp_source, suppress_placeholder)) |index| {
         var new_code = std.array_list.Managed(u8).init(manager.allocator);
@@ -744,14 +733,6 @@ pub const SecurityScanSubprocess = struct {
         this.stderr_data = std.array_list.Managed(u8).init(this.manager.allocator);
         this.ipc_reader.setParent(this);
 
-        const pipe_result = bun.sys.pipe();
-        const pipe_fds = switch (pipe_result) {
-            .err => {
-                return error.IPCPipeFailed;
-            },
-            .result => |fds| fds,
-        };
-
         const exec_path = try bun.selfExePath();
 
         var argv = [_]?[*:0]const u8{
@@ -768,34 +749,159 @@ pub const SecurityScanSubprocess = struct {
 
         const spawn_cwd = FileSystem.instance.top_level_dir;
 
+        if (comptime Environment.isWindows) {
+            try this.spawnWindows(&argv, spawn_cwd);
+        } else {
+            try this.spawnPosix(&argv, spawn_cwd);
+        }
+    }
+
+    fn spawnPosix(this: *SecurityScanSubprocess, argv: *[5]?[*:0]const u8, spawn_cwd: []const u8) !void {
+        // Create two pipes:
+        // - ipc_output_fds: child writes response (fd 3), parent reads
+        // - json_input_fds: parent writes JSON data, child reads (fd 4)
+        const ipc_output_fds = switch (bun.sys.pipe()) {
+            .err => return error.IPCPipeFailed,
+            .result => |fds| fds,
+        };
+
+        const json_input_fds = switch (bun.sys.pipe()) {
+            .err => {
+                ipc_output_fds[0].close();
+                ipc_output_fds[1].close();
+                return error.IPCPipeFailed;
+            },
+            .result => |fds| fds,
+        };
+
+        // Set CLOEXEC on fds the child should not inherit (beyond the dup2 targets).
+        // The dup2 actions in posix_spawn happen before exec, so they work fine even with CLOEXEC.
+        // Without this, the child inherits the write end of the JSON pipe, preventing EOF.
+        _ = bun.sys.setCloseOnExec(ipc_output_fds[0]); // parent's read end
+        _ = bun.sys.setCloseOnExec(json_input_fds[1]); // parent's write end
+
+        const extra_fds = [_]bun.spawn.SpawnOptions.Stdio{
+            .{ .pipe = ipc_output_fds[1] }, // fd 3: child writes here
+            .{ .pipe = json_input_fds[0] }, // fd 4: child reads JSON here
+        };
+
         const spawn_options = bun.spawn.SpawnOptions{
             .stdout = .inherit,
             .stderr = .inherit,
             .stdin = .inherit,
             .cwd = spawn_cwd,
-            .extra_fds = &.{.{ .pipe = pipe_fds[1] }},
-            .windows = if (Environment.isWindows) .{
+            .extra_fds = &extra_fds,
+        };
+
+        var spawned = try (try bun.spawn.spawnProcess(&spawn_options, @ptrCast(argv), @ptrCast(std.os.environ.ptr))).unwrap();
+
+        // Close the write end of the output pipe and read end of the input pipe in the parent
+        ipc_output_fds[1].close();
+        json_input_fds[0].close();
+
+        // Set up IPC reader for child's response (fd 3)
+        const ipc_read_fd = ipc_output_fds[0];
+        _ = bun.sys.setNonblocking(ipc_read_fd);
+
+        this.remaining_fds = 1;
+        this.ipc_reader.flags.nonblocking = true;
+        this.ipc_reader.flags.socket = false;
+        try this.ipc_reader.start(ipc_read_fd, true).unwrap();
+
+        // Set up process
+        var process = spawned.toProcess(&this.manager.event_loop, false);
+        this.process = process;
+        process.setExitHandler(this);
+
+        // Write JSON data to child via pipe (fd 4) and close when done
+        const json_write_fd = json_input_fds[1];
+        var remaining = this.json_data;
+        while (remaining.len > 0) {
+            switch (bun.sys.write(json_write_fd, remaining)) {
+                .result => |written| {
+                    if (written == 0) {
+                        Output.errGeneric("Failed to write JSON data to pipe: write returned 0", .{});
+                        return error.JSONPipeWriteFailed;
+                    }
+                    remaining = remaining[written..];
+                },
+                .err => |err| {
+                    Output.errGeneric("Failed to write JSON data to pipe: {f}", .{err});
+                    return error.JSONPipeWriteFailed;
+                },
+            }
+        }
+        json_write_fd.close();
+
+        switch (process.watchOrReap()) {
+            .err => {
+                return error.ProcessWatchFailed;
+            },
+            .result => {},
+        }
+    }
+
+    fn spawnWindows(this: *SecurityScanSubprocess, argv: *[5]?[*:0]const u8, spawn_cwd: []const u8) !void {
+        const uv = bun.windows.libuv;
+
+        // On Windows, we use two libuv pipes for IPC:
+        // - fd 3: child writes response → parent reads (buffer pipe)
+        // - fd 4: parent writes JSON → child reads (buffer pipe)
+        const output_pipe = try bun.default_allocator.create(uv.Pipe);
+        errdefer bun.default_allocator.destroy(output_pipe);
+
+        const input_pipe = try bun.default_allocator.create(uv.Pipe);
+        errdefer bun.default_allocator.destroy(input_pipe);
+
+        const extra_fds = [_]bun.spawn.SpawnOptions.Stdio{
+            .{ .buffer = output_pipe }, // fd 3: child writes here
+            .{ .buffer = input_pipe }, // fd 4: parent writes JSON here
+        };
+
+        const spawn_options = bun.spawn.SpawnOptions{
+            .stdout = .inherit,
+            .stderr = .inherit,
+            .stdin = .inherit,
+            .cwd = spawn_cwd,
+            .extra_fds = &extra_fds,
+            .windows = .{
                 .loop = jsc.EventLoopHandle.init(&this.manager.event_loop),
             },
         };
 
-        var spawned = try (try bun.spawn.spawnProcess(&spawn_options, @ptrCast(&argv), @ptrCast(std.os.environ.ptr))).unwrap();
+        var spawned = try (try bun.spawn.spawnProcess(&spawn_options, @ptrCast(argv), @ptrCast(std.os.environ.ptr))).unwrap();
 
-        pipe_fds[1].close();
+        const result_output_pipe = spawned.extra_pipes.items[0].buffer;
+        const result_input_pipe = spawned.extra_pipes.items[1].buffer;
 
-        if (comptime bun.Environment.isPosix) {
-            _ = bun.sys.setNonblocking(pipe_fds[0]);
-        }
+        // Set up IPC reader for child's response
         this.remaining_fds = 1;
-        this.ipc_reader.flags.nonblocking = true;
-        if (comptime bun.Environment.isPosix) {
-            this.ipc_reader.flags.socket = false;
-        }
-        try this.ipc_reader.start(pipe_fds[0], true).unwrap();
+        try this.ipc_reader.startWithPipe(result_output_pipe).unwrap();
 
+        // Set up process
         var process = spawned.toProcess(&this.manager.event_loop, false);
         this.process = process;
         process.setExitHandler(this);
+
+        // Write JSON data synchronously to child via the input pipe fd
+        const input_fd = result_input_pipe.fd();
+        var remaining = this.json_data;
+        while (remaining.len > 0) {
+            switch (bun.sys.write(input_fd, remaining)) {
+                .result => |written| {
+                    if (written == 0) {
+                        Output.errGeneric("Failed to write JSON data to pipe: write returned 0", .{});
+                        return error.JSONPipeWriteFailed;
+                    }
+                    remaining = remaining[written..];
+                },
+                .err => |err| {
+                    Output.errGeneric("Failed to write JSON data to pipe: {f}", .{err});
+                    return error.JSONPipeWriteFailed;
+                },
+            }
+        }
+        result_input_pipe.closeAndDestroy();
 
         switch (process.watchOrReap()) {
             .err => {

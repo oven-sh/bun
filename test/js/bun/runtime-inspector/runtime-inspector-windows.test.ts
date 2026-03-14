@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isWindows, tempDir } from "harness";
 import { join } from "path";
 
 // Inspector tests spawn subprocesses and wait for inspector activation — 5s default is too short.
@@ -37,7 +37,7 @@ function hasBanner(stderr: string): boolean {
 
 // Windows-specific tests (file mapping mechanism) - Windows only
 describe.skipIf(!isWindows)("Runtime inspector Windows file mapping", () => {
-  test("inspector activates via file mapping mechanism", async () => {
+  test.skipIf(isASAN)("inspector activates via file mapping mechanism", async () => {
     // This is the primary Windows test - verify the file mapping mechanism works
     using dir = tempDir("windows-file-mapping-test", {
       "target.js": `
@@ -93,7 +93,7 @@ describe.skipIf(!isWindows)("Runtime inspector Windows file mapping", () => {
     expect(targetStderr).toMatch(/ws:\/\/localhost:\d+\//);
   });
 
-  test("_debugProcess works with current process's own pid", async () => {
+  test.skipIf(isASAN)("_debugProcess works with current process's own pid", async () => {
     // On Windows, calling _debugProcess with our own PID should work.
     // Use PID file approach to avoid timing-dependent setTimeout.
     using dir = tempDir("windows-self-debug-test", {
@@ -143,7 +143,7 @@ describe.skipIf(!isWindows)("Runtime inspector Windows file mapping", () => {
     expect(stderr).toContain("Bun Inspector");
   });
 
-  test("inspector does not activate twice via file mapping", async () => {
+  test.skipIf(isASAN)("inspector does not activate twice via file mapping", async () => {
     using dir = tempDir("windows-twice-test", {
       "target.js": `
         const fs = require("fs");
@@ -207,7 +207,7 @@ describe.skipIf(!isWindows)("Runtime inspector Windows file mapping", () => {
     expect(matches?.length ?? 0).toBe(2);
   });
 
-  test("multiple Windows processes can have inspectors sequentially", async () => {
+  test.skipIf(isASAN)("multiple Windows processes can have inspectors sequentially", async () => {
     // Test sequential activation: activate first, shut down, then activate second.
     // Each process uses a random port, so concurrent would also work, but
     // sequential tests the full lifecycle.

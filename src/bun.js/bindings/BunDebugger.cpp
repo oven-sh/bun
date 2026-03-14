@@ -310,6 +310,8 @@ public:
             // when activeCallFrame is null, making it pointless. Scripts also
             // weren't registered (no scriptParsed events), so even real pauses
             // had their call frames filtered out → auto-resume.
+            for (auto* connection : connections)
+                connection->pauseFlags.store(0);
             if (auto* debugger = global->debugger())
                 debugger->continueProgram();
             return;
@@ -514,15 +516,18 @@ public:
         uint8_t flags = this->pauseFlags.load();
         if (flags & kInPauseLoop)
             return;
-        // Use notifyNeedDebuggerBreak instead of requestStopAll.
-        // This sets the NeedDebuggerBreak trap on the target VM only,
-        // WITHOUT stopping the debugger thread's VM. The trap handler
-        // drains CDP messages and only enters breakProgram() if a pause
-        // was explicitly requested (e.g., Debugger.pause).
-        // This avoids the cascade where every message delivery stops
-        // the debugger thread, preventing response delivery.
+        // Use requestStopAll(JSDebugger) to interrupt the target VM.
+        // This triggers StopTheWorld, whose callback (Bun__stopTheWorldCallback)
+        // calls schedulePauseForConnectedSessions → schedulePauseAtNextOpportunity
+        // + notifyNeedDebuggerBreak. After STW resumes, the NeedDebuggerBreak trap
+        // fires with stepping mode enabled, so the interpreter calls atStatement →
+        // pauseIfNeeded → enters the pause loop where CDP messages are drained.
+        //
+        // notifyNeedDebuggerBreak alone is insufficient because it only invalidates
+        // code blocks without enabling stepping mode. After continueProgram() clears
+        // stepping, the interpreter skips op_debug hooks entirely.
         this->pauseFlags.fetch_or(kMessageDeliveryPause);
-        this->globalObject->vm().notifyNeedDebuggerBreak();
+        JSC::VMManager::requestStopAll(JSC::VMManager::StopReason::JSDebugger);
     }
 
     WTF::Vector<WTF::String, 12> debuggerThreadMessages;

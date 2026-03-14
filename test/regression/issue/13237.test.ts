@@ -67,8 +67,28 @@ test("Bun.write with new Response(req.body) after accessing req.body does not ha
 test("Bun.write with Response overwrites file completely", async () => {
   using dir = tempDir("issue-13237-", {});
   const outFile = join(String(dir), "test.txt");
-  await Bun.write(outFile, new Response(Buffer.alloc(1000, "A").toString()));
-  await Bun.write(outFile, new Response(Buffer.alloc(100, "B").toString()));
+  await Bun.write(
+    outFile,
+    new Response(
+      new ReadableStream({
+        start(c) {
+          c.enqueue(Buffer.alloc(1000, "A"));
+          c.close();
+        },
+      }),
+    ),
+  );
+  await Bun.write(
+    outFile,
+    new Response(
+      new ReadableStream({
+        start(c) {
+          c.enqueue(Buffer.alloc(100, "B"));
+          c.close();
+        },
+      }),
+    ),
+  );
   const result = await Bun.file(outFile).text();
   expect(result).toBe(Buffer.alloc(100, "B").toString());
   expect(result.length).toBe(100);

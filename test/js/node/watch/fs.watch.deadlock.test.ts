@@ -1,5 +1,5 @@
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
-import { test, expect, describe } from "bun:test";
 
 describe("fs.watch deadlock", () => {
   test("rapid create/close of recursive watchers should not hang", async () => {

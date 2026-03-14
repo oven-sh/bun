@@ -713,6 +713,7 @@ fn attemptSecurityScanWithRetry(manager: *PackageManager, security_scanner: []co
         const path_slice: []const u8 = std.mem.sliceTo(json_tmp_path, 0);
         try new_code.writer().print("{f}", .{bun.fmt.formatJSONStringUTF8(path_slice, .{})});
         try new_code.appendSlice(",\"utf8\"))");
+        try new_code.appendSlice(temp_source[index + packages_placeholder.len ..]);
         code.deinit();
         code = new_code;
         temp_source = code.items;

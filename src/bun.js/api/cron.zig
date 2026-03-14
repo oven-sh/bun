@@ -1134,8 +1134,8 @@ fn cronToTaskXml(
     // (b) the pattern is expressible as a single PT interval that doesn't drift.
     const minute_interval = computeStepInterval(u64, cron.minutes, 0, 59);
     const hour_interval = computeStepInterval(u32, cron.hours, 0, 23);
-    const minutes_count = @popCount(cron.minutes);
-    const hours_count = @popCount(cron.hours);
+    const minutes_count: u32 = @popCount(cron.minutes);
+    const hours_count: u32 = @popCount(cron.hours);
 
     // Case 1: All hours active, evenly-spaced minutes that divide 60
     //   e.g. "* * * * *" → PT1M, "*/5 * * * *" → PT5M, "*/15 * * * *" → PT15M

@@ -887,12 +887,14 @@ declare module "bun" {
      *
      * When a `TypedArray` is passed, the bytes are parsed directly without
      * copying if the content is ASCII. Optional `start` and `end` parameters
-     * allow slicing without copying, and `read` will be a byte offset into
-     * the original typed array.
+     * select a window of the input without copying. For typed arrays these
+     * are byte offsets and `read` will be a byte offset into the original
+     * typed array. For strings these are character offsets and `read` will
+     * be a character offset into the original string.
      *
      * @param input The JSONL string or typed array to parse
-     * @param start Byte offset to start parsing from (typed array only, default: 0)
-     * @param end Byte offset to stop parsing at (typed array only, default: input.byteLength)
+     * @param start Offset to start parsing from (bytes for typed arrays, characters for strings, default: 0)
+     * @param end Offset to stop parsing at (bytes for typed arrays, characters for strings, default: input length)
      * @returns An object with `values`, `read`, `done`, and `error` properties
      *
      * @example
@@ -907,9 +909,8 @@ declare module "bun" {
      * }
      * ```
      */
-    export function parseChunk(input: string): ParseChunkResult;
     export function parseChunk(
-      input: NodeJS.TypedArray | DataView<ArrayBuffer> | ArrayBufferLike,
+      input: string | NodeJS.TypedArray | DataView<ArrayBuffer> | ArrayBufferLike,
       start?: number,
       end?: number,
     ): ParseChunkResult;
@@ -1193,10 +1194,20 @@ declare module "bun" {
       ordered: boolean;
       /** The start number for ordered lists. */
       start?: number;
+      /** Nesting depth. `0` for a top-level list, `1` for a list inside a list item, etc. */
+      depth: number;
     }
 
     /** Meta passed to the `listItem` callback. */
     interface ListItemMeta {
+      /** 0-based index of this item within its parent list. */
+      index: number;
+      /** Nesting depth of the parent list. `0` for items in a top-level list. */
+      depth: number;
+      /** Whether the parent list is ordered. */
+      ordered: boolean;
+      /** The start number of the parent list (only set when `ordered` is true). */
+      start?: number;
       /** Task list checked state. Set for `- [x]` / `- [ ]` items. */
       checked?: boolean;
     }
@@ -1234,8 +1245,8 @@ declare module "bun" {
       code?: (children: string, meta?: CodeBlockMeta) => string | null | undefined;
       /** Ordered or unordered list. `start` is the first item number for ordered lists. */
       list?: (children: string, meta: ListMeta) => string | null | undefined;
-      /** List item. `meta.checked` is set for task list items (`- [x]` / `- [ ]`). Only passed for task list items. */
-      listItem?: (children: string, meta?: ListItemMeta) => string | null | undefined;
+      /** List item. `meta` always includes `{index, depth, ordered}`. `meta.start` is set for ordered lists; `meta.checked` is set for task list items. */
+      listItem?: (children: string, meta: ListItemMeta) => string | null | undefined;
       /** Horizontal rule. */
       hr?: (children: string) => string | null | undefined;
       /** Table. */
@@ -2573,6 +2584,21 @@ declare module "bun" {
     plugins?: BunPlugin[];
     // manifest?: boolean; // whether to return manifest
     external?: string[];
+    /**
+     * Control whether dynamic `import()`, `require()`, or `require.resolve()` specifiers (non-literal
+     * arguments like `` `./locales/${lang}.json` ``) are allowed to pass through
+     * to runtime without being bundled.
+     *
+     * - `["*"]` (default) — allow all dynamic specifiers
+     * - `[]` — fail the build on any dynamic specifier
+     * - `["./locales/*.json", ...]` — allow only specifiers whose static
+     *   template parts match one of these glob patterns
+     *
+     * Add `""` to the list to allow fully opaque specifiers like `import(fn())`.
+     *
+     * @default ["*"]
+     */
+    allowUnresolved?: string[];
     packages?: "bundle" | "external";
     publicPath?: string;
     define?: Record<string, string>;

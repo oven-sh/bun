@@ -41,10 +41,11 @@ pub fn StatType(comptime big: bool) type {
                 return @as(i64, sec * std.time.ms_per_s) +|
                     @as(i64, @divTrunc(nsec, std.time.ns_per_ms));
             } else {
-                return @floatFromInt(bun.timespec.ms(&bun.timespec{
-                    .sec = @intCast(tv_sec),
-                    .nsec = @intCast(tv_nsec),
-                }));
+                // Use floating-point arithmetic to preserve sub-millisecond precision.
+                // Node.js returns fractional milliseconds (e.g. 1773248895434.0544).
+                const sec_ms: f64 = @as(f64, @floatFromInt(tv_sec)) * 1000.0;
+                const nsec_ms: f64 = @as(f64, @floatFromInt(tv_nsec)) / 1_000_000.0;
+                return sec_ms + nsec_ms;
             }
         }
 

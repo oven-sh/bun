@@ -510,6 +510,12 @@ fn initRedirections(
             },
             .jsbuf => |val| {
                 const globalObject = interpreter.event_loop.js.global;
+
+                if (file.jsbuf.idx >= interpreter.jsobjs.len) {
+                    globalObject.throw("Invalid JS object reference in shell", .{}) catch {};
+                    return .failed;
+                }
+
                 if (interpreter.jsobjs[file.jsbuf.idx].asArrayBuffer(globalObject)) |buf| {
                     const arraybuf: BuiltinIO.ArrayBuf = .{ .buf = jsc.ArrayBuffer.Strong{
                         .array_buffer = buf,

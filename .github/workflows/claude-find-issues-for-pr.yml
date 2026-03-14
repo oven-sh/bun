@@ -1,0 +1,35 @@
+name: Claude Find Issues for PR
+on:
+  pull_request:
+    types: [opened]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'PR number to find related issues for'
+        required: true
+        type: string
+
+jobs:
+  claude-find-issues:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: claude-find-issues-${{ github.event.pull_request.number || inputs.pr_number }}
+      cancel-in-progress: true
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Run Claude Code slash command
+        uses: anthropics/claude-code-base-action@beta
+        with:
+          prompt: "/find-issues ${{ github.repository }}/pull/${{ github.event.pull_request.number || inputs.pr_number }}"
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_args: "--model claude-opus-4-6[1m]"
+          claude_env: |
+            GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

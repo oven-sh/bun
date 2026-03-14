@@ -735,10 +735,54 @@ describe("Bun.JSONL", () => {
         expect(result.values).toStrictEqual([]);
       });
 
-      test("start/end ignored for string input", () => {
-        // start/end are typed-array byte offsets; for strings, they're ignored
+      test("start offset works for string input (character offsets)", () => {
         const result = Bun.JSONL.parseChunk('{"a":1}\n{"b":2}\n', 8);
+        expect(result.values).toStrictEqual([{ b: 2 }]);
+        expect(result.read).toBe(15);
+      });
+
+      test("end offset works for string input", () => {
+        const input = '{"a":1}\n{"b":2}\n{"c":3}\n';
+        const result = Bun.JSONL.parseChunk(input, 0, 16);
         expect(result.values).toStrictEqual([{ a: 1 }, { b: 2 }]);
+      });
+
+      test("start+end window works for string input", () => {
+        const input = '{"a":1}\n{"b":2}\n{"c":3}\n';
+        const result = Bun.JSONL.parseChunk(input, 8, 16);
+        expect(result.values).toStrictEqual([{ b: 2 }]);
+        expect(result.read).toBe(15);
+      });
+
+      test("string: start equals end returns empty", () => {
+        const result = Bun.JSONL.parseChunk('{"a":1}\n', 5, 5);
+        expect(result.values).toStrictEqual([]);
+        expect(result.read).toBe(5);
+        expect(result.done).toBe(true);
+      });
+
+      test("string: error-recovery loop with start offset terminates", () => {
+        // Regression: previously start was ignored for strings, so an
+        // error-recovery loop that advanced the offset would re-parse the
+        // same position forever. Now offsets are honored and each iteration
+        // makes progress.
+        const input = '{"a":1}\n{bad\n{"c":3}\n';
+        const collected: unknown[] = [];
+        let offset = 0;
+        let iterations = 0;
+        while (offset < input.length) {
+          iterations++;
+          if (iterations > 10) throw new Error("infinite loop");
+          const r = Bun.JSONL.parseChunk(input, offset);
+          collected.push(...r.values);
+          if (!r.error || r.done || r.read >= input.length) break;
+          const nl = input.indexOf("\n", r.read);
+          if (nl === -1) break;
+          offset = nl + 1;
+          if (offset <= r.read) offset = r.read + 1; // guarantee progress
+        }
+        expect(collected).toStrictEqual([{ a: 1 }, { c: 3 }]);
+        expect(iterations).toBeLessThanOrEqual(4);
       });
 
       test("non-ASCII with start offset", () => {
@@ -747,6 +791,101 @@ describe("Bun.JSONL", () => {
         const firstValueBytes = encode('{"jp":"日本"}\n').byteLength;
         const result = Bun.JSONL.parseChunk(buf, firstValueBytes);
         expect(result.values).toStrictEqual([{ a: 1 }]);
+      });
+
+      describe("invalid offset inputs", () => {
+        const input = '{"a":1}\n{"b":2}\n';
+        const buf = encode(input);
+
+        test.each([
+          ["NaN start", NaN, undefined],
+          ["NaN end", undefined, NaN],
+          ["Infinity start", Infinity, undefined],
+          ["-Infinity start", -Infinity, undefined],
+          ["Infinity end", undefined, Infinity],
+          ["-Infinity end", 0, -Infinity],
+          ["negative start", -5, undefined],
+          ["negative end", 0, -3],
+          ["fractional start", 0.7, undefined],
+          ["huge start", Number.MAX_SAFE_INTEGER, undefined],
+          ["huge end", 0, Number.MAX_SAFE_INTEGER],
+        ])("%s does not crash (string)", (_, start, end) => {
+          // Non-finite and out-of-range offsets should be clamped/ignored,
+          // never cause UB or out-of-bounds reads.
+          const r = Bun.JSONL.parseChunk(input, start as number, end as number);
+          expect(Array.isArray(r.values)).toBe(true);
+          expect(r.read).toBeGreaterThanOrEqual(0);
+          expect(r.read).toBeLessThanOrEqual(input.length);
+        });
+
+        test.each([
+          ["NaN start", NaN, undefined],
+          ["NaN end", undefined, NaN],
+          ["Infinity start", Infinity, undefined],
+          ["-Infinity start", -Infinity, undefined],
+          ["Infinity end", undefined, Infinity],
+          ["-Infinity end", 0, -Infinity],
+          ["negative start", -5, undefined],
+          ["negative end", 0, -3],
+          ["fractional start", 0.7, undefined],
+          ["huge start", Number.MAX_SAFE_INTEGER, undefined],
+          ["huge end", 0, Number.MAX_SAFE_INTEGER],
+        ])("%s does not crash (Buffer)", (_, start, end) => {
+          const r = Bun.JSONL.parseChunk(buf, start as number, end as number);
+          expect(Array.isArray(r.values)).toBe(true);
+          expect(r.read).toBeGreaterThanOrEqual(0);
+          expect(r.read).toBeLessThanOrEqual(buf.byteLength);
+        });
+
+        test("NaN start is treated as 0 (string)", () => {
+          const r = Bun.JSONL.parseChunk(input, NaN);
+          expect(r.values).toStrictEqual([{ a: 1 }, { b: 2 }]);
+        });
+
+        test("NaN start is treated as 0 (Buffer)", () => {
+          const r = Bun.JSONL.parseChunk(buf, NaN);
+          expect(r.values).toStrictEqual([{ a: 1 }, { b: 2 }]);
+        });
+
+        test("Infinity start clamps to length (string)", () => {
+          const r = Bun.JSONL.parseChunk(input, Infinity);
+          expect(r.values).toStrictEqual([]);
+          expect(r.read).toBe(input.length);
+        });
+
+        test("Infinity start clamps to length (Buffer)", () => {
+          const r = Bun.JSONL.parseChunk(buf, Infinity);
+          expect(r.values).toStrictEqual([]);
+          expect(r.read).toBe(buf.byteLength);
+        });
+
+        test("Infinity end clamps to length (string)", () => {
+          const r = Bun.JSONL.parseChunk(input, 0, Infinity);
+          expect(r.values).toStrictEqual([{ a: 1 }, { b: 2 }]);
+        });
+
+        test("Infinity end clamps to length (Buffer)", () => {
+          const r = Bun.JSONL.parseChunk(buf, 0, Infinity);
+          expect(r.values).toStrictEqual([{ a: 1 }, { b: 2 }]);
+        });
+
+        test("-Infinity end is ignored (treated as full length)", () => {
+          // Negative end values are rejected by the (e >= 0) guard, so end
+          // stays at input.length. This matches "ignore garbage offsets".
+          const r = Bun.JSONL.parseChunk(input, 0, -Infinity);
+          expect(r.values).toStrictEqual([{ a: 1 }, { b: 2 }]);
+        });
+
+        test("negative end is ignored (Buffer)", () => {
+          const r = Bun.JSONL.parseChunk(buf, 0, -10);
+          expect(r.values).toStrictEqual([{ a: 1 }, { b: 2 }]);
+        });
+
+        test("start > end clamps start down to end", () => {
+          const r = Bun.JSONL.parseChunk(input, 10, 5);
+          expect(r.values).toStrictEqual([]);
+          expect(r.read).toBe(5);
+        });
       });
     });
   });

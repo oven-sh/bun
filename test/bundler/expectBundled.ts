@@ -176,6 +176,7 @@ export interface BundlerTestInput {
   extensionOrder?: string[];
   /** Replaces "{{root}}" with the file root */
   external?: string[];
+  allowUnresolved?: string[];
   /** Defaults to "bundle" */
   packages?: "bundle" | "external";
   /** Defaults to "esm" */
@@ -446,6 +447,7 @@ function expectBundled(
     entryPointsRaw,
     env,
     external,
+    allowUnresolved,
     packages,
     drop = [],
     features = [],
@@ -579,6 +581,9 @@ function expectBundled(
   if (ESBUILD && _throw) {
     throw new Error("throw not implemented in esbuild");
   }
+  if (ESBUILD && allowUnresolved !== undefined) {
+    throw new Error("allowUnresolved not possible in esbuild backend");
+  }
   if (dryRun) {
     return testRef(id, opts);
   }
@@ -589,7 +594,6 @@ function expectBundled(
         dotenv ||
         typeof production !== "undefined" ||
         bundling === false ||
-        (run && target === "node") ||
         emitDCEAnnotations ||
         bundleWarnings ||
         env ||
@@ -748,6 +752,10 @@ function expectBundled(
               `--target=${target}`,
               `--format=${format}`,
               external && external.map(x => ["--external", x]),
+              allowUnresolved !== undefined &&
+                (allowUnresolved.length === 0
+                  ? "--reject-unresolved"
+                  : allowUnresolved.map(x => ["--allow-unresolved", x === "" ? "<empty>" : x])),
               packages && ["--packages", packages],
               conditions && conditions.map(x => ["--conditions", x]),
               minifyIdentifiers && `--minify-identifiers`,
@@ -1095,6 +1103,7 @@ function expectBundled(
         const buildConfig: BuildConfig = {
           entrypoints: [...entryPaths, ...(entryPointsRaw ?? [])],
           external,
+          allowUnresolved,
           banner,
           format,
           footer,

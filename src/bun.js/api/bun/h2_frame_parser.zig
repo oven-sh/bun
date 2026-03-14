@@ -2864,9 +2864,18 @@ pub const H2FrameParser = struct {
         if (this.usedWindowSize > windowSizeValue) {
             return globalObject.throwInvalidArguments("Expected windowSize to be greater than usedWindowSize", .{});
         }
+        const oldWindowSize = this.windowSize;
         this.windowSize = windowSizeValue;
         if (this.localSettings.initialWindowSize < windowSizeValue) {
             this.localSettings.initialWindowSize = windowSizeValue;
+        }
+        // Send a connection-level WINDOW_UPDATE frame to the peer so it knows
+        // about the increased window.  Per RFC 9113 Section 6.9, the
+        // INITIAL_WINDOW_SIZE setting only applies to stream-level windows;
+        // the connection-level window must be updated explicitly.
+        if (windowSizeValue > oldWindowSize) {
+            const increment: u31 = @truncate(windowSizeValue - oldWindowSize);
+            this.sendWindowUpdate(0, UInt31WithReserved.init(increment, false));
         }
         var it = this.streams.valueIterator();
         while (it.next()) |stream| {

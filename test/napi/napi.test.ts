@@ -426,6 +426,13 @@ describe.concurrent("napi", () => {
     });
   });
 
+  describe("napi_create_object", () => {
+    // https://github.com/oven-sh/bun/issues/25658
+    it("result is clonable with structuredClone", async () => {
+      await checkSameOutput("test_napi_create_object_structured_clone", []);
+    });
+  });
+
   // TODO(@190n) test allocating in a finalizer from a napi module with the right version
 
   describe("napi_wrap", () => {

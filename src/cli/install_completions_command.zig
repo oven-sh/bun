@@ -156,17 +156,16 @@ pub const InstallCompletionsCommand = struct {
             installUninstallerWindows() catch {};
         }
 
-        // TODO: https://github.com/oven-sh/bun/issues/8939
-        if (Environment.isWindows) {
-            Output.errGeneric("PowerShell completions are not yet written for Bun yet.", .{});
-            Output.printErrorln("See https://github.com/oven-sh/bun/issues/8939", .{});
-            return;
-        }
-
         switch (shell) {
             .unknown => {
                 Output.errGeneric("Unknown or unsupported shell. Please set $SHELL to one of zsh, fish, or bash.", .{});
                 Output.note("To manually output completions, run 'bun getcompletes'", .{});
+                Global.exit(fail_exit_code);
+            },
+            // TODO: https://github.com/oven-sh/bun/issues/8939
+            .pwsh => {
+                Output.errGeneric("PowerShell completions are not yet written for Bun yet.", .{});
+                Output.printErrorln("See https://github.com/oven-sh/bun/issues/8939", .{});
                 Global.exit(fail_exit_code);
             },
             else => {},

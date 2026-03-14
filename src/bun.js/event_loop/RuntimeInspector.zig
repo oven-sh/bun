@@ -139,6 +139,11 @@ fn activateInspector(vm: *VirtualMachine) !void {
         .mode = .listen,
     };
 
+    const saved_minify_identifiers = vm.transpiler.options.minify_identifiers;
+    const saved_minify_syntax = vm.transpiler.options.minify_syntax;
+    const saved_minify_whitespace = vm.transpiler.options.minify_whitespace;
+    const saved_debugger = vm.transpiler.options.debugger;
+
     vm.transpiler.options.minify_identifiers = false;
     vm.transpiler.options.minify_syntax = false;
     vm.transpiler.options.minify_whitespace = false;
@@ -146,6 +151,10 @@ fn activateInspector(vm: *VirtualMachine) !void {
 
     Debugger.create(vm, vm.global) catch |err| {
         vm.debugger = null;
+        vm.transpiler.options.minify_identifiers = saved_minify_identifiers;
+        vm.transpiler.options.minify_syntax = saved_minify_syntax;
+        vm.transpiler.options.minify_whitespace = saved_minify_whitespace;
+        vm.transpiler.options.debugger = saved_debugger;
         return err;
     };
 }

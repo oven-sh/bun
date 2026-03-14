@@ -334,10 +334,11 @@ public:
         }
 
         for (auto* connection : connections) {
-            connection->pauseFlags.store(0);
-            // Reset the scheduled flag so the debugger thread can post new
-            // tasks after the pause loop exits.
+            // Clear jsThreadMessageScheduled before pauseFlags so that when
+            // kInPauseLoop is cleared, any concurrent scheduleInspectorThreadDelivery
+            // will see the flag as false and correctly post a new task.
             connection->jsThreadMessageScheduled.store(false);
+            connection->pauseFlags.store(0);
         }
     }
 

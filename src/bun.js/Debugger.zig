@@ -119,7 +119,6 @@ pub fn create(this: *VirtualMachine, globalObject: *JSGlobalObject) !void {
     log("create", .{});
     jsc.markBinding(@src());
     if (!has_created_debugger) {
-        has_created_debugger = true;
         std.mem.doNotOptimizeAway(&TestReporterAgent.Bun__TestReporterAgentDisable);
         std.mem.doNotOptimizeAway(&LifecycleAgent.Bun__LifecycleAgentDisable);
         std.mem.doNotOptimizeAway(&TestReporterAgent.Bun__TestReporterAgentEnable);
@@ -128,9 +127,13 @@ pub fn create(this: *VirtualMachine, globalObject: *JSGlobalObject) !void {
         debugger.script_execution_context_id = Bun__createJSDebugger(globalObject);
         if (!this.has_started_debugger) {
             this.has_started_debugger = true;
-            var thread = try std.Thread.spawn(.{}, startJSDebuggerThread, .{this});
+            var thread = std.Thread.spawn(.{}, startJSDebuggerThread, .{this}) catch |err| {
+                this.has_started_debugger = false;
+                return err;
+            };
             thread.detach();
         }
+        has_created_debugger = true;
         this.eventLoop().ensureWaker();
 
         if (debugger.wait_for_connection != .off) {

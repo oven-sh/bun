@@ -5,7 +5,22 @@ import { basename } from "node:path";
 
 const crontabPath = Bun.which("crontab");
 const hasCrontab = !!crontabPath && isLinux;
-const hasSchtasks = isWindows;
+const hasSchtasks =
+  isWindows &&
+  (() => {
+    try {
+      const r = Bun.spawnSync({
+        cmd: ["schtasks", "/query", "/tn", "bun-cron-probe-test"],
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      // Exit 0 = task exists, exit 1 = not found (both mean schtasks works)
+      // Other exit codes (e.g. access denied) mean schtasks isn't usable
+      return r.exitCode === 0 || r.exitCode === 1;
+    } catch {
+      return false;
+    }
+  })();
 const hasLaunchctl =
   isMacOS &&
   (() => {

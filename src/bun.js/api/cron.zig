@@ -517,7 +517,7 @@ pub const CronRegisterJob = struct {
             return;
         };
 
-        var argv = [_:null]?[*:0]const u8{ "schtasks", "/create", "/xml", xml_path.ptr, "/tn", task_name.ptr, "/f", null };
+        var argv = [_:null]?[*:0]const u8{ bun.pathLiteral("C:\\Windows\\System32\\schtasks.exe"), "/create", "/xml", xml_path.ptr, "/tn", task_name.ptr, "/f", null };
         this.spawnCmd(&argv, .ignore, .ignore);
     }
 };
@@ -766,7 +766,7 @@ pub const CronRemoveJob = struct {
             return;
         };
         defer bun.default_allocator.free(task_name);
-        var argv = [_:null]?[*:0]const u8{ "schtasks", "/delete", "/tn", task_name.ptr, "/f", null };
+        var argv = [_:null]?[*:0]const u8{ bun.pathLiteral("C:\\Windows\\System32\\schtasks.exe"), "/delete", "/tn", task_name.ptr, "/f", null };
         this.spawnCmd(&argv, .ignore, .ignore);
     }
 };
@@ -842,12 +842,12 @@ fn spawnCmdGeneric(comptime Self: type, this: *Self, argv: anytype, stdin_opt: b
             this.finish();
             return;
         }).ptr);
-    var spawned = (bun.spawn.spawnProcess(&spawn_options, @ptrCast(argv), envp) catch {
-        this.setErr("Failed to spawn process", .{});
+    var spawned = (bun.spawn.spawnProcess(&spawn_options, @ptrCast(argv), envp) catch |e| {
+        this.setErr("Failed to spawn process: {s}", .{@errorName(e)});
         this.finish();
         return;
-    }).unwrap() catch {
-        this.setErr("Failed to spawn process", .{});
+    }).unwrap() catch |err| {
+        this.setErr("Failed to spawn process: {s}", .{@errorName(err)});
         this.finish();
         return;
     };

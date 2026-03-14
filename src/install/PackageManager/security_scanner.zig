@@ -682,16 +682,37 @@ fn attemptSecurityScanWithRetry(manager: *PackageManager, security_scanner: []co
         @as(u64, @bitCast(std.time.milliTimestamp())),
     }) catch return error.PathTooLong;
 
-    switch (bun.sys.File.writeFile(bun.FD.cwd(), tmp_path, json_data)) {
-        .result => {},
-        .err => return error.TempFileWriteFailed,
+    {
+        const tmp_fd = switch (bun.sys.open(tmp_path, bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC, 0o664)) {
+            .result => |fd| fd,
+            .err => return error.TempFileWriteFailed,
+        };
+        defer tmp_fd.close();
+        var remaining = json_data;
+        while (remaining.len > 0) {
+            switch (bun.sys.write(tmp_fd, remaining)) {
+                .result => |written| remaining = remaining[written..],
+                .err => return error.TempFileWriteFailed,
+            }
+        }
     }
+
+    // On Windows, normalize backslashes to forward slashes so the path can be
+    // safely embedded in a JS string literal without backslash escape issues.
+    // Node/Bun fs.readFileSync accepts forward slashes on all platforms.
+    const tmp_path_for_js: []const u8 = if (comptime bun.Environment.isWindows) blk: {
+        const buf = try manager.allocator.alloc(u8, tmp_path.len);
+        @memcpy(buf, tmp_path);
+        std.mem.replaceScalar(u8, buf, '\\', '/');
+        break :blk buf;
+    } else tmp_path;
+    defer if (comptime bun.Environment.isWindows) manager.allocator.free(tmp_path_for_js);
 
     const packages_placeholder = "__PACKAGES_FILE__";
     if (std.mem.indexOf(u8, temp_source, packages_placeholder)) |index| {
         var new_code = std.array_list.Managed(u8).init(manager.allocator);
         try new_code.appendSlice(temp_source[0..index]);
-        try new_code.appendSlice(tmp_path);
+        try new_code.appendSlice(tmp_path_for_js);
         try new_code.appendSlice(temp_source[index + packages_placeholder.len ..]);
         code.deinit();
         code = new_code;

@@ -1393,10 +1393,7 @@ fn allocPrintZ(allocator: std.mem.Allocator, comptime fmt: []const u8, args: any
 /// Create a temp file path with a random suffix to avoid TOCTOU/symlink attacks.
 fn makeTempPath(comptime prefix: []const u8, title: []const u8) ![:0]const u8 {
     const rand = bun.fastRandom();
-    const tmp_dir = if (comptime bun.Environment.isWindows)
-        bun.env_var.TEMP.get() orelse bun.env_var.TMP.get() orelse "C:\\Temp"
-    else
-        "/tmp";
+    const tmp_dir = bun.fs.FileSystem.RealFS.platformTempDir();
     return allocPrintZ(bun.default_allocator, "{s}/" ++ prefix ++ "{s}-{x}.tmp", .{ tmp_dir, title, rand });
 }
 

@@ -826,16 +826,22 @@ fn spawnCmdGeneric(comptime Self: type, this: *Self, argv: anytype, stdin_opt: b
     this.remaining_fds = 0;
 
     var resolved_argv0: ?[*:0]const u8 = null;
+    defer if (resolved_argv0) |p| bun.default_allocator.free(bun.sliceTo(p, 0));
     if (comptime bun.Environment.isWindows) {
-        // libuv on Windows doesn't do PATH+PATHEXT resolution for bare names.
-        // Resolve the executable the same way Bun.spawn does.
+        // Resolve the executable via bun.which, matching Bun.spawn's behavior.
+        // Copy to heap so the resolved path outlives the stack buffer.
         var path_buf: bun.PathBuffer = undefined;
         const PATH = jsc.VirtualMachine.get().transpiler.env.map.get("PATH") orelse "";
-        resolved_argv0 = bun.which(&path_buf, PATH, "", bun.sliceTo(argv[0].?, 0)) orelse {
+        const which_result = bun.which(&path_buf, PATH, "", bun.sliceTo(argv[0].?, 0)) orelse {
             this.setErr("Could not find '{s}' in PATH", .{bun.sliceTo(argv[0].?, 0)});
             this.finish();
             return;
         };
+        resolved_argv0 = (bun.default_allocator.dupeZ(u8, bun.sliceTo(which_result, 0)) catch {
+            this.setErr("Out of memory", .{});
+            this.finish();
+            return;
+        }).ptr;
     }
     const spawn_options = bun.spawn.SpawnOptions{
         .stdin = stdin_opt,

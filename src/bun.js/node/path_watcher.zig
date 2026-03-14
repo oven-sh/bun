@@ -14,6 +14,7 @@ pub const PathWatcherManager = struct {
     deinit_on_last_watcher: bool = false,
     pending_tasks: u32 = 0,
     deinit_on_last_task: bool = false,
+    deinit_started: bool = false,
     mutex: Mutex,
     const PathInfo = struct {
         fd: FD = .invalid,
@@ -323,6 +324,11 @@ pub const PathWatcherManager = struct {
                 }
             }
         }
+
+        // Tell threadMain not to destroy the Watcher when it exits. In-flight
+        // DirectoryRegisterTasks still access manager.main_watcher, so the
+        // manager's deferred deinit must handle Watcher cleanup instead.
+        this.main_watcher.skip_thread_destroy = true;
 
         // Release this.mutex before acquiring default_manager_mutex to
         // maintain consistent lock ordering (default_manager_mutex → this.mutex).
@@ -696,6 +702,10 @@ pub const PathWatcherManager = struct {
             this.mutex.lock();
             defer this.mutex.unlock();
 
+            // Guard against double-deinit: onError's deinit and
+            // unregisterWatcher's deferred deinit can race.
+            if (this.deinit_started) return;
+
             if (this.watcher_count > 0) {
                 // wait last watcher to close
                 this.deinit_on_last_watcher = true;
@@ -706,20 +716,34 @@ pub const PathWatcherManager = struct {
                 this.deinit_on_last_task = true;
                 return;
             }
+
+            this.deinit_started = true;
         }
 
-        // deinit(false) sets running=false under main_watcher.mutex.
-        // The watcher thread checks running inside processINotifyEventBatch /
-        // processKEvent under the same mutex, so after this returns the thread
-        // won't START a new onFileUpdate call.
-        this.main_watcher.deinit(false);
+        if (this.main_watcher.skip_thread_destroy) {
+            // Error path: onError set skip_thread_destroy so threadMain didn't
+            // destroy the Watcher. Check whether the thread has fully exited.
+            if (this.main_watcher.watchloop_handle == null) {
+                // Deferred path: thread exited. We destroy the Watcher.
+                this.main_watcher.freeOwnedFilePaths();
+                this.main_watcher.watchlist.deinit(this.main_watcher.allocator);
+                const watcher_allocator = this.main_watcher.allocator;
+                watcher_allocator.destroy(this.main_watcher);
+            } else {
+                // Synchronous path: still inside threadMain's call stack
+                // (onError → deinit). No tasks remain, so clear the flag and
+                // let threadMain handle its own cleanup when onError returns.
+                this.main_watcher.skip_thread_destroy = false;
+            }
+        } else {
+            // Normal shutdown: signal the watcher thread to stop.
+            // deinit(false) sets running=false under main_watcher.mutex so
+            // the thread won't start a new onFileUpdate call.
+            this.main_watcher.deinit(false);
+        }
 
-        // The thread reads file_paths only inside onFileUpdate, which holds
-        // this.mutex (PathWatcherManager's mutex). Acquire it to wait for any
-        // in-progress onFileUpdate to finish before freeing paths below.
-        // We use our OWN mutex rather than main_watcher.mutex because the
-        // thread may call allocator.destroy() on the Watcher after seeing
-        // running=false, making the Watcher's mutex inaccessible.
+        // Acquire our mutex to wait for any in-progress onFileUpdate to
+        // finish before freeing paths below.
         this.mutex.lock();
 
         if (this.watcher_count > 0) {

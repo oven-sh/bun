@@ -24,6 +24,10 @@ cwd: string,
 thread: std.Thread = undefined,
 running: bool = true,
 close_descriptors: bool = false,
+/// When true, the owner (e.g. PathWatcherManager) is responsible for
+/// cleaning up this Watcher's watchlist and memory. threadMain skips
+/// its destroy so in-flight tasks can still safely access the Watcher.
+pub skip_thread_destroy: bool = false,
 
 evict_list: [max_eviction_count]WatchItemIndex = undefined,
 evict_list_i: WatchItemIndex = 0,
@@ -118,6 +122,10 @@ pub fn deinit(this: *Watcher, close_descriptors: bool) void {
         defer this.mutex.unlock();
         this.close_descriptors = close_descriptors;
         this.running = false;
+    } else if (this.skip_thread_destroy) {
+        // Owner (PathWatcherManager) set skip_thread_destroy and will handle
+        // cleanup. Just mark as not running.
+        this.running = false;
     } else {
         if (close_descriptors and this.running) {
             const fds = this.watchlist.items(.fd);
@@ -132,7 +140,7 @@ pub fn deinit(this: *Watcher, close_descriptors: bool) void {
     }
 }
 
-fn freeOwnedFilePaths(this: *Watcher) void {
+pub fn freeOwnedFilePaths(this: *Watcher) void {
     const slice = this.watchlist.slice();
     const file_paths = slice.items(.file_path);
     const owns = slice.items(.owns_file_path);
@@ -245,14 +253,23 @@ fn threadMain(this: *Watcher) !void {
 
     switch (this.watchLoop()) {
         .err => |err| {
-            this.watchloop_handle = null;
             this.platform.stop();
             if (this.running) {
                 this.onError(this.ctx, err);
             }
+            // Clear after onError returns so that any Watcher.deinit(false)
+            // called from within onError sees watchloop_handle != null and
+            // only sets running=false instead of destroying this Watcher.
+            this.watchloop_handle = null;
         },
         .result => {},
     }
+
+    // When owned by a PathWatcherManager, skip_thread_destroy is set in
+    // onError. In-flight DirectoryRegisterTasks still reference this Watcher
+    // via manager.main_watcher, so threadMain must NOT destroy it. The
+    // manager's deferred deinit handles cleanup once all tasks complete.
+    if (this.skip_thread_destroy) return;
 
     // deinit and close descriptors if needed
     if (this.close_descriptors) {

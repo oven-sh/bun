@@ -1124,17 +1124,30 @@ fn cronToTaskXml(
     const weekdays_is_wild = cron.weekdays == all_weekdays;
     const months_is_wild = cron.months == all_months;
 
-    // Compute the GCD-based repetition interval for minute patterns.
-    // If all set minutes are evenly spaced (e.g. */5 → every 5 min), we can
-    // use a single trigger with Repetition instead of one trigger per minute.
+    // Try to use a single trigger with Repetition for simple repeating patterns.
+    // This avoids the 48-trigger limit for high-frequency expressions.
+    // Only valid when: (a) all days/weekdays/months are wild, AND
+    // (b) the pattern is expressible as a single PT interval that doesn't drift.
     const minute_interval = computeStepInterval(u64, cron.minutes, 0, 59);
     const hour_interval = computeStepInterval(u32, cron.hours, 0, 23);
+    const minutes_count = @popCount(cron.minutes);
+    const hours_count = @popCount(cron.hours);
 
-    // Strategy: use TimeTrigger+Repetition for simple repeating patterns,
-    // CalendarTrigger for complex day/month/weekday constraints.
-    if (days_is_wild and weekdays_is_wild and months_is_wild and minute_interval != null and hour_interval != null) {
-        // Simple repeating pattern: use a single trigger with Repetition.
-        // e.g. "* * * * *" → PT1M, "*/5 * * * *" → PT5M, "0 */2 * * *" → PT2H
+    // Case 1: All hours active, evenly-spaced minutes that divide 60
+    //   e.g. "* * * * *" → PT1M, "*/5 * * * *" → PT5M, "*/15 * * * *" → PT15M
+    // Case 2: Single minute, evenly-spaced hours that divide 24
+    //   e.g. "0 * * * *" → PT1H, "0 */2 * * *" → PT2H, "30 */6 * * *" → PT6H
+    const can_use_repetition = days_is_wild and weekdays_is_wild and months_is_wild and blk: {
+        if (hours_count == 24 and minute_interval != null and minute_interval.? <= 60 and 60 % minute_interval.? == 0) {
+            break :blk true; // Case 1
+        }
+        if (minutes_count == 1 and hour_interval != null and hour_interval.? <= 24 and 24 % hour_interval.? == 0) {
+            break :blk true; // Case 2
+        }
+        break :blk false;
+    };
+
+    if (can_use_repetition) {
         const minutes_expanded = expandBitfield(u64, cron.minutes, 0, 59) catch return error.InvalidCron;
         defer allocator.free(minutes_expanded);
         const hours_expanded = expandBitfield(u32, cron.hours, 0, 23) catch return error.InvalidCron;
@@ -1151,29 +1164,24 @@ fn cronToTaskXml(
         defer allocator.free(sb_line);
         try xml.appendSlice(sb_line);
 
-        // Add repetition if needed
-        if (minute_interval.? > 1 or hour_interval.? > 0) {
-            const total_minutes = (hour_interval orelse 0) * 60 + (minute_interval orelse 1);
-            if (total_minutes < 60) {
-                const rep = try std.fmt.allocPrint(allocator, "      <Repetition><Interval>PT{d}M</Interval></Repetition>\n", .{total_minutes});
+        if (hours_count == 24) {
+            // Case 1: minute-based repetition
+            const m = minute_interval.?;
+            if (m == 1) {
+                try xml.appendSlice("      <Repetition><Interval>PT1M</Interval></Repetition>\n");
+            } else {
+                const rep = try std.fmt.allocPrint(allocator, "      <Repetition><Interval>PT{d}M</Interval></Repetition>\n", .{m});
                 defer allocator.free(rep);
                 try xml.appendSlice(rep);
-            } else {
-                const rep_h = total_minutes / 60;
-                const rep_m = total_minutes % 60;
-                if (rep_m == 0) {
-                    const rep = try std.fmt.allocPrint(allocator, "      <Repetition><Interval>PT{d}H</Interval></Repetition>\n", .{rep_h});
-                    defer allocator.free(rep);
-                    try xml.appendSlice(rep);
-                } else {
-                    const rep = try std.fmt.allocPrint(allocator, "      <Repetition><Interval>PT{d}H{d}M</Interval></Repetition>\n", .{ rep_h, rep_m });
-                    defer allocator.free(rep);
-                    try xml.appendSlice(rep);
-                }
             }
         } else {
-            // Every minute
-            try xml.appendSlice("      <Repetition><Interval>PT1M</Interval></Repetition>\n");
+            // Case 2: hour-based repetition
+            const h = hour_interval.?;
+            if (h > 1) {
+                const rep = try std.fmt.allocPrint(allocator, "      <Repetition><Interval>PT{d}H</Interval></Repetition>\n", .{h});
+                defer allocator.free(rep);
+                try xml.appendSlice(rep);
+            }
         }
 
         try xml.appendSlice("      <ScheduleByDay><DaysInterval>1</DaysInterval></ScheduleByDay>\n");

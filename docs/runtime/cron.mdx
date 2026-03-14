@@ -259,7 +259,7 @@ Bun uses [Windows Task Scheduler](https://learn.microsoft.com/en-us/windows/win3
 
 Most cron expressions are fully supported, including `@daily`, `@weekly`, `@monthly`, `@yearly`, ranges (`1-5`), lists (`1,15`), named days/months, and day-of-month patterns.
 
-Tasks are registered using [`S4U` (Service-for-User)](https://learn.microsoft.com/en-us/windows/win32/taskschd/taskschedulerschema-logontype-simpletype) logon type, which runs jobs as the registering user even when not logged in — matching Linux `crontab` behavior. No password is stored. The trade-off is that scheduled jobs cannot access network resources.
+Tasks are registered using [`S4U` (Service-for-User)](https://learn.microsoft.com/en-us/windows/win32/taskschd/taskschedulerschema-logontype-simpletype) logon type, which runs jobs as the registering user even when not logged in — matching Linux `crontab` behavior. No password is stored. TCP/IP networking (`fetch()`, HTTP, WebSocket, database connections) works normally. The only limitation is that the task cannot access Windows-authenticated network resources (SMB file shares, mapped drives, Kerberos/NTLM services).
 
 :::note
 **Limitation:** Windows Task Scheduler has a limit of [48 triggers per task](https://learn.microsoft.com/en-us/windows/win32/taskschd/task-scheduler-start-page). Simple expressions (e.g. `*/5 * * * *`, `0 9 * * MON-FRI`) use efficient repetition patterns and work fine. However, complex combinations that expand to many distinct fire times may exceed this limit:

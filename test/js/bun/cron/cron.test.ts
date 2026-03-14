@@ -194,9 +194,9 @@ describe.skipIf(!hasAnyCronBackend)("cross-platform API consistency", () => {
   });
 });
 
-// Windows cannot represent all cron expressions via schtasks.
-// Complex expressions (ranges, lists, monthly, yearly) should reject
-// with a clear error rather than silently misbehaving.
+// Windows uses XML-based task registration with CalendarTrigger,
+// supporting the full range of cron expressions including monthly,
+// yearly, ranges, lists, and day-of-month patterns.
 describe.skipIf(!isWindows)("Windows XML-based scheduling (complex expressions)", () => {
   test("@monthly registers successfully", async () => {
     using dir = tempDir("bun-cron-test", {
@@ -869,16 +869,42 @@ describe.skipIf(!hasLaunchctl)("cron end-to-end (macOS)", () => {
       });
       expect(kick.exitCode).toBe(0);
 
-      // Poll for log output
+      // Wait for log output using fs.watch (event-driven with timeout)
       const logPath = "/tmp/bun.cron.test-mac-e2e.stdout.log";
-      let logContent = "";
-      for (let attempt = 0; attempt < 20; attempt++) {
-        await Bun.sleep(500);
-        logContent = await Bun.file(logPath)
-          .text()
-          .catch(() => "");
-        if (logContent.includes("scheduled")) break;
-      }
+      const fs = require("node:fs");
+      const path = require("node:path");
+
+      const waitForLog = async (): Promise<string> => {
+        const { promise, resolve, reject } = Promise.withResolvers<string>();
+        const timer = setTimeout(() => {
+          cleanup();
+          reject(new Error("Timed out"));
+        }, 10000);
+
+        const check = () => {
+          try {
+            const content = fs.readFileSync(logPath, "utf8");
+            if (content.includes("scheduled")) {
+              cleanup();
+              resolve(content);
+            }
+          } catch {}
+        };
+
+        // Watch /tmp for the log file to appear/change
+        const watcher = fs.watch(path.dirname(logPath), (_: string, filename: string) => {
+          if (filename === path.basename(logPath)) check();
+        });
+        const cleanup = () => {
+          clearTimeout(timer);
+          watcher.close();
+        };
+
+        // Check immediately in case the file already exists
+        check();
+        return promise;
+      };
+      const logContent = await waitForLog();
       const after = Date.now();
 
       // Find the JSON line in the output (may have debug noise)

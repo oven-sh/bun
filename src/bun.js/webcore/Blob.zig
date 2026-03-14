@@ -2497,11 +2497,8 @@ pub fn pipeReadableStreamToBlob(this: *Blob, globalThis: *jsc.JSGlobalObject, re
                     bun.O.WRONLY | bun.O.CREAT | bun.O.NONBLOCK,
                     write_permissions,
                 )) {
-                    .result => |result| switch (result.makeLibUVOwnedForSyscall(.open, .close_on_fail)) {
-                        .result => |uv_fd| break :brk uv_fd,
-                        .err => |err| {
-                            return jsc.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, try err.withPath(path).toJS(globalThis));
-                        },
+                    .result => |result| {
+                        break :brk result;
                     },
                     .err => |err| {
                         return jsc.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, try err.withPath(path).toJS(globalThis));

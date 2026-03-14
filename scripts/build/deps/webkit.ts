@@ -258,7 +258,10 @@ export const webkit: Dependency = {
       // it. If a future version drops libbmalloc.a, you'll get a clear
       // "file not found" at link time (not silent omission + cryptic
       // undefined symbols).
-      const libs = [...coreLibs(cfg), ...prebuiltIcuLibs(cfg), bmallocLib(cfg)];
+      //
+      // Windows: bmalloc/libpas is disabled due to crash-causing instability
+      // (see #20931, #26982, #26985, #28097).
+      const libs = [...coreLibs(cfg), ...prebuiltIcuLibs(cfg), ...(cfg.windows ? [] : [bmallocLib(cfg)])];
 
       const includes = ["include"];
       // Linux/windows: ICU headers under wtf/unicode. macOS: deleted by
@@ -281,7 +284,9 @@ export const webkit: Dependency = {
     // which source.ts appends to the resolved libs automatically. Listing
     // them here would make dep_build also claim to produce them (dup error).
     // Posix uses system ICU (linked via -licu* in bun.ts).
-    const libs = [...coreLibs(cfg), bmallocLib(cfg)];
+    // Windows: bmalloc/libpas is disabled due to crash-causing instability
+    // (see #20931, #26982, #26985, #28097).
+    const libs = [...coreLibs(cfg), ...(cfg.windows ? [] : [bmallocLib(cfg)])];
 
     const includes = [
       // ABSOLUTE — resolved here because they're in the build dir, not src.

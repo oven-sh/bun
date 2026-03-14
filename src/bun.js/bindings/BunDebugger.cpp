@@ -332,6 +332,13 @@ public:
                     break;
                 }
                 connection->receiveMessagesOnInspectorThread(*global->scriptExecutionContext(), global, true);
+                // Re-assert kInPauseLoop after message dispatch. If the dispatch
+                // triggered a nested breakpoint → recursive runWhilePaused, the
+                // inner call's cleanup (pauseFlags.store(0)) will have cleared
+                // this flag. Without re-asserting, interruptForMessageDelivery
+                // would see kInPauseLoop unset and call notifyNeedDebuggerBreak,
+                // which can deadlock.
+                connection->pauseFlags.fetch_or(BunInspectorConnection::kInPauseLoop);
             }
         } else {
             while (!isDoneProcessingEvents) {
@@ -339,6 +346,8 @@ public:
                 for (auto* connection : connections) {
                     closedCount += connection->status == ConnectionStatus::Disconnected || connection->status == ConnectionStatus::Disconnecting;
                     connection->receiveMessagesOnInspectorThread(*global->scriptExecutionContext(), global, true);
+                    // Re-assert after each dispatch (see single-connection comment above).
+                    connection->pauseFlags.fetch_or(BunInspectorConnection::kInPauseLoop);
                     if (isDoneProcessingEvents)
                         break;
                 }
@@ -1003,6 +1012,7 @@ void schedulePauseForConnectedSessions(JSC::VM& vm, bool isBootstrap)
 
 extern "C" bool Bun__tryActivateInspector();
 extern "C" void Bun__activateRuntimeInspectorMode();
+extern "C" void Bun__clearInspectorActivationRequest();
 
 JSC::StopTheWorldStatus Bun__stopTheWorldCallback(JSC::VM& vm, JSC::StopTheWorldEvent event)
 {
@@ -1015,8 +1025,16 @@ JSC::StopTheWorldStatus Bun__stopTheWorldCallback(JSC::VM& vm, JSC::StopTheWorld
     // CONTINUE: CONTINUE leaves m_currentStopReason set, so if the event-loop
     // path concurrently clears the stop request, the caller (notifyVMStop)
     // loops with stale state and waits forever on m_worldConditionVariable.
-    if (event != StopTheWorldEvent::VMStopped)
+    if (event != StopTheWorldEvent::VMStopped) {
+        // Clear the activation flag so that a subsequent SIGUSR1 can
+        // re-request STW. Without this, the flag stays true and
+        // requestInspectorActivation skips requestStopAll (only doing
+        // eventLoop().wakeup(), which can't interrupt a busy loop).
+        // We can't call Bun__tryActivateInspector here because that
+        // activates the inspector, which requires main-thread context.
+        Bun__clearInspectorActivationRequest();
         return STW_RESUME_ALL();
+    }
 
     // Phase 1: Activate inspector if requested (SIGUSR1 handler sets a flag)
     bool activated = Bun__tryActivateInspector();

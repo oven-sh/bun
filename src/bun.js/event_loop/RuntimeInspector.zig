@@ -405,11 +405,20 @@ export fn Bun__tryActivateInspector() bool {
     return tryActivateInspector();
 }
 
+/// Clear the inspector activation flag without activating.
+/// Called from the STW callback for non-VMStopped events (e.g. VMCreated)
+/// where we can't activate the inspector (wrong thread context) but need
+/// to unstick the flag so that a subsequent SIGUSR1 can re-request STW.
+export fn Bun__clearInspectorActivationRequest() void {
+    _ = inspector_activation_requested.swap(false, .acq_rel);
+}
+
 comptime {
     if (Environment.isPosix) {
         _ = Bun__Sigusr1Handler__uninstall;
     }
     _ = Bun__tryActivateInspector;
+    _ = Bun__clearInspectorActivationRequest;
 }
 
 const Semaphore = @import("../../sync/Semaphore.zig");

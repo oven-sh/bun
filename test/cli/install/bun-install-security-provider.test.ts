@@ -1,6 +1,6 @@
 import { file } from "bun";
-import { join } from "path";
 import { bunEnv, bunExe, runBunInstall } from "harness";
+import { join } from "path";
 import {
   dummyAfterAll,
   dummyAfterEach,

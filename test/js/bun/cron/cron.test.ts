@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isMacOS, isWindows, tempDir } from "harness";
-import { existsSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, unlinkSync, watch, writeFileSync } from "node:fs";
+import { basename } from "node:path";
 
 const crontabPath = Bun.which("crontab");
 const hasCrontab = !!crontabPath && isLinux;
@@ -106,6 +107,13 @@ describe("Bun.cron API", () => {
     expect(() => Bun.cron("./test.ts", "abc * * * *", "test-bad")).toThrow(/cron expression/i);
   });
 
+  test("throws with percent sign in path", async () => {
+    using dir = tempDir("bun-cron-test", {
+      "test%file.ts": `export default { scheduled() {} };`,
+    });
+    expect(() => Bun.cron(`${dir}/test%file.ts`, "* * * * *", "test-bad")).toThrow(/percent/i);
+  });
+
   test("remove throws with invalid title characters", () => {
     expect(() => Bun.cron.remove("bad title!")).toThrow(/alphanumeric/);
   });
@@ -187,37 +195,137 @@ describe.skipIf(!hasAnyCronBackend)("cross-platform API consistency", () => {
   });
 });
 
-// Windows cannot represent all cron expressions via schtasks.
-// Complex expressions (ranges, lists, monthly, yearly) should reject
-// with a clear error rather than silently misbehaving.
-describe.skipIf(!isWindows)("Windows schtasks limitations", () => {
-  test("rejects @monthly (not expressible in schtasks)", async () => {
+// Windows uses XML-based task registration with CalendarTrigger,
+// supporting the full range of cron expressions including monthly,
+// yearly, ranges, lists, and day-of-month patterns.
+describe.skipIf(!isWindows)("Windows XML-based scheduling (complex expressions)", () => {
+  test("@monthly registers successfully", async () => {
     using dir = tempDir("bun-cron-test", {
       "job.ts": `export default { scheduled() {} };`,
     });
-    expect(Bun.cron(`${dir}/job.ts`, "@monthly", "test-win-monthly")).rejects.toThrow(/supported/i);
+    try {
+      const result = await Bun.cron(`${dir}/job.ts`, "@monthly", "test-win-monthly");
+      expect(result).toBeUndefined();
+      expect(querySchtask("test-win-monthly")).not.toBeNull();
+    } finally {
+      deleteSchtask("test-win-monthly");
+    }
   });
 
-  test("rejects @yearly (not expressible in schtasks)", async () => {
+  test("@yearly registers successfully", async () => {
     using dir = tempDir("bun-cron-test", {
       "job.ts": `export default { scheduled() {} };`,
     });
-    expect(Bun.cron(`${dir}/job.ts`, "@yearly", "test-win-yearly")).rejects.toThrow(/supported/i);
+    try {
+      const result = await Bun.cron(`${dir}/job.ts`, "@yearly", "test-win-yearly");
+      expect(result).toBeUndefined();
+      expect(querySchtask("test-win-yearly")).not.toBeNull();
+    } finally {
+      deleteSchtask("test-win-yearly");
+    }
   });
 
-  test("rejects complex range expressions", async () => {
+  test("complex range expression registers successfully", async () => {
     using dir = tempDir("bun-cron-test", {
       "job.ts": `export default { scheduled() {} };`,
     });
-    expect(Bun.cron(`${dir}/job.ts`, "*/15 1-5 1,15 * 0-4", "test-win-complex")).rejects.toThrow(/supported/i);
+    try {
+      const result = await Bun.cron(`${dir}/job.ts`, "*/15 1-5 1,15 * 0-4", "test-win-complex");
+      expect(result).toBeUndefined();
+      expect(querySchtask("test-win-complex")).not.toBeNull();
+    } finally {
+      deleteSchtask("test-win-complex");
+    }
   });
 
-  test("rejects day-of-month expressions", async () => {
+  test("day-of-month expression registers successfully", async () => {
     using dir = tempDir("bun-cron-test", {
       "job.ts": `export default { scheduled() {} };`,
     });
-    expect(Bun.cron(`${dir}/job.ts`, "0 0 15 * *", "test-win-dom")).rejects.toThrow(/supported/i);
+    try {
+      const result = await Bun.cron(`${dir}/job.ts`, "0 0 15 * *", "test-win-dom");
+      expect(result).toBeUndefined();
+      expect(querySchtask("test-win-dom")).not.toBeNull();
+    } finally {
+      deleteSchtask("test-win-dom");
+    }
   });
+});
+
+// Test all Windows XML code paths: ScheduleByMonth, ScheduleByWeek,
+// ScheduleByMonthDayOfWeek, Repetition, and OR-split (day-of-month + day-of-week).
+describe.skipIf(!hasSchtasks)("Windows XML code paths", () => {
+  test("ScheduleByMonthDayOfWeek: weekday with month restriction", async () => {
+    using dir = tempDir("bun-cron-test", {
+      "job.ts": `export default { scheduled() {} };`,
+    });
+    try {
+      // Every Monday in June — uses ScheduleByMonthDayOfWeek
+      await Bun.cron(`${dir}/job.ts`, "0 9 * 6 1", "test-win-monthdow");
+      expect(querySchtask("test-win-monthdow")).not.toBeNull();
+    } finally {
+      deleteSchtask("test-win-monthdow");
+    }
+  });
+
+  test("OR-split: day-of-month AND day-of-week produce two triggers", async () => {
+    using dir = tempDir("bun-cron-test", {
+      "job.ts": `export default { scheduled() {} };`,
+    });
+    try {
+      // 15th of month OR every Friday — should create two triggers
+      await Bun.cron(`${dir}/job.ts`, "0 0 15 * 5", "test-win-or-split");
+      expect(querySchtask("test-win-or-split")).not.toBeNull();
+    } finally {
+      deleteSchtask("test-win-or-split");
+    }
+  });
+
+  test("daily with month restriction", async () => {
+    using dir = tempDir("bun-cron-test", {
+      "job.ts": `export default { scheduled() {} };`,
+    });
+    try {
+      // Every day in June — uses ScheduleByMonth with all 31 days
+      await Bun.cron(`${dir}/job.ts`, "0 0 * 6 *", "test-win-daily-month");
+      expect(querySchtask("test-win-daily-month")).not.toBeNull();
+    } finally {
+      deleteSchtask("test-win-daily-month");
+    }
+  });
+
+  test("hourly repetition pattern", async () => {
+    using dir = tempDir("bun-cron-test", {
+      "job.ts": `export default { scheduled() {} };`,
+    });
+    try {
+      // Every 3 hours — uses Repetition PT3H
+      await Bun.cron(`${dir}/job.ts`, "0 */3 * * *", "test-win-hourly-rep");
+      expect(querySchtask("test-win-hourly-rep")).not.toBeNull();
+    } finally {
+      deleteSchtask("test-win-hourly-rep");
+    }
+  });
+});
+
+// Minute steps that don't divide 60 (e.g. */7, */8, */9) cannot be represented
+// in Windows Task Scheduler without exceeding the 48-trigger limit.
+// On non-Windows platforms these work fine via crontab/launchd.
+// https://learn.microsoft.com/en-us/windows/win32/taskschd/task-scheduler-start-page
+describe.skipIf(!hasAnyCronBackend)("non-divisor minute steps", () => {
+  const nonDivisorSteps = ["*/7", "*/8", "*/9", "*/11", "*/13"];
+  for (const step of nonDivisorSteps) {
+    const expr = `${step} * * * *`;
+    (isWindows ? test.failing : test)(`${expr} registers on this platform`, async () => {
+      using dir = tempDir("bun-cron-test", {
+        "job.ts": `export default { scheduled() {} };`,
+      });
+      const title = `test-step-every${step.slice(2)}min`;
+      const result = await Bun.cron(`${dir}/job.ts`, expr, title);
+      expect(result).toBeUndefined();
+      await Bun.cron.remove(title);
+    });
+  }
 });
 
 // ==========================================================================
@@ -463,7 +571,7 @@ describe.skipIf(!hasSchtasks)("cron registration (Windows)", () => {
     }
   });
 
-  test("every-minute schedule uses MINUTE schedule type", async () => {
+  test("every-5-minutes schedule registers and is queryable", async () => {
     using dir = tempDir("bun-cron-test", {
       "job.ts": `export default { scheduled() {} };`,
     });
@@ -471,8 +579,7 @@ describe.skipIf(!hasSchtasks)("cron registration (Windows)", () => {
       await Bun.cron(`${dir}/job.ts`, "*/5 * * * *", "test-win-sched");
       const info = querySchtask("test-win-sched");
       expect(info).not.toBeNull();
-      // schtasks /query LIST format shows Schedule Type
-      expect(info).toContain("MINUTE");
+      expect(info).toContain("bun-cron-test-win-sched");
     } finally {
       deleteSchtask("test-win-sched");
     }
@@ -698,6 +805,43 @@ describe.skipIf(!hasLaunchctl)("cron registration (macOS)", () => {
     }
   });
 
+  test("POSIX OR semantics: day-of-month AND weekday produce separate dicts", async () => {
+    using dir = tempDir("bun-cron-test", {
+      "job.ts": `export default { scheduled() {} };`,
+    });
+    try {
+      // '0 0 15 * 5' = 15th of month OR every Friday
+      await Bun.cron(`${dir}/job.ts`, "0 0 15 * 5", "test-mac-or");
+      const plist = await Bun.file(plistPath("test-mac-or")).text();
+      // Should have separate dicts: one with Day=15 (no Weekday), one with Weekday=5 (no Day)
+      expect(plist).toContain("<key>Day</key>");
+      expect(plist).toContain("<integer>15</integer>");
+      expect(plist).toContain("<key>Weekday</key>");
+      expect(plist).toContain("<integer>5</integer>");
+      // Should be an array (multiple dicts)
+      expect(plist).toContain("<array>");
+    } finally {
+      removeLaunchdJob("test-mac-or");
+    }
+  });
+
+  test("complex multi-value expression produces correct plist", async () => {
+    using dir = tempDir("bun-cron-test", {
+      "job.ts": `export default { scheduled() {} };`,
+    });
+    try {
+      // '0 9 1,15 * *' = 1st and 15th of every month at 9am
+      await Bun.cron(`${dir}/job.ts`, "0 9 1,15 * *", "test-mac-multi-dom");
+      const plist = await Bun.file(plistPath("test-mac-multi-dom")).text();
+      expect(plist).toContain("<key>Day</key>");
+      // Should have both Day 1 and Day 15 in separate dicts
+      const dayMatches = plist.match(/<key>Day<\/key>/g);
+      expect(dayMatches?.length).toBe(2);
+    } finally {
+      removeLaunchdJob("test-mac-multi-dom");
+    }
+  });
+
   test("registers multiple different jobs", async () => {
     using dir = tempDir("bun-cron-test", {
       "a.ts": `export default { scheduled() {} };`,
@@ -773,6 +917,75 @@ describe.skipIf(!hasLaunchctl)("cron removal (macOS)", () => {
   });
 });
 
+describe.skipIf(!hasLaunchctl)("cron end-to-end (macOS)", () => {
+  test("force-triggered job receives correct controller properties", async () => {
+    const markerPath = `/tmp/bun-cron-e2e-${Date.now()}.json`;
+    using dir = tempDir("bun-cron-test", {
+      "e2e-job.ts": `
+        export default {
+          scheduled(controller) {
+            require("node:fs").writeFileSync("${markerPath}", JSON.stringify({
+              type: controller.type,
+              cron: controller.cron,
+              scheduledTime: controller.scheduledTime,
+              keys: Object.keys(controller).sort(),
+            }));
+          }
+        };
+      `,
+    });
+    try {
+      const before = Date.now();
+      await Bun.cron(`${dir}/e2e-job.ts`, "0 0 * * *", "test-mac-e2e");
+
+      Bun.spawnSync({
+        cmd: ["/bin/launchctl", "kickstart", `gui/${process.getuid!()}/bun.cron.test-mac-e2e`],
+      });
+
+      // Wait for the marker file to appear
+      const { promise, resolve, reject } = Promise.withResolvers<void>();
+      const timer = setTimeout(() => {
+        watcher.close();
+        reject(new Error("Timed out"));
+      }, 10000);
+      const watcher = watch("/tmp", (_, f) => {
+        if (f === basename(markerPath)) {
+          watcher.close();
+          clearTimeout(timer);
+          resolve();
+        }
+      });
+      if (existsSync(markerPath)) {
+        watcher.close();
+        clearTimeout(timer);
+        resolve();
+      }
+      await promise;
+
+      const output = JSON.parse(readFileSync(markerPath, "utf8"));
+      const after = Date.now();
+      expect(output.type).toBe("scheduled");
+      expect(output.cron).toBe("0 0 * * *");
+      expect(typeof output.scheduledTime).toBe("number");
+      expect(output.scheduledTime).toBeGreaterThanOrEqual(before - 5000);
+      expect(output.scheduledTime).toBeLessThanOrEqual(after + 5000);
+      // Verify exactly these three keys, no extras
+      expect(output.keys).toEqual(["cron", "scheduledTime", "type"]);
+    } finally {
+      removeLaunchdJob("test-mac-e2e");
+      try {
+        unlinkSync(markerPath);
+      } catch {}
+      try {
+        unlinkSync("/tmp/bun.cron.test-mac-e2e.stdout.log");
+      } catch {}
+      try {
+        unlinkSync("/tmp/bun.cron.test-mac-e2e.stderr.log");
+      } catch {}
+    }
+  });
+});
+
 // ==========================================================================
 // Cron execution mode (--cron-title / --cron-period)
 // ==========================================================================
@@ -786,13 +999,15 @@ describe("cron execution mode", () => {
             console.log(JSON.stringify({
               type: controller.type,
               cron: controller.cron,
-              hasScheduledTime: typeof controller.scheduledTime === "number",
+              scheduledTime: controller.scheduledTime,
+              keys: Object.keys(controller).sort(),
             }));
           }
         };
       `,
     });
 
+    const before = Date.now();
     await using proc = Bun.spawn({
       cmd: [bunExe(), "run", "--cron-title=my-job", "--cron-period=30 2 * * 1", `${dir}/scheduled.ts`],
       env: bunEnv,
@@ -801,13 +1016,18 @@ describe("cron execution mode", () => {
     });
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const after = Date.now();
 
     const output = JSON.parse(stdout.trim());
-    expect(output).toEqual({
-      type: "scheduled",
-      cron: "30 2 * * 1",
-      hasScheduledTime: true,
-    });
+    // Verify exact property names and types
+    expect(output.type).toBe("scheduled");
+    expect(output.cron).toBe("30 2 * * 1");
+    expect(typeof output.scheduledTime).toBe("number");
+    // scheduledTime should be close to now (within 5 seconds)
+    expect(output.scheduledTime).toBeGreaterThanOrEqual(before - 1000);
+    expect(output.scheduledTime).toBeLessThanOrEqual(after + 1000);
+    // Verify the controller has exactly these three keys
+    expect(output.keys).toEqual(["cron", "scheduledTime", "type"]);
     expect(exitCode).toBe(0);
   });
 

@@ -48,3 +48,10 @@ Bun.cron("./worker.ts");
 // -- Cron type is accessible --
 
 declare const schedule: Bun.CronWithAutocomplete;
+
+// -- CronController type is accessible --
+
+declare const controller: Bun.CronController;
+expectType(controller.type).is<"scheduled">();
+expectType(controller.cron).is<string>();
+expectType(controller.scheduledTime).is<number>();

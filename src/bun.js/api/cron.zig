@@ -55,6 +55,7 @@ pub const CronRegisterJob = struct {
     schedule: [:0]const u8, // normalized numeric form for crontab/launchd
     raw_schedule: [:0]const u8, // original form for --cron-period and schtasks parsing
     title: [:0]const u8,
+    parsed_cron: CronExpression,
 
     state: State = .reading_crontab,
     process: ?*Process = null,
@@ -419,11 +420,16 @@ pub const CronRegisterJob = struct {
             return globalObject.throwInvalidArguments("Failed to resolve path", .{});
         };
 
-        // Validate path has no single quotes (used for shell escaping in crontab)
+        // Validate path has no single quotes (shell escaping in crontab) or
+        // percent signs (cron interprets % as newline before the shell sees it)
         for (abs_path) |c| {
             if (c == '\'') {
                 bun.default_allocator.free(abs_path);
                 return globalObject.throwInvalidArguments("Path must not contain single quotes", .{});
+            }
+            if (c == '%') {
+                bun.default_allocator.free(abs_path);
+                return globalObject.throwInvalidArguments("Path must not contain percent signs (cron interprets % as newline)", .{});
             }
         }
 
@@ -454,7 +460,7 @@ pub const CronRegisterJob = struct {
             bun.default_allocator.free(title_owned);
             return globalObject.throw("Out of memory", .{});
         };
-        job.* = .{ .global = globalObject, .bun_exe = bun_exe, .abs_path = abs_path, .schedule = schedule_owned, .raw_schedule = raw_schedule_owned, .title = title_owned, .promise = jsc.JSPromise.Strong.init(globalObject) };
+        job.* = .{ .global = globalObject, .bun_exe = bun_exe, .abs_path = abs_path, .schedule = schedule_owned, .raw_schedule = raw_schedule_owned, .title = title_owned, .parsed_cron = parsed, .promise = jsc.JSPromise.Strong.init(globalObject) };
 
         const promise_value = job.promise.value();
         job.poll.ref(jsc.VirtualMachine.get());
@@ -472,9 +478,7 @@ pub const CronRegisterJob = struct {
     // -- Windows --
 
     fn startWindows(this: *CronRegisterJob) void {
-        // Use schtasks /create with /sc and /tr to register a task.
-        // Task name: "bun-cron-<title>"
-        this.state = .installing_crontab; // reuse state for "single spawn" flow
+        this.state = .installing_crontab;
 
         const task_name = allocPrintZ(bun.default_allocator, "bun-cron-{s}", .{this.title}) catch {
             this.setErr("Out of memory", .{});
@@ -483,59 +487,38 @@ pub const CronRegisterJob = struct {
         };
         defer bun.default_allocator.free(task_name);
 
-        // Build the command that schtasks will execute
-        const tr_cmd = allocPrintZ(bun.default_allocator, "\"{s}\" run --cron-title={s} --cron-period=\"{s}\" \"{s}\"", .{
-            this.bun_exe, this.title, this.schedule, this.abs_path,
-        }) catch {
+        const xml = cronToTaskXml(this.parsed_cron, this.bun_exe, this.title, this.schedule, this.abs_path) catch |err| {
+            if (err == error.TooManyTriggers) {
+                this.setErr("This cron expression requires too many triggers for Windows Task Scheduler (max 48). Simplify the expression or use fewer restricted fields.", .{});
+            } else {
+                this.setErr("Failed to build task XML", .{});
+            }
+            this.finish();
+            return;
+        };
+        defer bun.default_allocator.free(xml);
+
+        const xml_path = makeTempPath("bun-cron-xml-", this.title) catch {
             this.setErr("Out of memory", .{});
             this.finish();
             return;
         };
-        defer bun.default_allocator.free(tr_cmd);
+        this.tmp_path = xml_path;
 
-        // Parse cron to schtasks params using normalized schedule (nicknames already expanded to 5 fields)
-        const schtasks_params = cronToSchtasks(this.schedule) catch {
-            this.setErr("Cannot convert this cron expression to a Windows scheduled task. Only simple patterns are supported.", .{});
+        const file = bun.sys.File.openat(bun.FD.cwd(), xml_path, bun.O.WRONLY | bun.O.CREAT | bun.O.EXCL, 0o600).unwrap() catch {
+            this.setErr("Failed to create temp XML file", .{});
+            this.finish();
+            return;
+        };
+        defer file.close();
+        _ = file.writeAll(xml).unwrap() catch {
+            this.setErr("Failed to write temp XML file", .{});
             this.finish();
             return;
         };
 
-        var argv_buf: [16:null]?[*:0]const u8 = .{null} ** 16;
-        var argc: usize = 0;
-        argv_buf[argc] = "schtasks";
-        argc += 1;
-        argv_buf[argc] = "/create";
-        argc += 1;
-        argv_buf[argc] = "/tn";
-        argc += 1;
-        argv_buf[argc] = task_name.ptr;
-        argc += 1;
-        argv_buf[argc] = "/tr";
-        argc += 1;
-        argv_buf[argc] = tr_cmd.ptr;
-        argc += 1;
-        argv_buf[argc] = "/sc";
-        argc += 1;
-        argv_buf[argc] = schtasks_params.sc;
-        argc += 1;
-        argv_buf[argc] = "/mo";
-        argc += 1;
-        argv_buf[argc] = schtasks_params.mo;
-        argc += 1;
-        if (schtasks_params.start_time) |st| {
-            argv_buf[argc] = "/st";
-            argc += 1;
-            argv_buf[argc] = st;
-            argc += 1;
-        }
-        if (schtasks_params.day_spec) |d| {
-            argv_buf[argc] = "/d";
-            argc += 1;
-            argv_buf[argc] = d;
-            argc += 1;
-        }
-        argv_buf[argc] = "/f";
-        this.spawnCmd(&argv_buf, .ignore, .ignore);
+        var argv = [_:null]?[*:0]const u8{ "schtasks", "/create", "/xml", xml_path.ptr, "/tn", task_name.ptr, "/f", null };
+        this.spawnCmd(&argv, .ignore, .ignore);
     }
 };
 
@@ -1115,107 +1098,281 @@ fn emitCalendarDicts(result: *std.array_list.Managed(u8), field_values: [5]?[]co
     }
 }
 
-/// Convert a cron expression to schtasks /sc and /mo parameters.
-/// Supports: */N * * * * (MINUTE), 0 */N * * * (HOURLY), 0 0 * * * (DAILY),
-/// 0 0 * * N (WEEKLY). Returns error for complex expressions.
-const SchtasksParams = struct {
-    sc: [*:0]const u8,
-    mo: [*:0]const u8,
-    start_time: ?[*:0]const u8 = null, // /st HH:MM
-    day_spec: ?[*:0]const u8 = null, // /d for WEEKLY
-};
+/// Build a Windows Task Scheduler XML definition from a parsed cron expression.
+/// Uses TimeTrigger+Repetition for simple intervals, CalendarTrigger for complex schedules.
+fn cronToTaskXml(
+    cron: CronExpression,
+    bun_exe: []const u8,
+    title: []const u8,
+    schedule: []const u8,
+    abs_path: []const u8,
+) ![]const u8 {
+    const allocator = bun.default_allocator;
+    var xml = std.array_list.Managed(u8).init(allocator);
+    errdefer xml.deinit();
 
-fn cronToSchtasks(schedule: []const u8) !SchtasksParams {
-    var fields: [5][]const u8 = undefined;
-    var count: usize = 0;
-    var iter = std.mem.tokenizeScalar(u8, schedule, ' ');
-    while (iter.next()) |field| {
-        if (count >= 5) return error.UnsupportedSchedule;
-        fields[count] = field;
-        count += 1;
+    try xml.appendSlice(
+        \\<?xml version="1.0" encoding="UTF-8"?>
+        \\<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+        \\  <Triggers>
+        \\
+    );
+
+    // Use semantic checks (bitfield values) not syntax flags for wildcard detection.
+    // e.g. "*/1" sets all bits just like "*" but has _is_wildcard=false.
+    const all_days: u32 = ((1 << 32) - 1) & ~@as(u32, 1); // bits 1-31
+    const all_months: u16 = ((1 << 13) - 1) & ~@as(u16, 1); // bits 1-12
+    const all_weekdays: u8 = (1 << 7) - 1; // bits 0-6
+
+    const days_is_wild = cron.days == all_days;
+    const weekdays_is_wild = cron.weekdays == all_weekdays;
+    const months_is_wild = cron.months == all_months;
+
+    // Try to use a single trigger with Repetition for simple repeating patterns.
+    // This avoids the 48-trigger limit for high-frequency expressions.
+    // Only valid when: (a) all days/weekdays/months are wild, AND
+    // (b) the pattern is expressible as a single PT interval that doesn't drift.
+    const minute_interval = computeStepInterval(u64, cron.minutes, 0, 59);
+    const hour_interval = computeStepInterval(u32, cron.hours, 0, 23);
+    const minutes_count = @popCount(cron.minutes);
+    const hours_count = @popCount(cron.hours);
+
+    // Case 1: All hours active, evenly-spaced minutes that divide 60
+    //   e.g. "* * * * *" → PT1M, "*/5 * * * *" → PT5M, "*/15 * * * *" → PT15M
+    // Case 2: Single minute, evenly-spaced hours that divide 24
+    //   e.g. "0 * * * *" → PT1H, "0 */2 * * *" → PT2H, "30 */6 * * *" → PT6H
+    const can_use_repetition = days_is_wild and weekdays_is_wild and months_is_wild and blk: {
+        if (hours_count == 24 and minute_interval != null and minute_interval.? <= 60 and 60 % minute_interval.? == 0 and minutes_count == 60 / minute_interval.?) {
+            break :blk true; // Case 1
+        }
+        if (minutes_count == 1 and hour_interval != null and hour_interval.? <= 24 and 24 % hour_interval.? == 0 and hours_count == 24 / hour_interval.?) {
+            break :blk true; // Case 2
+        }
+        break :blk false;
+    };
+
+    if (can_use_repetition) {
+        const first_min: u32 = @ctz(cron.minutes);
+        const first_hour: u32 = @ctz(cron.hours);
+
+        var sb_buf: [32]u8 = undefined;
+        const sb = std.fmt.bufPrint(&sb_buf, "2000-01-01T{d:0>2}:{d:0>2}:00", .{ first_hour, first_min }) catch return error.InvalidCron;
+
+        try xml.appendSlice("    <CalendarTrigger>\n");
+        var line_buf: [128]u8 = undefined;
+        const sb_line = std.fmt.bufPrint(&line_buf, "      <StartBoundary>{s}</StartBoundary>\n", .{sb}) catch return error.InvalidCron;
+        try xml.appendSlice(sb_line);
+
+        if (hours_count == 24) {
+            // Case 1: minute-based repetition
+            const m = minute_interval.?;
+            if (m == 1) {
+                try xml.appendSlice("      <Repetition><Interval>PT1M</Interval></Repetition>\n");
+            } else {
+                const rep = std.fmt.bufPrint(&line_buf, "      <Repetition><Interval>PT{d}M</Interval></Repetition>\n", .{m}) catch return error.InvalidCron;
+                try xml.appendSlice(rep);
+            }
+        } else {
+            // Case 2: hour-based repetition
+            const h = hour_interval.?;
+            if (h > 1) {
+                const rep = std.fmt.bufPrint(&line_buf, "      <Repetition><Interval>PT{d}H</Interval></Repetition>\n", .{h}) catch return error.InvalidCron;
+                try xml.appendSlice(rep);
+            }
+        }
+
+        try xml.appendSlice("      <ScheduleByDay><DaysInterval>1</DaysInterval></ScheduleByDay>\n");
+        try xml.appendSlice("    </CalendarTrigger>\n");
+    } else {
+        // Complex pattern: emit CalendarTriggers for each hour×minute pair.
+        // Cap at 48 triggers (Task Scheduler limit).
+        const needs_or_split = !days_is_wild and !weekdays_is_wild;
+        const triggers_per_time: u32 = if (needs_or_split) 2 else 1;
+        const total_triggers = minutes_count * hours_count * triggers_per_time;
+        if (total_triggers > 48) return error.TooManyTriggers;
+
+        var hours_bits = cron.hours;
+        while (hours_bits != 0) {
+            const h: u32 = @ctz(hours_bits);
+            hours_bits &= hours_bits - 1;
+            var mins_bits = cron.minutes;
+            while (mins_bits != 0) {
+                const m: u32 = @ctz(mins_bits);
+                mins_bits &= mins_bits - 1;
+                var sb_buf: [32]u8 = undefined;
+                const sb = std.fmt.bufPrint(&sb_buf, "2000-01-01T{d:0>2}:{d:0>2}:00", .{
+                    @as(u32, @intCast(h)), @as(u32, @intCast(m)),
+                }) catch return error.InvalidCron;
+
+                // Emit day-of-month trigger if needed
+                if (!days_is_wild) {
+                    try appendCalendarTriggerWithSchedule(&xml, allocator, sb, .{ .by_month = .{ .cron = cron, .months_is_wild = months_is_wild } });
+                }
+
+                // Emit day-of-week trigger if needed
+                if (!weekdays_is_wild) {
+                    if (months_is_wild) {
+                        try appendCalendarTriggerWithSchedule(&xml, allocator, sb, .{ .by_week = cron.weekdays });
+                    } else {
+                        // Use ScheduleByMonthDayOfWeek to include month restrictions
+                        try appendCalendarTriggerWithSchedule(&xml, allocator, sb, .{ .by_month_dow = .{ .cron = cron, .months_is_wild = months_is_wild } });
+                    }
+                }
+
+                // Both wildcard: every day (with optional month restriction)
+                if (days_is_wild and weekdays_is_wild) {
+                    if (months_is_wild) {
+                        try appendCalendarTriggerWithSchedule(&xml, allocator, sb, .{ .by_day = {} });
+                    } else {
+                        // Daily but restricted months → use ScheduleByMonth with all days
+                        try appendCalendarTriggerWithSchedule(&xml, allocator, sb, .{ .by_month_all_days = cron.months });
+                    }
+                }
+            }
+        }
     }
-    if (count != 5) return error.UnsupportedSchedule;
 
-    const minute = fields[0];
-    const hour = fields[1];
-    const dom = fields[2];
-    const month = fields[3];
-    const dow = fields[4];
+    // Close triggers, add action
+    const xml_bun = try xmlEscape(bun_exe);
+    defer allocator.free(xml_bun);
+    const xml_title = try xmlEscape(title);
+    defer allocator.free(xml_title);
+    const xml_sched = try xmlEscape(schedule);
+    defer allocator.free(xml_sched);
+    const xml_path = try xmlEscape(abs_path);
+    defer allocator.free(xml_path);
 
-    // Every N minutes: */N * * * *
-    if (bun.strings.hasPrefixComptime(minute, "*/") and
-        bun.strings.eql(hour, "*") and bun.strings.eql(dom, "*") and
-        bun.strings.eql(month, "*") and bun.strings.eql(dow, "*"))
-    {
-        const val = std.fmt.parseInt(u32, minute[2..], 10) catch return error.UnsupportedSchedule;
-        const static_min = struct {
-            var buf: [16:0]u8 = undefined;
-        };
-        _ = std.fmt.bufPrintZ(&static_min.buf, "{d}", .{val}) catch return error.UnsupportedSchedule;
-        return .{ .sc = "MINUTE", .mo = &static_min.buf };
-    }
+    const action_xml = try std.fmt.allocPrint(allocator,
+        \\  </Triggers>
+        \\  <Settings>
+        \\    <Enabled>true</Enabled>
+        \\    <AllowStartOnDemand>true</AllowStartOnDemand>
+        \\    <AllowHardTerminate>true</AllowHardTerminate>
+        \\    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+        \\    <StartWhenAvailable>true</StartWhenAvailable>
+        \\  </Settings>
+        \\  <Actions>
+        \\    <Exec>
+        \\      <Command>{s}</Command>
+        \\      <Arguments>run --cron-title={s} --cron-period="{s}" "{s}"</Arguments>
+        \\    </Exec>
+        \\  </Actions>
+        \\</Task>
+        \\
+    , .{ xml_bun, xml_title, xml_sched, xml_path });
+    defer allocator.free(action_xml);
+    try xml.appendSlice(action_xml);
 
-    // Every minute: * * * * *
-    if (bun.strings.eql(minute, "*") and bun.strings.eql(hour, "*") and
-        bun.strings.eql(dom, "*") and bun.strings.eql(month, "*") and bun.strings.eql(dow, "*"))
-        return .{ .sc = "MINUTE", .mo = "1" };
-
-    // Hourly: 0 * * * * or N * * * *
-    if (bun.strings.eql(hour, "*") and bun.strings.eql(dom, "*") and
-        bun.strings.eql(month, "*") and bun.strings.eql(dow, "*"))
-    {
-        const m = std.fmt.parseInt(u32, minute, 10) catch return error.UnsupportedSchedule;
-        const static_hourly_st = struct {
-            var buf: [6:0]u8 = undefined;
-        };
-        _ = std.fmt.bufPrintZ(&static_hourly_st.buf, "00:{d:0>2}", .{m}) catch return error.UnsupportedSchedule;
-        return .{ .sc = "HOURLY", .mo = "1", .start_time = &static_hourly_st.buf };
-    }
-
-    // Daily: N N * * *
-    if (bun.strings.eql(dom, "*") and bun.strings.eql(month, "*") and bun.strings.eql(dow, "*")) {
-        const m = std.fmt.parseInt(u32, minute, 10) catch return error.UnsupportedSchedule;
-        const h = std.fmt.parseInt(u32, hour, 10) catch return error.UnsupportedSchedule;
-        const static_st = struct {
-            var buf: [6:0]u8 = undefined;
-        };
-        _ = std.fmt.bufPrintZ(&static_st.buf, "{d:0>2}:{d:0>2}", .{ h, m }) catch return error.UnsupportedSchedule;
-        return .{ .sc = "DAILY", .mo = "1", .start_time = &static_st.buf };
-    }
-
-    // Weekly: N N * * N (or named weekday like MON)
-    if (bun.strings.eql(dom, "*") and bun.strings.eql(month, "*")) {
-        const m = std.fmt.parseInt(u32, minute, 10) catch return error.UnsupportedSchedule;
-        const h = std.fmt.parseInt(u32, hour, 10) catch return error.UnsupportedSchedule;
-        const d = std.fmt.parseInt(u32, dow, 10) catch resolveWeekdayName(dow) catch return error.UnsupportedSchedule;
-        const static_st = struct {
-            var buf: [6:0]u8 = undefined;
-        };
-        _ = std.fmt.bufPrintZ(&static_st.buf, "{d:0>2}:{d:0>2}", .{ h, m }) catch return error.UnsupportedSchedule;
-        const day_names = [_][*:0]const u8{ "SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT" };
-        const day_idx: usize = switch (d) {
-            0...6 => d,
-            7 => 0, // 7 is also Sunday in POSIX cron
-            else => return error.UnsupportedSchedule,
-        };
-        return .{ .sc = "WEEKLY", .mo = "1", .start_time = &static_st.buf, .day_spec = day_names[day_idx] };
-    }
-
-    return error.UnsupportedSchedule;
+    return xml.toOwnedSlice();
 }
 
-/// Resolve a named weekday (e.g. "MON", "mon", "Monday") to its numeric value (0=SUN..6=SAT).
-fn resolveWeekdayName(name: []const u8) !u32 {
-    const prefixes = [_][]const u8{ "SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT" };
-    if (name.len < 3) return error.UnsupportedSchedule;
-    var upper: [3]u8 = undefined;
-    for (name[0..3], &upper) |c, *u| {
-        u.* = std.ascii.toUpper(c);
+fn appendDaysOfMonthXml(xml: *std.array_list.Managed(u8), days: u32) !void {
+    try xml.appendSlice("        <DaysOfMonth>\n");
+    var buf: [32]u8 = undefined;
+    for (1..32) |day| {
+        if (days & (@as(u32, 1) << @intCast(day)) != 0) {
+            const line = std.fmt.bufPrint(&buf, "          <Day>{d}</Day>\n", .{day}) catch return error.InvalidCron;
+            try xml.appendSlice(line);
+        }
     }
-    for (prefixes, 0..) |prefix, i| {
-        if (bun.strings.eql(&upper, prefix)) return @intCast(i);
+    try xml.appendSlice("        </DaysOfMonth>\n");
+}
+fn appendMonthsXml(xml: *std.array_list.Managed(u8), months: u16) !void {
+    const month_names = [_][]const u8{ "", "January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December" };
+    try xml.appendSlice("        <Months>\n");
+    var buf: [32]u8 = undefined;
+    for (1..13) |mo| {
+        if (months & (@as(u16, 1) << @intCast(mo)) != 0) {
+            const line = std.fmt.bufPrint(&buf, "          <{s}/>\n", .{month_names[mo]}) catch return error.InvalidCron;
+            try xml.appendSlice(line);
+        }
     }
-    return error.UnsupportedSchedule;
+    try xml.appendSlice("        </Months>\n");
+}
+
+fn appendDaysOfWeekXml(xml: *std.array_list.Managed(u8), weekdays: u8) !void {
+    const day_names = [_][]const u8{ "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday" };
+    try xml.appendSlice("        <DaysOfWeek>\n");
+    var buf: [32]u8 = undefined;
+    for (0..7) |d| {
+        if (weekdays & (@as(u8, 1) << @intCast(d)) != 0) {
+            const line = std.fmt.bufPrint(&buf, "          <{s}/>\n", .{day_names[d]}) catch return error.InvalidCron;
+            try xml.appendSlice(line);
+        }
+    }
+    try xml.appendSlice("        </DaysOfWeek>\n");
+}
+
+const ScheduleType = union(enum) {
+    by_day: void,
+    by_week: u8, // weekdays bitmask
+    by_month: struct { cron: CronExpression, months_is_wild: bool },
+    by_month_dow: struct { cron: CronExpression, months_is_wild: bool },
+    by_month_all_days: u16, // months bitmask (daily with month restriction)
+};
+
+fn appendCalendarTriggerWithSchedule(xml: *std.array_list.Managed(u8), _: std.mem.Allocator, start_boundary: []const u8, sched: ScheduleType) !void {
+    try xml.appendSlice("    <CalendarTrigger>\n");
+    var sb_buf: [80]u8 = undefined;
+    const sb_line = std.fmt.bufPrint(&sb_buf, "      <StartBoundary>{s}</StartBoundary>\n", .{start_boundary}) catch return error.OutOfMemory;
+    try xml.appendSlice(sb_line);
+
+    switch (sched) {
+        .by_day => {
+            try xml.appendSlice("      <ScheduleByDay><DaysInterval>1</DaysInterval></ScheduleByDay>\n");
+        },
+        .by_week => |weekdays| {
+            try xml.appendSlice("      <ScheduleByWeek>\n");
+            try xml.appendSlice("        <WeeksInterval>1</WeeksInterval>\n");
+            try appendDaysOfWeekXml(xml, weekdays);
+            try xml.appendSlice("      </ScheduleByWeek>\n");
+        },
+        .by_month => |info| {
+            try xml.appendSlice("      <ScheduleByMonth>\n");
+            try appendDaysOfMonthXml(xml, info.cron.days);
+            try appendMonthsXml(xml, info.cron.months);
+            try xml.appendSlice("      </ScheduleByMonth>\n");
+        },
+        .by_month_dow => |info| {
+            // ScheduleByMonthDayOfWeek: weekday + month restriction
+            try xml.appendSlice("      <ScheduleByMonthDayOfWeek>\n");
+            try xml.appendSlice("        <Weeks><Week>1</Week><Week>2</Week><Week>3</Week><Week>4</Week><Week>Last</Week></Weeks>\n");
+            try appendDaysOfWeekXml(xml, info.cron.weekdays);
+            try appendMonthsXml(xml, info.cron.months);
+            try xml.appendSlice("      </ScheduleByMonthDayOfWeek>\n");
+        },
+        .by_month_all_days => |months| {
+            try xml.appendSlice("      <ScheduleByMonth>\n");
+            try appendDaysOfMonthXml(xml, 0xFFFFFFFE);
+            try appendMonthsXml(xml, months);
+            try xml.appendSlice("      </ScheduleByMonth>\n");
+        },
+    }
+
+    try xml.appendSlice("    </CalendarTrigger>\n");
+}
+
+/// If all set bits are evenly spaced, return the step size. Otherwise null.
+fn computeStepInterval(comptime T: type, bits: T, _: u7, max: u7) ?u32 {
+    if (bits == 0) return null;
+    const count = @popCount(bits);
+    if (count == 1) return @as(u32, max) + 1;
+    // Find first two set bits to determine step
+    var remaining = bits;
+    const first: u32 = @ctz(remaining);
+    remaining &= remaining - 1;
+    const second: u32 = @ctz(remaining);
+    const step = second - first;
+    // Verify all bits are evenly spaced
+    remaining &= remaining - 1;
+    var prev = second;
+    while (remaining != 0) {
+        const next: u32 = @ctz(remaining);
+        if (next - prev != step) return null;
+        prev = next;
+        remaining &= remaining - 1;
+    }
+    return step;
 }
 
 fn allocPrintZ(allocator: std.mem.Allocator, comptime fmt: []const u8, args: anytype) std.mem.Allocator.Error![:0]const u8 {
@@ -1226,8 +1383,10 @@ fn allocPrintZ(allocator: std.mem.Allocator, comptime fmt: []const u8, args: any
 
 /// Create a temp file path with a random suffix to avoid TOCTOU/symlink attacks.
 fn makeTempPath(comptime prefix: []const u8, title: []const u8) ![:0]const u8 {
-    const rand = bun.fastRandom();
-    return allocPrintZ(bun.default_allocator, "/tmp/" ++ prefix ++ "{s}-{x}.tmp", .{ title, rand });
+    _ = title;
+    var name_buf: bun.PathBuffer = undefined;
+    const name = bun.fs.FileSystem.tmpname(prefix ++ "tmp", &name_buf, bun.fastRandom()) catch return error.OutOfMemory;
+    return bun.default_allocator.dupeZ(u8, bun.path.joinAbsString(bun.fs.FileSystem.RealFS.platformTempDir(), &.{name}, .auto));
 }
 
 const std = @import("std");

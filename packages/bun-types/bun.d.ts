@@ -7341,6 +7341,20 @@ declare module "bun" {
   ): SyncSubprocess<Out, Err>;
 
   /**
+   * Controller object passed to the `scheduled()` handler when a cron job fires.
+   *
+   * Compatible with [Cloudflare Workers' ScheduledController](https://developers.cloudflare.com/workers/runtime-apis/handlers/scheduled/).
+   */
+  interface CronController {
+    /** The type of event that triggered the handler. Always `"scheduled"`. */
+    readonly type: "scheduled";
+    /** The cron expression that triggered this invocation. */
+    readonly cron: string;
+    /** Timestamp (ms since epoch) when the job was scheduled to run. */
+    readonly scheduledTime: number;
+  }
+
+  /**
    * A cron schedule: a 5-field expression (`minute hour day month weekday`) or a nickname.
    *
    * Nicknames: `@yearly`, `@annually`, `@monthly`, `@weekly`, `@daily`, `@midnight`, `@hourly`.

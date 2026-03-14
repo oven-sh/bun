@@ -98,6 +98,115 @@ describe("Bun.cron API", () => {
 });
 
 // ==========================================================================
+// Cross-platform API consistency
+// ==========================================================================
+
+describe("cross-platform API consistency", () => {
+  test("@daily nickname registers successfully", async () => {
+    using dir = tempDir("bun-cron-test", {
+      "job.ts": `export default { scheduled() {} };`,
+    });
+    // @daily normalizes to "0 0 * * *" which all platforms support
+    const result = await Bun.cron(`${dir}/job.ts`, "@daily", "test-xplat-daily");
+    expect(result).toBeUndefined();
+    // Clean up
+    await Bun.cron.remove("test-xplat-daily");
+  });
+
+  test("@weekly nickname registers successfully", async () => {
+    using dir = tempDir("bun-cron-test", {
+      "job.ts": `export default { scheduled() {} };`,
+    });
+    const result = await Bun.cron(`${dir}/job.ts`, "@weekly", "test-xplat-weekly");
+    expect(result).toBeUndefined();
+    await Bun.cron.remove("test-xplat-weekly");
+  });
+
+  test("@hourly nickname registers successfully", async () => {
+    using dir = tempDir("bun-cron-test", {
+      "job.ts": `export default { scheduled() {} };`,
+    });
+    const result = await Bun.cron(`${dir}/job.ts`, "@hourly", "test-xplat-hourly");
+    expect(result).toBeUndefined();
+    await Bun.cron.remove("test-xplat-hourly");
+  });
+
+  test("every-5-minutes registers successfully", async () => {
+    using dir = tempDir("bun-cron-test", {
+      "job.ts": `export default { scheduled() {} };`,
+    });
+    const result = await Bun.cron(`${dir}/job.ts`, "*/5 * * * *", "test-xplat-5min");
+    expect(result).toBeUndefined();
+    await Bun.cron.remove("test-xplat-5min");
+  });
+
+  test("named weekday (Monday) normalizes and registers", async () => {
+    using dir = tempDir("bun-cron-test", {
+      "job.ts": `export default { scheduled() {} };`,
+    });
+    const result = await Bun.cron(`${dir}/job.ts`, "30 9 * * Monday", "test-xplat-named");
+    expect(result).toBeUndefined();
+    await Bun.cron.remove("test-xplat-named");
+  });
+
+  test("path with spaces works", async () => {
+    using dir = tempDir("bun cron spaces test", {
+      "my job.ts": `export default { scheduled() {} };`,
+    });
+    const result = await Bun.cron(`${dir}/my job.ts`, "0 0 * * *", "test-xplat-spaces");
+    expect(result).toBeUndefined();
+    await Bun.cron.remove("test-xplat-spaces");
+  });
+
+  test("remove resolves undefined on success", async () => {
+    using dir = tempDir("bun-cron-test", {
+      "job.ts": `export default { scheduled() {} };`,
+    });
+    await Bun.cron(`${dir}/job.ts`, "* * * * *", "test-xplat-rm-val");
+    const result = await Bun.cron.remove("test-xplat-rm-val");
+    expect(result).toBeUndefined();
+  });
+
+  test("remove non-existent job resolves without error", async () => {
+    const result = await Bun.cron.remove("test-xplat-nonexistent-12345");
+    expect(result).toBeUndefined();
+  });
+});
+
+// Windows cannot represent all cron expressions via schtasks.
+// Complex expressions (ranges, lists, monthly, yearly) should reject
+// with a clear error rather than silently misbehaving.
+describe.skipIf(!isWindows)("Windows schtasks limitations", () => {
+  test("rejects @monthly (not expressible in schtasks)", async () => {
+    using dir = tempDir("bun-cron-test", {
+      "job.ts": `export default { scheduled() {} };`,
+    });
+    expect(Bun.cron(`${dir}/job.ts`, "@monthly", "test-win-monthly")).rejects.toThrow(/supported/i);
+  });
+
+  test("rejects @yearly (not expressible in schtasks)", async () => {
+    using dir = tempDir("bun-cron-test", {
+      "job.ts": `export default { scheduled() {} };`,
+    });
+    expect(Bun.cron(`${dir}/job.ts`, "@yearly", "test-win-yearly")).rejects.toThrow(/supported/i);
+  });
+
+  test("rejects complex range expressions", async () => {
+    using dir = tempDir("bun-cron-test", {
+      "job.ts": `export default { scheduled() {} };`,
+    });
+    expect(Bun.cron(`${dir}/job.ts`, "*/15 1-5 1,15 * 0-4", "test-win-complex")).rejects.toThrow(/supported/i);
+  });
+
+  test("rejects day-of-month expressions", async () => {
+    using dir = tempDir("bun-cron-test", {
+      "job.ts": `export default { scheduled() {} };`,
+    });
+    expect(Bun.cron(`${dir}/job.ts`, "0 0 15 * *", "test-win-dom")).rejects.toThrow(/supported/i);
+  });
+});
+
+// ==========================================================================
 // Registration (Linux — crontab)
 // ==========================================================================
 
@@ -540,6 +649,38 @@ describe.skipIf(!hasLaunchctl)("cron registration (macOS)", () => {
       expect(plist).toContain("<integer>1</integer>");
     } finally {
       removeLaunchdJob("test-mac-cal");
+    }
+  });
+
+  test("named weekday 'Monday' normalized to integer 1 in plist", async () => {
+    using dir = tempDir("bun-cron-test", {
+      "job.ts": `export default { scheduled() {} };`,
+    });
+    try {
+      await Bun.cron(`${dir}/job.ts`, "0 0 * * Monday", "test-mac-named-day");
+      const plist = await Bun.file(plistPath("test-mac-named-day")).text();
+      expect(plist).toContain("<key>Weekday</key>");
+      expect(plist).toContain("<integer>1</integer>");
+      expect(plist).not.toContain("Monday");
+    } finally {
+      removeLaunchdJob("test-mac-named-day");
+    }
+  });
+
+  test("@daily produces correct CalendarInterval (midnight)", async () => {
+    using dir = tempDir("bun-cron-test", {
+      "job.ts": `export default { scheduled() {} };`,
+    });
+    try {
+      await Bun.cron(`${dir}/job.ts`, "@daily", "test-mac-daily");
+      const plist = await Bun.file(plistPath("test-mac-daily")).text();
+      expect(plist).toContain("<key>Minute</key>");
+      expect(plist).toContain("<key>Hour</key>");
+      // @daily = 0 0 * * * → Minute=0, Hour=0, no Day/Weekday
+      expect(plist).not.toContain("<key>Day</key>");
+      expect(plist).not.toContain("<key>Weekday</key>");
+    } finally {
+      removeLaunchdJob("test-mac-daily");
     }
   });
 

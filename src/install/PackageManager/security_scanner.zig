@@ -685,7 +685,7 @@ fn attemptSecurityScanWithRetry(manager: *PackageManager, security_scanner: []co
 
     defer _ = bun.sys.unlink(json_tmp_path);
     {
-        var file = switch (bun.sys.File.open(json_tmp_path, bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC, 0o664)) {
+        var file = switch (bun.sys.File.open(json_tmp_path, bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC, 0o600)) {
             .result => |f| f,
             .err => |err| {
                 Output.errGeneric("Failed to create security scanner temp file: {f}", .{err});

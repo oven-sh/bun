@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { existsSync } from "node:fs";
 import { join } from "path";
 
 // Issue #27716: bun install skips all processing when a security scanner is
@@ -88,10 +89,19 @@ scanner = "./scanner.ts"
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+  // Debug: print stderr to understand failures
+  if (!stdout.includes(`SCANNER_PACKAGE_COUNT:${PACKAGE_COUNT}`)) {
+    console.log("STDOUT:", stdout.slice(0, 500));
+    console.log("STDERR:", stderr.slice(0, 1000));
+    console.log("EXIT:", exitCode);
+  }
+
   // The scanner should have received all packages and logged the count.
   // On the broken system bun, the scanner subprocess fails to start because
   // the inlined JSON exceeds MAX_ARG_STRLEN, so this line won't appear.
   expect(stdout).toContain(`SCANNER_PACKAGE_COUNT:${PACKAGE_COUNT}`);
+  expect(existsSync(join(String(dir), "node_modules"))).toBe(true);
+  expect(existsSync(join(String(dir), "bun.lock"))).toBe(true);
   expect(exitCode).toBe(0);
 }, 120_000);
 

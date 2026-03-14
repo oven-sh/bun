@@ -327,6 +327,14 @@ pub const PathWatcherManager = struct {
                     watcher.flush();
                 }
             }
+
+            // Tell threadMain not to destroy the Watcher when it exits. In-flight
+            // DirectoryRegisterTasks still access manager.main_watcher (addFile,
+            // addDirectory, remove), so the manager's deferred deinit must handle
+            // Watcher cleanup instead. Set under this.mutex so deinit() sees
+            // consistent values.
+            this.main_watcher.skip_thread_destroy = true;
+            this.main_watcher_exited = true;
         }
 
         // Release this.mutex before acquiring default_manager_mutex to
@@ -338,13 +346,6 @@ pub const PathWatcherManager = struct {
             defer default_manager_mutex.unlock();
             default_manager = null;
         }
-
-        // Tell threadMain not to destroy the Watcher when it exits. In-flight
-        // DirectoryRegisterTasks still access manager.main_watcher (addFile,
-        // addDirectory, remove), so the manager's deferred deinit must handle
-        // Watcher cleanup instead.
-        this.main_watcher.skip_thread_destroy = true;
-        this.main_watcher_exited = true;
 
         // deinit manager when all watchers are closed
         this.deinit();
@@ -753,6 +754,9 @@ pub const PathWatcherManager = struct {
         // Check watcher_count, pending_tasks, and set deferred-deinit flags
         // under this.mutex to prevent races with unregisterWatcher and
         // unrefPendingTask which modify these fields under the same lock.
+        // Also capture main_watcher_exited under the lock since onError
+        // writes it under this.mutex.
+        var main_watcher_exited: bool = undefined;
         {
             this.mutex.lock();
             defer this.mutex.unlock();
@@ -773,9 +777,10 @@ pub const PathWatcherManager = struct {
             }
 
             this.deinit_started = true;
+            main_watcher_exited = this.main_watcher_exited;
         }
 
-        if (this.main_watcher_exited) {
+        if (main_watcher_exited) {
             // Error path: the watcher thread exited via onError. It set
             // skip_thread_destroy so threadMain skipped the Watcher cleanup.
             // Check if the thread has fully exited before we destroy it.

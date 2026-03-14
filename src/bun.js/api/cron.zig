@@ -1138,7 +1138,7 @@ fn cronToTaskXml(
     // Case 2: Single minute, evenly-spaced hours that divide 24
     //   e.g. "0 * * * *" → PT1H, "0 */2 * * *" → PT2H, "30 */6 * * *" → PT6H
     const can_use_repetition = days_is_wild and weekdays_is_wild and months_is_wild and blk: {
-        if (hours_count == 24 and minute_interval != null and minute_interval.? <= 60 and 60 % minute_interval.? == 0) {
+        if (hours_count == 24 and minute_interval != null and minute_interval.? <= 60 and 60 % minute_interval.? == 0 and minutes_count == 60 / minute_interval.?) {
             break :blk true; // Case 1
         }
         if (minutes_count == 1 and hour_interval != null and hour_interval.? <= 24 and 24 % hour_interval.? == 0 and hours_count == 24 / hour_interval.?) {
@@ -1251,6 +1251,7 @@ fn cronToTaskXml(
         \\    <AllowStartOnDemand>true</AllowStartOnDemand>
         \\    <AllowHardTerminate>true</AllowHardTerminate>
         \\    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+        \\    <StartWhenAvailable>true</StartWhenAvailable>
         \\  </Settings>
         \\  <Actions>
         \\    <Exec>

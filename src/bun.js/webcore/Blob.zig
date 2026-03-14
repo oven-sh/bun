@@ -1422,6 +1422,7 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
                             destination_blob.detach();
                             return globalThis.throwInvalidArguments("ReadableStream has already been used", .{});
                         }
+                        errdefer destination_blob.detach();
                         const result = try destination_blob.pipeReadableStreamToBlob(globalThis, readable, options.extra_options);
                         destination_blob.detach();
                         return result;
@@ -1498,6 +1499,7 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
                             destination_blob.detach();
                             return globalThis.throwInvalidArguments("ReadableStream has already been used", .{});
                         }
+                        errdefer destination_blob.detach();
                         const result = try destination_blob.pipeReadableStreamToBlob(globalThis, readable, options.extra_options);
                         destination_blob.detach();
                         return result;

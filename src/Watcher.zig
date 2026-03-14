@@ -129,6 +129,7 @@ pub fn deinit(this: *Watcher, close_descriptors: bool) void {
                 fd.close();
             }
         }
+        WatcherTrace.deinit();
         this.watchlist.deinit(this.allocator);
         const allocator = this.allocator;
         allocator.destroy(this);

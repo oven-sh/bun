@@ -1422,7 +1422,9 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
                             destination_blob.detach();
                             return globalThis.throwInvalidArguments("ReadableStream has already been used", .{});
                         }
-                        return destination_blob.pipeReadableStreamToBlob(globalThis, readable, options.extra_options);
+                        const result = try destination_blob.pipeReadableStreamToBlob(globalThis, readable, options.extra_options);
+                        destination_blob.detach();
+                        return result;
                     }
 
                     var task = bun.new(WriteFileWaitFromLockedValueTask, .{
@@ -1496,7 +1498,9 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
                             destination_blob.detach();
                             return globalThis.throwInvalidArguments("ReadableStream has already been used", .{});
                         }
-                        return destination_blob.pipeReadableStreamToBlob(globalThis, readable, options.extra_options);
+                        const result = try destination_blob.pipeReadableStreamToBlob(globalThis, readable, options.extra_options);
+                        destination_blob.detach();
+                        return result;
                     }
 
                     var task = bun.new(WriteFileWaitFromLockedValueTask, .{
@@ -2421,7 +2425,7 @@ pub fn onFileStreamResolveRequestStream(globalThis: *jsc.JSGlobalObject, callfra
 pub fn onFileStreamRejectRequestStream(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     const args = callframe.arguments_old(2);
     var this = args.ptr[args.len - 1].asPromisePtr(FileStreamWrapper);
-    defer this.sink.deref();
+    defer this.deinit();
     const err = args.ptr[0];
 
     var strong = this.readable_stream_ref;

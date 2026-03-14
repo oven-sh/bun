@@ -166,14 +166,17 @@ pub fn matchesPathIgnorePattern(this: *Scanner, abs_path: []const u8) bool {
     const rel_path = bun.path.relative(this.fs.top_level_dir, abs_path);
     for (this.path_ignore_patterns) |pattern| {
         if (bun.glob.match(pattern, rel_path).matches()) return true;
-        // Also try with a trailing separator so directory paths match
-        // patterns like "vendor/**".
-        if (rel_path.len > 0 and rel_path[rel_path.len - 1] != '/') {
-            var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-            if (rel_path.len < buf.len) {
-                @memcpy(buf[0..rel_path.len], rel_path);
-                buf[rel_path.len] = '/';
-                if (bun.glob.match(pattern, buf[0 .. rel_path.len + 1]).matches()) return true;
+        // Only try trailing separator for ** patterns (e.g. "vendor/**").
+        // Single-star patterns like "vendor/*" must not prune entire
+        // directories because * doesn't cross directory boundaries.
+        if (strings.indexOf(pattern, "**") != null) {
+            if (rel_path.len > 0 and rel_path[rel_path.len - 1] != '/') {
+                var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                if (rel_path.len < buf.len) {
+                    @memcpy(buf[0..rel_path.len], rel_path);
+                    buf[rel_path.len] = '/';
+                    if (bun.glob.match(pattern, buf[0 .. rel_path.len + 1]).matches()) return true;
+                }
             }
         }
     }

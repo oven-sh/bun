@@ -262,7 +262,9 @@ public:
 
         for (auto* connection : connections) {
             if (connection->status == ConnectionStatus::Pending) {
-                connection->connect();
+                auto* context = ScriptExecutionContext::getScriptExecutionContext(connection->scriptExecutionContextIdentifier);
+                if (context)
+                    connection->doConnect(*context);
                 continue;
             }
 

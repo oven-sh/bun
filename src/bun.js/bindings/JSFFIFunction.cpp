@@ -29,6 +29,7 @@
 #include <JavaScriptCore/JSCJSValueInlines.h>
 #include <JavaScriptCore/VM.h>
 #include "ZigGlobalObject.h"
+#include "ScriptExecutionContext.h"
 
 #include <JavaScriptCore/CallData.h>
 #include <JavaScriptCore/DOMJITAbstractHeap.h>
@@ -44,11 +45,13 @@ class FFICallbackFunctionWrapper {
 public:
     JSC::Strong<JSC::JSFunction> m_function;
     JSC::Strong<Zig::GlobalObject> globalObject;
+    WebCore::ScriptExecutionContextIdentifier m_contextIdentifier;
     ~FFICallbackFunctionWrapper() = default;
 
     FFICallbackFunctionWrapper(JSC::JSFunction* function, Zig::GlobalObject* globalObject)
         : m_function(globalObject->vm(), function)
         , globalObject(globalObject->vm(), globalObject)
+        , m_contextIdentifier(globalObject->scriptExecutionContext()->identifier())
     {
     }
 };
@@ -206,17 +209,23 @@ FFI_Callback_call(FFICallbackFunctionWrapper& wrapper, size_t argCount, JSC::Enc
 extern "C" void
 FFI_Callback_threadsafe_call(FFICallbackFunctionWrapper& wrapper, size_t argCount, JSC::EncodedJSValue* args)
 {
-
-    auto* globalObject = wrapper.globalObject.get();
+    // This function is called from native threads, so we must NOT touch any JSC
+    // objects here (JSC::Strong handles, GlobalObject, etc. are not thread-safe).
+    // We only read the pre-cached context identifier (a plain uint32_t) and
+    // capture a raw pointer to the wrapper. The wrapper's lifetime is managed by
+    // the JSCallback and outlives all queued tasks.
     WTF::Vector<JSC::EncodedJSValue, 8> argsVec;
     for (size_t i = 0; i < argCount; ++i)
         argsVec.append(args[i]);
 
-    WebCore::ScriptExecutionContext::postTaskTo(globalObject->scriptExecutionContext()->identifier(), [argsVec = WTF::move(argsVec), wrapper](WebCore::ScriptExecutionContext& ctx) mutable {
+    auto contextId = wrapper.m_contextIdentifier;
+    auto* wrapperPtr = &wrapper;
+
+    WebCore::ScriptExecutionContext::postTaskTo(contextId, [argsVec = WTF::move(argsVec), wrapperPtr](WebCore::ScriptExecutionContext& ctx) mutable {
         auto* globalObject = JSC::jsCast<Zig::GlobalObject*>(ctx.jsGlobalObject());
         auto& vm = JSC::getVM(globalObject);
         JSC::MarkedArgumentBuffer arguments;
-        auto* function = wrapper.m_function.get();
+        auto* function = wrapperPtr->m_function.get();
         for (size_t i = 0; i < argsVec.size(); ++i)
             arguments.appendWithCrashOnOverflow(JSC::JSValue::decode(argsVec[i]));
         WTF::NakedPtr<JSC::Exception> exception;

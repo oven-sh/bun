@@ -183,6 +183,15 @@ describe.skipIf(!isWindows)("Windows schtasks diagnostic", () => {
       } catch {}
     }
   });
+
+  test("whoami and schtasks /np identity check", () => {
+    const whoami = Bun.spawnSync({ cmd: ["whoami"], stdout: "pipe", stderr: "pipe" });
+    console.log("whoami:", whoami.stdout.toString().trim());
+    // Try creating with /ru and the SID directly
+    const sid = Bun.spawnSync({ cmd: ["whoami", "/user"], stdout: "pipe", stderr: "pipe" });
+    console.log("whoami /user:", sid.stdout.toString().trim());
+    expect(whoami.exitCode).toBe(0);
+  });
 });
 
 // ==========================================================================

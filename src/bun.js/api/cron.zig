@@ -1095,8 +1095,7 @@ fn emitCalendarDicts(result: *std.array_list.Managed(u8), field_values: [5]?[]co
 }
 
 /// Build a Windows Task Scheduler XML definition from a parsed cron expression.
-/// Uses CalendarTrigger with ScheduleByDay/ScheduleByWeek/ScheduleByMonth to
-/// support the full range of cron expressions, unlike the limited schtasks CLI flags.
+/// Uses TimeTrigger+Repetition for simple intervals, CalendarTrigger for complex schedules.
 fn cronToTaskXml(
     cron: CronExpression,
     bun_exe: []const u8,
@@ -1108,7 +1107,6 @@ fn cronToTaskXml(
     var xml = std.array_list.Managed(u8).init(allocator);
     errdefer xml.deinit();
 
-    // XML header + task start
     try xml.appendSlice(
         \\<?xml version="1.0" encoding="UTF-8"?>
         \\<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
@@ -1116,60 +1114,119 @@ fn cronToTaskXml(
         \\
     );
 
-    // Determine the trigger strategy based on what cron fields are set.
-    // Each distinct hour×minute combination needs its own CalendarTrigger,
-    // since StartBoundary (which sets the fire time) is per-trigger.
-    const minutes = expandBitfield(u64, cron.minutes, 0, 59) catch return error.InvalidCron;
-    defer allocator.free(minutes);
-    const hours = expandBitfield(u32, cron.hours, 0, 23) catch return error.InvalidCron;
-    defer allocator.free(hours);
+    // Use semantic checks (bitfield values) not syntax flags for wildcard detection.
+    // e.g. "*/1" sets all bits just like "*" but has _is_wildcard=false.
+    const all_days: u32 = ((1 << 32) - 1) & ~@as(u32, 1); // bits 1-31
+    const all_months: u16 = ((1 << 13) - 1) & ~@as(u16, 1); // bits 1-12
+    const all_weekdays: u8 = (1 << 7) - 1; // bits 0-6
 
-    // For each hour×minute pair, emit a CalendarTrigger
-    for (hours) |h| {
-        for (minutes) |m| {
-            var start_boundary_buf: [32]u8 = undefined;
-            const start_boundary = std.fmt.bufPrint(&start_boundary_buf, "2000-01-01T{d:0>2}:{d:0>2}:00", .{
-                @as(u32, @intCast(h)), @as(u32, @intCast(m)),
-            }) catch return error.InvalidCron;
+    const days_is_wild = cron.days == all_days;
+    const weekdays_is_wild = cron.weekdays == all_weekdays;
+    const months_is_wild = cron.months == all_months;
 
-            try xml.appendSlice("    <CalendarTrigger>\n");
-            const sb_line = try std.fmt.allocPrint(allocator, "      <StartBoundary>{s}</StartBoundary>\n", .{start_boundary});
-            defer allocator.free(sb_line);
-            try xml.appendSlice(sb_line);
+    // Compute the GCD-based repetition interval for minute patterns.
+    // If all set minutes are evenly spaced (e.g. */5 → every 5 min), we can
+    // use a single trigger with Repetition instead of one trigger per minute.
+    const minute_interval = computeStepInterval(u64, cron.minutes, 0, 59);
+    const hour_interval = computeStepInterval(u32, cron.hours, 0, 23);
 
-            // POSIX cron OR semantics: when both day-of-month AND day-of-week
-            // are non-wildcard, the job fires when EITHER matches. We emit
-            // separate triggers for each (Task Scheduler fires when ANY trigger matches).
-            const needs_or_split = !cron.days_is_wildcard and !cron.weekdays_is_wildcard;
+    // Strategy: use TimeTrigger+Repetition for simple repeating patterns,
+    // CalendarTrigger for complex day/month/weekday constraints.
+    if (days_is_wild and weekdays_is_wild and months_is_wild and minute_interval != null and hour_interval != null) {
+        // Simple repeating pattern: use a single trigger with Repetition.
+        // e.g. "* * * * *" → PT1M, "*/5 * * * *" → PT5M, "0 */2 * * *" → PT2H
+        const minutes_expanded = expandBitfield(u64, cron.minutes, 0, 59) catch return error.InvalidCron;
+        defer allocator.free(minutes_expanded);
+        const hours_expanded = expandBitfield(u32, cron.hours, 0, 23) catch return error.InvalidCron;
+        defer allocator.free(hours_expanded);
 
-            if (!cron.days_is_wildcard) {
-                try appendScheduleByMonth(&xml, allocator, cron, start_boundary);
-            }
-            if (!cron.weekdays_is_wildcard) {
-                if (needs_or_split) {
-                    // Close the day-of-month trigger, open a new one for day-of-week
-                    try xml.appendSlice("    </CalendarTrigger>\n");
-                    try xml.appendSlice("    <CalendarTrigger>\n");
-                    const sb2 = try std.fmt.allocPrint(allocator, "      <StartBoundary>{s}</StartBoundary>\n", .{start_boundary});
-                    defer allocator.free(sb2);
-                    try xml.appendSlice(sb2);
+        const first_min = if (minutes_expanded.len > 0) @as(u32, @intCast(minutes_expanded[0])) else 0;
+        const first_hour = if (hours_expanded.len > 0) @as(u32, @intCast(hours_expanded[0])) else 0;
+
+        var sb_buf: [32]u8 = undefined;
+        const sb = std.fmt.bufPrint(&sb_buf, "2000-01-01T{d:0>2}:{d:0>2}:00", .{ first_hour, first_min }) catch return error.InvalidCron;
+
+        try xml.appendSlice("    <CalendarTrigger>\n");
+        const sb_line = try std.fmt.allocPrint(allocator, "      <StartBoundary>{s}</StartBoundary>\n", .{sb});
+        defer allocator.free(sb_line);
+        try xml.appendSlice(sb_line);
+
+        // Add repetition if needed
+        if (minute_interval.? > 1 or hour_interval.? > 0) {
+            const total_minutes = (hour_interval orelse 0) * 60 + (minute_interval orelse 1);
+            if (total_minutes < 60) {
+                const rep = try std.fmt.allocPrint(allocator, "      <Repetition><Interval>PT{d}M</Interval></Repetition>\n", .{total_minutes});
+                defer allocator.free(rep);
+                try xml.appendSlice(rep);
+            } else {
+                const rep_h = total_minutes / 60;
+                const rep_m = total_minutes % 60;
+                if (rep_m == 0) {
+                    const rep = try std.fmt.allocPrint(allocator, "      <Repetition><Interval>PT{d}H</Interval></Repetition>\n", .{rep_h});
+                    defer allocator.free(rep);
+                    try xml.appendSlice(rep);
+                } else {
+                    const rep = try std.fmt.allocPrint(allocator, "      <Repetition><Interval>PT{d}H{d}M</Interval></Repetition>\n", .{ rep_h, rep_m });
+                    defer allocator.free(rep);
+                    try xml.appendSlice(rep);
                 }
-                try xml.appendSlice("      <ScheduleByWeek>\n");
-                try xml.appendSlice("        <WeeksInterval>1</WeeksInterval>\n");
-                try appendDaysOfWeekXml(&xml, cron.weekdays);
-                try xml.appendSlice("      </ScheduleByWeek>\n");
-            } else if (cron.days_is_wildcard) {
-                // Both wildcard: every day
-                try xml.appendSlice("      <ScheduleByDay>\n");
-                try xml.appendSlice("        <DaysInterval>1</DaysInterval>\n");
-                try xml.appendSlice("      </ScheduleByDay>\n");
             }
+        } else {
+            // Every minute
+            try xml.appendSlice("      <Repetition><Interval>PT1M</Interval></Repetition>\n");
+        }
 
-            try xml.appendSlice("    </CalendarTrigger>\n");
+        try xml.appendSlice("      <ScheduleByDay><DaysInterval>1</DaysInterval></ScheduleByDay>\n");
+        try xml.appendSlice("    </CalendarTrigger>\n");
+    } else {
+        // Complex pattern: emit CalendarTriggers for each hour×minute pair.
+        // Cap at 48 triggers (Task Scheduler limit).
+        const minutes_expanded = expandBitfield(u64, cron.minutes, 0, 59) catch return error.InvalidCron;
+        defer allocator.free(minutes_expanded);
+        const hours_expanded = expandBitfield(u32, cron.hours, 0, 23) catch return error.InvalidCron;
+        defer allocator.free(hours_expanded);
+
+        const needs_or_split = !days_is_wild and !weekdays_is_wild;
+        const triggers_per_time: u32 = if (needs_or_split) 2 else 1;
+        const total_triggers = @as(u32, @intCast(minutes_expanded.len)) * @as(u32, @intCast(hours_expanded.len)) * triggers_per_time;
+        if (total_triggers > 48) return error.InvalidCron;
+
+        for (hours_expanded) |h| {
+            for (minutes_expanded) |m| {
+                var sb_buf: [32]u8 = undefined;
+                const sb = std.fmt.bufPrint(&sb_buf, "2000-01-01T{d:0>2}:{d:0>2}:00", .{
+                    @as(u32, @intCast(h)), @as(u32, @intCast(m)),
+                }) catch return error.InvalidCron;
+
+                // Emit day-of-month trigger if needed
+                if (!days_is_wild) {
+                    try appendCalendarTriggerWithSchedule(&xml, allocator, sb, .{ .by_month = .{ .cron = cron, .months_is_wild = months_is_wild } });
+                }
+
+                // Emit day-of-week trigger if needed
+                if (!weekdays_is_wild) {
+                    if (months_is_wild) {
+                        try appendCalendarTriggerWithSchedule(&xml, allocator, sb, .{ .by_week = cron.weekdays });
+                    } else {
+                        // Use ScheduleByMonthDayOfWeek to include month restrictions
+                        try appendCalendarTriggerWithSchedule(&xml, allocator, sb, .{ .by_month_dow = .{ .cron = cron, .months_is_wild = months_is_wild } });
+                    }
+                }
+
+                // Both wildcard: every day (with optional month restriction)
+                if (days_is_wild and weekdays_is_wild) {
+                    if (months_is_wild) {
+                        try appendCalendarTriggerWithSchedule(&xml, allocator, sb, .{ .by_day = {} });
+                    } else {
+                        // Daily but restricted months → use ScheduleByMonth with all days
+                        try appendCalendarTriggerWithSchedule(&xml, allocator, sb, .{ .by_month_all_days = cron.months });
+                    }
+                }
+            }
         }
     }
 
-    // Close triggers, add action, close task
+    // Close triggers, add action
     const xml_bun = try xmlEscape(bun_exe);
     defer allocator.free(xml_bun);
     const xml_title = try xmlEscape(title);
@@ -1256,6 +1313,83 @@ fn expandBitfield(comptime T: type, bits: T, min: u7, max: u7) ![]u7 {
         if (i == max) break;
     }
     return result.toOwnedSlice();
+}
+
+const ScheduleType = union(enum) {
+    by_day: void,
+    by_week: u8, // weekdays bitmask
+    by_month: struct { cron: CronExpression, months_is_wild: bool },
+    by_month_dow: struct { cron: CronExpression, months_is_wild: bool },
+    by_month_all_days: u16, // months bitmask (daily with month restriction)
+};
+
+fn appendCalendarTriggerWithSchedule(xml: *std.array_list.Managed(u8), allocator: std.mem.Allocator, start_boundary: []const u8, sched: ScheduleType) !void {
+    try xml.appendSlice("    <CalendarTrigger>\n");
+    const sb_line = try std.fmt.allocPrint(allocator, "      <StartBoundary>{s}</StartBoundary>\n", .{start_boundary});
+    defer allocator.free(sb_line);
+    try xml.appendSlice(sb_line);
+
+    switch (sched) {
+        .by_day => {
+            try xml.appendSlice("      <ScheduleByDay><DaysInterval>1</DaysInterval></ScheduleByDay>\n");
+        },
+        .by_week => |weekdays| {
+            try xml.appendSlice("      <ScheduleByWeek>\n");
+            try xml.appendSlice("        <WeeksInterval>1</WeeksInterval>\n");
+            try appendDaysOfWeekXml(xml, weekdays);
+            try xml.appendSlice("      </ScheduleByWeek>\n");
+        },
+        .by_month => |info| {
+            try xml.appendSlice("      <ScheduleByMonth>\n");
+            try xml.appendSlice("        <DaysOfMonth>\n");
+            for (1..32) |day| {
+                if (info.cron.days & (@as(u32, 1) << @intCast(day)) != 0) {
+                    const day_line = try std.fmt.allocPrint(allocator, "          <Day>{d}</Day>\n", .{day});
+                    defer allocator.free(day_line);
+                    try xml.appendSlice(day_line);
+                }
+            }
+            try xml.appendSlice("        </DaysOfMonth>\n");
+            try appendMonthsXml(xml, info.cron.months);
+            try xml.appendSlice("      </ScheduleByMonth>\n");
+        },
+        .by_month_dow => |info| {
+            // ScheduleByMonthDayOfWeek: weekday + month restriction
+            try xml.appendSlice("      <ScheduleByMonthDayOfWeek>\n");
+            try xml.appendSlice("        <Weeks><Week>1</Week><Week>2</Week><Week>3</Week><Week>4</Week><Week>Last</Week></Weeks>\n");
+            try appendDaysOfWeekXml(xml, info.cron.weekdays);
+            try appendMonthsXml(xml, info.cron.months);
+            try xml.appendSlice("      </ScheduleByMonthDayOfWeek>\n");
+        },
+        .by_month_all_days => |months| {
+            // Daily schedule restricted to specific months
+            try xml.appendSlice("      <ScheduleByMonth>\n");
+            try xml.appendSlice("        <DaysOfMonth>\n");
+            for (1..32) |day| {
+                const day_line = try std.fmt.allocPrint(allocator, "          <Day>{d}</Day>\n", .{day});
+                defer allocator.free(day_line);
+                try xml.appendSlice(day_line);
+            }
+            try xml.appendSlice("        </DaysOfMonth>\n");
+            try appendMonthsXml(xml, months);
+            try xml.appendSlice("      </ScheduleByMonth>\n");
+        },
+    }
+
+    try xml.appendSlice("    </CalendarTrigger>\n");
+}
+
+/// If all set bits are evenly spaced, return the step size. Otherwise null.
+fn computeStepInterval(comptime T: type, bits: T, min: u7, max: u7) ?u32 {
+    const expanded = expandBitfield(T, bits, min, max) catch return null;
+    defer bun.default_allocator.free(expanded);
+    if (expanded.len == 0) return null;
+    if (expanded.len == 1) return @as(u32, max - min + 1); // fires once per cycle
+    const step = expanded[1] - expanded[0];
+    for (1..expanded.len) |i| {
+        if (expanded[i] - expanded[i - 1] != step) return null;
+    }
+    return step;
 }
 
 /// Convert a cron expression to schtasks /sc and /mo parameters.

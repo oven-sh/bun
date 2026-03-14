@@ -221,6 +221,8 @@ test(
       "pages-manifest.json",
       "server-reference-manifest.json",
       "server-reference-manifest.js",
+      "next-font-manifest.json",
+      "next-font-manifest.js",
       "[turbopack]_runtime.js",
     ];
     for (const name of nonDeterministicNames) {

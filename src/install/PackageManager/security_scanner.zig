@@ -726,8 +726,10 @@ pub const SecurityScanSubprocess = struct {
     has_received_ipc: bool = false,
     exit_status: ?bun.spawn.Status = null,
     remaining_fds: i8 = 0,
+    json_writer: ?*StaticPipeWriter = null,
 
     pub const new = bun.TrivialNew(@This());
+    pub const StaticPipeWriter = jsc.Subprocess.NewStaticPipeWriter(@This());
 
     pub fn spawn(this: *SecurityScanSubprocess) !void {
         this.ipc_data = .{};
@@ -741,25 +743,26 @@ pub const SecurityScanSubprocess = struct {
         // We can't inline the packages JSON into the code string because it can exceed
         // command-line length limits (>1MB), and we can't use stdin because scanners
         // may need stdin for their own setup (e.g. interactive prompts).
-        //
-        // Both pipes use bun.sys.pipe() + .pipe (inherit_fd), which is the same
-        // mechanism that already works on Windows for fd 3. The .buffer stdio type
-        // for extra_fds sets UV_OVERLAPPED_PIPE on the child's handle, which breaks
-        // synchronous reads in the child, so we avoid it here.
 
+        // fd 3 output pipe: bun.sys.pipe() + .pipe (inherit_fd) on both platforms.
         const ipc_output_fds = switch (bun.sys.pipe()) {
             .err => return error.IPCPipeFailed,
             .result => |fds| fds,
         };
 
-        const json_input_fds = switch (bun.sys.pipe()) {
-            .err => {
-                ipc_output_fds[0].close();
-                ipc_output_fds[1].close();
-                return error.IPCPipeFailed;
-            },
-            .result => |fds| fds,
-        };
+        // fd 4 input pipe setup. The child's handle MUST be non-overlapped so it can
+        // read synchronously with Bun.file(4).text(). The parent's handle needs to be
+        // pollable/overlapped so StaticPipeWriter can write asynchronously without
+        // blocking the event loop.
+        //
+        // Posix: .buffer stdio creates a nonblocking socketpair, both sides pollable.
+        // Windows: .buffer stdio for extra_fds sets UV_OVERLAPPED_PIPE on the CHILD's
+        //   handle (process.zig:1702), which breaks sync reads. Instead, create the
+        //   pipe ourselves with asymmetric flags: uv_pipe(fds, 0, UV_NONBLOCK_PIPE)
+        //   makes only the write end overlapped. Child inherits the read end via
+        //   .pipe (inherit_fd); parent wraps the write end in a uv.Pipe via
+        //   uv_pipe_open() for IOCP-based async writes.
+        const json_input_setup = try JsonInputPipe.create(this, ipc_output_fds);
 
         const exec_path = try bun.selfExePath();
 
@@ -779,7 +782,7 @@ pub const SecurityScanSubprocess = struct {
 
         const extra_fds = [_]bun.spawn.SpawnOptions.Stdio{
             .{ .pipe = ipc_output_fds[1] }, // fd 3: child inherits write end
-            .{ .pipe = json_input_fds[0] }, // fd 4: child inherits read end
+            json_input_setup.stdio, // fd 4: child inherits read end
         };
 
         const spawn_options = bun.spawn.SpawnOptions{
@@ -795,9 +798,9 @@ pub const SecurityScanSubprocess = struct {
 
         var spawned = try (try bun.spawn.spawnProcess(&spawn_options, @ptrCast(&argv), @ptrCast(std.os.environ.ptr))).unwrap();
 
-        // Close the ends the child owns; we keep the opposite ends.
+        // Close the write end of the output pipe in the parent; child keeps its copy.
         ipc_output_fds[1].close();
-        json_input_fds[0].close();
+        json_input_setup.closeChildEnd();
 
         // Start reading the child's response from fd 3.
         if (comptime bun.Environment.isPosix) {
@@ -814,39 +817,100 @@ pub const SecurityScanSubprocess = struct {
         this.process = process;
         process.setExitHandler(this);
 
-        switch (process.watchOrReap()) {
-            .err => {
-                json_input_fds[1].close();
-                return error.ProcessWatchFailed;
+        // Start the async JSON writer on fd 4. StaticPipeWriter closes the pipe when
+        // the write completes, signaling EOF to the child.
+        const json_stdio_result = json_input_setup.stdioResult(&spawned);
+        const json_data_copy = try this.manager.allocator.dupe(u8, this.json_data);
+        const json_source = jsc.Subprocess.Source{
+            .blob = jsc.WebCore.Blob.Any.fromOwnedSlice(this.manager.allocator, json_data_copy),
+        };
+
+        this.json_writer = StaticPipeWriter.create(&this.manager.event_loop, this, json_stdio_result, json_source);
+        errdefer if (this.json_writer) |writer| {
+            writer.source.detach();
+            writer.deref();
+            this.json_writer = null;
+        };
+
+        switch (this.json_writer.?.start()) {
+            .err => |err| {
+                Output.errGeneric("Failed to start security scanner JSON pipe writer: {f}", .{err});
+                return error.JSONPipeWriterFailed;
             },
             .result => {},
         }
 
-        // Write packages JSON to fd 4 synchronously, then close to signal EOF.
-        // The child reads this before doing anything else, so once it starts up
-        // the pipe buffer drains quickly. If the child crashes before reading,
-        // write() returns EPIPE/BROKEN_PIPE and we bail; the process exit handler
-        // will surface the real error from the child.
-        this.writeJsonToChild(json_input_fds[1]);
+        switch (process.watchOrReap()) {
+            .err => return error.ProcessWatchFailed,
+            .result => {},
+        }
     }
 
-    fn writeJsonToChild(this: *SecurityScanSubprocess, write_fd: bun.FileDescriptor) void {
-        defer write_fd.close();
+    /// Platform-specific setup for the fd 4 JSON input pipe. See spawn() comment.
+    const JsonInputPipe = if (Environment.isWindows) struct {
+        stdio: bun.spawn.SpawnOptions.Stdio,
+        child_read_fd: bun.FileDescriptor,
+        parent_write_pipe: *bun.windows.libuv.Pipe,
 
-        var remaining = this.json_data;
-        while (remaining.len > 0) {
-            switch (bun.sys.write(write_fd, remaining)) {
-                .err => |err| {
-                    if (this.manager.options.log_level == .verbose) {
-                        Output.prettyErrorln("<d>[SecurityProvider]<r> Failed to write packages JSON to scanner pipe: {f}", .{err});
-                    }
-                    return;
-                },
-                .result => |n| {
-                    if (n == 0) return;
-                    remaining = remaining[n..];
-                },
+        fn create(scanner: *SecurityScanSubprocess, ipc_output_fds: [2]bun.FileDescriptor) !@This() {
+            const uv = bun.windows.libuv;
+
+            // Asymmetric pipe: read end (child) non-overlapped, write end (parent) overlapped.
+            var json_fds: [2]uv.uv_file = undefined;
+            if (uv.uv_pipe(&json_fds, 0, uv.UV_NONBLOCK_PIPE).errEnum()) |e| {
+                ipc_output_fds[0].close();
+                ipc_output_fds[1].close();
+                return bun.errnoToZigErr(e);
             }
+            const child_read_fd = bun.FD.fromUV(json_fds[0]);
+            const parent_write_fd = bun.FD.fromUV(json_fds[1]);
+            errdefer {
+                child_read_fd.close();
+                parent_write_fd.close();
+            }
+
+            // Wrap the overlapped write end in a uv.Pipe for StaticPipeWriter.
+            const pipe = bun.new(uv.Pipe, std.mem.zeroes(uv.Pipe));
+            errdefer bun.destroy(pipe);
+            try pipe.init(scanner.loop(), false).unwrap();
+            try pipe.open(parent_write_fd).unwrap();
+
+            return .{
+                .stdio = .{ .pipe = child_read_fd }, // child inherits via inherit_fd
+                .child_read_fd = child_read_fd,
+                .parent_write_pipe = pipe,
+            };
+        }
+
+        fn closeChildEnd(this: @This()) void {
+            this.child_read_fd.close();
+        }
+
+        fn stdioResult(this: @This(), _: anytype) jsc.Subprocess.StdioResult {
+            return .{ .buffer = this.parent_write_pipe };
+        }
+    } else struct {
+        stdio: bun.spawn.SpawnOptions.Stdio,
+
+        fn create(_: *SecurityScanSubprocess, _: [2]bun.FileDescriptor) !@This() {
+            // .buffer stdio creates a nonblocking socketpair; fd is returned in extra_pipes.
+            return .{ .stdio = .buffer };
+        }
+
+        fn closeChildEnd(_: @This()) void {
+            // .buffer stdio: spawn closes the child's end automatically.
+        }
+
+        fn stdioResult(_: @This(), spawned: anytype) jsc.Subprocess.StdioResult {
+            return spawned.extra_pipes.items[1];
+        }
+    };
+
+    pub fn onCloseIO(this: *SecurityScanSubprocess, _: jsc.Subprocess.StdioKind) void {
+        if (this.json_writer) |writer| {
+            writer.source.detach();
+            writer.deref();
+            this.json_writer = null;
         }
     }
 

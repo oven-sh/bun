@@ -1141,7 +1141,7 @@ fn cronToTaskXml(
         if (hours_count == 24 and minute_interval != null and minute_interval.? <= 60 and 60 % minute_interval.? == 0) {
             break :blk true; // Case 1
         }
-        if (minutes_count == 1 and hour_interval != null and hour_interval.? <= 24 and 24 % hour_interval.? == 0) {
+        if (minutes_count == 1 and hour_interval != null and hour_interval.? <= 24 and 24 % hour_interval.? == 0 and hours_count == 24 / hour_interval.?) {
             break :blk true; // Case 2
         }
         break :blk false;

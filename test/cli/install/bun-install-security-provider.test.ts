@@ -542,6 +542,30 @@ describe("Large Data Handling", () => {
       expect(out).toContain("AAAA");
     },
   });
+
+  // Regression test for #23607 / #27716: package data is sent to the scanner via
+  // an IPC pipe (fd 4) instead of being embedded in the -e code argument, which
+  // avoids hitting OS max argument length limits for large package counts.
+  test("scanner receives packages via data pipe (regression #23607)", {
+    packages: ["bar", "qux"],
+    scanner: async ({ packages }) => {
+      // Verify packages were received correctly via the data pipe
+      if (!Array.isArray(packages) || packages.length === 0) {
+        throw new Error("No packages received from data pipe");
+      }
+      // Log the package count and names to verify the pipe delivered the data
+      console.log(`Received ${packages.length} packages via data pipe`);
+      for (const pkg of packages) {
+        console.log(`package: ${pkg.name}@${pkg.version}`);
+      }
+      return [];
+    },
+    expect: ({ out }) => {
+      expect(out).toContain("Received 2 packages via data pipe");
+      expect(out).toContain("package: bar@");
+      expect(out).toContain("package: qux@");
+    },
+  });
 });
 
 describe("Multiple Package Scanning", () => {

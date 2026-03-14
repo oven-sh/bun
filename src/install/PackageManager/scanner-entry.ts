@@ -1,7 +1,6 @@
 import fs from "node:fs";
 
 const scannerModuleName = "__SCANNER_MODULE__";
-const packages = __PACKAGES_JSON__;
 const suppressError = __SUPPRESS_ERROR__;
 
 type IPCMessage =
@@ -11,6 +10,7 @@ type IPCMessage =
   | { type: "error"; code: "SCAN_FAILED"; message: string };
 
 const IPC_PIPE_FD = 3;
+const DATA_PIPE_FD = 4;
 
 function writeAndExit(message: IPCMessage): never {
   const data = JSON.stringify(message);
@@ -70,6 +70,23 @@ try {
 
   if (typeof scanner.scan !== "function") {
     throw new Error(`scanner.scan is not a function, got ${typeof scanner.scan}`);
+  }
+
+  // Read package data from the data pipe (fd 4) to avoid command-line arg length limits
+  let packages: Bun.Security.Package[];
+  try {
+    const packagesJson = fs.readFileSync(DATA_PIPE_FD, "utf8");
+    fs.closeSync(DATA_PIPE_FD);
+    packages = JSON.parse(packagesJson);
+    if (!Array.isArray(packages)) {
+      throw new Error("Expected packages to be an array");
+    }
+  } catch (error) {
+    writeAndExit({
+      type: "error",
+      code: "SCAN_FAILED",
+      message: `Failed to read packages from data pipe: ${error instanceof Error ? error.message : String(error)}`,
+    });
   }
 
   const result = await scanner.scan({ packages });

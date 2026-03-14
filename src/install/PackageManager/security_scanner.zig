@@ -673,17 +673,6 @@ fn attemptSecurityScanWithRetry(manager: *PackageManager, security_scanner: []co
         temp_source = code.items;
     }
 
-    const packages_placeholder = "__PACKAGES_JSON__";
-    if (std.mem.indexOf(u8, temp_source, packages_placeholder)) |index| {
-        var new_code = std.array_list.Managed(u8).init(manager.allocator);
-        try new_code.appendSlice(temp_source[0..index]);
-        try new_code.appendSlice(json_data);
-        try new_code.appendSlice(temp_source[index + packages_placeholder.len ..]);
-        code.deinit();
-        code = new_code;
-        temp_source = code.items;
-    }
-
     const suppress_placeholder = "__SUPPRESS_ERROR__";
     if (std.mem.indexOf(u8, temp_source, suppress_placeholder)) |index| {
         var new_code = std.array_list.Managed(u8).init(manager.allocator);
@@ -744,10 +733,21 @@ pub const SecurityScanSubprocess = struct {
         this.stderr_data = std.array_list.Managed(u8).init(this.manager.allocator);
         this.ipc_reader.setParent(this);
 
-        const pipe_result = bun.sys.pipe();
-        const pipe_fds = switch (pipe_result) {
+        // IPC result pipe: child writes to fd 3, parent reads
+        const ipc_pipe_fds = switch (bun.sys.pipe()) {
+            .err => return error.IPCPipeFailed,
+            .result => |fds| fds,
+        };
+
+        // Data pipe: parent writes package JSON, child reads from fd 4.
+        // After spawning, the parent writes all data in blocking mode and closes
+        // the write end. The child's readFileSync blocks until EOF, and the pipe
+        // naturally flow-controls between parent writes and child reads.
+        const data_pipe_fds = switch (bun.sys.pipe()) {
             .err => {
-                return error.IPCPipeFailed;
+                ipc_pipe_fds[0].close();
+                ipc_pipe_fds[1].close();
+                return error.DataPipeFailed;
             },
             .result => |fds| fds,
         };
@@ -773,7 +773,10 @@ pub const SecurityScanSubprocess = struct {
             .stderr = .inherit,
             .stdin = .inherit,
             .cwd = spawn_cwd,
-            .extra_fds = &.{.{ .pipe = pipe_fds[1] }},
+            .extra_fds = &.{
+                .{ .pipe = ipc_pipe_fds[1] }, // fd 3: IPC result pipe (child writes)
+                .{ .pipe = data_pipe_fds[0] }, // fd 4: data pipe (child reads)
+            },
             .windows = if (Environment.isWindows) .{
                 .loop = jsc.EventLoopHandle.init(&this.manager.event_loop),
             },
@@ -781,17 +784,44 @@ pub const SecurityScanSubprocess = struct {
 
         var spawned = try (try bun.spawn.spawnProcess(&spawn_options, @ptrCast(&argv), @ptrCast(std.os.environ.ptr))).unwrap();
 
-        pipe_fds[1].close();
+        // Close the child ends in the parent
+        ipc_pipe_fds[1].close();
+        data_pipe_fds[0].close();
 
+        // Write all JSON data to the data pipe in blocking mode.
+        // The child reads with readFileSync, so both sides block naturally:
+        // parent blocks on write when pipe buffer is full, child reads and
+        // drains the buffer, unblocking the parent.
+        var remaining: []const u8 = this.json_data;
+        while (remaining.len > 0) {
+            switch (bun.sys.write(data_pipe_fds[1], remaining)) {
+                .err => |err| {
+                    data_pipe_fds[1].close();
+                    Output.errGeneric("Failed to write package data to pipe: {f}", .{err});
+                    return error.DataPipeWriteFailed;
+                },
+                .result => |written| {
+                    if (written == 0) {
+                        data_pipe_fds[1].close();
+                        return error.DataPipeWriteFailed;
+                    }
+                    remaining = remaining[written..];
+                },
+            }
+        }
+        // Close write end to signal EOF to the child
+        data_pipe_fds[1].close();
+
+        // Set up IPC reader (parent reads results from child)
         if (comptime bun.Environment.isPosix) {
-            _ = bun.sys.setNonblocking(pipe_fds[0]);
+            _ = bun.sys.setNonblocking(ipc_pipe_fds[0]);
         }
         this.remaining_fds = 1;
         this.ipc_reader.flags.nonblocking = true;
         if (comptime bun.Environment.isPosix) {
             this.ipc_reader.flags.socket = false;
         }
-        try this.ipc_reader.start(pipe_fds[0], true).unwrap();
+        try this.ipc_reader.start(ipc_pipe_fds[0], true).unwrap();
 
         var process = spawned.toProcess(&this.manager.event_loop, false);
         this.process = process;
@@ -809,16 +839,12 @@ pub const SecurityScanSubprocess = struct {
         return this.has_process_exited and this.remaining_fds == 0;
     }
 
-    pub fn eventLoop(this: *const SecurityScanSubprocess) *jsc.AnyEventLoop {
-        return &this.manager.event_loop;
+    pub fn eventLoop(this: *const SecurityScanSubprocess) jsc.EventLoopHandle {
+        return jsc.EventLoopHandle.init(&this.manager.event_loop);
     }
 
     pub fn loop(this: *const SecurityScanSubprocess) *bun.Async.Loop {
-        if (comptime bun.Environment.isWindows) {
-            return this.manager.event_loop.loop().uv_loop;
-        } else {
-            return this.manager.event_loop.loop();
-        }
+        return this.eventLoop().loop();
     }
 
     pub fn onReaderDone(this: *SecurityScanSubprocess) void {

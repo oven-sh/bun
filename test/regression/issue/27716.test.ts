@@ -52,7 +52,7 @@ scanner = "./scanner.ts"
 
       if (pathname.endsWith(".tgz")) {
         // Serve a minimal valid npm tarball (empty package)
-        return new Response(makeTarball(pathname));
+        return new Response(makeTarball());
       }
 
       // Registry metadata response
@@ -96,12 +96,8 @@ scanner = "./scanner.ts"
 }, 120_000);
 
 // Creates a minimal valid npm tarball containing just a package.json
-function makeTarball(name: string): Uint8Array {
-  // Create a minimal tar.gz with just a package/package.json
+function makeTarball(): Uint8Array {
   const packageJson = JSON.stringify({ name: "pkg", version: "0.0.1" });
-
-  // Use pre-built minimal tarball bytes
-  // This is a gzipped tar containing package/package.json with {"name":"pkg","version":"0.0.1"}
   return createMinimalTarGz(packageJson);
 }
 

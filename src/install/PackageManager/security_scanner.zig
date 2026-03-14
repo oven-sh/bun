@@ -683,6 +683,7 @@ fn attemptSecurityScanWithRetry(manager: *PackageManager, security_scanner: []co
     var json_path_buf: bun.PathBuffer = undefined;
     const json_tmp_path = bun.path.joinAbsStringBufZ(top_dir, &json_path_buf, &.{tmpname}, .auto);
 
+    defer _ = bun.sys.unlink(json_tmp_path);
     {
         var file = switch (bun.sys.File.open(json_tmp_path, bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC, 0o664)) {
             .result => |f| f,
@@ -700,7 +701,6 @@ fn attemptSecurityScanWithRetry(manager: *PackageManager, security_scanner: []co
             },
         }
     }
-    defer _ = bun.sys.unlink(json_tmp_path);
 
     // Replace __PACKAGES_JSON__ with a readFileSync call that loads from the temp file.
     // The path is JSON-escaped to handle any special characters (e.g. backslashes on Windows).

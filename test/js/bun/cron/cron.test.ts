@@ -144,12 +144,6 @@ describe.skipIf(!isWindows)("Windows schtasks diagnostic", () => {
       "      <ScheduleByDay><DaysInterval>1</DaysInterval></ScheduleByDay>",
       "    </CalendarTrigger>",
       "  </Triggers>",
-      "  <Principals>",
-      "    <Principal>",
-      "      <LogonType>S4U</LogonType>",
-      "      <RunLevel>LeastPrivilege</RunLevel>",
-      "    </Principal>",
-      "  </Principals>",
       "  <Settings>",
       "    <Enabled>true</Enabled>",
       "    <AllowStartOnDemand>true</AllowStartOnDemand>",
@@ -168,7 +162,7 @@ describe.skipIf(!isWindows)("Windows schtasks diagnostic", () => {
     writeFileSync(xmlPath, xml);
     try {
       const r = Bun.spawnSync({
-        cmd: ["schtasks", "/create", "/xml", xmlPath, "/tn", "bun-cron-diag", "/f"],
+        cmd: ["schtasks", "/create", "/xml", xmlPath, "/tn", "bun-cron-diag", "/np", "/f"],
         stdout: "pipe",
         stderr: "pipe",
       });

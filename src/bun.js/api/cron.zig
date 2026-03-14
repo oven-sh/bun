@@ -526,7 +526,7 @@ pub const CronRegisterJob = struct {
             return;
         };
 
-        var argv = [_:null]?[*:0]const u8{ "schtasks", "/create", "/xml", xml_path.ptr, "/tn", task_name.ptr, "/f", null };
+        var argv = [_:null]?[*:0]const u8{ "schtasks", "/create", "/xml", xml_path.ptr, "/tn", task_name.ptr, "/np", "/f", null };
         this.spawnCmd(&argv, .ignore, .ignore);
     }
 };

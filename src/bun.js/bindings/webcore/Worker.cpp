@@ -69,8 +69,8 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(Worker);
 
-extern "C" void WebWorker__notifyNeedTermination(
-    void* worker);
+extern "C" void WebWorker__notifyNeedTermination(void* worker);
+extern "C" void WebWorker__destroy(void* worker);
 
 static Lock allWorkersLock;
 static HashMap<ScriptExecutionContextIdentifier, Worker*>& allWorkers() WTF_REQUIRES_LOCK(allWorkersLock)
@@ -133,12 +133,14 @@ extern "C" void WebWorker__setRef(
 
 void Worker::setKeepAlive(bool keepAlive)
 {
-    WebWorker__setRef(impl_, keepAlive);
+    if (impl_)
+        WebWorker__setRef(impl_, keepAlive);
 }
 
 bool Worker::updatePtr()
 {
     if (!WebWorker__updatePtr(impl_, this)) {
+        impl_ = nullptr;
         m_onlineClosingFlags = ClosingFlag;
         m_terminationFlags.fetch_or(TerminatedFlag);
         return false;
@@ -263,7 +265,8 @@ void Worker::terminate()
 {
     // m_contextProxy.terminateWorkerGlobalScope();
     m_terminationFlags.fetch_or(TerminateRequestedFlag);
-    WebWorker__notifyNeedTermination(impl_);
+    if (impl_)
+        WebWorker__notifyNeedTermination(impl_);
 }
 
 // const char* Worker::activeDOMObjectName() const
@@ -444,6 +447,16 @@ void Worker::dispatchExit(int32_t exitCode)
             protectedThis->dispatchCloseEvent(event);
         }
         protectedThis->m_terminationFlags.fetch_or(TerminatedFlag);
+
+        // Destroy the Zig WebWorker struct now that all pending tasks
+        // that might call into it (via impl_) have been processed.
+        // This runs on the parent thread after all earlier-posted tasks
+        // (e.g. message events) have been handled, preventing UAF when
+        // a message handler calls worker.terminate().
+        if (protectedThis->impl_) {
+            WebWorker__destroy(protectedThis->impl_);
+            protectedThis->impl_ = nullptr;
+        }
     });
 }
 

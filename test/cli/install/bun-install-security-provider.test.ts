@@ -1,4 +1,5 @@
-import { bunEnv, runBunInstall } from "harness";
+import { bunEnv, runBunInstall, tmpdirSync } from "harness";
+import { rm } from "node:fs/promises";
 import {
   dummyAfterAll,
   dummyAfterEach,
@@ -687,47 +688,37 @@ describe("Package Resolution", () => {
   });
 });
 
-describe("Large payload via ipc pipes", () => {
+describe("Large payload via ipc pipe", () => {
   let tgzTempDir: string;
 
   beforeAll(async () => {
-    const { tmpdir } = await import("node:os");
-    const { mkdtemp } = await import("node:fs/promises");
-    const { join } = await import("node:path");
-    tgzTempDir = await mkdtemp(join(tmpdir(), "bun-test-tgz-"));
+    tgzTempDir = tmpdirSync();
 
-    // Copy bar-0.0.2.tgz and create test-pkg-* copies in temp dir
-    const testDir = import.meta.dir;
-    const barTarball = `${testDir}/bar-0.0.2.tgz`;
-    const barContent = Bun.file(barTarball);
-
-    // Create 10,000 packages to generate ~1.25MB of JSON
-    // (each entry is ~125 bytes, so 10k * 125 = 1.25MB)
+    // Copy bar-0.0.2.tgz to create 10,000 package tarballs.
+    // Each package entry in the JSON is ~125 bytes, so 10k packages = ~1.25MB,
+    // which exceeds typical command-line length limits.
+    const barTarball = Bun.file(`${import.meta.dir}/bar-0.0.2.tgz`);
     for (let i = 0; i < 10000; i++) {
-      const targetPath = `${tgzTempDir}/test-pkg-${i}-0.0.2.tgz`;
-      await Bun.write(targetPath, barContent);
+      await Bun.write(`${tgzTempDir}/test-pkg-${i}-0.0.2.tgz`, barTarball);
     }
   });
 
   afterAll(async () => {
-    const { rm } = await import("node:fs/promises");
-    try {
-      await rm(tgzTempDir, { recursive: true, force: true });
-    } catch (e) {}
+    await rm(tgzTempDir, { recursive: true, force: true });
   });
 
-  test("handles JSON data larger than max arg length (>1MB)", {
+  test("handles packages JSON larger than max arg length (>1MB)", {
     testTimeout: 60_000,
     scanner: async ({ packages }) => {
       const jsonSize = JSON.stringify(packages).length;
-      console.log(`Received JSON payload of ${jsonSize} bytes from ${packages.length} packages via stdin`);
+      console.log(`Received JSON payload of ${jsonSize} bytes from ${packages.length} packages`);
 
       if (jsonSize < 1024 * 1024) {
         throw new Error(`Expected JSON payload to exceed 1MB, got ${jsonSize} bytes`);
       }
 
       if (packages.length === 0) {
-        throw new Error("Expected to receive packages via stdin");
+        throw new Error("Expected to receive packages");
       }
 
       return [];
@@ -750,14 +741,11 @@ describe("Large payload via ipc pipes", () => {
     expectedExitCode: 0,
     expect: ({ out }) => {
       expect(out).toContain("Received JSON payload");
-      expect(out).toContain("via stdin");
-      expect(out).toContain("packages");
 
       const match = out.match(/Received JSON payload of (\d+) bytes/);
-      if (match) {
-        const bytes = parseInt(match[1], 10);
-        expect(bytes).toBeGreaterThan(1024 * 1024); // >1MB
-      }
+      expect(match).not.toBeNull();
+      const bytes = parseInt(match![1], 10);
+      expect(bytes).toBeGreaterThan(1024 * 1024);
     },
   });
 });

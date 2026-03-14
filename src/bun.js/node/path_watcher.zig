@@ -697,15 +697,14 @@ pub const PathWatcherManager = struct {
             default_manager = null;
         }
 
-        // only deinit if no watchers are registered
-        if (this.watcher_count > 0) {
-            // wait last watcher to close
-            this.deinit_on_last_watcher = true;
-            return;
-        }
-
+        // Check watcher_count and pending_tasks under one lock to avoid TOCTOU
         {
             this.mutex.lock();
+            if (this.watcher_count > 0) {
+                this.deinit_on_last_watcher = true;
+                this.mutex.unlock();
+                return;
+            }
             if (this.pending_tasks > 0) {
                 // deinit when all tasks are done
                 this.deinit_on_last_task = true;
@@ -715,9 +714,13 @@ pub const PathWatcherManager = struct {
             this.mutex.unlock();
         }
 
-        if (!this.main_watcher.skip_thread_cleanup) {
-            this.main_watcher.deinit(false);
+        // When skip_thread_cleanup is true (error path), threadMain is still
+        // running but will skip its own cleanup. Join to ensure it has exited
+        // before we free the Watcher.
+        if (this.main_watcher.skip_thread_cleanup) {
+            this.main_watcher.thread.join();
         }
+        this.main_watcher.deinit(false);
 
         if (this.watcher_count > 0) {
             while (this.watchers.pop()) |watcher| {

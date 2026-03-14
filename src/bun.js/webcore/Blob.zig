@@ -2494,7 +2494,7 @@ pub fn pipeReadableStreamToBlob(this: *Blob, globalThis: *jsc.JSGlobalObject, re
                 const path = pathlike.path.sliceZ(&file_path);
                 switch (bun.sys.open(
                     path,
-                    bun.O.WRONLY | bun.O.CREAT | bun.O.NONBLOCK,
+                    bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC | bun.O.NONBLOCK,
                     write_permissions,
                 )) {
                     .result => |result| switch (result.makeLibUVOwnedForSyscall(.open, .close_on_fail)) {

@@ -63,3 +63,13 @@ test("Bun.write with new Response(req.body) after accessing req.body does not ha
   expect(await res.text()).toBe(String("body after access check".length));
   expect(await Bun.file(outFile).text()).toBe("body after access check");
 });
+
+test("Bun.write with Response overwrites file completely", async () => {
+  using dir = tempDir("issue-13237-", {});
+  const outFile = join(String(dir), "test.txt");
+  await Bun.write(outFile, new Response(Buffer.alloc(1000, "A").toString()));
+  await Bun.write(outFile, new Response(Buffer.alloc(100, "B").toString()));
+  const result = await Bun.file(outFile).text();
+  expect(result).toBe(Buffer.alloc(100, "B").toString());
+  expect(result.length).toBe(100);
+});

@@ -50,7 +50,7 @@ describe.skipIf(!isWindows)("Runtime inspector Windows file mapping", () => {
     });
 
     await using targetProc = spawn({
-      cmd: [bunExe(), "target.js"],
+      cmd: [bunExe(), "--inspect-port=0", "target.js"],
       cwd: String(dir),
       env: bunEnv,
       stdout: "pipe",
@@ -107,7 +107,7 @@ describe.skipIf(!isWindows)("Runtime inspector Windows file mapping", () => {
     });
 
     await using proc = spawn({
-      cmd: [bunExe(), "target.js"],
+      cmd: [bunExe(), "--inspect-port=0", "target.js"],
       cwd: String(dir),
       env: bunEnv,
       stdout: "pipe",
@@ -155,7 +155,7 @@ describe.skipIf(!isWindows)("Runtime inspector Windows file mapping", () => {
     });
 
     await using targetProc = spawn({
-      cmd: [bunExe(), "target.js"],
+      cmd: [bunExe(), "--inspect-port=0", "target.js"],
       cwd: String(dir),
       env: bunEnv,
       stdout: "pipe",
@@ -225,7 +225,7 @@ describe.skipIf(!isWindows)("Runtime inspector Windows file mapping", () => {
     // First process: activate inspector, verify, then shut down
     {
       await using target1 = spawn({
-        cmd: [bunExe(), "target.js", "1"],
+        cmd: [bunExe(), "--inspect-port=0", "target.js", "1"],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
@@ -264,7 +264,7 @@ describe.skipIf(!isWindows)("Runtime inspector Windows file mapping", () => {
     // Second process
     {
       await using target2 = spawn({
-        cmd: [bunExe(), "target.js", "2"],
+        cmd: [bunExe(), "--inspect-port=0", "target.js", "2"],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",

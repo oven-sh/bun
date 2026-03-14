@@ -144,7 +144,10 @@ fn activateInspector(vm: *VirtualMachine) !void {
     vm.transpiler.options.minify_whitespace = false;
     vm.transpiler.options.debugger = true;
 
-    try Debugger.create(vm, vm.global);
+    Debugger.create(vm, vm.global) catch |err| {
+        vm.debugger = null;
+        return err;
+    };
 }
 
 pub fn isInstalled() bool {

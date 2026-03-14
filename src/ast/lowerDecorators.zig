@@ -1104,6 +1104,12 @@ pub fn LowerDecorators(
                 for (instance_field_decorate.items) |*elem| rewritePrivateAccessesInExpr(p, elem, &private_lowered_map);
                 rewritePrivateAccessesInStmts(p, pre_eval_stmts.items, &private_lowered_map);
                 rewritePrivateAccessesInStmts(p, prefix_stmts.items, &private_lowered_map);
+                rewritePrivateAccessesInStmts(p, constructor_inject_stmts.items, &private_lowered_map);
+                for (static_private_add_blocks.items) |spab| {
+                    if (spab.class_static_block) |sb|
+                        rewritePrivateAccessesInStmts(p, sb.stmts.slice(), &private_lowered_map);
+                }
+                for (suffix_exprs.items) |*expr| rewritePrivateAccessesInExpr(p, expr, &private_lowered_map);
             }
 
             // ── Phase 6: Emit suffix ─────────────────────────

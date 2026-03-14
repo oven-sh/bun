@@ -15,7 +15,11 @@ pub fn writeBind(
     try writer.String(cursor_name);
     try writer.string(name);
 
-    const len: u32 = @truncate(parameter_fields.len);
+    if (parameter_fields.len > max_parameters) {
+        return error.TooManyParameters;
+    }
+
+    const len: u16 = @intCast(parameter_fields.len);
 
     // The number of parameter format codes that follow (denoted C
     // below). This can be zero to indicate that there are no
@@ -168,6 +172,9 @@ pub fn writeBind(
     }
 
     if (any_non_text_fields) {
+        if (result_fields.len > max_parameters) {
+            return error.TooManyParameters;
+        }
         try writer.short(result_fields.len);
         for (result_fields) |field| {
             try writer.short(
@@ -242,6 +249,65 @@ pub fn bindAndExecute(
     var exec = protocol.Execute{
         .p = .{
             .prepared_statement = statement.signature.prepared_statement_name,
+        },
+    };
+    try exec.writeInternal(Context, writer);
+
+    try writer.write(&protocol.Flush);
+    try writer.write(&protocol.Sync);
+}
+
+/// Atomically sends Parse + [Describe] + Bind + Execute + Flush + Sync as a single message batch.
+/// This is required for unnamed prepared statements to work correctly with connection poolers
+/// like PgBouncer in transaction mode, which may reassign server connections between protocol
+/// round-trips. Without this, Parse and Bind+Execute could be routed to different backend
+/// connections, causing queries to execute against the wrong prepared statement.
+pub fn parseAndBindAndExecute(
+    globalObject: *jsc.JSGlobalObject,
+    query: []const u8,
+    statement: *PostgresSQLStatement,
+    array_value: JSValue,
+    columns_value: JSValue,
+    include_describe: bool,
+    comptime Context: type,
+    writer: protocol.NewWriter(Context),
+) AnyPostgresError!void {
+    const name = statement.signature.prepared_statement_name;
+
+    // Parse
+    {
+        var q = protocol.Parse{
+            .name = name,
+            .params = statement.signature.fields,
+            .query = query,
+        };
+        try q.writeInternal(Context, writer);
+        debug("Parse: {f}", .{bun.fmt.quote(query)});
+    }
+
+    // Describe (needed on first execution to learn parameter/result types for caching)
+    if (include_describe) {
+        var d = protocol.Describe{
+            .p = .{
+                .prepared_statement = name,
+            },
+        };
+        try d.writeInternal(Context, writer);
+        debug("Describe: {f}", .{bun.fmt.quote(name)});
+    }
+
+    // Bind — use server-provided types if available (binary format), otherwise
+    // fall back to signature types (text format for unknowns). The server will
+    // handle text-to-type conversion based on the parameter types from Parse.
+    const param_fields = if (statement.parameters.len > 0) statement.parameters else statement.signature.fields;
+    const result_fields = statement.fields;
+
+    try writeBind(name, bun.String.empty, globalObject, array_value, columns_value, param_fields, result_fields, Context, writer);
+
+    // Execute
+    var exec = protocol.Execute{
+        .p = .{
+            .prepared_statement = name,
         },
     };
     try exec.writeInternal(Context, writer);
@@ -326,6 +392,9 @@ pub fn onData(
 pub const Queue = bun.LinearFifo(*PostgresSQLQuery, .Dynamic);
 
 const debug = bun.Output.scoped(.Postgres, .visible);
+
+/// The PostgreSQL wire protocol uses 16-bit integers for parameter and column counts.
+const max_parameters = std.math.maxInt(u16);
 
 const PostgresSQLConnection = @import("./PostgresSQLConnection.zig");
 const PostgresSQLQuery = @import("./PostgresSQLQuery.zig");

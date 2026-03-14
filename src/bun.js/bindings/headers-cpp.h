@@ -142,13 +142,13 @@ extern "C" const size_t JSC__VM_object_align_ = alignof(JSC::VM);
 extern "C" const size_t JSC__ThrowScope_object_size_ = sizeof(JSC::ThrowScope);
 extern "C" const size_t JSC__ThrowScope_object_align_ = alignof(JSC::ThrowScope);
 
-#ifndef INCLUDED_JavaScriptCore_CatchScope_h
-#define INCLUDED_JavaScriptCore_CatchScope_h
-#include <JavaScriptCore/CatchScope.h>
+#ifndef INCLUDED_JavaScriptCore_TopExceptionScope_h
+#define INCLUDED_JavaScriptCore_TopExceptionScope_h
+#include <JavaScriptCore/TopExceptionScope.h>
 #endif
 
-extern "C" const size_t JSC__CatchScope_object_size_ = sizeof(JSC::CatchScope);
-extern "C" const size_t JSC__CatchScope_object_align_ = alignof(JSC::CatchScope);
+extern "C" const size_t JSC__TopExceptionScope_object_size_ = sizeof(JSC::TopExceptionScope);
+extern "C" const size_t JSC__TopExceptionScope_object_align_ = alignof(JSC::TopExceptionScope);
 
 #ifndef INCLUDED__ZigGlobalObject_h_
 #define INCLUDED__ZigGlobalObject_h_
@@ -190,6 +190,6 @@ extern "C" const size_t Bun__Timer_object_align_ = alignof(Bun__Timer);
 extern "C" const size_t Bun__BodyValueBufferer_object_size_ = sizeof(Bun__BodyValueBufferer);
 extern "C" const size_t Bun__BodyValueBufferer_object_align_ = alignof(Bun__BodyValueBufferer);
 
-const size_t sizes[39] = {sizeof(JSC::JSObject), sizeof(WebCore::DOMURL), sizeof(WebCore::DOMFormData), sizeof(WebCore::FetchHeaders), sizeof(SystemError), sizeof(JSC::JSCell), sizeof(JSC::JSString), sizeof(JSC::JSModuleLoader), sizeof(WebCore::AbortSignal), sizeof(JSC::JSPromise), sizeof(JSC::JSInternalPromise), sizeof(JSC::JSFunction), sizeof(JSC::JSGlobalObject), sizeof(JSC::JSMap), sizeof(JSC::JSValue), sizeof(JSC::Exception), sizeof(JSC::VM), sizeof(JSC::ThrowScope), sizeof(JSC::CatchScope), sizeof(FFI__ptr), sizeof(Reader__u8), sizeof(Reader__u16), sizeof(Reader__u32), sizeof(Reader__ptr), sizeof(Reader__i8), sizeof(Reader__i16), sizeof(Reader__i32), sizeof(Reader__f32), sizeof(Reader__f64), sizeof(Reader__i64), sizeof(Reader__u64), sizeof(Reader__intptr), sizeof(Zig::GlobalObject), sizeof(Bun__Path), sizeof(ArrayBufferSink), sizeof(HTTPSResponseSink), sizeof(HTTPResponseSink), sizeof(FileSink), sizeof(FileSink)};
+const size_t sizes[39] = {sizeof(JSC::JSObject), sizeof(WebCore::DOMURL), sizeof(WebCore::DOMFormData), sizeof(WebCore::FetchHeaders), sizeof(SystemError), sizeof(JSC::JSCell), sizeof(JSC::JSString), sizeof(JSC::JSModuleLoader), sizeof(WebCore::AbortSignal), sizeof(JSC::JSPromise), sizeof(JSC::JSInternalPromise), sizeof(JSC::JSFunction), sizeof(JSC::JSGlobalObject), sizeof(JSC::JSMap), sizeof(JSC::JSValue), sizeof(JSC::Exception), sizeof(JSC::VM), sizeof(JSC::ThrowScope), sizeof(JSC::TopExceptionScope), sizeof(FFI__ptr), sizeof(Reader__u8), sizeof(Reader__u16), sizeof(Reader__u32), sizeof(Reader__ptr), sizeof(Reader__i8), sizeof(Reader__i16), sizeof(Reader__i32), sizeof(Reader__f32), sizeof(Reader__f64), sizeof(Reader__i64), sizeof(Reader__u64), sizeof(Reader__intptr), sizeof(Zig::GlobalObject), sizeof(Bun__Path), sizeof(ArrayBufferSink), sizeof(HTTPSResponseSink), sizeof(HTTPResponseSink), sizeof(FileSink), sizeof(FileSink)};
 
-const size_t aligns[39] = {alignof(JSC::JSObject), alignof(WebCore::DOMURL), alignof(WebCore::DOMFormData), alignof(WebCore::FetchHeaders), alignof(SystemError), alignof(JSC::JSCell), alignof(JSC::JSString), alignof(JSC::JSModuleLoader), alignof(WebCore::AbortSignal), alignof(JSC::JSPromise), alignof(JSC::JSInternalPromise), alignof(JSC::JSFunction), alignof(JSC::JSGlobalObject), alignof(JSC::JSMap), alignof(JSC::JSValue), alignof(JSC::Exception), alignof(JSC::VM), alignof(JSC::ThrowScope), alignof(JSC::CatchScope), alignof(FFI__ptr), alignof(Reader__u8), alignof(Reader__u16), alignof(Reader__u32), alignof(Reader__ptr), alignof(Reader__i8), alignof(Reader__i16), alignof(Reader__i32), alignof(Reader__f32), alignof(Reader__f64), alignof(Reader__i64), alignof(Reader__u64), alignof(Reader__intptr), alignof(Zig::GlobalObject), alignof(Bun__Path), alignof(ArrayBufferSink), alignof(HTTPSResponseSink), alignof(HTTPResponseSink), alignof(FileSink), alignof(FileSink)};
+const size_t aligns[39] = {alignof(JSC::JSObject), alignof(WebCore::DOMURL), alignof(WebCore::DOMFormData), alignof(WebCore::FetchHeaders), alignof(SystemError), alignof(JSC::JSCell), alignof(JSC::JSString), alignof(JSC::JSModuleLoader), alignof(WebCore::AbortSignal), alignof(JSC::JSPromise), alignof(JSC::JSInternalPromise), alignof(JSC::JSFunction), alignof(JSC::JSGlobalObject), alignof(JSC::JSMap), alignof(JSC::JSValue), alignof(JSC::Exception), alignof(JSC::VM), alignof(JSC::ThrowScope), alignof(JSC::TopExceptionScope), alignof(FFI__ptr), alignof(Reader__u8), alignof(Reader__u16), alignof(Reader__u32), alignof(Reader__ptr), alignof(Reader__i8), alignof(Reader__i16), alignof(Reader__i32), alignof(Reader__f32), alignof(Reader__f64), alignof(Reader__i64), alignof(Reader__u64), alignof(Reader__intptr), alignof(Zig::GlobalObject), alignof(Bun__Path), alignof(ArrayBufferSink), alignof(HTTPSResponseSink), alignof(HTTPResponseSink), alignof(FileSink), alignof(FileSink)};

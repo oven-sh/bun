@@ -759,8 +759,6 @@ static void initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQ
 
     // Slow path:
 
-    JSC::ObjectInitializationScope initializationScope(vm);
-
     // 64 is the maximum we can preallocate here
     // see https://github.com/oven-sh/bun/issues/987
     JSObject* prototype = castedThis->userPrototype ? castedThis->userPrototype.get() : lexicalGlobalObject->objectPrototype();
@@ -1127,8 +1125,11 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementSetCustomSQLite, (JSC::JSGlobalObject * l
         return {};
     }
 
-    sqlite3_lib_path = sqliteStrValue.toWTFString(lexicalGlobalObject).utf8().data();
+    // Use a static CString to keep the string alive for the lifetime of the process
+    static CString sqlite3_lib_path_storage;
+    sqlite3_lib_path_storage = sqliteStrValue.toWTFString(lexicalGlobalObject).utf8();
     RETURN_IF_EXCEPTION(scope, {});
+    sqlite3_lib_path = sqlite3_lib_path_storage.data();
 
     if (lazyLoadSQLite() == -1) {
         sqlite3_handle = nullptr;
@@ -1322,9 +1323,11 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementLoadExtensionFunction, (JSC::JSGlobalObje
 
     auto entryPointStr = callFrame->argumentCount() > 2 && callFrame->argument(2).isString() ? callFrame->argument(2).toWTFString(lexicalGlobalObject) : String();
     RETURN_IF_EXCEPTION(scope, {});
-    const char* entryPoint = entryPointStr.length() == 0 ? NULL : entryPointStr.utf8().data();
+    auto entryPointUtf8 = entryPointStr.utf8();
+    const char* entryPoint = entryPointStr.length() == 0 ? NULL : entryPointUtf8.data();
+    auto extensionStringUtf8 = extensionString.utf8();
     char* error;
-    int rc = sqlite3_load_extension(db, extensionString.utf8().data(), entryPoint, &error);
+    int rc = sqlite3_load_extension(db, extensionStringUtf8.data(), entryPoint, &error);
 
     // TODO: can we disable loading extensions after this?
     if (rc != SQLITE_OK) {
@@ -1654,10 +1657,10 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementOpenStatementFunction, (JSC::JSGlobalObje
 #endif
     initializeSQLite();
 
-    auto catchScope = DECLARE_CATCH_SCOPE(vm);
+    auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     String path = pathValue.toWTFString(lexicalGlobalObject);
-    RETURN_IF_EXCEPTION(catchScope, JSValue::encode(jsUndefined()));
-    catchScope.clearException();
+    RETURN_IF_EXCEPTION(topExceptionScope, JSValue::encode(jsUndefined()));
+    (void)topExceptionScope.tryClearException();
     int openFlags = DEFAULT_SQLITE_FLAGS;
     if (callFrame->argumentCount() > 1) {
         JSValue flags = callFrame->argument(1);
@@ -2017,7 +2020,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementSetPrototypeFunction, (JSGlobalObject * l
             return {};
         }
 
-        castedThis->userPrototype.set(vm, classObject, prototype.getObject());
+        castedThis->userPrototype.set(vm, castedThis, prototype.getObject());
 
         // Force the prototypes to be re-created
         if (castedThis->version_db) {

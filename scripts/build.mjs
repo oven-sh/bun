@@ -4,7 +4,6 @@ import { basename, join, relative, resolve } from "node:path";
 import {
   formatAnnotationToHtml,
   getEnv,
-  getSecret,
   isCI,
   isWindows,
   parseAnnotations,
@@ -13,6 +12,8 @@ import {
   reportAnnotationToBuildKite,
   startGroup,
 } from "./utils.mjs";
+
+const isWindowsARM64 = isWindows && process.arch === "arm64";
 
 if (globalThis.Bun) {
   await import("./glob-sources.mjs");
@@ -81,6 +82,11 @@ async function build(args) {
   if (toolchain) {
     const toolchainPath = resolve(import.meta.dirname, "..", "cmake", "toolchains", `${toolchain}.cmake`);
     generateOptions["--toolchain"] = toolchainPath;
+  }
+
+  // Windows ARM64: log detection (compiler is selected by CMake/toolchain)
+  if (isWindowsARM64) {
+    console.log("Windows ARM64 detected");
   }
 
   const generateArgs = Object.entries(generateOptions).flatMap(([flag, value]) =>
@@ -157,35 +163,6 @@ async function spawn(command, args, options, label) {
   label ??= basename(command);
 
   const pipe = process.env.CI === "true";
-
-  if (isBuildkite()) {
-    if (process.env.BUN_LINK_ONLY && isWindows) {
-      env ||= options?.env || { ...process.env };
-
-      // Pass signing secrets directly to the build process
-      // The PowerShell signing script will handle certificate decoding
-      env.SM_CLIENT_CERT_PASSWORD = getSecret("SM_CLIENT_CERT_PASSWORD", {
-        redact: true,
-        required: true,
-      });
-      env.SM_CLIENT_CERT_FILE = getSecret("SM_CLIENT_CERT_FILE", {
-        redact: true,
-        required: true,
-      });
-      env.SM_API_KEY = getSecret("SM_API_KEY", {
-        redact: true,
-        required: true,
-      });
-      env.SM_KEYPAIR_ALIAS = getSecret("SM_KEYPAIR_ALIAS", {
-        redact: true,
-        required: true,
-      });
-      env.SM_HOST = getSecret("SM_HOST", {
-        redact: true,
-        required: true,
-      });
-    }
-  }
 
   const subprocess = nodeSpawn(command, effectiveArgs, {
     stdio: pipe ? "pipe" : "inherit",

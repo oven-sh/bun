@@ -135,6 +135,18 @@ await s3file.write(JSON.stringify({ name: "John", age: 30 }), {
   type: "application/json",
 });
 
+// Write with content encoding (e.g. for pre-compressed data)
+await s3file.write(compressedData, {
+  type: "application/json",
+  contentEncoding: "gzip",
+});
+
+// Write with content disposition
+await s3file.write(pdfData, {
+  type: "application/pdf",
+  contentDisposition: 'attachment; filename="report.pdf"',
+});
+
 // Write using a writer (streaming)
 const writer = s3file.writer({ type: "application/json" });
 writer.write("Hello");
@@ -188,7 +200,13 @@ const download = s3.presign("my-file.txt"); // GET, text/plain, expires in 24 ho
 const upload = s3.presign("my-file", {
   expiresIn: 3600, // 1 hour
   method: "PUT",
-  type: "application/json", // No extension for inferring, so we can specify the content type to be JSON
+  type: "application/json", // Sets response-content-type in the presigned URL
+});
+
+// Presign with content disposition (e.g. force download with a specific filename)
+const downloadUrl = s3.presign("report.pdf", {
+  expiresIn: 3600,
+  contentDisposition: 'attachment; filename="quarterly-report.pdf"',
 });
 
 // You can call .presign() if on a file reference, but avoid doing so

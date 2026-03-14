@@ -14,6 +14,14 @@ pub const CppWebSocket = opaque {
         buffered_data: ?[*]u8,
         buffered_len: usize,
         deflate_params: ?*const WebSocketDeflate.Params,
+        custom_ssl_ctx: ?*uws.SocketContext,
+    ) void;
+    extern fn WebSocket__didConnectWithTunnel(
+        websocket_context: *CppWebSocket,
+        tunnel: *anyopaque,
+        buffered_data: ?[*]u8,
+        buffered_len: usize,
+        deflate_params: ?*const WebSocketDeflate.Params,
     ) void;
     extern fn WebSocket__didAbruptClose(websocket_context: *CppWebSocket, reason: ErrorCode) void;
     extern fn WebSocket__didClose(websocket_context: *CppWebSocket, code: u16, reason: *const bun.String) void;
@@ -50,11 +58,17 @@ pub const CppWebSocket = opaque {
         defer loop.exit();
         return WebSocket__rejectUnauthorized(this);
     }
-    pub fn didConnect(this: *CppWebSocket, socket: *uws.Socket, buffered_data: ?[*]u8, buffered_len: usize, deflate_params: ?*const WebSocketDeflate.Params) void {
+    pub fn didConnect(this: *CppWebSocket, socket: *uws.Socket, buffered_data: ?[*]u8, buffered_len: usize, deflate_params: ?*const WebSocketDeflate.Params, custom_ssl_ctx: ?*uws.SocketContext) void {
         const loop = jsc.VirtualMachine.get().eventLoop();
         loop.enter();
         defer loop.exit();
-        WebSocket__didConnect(this, socket, buffered_data, buffered_len, deflate_params);
+        WebSocket__didConnect(this, socket, buffered_data, buffered_len, deflate_params, custom_ssl_ctx);
+    }
+    pub fn didConnectWithTunnel(this: *CppWebSocket, tunnel: *anyopaque, buffered_data: ?[*]u8, buffered_len: usize, deflate_params: ?*const WebSocketDeflate.Params) void {
+        const loop = jsc.VirtualMachine.get().eventLoop();
+        loop.enter();
+        defer loop.exit();
+        WebSocket__didConnectWithTunnel(this, tunnel, buffered_data, buffered_len, deflate_params);
     }
     extern fn WebSocket__incrementPendingActivity(websocket_context: *CppWebSocket) void;
     extern fn WebSocket__decrementPendingActivity(websocket_context: *CppWebSocket) void;

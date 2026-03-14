@@ -63,6 +63,9 @@
 #include <wtf/URL.h>
 #include "IDLTypes.h"
 #include "FetchHeaders.h"
+#include "JSFetchHeaders.h"
+#include "headers.h"
+#include "ObjectBindings.h"
 
 namespace WebCore {
 using namespace JSC;
@@ -210,10 +213,16 @@ static inline JSC::EncodedJSValue constructJSWebSocket3(JSGlobalObject* lexicalG
 
     Vector<String> protocols;
     int rejectUnauthorized = -1;
+    void* sslConfig = nullptr; // SSLConfig pointer from Zig
     auto headersInit = std::optional<Converter<IDLUnion<IDLSequence<IDLSequence<IDLByteString>>, IDLRecord<IDLByteString, IDLByteString>>>::ReturnType>();
+
+    // Proxy options
+    String proxyUrl;
+    auto proxyHeadersInit = std::optional<Converter<IDLUnion<IDLSequence<IDLSequence<IDLByteString>>, IDLRecord<IDLByteString, IDLByteString>>>::ReturnType>();
+
     if (JSC::JSObject* options = optionsObjectValue.getObject()) {
         const auto& builtinnames = WebCore::builtinNames(vm);
-        auto headersValue = options->getIfPropertyExists(globalObject, builtinnames.headersPublicName());
+        auto headersValue = Bun::getOwnPropertyIfExists(globalObject, options, builtinnames.headersPublicName());
         RETURN_IF_EXCEPTION(throwScope, {});
         if (headersValue) {
             if (!headersValue.isUndefinedOrNull()) {
@@ -222,7 +231,7 @@ static inline JSC::EncodedJSValue constructJSWebSocket3(JSGlobalObject* lexicalG
             }
         }
 
-        auto protocolsValue = options->getIfPropertyExists(globalObject, PropertyName(Identifier::fromString(vm, "protocols"_s)));
+        auto protocolsValue = Bun::getOwnPropertyIfExists(globalObject, options, PropertyName(Identifier::fromString(vm, "protocols"_s)));
         RETURN_IF_EXCEPTION(throwScope, {});
         if (protocolsValue) {
             if (!protocolsValue.isUndefinedOrNull()) {
@@ -230,7 +239,7 @@ static inline JSC::EncodedJSValue constructJSWebSocket3(JSGlobalObject* lexicalG
                 RETURN_IF_EXCEPTION(throwScope, {});
             }
         } else {
-            auto protocolValue = options->getIfPropertyExists(globalObject, PropertyName(Identifier::fromString(vm, "protocol"_s)));
+            auto protocolValue = Bun::getOwnPropertyIfExists(globalObject, options, PropertyName(Identifier::fromString(vm, "protocol"_s)));
             RETURN_IF_EXCEPTION(throwScope, {});
             if (protocolValue) {
                 if (!protocolValue.isUndefinedOrNull()) {
@@ -240,17 +249,61 @@ static inline JSC::EncodedJSValue constructJSWebSocket3(JSGlobalObject* lexicalG
             }
         }
 
-        auto tlsOptionsValue = options->getIfPropertyExists(globalObject, PropertyName(Identifier::fromString(vm, "tls"_s)));
+        // Parse TLS options using Zig's SSLConfig.fromJS for full TLS option support
+        JSValue tlsOptionsValue = Bun::getOwnPropertyIfExists(globalObject, options, PropertyName(Identifier::fromString(vm, "tls"_s)));
         RETURN_IF_EXCEPTION(throwScope, {});
-        if (tlsOptionsValue) {
-            if (!tlsOptionsValue.isUndefinedOrNull() && tlsOptionsValue.isObject()) {
-                if (JSC::JSObject* tlsOptions = tlsOptionsValue.getObject()) {
+        if (tlsOptionsValue && !tlsOptionsValue.isUndefinedOrNull() && tlsOptionsValue.isObject()) {
+            // Also extract rejectUnauthorized for backwards compatibility
+            if (JSC::JSObject* tlsOptions = tlsOptionsValue.getObject()) {
+                auto rejectUnauthorizedValue = Bun::getOwnPropertyIfExists(globalObject, tlsOptions, PropertyName(Identifier::fromString(vm, "rejectUnauthorized"_s)));
+                RETURN_IF_EXCEPTION(throwScope, {});
+                if (rejectUnauthorizedValue && !rejectUnauthorizedValue.isUndefinedOrNull() && rejectUnauthorizedValue.isBoolean()) {
+                    rejectUnauthorized = rejectUnauthorizedValue.asBoolean() ? 1 : 0;
+                }
+            }
 
-                    auto rejectUnauthorizedValue = tlsOptions->getIfPropertyExists(globalObject, PropertyName(Identifier::fromString(vm, "rejectUnauthorized"_s)));
+            // Parse full TLS options using Zig's SSLConfig.fromJS
+            sslConfig = Bun__WebSocket__parseSSLConfig(globalObject, JSValue::encode(tlsOptionsValue));
+            RETURN_IF_EXCEPTION(throwScope, {});
+        }
+
+        // Parse proxy option - can be string or { url, headers }
+        auto proxyValue = Bun::getOwnPropertyIfExists(globalObject, options, PropertyName(Identifier::fromString(vm, "proxy"_s)));
+        RETURN_IF_EXCEPTION(throwScope, {});
+        if (proxyValue) {
+            if (!proxyValue.isUndefinedOrNull()) {
+                if (proxyValue.isString()) {
+                    // proxy: "http://proxy:8080"
+                    proxyUrl = convert<IDLUSVString>(*lexicalGlobalObject, proxyValue);
                     RETURN_IF_EXCEPTION(throwScope, {});
-                    if (rejectUnauthorizedValue) {
-                        if (!rejectUnauthorizedValue.isUndefinedOrNull() && rejectUnauthorizedValue.isBoolean()) {
-                            rejectUnauthorized = rejectUnauthorizedValue.asBoolean() ? 1 : 0;
+                } else if (proxyValue.isObject()) {
+                    // proxy: { url: "http://proxy:8080", headers: {...} }
+                    if (JSC::JSObject* proxyOptions = proxyValue.getObject()) {
+                        auto proxyUrlValue = Bun::getOwnPropertyIfExists(globalObject, proxyOptions, PropertyName(Identifier::fromString(vm, "url"_s)));
+                        RETURN_IF_EXCEPTION(throwScope, {});
+                        if (proxyUrlValue && !proxyUrlValue.isUndefinedOrNull()) {
+                            proxyUrl = convert<IDLUSVString>(*lexicalGlobalObject, proxyUrlValue);
+                            RETURN_IF_EXCEPTION(throwScope, {});
+                        }
+
+                        auto proxyHeadersValue = Bun::getOwnPropertyIfExists(globalObject, proxyOptions, builtinnames.headersPublicName());
+                        RETURN_IF_EXCEPTION(throwScope, {});
+                        if (proxyHeadersValue && !proxyHeadersValue.isUndefinedOrNull()) {
+                            // Check if it's already a Headers instance (like fetch does)
+                            if (auto* jsHeaders = jsDynamicCast<JSFetchHeaders*>(proxyHeadersValue)) {
+                                // Convert FetchHeaders to the Init variant
+                                auto& headers = jsHeaders->wrapped();
+                                Vector<KeyValuePair<String, String>> pairs;
+                                auto iterator = headers.createIterator(false);
+                                while (auto value = iterator.next()) {
+                                    pairs.append({ value->key, value->value });
+                                }
+                                proxyHeadersInit = WTF::move(pairs);
+                            } else {
+                                // Fall back to IDL conversion for plain objects/arrays
+                                proxyHeadersInit = convert<IDLUnion<IDLSequence<IDLSequence<IDLByteString>>, IDLRecord<IDLByteString, IDLByteString>>>(*lexicalGlobalObject, proxyHeadersValue);
+                                RETURN_IF_EXCEPTION(throwScope, {});
+                            }
                         }
                     }
                 }
@@ -258,10 +311,13 @@ static inline JSC::EncodedJSValue constructJSWebSocket3(JSGlobalObject* lexicalG
         }
     }
 
-    auto object = (rejectUnauthorized == -1) ? WebSocket::create(*context, WTF::move(url), protocols, WTF::move(headersInit)) : WebSocket::create(*context, WTF::move(url), protocols, WTF::move(headersInit), rejectUnauthorized ? true : false);
+    auto object = (rejectUnauthorized == -1)
+        ? WebSocket::create(*context, WTF::move(url), protocols, WTF::move(headersInit), WTF::move(proxyUrl), WTF::move(proxyHeadersInit), sslConfig)
+        : WebSocket::create(*context, WTF::move(url), protocols, WTF::move(headersInit), rejectUnauthorized ? true : false, WTF::move(proxyUrl), WTF::move(proxyHeadersInit), sslConfig);
 
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
+
     static_assert(TypeOrExceptionOrUnderlyingType<decltype(object)>::isRef);
     auto jsValue = toJSNewlyCreated<IDLInterface<WebSocket>>(*lexicalGlobalObject, *globalObject, throwScope, WTF::move(object));
     if constexpr (IsExceptionOr<decltype(object)>)

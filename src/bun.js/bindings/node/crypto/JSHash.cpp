@@ -146,6 +146,9 @@ JSC_DEFINE_HOST_FUNCTION(jsHashProtoFuncUpdate, (JSC::JSGlobalObject * globalObj
     // Get the Hash instance
     JSValue thisHash = callFrame->thisValue();
     JSHash* hash = jsDynamicCast<JSHash*>(thisHash);
+    if (!hash) [[unlikely]] {
+        return Bun::ERR::INVALID_THIS(scope, globalObject, "Hash"_s);
+    }
 
     JSValue hashWrapper = callFrame->argument(0);
 
@@ -162,6 +165,8 @@ JSC_DEFINE_HOST_FUNCTION(jsHashProtoFuncUpdate, (JSC::JSGlobalObject * globalObj
         // Handle string inputValue
         JSString* inputString = inputValue.toString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
+
+        auto _ = JSC::EnsureStillAliveScope(inputString);
 
         auto encoding = parseEnumeration<WebCore::BufferEncodingType>(*globalObject, encodingValue).value_or(WebCore::BufferEncodingType::utf8);
         RETURN_IF_EXCEPTION(scope, {});
@@ -185,7 +190,10 @@ JSC_DEFINE_HOST_FUNCTION(jsHashProtoFuncUpdate, (JSC::JSGlobalObject * globalObj
 
         return JSValue::encode(hashWrapper);
     } else if (auto* view = JSC::jsDynamicCast<JSArrayBufferView*>(inputValue)) {
-        if (!hash->update(std::span { reinterpret_cast<const uint8_t*>(view->vector()), view->byteLength() })) {
+        if (view->isDetached()) [[unlikely]] {
+            return Bun::ERR::INVALID_STATE(scope, globalObject, "Cannot hash a detached buffer"_s);
+        }
+        if (!hash->update(view->span())) {
             return Bun::ERR::CRYPTO_HASH_UPDATE_FAILED(scope, globalObject);
         }
 
@@ -203,6 +211,9 @@ JSC_DEFINE_HOST_FUNCTION(jsHashProtoFuncDigest, (JSC::JSGlobalObject * lexicalGl
 
     // Get the Hash instance
     JSHash* hash = jsDynamicCast<JSHash*>(callFrame->thisValue());
+    if (!hash) [[unlikely]] {
+        return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "Hash"_s);
+    }
 
     // Check if already finalized
     if (hash->m_finalized) {
@@ -251,15 +262,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHashProtoFuncDigest, (JSC::JSGlobalObject * lexicalGl
 
     // Only compute the digest if it hasn't been cached yet
     if (!hash->m_digest && len > 0) {
-
-        const EVP_MD* md = hash->m_ctx.getDigest();
-        uint32_t bufLen = len;
-        if (md == EVP_sha512_224()) {
-            // SHA-512/224 expects buffer length of length % 8. can be truncated afterwards
-            bufLen = SHA512_224_DIGEST_BUFFER_LENGTH;
-        }
-
-        auto data = hash->m_ctx.digestFinal(bufLen);
+        auto data = hash->m_ctx.digestFinal(len);
         if (!data) {
             throwCryptoError(lexicalGlobalObject, scope, ERR_get_error(), "Failed to finalize digest"_s);
             return {};
@@ -325,10 +328,15 @@ JSC_DEFINE_HOST_FUNCTION(constructHash, (JSC::JSGlobalObject * globalObject, JSC
         WTF::String algorithm = algorithmOrHashInstanceValue.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
 
-        md = ncrypto::getDigestByName(algorithm, true);
+        md = ncrypto::getDigestByName(algorithm);
         if (!md) {
             zigHasher = ExternZigHash::getByName(zigGlobalObject, algorithm);
         }
+    }
+
+    if (md == nullptr && zigHasher == nullptr) [[unlikely]] {
+        throwCryptoError(globalObject, scope, ERR_get_error(), "Digest method not supported"_s);
+        return {};
     }
 
     std::optional<unsigned int> xofLen = std::nullopt;
@@ -355,7 +363,7 @@ JSC_DEFINE_HOST_FUNCTION(constructHash, (JSC::JSGlobalObject * globalObject, JSC
         return JSValue::encode(hash);
     }
 
-    if (md == nullptr || !hash->init(globalObject, scope, md, xofLen)) {
+    if (!hash->init(globalObject, scope, md, xofLen)) {
         throwCryptoError(globalObject, scope, ERR_get_error(), "Digest method not supported"_s);
         return {};
     }

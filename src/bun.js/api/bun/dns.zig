@@ -2659,7 +2659,7 @@ pub const Resolver = struct {
         const channel: *c_ares.Channel = switch (this.getChannel()) {
             .result => |res| res,
             .err => |err| {
-                return globalThis.throwValue(err.toJSWithSyscallAndHostname(globalThis, "getHostByAddr", ip));
+                return globalThis.throwValue(try err.toJSWithSyscallAndHostname(globalThis, "getHostByAddr", ip));
             },
         };
 
@@ -3038,7 +3038,7 @@ pub const Resolver = struct {
         var channel: *c_ares.Channel = switch (this.getChannel()) {
             .result => |res| res,
             .err => |err| {
-                return globalThis.throwValue(err.toJSWithSyscall(globalThis, "query" ++ &[_]u8{std.ascii.toUpper(type_name[0])} ++ type_name[1..]));
+                return globalThis.throwValue(try err.toJSWithSyscall(globalThis, "query" ++ &[_]u8{std.ascii.toUpper(type_name[0])} ++ type_name[1..]));
             },
         };
 

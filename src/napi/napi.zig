@@ -411,7 +411,7 @@ pub export fn napi_create_string_latin1(env_: napi_env, str: ?[*]const u8, lengt
     log("napi_create_string_latin1: {s}", .{slice});
 
     if (slice.len == 0) {
-        result.set(env, bun.String.empty.toJS(env.toJS()));
+        result.set(env, bun.String.empty.toJS(env.toJS()) catch return env.setLastError(.generic_failure));
         return env.ok();
     }
 
@@ -420,7 +420,7 @@ pub export fn napi_create_string_latin1(env_: napi_env, str: ?[*]const u8, lengt
 
     @memcpy(bytes, slice);
 
-    result.set(env, string.toJS(env.toJS()));
+    result.set(env, string.toJS(env.toJS()) catch return env.setLastError(.generic_failure));
     return env.ok();
 }
 pub export fn napi_create_string_utf8(env_: napi_env, str: ?[*]const u8, length: usize, result_: ?*napi_value) napi_status {
@@ -486,14 +486,14 @@ pub export fn napi_create_string_utf16(env_: napi_env, str: ?[*]const char16_t, 
         log("napi_create_string_utf16: {d} {f}", .{ slice.len, bun.fmt.FormatUTF16{ .buf = slice[0..@min(slice.len, 512)] } });
 
     if (slice.len == 0) {
-        result.set(env, bun.String.empty.toJS(env.toJS()));
+        result.set(env, bun.String.empty.toJS(env.toJS()) catch return env.setLastError(.generic_failure));
         return env.ok();
     }
 
     var string, const chars = bun.String.createUninitialized(.utf16, slice.len);
     @memcpy(chars, slice);
 
-    result.set(env, string.transferToJS(env.toJS()));
+    result.set(env, string.transferToJS(env.toJS()) catch return env.setLastError(.generic_failure));
     return env.ok();
 }
 
@@ -677,7 +677,7 @@ pub export fn napi_make_callback(env_: napi_env, _: *anyopaque, recv_: napi_valu
         return envIsNull();
     };
     const recv, const func = .{ recv_.get(), func_.get() };
-    if (func.isEmptyOrUndefinedOrNull() or !func.isCallable()) {
+    if (func.isEmptyOrUndefinedOrNull() or (!func.isCallable() and !func.isAsyncContextFrame())) {
         return env.setLastError(.function_expected);
     }
 
@@ -766,19 +766,13 @@ pub extern fn napi_type_tag_object(env: napi_env, _: napi_value, _: [*c]const na
 pub extern fn napi_check_object_type_tag(env: napi_env, _: napi_value, _: [*c]const napi_type_tag, _: *bool) napi_status;
 
 // do nothing for both of these
-pub export fn napi_open_callback_scope(env_: napi_env, _: napi_value, _: *anyopaque, _: *anyopaque) napi_status {
+pub export fn napi_open_callback_scope(_: napi_env, _: napi_value, _: *anyopaque, _: *anyopaque) napi_status {
     log("napi_open_callback_scope", .{});
-    const env = env_ orelse {
-        return envIsNull();
-    };
-    return env.ok();
+    return @intFromEnum(NapiStatus.ok);
 }
-pub export fn napi_close_callback_scope(env_: napi_env, _: *anyopaque) napi_status {
+pub export fn napi_close_callback_scope(_: napi_env, _: *anyopaque) napi_status {
     log("napi_close_callback_scope", .{});
-    const env = env_ orelse {
-        return envIsNull();
-    };
-    return env.ok();
+    return @intFromEnum(NapiStatus.ok);
 }
 pub extern fn napi_throw(env: napi_env, @"error": napi_value) napi_status;
 pub extern fn napi_throw_error(env: napi_env, code: [*c]const u8, msg: [*c]const u8) napi_status;
@@ -1762,7 +1756,7 @@ pub export fn napi_create_threadsafe_function(
     };
     const func = func_.get();
 
-    if (call_js_cb == null and (func.isEmptyOrUndefinedOrNull() or !func.isCallable())) {
+    if (call_js_cb == null and (func.isEmptyOrUndefinedOrNull() or (!func.isCallable() and !func.isAsyncContextFrame()))) {
         return env.setLastError(.function_expected);
     }
 

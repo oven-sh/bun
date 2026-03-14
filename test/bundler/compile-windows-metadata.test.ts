@@ -163,8 +163,8 @@ describe.skipIf(!isWindows).concurrent("Windows compile metadata", () => {
       const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
       expect(exitCode).not.toBe(0);
-      // When cross-compiling to non-Windows, it tries to download the target but fails
-      expect(stderr.toLowerCase()).toContain("target platform");
+      // Windows flags require a Windows compile target
+      expect(stderr.toLowerCase()).toContain("windows compile target");
     });
   });
 
@@ -178,7 +178,7 @@ describe.skipIf(!isWindows).concurrent("Windows compile metadata", () => {
         entrypoints: [join(String(dir), "app.js")],
         outdir: String(dir),
         compile: {
-          target: "bun-windows-x64",
+          target: process.arch === "arm64" ? "bun-windows-aarch64" : "bun-windows-x64",
           outfile: "app-api.exe",
           windows: {
             title: "API App",
@@ -225,7 +225,7 @@ describe.skipIf(!isWindows).concurrent("Windows compile metadata", () => {
         entrypoints: [join(String(dir), "app.js")],
         outdir: String(dir),
         compile: {
-          target: "bun-windows-x64",
+          target: process.arch === "arm64" ? "bun-windows-aarch64" : "bun-windows-x64",
           outfile: "partial-api.exe",
           windows: {
             title: "Partial App",
@@ -262,7 +262,7 @@ describe.skipIf(!isWindows).concurrent("Windows compile metadata", () => {
         entrypoints: [join(String(dir), "app.js")],
         outdir: "./out",
         compile: {
-          target: "bun-windows-x64",
+          target: process.arch === "arm64" ? "bun-windows-aarch64" : "bun-windows-x64",
           outfile: "relative.exe",
           windows: {
             title: "Relative Path App",

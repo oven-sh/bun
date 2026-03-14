@@ -97,7 +97,7 @@ const kSettingIds: Record<number, string> = {
 const kDefaultSettings = {
   headerTableSize: 4096,
   enablePush: true,
-  maxConcurrentStreams: kMaxStreams,
+  maxConcurrentStreams: 2 ** 32 - 1,
   initialWindowSize: 65535,
   maxFrameSize: 16384,
   maxHeaderListSize: 65535,
@@ -118,7 +118,7 @@ function throwSettingTypeError(name: string, value: any) {
 }
 
 function validateSettings(settings: any) {
-  if (typeof settings !== "object" || settings === null) {
+  if (typeof settings !== "object" || settings === null || $isArray(settings)) {
     throw $ERR_INVALID_ARG_TYPE("settings", "object", settings);
   }
 
@@ -183,7 +183,7 @@ function validateSettings(settings: any) {
     if (typeof cs !== "object" || cs === null) {
       throwSettingRangeError("customSettings", cs);
     }
-    const keys = Object.keys(cs);
+    const keys = ObjectKeys(cs);
     if (keys.length > MAX_ADDITIONAL_SETTINGS) {
       const err = new Error("Number of custom settings exceeds MAX_ADDITIONAL_SETTINGS");
       (err as any).code = "ERR_HTTP2_TOO_MANY_CUSTOM_SETTINGS";
@@ -237,7 +237,7 @@ function getPackedSettings(settings?: any): Buffer {
   }
   if (settings.customSettings) {
     const cs = settings.customSettings;
-    const keys = Object.keys(cs);
+    const keys = ObjectKeys(cs);
     // Sort custom settings by ID for consistent output
     keys.sort((a, b) => Number(a) - Number(b));
     for (const key of keys) {
@@ -263,10 +263,7 @@ function getUnpackedSettings(buf?: any, options?: any): any {
     throw $ERR_INVALID_ARG_TYPE("buf", ["Buffer", "TypedArray"], buf);
   }
 
-  // Convert TypedArray to Buffer if needed
-  const data = Buffer.isBuffer(buf) ? buf : Buffer.from(buf.buffer, buf.byteOffset, buf.byteLength);
-
-  if (data.length % 6 !== 0) {
+  if (buf.length % 6 !== 0) {
     const err = new RangeError("Packed settings length must be a multiple of six");
     (err as any).code = "ERR_HTTP2_INVALID_PACKED_SETTINGS_LENGTH";
     throw err;
@@ -276,9 +273,12 @@ function getUnpackedSettings(buf?: any, options?: any): any {
   const customSettings: Record<string, number> = {};
   let hasCustom = false;
 
-  for (let i = 0; i < data.length; i += 6) {
-    const type = data.readUInt16BE(i);
-    const value = data.readUInt32BE(i + 2);
+  // Use element-by-element access so it works for both Buffer and TypedArrays.
+  // For Buffer, buf[i] returns a byte. For Uint16Array etc., buf[i] returns
+  // the i-th element. Node.js reads settings this way too.
+  for (let i = 0; i < buf.length; i += 6) {
+    const type = buf[i] * 256 + buf[i + 1];
+    const value = ((buf[i + 2] << 24) | (buf[i + 3] << 16) | (buf[i + 4] << 8) | buf[i + 5]) >>> 0;
 
     const name = kSettingIds[type];
     if (name) {

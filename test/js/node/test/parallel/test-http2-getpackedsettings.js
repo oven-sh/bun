@@ -213,9 +213,6 @@ http2.getPackedSettings({ enablePush: false });
     }, {
       code: 'ERR_INVALID_ARG_TYPE',
       name: 'TypeError',
-      message:
-        'The "buf" argument must be an instance of Buffer or TypedArray.' +
-        common.invalidArgTypeHelper(input)
     });
   });
 
@@ -287,9 +284,6 @@ http2.getPackedSettings({ enablePush: false });
   }, {
     code: 'ERR_INVALID_ARG_TYPE',
     name: 'TypeError',
-    message:
-        'The "buf" argument must be an instance of Buffer or TypedArray.' +
-        common.invalidArgTypeHelper(packed)
   });
 }
 

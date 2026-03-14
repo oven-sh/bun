@@ -215,7 +215,7 @@ const FullSettingsPayload = packed struct(u336) {
     enableConnectProtocol: u32 = 0,
     pub const byteSize: usize = 42;
     pub fn toJS(this: *FullSettingsPayload, globalObject: *jsc.JSGlobalObject) jsc.JSValue {
-        var result = JSValue.createEmptyObject(globalObject, 9);
+        var result = JSValue.createEmptyObject(globalObject, 8);
         result.put(globalObject, jsc.ZigString.static("headerTableSize"), jsc.JSValue.jsNumber(this.headerTableSize));
         result.put(globalObject, jsc.ZigString.static("enablePush"), jsc.JSValue.jsBoolean(this.enablePush > 0));
         result.put(globalObject, jsc.ZigString.static("maxConcurrentStreams"), jsc.JSValue.jsNumber(this.maxConcurrentStreams));

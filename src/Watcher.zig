@@ -27,7 +27,7 @@ close_descriptors: bool = false,
 /// When true, the owner (e.g. PathWatcherManager) is responsible for
 /// cleaning up this Watcher's watchlist and memory. threadMain skips
 /// its destroy so in-flight tasks can still safely access the Watcher.
-pub skip_thread_destroy: bool = false,
+skip_thread_destroy: bool = false,
 
 evict_list: [max_eviction_count]WatchItemIndex = undefined,
 evict_list_i: WatchItemIndex = 0,

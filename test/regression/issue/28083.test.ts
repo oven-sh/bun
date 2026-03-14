@@ -1,7 +1,71 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isWindows } from "harness";
 
 describe("dgram implicit bind on send", () => {
+  test("reusePort option works with dgram sockets", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const dgram = require("dgram");
+        const isWin = process.platform === "win32";
+
+        // Create two sockets with reusePort: true bound to the same port
+        const s1 = dgram.createSocket({ type: "udp4", reusePort: !isWin });
+        const s2 = dgram.createSocket({ type: "udp4", reusePort: !isWin });
+
+        s1.bind(0, "127.0.0.1", () => {
+          const port = s1.address().port;
+          process.stdout.write("s1:" + port + "\\n");
+
+          if (isWin) {
+            // On Windows, reusePort is not supported - just verify s1 works
+            process.stdout.write("ok\\n");
+            s1.close();
+            s2.close();
+            return;
+          }
+
+          // On non-Windows, second socket should be able to bind to the same port
+          s2.bind(port, "127.0.0.1", () => {
+            const port2 = s2.address().port;
+            process.stdout.write("s2:" + port2 + "\\n");
+            process.stdout.write("same:" + String(port === port2) + "\\n");
+            s1.close();
+            s2.close();
+          });
+
+          s2.on("error", (err) => {
+            process.stdout.write("s2error:" + err.message + "\\n");
+            s1.close();
+            s2.close();
+            process.exit(1);
+          });
+        });
+
+        s1.on("error", (err) => {
+          process.stdout.write("s1error:" + err.message + "\\n");
+          s1.close();
+          process.exit(1);
+        });
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+    if (isWindows) {
+      expect(stdout).toContain("ok\n");
+    } else {
+      expect(stdout).toContain("same:true\n");
+    }
+    expect(exitCode).toBe(0);
+  });
+
   test("send() without bind() implicitly binds and delivers the message", async () => {
     await using proc = Bun.spawn({
       cmd: [

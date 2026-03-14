@@ -55,6 +55,7 @@ pub const CronRegisterJob = struct {
     schedule: [:0]const u8, // normalized numeric form for crontab/launchd
     raw_schedule: [:0]const u8, // original form for --cron-period and schtasks parsing
     title: [:0]const u8,
+    parsed_cron: CronExpression,
 
     state: State = .reading_crontab,
     process: ?*Process = null,
@@ -454,7 +455,7 @@ pub const CronRegisterJob = struct {
             bun.default_allocator.free(title_owned);
             return globalObject.throw("Out of memory", .{});
         };
-        job.* = .{ .global = globalObject, .bun_exe = bun_exe, .abs_path = abs_path, .schedule = schedule_owned, .raw_schedule = raw_schedule_owned, .title = title_owned, .promise = jsc.JSPromise.Strong.init(globalObject) };
+        job.* = .{ .global = globalObject, .bun_exe = bun_exe, .abs_path = abs_path, .schedule = schedule_owned, .raw_schedule = raw_schedule_owned, .title = title_owned, .parsed_cron = parsed, .promise = jsc.JSPromise.Strong.init(globalObject) };
 
         const promise_value = job.promise.value();
         job.poll.ref(jsc.VirtualMachine.get());
@@ -472,9 +473,7 @@ pub const CronRegisterJob = struct {
     // -- Windows --
 
     fn startWindows(this: *CronRegisterJob) void {
-        // Use schtasks /create with /sc and /tr to register a task.
-        // Task name: "bun-cron-<title>"
-        this.state = .installing_crontab; // reuse state for "single spawn" flow
+        this.state = .installing_crontab;
 
         const task_name = allocPrintZ(bun.default_allocator, "bun-cron-{s}", .{this.title}) catch {
             this.setErr("Out of memory", .{});
@@ -483,59 +482,34 @@ pub const CronRegisterJob = struct {
         };
         defer bun.default_allocator.free(task_name);
 
-        // Build the command that schtasks will execute
-        const tr_cmd = allocPrintZ(bun.default_allocator, "\"{s}\" run --cron-title={s} --cron-period=\"{s}\" \"{s}\"", .{
-            this.bun_exe, this.title, this.schedule, this.abs_path,
-        }) catch {
+        const xml = cronToTaskXml(this.parsed_cron, this.bun_exe, this.title, this.schedule, this.abs_path) catch {
+            this.setErr("Failed to build task XML", .{});
+            this.finish();
+            return;
+        };
+        defer bun.default_allocator.free(xml);
+
+        const xml_path = makeTempPath("bun-cron-xml-", this.title) catch {
             this.setErr("Out of memory", .{});
             this.finish();
             return;
         };
-        defer bun.default_allocator.free(tr_cmd);
+        this.tmp_path = xml_path;
 
-        // Parse cron to schtasks params using normalized schedule (nicknames already expanded to 5 fields)
-        const schtasks_params = cronToSchtasks(this.schedule) catch {
-            this.setErr("Cannot convert this cron expression to a Windows scheduled task. Only simple patterns are supported.", .{});
+        const file = bun.sys.File.openat(bun.FD.cwd(), xml_path, bun.O.WRONLY | bun.O.CREAT | bun.O.EXCL, 0o600).unwrap() catch {
+            this.setErr("Failed to create temp XML file", .{});
+            this.finish();
+            return;
+        };
+        defer file.close();
+        _ = file.writeAll(xml).unwrap() catch {
+            this.setErr("Failed to write temp XML file", .{});
             this.finish();
             return;
         };
 
-        var argv_buf: [16:null]?[*:0]const u8 = .{null} ** 16;
-        var argc: usize = 0;
-        argv_buf[argc] = "schtasks";
-        argc += 1;
-        argv_buf[argc] = "/create";
-        argc += 1;
-        argv_buf[argc] = "/tn";
-        argc += 1;
-        argv_buf[argc] = task_name.ptr;
-        argc += 1;
-        argv_buf[argc] = "/tr";
-        argc += 1;
-        argv_buf[argc] = tr_cmd.ptr;
-        argc += 1;
-        argv_buf[argc] = "/sc";
-        argc += 1;
-        argv_buf[argc] = schtasks_params.sc;
-        argc += 1;
-        argv_buf[argc] = "/mo";
-        argc += 1;
-        argv_buf[argc] = schtasks_params.mo;
-        argc += 1;
-        if (schtasks_params.start_time) |st| {
-            argv_buf[argc] = "/st";
-            argc += 1;
-            argv_buf[argc] = st;
-            argc += 1;
-        }
-        if (schtasks_params.day_spec) |d| {
-            argv_buf[argc] = "/d";
-            argc += 1;
-            argv_buf[argc] = d;
-            argc += 1;
-        }
-        argv_buf[argc] = "/f";
-        this.spawnCmd(&argv_buf, .ignore, .ignore);
+        var argv = [_:null]?[*:0]const u8{ "schtasks", "/create", "/xml", xml_path.ptr, "/tn", task_name.ptr, "/f", null };
+        this.spawnCmd(&argv, .ignore, .ignore);
     }
 };
 
@@ -1115,6 +1089,154 @@ fn emitCalendarDicts(result: *std.array_list.Managed(u8), field_values: [5]?[]co
     }
 }
 
+/// Build a Windows Task Scheduler XML definition from a parsed cron expression.
+/// Uses CalendarTrigger with ScheduleByDay/ScheduleByWeek/ScheduleByMonth to
+/// support the full range of cron expressions, unlike the limited schtasks CLI flags.
+fn cronToTaskXml(
+    cron: CronExpression,
+    bun_exe: []const u8,
+    title: []const u8,
+    schedule: []const u8,
+    abs_path: []const u8,
+) ![]const u8 {
+    const allocator = bun.default_allocator;
+    var xml = std.array_list.Managed(u8).init(allocator);
+    errdefer xml.deinit();
+
+    // XML header + task start
+    try xml.appendSlice(
+        \\<?xml version="1.0" encoding="UTF-16"?>
+        \\<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+        \\  <Triggers>
+        \\
+    );
+
+    // Determine the trigger strategy based on what cron fields are set.
+    // Each distinct hour×minute combination needs its own CalendarTrigger,
+    // since StartBoundary (which sets the fire time) is per-trigger.
+    const minutes = expandBitfield(u64, cron.minutes, 0, 59) catch return error.InvalidCron;
+    defer allocator.free(minutes);
+    const hours = expandBitfield(u32, cron.hours, 0, 23) catch return error.InvalidCron;
+    defer allocator.free(hours);
+
+    // For each hour×minute pair, emit a CalendarTrigger
+    for (hours) |h| {
+        for (minutes) |m| {
+            var start_boundary_buf: [32]u8 = undefined;
+            const start_boundary = std.fmt.bufPrint(&start_boundary_buf, "2000-01-01T{d:0>2}:{d:0>2}:00", .{
+                @as(u32, @intCast(h)), @as(u32, @intCast(m)),
+            }) catch return error.InvalidCron;
+
+            try xml.appendSlice("    <CalendarTrigger>\n");
+            const sb_line = try std.fmt.allocPrint(allocator, "      <StartBoundary>{s}</StartBoundary>\n", .{start_boundary});
+            defer allocator.free(sb_line);
+            try xml.appendSlice(sb_line);
+
+            // Choose schedule type based on cron fields
+            if (!cron.days_is_wildcard) {
+                // ScheduleByMonth: specific days-of-month
+                try xml.appendSlice("      <ScheduleByMonth>\n");
+                try xml.appendSlice("        <DaysOfMonth>\n");
+                for (1..32) |day| {
+                    if (cron.days & (@as(u32, 1) << @intCast(day)) != 0) {
+                        const day_line = try std.fmt.allocPrint(allocator, "          <Day>{d}</Day>\n", .{day});
+                        defer allocator.free(day_line);
+                        try xml.appendSlice(day_line);
+                    }
+                }
+                try xml.appendSlice("        </DaysOfMonth>\n");
+                try appendMonthsXml(&xml, cron.months);
+                try xml.appendSlice("      </ScheduleByMonth>\n");
+            } else if (!cron.weekdays_is_wildcard) {
+                // ScheduleByWeek: specific days-of-week
+                try xml.appendSlice("      <ScheduleByWeek>\n");
+                try xml.appendSlice("        <WeeksInterval>1</WeeksInterval>\n");
+                try appendDaysOfWeekXml(&xml, cron.weekdays);
+                try xml.appendSlice("      </ScheduleByWeek>\n");
+            } else {
+                // ScheduleByDay: every day
+                try xml.appendSlice("      <ScheduleByDay>\n");
+                try xml.appendSlice("        <DaysInterval>1</DaysInterval>\n");
+                try xml.appendSlice("      </ScheduleByDay>\n");
+            }
+
+            try xml.appendSlice("    </CalendarTrigger>\n");
+        }
+    }
+
+    // Close triggers, add action, close task
+    const xml_bun = try xmlEscape(bun_exe);
+    defer allocator.free(xml_bun);
+    const xml_title = try xmlEscape(title);
+    defer allocator.free(xml_title);
+    const xml_sched = try xmlEscape(schedule);
+    defer allocator.free(xml_sched);
+    const xml_path = try xmlEscape(abs_path);
+    defer allocator.free(xml_path);
+
+    const action_xml = try std.fmt.allocPrint(allocator,
+        \\  </Triggers>
+        \\  <Settings>
+        \\    <Enabled>true</Enabled>
+        \\    <AllowStartOnDemand>true</AllowStartOnDemand>
+        \\    <AllowHardTerminate>true</AllowHardTerminate>
+        \\    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+        \\  </Settings>
+        \\  <Actions>
+        \\    <Exec>
+        \\      <Command>{s}</Command>
+        \\      <Arguments>run --cron-title={s} --cron-period="{s}" "{s}"</Arguments>
+        \\    </Exec>
+        \\  </Actions>
+        \\</Task>
+        \\
+    , .{ xml_bun, xml_title, xml_sched, xml_path });
+    defer allocator.free(action_xml);
+    try xml.appendSlice(action_xml);
+
+    return xml.toOwnedSlice();
+}
+
+fn appendMonthsXml(xml: *std.array_list.Managed(u8), months: u16) !void {
+    const month_names = [_][]const u8{ "", "January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December" };
+    try xml.appendSlice("        <Months>\n");
+    for (1..13) |mo| {
+        if (months & (@as(u16, 1) << @intCast(mo)) != 0) {
+            const mo_line = try std.fmt.allocPrint(bun.default_allocator, "          <{s}/>\n", .{month_names[mo]});
+            defer bun.default_allocator.free(mo_line);
+            try xml.appendSlice(mo_line);
+        }
+    }
+    try xml.appendSlice("        </Months>\n");
+}
+
+fn appendDaysOfWeekXml(xml: *std.array_list.Managed(u8), weekdays: u8) !void {
+    const day_names = [_][]const u8{ "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday" };
+    try xml.appendSlice("        <DaysOfWeek>\n");
+    for (0..7) |d| {
+        if (weekdays & (@as(u8, 1) << @intCast(d)) != 0) {
+            const d_line = try std.fmt.allocPrint(bun.default_allocator, "          <{s}/>\n", .{day_names[d]});
+            defer bun.default_allocator.free(d_line);
+            try xml.appendSlice(d_line);
+        }
+    }
+    try xml.appendSlice("        </DaysOfWeek>\n");
+}
+
+/// Expand a bitfield into an array of set bit positions.
+fn expandBitfield(comptime T: type, bits: T, min: u7, max: u7) ![]u7 {
+    var result = std.array_list.Managed(u7).init(bun.default_allocator);
+    errdefer result.deinit();
+    var i: u7 = min;
+    while (i <= max) : (i += 1) {
+        if (bits & (@as(T, 1) << @intCast(i)) != 0) {
+            try result.append(i);
+        }
+        if (i == max) break;
+    }
+    return result.toOwnedSlice();
+}
+
 /// Convert a cron expression to schtasks /sc and /mo parameters.
 /// Supports: */N * * * * (MINUTE), 0 */N * * * (HOURLY), 0 0 * * * (DAILY),
 /// 0 0 * * N (WEEKLY). Returns error for complex expressions.
@@ -1227,7 +1349,11 @@ fn allocPrintZ(allocator: std.mem.Allocator, comptime fmt: []const u8, args: any
 /// Create a temp file path with a random suffix to avoid TOCTOU/symlink attacks.
 fn makeTempPath(comptime prefix: []const u8, title: []const u8) ![:0]const u8 {
     const rand = bun.fastRandom();
-    return allocPrintZ(bun.default_allocator, "/tmp/" ++ prefix ++ "{s}-{x}.tmp", .{ title, rand });
+    const tmp_dir = if (comptime bun.Environment.isWindows)
+        bun.env_var.TEMP.get() orelse bun.env_var.TMP.get() orelse "C:\\Temp"
+    else
+        "/tmp";
+    return allocPrintZ(bun.default_allocator, "{s}/" ++ prefix ++ "{s}-{x}.tmp", .{ tmp_dir, title, rand });
 }
 
 const std = @import("std");

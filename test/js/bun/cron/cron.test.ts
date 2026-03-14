@@ -190,33 +190,57 @@ describe.skipIf(!hasAnyCronBackend)("cross-platform API consistency", () => {
 // Windows cannot represent all cron expressions via schtasks.
 // Complex expressions (ranges, lists, monthly, yearly) should reject
 // with a clear error rather than silently misbehaving.
-describe.skipIf(!isWindows)("Windows schtasks limitations", () => {
-  test("rejects @monthly (not expressible in schtasks)", async () => {
+describe.skipIf(!isWindows)("Windows XML-based scheduling (complex expressions)", () => {
+  test("@monthly registers successfully", async () => {
     using dir = tempDir("bun-cron-test", {
       "job.ts": `export default { scheduled() {} };`,
     });
-    expect(Bun.cron(`${dir}/job.ts`, "@monthly", "test-win-monthly")).rejects.toThrow(/supported/i);
+    try {
+      const result = await Bun.cron(`${dir}/job.ts`, "@monthly", "test-win-monthly");
+      expect(result).toBeUndefined();
+      expect(querySchtask("test-win-monthly")).not.toBeNull();
+    } finally {
+      deleteSchtask("test-win-monthly");
+    }
   });
 
-  test("rejects @yearly (not expressible in schtasks)", async () => {
+  test("@yearly registers successfully", async () => {
     using dir = tempDir("bun-cron-test", {
       "job.ts": `export default { scheduled() {} };`,
     });
-    expect(Bun.cron(`${dir}/job.ts`, "@yearly", "test-win-yearly")).rejects.toThrow(/supported/i);
+    try {
+      const result = await Bun.cron(`${dir}/job.ts`, "@yearly", "test-win-yearly");
+      expect(result).toBeUndefined();
+      expect(querySchtask("test-win-yearly")).not.toBeNull();
+    } finally {
+      deleteSchtask("test-win-yearly");
+    }
   });
 
-  test("rejects complex range expressions", async () => {
+  test("complex range expression registers successfully", async () => {
     using dir = tempDir("bun-cron-test", {
       "job.ts": `export default { scheduled() {} };`,
     });
-    expect(Bun.cron(`${dir}/job.ts`, "*/15 1-5 1,15 * 0-4", "test-win-complex")).rejects.toThrow(/supported/i);
+    try {
+      const result = await Bun.cron(`${dir}/job.ts`, "*/15 1-5 1,15 * 0-4", "test-win-complex");
+      expect(result).toBeUndefined();
+      expect(querySchtask("test-win-complex")).not.toBeNull();
+    } finally {
+      deleteSchtask("test-win-complex");
+    }
   });
 
-  test("rejects day-of-month expressions", async () => {
+  test("day-of-month expression registers successfully", async () => {
     using dir = tempDir("bun-cron-test", {
       "job.ts": `export default { scheduled() {} };`,
     });
-    expect(Bun.cron(`${dir}/job.ts`, "0 0 15 * *", "test-win-dom")).rejects.toThrow(/supported/i);
+    try {
+      const result = await Bun.cron(`${dir}/job.ts`, "0 0 15 * *", "test-win-dom");
+      expect(result).toBeUndefined();
+      expect(querySchtask("test-win-dom")).not.toBeNull();
+    } finally {
+      deleteSchtask("test-win-dom");
+    }
   });
 });
 

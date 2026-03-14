@@ -142,12 +142,16 @@ public:
     String binaryType() const;
     ExceptionOr<void> setBinaryType(const String&);
 
-    uint16_t upgradeStatusCode() const { return m_upgradeStatusCode; }
-    void setUpgradeStatusCode(uint16_t upgradeStatusCode) { m_upgradeStatusCode = upgradeStatusCode; }
-    const String& upgradeStatusMessage() const { return m_upgradeStatusMessage; }
-    const Vector<std::pair<String, String>>& upgradeHeaders() const { return m_upgradeHeaders; }
-    void setUpgradeResponse(uint16_t upgradeStatusCode, const String& upgradeStatusMessage);
+    struct UpgradeResponseData {
+        uint16_t statusCode { 0 };
+        String statusMessage;
+        Vector<std::pair<String, String>> headers;
+    };
+
+    void setUpgradeResponse(uint16_t statusCode, const String& statusMessage);
     void appendUpgradeHeader(const String& name, const String& value);
+    UpgradeResponseData* upgradeResponseData() { return m_upgradeResponseData.get(); }
+    void clearUpgradeResponseData() { m_upgradeResponseData.reset(); }
 
     ScriptExecutionContext* scriptExecutionContext() const final;
 
@@ -256,9 +260,7 @@ private:
     String m_extensions;
     void* m_upgradeClient { nullptr };
     ConnectionType m_connectionType { ConnectionType::Plain };
-    uint16_t m_upgradeStatusCode { 0 };
-    String m_upgradeStatusMessage;
-    Vector<std::pair<String, String>> m_upgradeHeaders;
+    std::unique_ptr<UpgradeResponseData> m_upgradeResponseData;
     bool m_rejectUnauthorized { false };
     AnyWebSocket m_connectedWebSocket { nullptr };
     ConnectedWebSocketKind m_connectedWebSocketKind { ConnectedWebSocketKind::None };

@@ -1,6 +1,6 @@
-import { test, expect, describe } from "bun:test";
-import { once } from "node:events";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
+import { once } from "node:events";
 
 function createUpgradeServer() {
   return Bun.serve({
@@ -168,14 +168,13 @@ describe("ws upgrade and unexpected-response events", () => {
     });
   });
 
-  test("native WebSocket should expose upgradeStatusCode property", async () => {
+  test("native WebSocket should work normally without upgradeStatusCode property", async () => {
     await using server = createUpgradeServer();
     const ws = new WebSocket(`ws://127.0.0.1:${server.port}`);
 
     await new Promise<void>((resolve, reject) => {
       ws.addEventListener("open", () => {
-        expect(ws.upgradeStatusCode).toBe(101);
-        expect(typeof ws.upgradeStatusCode).toBe("number");
+        expect((ws as any).upgradeStatusCode).toBeUndefined();
         ws.close();
         resolve();
       });

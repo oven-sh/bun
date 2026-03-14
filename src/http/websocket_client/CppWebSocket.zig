@@ -28,7 +28,6 @@ pub const CppWebSocket = opaque {
         upgrade_status_code: u16,
         upgrade_status_message: *bun.String,
     ) void;
-    extern fn WebSocket__setUpgradeStatusCode(websocket_context: *CppWebSocket, upgrade_status_code: u16) void;
     extern fn WebSocket__appendUpgradeHeader(
         websocket_context: *CppWebSocket,
         name: *bun.String,
@@ -80,12 +79,6 @@ pub const CppWebSocket = opaque {
         loop.enter();
         defer loop.exit();
         WebSocket__didConnectWithTunnel(this, tunnel, buffered_data, buffered_len, deflate_params);
-    }
-    pub fn setUpgradeStatusCode(this: *CppWebSocket, upgrade_status_code: u16) void {
-        const loop = jsc.VirtualMachine.get().eventLoop();
-        loop.enter();
-        defer loop.exit();
-        WebSocket__setUpgradeStatusCode(this, upgrade_status_code);
     }
     pub fn setUpgradeResponse(this: *CppWebSocket, upgrade_status_code: u16, upgrade_status_message: *bun.String) void {
         const loop = jsc.VirtualMachine.get().eventLoop();

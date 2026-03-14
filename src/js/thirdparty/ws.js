@@ -281,8 +281,10 @@ class BunWebSocket extends EventEmitter {
   #createUpgradeResponse(defaultStatusCode) {
     const response = getWebSocketInternalBinding().getUpgradeResponse(this.#ws);
     if (response.statusCode === 0) {
-      response.statusCode = this.#ws.upgradeStatusCode || defaultStatusCode;
-      response.statusMessage ||= http.STATUS_CODES[response.statusCode] || "";
+      response.statusCode = defaultStatusCode;
+    }
+    if (!response.statusMessage) {
+      response.statusMessage = http.STATUS_CODES[response.statusCode] || "";
     }
     return response;
   }
@@ -314,13 +316,13 @@ class BunWebSocket extends EventEmitter {
 
     this.#nativeEventId |= mask;
     this.#ws.addEventListener("error", () => {
-      const statusCode = this.#ws.upgradeStatusCode;
+      const response = getWebSocketInternalBinding().getUpgradeResponse(this.#ws);
+      const statusCode = response.statusCode;
       if (statusCode && statusCode !== 101) {
-        this.emit(
-          "unexpected-response",
-          this.#createUnexpectedResponseRequest(),
-          this.#createUpgradeResponse(statusCode),
-        );
+        if (!response.statusMessage) {
+          response.statusMessage = http.STATUS_CODES[statusCode] || "";
+        }
+        this.emit("unexpected-response", this.#createUnexpectedResponseRequest(), response);
       }
     });
   }

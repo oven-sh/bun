@@ -485,8 +485,8 @@ pub const Bunfig = struct {
                     }
 
                     if (test_.get("pathIgnorePatterns")) |expr| brk: {
-                        // CLI --path-ignore-patterns overrides bunfig
-                        if (this.ctx.test_options.path_ignore_patterns.len > 0) break :brk;
+                        // Only skip if --path-ignore-patterns was explicitly passed via CLI
+                        if (this.ctx.test_options.path_ignore_patterns_from_cli) break :brk;
 
                         switch (expr.data) {
                             .e_string => |str| {

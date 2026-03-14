@@ -548,6 +548,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
 
         if (args.options("--path-ignore-patterns").len > 0) {
             ctx.test_options.path_ignore_patterns = args.options("--path-ignore-patterns");
+            ctx.test_options.path_ignore_patterns_from_cli = true;
         }
 
         if (args.option("--bail")) |bail| {

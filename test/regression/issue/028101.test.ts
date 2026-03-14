@@ -14,10 +14,13 @@ describe("#28101 — no bmalloc on Windows", () => {
     const cmakePath = resolve(repoRoot, "cmake/targets/BuildBun.cmake");
     const content = readFileSync(cmakePath, "utf8");
 
-    // Extract the WIN32 block (between `if(WIN32)` and `else()`)
-    const win32Match = content.match(/if\(WIN32\)([\s\S]*?)^else\(\)/m);
+    // Find the WIN32 block that links WebKit libs (contains WEBKIT_LIB_PATH).
+    // There are many if(WIN32) blocks in this file; we need the one with
+    // target_link_libraries referencing WEBKIT_LIB_PATH. Match backwards from
+    // WEBKIT_LIB_PATH to the nearest if(WIN32) to avoid matching earlier blocks.
+    const win32Match = content.match(/^if\(WIN32\)\n(?:(?!^if\()[\s\S])*?WEBKIT_LIB_PATH[\s\S]*?^endif\(\)/m);
     expect(win32Match).not.toBeNull();
-    const win32Block = win32Match![1];
+    const win32Block = win32Match![0];
 
     // bmalloc.lib must NOT appear in the Windows link targets
     expect(win32Block).not.toContain("bmalloc.lib");

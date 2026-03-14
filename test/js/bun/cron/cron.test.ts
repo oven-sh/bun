@@ -9,33 +9,40 @@ const hasSchtasks =
   isWindows &&
   (() => {
     try {
-      // Actually try creating and deleting a task — schtasks /query works
-      // even when /create fails (e.g. CI service accounts that can't
-      // resolve their identity to a Windows SID).
-      const create = Bun.spawnSync({
-        cmd: [
-          "schtasks",
-          "/create",
-          "/tn",
-          "bun-cron-probe",
-          "/tr",
-          "cmd /c echo probe",
-          "/sc",
-          "ONCE",
-          "/st",
-          "00:00",
-          "/f",
-        ],
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      if (create.exitCode !== 0) return false;
-      Bun.spawnSync({
-        cmd: ["schtasks", "/delete", "/tn", "bun-cron-probe", "/f"],
-        stdout: "ignore",
-        stderr: "ignore",
-      });
-      return true;
+      // Test the XML-based path that Bun.cron actually uses.
+      // CLI flags (/sc ONCE) work on CI service accounts but
+      // XML import triggers SID resolution that may fail.
+      const xml = [
+        '<?xml version="1.0"?>',
+        '<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">',
+        "  <Triggers><CalendarTrigger>",
+        "    <StartBoundary>2000-01-01T00:00:00</StartBoundary>",
+        "    <ScheduleByDay><DaysInterval>1</DaysInterval></ScheduleByDay>",
+        "  </CalendarTrigger></Triggers>",
+        "  <Settings><Enabled>true</Enabled></Settings>",
+        "  <Actions><Exec><Command>cmd</Command><Arguments>/c echo probe</Arguments></Exec></Actions>",
+        "</Task>",
+      ].join("\n");
+      const xmlPath = `${process.env.TEMP || "C:\\Temp"}\\bun-cron-probe.xml`;
+      writeFileSync(xmlPath, xml);
+      try {
+        const r = Bun.spawnSync({
+          cmd: ["schtasks", "/create", "/xml", xmlPath, "/tn", "bun-cron-probe", "/np", "/f"],
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        if (r.exitCode !== 0) return false;
+        Bun.spawnSync({
+          cmd: ["schtasks", "/delete", "/tn", "bun-cron-probe", "/f"],
+          stdout: "ignore",
+          stderr: "ignore",
+        });
+        return true;
+      } finally {
+        try {
+          unlinkSync(xmlPath);
+        } catch {}
+      }
     } catch {
       return false;
     }
@@ -150,68 +157,6 @@ describe("Bun.cron API", () => {
 
   test("remove throws with invalid title characters", () => {
     expect(() => Bun.cron.remove("bad title!")).toThrow(/alphanumeric/);
-  });
-});
-
-// Diagnostic: when Windows tests fail, dump the XML that schtasks rejects
-describe.skipIf(!isWindows)("Windows schtasks diagnostic", () => {
-  test("manual XML registration shows schtasks error", () => {
-    const xml = [
-      '<?xml version="1.0"?>',
-      '<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">',
-      "  <Triggers>",
-      "    <CalendarTrigger>",
-      "      <StartBoundary>2000-01-01T00:00:00</StartBoundary>",
-      "      <ScheduleByDay><DaysInterval>1</DaysInterval></ScheduleByDay>",
-      "    </CalendarTrigger>",
-      "  </Triggers>",
-      "  <Settings>",
-      "    <Enabled>true</Enabled>",
-      "    <AllowStartOnDemand>true</AllowStartOnDemand>",
-      "    <AllowHardTerminate>true</AllowHardTerminate>",
-      "    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>",
-      "  </Settings>",
-      "  <Actions>",
-      "    <Exec>",
-      "      <Command>cmd</Command>",
-      "      <Arguments>/c echo test</Arguments>",
-      "    </Exec>",
-      "  </Actions>",
-      "</Task>",
-    ].join("\n");
-    const xmlPath = `${process.env.TEMP || "C:\\Temp"}\\bun-cron-diag.xml`;
-    writeFileSync(xmlPath, xml);
-    try {
-      const r = Bun.spawnSync({
-        cmd: ["schtasks", "/create", "/xml", xmlPath, "/tn", "bun-cron-diag", "/np", "/f"],
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      console.log("schtasks exit:", r.exitCode);
-      console.log("stdout:", r.stdout.toString());
-      console.log("stderr:", r.stderr.toString());
-      if (r.exitCode === 0) {
-        Bun.spawnSync({
-          cmd: ["schtasks", "/delete", "/tn", "bun-cron-diag", "/f"],
-          stdout: "ignore",
-          stderr: "ignore",
-        });
-      }
-      expect(r.exitCode).toBe(0);
-    } finally {
-      try {
-        unlinkSync(xmlPath);
-      } catch {}
-    }
-  });
-
-  test("whoami and schtasks /np identity check", () => {
-    const whoami = Bun.spawnSync({ cmd: ["whoami"], stdout: "pipe", stderr: "pipe" });
-    console.log("whoami:", whoami.stdout.toString().trim());
-    // Try creating with /ru and the SID directly
-    const sid = Bun.spawnSync({ cmd: ["whoami", "/user"], stdout: "pipe", stderr: "pipe" });
-    console.log("whoami /user:", sid.stdout.toString().trim());
-    expect(whoami.exitCode).toBe(0);
   });
 });
 

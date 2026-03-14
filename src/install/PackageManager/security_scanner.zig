@@ -673,12 +673,46 @@ fn attemptSecurityScanWithRetry(manager: *PackageManager, security_scanner: []co
         temp_source = code.items;
     }
 
+    // Write the packages JSON to a temp file instead of inlining it in the code
+    // string. With many packages (>~790), the JSON exceeds the OS maximum
+    // argument length (MAX_ARG_STRLEN = 128KB on Linux), causing posix_spawn
+    // to fail silently.
+    var tmpname_buf: bun.PathBuffer = undefined;
+    const tmpname = try bun.fs.FileSystem.tmpname("bun-scan", &tmpname_buf, bun.fastRandom());
+    const top_dir = FileSystem.instance.top_level_dir;
+    var json_path_buf: bun.PathBuffer = undefined;
+    const json_tmp_path = bun.path.joinAbsStringBufZ(top_dir, &json_path_buf, &.{tmpname}, .auto);
+
+    {
+        var file = switch (bun.sys.File.open(json_tmp_path, bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC, 0o664)) {
+            .result => |f| f,
+            .err => |err| {
+                Output.errGeneric("Failed to create security scanner temp file: {f}", .{err});
+                return error.TempFileWriteFailed;
+            },
+        };
+        defer file.close();
+        switch (file.writeAll(json_data)) {
+            .result => {},
+            .err => |err| {
+                Output.errGeneric("Failed to write security scanner data: {f}", .{err});
+                return error.TempFileWriteFailed;
+            },
+        }
+    }
+    defer _ = bun.sys.unlink(json_tmp_path);
+
+    // Replace __PACKAGES_JSON__ with a readFileSync call that loads from the temp file.
+    // The path is JSON-escaped to handle any special characters (e.g. backslashes on Windows).
     const packages_placeholder = "__PACKAGES_JSON__";
     if (std.mem.indexOf(u8, temp_source, packages_placeholder)) |index| {
         var new_code = std.array_list.Managed(u8).init(manager.allocator);
         try new_code.appendSlice(temp_source[0..index]);
-        try new_code.appendSlice(json_data);
-        try new_code.appendSlice(temp_source[index + packages_placeholder.len ..]);
+        try new_code.appendSlice("JSON.parse(require(\"fs\").readFileSync(");
+        // Write the path as a JSON string to properly escape backslashes etc.
+        const path_slice: []const u8 = std.mem.sliceTo(json_tmp_path, 0);
+        try std.json.stringify(path_slice, .{}, new_code.writer());
+        try new_code.appendSlice(",\"utf8\"))");
         code.deinit();
         code = new_code;
         temp_source = code.items;
@@ -697,14 +731,12 @@ fn attemptSecurityScanWithRetry(manager: *PackageManager, security_scanner: []co
     var scanner = SecurityScanSubprocess.new(.{
         .manager = manager,
         .code = try manager.allocator.dupe(u8, code.items),
-        .json_data = try manager.allocator.dupe(u8, json_data),
         .ipc_data = undefined,
         .stderr_data = undefined,
     });
 
     defer {
         manager.allocator.free(scanner.code);
-        manager.allocator.free(scanner.json_data);
         bun.destroy(scanner);
     }
 
@@ -727,7 +759,6 @@ fn attemptSecurityScanWithRetry(manager: *PackageManager, security_scanner: []co
 pub const SecurityScanSubprocess = struct {
     manager: *PackageManager,
     code: []const u8,
-    json_data: []const u8,
     process: ?*bun.spawn.Process = null,
     ipc_reader: bun.io.BufferedReader = bun.io.BufferedReader.init(@This()),
     ipc_data: std.array_list.Managed(u8),

@@ -2420,7 +2420,7 @@ pub fn onFileStreamResolveRequestStream(globalThis: *jsc.JSGlobalObject, callfra
     if (strong.get(globalThis)) |stream| {
         stream.done(globalThis);
     }
-    try this.promise.resolve(globalThis, jsc.JSValue.jsNumber(0));
+    try this.promise.resolve(globalThis, jsc.JSValue.jsNumber(this.sink.written));
     return .js_undefined;
 }
 
@@ -2603,8 +2603,10 @@ pub fn pipeReadableStreamToBlob(this: *Blob, globalThis: *jsc.JSGlobalObject, re
 
     assignment_result.ensureStillAlive();
 
-    // assert that it was updated
-    bun.assert(!signal.isDead());
+    // Note: signal may still be dead if readStreamIntoSink completed
+    // synchronously (readMany() returned done:true without awaiting).
+    // In that case $startDirectStream is never called, which is fine
+    // because the stream has already been fully consumed via sink.end().
 
     if (assignment_result.toError()) |err| {
         file_sink.deref();
@@ -2635,9 +2637,10 @@ pub fn pipeReadableStreamToBlob(this: *Blob, globalThis: *jsc.JSGlobalObject, re
                     return promise_value;
                 },
                 .fulfilled => {
+                    const written = file_sink.written;
                     file_sink.deref();
                     readable_stream.done(globalThis);
-                    return jsc.JSPromise.resolvedPromiseValue(globalThis, jsc.JSValue.jsNumber(0));
+                    return jsc.JSPromise.resolvedPromiseValue(globalThis, jsc.JSValue.jsNumber(written));
                 },
                 .rejected => {
                     file_sink.deref();
@@ -2655,9 +2658,10 @@ pub fn pipeReadableStreamToBlob(this: *Blob, globalThis: *jsc.JSGlobalObject, re
             return jsc.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, assignment_result);
         }
     }
+    const written = file_sink.written;
     file_sink.deref();
 
-    return jsc.JSPromise.resolvedPromiseValue(globalThis, jsc.JSValue.jsNumber(0));
+    return jsc.JSPromise.resolvedPromiseValue(globalThis, jsc.JSValue.jsNumber(written));
 }
 
 pub fn getWriter(

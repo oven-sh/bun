@@ -9,8 +9,8 @@ test("Bun.write with new Response(req.body) does not hang", async () => {
   await using server = Bun.serve({
     port: 0,
     async fetch(req) {
-      await Bun.write(outFile, new Response(req.body));
-      return new Response("ok");
+      const written = await Bun.write(outFile, new Response(req.body));
+      return new Response(String(written));
     },
   });
 
@@ -19,7 +19,7 @@ test("Bun.write with new Response(req.body) does not hang", async () => {
     body: "hello from request body",
   });
 
-  expect(await res.text()).toBe("ok");
+  expect(await res.text()).toBe(String("hello from request body".length));
   expect(await Bun.file(outFile).text()).toBe("hello from request body");
 });
 
@@ -34,7 +34,8 @@ test("Bun.write with new Response(ReadableStream) does not hang", async () => {
     },
   });
 
-  await Bun.write(outFile, new Response(stream));
+  const written = await Bun.write(outFile, new Response(stream));
+  expect(written).toBe("hello from stream".length);
   expect(await Bun.file(outFile).text()).toBe("hello from stream");
 });
 
@@ -49,8 +50,8 @@ test("Bun.write with new Response(req.body) after accessing req.body does not ha
       if (!req.body) {
         return new Response("no body", { status: 400 });
       }
-      await Bun.write(outFile, new Response(req.body));
-      return new Response("ok");
+      const written = await Bun.write(outFile, new Response(req.body));
+      return new Response(String(written));
     },
   });
 
@@ -59,6 +60,6 @@ test("Bun.write with new Response(req.body) after accessing req.body does not ha
     body: "body after access check",
   });
 
-  expect(await res.text()).toBe("ok");
+  expect(await res.text()).toBe(String("body after access check".length));
   expect(await Bun.file(outFile).text()).toBe("body after access check");
 });

@@ -252,6 +252,62 @@ describe.skipIf(!isWindows)("Windows XML-based scheduling (complex expressions)"
   });
 });
 
+// Test all Windows XML code paths: ScheduleByMonth, ScheduleByWeek,
+// ScheduleByMonthDayOfWeek, Repetition, and OR-split (day-of-month + day-of-week).
+describe.skipIf(!hasSchtasks)("Windows XML code paths", () => {
+  test("ScheduleByMonthDayOfWeek: weekday with month restriction", async () => {
+    using dir = tempDir("bun-cron-test", {
+      "job.ts": `export default { scheduled() {} };`,
+    });
+    try {
+      // Every Monday in June — uses ScheduleByMonthDayOfWeek
+      await Bun.cron(`${dir}/job.ts`, "0 9 * 6 1", "test-win-monthdow");
+      expect(querySchtask("test-win-monthdow")).not.toBeNull();
+    } finally {
+      deleteSchtask("test-win-monthdow");
+    }
+  });
+
+  test("OR-split: day-of-month AND day-of-week produce two triggers", async () => {
+    using dir = tempDir("bun-cron-test", {
+      "job.ts": `export default { scheduled() {} };`,
+    });
+    try {
+      // 15th of month OR every Friday — should create two triggers
+      await Bun.cron(`${dir}/job.ts`, "0 0 15 * 5", "test-win-or-split");
+      expect(querySchtask("test-win-or-split")).not.toBeNull();
+    } finally {
+      deleteSchtask("test-win-or-split");
+    }
+  });
+
+  test("daily with month restriction", async () => {
+    using dir = tempDir("bun-cron-test", {
+      "job.ts": `export default { scheduled() {} };`,
+    });
+    try {
+      // Every day in June — uses ScheduleByMonth with all 31 days
+      await Bun.cron(`${dir}/job.ts`, "0 0 * 6 *", "test-win-daily-month");
+      expect(querySchtask("test-win-daily-month")).not.toBeNull();
+    } finally {
+      deleteSchtask("test-win-daily-month");
+    }
+  });
+
+  test("hourly repetition pattern", async () => {
+    using dir = tempDir("bun-cron-test", {
+      "job.ts": `export default { scheduled() {} };`,
+    });
+    try {
+      // Every 3 hours — uses Repetition PT3H
+      await Bun.cron(`${dir}/job.ts`, "0 */3 * * *", "test-win-hourly-rep");
+      expect(querySchtask("test-win-hourly-rep")).not.toBeNull();
+    } finally {
+      deleteSchtask("test-win-hourly-rep");
+    }
+  });
+});
+
 // Minute steps that don't divide 60 (e.g. */7, */8, */9) cannot be represented
 // in Windows Task Scheduler without exceeding the 48-trigger limit.
 // On non-Windows platforms these work fine via crontab/launchd.

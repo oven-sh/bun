@@ -157,6 +157,7 @@ pub fn freeOwnedFilePaths(this: *Watcher) void {
 pub fn destroyFromOwner(this: *Watcher) void {
     this.freeOwnedFilePaths();
     this.watchlist.deinit(this.allocator);
+    WatcherTrace.deinit();
     const allocator = this.allocator;
     allocator.destroy(this);
 }
@@ -248,6 +249,7 @@ pub const WatchItem = struct {
     kind: Kind,
     package_json: ?*PackageJSON,
     eventlist_index: if (Environment.isLinux) Platform.EventListIndex else u0 = 0,
+    owns_file_path: bool = false,
 
     pub const Kind = enum { file, directory };
 };
@@ -428,6 +430,7 @@ fn appendFileAssumeCapacity(
         .parent_hash = parent_hash,
         .package_json = package_json,
         .kind = .file,
+        .owns_file_path = clone_file_path,
     };
 
     if (comptime Environment.isMac) {
@@ -490,6 +493,7 @@ fn appendDirectoryAssumeCapacity(
         .parent_hash = parent_hash,
         .kind = .directory,
         .package_json = null,
+        .owns_file_path = clone_file_path,
     };
 
     if (Environment.isMac) {

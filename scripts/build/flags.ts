@@ -595,12 +595,12 @@ export const linkerFlags: Flag[] = [
   },
   {
     // Without -O at link time, clang's driver defaults LTO codegen to -O2.
-    // CMake implicitly forwarded CMAKE_CXX_FLAGS (incl. -O3) to the link line;
+    // CMake implicitly forwarded CMAKE_CXX_FLAGS (incl. -O2) to the link line;
     // we must do so explicitly. Dropping this cost ~5 MB of .text on linux-x64
     // (less unrolling/inlining in JSC — measurable in Yarr, DFG, BuiltinNames).
-    flag: "-O3",
+    flag: "-O2",
     when: c => c.unix && c.lto && c.release && !c.smol,
-    desc: "LTO codegen at -O3 (matches compile-side opt level)",
+    desc: "LTO codegen at -O2",
   },
   {
     flag: "-Os",

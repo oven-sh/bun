@@ -690,11 +690,17 @@ pub const PathWatcherManager = struct {
     }
 
     fn deinit(this: *PathWatcherManager) void {
-        // enable to create a new manager
-        default_manager_mutex.lock();
-        defer default_manager_mutex.unlock();
-        if (default_manager == this) {
-            default_manager = null;
+        // Clear default_manager under the global mutex, then release it
+        // BEFORE joining the watcher thread. Holding default_manager_mutex
+        // across thread.join() deadlocks: the watcher thread's onError path
+        // acquires default_manager_mutex (line 343), so if we hold it while
+        // waiting for the thread to exit, neither side can make progress.
+        {
+            default_manager_mutex.lock();
+            defer default_manager_mutex.unlock();
+            if (default_manager == this) {
+                default_manager = null;
+            }
         }
 
         // Check watcher_count and pending_tasks under one lock to avoid TOCTOU
@@ -716,9 +722,14 @@ pub const PathWatcherManager = struct {
 
         // When skip_thread_cleanup is true (error path), threadMain is still
         // running but will skip its own cleanup. Join to ensure it has exited
-        // before we free the Watcher.
+        // before we free the Watcher — unless we ARE the watcher thread
+        // (onError calls deinit() directly when watcher_count == 0, and
+        // joining ourselves would deadlock with EDEADLK).
         if (this.main_watcher.skip_thread_cleanup) {
-            this.main_watcher.thread.join();
+            const watcher_tid = this.main_watcher.watchloop_handle;
+            if (watcher_tid == null or watcher_tid.? != std.Thread.getCurrentId()) {
+                this.main_watcher.thread.join();
+            }
         }
         this.main_watcher.deinit(false);
 

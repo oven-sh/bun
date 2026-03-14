@@ -901,12 +901,13 @@ extern "C" bool Bun__shouldBreakAfterMessageDrain(JSC::VM& vm)
     if (hasBootstrapPause)
         return true;
     // Check if the debugger agent scheduled a pause (e.g., Debugger.pause command
-    // was dispatched during the drain).
+    // was dispatched during the drain). schedulePauseAtNextOpportunity() enables
+    // stepping mode, so isStepping() serves as a proxy for detecting a pending
+    // pause request after CDP message processing.
     auto* globalObject = vm.topCallFrame ? vm.topCallFrame->lexicalGlobalObject(vm) : nullptr;
     if (globalObject) {
         if (auto* debugger = globalObject->debugger()) {
-            // schedulePauseAtNextOpportunity sets m_pauseAtNextOpportunity
-            if (debugger->isPauseAtNextOpportunitySet())
+            if (debugger->isStepping())
                 return true;
         }
     }

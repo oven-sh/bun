@@ -252,6 +252,26 @@ describe.skipIf(!isWindows)("Windows XML-based scheduling (complex expressions)"
   });
 });
 
+// Minute steps that don't divide 60 (e.g. */7, */8, */9) cannot be represented
+// in Windows Task Scheduler without exceeding the 48-trigger limit.
+// On non-Windows platforms these work fine via crontab/launchd.
+// https://learn.microsoft.com/en-us/windows/win32/taskschd/task-scheduler-start-page
+describe.skipIf(!hasAnyCronBackend)("non-divisor minute steps", () => {
+  const nonDivisorSteps = ["*/7", "*/8", "*/9", "*/11", "*/13"];
+  for (const step of nonDivisorSteps) {
+    const expr = `${step} * * * *`;
+    (isWindows ? test.failing : test)(`${expr} registers on this platform`, async () => {
+      using dir = tempDir("bun-cron-test", {
+        "job.ts": `export default { scheduled() {} };`,
+      });
+      const title = `test-step-every${step.slice(2)}min`;
+      const result = await Bun.cron(`${dir}/job.ts`, expr, title);
+      expect(result).toBeUndefined();
+      await Bun.cron.remove(title);
+    });
+  }
+});
+
 // ==========================================================================
 // Registration (Linux — crontab)
 // ==========================================================================

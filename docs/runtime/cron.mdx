@@ -255,9 +255,13 @@ rm ~/Library/LaunchAgents/bun.cron.weekly-report.plist
 
 ### Windows
 
-Bun uses [Task Scheduler](https://learn.microsoft.com/en-us/windows/win32/taskschd/task-scheduler-start-page) via `schtasks`. Each job is registered as a scheduled task named `bun-cron-<title>`.
+Bun uses [Windows Task Scheduler](https://learn.microsoft.com/en-us/windows/win32/taskschd/task-scheduler-start-page) with XML-based task definitions. Each job is registered as a scheduled task named `bun-cron-<title>` using [`CalendarTrigger`](https://learn.microsoft.com/en-us/windows/win32/taskschd/taskschedulerschema-calendartrigger-triggergroup-element) elements and [`Repetition`](https://learn.microsoft.com/en-us/windows/win32/taskschd/taskschedulerschema-repetition-triggerbasetype-element) patterns.
 
-Only simple schedule patterns are supported — `*/N` (every N minutes), `N * * * *` (hourly), `N N * * *` (daily), and `N N * * N` (weekly).
+Most cron expressions are fully supported, including `@daily`, `@weekly`, `@monthly`, `@yearly`, ranges (`1-5`), lists (`1,15`), named days/months, and day-of-month patterns.
+
+:::note
+**Limitation:** Minute steps that don't evenly divide 60 (e.g. `*/7`, `*/8`, `*/9`, `*/11`, `*/13`) with all hours active are not supported on Windows. These patterns would require more than the [48 triggers](https://learn.microsoft.com/en-us/windows/win32/taskschd/task-scheduler-schema) per task that Windows Task Scheduler allows. Common intervals like `*/5`, `*/10`, `*/15`, `*/20`, and `*/30` work fine.
+:::
 
 **Viewing registered jobs:**
 
@@ -267,17 +271,6 @@ schtasks /query /tn "bun-cron-<title>"
 # List all bun cron tasks
 schtasks /query | findstr "bun-cron-"
 ```
-
-**Logs:** Task Scheduler logs events to the Windows Event Log. View them with:
-
-```powershell
-# In PowerShell
-Get-WinEvent -LogName Microsoft-Windows-TaskScheduler/Operational | Where-Object { $_.Message -like "*bun-cron*" }
-```
-
-Or open **Event Viewer** → **Applications and Services Logs** → **Microsoft** → **Windows** → **TaskScheduler** → **Operational**.
-
-To capture stdout/stderr to a file, add logging inside your `scheduled()` handler.
 
 **Manually uninstalling without code:**
 

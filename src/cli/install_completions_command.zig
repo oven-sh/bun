@@ -265,7 +265,7 @@ pub const InstallCompletionsCommand = struct {
                     }
                 },
                 .zsh => {
-                    if (bun.env_var.fpath.get()) |fpath| {
+                    if (bun.env_var.fpath.platformGet()) |fpath| {
                         var splitter = std.mem.splitScalar(u8, fpath, ' ');
 
                         while (splitter.next()) |dir| {

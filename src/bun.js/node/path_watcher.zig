@@ -15,10 +15,6 @@ pub const PathWatcherManager = struct {
     pending_tasks: u32 = 0,
     deinit_on_last_task: bool = false,
     has_pending_tasks: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
-    /// Set when onError is called from the watcher thread's threadMain.
-    /// threadMain cleans up the Watcher struct after onError returns,
-    /// so PathWatcherManager.deinit must not call main_watcher.deinit.
-    main_watcher_thread_owns_cleanup: bool = false,
     mutex: Mutex,
     const PathInfo = struct {
         fd: FD = .invalid,
@@ -324,10 +320,10 @@ pub const PathWatcherManager = struct {
                 }
             }
 
-            // onError is called from the watcher thread's threadMain, which
-            // cleans up the Watcher struct itself after this returns. Mark
-            // that so deinit() won't double-free via main_watcher.deinit().
-            this.main_watcher_thread_owns_cleanup = true;
+            // Tell the Watcher thread to skip its own cleanup (lines 244-257
+            // in threadMain). PathWatcherManager still holds main_watcher and
+            // uses it until deinit(), so threadMain must not free it.
+            this.main_watcher.skip_thread_cleanup = true;
 
             // Schedule deferred cleanup: watchers will unregister after
             // receiving their error events, triggering deinit when the
@@ -716,12 +712,7 @@ pub const PathWatcherManager = struct {
             return;
         }
 
-        // If the watcher thread is handling its own cleanup (onError path),
-        // threadMain frees the Watcher after onError returns. Calling
-        // main_watcher.deinit here would double-free.
-        if (!this.main_watcher_thread_owns_cleanup) {
-            this.main_watcher.deinit(false);
-        }
+        this.main_watcher.deinit(false);
 
         if (this.watcher_count > 0) {
             while (this.watchers.pop()) |watcher| {
@@ -766,6 +757,9 @@ pub const PathWatcher = struct {
     resolved_path: ?string = null,
     has_pending_directories: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
     closed: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
+    /// Guards against double-deinit from the TOCTOU race between
+    /// deinit() (main thread) and unrefPendingDirectory() (work pool).
+    deinit_started: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
     pub const ChangeEvent = struct {
         hash: Watcher.HashType = 0,
         event_type: EventType = .change,
@@ -937,6 +931,12 @@ pub const PathWatcher = struct {
             // will be freed on last directory
             return;
         }
+
+        // Guard against double-deinit: both the main thread (via detach/close)
+        // and the work pool (via unrefPendingDirectory) can reach this point
+        // when setClosed() and hasPendingDirectories() race (TOCTOU). The
+        // atomic swap ensures only one caller proceeds to destroy.
+        if (this.deinit_started.swap(true, .acq_rel)) return;
 
         if (this.manager) |manager| {
             if (comptime Environment.isMac) {

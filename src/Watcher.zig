@@ -24,6 +24,10 @@ cwd: string,
 thread: std.Thread = undefined,
 running: bool = true,
 close_descriptors: bool = false,
+/// When true, threadMain skips its cleanup (watchlist.deinit + destroy).
+/// Used when the owner (e.g. PathWatcherManager) takes responsibility for
+/// destroying the Watcher after the thread exits.
+skip_thread_cleanup: bool = false,
 
 evict_list: [max_eviction_count]WatchItemIndex = undefined,
 evict_list_i: WatchItemIndex = 0,
@@ -241,20 +245,25 @@ fn threadMain(this: *Watcher) !void {
         .result => {},
     }
 
-    // deinit and close descriptors if needed
-    if (this.close_descriptors) {
-        const fds = this.watchlist.items(.fd);
-        for (fds) |fd| {
-            fd.close();
+    // If the owner has taken responsibility for cleanup (e.g.
+    // PathWatcherManager after an onError), skip freeing here to
+    // avoid UAF — the Watcher is still referenced by the manager.
+    if (!this.skip_thread_cleanup) {
+        // deinit and close descriptors if needed
+        if (this.close_descriptors) {
+            const fds = this.watchlist.items(.fd);
+            for (fds) |fd| {
+                fd.close();
+            }
         }
+        this.watchlist.deinit(this.allocator);
+
+        // Close trace file if open
+        WatcherTrace.deinit();
+
+        const allocator = this.allocator;
+        allocator.destroy(this);
     }
-    this.watchlist.deinit(this.allocator);
-
-    // Close trace file if open
-    WatcherTrace.deinit();
-
-    const allocator = this.allocator;
-    allocator.destroy(this);
 }
 
 pub fn flushEvictions(this: *Watcher) void {

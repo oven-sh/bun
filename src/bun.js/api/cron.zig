@@ -420,11 +420,16 @@ pub const CronRegisterJob = struct {
             return globalObject.throwInvalidArguments("Failed to resolve path", .{});
         };
 
-        // Validate path has no single quotes (used for shell escaping in crontab)
+        // Validate path has no single quotes (shell escaping in crontab) or
+        // percent signs (cron interprets % as newline before the shell sees it)
         for (abs_path) |c| {
             if (c == '\'') {
                 bun.default_allocator.free(abs_path);
                 return globalObject.throwInvalidArguments("Path must not contain single quotes", .{});
+            }
+            if (c == '%') {
+                bun.default_allocator.free(abs_path);
+                return globalObject.throwInvalidArguments("Path must not contain percent signs (cron interprets % as newline)", .{});
             }
         }
 

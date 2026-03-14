@@ -106,6 +106,13 @@ describe("Bun.cron API", () => {
     expect(() => Bun.cron("./test.ts", "abc * * * *", "test-bad")).toThrow(/cron expression/i);
   });
 
+  test("throws with percent sign in path", async () => {
+    using dir = tempDir("bun-cron-test", {
+      "test%file.ts": `export default { scheduled() {} };`,
+    });
+    expect(() => Bun.cron(`${dir}/test%file.ts`, "* * * * *", "test-bad")).toThrow(/percent/i);
+  });
+
   test("remove throws with invalid title characters", () => {
     expect(() => Bun.cron.remove("bad title!")).toThrow(/alphanumeric/);
   });
@@ -722,6 +729,43 @@ describe.skipIf(!hasLaunchctl)("cron registration (macOS)", () => {
     }
   });
 
+  test("POSIX OR semantics: day-of-month AND weekday produce separate dicts", async () => {
+    using dir = tempDir("bun-cron-test", {
+      "job.ts": `export default { scheduled() {} };`,
+    });
+    try {
+      // '0 0 15 * 5' = 15th of month OR every Friday
+      await Bun.cron(`${dir}/job.ts`, "0 0 15 * 5", "test-mac-or");
+      const plist = await Bun.file(plistPath("test-mac-or")).text();
+      // Should have separate dicts: one with Day=15 (no Weekday), one with Weekday=5 (no Day)
+      expect(plist).toContain("<key>Day</key>");
+      expect(plist).toContain("<integer>15</integer>");
+      expect(plist).toContain("<key>Weekday</key>");
+      expect(plist).toContain("<integer>5</integer>");
+      // Should be an array (multiple dicts)
+      expect(plist).toContain("<array>");
+    } finally {
+      removeLaunchdJob("test-mac-or");
+    }
+  });
+
+  test("complex multi-value expression produces correct plist", async () => {
+    using dir = tempDir("bun-cron-test", {
+      "job.ts": `export default { scheduled() {} };`,
+    });
+    try {
+      // '0 9 1,15 * *' = 1st and 15th of every month at 9am
+      await Bun.cron(`${dir}/job.ts`, "0 9 1,15 * *", "test-mac-multi-dom");
+      const plist = await Bun.file(plistPath("test-mac-multi-dom")).text();
+      expect(plist).toContain("<key>Day</key>");
+      // Should have both Day 1 and Day 15 in separate dicts
+      const dayMatches = plist.match(/<key>Day<\/key>/g);
+      expect(dayMatches?.length).toBe(2);
+    } finally {
+      removeLaunchdJob("test-mac-multi-dom");
+    }
+  });
+
   test("registers multiple different jobs", async () => {
     using dir = tempDir("bun-cron-test", {
       "a.ts": `export default { scheduled() {} };`,
@@ -793,6 +837,51 @@ describe.skipIf(!hasLaunchctl)("cron removal (macOS)", () => {
       expect(plist).toContain("--cron-period=30 6 * * *");
     } finally {
       removeLaunchdJob("test-mac-reregister");
+    }
+  });
+});
+
+describe.skipIf(!hasLaunchctl)("cron end-to-end (macOS)", () => {
+  test("force-triggered job produces output", async () => {
+    using dir = tempDir("bun-cron-test", {
+      "e2e-job.ts": `
+        export default {
+          scheduled(controller: any) {
+            console.log("E2E_FIRED:" + controller.type);
+          }
+        };
+      `,
+    });
+    try {
+      await Bun.cron(`${dir}/e2e-job.ts`, "0 0 * * *", "test-mac-e2e");
+
+      // Force-trigger via launchctl kickstart
+      const kick = Bun.spawnSync({
+        cmd: ["/bin/launchctl", "kickstart", `gui/${process.getuid!()}/bun.cron.test-mac-e2e`],
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      expect(kick.exitCode).toBe(0);
+
+      // Wait for the job to execute and write output (poll instead of fixed sleep)
+      const logPath = "/tmp/bun.cron.test-mac-e2e.stdout.log";
+      let logContent = "";
+      for (let attempt = 0; attempt < 20; attempt++) {
+        await Bun.sleep(500);
+        logContent = await Bun.file(logPath)
+          .text()
+          .catch(() => "");
+        if (logContent.includes("E2E_FIRED")) break;
+      }
+      expect(logContent).toContain("E2E_FIRED:scheduled");
+    } finally {
+      removeLaunchdJob("test-mac-e2e");
+      try {
+        unlinkSync("/tmp/bun.cron.test-mac-e2e.stdout.log");
+      } catch {}
+      try {
+        unlinkSync("/tmp/bun.cron.test-mac-e2e.stderr.log");
+      } catch {}
     }
   });
 });

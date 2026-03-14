@@ -3,7 +3,7 @@
  * for local mode. Override via `--webkit-version=<hash>` to test a branch.
  * From https://github.com/oven-sh/WebKit releases.
  */
-export const WEBKIT_VERSION = "autobuild-preview-pr-168-b58d7086";
+export const WEBKIT_VERSION = "00e825523d549a556d75985f486e4954af6ab8c7";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine.
@@ -57,12 +57,7 @@ function prebuiltSuffix(cfg: Config): string {
   // Linux amd64 (glibc + musl) and Windows amd64. No baseline variant for
   // arm64 or macOS. Suffix order matches the release asset names:
   // bun-webkit-linux-amd64-musl-baseline-lto.tar.gz
-  //
-  // Preview builds from WebKit PRs may not include baseline artifacts (the
-  // PR branch may predate the baseline CI matrix). Skip the baseline suffix
-  // for preview builds — the non-baseline artifact has identical headers/APIs,
-  // only the compiled code differs in -march flags.
-  if (cfg.baseline && cfg.x64 && !cfg.webkitVersion.includes("-preview-pr-")) s += "-baseline";
+  if (cfg.baseline && cfg.x64) s += "-baseline";
   if (cfg.debug) s += "-debug";
   else if (cfg.lto) s += "-lto";
   if (cfg.asan) s += "-asan";

@@ -1,7 +1,6 @@
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
-import { test, expect, describe } from "bun:test";
 import path from "node:path";
-import fs from "node:fs";
 
 // Issue #23607: bun install hangs indefinitely with security scanner enabled
 // when node_modules exceeds ~790 packages. Root cause: package JSON was embedded

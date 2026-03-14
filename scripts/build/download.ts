@@ -134,6 +134,10 @@ export async function extractTarGz(tarball: string, dest: string, stripComponent
         );
       if (fatalLines.length === 0) {
         // Only symlink failures — source files were extracted, continue.
+        console.warn(
+          `warning: tar extraction of ${tarball} had symlink-only failures (symlinks require Developer Mode or elevated privileges on Windows); continuing anyway.\n` +
+            result.stderr.trimEnd(),
+        );
       } else {
         throw new BuildError(`tar extraction failed (exit ${result.status}): ${result.stderr}`, { file: tarball });
       }

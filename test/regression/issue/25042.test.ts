@@ -38,10 +38,10 @@ describe.if(isWindows)("bun completions on Git Bash", () => {
     });
 
     // When stdout is not a tty, it should output the completions directly and exit 0
-    expect(exitCode).toBe(0);
     const stdoutText = stdout.toString();
     // bash completions should contain some bun-specific content
     expect(stdoutText).toContain("bun");
+    expect(exitCode).toBe(0);
   });
 
   test("shows PowerShell error when SHELL is pwsh", () => {

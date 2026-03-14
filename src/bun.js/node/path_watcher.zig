@@ -781,18 +781,12 @@ pub const PathWatcherManager = struct {
         }
 
         if (main_watcher_exited) {
-            // Error path: the watcher thread exited via onError. It set
-            // skip_thread_destroy so threadMain skipped the Watcher cleanup.
-            // Check if the thread has fully exited before we destroy it.
-            if (this.main_watcher.watchloop_handle == null) {
-                // Thread fully exited (deferred path). We destroy the Watcher.
-                this.main_watcher.destroyFromOwner();
-            } else {
-                // Synchronous path: still inside threadMain's call stack
-                // (onError → deinit). No tasks remain, so clear the flag and
-                // let threadMain handle its own cleanup when onError returns.
-                this.main_watcher.skip_thread_destroy = false;
-            }
+            // Always let threadMain handle its own Watcher cleanup.
+            // We cannot safely read watchloop_handle here — it is written
+            // by the watcher thread without synchronization, making the
+            // concurrent read UB. Clear skip_thread_destroy so threadMain
+            // proceeds past the early-return check and destroys the Watcher.
+            this.main_watcher.skip_thread_destroy = false;
         } else {
             // Normal shutdown: signal the watcher thread to stop.
             // deinit(false) sets running=false under main_watcher.mutex.

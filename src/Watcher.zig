@@ -264,16 +264,10 @@ fn threadMain(this: *Watcher) !void {
 
     switch (this.watchLoop()) {
         .err => |err| {
-            // Do not clear watchloop_handle before onError: if the error
-            // callback triggers deinit → main_watcher.deinit(false), a null
-            // watchloop_handle makes deinit take the direct-destruction path,
-            // freeing this Watcher while threadMain still needs it.
-            // Keeping it non-null forces the signaling path (sets running=false).
             this.platform.stop();
             if (this.running) {
                 this.onError(this.ctx, err);
             }
-            this.watchloop_handle = null;
         },
         .result => {},
     }
@@ -283,6 +277,14 @@ fn threadMain(this: *Watcher) !void {
     // via manager.main_watcher, so threadMain must NOT destroy it. The
     // manager's deferred deinit handles cleanup once all tasks complete.
     if (this.skip_thread_destroy) return;
+
+    // Clear watchloop_handle AFTER the skip_thread_destroy check. Writing
+    // it before the check creates a race: a thread pool thread calling
+    // deinit() can read watchloop_handle==null, call destroyFromOwner()
+    // freeing this Watcher, and then threadMain reads skip_thread_destroy
+    // on freed memory (UAF). watchloop_handle is also non-atomic, so the
+    // concurrent read/write is itself UB.
+    this.watchloop_handle = null;
 
     // deinit and close descriptors if needed
     if (this.close_descriptors) {

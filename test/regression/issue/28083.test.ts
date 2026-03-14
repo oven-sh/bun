@@ -53,16 +53,21 @@ describe("dgram implicit bind on send", () => {
         `
         const dgram = require("dgram");
         const socket = dgram.createSocket("udp4");
+        const target = dgram.createSocket("udp4");
         let listeningFired = false;
 
         socket.on("listening", () => {
           listeningFired = true;
         });
 
-        socket.send(Buffer.from("test"), 0, 4, 41234, "127.0.0.1", (err) => {
-          process.nextTick(() => {
-            process.stdout.write(String(listeningFired) + "\\n");
-            socket.close();
+        target.bind(0, "127.0.0.1", () => {
+          const port = target.address().port;
+          socket.send(Buffer.from("test"), 0, 4, port, "127.0.0.1", (err) => {
+            process.nextTick(() => {
+              process.stdout.write(String(listeningFired) + "\\n");
+              socket.close();
+              target.close();
+            });
           });
         });
         `,

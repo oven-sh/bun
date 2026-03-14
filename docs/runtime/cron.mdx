@@ -260,7 +260,12 @@ Bun uses [Windows Task Scheduler](https://learn.microsoft.com/en-us/windows/win3
 Most cron expressions are fully supported, including `@daily`, `@weekly`, `@monthly`, `@yearly`, ranges (`1-5`), lists (`1,15`), named days/months, and day-of-month patterns.
 
 :::note
-**Limitation:** Minute steps that don't evenly divide 60 (e.g. `*/7`, `*/8`, `*/9`, `*/11`, `*/13`) with all hours active are not supported on Windows. These patterns would require more than the [48 triggers](https://learn.microsoft.com/en-us/windows/win32/taskschd/task-scheduler-schema) per task that Windows Task Scheduler allows. Common intervals like `*/5`, `*/10`, `*/15`, `*/20`, and `*/30` work fine.
+**Limitation:** Windows Task Scheduler has a limit of [48 triggers per task](https://learn.microsoft.com/en-us/windows/win32/taskschd/task-scheduler-start-page). Simple expressions (e.g. `*/5 * * * *`, `0 9 * * MON-FRI`) use efficient repetition patterns and work fine. However, complex combinations that expand to many distinct fire times may exceed this limit:
+
+- Minute steps that don't evenly divide 60 (e.g. `*/7`, `*/8`, `*/9`) with all hours active
+- Expressions combining frequent intervals with restricted days, like `*/15 * * * MON-FRI` (4 minutes x 24 hours = 96 triggers)
+
+When a pattern exceeds the limit, `Bun.cron()` will reject it with an error explaining the trigger count.
 :::
 
 **Viewing registered jobs:**

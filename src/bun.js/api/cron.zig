@@ -487,8 +487,12 @@ pub const CronRegisterJob = struct {
         };
         defer bun.default_allocator.free(task_name);
 
-        const xml = cronToTaskXml(this.parsed_cron, this.bun_exe, this.title, this.schedule, this.abs_path) catch {
-            this.setErr("Failed to build task XML", .{});
+        const xml = cronToTaskXml(this.parsed_cron, this.bun_exe, this.title, this.schedule, this.abs_path) catch |err| {
+            if (err == error.TooManyTriggers) {
+                this.setErr("This cron expression requires too many triggers for Windows Task Scheduler (max 48). Simplify the expression or use fewer restricted fields.", .{});
+            } else {
+                this.setErr("Failed to build task XML", .{});
+            }
             this.finish();
             return;
         };
@@ -1185,7 +1189,7 @@ fn cronToTaskXml(
         const needs_or_split = !days_is_wild and !weekdays_is_wild;
         const triggers_per_time: u32 = if (needs_or_split) 2 else 1;
         const total_triggers = minutes_count * hours_count * triggers_per_time;
-        if (total_triggers > 48) return error.InvalidCron;
+        if (total_triggers > 48) return error.TooManyTriggers;
 
         var hours_bits = cron.hours;
         while (hours_bits != 0) {
@@ -1279,7 +1283,7 @@ fn appendMonthsXml(xml: *std.array_list.Managed(u8), months: u16) !void {
     var buf: [32]u8 = undefined;
     for (1..13) |mo| {
         if (months & (@as(u16, 1) << @intCast(mo)) != 0) {
-            const line = std.fmt.bufPrint(&buf, "          <{s}/>\n", .{month_names[mo]}) catch continue;
+            const line = std.fmt.bufPrint(&buf, "          <{s}/>\n", .{month_names[mo]}) catch return error.InvalidCron;
             try xml.appendSlice(line);
         }
     }
@@ -1292,7 +1296,7 @@ fn appendDaysOfWeekXml(xml: *std.array_list.Managed(u8), weekdays: u8) !void {
     var buf: [32]u8 = undefined;
     for (0..7) |d| {
         if (weekdays & (@as(u8, 1) << @intCast(d)) != 0) {
-            const line = std.fmt.bufPrint(&buf, "          <{s}/>\n", .{day_names[d]}) catch continue;
+            const line = std.fmt.bufPrint(&buf, "          <{s}/>\n", .{day_names[d]}) catch return error.InvalidCron;
             try xml.appendSlice(line);
         }
     }

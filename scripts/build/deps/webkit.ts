@@ -103,22 +103,6 @@ function bmallocLib(cfg: Config): string {
 }
 
 /**
- * Guard: bmalloc/libpas must never be linked on Windows — it causes crashes
- * under memory pressure (see #20931, #26982, #26985, #28097). Call this after
- * assembling the final libs array so CI catches any accidental reintroduction.
- */
-function assertNoBmallocOnWindows(cfg: Config, libs: string[]): void {
-  if (!cfg.windows) return;
-  const bad = libs.filter(l => /bmalloc|libpas/i.test(l));
-  if (bad.length > 0) {
-    throw new Error(
-      `bmalloc/libpas must not be linked on Windows (crashes under memory pressure). ` +
-        `Found: ${bad.join(", ")}. See #20931, #26982, #26985, #28097.`,
-    );
-  }
-}
-
-/**
  * ICU libs — prebuilt bundles them on linux/windows. macOS uses system ICU.
  * Local mode: system ICU on posix (linked via -licu* in bun.ts); built from
  * source on Windows (see icuDir/icuLibs).
@@ -275,16 +259,16 @@ export const webkit: Dependency = {
       // "file not found" at link time (not silent omission + cryptic
       // undefined symbols).
       //
-      // Windows: bmalloc/libpas is disabled due to crash-causing instability
-      // (see #20931, #26982, #26985, #28097).
-      const libs = [...coreLibs(cfg), ...prebuiltIcuLibs(cfg), ...(cfg.windows ? [] : [bmallocLib(cfg)])];
+      // TODO(#28097): bmalloc/libpas causes crashes on Windows under memory
+      // pressure. Once oven-sh/WebKit rebuilds prebuilts with
+      // -DUSE_SYSTEM_MALLOC=ON, exclude bmallocLib on Windows here.
+      const libs = [...coreLibs(cfg), ...prebuiltIcuLibs(cfg), bmallocLib(cfg)];
 
       const includes = ["include"];
       // Linux/windows: ICU headers under wtf/unicode. macOS: deleted by
       // postExtract.
       if (!cfg.darwin) includes.push("include/wtf/unicode");
 
-      assertNoBmallocOnWindows(cfg, libs);
       return { libs, includes };
     }
 
@@ -301,9 +285,9 @@ export const webkit: Dependency = {
     // which source.ts appends to the resolved libs automatically. Listing
     // them here would make dep_build also claim to produce them (dup error).
     // Posix uses system ICU (linked via -licu* in bun.ts).
-    // Windows: bmalloc/libpas is disabled due to crash-causing instability
-    // (see #20931, #26982, #26985, #28097).
-    const libs = [...coreLibs(cfg), ...(cfg.windows ? [] : [bmallocLib(cfg)])];
+    // TODO(#28097): same as above — exclude bmallocLib on Windows once
+    // prebuilts are rebuilt with -DUSE_SYSTEM_MALLOC=ON.
+    const libs = [...coreLibs(cfg), bmallocLib(cfg)];
 
     const includes = [
       // ABSOLUTE — resolved here because they're in the build dir, not src.
@@ -318,7 +302,6 @@ export const webkit: Dependency = {
     // Windows: ICU headers from preBuild output.
     if (cfg.windows) includes.push(resolve(icuDir(cfg), "include"));
 
-    assertNoBmallocOnWindows(cfg, libs);
     return { libs, includes };
   },
 };

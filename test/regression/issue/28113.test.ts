@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, isArm64, tempDir } from "harness";
+import { bunEnv, bunExe, isArm64, isWindows, tempDir } from "harness";
 
 const isFFIUnavailable = isWindows && isArm64;
 

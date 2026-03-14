@@ -673,11 +673,25 @@ fn attemptSecurityScanWithRetry(manager: *PackageManager, security_scanner: []co
         temp_source = code.items;
     }
 
-    const packages_placeholder = "__PACKAGES_JSON__";
+    // Write package data to a temp file instead of embedding it inline in the
+    // -e argument. Large projects (>~790 packages) exceed the OS per-argument
+    // size limit (MAX_ARG_STRLEN = 128KB on Linux), causing posix_spawn to fail.
+    var tmp_path_buf: bun.PathBuffer = undefined;
+    const tmp_path = std.fmt.bufPrintZ(&tmp_path_buf, "{s}/bun_scan_{x}", .{
+        FileSystem.RealFS.tmpdirPath(),
+        @as(u64, @bitCast(std.time.milliTimestamp())),
+    }) catch return error.PathTooLong;
+
+    switch (bun.sys.File.writeFile(bun.FD.cwd(), tmp_path, json_data)) {
+        .result => {},
+        .err => return error.TempFileWriteFailed,
+    }
+
+    const packages_placeholder = "__PACKAGES_FILE__";
     if (std.mem.indexOf(u8, temp_source, packages_placeholder)) |index| {
         var new_code = std.array_list.Managed(u8).init(manager.allocator);
         try new_code.appendSlice(temp_source[0..index]);
-        try new_code.appendSlice(json_data);
+        try new_code.appendSlice(tmp_path);
         try new_code.appendSlice(temp_source[index + packages_placeholder.len ..]);
         code.deinit();
         code = new_code;
@@ -697,14 +711,13 @@ fn attemptSecurityScanWithRetry(manager: *PackageManager, security_scanner: []co
     var scanner = SecurityScanSubprocess.new(.{
         .manager = manager,
         .code = try manager.allocator.dupe(u8, code.items),
-        .json_data = try manager.allocator.dupe(u8, json_data),
         .ipc_data = undefined,
         .stderr_data = undefined,
     });
 
     defer {
         manager.allocator.free(scanner.code);
-        manager.allocator.free(scanner.json_data);
+        _ = bun.sys.unlink(tmp_path);
         bun.destroy(scanner);
     }
 
@@ -727,7 +740,6 @@ fn attemptSecurityScanWithRetry(manager: *PackageManager, security_scanner: []co
 pub const SecurityScanSubprocess = struct {
     manager: *PackageManager,
     code: []const u8,
-    json_data: []const u8,
     process: ?*bun.spawn.Process = null,
     ipc_reader: bun.io.BufferedReader = bun.io.BufferedReader.init(@This()),
     ipc_data: std.array_list.Managed(u8),

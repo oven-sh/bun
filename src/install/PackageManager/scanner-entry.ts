@@ -1,7 +1,7 @@
 import fs from "node:fs";
 
 const scannerModuleName = "__SCANNER_MODULE__";
-const packages = __PACKAGES_JSON__;
+const packages = JSON.parse(fs.readFileSync("__PACKAGES_FILE__", "utf8"));
 const suppressError = __SUPPRESS_ERROR__;
 
 type IPCMessage =

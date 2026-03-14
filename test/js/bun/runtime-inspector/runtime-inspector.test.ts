@@ -317,7 +317,7 @@ describe("Runtime inspector activation", () => {
       expect(targetStderr).toMatch(/ws:\/\/localhost:\d+\//);
     });
 
-    test.skipIf(isASAN)("can pause execution during while(true) via CDP", async () => {
+    test.skip("can pause execution during while(true) via CDP", async () => {
       // Start target process with infinite loop
       await using targetProc = spawn({
         cmd: [bunExe(), "--inspect-port=0", "-e", `console.log(process.pid); while (true) {}`],

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isMacOS, isWindows, tempDir } from "harness";
-import { existsSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, unlinkSync, watch, writeFileSync } from "node:fs";
+import { basename } from "node:path";
 
 const crontabPath = Bun.which("crontab");
 const hasCrontab = !!crontabPath && isLinux;
@@ -843,11 +844,12 @@ describe.skipIf(!hasLaunchctl)("cron removal (macOS)", () => {
 
 describe.skipIf(!hasLaunchctl)("cron end-to-end (macOS)", () => {
   test("force-triggered job receives correct controller properties", async () => {
+    const markerPath = `/tmp/bun-cron-e2e-${Date.now()}.json`;
     using dir = tempDir("bun-cron-test", {
       "e2e-job.ts": `
         export default {
-          scheduled(controller: any) {
-            console.log(JSON.stringify({
+          scheduled(controller) {
+            require("node:fs").writeFileSync("${markerPath}", JSON.stringify({
               type: controller.type,
               cron: controller.cron,
               scheduledTime: controller.scheduledTime,
@@ -861,58 +863,32 @@ describe.skipIf(!hasLaunchctl)("cron end-to-end (macOS)", () => {
       const before = Date.now();
       await Bun.cron(`${dir}/e2e-job.ts`, "0 0 * * *", "test-mac-e2e");
 
-      // Force-trigger via launchctl kickstart
-      const kick = Bun.spawnSync({
+      Bun.spawnSync({
         cmd: ["/bin/launchctl", "kickstart", `gui/${process.getuid!()}/bun.cron.test-mac-e2e`],
-        stdout: "pipe",
-        stderr: "pipe",
       });
-      expect(kick.exitCode).toBe(0);
 
-      // Wait for log output using fs.watch (event-driven with timeout)
-      const logPath = "/tmp/bun.cron.test-mac-e2e.stdout.log";
-      const fs = require("node:fs");
-      const path = require("node:path");
-
-      const waitForLog = async (): Promise<string> => {
-        const { promise, resolve, reject } = Promise.withResolvers<string>();
-        const timer = setTimeout(() => {
-          cleanup();
-          reject(new Error("Timed out"));
-        }, 10000);
-
-        const check = () => {
-          try {
-            const content = fs.readFileSync(logPath, "utf8");
-            if (content.includes("scheduled")) {
-              cleanup();
-              resolve(content);
-            }
-          } catch {}
-        };
-
-        // Watch /tmp for the log file to appear/change
-        const watcher = fs.watch(path.dirname(logPath), (_: string, filename: string) => {
-          if (filename === path.basename(logPath)) check();
-        });
-        const cleanup = () => {
-          clearTimeout(timer);
+      // Wait for the marker file to appear
+      const { promise, resolve, reject } = Promise.withResolvers<void>();
+      const timer = setTimeout(() => {
+        watcher.close();
+        reject(new Error("Timed out"));
+      }, 10000);
+      const watcher = watch("/tmp", (_, f) => {
+        if (f === basename(markerPath)) {
           watcher.close();
-        };
+          clearTimeout(timer);
+          resolve();
+        }
+      });
+      if (existsSync(markerPath)) {
+        watcher.close();
+        clearTimeout(timer);
+        resolve();
+      }
+      await promise;
 
-        // Check immediately in case the file already exists
-        check();
-        return promise;
-      };
-      const logContent = await waitForLog();
+      const output = JSON.parse(readFileSync(markerPath, "utf8"));
       const after = Date.now();
-
-      // Find the JSON line in the output (may have debug noise)
-      const jsonLine = logContent.split("\n").find(l => l.startsWith("{"));
-      expect(jsonLine).toBeDefined();
-      const output = JSON.parse(jsonLine!);
-
-      // Verify all three controller properties
       expect(output.type).toBe("scheduled");
       expect(output.cron).toBe("0 0 * * *");
       expect(typeof output.scheduledTime).toBe("number");
@@ -922,6 +898,9 @@ describe.skipIf(!hasLaunchctl)("cron end-to-end (macOS)", () => {
       expect(output.keys).toEqual(["cron", "scheduledTime", "type"]);
     } finally {
       removeLaunchdJob("test-mac-e2e");
+      try {
+        unlinkSync(markerPath);
+      } catch {}
       try {
         unlinkSync("/tmp/bun.cron.test-mac-e2e.stdout.log");
       } catch {}

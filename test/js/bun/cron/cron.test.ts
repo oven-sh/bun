@@ -14,8 +14,6 @@ const hasSchtasks =
         stdout: "pipe",
         stderr: "pipe",
       });
-      // Exit 0 = task exists, exit 1 = not found (both mean schtasks works)
-      // Other exit codes (e.g. access denied) mean schtasks isn't usable
       return r.exitCode === 0 || r.exitCode === 1;
     } catch {
       return false;
@@ -131,6 +129,59 @@ describe("Bun.cron API", () => {
 
   test("remove throws with invalid title characters", () => {
     expect(() => Bun.cron.remove("bad title!")).toThrow(/alphanumeric/);
+  });
+});
+
+// Diagnostic: when Windows tests fail, dump the XML that schtasks rejects
+describe.skipIf(!isWindows)("Windows schtasks diagnostic", () => {
+  test("manual XML registration shows schtasks error", () => {
+    const xml = [
+      '<?xml version="1.0" encoding="UTF-8"?>',
+      '<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">',
+      "  <Triggers>",
+      "    <CalendarTrigger>",
+      "      <StartBoundary>2000-01-01T00:00:00</StartBoundary>",
+      "      <ScheduleByDay><DaysInterval>1</DaysInterval></ScheduleByDay>",
+      "    </CalendarTrigger>",
+      "  </Triggers>",
+      "  <Settings>",
+      "    <Enabled>true</Enabled>",
+      "    <AllowStartOnDemand>true</AllowStartOnDemand>",
+      "    <AllowHardTerminate>true</AllowHardTerminate>",
+      "    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>",
+      "  </Settings>",
+      "  <Actions>",
+      "    <Exec>",
+      "      <Command>cmd</Command>",
+      "      <Arguments>/c echo test</Arguments>",
+      "    </Exec>",
+      "  </Actions>",
+      "</Task>",
+    ].join("\n");
+    const xmlPath = `${process.env.TEMP || "C:\\Temp"}\\bun-cron-diag.xml`;
+    writeFileSync(xmlPath, xml);
+    try {
+      const r = Bun.spawnSync({
+        cmd: ["schtasks", "/create", "/xml", xmlPath, "/tn", "bun-cron-diag", "/f"],
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      console.log("schtasks exit:", r.exitCode);
+      console.log("stdout:", r.stdout.toString());
+      console.log("stderr:", r.stderr.toString());
+      if (r.exitCode === 0) {
+        Bun.spawnSync({
+          cmd: ["schtasks", "/delete", "/tn", "bun-cron-diag", "/f"],
+          stdout: "ignore",
+          stderr: "ignore",
+        });
+      }
+      expect(r.exitCode).toBe(0);
+    } finally {
+      try {
+        unlinkSync(xmlPath);
+      } catch {}
+    }
   });
 });
 

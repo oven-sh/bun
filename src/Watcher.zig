@@ -232,11 +232,16 @@ fn threadMain(this: *Watcher) !void {
 
     switch (this.watchLoop()) {
         .err => |err| {
-            this.watchloop_handle = null;
+            // Do not clear watchloop_handle before onError: if the error
+            // callback triggers deinit → main_watcher.deinit(false), a null
+            // watchloop_handle makes deinit take the direct-destruction path,
+            // freeing this Watcher while threadMain still needs it.
+            // Keeping it non-null forces the signaling path (sets running=false).
             this.platform.stop();
             if (this.running) {
                 this.onError(this.ctx, err);
             }
+            this.watchloop_handle = null;
         },
         .result => {},
     }

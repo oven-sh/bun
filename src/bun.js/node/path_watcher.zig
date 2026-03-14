@@ -14,6 +14,10 @@ pub const PathWatcherManager = struct {
     deinit_on_last_watcher: bool = false,
     pending_tasks: u32 = 0,
     deinit_on_last_task: bool = false,
+    /// Set when the watcher thread is exiting and will handle its own
+    /// Watcher cleanup in threadMain.  deinit() checks this to skip
+    /// main_watcher.deinit() and avoid a double-free.
+    main_watcher_exited: bool = false,
     mutex: Mutex,
     const PathInfo = struct {
         fd: FD = .invalid,
@@ -334,7 +338,33 @@ pub const PathWatcherManager = struct {
             default_manager = null;
         }
 
-        // deinit manager when all watchers are closed
+        // The watcher thread (threadMain) calls onError then continues to
+        // clean up its own Watcher (close fds, free watchlist, destroy struct).
+        // We must NOT call this.deinit() here — it would call
+        // main_watcher.deinit(false) which destroys the Watcher while
+        // threadMain still needs it (UAF / double-free).
+        //
+        // Instead, mark that the watcher thread owns its own destruction and
+        // defer manager cleanup to the last watcher/task unregistration.
+        this.main_watcher_exited = true;
+
+        {
+            this.mutex.lock();
+            defer this.mutex.unlock();
+
+            if (this.watcher_count > 0) {
+                this.deinit_on_last_watcher = true;
+                return;
+            }
+
+            if (this.pending_tasks > 0) {
+                this.deinit_on_last_task = true;
+                return;
+            }
+        }
+
+        // No watchers and no pending tasks — safe to clean up manager now.
+        // main_watcher_exited is set so deinit() will skip main_watcher.deinit().
         this.deinit();
     }
 
@@ -751,11 +781,17 @@ pub const PathWatcherManager = struct {
             }
         }
 
-        // deinit(false) sets running=false under main_watcher.mutex.
-        // The watcher thread checks running inside processINotifyEventBatch /
-        // processKEvent under the same mutex, so after this returns the thread
-        // won't START a new onFileUpdate call.
-        this.main_watcher.deinit(false);
+        if (this.main_watcher_exited) {
+            // The watcher thread already exited the watch loop and will handle
+            // its own Watcher cleanup in threadMain.  Skip main_watcher.deinit()
+            // to avoid double-free.
+        } else {
+            // deinit(false) sets running=false under main_watcher.mutex.
+            // The watcher thread checks running inside processINotifyEventBatch /
+            // processKEvent under the same mutex, so after this returns the thread
+            // won't START a new onFileUpdate call.
+            this.main_watcher.deinit(false);
+        }
 
         // The thread reads file_paths only inside onFileUpdate, which holds
         // this.mutex (PathWatcherManager's mutex). Acquire it to wait for any

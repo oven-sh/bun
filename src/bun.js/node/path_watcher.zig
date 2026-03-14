@@ -15,6 +15,10 @@ pub const PathWatcherManager = struct {
     pending_tasks: u32 = 0,
     deinit_on_last_task: bool = false,
     has_pending_tasks: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
+    /// Set when onError is called from the watcher thread's threadMain.
+    /// threadMain cleans up the Watcher struct after onError returns,
+    /// so PathWatcherManager.deinit must not call main_watcher.deinit.
+    main_watcher_thread_owns_cleanup: bool = false,
     mutex: Mutex,
     const PathInfo = struct {
         fd: FD = .invalid,
@@ -304,6 +308,7 @@ pub const PathWatcherManager = struct {
         this: *PathWatcherManager,
         err: bun.sys.Error,
     ) void {
+        var needs_deinit = false;
         {
             this.mutex.lock();
             defer this.mutex.unlock();
@@ -318,6 +323,20 @@ pub const PathWatcherManager = struct {
                     watcher.flush();
                 }
             }
+
+            // onError is called from the watcher thread's threadMain, which
+            // cleans up the Watcher struct itself after this returns. Mark
+            // that so deinit() won't double-free via main_watcher.deinit().
+            this.main_watcher_thread_owns_cleanup = true;
+
+            // Schedule deferred cleanup: watchers will unregister after
+            // receiving their error events, triggering deinit when the
+            // last one closes. If no watchers exist, we must deinit now.
+            if (this.watcher_count == 0) {
+                needs_deinit = true;
+            } else {
+                this.deinit_on_last_watcher = true;
+            }
         }
 
         // Acquire default_manager_mutex AFTER releasing this.mutex to maintain
@@ -327,11 +346,17 @@ pub const PathWatcherManager = struct {
         {
             default_manager_mutex.lock();
             defer default_manager_mutex.unlock();
-            default_manager = null;
+            if (default_manager == this) {
+                default_manager = null;
+            }
         }
 
-        // deinit manager when all watchers are closed
-        this.deinit();
+        // If no watchers were registered, the deferred cleanup won't
+        // trigger. Clean up manager resources directly, but skip
+        // main_watcher.deinit() since threadMain owns that.
+        if (needs_deinit) {
+            this.deinit();
+        }
     }
 
     pub const DirectoryRegisterTask = struct {
@@ -691,7 +716,12 @@ pub const PathWatcherManager = struct {
             return;
         }
 
-        this.main_watcher.deinit(false);
+        // If the watcher thread is handling its own cleanup (onError path),
+        // threadMain frees the Watcher after onError returns. Calling
+        // main_watcher.deinit here would double-free.
+        if (!this.main_watcher_thread_owns_cleanup) {
+            this.main_watcher.deinit(false);
+        }
 
         if (this.watcher_count > 0) {
             while (this.watchers.pop()) |watcher| {

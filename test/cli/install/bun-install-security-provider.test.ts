@@ -691,15 +691,21 @@ describe("Package Resolution", () => {
 describe("Large payload via ipc pipe", () => {
   let tgzTempDir: string;
 
+  // Pad package names so the JSON exceeds 1MB with fewer packages. Each
+  // package resolution triggers an HTTP round-trip to the dummy registry,
+  // which is the slow part on Windows aarch64. The name appears twice in
+  // each JSON entry (name field + tarball URL), so 150-char padding gives
+  // ~430 bytes/entry; 3000 entries = ~1.3MB. Filenames stay under 200 chars.
+  const PKG_COUNT = 3000;
+  const NAME_PAD = Buffer.alloc(150, "x").toString();
+  const pkgName = (i: number) => `test-pkg-${NAME_PAD}-${i}`;
+
   beforeAll(async () => {
     tgzTempDir = tmpdirSync();
 
-    // Copy bar-0.0.2.tgz to create 10,000 package tarballs.
-    // Each package entry in the JSON is ~125 bytes, so 10k packages = ~1.25MB,
-    // which exceeds typical command-line length limits.
     const barTarball = Bun.file(`${import.meta.dir}/bar-0.0.2.tgz`);
-    for (let i = 0; i < 10000; i++) {
-      await Bun.write(`${tgzTempDir}/test-pkg-${i}-0.0.2.tgz`, barTarball);
+    for (let i = 0; i < PKG_COUNT; i++) {
+      await Bun.write(`${tgzTempDir}/${pkgName(i)}-0.0.2.tgz`, barTarball);
     }
   });
 
@@ -708,7 +714,7 @@ describe("Large payload via ipc pipe", () => {
   });
 
   test("handles packages JSON larger than max arg length (>1MB)", {
-    testTimeout: 60_000,
+    testTimeout: 120_000,
     scanner: async ({ packages }) => {
       const jsonSize = JSON.stringify(packages).length;
       console.log(`Received JSON payload of ${jsonSize} bytes from ${packages.length} packages`);
@@ -727,8 +733,8 @@ describe("Large payload via ipc pipe", () => {
     packageJson: (() => {
       const dependencies: Record<string, string> = {};
 
-      for (let i = 0; i < 10000; i++) {
-        dependencies[`test-pkg-${i}`] = "0.0.2";
+      for (let i = 0; i < PKG_COUNT; i++) {
+        dependencies[pkgName(i)] = "0.0.2";
       }
       return {
         name: "my-app",

@@ -825,10 +825,23 @@ fn spawnCmdGeneric(comptime Self: type, this: *Self, argv: anytype, stdin_opt: b
     this.exit_status = null;
     this.remaining_fds = 0;
 
+    var resolved_argv0: ?[*:0]const u8 = null;
+    if (comptime bun.Environment.isWindows) {
+        // libuv on Windows doesn't do PATH+PATHEXT resolution for bare names.
+        // Resolve the executable the same way Bun.spawn does.
+        var path_buf: bun.PathBuffer = undefined;
+        const PATH = jsc.VirtualMachine.get().transpiler.env.map.get("PATH") orelse "";
+        resolved_argv0 = bun.which(&path_buf, PATH, "", bun.sliceTo(argv[0].?, 0)) orelse {
+            this.setErr("Could not find '{s}' in PATH", .{bun.sliceTo(argv[0].?, 0)});
+            this.finish();
+            return;
+        };
+    }
     const spawn_options = bun.spawn.SpawnOptions{
         .stdin = stdin_opt,
         .stdout = stdout_opt,
         .stderr = .ignore,
+        .argv0 = resolved_argv0,
         .windows = if (comptime bun.Environment.isWindows) .{
             .loop = jsc.EventLoopHandle.init(jsc.VirtualMachine.get().eventLoop()),
         },

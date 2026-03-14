@@ -1259,22 +1259,6 @@ fn cronToTaskXml(
     return xml.toOwnedSlice();
 }
 
-fn appendScheduleByMonth(xml: *std.array_list.Managed(u8), allocator: std.mem.Allocator, cron: CronExpression, start_boundary: []const u8) !void {
-    _ = start_boundary;
-    try xml.appendSlice("      <ScheduleByMonth>\n");
-    try xml.appendSlice("        <DaysOfMonth>\n");
-    for (1..32) |day| {
-        if (cron.days & (@as(u32, 1) << @intCast(day)) != 0) {
-            const day_line = try std.fmt.allocPrint(allocator, "          <Day>{d}</Day>\n", .{day});
-            defer allocator.free(day_line);
-            try xml.appendSlice(day_line);
-        }
-    }
-    try xml.appendSlice("        </DaysOfMonth>\n");
-    try appendMonthsXml(xml, cron.months);
-    try xml.appendSlice("      </ScheduleByMonth>\n");
-}
-
 fn appendMonthsXml(xml: *std.array_list.Managed(u8), months: u16) !void {
     const month_names = [_][]const u8{ "", "January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December" };
     try xml.appendSlice("        <Months>\n");
@@ -1390,109 +1374,6 @@ fn computeStepInterval(comptime T: type, bits: T, min: u7, max: u7) ?u32 {
         if (expanded[i] - expanded[i - 1] != step) return null;
     }
     return step;
-}
-
-/// Convert a cron expression to schtasks /sc and /mo parameters.
-/// Supports: */N * * * * (MINUTE), 0 */N * * * (HOURLY), 0 0 * * * (DAILY),
-/// 0 0 * * N (WEEKLY). Returns error for complex expressions.
-const SchtasksParams = struct {
-    sc: [*:0]const u8,
-    mo: [*:0]const u8,
-    start_time: ?[*:0]const u8 = null, // /st HH:MM
-    day_spec: ?[*:0]const u8 = null, // /d for WEEKLY
-};
-
-fn cronToSchtasks(schedule: []const u8) !SchtasksParams {
-    var fields: [5][]const u8 = undefined;
-    var count: usize = 0;
-    var iter = std.mem.tokenizeScalar(u8, schedule, ' ');
-    while (iter.next()) |field| {
-        if (count >= 5) return error.UnsupportedSchedule;
-        fields[count] = field;
-        count += 1;
-    }
-    if (count != 5) return error.UnsupportedSchedule;
-
-    const minute = fields[0];
-    const hour = fields[1];
-    const dom = fields[2];
-    const month = fields[3];
-    const dow = fields[4];
-
-    // Every N minutes: */N * * * *
-    if (bun.strings.hasPrefixComptime(minute, "*/") and
-        bun.strings.eql(hour, "*") and bun.strings.eql(dom, "*") and
-        bun.strings.eql(month, "*") and bun.strings.eql(dow, "*"))
-    {
-        const val = std.fmt.parseInt(u32, minute[2..], 10) catch return error.UnsupportedSchedule;
-        const static_min = struct {
-            var buf: [16:0]u8 = undefined;
-        };
-        _ = std.fmt.bufPrintZ(&static_min.buf, "{d}", .{val}) catch return error.UnsupportedSchedule;
-        return .{ .sc = "MINUTE", .mo = &static_min.buf };
-    }
-
-    // Every minute: * * * * *
-    if (bun.strings.eql(minute, "*") and bun.strings.eql(hour, "*") and
-        bun.strings.eql(dom, "*") and bun.strings.eql(month, "*") and bun.strings.eql(dow, "*"))
-        return .{ .sc = "MINUTE", .mo = "1" };
-
-    // Hourly: 0 * * * * or N * * * *
-    if (bun.strings.eql(hour, "*") and bun.strings.eql(dom, "*") and
-        bun.strings.eql(month, "*") and bun.strings.eql(dow, "*"))
-    {
-        const m = std.fmt.parseInt(u32, minute, 10) catch return error.UnsupportedSchedule;
-        const static_hourly_st = struct {
-            var buf: [6:0]u8 = undefined;
-        };
-        _ = std.fmt.bufPrintZ(&static_hourly_st.buf, "00:{d:0>2}", .{m}) catch return error.UnsupportedSchedule;
-        return .{ .sc = "HOURLY", .mo = "1", .start_time = &static_hourly_st.buf };
-    }
-
-    // Daily: N N * * *
-    if (bun.strings.eql(dom, "*") and bun.strings.eql(month, "*") and bun.strings.eql(dow, "*")) {
-        const m = std.fmt.parseInt(u32, minute, 10) catch return error.UnsupportedSchedule;
-        const h = std.fmt.parseInt(u32, hour, 10) catch return error.UnsupportedSchedule;
-        const static_st = struct {
-            var buf: [6:0]u8 = undefined;
-        };
-        _ = std.fmt.bufPrintZ(&static_st.buf, "{d:0>2}:{d:0>2}", .{ h, m }) catch return error.UnsupportedSchedule;
-        return .{ .sc = "DAILY", .mo = "1", .start_time = &static_st.buf };
-    }
-
-    // Weekly: N N * * N (or named weekday like MON)
-    if (bun.strings.eql(dom, "*") and bun.strings.eql(month, "*")) {
-        const m = std.fmt.parseInt(u32, minute, 10) catch return error.UnsupportedSchedule;
-        const h = std.fmt.parseInt(u32, hour, 10) catch return error.UnsupportedSchedule;
-        const d = std.fmt.parseInt(u32, dow, 10) catch resolveWeekdayName(dow) catch return error.UnsupportedSchedule;
-        const static_st = struct {
-            var buf: [6:0]u8 = undefined;
-        };
-        _ = std.fmt.bufPrintZ(&static_st.buf, "{d:0>2}:{d:0>2}", .{ h, m }) catch return error.UnsupportedSchedule;
-        const day_names = [_][*:0]const u8{ "SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT" };
-        const day_idx: usize = switch (d) {
-            0...6 => d,
-            7 => 0, // 7 is also Sunday in POSIX cron
-            else => return error.UnsupportedSchedule,
-        };
-        return .{ .sc = "WEEKLY", .mo = "1", .start_time = &static_st.buf, .day_spec = day_names[day_idx] };
-    }
-
-    return error.UnsupportedSchedule;
-}
-
-/// Resolve a named weekday (e.g. "MON", "mon", "Monday") to its numeric value (0=SUN..6=SAT).
-fn resolveWeekdayName(name: []const u8) !u32 {
-    const prefixes = [_][]const u8{ "SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT" };
-    if (name.len < 3) return error.UnsupportedSchedule;
-    var upper: [3]u8 = undefined;
-    for (name[0..3], &upper) |c, *u| {
-        u.* = std.ascii.toUpper(c);
-    }
-    for (prefixes, 0..) |prefix, i| {
-        if (bun.strings.eql(&upper, prefix)) return @intCast(i);
-    }
-    return error.UnsupportedSchedule;
 }
 
 fn allocPrintZ(allocator: std.mem.Allocator, comptime fmt: []const u8, args: anytype) std.mem.Allocator.Error![:0]const u8 {

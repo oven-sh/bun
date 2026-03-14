@@ -60,6 +60,7 @@ pub const CronRegisterJob = struct {
     state: State = .reading_crontab,
     process: ?*Process = null,
     stdout_reader: OutputReader = OutputReader.init(CronRegisterJob),
+    stderr_reader: OutputReader = OutputReader.init(CronRegisterJob),
     remaining_fds: i8 = 0,
     has_called_process_exit: bool = false,
     exit_status: ?bun.spawn.Status = null,
@@ -94,7 +95,15 @@ pub const CronRegisterJob = struct {
         switch (status) {
             .exited => |exited| {
                 if (exited.code != 0 and !(this.state == .reading_crontab and exited.code == 1) and this.state != .booting_out) {
-                    this.setErr("Process exited with code {d}", .{exited.code});
+                    const stderr_output = if (comptime bun.Environment.isWindows)
+                        std.mem.trim(u8, this.stderr_reader.finalBuffer().items, &std.ascii.whitespace)
+                    else
+                        "";
+                    if (stderr_output.len > 0) {
+                        this.setErr("{s}", .{stderr_output});
+                    } else {
+                        this.setErr("Process exited with code {d}", .{exited.code});
+                    }
                     this.finish();
                     return;
                 }
@@ -535,6 +544,7 @@ pub const CronRemoveJob = struct {
     state: State = .reading_crontab,
     process: ?*Process = null,
     stdout_reader: OutputReader = OutputReader.init(CronRemoveJob),
+    stderr_reader: OutputReader = OutputReader.init(CronRemoveJob),
     remaining_fds: i8 = 0,
     has_called_process_exit: bool = false,
     exit_status: ?bun.spawn.Status = null,
@@ -574,7 +584,15 @@ pub const CronRemoveJob = struct {
                     // removal of a non-existent job should resolve without error.
                     (if (comptime bun.Environment.isWindows) this.state == .installing_crontab else false);
                 if (exited.code != 0 and !is_acceptable_nonzero) {
-                    this.setErr("Process exited with code {d}", .{exited.code});
+                    const stderr_output = if (comptime bun.Environment.isWindows)
+                        std.mem.trim(u8, this.stderr_reader.finalBuffer().items, &std.ascii.whitespace)
+                    else
+                        "";
+                    if (stderr_output.len > 0) {
+                        this.setErr("{s}", .{stderr_output});
+                    } else {
+                        this.setErr("Process exited with code {d}", .{exited.code});
+                    }
                     this.finish();
                     return;
                 }
@@ -836,11 +854,14 @@ fn spawnCmdGeneric(comptime Self: type, this: *Self, argv: anytype, stdin_opt: b
             return;
         };
     }
+    if (comptime bun.Environment.isWindows) {
+        this.stderr_reader.source = .{ .pipe = bun.new(bun.windows.libuv.Pipe, std.mem.zeroes(bun.windows.libuv.Pipe)) };
+    }
     const cwd = jsc.VirtualMachine.get().transpiler.fs.top_level_dir;
     const spawn_options = bun.spawn.SpawnOptions{
         .stdin = stdin_opt,
         .stdout = stdout_opt,
-        .stderr = .ignore,
+        .stderr = if (comptime bun.Environment.isWindows) .{ .buffer = this.stderr_reader.source.?.pipe } else .ignore,
         .cwd = cwd,
         .argv0 = resolved_argv0,
         .windows = if (comptime bun.Environment.isWindows) .{
@@ -887,6 +908,17 @@ fn spawnCmdGeneric(comptime Self: type, this: *Self, argv: anytype, stdin_opt: b
                 this.stdout_reader.setParent(this);
                 this.stdout_reader.startMemfd(stdout);
             }
+        }
+    }
+    if (comptime bun.Environment.isWindows) {
+        if (spawned.stderr == .buffer) {
+            this.stderr_reader.parent = this;
+            this.remaining_fds += 1;
+            this.stderr_reader.startWithCurrentPipe().unwrap() catch {
+                this.setErr("Failed to start reading stderr", .{});
+                this.finish();
+                return;
+            };
         }
     }
 

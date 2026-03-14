@@ -1105,7 +1105,7 @@ fn cronToTaskXml(
 
     // XML header + task start
     try xml.appendSlice(
-        \\<?xml version="1.0" encoding="UTF-16"?>
+        \\<?xml version="1.0" encoding="UTF-8"?>
         \\<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
         \\  <Triggers>
         \\
@@ -1132,29 +1132,29 @@ fn cronToTaskXml(
             defer allocator.free(sb_line);
             try xml.appendSlice(sb_line);
 
-            // Choose schedule type based on cron fields
+            // POSIX cron OR semantics: when both day-of-month AND day-of-week
+            // are non-wildcard, the job fires when EITHER matches. We emit
+            // separate triggers for each (Task Scheduler fires when ANY trigger matches).
+            const needs_or_split = !cron.days_is_wildcard and !cron.weekdays_is_wildcard;
+
             if (!cron.days_is_wildcard) {
-                // ScheduleByMonth: specific days-of-month
-                try xml.appendSlice("      <ScheduleByMonth>\n");
-                try xml.appendSlice("        <DaysOfMonth>\n");
-                for (1..32) |day| {
-                    if (cron.days & (@as(u32, 1) << @intCast(day)) != 0) {
-                        const day_line = try std.fmt.allocPrint(allocator, "          <Day>{d}</Day>\n", .{day});
-                        defer allocator.free(day_line);
-                        try xml.appendSlice(day_line);
-                    }
+                try appendScheduleByMonth(&xml, allocator, cron, start_boundary);
+            }
+            if (!cron.weekdays_is_wildcard) {
+                if (needs_or_split) {
+                    // Close the day-of-month trigger, open a new one for day-of-week
+                    try xml.appendSlice("    </CalendarTrigger>\n");
+                    try xml.appendSlice("    <CalendarTrigger>\n");
+                    const sb2 = try std.fmt.allocPrint(allocator, "      <StartBoundary>{s}</StartBoundary>\n", .{start_boundary});
+                    defer allocator.free(sb2);
+                    try xml.appendSlice(sb2);
                 }
-                try xml.appendSlice("        </DaysOfMonth>\n");
-                try appendMonthsXml(&xml, cron.months);
-                try xml.appendSlice("      </ScheduleByMonth>\n");
-            } else if (!cron.weekdays_is_wildcard) {
-                // ScheduleByWeek: specific days-of-week
                 try xml.appendSlice("      <ScheduleByWeek>\n");
                 try xml.appendSlice("        <WeeksInterval>1</WeeksInterval>\n");
                 try appendDaysOfWeekXml(&xml, cron.weekdays);
                 try xml.appendSlice("      </ScheduleByWeek>\n");
-            } else {
-                // ScheduleByDay: every day
+            } else if (cron.days_is_wildcard) {
+                // Both wildcard: every day
                 try xml.appendSlice("      <ScheduleByDay>\n");
                 try xml.appendSlice("        <DaysInterval>1</DaysInterval>\n");
                 try xml.appendSlice("      </ScheduleByDay>\n");
@@ -1195,6 +1195,22 @@ fn cronToTaskXml(
     try xml.appendSlice(action_xml);
 
     return xml.toOwnedSlice();
+}
+
+fn appendScheduleByMonth(xml: *std.array_list.Managed(u8), allocator: std.mem.Allocator, cron: CronExpression, start_boundary: []const u8) !void {
+    _ = start_boundary;
+    try xml.appendSlice("      <ScheduleByMonth>\n");
+    try xml.appendSlice("        <DaysOfMonth>\n");
+    for (1..32) |day| {
+        if (cron.days & (@as(u32, 1) << @intCast(day)) != 0) {
+            const day_line = try std.fmt.allocPrint(allocator, "          <Day>{d}</Day>\n", .{day});
+            defer allocator.free(day_line);
+            try xml.appendSlice(day_line);
+        }
+    }
+    try xml.appendSlice("        </DaysOfMonth>\n");
+    try appendMonthsXml(xml, cron.months);
+    try xml.appendSlice("      </ScheduleByMonth>\n");
 }
 
 fn appendMonthsXml(xml: *std.array_list.Managed(u8), months: u16) !void {

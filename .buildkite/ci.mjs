@@ -444,42 +444,54 @@ function getTestAgent(platform, options) {
  */
 
 /**
+ * Build the scripts/build.ts argument list from a target's properties.
+ * Replaces the old getBuildEnv (cmake -D env vars) + getBuildCommand
+ * (--target passthrough) with direct build.ts flags.
+ *
  * @param {Target} target
  * @param {PipelineOptions} options
- * @returns {Record<string, string | undefined>}
+ * @param {"cpp-only" | "zig-only" | "link-only"} mode
+ * @returns {string}
  */
-function getBuildEnv(target, options) {
-  const { baseline, abi } = target;
+function getBuildArgs(target, options, mode) {
+  const { os, arch, abi, baseline, profile } = target;
   const { canary } = options;
-  const revision = typeof canary === "number" ? canary : 1;
 
-  return {
-    ENABLE_BASELINE: baseline ? "ON" : "OFF",
-    ENABLE_CANARY: revision > 0 ? "ON" : "OFF",
-    CANARY_REVISION: revision,
-    ABI: abi === "musl" ? "musl" : undefined,
-    CMAKE_VERBOSE_MAKEFILE: "ON",
-    CMAKE_TLS_VERIFY: "0",
-  };
+  const args = [`--profile=ci-${mode}`];
+
+  // zig-only cross-compiles (linux host → all targets); os/arch/abi must
+  // all be explicit — host detection (detectLinuxAbi checks /etc/alpine-release)
+  // would report the build box's abi (Alpine→musl), not the target's.
+  // cpp-only/link-only: native build, host detection is correct.
+  if (mode === "zig-only") {
+    args.push(`--os=${os}`, `--arch=${arch}`);
+    if (os === "linux") args.push(`--abi=${abi ?? "gnu"}`);
+  } else if (abi === "musl") {
+    args.push("--abi=musl");
+  }
+  if (baseline) args.push("--baseline=on");
+  if (profile === "asan") args.push("--asan=on");
+
+  // canary: options.canary can be number (revision count) or undefined
+  // (default on). Old system used CANARY_REVISION as a counter; build.ts
+  // has only on/off — disabled only when explicitly 0.
+  const canaryRev = typeof canary === "number" ? canary : 1;
+  if (canaryRev === 0) args.push("--canary=off");
+
+  return args.join(" ");
 }
 
 /**
  * @param {Target} target
  * @param {PipelineOptions} options
+ * @param {"cpp-only" | "zig-only" | "link-only"} mode
  * @returns {string}
  */
-function getBuildCommand(target, options, label) {
-  const { profile } = target;
-  const buildProfile = profile || "release";
-
-  if (target.os === "windows" && label === "build-bun") {
-    // Only sign release builds, not canary builds (DigiCert charges per signature)
-    // Skip signing on ARM64 for now — smctl (x64-only) silently fails under emulation
-    const enableSigning = !options.canary && target.arch !== "aarch64" ? " -DENABLE_WINDOWS_CODESIGNING=ON" : "";
-    return `bun run build:${buildProfile}${enableSigning}`;
-  }
-
-  return `bun run build:${buildProfile}`;
+function getBuildCommand(target, options, mode) {
+  // Windows code signing is handled by a dedicated 'windows-sign' step after
+  // all Windows builds complete — see getWindowsSignStep(). smctl is x64-only,
+  // so signing on the build agent wouldn't work for ARM64 anyway.
+  return `bun scripts/build.ts ${getBuildArgs(target, options, mode)}`;
 }
 
 /**
@@ -488,39 +500,17 @@ function getBuildCommand(target, options, label) {
  * @returns {Step}
  */
 function getBuildCppStep(platform, options) {
-  const command = getBuildCommand(platform, options);
-
   return {
     key: `${getTargetKey(platform)}-build-cpp`,
     label: `${getTargetLabel(platform)} - build-cpp`,
     agents: getCppAgent(platform, options),
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
-    env: {
-      BUN_CPP_ONLY: "ON",
-      ...getBuildEnv(platform, options),
-    },
-    // We used to build the C++ dependencies and bun in separate steps.
-    // However, as long as the zig build takes longer than both sequentially,
-    // it's cheaper to run them in the same step. Can be revisited in the future.
-    command: [`${command} --target bun`, `${command} --target dependencies`],
+    // cpp-only builds deps + bun's C++ in one ninja graph (ninja pulls
+    // everything the archive transitively needs). The old two-command
+    // split (--target bun, --target dependencies) was a cmake artifact.
+    command: getBuildCommand(platform, options, "cpp-only"),
   };
-}
-
-/**
- * @param {Target} target
- * @returns {string}
- */
-function getBuildToolchain(target) {
-  const { os, arch, abi, baseline } = target;
-  let key = `${os}-${arch}`;
-  if (abi) {
-    key += `-${abi}`;
-  }
-  if (baseline) {
-    key += "-baseline";
-  }
-  return key;
 }
 
 /**
@@ -529,18 +519,15 @@ function getBuildToolchain(target) {
  * @returns {Step}
  */
 function getBuildZigStep(platform, options) {
-  const { os, arch } = platform;
-  const toolchain = getBuildToolchain(platform);
-  // Native Windows builds don't need a cross-compilation toolchain
-  const toolchainArg = os === "windows" ? "" : ` --toolchain ${toolchain}`;
   return {
     key: `${getTargetKey(platform)}-build-zig`,
     retry: getRetry(),
     label: `${getTargetLabel(platform)} - build-zig`,
     agents: getZigAgent(platform, options),
     cancel_on_build_failing: isMergeQueue(),
-    env: getBuildEnv(platform, options),
-    command: `${getBuildCommand(platform, options)} --target bun-zig${toolchainArg}`,
+    // zig cross-compiles via --os/--arch in build args. No separate
+    // toolchain file — zig handles cross-compilation natively.
+    command: getBuildCommand(platform, options, "zig-only"),
     timeout_in_minutes: 35,
   };
 }
@@ -559,11 +546,13 @@ function getLinkBunStep(platform, options) {
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
     env: {
-      BUN_LINK_ONLY: "ON",
+      // ASAN runtime settings — unrelated to build config, affects the
+      // linked binary's startup during the smoke test.
       ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=0",
-      ...getBuildEnv(platform, options),
     },
-    command: `${getBuildCommand(platform, options, "build-bun")} --target bun`,
+    // link-only downloads artifacts from the sibling build-cpp and
+    // build-zig steps (derived from BUILDKITE_STEP_KEY) before ninja runs.
+    command: getBuildCommand(platform, options, "link-only"),
   };
 }
 
@@ -637,13 +626,20 @@ function getVerifyBaselineStep(platform, options) {
   const emulator = getEmulatorBinary(platform);
   const jitStressFlag = hasWebKitChanges(options) ? " --jit-stress" : "";
 
+  // Scan bun-profile, not bun. The stripped binary has no .symtab (ELF) and
+  // no companion .pdb (PE) — the static scanner would emit <no-symbol@addr>
+  // for everything and none of the allowlist entries would match. bun-profile
+  // has identical .text so violation results are the same, just attributable.
+  const profileDir = `${triplet}-profile`;
+  const profileExe = os === "windows" ? "bun-profile.exe" : "bun-profile";
+
   const setupCommands =
     os === "windows"
       ? [
           `echo Downloading build artifacts...`,
-          `buildkite-agent artifact download ${triplet}.zip . --step ${targetKey}-build-bun`,
-          `echo Extracting ${triplet}.zip...`,
-          `tar -xf ${triplet}.zip`,
+          `buildkite-agent artifact download ${profileDir}.zip . --step ${targetKey}-build-bun`,
+          `echo Extracting ${profileDir}.zip...`,
+          `tar -xf ${profileDir}.zip`,
           `echo Downloading Intel SDE...`,
           `curl.exe -fsSL -o sde.tar.xz "${SDE_URL}"`,
           `echo Extracting Intel SDE...`,
@@ -652,9 +648,9 @@ function getVerifyBaselineStep(platform, options) {
           `ren sde-external-${SDE_VERSION}-win sde-external`,
         ]
       : [
-          `buildkite-agent artifact download '*.zip' . --step ${targetKey}-build-bun`,
-          `unzip -o '${triplet}.zip'`,
-          `chmod +x ${triplet}/bun`,
+          `buildkite-agent artifact download '${profileDir}.zip' . --step ${targetKey}-build-bun`,
+          `unzip -o '${profileDir}.zip'`,
+          `chmod +x ${profileDir}/${profileExe}`,
         ];
 
   return {
@@ -667,25 +663,9 @@ function getVerifyBaselineStep(platform, options) {
     timeout_in_minutes: hasWebKitChanges(options) ? 30 : 10,
     command: [
       ...setupCommands,
-      `bun scripts/verify-baseline.ts --binary ${triplet}/${os === "windows" ? "bun.exe" : "bun"} --emulator ${emulator}${jitStressFlag}`,
+      `cargo build --release --manifest-path scripts/verify-baseline-static/Cargo.toml`,
+      `bun scripts/verify-baseline.ts --binary ${profileDir}/${profileExe} --emulator ${emulator}${jitStressFlag}`,
     ],
-  };
-}
-
-/**
- * @param {Platform} platform
- * @param {PipelineOptions} options
- * @returns {Step}
- */
-function getBuildBunStep(platform, options) {
-  return {
-    key: `${getTargetKey(platform)}-build-bun`,
-    label: `${getTargetLabel(platform)} - build-bun`,
-    agents: getCppAgent(platform, options),
-    retry: getRetry(),
-    cancel_on_build_failing: isMergeQueue(),
-    env: getBuildEnv(platform, options),
-    command: getBuildCommand(platform, options),
   };
 }
 
@@ -783,13 +763,60 @@ function getBuildImageStep(platform, options) {
 }
 
 /**
- * @param {Platform[]} buildPlatforms
+ * Batch-signs all Windows artifacts on an x64 agent. DigiCert smctl is x64-only
+ * and silently fails under ARM64 emulation, so signing must happen here instead
+ * of inline during each build. Re-uploads signed zips with the same names so
+ * the release step picks them up transparently.
+ * @param {Platform[]} windowsPlatforms
  * @param {PipelineOptions} options
  * @returns {Step}
  */
-function getReleaseStep(buildPlatforms, options) {
+function getWindowsSignStep(windowsPlatforms, options) {
+  // Each build-bun step produces two zips: <triplet>-profile.zip and <triplet>.zip
+  const artifacts = [];
+  const buildSteps = [];
+  for (const platform of windowsPlatforms) {
+    const triplet = getTargetTriplet(platform);
+    const stepKey = `${getTargetKey(platform)}-build-bun`;
+    artifacts.push(`${triplet}-profile.zip`, `${triplet}.zip`);
+    buildSteps.push(stepKey, stepKey);
+  }
+
+  // Run on an x64 build agent — smctl doesn't work on ARM64
+  const signPlatform = windowsPlatforms.find(p => p.arch === "x64" && !p.baseline) ?? windowsPlatforms[0];
+
+  return {
+    key: "windows-sign",
+    label: `${getBuildkiteEmoji("windows")} sign`,
+    depends_on: windowsPlatforms.map(p => `${getTargetKey(p)}-build-bun`),
+    agents: getEc2Agent(signPlatform, options, {
+      instanceType: getAzureVmSize("windows", "x64", "test"),
+    }),
+    retry: getRetry(),
+    cancel_on_build_failing: isMergeQueue(),
+    command: [
+      `powershell -NoProfile -ExecutionPolicy Bypass -File .buildkite/scripts/sign-windows-artifacts.ps1 ` +
+        `-Artifacts ${artifacts.join(",")} ` +
+        `-BuildSteps ${buildSteps.join(",")}`,
+    ],
+  };
+}
+
+/**
+ * @param {Platform[]} buildPlatforms
+ * @param {PipelineOptions} options
+ * @param {{ signed: boolean }} [extra]
+ * @returns {Step}
+ */
+function getReleaseStep(buildPlatforms, options, { signed = false } = {}) {
   const { canary } = options;
   const revision = typeof canary === "number" ? canary : 1;
+
+  // When signing ran, depend on windows-sign instead of the raw Windows builds
+  // so we wait for signed artifacts before releasing.
+  const depends_on = signed
+    ? [...buildPlatforms.filter(p => p.os !== "windows").map(p => `${getTargetKey(p)}-build-bun`), "windows-sign"]
+    : buildPlatforms.map(platform => `${getTargetKey(platform)}-build-bun`);
 
   return {
     key: "release",
@@ -797,9 +824,12 @@ function getReleaseStep(buildPlatforms, options) {
     agents: {
       queue: "test-darwin",
     },
-    depends_on: buildPlatforms.map(platform => `${getTargetKey(platform)}-build-bun`),
+    depends_on,
     env: {
       CANARY: revision,
+      // Tells upload-release.sh to fetch Windows zips from the sign step
+      // (same filenames, but the signed re-uploads are the ones we want).
+      WINDOWS_ARTIFACT_STEP: signed ? "windows-sign" : "",
     },
     command: ".buildkite/scripts/upload-release.sh",
   };
@@ -905,6 +935,7 @@ function getBenchmarkStep() {
  * @property {string | boolean} [forceBuilds]
  * @property {string | boolean} [forceTests]
  * @property {string | boolean} [buildImages]
+ * @property {string | boolean} [signWindows]
  * @property {string | boolean} [publishImages]
  * @property {number} [canary]
  * @property {Platform[]} [buildPlatforms]
@@ -1180,6 +1211,7 @@ async function getPipelineOptions() {
     skipBuilds: parseOption(/\[(skip builds?|no builds?|only tests?)\]/i),
     forceBuilds: parseOption(/\[(force builds?)\]/i),
     skipTests: parseOption(/\[(skip tests?|no tests?|only builds?)\]/i),
+    signWindows: parseOption(/\[(sign windows)\]/i),
     buildImages: parseOption(/\[(build (?:(?:windows|linux) )?images?)\]/i),
     dryRun: parseOption(/\[(dry run)\]/i),
     publishImages: parseOption(/\[(publish (?:(?:windows|linux) )?images?)\]/i),
@@ -1294,8 +1326,19 @@ async function getPipeline(options = {}) {
     }
   }
 
+  // Sign Windows builds on release (non-canary main) or when [sign windows]
+  // is in the commit message (for testing the sign step on a branch).
+  // DigiCert charges per signature, so canary builds are never signed.
+  const shouldSignWindows = (isMainBranch() && !options.canary) || options.signWindows;
+  if (shouldSignWindows) {
+    const windowsPlatforms = buildPlatforms.filter(p => p.os === "windows");
+    if (windowsPlatforms.length > 0) {
+      steps.push(getWindowsSignStep(windowsPlatforms, options));
+    }
+  }
+
   if (isMainBranch()) {
-    steps.push(getReleaseStep(buildPlatforms, options));
+    steps.push(getReleaseStep(buildPlatforms, options, { signed: shouldSignWindows }));
   }
   steps.push(getBenchmarkStep());
 

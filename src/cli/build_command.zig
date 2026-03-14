@@ -85,6 +85,7 @@ pub const BuildCommand = struct {
         this_transpiler.options.drop = ctx.args.drop;
         this_transpiler.options.bundler_feature_flags = Runtime.Features.initBundlerFeatureFlags(allocator, ctx.args.feature_flags);
 
+        this_transpiler.options.allow_unresolved = if (ctx.bundler_options.allow_unresolved) |a| options.AllowUnresolved.fromStrings(a) else .all;
         this_transpiler.options.css_chunking = ctx.bundler_options.css_chunking;
         this_transpiler.options.metafile = ctx.bundler_options.metafile.len > 0 or ctx.bundler_options.metafile_md.len > 0;
 

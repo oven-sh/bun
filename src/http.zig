@@ -22,7 +22,8 @@ var print_every_i: usize = 0;
 
 // we always rewrite the entire HTTP request when write() returns EAGAIN
 // so we can reuse this buffer
-var shared_request_headers_buf: [256]picohttp.Header = undefined;
+const max_request_headers = 256;
+var shared_request_headers_buf: [max_request_headers]picohttp.Header = undefined;
 
 // this doesn't need to be stack memory because it is immediately cloned after use
 var shared_response_headers_buf: [256]picohttp.Header = undefined;
@@ -32,6 +33,49 @@ pub const end_of_chunked_http1_1_encoding_response_body = "0\r\n\r\n";
 const log = Output.scoped(.fetch, .visible);
 
 pub var temp_hostname: [8192]u8 = undefined;
+
+/// Returns the hostname to use for TLS SNI and certificate verification.
+/// Priority: tls_props.server_name > client.hostname > client.url.hostname
+/// The Host header value (client.hostname) may contain a port suffix which
+/// must be stripped because it is not part of the DNS name in certificates.
+fn getTlsHostname(client: *const HTTPClient, allowProxyUrl: bool) []const u8 {
+    if (allowProxyUrl) {
+        if (client.http_proxy) |proxy| {
+            return proxy.hostname;
+        }
+    }
+    // Prefer the explicit TLS server_name (e.g. from Node.js servername option)
+    if (client.tls_props) |props| {
+        if (props.get().server_name) |sn| {
+            const sn_slice = bun.sliceTo(sn, 0);
+            if (sn_slice.len > 0) return sn_slice;
+        }
+    }
+    // client.hostname comes from the Host header and may include ":port"
+    if (client.hostname) |host| {
+        return stripPortFromHost(host);
+    }
+    return client.url.hostname;
+}
+
+/// Strips an optional port suffix from a host string (e.g. "example.com:443" -> "example.com").
+/// Handles IPv6 bracket notation correctly (e.g. "[::1]:443" -> "[::1]").
+fn stripPortFromHost(host: []const u8) []const u8 {
+    if (host.len == 0) return host;
+    // IPv6 with brackets: "[::1]:port"
+    if (host[0] == '[') {
+        if (std.mem.lastIndexOfScalar(u8, host, ']')) |bracket| {
+            // Return everything up to and including ']'
+            return host[0 .. bracket + 1];
+        }
+        return host;
+    }
+    // IPv4 or hostname: find last colon
+    if (std.mem.lastIndexOfScalar(u8, host, ':')) |colon| {
+        return host[0..colon];
+    }
+    return host;
+}
 
 pub fn checkServerIdentity(
     client: *HTTPClient,
@@ -44,6 +88,7 @@ pub fn checkServerIdentity(
     if (client.flags.reject_unauthorized) {
         if (BoringSSL.SSL_get_peer_cert_chain(sslPtr)) |cert_chain| {
             if (BoringSSL.sk_X509_value(cert_chain, 0)) |x509| {
+                const hostname = getTlsHostname(client, allowProxyUrl);
 
                 // check if we need to report the error (probably to `checkServerIdentity` was informed from JS side)
                 // this is the slow path
@@ -54,13 +99,6 @@ pub fn checkServerIdentity(
                     var cert_ptr = cert.ptr;
                     const result_size = BoringSSL.i2d_X509(x509, &cert_ptr);
                     assert(result_size == cert_size);
-
-                    var hostname = client.hostname orelse client.url.hostname;
-                    if (allowProxyUrl) {
-                        if (client.http_proxy) |proxy| {
-                            hostname = proxy.hostname;
-                        }
-                    }
 
                     client.state.certificate_info = .{
                         .cert = cert,
@@ -79,14 +117,6 @@ pub fn checkServerIdentity(
                 } else {
                     // we check with native code if the cert is valid
                     // fast path
-
-                    var hostname = client.hostname orelse client.url.hostname;
-                    if (allowProxyUrl) {
-                        if (client.http_proxy) |proxy| {
-                            hostname = proxy.hostname;
-                        }
-                    }
-
                     if (bun.BoringSSL.checkX509ServerIdentity(x509, hostname)) {
                         return true;
                     }
@@ -148,10 +178,7 @@ pub fn onOpen(
     if (comptime is_ssl) {
         var ssl_ptr: *BoringSSL.SSL = @ptrCast(socket.getNativeHandle());
         if (!ssl_ptr.isInitFinished()) {
-            var _hostname = client.hostname orelse client.url.hostname;
-            if (client.http_proxy) |proxy| {
-                _hostname = proxy.hostname;
-            }
+            const _hostname = getTlsHostname(client, client.http_proxy != null);
 
             var hostname: [:0]const u8 = "";
             var hostname_needs_free = false;
@@ -480,7 +507,7 @@ progress_node: ?*Progress.Node = null,
 flags: Flags = Flags{},
 
 state: InternalState = .{},
-tls_props: ?*SSLConfig = null,
+tls_props: ?SSLConfig.SharedPtr = null,
 /// The custom SSL context used for this request (null = default context).
 /// Set by HTTPThread.connect() when using custom TLS configs.
 custom_ssl_ctx: ?*NewHTTPContext(true) = null,
@@ -517,11 +544,9 @@ pub fn deinit(this: *HTTPClient) void {
         this.proxy_tunnel = null;
         tunnel.detachAndDeref();
     }
-    // Release our reference on the interned SSLConfig
-    if (this.tls_props) |config| {
-        config.deref();
-        this.tls_props = null;
-    }
+    // Release our strong ref on the interned SSLConfig
+    if (this.tls_props) |*tls| tls.deinit();
+    this.tls_props = null;
     this.unix_socket_path.deinit();
     this.unix_socket_path = jsc.ZigString.Slice.empty;
 }
@@ -633,26 +658,40 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
     var add_transfer_encoding = true;
     var original_content_length: ?string = null;
 
+    // Reserve slots for default headers that may be appended after user headers
+    // (Connection, User-Agent, Accept, Host, Accept-Encoding, Content-Length/Transfer-Encoding).
+    const max_default_headers = 6;
+    const max_user_headers = max_request_headers - max_default_headers;
+
     for (header_names, 0..) |head, i| {
         const name = this.headerStr(head);
         // Hash it as lowercase
         const hash = hashHeaderName(name);
+
+        // Whether this header will actually be written to the buffer.
+        // Override flags must only be set when the header is kept, otherwise
+        // the default header is suppressed but the user header is dropped,
+        // leaving the header entirely absent from the request.
+        const will_append = header_count < max_user_headers;
 
         // Skip host and connection header
         // we manage those
         switch (hash) {
             hashHeaderConst("Content-Length"),
             => {
+                // Content-Length is always consumed (never written to the buffer).
                 original_content_length = this.headerStr(header_values[i]);
                 continue;
             },
             hashHeaderConst("Connection") => {
-                override_connection_header = true;
-                const connection_value = this.headerStr(header_values[i]);
-                if (std.ascii.eqlIgnoreCase(connection_value, "close")) {
-                    this.flags.disable_keepalive = true;
-                } else if (std.ascii.eqlIgnoreCase(connection_value, "keep-alive")) {
-                    this.flags.disable_keepalive = false;
+                if (will_append) {
+                    override_connection_header = true;
+                    const connection_value = this.headerStr(header_values[i]);
+                    if (std.ascii.eqlIgnoreCase(connection_value, "close")) {
+                        this.flags.disable_keepalive = true;
+                    } else if (std.ascii.eqlIgnoreCase(connection_value, "keep-alive")) {
+                        this.flags.disable_keepalive = false;
+                    }
                 }
             },
             hashHeaderConst("if-modified-since") => {
@@ -661,29 +700,34 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
                 }
             },
             hashHeaderConst(host_header_name) => {
-                override_host_header = true;
+                if (will_append) override_host_header = true;
             },
             hashHeaderConst("Accept") => {
-                override_accept_header = true;
+                if (will_append) override_accept_header = true;
             },
             hashHeaderConst("User-Agent") => {
-                override_user_agent = true;
+                if (will_append) override_user_agent = true;
             },
             hashHeaderConst("Accept-Encoding") => {
-                override_accept_encoding = true;
+                if (will_append) override_accept_encoding = true;
             },
             hashHeaderConst("Upgrade") => {
-                const value = this.headerStr(header_values[i]);
-                if (!std.ascii.eqlIgnoreCase(value, "h2") and !std.ascii.eqlIgnoreCase(value, "h2c")) {
-                    this.flags.upgrade_state = .pending;
+                if (will_append) {
+                    const value = this.headerStr(header_values[i]);
+                    if (!std.ascii.eqlIgnoreCase(value, "h2") and !std.ascii.eqlIgnoreCase(value, "h2c")) {
+                        this.flags.upgrade_state = .pending;
+                    }
                 }
             },
             hashHeaderConst(chunked_encoded_header.name) => {
                 // We don't want to override chunked encoding header if it was set by the user
-                add_transfer_encoding = false;
+                if (will_append) add_transfer_encoding = false;
             },
             else => {},
         }
+
+        // Silently drop excess headers to stay within the fixed-size request header buffer.
+        if (!will_append) continue;
 
         request_headers_buf[header_count] = .{
             .name = name,
@@ -1434,7 +1478,7 @@ pub fn closeAndFail(this: *HTTPClient, err: anyerror, comptime is_ssl: bool, soc
 fn startProxyHandshake(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket, start_payload: []const u8) void {
     log("startProxyHandshake", .{});
     // if we have options we pass them (ca, reject_unauthorized, etc) otherwise use the default
-    const ssl_options = if (this.tls_props != null) this.tls_props.?.* else jsc.API.ServerConfig.SSLConfig.zero;
+    const ssl_options = if (this.tls_props) |tls| tls.get().* else jsc.API.ServerConfig.SSLConfig.zero;
     ProxyTunnel.start(this, is_ssl, socket, ssl_options, start_payload);
 }
 
@@ -2341,19 +2385,20 @@ pub fn handleResponseMetadata(
         response.status_code = 304;
     }
 
+    // According to RFC 7230 section 3.3.3:
+    //   1. Any response to a HEAD request and any response with a 1xx (Informational),
+    //      204 (No Content), or 304 (Not Modified) status code
+    //      [...] cannot contain a message body or trailer section.
+    // Therefore in these cases set content-length to 0, so the response body is always ignored
+    // and is not waited for (which could cause a timeout).
+    // This applies regardless of whether we're using a proxy tunnel or not,
+    // since these status codes NEVER have a body per the HTTP spec.
+    if ((response.status_code >= 100 and response.status_code < 200) or response.status_code == 204 or response.status_code == 304) {
+        this.state.content_length = 0;
+    }
+
     // Don't do this for proxies because those connections will be open for awhile.
     if (!this.flags.proxy_tunneling) {
-
-        // according to RFC 7230 section 3.3.3:
-        //   1. Any response to a HEAD request and any response with a 1xx (Informational),
-        //      204 (No Content), or 304 (Not Modified) status code
-        //      [...] cannot contain a message body or trailer section.
-        // therefore in these cases set content-length to 0, so the response body is always ignored
-        // and is not waited for (which could cause a timeout)
-        if ((response.status_code >= 100 and response.status_code < 200) or response.status_code == 204 or response.status_code == 304) {
-            this.state.content_length = 0;
-        }
-
         //
         // according to RFC 7230 section 6.3:
         //   In order to remain persistent, all messages on a connection need to
@@ -2363,7 +2408,7 @@ pub fn handleResponseMetadata(
         // the keep-alive behavior (keep-alive being the default behavior for HTTP/1.1 and not for HTTP/1.0)
         //
         // but, we must only do this IF the status code allows it to contain a body.
-        else if (this.state.content_length == null and this.state.transfer_encoding != .chunked) {
+        if (this.state.content_length == null and this.state.transfer_encoding != .chunked) {
             this.state.flags.allow_keepalive = false;
         }
     }

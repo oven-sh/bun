@@ -171,6 +171,10 @@ debug_thread_id: if (Environment.allow_assert) std.Thread.Id else void,
 body_value_hive_allocator: webcore.Body.Value.HiveAllocator = undefined,
 
 is_inside_deferred_task_queue: bool = false,
+/// When true, drainMicrotasksWithGlobal is suppressed. Used by SpawnSyncEventLoop
+/// to prevent the isolated event loop from draining the shared JSC microtask queue
+/// (which would execute user JavaScript during spawnSync).
+suppress_microtask_drain: bool = false,
 
 // defaults off. .on("message") will set it to true unless overridden
 // process.channel.unref() will set it to false and mark it overridden
@@ -1684,9 +1688,18 @@ fn _resolve(
                     const buster_name = name: {
                         if (std.fs.path.isAbsolute(normalized_specifier)) {
                             if (std.fs.path.dirname(normalized_specifier)) |dir| {
+                                if (dir.len > specifier_cache_resolver_buf.len) {
+                                    return error.ModuleNotFound;
+                                }
                                 // Normalized without trailing slash
                                 break :name bun.strings.normalizeSlashesOnly(&specifier_cache_resolver_buf, dir, std.fs.path.sep);
                             }
+                        }
+
+                        // If the specifier is too long to join, it can't name a real
+                        // directory — skip the cache bust and fail.
+                        if (source_to_use.len + normalized_specifier.len + 4 >= specifier_cache_resolver_buf.len) {
+                            return error.ModuleNotFound;
                         }
 
                         var parts = [_]string{

@@ -289,7 +289,7 @@ pub noinline fn next(this: *Rm) Yield {
     }
 
     switch (this.state) {
-        .done => return this.bltn().done(0),
+        .done => return this.bltn().done(this.state.done.exit_code),
         .err => return this.bltn().done(this.state.err),
         else => unreachable,
     }
@@ -430,7 +430,7 @@ pub fn onShellRmTaskDone(this: *Rm, task: *ShellRmTask) void {
     if (tasks_done >= this.state.exec.total_tasks and
         exec.getOutputCount(.output_done) >= exec.getOutputCount(.output_count))
     {
-        this.state = .{ .done = .{ .exit_code = if (exec.err) |theerr| theerr.errno else 0 } };
+        this.state = .{ .done = .{ .exit_code = if (exec.err != null) 1 else 0 } };
         this.next().run();
     }
 }

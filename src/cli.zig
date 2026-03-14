@@ -481,6 +481,7 @@ pub const Command = struct {
             compile_autoload_package_json: bool = false,
             compile_executable_path: ?[]const u8 = null,
             windows: options.WindowsOptions = .{},
+            allow_unresolved: ?[]const []const u8 = null,
         };
 
         pub fn create(allocator: std.mem.Allocator, log: *logger.Log, comptime command: Command.Tag) anyerror!Context {

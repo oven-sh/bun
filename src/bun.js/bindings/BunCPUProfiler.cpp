@@ -207,7 +207,7 @@ WTF::String stopCPUProfilerAndGetJSON(JSC::VM& vm)
 #if USE(BUN_JSC_ADDITIONS)
                         auto& fn = vm.computeLineColumnWithSourcemap();
                         if (fn) {
-                            fn(vm, provider, sourceMappedLineColumn);
+                            fn(vm, provider, sourceMappedLineColumn, url);
                         }
 #endif
                     }
@@ -670,7 +670,7 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
 #if USE(BUN_JSC_ADDITIONS)
                             auto& fn = vm.computeLineColumnWithSourcemap();
                             if (fn)
-                                fn(vm, provider, sourceMappedLineColumn);
+                                fn(vm, provider, sourceMappedLineColumn, url);
 #endif
                         }
                         lineNumber = static_cast<int>(sourceMappedLineColumn.line);
@@ -841,7 +841,7 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
 #if USE(BUN_JSC_ADDITIONS)
                             auto& fn = vm.computeLineColumnWithSourcemap();
                             if (fn)
-                                fn(vm, provider, sourceMappedLineColumn);
+                                fn(vm, provider, sourceMappedLineColumn, url);
 #endif
                         }
                         lineNumber = static_cast<int>(sourceMappedLineColumn.line);

@@ -437,6 +437,35 @@ pub const BundleV2 = struct {
             },
         }
 
+        // Remove dynamic import entry points whose import() call sites will
+        // be dead-code-eliminated during tree-shaking. A call site is
+        // considered dead if its containing part can be removed when unused
+        // AND no non-removable part in the same file references any symbol
+        // declared by that part.
+        if (this.dynamic_import_entry_points.count() > 0) {
+            const all_parts = this.graph.ast.items(.parts);
+            const all_import_records = this.graph.ast.items(.import_records);
+            const all_named_exports = this.graph.ast.items(.named_exports);
+
+            // Iterate until stable: removing a target may make other targets'
+            // exported-symbol checks no longer relevant (transitive chains).
+            var removed = true;
+            while (removed) {
+                removed = false;
+                var i: usize = 0;
+                while (i < this.dynamic_import_entry_points.count()) {
+                    const target = this.dynamic_import_entry_points.keys()[i];
+
+                    if (this.dynamicImportHasLiveCaller(target, visitor.reachable.items, all_parts, all_import_records, all_named_exports)) {
+                        i += 1;
+                    } else {
+                        this.dynamic_import_entry_points.swapRemoveAt(i);
+                        removed = true;
+                    }
+                }
+            }
+        }
+
         const DebugLog = bun.Output.Scoped(.ReachableFiles, .visible);
         if (DebugLog.isVisible()) {
             DebugLog.log("Reachable count: {d} / {d}", .{ visitor.reachable.items.len, this.graph.input_files.len });
@@ -469,6 +498,79 @@ pub const BundleV2 = struct {
         }
 
         return visitor.reachable.toOwnedSlice();
+    }
+
+    /// Check if any live (non-removable) code contains an import() to the target.
+    /// A call site is live if its part has side effects (!can_be_removed_if_unused),
+    /// or if a non-removable part references symbols declared by the call site's part.
+    fn dynamicImportHasLiveCaller(
+        this: *BundleV2,
+        target: Index.Int,
+        reachable: []const Index,
+        all_parts: []bun.BabyList(Part),
+        all_import_records: []ImportRecord.List,
+        all_named_exports: []JSAst.NamedExports,
+    ) bool {
+        for (reachable) |reachable_idx| {
+            const source_index = reachable_idx.get();
+            const file_parts = all_parts[source_index].slice();
+
+            // Exports only matter if this file is a user entry point or
+            // is still a dynamic import entry point (not yet removed).
+            var is_entry_or_dynamic_target = this.dynamic_import_entry_points.contains(source_index);
+            if (!is_entry_or_dynamic_target) {
+                for (this.graph.entry_points.items) |ep| {
+                    if (ep.get() == source_index) {
+                        is_entry_or_dynamic_target = true;
+                        break;
+                    }
+                }
+            }
+
+            for (file_parts) |part| {
+                // Find parts containing import() to the target.
+                var has_import_to_target = false;
+                for (part.import_record_indices.slice()) |import_record_index| {
+                    const record = all_import_records[source_index].at(import_record_index);
+                    if (record.kind == .dynamic and
+                        record.source_index.isValid() and
+                        record.source_index.get() == target)
+                    {
+                        has_import_to_target = true;
+                        break;
+                    }
+                }
+                if (!has_import_to_target) continue;
+
+                // The part has side effects — the import() is definitely live.
+                if (!part.can_be_removed_if_unused) return true;
+
+                // The part is removable, but check if it might be kept alive:
+                // 1. Any non-removable part in this file uses its symbols
+                // 2. Its symbols are exported AND the file is a live entry
+                //    point (user-specified or still a dynamic import target)
+                const named_exports = all_named_exports[source_index];
+                for (part.declared_symbols.refs()) |ref| {
+                    // Check if this symbol is exported from a live entry
+                    if (is_entry_or_dynamic_target) {
+                        for (named_exports.values()) |export_data| {
+                            if (export_data.ref.eql(ref)) {
+                                return true;
+                            }
+                        }
+                    }
+
+                    // Check within-file references from non-removable parts
+                    for (file_parts) |other_part| {
+                        if (other_part.can_be_removed_if_unused) continue;
+                        if (other_part.symbol_uses.getIndex(ref)) |_| {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        return false;
     }
 
     fn isDone(this: *BundleV2) bool {

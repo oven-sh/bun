@@ -1767,10 +1767,12 @@ pub const LinkerContext = struct {
             // Include all parts in this file with side effects, or just include
             // everything if tree-shaking is disabled. Note that we still want to
             // perform tree-shaking on the runtime even if tree-shaking is disabled.
+            // Dynamic-import entry points are always tree-shaken — their exports
+            // are preserved through the entry point part's dependencies.
             if (!can_be_removed_if_unused or
                 (!part.force_tree_shaking and
                     !c.options.tree_shaking and
-                    entry_point_kinds[source_index].isEntryPoint()))
+                    entry_point_kinds[source_index].isUserSpecifiedEntryPoint()))
             {
                 c.markPartLiveForTreeShaking(
                     @intCast(part_index),

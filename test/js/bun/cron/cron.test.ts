@@ -146,7 +146,7 @@ describe.skipIf(!isWindows)("Windows schtasks diagnostic", () => {
       "  </Triggers>",
       "  <Principals>",
       "    <Principal>",
-      "      <LogonType>InteractiveToken</LogonType>",
+      "      <LogonType>S4U</LogonType>",
       "      <RunLevel>LeastPrivilege</RunLevel>",
       "    </Principal>",
       "  </Principals>",

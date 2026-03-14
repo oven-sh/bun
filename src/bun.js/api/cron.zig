@@ -1292,7 +1292,7 @@ fn cronToTaskXml(
         \\  </Triggers>
         \\  <Principals>
         \\    <Principal>
-        \\      <LogonType>InteractiveToken</LogonType>
+        \\      <LogonType>S4U</LogonType>
         \\      <RunLevel>LeastPrivilege</RunLevel>
         \\    </Principal>
         \\  </Principals>

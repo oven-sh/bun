@@ -1073,6 +1073,7 @@ pub const SystemErrno = enum(u16) {
                 Win32Error.DIR_NOT_EMPTY => SystemErrno.ENOTEMPTY,
                 Win32Error.WSAENOTSOCK => SystemErrno.ENOTSOCK,
                 Win32Error.NOT_SUPPORTED => SystemErrno.ENOTSUP,
+                Win32Error.WSAEOPNOTSUPP => SystemErrno.ENOTSUP,
                 Win32Error.BROKEN_PIPE => SystemErrno.EPIPE,
                 Win32Error.ACCESS_DENIED => SystemErrno.EPERM,
                 Win32Error.PRIVILEGE_NOT_HELD => SystemErrno.EPERM,

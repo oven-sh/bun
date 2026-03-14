@@ -1290,6 +1290,12 @@ fn cronToTaskXml(
 
     const action_xml = try std.fmt.allocPrint(allocator,
         \\  </Triggers>
+        \\  <Principals>
+        \\    <Principal>
+        \\      <LogonType>InteractiveToken</LogonType>
+        \\      <RunLevel>LeastPrivilege</RunLevel>
+        \\    </Principal>
+        \\  </Principals>
         \\  <Settings>
         \\    <Enabled>true</Enabled>
         \\    <AllowStartOnDemand>true</AllowStartOnDemand>

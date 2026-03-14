@@ -542,6 +542,24 @@ describe.skipIf(!hasLaunchctl)("cron registration (macOS)", () => {
       removeLaunchdJob("test-mac-cal");
     }
   });
+
+  test("registers multiple different jobs", async () => {
+    using dir = tempDir("bun-cron-test", {
+      "a.ts": `export default { scheduled() {} };`,
+      "b.ts": `export default { scheduled() {} };`,
+    });
+    try {
+      await Bun.cron(`${dir}/a.ts`, "0 * * * *", "test-mac-multi-a");
+      await Bun.cron(`${dir}/b.ts`, "30 12 * * 5", "test-mac-multi-b");
+      expect(queryLaunchdJob("test-mac-multi-a")).toBe(true);
+      expect(queryLaunchdJob("test-mac-multi-b")).toBe(true);
+      expect(existsSync(plistPath("test-mac-multi-a"))).toBe(true);
+      expect(existsSync(plistPath("test-mac-multi-b"))).toBe(true);
+    } finally {
+      removeLaunchdJob("test-mac-multi-a");
+      removeLaunchdJob("test-mac-multi-b");
+    }
+  });
 });
 
 describe.skipIf(!hasLaunchctl)("cron removal (macOS)", () => {
@@ -560,6 +578,43 @@ describe.skipIf(!hasLaunchctl)("cron removal (macOS)", () => {
   test("removing non-existent job resolves without error", async () => {
     const result = await Bun.cron.remove("test-mac-nonexistent");
     expect(result).toBeUndefined();
+  });
+
+  test("removes only the targeted job", async () => {
+    using dir = tempDir("bun-cron-test", {
+      "a.ts": `export default { scheduled() {} };`,
+      "b.ts": `export default { scheduled() {} };`,
+    });
+    try {
+      await Bun.cron(`${dir}/a.ts`, "0 * * * *", "test-mac-rm-keep");
+      await Bun.cron(`${dir}/b.ts`, "30 2 * * 1", "test-mac-rm-del");
+
+      await Bun.cron.remove("test-mac-rm-del");
+      expect(queryLaunchdJob("test-mac-rm-keep")).toBe(true);
+      expect(queryLaunchdJob("test-mac-rm-del")).toBe(false);
+      expect(existsSync(plistPath("test-mac-rm-del"))).toBe(false);
+    } finally {
+      removeLaunchdJob("test-mac-rm-keep");
+      removeLaunchdJob("test-mac-rm-del");
+    }
+  });
+
+  test("register after remove works", async () => {
+    using dir = tempDir("bun-cron-test", {
+      "job.ts": `export default { scheduled() {} };`,
+    });
+    try {
+      await Bun.cron(`${dir}/job.ts`, "0 * * * *", "test-mac-reregister");
+      await Bun.cron.remove("test-mac-reregister");
+      expect(queryLaunchdJob("test-mac-reregister")).toBe(false);
+
+      await Bun.cron(`${dir}/job.ts`, "30 6 * * *", "test-mac-reregister");
+      expect(queryLaunchdJob("test-mac-reregister")).toBe(true);
+      const plist = await Bun.file(plistPath("test-mac-reregister")).text();
+      expect(plist).toContain("--cron-period=30 6 * * *");
+    } finally {
+      removeLaunchdJob("test-mac-reregister");
+    }
   });
 });
 

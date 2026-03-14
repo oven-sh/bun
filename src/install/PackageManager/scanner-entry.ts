@@ -31,19 +31,9 @@ function sendAndExit(message: IPCMessage): never {
 
 // Read packages JSON from fd 4 (reads until EOF when parent closes the pipe)
 let packages: Bun.Security.Package[];
-let packagesJson: string = "";
 
 try {
-  packagesJson = await Bun.file(IPC_INPUT_FD).text();
-} catch (error) {
-  sendAndExit({
-    type: "error",
-    code: "SCAN_FAILED",
-    message: `Failed to read packages from FD ${IPC_INPUT_FD}: ${error instanceof Error ? error.message : String(error)}`,
-  });
-}
-
-try {
+  const packagesJson = await Bun.file(IPC_INPUT_FD).text();
   packages = JSON.parse(packagesJson);
   if (!Array.isArray(packages)) {
     throw new Error("Expected packages to be an array");
@@ -52,7 +42,7 @@ try {
   sendAndExit({
     type: "error",
     code: "SCAN_FAILED",
-    message: `Failed to parse packages JSON: ${error instanceof Error ? error.message : String(error)}`,
+    message: `Failed to read or parse packages: ${error instanceof Error ? error.message : String(error)}`,
   });
 }
 

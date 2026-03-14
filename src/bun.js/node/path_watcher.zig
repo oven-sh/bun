@@ -14,9 +14,10 @@ pub const PathWatcherManager = struct {
     deinit_on_last_watcher: bool = false,
     pending_tasks: u32 = 0,
     deinit_on_last_task: bool = false,
-    /// Set when the watcher thread is exiting and will handle its own
-    /// Watcher cleanup in threadMain.  deinit() checks this to skip
-    /// main_watcher.deinit() and avoid a double-free.
+    deinit_started: bool = false,
+    /// Set when the watcher thread has exited the watch loop via an error.
+    /// deinit() uses this to decide whether to signal the thread to stop
+    /// (normal path) or destroy the Watcher directly (error path).
     main_watcher_exited: bool = false,
     mutex: Mutex,
     const PathInfo = struct {
@@ -338,33 +339,14 @@ pub const PathWatcherManager = struct {
             default_manager = null;
         }
 
-        // The watcher thread (threadMain) calls onError then continues to
-        // clean up its own Watcher (close fds, free watchlist, destroy struct).
-        // We must NOT call this.deinit() here — it would call
-        // main_watcher.deinit(false) which destroys the Watcher while
-        // threadMain still needs it (UAF / double-free).
-        //
-        // Instead, mark that the watcher thread owns its own destruction and
-        // defer manager cleanup to the last watcher/task unregistration.
+        // Tell threadMain not to destroy the Watcher when it exits. In-flight
+        // DirectoryRegisterTasks still access manager.main_watcher (addFile,
+        // addDirectory, remove), so the manager's deferred deinit must handle
+        // Watcher cleanup instead.
+        this.main_watcher.skip_thread_destroy = true;
         this.main_watcher_exited = true;
 
-        {
-            this.mutex.lock();
-            defer this.mutex.unlock();
-
-            if (this.watcher_count > 0) {
-                this.deinit_on_last_watcher = true;
-                return;
-            }
-
-            if (this.pending_tasks > 0) {
-                this.deinit_on_last_task = true;
-                return;
-            }
-        }
-
-        // No watchers and no pending tasks — safe to clean up manager now.
-        // main_watcher_exited is set so deinit() will skip main_watcher.deinit().
+        // deinit manager when all watchers are closed
         this.deinit();
     }
 
@@ -691,6 +673,12 @@ pub const PathWatcherManager = struct {
         var should_deinit = false;
         defer if (should_deinit) this.deinit();
 
+        // Save main_watcher to a local before releasing the mutex. A racing
+        // deinit() could free `this` (the PathWatcherManager) between the
+        // mutex.unlock() and the deferred hash removal, making `this.main_watcher`
+        // a UAF. The local keeps the pointer safe.
+        const main_watcher = this.main_watcher;
+
         // Collect hashes whose refs dropped to zero. We must call
         // main_watcher.remove() for these AFTER releasing manager.mutex,
         // because the watcher thread holds main_watcher.mutex → manager.mutex
@@ -699,7 +687,7 @@ pub const PathWatcherManager = struct {
         var hashes_to_remove = bun.BabyList(Watcher.HashType){};
         defer {
             for (hashes_to_remove.slice()) |hash| {
-                this.main_watcher.remove(hash);
+                main_watcher.remove(hash);
             }
             hashes_to_remove.deinit(bun.default_allocator);
         }
@@ -769,6 +757,10 @@ pub const PathWatcherManager = struct {
             this.mutex.lock();
             defer this.mutex.unlock();
 
+            // Guard against double-deinit: onError's deinit and
+            // unregisterWatcher's deferred deinit can race.
+            if (this.deinit_started) return;
+
             if (this.watcher_count > 0) {
                 // wait last watcher to close
                 this.deinit_on_last_watcher = true;
@@ -779,15 +771,27 @@ pub const PathWatcherManager = struct {
                 this.deinit_on_last_task = true;
                 return;
             }
+
+            this.deinit_started = true;
         }
 
         if (this.main_watcher_exited) {
-            // The watcher thread already exited the watch loop and will handle
-            // its own Watcher cleanup in threadMain.  Skip main_watcher.deinit()
-            // to avoid double-free.
+            // Error path: the watcher thread exited via onError. It set
+            // skip_thread_destroy so threadMain skipped the Watcher cleanup.
+            // Check if the thread has fully exited before we destroy it.
+            if (this.main_watcher.watchloop_handle == null) {
+                // Thread fully exited (deferred path). We destroy the Watcher.
+                this.main_watcher.destroyFromOwner();
+            } else {
+                // Synchronous path: still inside threadMain's call stack
+                // (onError → deinit). No tasks remain, so clear the flag and
+                // let threadMain handle its own cleanup when onError returns.
+                this.main_watcher.skip_thread_destroy = false;
+            }
         } else {
+            // Normal shutdown: signal the watcher thread to stop.
             // deinit(false) sets running=false under main_watcher.mutex.
-            // The watcher thread checks running inside processINotifyEventBatch /
+            // The thread checks running inside processINotifyEventBatch /
             // processKEvent under the same mutex, so after this returns the thread
             // won't START a new onFileUpdate call.
             this.main_watcher.deinit(false);

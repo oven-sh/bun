@@ -708,8 +708,7 @@ install_common_software() {
 			git \
 			unzip \
 			wget \
-			libc6-dbg \
-			cron
+			libc6-dbg
 		;;
 	dnf)
 		# https://packages.fedoraproject.org
@@ -722,8 +721,7 @@ install_common_software() {
 			git \
 			unzip \
 			wget \
-			dnf-plugins-core \
-			cronie
+			dnf-plugins-core
 		;;
 	apk)
 		# https://pkgs.alpinelinux.org/packages
@@ -736,7 +734,6 @@ install_common_software() {
 			git \
 			unzip \
 			wget \
-			busybox-suid \
 		;;
 	pkg)
 		# https://www.freshports.org

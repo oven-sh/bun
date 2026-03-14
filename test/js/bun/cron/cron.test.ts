@@ -6,6 +6,7 @@ const crontabPath = Bun.which("crontab");
 const hasCrontab = !!crontabPath && isLinux;
 const hasSchtasks = isWindows;
 const hasLaunchctl = isMacOS;
+const hasAnyCronBackend = hasCrontab || hasLaunchctl || hasSchtasks;
 
 function readCrontab(): string {
   const result = Bun.spawnSync({
@@ -101,7 +102,7 @@ describe("Bun.cron API", () => {
 // Cross-platform API consistency
 // ==========================================================================
 
-describe("cross-platform API consistency", () => {
+describe.skipIf(!hasAnyCronBackend)("cross-platform API consistency", () => {
   test("@daily nickname registers successfully", async () => {
     using dir = tempDir("bun-cron-test", {
       "job.ts": `export default { scheduled() {} };`,

@@ -5,7 +5,20 @@ import { existsSync, unlinkSync, writeFileSync } from "node:fs";
 const crontabPath = Bun.which("crontab");
 const hasCrontab = !!crontabPath && isLinux;
 const hasSchtasks = isWindows;
-const hasLaunchctl = isMacOS;
+const hasLaunchctl =
+  isMacOS &&
+  (() => {
+    try {
+      const r = Bun.spawnSync({
+        cmd: ["launchctl", "print", "gui/" + String(process.getuid())],
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      return r.exitCode === 0;
+    } catch {
+      return false;
+    }
+  })();
 const hasAnyCronBackend = hasCrontab || hasLaunchctl || hasSchtasks;
 
 function readCrontab(): string {

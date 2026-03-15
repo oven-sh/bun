@@ -239,6 +239,7 @@ pub const test_only_params = [_]ParamType{
     clap.parseParam("--dots                           Enable dots reporter. Shorthand for --reporter=dots.") catch unreachable,
     clap.parseParam("--only-failures                  Only display test failures, hiding passing tests.") catch unreachable,
     clap.parseParam("--max-concurrency <NUMBER>        Maximum number of concurrent tests to execute at once. Default is 20.") catch unreachable,
+    clap.parseParam("--path-ignore-patterns <STR>...   Glob patterns for test file paths to ignore.") catch unreachable,
 };
 pub const test_params = test_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
 
@@ -543,6 +544,11 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
 
         if (args.option("--coverage-dir")) |dir| {
             ctx.test_options.coverage.reports_directory = dir;
+        }
+
+        if (args.options("--path-ignore-patterns").len > 0) {
+            ctx.test_options.path_ignore_patterns = args.options("--path-ignore-patterns");
+            ctx.test_options.path_ignore_patterns_from_cli = true;
         }
 
         if (args.option("--bail")) |bail| {

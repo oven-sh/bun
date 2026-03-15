@@ -790,6 +790,7 @@ pub const SecurityScanSubprocess = struct {
         };
 
         var spawned = try (try bun.spawn.spawnProcess(&spawn_options, @ptrCast(argv), @ptrCast(std.os.environ.ptr))).unwrap();
+        defer spawned.extra_pipes.deinit();
 
         ipc_output_fds[1].close();
 
@@ -815,21 +816,25 @@ pub const SecurityScanSubprocess = struct {
             ipc_output_fds[1].close();
             return bun.errnoToZigErr(e);
         }
-        const child_read_fd = bun.FD.fromUV(json_fds[0]);
-        const parent_write_fd = bun.FD.fromUV(json_fds[1]);
+        // Track ownership with optionals: null means the fd has been transferred
+        // or closed, so the errdefer skips it. Prevents double-close on error paths
+        // after pipe.open() takes ownership or after the explicit closes below.
+        var child_read_fd: ?bun.FileDescriptor = bun.FD.fromUV(json_fds[0]);
+        var parent_write_fd: ?bun.FileDescriptor = bun.FD.fromUV(json_fds[1]);
         errdefer {
-            child_read_fd.close();
-            parent_write_fd.close();
+            if (child_read_fd) |fd| fd.close();
+            if (parent_write_fd) |fd| fd.close();
         }
 
         const pipe = bun.new(uv.Pipe, std.mem.zeroes(uv.Pipe));
         errdefer pipe.closeAndDestroy();
         try pipe.init(this.loop(), false).unwrap();
-        try pipe.open(parent_write_fd).unwrap();
+        try pipe.open(parent_write_fd.?).unwrap();
+        parent_write_fd = null; // pipe owns it now
 
         const extra_fds = [_]bun.spawn.SpawnOptions.Stdio{
             .{ .pipe = ipc_output_fds[1] }, // fd 3: child inherits write end
-            .{ .pipe = child_read_fd }, // fd 4: child inherits non-overlapped read end
+            .{ .pipe = child_read_fd.? }, // fd 4: child inherits non-overlapped read end
         };
 
         const spawn_options = bun.spawn.SpawnOptions{
@@ -844,9 +849,11 @@ pub const SecurityScanSubprocess = struct {
         };
 
         var spawned = try (try bun.spawn.spawnProcess(&spawn_options, @ptrCast(argv), @ptrCast(std.os.environ.ptr))).unwrap();
+        defer spawned.extra_pipes.deinit();
 
         ipc_output_fds[1].close();
-        child_read_fd.close();
+        child_read_fd.?.close();
+        child_read_fd = null;
 
         this.ipc_reader.flags.nonblocking = true;
 
@@ -861,6 +868,14 @@ pub const SecurityScanSubprocess = struct {
         ipc_read_fd: bun.FileDescriptor,
         json_stdio_result: jsc.Subprocess.StdioResult,
     ) !void {
+        // Allocate the blob copy before registering any event loop callbacks. If
+        // this fails, nothing is registered yet and the caller's defer can safely
+        // destroy the struct.
+        const json_data_copy = try this.manager.allocator.dupe(u8, this.json_data);
+        const json_source = jsc.Subprocess.Source{
+            .blob = jsc.WebCore.Blob.Any.fromOwnedSlice(this.manager.allocator, json_data_copy),
+        };
+
         // 2 = ipc_reader (fd 3) + json_writer (fd 4). Both must complete before
         // isDone() returns true, otherwise we risk freeing this struct while
         // StaticPipeWriter still holds a pointer to it (child crash case).
@@ -870,11 +885,6 @@ pub const SecurityScanSubprocess = struct {
         var process = spawned.toProcess(&this.manager.event_loop, false);
         this.process = process;
         process.setExitHandler(this);
-
-        const json_data_copy = try this.manager.allocator.dupe(u8, this.json_data);
-        const json_source = jsc.Subprocess.Source{
-            .blob = jsc.WebCore.Blob.Any.fromOwnedSlice(this.manager.allocator, json_data_copy),
-        };
 
         this.json_writer = StaticPipeWriter.create(&this.manager.event_loop, this, json_stdio_result, json_source);
         errdefer if (this.json_writer) |writer| {

@@ -69,13 +69,20 @@ pub const FileCopier = struct {
         };
         defer dest_dir.close();
 
-        var copy_file_state: bun.CopyFileState = .{};
+        if (comptime Environment.isWindows) {
+            // On Windows, CopyFileW and CreateDirectoryExW require absolute paths.
+            // The dest_subpath is relative to CWD, so we must resolve it to an
+            // absolute path with the NT prefix to handle long paths correctly.
+            const cwd_buf = bun.w_path_buffer_pool.get();
+            defer bun.w_path_buffer_pool.put(cwd_buf);
+            const dest_cwd = FD.cwd().getFdPathW(cwd_buf) catch {
+                return .{ .err = bun.sys.Error.fromCode(.ACCES, .copyfile) };
+            };
 
-        while (switch (this.walker.next()) {
-            .result => |res| res,
-            .err => |err| return .initErr(err),
-        }) |entry| {
-            if (comptime Environment.isWindows) {
+            while (switch (this.walker.next()) {
+                .result => |res| res,
+                .err => |err| return .initErr(err),
+            }) |entry| {
                 switch (entry.kind) {
                     .directory, .file => {},
                     else => continue,
@@ -91,17 +98,30 @@ pub const FileCopier = struct {
 
                 this.dest_subpath.append(entry.path);
 
+                const dest_abs_buf = bun.w_path_buffer_pool.get();
+                defer bun.w_path_buffer_pool.put(dest_abs_buf);
+                const dest_abs_buf2 = bun.w_path_buffer_pool.get();
+                defer bun.w_path_buffer_pool.put(dest_abs_buf2);
+                const dest_abs = bun.strings.addNTPathPrefixIfNeeded(
+                    dest_abs_buf2,
+                    bun.path.joinStringBufWZ(
+                        dest_abs_buf,
+                        &[_][]const u16{ dest_cwd, this.dest_subpath.slice() },
+                        .windows,
+                    ),
+                );
+
                 switch (entry.kind) {
                     .directory => {
-                        if (bun.windows.CreateDirectoryExW(this.src_path.sliceZ(), this.dest_subpath.sliceZ(), null) == 0) {
+                        if (bun.windows.CreateDirectoryExW(this.src_path.sliceZ(), dest_abs, null) == 0) {
                             bun.MakePath.makePath(u16, dest_dir, entry.path) catch {};
                         }
                     },
                     .file => {
-                        bun.copyFile(this.src_path.sliceZ(), this.dest_subpath.sliceZ()).unwrap() catch {
+                        bun.copyFile(this.src_path.sliceZ(), dest_abs).unwrap() catch {
                             if (bun.Dirname.dirname(u16, entry.path)) |entry_dirname| {
                                 bun.MakePath.makePath(u16, dest_dir, entry_dirname) catch {};
-                                switch (bun.copyFile(this.src_path.sliceZ(), this.dest_subpath.sliceZ())) {
+                                switch (bun.copyFile(this.src_path.sliceZ(), dest_abs)) {
                                     .result => {},
                                     .err => |err| {
                                         return .initErr(err);
@@ -112,7 +132,14 @@ pub const FileCopier = struct {
                     },
                     else => unreachable,
                 }
-            } else {
+            }
+        } else {
+            var copy_file_state: bun.CopyFileState = .{};
+
+            while (switch (this.walker.next()) {
+                .result => |res| res,
+                .err => |err| return .initErr(err),
+            }) |entry| {
                 if (entry.kind != .file) {
                     continue;
                 }

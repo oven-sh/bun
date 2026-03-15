@@ -66,7 +66,6 @@ pub const CronRegisterJob = struct {
     exit_status: ?bun.spawn.Status = null,
     err_msg: ?[]const u8 = null,
     tmp_path: ?[:0]const u8 = null,
-    tried_system_fallback: bool = false,
 
     const State = enum { reading_crontab, installing_crontab, writing_plist, booting_out, bootstrapping, done, failed };
 
@@ -100,14 +99,20 @@ pub const CronRegisterJob = struct {
                         std.mem.trim(u8, this.stderr_reader.finalBuffer().items, &std.ascii.whitespace)
                     else
                         "";
-                    // On Windows, if schtasks fails with SID resolution error,
-                    // retry with /ru SYSTEM as a fallback for headless servers.
+                    // On Windows, detect the SID resolution error and provide
+                    // a clear message instead of the raw schtasks output.
                     if (comptime bun.Environment.isWindows) {
-                        if (!this.tried_system_fallback and this.state == .installing_crontab and
+                        if (this.state == .installing_crontab and
                             std.mem.indexOf(u8, stderr_output, "No mapping between account names") != null)
                         {
-                            this.tried_system_fallback = true;
-                            this.retryWithSystem();
+                            this.setErr(
+                                "Failed to register cron job: your Windows account's Security Identifier (SID) could not be resolved. " ++
+                                    "This typically happens on headless servers or CI where the process runs under a service account. " ++
+                                    "To fix this, either run Bun as a regular user account, or create the scheduled task manually with: " ++
+                                    "schtasks /create /xml <file> /tn <name> /ru SYSTEM /f",
+                                .{},
+                            );
+                            this.finish();
                             return;
                         }
                     }
@@ -539,27 +544,6 @@ pub const CronRegisterJob = struct {
         };
 
         var argv = [_:null]?[*:0]const u8{ "schtasks", "/create", "/xml", xml_path.ptr, "/tn", task_name.ptr, "/np", "/f", null };
-        this.spawnCmd(&argv, .ignore, .ignore);
-    }
-
-    /// Retry schtasks /create with /ru SYSTEM when SID resolution fails.
-    /// This handles headless servers and CI where the service account's
-    /// username can't be resolved to a SID. SYSTEM (S-1-5-18) always resolves.
-    fn retryWithSystem(this: *CronRegisterJob) void {
-        if (comptime !bun.Environment.isWindows) return;
-        const task_name = allocPrintZ(bun.default_allocator, "bun-cron-{s}", .{this.title}) catch {
-            this.setErr("Out of memory", .{});
-            this.finish();
-            return;
-        };
-        defer bun.default_allocator.free(task_name);
-        const xml_path = this.tmp_path orelse {
-            this.setErr("No temp XML path for retry", .{});
-            this.finish();
-            return;
-        };
-        this.err_msg = null;
-        var argv = [_:null]?[*:0]const u8{ "schtasks", "/create", "/xml", xml_path.ptr, "/tn", task_name.ptr, "/ru", "SYSTEM", "/f", null };
         this.spawnCmd(&argv, .ignore, .ignore);
     }
 };

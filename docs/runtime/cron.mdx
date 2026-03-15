@@ -265,7 +265,7 @@ Tasks are registered using [`S4U` (Service-for-User)](https://learn.microsoft.co
 
 TCP/IP networking (`fetch()`, HTTP, WebSocket, database connections) works normally. The only restriction is that S4U tasks cannot access [Windows-authenticated network resources](https://learn.microsoft.com/en-us/windows/win32/taskschd/security-contexts-for-running-tasks) (SMB file shares, mapped drives, Kerberos/NTLM services).
 
-On headless servers and CI environments where the current user's Security Identifier (SID) cannot be resolved — such as service accounts created by [NSSM](https://nssm.cc/) or similar tools — Bun automatically falls back to running the task as `SYSTEM`. This ensures `Bun.cron()` works on any Windows machine, but the task runs with elevated privileges and a different user profile (`%SYSTEMROOT%\system32\config\systemprofile` instead of `%USERPROFILE%`).
+On headless servers and CI environments where the current user's [Security Identifier (SID)](https://learn.microsoft.com/en-us/windows/security/identity-protection/access-control/security-identifiers) cannot be resolved — such as service accounts created by [NSSM](https://nssm.cc/) or similar tools — `Bun.cron()` will fail with an error explaining the issue. To work around this, either run Bun as a regular user account, or create the scheduled task manually with `schtasks /create /xml <file> /tn <name> /ru SYSTEM /f`.
 
 #### Trigger limit
 

@@ -1,0 +1,39 @@
+{
+  "name": "depends-on-electron",
+  "versions": {
+    "1.0.0": {
+      "name": "depends-on-electron",
+      "version": "1.0.0",
+      "dependencies": {
+        "electron": "1.0.0"
+      },
+      "_id": "depends-on-electron@1.0.0",
+      "dist": {
+        "integrity": "sha512-uBysbqq67YQO4YAk2sar4vM+pujNw0ak8CcggwpG30kdC7RbJksmoqidxNyzvKYDq3unaWmLAnqDserikgN/Yw==",
+        "shasum": "3ee52bb649202dbbb880efcbd7c0df8793a2dac7",
+        "tarball": "http://localhost:4873/depends-on-electron/-/depends-on-electron-1.0.0.tgz"
+      },
+      "contributors": []
+    }
+  },
+  "time": {
+    "modified": "2024-02-15T01:16:09.439Z",
+    "created": "2024-02-15T01:16:09.439Z",
+    "1.0.0": "2024-02-15T01:16:09.439Z"
+  },
+  "users": {},
+  "dist-tags": {
+    "latest": "1.0.0"
+  },
+  "_uplinks": {},
+  "_distfiles": {},
+  "_attachments": {
+    "depends-on-electron-1.0.0.tgz": {
+      "shasum": "3ee52bb649202dbbb880efcbd7c0df8793a2dac7",
+      "version": "1.0.0"
+    }
+  },
+  "_rev": "",
+  "_id": "depends-on-electron",
+  "readme": "ERROR: No README data found!"
+}

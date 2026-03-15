@@ -357,22 +357,112 @@ describe.skipIf(!hasSchtasks)("Windows XML code paths", () => {
   });
 });
 
-// Minute steps that don't divide 60 (e.g. */7, */8, */9) cannot be represented
-// in Windows Task Scheduler without exceeding the 48-trigger limit.
-// On non-Windows platforms these work fine via crontab/launchd.
+// Windows Task Scheduler has a limit of 48 CalendarTrigger elements per task.
+// Complex cron expressions that expand to more than 48 (hour, minute) pairs fail
+// on Windows but work fine on Linux (crontab) and macOS (launchd CalendarInterval).
 // https://learn.microsoft.com/en-us/windows/win32/taskschd/task-scheduler-start-page
-describe.skipIf(!hasAnyCronBackend)("non-divisor minute steps", () => {
-  const nonDivisorSteps = ["*/7", "*/8", "*/9", "*/11", "*/13"];
-  for (const step of nonDivisorSteps) {
-    const expr = `${step} * * * *`;
-    (isWindows ? test.failing : test)(`${expr} registers on this platform`, async () => {
+//
+// These tests verify:
+//   - On Windows: Bun.cron() rejects these patterns with an error about triggers
+//   - On non-Windows: Bun.cron() registers them successfully
+describe.skipIf(!hasAnyCronBackend)("Windows trigger-limit expressions", () => {
+  // Category 1: Minute steps that don't evenly divide 60.
+  // e.g. */7 = 9 minute values × 24 hours = 216 triggers (limit: 48)
+  // Divisors of 60 (1,2,3,4,5,6,10,12,15,20,30) use Repetition and are fine.
+  const nonDivisorSteps = [
+    { expr: "*/7 * * * *", title: "step-7min", triggers: "9×24=216" },
+    { expr: "*/8 * * * *", title: "step-8min", triggers: "8×24=192" },
+    { expr: "*/9 * * * *", title: "step-9min", triggers: "7×24=168" },
+    { expr: "*/11 * * * *", title: "step-11min", triggers: "6×24=144" },
+    { expr: "*/13 * * * *", title: "step-13min", triggers: "5×24=120" },
+  ];
+
+  for (const { expr, title, triggers } of nonDivisorSteps) {
+    if (isWindows) {
+      test(`${expr} throws on Windows (${triggers} triggers > 48)`, () => {
+        using dir = tempDir("bun-cron-test", {
+          "job.ts": `export default { scheduled() {} };`,
+        });
+        expect(() => Bun.cron(`${dir}/job.ts`, expr, `test-win-${title}`)).toThrow(/too many triggers/i);
+      });
+    } else {
+      test(`${expr} succeeds on ${isMacOS ? "macOS" : "Linux"}`, async () => {
+        using dir = tempDir("bun-cron-test", {
+          "job.ts": `export default { scheduled() {} };`,
+        });
+        const t = `test-win-${title}`;
+        try {
+          const result = await Bun.cron(`${dir}/job.ts`, expr, t);
+          expect(result).toBeUndefined();
+        } finally {
+          await Bun.cron.remove(t);
+        }
+      });
+    }
+  }
+
+  // Category 2: Frequent intervals with restricted fields prevent Repetition.
+  // */15 with all hours and wildcard days uses Repetition (1 trigger),
+  // but adding a month or weekday restriction forces per-pair expansion.
+  const restrictedFieldExprs = [
+    {
+      expr: "*/15 * * 6 *",
+      title: "step15-month",
+      why: "4 minutes × 24 hours = 96 triggers (month restriction prevents Repetition)",
+    },
+    {
+      expr: "0,10,20,30,40,50 1-9 * * *",
+      title: "6min-9hr",
+      why: "6 minutes × 9 hours = 54 triggers",
+    },
+  ];
+
+  for (const { expr, title, why } of restrictedFieldExprs) {
+    if (isWindows) {
+      test(`${expr} throws on Windows (${why})`, () => {
+        using dir = tempDir("bun-cron-test", {
+          "job.ts": `export default { scheduled() {} };`,
+        });
+        expect(() => Bun.cron(`${dir}/job.ts`, expr, `test-win-${title}`)).toThrow(/too many triggers/i);
+      });
+    } else {
+      test(`${expr} succeeds on ${isMacOS ? "macOS" : "Linux"}`, async () => {
+        using dir = tempDir("bun-cron-test", {
+          "job.ts": `export default { scheduled() {} };`,
+        });
+        const t = `test-win-${title}`;
+        try {
+          const result = await Bun.cron(`${dir}/job.ts`, expr, t);
+          expect(result).toBeUndefined();
+        } finally {
+          await Bun.cron.remove(t);
+        }
+      });
+    }
+  }
+
+  // Category 3: POSIX OR-split (both day-of-month and day-of-week non-wild)
+  // doubles the trigger count per (hour, minute) pair.
+  if (isWindows) {
+    test("0,30 * 15 * 5 throws on Windows (2×24×2 = 96 triggers from OR-split)", () => {
       using dir = tempDir("bun-cron-test", {
         "job.ts": `export default { scheduled() {} };`,
       });
-      const title = `test-step-every${step.slice(2)}min`;
-      const result = await Bun.cron(`${dir}/job.ts`, expr, title);
-      expect(result).toBeUndefined();
-      await Bun.cron.remove(title);
+      expect(() => Bun.cron(`${dir}/job.ts`, "0,30 * 15 * 5", "test-win-or-split")).toThrow(/too many triggers/i);
+    });
+  } else {
+    test(`0,30 * 15 * 5 succeeds on ${isMacOS ? "macOS" : "Linux"} (OR semantics)`, async () => {
+      using dir = tempDir("bun-cron-test", {
+        "job.ts": `export default { scheduled() {} };`,
+      });
+      const t = "test-win-or-split";
+      try {
+        const result = await Bun.cron(`${dir}/job.ts`, "0,30 * 15 * 5", t);
+        expect(result).toBeUndefined();
+      } finally {
+        if (hasCrontab) removeCrontabEntry(t);
+        if (hasLaunchctl) removeLaunchdJob(t);
+      }
     });
   }
 });

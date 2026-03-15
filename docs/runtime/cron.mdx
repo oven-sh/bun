@@ -259,15 +259,61 @@ Bun uses [Windows Task Scheduler](https://learn.microsoft.com/en-us/windows/win3
 
 Most cron expressions are fully supported, including `@daily`, `@weekly`, `@monthly`, `@yearly`, ranges (`1-5`), lists (`1,15`), named days/months, and day-of-month patterns.
 
-Tasks are registered using [`S4U` (Service-for-User)](https://learn.microsoft.com/en-us/windows/win32/taskschd/taskschedulerschema-logontype-simpletype) logon type, which runs jobs as the registering user even when not logged in — matching Linux `crontab` behavior. No password is stored. TCP/IP networking (`fetch()`, HTTP, WebSocket, database connections) works normally. The only limitation is that the task cannot access Windows-authenticated network resources (SMB file shares, mapped drives, Kerberos/NTLM services).
+#### User context
 
-:::note
-**Limitation:** Windows Task Scheduler has a limit of [48 triggers per task](https://learn.microsoft.com/en-us/windows/win32/taskschd/task-scheduler-start-page). Simple expressions (e.g. `*/5 * * * *`, `0 9 * * MON-FRI`) use efficient repetition patterns and work fine. However, complex combinations that expand to many distinct fire times may exceed this limit:
+Tasks are registered using [`S4U` (Service-for-User)](https://learn.microsoft.com/en-us/windows/win32/taskschd/taskschedulerschema-logontype-simpletype) logon type, which runs jobs as the registering user even when not logged in — matching Linux `crontab` behavior. No password is stored.
 
-- Minute steps that don't evenly divide 60 (e.g. `*/7`, `*/8`, `*/9`) with all hours active
-- Expressions combining frequent intervals with restricted days, like `*/15 * * * MON-FRI` (4 minutes x 24 hours = 96 triggers)
+TCP/IP networking (`fetch()`, HTTP, WebSocket, database connections) works normally. The only restriction is that S4U tasks cannot access [Windows-authenticated network resources](https://learn.microsoft.com/en-us/windows/win32/taskschd/security-contexts-for-running-tasks) (SMB file shares, mapped drives, Kerberos/NTLM services).
 
-When a pattern exceeds the limit, `Bun.cron()` will reject it with an error explaining the trigger count.
+On headless servers and CI environments where the current user's Security Identifier (SID) cannot be resolved — such as service accounts created by [NSSM](https://nssm.cc/) or similar tools — Bun automatically falls back to running the task as `SYSTEM`. This ensures `Bun.cron()` works on any Windows machine, but the task runs with elevated privileges and a different user profile (`%SYSTEMROOT%\system32\config\systemprofile` instead of `%USERPROFILE%`).
+
+#### Trigger limit
+
+:::caution
+Windows Task Scheduler enforces a limit of [48 triggers per task](https://learn.microsoft.com/en-us/windows/win32/taskschd/taskschedulerschema-triggers-tasktype-element) (the `CalendarTrigger` element has [`maxOccurs="48"`](https://learn.microsoft.com/en-us/windows/win32/taskschd/taskschedulerschema-calendartrigger-triggergroup-element)). Some cron expressions that work on Linux and macOS exceed this limit on Windows.
+
+**Expressions that work on all platforms:**
+
+| Pattern | Trigger strategy | Count |
+| --- | --- | --- |
+| `*/5 * * * *` | Single trigger with [`Repetition`](https://learn.microsoft.com/en-us/windows/win32/taskschd/taskschedulerschema-repetition-triggerbasetype-element) (PT5M) | 1 |
+| `*/15 * * * *` | Single trigger with Repetition (PT15M) | 1 |
+| `0 9 * * MON-FRI` | One `CalendarTrigger` per weekday | 5 |
+| `0,30 9-17 * * *` | 2 minutes × 9 hours | 18 |
+| `@daily`, `@weekly`, `@monthly`, `@yearly` | Single trigger | 1 |
+
+**Expressions that fail on Windows** (but work on Linux and macOS):
+
+| Pattern | Why | Trigger count |
+| --- | --- | --- |
+| `*/7 * * * *` | 9 minute values × 24 hours | 216 |
+| `*/8 * * * *` | 8 minute values × 24 hours | 192 |
+| `*/9 * * * *` | 7 minute values × 24 hours | 168 |
+| `*/11 * * * *` | 6 minute values × 24 hours | 144 |
+| `*/13 * * * *` | 5 minute values × 24 hours | 120 |
+| `*/15 * * 6 *` | Month restriction prevents Repetition: 4 × 24 | 96 |
+| `0,30 * 15 * FRI` | OR-split doubles triggers: 2 × 24 × 2 | 96 |
+
+The key factor is whether the expression can use a [`Repetition`](https://learn.microsoft.com/en-us/windows/win32/taskschd/taskschedulerschema-repetition-triggerbasetype-element) interval (single trigger) or must expand to individual `CalendarTrigger` elements. Minute steps that **evenly divide 60** (`*/1`, `*/2`, `*/3`, `*/4`, `*/5`, `*/6`, `*/10`, `*/12`, `*/15`, `*/20`, `*/30`) use Repetition and work regardless of other fields. Steps that don't divide 60 (`*/7`, `*/8`, `*/9`, `*/11`, `*/13`, etc.) must be expanded, and with 24 hours active, the count quickly exceeds 48.
+
+When a pattern exceeds the limit, `Bun.cron()` rejects it with an error message. To work around it, simplify the expression or restrict the hour range:
+
+```ts
+// ❌ Fails on Windows: */7 with all hours = 216 triggers
+await Bun.cron("./job.ts", "*/7 * * * *", "my-job");
+
+// ✅ Works: restrict to specific hours (9 values × 5 hours = 45 triggers)
+await Bun.cron("./job.ts", "*/7 9-13 * * *", "my-job");
+
+// ✅ Works: use a divisor of 60 instead (Repetition, 1 trigger)
+await Bun.cron("./job.ts", "*/5 * * * *", "my-job");
+```
+:::
+
+#### Windows containers
+
+:::caution
+`Bun.cron()` is not supported in Windows Docker containers. The Task Scheduler service is not running in `servercore` or `nanoserver` images. Use an in-process scheduler for containerized workloads.
 :::
 
 **Viewing registered jobs:**

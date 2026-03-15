@@ -2126,10 +2126,13 @@ pub const default_trusted_dependencies = brk: {
 pub fn hasTrustedDependency(this: *const Lockfile, name: []const u8, resolution: *const Resolution) bool {
     if (this.trusted_dependencies) |trusted_dependencies| {
         const hash = @as(u32, @truncate(String.Builder.stringHash(name)));
-        return trusted_dependencies.contains(hash);
+        if (trusted_dependencies.contains(hash)) return true;
     }
 
-    // Only allow default trusted dependencies for npm packages
+    // Also allow default trusted dependencies for npm packages.
+    // User-specified trustedDependencies are additive to the defaults,
+    // so that adding trustedDependencies doesn't inadvertently block
+    // transitive dependencies that are in the default list.
     return resolution.tag == .npm and default_trusted_dependencies.has(name);
 }
 

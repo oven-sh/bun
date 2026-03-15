@@ -1613,7 +1613,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
     });
 
-    test("default trusted dependencies should not be used of trustedDependencies is populated", async () => {
+    test("default trusted dependencies should also apply when trustedDependencies is populated", async () => {
       const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
       await writeFile(
@@ -1626,6 +1626,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
             // fake electron package because it's in the default trustedDependencies list
             "electron": "1.0.0",
           },
+          trustedDependencies: ["uses-what-bin"],
         }),
       );
 
@@ -1638,81 +1639,21 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         env: testEnv,
       });
 
-      // electron lifecycle scripts should run, uses-what-bin scripts should not run
+      // both uses-what-bin (explicitly trusted) and electron (default trusted) should run
       var err = await stderr.text();
       expect(err).toContain("Saved lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
       var out = await stdout.text();
-      expect(out.replace(/\s*\[[0-9\.]+m?s\]$/m, "").split(/\r?\n/)).toEqual([
-        expect.stringContaining("bun install v1."),
-        "",
-        "+ electron@1.0.0",
-        expect.stringContaining("+ uses-what-bin@1.0.0"),
-        "",
-        "3 packages installed",
-        "",
-        "Blocked 1 postinstall. Run `bun pm untrusted` for details.",
-        "",
-      ]);
-      expect(await exited).toBe(0);
-      assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
-
-      expect(await exists(join(packageDir, "node_modules", "uses-what-bin", "what-bin.txt"))).toBeFalse();
-      expect(await exists(join(packageDir, "node_modules", "electron", "preinstall.txt"))).toBeTrue();
-
-      await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
-      await rm(join(packageDir, ".bun-cache"), { recursive: true, force: true });
-      await rm(join(packageDir, "bun.lock"));
-
-      await writeFile(
-        packageJson,
-        JSON.stringify({
-          name: "foo",
-          version: "1.2.3",
-          dependencies: {
-            "uses-what-bin": "1.0.0",
-            "electron": "1.0.0",
-          },
-          trustedDependencies: ["uses-what-bin"],
-        }),
-      );
-
-      // now uses-what-bin scripts should run and electron scripts should not run.
-
-      ({ stdout, stderr, exited } = spawn({
-        cmd: [bunExe(), "install"],
-        cwd: packageDir,
-        stdout: "pipe",
-        stdin: "ignore",
-        stderr: "pipe",
-        env: testEnv,
-      }));
-
-      err = await stderr.text();
-      expect(err).toContain("Saved lockfile");
-      expect(err).not.toContain("not found");
-      expect(err).not.toContain("error:");
-      out = await stdout.text();
-      expect(out.replace(/\s*\[[0-9\.]+m?s\]$/m, "").split(/\r?\n/)).toEqual([
-        expect.stringContaining("bun install v1."),
-        "",
-        "+ electron@1.0.0",
-        expect.stringContaining("+ uses-what-bin@1.0.0"),
-        "",
-        "3 packages installed",
-        "",
-        "Blocked 1 postinstall. Run `bun pm untrusted` for details.",
-        "",
-      ]);
+      expect(out).not.toContain("Blocked");
       expect(await exited).toBe(0);
       assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
 
       expect(await exists(join(packageDir, "node_modules", "uses-what-bin", "what-bin.txt"))).toBeTrue();
-      expect(await exists(join(packageDir, "node_modules", "electron", "preinstall.txt"))).toBeFalse();
+      expect(await exists(join(packageDir, "node_modules", "electron", "preinstall.txt"))).toBeTrue();
     });
 
-    test("does not run any scripts if trustedDependencies is an empty list", async () => {
+    test("empty trustedDependencies still runs default trusted scripts", async () => {
       const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
       await writeFile(
@@ -1742,22 +1683,13 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       expect(err).toContain("Saved lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
-      expect(out.replace(/\s*\[[0-9\.]+m?s\]$/m, "").split(/\r?\n/)).toEqual([
-        expect.stringContaining("bun install v1."),
-        "",
-        "+ electron@1.0.0",
-        expect.stringContaining("+ uses-what-bin@1.0.0"),
-        "",
-        "3 packages installed",
-        "",
-        "Blocked 2 postinstalls. Run `bun pm untrusted` for details.",
-        "",
-      ]);
+      // electron runs (default trusted), uses-what-bin is blocked (not in defaults or user list)
+      expect(out).toContain("Blocked 1 postinstall. Run `bun pm untrusted` for details.");
       expect(await exited).toBe(0);
       assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
 
       expect(await exists(join(packageDir, "node_modules", "uses-what-bin", "what-bin.txt"))).toBeFalse();
-      expect(await exists(join(packageDir, "node_modules", "electron", "preinstall.txt"))).toBeFalse();
+      expect(await exists(join(packageDir, "node_modules", "electron", "preinstall.txt"))).toBeTrue();
     });
 
     test("default trusted dependencies should only apply to npm packages, not file: dependencies", async () => {
@@ -1881,7 +1813,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       expect(await exists(join(packageDir, "node_modules", "esbuild", "postinstall-ran.txt"))).toBeTrue();
     });
 
-    test("will run default trustedDependencies after install that didn't include them", async () => {
+    test("default trustedDependencies run even when trustedDependencies lists unrelated packages", async () => {
       await verdaccio.writeBunfig(packageDir, { saveTextLockfile: false, linker: "hoisted" });
       const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
@@ -1897,7 +1829,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         }),
       );
 
-      // first install does not run electron scripts
+      // electron scripts should run because electron is in the default trusted list,
+      // even though trustedDependencies is populated with unrelated packages.
 
       var { stdout, stderr, exited } = spawn({
         cmd: [bunExe(), "install"],
@@ -1913,53 +1846,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
       var out = await stdout.text();
-      expect(out.replace(/\s*\[[0-9\.]+m?s\]$/m, "").split(/\r?\n/)).toEqual([
-        expect.stringContaining("bun install v1."),
-        "",
-        "+ electron@1.0.0",
-        "",
-        "1 package installed",
-        "",
-        "Blocked 1 postinstall. Run `bun pm untrusted` for details.",
-        "",
-      ]);
-      expect(await exited).toBe(0);
-      assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
-
-      expect(await exists(join(packageDir, "node_modules", "electron", "preinstall.txt"))).toBeFalse();
-
-      await writeFile(
-        packageJson,
-        JSON.stringify({
-          name: "foo",
-          version: "1.2.3",
-          dependencies: {
-            electron: "1.0.0",
-          },
-        }),
-      );
-
-      // The electron scripts should run now because it's in default trusted dependencies.
-
-      ({ stdout, stderr, exited } = spawn({
-        cmd: [bunExe(), "install"],
-        cwd: packageDir,
-        stdout: "pipe",
-        stdin: "ignore",
-        stderr: "pipe",
-        env: testEnv,
-      }));
-
-      err = await stderr.text();
-      expect(err).toContain("Saved lockfile");
-      expect(err).not.toContain("not found");
-      expect(err).not.toContain("error:");
-      out = await stdout.text();
-      expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-        expect.stringContaining("bun install v1."),
-        "",
-        "Checked 1 install across 2 packages (no changes)",
-      ]);
+      expect(out).not.toContain("Blocked");
       expect(await exited).toBe(0);
       assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
 

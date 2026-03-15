@@ -29,11 +29,11 @@ const token = Bun.CSRF.generate("my-secret-key");
 - `secret` (string, optional) — The secret key used to sign the token. If not provided, Bun generates a random in-memory default secret (unique per process).
 - `options` (object, optional):
 
-| Option      | Type     | Default      | Description                                                                                 |
-| ----------- | -------- | ------------ | ------------------------------------------------------------------------------------------- |
-| `expiresIn` | `number` | `86400000`   | Milliseconds until the token expires. Defaults to 24 hours.                                 |
-| `encoding`  | `string` | `"base64url"` | Token encoding format: `"base64"`, `"base64url"`, or `"hex"`.                               |
-| `algorithm` | `string` | `"sha256"`   | HMAC algorithm: `"sha256"`, `"sha384"`, `"sha512"`, `"sha512-256"`, `"blake2b256"`, or `"blake2b512"`. |
+| Option      | Type     | Default       | Description                                                                                            |
+| ----------- | -------- | ------------- | ------------------------------------------------------------------------------------------------------ |
+| `expiresIn` | `number` | `86400000`    | Milliseconds until the token expires. Defaults to 24 hours.                                            |
+| `encoding`  | `string` | `"base64url"` | Token encoding format: `"base64"`, `"base64url"`, or `"hex"`.                                          |
+| `algorithm` | `string` | `"sha256"`    | HMAC algorithm: `"sha256"`, `"sha384"`, `"sha512"`, `"sha512-256"`, `"blake2b256"`, or `"blake2b512"`. |
 
 **Returns:** `string` — the encoded token.
 
@@ -65,12 +65,12 @@ const isValid = Bun.CSRF.verify(token, { secret: "my-secret-key" });
 - `token` (string, required) — The token to verify.
 - `options` (object, optional):
 
-| Option      | Type     | Default      | Description                                                                                 |
-| ----------- | -------- | ------------ | ------------------------------------------------------------------------------------------- |
-| `secret`    | `string` | (auto)       | The secret used to sign the token. If not provided, uses the same in-memory default as `generate()`. |
-| `maxAge`    | `number` | `86400000`   | Maximum token age in milliseconds, independent of the token's own `expiresIn`.                |
-| `encoding`  | `string` | `"base64url"` | Must match the encoding used during `generate()`.                                            |
-| `algorithm` | `string` | `"sha256"`   | Must match the algorithm used during `generate()`.                                           |
+| Option      | Type     | Default       | Description                                                                                          |
+| ----------- | -------- | ------------- | ---------------------------------------------------------------------------------------------------- |
+| `secret`    | `string` | (auto)        | The secret used to sign the token. If not provided, uses the same in-memory default as `generate()`. |
+| `maxAge`    | `number` | `86400000`    | Maximum token age in milliseconds, independent of the token's own `expiresIn`.                       |
+| `encoding`  | `string` | `"base64url"` | Must match the encoding used during `generate()`.                                                    |
+| `algorithm` | `string` | `"sha256"`    | Must match the algorithm used during `generate()`.                                                   |
 
 **Returns:** `boolean`
 
@@ -117,10 +117,7 @@ const server = Bun.serve({
         const formData = await req.formData();
         const csrfToken = formData.get("_csrf");
 
-        if (
-          typeof csrfToken !== "string" ||
-          !Bun.CSRF.verify(csrfToken, { secret: SECRET })
-        ) {
+        if (typeof csrfToken !== "string" || !Bun.CSRF.verify(csrfToken, { secret: SECRET })) {
           return new Response("Invalid CSRF token", { status: 403 });
         }
 
@@ -152,13 +149,7 @@ For production use, always provide an explicit secret shared across your infrast
 ## TypeScript
 
 ```ts title="types.ts" icon="/icons/typescript.svg"
-type CSRFAlgorithm =
-  | "blake2b256"
-  | "blake2b512"
-  | "sha256"
-  | "sha384"
-  | "sha512"
-  | "sha512-256";
+type CSRFAlgorithm = "blake2b256" | "blake2b512" | "sha256" | "sha384" | "sha512" | "sha512-256";
 
 interface CSRFGenerateOptions {
   expiresIn?: number;

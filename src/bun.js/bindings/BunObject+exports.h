@@ -71,6 +71,7 @@
     macro(shrink) \
     macro(sleepSync) \
     macro(spawn) \
+    macro(spawnAndWait) \
     macro(spawnSync) \
     macro(stringWidth) \
     macro(udpSocket) \

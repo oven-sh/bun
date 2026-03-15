@@ -460,8 +460,7 @@ describe.skipIf(!hasAnyCronBackend)("Windows trigger-limit expressions", () => {
         const result = await Bun.cron(`${dir}/job.ts`, "0,30 * 15 * 5", t);
         expect(result).toBeUndefined();
       } finally {
-        if (hasCrontab) removeCrontabEntry(t);
-        if (hasLaunchctl) removeLaunchdJob(t);
+        await Bun.cron.remove(t);
       }
     });
   }
@@ -665,7 +664,7 @@ describe.skipIf(!hasCrontab)("cron removal (Linux)", () => {
 
 function querySchtask(title: string): string | null {
   const result = Bun.spawnSync({
-    cmd: ["schtasks", "/query", "/tn", `bun-cron-${title}`, "/fo", "LIST"],
+    cmd: ["schtasks", "/query", "/tn", `bun-cron-${title}`, "/fo", "LIST", "/v"],
     stdout: "pipe",
     stderr: "pipe",
   });

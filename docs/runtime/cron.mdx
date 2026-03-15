@@ -274,25 +274,25 @@ Windows Task Scheduler enforces a limit of [48 triggers per task](https://learn.
 
 **Expressions that work on all platforms:**
 
-| Pattern | Trigger strategy | Count |
-| --- | --- | --- |
-| `*/5 * * * *` | Single trigger with [`Repetition`](https://learn.microsoft.com/en-us/windows/win32/taskschd/taskschedulerschema-repetition-triggerbasetype-element) (PT5M) | 1 |
-| `*/15 * * * *` | Single trigger with Repetition (PT15M) | 1 |
-| `0 9 * * MON-FRI` | One `CalendarTrigger` per weekday | 5 |
-| `0,30 9-17 * * *` | 2 minutes × 9 hours | 18 |
-| `@daily`, `@weekly`, `@monthly`, `@yearly` | Single trigger | 1 |
+| Pattern                                    | Trigger strategy                                                                                                                                           | Count |
+| ------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | ----- |
+| `*/5 * * * *`                              | Single trigger with [`Repetition`](https://learn.microsoft.com/en-us/windows/win32/taskschd/taskschedulerschema-repetition-triggerbasetype-element) (PT5M) | 1     |
+| `*/15 * * * *`                             | Single trigger with Repetition (PT15M)                                                                                                                     | 1     |
+| `0 9 * * MON-FRI`                          | One `CalendarTrigger` per weekday                                                                                                                          | 5     |
+| `0,30 9-17 * * *`                          | 2 minutes × 9 hours                                                                                                                                        | 18    |
+| `@daily`, `@weekly`, `@monthly`, `@yearly` | Single trigger                                                                                                                                             | 1     |
 
 **Expressions that fail on Windows** (but work on Linux and macOS):
 
-| Pattern | Why | Trigger count |
-| --- | --- | --- |
-| `*/7 * * * *` | 9 minute values × 24 hours | 216 |
-| `*/8 * * * *` | 8 minute values × 24 hours | 192 |
-| `*/9 * * * *` | 7 minute values × 24 hours | 168 |
-| `*/11 * * * *` | 6 minute values × 24 hours | 144 |
-| `*/13 * * * *` | 5 minute values × 24 hours | 120 |
-| `*/15 * * 6 *` | Month restriction prevents Repetition: 4 × 24 | 96 |
-| `0,30 * 15 * FRI` | OR-split doubles triggers: 2 × 24 × 2 | 96 |
+| Pattern           | Why                                           | Trigger count |
+| ----------------- | --------------------------------------------- | ------------- |
+| `*/7 * * * *`     | 9 minute values × 24 hours                    | 216           |
+| `*/8 * * * *`     | 8 minute values × 24 hours                    | 192           |
+| `*/9 * * * *`     | 7 minute values × 24 hours                    | 168           |
+| `*/11 * * * *`    | 6 minute values × 24 hours                    | 144           |
+| `*/13 * * * *`    | 5 minute values × 24 hours                    | 120           |
+| `*/15 * * 6 *`    | Month restriction prevents Repetition: 4 × 24 | 96            |
+| `0,30 * 15 * FRI` | OR-split doubles triggers: 2 × 24 × 2         | 96            |
 
 The key factor is whether the expression can use a [`Repetition`](https://learn.microsoft.com/en-us/windows/win32/taskschd/taskschedulerschema-repetition-triggerbasetype-element) interval (single trigger) or must expand to individual `CalendarTrigger` elements. Minute steps that **evenly divide 60** (`*/1`, `*/2`, `*/3`, `*/4`, `*/5`, `*/6`, `*/10`, `*/12`, `*/15`, `*/20`, `*/30`) use Repetition and work regardless of other fields. Steps that don't divide 60 (`*/7`, `*/8`, `*/9`, `*/11`, `*/13`, etc.) must be expanded, and with 24 hours active, the count quickly exceeds 48.
 
@@ -308,6 +308,7 @@ await Bun.cron("./job.ts", "*/7 9-13 * * *", "my-job");
 // ✅ Works: use a divisor of 60 instead (Repetition, 1 trigger)
 await Bun.cron("./job.ts", "*/5 * * * *", "my-job");
 ```
+
 :::
 
 #### Windows containers

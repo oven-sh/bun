@@ -1,4 +1,4 @@
-import { spawn, write } from "bun";
+import { spawn } from "bun";
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";

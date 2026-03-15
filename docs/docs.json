@@ -147,6 +147,7 @@
             "group": "Utilities",
             "icon": "wrench",
             "pages": [
+              "/runtime/csrf",
               "/runtime/secrets",
               "/runtime/console",
               "/runtime/toml",

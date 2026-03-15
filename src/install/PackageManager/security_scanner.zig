@@ -695,6 +695,10 @@ fn attemptSecurityScanWithRetry(manager: *PackageManager, security_scanner: []co
     defer {
         manager.allocator.free(scanner.code);
         manager.allocator.free(scanner.json_data);
+        if (scanner.process) |p| {
+            p.detach();
+            p.deref();
+        }
         bun.destroy(scanner);
     }
 

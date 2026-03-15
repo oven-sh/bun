@@ -10,8 +10,7 @@ const hasSchtasks =
   (() => {
     try {
       // Test the XML-based path that Bun.cron actually uses.
-      // CLI flags (/sc ONCE) work on CI service accounts but
-      // XML import triggers SID resolution that may fail.
+      // Try /np first (normal user), fall back to /ru SYSTEM (headless).
       const xml = [
         '<?xml version="1.0"?>',
         '<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">',
@@ -26,11 +25,20 @@ const hasSchtasks =
       const xmlPath = `${process.env.TEMP || "C:\\Temp"}\\bun-cron-probe.xml`;
       writeFileSync(xmlPath, xml);
       try {
-        const r = Bun.spawnSync({
+        // Try normal user first
+        let r = Bun.spawnSync({
           cmd: ["schtasks", "/create", "/xml", xmlPath, "/tn", "bun-cron-probe", "/np", "/f"],
           stdout: "pipe",
           stderr: "pipe",
         });
+        // Fall back to SYSTEM if SID resolution fails (headless/CI)
+        if (r.exitCode !== 0) {
+          r = Bun.spawnSync({
+            cmd: ["schtasks", "/create", "/xml", xmlPath, "/tn", "bun-cron-probe", "/ru", "SYSTEM", "/f"],
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+        }
         if (r.exitCode !== 0) return false;
         Bun.spawnSync({
           cmd: ["schtasks", "/delete", "/tn", "bun-cron-probe", "/f"],

@@ -239,7 +239,7 @@ describe.skipIf(!hasAnyCronBackend)("cross-platform API consistency", () => {
 // Windows uses XML-based task registration with CalendarTrigger,
 // supporting the full range of cron expressions including monthly,
 // yearly, ranges, lists, and day-of-month patterns.
-describe.skipIf(!isWindows)("Windows XML-based scheduling (complex expressions)", () => {
+describe.skipIf(!hasSchtasks)("Windows XML-based scheduling (complex expressions)", () => {
   test("@monthly registers successfully", async () => {
     using dir = tempDir("bun-cron-test", {
       "job.ts": `export default { scheduled() {} };`,

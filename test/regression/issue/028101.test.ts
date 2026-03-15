@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { bunEnv, bunExe } from "harness";
 
 // Regression test for https://github.com/oven-sh/bun/issues/28101
 //

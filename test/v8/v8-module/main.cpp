@@ -1138,6 +1138,32 @@ void test_v8_value_type_checks(const FunctionCallbackInfo<Value> &info) {
   return ok(info);
 }
 
+void test_v8_async_hooks(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Object> resource = Object::New(isolate);
+  Local<String> name =
+      String::NewFromUtf8(isolate, "test_resource").ToLocalChecked();
+
+  // Test EmitAsyncInit with const char* (should not crash)
+  node::async_context ctx1 =
+      node::EmitAsyncInit(isolate, resource, "test_resource");
+
+  // Test EmitAsyncInit with Local<String> (should not crash)
+  node::async_context ctx2 = node::EmitAsyncInit(isolate, resource, name);
+
+  // Test AsyncHooksGetExecutionAsyncId (should not crash)
+  node::AsyncHooksGetExecutionAsyncId(isolate);
+
+  // Test AsyncHooksGetTriggerAsyncId (should not crash)
+  node::AsyncHooksGetTriggerAsyncId(isolate);
+
+  // Test EmitAsyncDestroy (should not crash)
+  node::EmitAsyncDestroy(isolate, ctx1);
+  node::EmitAsyncDestroy(isolate, ctx2);
+
+  return ok(info);
+}
+
 void initialize(Local<Object> exports, Local<Value> module,
                 Local<Context> context) {
   NODE_SET_METHOD(exports, "test_v8_native_call", test_v8_native_call);
@@ -1191,6 +1217,8 @@ void initialize(Local<Object> exports, Local<Value> module,
                   perform_object_set_by_key);
   NODE_SET_METHOD(exports, "test_v8_value_type_checks",
                   test_v8_value_type_checks);
+
+  NODE_SET_METHOD(exports, "test_v8_async_hooks", test_v8_async_hooks);
 
   // without this, node hits a UAF deleting the Global
   node::AddEnvironmentCleanupHook(context->GetIsolate(),

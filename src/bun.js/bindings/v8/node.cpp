@@ -36,6 +36,37 @@ void RemoveEnvironmentCleanupHook(v8::Isolate* isolate,
     // TODO
 }
 
+async_id AsyncHooksGetExecutionAsyncId(v8::Isolate* isolate)
+{
+    return -1;
+}
+
+async_id AsyncHooksGetTriggerAsyncId(v8::Isolate* isolate)
+{
+    return -1;
+}
+
+async_context EmitAsyncInit(v8::Isolate* isolate,
+    v8::Local<v8::Object> resource,
+    const char* name,
+    async_id trigger_async_id)
+{
+    return async_context { -1, -1 };
+}
+
+async_context EmitAsyncInit(v8::Isolate* isolate,
+    v8::Local<v8::Object> resource,
+    v8::Local<v8::String> name,
+    async_id trigger_async_id)
+{
+    return async_context { -1, -1 };
+}
+
+void EmitAsyncDestroy(v8::Isolate* isolate,
+    async_context asyncContext)
+{
+}
+
 void node_module_register(void* opaque_mod)
 {
     // TODO unify this with napi_module_register

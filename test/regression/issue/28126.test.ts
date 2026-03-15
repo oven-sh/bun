@@ -123,3 +123,42 @@ test("bin linking handles shebang with env -S bun", async () => {
   expect(stdout).toContain("hello from env -S bun");
   expect(exitCode).toBe(0);
 });
+
+test("bin linking handles shebang with env -u flag before program", async () => {
+  using dir = tempDir("issue-28126-u", {
+    "pkg/package.json": JSON.stringify({
+      name: "test-env-u-shebang",
+      version: "1.0.0",
+      bin: {
+        "test-env-u": "index.js",
+      },
+    }),
+    // -u takes a value (variable name to unset), which must be skipped
+    "pkg/index.js": '#!/usr/bin/env -S -u HOME node\nconsole.log("hello from env -u");\n',
+    "consumer/package.json": JSON.stringify({
+      name: "consumer",
+      version: "1.0.0",
+      dependencies: {
+        "test-env-u-shebang": "file:../pkg",
+      },
+    }),
+  });
+
+  const consumerDir = join(String(dir), "consumer");
+
+  await runBunInstall(env, consumerDir);
+
+  await using proc = spawn({
+    cmd: [bunExe(), "run", "test-env-u"],
+    cwd: consumerDir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).not.toContain("interpreter executable");
+  expect(stdout).toContain("hello from env -u");
+  expect(exitCode).toBe(0);
+});

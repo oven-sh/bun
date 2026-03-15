@@ -195,11 +195,23 @@ pub const Shebang = struct {
         var tokenizer = std.mem.tokenizeScalar(u8, line, ' ');
         const first = tokenizer.next() orelse return parseFromBinPath(bin_path);
         if (eqlComptime(first, "/usr/bin/env") or eqlComptime(first, "/bin/env")) {
-            // Skip flags passed to env (e.g. -S, -u, -i, --split-string)
-            // to find the actual program name.
+            // Skip flags passed to env to find the actual program name.
+            // Note: -S/--split-string is NOT treated as consuming the next token
+            // because in shebang context the text after -S IS the command to run
+            // (e.g. "#!/usr/bin/env -S node" — "node" is the program, not an arg to -S).
             const program = program: while (true) {
                 const token = tokenizer.next() orelse return parseFromBinPath(bin_path);
-                if (token.len > 0 and token[0] == '-') continue;
+                if (token.len > 0 and token[0] == '-') {
+                    // These flags consume the next token as their value:
+                    //   -u/--unset NAME, -C/--chdir DIR, -a/--argv0 ARG
+                    if (eqlComptime(token, "-u") or eqlComptime(token, "--unset") or
+                        eqlComptime(token, "-C") or eqlComptime(token, "--chdir") or
+                        eqlComptime(token, "-a") or eqlComptime(token, "--argv0"))
+                    {
+                        _ = tokenizer.next(); // consume the flag's value
+                    }
+                    continue;
+                }
                 break :program token;
             };
             const rest_after_program = tokenizer.rest();

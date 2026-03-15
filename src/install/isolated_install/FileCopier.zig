@@ -79,6 +79,11 @@ pub const FileCopier = struct {
                 return .{ .err = bun.sys.Error.fromCode(.ACCES, .copyfile) };
             };
 
+            const dest_abs_buf = bun.w_path_buffer_pool.get();
+            defer bun.w_path_buffer_pool.put(dest_abs_buf);
+            const dest_abs_buf2 = bun.w_path_buffer_pool.get();
+            defer bun.w_path_buffer_pool.put(dest_abs_buf2);
+
             while (switch (this.walker.next()) {
                 .result => |res| res,
                 .err => |err| return .initErr(err),
@@ -98,10 +103,6 @@ pub const FileCopier = struct {
 
                 this.dest_subpath.append(entry.path);
 
-                const dest_abs_buf = bun.w_path_buffer_pool.get();
-                defer bun.w_path_buffer_pool.put(dest_abs_buf);
-                const dest_abs_buf2 = bun.w_path_buffer_pool.get();
-                defer bun.w_path_buffer_pool.put(dest_abs_buf2);
                 const dest_abs = bun.strings.addNTPathPrefixIfNeeded(
                     dest_abs_buf2,
                     bun.path.joinStringBufWZ(

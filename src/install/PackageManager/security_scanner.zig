@@ -806,7 +806,10 @@ pub const SecurityScanSubprocess = struct {
         if (comptime bun.Environment.isPosix) {
             _ = bun.sys.setNonblocking(ipc_output_fds[0]);
         }
-        this.remaining_fds = 1;
+        // 2 = ipc_reader (fd 3) + json_writer (fd 4). Both must complete before
+        // isDone() returns true, otherwise we risk freeing this struct while
+        // StaticPipeWriter still holds a pointer to it (child crash case).
+        this.remaining_fds = 2;
         this.ipc_reader.flags.nonblocking = true;
         if (comptime bun.Environment.isPosix) {
             this.ipc_reader.flags.socket = false;
@@ -871,7 +874,7 @@ pub const SecurityScanSubprocess = struct {
 
             // Wrap the overlapped write end in a uv.Pipe for StaticPipeWriter.
             const pipe = bun.new(uv.Pipe, std.mem.zeroes(uv.Pipe));
-            errdefer bun.destroy(pipe);
+            errdefer pipe.closeAndDestroy();
             try pipe.init(scanner.loop(), false).unwrap();
             try pipe.open(parent_write_fd).unwrap();
 
@@ -911,6 +914,7 @@ pub const SecurityScanSubprocess = struct {
             writer.source.detach();
             writer.deref();
             this.json_writer = null;
+            this.remaining_fds -= 1;
         }
     }
 
@@ -963,9 +967,9 @@ pub const SecurityScanSubprocess = struct {
         this.has_process_exited = true;
         this.exit_status = status;
 
-        if (this.remaining_fds > 0 and !this.has_received_ipc) {
+        if (!this.has_received_ipc) {
             this.ipc_reader.deinit();
-            this.remaining_fds = 0;
+            this.remaining_fds -= 1;
         }
     }
 

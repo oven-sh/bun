@@ -295,4 +295,19 @@ describe("bundler", () => {
     run: true,
     capture: ["1 /* Value */", "1 /* Value */", "1 /* Value */"],
   });
+
+  // https://github.com/oven-sh/bun/issues/20278
+  itBundled("regression/EntryPointsWithCSSInlinedAssets#20278", {
+    files: {
+      "/style.css": /* css */ `
+        select {
+          background-image: url("./icon.svg");
+        }
+      `,
+      "/icon.svg": `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><path d="m6 9 6 6 6-6"/></svg>`,
+    },
+    entryPoints: ["/style.css", "/icon.svg"],
+    outputPaths: ["/out/style.css", "/out/icon.js"],
+    outdir: "/out",
+  });
 });

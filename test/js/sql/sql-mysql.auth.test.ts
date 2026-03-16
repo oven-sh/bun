@@ -64,9 +64,11 @@ describeWithContainer(
               GRANT ALL PRIVILEGES ON bun_sql_test.* TO short_pass@'%';
             FLUSH PRIVILEGES;`.simple();
       }
-      await using sql = new SQL(`mysql://short_pass:short@${container.host}:${container.port}/bun_sql_test`);
-      const result = await sql`select 1 as x`;
-      expect(result).toEqual([{ x: 1 }]);
+      for (let i = 0; i < 2; i++) {
+        await using sql = new SQL(`mysql://short_pass:short@${container.host}:${container.port}/bun_sql_test`);
+        const result = await sql`select 1 as x`;
+        expect(result).toEqual([{ x: 1 }]);
+      }
     });
 
     test("should connect with caching_sha2_password (exactly 20 chars — boundary)", async () => {

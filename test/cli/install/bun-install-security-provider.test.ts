@@ -1,4 +1,5 @@
-import { bunEnv, runBunInstall } from "harness";
+import { bunEnv, runBunInstall, tmpdirSync } from "harness";
+import { rm } from "node:fs/promises";
 import {
   dummyAfterAll,
   dummyAfterEach,
@@ -30,13 +31,15 @@ function test(
     bunfigScanner?: string | false;
     packages?: string[];
     scannerFile?: string;
+    packageJson?: object;
+    customRegistry?: (urls: string[]) => any;
   },
 ) {
   it(
     name,
     async () => {
       const urls: string[] = [];
-      setHandler(dummyRegistry(urls));
+      setHandler(options.customRegistry ? options.customRegistry(urls) : dummyRegistry(urls));
 
       const scannerPath = options.scannerFile || "./scanner.ts";
       if (typeof options.scanner === "string") {
@@ -55,11 +58,14 @@ function test(
         await write("./bunfig.toml", `${bunfig}\n[install.security]\nscanner = "${scannerPath}"`);
       }
 
-      await write("package.json", {
-        name: "my-app",
-        version: "1.0.0",
-        dependencies: {},
-      });
+      await write(
+        "package.json",
+        options.packageJson ?? {
+          name: "my-app",
+          version: "1.0.0",
+          dependencies: {},
+        },
+      );
 
       const expectedExitCode = options.expectedExitCode ?? (options.fails ? 1 : 0);
       const packages = options.packages ?? ["bar"];
@@ -678,6 +684,74 @@ describe("Package Resolution", () => {
     expectedExitCode: 0,
     expect: ({ out }) => {
       expect(out).toContain("Latest tag:");
+    },
+  });
+});
+
+describe("Large payload via ipc pipe", () => {
+  let tgzTempDir: string;
+
+  // Pad package names so the JSON exceeds 1MB with fewer packages. Each
+  // package resolution triggers an HTTP round-trip to the dummy registry,
+  // which is the slow part on Windows aarch64. The name appears twice in
+  // each JSON entry (name field + tarball URL), so 150-char padding gives
+  // ~430 bytes/entry; 3000 entries = ~1.3MB. Filenames stay under 200 chars.
+  const PKG_COUNT = 3000;
+  const NAME_PAD = Buffer.alloc(150, "x").toString();
+  const pkgName = (i: number) => `test-pkg-${NAME_PAD}-${i}`;
+
+  beforeAll(async () => {
+    tgzTempDir = tmpdirSync();
+
+    const barTarball = Bun.file(`${import.meta.dir}/bar-0.0.2.tgz`);
+    for (let i = 0; i < PKG_COUNT; i++) {
+      await Bun.write(`${tgzTempDir}/${pkgName(i)}-0.0.2.tgz`, barTarball);
+    }
+  });
+
+  afterAll(async () => {
+    await rm(tgzTempDir, { recursive: true, force: true });
+  });
+
+  test("handles packages JSON larger than max arg length (>1MB)", {
+    testTimeout: 120_000,
+    scanner: async ({ packages }) => {
+      const jsonSize = JSON.stringify(packages).length;
+      console.log(`Received JSON payload of ${jsonSize} bytes from ${packages.length} packages`);
+
+      if (jsonSize < 1024 * 1024) {
+        throw new Error(`Expected JSON payload to exceed 1MB, got ${jsonSize} bytes`);
+      }
+
+      if (packages.length === 0) {
+        throw new Error("Expected to receive packages");
+      }
+
+      return [];
+    },
+
+    packageJson: (() => {
+      const dependencies: Record<string, string> = {};
+
+      for (let i = 0; i < PKG_COUNT; i++) {
+        dependencies[pkgName(i)] = "0.0.2";
+      }
+      return {
+        name: "my-app",
+        version: "1.0.0",
+        dependencies,
+      };
+    })(),
+    packages: [],
+    customRegistry: urls => dummyRegistry(urls, { "0.0.2": {} }, 0, tgzTempDir),
+    expectedExitCode: 0,
+    expect: ({ out }) => {
+      expect(out).toContain("Received JSON payload");
+
+      const match = out.match(/Received JSON payload of (\d+) bytes/);
+      expect(match).not.toBeNull();
+      const bytes = parseInt(match![1], 10);
+      expect(bytes).toBeGreaterThan(1024 * 1024);
     },
   });
 });

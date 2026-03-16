@@ -153,7 +153,7 @@ The registered script must export a default object with a `scheduled()` method, 
 
 ```ts worker.ts
 export default {
-  scheduled(controller) {
+  scheduled(controller: Bun.CronController) {
     console.log(controller.cron); // "30 2 * * 1"
     console.log(controller.type); // "scheduled"
     console.log(controller.scheduledTime); // 1737340201847 (Date.now() at invocation)

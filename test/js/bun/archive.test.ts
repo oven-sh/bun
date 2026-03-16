@@ -1111,8 +1111,14 @@ describe("Bun.Archive", () => {
         { compress: "gzip" },
       );
 
+      // Produce actual gzip-compressed bytes via bytes()
+      const gzipBytes = await archive.bytes();
+
+      // Feed gzip bytes into a new Archive so extract() exercises the gzip decoder
+      const archive2 = new Bun.Archive(gzipBytes);
+
       using dir = tempDir("archive-gzip-unicode", {});
-      await archive.extract(String(dir));
+      await archive2.extract(String(dir));
 
       expect(await Bun.file(join(String(dir), "package/Søreng.json")).text()).toBe('{"ok": true}');
       expect(await Bun.file(join(String(dir), "package/données.txt")).text()).toBe("french data");

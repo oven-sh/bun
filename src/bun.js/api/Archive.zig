@@ -236,7 +236,10 @@ fn buildTarballFromObject(globalThis: *jsc.JSGlobalObject, obj: jsc.JSValue) bun
         // Write entry to archive
         const data = data_slice.slice();
         _ = entry.clear();
-        entry.setPathname(key_str);
+        if (comptime bun.Environment.isWindows)
+            entry.setPathnameUtf8(key_str)
+        else
+            entry.setPathname(key_str);
         entry.setSize(@intCast(data.len));
         entry.setFiletype(@intFromEnum(lib.FileType.regular));
         entry.setPerm(0o644);
@@ -822,7 +825,16 @@ const FilesContext = struct {
         while (archive.readNextHeader(&entry) == .ok) {
             if (entry.filetype() != @intFromEnum(lib.FileType.regular)) continue;
 
-            const pathname = entry.pathname();
+            const pathname: [:0]const u8 = if (comptime bun.Environment.isWindows) blk: {
+                const pathname_w = entry.pathnameW();
+                var list = bun.handleOom(bun.strings.toUTF8ListWithType(
+                    std.array_list.Managed(u8).init(bun.default_allocator),
+                    pathname_w,
+                ));
+                defer list.deinit();
+                break :blk bun.handleOom(bun.default_allocator.dupeZ(u8, list.items));
+            } else entry.pathname();
+            defer if (comptime bun.Environment.isWindows) bun.default_allocator.free(pathname);
             // Apply glob pattern filtering (supports both positive and negative patterns)
             if (this.glob_patterns) |patterns| {
                 if (!matchGlobPatterns(patterns, pathname)) continue;
@@ -1026,7 +1038,16 @@ fn extractToDiskFiltered(
     var entry: *lib.Archive.Entry = undefined;
 
     while (archive.readNextHeader(&entry) == .ok) {
-        const pathname = entry.pathname();
+        const pathname: [:0]const u8 = if (comptime bun.Environment.isWindows) blk: {
+            const pathname_w = entry.pathnameW();
+            var list = bun.handleOom(bun.strings.toUTF8ListWithType(
+                std.array_list.Managed(u8).init(bun.default_allocator),
+                pathname_w,
+            ));
+            defer list.deinit();
+            break :blk bun.handleOom(bun.default_allocator.dupeZ(u8, list.items));
+        } else entry.pathname();
+        defer if (comptime bun.Environment.isWindows) bun.default_allocator.free(pathname);
 
         // Validate path safety (reject absolute paths, path traversal)
         if (!isSafePath(pathname)) continue;

@@ -680,14 +680,14 @@ test("patched package with multiple peer variants should not re-apply patch (#28
 
   // Reinstall with the patch to exercise the extraction + patch + hardlink path
   await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
-  await runBunInstall(bunEnv, packageDir);
+  await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
   await verifyInstall();
 
   // Reinstall again from clean node_modules to exercise the cache-hit path
   // (missing_from_cache == false). Before the fix, this would re-apply the
   // patch per variant, causing EPERM on Windows.
   await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
-  await runBunInstall(bunEnv, packageDir);
+  await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
   await verifyInstall();
 });
 

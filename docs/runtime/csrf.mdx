@@ -137,7 +137,7 @@ console.log(`Listening on ${server.url}`);
 If you omit the `secret` parameter in both `generate()` and `verify()`, Bun uses a random secret generated once per process. This is convenient for single-process applications but won't work across multiple servers or after a restart.
 
 ```ts title="default-secret.ts" icon="/icons/typescript.svg"
-// Both use the same in-memory default secret
+If you omit the `secret` parameter in both `generate()` and `verify()`, Bun uses a random secret generated once per thread. This is convenient for single-thread applications but won't work across multiple servers, workers, or after a restart.
 const token = Bun.CSRF.generate();
 const isValid = Bun.CSRF.verify(token); // true
 ```

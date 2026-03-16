@@ -69,6 +69,7 @@ if(ENABLE_TINYCC)
 endif()
 
 include(CloneZstd)
+include(CloneGhostty)
 
 # --- Codegen ---
 
@@ -741,6 +742,7 @@ register_command(
   TARGETS
     clone-zig
     clone-zstd
+    clone-ghostty
     bun-cppbind
   SOURCES
     ${BUN_ZIG_SOURCES}

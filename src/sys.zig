@@ -265,6 +265,10 @@ pub const Tag = enum(u8) {
     readv,
     preadv,
     ioctl_ficlone,
+    tcgetattr,
+    tcsetattr,
+    ioctl_TIOCGWINSZ,
+    ioctl_TIOCSWINSZ,
     accept,
     bind2,
     connect2,
@@ -4349,6 +4353,56 @@ pub const umask = switch (Environment.os) {
     // https://github.com/nodejs/node/blob/ad5e2dab4c8306183685973387829c2f69e793da/src/node_process_methods.cc#L29
     .windows => @extern(*const fn (mode: u16) callconv(.c) u16, .{ .name = "_umask" }),
 };
+
+// --- Terminal I/O ---
+
+pub fn tcgetattr(fd: bun.FileDescriptor) Maybe(std.posix.termios) {
+    if (comptime Environment.isWindows) {
+        return .{ .err = Error.fromCode(.NOTTY, .tcgetattr) };
+    }
+    const native = fd.native();
+    var termios: std.posix.termios = undefined;
+    const rc = std.posix.system.tcgetattr(native, &termios);
+    if (rc != 0) {
+        return .{ .err = Error.fromCode(std.posix.errno(rc), .tcgetattr) };
+    }
+    return .{ .result = termios };
+}
+
+pub fn tcsetattr(fd: bun.FileDescriptor, action: std.posix.TCSA, termios_p: std.posix.termios) Maybe(void) {
+    if (comptime Environment.isWindows) {
+        return .{ .err = Error.fromCode(.NOTTY, .tcsetattr) };
+    }
+    const native = fd.native();
+    const rc = std.posix.system.tcsetattr(native, action, &termios_p);
+    if (rc != 0) {
+        return .{ .err = Error.fromCode(std.posix.errno(rc), .tcsetattr) };
+    }
+    return .{ .result = {} };
+}
+
+pub fn getWinsize(fd: bun.FileDescriptor) Maybe(std.posix.winsize) {
+    if (comptime Environment.isWindows) {
+        return .{ .err = Error.fromCode(.NOTTY, .ioctl_TIOCGWINSZ) };
+    }
+    var ws: std.posix.winsize = undefined;
+    const rc = std.posix.system.ioctl(fd.native(), std.posix.T.IOCGWINSZ, @intFromPtr(&ws));
+    if (rc != 0) {
+        return .{ .err = Error.fromCode(std.posix.errno(rc), .ioctl_TIOCGWINSZ) };
+    }
+    return .{ .result = ws };
+}
+
+pub fn setWinsize(fd: bun.FileDescriptor, ws: std.posix.winsize) Maybe(void) {
+    if (comptime Environment.isWindows) {
+        return .{ .err = Error.fromCode(.NOTTY, .ioctl_TIOCSWINSZ) };
+    }
+    const rc = std.posix.system.ioctl(fd.native(), std.posix.T.IOCSWINSZ, @intFromPtr(&ws));
+    if (rc != 0) {
+        return .{ .err = Error.fromCode(std.posix.errno(rc), .ioctl_TIOCSWINSZ) };
+    }
+    return .{ .result = {} };
+}
 
 pub const File = @import("./sys/File.zig");
 

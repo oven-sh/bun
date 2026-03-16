@@ -25,6 +25,12 @@ pub const SocketHandlers = @import("./api/bun/socket.zig").Handlers;
 
 pub const Subprocess = @import("./api/bun/subprocess.zig");
 pub const Terminal = @import("./api/bun/Terminal.zig");
+pub const tui = @import("./api/tui/tui.zig");
+pub const TuiRenderer = tui.TuiRenderer;
+pub const TuiScreen = tui.TuiScreen;
+pub const TuiTerminalWriter = tui.TuiTerminalWriter;
+pub const TuiBufferWriter = tui.TuiBufferWriter;
+pub const TuiKeyReader = tui.TuiKeyReader;
 pub const HashObject = @import("./api/HashObject.zig");
 pub const JSONCObject = @import("./api/JSONCObject.zig");
 pub const MarkdownObject = @import("./api/MarkdownObject.zig");

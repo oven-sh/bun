@@ -152,6 +152,7 @@ pub const FilePoll = struct {
     const SecurityScanStaticPipeWriter = bun.install.SecurityScanSubprocess.StaticPipeWriter.Poll;
     const FileSink = jsc.WebCore.FileSink.Poll;
     const TerminalPoll = bun.api.Terminal.Poll;
+    const TuiWriterPoll = bun.api.TuiTerminalWriter.IOWriter;
     const DNSResolver = bun.api.dns.Resolver;
     const GetAddrInfoRequest = bun.api.dns.GetAddrInfoRequest;
     const Request = bun.api.dns.internal.Request;
@@ -185,6 +186,7 @@ pub const FilePoll = struct {
         Process,
         ShellBufferedWriter, // i do not know why, but this has to be here otherwise compiler will complain about dependency loop
         TerminalPoll,
+        TuiWriterPoll,
     });
 
     pub const AllocatorType = enum {
@@ -425,6 +427,12 @@ pub const FilePoll = struct {
             @field(Owner.Tag, @typeName(TerminalPoll)) => {
                 log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {f}) Terminal", .{poll.fd});
                 var handler: *TerminalPoll = ptr.as(TerminalPoll);
+                handler.onPoll(size_or_offset, poll.flags.contains(.hup));
+            },
+
+            @field(Owner.Tag, @typeName(TuiWriterPoll)) => {
+                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {f}) TuiWriter", .{poll.fd});
+                var handler: *TuiWriterPoll = ptr.as(TuiWriterPoll);
                 handler.onPoll(size_or_offset, poll.flags.contains(.hup));
             },
 

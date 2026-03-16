@@ -24,6 +24,10 @@
     macro(TOML) \
     macro(YAML) \
     macro(Terminal) \
+    macro(TUIScreen) \
+    macro(TUITerminalWriter) \
+    macro(TUIBufferWriter) \
+    macro(TUIKeyReader) \
     macro(Transpiler) \
     macro(ValkeyClient) \
     macro(argv) \

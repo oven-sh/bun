@@ -605,6 +605,7 @@ pub fn load(
         }
 
         if (cli.backend) |backend| {
+            PackageInstall.requested_method = backend;
             PackageInstall.supported_method = backend;
         }
 

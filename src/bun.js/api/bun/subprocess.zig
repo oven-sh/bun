@@ -649,6 +649,11 @@ pub fn onProcessExit(this: *Subprocess, process: *Process, status: bun.spawn.Sta
     if (!is_sync) {
         if (this_jsvalue != .zero) {
             if (consumeExitedPromise(this_jsvalue, globalThis)) |promise| {
+                // The promise was just removed from the WriteBarrier cache, so it's
+                // only alive on the stack. Pin it so the conservative GC can find it
+                // if a collection is triggered by updateHasPendingActivity or toJS below.
+                promise.ensureStillAlive();
+
                 loop.enter();
                 defer loop.exit();
 
@@ -657,15 +662,17 @@ pub fn onProcessExit(this: *Subprocess, process: *Process, status: bun.spawn.Sta
                     did_update_has_pending_activity = true;
                 }
 
-                switch (status) {
-                    .exited => |exited| promise.asAnyPromise().?.resolve(globalThis, JSValue.jsNumber(exited.code)) catch {}, // TODO: properly propagate exception upwards
-                    .err => |err| promise.asAnyPromise().?.reject(globalThis, err.toJS(globalThis) catch return) catch {}, // TODO: properly propagate exception upwards
-                    .signaled => promise.asAnyPromise().?.resolve(globalThis, JSValue.jsNumber(128 +% @intFromEnum(status.signaled))) catch {}, // TODO: properly propagate exception upwards
-                    else => {
-                        // crash in debug mode
-                        if (comptime Environment.allow_assert)
-                            unreachable;
-                    },
+                if (promise.asAnyPromise()) |prom| {
+                    switch (status) {
+                        .exited => |exited| prom.resolve(globalThis, JSValue.jsNumber(exited.code)) catch {},
+                        .err => |err| prom.reject(globalThis, err.toJS(globalThis) catch return) catch {},
+                        .signaled => prom.resolve(globalThis, JSValue.jsNumber(128 +% @intFromEnum(status.signaled))) catch {},
+                        else => {
+                            // crash in debug mode
+                            if (comptime Environment.allow_assert)
+                                unreachable;
+                        },
+                    }
                 }
             }
 

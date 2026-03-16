@@ -11,7 +11,7 @@
 // 2. Runtime: exercise the exact crash code path (error stack trace formatting
 //    with source map remapping under GC pressure).
 
-import { describe, test, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";

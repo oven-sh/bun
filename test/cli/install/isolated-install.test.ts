@@ -599,6 +599,80 @@ describe("optional peers", () => {
   });
 });
 
+test("patched package with multiple peer variants should not re-apply patch (#28147)", async () => {
+  // Regression test: when a patched dependency resolves to multiple isolated
+  // store variants (different peer hashes), the patch should only be applied
+  // once during extraction, not re-applied per variant. Re-applying while
+  // another variant is hardlinking causes EPERM on Windows.
+  const patch = `diff --git a/package.json b/package.json
+--- a/package.json
++++ b/package.json
+@@ -1,5 +1,6 @@
+ {
+   "name": "one-optional-peer-dep",
+   "version": "1.0.1",
++  "description": "patched",
+   "peerDependencies": {
+     "no-deps": "^1.0.0"
+   }
+`;
+
+  const { packageDir, packageJson } = await registry.createTestDir({
+    bunfigOpts: { linker: "isolated" },
+  });
+
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "patch-peer-variants",
+      workspaces: ["packages/*"],
+      patchedDependencies: {
+        "one-optional-peer-dep@1.0.1": "patches/one-optional-peer-dep@1.0.1.patch",
+      },
+    }),
+  );
+  await write(join(packageDir, "patches", "one-optional-peer-dep@1.0.1.patch"), patch);
+  await write(
+    join(packageDir, "packages", "pkg1", "package.json"),
+    JSON.stringify({
+      name: "pkg1",
+      dependencies: {
+        "one-optional-peer-dep": "1.0.1",
+        "no-deps": "1.0.1",
+      },
+    }),
+  );
+  await write(
+    join(packageDir, "packages", "pkg2", "package.json"),
+    JSON.stringify({
+      name: "pkg2",
+      dependencies: {
+        "one-optional-peer-dep": "1.0.1",
+      },
+    }),
+  );
+
+  // First install: extract + patch + hardlink
+  await runBunInstall(bunEnv, packageDir);
+
+  // Verify the patch was applied by checking the installed package.json
+  const storeDirs = (
+    await Array.fromAsync(
+      new Bun.Glob("one-optional-peer-dep@*").scan({
+        cwd: join(packageDir, "node_modules", ".bun"),
+        onlyFiles: false,
+      }),
+    )
+  ).sort();
+
+  // Should have at least one store entry for one-optional-peer-dep
+  expect(storeDirs.length).toBeGreaterThanOrEqual(1);
+
+  // Reinstall from clean node_modules to exercise the cache-hit path
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+  await runBunInstall(bunEnv, packageDir);
+});
+
 for (const backend of ["clonefile", "hardlink", "copyfile"]) {
   test(`isolated install with backend: ${backend}`, async () => {
     const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });

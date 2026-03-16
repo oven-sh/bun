@@ -468,6 +468,17 @@ pub fn writeHead(this: *NodeHTTPResponse, globalObject: *jsc.JSGlobalObject, cal
         return globalObject.ERR(.HTTP_HEADERS_SENT, "Stream already started", .{}).throw();
     }
 
+    // Validate status message does not contain invalid characters (defense-in-depth
+    // against HTTP response splitting). Matches Node.js checkInvalidHeaderChar:
+    // rejects any char not in [\t\x20-\x7e\x80-\xff].
+    if (status_message_slice.len > 0) {
+        for (status_message_slice.slice()) |c| {
+            if (c != '\t' and (c < 0x20 or c == 0x7f)) {
+                return globalObject.ERR(.INVALID_CHAR, "Invalid character in statusMessage", .{}).throw();
+            }
+        }
+    }
+
     do_it: {
         if (status_message_slice.len == 0) {
             if (HTTPStatusText.get(@intCast(status_code))) |status_message| {

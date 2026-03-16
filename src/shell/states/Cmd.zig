@@ -556,6 +556,10 @@ fn initRedirections(this: *Cmd, spawn_args: *Subprocess.SpawnArgs) bun.JSError!?
                 if (this.base.eventLoop() != .js) @panic("JS values not allowed in this context");
                 const global = this.base.eventLoop().js.global;
 
+                if (val.idx >= this.base.interpreter.jsobjs.len) {
+                    return global.throw("Invalid JS object reference in shell", .{});
+                }
+
                 if (this.base.interpreter.jsobjs[val.idx].asArrayBuffer(global)) |buf| {
                     const stdio: bun.shell.subproc.Stdio = .{ .array_buffer = jsc.ArrayBuffer.Strong{
                         .array_buffer = buf,
@@ -568,9 +572,9 @@ fn initRedirections(this: *Cmd, spawn_args: *Subprocess.SpawnArgs) bun.JSError!?
                     if (this.node.redirect.stdin) {
                         try spawn_args.stdio[stdin_no].extractBlob(global, .{ .Blob = blob }, stdin_no);
                     } else if (this.node.redirect.stdout) {
-                        try spawn_args.stdio[stdin_no].extractBlob(global, .{ .Blob = blob }, stdout_no);
+                        try spawn_args.stdio[stdout_no].extractBlob(global, .{ .Blob = blob }, stdout_no);
                     } else if (this.node.redirect.stderr) {
-                        try spawn_args.stdio[stdin_no].extractBlob(global, .{ .Blob = blob }, stderr_no);
+                        try spawn_args.stdio[stderr_no].extractBlob(global, .{ .Blob = blob }, stderr_no);
                     }
                 } else if (try jsc.WebCore.ReadableStream.fromJS(this.base.interpreter.jsobjs[val.idx], global)) |rstream| {
                     _ = rstream;

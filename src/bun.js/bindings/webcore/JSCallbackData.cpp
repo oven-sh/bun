@@ -48,7 +48,7 @@ JSValue JSCallbackData::invokeCallback(VM& vm, JSObject* callback, JSValue thisV
     // https://webidl.spec.whatwg.org/#ref-for-prepare-to-run-script makes callback's [[Realm]] a running JavaScript execution context,
     // which is used for creating TypeError objects: https://tc39.es/ecma262/#sec-ecmascript-function-objects-call-thisargument-argumentslist (step 4).
     JSGlobalObject* lexicalGlobalObject = callback->globalObject();
-    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     JSValue function;
     CallData callData;

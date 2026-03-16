@@ -401,10 +401,10 @@ pub fn Parser(comptime enc: Encoding) type {
                     pos: Pos,
                 },
 
-                pub fn addToLog(this: *const Error, source: *const logger.Source, log: *logger.Log) OOM!void {
+                pub fn addToLog(this: *const Error, source: *const logger.Source, log: *logger.Log) (OOM || error{StackOverflow})!void {
                     switch (this.*) {
                         .oom => return error.OutOfMemory,
-                        .stack_overflow => {},
+                        .stack_overflow => return error.StackOverflow,
                         .unexpected_eof => |e| {
                             try log.addError(source, e.pos.loc(), "Unexpected EOF");
                         },

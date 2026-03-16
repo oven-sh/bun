@@ -21,6 +21,10 @@ endforeach()
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm|ARM|arm64|ARM64|aarch64|AARCH64")
   if(APPLE)
     register_compiler_flags(-mcpu=apple-m1)
+  elseif(WIN32)
+    # Windows ARM64: use /clang: prefix for clang-cl, skip for MSVC cl.exe subprojects
+    # These flags are only understood by clang-cl, not MSVC cl.exe
+    register_compiler_flags(/clang:-march=armv8-a+crc /clang:-mtune=ampere1)
   else()
     register_compiler_flags(-march=armv8-a+crc -mtune=ampere1)
   endif()
@@ -36,6 +40,13 @@ endif()
 
 # --- MSVC runtime ---
 if(WIN32)
+  # CMP0091 NEW (Policies.cmake) makes CMake use this property instead of
+  # injecting /MD into CMAKE_<LANG>_FLAGS_<CONFIG>. Without it, CMake defaults
+  # to MultiThreadedDLL and appends -MD after our /MT, poisoning vendor libs
+  # with /DEFAULTLIB:msvcrt.lib. Set it explicitly so the property matches the
+  # raw /MT flags below.
+  set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+
   register_compiler_flags(
     DESCRIPTION "Use static MSVC runtime"
     /MTd ${DEBUG}
@@ -242,10 +253,17 @@ if(UNIX)
   )
 endif()
 
-register_compiler_flags(
-  DESCRIPTION "Set C/C++ error limit"
-  -ferror-limit=${ERROR_LIMIT}
-)
+if(WIN32)
+  register_compiler_flags(
+    DESCRIPTION "Set C/C++ error limit"
+    /clang:-ferror-limit=${ERROR_LIMIT}
+  )
+else()
+  register_compiler_flags(
+    DESCRIPTION "Set C/C++ error limit"
+    -ferror-limit=${ERROR_LIMIT}
+  )
+endif()
 
 # --- LTO ---
 if(ENABLE_LTO)

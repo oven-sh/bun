@@ -131,10 +131,10 @@ void CallSite::formatAsString(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WT
         }
 
         if (auto* object = thisValue.getObject()) {
-            auto catchScope = DECLARE_CATCH_SCOPE(vm);
+            auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
             auto className = object->calculatedClassName(object);
-            if (catchScope.exception()) {
-                (void)catchScope.tryClearException();
+            if (topExceptionScope.exception()) {
+                (void)topExceptionScope.tryClearException();
             }
 
             if (className.length() > 0) {

@@ -107,7 +107,7 @@ pub fn toJSHostCall(
 /// The wrapped function must return an empty JSValue if and only if it has thrown an exception.
 /// If your function does not follow this pattern (if it can return empty without an exception, or
 /// throw an exception and return non-empty), either fix the function or write a custom wrapper with
-/// CatchScope.
+/// TopExceptionScope.
 pub fn fromJSHostCall(
     globalThis: *JSGlobalObject,
     /// For attributing thrown exceptions
@@ -132,7 +132,7 @@ pub fn fromJSHostCallGeneric(
     comptime function: anytype,
     args: std.meta.ArgsTuple(@TypeOf(function)),
 ) error{JSError}!@typeInfo(@TypeOf(function)).@"fn".return_type.? {
-    var scope: jsc.CatchScope = undefined;
+    var scope: jsc.TopExceptionScope = undefined;
     scope.init(globalThis, src);
     defer scope.deinit();
 

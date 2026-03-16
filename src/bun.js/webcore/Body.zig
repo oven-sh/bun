@@ -75,6 +75,7 @@ pub const PendingValue = struct {
     onStartBuffering: ?*const fn (ctx: *anyopaque) void = null,
     onStartStreaming: ?*const fn (ctx: *anyopaque) jsc.WebCore.DrainResult = null,
     onReadableStreamAvailable: ?*const fn (ctx: *anyopaque, globalThis: *jsc.JSGlobalObject, readable: jsc.WebCore.ReadableStream) void = null,
+    onStreamCancelled: ?*const fn (ctx: ?*anyopaque) void = null,
     size_hint: Blob.SizeType = 0,
 
     deinit: bool = false,
@@ -146,7 +147,7 @@ pub const PendingValue = struct {
         return null;
     }
 
-    pub fn setPromise(value: *PendingValue, globalThis: *jsc.JSGlobalObject, action: Action, owned_readable: ?jsc.WebCore.ReadableStream) JSValue {
+    pub fn setPromise(value: *PendingValue, globalThis: *jsc.JSGlobalObject, action: Action, owned_readable: ?jsc.WebCore.ReadableStream) bun.JSError!JSValue {
         value.action = action;
         if (owned_readable orelse value.readable.get(globalThis)) |readable| {
             switch (action) {
@@ -164,7 +165,7 @@ pub const PendingValue = struct {
                             }
 
                             break :brk globalThis.readableStreamToFormData(readable.value, switch (form_data.?.encoding) {
-                                .Multipart => |multipart| bun.String.init(multipart).toJS(globalThis),
+                                .Multipart => |multipart| try bun.String.init(multipart).toJS(globalThis),
                                 .URLEncoded => .js_undefined,
                             });
                         },
@@ -495,6 +496,13 @@ pub const Value = union(Tag) {
                     .globalThis = globalThis,
                 });
 
+                if (locked.onStreamCancelled) |onCancelled| {
+                    if (locked.task) |task| {
+                        reader.cancel_handler = onCancelled;
+                        reader.cancel_ctx = task;
+                    }
+                }
+
                 reader.context.setup();
 
                 if (drain_result == .estimated_size) {
@@ -815,16 +823,10 @@ pub const Value = union(Tag) {
     }
 
     pub fn tryUseAsAnyBlob(this: *Value) ?AnyBlob {
-        if (this.* == .WTFStringImpl) {
-            if (this.WTFStringImpl.canUseAsUTF8()) {
-                return AnyBlob{ .WTFStringImpl = this.WTFStringImpl };
-            }
-        }
-
         const any_blob: AnyBlob = switch (this.*) {
-            .Blob => AnyBlob{ .Blob = this.Blob },
-            .InternalBlob => AnyBlob{ .InternalBlob = this.InternalBlob },
-            // .InlineBlob => AnyBlob{ .InlineBlob = this.InlineBlob },
+            .Blob => .{ .Blob = this.Blob },
+            .InternalBlob => .{ .InternalBlob = this.InternalBlob },
+            .WTFStringImpl => |str| if (str.canUseAsUTF8()) .{ .WTFStringImpl = str } else return null,
             .Locked => this.Locked.toAnyBlobAllowPromise() orelse return null,
             else => return null,
         };
@@ -1113,7 +1115,7 @@ pub fn Mixin(comptime Type: type) type {
                         if (readable.isDisturbed(globalObject)) {
                             return handleBodyAlreadyUsed(globalObject);
                         }
-                        return value.Locked.setPromise(globalObject, .{ .getText = {} }, readable);
+                        return try value.Locked.setPromise(globalObject, .{ .getText = {} }, readable);
                     }
                 }
                 if (value.* == .Locked) {
@@ -1121,7 +1123,7 @@ pub fn Mixin(comptime Type: type) type {
                         return handleBodyAlreadyUsed(globalObject);
                     }
 
-                    return value.Locked.setPromise(globalObject, .{ .getText = {} }, null);
+                    return try value.Locked.setPromise(globalObject, .{ .getText = {} }, null);
                 }
             }
 
@@ -1193,7 +1195,7 @@ pub fn Mixin(comptime Type: type) type {
 
                         value.toBlobIfPossible();
                         if (value.* == .Locked) {
-                            return value.Locked.setPromise(globalObject, .{ .getJSON = {} }, readable);
+                            return try value.Locked.setPromise(globalObject, .{ .getJSON = {} }, readable);
                         }
                     }
                 }
@@ -1204,7 +1206,7 @@ pub fn Mixin(comptime Type: type) type {
 
                     value.toBlobIfPossible();
                     if (value.* == .Locked) {
-                        return value.Locked.setPromise(globalObject, .{ .getJSON = {} }, null);
+                        return try value.Locked.setPromise(globalObject, .{ .getJSON = {} }, null);
                     }
                 }
             }
@@ -1234,7 +1236,7 @@ pub fn Mixin(comptime Type: type) type {
                         }
                         value.toBlobIfPossible();
                         if (value.* == .Locked) {
-                            return value.Locked.setPromise(globalObject, .{ .getArrayBuffer = {} }, readable);
+                            return try value.Locked.setPromise(globalObject, .{ .getArrayBuffer = {} }, readable);
                         }
                     }
                 }
@@ -1245,7 +1247,7 @@ pub fn Mixin(comptime Type: type) type {
                     value.toBlobIfPossible();
 
                     if (value.* == .Locked) {
-                        return value.Locked.setPromise(globalObject, .{ .getArrayBuffer = {} }, null);
+                        return try value.Locked.setPromise(globalObject, .{ .getArrayBuffer = {} }, null);
                     }
                 }
             }
@@ -1271,7 +1273,7 @@ pub fn Mixin(comptime Type: type) type {
                         }
                         value.toBlobIfPossible();
                         if (value.* == .Locked) {
-                            return value.Locked.setPromise(globalObject, .{ .getBytes = {} }, readable);
+                            return try value.Locked.setPromise(globalObject, .{ .getBytes = {} }, readable);
                         }
                     }
                 }
@@ -1281,7 +1283,7 @@ pub fn Mixin(comptime Type: type) type {
                     }
                     value.toBlobIfPossible();
                     if (value.* == .Locked) {
-                        return value.Locked.setPromise(globalObject, .{ .getBytes = {} }, null);
+                        return try value.Locked.setPromise(globalObject, .{ .getBytes = {} }, null);
                     }
                 }
             }
@@ -1322,9 +1324,9 @@ pub fn Mixin(comptime Type: type) type {
 
             if (value.* == .Locked) {
                 if (@hasDecl(Type, "getBodyReadableStream")) {
-                    return value.Locked.setPromise(globalObject, .{ .getFormData = encoder }, this.getBodyReadableStream(globalObject));
+                    return try value.Locked.setPromise(globalObject, .{ .getFormData = encoder }, this.getBodyReadableStream(globalObject));
                 } else {
-                    return value.Locked.setPromise(globalObject, .{ .getFormData = encoder }, null);
+                    return try value.Locked.setPromise(globalObject, .{ .getFormData = encoder }, null);
                 }
             }
 
@@ -1374,7 +1376,7 @@ pub fn Mixin(comptime Type: type) type {
                         }
                         value.toBlobIfPossible();
                         if (value.* == .Locked) {
-                            return value.Locked.setPromise(globalObject, .{ .getBlob = {} }, readable);
+                            return try value.Locked.setPromise(globalObject, .{ .getBlob = {} }, readable);
                         }
                     }
                 }
@@ -1389,7 +1391,7 @@ pub fn Mixin(comptime Type: type) type {
                     value.toBlobIfPossible();
 
                     if (value.* == .Locked) {
-                        return value.Locked.setPromise(globalObject, .{ .getBlob = {} }, null);
+                        return try value.Locked.setPromise(globalObject, .{ .getBlob = {} }, null);
                     }
                 }
             }

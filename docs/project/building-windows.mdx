@@ -35,7 +35,7 @@ winget install "Visual Studio Community 2022" --override "--add Microsoft.Visual
 
 After Visual Studio, you need the following:
 
-- LLVM 19.1.7
+- LLVM 21.1.8
 - Go
 - Rust
 - NASM
@@ -47,11 +47,19 @@ After Visual Studio, you need the following:
 
 [Scoop](https://scoop.sh) can be used to install these remaining tools easily.
 
-```ps1 Scoop
+```ps1 Scoop (x64)
 irm https://get.scoop.sh | iex
 scoop install nodejs-lts go rust nasm ruby perl ccache
 # scoop seems to be buggy if you install llvm and the rest at the same time
-scoop install llvm@19.1.7
+scoop install llvm@21.1.8
+```
+
+For Windows ARM64, download LLVM 21.1.8 directly from GitHub releases (first version with ARM64 Windows builds):
+
+```ps1 ARM64
+# Download and install LLVM for ARM64
+Invoke-WebRequest -Uri "https://github.com/llvm/llvm-project/releases/download/llvmorg-21.1.8/LLVM-21.1.8-woa64.exe" -OutFile "$env:TEMP\LLVM-21.1.8-woa64.exe"
+Start-Process -FilePath "$env:TEMP\LLVM-21.1.8-woa64.exe" -ArgumentList "/S" -Wait
 ```
 
 <Note>
@@ -60,11 +68,13 @@ scoop install llvm@19.1.7
   will conflict with MSVC and break the build.
 </Note>
 
-If you intend on building WebKit locally (optional), you should install these packages:
+If you intend on building WebKit locally (optional, x64 only), you should install these packages:
 
 ```ps1 Scoop
 scoop install make cygwin python
 ```
+
+<Note>Cygwin is not required for ARM64 builds as WebKit is provided as a pre-built binary.</Note>
 
 From here on out, it is **expected you use a PowerShell Terminal with `.\scripts\vs-shell.ps1` sourced**. This script is available in the Bun repository and can be loaded by executing it:
 

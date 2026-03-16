@@ -839,7 +839,7 @@ pub const MatchedParams = struct {
             const value_str = bun.String.cloneUTF8(param.value);
             defer value_str.deref();
 
-            _ = obj.putBunStringOneOrArray(global, &key_str, value_str.toJS(global)) catch unreachable;
+            _ = obj.putBunStringOneOrArray(global, &key_str, value_str.toJS(global) catch unreachable) catch unreachable;
         }
         return obj;
     }
@@ -1247,7 +1247,7 @@ pub const JSFrameworkRouter = struct {
                     for (params_out.params.slice()) |param| {
                         const value = bun.String.cloneUTF8(param.value);
                         defer value.deref();
-                        obj.put(global, param.key, value.toJS(global));
+                        obj.put(global, param.key, try value.toJS(global));
                     }
                     break :params obj;
                 } else .null,
@@ -1271,8 +1271,8 @@ pub const JSFrameworkRouter = struct {
         const route = jsfr.router.routePtr(route_index);
         return (try jsc.JSObject.create(.{
             .part = try partToJS(global, route.part, allocator),
-            .page = jsfr.fileIdToJS(global, route.file_page),
-            .layout = jsfr.fileIdToJS(global, route.file_layout),
+            .page = try jsfr.fileIdToJS(global, route.file_page),
+            .layout = try jsfr.fileIdToJS(global, route.file_layout),
             // .notFound = jsfr.fileIdToJS(global, route.file_not_found),
             .children = brk: {
                 var len: usize = 0;
@@ -1295,8 +1295,8 @@ pub const JSFrameworkRouter = struct {
         const route = jsfr.router.routePtr(route_index);
         return (try jsc.JSObject.create(.{
             .part = try partToJS(global, route.part, allocator),
-            .page = jsfr.fileIdToJS(global, route.file_page),
-            .layout = jsfr.fileIdToJS(global, route.file_layout),
+            .page = try jsfr.fileIdToJS(global, route.file_page),
+            .layout = try jsfr.fileIdToJS(global, route.file_layout),
             // .notFound = jsfr.fileIdToJS(global, route.file_not_found),
             .parent = if (route.parent.unwrap()) |parent|
                 try routeToJsonInverse(jsfr, global, parent, allocator)
@@ -1341,8 +1341,8 @@ pub const JSFrameworkRouter = struct {
 
         var out = bun.String.init(rendered.items);
         const obj = JSValue.createEmptyObject(global, 2);
-        obj.put(global, "kind", bun.String.static(@tagName(parsed.kind)).toJS(global));
-        obj.put(global, "pattern", out.transferToJS(global));
+        obj.put(global, "kind", try bun.String.static(@tagName(parsed.kind)).toJS(global));
+        obj.put(global, "pattern", try out.transferToJS(global));
         return obj;
     }
 
@@ -1352,7 +1352,7 @@ pub const JSFrameworkRouter = struct {
         var it = pattern.iterate();
         while (it.next()) |part| try part.toStringForInternalUse(rendered.writer());
         var str = bun.String.cloneUTF8(rendered.items);
-        return str.transferToJS(global);
+        return try str.transferToJS(global);
     }
 
     fn partToJS(global: *JSGlobalObject, part: Part, temp_allocator: Allocator) !JSValue {
@@ -1360,7 +1360,7 @@ pub const JSFrameworkRouter = struct {
         defer rendered.deinit();
         try part.toStringForInternalUse(rendered.writer());
         var str = bun.String.cloneUTF8(rendered.items);
-        return str.transferToJS(global);
+        return try str.transferToJS(global);
     }
 
     pub fn getFileIdForRouter(jsfr: *JSFrameworkRouter, abs_path: []const u8, _: Route.Index, _: Route.FileKind) !OpaqueFileId {
@@ -1377,7 +1377,7 @@ pub const JSFrameworkRouter = struct {
         });
     }
 
-    pub fn fileIdToJS(jsfr: *JSFrameworkRouter, global: *JSGlobalObject, id: OpaqueFileId.Optional) JSValue {
+    pub fn fileIdToJS(jsfr: *JSFrameworkRouter, global: *JSGlobalObject, id: OpaqueFileId.Optional) bun.JSError!JSValue {
         return jsfr.files.items[(id.unwrap() orelse return .null).get()].toJS(global);
     }
 };

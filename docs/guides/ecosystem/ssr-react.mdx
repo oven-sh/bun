@@ -33,7 +33,7 @@ const stream = await renderToReadableStream(<Component message="Hello from serve
 
 Combining this with `Bun.serve()`, we get a simple SSR HTTP server:
 
-```tsx server.ts icon="/icons/typescript.svg"
+```tsx server.tsx icon="/icons/typescript.svg"
 Bun.serve({
   async fetch() {
     const stream = await renderToReadableStream(<Component message="Hello from server!" />);

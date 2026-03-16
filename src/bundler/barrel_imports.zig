@@ -98,9 +98,8 @@ fn applyBarrelOptimizationImpl(this: *BundleV2, parse_result: *ParseTask.Result)
                     if (resolveBarrelExport(p_entry.key_ptr.*, named_exports, named_imports)) |resolution| {
                         try needed_records.put(needed_records_alloc, resolution.import_record_index, {});
                         // When the export resolves to `export * as Name from '...'`,
-                        // the entire target namespace is consumed — we must not
-                        // barrel-defer the target at all. Mark all non-internal
-                        // records as needed so nothing gets deferred.
+                        // the entire target namespace is consumed — bail out of
+                        // barrel optimization so nothing gets deferred.
                         if (resolution.alias_is_star) return;
                     }
                 }

@@ -629,11 +629,13 @@ devTest("barrel optimization: export * as Name through nested barrels (#28166)",
       sideEffects: false,
     }),
     "node_modules/outer-lib/index.js": `
-      export * from './components/index.js';
+      export { Toast } from './components/index.js';
     `,
     // The intermediate barrel uses "export * as Toast from" — a namespaced
     // re-export. The target module's exports (Root, Title) must all be
-    // available on the namespace object.
+    // available on the namespace object. Using a named re-export above
+    // (not export *) ensures components/index.js is not marked as
+    // is_export_star_target, so barrel optimization runs on it.
     "node_modules/outer-lib/components/index.js": `
       export * as Toast from 'inner-lib/toast';
       export { createToaster } from 'inner-lib/create-toaster';

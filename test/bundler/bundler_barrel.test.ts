@@ -1606,7 +1606,7 @@ describe("bundler", () => {
         sideEffects: false,
       }),
       "/node_modules/outer-lib/index.js": /* js */ `
-        export * from './components/index.js';
+        export { Toast } from './components/index.js';
       `,
       "/node_modules/outer-lib/components/index.js": /* js */ `
         export * as Toast from 'inner-lib/toast';
@@ -1641,6 +1641,7 @@ describe("bundler", () => {
       `,
     },
     outdir: "/out",
+    run: { stdout: "ROOT TITLE" },
     onAfterBundle(api) {
       api.expectFile("/out/entry.js").toContain("ToastRoot");
       api.expectFile("/out/entry.js").toContain("ToastTitle");

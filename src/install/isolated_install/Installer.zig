@@ -44,15 +44,54 @@ pub const Installer = struct {
 
     pub fn onPackageExtracted(this: *Installer, task_id: install.Task.Id) void {
         if (this.manager.task_queue.fetchRemove(task_id)) |removed| {
-            for (removed.value.items) |install_ctx| {
-                const entry_id = install_ctx.isolated_package_install_context;
+            const store = this.store;
 
-                // The patch was already applied during extraction by the
-                // PackageManagerTask callback (apply_patch_task). Do not
-                // re-apply per entry: the patched cache directory is shared
-                // across all peer variants, and re-patching while another
-                // entry's hardlink task is running causes EPERM on Windows.
-                this.startTask(entry_id);
+            const node_pkg_ids = store.nodes.items(.pkg_id);
+
+            const entries = store.entries.slice();
+            const entry_steps = entries.items(.step);
+            const entry_node_ids = entries.items(.node_id);
+
+            const pkgs = this.lockfile.packages.slice();
+            const pkg_names = pkgs.items(.name);
+            const pkg_name_hashes = pkgs.items(.name_hash);
+            const pkg_resolutions = pkgs.items(.resolution);
+
+            // Apply the patch once (using the first entry) before starting
+            // any hardlink tasks. Applying per entry would race: a subsequent
+            // entry's patch application could mutate the shared cache
+            // directory while an earlier entry's hardlink task is reading it,
+            // causing EPERM on Windows.
+            var patch_failed = false;
+            if (removed.value.items.len > 0) {
+                const first_entry_id = removed.value.items[0].isolated_package_install_context;
+                const first_node_id = entry_node_ids[first_entry_id.get()];
+                const first_pkg_id = node_pkg_ids[first_node_id.get()];
+                const pkg_name = pkg_names[first_pkg_id];
+                const pkg_name_hash = pkg_name_hashes[first_pkg_id];
+                const pkg_res = &pkg_resolutions[first_pkg_id];
+
+                const patch_info = bun.handleOom(this.packagePatchInfo(pkg_name, pkg_name_hash, pkg_res));
+
+                if (patch_info == .patch) {
+                    var log: bun.logger.Log = .init(this.manager.allocator);
+                    this.applyPackagePatch(first_entry_id, patch_info.patch, &log);
+                    if (log.hasErrors()) {
+                        patch_failed = true;
+                        for (removed.value.items) |install_ctx| {
+                            const entry_id = install_ctx.isolated_package_install_context;
+                            entry_steps[entry_id.get()].store(.done, .monotonic);
+                            this.onTaskFail(entry_id, .{ .patching = log });
+                        }
+                    }
+                }
+            }
+
+            if (!patch_failed) {
+                for (removed.value.items) |install_ctx| {
+                    const entry_id = install_ctx.isolated_package_install_context;
+                    this.startTask(entry_id);
+                }
             }
         }
     }

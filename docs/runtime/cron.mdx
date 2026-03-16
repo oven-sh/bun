@@ -156,7 +156,7 @@ export default {
   scheduled(controller) {
     console.log(controller.cron); // "30 2 * * 1"
     console.log(controller.type); // "scheduled"
-    console.log(controller.scheduledTime); // 1737340200000
+    console.log(controller.scheduledTime); // 1737340201847 (Date.now() at invocation)
   },
 };
 ```

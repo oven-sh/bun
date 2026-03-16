@@ -1591,4 +1591,59 @@ describe("bundler", () => {
     compile: true,
     run: { stdout: "ok" },
   });
+
+  // --- export * as Name through nested barrels (#28166) ---
+
+  itBundled("barrel/ExportStarAsNameNestedBarrels", {
+    files: {
+      "/entry.js": /* js */ `
+        import { Toast } from 'outer-lib';
+        console.log(Toast.Root() + ' ' + Toast.Title());
+      `,
+      "/node_modules/outer-lib/package.json": JSON.stringify({
+        name: "outer-lib",
+        main: "./index.js",
+        sideEffects: false,
+      }),
+      "/node_modules/outer-lib/index.js": /* js */ `
+        export * from './components/index.js';
+      `,
+      "/node_modules/outer-lib/components/index.js": /* js */ `
+        export * as Toast from 'inner-lib/toast';
+        export { createToaster } from 'inner-lib/create-toaster';
+      `,
+      "/node_modules/inner-lib/package.json": JSON.stringify({
+        name: "inner-lib",
+        main: "./index.js",
+        sideEffects: false,
+        exports: {
+          ".": "./index.js",
+          "./toast": "./toast/namespace.js",
+          "./create-toaster": "./create-toaster.js",
+        },
+      }),
+      "/node_modules/inner-lib/index.js": /* js */ `
+        export * as Toast from './toast/namespace.js';
+        export { createToaster } from './create-toaster.js';
+      `,
+      "/node_modules/inner-lib/toast/namespace.js": /* js */ `
+        export { ToastRoot as Root } from './toast-root.js';
+        export { ToastTitle as Title } from './toast-title.js';
+      `,
+      "/node_modules/inner-lib/toast/toast-root.js": /* js */ `
+        export function ToastRoot() { return "ROOT"; }
+      `,
+      "/node_modules/inner-lib/toast/toast-title.js": /* js */ `
+        export function ToastTitle() { return "TITLE"; }
+      `,
+      "/node_modules/inner-lib/create-toaster.js": /* js */ `
+        export function createToaster() { return "TOASTER"; }
+      `,
+    },
+    outdir: "/out",
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.js").toContain("ToastRoot");
+      api.expectFile("/out/entry.js").toContain("ToastTitle");
+    },
+  });
 });

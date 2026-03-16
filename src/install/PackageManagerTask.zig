@@ -80,7 +80,9 @@ pub fn callback(task: *ThreadPool.Task) void {
                 defer pt.deinit();
                 bun.handleOom(pt.apply());
                 if (pt.callback.apply.logger.errors > 0) {
-                    defer pt.callback.apply.logger.deinit();
+                    bun.handleOom(pt.callback.apply.logger.cloneToWithRecycled(&this.log, true));
+                    this.err = error.InstallFailed;
+                    this.status = .fail;
                     // this.log.addErrorFmt(null, logger.Loc.Empty, bun.default_allocator, "failed to apply patch: {}", .{e}) catch unreachable;
                     pt.callback.apply.logger.print(Output.errorWriter()) catch {};
                 }

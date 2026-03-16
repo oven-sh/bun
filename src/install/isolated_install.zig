@@ -1121,6 +1121,7 @@ pub fn installIsolatedPackages(
                                 dep.name.slice(string_buf),
                                 &pkg_res,
                                 ctx,
+                                patch_info.nameAndVersionHash(),
                             );
                         },
                         .remote_tarball => {

@@ -130,6 +130,7 @@ pub fn enqueueTarballForReading(
     alias: string,
     resolution: *const Resolution,
     task_context: TaskCallbackContext,
+    patch_name_and_version_hash: ?u64,
 ) void {
     const path = this.lockfile.str(&resolution.value.local_tarball);
     const task_id = Task.Id.forTarball(path);
@@ -151,10 +152,12 @@ pub fn enqueueTarballForReading(
         this,
         task_id,
         dependency_id,
+        package_id,
         alias,
         path,
         resolution.*,
         integrity,
+        patch_name_and_version_hash,
     )));
 }
 
@@ -1168,10 +1171,12 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
                         this,
                         task_id,
                         id,
+                        package_id,
                         this.lockfile.str(&dependency.name),
                         url,
                         res,
                         .{},
+                        patch_name_and_version_hash,
                     )));
                 },
                 .remote => {
@@ -1334,10 +1339,12 @@ fn enqueueLocalTarball(
     this: *PackageManager,
     task_id: Task.Id,
     dependency_id: DependencyID,
+    package_id: PackageID,
     name: string,
     path: string,
     resolution: Resolution,
     integrity: Integrity,
+    patch_name_and_version_hash: ?u64,
 ) *ThreadPool.Task {
     var task = this.preallocated_resolve_tasks.get();
     task.* = Task{
@@ -1366,6 +1373,12 @@ fn enqueueLocalTarball(
                 },
             },
         },
+        .apply_patch_task = if (patch_name_and_version_hash) |h| brk: {
+            const patch_hash = this.lockfile.patched_dependencies.get(h).?.patchfileHash().?;
+            const pt = PatchTask.newApplyPatchHash(this, package_id, patch_hash, h);
+            pt.callback.apply.task_id = task_id;
+            break :brk pt;
+        } else null,
         .id = task_id,
         .data = undefined,
     };

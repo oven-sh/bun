@@ -320,6 +320,8 @@ pub fn setup(this: *FileSink, options: *const FileSink.Options) bun.sys.Maybe(vo
         .result => |fd| fd,
     };
 
+    this.fd = fd;
+
     if (comptime Environment.isWindows) {
         if (this.force_sync) {
             switch (this.writer.startSync(

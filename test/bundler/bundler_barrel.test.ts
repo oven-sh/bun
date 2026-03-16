@@ -541,7 +541,9 @@ describe("bundler", () => {
   });
 
   // --- Ported from Rolldown: dynamic-import-entry ---
-  // A submodule dynamically imports the barrel back
+  // A submodule dynamically imports the barrel back. import() returns the full
+  // module namespace — all barrel exports must be preserved, even if the
+  // import() result is discarded (we can't statically prove it isn't used).
 
   itBundled("barrel/DynamicImportInSubmodule", {
     files: {
@@ -562,15 +564,101 @@ describe("bundler", () => {
         export const a = 'dyn-a';
         import('./index.js');
       `,
-      // b.js has a syntax error — only a is imported, so b should be skipped
       "/node_modules/dynlib/b.js": /* js */ `
-        export const b = <<<SYNTAX_ERROR>>>;
+        export const b = 'dyn-b';
       `,
     },
     outdir: "/out",
     onAfterBundle(api) {
       api.expectFile("/out/entry.js").toContain("dyn-a");
+      // b must be included — import() needs the full namespace
+      api.expectFile("/out/entry.js").toContain("dyn-b");
     },
+  });
+
+  // Dynamic import returns the full namespace at runtime — consumer can access any export.
+  // When a file also has a static named import of the same barrel, the barrel
+  // optimization must not drop exports the dynamic import might use.
+  // Previously, the dynamic import was ignored if a static import already seeded
+  // requested_exports, producing invalid JS (export clause referencing undeclared symbol).
+  itBundled("barrel/DynamicImportWithStaticImportSameTarget", {
+    files: {
+      "/entry.js": /* js */ `
+        import { a } from "barrel";
+        console.log(a);
+        const run = async () => {
+          const { b } = await import("barrel");
+          console.log(b);
+        };
+        run();
+      `,
+      "/node_modules/barrel/package.json": JSON.stringify({
+        name: "barrel",
+        main: "./index.js",
+        sideEffects: false,
+      }),
+      "/node_modules/barrel/index.js": /* js */ `
+        export { a } from "./a.js";
+        export { b } from "./b.js";
+      `,
+      "/node_modules/barrel/a.js": /* js */ `
+        export const a = "A";
+      `,
+      "/node_modules/barrel/b.js": /* js */ `
+        export const b = "B";
+      `,
+    },
+    splitting: true,
+    format: "esm",
+    target: "bun",
+    outdir: "/out",
+    run: {
+      stdout: "A\nB",
+    },
+  });
+
+  // Same as above but static and dynamic importers are in separate files.
+  // This was parse-order dependent — if the static importer's
+  // scheduleBarrelDeferredImports ran first, it seeded .partial and the dynamic
+  // importer's escalation was skipped. Now import() always escalates to .all.
+  itBundled("barrel/DynamicImportWithStaticImportSeparateFiles", {
+    files: {
+      "/static-user.js": /* js */ `
+        import { a } from "barrel2";
+        console.log(a);
+      `,
+      "/dynamic-user.js": /* js */ `
+        const run = async () => {
+          const { b } = await import("barrel2");
+          console.log(b);
+        };
+        run();
+      `,
+      "/node_modules/barrel2/package.json": JSON.stringify({
+        name: "barrel2",
+        main: "./index.js",
+        sideEffects: false,
+      }),
+      "/node_modules/barrel2/index.js": /* js */ `
+        export { a } from "./a.js";
+        export { b } from "./b.js";
+      `,
+      "/node_modules/barrel2/a.js": /* js */ `
+        export const a = "A";
+      `,
+      "/node_modules/barrel2/b.js": /* js */ `
+        export const b = "B";
+      `,
+    },
+    entryPoints: ["/static-user.js", "/dynamic-user.js"],
+    splitting: true,
+    format: "esm",
+    target: "bun",
+    outdir: "/out",
+    run: [
+      { file: "/out/static-user.js", stdout: "A" },
+      { file: "/out/dynamic-user.js", stdout: "B" },
+    ],
   });
 
   // --- Ported from Rolldown: multiple-entries ---

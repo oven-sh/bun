@@ -1,0 +1,130 @@
+# verify-baseline-static allowlist for aarch64 armv8-a+crc baseline.
+#
+# Shared by linux-aarch64 and linux-aarch64-musl.
+
+
+# ----------------------------------------------------------------------------
+# Bun's Highway SVE/SVE2 targets. Gate: hwy::SupportedTargets via getauxval(AT_HWCAP).
+# (48 symbols)
+# ----------------------------------------------------------------------------
+_ZN3bun10N_SVE2_12810MemMemImplEPKhmS2_m                                      [SVE]
+_ZN3bun10N_SVE2_12815CopyU16ToU8ImplEPKtmPh                                   [SVE]
+_ZN3bun10N_SVE2_12815IndexOfCharImplEPKhmh                                    [SVE]
+_ZN3bun10N_SVE2_12818IndexOfAnyCharImplEPKhmS2_m                              [SVE]
+_ZN3bun10N_SVE2_12820FillWithSkipMaskImplEPKhmPhS2_mb                         [SVE]
+_ZN3bun10N_SVE2_12828IndexOfNewlineOrNonASCIIImplEPKhm                        [SVE]
+_ZN3bun10N_SVE2_12835IndexOfSpaceOrNewlineOrNonASCIIImplEPKhm                 [SVE]
+_ZN3bun10N_SVE2_12836ContainsNewlineOrNonASCIIOrQuoteImplEPKhm                [SVE]
+_ZN3bun10N_SVE2_12838IndexOfNewlineOrNonASCIIOrHashOrAtImplEPKhm              [SVE]
+_ZN3bun10N_SVE2_12846IndexOfInterestingCharacterInStringLiteralImplEPKhmh     [SVE]
+_ZN3bun10N_SVE2_12846IndexOfNeedsEscapeForJavaScriptStringImplQuoteEPKhmh     [SVE]
+_ZN3bun10N_SVE2_12849IndexOfNeedsEscapeForJavaScriptStringImplBacktickEPKhmh  [SVE]
+_ZN3bun5N_SVE10MemMemImplEPKhmS2_m                                            [SVE]
+_ZN3bun5N_SVE15CopyU16ToU8ImplEPKtmPh                                         [SVE]
+_ZN3bun5N_SVE15IndexOfCharImplEPKhmh                                          [SVE]
+_ZN3bun5N_SVE18IndexOfAnyCharImplEPKhmS2_m                                    [SVE]
+_ZN3bun5N_SVE20FillWithSkipMaskImplEPKhmPhS2_mb                               [SVE]
+_ZN3bun5N_SVE28IndexOfNewlineOrNonASCIIImplEPKhm                              [SVE]
+_ZN3bun5N_SVE35IndexOfSpaceOrNewlineOrNonASCIIImplEPKhm                       [SVE]
+_ZN3bun5N_SVE36ContainsNewlineOrNonASCIIOrQuoteImplEPKhm                      [SVE]
+_ZN3bun5N_SVE38IndexOfNewlineOrNonASCIIOrHashOrAtImplEPKhm                    [SVE]
+_ZN3bun5N_SVE46IndexOfInterestingCharacterInStringLiteralImplEPKhmh           [SVE]
+_ZN3bun5N_SVE46IndexOfNeedsEscapeForJavaScriptStringImplQuoteEPKhmh           [SVE]
+_ZN3bun5N_SVE49IndexOfNeedsEscapeForJavaScriptStringImplBacktickEPKhmh        [SVE]
+_ZN3bun6N_SVE210MemMemImplEPKhmS2_m                                           [SVE]
+_ZN3bun6N_SVE215CopyU16ToU8ImplEPKtmPh                                        [SVE]
+_ZN3bun6N_SVE215IndexOfCharImplEPKhmh                                         [SVE]
+_ZN3bun6N_SVE218IndexOfAnyCharImplEPKhmS2_m                                   [SVE]
+_ZN3bun6N_SVE220FillWithSkipMaskImplEPKhmPhS2_mb                              [SVE]
+_ZN3bun6N_SVE228IndexOfNewlineOrNonASCIIImplEPKhm                             [SVE]
+_ZN3bun6N_SVE235IndexOfSpaceOrNewlineOrNonASCIIImplEPKhm                      [SVE]
+_ZN3bun6N_SVE236ContainsNewlineOrNonASCIIOrQuoteImplEPKhm                     [SVE]
+_ZN3bun6N_SVE238IndexOfNewlineOrNonASCIIOrHashOrAtImplEPKhm                   [SVE]
+_ZN3bun6N_SVE246IndexOfInterestingCharacterInStringLiteralImplEPKhmh          [SVE]
+_ZN3bun6N_SVE246IndexOfNeedsEscapeForJavaScriptStringImplQuoteEPKhmh          [SVE]
+_ZN3bun6N_SVE249IndexOfNeedsEscapeForJavaScriptStringImplBacktickEPKhmh       [SVE]
+_ZN3bun9N_SVE_25610MemMemImplEPKhmS2_m                                        [SVE]
+_ZN3bun9N_SVE_25615CopyU16ToU8ImplEPKtmPh                                     [SVE]
+_ZN3bun9N_SVE_25615IndexOfCharImplEPKhmh                                      [SVE]
+_ZN3bun9N_SVE_25618IndexOfAnyCharImplEPKhmS2_m                                [SVE]
+_ZN3bun9N_SVE_25620FillWithSkipMaskImplEPKhmPhS2_mb                           [SVE]
+_ZN3bun9N_SVE_25628IndexOfNewlineOrNonASCIIImplEPKhm                          [SVE]
+_ZN3bun9N_SVE_25635IndexOfSpaceOrNewlineOrNonASCIIImplEPKhm                   [SVE]
+_ZN3bun9N_SVE_25636ContainsNewlineOrNonASCIIOrQuoteImplEPKhm                  [SVE]
+_ZN3bun9N_SVE_25638IndexOfNewlineOrNonASCIIOrHashOrAtImplEPKhm                [SVE]
+_ZN3bun9N_SVE_25646IndexOfInterestingCharacterInStringLiteralImplEPKhmh       [SVE]
+_ZN3bun9N_SVE_25646IndexOfNeedsEscapeForJavaScriptStringImplQuoteEPKhmh       [SVE]
+_ZN3bun9N_SVE_25649IndexOfNeedsEscapeForJavaScriptStringImplBacktickEPKhmh    [SVE]
+
+
+# ----------------------------------------------------------------------------
+# Highway SVE detector.
+# (1 symbols)
+# ----------------------------------------------------------------------------
+_ZN3hwy3armL26DetectAdditionalSveTargetsEl  [SVE]
+
+
+# ----------------------------------------------------------------------------
+# compiler-rt outline atomics. Each helper has both LSE and LDXR/STXR paths;
+# __aarch64_have_lse_atomics (= AT_HWCAP & HWCAP_ATOMICS) picks at runtime.
+# (41 symbols)
+# ----------------------------------------------------------------------------
+__aarch64_cas1_acq        [LSE]
+__aarch64_cas1_acq_rel    [LSE]
+__aarch64_cas1_rel        [LSE]
+__aarch64_cas1_relax      [LSE]
+__aarch64_cas2_acq_rel    [LSE]
+__aarch64_cas4_acq        [LSE]
+__aarch64_cas4_acq_rel    [LSE]
+__aarch64_cas4_rel        [LSE]
+__aarch64_cas4_relax      [LSE]
+__aarch64_cas8_acq        [LSE]
+__aarch64_cas8_acq_rel    [LSE]
+__aarch64_cas8_rel        [LSE]
+__aarch64_cas8_relax      [LSE]
+__aarch64_ldadd1_acq_rel  [LSE]
+__aarch64_ldadd2_acq_rel  [LSE]
+__aarch64_ldadd4_acq_rel  [LSE]
+__aarch64_ldadd4_rel      [LSE]
+__aarch64_ldadd4_relax    [LSE]
+__aarch64_ldadd8_acq_rel  [LSE]
+__aarch64_ldadd8_rel      [LSE]
+__aarch64_ldadd8_relax    [LSE]
+__aarch64_ldclr1_acq_rel  [LSE]
+__aarch64_ldclr2_acq_rel  [LSE]
+__aarch64_ldclr4_acq_rel  [LSE]
+__aarch64_ldclr8_acq_rel  [LSE]
+__aarch64_ldeor1_acq_rel  [LSE]
+__aarch64_ldeor2_acq_rel  [LSE]
+__aarch64_ldeor4_acq_rel  [LSE]
+__aarch64_ldeor8_acq_rel  [LSE]
+__aarch64_ldset1_acq_rel  [LSE]
+__aarch64_ldset2_acq_rel  [LSE]
+__aarch64_ldset4_acq_rel  [LSE]
+__aarch64_ldset8_acq_rel  [LSE]
+__aarch64_swp1_acq        [LSE]
+__aarch64_swp1_acq_rel    [LSE]
+__aarch64_swp1_relax      [LSE]
+__aarch64_swp2_acq_rel    [LSE]
+__aarch64_swp4_acq        [LSE]
+__aarch64_swp4_acq_rel    [LSE]
+__aarch64_swp4_rel        [LSE]
+__aarch64_swp8_acq_rel    [LSE]
+
+
+# ----------------------------------------------------------------------------
+# libgcc DWARF unwinder SVE VG register (CNTD). Only reached when unwinding
+# through an SVE frame — transitively gated by Highway's dispatch.
+# (4 symbols)
+# ----------------------------------------------------------------------------
+_Unwind_GetGR        [SVE]
+execute_stack_op     [SVE]
+uw_update_context    [SVE]
+uw_update_context_1  [SVE]
+
+
+# ----------------------------------------------------------------------------
+# libdeflate Adler-32 NEON DotProd. Gate: HWCAP_ASIMDDP.
+# (1 symbols)
+# ----------------------------------------------------------------------------
+adler32_arm_neon_dotprod  [DotProd]

@@ -887,12 +887,14 @@ declare module "bun" {
      *
      * When a `TypedArray` is passed, the bytes are parsed directly without
      * copying if the content is ASCII. Optional `start` and `end` parameters
-     * allow slicing without copying, and `read` will be a byte offset into
-     * the original typed array.
+     * select a window of the input without copying. For typed arrays these
+     * are byte offsets and `read` will be a byte offset into the original
+     * typed array. For strings these are character offsets and `read` will
+     * be a character offset into the original string.
      *
      * @param input The JSONL string or typed array to parse
-     * @param start Byte offset to start parsing from (typed array only, default: 0)
-     * @param end Byte offset to stop parsing at (typed array only, default: input.byteLength)
+     * @param start Offset to start parsing from (bytes for typed arrays, characters for strings, default: 0)
+     * @param end Offset to stop parsing at (bytes for typed arrays, characters for strings, default: input length)
      * @returns An object with `values`, `read`, `done`, and `error` properties
      *
      * @example
@@ -907,9 +909,8 @@ declare module "bun" {
      * }
      * ```
      */
-    export function parseChunk(input: string): ParseChunkResult;
     export function parseChunk(
-      input: NodeJS.TypedArray | DataView<ArrayBuffer> | ArrayBufferLike,
+      input: string | NodeJS.TypedArray | DataView<ArrayBuffer> | ArrayBufferLike,
       start?: number,
       end?: number,
     ): ParseChunkResult;
@@ -2583,6 +2584,21 @@ declare module "bun" {
     plugins?: BunPlugin[];
     // manifest?: boolean; // whether to return manifest
     external?: string[];
+    /**
+     * Control whether dynamic `import()`, `require()`, or `require.resolve()` specifiers (non-literal
+     * arguments like `` `./locales/${lang}.json` ``) are allowed to pass through
+     * to runtime without being bundled.
+     *
+     * - `["*"]` (default) — allow all dynamic specifiers
+     * - `[]` — fail the build on any dynamic specifier
+     * - `["./locales/*.json", ...]` — allow only specifiers whose static
+     *   template parts match one of these glob patterns
+     *
+     * Add `""` to the list to allow fully opaque specifiers like `import(fn())`.
+     *
+     * @default ["*"]
+     */
+    allowUnresolved?: string[];
     packages?: "bundle" | "external";
     publicPath?: string;
     define?: Record<string, string>;

@@ -26,7 +26,7 @@ const token = Bun.CSRF.generate("my-secret-key");
 
 **Parameters:**
 
-- `secret` (string, optional) — The secret key used to sign the token. If not provided, Bun generates a random in-memory default secret (unique per process).
+- `secret` (string, optional) — The secret key used to sign the token. If not provided, Bun generates a random in-memory default secret (unique per thread).
 - `options` (object, optional):
 
 | Option      | Type     | Default       | Description                                                                                            |
@@ -134,10 +134,10 @@ console.log(`Listening on ${server.url}`);
 
 ## Default secret
 
-If you omit the `secret` parameter in both `generate()` and `verify()`, Bun uses a random secret generated once per process. This is convenient for single-process applications but won't work across multiple servers or after a restart.
+If you omit the `secret` parameter in both `generate()` and `verify()`, Bun uses a random secret generated once per thread. This is convenient for single-thread applications but won't work across multiple servers, workers, or after a restart.
 
 ```ts title="default-secret.ts" icon="/icons/typescript.svg"
-If you omit the `secret` parameter in both `generate()` and `verify()`, Bun uses a random secret generated once per thread. This is convenient for single-thread applications but won't work across multiple servers, workers, or after a restart.
+// Both calls use the same per-thread default secret within this runtime context.
 const token = Bun.CSRF.generate();
 const isValid = Bun.CSRF.verify(token); // true
 ```

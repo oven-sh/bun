@@ -611,16 +611,20 @@ test("patched package with multiple peer variants should not re-apply patch (#28
   // provides-peer-deps-2-0-0 depends on peer-deps + no-deps@2.0.0
   // This creates two isolated store variants for peer-deps (different peer hashes).
 
-  // Patch for peer-deps@1.0.0 index.js: add a console.log to prove it's patched
-  const patch = `diff --git a/index.js b/index.js
---- a/index.js
-+++ b/index.js
-@@ -1,3 +1,4 @@
-+console.log("PATCHED");
- module.exports = require(\`./package.json\`);
-
- for (const key of [\`dependencies\`, \`devDependencies\`, \`peerDependencies\`]) {
-`;
+  // Patch for peer-deps@1.0.0 package.json: add a description to prove it's patched
+  const patch = [
+    "diff --git a/package.json b/package.json",
+    "--- a/package.json",
+    "+++ b/package.json",
+    "@@ -1,5 +1,6 @@",
+    " {",
+    `     "name": "peer-deps",`,
+    `     "version": "1.0.0",`,
+    `+    "description": "patched",`,
+    `     "peerDependencies": {`,
+    `         "no-deps": "*"`,
+    "",
+  ].join("\n");
 
   const { packageDir, packageJson } = await registry.createTestDir({
     bunfigOpts: { linker: "isolated" },
@@ -658,22 +662,41 @@ test("patched package with multiple peer variants should not re-apply patch (#28
 
     // Verify the patch was applied in every store variant
     for (const storeDir of storeDirs) {
-      const indexJs = await file(
-        join(packageDir, "node_modules", ".bun", storeDir, "node_modules", "peer-deps", "index.js"),
-      ).text();
-      expect(indexJs).toContain('console.log("PATCHED")');
+      const patchedPkg = await file(
+        join(packageDir, "node_modules", ".bun", storeDir, "node_modules", "peer-deps", "package.json"),
+      ).json();
+      expect(patchedPkg.description).toBe("patched");
     }
   }
 
+  async function install() {
+    const proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+    expect(stderr).not.toContain("panic:");
+    expect(stderr).not.toContain("error:");
+    expect(stdout).not.toContain("error:");
+    expect(exitCode).toBe(0);
+  }
+
   // First install: extract + patch + hardlink
-  await runBunInstall(bunEnv, packageDir);
+  await install();
   await verifyInstall();
 
   // Reinstall from clean node_modules to exercise the cache-hit path
   // (missing_from_cache == false). Before the fix, this would re-apply the
   // patch per variant, causing EPERM on Windows.
   await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
-  await runBunInstall(bunEnv, packageDir);
+  await install();
   await verifyInstall();
 });
 

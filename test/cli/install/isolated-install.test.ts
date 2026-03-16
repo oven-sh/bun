@@ -1,9 +1,9 @@
 import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { existsSync, lstatSync, readlinkSync } from "fs";
+import { existsSync, lstatSync, readlinkSync, statSync } from "fs";
 import { mkdir, readlink, rm, symlink } from "fs/promises";
-import { VerdaccioRegistry, bunEnv, bunExe, readdirSorted, runBunInstall, tempDir } from "harness";
-import { join } from "path";
+import { VerdaccioRegistry, bunEnv, bunExe, isWindows, pack, readdirSorted, runBunInstall, tempDir } from "harness";
+import { dirname, join } from "path";
 
 const registry = new VerdaccioRegistry();
 
@@ -1342,4 +1342,212 @@ test("transitive peer deps are resolved when resolution is fully synchronous", a
   expect(readlinkSync(join(bunDir, usesStrictEntry!, "node_modules", "strict-peer-dep"))).toBe(
     join("..", "..", strictPeerEntry!, "node_modules", "strict-peer-dep"),
   );
+});
+
+test("patched peer variants reuse one patched cache hardlink source", async () => {
+  if (!isWindows) return;
+
+  using packageDir = tempDir("patched-peer-variants-", {});
+  const rootDir = String(packageDir);
+  const packageSourcesDir = join(rootDir, "package-sources");
+  const tarballsDir = join(rootDir, "tarballs");
+  const cacheDir = join(rootDir, ".bun-cache");
+
+  await Promise.all([
+    mkdir(packageSourcesDir, { recursive: true }),
+    mkdir(tarballsDir, { recursive: true }),
+    mkdir(join(rootDir, "patches"), { recursive: true }),
+  ]);
+
+  const manifests: Record<string, any> = {};
+
+  async function createRegistryPackage(
+    name: string,
+    version: string,
+    packageJson: Record<string, any>,
+    files: Record<string, string>,
+  ) {
+    const sourceDir = join(packageSourcesDir, `${name}-${version}`);
+    await mkdir(sourceDir, { recursive: true });
+
+    await write(
+      join(sourceDir, "package.json"),
+      JSON.stringify({
+        name,
+        version,
+        ...packageJson,
+      }),
+    );
+
+    for (const [relativePath, contents] of Object.entries(files)) {
+      await mkdir(dirname(join(sourceDir, relativePath)), { recursive: true });
+      await write(join(sourceDir, relativePath), contents);
+    }
+
+    await pack(sourceDir, bunEnv, `--destination=${tarballsDir}`);
+
+    manifests[name] ??= {
+      name,
+      versions: {},
+      "dist-tags": {},
+    };
+    manifests[name].versions[version] = {
+      name,
+      version,
+      ...packageJson,
+      dist: { tarball: "" },
+    };
+    manifests[name]["dist-tags"].latest = version;
+  }
+
+  await createRegistryPackage("peer-shared", "1.0.0", { main: "index.js" }, { "index.js": `module.exports = "v1";\n` });
+  await createRegistryPackage("peer-shared", "2.0.0", { main: "index.js" }, { "index.js": `module.exports = "v2";\n` });
+
+  const payload = Buffer.alloc(2048, "x").toString();
+  const targetFiles: Record<string, string> = {};
+  for (let i = 1; i <= 64; i++) {
+    targetFiles[`dist/vendors/file-${i.toString().padStart(4, "0")}.js`] = `module.exports = "file ${i} ${payload}";\n`;
+  }
+  for (let i = 1; i <= 64; i++) {
+    targetFiles[`dist/vendors/nested/deep/nested-${i.toString().padStart(4, "0")}.js`] = `module.exports = "nested ${i}";\n`;
+  }
+
+  await createRegistryPackage(
+    "target-pkg",
+    "1.0.0",
+    {
+      main: "dist/vendors/file-0001.js",
+      peerDependencies: {
+        "peer-shared": "*",
+      },
+    },
+    targetFiles,
+  );
+  await createRegistryPackage(
+    "uses-target",
+    "1.0.0",
+    {
+      main: "index.js",
+      dependencies: {
+        "target-pkg": "1.0.0",
+      },
+    },
+    {
+      "index.js": `module.exports = require("target-pkg");\n`,
+    },
+  );
+
+  using server = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      const url = new URL(req.url);
+      const pathname = decodeURIComponent(url.pathname);
+
+      if (pathname.endsWith(".tgz")) {
+        const tarball = file(join(tarballsDir, pathname.split("/").pop()!));
+        if (await tarball.exists()) {
+          return new Response(tarball, {
+            headers: { "Content-Type": "application/octet-stream" },
+          });
+        }
+        return new Response("Not found", { status: 404 });
+      }
+
+      const packageName = pathname.slice(1);
+      const manifest = manifests[packageName];
+      if (!manifest) {
+        return new Response("Not found", { status: 404 });
+      }
+
+      const body = JSON.parse(JSON.stringify(manifest));
+      for (const [version, info] of Object.entries(body.versions) as [string, any][]) {
+        info.dist.tarball = `http://127.0.0.1:${server.port}/${packageName}/-/${packageName}-${version}.tgz`;
+      }
+
+      return new Response(JSON.stringify(body), {
+        headers: {
+          "Content-Type": "application/json",
+          "Cache-Control": "public, max-age=300",
+        },
+      });
+    },
+  });
+
+  await write(
+    join(rootDir, "bunfig.toml"),
+    `[install]\nregistry = "http://127.0.0.1:${server.port}/"\nlinker = "isolated"\ncache = "${cacheDir.replaceAll("\\", "\\\\")}"\n`,
+  );
+  await write(
+    join(rootDir, "package.json"),
+    JSON.stringify({
+      name: "patched-peer-variants-root",
+      private: true,
+      workspaces: ["packages/*"],
+      patchedDependencies: {
+        "target-pkg@1.0.0": "patches/target-pkg@1.0.0.patch",
+      },
+    }),
+  );
+  await write(
+    join(rootDir, "patches", "target-pkg@1.0.0.patch"),
+    [
+      "diff --git a/dist/vendors/file-0001.js b/dist/vendors/file-0001.js",
+      "index 1111111..2222222 100644",
+      "--- a/dist/vendors/file-0001.js",
+      "+++ b/dist/vendors/file-0001.js",
+      "@@ -1 +1 @@",
+      `-module.exports = \"file 1 ${payload}\";`,
+      '+module.exports = \"patched 1\";',
+      "",
+    ].join("\n"),
+  );
+
+  for (const [name, version] of Object.entries({ app1: "1.0.0", app2: "2.0.0" })) {
+    await mkdir(join(rootDir, "packages", name), { recursive: true });
+    await write(
+      join(rootDir, "packages", name, "package.json"),
+      JSON.stringify({
+        name,
+        version: "1.0.0",
+        dependencies: {
+          "uses-target": "1.0.0",
+          "peer-shared": version,
+        },
+      }),
+    );
+  }
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "install", "--backend", "hardlink"],
+    cwd: rootDir,
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toContain("packages installed");
+  expect(stderr).toContain("Saved lockfile");
+  expect(exitCode).toBe(0);
+
+  const bunDir = join(rootDir, "node_modules", ".bun");
+  const entries = await readdirSorted(bunDir);
+  const targetEntries = entries.filter(entry => entry.startsWith("target-pkg@1.0.0+"));
+  expect(targetEntries).toHaveLength(2);
+
+  const patchedCacheEntry = (await readdirSorted(cacheDir)).find(
+    entry => entry.startsWith("target-pkg@1.0.0") && entry.includes("patch_hash="),
+  );
+  expect(patchedCacheEntry).toBeDefined();
+
+  const variantStats = targetEntries.map(entry =>
+    statSync(join(bunDir, entry, "node_modules", "target-pkg", "dist", "vendors", "file-0001.js")),
+  );
+  const cacheStat = statSync(join(cacheDir, patchedCacheEntry!, "dist", "vendors", "file-0001.js"));
+
+  expect(new Set([...variantStats.map(stat => String(stat.ino)), String(cacheStat.ino)])).toEqual(
+    new Set([String(cacheStat.ino)]),
+  );
+  expect(variantStats.map(stat => stat.nlink)).toEqual([3, 3]);
+  expect(cacheStat.nlink).toBe(3);
 });

@@ -39,9 +39,13 @@ pub fn runTasks(
         try ptask.runFromMainThread(manager, log_level);
         if (ptask.callback == .apply) {
             if (ptask.callback.apply.logger.errors == 0) {
+                manager.setPreinstallState(ptask.callback.apply.pkg_id, manager.lockfile, .done);
+
                 if (comptime @TypeOf(callbacks.onExtract) != void) {
                     if (ptask.callback.apply.task_id) |task_id| {
-                        _ = task_id; // autofix
+                        if (Ctx == *Store.Installer) {
+                            callbacks.onExtract(extract_ctx, task_id);
+                        }
 
                     } else if (Ctx == *PackageInstaller) {
                         if (ptask.callback.apply.install_context) |*ctx| {

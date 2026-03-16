@@ -1202,6 +1202,9 @@ pub fn enqueueExtractNPMPackage(
     tarball: *const ExtractTarball,
     network_task: *NetworkTask,
 ) *ThreadPool.Task {
+    const apply_patch_task = network_task.apply_patch_task;
+    network_task.apply_patch_task = null;
+
     var task = this.preallocated_resolve_tasks.get();
     task.* = Task{
         .package_manager = this,
@@ -1215,6 +1218,7 @@ pub fn enqueueExtractNPMPackage(
         },
         .id = network_task.task_id,
         .data = undefined,
+        .apply_patch_task = apply_patch_task,
     };
     task.request.extract.tarball.skip_verify = !this.options.do.verify_integrity;
     return &task.threadpool_task;

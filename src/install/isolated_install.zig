@@ -967,42 +967,77 @@ pub fn installIsolatedPackages(
                     const cache_dir, const cache_dir_path = manager.getCacheDirectoryAndAbsPath();
                     defer cache_dir_path.deinit();
 
-                    const missing_from_cache = switch (manager.getPreinstallState(pkg_id)) {
-                        .done => false,
-                        else => missing_from_cache: {
-                            if (patch_info == .none) {
-                                const exists = switch (pkg_res_tag) {
-                                    .npm => exists: {
-                                        var cache_dir_path_save = pkg_cache_dir_subpath.save();
-                                        defer cache_dir_path_save.restore();
-                                        pkg_cache_dir_subpath.append("package.json");
-                                        break :exists sys.existsAt(cache_dir, pkg_cache_dir_subpath.sliceZ());
-                                    },
-                                    else => sys.directoryExistsAt(cache_dir, pkg_cache_dir_subpath.sliceZ()).unwrapOr(false),
-                                };
-                                if (exists) {
-                                    manager.setPreinstallState(pkg_id, installer.lockfile, .done);
-                                }
-                                break :missing_from_cache !exists;
-                            }
-
-                            // TODO: why does this look like it will never work?
-                            break :missing_from_cache true;
+                    const preinstall_state = manager.getPreinstallState(pkg_id);
+                    switch (preinstall_state) {
+                        .done => {
+                            installer.startTask(entry_id);
+                            continue;
                         },
+                        .apply_patch, .applying_patch => {
+                            const patch = switch (patch_info) {
+                                .patch => |patch| patch,
+                                else => unreachable,
+                            };
+
+                            const task_id = switch (pkg_res_tag) {
+                                .npm => install.Task.Id.forNPMPackage(pkg_name.slice(string_buf), pkg_res.value.npm.version),
+                                .git => install.Task.Id.forGitCheckout(
+                                    pkg_res.value.git.repo.slice(string_buf),
+                                    pkg_res.value.git.resolved.slice(string_buf),
+                                ),
+                                .github => github_task_id: {
+                                    const url = manager.allocGitHubURL(&pkg_res.value.git);
+                                    defer manager.allocator.free(url);
+                                    break :github_task_id install.Task.Id.forTarball(url);
+                                },
+                                .local_tarball => install.Task.Id.forTarball(pkg_res.value.local_tarball.slice(string_buf)),
+                                .remote_tarball => install.Task.Id.forTarball(pkg_res.value.remote_tarball.slice(string_buf)),
+                                else => comptime unreachable,
+                            };
+
+                            var task_queue = try manager.task_queue.getOrPut(manager.allocator, task_id);
+                            if (!task_queue.found_existing) {
+                                task_queue.value_ptr.* = .{};
+                            }
+                            try task_queue.value_ptr.append(manager.allocator, .{ .isolated_package_install_context = entry_id });
+
+                            if (preinstall_state == .apply_patch) {
+                                manager.setPreinstallState(pkg_id, installer.lockfile, .applying_patch);
+
+                                const patch_task = install.PatchTask.newApplyPatchHash(
+                                    manager,
+                                    pkg_id,
+                                    patch.contents_hash,
+                                    patch.name_and_version_hash,
+                                );
+                                patch_task.callback.apply.task_id = task_id;
+                                manager.enqueuePatchTask(patch_task);
+                            }
+                            continue;
+                        },
+                        else => {},
+                    }
+
+                    const missing_from_cache = switch (patch_info) {
+                        .none => missing_from_cache: {
+                            const exists = switch (pkg_res_tag) {
+                                .npm => exists: {
+                                    var cache_dir_path_save = pkg_cache_dir_subpath.save();
+                                    defer cache_dir_path_save.restore();
+                                    pkg_cache_dir_subpath.append("package.json");
+                                    break :exists sys.existsAt(cache_dir, pkg_cache_dir_subpath.sliceZ());
+                                },
+                                else => sys.directoryExistsAt(cache_dir, pkg_cache_dir_subpath.sliceZ()).unwrapOr(false),
+                            };
+                            if (exists) {
+                                manager.setPreinstallState(pkg_id, installer.lockfile, .done);
+                            }
+                            break :missing_from_cache !exists;
+                        },
+                        else => true,
                     };
 
                     if (!missing_from_cache) {
-                        if (patch_info == .patch) {
-                            var patch_log: bun.logger.Log = .init(manager.allocator);
-                            installer.applyPackagePatch(entry_id, patch_info.patch, &patch_log);
-                            if (patch_log.hasErrors()) {
-                                // monotonic is okay because we haven't started the task yet (it isn't running
-                                // on another thread)
-                                entry_steps[entry_id.get()].store(.done, .monotonic);
-                                installer.onTaskFail(entry_id, .{ .patching = patch_log });
-                                continue;
-                            }
-                        }
                         installer.startTask(entry_id);
                         continue;
                     }

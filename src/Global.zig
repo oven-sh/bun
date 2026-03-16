@@ -117,10 +117,16 @@ pub fn exit(code: u32) noreturn {
     // Flush output before exiting to ensure all messages are visible
     Output.flush();
 
+    // Run exit callbacks and flush before calling into the C runtime's exit.
+    // On macOS, this was previously deferred to the atexit handler, but calling
+    // it explicitly ensures Bun's buffers are flushed before the C library
+    // flushes its own stdio buffers (which may contain data written by linked
+    // C/C++ code). This prevents stdout truncation when piped.
+    Bun__onExit();
+
     switch (Environment.os) {
         .mac => std.c.exit(@bitCast(code)),
         .windows => {
-            Bun__onExit();
             std.os.windows.kernel32.ExitProcess(code);
         },
         else => {
@@ -209,7 +215,12 @@ comptime {
     _ = Bun__userAgent;
 }
 
+var on_exit_has_run = false;
+
 pub export fn Bun__onExit() void {
+    if (on_exit_has_run) return;
+    on_exit_has_run = true;
+
     bun.jsc.Node.FSEvents.closeAndWait();
 
     runExitCallbacks();

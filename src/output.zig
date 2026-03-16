@@ -610,6 +610,13 @@ pub fn flush() void {
         // source.stream.flush() catch {};
         // source.error_stream.flush() catch {};
     }
+    // Also flush libc stdio buffers. While Bun uses raw write() for most output,
+    // linked C/C++ code (e.g. WebKit/JSC internals) may write through libc stdio.
+    // On macOS, stdout defaults to full buffering (BUFSIZ=8192) when piped, and
+    // quick_exit() on Linux skips stdio flushing entirely.
+    if (comptime Environment.isPosix) {
+        _ = fflush(null);
+    }
 }
 
 pub const ElapsedFormatter = struct {
@@ -1334,3 +1341,4 @@ const c = bun.c;
 const strings = bun.strings;
 const use_mimalloc = bun.use_mimalloc;
 const File = bun.sys.File;
+extern "c" fn fflush(stream: ?*anyopaque) c_int;

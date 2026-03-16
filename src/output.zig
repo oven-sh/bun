@@ -1329,6 +1329,8 @@ pub const Synchronized = struct {
     }
 };
 
+extern "c" fn fflush(stream: ?*anyopaque) c_int;
+
 const Environment = @import("./env.zig");
 const root = @import("root");
 const std = @import("std");
@@ -1341,4 +1343,3 @@ const c = bun.c;
 const strings = bun.strings;
 const use_mimalloc = bun.use_mimalloc;
 const File = bun.sys.File;
-extern "c" fn fflush(stream: ?*anyopaque) c_int;

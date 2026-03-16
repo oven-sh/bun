@@ -3,7 +3,7 @@ title: CSRF Protection
 description: Generate and verify CSRF tokens with Bun's built-in API
 ---
 
-Bun provides a built-in API for generating and verifying [CSRF (Cross-Site Request Forgery)](https://owasp.org/www-community/attacks/csrf) tokens through `Bun.CSRF`. Tokens are signed with HMAC and include expiration timestamps to protect against replay attacks.
+Bun provides a built-in API for generating and verifying [CSRF (Cross-Site Request Forgery)](https://owasp.org/www-community/attacks/csrf) tokens through `Bun.CSRF`. Tokens are signed with HMAC and include expiration timestamps to limit the token validity window.
 
 ```ts title="csrf.ts" icon="/icons/typescript.svg"
 // Generate a token

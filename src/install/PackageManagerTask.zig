@@ -83,8 +83,6 @@ pub fn callback(task: *ThreadPool.Task) void {
                     bun.handleOom(pt.callback.apply.logger.cloneToWithRecycled(&this.log, true));
                     this.err = error.InstallFailed;
                     this.status = .fail;
-                    // this.log.addErrorFmt(null, logger.Loc.Empty, bun.default_allocator, "failed to apply patch: {}", .{e}) catch unreachable;
-                    pt.callback.apply.logger.print(Output.errorWriter()) catch {};
                 }
             }
         }

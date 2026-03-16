@@ -1261,7 +1261,7 @@ pub fn installIsolatedPackages(
                 log(" and is able to run\n", .{});
             }
 
-            bun.debugAssert(done);
+            bun.debugAssert(done or manager.log.hasErrors());
         }
 
         installer.summary.successfully_installed = installer.installed;

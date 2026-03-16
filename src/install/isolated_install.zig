@@ -967,7 +967,18 @@ pub fn installIsolatedPackages(
                     const cache_dir, const cache_dir_path = manager.getCacheDirectoryAndAbsPath();
                     defer cache_dir_path.deinit();
 
-                    const preinstall_state = manager.getPreinstallState(pkg_id);
+                    var preinstall_state = manager.getPreinstallState(pkg_id);
+                    if (preinstall_state == .unknown) {
+                        var seeded_name_and_version_hash: ?u64 = null;
+                        var seeded_patchfile_hash: ?u64 = null;
+                        preinstall_state = manager.determinePreinstallState(
+                            lockfile.packages.get(pkg_id),
+                            installer.lockfile,
+                            &seeded_name_and_version_hash,
+                            &seeded_patchfile_hash,
+                        );
+                    }
+
                     switch (preinstall_state) {
                         .done => {
                             installer.startTask(entry_id);
@@ -986,7 +997,7 @@ pub fn installIsolatedPackages(
                                     pkg_res.value.git.resolved.slice(string_buf),
                                 ),
                                 .github => github_task_id: {
-                                    const url = manager.allocGitHubURL(&pkg_res.value.git);
+                                    const url = manager.allocGitHubURL(&pkg_res.value.github);
                                     defer manager.allocator.free(url);
                                     break :github_task_id install.Task.Id.forTarball(url);
                                 },
@@ -1087,7 +1098,7 @@ pub fn installIsolatedPackages(
                             );
                         },
                         .github => {
-                            const url = manager.allocGitHubURL(&pkg_res.value.git);
+                            const url = manager.allocGitHubURL(&pkg_res.value.github);
                             defer manager.allocator.free(url);
                             manager.enqueueTarballForDownload(
                                 dep_id,

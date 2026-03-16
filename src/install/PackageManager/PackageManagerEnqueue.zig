@@ -1171,12 +1171,12 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
                         this,
                         task_id,
                         id,
-                        package_id,
+                        invalid_package_id,
                         this.lockfile.str(&dependency.name),
                         url,
                         res,
                         .{},
-                        patch_name_and_version_hash,
+                        null,
                     )));
                 },
                 .remote => {
@@ -1265,10 +1265,7 @@ fn enqueueGitClone(
         .id = task_id,
         .apply_patch_task = if (patch_name_and_version_hash) |h| brk: {
             const dep = dependency;
-            const pkg_id = switch (this.lockfile.package_index.get(dep.name_hash) orelse @panic("Package not found")) {
-                .id => |p| p,
-                .ids => |ps| ps.items[0], // TODO is this correct
-            };
+            const pkg_id = this.lockfile.getPackageID(dep.name_hash, null, res) orelse @panic("Package not found");
             const patch_hash = this.lockfile.patched_dependencies.get(h).?.patchfileHash().?;
             const pt = PatchTask.newApplyPatchHash(this, pkg_id, patch_hash, h);
             pt.callback.apply.task_id = task_id;
@@ -1320,10 +1317,7 @@ pub fn enqueueGitCheckout(
         },
         .apply_patch_task = if (patch_name_and_version_hash) |h| brk: {
             const dep = this.lockfile.buffers.dependencies.items[dependency_id];
-            const pkg_id = switch (this.lockfile.package_index.get(dep.name_hash) orelse @panic("Package not found")) {
-                .id => |p| p,
-                .ids => |ps| ps.items[0], // TODO is this correct
-            };
+            const pkg_id = this.lockfile.getPackageID(dep.name_hash, null, &resolution) orelse @panic("Package not found");
             const patch_hash = this.lockfile.patched_dependencies.get(h).?.patchfileHash().?;
             const pt = PatchTask.newApplyPatchHash(this, pkg_id, patch_hash, h);
             pt.callback.apply.task_id = task_id;
@@ -1374,6 +1368,7 @@ fn enqueueLocalTarball(
             },
         },
         .apply_patch_task = if (patch_name_and_version_hash) |h| brk: {
+            bun.assert(package_id != invalid_package_id);
             const patch_hash = this.lockfile.patched_dependencies.get(h).?.patchfileHash().?;
             const pt = PatchTask.newApplyPatchHash(this, package_id, patch_hash, h);
             pt.callback.apply.task_id = task_id;

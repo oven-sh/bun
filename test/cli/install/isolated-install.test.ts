@@ -669,34 +669,15 @@ test("patched package with multiple peer variants should not re-apply patch (#28
     }
   }
 
-  async function install() {
-    const proc = spawn({
-      cmd: [bunExe(), "install"],
-      cwd: packageDir,
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-      proc.exited,
-    ]);
-    expect(stderr).not.toContain("panic:");
-    expect(stderr).not.toContain("error:");
-    expect(stdout).not.toContain("error:");
-    expect(exitCode).toBe(0);
-  }
-
   // First install: extract + patch + hardlink
-  await install();
+  await runBunInstall(bunEnv, packageDir);
   await verifyInstall();
 
   // Reinstall from clean node_modules to exercise the cache-hit path
   // (missing_from_cache == false). Before the fix, this would re-apply the
   // patch per variant, causing EPERM on Windows.
   await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
-  await install();
+  await runBunInstall(bunEnv, packageDir);
   await verifyInstall();
 });
 

@@ -44,42 +44,14 @@ pub const Installer = struct {
 
     pub fn onPackageExtracted(this: *Installer, task_id: install.Task.Id) void {
         if (this.manager.task_queue.fetchRemove(task_id)) |removed| {
-            const store = this.store;
-
-            const node_pkg_ids = store.nodes.items(.pkg_id);
-
-            const entries = store.entries.slice();
-            const entry_steps = entries.items(.step);
-            const entry_node_ids = entries.items(.node_id);
-
-            const pkgs = this.lockfile.packages.slice();
-            const pkg_names = pkgs.items(.name);
-            const pkg_name_hashes = pkgs.items(.name_hash);
-            const pkg_resolutions = pkgs.items(.resolution);
-
             for (removed.value.items) |install_ctx| {
                 const entry_id = install_ctx.isolated_package_install_context;
 
-                const node_id = entry_node_ids[entry_id.get()];
-                const pkg_id = node_pkg_ids[node_id.get()];
-                const pkg_name = pkg_names[pkg_id];
-                const pkg_name_hash = pkg_name_hashes[pkg_id];
-                const pkg_res = &pkg_resolutions[pkg_id];
-
-                const patch_info = bun.handleOom(this.packagePatchInfo(pkg_name, pkg_name_hash, pkg_res));
-
-                if (patch_info == .patch) {
-                    var log: bun.logger.Log = .init(this.manager.allocator);
-                    this.applyPackagePatch(entry_id, patch_info.patch, &log);
-                    if (log.hasErrors()) {
-                        // monotonic is okay because we haven't started the task yet (it isn't running
-                        // on another thread)
-                        entry_steps[entry_id.get()].store(.done, .monotonic);
-                        this.onTaskFail(entry_id, .{ .patching = log });
-                        continue;
-                    }
-                }
-
+                // The patch was already applied during extraction by the
+                // PackageManagerTask callback (apply_patch_task). Do not
+                // re-apply per entry: the patched cache directory is shared
+                // across all peer variants, and re-patching while another
+                // entry's hardlink task is running causes EPERM on Windows.
                 this.startTask(entry_id);
             }
         }

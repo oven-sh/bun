@@ -220,6 +220,59 @@ describe.skipIf(!hasAnyCronBackend)("cross-platform API consistency", () => {
     await Bun.cron.remove("test-xplat-spaces");
   });
 
+  test("relative path resolves relative to caller file, not cwd (docs L139)", async () => {
+    // Create register.ts + worker.ts in a temp dir; register.ts uses "./worker.ts".
+    // Run register.ts from a DIFFERENT cwd and verify the resolved absolute path
+    // points into the temp dir (caller's directory), not into cwd.
+    using dir = tempDir("bun-cron-caller-rel", {
+      "worker.ts": `export default { scheduled() {} };`,
+      "register.ts": `
+        await Bun.cron("./worker.ts", "0 0 * * *", "test-xplat-caller-rel");
+        console.log("registered");
+      `,
+    });
+    // Make an unrelated cwd — must not contain worker.ts
+    using cwdDir = tempDir("bun-cron-other-cwd", {});
+
+    try {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), `${dir}/register.ts`],
+        env: bunEnv,
+        cwd: String(cwdDir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout.trim()).toBe("registered");
+      expect(exitCode).toBe(0);
+
+      // Verify the registered path points at worker.ts inside the temp dir.
+      // Each backend records the absolute path differently; inspect the appropriate one.
+      if (hasLaunchctl) {
+        const plist = await Bun.file(
+          `${process.env.HOME}/Library/LaunchAgents/bun.cron.test-xplat-caller-rel.plist`,
+        ).text();
+        // On macOS /tmp is a symlink to /private/tmp, so the resolved path may use either.
+        // The important thing: it ends in the caller dir's worker.ts, not the cwd.
+        expect(plist).toMatch(/bun-cron-caller-rel[^<]*[\\/]worker\.ts/);
+        expect(plist).not.toContain("bun-cron-other-cwd");
+      } else if (hasCrontab) {
+        const crontab = Bun.spawnSync({ cmd: [Bun.which("crontab")!, "-l"], stdout: "pipe" }).stdout.toString();
+        expect(crontab).toMatch(/bun-cron-caller-rel[^\n]*[\\/]worker\.ts/);
+        expect(crontab).not.toContain("bun-cron-other-cwd");
+      } else if (hasSchtasks) {
+        const query = Bun.spawnSync({
+          cmd: ["schtasks", "/query", "/tn", "bun-cron-test-xplat-caller-rel", "/xml"],
+          stdout: "pipe",
+        }).stdout.toString();
+        expect(query).toMatch(/bun-cron-caller-rel[^<]*[\\/]worker\.ts/);
+        expect(query).not.toContain("bun-cron-other-cwd");
+      }
+    } finally {
+      await Bun.cron.remove("test-xplat-caller-rel");
+    }
+  });
+
   test("remove resolves undefined on success", async () => {
     using dir = tempDir("bun-cron-test", {
       "job.ts": `export default { scheduled() {} };`,
@@ -917,6 +970,21 @@ describe.skipIf(!hasLaunchctl)("cron registration (macOS)", () => {
     }
   });
 
+  test("--cron-period in plist is normalized form (docs L157)", async () => {
+    using dir = tempDir("bun-cron-test", {
+      "job.ts": `export default { scheduled() {} };`,
+    });
+    try {
+      // Register with named weekday — controller.cron should get normalized numeric form
+      await Bun.cron(`${dir}/job.ts`, "30 2 * * MON", "test-mac-cron-period-norm");
+      const plist = await Bun.file(plistPath("test-mac-cron-period-norm")).text();
+      expect(plist).toContain("--cron-period=30 2 * * 1");
+      expect(plist).not.toContain("MON");
+    } finally {
+      removeLaunchdJob("test-mac-cron-period-norm");
+    }
+  });
+
   test("@daily produces correct CalendarInterval (midnight)", async () => {
     using dir = tempDir("bun-cron-test", {
       "job.ts": `export default { scheduled() {} };`,
@@ -968,6 +1036,39 @@ describe.skipIf(!hasLaunchctl)("cron registration (macOS)", () => {
       expect(dayMatches?.length).toBe(2);
     } finally {
       removeLaunchdJob("test-mac-multi-dom");
+    }
+  });
+
+  test("two varying fields produce Cartesian product (docs L220)", async () => {
+    using dir = tempDir("bun-cron-test", {
+      "job.ts": `export default { scheduled() {} };`,
+    });
+    try {
+      // 0,30 9,10 * * * → 2 minutes × 2 hours = 4 dicts
+      await Bun.cron(`${dir}/job.ts`, "0,30 9,10 * * *", "test-mac-cartesian");
+      const plist = await Bun.file(plistPath("test-mac-cartesian")).text();
+      const arrayMatch = plist.match(/<key>StartCalendarInterval<\/key>\s*<array>([\s\S]*?)<\/array>/);
+      expect(arrayMatch).not.toBeNull();
+      const dictCount = (arrayMatch![1].match(/<dict>/g) || []).length;
+      expect(dictCount).toBe(4);
+    } finally {
+      removeLaunchdJob("test-mac-cartesian");
+    }
+  });
+
+  test("plist declares StandardOutPath and StandardErrorPath (docs L231-232)", async () => {
+    using dir = tempDir("bun-cron-test", {
+      "job.ts": `export default { scheduled() {} };`,
+    });
+    try {
+      await Bun.cron(`${dir}/job.ts`, "0 0 * * *", "test-mac-logpaths");
+      const plist = await Bun.file(plistPath("test-mac-logpaths")).text();
+      expect(plist).toContain("<key>StandardOutPath</key>");
+      expect(plist).toContain("<string>/tmp/bun.cron.test-mac-logpaths.stdout.log</string>");
+      expect(plist).toContain("<key>StandardErrorPath</key>");
+      expect(plist).toContain("<string>/tmp/bun.cron.test-mac-logpaths.stderr.log</string>");
+    } finally {
+      removeLaunchdJob("test-mac-logpaths");
     }
   });
 
@@ -1183,6 +1284,34 @@ describe("cron execution mode", () => {
 
     expect(stdout.trim()).toBe("async-done");
     expect(exitCode).toBe(0);
+  });
+
+  test("async rejected handler also settles (docs L164: 'settle')", async () => {
+    using dir = tempDir("bun-cron-test", {
+      "reject-scheduled.ts": `
+        export default {
+          async scheduled() {
+            await Bun.sleep(10);
+            console.log("before-throw");
+            throw new Error("intentional");
+          }
+        };
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "--cron-title=reject-job", "--cron-period=* * * * *", `${dir}/reject-scheduled.ts`],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // The await completed (proved by before-throw appearing), then rejection propagated
+    expect(stdout.trim()).toBe("before-throw");
+    expect(stderr).toContain("intentional");
+    expect(exitCode).not.toBe(0);
   });
 
   test("exits with error when no scheduled method", async () => {
@@ -1464,6 +1593,26 @@ describe("Bun.cron.parse", () => {
         Bun.cron.parse(`0 0 * * ${full}`, from)!.getTime(),
       );
     }
+  });
+
+  test("weekday names are case-insensitive (docs L85)", () => {
+    const from = Date.UTC(2025, 0, 14, 10, 0, 0);
+    const upper = Bun.cron.parse("0 0 * * MON", from)!;
+    const lower = Bun.cron.parse("0 0 * * mon", from)!;
+    const mixed = Bun.cron.parse("0 0 * * Mon", from)!;
+    expect(lower.getTime()).toBe(upper.getTime());
+    expect(mixed.getTime()).toBe(upper.getTime());
+  });
+
+  test("month names are case-insensitive (docs L85)", () => {
+    const from = Date.UTC(2025, 0, 1, 0, 0, 0);
+    const upper = Bun.cron.parse("0 0 1 JUN *", from)!;
+    const lower = Bun.cron.parse("0 0 1 jun *", from)!;
+    const mixed = Bun.cron.parse("0 0 1 Jun *", from)!;
+    const full = Bun.cron.parse("0 0 1 june *", from)!;
+    expect(lower.getTime()).toBe(upper.getTime());
+    expect(mixed.getTime()).toBe(upper.getTime());
+    expect(full.getTime()).toBe(upper.getTime());
   });
 
   test("MON-FRI/2 produces Mon, Wed, Fri", () => {

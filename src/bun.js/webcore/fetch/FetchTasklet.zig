@@ -563,7 +563,7 @@ pub const FetchTasklet = struct {
                 defer self.held.deinit();
                 defer self.promise.deinit();
                 // resolve the promise
-                var prom = self.promise.swap().asAnyPromise().?;
+                var prom = self.promise.swap().asAnyPromise() orelse return;
                 const res = self.held.swap();
                 res.ensureStillAlive();
                 try prom.resolve(self.globalObject, res);
@@ -576,7 +576,7 @@ pub const FetchTasklet = struct {
                 defer self.promise.deinit();
 
                 // reject the promise
-                var prom = self.promise.swap().asAnyPromise().?;
+                var prom = self.promise.swap().asAnyPromise() orelse return;
                 const res = self.held.swap();
                 res.ensureStillAlive();
                 try prom.reject(self.globalObject, res);

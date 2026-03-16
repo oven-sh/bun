@@ -234,6 +234,7 @@ pub const JSBundler = struct {
         emit_dce_annotations: ?bool = null,
         names: Names = .{},
         external: bun.StringSet = bun.StringSet.init(bun.default_allocator),
+        allow_unresolved: ?bun.StringSet = null,
         source_map: options.SourceMapOption = .none,
         public_path: OwnedString = OwnedString.initEmpty(bun.default_allocator),
         conditions: bun.StringSet = bun.StringSet.init(bun.default_allocator),
@@ -260,6 +261,10 @@ pub const JSBundler = struct {
         files: FileMap = .{},
         /// Generate metafile (JSON module graph)
         metafile: bool = false,
+        /// Package names whose barrel files should be optimized.
+        /// Named imports from these packages will only load the submodules
+        /// that are actually used instead of parsing all re-exported submodules.
+        optimize_imports: bun.StringSet = bun.StringSet.init(bun.default_allocator),
 
         pub const CompileOptions = struct {
             compile_target: CompileTarget = .{},
@@ -435,6 +440,7 @@ pub const JSBundler = struct {
             var this = Config{
                 .entry_points = bun.StringSet.init(allocator),
                 .external = bun.StringSet.init(allocator),
+                .optimize_imports = bun.StringSet.init(allocator),
                 .define = bun.StringMap.init(allocator, true),
                 .dir = OwnedString.initEmpty(allocator),
                 .outdir = OwnedString.initEmpty(allocator),
@@ -801,6 +807,23 @@ pub const JSBundler = struct {
                 }
             }
 
+            if (try config.getOwn(globalThis, "allowUnresolved")) |allow_unresolved_val| {
+                if (!allow_unresolved_val.isUndefined() and !allow_unresolved_val.isNull()) {
+                    if (!allow_unresolved_val.jsTypeLoose().isArray()) {
+                        return globalThis.throwInvalidArguments("allowUnresolved must be an array", .{});
+                    }
+                    this.allow_unresolved = bun.StringSet.init(bun.default_allocator);
+                    if (try allow_unresolved_val.getLength(globalThis) > 0) {
+                        var iter = try allow_unresolved_val.arrayIterator(globalThis);
+                        while (try iter.next()) |entry| {
+                            var slice = try entry.toSliceOrNull(globalThis);
+                            defer slice.deinit();
+                            try this.allow_unresolved.?.insert(slice.slice());
+                        }
+                    }
+                }
+            }
+
             if (try config.getOwnArray(globalThis, "drop")) |drops| {
                 var iter = try drops.arrayIterator(globalThis);
                 while (try iter.next()) |entry| {
@@ -816,6 +839,15 @@ pub const JSBundler = struct {
                     var slice = try entry.toSliceOrNull(globalThis);
                     defer slice.deinit();
                     try this.features.insert(slice.slice());
+                }
+            }
+
+            if (try config.getOwnArray(globalThis, "optimizeImports")) |optimize_imports| {
+                var iter = try optimize_imports.arrayIterator(globalThis);
+                while (try iter.next()) |entry| {
+                    var slice = try entry.toSliceOrNull(globalThis);
+                    defer slice.deinit();
+                    try this.optimize_imports.insert(slice.slice());
                 }
             }
 
@@ -1092,6 +1124,7 @@ pub const JSBundler = struct {
         pub fn deinit(self: *Config, allocator: std.mem.Allocator) void {
             self.entry_points.deinit();
             self.external.deinit();
+            if (self.allow_unresolved) |*a| a.deinit();
             self.define.deinit();
             self.dir.deinit();
             self.serve.deinit(allocator);
@@ -1129,6 +1162,7 @@ pub const JSBundler = struct {
             self.env_prefix.deinit();
             self.footer.deinit();
             self.tsconfig_override.deinit();
+            self.optimize_imports.deinit();
             self.files.deinitAndUnprotect();
             self.metafile_json_path.deinit();
             self.metafile_markdown_path.deinit();

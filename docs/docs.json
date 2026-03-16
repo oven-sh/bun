@@ -75,7 +75,7 @@
           {
             "group": "Core Runtime",
             "icon": "cog",
-            "pages": ["/runtime/index", "/runtime/watch-mode", "/runtime/debugger", "/runtime/bunfig"]
+            "pages": ["/runtime/index", "/runtime/watch-mode", "/runtime/debugger", "/runtime/repl", "/runtime/bunfig"]
           },
           {
             "group": "File & Module System",
@@ -147,8 +147,10 @@
             "group": "Utilities",
             "icon": "wrench",
             "pages": [
+              "/runtime/csrf",
               "/runtime/secrets",
               "/runtime/console",
+              "/runtime/toml",
               "/runtime/yaml",
               "/runtime/markdown",
               "/runtime/json5",
@@ -400,6 +402,7 @@
               "/guides/http/file-uploads",
               "/guides/http/fetch-unix",
               "/guides/http/stream-iterator",
+              "/guides/http/sse",
               "/guides/http/stream-node-streams-in-bun"
             ]
           },

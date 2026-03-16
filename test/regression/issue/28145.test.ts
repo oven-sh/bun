@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
-test("process.stdout removes O_NONBLOCK for synchronous pipe writes", async () => {
+test.skipIf(process.platform !== "linux")("process.stdout removes O_NONBLOCK for synchronous pipe writes", async () => {
   // Reproduces https://github.com/oven-sh/bun/issues/28145
   //
   // When process.stdout is initialized for a pipe, FileSink.setup() opens

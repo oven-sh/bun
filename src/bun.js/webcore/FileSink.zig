@@ -320,8 +320,6 @@ pub fn setup(this: *FileSink, options: *const FileSink.Options) bun.sys.Maybe(vo
         .result => |fd| fd,
     };
 
-    this.fd = fd;
-
     if (comptime Environment.isWindows) {
         if (this.force_sync) {
             switch (this.writer.startSync(
@@ -333,6 +331,7 @@ pub fn setup(this: *FileSink, options: *const FileSink.Options) bun.sys.Maybe(vo
                     return .{ .err = err };
                 },
                 .result => {
+                    this.fd = fd;
                     this.writer.updateRef(this.eventLoop(), false);
                 },
             }
@@ -349,6 +348,7 @@ pub fn setup(this: *FileSink, options: *const FileSink.Options) bun.sys.Maybe(vo
             return .{ .err = err };
         },
         .result => {
+            this.fd = fd;
             // Only keep the event loop ref'd while there's a pending write in progress.
             // If there's no pending write, no need to keep the event loop ref'd.
             this.writer.updateRef(this.eventLoop(), false);

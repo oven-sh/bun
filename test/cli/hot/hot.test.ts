@@ -577,8 +577,9 @@ ${Buffer.alloc(counter * 2, " ").toString()}throw new Error(${counter});`,
           );
         },
         verifyLine: (_errorLine, nextLine, counter) => {
+          if (!nextLine) throw new Error(_errorLine);
           expect(nextLine).toInclude("bundle_in.ts");
-          const match = nextLine!.match(/\s*at.*?:4:(\d+)$/);
+          const match = nextLine.match(/\s*at.*?:4:(\d+)$/);
           if (!match) throw new Error("invalid stack trace: " + nextLine);
           const col = match[1];
           expect(Number(col)).toBe(1 + "throw ".length + counter * 2);
@@ -658,8 +659,9 @@ ${Buffer.alloc(counter * 2, " ").toString()}throw new Error(${counter});`,
           );
         },
         verifyLine: (_errorLine, nextLine, counter) => {
+          if (!nextLine) throw new Error(_errorLine);
           expect(nextLine).toInclude("bundle_in.ts");
-          const match = nextLine!.match(/\s*at.*?:4:(\d+)$/);
+          const match = nextLine.match(/\s*at.*?:4:(\d+)$/);
           if (!match) throw new Error("invalid stack trace: " + nextLine);
           const col = match[1];
           expect(Number(col)).toBe(1 + "throw ".length + counter * 2);

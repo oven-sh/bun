@@ -1,7 +1,7 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
+import { mkdirSync, readdirSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
-import { readdirSync, mkdirSync } from "fs";
 
 test("runtime transpiler cache is disabled when BUN_INSPECT is set", async () => {
   // When the debugger is active (via BUN_INSPECT env var), the runtime
@@ -42,19 +42,13 @@ test("runtime transpiler cache is disabled when BUN_INSPECT is set", async () =>
       ...bunEnv,
       BUN_RUNTIME_TRANSPILER_CACHE_PATH: cacheDir,
       BUN_INSPECT:
-        process.platform === "win32"
-          ? "127.0.0.1:0"
-          : "ws+unix:///tmp/bun-inspect-fake-" + Date.now() + ".sock",
+        process.platform === "win32" ? "127.0.0.1:0" : "ws+unix:///tmp/bun-inspect-fake-" + Date.now() + ".sock",
     },
     stdout: "pipe",
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stdout.trim()).toBe("ok");
   expect(exitCode).toBe(0);

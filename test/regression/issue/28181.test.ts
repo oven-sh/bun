@@ -25,8 +25,9 @@ async function startInspectee(): Promise<{ proc: ReturnType<typeof Bun.spawn>; w
   const cleaned = stderr.replace(/\x1b\[[0-9;]*m/g, "").replace(/\x1b\]8;;[^\x1b]*\x1b\\/g, "");
   const match = cleaned.match(/ws:\/\/\S+/);
   if (!match) {
+    const exitCode = proc.exitCode;
     proc.kill();
-    throw new Error("Unable to find listening URL in stderr: " + stderr);
+    throw new Error(`Unable to find listening URL (exitCode=${exitCode}) in stderr: ${stderr}`);
   }
   return { proc, wsUrl: new URL(match[0]) };
 }

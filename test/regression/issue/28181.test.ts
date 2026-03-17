@@ -20,7 +20,9 @@ async function startInspectee(): Promise<{ proc: ReturnType<typeof Bun.spawn>; w
     }
   }
 
-  const match = stderr.match(/ws:\/\/[^\s\x1b]+/);
+  // Strip ANSI escape sequences before extracting the URL
+  const cleaned = stderr.replace(/\x1b\[[0-9;]*m/g, "").replace(/\x1b\]8;;[^\x1b]*\x1b\\/g, "");
+  const match = cleaned.match(/ws:\/\/\S+/);
   if (!match) {
     proc.kill();
     throw new Error("Unable to find listening URL in stderr: " + stderr);
@@ -59,10 +61,12 @@ describe("inspector /json endpoints", () => {
     await using _ = proc;
     const httpUrl = `http://${wsUrl.hostname}:${wsUrl.port}`;
 
-    const [listRes, jsonRes] = await Promise.all([
-      fetch(`${httpUrl}/json/list`).then(r => r.json()),
-      fetch(`${httpUrl}/json`).then(r => r.json()),
-    ]);
+    const [listResponse, jsonResponse] = await Promise.all([fetch(`${httpUrl}/json/list`), fetch(`${httpUrl}/json`)]);
+
+    expect(listResponse.status).toBe(200);
+    expect(jsonResponse.status).toBe(200);
+
+    const [listRes, jsonRes] = await Promise.all([listResponse.json(), jsonResponse.json()]);
 
     expect(jsonRes).toEqual(listRes);
   });
@@ -104,15 +108,30 @@ describe("inspector /json endpoints", () => {
     // Verify we can execute commands over the discovered WebSocket
     ws.send(JSON.stringify({ id: 1, method: "Runtime.evaluate", params: { expression: "2 + 2" } }));
 
-    const result = await new Promise<any>(resolve => {
-      const handler = (event: MessageEvent) => {
+    const result = await new Promise<any>((resolve, reject) => {
+      const cleanup = () => {
+        ws.removeEventListener("message", onMessage);
+        ws.removeEventListener("error", onError);
+        ws.removeEventListener("close", onClose);
+      };
+      const onMessage = (event: MessageEvent) => {
         const parsed = JSON.parse(String(event.data));
         if (parsed.id === 1) {
-          ws.removeEventListener("message", handler);
+          cleanup();
           resolve(parsed);
         }
       };
-      ws.addEventListener("message", handler);
+      const onError = () => {
+        cleanup();
+        reject(new Error("WebSocket error while waiting for response"));
+      };
+      const onClose = () => {
+        cleanup();
+        reject(new Error("WebSocket closed while waiting for response"));
+      };
+      ws.addEventListener("message", onMessage);
+      ws.addEventListener("error", onError);
+      ws.addEventListener("close", onClose);
     });
 
     expect(result).toMatchObject({

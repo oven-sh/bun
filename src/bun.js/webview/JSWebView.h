@@ -11,7 +11,9 @@
 namespace Bun {
 
 #if OS(DARWIN)
-namespace WebViewProto { enum class VirtualKey : uint8_t; }
+namespace WebViewProto {
+enum class VirtualKey : uint8_t;
+}
 #endif
 
 // IPC client. The actual WKWebView lives in the host subprocess; this

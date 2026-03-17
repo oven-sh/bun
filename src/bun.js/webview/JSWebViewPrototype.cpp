@@ -12,7 +12,7 @@
 #include <wtf/text/MakeString.h>
 
 #if OS(DARWIN)
-#include "ipc_protocol.h"  // VirtualKey, Mod*
+#include "ipc_protocol.h" // VirtualKey, Mod*
 #endif
 
 namespace Bun {
@@ -112,10 +112,10 @@ JSObject* createJSWebViewPrototype(VM& vm, JSGlobalObject* globalObject)
 
 // --- Helpers ----------------------------------------------------------------
 
-#define WEBVIEW_UNIMPLEMENTED_BODY(method)                                                               \
-    VM& vm = globalObject->vm();                                                                         \
-    auto scope = DECLARE_THROW_SCOPE(vm);                                                                \
-    return Bun::throwError(globalObject, scope, ErrorCode::ERR_METHOD_NOT_IMPLEMENTED,                   \
+#define WEBVIEW_UNIMPLEMENTED_BODY(method)                                             \
+    VM& vm = globalObject->vm();                                                       \
+    auto scope = DECLARE_THROW_SCOPE(vm);                                              \
+    return Bun::throwError(globalObject, scope, ErrorCode::ERR_METHOD_NOT_IMPLEMENTED, \
         "Bun.WebView." method " is not yet implemented on this platform"_s);
 
 #if OS(DARWIN)
@@ -160,10 +160,14 @@ static uint8_t parseModifiers(JSGlobalObject* g, ThrowScope& scope, JSValue v)
         RETURN_IF_EXCEPTION(scope, 0);
         WTF::String s = item.toWTFString(g);
         RETURN_IF_EXCEPTION(scope, 0);
-        if (s == "Shift"_s || s == "shift"_s)      mods |= ModShift;
-        else if (s == "Control"_s || s == "ctrl"_s || s == "control"_s) mods |= ModCtrl;
-        else if (s == "Alt"_s || s == "alt"_s || s == "option"_s)   mods |= ModAlt;
-        else if (s == "Meta"_s || s == "meta"_s || s == "cmd"_s || s == "command"_s) mods |= ModMeta;
+        if (s == "Shift"_s || s == "shift"_s)
+            mods |= ModShift;
+        else if (s == "Control"_s || s == "ctrl"_s || s == "control"_s)
+            mods |= ModCtrl;
+        else if (s == "Alt"_s || s == "alt"_s || s == "option"_s)
+            mods |= ModAlt;
+        else if (s == "Meta"_s || s == "meta"_s || s == "cmd"_s || s == "command"_s)
+            mods |= ModMeta;
     }
     return mods;
 }
@@ -172,23 +176,27 @@ static uint8_t parseModifiers(JSGlobalObject* g, ThrowScope& scope, JSValue v)
 // static_assert in WebViewHost.cpp enforces the child-side table matches too.
 static VirtualKey virtualKeyFromName(const WTF::String& s)
 {
-    struct { ASCIILiteral name; VirtualKey k; } table[] = {
-        { "Enter"_s,      VirtualKey::Enter },
-        { "Tab"_s,        VirtualKey::Tab },
-        { "Space"_s,      VirtualKey::Space },
-        { "Backspace"_s,  VirtualKey::Backspace },
-        { "Delete"_s,     VirtualKey::Delete },
-        { "Escape"_s,     VirtualKey::Escape },
-        { "ArrowLeft"_s,  VirtualKey::ArrowLeft },
+    struct {
+        ASCIILiteral name;
+        VirtualKey k;
+    } table[] = {
+        { "Enter"_s, VirtualKey::Enter },
+        { "Tab"_s, VirtualKey::Tab },
+        { "Space"_s, VirtualKey::Space },
+        { "Backspace"_s, VirtualKey::Backspace },
+        { "Delete"_s, VirtualKey::Delete },
+        { "Escape"_s, VirtualKey::Escape },
+        { "ArrowLeft"_s, VirtualKey::ArrowLeft },
         { "ArrowRight"_s, VirtualKey::ArrowRight },
-        { "ArrowUp"_s,    VirtualKey::ArrowUp },
-        { "ArrowDown"_s,  VirtualKey::ArrowDown },
-        { "Home"_s,       VirtualKey::Home },
-        { "End"_s,        VirtualKey::End },
-        { "PageUp"_s,     VirtualKey::PageUp },
-        { "PageDown"_s,   VirtualKey::PageDown },
+        { "ArrowUp"_s, VirtualKey::ArrowUp },
+        { "ArrowDown"_s, VirtualKey::ArrowDown },
+        { "Home"_s, VirtualKey::Home },
+        { "End"_s, VirtualKey::End },
+        { "PageUp"_s, VirtualKey::PageUp },
+        { "PageDown"_s, VirtualKey::PageDown },
     };
-    for (auto& e : table) if (s == e.name) return e.k;
+    for (auto& e : table)
+        if (s == e.name) return e.k;
     return VirtualKey::Character;
 }
 
@@ -278,8 +286,10 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncClick, (JSGlobalObject * globalObject
         if (b.isString()) {
             WTF::String bs = b.toWTFString(globalObject);
             RETURN_IF_EXCEPTION(scope, false);
-            if (bs == "right"_s) button = 1;
-            else if (bs == "middle"_s) button = 2;
+            if (bs == "right"_s)
+                button = 1;
+            else if (bs == "middle"_s)
+                button = 2;
         }
         JSValue m = o->get(globalObject, Identifier::fromString(vm, "modifiers"_s));
         RETURN_IF_EXCEPTION(scope, false);
@@ -422,7 +432,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncScrollTo, (JSGlobalObject * globalObj
 
     // opts: { timeout?, block?: "start"|"center"|"end"|"nearest" }
     uint32_t timeout = 30000;
-    uint8_t block = 1;  // center
+    uint8_t block = 1; // center
     JSValue opts = callFrame->argument(1);
     if (opts.isObject()) {
         JSObject* o = opts.getObject();
@@ -435,12 +445,17 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncScrollTo, (JSGlobalObject * globalObj
         if (b.isString()) {
             WTF::String bs = b.toWTFString(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
-            if (bs == "start"_s) block = 0;
-            else if (bs == "center"_s) block = 1;
-            else if (bs == "end"_s) block = 2;
-            else if (bs == "nearest"_s) block = 3;
-            else return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "block"_s, b,
-                "must be \"start\", \"center\", \"end\", or \"nearest\""_s);
+            if (bs == "start"_s)
+                block = 0;
+            else if (bs == "center"_s)
+                block = 1;
+            else if (bs == "end"_s)
+                block = 2;
+            else if (bs == "nearest"_s)
+                block = 3;
+            else
+                return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "block"_s, b,
+                    "must be \"start\", \"center\", \"end\", or \"nearest\""_s);
         }
     }
 
@@ -551,30 +566,30 @@ JSC_DEFINE_CUSTOM_GETTER(jsWebViewGetter_loading, (JSGlobalObject*, EncodedJSVal
 
 // --- Callback accessors -----------------------------------------------------
 
-#define WEBVIEW_CALLBACK_ACCESSOR(Name, field)                                                                   \
-    JSC_DEFINE_CUSTOM_GETTER(jsWebViewGetter_##Name, (JSGlobalObject*, EncodedJSValue thisValue, PropertyName))  \
-    {                                                                                                            \
-        auto* thisObject = jsDynamicCast<JSWebView*>(JSValue::decode(thisValue));                                \
-        if (!thisObject) return JSValue::encode(jsUndefined());                                                  \
-        JSObject* cb = thisObject->field.get();                                                                  \
-        return JSValue::encode(cb ? JSValue(cb) : jsNull());                                                     \
-    }                                                                                                            \
-    JSC_DEFINE_CUSTOM_SETTER(jsWebViewSetter_##Name,                                                             \
-        (JSGlobalObject * globalObject, EncodedJSValue thisValue, EncodedJSValue encodedValue, PropertyName))    \
-    {                                                                                                            \
-        auto* thisObject = jsDynamicCast<JSWebView*>(JSValue::decode(thisValue));                                \
-        if (!thisObject) return false;                                                                           \
-        JSValue value = JSValue::decode(encodedValue);                                                           \
-        if (value.isUndefinedOrNull()) {                                                                         \
-            thisObject->field.clear();                                                                           \
-        } else if (value.isCallable()) {                                                                         \
-            thisObject->field.set(globalObject->vm(), thisObject, value.getObject());                            \
-        } else {                                                                                                 \
-            auto scope = DECLARE_THROW_SCOPE(globalObject->vm());                                                \
-            Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "callback"_s, "function"_s, value);                  \
-            return false;                                                                                        \
-        }                                                                                                        \
-        return true;                                                                                             \
+#define WEBVIEW_CALLBACK_ACCESSOR(Name, field)                                                                  \
+    JSC_DEFINE_CUSTOM_GETTER(jsWebViewGetter_##Name, (JSGlobalObject*, EncodedJSValue thisValue, PropertyName)) \
+    {                                                                                                           \
+        auto* thisObject = jsDynamicCast<JSWebView*>(JSValue::decode(thisValue));                               \
+        if (!thisObject) return JSValue::encode(jsUndefined());                                                 \
+        JSObject* cb = thisObject->field.get();                                                                 \
+        return JSValue::encode(cb ? JSValue(cb) : jsNull());                                                    \
+    }                                                                                                           \
+    JSC_DEFINE_CUSTOM_SETTER(jsWebViewSetter_##Name,                                                            \
+        (JSGlobalObject * globalObject, EncodedJSValue thisValue, EncodedJSValue encodedValue, PropertyName))   \
+    {                                                                                                           \
+        auto* thisObject = jsDynamicCast<JSWebView*>(JSValue::decode(thisValue));                               \
+        if (!thisObject) return false;                                                                          \
+        JSValue value = JSValue::decode(encodedValue);                                                          \
+        if (value.isUndefinedOrNull()) {                                                                        \
+            thisObject->field.clear();                                                                          \
+        } else if (value.isCallable()) {                                                                        \
+            thisObject->field.set(globalObject->vm(), thisObject, value.getObject());                           \
+        } else {                                                                                                \
+            auto scope = DECLARE_THROW_SCOPE(globalObject->vm());                                               \
+            Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "callback"_s, "function"_s, value);                 \
+            return false;                                                                                       \
+        }                                                                                                       \
+        return true;                                                                                            \
     }
 
 WEBVIEW_CALLBACK_ACCESSOR(onNavigated, m_onNavigated)

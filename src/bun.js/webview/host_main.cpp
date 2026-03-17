@@ -50,7 +50,9 @@ static bool loadHostCF()
 {
     void* h = dlopen("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation", RTLD_LAZY | RTLD_LOCAL);
     if (!h) return false;
-#define S(name) cf.name = reinterpret_cast<decltype(cf.name)>(dlsym(h, #name)); if (!cf.name) return false
+#define S(name)                                                     \
+    cf.name = reinterpret_cast<decltype(cf.name)>(dlsym(h, #name)); \
+    if (!cf.name) return false
     S(CFRunLoopRun);
     S(CFRunLoopStop);
     S(CFRunLoopGetCurrent);
@@ -199,7 +201,7 @@ void Host::onReadable()
             return;
         }
         if (rx.size() - off < sizeof(Frame) + h.len) break; // partial payload
-        Reader r{ base + off + sizeof(Frame), base + off + sizeof(Frame) + h.len };
+        Reader r { base + off + sizeof(Frame), base + off + sizeof(Frame) + h.len };
         dispatch(h.viewId, static_cast<Op>(h.op), r);
         off += sizeof(Frame) + h.len;
     }
@@ -241,17 +243,29 @@ void Host::dispatch(uint32_t viewId, Op op, Reader r)
         return;
     case Op::Resize: {
         auto p = decode<ResizePayload>(r);
-        if (auto* v = view(viewId)) { v->resize(p.width, p.height); writer.sendReply(viewId, Reply::Ack); }
+        if (auto* v = view(viewId)) {
+            v->resize(p.width, p.height);
+            writer.sendReply(viewId, Reply::Ack);
+        }
         return;
     }
     case Op::GoBack:
-        if (auto* v = view(viewId)) { v->goBack(); writer.sendReply(viewId, Reply::Ack); }
+        if (auto* v = view(viewId)) {
+            v->goBack();
+            writer.sendReply(viewId, Reply::Ack);
+        }
         return;
     case Op::GoForward:
-        if (auto* v = view(viewId)) { v->goForward(); writer.sendReply(viewId, Reply::Ack); }
+        if (auto* v = view(viewId)) {
+            v->goForward();
+            writer.sendReply(viewId, Reply::Ack);
+        }
         return;
     case Op::Reload:
-        if (auto* v = view(viewId)) { v->reload(); writer.sendReply(viewId, Reply::Ack); }
+        if (auto* v = view(viewId)) {
+            v->reload();
+            writer.sendReply(viewId, Reply::Ack);
+        }
         return;
     // Input ops: return true = async (completion block Acks), false = sync.
     case Op::Click: {
@@ -302,7 +316,7 @@ void Host::dispatch(uint32_t viewId, Op op, Reader r)
 
 static void cfCallback(CFFileDescriptorRef, CFOptionFlags flags, void*)
 {
-    if (flags & kCFFileDescriptorReadCallBack)  g_host.onReadable();
+    if (flags & kCFFileDescriptorReadCallBack) g_host.onReadable();
     if (flags & kCFFileDescriptorWriteCallBack) g_host.writer.onWritable();
 }
 

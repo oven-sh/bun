@@ -16,7 +16,9 @@ namespace Bun {
 using namespace WebViewProto;
 
 // Defined in host_main.cpp.
-namespace WebViewProto { FrameWriter* hostWriter(); }
+namespace WebViewProto {
+FrameWriter* hostWriter();
+}
 
 std::unique_ptr<WebViewHost> WebViewHost::createForIPC(uint32_t viewId, uint32_t width, uint32_t height, const WTF::String& persistDir)
 {
@@ -155,9 +157,9 @@ static unsigned long expandModifiers(uint8_t m)
     using NSEvent = objc::NSEvent;
     unsigned long r = 0;
     if (m & ModShift) r |= NSEvent::ModShift;
-    if (m & ModCtrl)  r |= NSEvent::ModControl;
-    if (m & ModAlt)   r |= NSEvent::ModOption;
-    if (m & ModMeta)  r |= NSEvent::ModCommand;
+    if (m & ModCtrl) r |= NSEvent::ModControl;
+    if (m & ModAlt) r |= NSEvent::ModOption;
+    if (m & ModMeta) r |= NSEvent::ModCommand;
     return r;
 }
 
@@ -175,7 +177,7 @@ bool WebViewHost::clickIPC(float x, float y, uint8_t button, uint8_t modifiers, 
 void WebViewHost::doNativeClick(float x, float y, uint8_t button, uint8_t modifiers, uint8_t clickCount)
 {
     using NSEvent = objc::NSEvent;
-    double wy = static_cast<double>(m_height) - y;  // viewport y-down → window y-up
+    double wy = static_cast<double>(m_height) - y; // viewport y-down → window y-up
     unsigned long mods = expandModifiers(modifiers);
     double ts = objc::NSProcessInfo::systemUptime();
     long win = m_window.windowNumber();
@@ -189,15 +191,15 @@ void WebViewHost::doNativeClick(float x, float y, uint8_t button, uint8_t modifi
     switch (button) {
     case 1:
         m_webview.rightMouseDown(NSEvent::mouseEvent(NSEvent::RightMouseDown, x, wy, mods, ts, win, clickCount));
-        m_webview.rightMouseUp(  NSEvent::mouseEvent(NSEvent::RightMouseUp,   x, wy, mods, ts, win, clickCount));
+        m_webview.rightMouseUp(NSEvent::mouseEvent(NSEvent::RightMouseUp, x, wy, mods, ts, win, clickCount));
         break;
     case 2:
         m_webview.otherMouseDown(NSEvent::mouseEvent(NSEvent::OtherMouseDown, x, wy, mods, ts, win, clickCount));
-        m_webview.otherMouseUp(  NSEvent::mouseEvent(NSEvent::OtherMouseUp,   x, wy, mods, ts, win, clickCount));
+        m_webview.otherMouseUp(NSEvent::mouseEvent(NSEvent::OtherMouseUp, x, wy, mods, ts, win, clickCount));
         break;
     default:
         m_webview.mouseDown(NSEvent::mouseEvent(NSEvent::LeftMouseDown, x, wy, mods, ts, win, clickCount));
-        m_webview.mouseUp(  NSEvent::mouseEvent(NSEvent::LeftMouseUp,   x, wy, mods, ts, win, clickCount));
+        m_webview.mouseUp(NSEvent::mouseEvent(NSEvent::LeftMouseUp, x, wy, mods, ts, win, clickCount));
     }
 
     // Both events are now in mouseEventQueue. The barrier fires when the
@@ -271,7 +273,7 @@ bool WebViewHost::clickSelectorIPC(const WTF::String& selector, uint32_t timeout
 
     auto body = objc::NSString::fromWTF(WTF::String::fromUTF8(kActionabilityJS));
     auto args = objc::NSDictionary::with2(
-        objc::NSString::fromWTF(selector).m_id,             objc::NSString::fromWTF("sel"_s).m_id,
+        objc::NSString::fromWTF(selector).m_id, objc::NSString::fromWTF("sel"_s).m_id,
         objc::NSNumber::withDouble(static_cast<double>(timeout)).m_id, objc::NSString::fromWTF("timeout"_s).m_id);
     m_webview.callAsync(body, args.m_id, selectorCompletionBlock());
     return true;
@@ -293,9 +295,9 @@ bool WebViewHost::scrollToIPC(const WTF::String& selector, uint32_t timeout, uin
 
     auto body = objc::NSString::fromWTF(WTF::String::fromUTF8(kScrollToJS));
     auto args = objc::NSDictionary::with3(
-        objc::NSString::fromWTF(selector).m_id,                          objc::NSString::fromWTF("sel"_s).m_id,
-        objc::NSNumber::withDouble(static_cast<double>(timeout)).m_id,   objc::NSString::fromWTF("timeout"_s).m_id,
-        objc::NSString::fromWTF(blockStr).m_id,                          objc::NSString::fromWTF("block"_s).m_id);
+        objc::NSString::fromWTF(selector).m_id, objc::NSString::fromWTF("sel"_s).m_id,
+        objc::NSNumber::withDouble(static_cast<double>(timeout)).m_id, objc::NSString::fromWTF("timeout"_s).m_id,
+        objc::NSString::fromWTF(blockStr).m_id, objc::NSString::fromWTF("block"_s).m_id);
     m_webview.callAsync(body, args.m_id, selectorCompletionBlock());
     return true;
 }
@@ -308,8 +310,7 @@ void WebViewHost::onSelectorComplete(id result, id error)
         // reason in userInfo["WKJavaScriptExceptionMessage"], not in
         // localizedDescription (that's just "A JavaScript exception occurred").
         objc::NSError err(error);
-        id msg = objc::NSDictionary(err.userInfo()).objectForKey(
-            objc::NSString::fromWTF("WKJavaScriptExceptionMessage"_s).m_id);
+        id msg = objc::NSDictionary(err.userInfo()).objectForKey(objc::NSString::fromWTF("WKJavaScriptExceptionMessage"_s).m_id);
         hostWriter()->sendReplyStr(m_viewId, Reply::Error,
             msg ? objc::NSString(msg).toWTF() : err.localizedDescription());
         return;
@@ -362,7 +363,7 @@ bool WebViewHost::typeIPC(const WTF::String& text)
 // EditorCommand.cpp's createCommandMap; keyCodes from HIToolbox/Events.h;
 // character codes are NSF-key range for nav keys.
 struct VKeyInfo {
-    ASCIILiteral command;   // non-null → _executeEditCommand path
+    ASCIILiteral command; // non-null → _executeEditCommand path
     uint16_t keyCode;
     UChar ch;
 };
@@ -373,21 +374,21 @@ static const VKeyInfo& vkeyInfo(VirtualKey k)
     // and mapping every chord is a lot; modified presses fall through to
     // keyDown. Character stays {0,0,0}; caller supplies the char string.
     static constexpr VKeyInfo table[] = {
-        /* Character */  { {},                         0,    0      },
-        /* Enter */      { "InsertNewline"_s,          0x24, '\r'   },
-        /* Tab */        { "InsertTab"_s,              0x30, '\t'   },
-        /* Space */      { {},                         0x31, ' '    },
-        /* Backspace */  { "DeleteBackward"_s,         0x33, 0x7f   },
-        /* Delete */     { "DeleteForward"_s,          0x75, 0xF728 },
-        /* Escape */     { {},                         0x35, 0x1b   },
-        /* ArrowLeft */  { "MoveLeft"_s,               0x7B, 0xF702 },
-        /* ArrowRight */ { "MoveRight"_s,              0x7C, 0xF703 },
-        /* ArrowUp */    { "MoveUp"_s,                 0x7E, 0xF700 },
-        /* ArrowDown */  { "MoveDown"_s,               0x7D, 0xF701 },
-        /* Home */       { "MoveToBeginningOfLine"_s,  0x73, 0xF729 },
-        /* End */        { "MoveToEndOfLine"_s,        0x77, 0xF72B },
-        /* PageUp */     { "ScrollPageBackward"_s,     0x74, 0xF72C },
-        /* PageDown */   { "ScrollPageForward"_s,      0x79, 0xF72D },
+        /* Character */ { {}, 0, 0 },
+        /* Enter */ { "InsertNewline"_s, 0x24, '\r' },
+        /* Tab */ { "InsertTab"_s, 0x30, '\t' },
+        /* Space */ { {}, 0x31, ' ' },
+        /* Backspace */ { "DeleteBackward"_s, 0x33, 0x7f },
+        /* Delete */ { "DeleteForward"_s, 0x75, 0xF728 },
+        /* Escape */ { {}, 0x35, 0x1b },
+        /* ArrowLeft */ { "MoveLeft"_s, 0x7B, 0xF702 },
+        /* ArrowRight */ { "MoveRight"_s, 0x7C, 0xF703 },
+        /* ArrowUp */ { "MoveUp"_s, 0x7E, 0xF700 },
+        /* ArrowDown */ { "MoveDown"_s, 0x7D, 0xF701 },
+        /* Home */ { "MoveToBeginningOfLine"_s, 0x73, 0xF729 },
+        /* End */ { "MoveToEndOfLine"_s, 0x77, 0xF72B },
+        /* PageUp */ { "ScrollPageBackward"_s, 0x74, 0xF72C },
+        /* PageDown */ { "ScrollPageForward"_s, 0x79, 0xF72D },
     };
     static_assert(std::size(table) == static_cast<size_t>(VirtualKey::PageDown) + 1);
     uint8_t idx = static_cast<uint8_t>(k);
@@ -438,7 +439,7 @@ bool WebViewHost::pressIPC(VirtualKey key, uint8_t modifiers, const WTF::String&
     }
     auto chars = objc::NSString::fromWTF(charsStr);
     m_webview.keyDown(NSEvent::keyEvent(NSEvent::KeyDown, mods, ts, win, chars, chars, keyCode));
-    m_webview.keyUp(  NSEvent::keyEvent(NSEvent::KeyUp,   mods, ts, win, chars, chars, keyCode));
+    m_webview.keyUp(NSEvent::keyEvent(NSEvent::KeyUp, mods, ts, win, chars, chars, keyCode));
     return false;
 }
 
@@ -525,9 +526,15 @@ void WebViewHost::resize(uint32_t width, uint32_t height)
     m_height = height;
 }
 
-void WebViewHost::goBack()    { if (m_webview.canGoBack())    m_webview.goBack();    }
-void WebViewHost::goForward() { if (m_webview.canGoForward()) m_webview.goForward(); }
-void WebViewHost::reload()    { m_webview.reload(); }
+void WebViewHost::goBack()
+{
+    if (m_webview.canGoBack()) m_webview.goBack();
+}
+void WebViewHost::goForward()
+{
+    if (m_webview.canGoForward()) m_webview.goForward();
+}
+void WebViewHost::reload() { m_webview.reload(); }
 
 WTF::String WebViewHost::url()
 {
@@ -548,8 +555,13 @@ static WTF::Vector<uint8_t, 512> pack2(const WTF::String& a, const WTF::String& 
     WTF::Vector<uint8_t, 512> out;
     out.grow(8 + na + nb);
     uint8_t* p = out.mutableSpan().data();
-    memcpy(p, &na, 4); p += 4; memcpy(p, ca.data(), na); p += na;
-    memcpy(p, &nb, 4); p += 4; memcpy(p, cb.data(), nb);
+    memcpy(p, &na, 4);
+    p += 4;
+    memcpy(p, ca.data(), na);
+    p += na;
+    memcpy(p, &nb, 4);
+    p += 4;
+    memcpy(p, cb.data(), nb);
     return out;
 }
 
@@ -601,9 +613,15 @@ void WebViewHost::onScreenshotComplete(id nsimage, id error)
     }
 
     id cg = objc::NSImage(nsimage).cgImage();
-    if (!cg) { hostWriter()->sendReplyStr(m_viewId, Reply::ScreenshotFailed, "CGImage extraction failed"_s); return; }
+    if (!cg) {
+        hostWriter()->sendReplyStr(m_viewId, Reply::ScreenshotFailed, "CGImage extraction failed"_s);
+        return;
+    }
     auto png = objc::NSBitmapImageRep::pngFromCGImage(cg);
-    if (!png) { hostWriter()->sendReplyStr(m_viewId, Reply::ScreenshotFailed, "PNG encoding failed"_s); return; }
+    if (!png) {
+        hostWriter()->sendReplyStr(m_viewId, Reply::ScreenshotFailed, "PNG encoding failed"_s);
+        return;
+    }
     unsigned long length = png.length();
 
     // PNG goes in POSIX shared memory — reply frame stays tiny. The parent
@@ -623,7 +641,8 @@ void WebViewHost::onScreenshotComplete(id nsimage, id error)
         return;
     }
     if (ftruncate(fd, static_cast<off_t>(length)) != 0) {
-        ::close(fd); shm_unlink(name);
+        ::close(fd);
+        shm_unlink(name);
         hostWriter()->sendReplyStr(m_viewId, Reply::ScreenshotFailed, makeString("ftruncate: "_s, WTF::String::fromUTF8(strerror(errno))));
         return;
     }
@@ -643,7 +662,10 @@ void WebViewHost::onScreenshotComplete(id nsimage, id error)
     WTF::Vector<uint8_t, 64> payload;
     payload.grow(4 + nameLen + 4);
     uint8_t* p = payload.mutableSpan().data();
-    memcpy(p, &nameLen, 4); p += 4; memcpy(p, name, nameLen); p += nameLen;
+    memcpy(p, &nameLen, 4);
+    p += 4;
+    memcpy(p, name, nameLen);
+    p += nameLen;
     memcpy(p, &pngLen, 4);
     hostWriter()->sendReply(m_viewId, Reply::ScreenshotDone, payload.span().data(), static_cast<uint32_t>(payload.size()));
 }

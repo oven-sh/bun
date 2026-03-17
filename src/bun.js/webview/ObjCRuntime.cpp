@@ -268,7 +268,12 @@ static void delegateGetContextMenu(id, SEL, id /*web*/, id /*menu*/, id /*elemen
 {
     // The block's invoke is at offset 16 (isa + flags + reserved). The
     // signature is void(^)(NSMenu*); call with nil.
-    struct { void* isa; int32_t flags; int32_t reserved; void (*invoke)(void*, id); }* block
+    struct {
+        void* isa;
+        int32_t flags;
+        int32_t reserved;
+        void (*invoke)(void*, id);
+    }* block
         = reinterpret_cast<decltype(block)>(handler);
     block->invoke(handler, nullptr);
 }
@@ -276,7 +281,7 @@ static void delegateGetContextMenu(id, SEL, id /*web*/, id /*menu*/, id /*elemen
 // NSResponder's default noResponderFor: beeps when the selector is keyDown:.
 // WebContent doesn't consume press("Escape") (page listener observes but
 // doesn't preventDefault) → bounces up the chain → ding. Swallow it.
-static void windowNoResponderFor(id, SEL, SEL) { }
+static void windowNoResponderFor(id, SEL, SEL) {}
 
 } // extern "C"
 
@@ -311,10 +316,13 @@ bool ObjCRuntime::load()
     }
 
     // --- libobjc ----------------------------------------------------------
-#define SYM(var, handle, name)                                                   \
-    do {                                                                         \
-        var = reinterpret_cast<decltype(var)>(dlsym(handle, name));              \
-        if (!var) { m_loadError = "missing symbol: " name ""_s; return false; }  \
+#define SYM(var, handle, name)                                      \
+    do {                                                            \
+        var = reinterpret_cast<decltype(var)>(dlsym(handle, name)); \
+        if (!var) {                                                 \
+            m_loadError = "missing symbol: " name ""_s;             \
+            return false;                                           \
+        }                                                           \
     } while (0)
 
     void* msgSend = dlsym(libobjc, "objc_msgSend");
@@ -355,10 +363,13 @@ bool ObjCRuntime::load()
     // --- populate wrapper classes -----------------------------------------
     // A missing class at load time beats a nil-message (silent no-op) at
     // call time.
-#define CLS(var, name)                                                           \
-    do {                                                                         \
-        var = getClass(name);                                                    \
-        if (!var) { m_loadError = "missing class: " name ""_s; return false; }   \
+#define CLS(var, name)                                 \
+    do {                                               \
+        var = getClass(name);                          \
+        if (!var) {                                    \
+            m_loadError = "missing class: " name ""_s; \
+            return false;                              \
+        }                                              \
     } while (0)
 
     CLS(NSString::cls, "NSString");

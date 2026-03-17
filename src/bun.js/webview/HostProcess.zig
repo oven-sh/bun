@@ -130,5 +130,6 @@ extern fn Bun__WebViewHost__childDied(signo: i32) void;
 const log = bun.Output.scoped(.WebViewHost, .hidden);
 
 const std = @import("std");
+
 const bun = @import("bun");
 const jsc = bun.jsc;

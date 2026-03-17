@@ -75,7 +75,8 @@ class JSWebViewWeakOwner final : public JSC::WeakHandleOwner {
         auto* view = jsCast<JSWebView*>(handle.slot()->asCell());
         if (view->m_pendingActivityCount.load(std::memory_order_acquire) == 0)
             return false;
-        if (reason) [[unlikely]] *reason = "WebView with pending operation"_s;
+        if (reason) [[unlikely]]
+            *reason = "WebView with pending operation"_s;
         return true;
     }
 };
@@ -140,9 +141,21 @@ us_socket_t* hostOnData(us_socket_t* s, char* data, int length)
     hostClient().onData(data, length);
     return s;
 }
-us_socket_t* hostOnWritable(us_socket_t* s) { hostClient().onWritable(); return s; }
-us_socket_t* hostOnClose(us_socket_t* s, int, void*) { hostClient().onClose(); return s; }
-us_socket_t* hostOnEnd(us_socket_t* s) { hostClient().onClose(); return s; }
+us_socket_t* hostOnWritable(us_socket_t* s)
+{
+    hostClient().onWritable();
+    return s;
+}
+us_socket_t* hostOnClose(us_socket_t* s, int, void*)
+{
+    hostClient().onClose();
+    return s;
+}
+us_socket_t* hostOnEnd(us_socket_t* s)
+{
+    hostClient().onClose();
+    return s;
+}
 us_socket_t* hostOnOpen(us_socket_t* s, int, char*, int) { return s; }
 
 bool HostClient::ensureSpawned(Zig::GlobalObject* zig)
@@ -161,7 +174,10 @@ bool HostClient::ensureSpawned(Zig::GlobalObject* zig)
     }
 
     int fd = Bun__WebViewHost__ensure(zig);
-    if (fd < 0) { dead = true; return false; }
+    if (fd < 0) {
+        dead = true;
+        return false;
+    }
     global = zig;
 
     // Socket context — once. usockets needs all callbacks set even for
@@ -184,7 +200,10 @@ bool HostClient::ensureSpawned(Zig::GlobalObject* zig)
     // us_poll_start_rc doesn't touch loop.active; updateKeepAlive is the
     // sole ref manager.
     sock = us_socket_from_fd(ctx, sizeof(void*), fd, 0);
-    if (!sock) { dead = true; return false; }
+    if (!sock) {
+        dead = true;
+        return false;
+    }
     return true;
 }
 
@@ -268,8 +287,10 @@ void settle(JSGlobalObject* g, JSWebView* view, WriteBarrier<JSPromise>& slot, b
     if (!p) return;
     slot.clear();
     view->m_pendingActivityCount.fetch_sub(1, std::memory_order_release);
-    if (ok) p->resolve(g, v);
-    else    p->reject(g->vm(), g, v);
+    if (ok)
+        p->resolve(g, v);
+    else
+        p->reject(g->vm(), g, v);
 }
 
 void HostClient::handleReply(const Frame& h, Reader r)
@@ -357,10 +378,10 @@ void HostClient::rejectAllAndMarkDead(const WTF::String& reason)
     for (auto& [id, weak] : viewsById) {
         JSWebView* v = weak.get();
         if (!v) continue;
-        settle(g, v, v->m_pendingNavigate,   false, err);
-        settle(g, v, v->m_pendingEval,       false, err);
+        settle(g, v, v->m_pendingNavigate, false, err);
+        settle(g, v, v->m_pendingEval, false, err);
         settle(g, v, v->m_pendingScreenshot, false, err);
-        settle(g, v, v->m_pendingMisc,       false, err);
+        settle(g, v, v->m_pendingMisc, false, err);
     }
     viewsById.clear();
     updateKeepAlive();
@@ -392,8 +413,8 @@ void HostClient::onData(const char* data, int length)
             break;
         }
         if (rx.size() - off < sizeof(Frame) + h.len) break;
-        Reader r{ rx.span().data() + off + sizeof(Frame),
-                  rx.span().data() + off + sizeof(Frame) + h.len };
+        Reader r { rx.span().data() + off + sizeof(Frame),
+            rx.span().data() + off + sizeof(Frame) + h.len };
         off += sizeof(Frame) + h.len;
 
         handleReply(h, r);
@@ -441,8 +462,8 @@ extern "C" void Bun__WebViewHost__childDied(int32_t signo)
     auto& client = hostClient();
     if (client.dead) return;
     client.rejectAllAndMarkDead(signo
-        ? makeString("WebView host process killed by signal "_s, signo)
-        : "WebView host process exited"_s);
+            ? makeString("WebView host process killed by signal "_s, signo)
+            : "WebView host process exited"_s);
 }
 
 #endif // OS(DARWIN)
@@ -539,14 +560,14 @@ JSPromise* JSWebView::screenshot(JSGlobalObject* g)
 
 JSPromise* JSWebView::click(JSGlobalObject* g, float x, float y, uint8_t button, uint8_t modifiers, uint8_t clickCount)
 {
-    auto payload = encode(ClickPayload{ x, y, button, modifiers, clickCount });
+    auto payload = encode(ClickPayload { x, y, button, modifiers, clickCount });
     return sendOp(g, this, m_pendingMisc, Op::Click,
         payload.span().data(), static_cast<uint32_t>(payload.size()));
 }
 
 JSPromise* JSWebView::clickSelector(JSGlobalObject* g, const WTF::String& selector, uint32_t timeout, uint8_t button, uint8_t modifiers, uint8_t clickCount)
 {
-    auto payload = encode(ClickSelectorPayload{ timeout, button, modifiers, clickCount }, selector);
+    auto payload = encode(ClickSelectorPayload { timeout, button, modifiers, clickCount }, selector);
     return sendOp(g, this, m_pendingMisc, Op::ClickSelector,
         payload.span().data(), static_cast<uint32_t>(payload.size()));
 }
@@ -562,7 +583,7 @@ JSPromise* JSWebView::press(JSGlobalObject* g, VirtualKey key, uint8_t modifiers
 {
     // Tail string is null for named keys, present for VirtualKey::Character.
     // encode() skips the tail encoding when the string is null.
-    auto payload = encode(PressPayload{ static_cast<uint8_t>(key), modifiers },
+    auto payload = encode(PressPayload { static_cast<uint8_t>(key), modifiers },
         key == VirtualKey::Character ? character : WTF::String());
     return sendOp(g, this, m_pendingMisc, Op::Press,
         payload.span().data(), static_cast<uint32_t>(payload.size()));
@@ -570,28 +591,28 @@ JSPromise* JSWebView::press(JSGlobalObject* g, VirtualKey key, uint8_t modifiers
 
 JSPromise* JSWebView::scroll(JSGlobalObject* g, double dx, double dy)
 {
-    auto payload = encode(ScrollPayload{ static_cast<float>(dx), static_cast<float>(dy) });
+    auto payload = encode(ScrollPayload { static_cast<float>(dx), static_cast<float>(dy) });
     return sendOp(g, this, m_pendingMisc, Op::Scroll,
         payload.span().data(), static_cast<uint32_t>(payload.size()));
 }
 
 JSPromise* JSWebView::scrollTo(JSGlobalObject* g, const WTF::String& selector, uint32_t timeout, uint8_t block)
 {
-    auto payload = encode(ScrollToPayload{ timeout, block }, selector);
+    auto payload = encode(ScrollToPayload { timeout, block }, selector);
     return sendOp(g, this, m_pendingMisc, Op::ScrollTo,
         payload.span().data(), static_cast<uint32_t>(payload.size()));
 }
 
 JSPromise* JSWebView::resize(JSGlobalObject* g, uint32_t width, uint32_t height)
 {
-    auto payload = encode(ResizePayload{ width, height });
+    auto payload = encode(ResizePayload { width, height });
     return sendOp(g, this, m_pendingMisc, Op::Resize,
         payload.span().data(), static_cast<uint32_t>(payload.size()));
 }
 
-JSPromise* JSWebView::goBack(JSGlobalObject* g)    { return sendOp(g, this, m_pendingMisc, Op::GoBack,    nullptr, 0); }
+JSPromise* JSWebView::goBack(JSGlobalObject* g) { return sendOp(g, this, m_pendingMisc, Op::GoBack, nullptr, 0); }
 JSPromise* JSWebView::goForward(JSGlobalObject* g) { return sendOp(g, this, m_pendingMisc, Op::GoForward, nullptr, 0); }
-JSPromise* JSWebView::reload(JSGlobalObject* g)    { return sendOp(g, this, m_pendingMisc, Op::Reload,    nullptr, 0); }
+JSPromise* JSWebView::reload(JSGlobalObject* g) { return sendOp(g, this, m_pendingMisc, Op::Reload, nullptr, 0); }
 
 void JSWebView::doClose()
 {
@@ -606,10 +627,10 @@ void JSWebView::doClose()
     if (client.global) {
         auto* g = client.global;
         JSValue err = createError(g, "WebView closed"_s);
-        settle(g, this, m_pendingNavigate,   false, err);
-        settle(g, this, m_pendingEval,       false, err);
+        settle(g, this, m_pendingNavigate, false, err);
+        settle(g, this, m_pendingEval, false, err);
         settle(g, this, m_pendingScreenshot, false, err);
-        settle(g, this, m_pendingMisc,       false, err);
+        settle(g, this, m_pendingMisc, false, err);
     }
 
     // Fire-and-forget: no slot (view is going away), child's Ack finds no
@@ -642,7 +663,7 @@ JSWebView* JSWebView::createAndSend(JSGlobalObject* g, Structure* structure,
     // "invalid viewId" lookup. Simpler than an async constructor.
     bool persistent = !persistDir.isEmpty();
     auto payload = encode(
-        CreatePayload{ width, height,
+        CreatePayload { width, height,
             static_cast<uint8_t>(persistent ? DataStoreKind::Persistent : DataStoreKind::Ephemeral) },
         persistent ? persistDir : WTF::String());
     client.writeFrame(Op::Create, view->m_viewId,

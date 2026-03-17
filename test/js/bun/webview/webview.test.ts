@@ -1,5 +1,5 @@
-import { test, expect, describe } from "bun:test";
-import { isMacOS, bunEnv, bunExe, tempDir } from "harness";
+import { expect, test } from "bun:test";
+import { bunEnv, bunExe, isMacOS, tempDir } from "harness";
 
 // Bun.WebView only exists on darwin for now.
 const it = isMacOS ? test : test.skip;

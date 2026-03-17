@@ -24,11 +24,11 @@ struct BlockDescriptor {
 };
 template<typename Invoke>
 struct GlobalBlock {
-    void* isa;
+    void *isa;
     int32_t flags;
     int32_t reserved;
     Invoke invoke;
-    const BlockDescriptor* descriptor;
+    const BlockDescriptor *descriptor;
 };
 enum : int32_t { BLOCK_IS_GLOBAL = (1 << 28) };
 
@@ -43,13 +43,19 @@ struct Ref {
     id m_id = nullptr;
 
     Ref() = default;
-    Ref(id i) : m_id(i) {}
+    Ref(id i)
+        : m_id(i)
+    {
+    }
     operator id() const { return m_id; }
     explicit operator bool() const { return m_id != nullptr; }
 
-    void release() { if (m_id) msg<void>(s_release); }
+    void release()
+    {
+        if (m_id) msg<void>(s_release);
+    }
 
-    static void* s_msgSend;
+    static void *s_msgSend;
     static SEL s_alloc;
     static SEL s_init;
     static SEL s_release;
@@ -78,7 +84,7 @@ struct NSString : Ref {
     static SEL s_UTF8String;
 
     // Returns autoreleased; callers pass to ObjC methods that retain.
-    static NSString fromWTF(const WTF::String& s)
+    static NSString fromWTF(const WTF::String &s)
     {
         WTF::CString utf8 = s.utf8();
         return msgCls<id>(cls, s_stringWithUTF8String, utf8.data());
@@ -86,7 +92,7 @@ struct NSString : Ref {
     WTF::String toWTF() const
     {
         if (!m_id) return WTF::String();
-        const char* u = msg<const char*>(s_UTF8String);
+        const char *u = msg<const char *>(s_UTF8String);
         return u ? WTF::String::fromUTF8(u) : WTF::String();
     }
 };
@@ -131,7 +137,7 @@ struct NSData : Ref {
     static SEL s_bytes;
     static SEL s_length;
 
-    const void* bytes() const { return msg<const void*>(s_bytes); }
+    const void *bytes() const { return msg<const void *>(s_bytes); }
     unsigned long length() const { return msg<unsigned long>(s_length); }
 };
 
@@ -218,7 +224,7 @@ struct NSWindow : Ref {
     void close() { msg<void>(s_close); }
 
     static SEL s_orderFront;
-    void orderFront() { msg<void>(s_orderFront, (id)nullptr); }
+    void orderFront() { msg<void>(s_orderFront, (id) nullptr); }
 
     static SEL s_windowNumber;
     long windowNumber() const { return msg<long>(s_windowNumber); }
@@ -263,7 +269,7 @@ struct NSImage : Ref {
     id cgImage() const
     {
         return msg<id>(s_CGImageForProposedRect_context_hints,
-            (void*)nullptr, (id) nullptr, (id) nullptr);
+            (void *)nullptr, (id) nullptr, (id) nullptr);
     }
 };
 
@@ -300,36 +306,36 @@ struct NSProcessInfo : Ref {
 struct NSEvent : Ref {
     using Ref::Ref;
     static Class cls;
-    static SEL s_mouseEventWithType;  // ...location:modifierFlags:timestamp:windowNumber:context:eventNumber:clickCount:pressure:
-    static SEL s_keyEventWithType;    // ...location:modifierFlags:timestamp:windowNumber:context:characters:charactersIgnoringModifiers:isARepeat:keyCode:
+    static SEL s_mouseEventWithType; // ...location:modifierFlags:timestamp:windowNumber:context:eventNumber:clickCount:pressure:
+    static SEL s_keyEventWithType; // ...location:modifierFlags:timestamp:windowNumber:context:characters:charactersIgnoringModifiers:isARepeat:keyCode:
     static SEL s_eventWithCGEvent;
-    static SEL s_eventRelativeToWindow;  // _eventRelativeToWindow: (SPI)
+    static SEL s_eventRelativeToWindow; // _eventRelativeToWindow: (SPI)
 
     // CoreGraphics function pointers — dlsym'd in load(), not ObjC.
     // CGScrollEventUnitPixel = 0. wheelCount=2 for x+y; delta args are
     // (wheel1, wheel2, ...) = (deltaY, deltaX) — yes, y first.
-    static void* (*s_CGEventCreateScrollWheelEvent)(void* source, uint32_t units, uint32_t wheelCount, int32_t wheel1, ...);
-    static void (*s_CGEventSetLocation)(void* event, CGPoint location);
+    static void *(*s_CGEventCreateScrollWheelEvent)(void *source, uint32_t units, uint32_t wheelCount, int32_t wheel1, ...);
+    static void (*s_CGEventSetLocation)(void *event, CGPoint location);
     static uint32_t (*s_CGMainDisplayID)();
     static CGRect (*s_CGDisplayBounds)(uint32_t displayID);
-    static void (*s_CFRelease)(void*);
+    static void (*s_CFRelease)(void *);
 
     // NSEventType — the ones we use.
     enum : unsigned long {
-        LeftMouseDown  = 1,
-        LeftMouseUp    = 2,
+        LeftMouseDown = 1,
+        LeftMouseUp = 2,
         RightMouseDown = 3,
-        RightMouseUp   = 4,
-        KeyDown        = 10,
-        KeyUp          = 11,
+        RightMouseUp = 4,
+        KeyDown = 10,
+        KeyUp = 11,
         OtherMouseDown = 25,
-        OtherMouseUp   = 26,
+        OtherMouseUp = 26,
     };
     // NSEventModifierFlags — bits 16–20.
     enum : unsigned long {
-        ModShift   = 1ul << 17,
+        ModShift = 1ul << 17,
         ModControl = 1ul << 18,
-        ModOption  = 1ul << 19,
+        ModOption = 1ul << 19,
         ModCommand = 1ul << 20,
     };
 
@@ -341,7 +347,7 @@ struct NSEvent : Ref {
     {
         return msgCls<id>(cls, s_mouseEventWithType,
             type, CGPointMake(x, y), modifierFlags, timestamp,
-            windowNumber, (id)nullptr /* context */,
+            windowNumber, (id) nullptr /* context */,
             (long)0 /* eventNumber */, clickCount,
             (float)1.0 /* pressure */);
     }
@@ -356,7 +362,7 @@ struct NSEvent : Ref {
     {
         return msgCls<id>(cls, s_keyEventWithType,
             type, CGPointMake(0, 0), modifierFlags, timestamp,
-            windowNumber, (id)nullptr /* context */,
+            windowNumber, (id) nullptr /* context */,
             characters.m_id, charactersIgnoringModifiers.m_id,
             (signed char)0 /* isARepeat */, keyCode);
     }
@@ -374,7 +380,7 @@ struct NSEvent : Ref {
     // The flip cancels out and locationInWindow lands exactly at (wx, wy).
     static NSEvent wheelEvent(float deltaX, float deltaY, NSWindow window, double wx, double wy)
     {
-        void* cgEvent = s_CGEventCreateScrollWheelEvent(
+        void *cgEvent = s_CGEventCreateScrollWheelEvent(
             nullptr, /* kCGScrollEventUnitPixel */ 0, /* wheelCount */ 2,
             -static_cast<int32_t>(deltaY), -static_cast<int32_t>(deltaX));
         CGPoint screen = window.convertPointToScreen(wx, wy);
@@ -395,8 +401,8 @@ struct WKWebViewConfiguration : Ref {
     static Class cls_WKWebsiteDataStore;
     static Class cls_WKWebsiteDataStoreConfiguration; // _WKWebsiteDataStoreConfiguration (SPI)
     static SEL s_nonPersistentDataStore;
-    static SEL s_initWithDirectory;                   // macOS 15.2+ (SPI)
-    static SEL s_initWithConfiguration;               // _initWithConfiguration: (SPI)
+    static SEL s_initWithDirectory; // macOS 15.2+ (SPI)
+    static SEL s_initWithConfiguration; // _initWithConfiguration: (SPI)
     static SEL s_setWebsiteDataStore;
 
     // +1 retained.
@@ -415,7 +421,7 @@ struct WKWebViewConfiguration : Ref {
     // sqlite handle, so two instances pointing at the same directory
     // DON'T share state. Caching gives views with the same dir the
     // same store instance.
-    static WKWebViewConfiguration createPersistent(const WTF::String& directory)
+    static WKWebViewConfiguration createPersistent(const WTF::String &directory)
     {
         WKWebViewConfiguration cfg(msgCls<id>(cls, s_alloc));
         cfg.m_id = cfg.msg<id>(s_init);
@@ -424,7 +430,7 @@ struct WKWebViewConfiguration : Ref {
     }
 
 private:
-    static id persistentStoreForDirectory(const WTF::String& directory);
+    static id persistentStoreForDirectory(const WTF::String &directory);
 };
 
 struct WKWebView : Ref {
@@ -459,7 +465,7 @@ struct WKWebView : Ref {
     static SEL s_setUIDelegate;
     void setUIDelegate(id d) { msg<void>(s_setUIDelegate, d); }
     void loadRequest(NSURLRequest r) { msg<void>(s_loadRequest, r.m_id); }
-    void evaluate(NSString script, void* block) { msg<void>(s_evaluateJavaScript_completionHandler, script.m_id, block); }
+    void evaluate(NSString script, void *block) { msg<void>(s_evaluateJavaScript_completionHandler, script.m_id, block); }
 
     // callAsyncJavaScript:arguments:inFrame:inContentWorld:completionHandler:
     // (public API, macOS 11.0+). The body is wrapped in an async function;
@@ -471,10 +477,10 @@ struct WKWebView : Ref {
     static Class cls_WKContentWorld;
     static SEL s_pageWorld;
     static SEL s_callAsyncJavaScript;
-    void callAsync(NSString body, id argsDict, void* block)
+    void callAsync(NSString body, id argsDict, void *block)
     {
         id world = msgCls<id>(cls_WKContentWorld, s_pageWorld);
-        msg<void>(s_callAsyncJavaScript, body.m_id, argsDict, (id)nullptr /*frame*/, world, block);
+        msg<void>(s_callAsyncJavaScript, body.m_id, argsDict, (id) nullptr /*frame*/, world, block);
     }
     void stopLoading() { msg<void>(s_stopLoading); }
     void reload() { msg<void>(s_reload); }
@@ -498,17 +504,17 @@ struct WKWebView : Ref {
     static SEL s_otherMouseUp;
     static SEL s_keyDown;
     static SEL s_keyUp;
-    void mouseDown(NSEvent e)      { msg<void>(s_mouseDown, e.m_id); }
-    void mouseUp(NSEvent e)        { msg<void>(s_mouseUp, e.m_id); }
+    void mouseDown(NSEvent e) { msg<void>(s_mouseDown, e.m_id); }
+    void mouseUp(NSEvent e) { msg<void>(s_mouseUp, e.m_id); }
     void rightMouseDown(NSEvent e) { msg<void>(s_rightMouseDown, e.m_id); }
-    void rightMouseUp(NSEvent e)   { msg<void>(s_rightMouseUp, e.m_id); }
+    void rightMouseUp(NSEvent e) { msg<void>(s_rightMouseUp, e.m_id); }
     void otherMouseDown(NSEvent e) { msg<void>(s_otherMouseDown, e.m_id); }
-    void otherMouseUp(NSEvent e)   { msg<void>(s_otherMouseUp, e.m_id); }
-    void keyDown(NSEvent e)        { msg<void>(s_keyDown, e.m_id); }
-    void keyUp(NSEvent e)          { msg<void>(s_keyUp, e.m_id); }
+    void otherMouseUp(NSEvent e) { msg<void>(s_otherMouseUp, e.m_id); }
+    void keyDown(NSEvent e) { msg<void>(s_keyDown, e.m_id); }
+    void keyUp(NSEvent e) { msg<void>(s_keyUp, e.m_id); }
 
     static SEL s_scrollWheel;
-    void scrollWheel(NSEvent e)    { msg<void>(s_scrollWheel, e.m_id); }
+    void scrollWheel(NSEvent e) { msg<void>(s_scrollWheel, e.m_id); }
 
     // TextChecker state is process-global; set once. Native keydown goes
     // through NSTextInputContext → smart quotes/dashes/replacement by
@@ -545,13 +551,13 @@ struct WKWebView : Ref {
     // _doAfterProcessingAllPendingMouseEvents fires when the UIProcess
     // mouseEventQueue drains (WebContent has acked every sent mouse event).
     // No JSON, no evaluateJavaScript polling. macOS 10.13.4+ for both.
-    static SEL s_executeEditCommand;          // _executeEditCommand:argument:completion:
-    static SEL s_doAfterPendingMouseEvents;   // _doAfterProcessingAllPendingMouseEvents:
-    void executeEditCommand(NSString cmd, NSString arg, void* completionBlock)
+    static SEL s_executeEditCommand; // _executeEditCommand:argument:completion:
+    static SEL s_doAfterPendingMouseEvents; // _doAfterProcessingAllPendingMouseEvents:
+    void executeEditCommand(NSString cmd, NSString arg, void *completionBlock)
     {
         msg<void>(s_executeEditCommand, cmd.m_id, arg.m_id, completionBlock);
     }
-    void doAfterPendingMouseEvents(void* block)
+    void doAfterPendingMouseEvents(void *block)
     {
         msg<void>(s_doAfterPendingMouseEvents, block);
     }
@@ -562,12 +568,12 @@ struct WKWebView : Ref {
     // RemoteScrollingCoordinatorProxy hits an empty tree and drops the event.
     // macOS 10.12+.
     static SEL s_doAfterNextPresentationUpdate;
-    void doAfterNextPresentationUpdate(void* block)
+    void doAfterNextPresentationUpdate(void *block)
     {
         msg<void>(s_doAfterNextPresentationUpdate, block);
     }
 
-    void takeSnapshot(void* block)
+    void takeSnapshot(void *block)
     {
         Ref cfg(msgCls<id>(cls_WKSnapshotConfiguration, s_alloc));
         cfg.m_id = cfg.msg<id>(s_init);
@@ -582,12 +588,12 @@ struct WKWebView : Ref {
 struct NavigationDelegate : Ref {
     using Ref::Ref;
     static Class cls;
-    static void (*s_setAssoc)(id, const void*, id, uintptr_t);
-    static id (*s_getAssoc)(id, const void*);
+    static void (*s_setAssoc)(id, const void *, id, uintptr_t);
+    static id (*s_getAssoc)(id, const void *);
     static char s_hostKey;
 
     // +1 retained.
-    static NavigationDelegate create(WebViewHost* host)
+    static NavigationDelegate create(WebViewHost *host)
     {
         NavigationDelegate d(msgCls<id>(cls, s_alloc));
         d.m_id = d.msg<id>(s_init);
@@ -595,7 +601,7 @@ struct NavigationDelegate : Ref {
         return d;
     }
     void clearHost() { s_setAssoc(m_id, &s_hostKey, nullptr, 0); }
-    WebViewHost* host() const { return reinterpret_cast<WebViewHost*>(s_getAssoc(m_id, &s_hostKey)); }
+    WebViewHost *host() const { return reinterpret_cast<WebViewHost *>(s_getAssoc(m_id, &s_hostKey)); }
 };
 
 } // namespace objc
@@ -613,24 +619,24 @@ public:
     // Block correlation: only one eval/screenshot outstanding at a time,
     // and blocks fire synchronously inside CFRunLoop in the host process
     // (single-threaded) — so a per-runtime target pointer is race-free.
-    WebViewHost* m_evalTarget = nullptr;
-    WebViewHost* m_screenshotTarget = nullptr;
-    WebViewHost* m_inputTarget = nullptr;
-    WebViewHost* m_scrollTarget = nullptr;
-    WebViewHost* m_selectorTarget = nullptr;
+    WebViewHost *m_evalTarget = nullptr;
+    WebViewHost *m_screenshotTarget = nullptr;
+    WebViewHost *m_inputTarget = nullptr;
+    WebViewHost *m_scrollTarget = nullptr;
+    WebViewHost *m_selectorTarget = nullptr;
 
-    static ObjCRuntime* tryLoad();
-
+    static ObjCRuntime *tryLoad();
 
     // CFRunLoopRun in the host process doesn't install the NSApplication
     // autorelease-pool observer. Every stringWithUTF8String: etc. is
     // autoreleased; WebKit teardown also relies on autorelease for the
     // last strong ref drop → dealloc → XPC cancel. Bracket each dispatch.
-    void* (*m_autoreleasePoolPush)();
-    void (*m_autoreleasePoolPop)(void*);
+    void *(*m_autoreleasePoolPush)();
+    void (*m_autoreleasePoolPop)(void *);
 
     class ARPool {
-        void* m_ctx;
+        void *m_ctx;
+
     public:
         ARPool() { m_ctx = ObjCRuntime::tryLoad()->m_autoreleasePoolPush(); }
         ~ARPool() { ObjCRuntime::tryLoad()->m_autoreleasePoolPop(m_ctx); }
@@ -640,18 +646,17 @@ public:
 
 private:
     bool load();
-
 };
 
 // Accessors for the static global blocks (defined in ObjCRuntime.cpp).
-void* evalCompletionBlock();
-void* snapshotCompletionBlock();
+void *evalCompletionBlock();
+void *snapshotCompletionBlock();
 // _executeEditCommand:completion: is void(^)(BOOL), _doAfterProcessingAllPendingMouseEvents: is void(^)().
 // Two block instances, both route to WebViewHost::onInputComplete.
-void* editCommandCompletionBlock();
-void* mouseBarrierBlock();
-void* scrollBarrierBlock();
-void* selectorCompletionBlock();
+void *editCommandCompletionBlock();
+void *mouseBarrierBlock();
+void *scrollBarrierBlock();
+void *selectorCompletionBlock();
 
 } // namespace Bun
 

@@ -590,7 +590,9 @@ ${Buffer.alloc(counter * 2, " ").toString()}throw new Error(${counter});`,
           const col = match[1];
           expect(Number(col)).toBe(1 + "throw ".length + counter * 2);
         },
-      }).finally(() => { done = true; }),
+      }).finally(() => {
+        done = true;
+      }),
       bundler.exited.then(code => {
         if (!done) throw new Error(`bundler exited early with code ${code}`);
         return -1; // Ignored — race already resolved
@@ -669,7 +671,9 @@ ${Buffer.alloc(counter * 2, " ").toString()}throw new Error(${counter});`,
           const col = match[1];
           expect(Number(col)).toBe(1 + "throw ".length + counter * 2);
         },
-      }).finally(() => { done2 = true; }),
+      }).finally(() => {
+        done2 = true;
+      }),
       bundler.exited.then(code => {
         if (!done2) throw new Error(`bundler exited early with code ${code}`);
         return -1; // Ignored — race already resolved

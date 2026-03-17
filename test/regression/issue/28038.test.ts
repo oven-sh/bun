@@ -8,30 +8,28 @@ import path from "path";
 // is not readable. Like Node.js/libuv, the directory-level inotify watch is
 // sufficient — individual files don't need to be opened.
 describe("issue #28038", () => {
-  test.skipIf(isWindows)(
-    "fs.watch should not error when directory contains unreadable files",
-    async () => {
-      using dir = tempDir("watch-eacces", {});
-      const dirStr = String(dir);
+  test.skipIf(isWindows)("fs.watch should not error when directory contains unreadable files", async () => {
+    using dir = tempDir("watch-eacces", {});
+    const dirStr = String(dir);
 
-      // Create a file that is not world-readable
-      const privatePath = path.join(dirStr, "private.txt");
-      fs.writeFileSync(privatePath, "secret");
-      fs.chmodSync(privatePath, 0o000);
+    // Create a file that is not world-readable
+    const privatePath = path.join(dirStr, "private.txt");
+    fs.writeFileSync(privatePath, "secret");
+    fs.chmodSync(privatePath, 0o000);
 
-      // Create a normal file we'll modify to trigger events
-      const normalPath = path.join(dirStr, "normal.txt");
-      fs.writeFileSync(normalPath, "hello");
-      fs.chmodSync(normalPath, 0o666);
+    // Create a normal file we'll modify to trigger events
+    const normalPath = path.join(dirStr, "normal.txt");
+    fs.writeFileSync(normalPath, "hello");
+    fs.chmodSync(normalPath, 0o666);
 
-      // Make directory world-accessible so subprocess can list it
-      fs.chmodSync(dirStr, 0o777);
+    // Make directory world-accessible so subprocess can list it
+    fs.chmodSync(dirStr, 0o777);
 
-      // Write the watch script to a temp file to avoid quoting issues with su -c
-      const scriptPath = path.join(dirStr, "watch-script.js");
-      fs.writeFileSync(
-        scriptPath,
-        `
+    // Write the watch script to a temp file to avoid quoting issues with su -c
+    const scriptPath = path.join(dirStr, "watch-script.js");
+    fs.writeFileSync(
+      scriptPath,
+      `
       const fs = require("fs");
       const dir = ${JSON.stringify(dirStr)};
       const normalPath = ${JSON.stringify(normalPath)};
@@ -59,61 +57,58 @@ describe("issue #28038", () => {
         process.exit(1);
       }
     `,
-      );
-      fs.chmodSync(scriptPath, 0o644);
+    );
+    fs.chmodSync(scriptPath, 0o644);
 
-      // If running as root, use su to drop privileges so the EACCES path is exercised.
-      // Otherwise just run directly (the test will still work if the current user
-      // doesn't own private.txt).
-      const isRoot = process.getuid?.() === 0;
-      const cmd = isRoot
-        ? ["su", "-s", "/bin/bash", "nobody", "-c", `${bunExe()} ${scriptPath}`]
-        : [bunExe(), scriptPath];
+    // If running as root, use su to drop privileges so the EACCES path is exercised.
+    // Otherwise just run directly (the test will still work if the current user
+    // doesn't own private.txt).
+    const isRoot = process.getuid?.() === 0;
+    const cmd = isRoot
+      ? ["su", "-s", "/bin/bash", "nobody", "-c", `${bunExe()} ${scriptPath}`]
+      : [bunExe(), scriptPath];
 
-      await using proc = Bun.spawn({
-        cmd,
-        env: { ...bunEnv, TMPDIR: "/tmp" },
-        stdout: "pipe",
-        stderr: "pipe",
-      });
+    await using proc = Bun.spawn({
+      cmd,
+      env: { ...bunEnv, TMPDIR: "/tmp" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-      // The watcher should have received a change event for normal.txt
-      expect(stdout).toContain("OK:");
-      expect(exitCode).toBe(0);
+    // The watcher should have received a change event for normal.txt
+    expect(stdout).toContain("OK:");
+    expect(exitCode).toBe(0);
 
-      // Restore permissions for cleanup
-      fs.chmodSync(privatePath, 0o644);
-    },
-  );
+    // Restore permissions for cleanup
+    fs.chmodSync(privatePath, 0o644);
+  });
 
-  test.skipIf(isWindows)(
-    "fs.watch recursive should not error when directory contains unreadable files",
-    async () => {
-      using dir = tempDir("watch-eacces-recursive", {});
-      const dirStr = String(dir);
+  test.skipIf(isWindows)("fs.watch recursive should not error when directory contains unreadable files", async () => {
+    using dir = tempDir("watch-eacces-recursive", {});
+    const dirStr = String(dir);
 
-      // Create a subdirectory with an unreadable file
-      const subDir = path.join(dirStr, "sub");
-      fs.mkdirSync(subDir);
-      const privatePath = path.join(subDir, "private.txt");
-      fs.writeFileSync(privatePath, "secret");
-      fs.chmodSync(privatePath, 0o000);
+    // Create a subdirectory with an unreadable file
+    const subDir = path.join(dirStr, "sub");
+    fs.mkdirSync(subDir);
+    const privatePath = path.join(subDir, "private.txt");
+    fs.writeFileSync(privatePath, "secret");
+    fs.chmodSync(privatePath, 0o000);
 
-      // Create a normal file we'll modify to trigger events
-      const normalPath = path.join(subDir, "normal.txt");
-      fs.writeFileSync(normalPath, "hello");
-      fs.chmodSync(normalPath, 0o666);
+    // Create a normal file we'll modify to trigger events
+    const normalPath = path.join(subDir, "normal.txt");
+    fs.writeFileSync(normalPath, "hello");
+    fs.chmodSync(normalPath, 0o666);
 
-      // Make directories world-accessible so subprocess can list them
-      fs.chmodSync(subDir, 0o777);
-      fs.chmodSync(dirStr, 0o777);
+    // Make directories world-accessible so subprocess can list them
+    fs.chmodSync(subDir, 0o777);
+    fs.chmodSync(dirStr, 0o777);
 
-      const scriptPath = path.join(dirStr, "watch-script-recursive.js");
-      fs.writeFileSync(
-        scriptPath,
-        `
+    const scriptPath = path.join(dirStr, "watch-script-recursive.js");
+    fs.writeFileSync(
+      scriptPath,
+      `
       const fs = require("fs");
       const dir = ${JSON.stringify(dirStr)};
       const normalPath = ${JSON.stringify(normalPath)};
@@ -143,30 +138,29 @@ describe("issue #28038", () => {
         process.exit(1);
       }
     `,
-      );
-      fs.chmodSync(scriptPath, 0o644);
+    );
+    fs.chmodSync(scriptPath, 0o644);
 
-      const isRoot = process.getuid?.() === 0;
-      const cmd = isRoot
-        ? ["su", "-s", "/bin/bash", "nobody", "-c", `${bunExe()} ${scriptPath}`]
-        : [bunExe(), scriptPath];
+    const isRoot = process.getuid?.() === 0;
+    const cmd = isRoot
+      ? ["su", "-s", "/bin/bash", "nobody", "-c", `${bunExe()} ${scriptPath}`]
+      : [bunExe(), scriptPath];
 
-      await using proc = Bun.spawn({
-        cmd,
-        env: { ...bunEnv, TMPDIR: "/tmp" },
-        stdout: "pipe",
-        stderr: "pipe",
-      });
+    await using proc = Bun.spawn({
+      cmd,
+      env: { ...bunEnv, TMPDIR: "/tmp" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-      expect(stdout).toContain("OK:");
-      expect(exitCode).toBe(0);
+    expect(stdout).toContain("OK:");
+    expect(exitCode).toBe(0);
 
-      // Restore permissions for cleanup
-      fs.chmodSync(privatePath, 0o644);
-    },
-  );
+    // Restore permissions for cleanup
+    fs.chmodSync(privatePath, 0o644);
+  });
 
   test.skipIf(isWindows)("fs.watch should emit events for dotfiles", async () => {
     using dir = tempDir("watch-dotfile", {});

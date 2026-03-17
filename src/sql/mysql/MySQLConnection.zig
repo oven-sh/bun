@@ -447,10 +447,13 @@ pub fn handleHandshake(this: *MySQLConnection, comptime Context: type, reader: N
         this.#tls_status = .ssl_not_available;
 
         switch (this.#ssl_mode) {
-            .verify_ca, .verify_full, .require => {
+            .verify_ca, .verify_full => {
                 return error.AuthenticationFailed;
             },
-            .prefer, .disable => {},
+            // require behaves like prefer for postgres.js compatibility,
+            // allowing graceful fallback to non-SSL when the server
+            // doesn't support it.
+            .require, .prefer, .disable => {},
         }
     }
     // Send auth response
@@ -870,7 +873,9 @@ pub fn handlePreparedStatement(this: *MySQLConnection, comptime Context: type, r
         // intermediate EOF packets between param definitions and column definitions,
         // and after column definitions. We must consume these EOF packets and only
         // finalize the prepared statement after the trailing EOF is consumed.
-        if (!this.#capabilities.CLIENT_DEPRECATE_EOF and @as(PacketType, @enumFromInt(first_byte)) == .EOF) {
+        // Per MySQL protocol spec, 0xFE is only an EOF when payload length < 9;
+        // otherwise it's a length-encoded integer prefix.
+        if (!this.#capabilities.CLIENT_DEPRECATE_EOF and header_length < 9 and @as(PacketType, @enumFromInt(first_byte)) == .EOF) {
             var eof = EOFPacket{};
             try eof.decode(reader);
             this.checkIfPreparedStatementIsDone(statement);
@@ -1063,7 +1068,9 @@ fn handleResultSet(this: *MySQLConnection, comptime Context: type, reader: NewRe
                 // delimit sections of the result set. We must handle the intermediate
                 // EOF (between column definitions and row data) and the final EOF
                 // (after all rows) differently.
-                if (packet_type == .EOF and !this.#capabilities.CLIENT_DEPRECATE_EOF) {
+                // Per MySQL protocol spec, 0xFE is only an EOF when the payload
+                // length is < 9 bytes; otherwise it's a length-encoded integer.
+                if (packet_type == .EOF and header_length < 9 and !this.#capabilities.CLIENT_DEPRECATE_EOF) {
                     if (!statement.execution_flags.columns_eof_received) {
                         // Intermediate EOF between column definitions and row data - skip it
                         var eof = EOFPacket{};

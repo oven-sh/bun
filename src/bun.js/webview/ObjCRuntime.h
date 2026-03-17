@@ -191,6 +191,10 @@ struct NSApplication : Ref {
 struct NSWindow : Ref {
     using Ref::Ref;
     static Class cls;
+    // BunHostWindow — runtime-registered subclass with noResponderFor:
+    // overridden to no-op. NSResponder's default beeps on unhandled
+    // keyDown: (press("Escape") when the page doesn't preventDefault).
+    static Class hostCls;
     static SEL s_initWithContentRect_styleMask_backing_defer;
     static SEL s_setReleasedWhenClosed;
     static SEL s_setContentView;
@@ -200,7 +204,7 @@ struct NSWindow : Ref {
     // +1 retained. Borderless, buffered, offscreen.
     static NSWindow createOffscreen(double w, double h)
     {
-        NSWindow win(msgCls<id>(cls, s_alloc));
+        NSWindow win(msgCls<id>(hostCls, s_alloc));
         win.m_id = win.msg<id>(s_initWithContentRect_styleMask_backing_defer,
             CGRectMake(-10000, -10000, w, h),
             (unsigned long)0 /* NSWindowStyleMaskBorderless */,

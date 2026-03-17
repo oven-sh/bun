@@ -52,6 +52,7 @@ SEL NSApplication::s_sharedApplication;
 SEL NSApplication::s_setActivationPolicy;
 
 Class NSWindow::cls;
+Class NSWindow::hostCls;
 SEL NSWindow::s_initWithContentRect_styleMask_backing_defer;
 SEL NSWindow::s_setReleasedWhenClosed;
 SEL NSWindow::s_setContentView;
@@ -271,6 +272,11 @@ static void delegateGetContextMenu(id, SEL, id /*web*/, id /*menu*/, id /*elemen
         = reinterpret_cast<decltype(block)>(handler);
     block->invoke(handler, nullptr);
 }
+
+// NSResponder's default noResponderFor: beeps when the selector is keyDown:.
+// WebContent doesn't consume press("Escape") (page listener observes but
+// doesn't preventDefault) → bounces up the chain → ding. Swallow it.
+static void windowNoResponderFor(id, SEL, SEL) { }
 
 } // extern "C"
 
@@ -512,6 +518,16 @@ bool ObjCRuntime::load()
     if (Protocol* proto = getProtocol("WKNavigationDelegate")) addProtocol(NavigationDelegate::cls, proto);
     if (Protocol* proto = getProtocol("WKUIDelegate")) addProtocol(NavigationDelegate::cls, proto);
     registerClassPair(NavigationDelegate::cls);
+
+    // --- register BunHostWindow : NSWindow -------------------------------
+    NSWindow::hostCls = allocateClassPair(NSWindow::cls, "BunHostWindow", 0);
+    if (!NSWindow::hostCls) {
+        m_loadError = "failed to allocate window class"_s;
+        return false;
+    }
+    addMethod(NSWindow::hostCls, sel("noResponderFor:"),
+        reinterpret_cast<IMP>(windowNoResponderFor), "v@::");
+    registerClassPair(NSWindow::hostCls);
 
     NSApplication::setActivationPolicyProhibited();
 

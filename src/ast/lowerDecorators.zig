@@ -891,18 +891,6 @@ pub fn LowerDecorators(
                         }
                         continue;
                     }
-                    // When lower_all_private is true, instance fields with initializers
-                    // must be moved into the constructor to preserve evaluation order
-                    // relative to lowered private fields (which are also in the constructor).
-                    if (lower_all_private and !prop.flags.contains(.is_static) and
-                        !prop.flags.contains(.is_method) and prop.kind == .normal and
-                        prop.initializer != null)
-                    {
-                        constructor_inject_stmts.append(
-                            Stmt.assign(memberTarget(p, p.newExpr(E.This{}, loc), prop.*), prop.initializer.?),
-                        ) catch unreachable;
-                        continue;
-                    }
                     new_properties.append(prop.*) catch unreachable;
                     continue;
                 }

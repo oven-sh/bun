@@ -60,7 +60,6 @@ pub fn doPartialInstallOfSecurityScanner(
     }
 
     if (security_scanner_pkg_id == invalid_package_id) {
-        Output.errGeneric("Cannot perform partial install: security scanner package ID is invalid", .{});
         return error.InvalidPackageID;
     }
 
@@ -93,12 +92,10 @@ pub fn doPartialInstallOfSecurityScanner(
     }
 
     if (summary.fail > 0) {
-        Output.errGeneric("Failed to install security scanner package (failed: {d}, success: {d})", .{ summary.fail, summary.success });
         return error.PartialInstallFailed;
     }
 
     if (summary.success == 0 and summary.skipped == 0) {
-        Output.errGeneric("No packages were installed during security scanner installation", .{});
         return error.NoPackagesInstalled;
     }
 }
@@ -155,7 +152,6 @@ const ScannerFinder = struct {
                 const dep = this.manager.lockfile.buffers.dependencies.items[dep_id];
 
                 if (std.mem.eql(u8, dep.name.slice(string_buf), this.scanner_name)) {
-                    Output.errGeneric("Security scanner '{s}' cannot be a dependency of a workspace package. It must be a direct dependency of the root package.", .{this.scanner_name});
                     return error.SecurityScannerInWorkspace;
                 }
             }
@@ -205,11 +201,7 @@ pub fn performSecurityScanForAll(manager: *PackageManager, command_ctx: bun.cli.
             const retry_result = try attemptSecurityScanWithRetry(manager, security_scanner, true, command_ctx, original_cwd, true);
             switch (retry_result) {
                 .success => |scan_results| return scan_results,
-                .needs_install => {
-                    // Should not happen after retry - we just installed it
-                    Output.errGeneric("Security scanner still required installation after partial install. This is probably a bug in Bun. Please report it to https://github.com/oven-sh/bun/issues", .{});
-                    return error.SecurityScannerRetryFailed;
-                },
+                .needs_install => return error.SecurityScannerRetryFailed,
                 .@"error" => |err| return err,
             }
         },

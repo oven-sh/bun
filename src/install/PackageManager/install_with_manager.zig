@@ -648,6 +648,15 @@ pub fn installWithManager(
                         error.SecurityScannerRetryFailed => {
                             Output.errGeneric("security scanner failed after partial install. This is probably a bug in Bun. Please report it at https://github.com/oven-sh/bun/issues", .{});
                         },
+                        error.InvalidPackageID => {
+                            Output.errGeneric("cannot perform partial install: security scanner package ID is invalid", .{});
+                        },
+                        error.PartialInstallFailed => {
+                            Output.errGeneric("failed to install security scanner package", .{});
+                        },
+                        error.NoPackagesInstalled => {
+                            Output.errGeneric("no packages were installed during security scanner installation", .{});
+                        },
                         error.IPCPipeFailed => {
                             Output.errGeneric("failed to create IPC pipe for security scanner", .{});
                         },

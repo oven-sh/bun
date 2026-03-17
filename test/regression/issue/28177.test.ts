@@ -1,5 +1,5 @@
-import { test, expect } from "bun:test";
 import { $ } from "bun";
+import { expect, test } from "bun:test";
 import { tempDir } from "harness";
 
 $.nothrow();

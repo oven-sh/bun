@@ -183,7 +183,11 @@ pub fn performSecurityScanAfterResolution(manager: *PackageManager, command_ctx:
             const retry_result = try attemptSecurityScanWithRetry(manager, security_scanner, scan_all, command_ctx, original_cwd, true);
             switch (retry_result) {
                 .success => |scan_results| return scan_results,
-                else => return error.SecurityScannerRetryFailed,
+                .needs_install => {
+                    Output.errGeneric("Security scanner still required installation after partial install. This is probably a bug in Bun. Please report it to https://github.com/oven-sh/bun/issues", .{});
+                    return error.SecurityScannerRetryFailed;
+                },
+                .@"error" => |err| return err,
             }
         },
         .@"error" => |err| return err,
@@ -750,7 +754,10 @@ pub const SecurityScanSubprocess = struct {
 
         // fd 3 output pipe: bun.sys.pipe() + .pipe (inherit_fd) on both platforms.
         const ipc_output_fds = switch (bun.sys.pipe()) {
-            .err => return error.IPCPipeFailed,
+            .err => |err| {
+                Output.errGeneric("Failed to create IPC pipe for security scanner: {f}", .{err});
+                return error.IPCPipeFailed;
+            },
             .result => |fds| fds,
         };
 
@@ -906,7 +913,10 @@ pub const SecurityScanSubprocess = struct {
         }
 
         switch (process.watchOrReap()) {
-            .err => return error.ProcessWatchFailed,
+            .err => |err| {
+                Output.errGeneric("Failed to watch security scanner process: {f}", .{err});
+                return error.ProcessWatchFailed;
+            },
             .result => {},
         }
     }

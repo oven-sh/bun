@@ -7,6 +7,81 @@ import { join } from "path";
 const timeout = isDebug ? Infinity : 10_000;
 const longTimeout = isDebug ? Infinity : 30_000;
 
+/**
+ * Helper to parse stderr from a --hot process that throws errors.
+ * Drives the reload cycle: reads error lines from stderr, verifies them,
+ * and calls onReload to trigger the next file change.
+ *
+ * This avoids the previous pattern where duplicate error handling could
+ * write identical file content (causing the watcher to not fire) or
+ * discard buffered lines via `continue outer`.
+ */
+async function driveErrorReloadCycle(
+  runner: ReturnType<typeof spawn>,
+  opts: {
+    targetCount: number;
+    onReload: (counter: number, nonce: number) => void;
+    verifyLine?: (errorLine: string, nextLine: string | undefined, counter: number) => void;
+  },
+): Promise<number> {
+  const { targetCount, onReload, verifyLine } = opts;
+  let reloadCounter = 0;
+  let str = "";
+  // Nonce ensures file content always changes, even when re-saving on duplicate errors.
+  // Without this, writing the same content may not trigger the file watcher.
+  let nonce = 0;
+
+  for await (const chunk of runner.stderr) {
+    str += new TextDecoder().decode(chunk);
+    // Need at least one error line followed by a newline, then another line followed by a newline
+    if (!/error: .*[0-9]\n.*?\n/g.test(str)) continue;
+
+    const lines = str.split("\n");
+    str = "";
+    let triggered = false;
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (!line.includes("error:")) continue;
+
+      if (reloadCounter >= targetCount) {
+        runner.kill();
+        return reloadCounter;
+      }
+
+      // If we see the previous error repeated, the pending reload hasn't
+      // taken effect yet. Re-save with a new nonce to force a watcher event,
+      // then skip to reading the next chunk.
+      if (line.includes(`error: ${reloadCounter - 1}`)) {
+        // Put remaining unprocessed lines back into str so they aren't lost
+        str = lines.slice(i + 1).join("\n");
+        nonce++;
+        onReload(reloadCounter, nonce);
+        break;
+      }
+
+      expect(line).toContain(`error: ${reloadCounter}`);
+
+      const nextLine = lines[i + 1];
+      if (verifyLine) {
+        verifyLine(line, nextLine, reloadCounter);
+      }
+      // Skip the next line (stack trace) since verifyLine consumed it
+      if (verifyLine) i++;
+
+      reloadCounter++;
+      triggered = true;
+    }
+
+    if (triggered) {
+      nonce++;
+      onReload(reloadCounter, nonce);
+    }
+  }
+
+  return reloadCounter;
+}
+
 let hotRunnerRoot: string = "",
   cwd = "";
 beforeEach(() => {
@@ -432,50 +507,24 @@ throw new Error('0');`,
       stderr: "pipe",
       stdin: "ignore",
     });
-    let reloadCounter = 0;
-    function onReload() {
-      writeFileSync(
-        hotRunnerRoot,
-        `// source content
+    const reloadCounter = await driveErrorReloadCycle(runner, {
+      targetCount: 50,
+      onReload: (counter, nonce) => {
+        writeFileSync(
+          hotRunnerRoot,
+          `// source content /*nonce:${nonce}*/
 ${comment_spam}
-${" ".repeat(reloadCounter * 2)}throw new Error(${reloadCounter});`,
-      );
-    }
-    let str = "";
-    outer: for await (const chunk of runner.stderr) {
-      str += new TextDecoder().decode(chunk);
-      var any = false;
-      if (!/error: .*[0-9]\n.*?\n/g.test(str)) continue;
-
-      let it = str.split("\n");
-      let line;
-      while ((line = it.shift())) {
-        if (!line.includes("error:")) continue;
-        str = "";
-
-        if (reloadCounter === 50) {
-          runner.kill();
-          break;
-        }
-
-        if (line.includes(`error: ${reloadCounter - 1}`)) {
-          onReload(); // re-save file to prevent deadlock
-          continue outer;
-        }
-        expect(line).toContain(`error: ${reloadCounter}`);
-        reloadCounter++;
-
-        let next = it.shift()!;
-        if (!next) throw new Error(line);
-        const match = next.match(/\s*at.*?:1003:(\d+)$/);
-        if (!match) throw new Error("invalid string: " + next);
+${" ".repeat(counter * 2)}throw new Error(${counter});`,
+        );
+      },
+      verifyLine: (errorLine, nextLine, counter) => {
+        if (!nextLine) throw new Error(errorLine);
+        const match = nextLine.match(/\s*at.*?:1003:(\d+)$/);
+        if (!match) throw new Error("invalid string: " + nextLine);
         const col = match[1];
-        expect(Number(col)).toBe(1 + "throw new ".length + (reloadCounter - 1) * 2);
-        any = true;
-      }
-
-      if (any) await onReload();
-    }
+        expect(Number(col)).toBe(1 + "throw new ".length + counter * 2);
+      },
+    });
     await runner.exited;
     expect(reloadCounter).toBe(50);
   },
@@ -498,8 +547,8 @@ throw new Error('0');`,
       cmd: [bunExe(), "build", "--watch", bundleIn, "--target=bun", "--sourcemap=inline", "--outfile", hotRunnerRoot],
       env: bunEnv,
       cwd,
-      stdout: "inherit",
-      stderr: "inherit",
+      stdout: "ignore",
+      stderr: "ignore",
       stdin: "ignore",
     });
     waitForFileToExist(hotRunnerRoot, 20);
@@ -511,50 +560,23 @@ throw new Error('0');`,
       stderr: "pipe",
       stdin: "ignore",
     });
-    let reloadCounter = 0;
-    function onReload() {
-      writeFileSync(
-        bundleIn,
-        `// source content
+    const reloadCounter = await driveErrorReloadCycle(runner, {
+      targetCount: 50,
+      onReload: (counter, nonce) => {
+        writeFileSync(
+          bundleIn,
+          `// source content /*nonce:${nonce}*/
 // etc etc
 // etc etc
-${" ".repeat(reloadCounter * 2)}throw new Error(${reloadCounter});`,
-      );
-    }
-    let str = "";
-    outer: for await (const chunk of runner.stderr) {
-      const s = new TextDecoder().decode(chunk);
-      str += s;
-      var any = false;
-      if (!/error: .*[0-9]\n.*?\n/g.test(str)) continue;
-
-      let it = str.split("\n");
-      let line;
-      while ((line = it.shift())) {
-        if (!line.includes("error:")) continue;
-        str = "";
-
-        if (reloadCounter === 50) {
-          runner.kill();
-          break;
-        }
-
-        if (line.includes(`error: ${reloadCounter - 1}`)) {
-          onReload(); // re-save file to prevent deadlock
-          continue outer;
-        }
-        expect(line).toContain(`error: ${reloadCounter}`);
-        reloadCounter++;
-
-        let next = it.shift()!;
-        expect(next).toInclude("bundle_in.ts");
-        const col = next.match(/\s*at.*?:4:(\d+)$/)![1];
-        expect(Number(col)).toBe(1 + "throw ".length + (reloadCounter - 1) * 2);
-        any = true;
-      }
-
-      if (any) await onReload();
-    }
+${" ".repeat(counter * 2)}throw new Error(${counter});`,
+        );
+      },
+      verifyLine: (_errorLine, nextLine, counter) => {
+        expect(nextLine).toInclude("bundle_in.ts");
+        const col = nextLine!.match(/\s*at.*?:4:(\d+)$/)![1];
+        expect(Number(col)).toBe(1 + "throw ".length + counter * 2);
+      },
+    });
     expect(reloadCounter).toBe(50);
     bundler.kill();
   },
@@ -604,68 +626,31 @@ throw new Error('0');`,
       ],
       env: bunEnv,
       cwd,
-      stdout: "inherit",
+      stdout: "ignore",
       stderr: "pipe",
       stdin: "ignore",
     });
-    let reloadCounter = 0;
-    function onReload() {
-      writeFileSync(
-        bundleIn,
-        `// ${long_comment}
+    const reloadCounter = await driveErrorReloadCycle(runner, {
+      targetCount: 50,
+      onReload: (counter, nonce) => {
+        writeFileSync(
+          bundleIn,
+          `// ${long_comment} /*nonce:${nonce}*/
 console.error("RSS: %s", process.memoryUsage().rss);
 //
-${" ".repeat(reloadCounter * 2)}throw new Error(${reloadCounter});`,
-      );
-    }
-    let str = "";
-    let sampleMemory10: number | undefined;
-    let sampleMemory100: number | undefined;
-    outer: for await (const chunk of runner.stderr) {
-      str += new TextDecoder().decode(chunk);
-      var any = false;
-      if (!/error: .*[0-9]\n.*?\n/g.test(str)) continue;
-
-      let it = str.split("\n");
-      let line;
-      while ((line = it.shift())) {
-        if (!line.includes("error:")) continue;
-        let rssMatch = str.match(/RSS: (\d+(\.\d+)?)\n/);
-        let rss;
-        if (rssMatch) rss = Number(rssMatch[1]);
-        str = "";
-
-        if (reloadCounter == 10) {
-          sampleMemory10 = rss;
-        }
-
-        if (reloadCounter >= 50) {
-          sampleMemory100 = rss;
-          runner.kill();
-          break;
-        }
-
-        if (line.includes(`error: ${reloadCounter - 1}`)) {
-          onReload(); // re-save file to prevent deadlock
-          continue outer;
-        }
-        expect(line).toContain(`error: ${reloadCounter}`);
-
-        reloadCounter++;
-        let next = it.shift()!;
-        expect(next).toInclude("bundle_in.ts");
-        const col = next.match(/\s*at.*?:4:(\d+)$/)![1];
-        expect(Number(col)).toBe(1 + "throw ".length + (reloadCounter - 1) * 2);
-        any = true;
-      }
-
-      if (any) await onReload();
-    }
+${" ".repeat(counter * 2)}throw new Error(${counter});`,
+        );
+      },
+      verifyLine: (_errorLine, nextLine, counter) => {
+        expect(nextLine).toInclude("bundle_in.ts");
+        const col = nextLine!.match(/\s*at.*?:4:(\d+)$/)![1];
+        expect(Number(col)).toBe(1 + "throw ".length + counter * 2);
+      },
+    });
     expect(reloadCounter).toBe(50);
     bundler.kill();
     await runner.exited;
     // TODO: bun has a memory leak when --hot is used on very large files
-    // console.log({ sampleMemory10, sampleMemory100 });
   },
   longTimeout,
 );

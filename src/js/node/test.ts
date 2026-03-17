@@ -115,27 +115,27 @@ class TestContext {
   }
 
   before(arg0: unknown, arg1: unknown) {
-    const { fn } = createHook(arg0, arg1);
+    const { fn, options } = createHook(arg0, arg1);
     const { beforeAll } = bunTest();
-    beforeAll(fn);
+    beforeAll(fn, options);
   }
 
   after(arg0: unknown, arg1: unknown) {
-    const { fn } = createHook(arg0, arg1);
+    const { fn, options } = createHook(arg0, arg1);
     const { afterAll } = bunTest();
-    afterAll(fn);
+    afterAll(fn, options);
   }
 
   beforeEach(arg0: unknown, arg1: unknown) {
-    const { fn } = createHook(arg0, arg1);
+    const { fn, options } = createHook(arg0, arg1);
     const { beforeEach } = bunTest();
-    beforeEach(fn);
+    beforeEach(fn, options);
   }
 
   afterEach(arg0: unknown, arg1: unknown) {
-    const { fn } = createHook(arg0, arg1);
+    const { fn, options } = createHook(arg0, arg1);
     const { afterEach } = bunTest();
-    afterEach(fn);
+    afterEach(fn, options);
   }
 
   waitFor(_condition: unknown, _options: { timeout?: number } = kEmptyObject) {
@@ -237,27 +237,27 @@ test.only = function (arg0: unknown, arg1: unknown, arg2: unknown) {
 };
 
 function before(arg0: unknown, arg1: unknown) {
-  const { fn } = createHook(arg0, arg1);
+  const { fn, options } = createHook(arg0, arg1);
   const { beforeAll } = bunTest();
-  beforeAll(fn);
+  beforeAll(fn, options);
 }
 
 function after(arg0: unknown, arg1: unknown) {
-  const { fn } = createHook(arg0, arg1);
+  const { fn, options } = createHook(arg0, arg1);
   const { afterAll } = bunTest();
-  afterAll(fn);
+  afterAll(fn, options);
 }
 
 function beforeEach(arg0: unknown, arg1: unknown) {
-  const { fn } = createHook(arg0, arg1);
+  const { fn, options } = createHook(arg0, arg1);
   const { beforeEach } = bunTest();
-  beforeEach(fn);
+  beforeEach(fn, options);
 }
 
 function afterEach(arg0: unknown, arg1: unknown) {
-  const { fn } = createHook(arg0, arg1);
+  const { fn, options } = createHook(arg0, arg1);
   const { afterEach } = bunTest();
-  afterEach(fn);
+  afterEach(fn, options);
 }
 
 function parseTestOptions(arg0: unknown, arg1: unknown, arg2: unknown) {
@@ -304,32 +304,24 @@ function createTest(arg0: unknown, arg1: unknown, arg2: unknown) {
   checkNotInsideTest(ctx, "test");
   const context = new TestContext(true, name, Bun.main, ctx);
 
-  const runTest = (done: (error?: unknown) => void) => {
+  // Use async wrapper (fn.length === 0) so bun:test doesn't misclassify this
+  // as a done-callback test, which would apply bun's 5s default timeout.
+  // Node.js's node:test has no default timeout (Infinity).
+  const runTest = async () => {
     const originalContext = ctx;
     ctx = context;
-    const endTest = (error?: unknown) => {
-      try {
-        done(error);
-      } finally {
-        ctx = originalContext;
-      }
-    };
-
-    let result: unknown;
     try {
-      result = fn(context);
-    } catch (error) {
-      endTest(error);
-      return;
-    }
-    if (result instanceof Promise) {
-      (result as Promise<unknown>).then(() => endTest()).catch(error => endTest(error));
-    } else {
-      endTest();
+      await fn(context);
+    } finally {
+      ctx = originalContext;
     }
   };
 
-  return { name, options, fn: runTest };
+  // Default to timeout: 0 (no timeout) to match Node.js semantics.
+  // Preserve any explicit timeout the user set.
+  const testOptions = { ...options, timeout: options.timeout ?? 0 };
+
+  return { name, options: testOptions, fn: runTest };
 }
 
 function createDescribe(arg0: unknown, arg1: unknown, arg2: unknown) {
@@ -377,22 +369,15 @@ function parseHookOptions(arg0: unknown, arg1: unknown) {
 function createHook(arg0: unknown, arg1: unknown) {
   const { fn, options } = parseHookOptions(arg0, arg1);
 
-  const runHook = (done: (error?: unknown) => void) => {
-    let result: unknown;
-    try {
-      result = fn();
-    } catch (error) {
-      done(error);
-      return;
-    }
-    if (result instanceof Promise) {
-      (result as Promise<unknown>).then(() => done()).catch(error => done(error));
-    } else {
-      done();
-    }
+  // Same fix as createTest: use async wrapper so bun:test doesn't
+  // misclassify hooks as done-callback style (which applies 5s timeout).
+  const runHook = async () => {
+    await fn();
   };
 
-  return { options, fn: runHook };
+  const hookOptions = { ...options, timeout: options.timeout ?? 0 };
+
+  return { options: hookOptions, fn: runHook };
 }
 
 type TestFn = (ctx: TestContext) => unknown | Promise<unknown>;

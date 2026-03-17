@@ -246,6 +246,15 @@ UV_EXTERN int uv_set_process_title(const char* title)
         return;
 
     cleanup:
+        pLSGetCurrentApplicationASN = NULL;
+        pLSSetApplicationInformationItem = NULL;
+        pLSSetApplicationLaunchServicesServerConnectionStatus = NULL;
+        pLSApplicationCheckIn = NULL;
+        p_kLSDisplayNameKey = NULL;
+        pCFBundleGetInfoDictionary = NULL;
+        pCFBundleGetMainBundle = NULL;
+        pCFStringCreateWithCString = NULL;
+        pCFRelease = NULL;
         if (application_services_handle) dlclose(application_services_handle);
         if (core_foundation_handle) dlclose(core_foundation_handle);
         application_services_handle = NULL;
@@ -262,8 +271,10 @@ UV_EXTERN int uv_set_process_title(const char* title)
         CFTypeRef asn = pLSGetCurrentApplicationASN();
         if (asn != NULL) {
             CFStringRef value = pCFStringCreateWithCString(NULL, title, kCFStringEncodingUTF8);
-            pLSSetApplicationInformationItem(-2, asn, *p_kLSDisplayNameKey, value, NULL);
-            pCFRelease(value);
+            if (value != NULL) {
+                pLSSetApplicationInformationItem(-2, asn, *p_kLSDisplayNameKey, value, NULL);
+                pCFRelease(value);
+            }
         }
     }
 

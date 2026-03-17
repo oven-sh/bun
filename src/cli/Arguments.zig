@@ -124,6 +124,8 @@ pub const runtime_params_ = [_]ParamType{
     clap.parseParam("--unhandled-rejections <STR>      One of \"strict\", \"throw\", \"warn\", \"none\", or \"warn-with-error-code\"") catch unreachable,
     clap.parseParam("--console-depth <NUMBER>          Set the default depth for console.log object inspection (default: 2)") catch unreachable,
     clap.parseParam("--user-agent <STR>               Set the default User-Agent header for HTTP requests") catch unreachable,
+    clap.parseParam("--cron-title <STR>               Title for cron execution mode") catch unreachable,
+    clap.parseParam("--cron-period <STR>              Cron period for cron execution mode") catch unreachable,
 };
 
 pub const auto_or_run_params = [_]ParamType{
@@ -831,6 +833,23 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             ctx.runtime_options.dns_result_order = order;
         }
 
+        const has_cron_title = args.option("--cron-title");
+        const has_cron_period = args.option("--cron-period");
+        if (has_cron_title) |t| {
+            ctx.runtime_options.cron_title = t;
+        }
+        if (has_cron_period) |p| {
+            ctx.runtime_options.cron_period = p;
+        }
+        if ((has_cron_title != null) != (has_cron_period != null)) {
+            Output.errGeneric("--cron-title and --cron-period must be provided together", .{});
+            Global.exit(1);
+        }
+        if (has_cron_title != null and (ctx.runtime_options.cron_title.len == 0 or ctx.runtime_options.cron_period.len == 0)) {
+            Output.errGeneric("--cron-title and --cron-period must not be empty", .{});
+            Global.exit(1);
+        }
+
         if (args.option("--inspect")) |inspect_flag| {
             ctx.runtime_options.debugger = if (inspect_flag.len == 0)
                 Command.Debugger{ .enable = .{} }
@@ -838,8 +857,6 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                 Command.Debugger{ .enable = .{
                     .path_or_port = inspect_flag,
                 } };
-
-            bun.jsc.RuntimeTranspilerCache.is_disabled = true;
         } else if (args.option("--inspect-wait")) |inspect_flag| {
             ctx.runtime_options.debugger = if (inspect_flag.len == 0)
                 Command.Debugger{ .enable = .{
@@ -850,8 +867,6 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                     .path_or_port = inspect_flag,
                     .wait_for_connection = true,
                 } };
-
-            bun.jsc.RuntimeTranspilerCache.is_disabled = true;
         } else if (args.option("--inspect-brk")) |inspect_flag| {
             ctx.runtime_options.debugger = if (inspect_flag.len == 0)
                 Command.Debugger{ .enable = .{
@@ -864,8 +879,6 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                     .wait_for_connection = true,
                     .set_breakpoint_on_first_line = true,
                 } };
-
-            bun.jsc.RuntimeTranspilerCache.is_disabled = true;
         }
 
         const cpu_prof_flag = args.flag("--cpu-prof");

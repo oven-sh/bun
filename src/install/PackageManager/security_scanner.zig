@@ -183,7 +183,8 @@ pub fn performSecurityScanAfterResolution(manager: *PackageManager, command_ctx:
             const retry_result = try attemptSecurityScanWithRetry(manager, security_scanner, scan_all, command_ctx, original_cwd, true);
             switch (retry_result) {
                 .success => |scan_results| return scan_results,
-                else => return error.SecurityScannerRetryFailed,
+                .needs_install => return error.SecurityScannerRetryFailed,
+                .@"error" => |err| return err,
             }
         },
         .@"error" => |err| return err,

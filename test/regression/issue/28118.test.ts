@@ -141,3 +141,37 @@ console.log(new MyClass().sum());
   expect(stdout.trim()).toBe("6");
   expect(exitCode).toBe(0);
 });
+
+test("public field initializer referencing private field with decorated accessor", async () => {
+  using dir = tempDir("issue-28118", {
+    "tsconfig.json": JSON.stringify({ compilerOptions: {} }),
+    "test.ts": `
+function id(
+  value: ClassAccessorDecoratorTarget<any, any>,
+  context: ClassAccessorDecoratorContext,
+): ClassAccessorDecoratorResult<any, any> {
+  return value;
+}
+
+class MyClass {
+  @id accessor label: string = "";
+  #name = "hello";
+  foo = this.#name;
+}
+
+console.log(new MyClass().foo);
+`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout.trim()).toBe("hello");
+  expect(exitCode).toBe(0);
+});

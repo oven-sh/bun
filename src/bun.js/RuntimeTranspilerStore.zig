@@ -272,7 +272,12 @@ pub const RuntimeTranspilerStore = struct {
             this.promise.deinit();
             this.deinit();
 
-            _ = vm.transpiler_store.store.put(this);
+            // Delay returning the slot to the pool until after fulfill() completes.
+            // fulfill() executes JavaScript synchronously, which may trigger new
+            // transpile() calls that recycle this slot via store.get(). Returning the
+            // slot before fulfill() causes the HiveArray to poison the memory, and
+            // a new worker thread accessing the recycled slot hits use-after-poison.
+            defer _ = vm.transpiler_store.store.put(this);
 
             try AsyncModule.fulfill(globalThis, promise, &resolved_source, parse_error, specifier, referrer, &log);
         }

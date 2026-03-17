@@ -272,7 +272,13 @@ pub const RuntimeTranspilerStore = struct {
             this.promise.deinit();
             this.deinit();
 
-            _ = vm.transpiler_store.store.put(this);
+            // Delay returning the slot to the pool until after fulfill() completes.
+            // fulfill() calls Bun__onFulfillAsyncModule which synchronously evaluates
+            // JavaScript (module initialization). That JS may trigger new transpile()
+            // calls which call store.get(). If the slot was already returned via put(),
+            // get() could recycle it for a new worker while fulfill()'s C++ stack frames
+            // still reference the slot's address range, causing ASAN use-after-poison.
+            defer _ = vm.transpiler_store.store.put(this);
 
             try AsyncModule.fulfill(globalThis, promise, &resolved_source, parse_error, specifier, referrer, &log);
         }

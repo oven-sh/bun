@@ -37,7 +37,8 @@ async function driveErrorReloadCycle(
     if (!/error: .*[0-9]\n.*?\n/g.test(str)) continue;
 
     const lines = str.split("\n");
-    str = "";
+    // Preserve trailing partial line for the next chunk
+    str = lines.pop() ?? "";
     let triggered = false;
 
     for (let i = 0; i < lines.length; i++) {
@@ -54,7 +55,8 @@ async function driveErrorReloadCycle(
       // then skip to reading the next chunk.
       if (line.includes(`error: ${reloadCounter - 1}`)) {
         // Put remaining unprocessed lines back into str so they aren't lost
-        str = lines.slice(i + 1).join("\n");
+        const remaining = lines.slice(i + 1).join("\n");
+        str = remaining ? (str ? `${remaining}\n${str}` : remaining) : str;
         nonce++;
         onReload(reloadCounter, nonce);
         break;

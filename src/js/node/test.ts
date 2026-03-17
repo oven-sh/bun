@@ -115,27 +115,27 @@ class TestContext {
   }
 
   before(arg0: unknown, arg1: unknown) {
-    const { fn } = createHook(arg0, arg1);
+    const { fn, options } = createHook(arg0, arg1);
     const { beforeAll } = bunTest();
-    beforeAll(fn);
+    beforeAll(fn, { timeout: options.timeout ?? 0 });
   }
 
   after(arg0: unknown, arg1: unknown) {
-    const { fn } = createHook(arg0, arg1);
+    const { fn, options } = createHook(arg0, arg1);
     const { afterAll } = bunTest();
-    afterAll(fn);
+    afterAll(fn, { timeout: options.timeout ?? 0 });
   }
 
   beforeEach(arg0: unknown, arg1: unknown) {
-    const { fn } = createHook(arg0, arg1);
+    const { fn, options } = createHook(arg0, arg1);
     const { beforeEach } = bunTest();
-    beforeEach(fn);
+    beforeEach(fn, { timeout: options.timeout ?? 0 });
   }
 
   afterEach(arg0: unknown, arg1: unknown) {
-    const { fn } = createHook(arg0, arg1);
+    const { fn, options } = createHook(arg0, arg1);
     const { afterEach } = bunTest();
-    afterEach(fn);
+    afterEach(fn, { timeout: options.timeout ?? 0 });
   }
 
   waitFor(_condition: unknown, _options: { timeout?: number } = kEmptyObject) {
@@ -149,13 +149,13 @@ class TestContext {
 
     const { test } = bunTest();
     if (options.only) {
-      test.only(name, fn);
+      test.only(name, fn, options);
     } else if (options.todo) {
-      test.todo(name, fn);
+      test.todo(name, fn, options);
     } else if (options.skip) {
-      test.skip(name, fn);
+      test.skip(name, fn, options);
     } else {
-      test(name, fn);
+      test(name, fn, options);
     }
   }
 
@@ -237,27 +237,27 @@ test.only = function (arg0: unknown, arg1: unknown, arg2: unknown) {
 };
 
 function before(arg0: unknown, arg1: unknown) {
-  const { fn } = createHook(arg0, arg1);
+  const { fn, options } = createHook(arg0, arg1);
   const { beforeAll } = bunTest();
-  beforeAll(fn);
+  beforeAll(fn, { timeout: options.timeout ?? 0 });
 }
 
 function after(arg0: unknown, arg1: unknown) {
-  const { fn } = createHook(arg0, arg1);
+  const { fn, options } = createHook(arg0, arg1);
   const { afterAll } = bunTest();
-  afterAll(fn);
+  afterAll(fn, { timeout: options.timeout ?? 0 });
 }
 
 function beforeEach(arg0: unknown, arg1: unknown) {
-  const { fn } = createHook(arg0, arg1);
+  const { fn, options } = createHook(arg0, arg1);
   const { beforeEach } = bunTest();
-  beforeEach(fn);
+  beforeEach(fn, { timeout: options.timeout ?? 0 });
 }
 
 function afterEach(arg0: unknown, arg1: unknown) {
-  const { fn } = createHook(arg0, arg1);
+  const { fn, options } = createHook(arg0, arg1);
   const { afterEach } = bunTest();
-  afterEach(fn);
+  afterEach(fn, { timeout: options.timeout ?? 0 });
 }
 
 function parseTestOptions(arg0: unknown, arg1: unknown, arg2: unknown) {
@@ -329,7 +329,9 @@ function createTest(arg0: unknown, arg1: unknown, arg2: unknown) {
     }
   };
 
-  return { name, options, fn: runTest };
+  // Node.js node:test has no default timeout, so default to 0 (no timeout)
+  // to avoid inheriting bun:test's 5s default when using done-callback wrapper.
+  return { name, options: { ...options, timeout: options.timeout ?? 0 }, fn: runTest };
 }
 
 function createDescribe(arg0: unknown, arg1: unknown, arg2: unknown) {

@@ -339,7 +339,7 @@ class Debugger {
         return Response.json(versionInfo());
       case "/json":
       case "/json/list":
-      // TODO?
+        return Response.json(targetListInfo(this.#url!));
     }
 
     if (!this.#url!.protocol.includes("unix") && this.#url!.pathname !== pathname) {
@@ -516,6 +516,21 @@ function versionInfo(): unknown {
     "Bun-Version": Bun.version,
     "Bun-Revision": Bun.revision,
   };
+}
+
+function targetListInfo(url: URL): unknown[] {
+  const wsUrl = `${url.hostname}:${url.port}${url.pathname}`;
+  return [
+    {
+      description: "Bun instance",
+      devtoolsFrontendUrl: `devtools://devtools/bundled/js_app.html?experiments=true&v8only=true&ws=${wsUrl}`,
+      id: url.pathname.slice(1),
+      title: process.argv[1] || `bun[${process.pid}]`,
+      type: "node",
+      url: `file://${process.argv[1] || ""}`,
+      webSocketDebuggerUrl: `ws://${wsUrl}`,
+    },
+  ];
 }
 
 function webSocketWriter(ws: ServerWebSocket<unknown>): Writer {

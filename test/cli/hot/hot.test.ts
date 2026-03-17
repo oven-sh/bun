@@ -12,24 +12,21 @@ const longTimeout = isDebug ? Infinity : 30_000;
  * Drives the reload cycle: reads error lines from stderr, verifies them,
  * and calls onReload to trigger the next file change.
  *
- * This avoids the previous pattern where duplicate error handling could
- * write identical file content (causing the watcher to not fire) or
- * discard buffered lines via `continue outer`.
+ * This fixes the original `continue outer` pattern which discarded any
+ * remaining buffered lines from the current chunk when a duplicate error
+ * was encountered, potentially losing data and causing test hangs.
  */
 async function driveErrorReloadCycle(
   runner: ReturnType<typeof spawn>,
   opts: {
     targetCount: number;
-    onReload: (counter: number, nonce: number) => void;
+    onReload: (counter: number) => void;
     verifyLine?: (errorLine: string, nextLine: string | undefined, counter: number) => void;
   },
 ): Promise<number> {
   const { targetCount, onReload, verifyLine } = opts;
   let reloadCounter = 0;
   let str = "";
-  // Nonce ensures file content always changes, even when re-saving on duplicate errors.
-  // Without this, writing the same content may not trigger the file watcher.
-  let nonce = 0;
 
   for await (const chunk of runner.stderr) {
     str += new TextDecoder().decode(chunk);
@@ -51,17 +48,14 @@ async function driveErrorReloadCycle(
       }
 
       // If we see the previous error repeated, the pending reload hasn't
-      // taken effect yet. Re-save with a new nonce to force a watcher event,
-      // then skip to reading the next chunk.
+      // taken effect yet. Re-save the file and put remaining unprocessed
+      // lines back into the buffer so they aren't lost.
       if (line.includes(`error: ${reloadCounter - 1}`)) {
-        // Put remaining unprocessed lines back into str so they aren't lost.
-        // Always keep a trailing \n so the next chunk starts a new logical line.
         const remaining = lines.slice(i + 1).join("\n");
         if (remaining) {
           str = `${remaining}\n${str}`;
         }
-        nonce++;
-        onReload(reloadCounter, nonce);
+        onReload(reloadCounter);
         triggered = false; // onReload already called; skip post-loop call
         break;
       }
@@ -84,8 +78,7 @@ async function driveErrorReloadCycle(
     }
 
     if (triggered) {
-      nonce++;
-      onReload(reloadCounter, nonce);
+      onReload(reloadCounter);
     }
   }
 
@@ -519,10 +512,10 @@ throw new Error('0');`,
     });
     const reloadCounter = await driveErrorReloadCycle(runner, {
       targetCount: 50,
-      onReload: (counter, nonce) => {
+      onReload: (counter) => {
         writeFileSync(
           hotRunnerRoot,
-          `// source content /*nonce:${nonce}*/
+          `// source content
 ${comment_spam}
 ${Buffer.alloc(counter * 2, " ").toString()}throw new Error(${counter});`,
         );
@@ -574,10 +567,10 @@ throw new Error('0');`,
     const reloadCounter = await Promise.race([
       driveErrorReloadCycle(runner, {
         targetCount: 50,
-        onReload: (counter, nonce) => {
+        onReload: (counter) => {
           writeFileSync(
             bundleIn,
-            `// source content /*nonce:${nonce}*/
+            `// source content
 // etc etc
 // etc etc
 ${Buffer.alloc(counter * 2, " ").toString()}throw new Error(${counter});`,
@@ -655,10 +648,10 @@ throw new Error('0');`,
     const reloadCounter = await Promise.race([
       driveErrorReloadCycle(runner, {
         targetCount: 50,
-        onReload: (counter, nonce) => {
+        onReload: (counter) => {
           writeFileSync(
             bundleIn,
-            `// ${long_comment} /*nonce:${nonce}*/
+            `// ${long_comment}
 console.error("RSS: %s", process.memoryUsage().rss);
 //
 ${Buffer.alloc(counter * 2, " ").toString()}throw new Error(${counter});`,

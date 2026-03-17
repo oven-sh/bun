@@ -41,7 +41,10 @@ test("runtime transpiler cache is disabled when BUN_INSPECT is set", async () =>
     env: {
       ...bunEnv,
       BUN_RUNTIME_TRANSPILER_CACHE_PATH: cacheDir,
-      BUN_INSPECT: "ws+unix:///tmp/bun-inspect-fake-" + Date.now() + ".sock",
+      BUN_INSPECT:
+        process.platform === "win32"
+          ? "127.0.0.1:0"
+          : "ws+unix:///tmp/bun-inspect-fake-" + Date.now() + ".sock",
     },
     stdout: "pipe",
     stderr: "pipe",

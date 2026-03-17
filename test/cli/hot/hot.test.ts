@@ -512,7 +512,7 @@ throw new Error('0');`,
     });
     const reloadCounter = await driveErrorReloadCycle(runner, {
       targetCount: 50,
-      onReload: (counter) => {
+      onReload: counter => {
         writeFileSync(
           hotRunnerRoot,
           `// source content
@@ -567,7 +567,7 @@ throw new Error('0');`,
     const reloadCounter = await Promise.race([
       driveErrorReloadCycle(runner, {
         targetCount: 50,
-        onReload: (counter) => {
+        onReload: counter => {
           writeFileSync(
             bundleIn,
             `// source content
@@ -648,7 +648,7 @@ throw new Error('0');`,
     const reloadCounter = await Promise.race([
       driveErrorReloadCycle(runner, {
         targetCount: 50,
-        onReload: (counter) => {
+        onReload: counter => {
           writeFileSync(
             bundleIn,
             `// ${long_comment}

@@ -798,8 +798,9 @@ pub const ShellRmTask = struct {
                             },
                             .NOTDIR => {
                                 delete_state.treat_as_dir = false;
+                                // removeEntryFile already wraps errors via errorWithPath; don't re-wrap.
                                 if (this.removeEntryFile(dir_task, dir_task.path, is_absolute, buf, &delete_state).asErr()) |err| {
-                                    return .{ .err = this.errorWithPath(err, path) };
+                                    return .{ .err = err };
                                 }
                                 if (!delete_state.treat_as_dir) return .success;
                                 if (delete_state.treat_as_dir) break :out_to_iter;
@@ -813,7 +814,7 @@ pub const ShellRmTask = struct {
 
         if (!this.opts.recursive) {
             return Maybe(void).initErr(this.errorWithPath(
-                Syscall.Error.fromCode(bun.sys.E.ISDIR, .TODO),
+                Syscall.Error.fromCode(bun.sys.E.ISDIR, .unlink),
                 dir_task.path,
             ));
         }
@@ -886,8 +887,9 @@ pub const ShellRmTask = struct {
                         .result => |p| p,
                     };
 
+                    // removeEntryFile already wraps errors via errorWithPath; don't re-wrap.
                     switch (this.removeEntryFile(dir_task, file_path, is_absolute, buf, &remove_child_vtable)) {
-                        .err => |e| return .{ .err = this.errorWithPath(e, current.name.sliceAssumeZ()) },
+                        .err => |e| return .{ .err = e },
                         .result => {},
                     }
                 },

@@ -643,7 +643,7 @@ pub fn installWithManager(
                 if (security_scanner.performSecurityScanAfterResolution(manager, ctx, original_cwd) catch |err| {
                     switch (err) {
                         error.SecurityScannerInWorkspace => {
-                            Output.pretty("<red>Security scanner cannot be a dependency of a workspace package. It must be a direct dependency of the root package.<r>\n", .{});
+                            Output.errGeneric("security scanner cannot be a dependency of a workspace package. It must be a direct dependency of the root package.", .{});
                         },
                         error.SecurityScannerRetryFailed => {
                             Output.errGeneric("security scanner failed after partial install. This is probably a bug in Bun. Please report it at https://github.com/oven-sh/bun/issues", .{});

@@ -88,7 +88,8 @@ test("barrel optimization propagates through namespace re-exports", async () => 
     cwd: String(dir),
     stderr: "pipe",
   });
-  const [, installExit] = await Promise.all([installProc.stderr.text(), installProc.exited]);
+  const [installStderr, installExit] = await Promise.all([installProc.stderr.text(), installProc.exited]);
+  expect(installStderr).not.toContain("error:");
   expect(installExit).toBe(0);
 
   const outFile = path.join(String(dir), "dist", "index.js");
@@ -109,12 +110,13 @@ test("barrel optimization propagates through namespace re-exports", async () => 
     stderr: "pipe",
   });
 
-  const [buildStdout, buildStderr, buildExit] = await Promise.all([
+  const [, buildStderr, buildExit] = await Promise.all([
     buildProc.stdout.text(),
     buildProc.stderr.text(),
     buildProc.exited,
   ]);
 
+  expect(buildStderr).toBe("");
   expect(buildExit).toBe(0);
 
   // Run the bundled output

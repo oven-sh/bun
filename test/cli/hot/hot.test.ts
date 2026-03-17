@@ -586,7 +586,7 @@ ${" ".repeat(counter * 2)}throw new Error(${counter});`,
           expect(Number(col)).toBe(1 + "throw ".length + counter * 2);
         },
       }),
-      bundler.exited.then((code) => {
+      bundler.exited.then(code => {
         throw new Error(`bundler exited early with code ${code}`);
       }),
     ]);
@@ -663,7 +663,7 @@ ${" ".repeat(counter * 2)}throw new Error(${counter});`,
           expect(Number(col)).toBe(1 + "throw ".length + counter * 2);
         },
       }),
-      bundler.exited.then((code) => {
+      bundler.exited.then(code => {
         throw new Error(`bundler exited early with code ${code}`);
       }),
     ]);

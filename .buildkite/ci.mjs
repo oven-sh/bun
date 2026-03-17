@@ -836,22 +836,6 @@ function getReleaseStep(buildPlatforms, options, { signed = false } = {}) {
 }
 
 /**
- * @param {Platform[]} buildPlatforms
- * @returns {Step}
- */
-function getBenchmarkStep() {
-  return {
-    key: "benchmark",
-    label: "📊",
-    agents: {
-      queue: "build-image",
-    },
-    depends_on: `linux-x64-build-bun`,
-    command: "node .buildkite/scripts/upload-benchmark.mjs",
-  };
-}
-
-/**
  * @typedef {Object} Pipeline
  * @property {Step[]} [steps]
  * @property {number} [priority]
@@ -1340,7 +1324,6 @@ async function getPipeline(options = {}) {
   if (isMainBranch()) {
     steps.push(getReleaseStep(buildPlatforms, options, { signed: shouldSignWindows }));
   }
-  steps.push(getBenchmarkStep());
 
   /** @type {Map<string, GroupStep>} */
   const stepsByGroup = new Map();

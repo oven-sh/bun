@@ -182,6 +182,12 @@ struct NSWindow : Ref {
 
     static SEL s_windowNumber;
     long windowNumber() const { return msg<long>(s_windowNumber); }
+
+    static SEL s_convertPointToScreen;
+    CGPoint convertPointToScreen(double x, double y) const
+    {
+        return msg<CGPoint>(s_convertPointToScreen, CGPointMake(x, y));
+    }
 };
 
 struct NSView : Ref {
@@ -236,11 +242,16 @@ struct NSProcessInfo : Ref {
     }
 };
 
-// NSEvent synthesis. WKWebView's mouseDown:/keyDown: are straight NSResponder
+// NSEvent synthesis. WKWebView's mouseDown:/keyDown:/scrollWheel: are NSResponder
 // overrides — calling them directly dispatches to WebContent via XPC, trusted,
 // no window key/firstResponder gate in the basic path (verified in
-// WebViewImpl::keyDown). The automation tag (objc_setAssociatedObject) is a
-// tracker for embedders, not a gate — WebKit doesn't check it internally.
+// WebViewImpl::keyDown / ::scrollWheel). The automation tag
+// (objc_setAssociatedObject) is a tracker for embedders, not a gate.
+//
+// Wheel events are different: no +[NSEvent scrollWheelEvent...] class method
+// exists. CGEventCreateScrollWheelEvent → [NSEvent eventWithCGEvent:] is the
+// path (same as WebAutomationSessionMac.mm). CoreGraphics is a transitive
+// dep of AppKit so dlsym RTLD_DEFAULT works after the AppKit dlopen.
 //
 // The 9- and 10-argument class method selectors are the only ObjC calls in the
 // codebase that stress the varargs cast this hard. arm64 ABI: CGPoint passes
@@ -251,6 +262,17 @@ struct NSEvent : Ref {
     static Class cls;
     static SEL s_mouseEventWithType;  // ...location:modifierFlags:timestamp:windowNumber:context:eventNumber:clickCount:pressure:
     static SEL s_keyEventWithType;    // ...location:modifierFlags:timestamp:windowNumber:context:characters:charactersIgnoringModifiers:isARepeat:keyCode:
+    static SEL s_eventWithCGEvent;
+    static SEL s_eventRelativeToWindow;  // _eventRelativeToWindow: (SPI)
+
+    // CoreGraphics function pointers — dlsym'd in load(), not ObjC.
+    // CGScrollEventUnitPixel = 0. wheelCount=2 for x+y; delta args are
+    // (wheel1, wheel2, ...) = (deltaY, deltaX) — yes, y first.
+    static void* (*s_CGEventCreateScrollWheelEvent)(void* source, uint32_t units, uint32_t wheelCount, int32_t wheel1, ...);
+    static void (*s_CGEventSetLocation)(void* event, CGPoint location);
+    static uint32_t (*s_CGMainDisplayID)();
+    static CGRect (*s_CGDisplayBounds)(uint32_t displayID);
+    static void (*s_CFRelease)(void*);
 
     // NSEventType — the ones we use.
     enum : unsigned long {
@@ -297,6 +319,30 @@ struct NSEvent : Ref {
             windowNumber, (id)nullptr /* context */,
             characters.m_id, charactersIgnoringModifiers.m_id,
             (signed char)0 /* isARepeat */, keyCode);
+    }
+
+    // Autoreleased. Deltas are pixels; positive dy scrolls viewport DOWN
+    // (content up), matching scrollBy() semantics.
+    //
+    // eventWithCGEvent: returns an NSEvent with no window, so
+    // pointForEvent(event, view) reads a garbage locationInWindow and the
+    // wheel event falls outside the view → dropped. The fix is the same
+    // transform WebAutomationSessionMac::platformSimulateWheelInteraction
+    // uses: set CGEvent location to window-local → screen → flipped for CG
+    // top-left (compensates for eventWithCGEvent:'s internal flip — see
+    // <rdar://problem/17180591>), then _eventRelativeToWindow: rehomes it.
+    // The flip cancels out and locationInWindow lands exactly at (wx, wy).
+    static NSEvent wheelEvent(float deltaX, float deltaY, NSWindow window, double wx, double wy)
+    {
+        void* cgEvent = s_CGEventCreateScrollWheelEvent(
+            nullptr, /* kCGScrollEventUnitPixel */ 0, /* wheelCount */ 2,
+            -static_cast<int32_t>(deltaY), -static_cast<int32_t>(deltaX));
+        CGPoint screen = window.convertPointToScreen(wx, wy);
+        double firstScreenH = s_CGDisplayBounds(s_CGMainDisplayID()).size.height;
+        s_CGEventSetLocation(cgEvent, CGPointMake(screen.x, firstScreenH - screen.y));
+        id ns = msgCls<id>(cls, s_eventWithCGEvent, cgEvent);
+        s_CFRelease(cgEvent);
+        return Ref(ns).msg<id>(s_eventRelativeToWindow, window.m_id);
     }
 };
 
@@ -403,6 +449,9 @@ struct WKWebView : Ref {
     void keyDown(NSEvent e)        { msg<void>(s_keyDown, e.m_id); }
     void keyUp(NSEvent e)          { msg<void>(s_keyUp, e.m_id); }
 
+    static SEL s_scrollWheel;
+    void scrollWheel(NSEvent e)    { msg<void>(s_scrollWheel, e.m_id); }
+
     // TextChecker state is process-global; set once. Native keydown goes
     // through NSTextInputContext → smart quotes/dashes/replacement by
     // default — type("it's") would yield "it’s". Automation wants literal
@@ -432,6 +481,17 @@ struct WKWebView : Ref {
     void doAfterPendingMouseEvents(void* block)
     {
         msg<void>(s_doAfterPendingMouseEvents, block);
+    }
+
+    // Fires after the next layer tree commit arrives in the UI process.
+    // The scrolling tree is bundled with that commit, so this is the barrier
+    // for the first scrollWheel: after a navigation — before it arrives,
+    // RemoteScrollingCoordinatorProxy hits an empty tree and drops the event.
+    // macOS 10.12+.
+    static SEL s_doAfterNextPresentationUpdate;
+    void doAfterNextPresentationUpdate(void* block)
+    {
+        msg<void>(s_doAfterNextPresentationUpdate, block);
     }
 
     void takeSnapshot(void* block)
@@ -483,6 +543,7 @@ public:
     WebViewHost* m_evalTarget = nullptr;
     WebViewHost* m_screenshotTarget = nullptr;
     WebViewHost* m_inputTarget = nullptr;
+    WebViewHost* m_scrollTarget = nullptr;
 
     static ObjCRuntime* tryLoad();
 
@@ -515,6 +576,7 @@ void* snapshotCompletionBlock();
 // Two block instances, both route to WebViewHost::onInputComplete.
 void* editCommandCompletionBlock();
 void* mouseBarrierBlock();
+void* scrollBarrierBlock();
 
 } // namespace Bun
 

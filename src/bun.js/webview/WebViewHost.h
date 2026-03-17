@@ -37,7 +37,9 @@ public:
     bool clickIPC(float x, float y, uint8_t button, uint8_t modifiers, uint8_t clickCount);
     bool typeIPC(const WTF::String& text);
     bool pressIPC(WebViewProto::VirtualKey key, uint8_t modifiers, const WTF::String& character);
+    bool scrollIPC(float dx, float dy);
     void onInputComplete();
+    void onScrollBarrier();
 
     void resize(uint32_t width, uint32_t height);
     void goBack();
@@ -65,13 +67,19 @@ private:
     bool m_evalPending = false;
     bool m_screenshotPending = false;
     bool m_inputPending = false;
+    bool m_scrollPending = false;
 
     objc::WKWebView m_webview;
     objc::NSWindow m_window;
     objc::NavigationDelegate m_delegate;
     bool m_closed = false;
-    // Cached for viewport→window coord flip; updated in resize().
+    // Cached for viewport→window coord flip and wheel event location;
+    // updated in resize().
+    uint32_t m_width = 0;
     uint32_t m_height = 0;
+    float m_pendingScrollDx = 0;
+    float m_pendingScrollDy = 0;
+    bool m_scrollWheelFired = false;
 };
 
 } // namespace Bun

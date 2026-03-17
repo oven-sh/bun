@@ -213,11 +213,11 @@ void Host::dispatch(uint32_t viewId, Op op, Reader r)
     ObjCRuntime::ARPool pool;
     switch (op) {
     case Op::Create: {
-        uint32_t w = r.u32(), h = r.u32();
-        auto kind = static_cast<DataStoreKind>(r.u8());
+        auto p = decode<CreatePayload>(r);
         WTF::String persistDir;
-        if (kind == DataStoreKind::Persistent) persistDir = r.str();
-        auto host = WebViewHost::createForIPC(viewId, w, h, persistDir);
+        if (static_cast<DataStoreKind>(p.dataStoreKind) == DataStoreKind::Persistent)
+            persistDir = r.str();
+        auto host = WebViewHost::createForIPC(viewId, p.width, p.height, persistDir);
         if (!host) {
             writer.sendReplyStr(viewId, Reply::Error, "WKWebView creation failed"_s);
             return;
@@ -240,8 +240,8 @@ void Host::dispatch(uint32_t viewId, Op op, Reader r)
         writer.sendReply(viewId, Reply::Ack);
         return;
     case Op::Resize: {
-        uint32_t w = r.u32(), h = r.u32();
-        if (auto* v = view(viewId)) { v->resize(w, h); writer.sendReply(viewId, Reply::Ack); }
+        auto p = decode<ResizePayload>(r);
+        if (auto* v = view(viewId)) { v->resize(p.width, p.height); writer.sendReply(viewId, Reply::Ack); }
         return;
     }
     case Op::GoBack:
@@ -255,10 +255,9 @@ void Host::dispatch(uint32_t viewId, Op op, Reader r)
         return;
     // Input ops: return true = async (completion block Acks), false = sync.
     case Op::Click: {
-        float x = r.f32(), y = r.f32();
-        uint8_t button = r.u8(), mods = r.u8(), clickCount = r.u8();
+        auto p = decode<ClickPayload>(r);
         if (auto* v = view(viewId)) {
-            if (!v->clickIPC(x, y, button, mods, clickCount)) writer.sendReply(viewId, Reply::Ack);
+            if (!v->clickIPC(p.x, p.y, p.button, p.modifiers, p.clickCount)) writer.sendReply(viewId, Reply::Ack);
         }
         return;
     }
@@ -268,11 +267,18 @@ void Host::dispatch(uint32_t viewId, Op op, Reader r)
         }
         return;
     case Op::Press: {
-        auto key = static_cast<VirtualKey>(r.u8());
-        uint8_t mods = r.u8();
-        WTF::String ch = (key == VirtualKey::Character) ? r.str() : WTF::String();
+        auto p = decode<PressPayload>(r);
+        auto vk = static_cast<VirtualKey>(p.virtualKey);
+        WTF::String ch = (vk == VirtualKey::Character) ? r.str() : WTF::String();
         if (auto* v = view(viewId)) {
-            if (!v->pressIPC(key, mods, ch)) writer.sendReply(viewId, Reply::Ack);
+            if (!v->pressIPC(vk, p.modifiers, ch)) writer.sendReply(viewId, Reply::Ack);
+        }
+        return;
+    }
+    case Op::Scroll: {
+        auto p = decode<ScrollPayload>(r);
+        if (auto* v = view(viewId)) {
+            if (!v->scrollIPC(p.deltaX, p.deltaY)) writer.sendReply(viewId, Reply::Ack);
         }
         return;
     }

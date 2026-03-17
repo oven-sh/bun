@@ -36,6 +36,7 @@ std::unique_ptr<WebViewHost> WebViewHost::createForIPC(uint32_t viewId, uint32_t
 
     host->m_window = objc::NSWindow::createOffscreen(width, height);
     host->m_window.setContentView(host->m_webview);
+    host->m_width = width;
     host->m_height = height;
 
     // Process-global TextChecker state. keyDown: → NSTextInputContext →
@@ -62,6 +63,7 @@ void WebViewHost::close()
     if (rt->m_evalTarget == this) rt->m_evalTarget = nullptr;
     if (rt->m_screenshotTarget == this) rt->m_screenshotTarget = nullptr;
     if (rt->m_inputTarget == this) rt->m_inputTarget = nullptr;
+    if (rt->m_scrollTarget == this) rt->m_scrollTarget = nullptr;
 
     if (m_webview) {
         m_webview.setNavigationDelegate(nullptr);
@@ -297,6 +299,63 @@ bool WebViewHost::pressIPC(VirtualKey key, uint8_t modifiers, const WTF::String&
     return false;
 }
 
+bool WebViewHost::scrollIPC(float dx, float dy)
+{
+    // Native wheel on macOS takes a double trip through async layers:
+    //
+    // 1. RemoteScrollingCoordinatorProxy's tree is populated by
+    //    commitScrollingTreeState, bundled in the layer tree transaction.
+    //    That commit lands AFTER didFinishNavigation. Before it, the
+    //    scrolling tree is empty — hit-test finds nothing, the wheel
+    //    event is silently dropped. _doAfterNextPresentationUpdate: sends
+    //    DispatchAfterEnsuringDrawing which forces a commit and fires
+    //    after it arrives; our callbackID ships inside that commit bundle
+    //    so we're past commitScrollingTreeState when the barrier runs.
+    //
+    // 2. RemoteLayerTreeEventDispatcher::handleWheelEvent posts to
+    //    ScrollingThread, then the result bounces back via
+    //    RunLoop::mainSingleton().dispatch() — a later main-loop iteration.
+    //    scrollWheel: returns immediately; sendWheelEvent happens later.
+    //    A second presentation-update barrier after scrollWheel: gives the
+    //    scrolling thread roundtrip a chance to complete before we Ack —
+    //    the wheel XPC is ordered before DispatchAfterEnsuringDrawing on
+    //    the WebContent connection, so the second commit reflects the
+    //    scroll.
+    //
+    // Decoupled from click/type's m_inputTarget. If a scroll is already
+    // pending, accumulate onto the scheduled barrier — the parent's
+    // m_pendingMisc slot serializes from JS so this is rare.
+    m_pendingScrollDx += dx;
+    m_pendingScrollDy += dy;
+    if (std::exchange(m_scrollPending, true)) return true;
+
+    m_scrollWheelFired = false;
+    ObjCRuntime::tryLoad()->m_scrollTarget = this;
+    m_webview.doAfterNextPresentationUpdate(scrollBarrierBlock());
+    return true;
+}
+
+void WebViewHost::onScrollBarrier()
+{
+    if (!m_scrollPending) return;
+
+    if (!std::exchange(m_scrollWheelFired, true)) {
+        float dx = std::exchange(m_pendingScrollDx, 0);
+        float dy = std::exchange(m_pendingScrollDy, 0);
+        // View center in window coords — AppKit bottom-left. The view
+        // fills the borderless window so window-local == view-local.
+        m_webview.scrollWheel(objc::NSEvent::wheelEvent(
+            dx, dy, m_window, m_width / 2.0, m_height / 2.0));
+        // Re-arm: second barrier serializes the ScrollingThread roundtrip.
+        ObjCRuntime::tryLoad()->m_scrollTarget = this;
+        m_webview.doAfterNextPresentationUpdate(scrollBarrierBlock());
+        return;
+    }
+
+    m_scrollPending = false;
+    hostWriter()->sendReply(m_viewId, Reply::Ack);
+}
+
 void WebViewHost::onInputComplete()
 {
     if (!std::exchange(m_inputPending, false)) return;
@@ -308,6 +367,7 @@ void WebViewHost::resize(uint32_t width, uint32_t height)
     if (m_closed) return;
     m_window.setContentSize(width, height);
     objc::NSView(m_webview).setFrame(width, height);
+    m_width = width;
     m_height = height;
 }
 

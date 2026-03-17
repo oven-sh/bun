@@ -59,6 +59,7 @@ SEL NSBitmapImageRep::s_representationUsingType_properties;
 SEL NSImage::s_CGImageForProposedRect_context_hints;
 
 SEL NSWindow::s_windowNumber;
+SEL NSWindow::s_convertPointToScreen;
 
 Class NSProcessInfo::cls;
 SEL NSProcessInfo::s_processInfo;
@@ -67,6 +68,13 @@ SEL NSProcessInfo::s_systemUptime;
 Class NSEvent::cls;
 SEL NSEvent::s_mouseEventWithType;
 SEL NSEvent::s_keyEventWithType;
+SEL NSEvent::s_eventWithCGEvent;
+SEL NSEvent::s_eventRelativeToWindow;
+void* (*NSEvent::s_CGEventCreateScrollWheelEvent)(void*, uint32_t, uint32_t, int32_t, ...);
+void (*NSEvent::s_CGEventSetLocation)(void*, CGPoint);
+uint32_t (*NSEvent::s_CGMainDisplayID)();
+CGRect (*NSEvent::s_CGDisplayBounds)(uint32_t);
+void (*NSEvent::s_CFRelease)(void*);
 
 SEL WKWebView::s_mouseDown;
 SEL WKWebView::s_mouseUp;
@@ -76,11 +84,13 @@ SEL WKWebView::s_otherMouseDown;
 SEL WKWebView::s_otherMouseUp;
 SEL WKWebView::s_keyDown;
 SEL WKWebView::s_keyUp;
+SEL WKWebView::s_scrollWheel;
 SEL WKWebView::s_setAutomaticQuoteSubstitutionEnabled;
 SEL WKWebView::s_setAutomaticDashSubstitutionEnabled;
 SEL WKWebView::s_setAutomaticTextReplacementEnabled;
 SEL WKWebView::s_executeEditCommand;
 SEL WKWebView::s_doAfterPendingMouseEvents;
+SEL WKWebView::s_doAfterNextPresentationUpdate;
 
 Class WKWebViewConfiguration::cls;
 Class WKWebViewConfiguration::cls_WKWebsiteDataStore;
@@ -180,16 +190,25 @@ static void mouseBarrierBlockInvoke(void* /*blockSelf*/)
     rt->m_inputTarget = nullptr;
     if (host) host->onInputComplete();
 }
+static void scrollBarrierBlockInvoke(void* /*blockSelf*/)
+{
+    auto* rt = ObjCRuntime::tryLoad();
+    auto* host = rt->m_scrollTarget;
+    rt->m_scrollTarget = nullptr;
+    if (host) host->onScrollBarrier();
+}
 
 static GlobalBlock<CompletionInvoke> g_evalBlock;
 static GlobalBlock<CompletionInvoke> g_snapshotBlock;
 static GlobalBlock<EditCmdInvoke> g_editCmdBlock;
 static GlobalBlock<VoidInvoke> g_mouseBarrierBlock;
+static GlobalBlock<VoidInvoke> g_scrollBarrierBlock;
 
 void* evalCompletionBlock() { return &g_evalBlock; }
 void* snapshotCompletionBlock() { return &g_snapshotBlock; }
 void* editCommandCompletionBlock() { return &g_editCmdBlock; }
 void* mouseBarrierBlock() { return &g_mouseBarrierBlock; }
+void* scrollBarrierBlock() { return &g_scrollBarrierBlock; }
 
 // --- Delegate IMPs ---------------------------------------------------------
 // Installed on the runtime-registered BunWKNavigationDelegate class.
@@ -333,6 +352,7 @@ bool ObjCRuntime::load()
     NSImage::s_CGImageForProposedRect_context_hints = sel("CGImageForProposedRect:context:hints:");
 
     NSWindow::s_windowNumber = sel("windowNumber");
+    NSWindow::s_convertPointToScreen = sel("convertPointToScreen:");
 
     CLS(NSProcessInfo::cls, "NSProcessInfo");
     NSProcessInfo::s_processInfo = sel("processInfo");
@@ -341,6 +361,24 @@ bool ObjCRuntime::load()
     CLS(NSEvent::cls, "NSEvent");
     NSEvent::s_mouseEventWithType = sel("mouseEventWithType:location:modifierFlags:timestamp:windowNumber:context:eventNumber:clickCount:pressure:");
     NSEvent::s_keyEventWithType = sel("keyEventWithType:location:modifierFlags:timestamp:windowNumber:context:characters:charactersIgnoringModifiers:isARepeat:keyCode:");
+    NSEvent::s_eventWithCGEvent = sel("eventWithCGEvent:");
+    NSEvent::s_eventRelativeToWindow = sel("_eventRelativeToWindow:");
+    // CoreGraphics — transitive dep of AppKit. RTLD_DEFAULT finds it.
+    NSEvent::s_CGEventCreateScrollWheelEvent = reinterpret_cast<decltype(NSEvent::s_CGEventCreateScrollWheelEvent)>(
+        dlsym(RTLD_DEFAULT, "CGEventCreateScrollWheelEvent"));
+    NSEvent::s_CGEventSetLocation = reinterpret_cast<decltype(NSEvent::s_CGEventSetLocation)>(
+        dlsym(RTLD_DEFAULT, "CGEventSetLocation"));
+    NSEvent::s_CGMainDisplayID = reinterpret_cast<decltype(NSEvent::s_CGMainDisplayID)>(
+        dlsym(RTLD_DEFAULT, "CGMainDisplayID"));
+    NSEvent::s_CGDisplayBounds = reinterpret_cast<decltype(NSEvent::s_CGDisplayBounds)>(
+        dlsym(RTLD_DEFAULT, "CGDisplayBounds"));
+    NSEvent::s_CFRelease = reinterpret_cast<decltype(NSEvent::s_CFRelease)>(
+        dlsym(RTLD_DEFAULT, "CFRelease"));
+    if (!NSEvent::s_CGEventCreateScrollWheelEvent || !NSEvent::s_CGEventSetLocation
+        || !NSEvent::s_CGMainDisplayID || !NSEvent::s_CGDisplayBounds || !NSEvent::s_CFRelease) {
+        m_loadError = "missing CoreGraphics symbols"_s;
+        return false;
+    }
 
     CLS(WKWebViewConfiguration::cls, "WKWebViewConfiguration");
     CLS(WKWebViewConfiguration::cls_WKWebsiteDataStore, "WKWebsiteDataStore");
@@ -377,11 +415,13 @@ bool ObjCRuntime::load()
     WKWebView::s_otherMouseUp = sel("otherMouseUp:");
     WKWebView::s_keyDown = sel("keyDown:");
     WKWebView::s_keyUp = sel("keyUp:");
+    WKWebView::s_scrollWheel = sel("scrollWheel:");
     WKWebView::s_setAutomaticQuoteSubstitutionEnabled = sel("setAutomaticQuoteSubstitutionEnabled:");
     WKWebView::s_setAutomaticDashSubstitutionEnabled = sel("setAutomaticDashSubstitutionEnabled:");
     WKWebView::s_setAutomaticTextReplacementEnabled = sel("setAutomaticTextReplacementEnabled:");
     WKWebView::s_executeEditCommand = sel("_executeEditCommand:argument:completion:");
     WKWebView::s_doAfterPendingMouseEvents = sel("_doAfterProcessingAllPendingMouseEvents:");
+    WKWebView::s_doAfterNextPresentationUpdate = sel("_doAfterNextPresentationUpdate:");
 #undef CLS
 
     // --- initialize global blocks -----------------------------------------
@@ -392,6 +432,7 @@ bool ObjCRuntime::load()
     // shared across signatures (it's {0, sizeof(anything)} and unchecked).
     g_editCmdBlock = { nsConcreteGlobalBlock, BLOCK_IS_GLOBAL, 0, editCmdBlockInvoke, &g_blockDescriptor };
     g_mouseBarrierBlock = { nsConcreteGlobalBlock, BLOCK_IS_GLOBAL, 0, mouseBarrierBlockInvoke, &g_blockDescriptor };
+    g_scrollBarrierBlock = { nsConcreteGlobalBlock, BLOCK_IS_GLOBAL, 0, scrollBarrierBlockInvoke, &g_blockDescriptor };
 
     // --- register BunWKNavigationDelegate : NSObject <WKNavigationDelegate>
     Class nsobject = getClass("NSObject");

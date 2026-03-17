@@ -10,9 +10,13 @@
 
 namespace Bun {
 
+#if OS(DARWIN)
+namespace WebViewProto { enum class VirtualKey : uint8_t; }
+#endif
+
 // IPC client. The actual WKWebView lives in the host subprocess; this
-// object holds a viewId and routes frames. Promises for pending ops live
-// in the client's req_id → Strong<JSPromise> map, not here.
+// object holds a viewId and writes length-prefixed frames. Promises for
+// pending ops live in the WriteBarrier slots below — no Strong<> anywhere.
 class JSWebView final : public JSC::JSDestructibleObject {
 public:
     using Base = JSC::JSDestructibleObject;
@@ -47,6 +51,33 @@ public:
     static void destroy(JSC::JSCell*);
     ~JSWebView();
 
+#if OS(DARWIN)
+    // Instance-level operations. Called from JSWebViewPrototype.cpp after arg
+    // validation; all wire encoding + HostClient access is here. Each returns
+    // the promise stored in the corresponding WriteBarrier slot.
+    //
+    // Caller guarantees the relevant slot is empty (INVALID_STATE thrown
+    // before reaching here) and m_closed is false.
+    JSC::JSPromise* navigate(JSC::JSGlobalObject*, const WTF::String& url);
+    JSC::JSPromise* evaluate(JSC::JSGlobalObject*, const WTF::String& script);
+    JSC::JSPromise* screenshot(JSC::JSGlobalObject*);
+    JSC::JSPromise* click(JSC::JSGlobalObject*, float x, float y, uint8_t button, uint8_t modifiers, uint8_t clickCount);
+    JSC::JSPromise* type(JSC::JSGlobalObject*, const WTF::String& text);
+    JSC::JSPromise* press(JSC::JSGlobalObject*, WebViewProto::VirtualKey, uint8_t modifiers, const WTF::String& character);
+    JSC::JSPromise* scroll(JSC::JSGlobalObject*, double dx, double dy);
+    JSC::JSPromise* resize(JSC::JSGlobalObject*, uint32_t width, uint32_t height);
+    JSC::JSPromise* goBack(JSC::JSGlobalObject*);
+    JSC::JSPromise* goForward(JSC::JSGlobalObject*);
+    JSC::JSPromise* reload(JSC::JSGlobalObject*);
+    void doClose();
+
+    // For the constructor: spawn host if needed, allocate viewId, register
+    // in the Weak routing table, write the Create frame. Returns nullptr if
+    // host spawn failed (caller throws).
+    static JSWebView* createAndSend(JSC::JSGlobalObject*, JSC::Structure*,
+        uint32_t width, uint32_t height, const WTF::String& persistDir);
+#endif
+
     void finishCreation(JSC::VM&);
     static JSC::Structure* createStructure(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue prototype);
 
@@ -71,5 +102,10 @@ private:
 };
 
 void setupJSWebViewClassStructure(JSC::LazyClassStructure::Initializer&);
+
+// Implemented in JSWebViewPrototype.cpp / JSWebViewConstructor.cpp.
+// setupJSWebViewClassStructure calls these.
+JSC::JSObject* createJSWebViewPrototype(JSC::VM&, JSC::JSGlobalObject*);
+JSC::InternalFunction* createJSWebViewConstructor(JSC::VM&, JSC::JSGlobalObject*, JSC::JSObject* prototype);
 
 } // namespace Bun

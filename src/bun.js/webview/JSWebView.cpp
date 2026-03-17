@@ -1,24 +1,25 @@
+// JSWebView: the JSCell class + HostClient (usockets wire to the host
+// subprocess) + instance-level ops. Prototype/Constructor validate args and
+// call JSWebView::navigate() etc.; all wire encoding and HostClient access
+// is here.
+
 #include "root.h"
 #include "JSWebView.h"
 #include "ZigGlobalObject.h"
 #include "BunClientData.h"
-#include "ErrorCode.h"
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/TopExceptionScope.h>
 #include <JavaScriptCore/LazyClassStructure.h>
 #include <JavaScriptCore/LazyClassStructureInlines.h>
-#include <JavaScriptCore/FunctionPrototype.h>
-#include <JavaScriptCore/InternalFunction.h>
 #include <JavaScriptCore/JSPromise.h>
-#include <JavaScriptCore/ObjectConstructor.h>
-#include <JavaScriptCore/JSONObject.h>
 #include <JavaScriptCore/TypedArrayInlines.h>
 #include <JavaScriptCore/JSTypedArrays.h>
-#include <JavaScriptCore/VMTrapsInlines.h>
 #include <JavaScriptCore/Weak.h>
 #include <JavaScriptCore/WeakInlines.h>
 #include <JavaScriptCore/WeakHandleOwner.h>
 #include <wtf/text/MakeString.h>
+#include <wtf/NeverDestroyed.h>
+#include <mutex>
 
 #if OS(DARWIN)
 #include "ipc_protocol.h"
@@ -35,12 +36,14 @@ namespace Bun {
 using namespace JSC;
 
 #if OS(DARWIN)
+
+using namespace WebViewProto;
+
 // Spawn + process-exit watch in Zig (reuses bun.spawn.Process / EVFILT_PROC).
 extern "C" int32_t Bun__WebViewHost__ensure(Zig::GlobalObject*);
 extern "C" void Bun__eventLoop__incrementRefConcurrently(void* bunVM, int delta);
 // Bracket the whole onData batch. exit() drains microtasks when outermost,
-// so all the promise reactions from this batch run before we return to
-// usockets.
+// so all the promise reactions from this batch run before we return to usockets.
 extern "C" void Bun__EventLoop__enter(Zig::GlobalObject*);
 extern "C" void Bun__EventLoop__exit(Zig::GlobalObject*);
 // runCallback does its own nested enter/exit + reportActiveExceptionAsUnhandled
@@ -48,12 +51,10 @@ extern "C" void Bun__EventLoop__exit(Zig::GlobalObject*);
 extern "C" void Bun__EventLoop__runCallback2(JSC::JSGlobalObject*, JSC::EncodedJSValue cb,
     JSC::EncodedJSValue thisVal, JSC::EncodedJSValue arg0, JSC::EncodedJSValue arg1);
 
-using namespace WebViewProto;
-
 // ---------------------------------------------------------------------------
-// HostClient: parent-side state for the single host subprocess.
-// Static — one host per Bun process, lazy-spawned.
-// Everything runs on the JS thread (usockets callbacks fire there).
+// HostClient + all wire plumbing. Anonymous namespace — nothing here is
+// visible outside this TU. Prototype/Constructor go through JSWebView::
+// instance methods defined below.
 //
 // No Strong<>, no req_id map. Promises live in WriteBarrier slots on
 // JSWebView; the frame header carries viewId. Reply arrives → viewsById[viewId]
@@ -61,10 +62,10 @@ using namespace WebViewProto;
 // takes both; the reply finds a dead Weak and discards.
 //
 // The viewsById Weak<> has a WeakHandleOwner: isReachableFromOpaqueRoots
-// returns true while any pending slot is set. Under `bun test` the closure →
-// view → m_pendingNavigate → promise → reaction → closure cycle has no
-// external root (the test-function promise goes out of Zig scope after
-// runTestCallback returns). This predicate IS the root.
+// reads the atomic activity count. Under `bun test` the closure → view →
+// m_pendingNavigate → promise → reaction → closure cycle has no external
+// root (the test-function promise goes out of Zig scope after runTestCallback
+// returns). This predicate IS the root.
 // ---------------------------------------------------------------------------
 namespace {
 
@@ -121,16 +122,27 @@ struct HostClient {
     void onClose();
 };
 
-HostClient s_client;
+// No static top-level initializers. HostClient's default ctor is trivial
+// (just member inits), but the Vector/unordered_map members have non-trivial
+// ctors that would run at image load. LazyNeverDestroyed + call_once defers
+// to first use — which is always on the JS thread via ensureSpawned(), so
+// the once_flag doesn't contend.
+HostClient& hostClient()
+{
+    static LazyNeverDestroyed<HostClient> instance;
+    static std::once_flag once;
+    std::call_once(once, [] { instance.construct(); });
+    return instance.get();
+}
 
 us_socket_t* hostOnData(us_socket_t* s, char* data, int length)
 {
-    s_client.onData(data, length);
+    hostClient().onData(data, length);
     return s;
 }
-us_socket_t* hostOnWritable(us_socket_t* s) { s_client.onWritable(); return s; }
-us_socket_t* hostOnClose(us_socket_t* s, int, void*) { s_client.onClose(); return s; }
-us_socket_t* hostOnEnd(us_socket_t* s) { s_client.onClose(); return s; }
+us_socket_t* hostOnWritable(us_socket_t* s) { hostClient().onWritable(); return s; }
+us_socket_t* hostOnClose(us_socket_t* s, int, void*) { hostClient().onClose(); return s; }
+us_socket_t* hostOnEnd(us_socket_t* s) { hostClient().onClose(); return s; }
 us_socket_t* hostOnOpen(us_socket_t* s, int, char*, int) { return s; }
 
 bool HostClient::ensureSpawned(Zig::GlobalObject* zig)
@@ -204,49 +216,9 @@ void HostClient::onWritable()
     }
 }
 
-void HostClient::onData(const char* data, int length)
-{
-    rx.append(std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(data), static_cast<size_t>(length)));
-
-    auto& vm = global->vm();
-    // TopExceptionScope is the event-loop catch-all (same pattern as
-    // performMicrotaskCheckpoint). Its dtor doesn't simulate.
-    auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    Bun__EventLoop__enter(global);
-
-    size_t off = 0;
-    while (rx.size() - off >= sizeof(Frame)) {
-        Frame h;
-        memcpy(&h, rx.span().data() + off, sizeof(h));
-        if (h.len > kMaxFrameLen) [[unlikely]] {
-            // Child memory corruption. Stop parsing; rx tail is dead weight
-            // until socket close, but we won't livelock growing it forever.
-            rejectAllAndMarkDead("WebView host sent a corrupt frame"_s);
-            break;
-        }
-        if (rx.size() - off < sizeof(Frame) + h.len) break;
-        Reader r{ rx.span().data() + off + sizeof(Frame),
-                  rx.span().data() + off + sizeof(Frame) + h.len };
-        off += sizeof(Frame) + h.len;
-
-        handleReply(h, r);
-        // createError/jsString/createUninitialized can throw (OOM). Report +
-        // clear so one bad frame doesn't poison the rest of the batch.
-        if (auto* exception = catchScope.exception()) [[unlikely]] {
-            if (!catchScope.clearExceptionExceptTermination()) break;
-            global->reportUncaughtExceptionAtEventLoop(global, exception);
-        }
-    }
-    if (off) rx.removeAt(0, off);
-
-    // exit() drains microtasks when outermost — all the reactions from
-    // resolve()s above run here, before we return to usockets.
-    Bun__EventLoop__exit(global);
-}
-
 // Returns Uint8Array on success, JS Error on failure. May throw (OOM in
-// createUninitialized); caller's scope in onData reports + clears.
-static JSValue openShmScreenshot(JSGlobalObject* g, const char* name, uint32_t nameLen, uint32_t pngLen)
+// createUninitialized); onData's TopExceptionScope reports + clears.
+JSValue openShmScreenshot(JSGlobalObject* g, const char* name, uint32_t nameLen, uint32_t pngLen)
 {
     auto& vm = g->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -280,7 +252,7 @@ static JSValue openShmScreenshot(JSGlobalObject* g, const char* name, uint32_t n
 // the call into JS so a re-entrant navigate() inside a .then() sees an empty
 // slot. Activity decremented AFTER clear (GC seeing count>0 with a clear
 // slot is benign — one extra mark cycle).
-static void settle(JSGlobalObject* g, JSWebView* view, WriteBarrier<JSPromise>& slot, bool ok, JSValue v)
+void settle(JSGlobalObject* g, JSWebView* view, WriteBarrier<JSPromise>& slot, bool ok, JSValue v)
 {
     JSPromise* p = slot.get();
     if (!p) return;
@@ -389,27 +361,56 @@ void HostClient::onClose()
     rejectAllAndMarkDead("WebView host process died"_s);
 }
 
-// Pack an inline string: u32 len + bytes. viewId is in the frame header.
-WTF::Vector<uint8_t, 512> packStr(const WTF::String& s)
+void HostClient::onData(const char* data, int length)
 {
-    WTF::CString c = s.utf8();
-    uint32_t n = static_cast<uint32_t>(c.length());
-    WTF::Vector<uint8_t, 512> out;
-    out.grow(4 + n);
-    uint8_t* p = out.mutableSpan().data();
-    memcpy(p, &n, 4);
-    memcpy(p + 4, c.data(), n);
-    return out;
+    rx.append(std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(data), static_cast<size_t>(length)));
+
+    auto& vm = global->vm();
+    // TopExceptionScope is the event-loop catch-all (same pattern as
+    // performMicrotaskCheckpoint). Its dtor doesn't simulate.
+    auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    Bun__EventLoop__enter(global);
+
+    size_t off = 0;
+    while (rx.size() - off >= sizeof(Frame)) {
+        Frame h;
+        memcpy(&h, rx.span().data() + off, sizeof(h));
+        if (h.len > kMaxFrameLen) [[unlikely]] {
+            // Child memory corruption. Stop parsing; rx tail is dead weight
+            // until socket close, but we won't livelock growing it forever.
+            rejectAllAndMarkDead("WebView host sent a corrupt frame"_s);
+            break;
+        }
+        if (rx.size() - off < sizeof(Frame) + h.len) break;
+        Reader r{ rx.span().data() + off + sizeof(Frame),
+                  rx.span().data() + off + sizeof(Frame) + h.len };
+        off += sizeof(Frame) + h.len;
+
+        handleReply(h, r);
+        // createError/jsString/createUninitialized can throw (OOM). Report +
+        // clear so one bad frame doesn't poison the rest of the batch.
+        if (auto* exception = catchScope.exception()) [[unlikely]] {
+            if (!catchScope.clearExceptionExceptTermination()) break;
+            global->reportUncaughtExceptionAtEventLoop(global, exception);
+        }
+    }
+    if (off) rx.removeAt(0, off);
+
+    // exit() drains microtasks when outermost — all the reactions from
+    // resolve()s above run here, before we return to usockets.
+    Bun__EventLoop__exit(global);
 }
 
-// Send with slot — creates the promise, stores in the barrier, writes frame.
-// Caller guarantees slot is empty (checked before call, INVALID_STATE thrown).
+// Create promise, store in barrier, write frame. Caller guarantees the slot
+// is empty (INVALID_STATE thrown in the prototype method before calling into
+// the instance method that ends up here).
 JSPromise* sendOp(JSGlobalObject* g, JSWebView* view, WriteBarrier<JSPromise>& slot,
     Op op, const uint8_t* payload, uint32_t len)
 {
     auto& vm = g->vm();
     auto* promise = JSPromise::create(vm, g->promiseStructure());
-    if (!s_client.sock || s_client.dead || us_socket_is_closed(0, s_client.sock)) {
+    auto& client = hostClient();
+    if (!client.sock || client.dead || us_socket_is_closed(0, client.sock)) {
         promise->reject(vm, g, createError(g, "WebView host process is not running"_s));
         return promise;
     }
@@ -417,7 +418,7 @@ JSPromise* sendOp(JSGlobalObject* g, JSWebView* view, WriteBarrier<JSPromise>& s
     // Release ordering: the slot write below must not be reordered above this.
     view->m_pendingActivityCount.fetch_add(1, std::memory_order_release);
     slot.set(vm, view, promise);
-    s_client.writeFrame(op, view->m_viewId, payload, len);
+    client.writeFrame(op, view->m_viewId, payload, len);
     return promise;
 }
 
@@ -427,61 +428,16 @@ JSPromise* sendOp(JSGlobalObject* g, JSWebView* view, WriteBarrier<JSPromise>& s
 // may not have fired (crash = no FIN). Idempotent with onClose.
 extern "C" void Bun__WebViewHost__childDied(int32_t signo)
 {
-    if (s_client.dead) return;
-    s_client.rejectAllAndMarkDead(signo
+    auto& client = hostClient();
+    if (client.dead) return;
+    client.rejectAllAndMarkDead(signo
         ? makeString("WebView host process killed by signal "_s, signo)
         : "WebView host process exited"_s);
 }
 
 #endif // OS(DARWIN)
 
-// ---------------------------------------------------------------------------
-// JSWebView class scaffolding
-// ---------------------------------------------------------------------------
-
-JSC_DECLARE_HOST_FUNCTION(callWebView);
-JSC_DECLARE_HOST_FUNCTION(constructWebView);
-
-static JSC_DECLARE_HOST_FUNCTION(jsWebViewProtoFuncNavigate);
-static JSC_DECLARE_HOST_FUNCTION(jsWebViewProtoFuncEvaluate);
-static JSC_DECLARE_HOST_FUNCTION(jsWebViewProtoFuncScreenshot);
-static JSC_DECLARE_HOST_FUNCTION(jsWebViewProtoFuncClick);
-static JSC_DECLARE_HOST_FUNCTION(jsWebViewProtoFuncType);
-static JSC_DECLARE_HOST_FUNCTION(jsWebViewProtoFuncPress);
-static JSC_DECLARE_HOST_FUNCTION(jsWebViewProtoFuncScroll);
-static JSC_DECLARE_HOST_FUNCTION(jsWebViewProtoFuncResize);
-static JSC_DECLARE_HOST_FUNCTION(jsWebViewProtoFuncBack);
-static JSC_DECLARE_HOST_FUNCTION(jsWebViewProtoFuncForward);
-static JSC_DECLARE_HOST_FUNCTION(jsWebViewProtoFuncReload);
-static JSC_DECLARE_HOST_FUNCTION(jsWebViewProtoFuncClose);
-
-static JSC_DECLARE_CUSTOM_GETTER(jsWebViewGetter_url);
-static JSC_DECLARE_CUSTOM_GETTER(jsWebViewGetter_title);
-static JSC_DECLARE_CUSTOM_GETTER(jsWebViewGetter_loading);
-static JSC_DECLARE_CUSTOM_GETTER(jsWebViewGetter_onNavigated);
-static JSC_DECLARE_CUSTOM_SETTER(jsWebViewSetter_onNavigated);
-static JSC_DECLARE_CUSTOM_GETTER(jsWebViewGetter_onNavigationFailed);
-static JSC_DECLARE_CUSTOM_SETTER(jsWebViewSetter_onNavigationFailed);
-
-static const HashTableValue JSWebViewPrototypeTableValues[] = {
-    { "navigate"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWebViewProtoFuncNavigate, 1 } },
-    { "evaluate"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWebViewProtoFuncEvaluate, 1 } },
-    { "screenshot"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWebViewProtoFuncScreenshot, 0 } },
-    { "click"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWebViewProtoFuncClick, 2 } },
-    { "type"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWebViewProtoFuncType, 1 } },
-    { "press"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWebViewProtoFuncPress, 1 } },
-    { "scroll"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWebViewProtoFuncScroll, 2 } },
-    { "resize"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWebViewProtoFuncResize, 2 } },
-    { "back"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWebViewProtoFuncBack, 0 } },
-    { "forward"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWebViewProtoFuncForward, 0 } },
-    { "reload"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWebViewProtoFuncReload, 0 } },
-    { "close"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWebViewProtoFuncClose, 0 } },
-    { "url"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsWebViewGetter_url, 0 } },
-    { "title"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsWebViewGetter_title, 0 } },
-    { "loading"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsWebViewGetter_loading, 0 } },
-    { "onNavigated"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsWebViewGetter_onNavigated, jsWebViewSetter_onNavigated } },
-    { "onNavigationFailed"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsWebViewGetter_onNavigationFailed, jsWebViewSetter_onNavigationFailed } },
-};
+// --- JSWebView class -------------------------------------------------------
 
 JSWebView::JSWebView(VM& vm, Structure* structure)
     : Base(vm, structure)
@@ -510,8 +466,9 @@ JSWebView::~JSWebView()
     // parent's reply handler. The child-side view leaks for process
     // lifetime — bounded, and the user was supposed to call close().
     if (!m_closed && m_viewId) {
-        s_client.viewsById.erase(m_viewId);
-        s_client.updateKeepAlive();
+        auto& client = hostClient();
+        client.viewsById.erase(m_viewId);
+        client.updateKeepAlive();
     }
 #endif
 }
@@ -544,675 +501,125 @@ DEFINE_VISIT_CHILDREN(JSWebView);
 
 const ClassInfo JSWebView::s_info = { "WebView"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSWebView) };
 
-// --- Prototype -------------------------------------------------------------
-
-class JSWebViewPrototype final : public JSC::JSNonFinalObject {
-public:
-    using Base = JSC::JSNonFinalObject;
-    static constexpr unsigned StructureFlags = Base::StructureFlags;
-
-    static JSWebViewPrototype* create(VM& vm, JSGlobalObject* globalObject, Structure* structure)
-    {
-        JSWebViewPrototype* prototype = new (NotNull, allocateCell<JSWebViewPrototype>(vm)) JSWebViewPrototype(vm, structure);
-        prototype->finishCreation(vm);
-        return prototype;
-    }
-
-    DECLARE_INFO;
-
-    template<typename, SubspaceAccess>
-    static GCClient::IsoSubspace* subspaceFor(VM& vm) { return &vm.plainObjectSpace(); }
-
-    static Structure* createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
-    {
-        auto* structure = Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
-        structure->setMayBePrototype(true);
-        return structure;
-    }
-
-private:
-    JSWebViewPrototype(VM& vm, Structure* structure)
-        : Base(vm, structure)
-    {
-    }
-
-    void finishCreation(VM& vm)
-    {
-        Base::finishCreation(vm);
-        reifyStaticProperties(vm, JSWebView::info(), JSWebViewPrototypeTableValues, *this);
-        JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
-    }
-};
-
-const ClassInfo JSWebViewPrototype::s_info = { "WebView"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSWebViewPrototype) };
-
-// --- Constructor -----------------------------------------------------------
-
-class JSWebViewConstructor final : public JSC::InternalFunction {
-public:
-    using Base = JSC::InternalFunction;
-    static constexpr unsigned StructureFlags = Base::StructureFlags;
-
-    static JSWebViewConstructor* create(VM& vm, Structure* structure, JSObject* prototype)
-    {
-        JSWebViewConstructor* constructor = new (NotNull, allocateCell<JSWebViewConstructor>(vm)) JSWebViewConstructor(vm, structure);
-        constructor->finishCreation(vm, prototype);
-        return constructor;
-    }
-
-    DECLARE_INFO;
-
-    template<typename, SubspaceAccess>
-    static GCClient::IsoSubspace* subspaceFor(VM& vm) { return &vm.internalFunctionSpace(); }
-
-    static Structure* createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
-    {
-        return Structure::create(vm, globalObject, prototype, TypeInfo(InternalFunctionType, StructureFlags), info());
-    }
-
-private:
-    JSWebViewConstructor(VM& vm, Structure* structure)
-        : Base(vm, structure, callWebView, constructWebView)
-    {
-    }
-
-    void finishCreation(VM& vm, JSObject* prototype)
-    {
-        Base::finishCreation(vm, 1, "WebView"_s);
-        putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype,
-            PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
-    }
-};
-
-const ClassInfo JSWebViewConstructor::s_info = { "WebView"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSWebViewConstructor) };
-
-JSC_DEFINE_HOST_FUNCTION(callWebView, (JSGlobalObject * globalObject, CallFrame*))
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    return Bun::throwError(globalObject, scope, ErrorCode::ERR_ILLEGAL_CONSTRUCTOR,
-        "Class constructor WebView cannot be invoked without 'new'"_s);
-}
-
-JSC_DEFINE_HOST_FUNCTION(constructWebView, (JSGlobalObject * globalObject, CallFrame* callFrame))
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-#if !OS(DARWIN)
-    return Bun::throwError(globalObject, scope, ErrorCode::ERR_METHOD_NOT_IMPLEMENTED,
-        "Bun.WebView is not yet implemented on this platform"_s);
-#else
-    auto* zigGlobalObject = defaultGlobalObject(globalObject);
-
-    uint32_t width = 800, height = 600;
-    WTF::String persistDir;
-
-    JSValue options = callFrame->argument(0);
-    if (options.isObject()) {
-        JSObject* opts = options.getObject();
-        JSValue w = opts->get(globalObject, Identifier::fromString(vm, "width"_s));
-        RETURN_IF_EXCEPTION(scope, {});
-        if (w.isNumber()) width = static_cast<uint32_t>(w.toUInt32(globalObject));
-        RETURN_IF_EXCEPTION(scope, {});
-
-        JSValue h = opts->get(globalObject, Identifier::fromString(vm, "height"_s));
-        RETURN_IF_EXCEPTION(scope, {});
-        if (h.isNumber()) height = static_cast<uint32_t>(h.toUInt32(globalObject));
-        RETURN_IF_EXCEPTION(scope, {});
-
-        JSValue headless = opts->get(globalObject, Identifier::fromString(vm, "headless"_s));
-        RETURN_IF_EXCEPTION(scope, {});
-        if (headless.isBoolean() && !headless.asBoolean()) {
-            return Bun::throwError(globalObject, scope, ErrorCode::ERR_METHOD_NOT_IMPLEMENTED,
-                "headless: false is not yet implemented"_s);
-        }
-
-        JSValue dataStore = opts->get(globalObject, Identifier::fromString(vm, "dataStore"_s));
-        RETURN_IF_EXCEPTION(scope, {});
-        if (dataStore.isObject()) {
-            JSValue dir = dataStore.getObject()->get(globalObject, Identifier::fromString(vm, "directory"_s));
-            RETURN_IF_EXCEPTION(scope, {});
-            if (dir.isString()) {
-                persistDir = dir.toWTFString(globalObject);
-                RETURN_IF_EXCEPTION(scope, {});
-            } else {
-                return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE,
-                    "dataStore.directory must be a string"_s);
-            }
-        } else if (dataStore.isString()) {
-            WTF::String s = dataStore.toWTFString(globalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-            if (s != "ephemeral"_s) {
-                return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_VALUE,
-                    "dataStore must be \"ephemeral\" or { directory: string }"_s);
-            }
-        }
-    }
-
-    if (width == 0 || height == 0 || width > 16384 || height > 16384) {
-        return Bun::ERR::OUT_OF_RANGE(scope, globalObject, "width/height"_s, 1, 16384, jsNumber(width));
-    }
-
-    // Lazy-spawn the host. Synchronous — spawn returns after fork+exec,
-    // before the child finishes init. The socket is writable immediately
-    // (kernel buffers); the child reads on its first CFRunLoop tick.
-    if (!s_client.ensureSpawned(zigGlobalObject)) {
-        return Bun::throwError(globalObject, scope, ErrorCode::ERR_DLOPEN_FAILED,
-            "Failed to spawn WebView host process"_s);
-    }
-
-    Structure* structure = zigGlobalObject->m_JSWebViewClassStructure.get(zigGlobalObject);
-    JSValue newTarget = callFrame->newTarget();
-    if (zigGlobalObject->m_JSWebViewClassStructure.constructor(zigGlobalObject) != newTarget) [[unlikely]] {
-        auto* functionGlobalObject = defaultGlobalObject(getFunctionRealm(globalObject, newTarget.getObject()));
-        RETURN_IF_EXCEPTION(scope, {});
-        structure = InternalFunction::createSubclassStructure(globalObject, newTarget.getObject(),
-            functionGlobalObject->m_JSWebViewClassStructure.get(functionGlobalObject));
-        RETURN_IF_EXCEPTION(scope, {});
-    }
-
-    JSWebView* view = JSWebView::create(vm, structure);
-    view->m_viewId = s_client.nextViewId++;
-    s_client.viewsById.emplace(view->m_viewId, Weak<JSWebView>(view, &webViewWeakOwner()));
-    s_client.updateKeepAlive();
-
-    // Create payload: u32 w, u32 h, u8 kind, [u32 dirLen, dir]. viewId is in
-    // the frame header. Fire-and-forget — no promise, no slot. If WKWebView
-    // alloc fails (exceedingly rare), subsequent ops get Reply::Error from
-    // the child's "invalid viewId" lookup. Simpler than an async constructor.
-    WTF::CString dir = persistDir.utf8();
-    uint32_t dirLen = static_cast<uint32_t>(dir.length());
-    bool persistent = !persistDir.isEmpty();
-    WTF::Vector<uint8_t, 64> payload;
-    payload.grow(4 + 4 + 1 + (persistent ? 4 + dirLen : 0));
-    uint8_t* p = payload.mutableSpan().data();
-    memcpy(p, &width, 4);  p += 4;
-    memcpy(p, &height, 4); p += 4;
-    *p++ = persistent ? static_cast<uint8_t>(DataStoreKind::Persistent)
-                      : static_cast<uint8_t>(DataStoreKind::Ephemeral);
-    if (persistent) {
-        memcpy(p, &dirLen, 4); p += 4;
-        memcpy(p, dir.data(), dirLen);
-    }
-    s_client.writeFrame(Op::Create, view->m_viewId, payload.span().data(), static_cast<uint32_t>(payload.size()));
-
-    return JSValue::encode(view);
-#endif
-}
-
-// --- Prototype method helpers ----------------------------------------------
-
 #if OS(DARWIN)
-static JSWebView* unwrapThis(JSGlobalObject* globalObject, ThrowScope& scope, CallFrame* callFrame, ASCIILiteral method)
+
+// --- Instance operations ---------------------------------------------------
+// Called from JSWebViewPrototype.cpp after arg validation. Wire encoding is
+// the typed payload structs from ipc_protocol.h; no inline memcpy here.
+
+JSPromise* JSWebView::navigate(JSGlobalObject* g, const WTF::String& url)
 {
-    auto* thisObject = jsDynamicCast<JSWebView*>(callFrame->thisValue());
-    if (!thisObject) [[unlikely]] {
-        Bun::ERR::INVALID_THIS(scope, globalObject, "WebView"_s);
-        return nullptr;
-    }
-    if (thisObject->m_closed) {
-        Bun::ERR::INVALID_STATE(scope, globalObject, makeString("WebView."_s, method, ": view is closed"_s));
-        return nullptr;
-    }
-    return thisObject;
+    m_loading = true;
+    auto payload = encodeStr(url);
+    return sendOp(g, this, m_pendingNavigate, Op::Navigate,
+        payload.span().data(), static_cast<uint32_t>(payload.size()));
 }
 
-// Simple ops: empty payload, reply is Ack → m_pendingMisc slot.
-static EncodedJSValue sendSimpleOp(JSGlobalObject* g, CallFrame* cf, Op op, ASCIILiteral method)
+JSPromise* JSWebView::evaluate(JSGlobalObject* g, const WTF::String& script)
 {
-    auto& vm = g->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* view = unwrapThis(g, scope, cf, method);
-    RETURN_IF_EXCEPTION(scope, {});
-    if (view->m_pendingMisc) {
-        Bun::ERR::INVALID_STATE(scope, g, makeString("WebView."_s, method, ": a simple operation is already pending"_s));
-        return {};
-    }
-    return JSValue::encode(sendOp(g, view, view->m_pendingMisc, op, nullptr, 0));
-}
-#endif
-
-#define WEBVIEW_UNIMPLEMENTED_BODY(method)                                                               \
-    VM& vm = globalObject->vm();                                                                         \
-    auto scope = DECLARE_THROW_SCOPE(vm);                                                                \
-    return Bun::throwError(globalObject, scope, ErrorCode::ERR_METHOD_NOT_IMPLEMENTED,                   \
-        "Bun.WebView." method " is not yet implemented on this platform"_s);
-
-// --- Prototype methods -----------------------------------------------------
-
-JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncNavigate, (JSGlobalObject * globalObject, CallFrame* callFrame))
-{
-#if !OS(DARWIN)
-    WEBVIEW_UNIMPLEMENTED_BODY("navigate")
-#else
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* thisObject = unwrapThis(globalObject, scope, callFrame, "navigate"_s);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    JSValue urlArg = callFrame->argument(0);
-    if (!urlArg.isString()) {
-        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "url"_s, "string"_s, urlArg);
-    }
-    WTF::String url = urlArg.toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    if (thisObject->m_pendingNavigate) {
-        Bun::ERR::INVALID_STATE(scope, globalObject, "a navigation is already pending"_s);
-        return {};
-    }
-    thisObject->m_loading = true;
-    auto payload = packStr(url);
-    return JSValue::encode(sendOp(globalObject, thisObject, thisObject->m_pendingNavigate,
-        Op::Navigate, payload.span().data(), static_cast<uint32_t>(payload.size())));
-#endif
+    auto payload = encodeStr(script);
+    return sendOp(g, this, m_pendingEval, Op::Evaluate,
+        payload.span().data(), static_cast<uint32_t>(payload.size()));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncEvaluate, (JSGlobalObject * globalObject, CallFrame* callFrame))
+JSPromise* JSWebView::screenshot(JSGlobalObject* g)
 {
-#if !OS(DARWIN)
-    WEBVIEW_UNIMPLEMENTED_BODY("evaluate")
-#else
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* thisObject = unwrapThis(globalObject, scope, callFrame, "evaluate"_s);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    JSValue scriptArg = callFrame->argument(0);
-    if (!scriptArg.isString()) {
-        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "script"_s, "string"_s, scriptArg);
-    }
-    WTF::String script = scriptArg.toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-    if (thisObject->m_pendingEval) {
-        Bun::ERR::INVALID_STATE(scope, globalObject, "an evaluate() is already pending"_s);
-        return {};
-    }
-    auto payload = packStr(script);
-    return JSValue::encode(sendOp(globalObject, thisObject, thisObject->m_pendingEval,
-        Op::Evaluate, payload.span().data(), static_cast<uint32_t>(payload.size())));
-#endif
+    return sendOp(g, this, m_pendingScreenshot, Op::Screenshot, nullptr, 0);
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncScreenshot, (JSGlobalObject * globalObject, CallFrame* callFrame))
+JSPromise* JSWebView::click(JSGlobalObject* g, float x, float y, uint8_t button, uint8_t modifiers, uint8_t clickCount)
 {
-#if !OS(DARWIN)
-    WEBVIEW_UNIMPLEMENTED_BODY("screenshot")
-#else
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* thisObject = unwrapThis(globalObject, scope, callFrame, "screenshot"_s);
-    RETURN_IF_EXCEPTION(scope, {});
-    if (thisObject->m_pendingScreenshot) {
-        Bun::ERR::INVALID_STATE(scope, globalObject, "a screenshot() is already pending"_s);
-        return {};
-    }
-    return JSValue::encode(sendOp(globalObject, thisObject, thisObject->m_pendingScreenshot,
-        Op::Screenshot, nullptr, 0));
-#endif
+    auto payload = encode(ClickPayload{ x, y, button, modifiers, clickCount });
+    return sendOp(g, this, m_pendingMisc, Op::Click,
+        payload.span().data(), static_cast<uint32_t>(payload.size()));
 }
 
-// click/type/scroll desugar to evaluate() with generated JS.
-
-// --- Native input ---------------------------------------------------------
-// click/type/most of press use WebKit's own completion SPIs in the child:
-// _doAfterProcessingAllPendingMouseEvents: (click) and _executeEditCommand:
-// (type, editing-key press). Ack arrives when WebContent has processed the
-// input, not just when it's been queued. Escape and modifier chords fall
-// back to keyDown with immediate Ack (WebKit has no keyboard barrier SPI).
-
-#if OS(DARWIN)
-static uint8_t parseModifiers(JSGlobalObject* g, ThrowScope& scope, JSValue v)
+JSPromise* JSWebView::type(JSGlobalObject* g, const WTF::String& text)
 {
-    if (!v.isObject()) return 0;
-    auto* arr = jsDynamicCast<JSArray*>(v);
-    if (!arr) return 0;
-    uint8_t mods = 0;
-    unsigned len = arr->length();
-    for (unsigned i = 0; i < len; ++i) {
-        JSValue item = arr->get(g, i);
-        RETURN_IF_EXCEPTION(scope, 0);
-        WTF::String s = item.toWTFString(g);
-        RETURN_IF_EXCEPTION(scope, 0);
-        if (s == "shift"_s)      mods |= ModShift;
-        else if (s == "ctrl"_s || s == "control"_s) mods |= ModCtrl;
-        else if (s == "alt"_s || s == "option"_s)   mods |= ModAlt;
-        else if (s == "meta"_s || s == "cmd"_s || s == "command"_s) mods |= ModMeta;
-    }
-    return mods;
-}
-#endif
-
-JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncClick, (JSGlobalObject * globalObject, CallFrame* callFrame))
-{
-#if !OS(DARWIN)
-    WEBVIEW_UNIMPLEMENTED_BODY("click")
-#else
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* thisObject = unwrapThis(globalObject, scope, callFrame, "click"_s);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    double x = callFrame->argument(0).toNumber(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-    double y = callFrame->argument(1).toNumber(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    // Optional { button: "left"|"right"|"middle", modifiers: [...], clickCount }
-    uint8_t button = 0, mods = 0, clickCount = 1;
-    JSValue opts = callFrame->argument(2);
-    if (opts.isObject()) {
-        JSObject* o = opts.getObject();
-        JSValue b = o->get(globalObject, Identifier::fromString(vm, "button"_s));
-        RETURN_IF_EXCEPTION(scope, {});
-        if (b.isString()) {
-            WTF::String bs = b.toWTFString(globalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-            if (bs == "right"_s) button = 1;
-            else if (bs == "middle"_s) button = 2;
-        }
-        JSValue m = o->get(globalObject, Identifier::fromString(vm, "modifiers"_s));
-        RETURN_IF_EXCEPTION(scope, {});
-        mods = parseModifiers(globalObject, scope, m);
-        RETURN_IF_EXCEPTION(scope, {});
-        JSValue cc = o->get(globalObject, Identifier::fromString(vm, "clickCount"_s));
-        RETURN_IF_EXCEPTION(scope, {});
-        if (cc.isNumber()) clickCount = static_cast<uint8_t>(std::clamp(cc.toInt32(globalObject), 1, 3));
-        RETURN_IF_EXCEPTION(scope, {});
-    }
-
-    if (thisObject->m_pendingMisc) {
-        Bun::ERR::INVALID_STATE(scope, globalObject, "WebView.click: a simple operation is already pending"_s);
-        return {};
-    }
-
-    // f32 x, f32 y, u8 button, u8 modifiers, u8 clickCount
-    uint8_t payload[11];
-    float fx = static_cast<float>(x), fy = static_cast<float>(y);
-    memcpy(payload,     &fx, 4);
-    memcpy(payload + 4, &fy, 4);
-    payload[8]  = button;
-    payload[9]  = mods;
-    payload[10] = clickCount;
-    return JSValue::encode(sendOp(globalObject, thisObject, thisObject->m_pendingMisc, Op::Click, payload, 11));
-#endif
+    auto payload = encodeStr(text);
+    return sendOp(g, this, m_pendingMisc, Op::Type,
+        payload.span().data(), static_cast<uint32_t>(payload.size()));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncType, (JSGlobalObject * globalObject, CallFrame* callFrame))
+JSPromise* JSWebView::press(JSGlobalObject* g, VirtualKey key, uint8_t modifiers, const WTF::String& character)
 {
-#if !OS(DARWIN)
-    WEBVIEW_UNIMPLEMENTED_BODY("type")
-#else
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* thisObject = unwrapThis(globalObject, scope, callFrame, "type"_s);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    JSValue textArg = callFrame->argument(0);
-    if (!textArg.isString()) {
-        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "text"_s, "string"_s, textArg);
-    }
-    WTF::String text = textArg.toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    if (thisObject->m_pendingMisc) {
-        Bun::ERR::INVALID_STATE(scope, globalObject, "WebView.type: a simple operation is already pending"_s);
-        return {};
-    }
-
-    // Child iterates per code unit (surrogate pairs paired), emits keydown+
-    // keyup with keyCode=0. Text routes through the editing pipeline —
-    // input/beforeinput fire, maxlength respected, IME-aware.
-    auto payload = packStr(text);
-    return JSValue::encode(sendOp(globalObject, thisObject, thisObject->m_pendingMisc,
-        Op::Type, payload.span().data(), static_cast<uint32_t>(payload.size())));
-#endif
+    // Tail string is null for named keys, present for VirtualKey::Character.
+    // encode() skips the tail encoding when the string is null.
+    auto payload = encode(PressPayload{ static_cast<uint8_t>(key), modifiers },
+        key == VirtualKey::Character ? character : WTF::String());
+    return sendOp(g, this, m_pendingMisc, Op::Press,
+        payload.span().data(), static_cast<uint32_t>(payload.size()));
 }
 
-#if OS(DARWIN)
-// JS string name → wire tag. Order must match the enum in ipc_protocol.h
-// (static_assert there enforces it matches the child's table too).
-static VirtualKey virtualKeyFromName(const WTF::String& s)
+JSPromise* JSWebView::scroll(JSGlobalObject* g, double dx, double dy)
 {
-    struct { ASCIILiteral name; VirtualKey k; } table[] = {
-        { "Enter"_s,      VirtualKey::Enter },
-        { "Tab"_s,        VirtualKey::Tab },
-        { "Space"_s,      VirtualKey::Space },
-        { "Backspace"_s,  VirtualKey::Backspace },
-        { "Delete"_s,     VirtualKey::Delete },
-        { "Escape"_s,     VirtualKey::Escape },
-        { "ArrowLeft"_s,  VirtualKey::ArrowLeft },
-        { "ArrowRight"_s, VirtualKey::ArrowRight },
-        { "ArrowUp"_s,    VirtualKey::ArrowUp },
-        { "ArrowDown"_s,  VirtualKey::ArrowDown },
-        { "Home"_s,       VirtualKey::Home },
-        { "End"_s,        VirtualKey::End },
-        { "PageUp"_s,     VirtualKey::PageUp },
-        { "PageDown"_s,   VirtualKey::PageDown },
-    };
-    for (auto& e : table) if (s == e.name) return e.k;
-    return VirtualKey::Character;
-}
-#endif
-
-JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncPress, (JSGlobalObject * globalObject, CallFrame* callFrame))
-{
-#if !OS(DARWIN)
-    WEBVIEW_UNIMPLEMENTED_BODY("press")
-#else
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* thisObject = unwrapThis(globalObject, scope, callFrame, "press"_s);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    JSValue keyArg = callFrame->argument(0);
-    if (!keyArg.isString()) {
-        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "key"_s, "string"_s, keyArg);
-    }
-    WTF::String key = keyArg.toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    uint8_t mods = parseModifiers(globalObject, scope, callFrame->argument(1));
-    RETURN_IF_EXCEPTION(scope, {});
-
-    VirtualKey vk = virtualKeyFromName(key);
-    if (vk == VirtualKey::Character && key.length() != 1) {
-        return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "key"_s, keyArg,
-            "must be a virtual key name (Enter, Tab, Escape, Arrow*, etc.) or a single character"_s);
-    }
-
-    if (thisObject->m_pendingMisc) {
-        Bun::ERR::INVALID_STATE(scope, globalObject, "WebView.press: a simple operation is already pending"_s);
-        return {};
-    }
-
-    // u8 tag, u8 modifiers, [str char iff Character]. 2 bytes for named keys.
-    if (vk != VirtualKey::Character) {
-        uint8_t payload[2] = { static_cast<uint8_t>(vk), mods };
-        return JSValue::encode(sendOp(globalObject, thisObject, thisObject->m_pendingMisc,
-            Op::Press, payload, 2));
-    }
-    WTF::CString c = key.utf8();
-    uint32_t clen = static_cast<uint32_t>(c.length());
-    WTF::Vector<uint8_t, 16> payload;
-    payload.grow(2 + 4 + clen);
-    uint8_t* p = payload.mutableSpan().data();
-    *p++ = static_cast<uint8_t>(vk);
-    *p++ = mods;
-    memcpy(p, &clen, 4); p += 4;
-    memcpy(p, c.data(), clen);
-    return JSValue::encode(sendOp(globalObject, thisObject, thisObject->m_pendingMisc,
-        Op::Press, payload.span().data(), static_cast<uint32_t>(payload.size())));
-#endif
+    auto payload = encode(ScrollPayload{ static_cast<float>(dx), static_cast<float>(dy) });
+    return sendOp(g, this, m_pendingMisc, Op::Scroll,
+        payload.span().data(), static_cast<uint32_t>(payload.size()));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncScroll, (JSGlobalObject * globalObject, CallFrame* callFrame))
+JSPromise* JSWebView::resize(JSGlobalObject* g, uint32_t width, uint32_t height)
 {
-#if !OS(DARWIN)
-    WEBVIEW_UNIMPLEMENTED_BODY("scroll")
-#else
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* thisObject = unwrapThis(globalObject, scope, callFrame, "scroll"_s);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    double dx = callFrame->argument(0).toNumber(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-    double dy = callFrame->argument(1).toNumber(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    if (thisObject->m_pendingEval) {
-        Bun::ERR::INVALID_STATE(scope, globalObject, "an evaluate() is already pending"_s);
-        return {};
-    }
-    auto js = makeString("window.scrollBy("_s, dx, ","_s, dy, ")"_s);
-    auto payload = packStr(js);
-    return JSValue::encode(sendOp(globalObject, thisObject, thisObject->m_pendingEval,
-        Op::Evaluate, payload.span().data(), static_cast<uint32_t>(payload.size())));
-#endif
+    auto payload = encode(ResizePayload{ width, height });
+    return sendOp(g, this, m_pendingMisc, Op::Resize,
+        payload.span().data(), static_cast<uint32_t>(payload.size()));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncResize, (JSGlobalObject * globalObject, CallFrame* callFrame))
-{
-#if !OS(DARWIN)
-    WEBVIEW_UNIMPLEMENTED_BODY("resize")
-#else
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* thisObject = unwrapThis(globalObject, scope, callFrame, "resize"_s);
-    RETURN_IF_EXCEPTION(scope, {});
+JSPromise* JSWebView::goBack(JSGlobalObject* g)    { return sendOp(g, this, m_pendingMisc, Op::GoBack,    nullptr, 0); }
+JSPromise* JSWebView::goForward(JSGlobalObject* g) { return sendOp(g, this, m_pendingMisc, Op::GoForward, nullptr, 0); }
+JSPromise* JSWebView::reload(JSGlobalObject* g)    { return sendOp(g, this, m_pendingMisc, Op::Reload,    nullptr, 0); }
 
-    uint32_t w = callFrame->argument(0).toUInt32(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-    uint32_t h = callFrame->argument(1).toUInt32(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-    if (w == 0 || h == 0 || w > 16384 || h > 16384) {
-        return Bun::ERR::OUT_OF_RANGE(scope, globalObject, "width/height"_s, 1, 16384, jsNumber(w));
-    }
-    if (thisObject->m_pendingMisc) {
-        Bun::ERR::INVALID_STATE(scope, globalObject, "WebView.resize: a simple operation is already pending"_s);
-        return {};
-    }
-    uint8_t payload[8];
-    memcpy(payload,     &w, 4);
-    memcpy(payload + 4, &h, 4);
-    return JSValue::encode(sendOp(globalObject, thisObject, thisObject->m_pendingMisc, Op::Resize, payload, 8));
-#endif
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncBack, (JSGlobalObject * globalObject, CallFrame* callFrame))
+void JSWebView::doClose()
 {
-#if !OS(DARWIN)
-    WEBVIEW_UNIMPLEMENTED_BODY("back")
-#else
-    return sendSimpleOp(globalObject, callFrame, Op::GoBack, "back"_s);
-#endif
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncForward, (JSGlobalObject * globalObject, CallFrame* callFrame))
-{
-#if !OS(DARWIN)
-    WEBVIEW_UNIMPLEMENTED_BODY("forward")
-#else
-    return sendSimpleOp(globalObject, callFrame, Op::GoForward, "forward"_s);
-#endif
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncReload, (JSGlobalObject * globalObject, CallFrame* callFrame))
-{
-#if !OS(DARWIN)
-    WEBVIEW_UNIMPLEMENTED_BODY("reload")
-#else
-    return sendSimpleOp(globalObject, callFrame, Op::Reload, "reload"_s);
-#endif
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncClose, (JSGlobalObject * globalObject, CallFrame* callFrame))
-{
-#if !OS(DARWIN)
-    return JSValue::encode(jsUndefined());
-#else
-    auto* thisObject = jsDynamicCast<JSWebView*>(callFrame->thisValue());
-    if (!thisObject || thisObject->m_closed) {
-        return JSValue::encode(jsUndefined());
-    }
-    thisObject->m_closed = true;
+    m_closed = true;
     // Fire-and-forget: no slot (view is going away), child's Ack finds no
     // entry in viewsById and drops. Erase AFTER write so keep-alive stays
     // ref'd long enough for the frame to reach the socket buffer.
-    s_client.writeFrame(Op::Close, thisObject->m_viewId, nullptr, 0);
-    s_client.viewsById.erase(thisObject->m_viewId);
-    s_client.updateKeepAlive();
-    return JSValue::encode(jsUndefined());
-#endif
+    auto& client = hostClient();
+    client.writeFrame(Op::Close, m_viewId, nullptr, 0);
+    client.viewsById.erase(m_viewId);
+    client.updateKeepAlive();
 }
 
-// --- Getters ---------------------------------------------------------------
+// --- Constructor entry -----------------------------------------------------
 
-JSC_DEFINE_CUSTOM_GETTER(jsWebViewGetter_url, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
+JSWebView* JSWebView::createAndSend(JSGlobalObject* g, Structure* structure,
+    uint32_t width, uint32_t height, const WTF::String& persistDir)
 {
-    auto* thisObject = jsDynamicCast<JSWebView*>(JSValue::decode(thisValue));
-    if (!thisObject) return JSValue::encode(jsEmptyString(globalObject->vm()));
-    return JSValue::encode(jsString(globalObject->vm(), thisObject->m_url));
+    auto* zig = defaultGlobalObject(g);
+    auto& client = hostClient();
+    // Lazy-spawn the host. Synchronous — spawn returns after fork+exec,
+    // before the child finishes init. The socket is writable immediately
+    // (kernel buffers); the child reads on its first CFRunLoop tick.
+    if (!client.ensureSpawned(zig)) return nullptr;
+
+    JSWebView* view = create(g->vm(), structure);
+    view->m_viewId = client.nextViewId++;
+    client.viewsById.emplace(view->m_viewId, Weak<JSWebView>(view, &webViewWeakOwner()));
+    client.updateKeepAlive();
+
+    // Fire-and-forget — no promise, no slot. If WKWebView alloc fails
+    // (exceedingly rare), subsequent ops get Reply::Error from the child's
+    // "invalid viewId" lookup. Simpler than an async constructor.
+    bool persistent = !persistDir.isEmpty();
+    auto payload = encode(
+        CreatePayload{ width, height,
+            static_cast<uint8_t>(persistent ? DataStoreKind::Persistent : DataStoreKind::Ephemeral) },
+        persistent ? persistDir : WTF::String());
+    client.writeFrame(Op::Create, view->m_viewId,
+        payload.span().data(), static_cast<uint32_t>(payload.size()));
+
+    return view;
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsWebViewGetter_title, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
-{
-    auto* thisObject = jsDynamicCast<JSWebView*>(JSValue::decode(thisValue));
-    if (!thisObject) return JSValue::encode(jsEmptyString(globalObject->vm()));
-    return JSValue::encode(jsString(globalObject->vm(), thisObject->m_title));
-}
-
-JSC_DEFINE_CUSTOM_GETTER(jsWebViewGetter_loading, (JSGlobalObject*, EncodedJSValue thisValue, PropertyName))
-{
-    auto* thisObject = jsDynamicCast<JSWebView*>(JSValue::decode(thisValue));
-    return JSValue::encode(jsBoolean(thisObject && thisObject->m_loading));
-}
-
-// --- Callback accessors ----------------------------------------------------
-
-#define WEBVIEW_CALLBACK_ACCESSOR(Name, field)                                                                   \
-    JSC_DEFINE_CUSTOM_GETTER(jsWebViewGetter_##Name, (JSGlobalObject*, EncodedJSValue thisValue, PropertyName))  \
-    {                                                                                                            \
-        auto* thisObject = jsDynamicCast<JSWebView*>(JSValue::decode(thisValue));                                \
-        if (!thisObject) return JSValue::encode(jsUndefined());                                                  \
-        JSObject* cb = thisObject->field.get();                                                                  \
-        return JSValue::encode(cb ? JSValue(cb) : jsNull());                                                     \
-    }                                                                                                            \
-    JSC_DEFINE_CUSTOM_SETTER(jsWebViewSetter_##Name,                                                             \
-        (JSGlobalObject * globalObject, EncodedJSValue thisValue, EncodedJSValue encodedValue, PropertyName))    \
-    {                                                                                                            \
-        auto* thisObject = jsDynamicCast<JSWebView*>(JSValue::decode(thisValue));                                \
-        if (!thisObject) return false;                                                                           \
-        JSValue value = JSValue::decode(encodedValue);                                                           \
-        if (value.isUndefinedOrNull()) {                                                                         \
-            thisObject->field.clear();                                                                           \
-        } else if (value.isCallable()) {                                                                         \
-            thisObject->field.set(globalObject->vm(), thisObject, value.getObject());                            \
-        } else {                                                                                                 \
-            auto scope = DECLARE_THROW_SCOPE(globalObject->vm());                                                \
-            Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "callback"_s, "function"_s, value);                  \
-            return false;                                                                                        \
-        }                                                                                                        \
-        return true;                                                                                             \
-    }
-
-WEBVIEW_CALLBACK_ACCESSOR(onNavigated, m_onNavigated)
-WEBVIEW_CALLBACK_ACCESSOR(onNavigationFailed, m_onNavigationFailed)
-
-#undef WEBVIEW_CALLBACK_ACCESSOR
+#endif // OS(DARWIN)
 
 // --- Setup -----------------------------------------------------------------
 
 void setupJSWebViewClassStructure(LazyClassStructure::Initializer& init)
 {
-    auto* prototypeStructure = JSWebViewPrototype::createStructure(init.vm, init.global, init.global->objectPrototype());
-    auto* prototype = JSWebViewPrototype::create(init.vm, init.global, prototypeStructure);
-
-    auto* constructorStructure = JSWebViewConstructor::createStructure(init.vm, init.global, init.global->functionPrototype());
-    auto* constructor = JSWebViewConstructor::create(init.vm, constructorStructure, prototype);
-
+    auto* prototype = createJSWebViewPrototype(init.vm, init.global);
+    auto* constructor = createJSWebViewConstructor(init.vm, init.global, prototype);
     auto* structure = JSWebView::createStructure(init.vm, init.global, prototype);
     init.setPrototype(prototype);
     init.setStructure(structure);

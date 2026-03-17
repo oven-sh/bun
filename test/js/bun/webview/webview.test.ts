@@ -200,13 +200,133 @@ it("press dispatches virtual keys", async () => {
   }
 });
 
-it("scroll moves scrollY", async () => {
+it("scroll dispatches native wheel event with isTrusted", async () => {
+  const view = new Bun.WebView({ width: 200, height: 200 });
+  try {
+    await view.navigate(
+      "data:text/html," +
+        encodeURIComponent(`
+          <div style="height:5000px;width:5000px">tall</div>
+          <script>
+            window.__w = [];
+            addEventListener("wheel", e => __w.push({
+              dy: e.deltaY, dx: e.deltaX,
+              trusted: e.isTrusted,
+              x: e.clientX, y: e.clientY,
+              mode: e.deltaMode,
+            }), { passive: true });
+          </script>
+        `),
+    );
+    await view.scroll(0, 100);
+    const result = await view.evaluate("JSON.stringify({y: scrollY, w: __w})");
+    const { y, w } = JSON.parse(result);
+    // The double presentation-update barrier: first ensures the scrolling
+    // tree is populated (commitScrollingTreeState in the layer commit),
+    // second serializes against the ScrollingThread roundtrip so await
+    // resolves after sendWheelEvent has fired. No polling.
+    expect(y).toBe(100);
+    // Wheel fires at view center — wheelEvent() passes (W/2, H/2) through
+    // convertPointToScreen: + screen-height flip + _eventRelativeToWindow:
+    // and lands exactly at locationInWindow=(100,100) in a 200×200 view.
+    expect(w).toEqual([{ dy: 100, dx: 0, trusted: true, x: 100, y: 100, mode: 0 }]);
+  } finally {
+    view.close();
+  }
+});
+
+it("scroll: sequential calls in same view", async () => {
   const view = new Bun.WebView({ width: 200, height: 200 });
   try {
     await view.navigate("data:text/html," + encodeURIComponent(`<div style="height:5000px">tall</div>`));
+    // Each scroll runs the full double-barrier: both presentation-update
+    // callbacks fire, m_scrollWheelFired resets to false at the top of
+    // the next scrollIPC. If the state machine didn't re-arm, the second
+    // scroll would hang (barrier never fires) or no-op.
     await view.scroll(0, 100);
-    const result = await view.evaluate("String(window.scrollY)");
-    expect(Number(result)).toBeGreaterThan(0);
+    await view.scroll(0, 50);
+    await view.scroll(0, -30);
+    const y = await view.evaluate("String(scrollY)");
+    expect(Number(y)).toBe(120);
+  } finally {
+    view.close();
+  }
+});
+
+it("scroll: horizontal", async () => {
+  const view = new Bun.WebView({ width: 200, height: 200 });
+  try {
+    await view.navigate("data:text/html," + encodeURIComponent(`<div style="width:5000px;height:100px">wide</div>`));
+    await view.scroll(80, 0);
+    const x = await view.evaluate("String(scrollX)");
+    // CGEventCreateScrollWheelEvent takes (wheel1, wheel2) = (-dy, -dx) —
+    // y is the primary wheel. wheelEvent() passes wheelCount=2 for both.
+    expect(Number(x)).toBe(80);
+  } finally {
+    view.close();
+  }
+});
+
+it("scroll: interleaved with click in same view", async () => {
+  // Scroll uses m_scrollTarget, click uses m_inputTarget — decoupled so a
+  // late-firing mouse barrier doesn't clear the scroll barrier's target.
+  const view = new Bun.WebView({ width: 200, height: 200 });
+  try {
+    await view.navigate(
+      "data:text/html," +
+        encodeURIComponent(`
+          <div style="height:5000px">tall</div>
+          <button id=b style="position:fixed;left:0;top:0;width:50px;height:50px" onclick="window.__c=(window.__c||0)+1">b</button>
+        `),
+    );
+    await view.click(25, 25);
+    await view.scroll(0, 100);
+    await view.click(25, 25);
+    await view.scroll(0, 50);
+    const r = await view.evaluate("JSON.stringify({y:scrollY,c:__c})");
+    expect(JSON.parse(r)).toEqual({ y: 150, c: 2 });
+  } finally {
+    view.close();
+  }
+});
+
+it("scroll: survives navigate (fresh scrolling tree)", async () => {
+  // Second navigate gets a fresh scrolling tree. The first presentation-
+  // update barrier has to wait for the NEW tree's commit, not a stale one
+  // from the previous page.
+  const view = new Bun.WebView({ width: 200, height: 200 });
+  try {
+    await view.navigate("data:text/html," + encodeURIComponent(`<div style="height:5000px">a</div>`));
+    await view.scroll(0, 200);
+    expect(await view.evaluate("String(scrollY)")).toBe("200");
+    await view.navigate("data:text/html," + encodeURIComponent(`<div style="height:5000px">b</div>`));
+    expect(await view.evaluate("String(scrollY)")).toBe("0");
+    await view.scroll(0, 75);
+    expect(await view.evaluate("String(scrollY)")).toBe("75");
+  } finally {
+    view.close();
+  }
+});
+
+it("scroll: targets inner scrollable under view center", async () => {
+  // Wheel location is always (W/2, H/2). If a scrollable element covers
+  // the center, it receives the wheel and scrolls — the scrolling tree
+  // hit-test finds the inner node, not the document root.
+  const view = new Bun.WebView({ width: 200, height: 200 });
+  try {
+    await view.navigate(
+      "data:text/html," +
+        encodeURIComponent(`
+          <div id=inner style="position:fixed;left:50px;top:50px;width:100px;height:100px;overflow:auto">
+            <div style="height:1000px">inner content</div>
+          </div>
+        `),
+    );
+    await view.scroll(0, 60);
+    const r = await view.evaluate("JSON.stringify({inner: document.getElementById('inner').scrollTop, doc: scrollY})");
+    const { inner, doc } = JSON.parse(r);
+    expect(inner).toBe(60);
+    expect(doc).toBe(0);
   } finally {
     view.close();
   }

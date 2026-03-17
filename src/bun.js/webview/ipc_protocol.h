@@ -53,9 +53,10 @@ enum class Op : uint8_t {
     // Press: editing command with completion, or keyDown fallback for
     //        Escape/chord keys (no completion; WebKit exposes no keyboard
     //        equivalent of the mouse barrier).
-    Click      = 10, // f32 x, f32 y (viewport coords, y-down), u8 button, u8 modifiers, u8 clickCount
+    Click      = 10, // ClickPayload
     Type       = 11, // str text
-    Press      = 12, // u8 VirtualKey, u8 modifiers, [str char iff VirtualKey::Character]
+    Press      = 12, // PressPayload + [str char iff VirtualKey::Character]
+    Scroll     = 13, // ScrollPayload
 };
 
 // Mouse button: 0=left, 1=right, 2=middle.
@@ -66,6 +67,88 @@ enum : uint8_t {
     ModAlt   = 1 << 2,
     ModMeta  = 1 << 3,
 };
+
+// --- Payload structs -------------------------------------------------------
+// Fixed-size heads; variable-length strings (u32 len + utf8) follow where
+// noted. Both sides include this header so encode/decode stay in lockstep.
+// No padding — pragma pack(1) already in effect above for Frame.
+
+#pragma pack(push, 1)
+
+struct CreatePayload {
+    uint32_t width;
+    uint32_t height;
+    uint8_t  dataStoreKind;   // DataStoreKind; str persistDir follows iff Persistent
+};
+
+struct ClickPayload {
+    float   x;                // viewport coords, y-down
+    float   y;
+    uint8_t button;
+    uint8_t modifiers;
+    uint8_t clickCount;
+};
+
+struct ResizePayload {
+    uint32_t width;
+    uint32_t height;
+};
+
+struct PressPayload {
+    uint8_t virtualKey;       // VirtualKey; str character follows iff Character
+    uint8_t modifiers;
+};
+
+struct ScrollPayload {
+    float deltaX;
+    float deltaY;
+};
+
+#pragma pack(pop)
+
+static_assert(sizeof(CreatePayload) == 9);
+static_assert(sizeof(ClickPayload) == 11);
+static_assert(sizeof(ResizePayload) == 8);
+static_assert(sizeof(PressPayload) == 2);
+static_assert(sizeof(ScrollPayload) == 8);
+
+// Encode: POD head + optional trailing string (u32 len + utf8). 64 bytes
+// inline covers every head; strings that overflow it heap-allocate, which
+// is fine — evaluate() scripts are the only large ones and they pay one
+// alloc per call anyway.
+template<typename Head>
+WTF::Vector<uint8_t, 64> encode(const Head& head, const WTF::String& tail = { })
+{
+    static_assert(std::is_trivially_copyable_v<Head>);
+    WTF::Vector<uint8_t, 64> out;
+    if (tail.isNull()) {
+        out.grow(sizeof(Head));
+        __builtin_memcpy(out.mutableSpan().data(), &head, sizeof(Head));
+    } else {
+        WTF::CString c = tail.utf8();
+        uint32_t n = static_cast<uint32_t>(c.length());
+        out.grow(sizeof(Head) + 4 + n);
+        uint8_t* p = out.mutableSpan().data();
+        __builtin_memcpy(p, &head, sizeof(Head)); p += sizeof(Head);
+        __builtin_memcpy(p, &n, 4);               p += 4;
+        __builtin_memcpy(p, c.data(), n);
+    }
+    return out;
+}
+
+// String-only payload (Navigate, Evaluate, Type) — no head struct.
+inline WTF::Vector<uint8_t, 64> encodeStr(const WTF::String& s)
+{
+    WTF::CString c = s.utf8();
+    uint32_t n = static_cast<uint32_t>(c.length());
+    WTF::Vector<uint8_t, 64> out;
+    out.grow(4 + n);
+    uint8_t* p = out.mutableSpan().data();
+    __builtin_memcpy(p, &n, 4);
+    __builtin_memcpy(p + 4, c.data(), n);
+    return out;
+}
+
 
 // Press() key tag. Order doesn't matter across the wire — both sides
 // include this header. Parent maps JS string name → tag; child maps tag →
@@ -157,6 +240,19 @@ struct Reader {
         return WTF::String::fromUTF8(std::span<const char>(reinterpret_cast<const char*>(b), n));
     }
 };
+
+// Child-side decode for payload structs. Reader already bounds-checks;
+// this reads the head out of the stream and advances past it.
+template<typename Head>
+Head decode(Reader& r)
+{
+    static_assert(std::is_trivially_copyable_v<Head>);
+    Head h {};
+    if (r.remaining() >= sizeof(Head)) {
+        __builtin_memcpy(&h, r.bytes(sizeof(Head)), sizeof(Head));
+    }
+    return h;
+}
 
 // Child-side writer. Decl here so WebViewHost's completion callbacks can
 // call sendReply; impl in host_main.cpp (owns the CF fd).

@@ -1448,12 +1448,17 @@ fn findUncoveredFiles(
 
             const relative_path = bun.path.relative(root_dir, abs_path);
 
-            // Check if file matches any collectCoverageFrom pattern
+            // Check if file matches any collectCoverageFrom pattern.
+            // Patterns are evaluated in order: positive patterns include, `!`-prefixed
+            // negation patterns exclude. Later patterns override earlier ones.
             var matches_collect = false;
             for (opts.collect_coverage_from) |pattern| {
-                if (bun.glob.match(pattern, relative_path).matches()) {
+                const result = bun.glob.match(pattern, relative_path);
+                if (result == .match) {
                     matches_collect = true;
-                    break;
+                } else if (result == .negate_no_match) {
+                    // Pattern started with `!` and matched the file — exclude it
+                    matches_collect = false;
                 }
             }
             if (!matches_collect) continue;

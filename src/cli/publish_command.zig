@@ -76,7 +76,7 @@ pub const PublishCommand = struct {
                     .result => |res| res,
                 }) |next| {
                     const pathname = if (comptime Environment.isWindows)
-                        next.entry.pathnameW()
+                        (next.entry.pathnameW() orelse continue)
                     else
                         next.entry.pathname();
 

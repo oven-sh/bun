@@ -959,20 +959,16 @@ ExceptionOr<void> WebSocket::terminate()
 
 ExceptionOr<void> WebSocket::ping()
 {
-    auto message = WTF::String::number(WTF::jsCurrentTime());
-    // LOG(Network, "WebSocket %p ping() Sending Timestamp '%s'", this, message.data());
     if (m_state == CONNECTING)
         return Exception { InvalidStateError };
 
     // No exception is raised if the connection was once established but has subsequently been closed.
     if (m_state == CLOSING || m_state == CLOSED) {
-        size_t payloadSize = message.length();
-        m_bufferedAmountAfterClose = saturateAdd(m_bufferedAmountAfterClose, payloadSize);
-        m_bufferedAmountAfterClose = saturateAdd(m_bufferedAmountAfterClose, getFramingOverhead(payloadSize));
         return {};
     }
 
-    this->sendWebSocketString(message, Opcode::Ping);
+    // Send empty ping frame per RFC 6455 and Node.js ws compatibility
+    this->sendWebSocketData(nullptr, 0, Opcode::Ping);
 
     return {};
 }
@@ -1042,20 +1038,16 @@ ExceptionOr<void> WebSocket::ping(ArrayBufferView& arrayBufferView)
 
 ExceptionOr<void> WebSocket::pong()
 {
-    auto message = WTF::String::number(WTF::jsCurrentTime());
-    // LOG(Network, "WebSocket %p pong() Sending Timestamp '%s'", this, message.data());
     if (m_state == CONNECTING)
         return Exception { InvalidStateError };
 
     // No exception is raised if the connection was once established but has subsequently been closed.
     if (m_state == CLOSING || m_state == CLOSED) {
-        size_t payloadSize = message.length();
-        m_bufferedAmountAfterClose = saturateAdd(m_bufferedAmountAfterClose, payloadSize);
-        m_bufferedAmountAfterClose = saturateAdd(m_bufferedAmountAfterClose, getFramingOverhead(payloadSize));
         return {};
     }
 
-    this->sendWebSocketString(message, Opcode::Pong);
+    // Send empty pong frame per RFC 6455 and Node.js ws compatibility
+    this->sendWebSocketData(nullptr, 0, Opcode::Pong);
 
     return {};
 }

@@ -177,6 +177,17 @@ Same as the top-level `preload` field, but only applies to `bun test`.
 preload = ["./setup.ts"]
 ```
 
+### `test.pathIgnorePatterns`
+
+Exclude files and directories from test discovery using glob patterns. Matched directories are pruned during scanning, so their contents are never traversed. This is useful when your project contains submodules or vendored code with `*.test.ts` files that you don't want `bun test` to pick up.
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+pathIgnorePatterns = ["vendor/**", "submodules/**", "fixtures/**"]
+```
+
+Equivalent CLI flag: `--path-ignore-patterns`. CLI flags override the `bunfig.toml` value entirely.
+
 ### `test.smol`
 
 Same as the top-level `smol` field, but only applies to `bun test`.

@@ -117,25 +117,25 @@ class TestContext {
   before(arg0: unknown, arg1: unknown) {
     const { fn, options } = createHook(arg0, arg1);
     const { beforeAll } = bunTest();
-    beforeAll(fn, { timeout: options.timeout ?? 0 });
+    beforeAll(fn, options);
   }
 
   after(arg0: unknown, arg1: unknown) {
     const { fn, options } = createHook(arg0, arg1);
     const { afterAll } = bunTest();
-    afterAll(fn, { timeout: options.timeout ?? 0 });
+    afterAll(fn, options);
   }
 
   beforeEach(arg0: unknown, arg1: unknown) {
     const { fn, options } = createHook(arg0, arg1);
     const { beforeEach } = bunTest();
-    beforeEach(fn, { timeout: options.timeout ?? 0 });
+    beforeEach(fn, options);
   }
 
   afterEach(arg0: unknown, arg1: unknown) {
     const { fn, options } = createHook(arg0, arg1);
     const { afterEach } = bunTest();
-    afterEach(fn, { timeout: options.timeout ?? 0 });
+    afterEach(fn, options);
   }
 
   waitFor(_condition: unknown, _options: { timeout?: number } = kEmptyObject) {
@@ -239,25 +239,25 @@ test.only = function (arg0: unknown, arg1: unknown, arg2: unknown) {
 function before(arg0: unknown, arg1: unknown) {
   const { fn, options } = createHook(arg0, arg1);
   const { beforeAll } = bunTest();
-  beforeAll(fn, { timeout: options.timeout ?? 0 });
+  beforeAll(fn, options);
 }
 
 function after(arg0: unknown, arg1: unknown) {
   const { fn, options } = createHook(arg0, arg1);
   const { afterAll } = bunTest();
-  afterAll(fn, { timeout: options.timeout ?? 0 });
+  afterAll(fn, options);
 }
 
 function beforeEach(arg0: unknown, arg1: unknown) {
   const { fn, options } = createHook(arg0, arg1);
   const { beforeEach } = bunTest();
-  beforeEach(fn, { timeout: options.timeout ?? 0 });
+  beforeEach(fn, options);
 }
 
 function afterEach(arg0: unknown, arg1: unknown) {
   const { fn, options } = createHook(arg0, arg1);
   const { afterEach } = bunTest();
-  afterEach(fn, { timeout: options.timeout ?? 0 });
+  afterEach(fn, options);
 }
 
 function parseTestOptions(arg0: unknown, arg1: unknown, arg2: unknown) {
@@ -304,34 +304,20 @@ function createTest(arg0: unknown, arg1: unknown, arg2: unknown) {
   checkNotInsideTest(ctx, "test");
   const context = new TestContext(true, name, Bun.main, ctx);
 
-  const runTest = (done: (error?: unknown) => void) => {
+  const runTest = async () => {
     const originalContext = ctx;
     ctx = context;
-    const endTest = (error?: unknown) => {
-      try {
-        done(error);
-      } finally {
-        ctx = originalContext;
-      }
-    };
-
-    let result: unknown;
     try {
-      result = fn(context);
-    } catch (error) {
-      endTest(error);
-      return;
-    }
-    if (result instanceof Promise) {
-      (result as Promise<unknown>).then(() => endTest()).catch(error => endTest(error));
-    } else {
-      endTest();
+      await fn(context);
+    } finally {
+      ctx = originalContext;
     }
   };
 
-  // Node.js node:test has no default timeout, so default to 0 (no timeout)
-  // to avoid inheriting bun:test's 5s default when using done-callback wrapper.
-  return { name, options: { ...options, timeout: options.timeout ?? 0 }, fn: runTest };
+  // Node.js node:test has no default timeout — only apply timeout: 0 (unlimited)
+  // when the user hasn't explicitly set one via node:test options.
+  const testOptions = options.timeout !== undefined ? options : { ...options, timeout: 0 };
+  return { name, options: testOptions, fn: runTest };
 }
 
 function createDescribe(arg0: unknown, arg1: unknown, arg2: unknown) {
@@ -379,22 +365,14 @@ function parseHookOptions(arg0: unknown, arg1: unknown) {
 function createHook(arg0: unknown, arg1: unknown) {
   const { fn, options } = parseHookOptions(arg0, arg1);
 
-  const runHook = (done: (error?: unknown) => void) => {
-    let result: unknown;
-    try {
-      result = fn();
-    } catch (error) {
-      done(error);
-      return;
-    }
-    if (result instanceof Promise) {
-      (result as Promise<unknown>).then(() => done()).catch(error => done(error));
-    } else {
-      done();
-    }
+  const runHook = async () => {
+    await fn();
   };
 
-  return { options, fn: runHook };
+  // Node.js node:test has no default timeout — only apply timeout: 0 (unlimited)
+  // when the user hasn't explicitly set one via node:test options.
+  const hookOptions = options.timeout !== undefined ? options : { ...options, timeout: 0 };
+  return { options: hookOptions, fn: runHook };
 }
 
 type TestFn = (ctx: TestContext) => unknown | Promise<unknown>;

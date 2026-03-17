@@ -113,3 +113,30 @@ it('test with explicit timeout', { timeout: 1000 }, async () => {
   expect(output).toContain("timed out");
   expect(exitCode).not.toBe(0);
 }, 15_000);
+
+test("node:test explicit per-test timeout overrides default no-timeout", async () => {
+  using dir = tempDir("28190", {
+    "test.test.mjs": `
+import { it } from 'node:test';
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+it('fast test with explicit timeout', { timeout: 2000 }, async () => {
+  await sleep(500);
+});
+`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "test.test.mjs"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const output = stdout + stderr;
+  expect(output).toContain("pass");
+  expect(output).not.toContain("timed out");
+  expect(exitCode).toBe(0);
+}, 15_000);

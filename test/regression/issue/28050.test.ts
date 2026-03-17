@@ -105,16 +105,36 @@ test("process.title can be set multiple times", async () => {
   expect(exitCode).toBe(0);
 });
 
-test.skipIf(process.platform !== "darwin")("process.title setter works on macOS", async () => {
+test.skipIf(process.platform !== "darwin")("process.title setter updates pthread name on macOS", async () => {
   const customTitle = "bun-test-28050";
 
+  // The child process sets process.title and then reads back the OS-level
+  // pthread name via pthread_getname_np using bun:ffi to verify the kernel
+  // actually received the new name.
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
       "-e",
       `
+      const { dlopen, ptr } = require("bun:ffi");
+
       process.title = "${customTitle}";
-      console.log(JSON.stringify({ jsTitle: process.title, pid: process.pid }));
+
+      // Open libc and resolve pthread_self + pthread_getname_np
+      const lib = dlopen("libc.dylib", {
+        pthread_self: { args: [], returns: "ptr" },
+        pthread_getname_np: { args: ["ptr", "ptr", "usize"], returns: "int" },
+      });
+
+      const buf = new Uint8Array(64);
+      const self = lib.symbols.pthread_self();
+      lib.symbols.pthread_getname_np(self, ptr(buf), buf.length);
+      const threadName = new (require("bun:ffi").CString)(ptr(buf));
+
+      console.log(JSON.stringify({
+        jsTitle: process.title,
+        threadName: threadName.toString(),
+      }));
       `,
     ],
     env: bunEnv,
@@ -125,6 +145,7 @@ test.skipIf(process.platform !== "darwin")("process.title setter works on macOS"
 
   const result = JSON.parse(stdout.trim());
   expect(result.jsTitle).toBe(customTitle);
-  expect(result.pid).toBeGreaterThan(0);
+  // pthread_setname_np was called — the OS-level thread name should match
+  expect(result.threadName).toBe(customTitle);
   expect(exitCode).toBe(0);
 });

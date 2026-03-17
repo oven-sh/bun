@@ -10,8 +10,8 @@ test("rm error path does not corrupt memory when removing non-existent files", a
   using dir = tempDir("rm-error-path", {});
 
   const { stderr, exitCode } = await $`rm ${dir}/nonexistent1 ${dir}/nonexistent2 ${dir}/nonexistent3`;
-  expect(exitCode).not.toBe(0);
   expect(stderr.toString()).toContain("No such file or directory");
+  expect(exitCode).not.toBe(0);
 });
 
 test("rm -d on non-empty directory triggers correct error handling", async () => {
@@ -21,8 +21,8 @@ test("rm -d on non-empty directory triggers correct error handling", async () =>
   });
 
   const { stderr, exitCode } = await $`rm -d ${dir}/subdir`;
-  expect(exitCode).not.toBe(0);
   expect(stderr.toString()).toContain("Directory not empty");
+  expect(exitCode).not.toBe(0);
 });
 
 test("rm on directory without -r flag triggers EISDIR error path", async () => {
@@ -32,8 +32,8 @@ test("rm on directory without -r flag triggers EISDIR error path", async () => {
   });
 
   const { stderr, exitCode } = await $`rm ${dir}/mydir`;
-  expect(exitCode).not.toBe(0);
   expect(stderr.toString()).toContain("Is a directory");
+  expect(exitCode).not.toBe(0);
 });
 
 test("concurrent rm errors do not cause use-after-free", async () => {
@@ -47,6 +47,6 @@ test("concurrent rm errors do not cause use-after-free", async () => {
 
   // Without force flag, should fail with proper error handling
   const { stderr, exitCode: exitCode2 } = await $`rm ${dir}/x ${dir}/y ${dir}/z`;
-  expect(exitCode2).not.toBe(0);
   expect(stderr.toString()).toContain("No such file or directory");
+  expect(exitCode2).not.toBe(0);
 });

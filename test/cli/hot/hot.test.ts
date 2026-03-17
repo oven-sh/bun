@@ -62,6 +62,7 @@ async function driveErrorReloadCycle(
         }
         nonce++;
         onReload(reloadCounter, nonce);
+        triggered = false; // onReload already called; skip post-loop call
         break;
       }
 

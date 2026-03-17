@@ -183,7 +183,14 @@ pub fn performSecurityScanAfterResolution(manager: *PackageManager, command_ctx:
             const retry_result = try attemptSecurityScanWithRetry(manager, security_scanner, scan_all, command_ctx, original_cwd, true);
             switch (retry_result) {
                 .success => |scan_results| return scan_results,
-                else => return error.SecurityScannerRetryFailed,
+                .needs_install => {
+                    Output.errGeneric("Security scanner '{s}' still could not be loaded after installation. It may have unmet dependencies.", .{security_scanner});
+                    return error.SecurityScannerRetryFailed;
+                },
+                .@"error" => |retry_err| {
+                    Output.errGeneric("Security scanner '{s}' failed after installation: {s}", .{ security_scanner, @errorName(retry_err) });
+                    return error.SecurityScannerRetryFailed;
+                },
             }
         },
         .@"error" => |err| return err,
@@ -750,7 +757,10 @@ pub const SecurityScanSubprocess = struct {
 
         // fd 3 output pipe: bun.sys.pipe() + .pipe (inherit_fd) on both platforms.
         const ipc_output_fds = switch (bun.sys.pipe()) {
-            .err => return error.IPCPipeFailed,
+            .err => {
+                Output.errGeneric("Failed to create IPC pipe for security scanner", .{});
+                return error.IPCPipeFailed;
+            },
             .result => |fds| fds,
         };
 
@@ -906,7 +916,10 @@ pub const SecurityScanSubprocess = struct {
         }
 
         switch (process.watchOrReap()) {
-            .err => return error.ProcessWatchFailed,
+            .err => {
+                Output.errGeneric("Failed to watch security scanner process", .{});
+                return error.ProcessWatchFailed;
+            },
             .result => {},
         }
     }

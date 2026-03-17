@@ -640,15 +640,18 @@ pub fn installWithManager(
             const is_subcommand_to_run_scanner = manager.subcommand == .add or manager.subcommand == .update or manager.subcommand == .install or manager.subcommand == .remove;
 
             if (is_subcommand_to_run_scanner) {
-                if (security_scanner.performSecurityScanAfterResolution(manager, ctx, original_cwd) catch |err| {
+                if (security_scanner.performSecurityScanAfterResolution(manager, ctx, original_cwd) catch |err| blk: {
                     switch (err) {
                         error.SecurityScannerInWorkspace => {
                             Output.pretty("<red>Security scanner cannot be a dependency of a workspace package. It must be a direct dependency of the root package.<r>\n", .{});
+                            Global.exit(1);
                         },
-                        else => {},
+                        else => {
+                            Output.warn("Security scanner failed to run: {s}. Continuing installation without security scan.\n", .{@errorName(err)});
+                        },
                     }
 
-                    Global.exit(1);
+                    break :blk @as(?security_scanner.SecurityScanResults, null);
                 }) |results| {
                     defer {
                         var results_mut = results;

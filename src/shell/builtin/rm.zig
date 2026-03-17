@@ -586,7 +586,8 @@ pub const ShellRmTask = struct {
                 this.task_manager.err = err;
                 this.task_manager.error_signal.store(true, .seq_cst);
             } else {
-                this.task_manager.err.?.deinit();
+                var err2 = err;
+                err2.deinit();
             }
         }
 
@@ -645,7 +646,8 @@ pub const ShellRmTask = struct {
                     if (this.task_manager.err == null) {
                         this.task_manager.err = e;
                     } else {
-                        bun.default_allocator.free(e.path);
+                        var err2 = e;
+                        err2.deinit();
                     }
                 },
                 .result => |deleted| {
@@ -827,7 +829,7 @@ pub const ShellRmTask = struct {
         }
 
         if (!this.opts.recursive) {
-            return Maybe(void).initErr(Syscall.Error.fromCode(bun.sys.E.ISDIR, .TODO).withPath(bun.handleOom(bun.default_allocator.dupeZ(u8, dir_task.path))));
+            return Maybe(void).initErr(Syscall.Error.fromCode(bun.sys.E.ISDIR, .TODO).withPath(bun.handleOom(bun.default_allocator.dupe(u8, dir_task.path))));
         }
 
         const flags = bun.O.DIRECTORY | bun.O.RDONLY;
@@ -1140,7 +1142,7 @@ pub const ShellRmTask = struct {
 
     fn errorWithPath(this: *ShellRmTask, err: Syscall.Error, path: [:0]const u8) Syscall.Error {
         _ = this;
-        return err.withPath(bun.handleOom(bun.default_allocator.dupeZ(u8, path[0..path.len])));
+        return err.withPath(bun.handleOom(bun.default_allocator.dupe(u8, path[0..path.len])));
     }
 
     inline fn join(this: *ShellRmTask, alloc: Allocator, subdir_parts: []const []const u8, is_absolute: bool) [:0]const u8 {

@@ -54,9 +54,12 @@ async function driveErrorReloadCycle(
       // taken effect yet. Re-save with a new nonce to force a watcher event,
       // then skip to reading the next chunk.
       if (line.includes(`error: ${reloadCounter - 1}`)) {
-        // Put remaining unprocessed lines back into str so they aren't lost
+        // Put remaining unprocessed lines back into str so they aren't lost.
+        // Always keep a trailing \n so the next chunk starts a new logical line.
         const remaining = lines.slice(i + 1).join("\n");
-        str = remaining ? (str ? `${remaining}\n${str}` : remaining) : str;
+        if (remaining) {
+          str = `${remaining}\n${str}`;
+        }
         nonce++;
         onReload(reloadCounter, nonce);
         break;

@@ -72,6 +72,11 @@ async function driveErrorReloadCycle(
 
       reloadCounter++;
       triggered = true;
+
+      if (reloadCounter >= targetCount) {
+        runner.kill();
+        return reloadCounter;
+      }
     }
 
     if (triggered) {
@@ -561,25 +566,30 @@ throw new Error('0');`,
       stderr: "pipe",
       stdin: "ignore",
     });
-    const reloadCounter = await driveErrorReloadCycle(runner, {
-      targetCount: 50,
-      onReload: (counter, nonce) => {
-        writeFileSync(
-          bundleIn,
-          `// source content /*nonce:${nonce}*/
+    const reloadCounter = await Promise.race([
+      driveErrorReloadCycle(runner, {
+        targetCount: 50,
+        onReload: (counter, nonce) => {
+          writeFileSync(
+            bundleIn,
+            `// source content /*nonce:${nonce}*/
 // etc etc
 // etc etc
 ${" ".repeat(counter * 2)}throw new Error(${counter});`,
-        );
-      },
-      verifyLine: (_errorLine, nextLine, counter) => {
-        expect(nextLine).toInclude("bundle_in.ts");
-        const match = nextLine!.match(/\s*at.*?:4:(\d+)$/);
-        if (!match) throw new Error("invalid stack trace: " + nextLine);
-        const col = match[1];
-        expect(Number(col)).toBe(1 + "throw ".length + counter * 2);
-      },
-    });
+          );
+        },
+        verifyLine: (_errorLine, nextLine, counter) => {
+          expect(nextLine).toInclude("bundle_in.ts");
+          const match = nextLine!.match(/\s*at.*?:4:(\d+)$/);
+          if (!match) throw new Error("invalid stack trace: " + nextLine);
+          const col = match[1];
+          expect(Number(col)).toBe(1 + "throw ".length + counter * 2);
+        },
+      }),
+      bundler.exited.then((code) => {
+        throw new Error(`bundler exited early with code ${code}`);
+      }),
+    ]);
     expect(reloadCounter).toBe(50);
     bundler.kill();
   },
@@ -633,25 +643,30 @@ throw new Error('0');`,
       stderr: "pipe",
       stdin: "ignore",
     });
-    const reloadCounter = await driveErrorReloadCycle(runner, {
-      targetCount: 50,
-      onReload: (counter, nonce) => {
-        writeFileSync(
-          bundleIn,
-          `// ${long_comment} /*nonce:${nonce}*/
+    const reloadCounter = await Promise.race([
+      driveErrorReloadCycle(runner, {
+        targetCount: 50,
+        onReload: (counter, nonce) => {
+          writeFileSync(
+            bundleIn,
+            `// ${long_comment} /*nonce:${nonce}*/
 console.error("RSS: %s", process.memoryUsage().rss);
 //
 ${" ".repeat(counter * 2)}throw new Error(${counter});`,
-        );
-      },
-      verifyLine: (_errorLine, nextLine, counter) => {
-        expect(nextLine).toInclude("bundle_in.ts");
-        const match = nextLine!.match(/\s*at.*?:4:(\d+)$/);
-        if (!match) throw new Error("invalid stack trace: " + nextLine);
-        const col = match[1];
-        expect(Number(col)).toBe(1 + "throw ".length + counter * 2);
-      },
-    });
+          );
+        },
+        verifyLine: (_errorLine, nextLine, counter) => {
+          expect(nextLine).toInclude("bundle_in.ts");
+          const match = nextLine!.match(/\s*at.*?:4:(\d+)$/);
+          if (!match) throw new Error("invalid stack trace: " + nextLine);
+          const col = match[1];
+          expect(Number(col)).toBe(1 + "throw ".length + counter * 2);
+        },
+      }),
+      bundler.exited.then((code) => {
+        throw new Error(`bundler exited early with code ${code}`);
+      }),
+    ]);
     expect(reloadCounter).toBe(50);
     bundler.kill();
     await runner.exited;

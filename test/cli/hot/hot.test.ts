@@ -67,9 +67,8 @@ async function driveErrorReloadCycle(
       const nextLine = lines[i + 1];
       if (verifyLine) {
         verifyLine(line, nextLine, reloadCounter);
+        i++; // Skip the next line (stack trace)
       }
-      // Skip the next line (stack trace) since verifyLine consumed it
-      if (verifyLine) i++;
 
       reloadCounter++;
       triggered = true;

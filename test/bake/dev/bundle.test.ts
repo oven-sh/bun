@@ -613,59 +613,54 @@ devTest("barrel optimization: export star target not deferred (#27521)", {
   },
 });
 
-devTest("barrel optimization: export * as Name through nested barrels (#28166)", {
+devTest("barrel optimization: export * as Name cross-package (#28166)", {
   files: {
     "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
     "index.ts": `
-      import { Toast } from 'outer-lib';
-      console.log('result: ' + Toast.Root() + ' ' + Toast.Title());
+      import { encode } from 'codec';
+      import { u8 } from 'utils';
+      console.log('result: ' + encode(new Uint8Array([1, 2])) + ' ' + u8.pool(4));
     `,
-    // outer-lib is a barrel with sideEffects:false that re-exports from
-    // an intermediate barrel via plain "export * from".
-    "node_modules/outer-lib/package.json": JSON.stringify({
-      name: "outer-lib",
+    "node_modules/utils/package.json": JSON.stringify({
+      name: "utils",
       version: "1.0.0",
       main: "./index.js",
       sideEffects: false,
     }),
-    "node_modules/outer-lib/index.js": `
-      export { Toast } from './components/index.js';
+    "node_modules/utils/index.js": `
+      export * as typed from './arrays/typed/index.js';
+      export * as u8 from './arrays/u8/pool.js';
     `,
-    // The intermediate barrel uses "export * as Toast from" — a namespaced
-    // re-export. The target module's exports (Root, Title) must all be
-    // available on the namespace object. Using a named re-export above
-    // (not export *) ensures components/index.js is not marked as
-    // is_export_star_target, so barrel optimization runs on it.
-    "node_modules/outer-lib/components/index.js": `
-      export * as Toast from 'inner-lib/toast';
-      export { createToaster } from 'inner-lib/create-toaster';
+    "node_modules/utils/arrays/typed/index.js": `
+      export { toDataView } from './misc.js';
     `,
-    "node_modules/inner-lib/package.json": JSON.stringify({
-      name: "inner-lib",
+    "node_modules/utils/arrays/typed/misc.js": `
+      export function toDataView(arr) { return arr.byteLength; }
+    `,
+    "node_modules/utils/arrays/u8/pool.js": `
+      export function pool(n) { return n * 2; }
+    `,
+    "node_modules/codec/package.json": JSON.stringify({
+      name: "codec",
       version: "1.0.0",
       main: "./index.js",
       sideEffects: false,
-      exports: {
-        ".": "./index.js",
-        "./toast": "./toast/namespace.js",
-        "./create-toaster": "./create-toaster.js",
-      },
     }),
-    "node_modules/inner-lib/index.js": `
-      export * as Toast from './toast/namespace.js';
-      export { createToaster } from './create-toaster.js';
+    "node_modules/codec/index.js": `
+      export { encode } from './intermediate.js';
+      export { decode } from './decode.js';
     `,
-    "node_modules/inner-lib/toast/namespace.js": `
-      export { ToastRoot as Root } from './toast-root.js';
-      export { ToastTitle as Title } from './toast-title.js';
+    "node_modules/codec/intermediate.js": `
+      import { typed } from 'utils';
+      export function encode(data) { return typed.toDataView(data); }
     `,
-    "node_modules/inner-lib/toast/toast-root.js": `export function ToastRoot() { return "ROOT"; }`,
-    "node_modules/inner-lib/toast/toast-title.js": `export function ToastTitle() { return "TITLE"; }`,
-    "node_modules/inner-lib/create-toaster.js": `export function createToaster() { return "TOASTER"; }`,
+    "node_modules/codec/decode.js": `
+      export function decode(data) { return "decoded"; }
+    `,
   },
   async test(dev) {
     await using c = await dev.client("/");
-    await c.expectMessage("result: ROOT TITLE");
+    await c.expectMessage("result: 2 8");
   },
 });
 

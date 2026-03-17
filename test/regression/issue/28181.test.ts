@@ -101,26 +101,26 @@ describe("inspector /json endpoints", () => {
     // Connect using the discovered URL (use `ws` package like existing inspect tests)
     const ws = new WebSocket(debugUrl);
 
-    expect(
-      new Promise<void>((resolve, reject) => {
-        ws.addEventListener("open", () => resolve());
-        ws.addEventListener("error", cause => reject(new Error("WebSocket error", { cause })));
-        ws.addEventListener("close", cause => reject(new Error("WebSocket closed", { cause })));
-      }),
-    ).resolves.toBeUndefined();
+    await new Promise<void>((resolve, reject) => {
+      ws.addEventListener("open", () => resolve());
+      ws.addEventListener("error", cause => reject(new Error("WebSocket error", { cause })));
+      ws.addEventListener("close", cause => reject(new Error("WebSocket closed", { cause })));
+    });
 
-    // Register message listener before sending (avoids race on slow ASAN builds)
+    // Set up message listener before sending to avoid race
+    const messagePromise = new Promise<any>(resolve => {
+      ws.addEventListener("message", ({ data }) => {
+        const parsed = JSON.parse(data.toString());
+        if (parsed.id === 1) {
+          resolve(parsed);
+        }
+      });
+    });
+
     ws.send(JSON.stringify({ id: 1, method: "Runtime.evaluate", params: { expression: "2 + 2" } }));
-    expect(
-      new Promise(resolve => {
-        ws.addEventListener("message", ({ data }) => {
-          const parsed = JSON.parse(data.toString());
-          if (parsed.id === 1) {
-            resolve(parsed);
-          }
-        });
-      }),
-    ).resolves.toMatchObject({
+
+    const result = await messagePromise;
+    expect(result).toMatchObject({
       id: 1,
       result: {
         result: {

@@ -1271,11 +1271,18 @@ fn configureDebugger(this: *VirtualMachine, cli_flag: bun.cli.Command.Debugger) 
         },
     }
 
-    if (this.isInspectorEnabled() and this.debugger.?.mode != .connect) {
-        this.transpiler.options.minify_identifiers = false;
-        this.transpiler.options.minify_syntax = false;
-        this.transpiler.options.minify_whitespace = false;
-        this.transpiler.options.debugger = true;
+    if (this.isInspectorEnabled()) {
+        // The runtime transpiler cache does not store inline source maps needed
+        // by the debugger frontend. Disable it so the printer always runs and
+        // generates the inline sourceMappingURL for the inspector.
+        jsc.RuntimeTranspilerCache.is_disabled = true;
+
+        if (this.debugger.?.mode != .connect) {
+            this.transpiler.options.minify_identifiers = false;
+            this.transpiler.options.minify_syntax = false;
+            this.transpiler.options.minify_whitespace = false;
+            this.transpiler.options.debugger = true;
+        }
     }
 }
 

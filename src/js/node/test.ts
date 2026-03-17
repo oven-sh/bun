@@ -286,7 +286,7 @@ function parseTestOptions(arg0: unknown, arg1: unknown, arg2: unknown) {
       fn = arg1 as TestFn;
       options = kDefaultOptions;
     } else {
-      fn = kDefaultFunction;
+      fn = typeof arg2 === "function" ? (arg2 as TestFn) : kDefaultFunction;
       options = kDefaultOptions;
     }
   } else {

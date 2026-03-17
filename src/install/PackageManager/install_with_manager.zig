@@ -645,6 +645,15 @@ pub fn installWithManager(
                         error.SecurityScannerInWorkspace => {
                             Output.pretty("<red>Security scanner cannot be a dependency of a workspace package. It must be a direct dependency of the root package.<r>\n", .{});
                         },
+                        error.SecurityScannerRetryFailed => {
+                            Output.errGeneric("security scanner failed after partial install. This is probably a bug in Bun. Please report it at https://github.com/oven-sh/bun/issues", .{});
+                        },
+                        error.IPCPipeFailed => {
+                            Output.errGeneric("failed to create IPC pipe for security scanner", .{});
+                        },
+                        error.ProcessWatchFailed => {
+                            Output.errGeneric("failed to watch security scanner process", .{});
+                        },
                         else => |e| {
                             Output.errGeneric("security scanner failed: {s}", .{@errorName(e)});
                         },

@@ -144,88 +144,85 @@ function buildRow(seqId: number, values: string[]): Buffer {
 
 // --- Test ---
 
-test(
-  "MySQL-compatible server without CLIENT_DEPRECATE_EOF returns rows correctly",
-  async () => {
-    // Mock MySQL server using legacy EOF protocol
-    const server = net.createServer(socket => {
-      // Immediately send HandshakeV10
-      socket.write(makePacket(0, buildHandshake()));
+test("MySQL-compatible server without CLIENT_DEPRECATE_EOF returns rows correctly", async () => {
+  // Mock MySQL server using legacy EOF protocol
+  const server = net.createServer(socket => {
+    // Immediately send HandshakeV10
+    socket.write(makePacket(0, buildHandshake()));
 
-      let state: "waiting_auth" | "ready" = "waiting_auth";
-      let buf = Buffer.alloc(0);
+    let state: "waiting_auth" | "ready" = "waiting_auth";
+    let buf = Buffer.alloc(0);
 
-      socket.on("data", data => {
-        buf = Buffer.concat([buf, data]);
+    socket.on("data", data => {
+      buf = Buffer.concat([buf, data]);
 
-        // Process complete packets
-        while (buf.length >= 4) {
-          const pktLen = buf[0]! | (buf[1]! << 8) | (buf[2]! << 16);
-          const totalLen = pktLen + 4;
-          if (buf.length < totalLen) break;
+      // Process complete packets
+      while (buf.length >= 4) {
+        const pktLen = buf[0]! | (buf[1]! << 8) | (buf[2]! << 16);
+        const totalLen = pktLen + 4;
+        if (buf.length < totalLen) break;
 
-          const pktSeqId = buf[3]!;
-          const payload = buf.subarray(4, totalLen);
-          buf = buf.subarray(totalLen);
+        const pktSeqId = buf[3]!;
+        const payload = buf.subarray(4, totalLen);
+        buf = buf.subarray(totalLen);
 
-          if (state === "waiting_auth") {
-            // Received HandshakeResponse41 → send OK
-            socket.write(buildOK(pktSeqId + 1));
-            state = "ready";
-          } else if (state === "ready") {
-            const cmd = payload[0];
-            if (cmd === 0x03) {
-              // COM_QUERY → send result set with legacy EOF protocol:
-              //   ResultSetHeader → ColumnDefs → EOF → Rows → EOF
-              let seq = pktSeqId + 1;
+        if (state === "waiting_auth") {
+          // Received HandshakeResponse41 → send OK
+          socket.write(buildOK(pktSeqId + 1));
+          state = "ready";
+        } else if (state === "ready") {
+          const cmd = payload[0];
+          if (cmd === 0x03) {
+            // COM_QUERY → send result set with legacy EOF protocol:
+            //   ResultSetHeader → ColumnDefs → EOF → Rows → EOF
+            let seq = pktSeqId + 1;
 
-              // ResultSetHeader: 2 columns
-              socket.write(makePacket(seq++, Buffer.from([0x02])));
-              // Column definitions
-              socket.write(buildColumnDef(seq++, "id"));
-              socket.write(buildColumnDef(seq++, "name"));
-              // Intermediate EOF (this is the packet that caused issue #28004)
-              socket.write(buildEOF(seq++));
-              // Row data
-              socket.write(buildRow(seq++, ["1", "hello"]));
-              socket.write(buildRow(seq++, ["2", "world"]));
-              // Final EOF
-              socket.write(buildEOF(seq++));
-            } else if (cmd === 0x01) {
-              // COM_QUIT
-              socket.end();
-            }
+            // ResultSetHeader: 2 columns
+            socket.write(makePacket(seq++, Buffer.from([0x02])));
+            // Column definitions
+            socket.write(buildColumnDef(seq++, "id"));
+            socket.write(buildColumnDef(seq++, "name"));
+            // Intermediate EOF (this is the packet that caused issue #28004)
+            socket.write(buildEOF(seq++));
+            // Row data
+            socket.write(buildRow(seq++, ["1", "hello"]));
+            socket.write(buildRow(seq++, ["2", "world"]));
+            // Final EOF
+            socket.write(buildEOF(seq++));
+          } else if (cmd === 0x01) {
+            // COM_QUIT
+            socket.end();
           }
         }
-      });
+      }
+    });
+  });
+
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  const port = (server.address() as net.AddressInfo).port;
+
+  try {
+    await using db = new SQL({
+      adapter: "mysql",
+      hostname: "127.0.0.1",
+      port,
+      username: "root",
+      password: "",
+      database: "test",
+      max: 1,
+      idleTimeout: 1,
     });
 
-    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
-    const port = (server.address() as net.AddressInfo).port;
+    const rows = await db.unsafe("SELECT * FROM demo");
 
-    try {
-      await using db = new SQL({
-        adapter: "mysql",
-        hostname: "127.0.0.1",
-        port,
-        username: "root",
-        password: "",
-        database: "test",
-        max: 1,
-        idleTimeout: 1,
-      });
-
-      const rows = await db.unsafe("SELECT * FROM demo");
-
-      // Before the fix, rows.length was 0 because the intermediate EOF
-      // was misinterpreted as end-of-result-set.
-      expect(rows.length).toBe(2);
-      expect(rows[0].id).toBe("1");
-      expect(rows[0].name).toBe("hello");
-      expect(rows[1].id).toBe("2");
-      expect(rows[1].name).toBe("world");
-    } finally {
-      server.close();
-    }
-  },
-);
+    // Before the fix, rows.length was 0 because the intermediate EOF
+    // was misinterpreted as end-of-result-set.
+    expect(rows.length).toBe(2);
+    expect(rows[0].id).toBe("1");
+    expect(rows[0].name).toBe("hello");
+    expect(rows[1].id).toBe("2");
+    expect(rows[1].name).toBe("world");
+  } finally {
+    server.close();
+  }
+});

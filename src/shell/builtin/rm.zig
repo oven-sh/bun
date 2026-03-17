@@ -812,7 +812,10 @@ pub const ShellRmTask = struct {
         }
 
         if (!this.opts.recursive) {
-            return Maybe(void).initErr(Syscall.Error.fromCode(bun.sys.E.ISDIR, .TODO).withPath(bun.handleOom(bun.default_allocator.dupe(u8, dir_task.path))));
+            return Maybe(void).initErr(this.errorWithPath(
+                Syscall.Error.fromCode(bun.sys.E.ISDIR, .TODO),
+                dir_task.path,
+            ));
         }
 
         const flags = bun.O.DIRECTORY | bun.O.RDONLY;

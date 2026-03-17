@@ -573,7 +573,9 @@ ${" ".repeat(counter * 2)}throw new Error(${counter});`,
       },
       verifyLine: (_errorLine, nextLine, counter) => {
         expect(nextLine).toInclude("bundle_in.ts");
-        const col = nextLine!.match(/\s*at.*?:4:(\d+)$/)![1];
+        const match = nextLine!.match(/\s*at.*?:4:(\d+)$/);
+        if (!match) throw new Error("invalid stack trace: " + nextLine);
+        const col = match[1];
         expect(Number(col)).toBe(1 + "throw ".length + counter * 2);
       },
     });
@@ -643,7 +645,9 @@ ${" ".repeat(counter * 2)}throw new Error(${counter});`,
       },
       verifyLine: (_errorLine, nextLine, counter) => {
         expect(nextLine).toInclude("bundle_in.ts");
-        const col = nextLine!.match(/\s*at.*?:4:(\d+)$/)![1];
+        const match = nextLine!.match(/\s*at.*?:4:(\d+)$/);
+        if (!match) throw new Error("invalid stack trace: " + nextLine);
+        const col = match[1];
         expect(Number(col)).toBe(1 + "throw ".length + counter * 2);
       },
     });

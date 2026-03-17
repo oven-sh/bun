@@ -42,6 +42,14 @@ export const globalFlags: Flag[] = [
     desc: "Target Apple M1 (works on all Apple Silicon)",
   },
   {
+    // CMake auto-added these via CMAKE_OSX_DEPLOYMENT_TARGET/CMAKE_OSX_SYSROOT;
+    // we must add explicitly. Without this, clang/ld64 default to the host SDK
+    // version — CI builds get minos=15.0, breaking macOS 13/14 users at launch.
+    flag: c => [`-mmacosx-version-min=${c.osxDeploymentTarget!}`, "-isysroot", c.osxSysroot!],
+    when: c => c.darwin && c.osxDeploymentTarget !== undefined && c.osxSysroot !== undefined,
+    desc: "macOS deployment target + SDK (sets LC_BUILD_VERSION minos)",
+  },
+  {
     flag: ["-march=armv8-a+crc", "-mtune=ampere1"],
     when: c => c.linux && c.arm64,
     desc: "ARM64 Linux: ARMv8-A base + CRC, tuned for Ampere (Graviton-like)",
@@ -585,6 +593,20 @@ export const linkerFlags: Flag[] = [
     when: c => c.unix && c.lto,
     desc: "LTO at link time (matches compile-side -flto=full)",
   },
+  {
+    // Without -O at link time, clang's driver defaults LTO codegen to -O2.
+    // CMake implicitly forwarded CMAKE_CXX_FLAGS (incl. -O2) to the link line;
+    // we must do so explicitly. Dropping this cost ~5 MB of .text on linux-x64
+    // (less unrolling/inlining in JSC — measurable in Yarr, DFG, BuiltinNames).
+    flag: "-O2",
+    when: c => c.unix && c.lto && c.release && !c.smol,
+    desc: "LTO codegen at -O2",
+  },
+  {
+    flag: "-Os",
+    when: c => c.unix && c.lto && c.smol,
+    desc: "LTO codegen at -Os (matches compile-side opt level)",
+  },
 
   // ─── Windows ───
   {
@@ -617,6 +639,14 @@ export const linkerFlags: Flag[] = [
     flag: ["-Wl,-ld_new", "-Wl,-no_compact_unwind", "-Wl,-stack_size,0x1200000", "-fno-keep-static-consts"],
     when: c => c.darwin,
     desc: "Use new Apple linker, 18MB stack, skip compact unwind",
+  },
+  {
+    // Must also be passed at link: ld64 reads this to write LC_BUILD_VERSION.minos.
+    // Without it, ld64 defaults to the SDK version (15.0 on CI) → binary refuses
+    // to launch on macOS 13/14. globalFlags doesn't flow to ldflags, so repeat here.
+    flag: c => [`-mmacosx-version-min=${c.osxDeploymentTarget!}`, "-isysroot", c.osxSysroot!],
+    when: c => c.darwin && c.osxDeploymentTarget !== undefined && c.osxSysroot !== undefined,
+    desc: "macOS deployment target at link (sets LC_BUILD_VERSION minos)",
   },
   {
     flag: "-Wl,-w",

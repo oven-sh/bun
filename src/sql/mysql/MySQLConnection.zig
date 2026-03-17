@@ -447,11 +447,10 @@ pub fn handleHandshake(this: *MySQLConnection, comptime Context: type, reader: N
         this.#tls_status = .ssl_not_available;
 
         switch (this.#ssl_mode) {
-            .verify_ca, .verify_full => {
+            .verify_ca, .verify_full, .require => {
                 return error.AuthenticationFailed;
             },
-            // require is the same as prefer
-            .require, .prefer, .disable => {},
+            .prefer, .disable => {},
         }
     }
     // Send auth response
@@ -869,8 +868,11 @@ pub fn handlePreparedStatement(this: *MySQLConnection, comptime Context: type, r
     if (statement.statement_id > 0) {
         // In legacy protocol (CLIENT_DEPRECATE_EOF not negotiated), the server sends
         // intermediate EOF packets between param definitions and column definitions,
-        // and after column definitions. Skip these EOF packets.
+        // and after column definitions. We must consume these EOF packets and only
+        // finalize the prepared statement after the trailing EOF is consumed.
         if (!this.#capabilities.CLIENT_DEPRECATE_EOF and @as(PacketType, @enumFromInt(first_byte)) == .EOF) {
+            var eof = EOFPacket{};
+            try eof.decode(reader);
             this.checkIfPreparedStatementIsDone(statement);
             return;
         }
@@ -887,7 +889,13 @@ pub fn handlePreparedStatement(this: *MySQLConnection, comptime Context: type, r
             try statement.columns[statement.columns_received].decode(reader);
             statement.columns_received += 1;
         }
-        this.checkIfPreparedStatementIsDone(statement);
+        // In CLIENT_DEPRECATE_EOF mode, there are no trailing EOF packets, so
+        // we check completion after each column/param definition. In legacy mode,
+        // completion is deferred to the EOF handler above to avoid marking the
+        // statement as prepared before the trailing EOF is consumed.
+        if (this.#capabilities.CLIENT_DEPRECATE_EOF) {
+            this.checkIfPreparedStatementIsDone(statement);
+        }
         return;
     }
 

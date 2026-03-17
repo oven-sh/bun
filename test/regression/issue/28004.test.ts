@@ -35,15 +35,16 @@ function lenEncStr(str: string): Buffer {
 
 /**
  * Build a HandshakeV10 payload. The server capabilities deliberately
- * EXCLUDE CLIENT_DEPRECATE_EOF to simulate StarRocks / MySQL 5.7.
+ * EXCLUDE CLIENT_DEPRECATE_EOF to simulate StarRocks / MySQL-compatible databases.
  */
 function buildHandshake(): Buffer {
   const parts: Buffer[] = [];
 
   // Protocol version
   parts.push(Buffer.from([0x0a]));
-  // Server version (null-terminated)
-  parts.push(Buffer.from("5.7.0-mock-no-deprecate-eof\0"));
+  // Server version (null-terminated) - use 8.0.x to catch regressions
+  // that might reintroduce version-based assumptions
+  parts.push(Buffer.from("8.0.36-mock-no-deprecate-eof\0"));
   // Connection ID (4 bytes LE)
   const connId = Buffer.alloc(4);
   connId.writeUInt32LE(1);
@@ -227,5 +228,4 @@ test(
       server.close();
     }
   },
-  { timeout: 10_000 },
 );

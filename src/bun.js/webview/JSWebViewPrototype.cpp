@@ -26,6 +26,7 @@ static JSC_DECLARE_HOST_FUNCTION(jsWebViewProtoFuncClick);
 static JSC_DECLARE_HOST_FUNCTION(jsWebViewProtoFuncType);
 static JSC_DECLARE_HOST_FUNCTION(jsWebViewProtoFuncPress);
 static JSC_DECLARE_HOST_FUNCTION(jsWebViewProtoFuncScroll);
+static JSC_DECLARE_HOST_FUNCTION(jsWebViewProtoFuncScrollTo);
 static JSC_DECLARE_HOST_FUNCTION(jsWebViewProtoFuncResize);
 static JSC_DECLARE_HOST_FUNCTION(jsWebViewProtoFuncBack);
 static JSC_DECLARE_HOST_FUNCTION(jsWebViewProtoFuncForward);
@@ -48,6 +49,7 @@ static const HashTableValue JSWebViewPrototypeTableValues[] = {
     { "type"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWebViewProtoFuncType, 1 } },
     { "press"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWebViewProtoFuncPress, 1 } },
     { "scroll"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWebViewProtoFuncScroll, 2 } },
+    { "scrollTo"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWebViewProtoFuncScrollTo, 1 } },
     { "resize"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWebViewProtoFuncResize, 2 } },
     { "back"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWebViewProtoFuncBack, 0 } },
     { "forward"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWebViewProtoFuncForward, 0 } },
@@ -158,10 +160,10 @@ static uint8_t parseModifiers(JSGlobalObject* g, ThrowScope& scope, JSValue v)
         RETURN_IF_EXCEPTION(scope, 0);
         WTF::String s = item.toWTFString(g);
         RETURN_IF_EXCEPTION(scope, 0);
-        if (s == "shift"_s)      mods |= ModShift;
-        else if (s == "ctrl"_s || s == "control"_s) mods |= ModCtrl;
-        else if (s == "alt"_s || s == "option"_s)   mods |= ModAlt;
-        else if (s == "meta"_s || s == "cmd"_s || s == "command"_s) mods |= ModMeta;
+        if (s == "Shift"_s || s == "shift"_s)      mods |= ModShift;
+        else if (s == "Control"_s || s == "ctrl"_s || s == "control"_s) mods |= ModCtrl;
+        else if (s == "Alt"_s || s == "alt"_s || s == "option"_s)   mods |= ModAlt;
+        else if (s == "Meta"_s || s == "meta"_s || s == "cmd"_s || s == "command"_s) mods |= ModMeta;
     }
     return mods;
 }
@@ -262,33 +264,57 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncClick, (JSGlobalObject * globalObject
     auto* thisObject = unwrapThis(globalObject, scope, callFrame, "click"_s);
     RETURN_IF_EXCEPTION(scope, {});
 
-    double x = callFrame->argument(0).toNumber(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-    double y = callFrame->argument(1).toNumber(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
+    JSValue arg0 = callFrame->argument(0);
 
-    // Optional { button: "left"|"right"|"middle", modifiers: [...], clickCount }
+    // Shared options parse: { button, modifiers, clickCount, timeout }
+    // timeout only applies to the selector overload.
     uint8_t button = 0, mods = 0, clickCount = 1;
-    JSValue opts = callFrame->argument(2);
-    if (opts.isObject()) {
+    uint32_t timeout = 30000;
+    auto parseOpts = [&](JSValue opts) -> bool {
+        if (!opts.isObject()) return true;
         JSObject* o = opts.getObject();
         JSValue b = o->get(globalObject, Identifier::fromString(vm, "button"_s));
-        RETURN_IF_EXCEPTION(scope, {});
+        RETURN_IF_EXCEPTION(scope, false);
         if (b.isString()) {
             WTF::String bs = b.toWTFString(globalObject);
-            RETURN_IF_EXCEPTION(scope, {});
+            RETURN_IF_EXCEPTION(scope, false);
             if (bs == "right"_s) button = 1;
             else if (bs == "middle"_s) button = 2;
         }
         JSValue m = o->get(globalObject, Identifier::fromString(vm, "modifiers"_s));
-        RETURN_IF_EXCEPTION(scope, {});
+        RETURN_IF_EXCEPTION(scope, false);
         mods = parseModifiers(globalObject, scope, m);
-        RETURN_IF_EXCEPTION(scope, {});
+        RETURN_IF_EXCEPTION(scope, false);
         JSValue cc = o->get(globalObject, Identifier::fromString(vm, "clickCount"_s));
-        RETURN_IF_EXCEPTION(scope, {});
+        RETURN_IF_EXCEPTION(scope, false);
         if (cc.isNumber()) clickCount = static_cast<uint8_t>(std::clamp(cc.toInt32(globalObject), 1, 3));
+        RETURN_IF_EXCEPTION(scope, false);
+        JSValue t = o->get(globalObject, Identifier::fromString(vm, "timeout"_s));
+        RETURN_IF_EXCEPTION(scope, false);
+        if (t.isNumber()) timeout = static_cast<uint32_t>(std::max(0.0, t.toNumber(globalObject)));
+        RETURN_IF_EXCEPTION(scope, false);
+        return true;
+    };
+
+    // click(selector, opts?) — rAF-polled actionability check page-side
+    // via callAsyncJavaScript:, then native click at the resolved center.
+    if (arg0.isString()) {
+        WTF::String selector = arg0.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
+        if (selector.isEmpty()) {
+            return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "selector"_s, arg0, "must not be empty"_s);
+        }
+        if (!parseOpts(callFrame->argument(1))) return {};
+        if (!checkSlot(globalObject, scope, thisObject->m_pendingMisc, "a simple operation"_s)) return {};
+        return JSValue::encode(thisObject->clickSelector(globalObject, selector, timeout, button, mods, clickCount));
     }
+
+    // click(x, y, opts?)
+    double x = arg0.toNumber(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    double y = callFrame->argument(1).toNumber(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!parseOpts(callFrame->argument(2))) return {};
 
     if (!checkSlot(globalObject, scope, thisObject->m_pendingMisc, "a simple operation"_s)) return {};
     return JSValue::encode(thisObject->click(globalObject,
@@ -365,6 +391,55 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncScroll, (JSGlobalObject * globalObjec
 
     if (!checkSlot(globalObject, scope, thisObject->m_pendingMisc, "a simple operation"_s)) return {};
     return JSValue::encode(thisObject->scroll(globalObject, dx, dy));
+#endif
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncScrollTo, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+#if !OS(DARWIN)
+    WEBVIEW_UNIMPLEMENTED_BODY("scrollTo")
+#else
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* thisObject = unwrapThis(globalObject, scope, callFrame, "scrollTo"_s);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    JSValue arg0 = callFrame->argument(0);
+    if (!arg0.isString()) {
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "selector"_s, "string"_s, arg0);
+    }
+    WTF::String selector = arg0.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (selector.isEmpty()) {
+        return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "selector"_s, arg0, "must not be empty"_s);
+    }
+
+    // opts: { timeout?, block?: "start"|"center"|"end"|"nearest" }
+    uint32_t timeout = 30000;
+    uint8_t block = 1;  // center
+    JSValue opts = callFrame->argument(1);
+    if (opts.isObject()) {
+        JSObject* o = opts.getObject();
+        JSValue t = o->get(globalObject, Identifier::fromString(vm, "timeout"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+        if (t.isNumber()) timeout = static_cast<uint32_t>(std::max(0.0, t.toNumber(globalObject)));
+        RETURN_IF_EXCEPTION(scope, {});
+        JSValue b = o->get(globalObject, Identifier::fromString(vm, "block"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+        if (b.isString()) {
+            WTF::String bs = b.toWTFString(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (bs == "start"_s) block = 0;
+            else if (bs == "center"_s) block = 1;
+            else if (bs == "end"_s) block = 2;
+            else if (bs == "nearest"_s) block = 3;
+            else return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "block"_s, b,
+                "must be \"start\", \"center\", \"end\", or \"nearest\""_s);
+        }
+    }
+
+    if (!checkSlot(globalObject, scope, thisObject->m_pendingMisc, "a simple operation"_s)) return {};
+    return JSValue::encode(thisObject->scrollTo(globalObject, selector, timeout, block));
 #endif
 }
 

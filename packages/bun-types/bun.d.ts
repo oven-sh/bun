@@ -7770,6 +7770,247 @@ declare module "bun" {
     match(str: string): boolean;
   }
 
+  namespace WebView {
+    type Modifier = "Shift" | "Control" | "Alt" | "Meta";
+
+    type VirtualKey =
+      | "Enter"
+      | "Tab"
+      | "Space"
+      | "Backspace"
+      | "Delete"
+      | "Escape"
+      | "ArrowLeft"
+      | "ArrowRight"
+      | "ArrowUp"
+      | "ArrowDown"
+      | "Home"
+      | "End"
+      | "PageUp"
+      | "PageDown";
+
+    interface ClickOptions {
+      /** @default "left" */
+      button?: "left" | "right" | "middle";
+      /** Modifier keys to hold during the click. */
+      modifiers?: Modifier[];
+      /** Number of clicks (1 = single, 2 = double). @default 1 */
+      clickCount?: 1 | 2 | 3;
+    }
+
+    interface ClickSelectorOptions extends ClickOptions {
+      /**
+       * Maximum time in milliseconds to wait for the element to become
+       * actionable (attached, visible, stable for 2 frames, not obscured).
+       * @default 30000
+       */
+      timeout?: number;
+    }
+
+    interface ScrollToOptions {
+      /**
+       * Maximum time in milliseconds to wait for the element to exist.
+       * @default 30000
+       */
+      timeout?: number;
+      /**
+       * Vertical alignment. `"nearest"` scrolls minimally (no-op if already
+       * in view); `"center"` snaps the element's center to the viewport
+       * center.
+       * @default "center"
+       */
+      block?: "start" | "center" | "end" | "nearest";
+    }
+
+    interface PressOptions {
+      /** Modifier keys to hold during the keypress. */
+      modifiers?: Modifier[];
+    }
+
+    interface ConstructorOptions {
+      /** Viewport width in pixels. Range: [1, 16384]. */
+      width: number;
+      /** Viewport height in pixels. Range: [1, 16384]. */
+      height: number;
+      /** Only `true` (headless) is implemented. @default true */
+      headless?: boolean;
+      /**
+       * Storage backing for cookies, localStorage, IndexedDB, etc.
+       *
+       * - `"ephemeral"` (default): in-memory only, nothing written to disk.
+       * - `{ directory }`: persistent storage rooted at the given path.
+       *   Multiple views with the same directory share state.
+       */
+      dataStore?: "ephemeral" | { directory: string };
+    }
+  }
+
+  /**
+   * A headless WKWebView for browser automation. Currently macOS-only.
+   *
+   * Each view runs its page in a separate WebContent process (WebKit2
+   * architecture). All input methods dispatch **native** events — mouse
+   * events go through the NSResponder chain, wheel events are synthesized
+   * via CGEvent, and the resulting DOM events have `isTrusted: true`.
+   *
+   * @example
+   * ```ts
+   * const view = new Bun.WebView({ width: 800, height: 600 });
+   * await view.navigate("https://example.com");
+   * await view.click("button[type=submit]");  // waits for actionability
+   * const title = await view.evaluate("document.title");
+   * const png = await view.screenshot();
+   * view.close();
+   * ```
+   *
+   * @experimental
+   */
+  class WebView {
+    /**
+     * @throws on non-macOS platforms (not yet implemented).
+     */
+    constructor(options: WebView.ConstructorOptions);
+
+    /** The last-navigated URL. Updated when a navigation completes. */
+    readonly url: string;
+    /** The page's `<title>`. Updated when a navigation completes. */
+    readonly title: string;
+    /** True while a navigation is in flight. */
+    readonly loading: boolean;
+
+    /**
+     * Fired when a navigation completes successfully. The callback runs
+     * before the corresponding `navigate()` promise resolves.
+     */
+    onNavigated: ((url: string, title: string) => void) | null;
+    /**
+     * Fired when a navigation fails. The callback runs before the
+     * corresponding `navigate()` promise rejects.
+     */
+    onNavigationFailed: ((error: string) => void) | null;
+
+    /**
+     * Navigate to a URL. Resolves when the main frame's load completes
+     * (WKNavigationDelegate `didFinishNavigation`).
+     *
+     * @example
+     * ```ts
+     * await view.navigate("https://example.com");
+     * await view.navigate("data:text/html,<h1>hello</h1>");
+     * ```
+     */
+    navigate(url: string): Promise<void>;
+
+    /**
+     * Run JavaScript in the page's main frame and return the result.
+     * The result must be JSON-serializable (string, number, boolean, null,
+     * or a structure of those).
+     *
+     * Only one `evaluate()` may be in flight at a time per view; a second
+     * concurrent call throws `ERR_INVALID_STATE`.
+     */
+    evaluate(script: string): Promise<string>;
+
+    /**
+     * Capture a PNG screenshot of the current viewport.
+     */
+    screenshot(): Promise<Uint8Array>;
+
+    /**
+     * Click at the given viewport coordinates.
+     *
+     * Fires native `pointerdown`/`mousedown`/`pointerup`/`mouseup`/`click`
+     * events with `isTrusted: true`. The promise resolves after WebContent
+     * has processed the full event sequence (including all JS handlers) —
+     * no polling, WebKit's own mouse-queue-drain barrier.
+     */
+    click(x: number, y: number, options?: WebView.ClickOptions): Promise<void>;
+    /**
+     * Wait for an element to become actionable, then click its center.
+     *
+     * Actionability is checked page-side at rAF rate: the element must be
+     * attached, have non-zero size, be in the viewport, be stable (bounding
+     * box unchanged for 2 consecutive frames), and be the topmost element
+     * at its center point (not obscured). Once actionable, a native click
+     * fires at the center coordinates.
+     *
+     * @example
+     * ```ts
+     * // Waits for the button to appear and stop animating, then clicks.
+     * await view.click("#submit");
+     * ```
+     */
+    click(selector: string, options?: WebView.ClickSelectorOptions): Promise<void>;
+
+    /**
+     * Insert text into the focused element.
+     *
+     * Uses WebKit's `InsertText` editing command (not keystroke simulation),
+     * so no `keydown` events fire — this is the same path as paste. No IME,
+     * no smart-quote substitution; the text lands exactly as given. Fires
+     * `beforeinput`/`input` with `isTrusted: true`.
+     */
+    type(text: string): Promise<void>;
+
+    /**
+     * Press a key.
+     *
+     * Named keys (`"Enter"`, `"Backspace"`, `"ArrowLeft"`, etc.) map to
+     * editing commands where available and resolve when WebContent has
+     * processed them. `"Escape"` and keys with modifiers fall back to raw
+     * keyDown/keyUp (no WebKit barrier exists for keyboard events — a
+     * following `evaluate()` serializes).
+     *
+     * A single character (e.g. `"a"`) combined with `modifiers` sends a
+     * chord like Cmd+A.
+     */
+    press(key: WebView.VirtualKey | (string & {}), options?: WebView.PressOptions): Promise<void>;
+
+    /**
+     * Scroll the viewport by the given pixel delta.
+     *
+     * Fires a native `wheel` event with `isTrusted: true` at the viewport
+     * center. Positive `dy` scrolls down (content up), matching
+     * `window.scrollBy` semantics.
+     */
+    scroll(dx: number, dy: number): Promise<void>;
+
+    /**
+     * Wait for an element to exist, then scroll it into view.
+     *
+     * Uses `Element.scrollIntoView({ block, behavior: 'instant' })` —
+     * scrolls every scrollable ancestor in the chain, not just the
+     * document. `scrollY` is updated synchronously before the promise
+     * resolves. No `wheel` event fires (this is a programmatic scroll).
+     *
+     * @example
+     * ```ts
+     * await view.scrollTo("#footer");               // center (default)
+     * await view.scrollTo("#hero", { block: "start" });
+     * await view.scrollTo(".item", { block: "nearest" }); // minimal scroll
+     * ```
+     */
+    scrollTo(selector: string, options?: WebView.ScrollToOptions): Promise<void>;
+
+    /**
+     * Resize the viewport.
+     */
+    resize(width: number, height: number): Promise<void>;
+
+    /** Navigate back in session history. */
+    back(): Promise<void>;
+    /** Navigate forward in session history. */
+    forward(): Promise<void>;
+    /** Reload the current page. */
+    reload(): Promise<void>;
+
+    /**
+     * Close the view and release its WebContent process. After close,
+     * all methods throw. Idempotent.
+     */
+    close(): void;
+  }
+
   /**
    * Input data for creating an archive. Can be:
    * - An object mapping paths to file contents (string, Blob, TypedArray, or ArrayBuffer)

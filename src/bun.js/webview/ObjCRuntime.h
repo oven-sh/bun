@@ -117,11 +117,13 @@ struct NSURLRequest : Ref {
 struct NSError : Ref {
     using Ref::Ref;
     static SEL s_localizedDescription;
+    static SEL s_userInfo;
 
     WTF::String localizedDescription() const
     {
         return NSString(msg<id>(s_localizedDescription)).toWTF();
     }
+    id userInfo() const { return msg<id>(s_userInfo); }
 };
 
 struct NSData : Ref {
@@ -131,6 +133,37 @@ struct NSData : Ref {
 
     const void* bytes() const { return msg<const void*>(s_bytes); }
     unsigned long length() const { return msg<unsigned long>(s_length); }
+};
+
+struct NSNumber : Ref {
+    using Ref::Ref;
+    static Class cls;
+    static SEL s_numberWithDouble;
+    static NSNumber withDouble(double d) { return msgCls<id>(cls, s_numberWithDouble, d); }
+};
+
+struct NSDictionary : Ref {
+    using Ref::Ref;
+    static Class cls;
+    // dictionaryWithObjects:forKeys:count: — non-variadic. The variadic
+    // dictionaryWithObjectsAndKeys: puts all args on the stack on arm64
+    // (variadic ABI), but msgCls<> casts to a fixed signature which puts
+    // them in registers; the callee reads garbage.
+    static SEL s_dictionaryWithObjects_forKeys_count;
+    static SEL s_objectForKey;
+    id objectForKey(id key) const { return msg<id>(s_objectForKey, key); }
+    static NSDictionary with2(id v1, id k1, id v2, id k2)
+    {
+        id vs[2] = { v1, v2 };
+        id ks[2] = { k1, k2 };
+        return msgCls<id>(cls, s_dictionaryWithObjects_forKeys_count, vs, ks, (unsigned long)2);
+    }
+    static NSDictionary with3(id v1, id k1, id v2, id k2, id v3, id k3)
+    {
+        id vs[3] = { v1, v2, v3 };
+        id ks[3] = { k1, k2, k3 };
+        return msgCls<id>(cls, s_dictionaryWithObjects_forKeys_count, vs, ks, (unsigned long)3);
+    }
 };
 
 struct NSObject : Ref {
@@ -179,6 +212,9 @@ struct NSWindow : Ref {
     void setContentView(id view) { msg<void>(s_setContentView, view); }
     void setContentSize(double w, double h) { msg<void>(s_setContentSize, CGSizeMake(w, h)); }
     void close() { msg<void>(s_close); }
+
+    static SEL s_orderFront;
+    void orderFront() { msg<void>(s_orderFront, (id)nullptr); }
 
     static SEL s_windowNumber;
     long windowNumber() const { return msg<long>(s_windowNumber); }
@@ -416,8 +452,26 @@ struct WKWebView : Ref {
         return web;
     }
     void setNavigationDelegate(id d) { msg<void>(s_setNavigationDelegate, d); }
+    static SEL s_setUIDelegate;
+    void setUIDelegate(id d) { msg<void>(s_setUIDelegate, d); }
     void loadRequest(NSURLRequest r) { msg<void>(s_loadRequest, r.m_id); }
     void evaluate(NSString script, void* block) { msg<void>(s_evaluateJavaScript_completionHandler, script.m_id, block); }
+
+    // callAsyncJavaScript:arguments:inFrame:inContentWorld:completionHandler:
+    // (public API, macOS 11.0+). The body is wrapped in an async function;
+    // named keys in the args dict become named parameters. If the body
+    // returns a thenable, WebKit awaits it — completion fires on resolve,
+    // or with WKErrorJavaScriptAsyncFunctionResultRejected on reject, or
+    // WKErrorJavaScriptAsyncFunctionResultUnreachable if the promise GCs
+    // (page navigated away). No polling; the page-side Promise is the signal.
+    static Class cls_WKContentWorld;
+    static SEL s_pageWorld;
+    static SEL s_callAsyncJavaScript;
+    void callAsync(NSString body, id argsDict, void* block)
+    {
+        id world = msgCls<id>(cls_WKContentWorld, s_pageWorld);
+        msg<void>(s_callAsyncJavaScript, body.m_id, argsDict, (id)nullptr /*frame*/, world, block);
+    }
     void stopLoading() { msg<void>(s_stopLoading); }
     void reload() { msg<void>(s_reload); }
     bool canGoBack() const { return msg<signed char>(s_canGoBack) != 0; }
@@ -464,6 +518,21 @@ struct WKWebView : Ref {
         msg<void>(s_setAutomaticQuoteSubstitutionEnabled, (signed char)0);
         msg<void>(s_setAutomaticDashSubstitutionEnabled, (signed char)0);
         msg<void>(s_setAutomaticTextReplacementEnabled, (signed char)0);
+    }
+
+    // With the window offscreen and never orderFront'd, visibilityState is
+    // "hidden" and requestAnimationFrame never fires — spec'd behavior,
+    // the display link is gated on page visibility. orderFront: alone
+    // doesn't help because WKWebView's occlusion detection (via
+    // NSWindowDidChangeOcclusionStateNotification) correctly sees the
+    // window at (-10000,-10000) is fully occluded. Disabling occlusion
+    // detection + orderFront: = visibilityState "visible" + rAF ticks at
+    // display rate. The window is still invisible to the user: borderless,
+    // offscreen, ActivationPolicyProhibited means it can't be activated.
+    static SEL s_setWindowOcclusionDetectionEnabled;
+    void disableOcclusionDetection()
+    {
+        msg<void>(s_setWindowOcclusionDetectionEnabled, (signed char)0);
     }
 
     // Input completion SPIs. Both are the proper WebKit-owned barriers:
@@ -544,6 +613,7 @@ public:
     WebViewHost* m_screenshotTarget = nullptr;
     WebViewHost* m_inputTarget = nullptr;
     WebViewHost* m_scrollTarget = nullptr;
+    WebViewHost* m_selectorTarget = nullptr;
 
     static ObjCRuntime* tryLoad();
 
@@ -577,6 +647,7 @@ void* snapshotCompletionBlock();
 void* editCommandCompletionBlock();
 void* mouseBarrierBlock();
 void* scrollBarrierBlock();
+void* selectorCompletionBlock();
 
 } // namespace Bun
 

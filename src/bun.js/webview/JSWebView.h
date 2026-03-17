@@ -62,9 +62,11 @@ public:
     JSC::JSPromise* evaluate(JSC::JSGlobalObject*, const WTF::String& script);
     JSC::JSPromise* screenshot(JSC::JSGlobalObject*);
     JSC::JSPromise* click(JSC::JSGlobalObject*, float x, float y, uint8_t button, uint8_t modifiers, uint8_t clickCount);
+    JSC::JSPromise* clickSelector(JSC::JSGlobalObject*, const WTF::String& selector, uint32_t timeout, uint8_t button, uint8_t modifiers, uint8_t clickCount);
     JSC::JSPromise* type(JSC::JSGlobalObject*, const WTF::String& text);
     JSC::JSPromise* press(JSC::JSGlobalObject*, WebViewProto::VirtualKey, uint8_t modifiers, const WTF::String& character);
     JSC::JSPromise* scroll(JSC::JSGlobalObject*, double dx, double dy);
+    JSC::JSPromise* scrollTo(JSC::JSGlobalObject*, const WTF::String& selector, uint32_t timeout, uint8_t block);
     JSC::JSPromise* resize(JSC::JSGlobalObject*, uint32_t width, uint32_t height);
     JSC::JSPromise* goBack(JSC::JSGlobalObject*);
     JSC::JSPromise* goForward(JSC::JSGlobalObject*);

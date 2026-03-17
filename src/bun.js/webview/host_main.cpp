@@ -282,6 +282,20 @@ void Host::dispatch(uint32_t viewId, Op op, Reader r)
         }
         return;
     }
+    case Op::ClickSelector: {
+        auto p = decode<ClickSelectorPayload>(r);
+        if (auto* v = view(viewId)) {
+            if (!v->clickSelectorIPC(r.str(), p.timeout, p.button, p.modifiers, p.clickCount)) writer.sendReply(viewId, Reply::Ack);
+        }
+        return;
+    }
+    case Op::ScrollTo: {
+        auto p = decode<ScrollToPayload>(r);
+        if (auto* v = view(viewId)) {
+            if (!v->scrollToIPC(r.str(), p.timeout, p.block)) writer.sendReply(viewId, Reply::Ack);
+        }
+        return;
+    }
     }
     writer.sendReplyStr(viewId, Reply::Error, "unknown op"_s);
 }

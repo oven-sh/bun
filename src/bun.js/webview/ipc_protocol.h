@@ -57,6 +57,16 @@ enum class Op : uint8_t {
     Type       = 11, // str text
     Press      = 12, // PressPayload + [str char iff VirtualKey::Character]
     Scroll     = 13, // ScrollPayload
+
+    // click(selector) — page-side rAF-polled actionability check via
+    // callAsyncJavaScript:, then native click at the resolved coords.
+    ClickSelector = 14, // ClickSelectorPayload + str selector
+
+    // scrollTo(selector) — page-side scrollIntoView via callAsyncJavaScript:
+    // after waiting for the element to exist. No native wheel; scroll event
+    // fires (isTrusted:true — browser-driven), scrollY updates,
+    // IntersectionObserver triggers.
+    ScrollTo   = 15, // ScrollToPayload + str selector
 };
 
 // Mouse button: 0=left, 1=right, 2=middle.
@@ -104,6 +114,20 @@ struct ScrollPayload {
     float deltaY;
 };
 
+struct ClickSelectorPayload {
+    uint32_t timeout;         // ms; page-time (performance.now), pauses with debugger
+    uint8_t  button;
+    uint8_t  modifiers;
+    uint8_t  clickCount;
+    // str selector follows
+};
+
+struct ScrollToPayload {
+    uint32_t timeout;
+    uint8_t  block;           // 0=start 1=center 2=end 3=nearest
+    // str selector follows
+};
+
 #pragma pack(pop)
 
 static_assert(sizeof(CreatePayload) == 9);
@@ -111,6 +135,8 @@ static_assert(sizeof(ClickPayload) == 11);
 static_assert(sizeof(ResizePayload) == 8);
 static_assert(sizeof(PressPayload) == 2);
 static_assert(sizeof(ScrollPayload) == 8);
+static_assert(sizeof(ClickSelectorPayload) == 7);
+static_assert(sizeof(ScrollToPayload) == 5);
 
 // Encode: POD head + optional trailing string (u32 len + utf8). 64 bytes
 // inline covers every head; strings that overflow it heap-allocate, which

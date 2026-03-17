@@ -35,9 +35,17 @@ Class NSURLRequest::cls;
 SEL NSURLRequest::s_requestWithURL;
 
 SEL NSError::s_localizedDescription;
+SEL NSError::s_userInfo;
 
 SEL NSData::s_bytes;
 SEL NSData::s_length;
+
+Class NSNumber::cls;
+SEL NSNumber::s_numberWithDouble;
+
+Class NSDictionary::cls;
+SEL NSDictionary::s_dictionaryWithObjects_forKeys_count;
+SEL NSDictionary::s_objectForKey;
 
 Class NSApplication::cls;
 SEL NSApplication::s_sharedApplication;
@@ -60,6 +68,7 @@ SEL NSImage::s_CGImageForProposedRect_context_hints;
 
 SEL NSWindow::s_windowNumber;
 SEL NSWindow::s_convertPointToScreen;
+SEL NSWindow::s_orderFront;
 
 Class NSProcessInfo::cls;
 SEL NSProcessInfo::s_processInfo;
@@ -88,9 +97,13 @@ SEL WKWebView::s_scrollWheel;
 SEL WKWebView::s_setAutomaticQuoteSubstitutionEnabled;
 SEL WKWebView::s_setAutomaticDashSubstitutionEnabled;
 SEL WKWebView::s_setAutomaticTextReplacementEnabled;
+SEL WKWebView::s_setWindowOcclusionDetectionEnabled;
 SEL WKWebView::s_executeEditCommand;
 SEL WKWebView::s_doAfterPendingMouseEvents;
 SEL WKWebView::s_doAfterNextPresentationUpdate;
+Class WKWebView::cls_WKContentWorld;
+SEL WKWebView::s_pageWorld;
+SEL WKWebView::s_callAsyncJavaScript;
 
 Class WKWebViewConfiguration::cls;
 Class WKWebViewConfiguration::cls_WKWebsiteDataStore;
@@ -124,6 +137,7 @@ Class WKWebView::cls;
 Class WKWebView::cls_WKSnapshotConfiguration;
 SEL WKWebView::s_initWithFrame_configuration;
 SEL WKWebView::s_setNavigationDelegate;
+SEL WKWebView::s_setUIDelegate;
 SEL WKWebView::s_loadRequest;
 SEL WKWebView::s_evaluateJavaScript_completionHandler;
 SEL WKWebView::s_stopLoading;
@@ -198,17 +212,28 @@ static void scrollBarrierBlockInvoke(void* /*blockSelf*/)
     if (host) host->onScrollBarrier();
 }
 
+// callAsyncJavaScript: completion — same signature as eval, (id result, id error).
+static void selectorBlockInvoke(void* /*blockSelf*/, id result, id error)
+{
+    auto* rt = ObjCRuntime::tryLoad();
+    auto* host = rt->m_selectorTarget;
+    rt->m_selectorTarget = nullptr;
+    if (host) host->onSelectorComplete(result, error);
+}
+
 static GlobalBlock<CompletionInvoke> g_evalBlock;
 static GlobalBlock<CompletionInvoke> g_snapshotBlock;
 static GlobalBlock<EditCmdInvoke> g_editCmdBlock;
 static GlobalBlock<VoidInvoke> g_mouseBarrierBlock;
 static GlobalBlock<VoidInvoke> g_scrollBarrierBlock;
+static GlobalBlock<CompletionInvoke> g_selectorBlock;
 
 void* evalCompletionBlock() { return &g_evalBlock; }
 void* snapshotCompletionBlock() { return &g_snapshotBlock; }
 void* editCommandCompletionBlock() { return &g_editCmdBlock; }
 void* mouseBarrierBlock() { return &g_mouseBarrierBlock; }
 void* scrollBarrierBlock() { return &g_scrollBarrierBlock; }
+void* selectorCompletionBlock() { return &g_selectorBlock; }
 
 // --- Delegate IMPs ---------------------------------------------------------
 // Installed on the runtime-registered BunWKNavigationDelegate class.
@@ -230,6 +255,21 @@ static void delegateDidFailNavigation(id self, SEL, id /*webView*/, id /*navigat
 static void delegateDidFailProvisionalNavigation(id self, SEL _cmd, id webView, id navigation, id error)
 {
     delegateDidFailNavigation(self, _cmd, webView, navigation, error);
+}
+
+// _webView:getContextMenuFromProposedMenu:forElement:userInfo:completionHandler:
+// (WKUIDelegatePrivate, macOS 10.14+). With the page visible (orderFront +
+// occlusion detection off), right-click actually opens NSMenu's modal runloop
+// — rightMouseDown → XPC contextmenu → WebContextMenuProxyMac::show blocks.
+// Calling the completion with nil suppresses it without touching the page's
+// own contextmenu handling.
+static void delegateGetContextMenu(id, SEL, id /*web*/, id /*menu*/, id /*element*/, id /*userInfo*/, void* handler)
+{
+    // The block's invoke is at offset 16 (isa + flags + reserved). The
+    // signature is void(^)(NSMenu*); call with nil.
+    struct { void* isa; int32_t flags; int32_t reserved; void (*invoke)(void*, id); }* block
+        = reinterpret_cast<decltype(block)>(handler);
+    block->invoke(handler, nullptr);
 }
 
 } // extern "C"
@@ -328,9 +368,17 @@ bool ObjCRuntime::load()
     NSURLRequest::s_requestWithURL = sel("requestWithURL:");
 
     NSError::s_localizedDescription = sel("localizedDescription");
+    NSError::s_userInfo = sel("userInfo");
 
     NSData::s_bytes = sel("bytes");
     NSData::s_length = sel("length");
+
+    CLS(NSNumber::cls, "NSNumber");
+    NSNumber::s_numberWithDouble = sel("numberWithDouble:");
+
+    CLS(NSDictionary::cls, "NSDictionary");
+    NSDictionary::s_dictionaryWithObjects_forKeys_count = sel("dictionaryWithObjects:forKeys:count:");
+    NSDictionary::s_objectForKey = sel("objectForKey:");
 
     CLS(NSApplication::cls, "NSApplication");
     NSApplication::s_sharedApplication = sel("sharedApplication");
@@ -353,6 +401,7 @@ bool ObjCRuntime::load()
 
     NSWindow::s_windowNumber = sel("windowNumber");
     NSWindow::s_convertPointToScreen = sel("convertPointToScreen:");
+    NSWindow::s_orderFront = sel("orderFront:");
 
     CLS(NSProcessInfo::cls, "NSProcessInfo");
     NSProcessInfo::s_processInfo = sel("processInfo");
@@ -394,6 +443,7 @@ bool ObjCRuntime::load()
     CLS(WKWebView::cls_WKSnapshotConfiguration, "WKSnapshotConfiguration");
     WKWebView::s_initWithFrame_configuration = sel("initWithFrame:configuration:");
     WKWebView::s_setNavigationDelegate = sel("setNavigationDelegate:");
+    WKWebView::s_setUIDelegate = sel("setUIDelegate:");
     WKWebView::s_loadRequest = sel("loadRequest:");
     WKWebView::s_evaluateJavaScript_completionHandler = sel("evaluateJavaScript:completionHandler:");
     WKWebView::s_stopLoading = sel("stopLoading");
@@ -419,9 +469,13 @@ bool ObjCRuntime::load()
     WKWebView::s_setAutomaticQuoteSubstitutionEnabled = sel("setAutomaticQuoteSubstitutionEnabled:");
     WKWebView::s_setAutomaticDashSubstitutionEnabled = sel("setAutomaticDashSubstitutionEnabled:");
     WKWebView::s_setAutomaticTextReplacementEnabled = sel("setAutomaticTextReplacementEnabled:");
+    WKWebView::s_setWindowOcclusionDetectionEnabled = sel("_setWindowOcclusionDetectionEnabled:");
     WKWebView::s_executeEditCommand = sel("_executeEditCommand:argument:completion:");
     WKWebView::s_doAfterPendingMouseEvents = sel("_doAfterProcessingAllPendingMouseEvents:");
     WKWebView::s_doAfterNextPresentationUpdate = sel("_doAfterNextPresentationUpdate:");
+    CLS(WKWebView::cls_WKContentWorld, "WKContentWorld");
+    WKWebView::s_pageWorld = sel("pageWorld");
+    WKWebView::s_callAsyncJavaScript = sel("callAsyncJavaScript:arguments:inFrame:inContentWorld:completionHandler:");
 #undef CLS
 
     // --- initialize global blocks -----------------------------------------
@@ -433,6 +487,7 @@ bool ObjCRuntime::load()
     g_editCmdBlock = { nsConcreteGlobalBlock, BLOCK_IS_GLOBAL, 0, editCmdBlockInvoke, &g_blockDescriptor };
     g_mouseBarrierBlock = { nsConcreteGlobalBlock, BLOCK_IS_GLOBAL, 0, mouseBarrierBlockInvoke, &g_blockDescriptor };
     g_scrollBarrierBlock = { nsConcreteGlobalBlock, BLOCK_IS_GLOBAL, 0, scrollBarrierBlockInvoke, &g_blockDescriptor };
+    g_selectorBlock = { nsConcreteGlobalBlock, BLOCK_IS_GLOBAL, 0, selectorBlockInvoke, &g_blockDescriptor };
 
     // --- register BunWKNavigationDelegate : NSObject <WKNavigationDelegate>
     Class nsobject = getClass("NSObject");
@@ -448,9 +503,14 @@ bool ObjCRuntime::load()
         reinterpret_cast<IMP>(delegateDidFailNavigation), "v@:@@@");
     addMethod(NavigationDelegate::cls, sel("webView:didFailProvisionalNavigation:withError:"),
         reinterpret_cast<IMP>(delegateDidFailProvisionalNavigation), "v@:@@@");
-    if (Protocol* proto = getProtocol("WKNavigationDelegate")) {
-        addProtocol(NavigationDelegate::cls, proto);
-    }
+    // Also adopt WKUIDelegate to suppress context menus. The method is
+    // in WKUIDelegatePrivate but protocol adoption isn't checked for it;
+    // WebKit does respondsToSelector:.
+    addMethod(NavigationDelegate::cls,
+        sel("_webView:getContextMenuFromProposedMenu:forElement:userInfo:completionHandler:"),
+        reinterpret_cast<IMP>(delegateGetContextMenu), "v@:@@@@@?");
+    if (Protocol* proto = getProtocol("WKNavigationDelegate")) addProtocol(NavigationDelegate::cls, proto);
+    if (Protocol* proto = getProtocol("WKUIDelegate")) addProtocol(NavigationDelegate::cls, proto);
     registerClassPair(NavigationDelegate::cls);
 
     NSApplication::setActivationPolicyProhibited();

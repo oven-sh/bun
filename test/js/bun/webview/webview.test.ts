@@ -133,6 +133,242 @@ it("click dispatches native mousedown/mouseup/click with isTrusted", async () =>
   }
 });
 
+it("click(selector) waits for actionability, clicks center", async () => {
+  const view = new Bun.WebView({ width: 300, height: 300 });
+  try {
+    await view.navigate(
+      "data:text/html," +
+        encodeURIComponent(`
+          <script>
+            window.__ev = [];
+            document.addEventListener("click", e => __ev.push({
+              trusted: e.isTrusted, x: e.clientX, y: e.clientY,
+              target: e.target.id,
+            }), true);
+          </script>
+          <button id=btn style="position:fixed;left:40px;top:60px;width:100px;height:80px">btn</button>
+        `),
+    );
+    // No coord math on our side — the rAF-polled actionability check
+    // resolves the center page-side and returns it. Button center is
+    // (40+50, 60+40) = (90, 100).
+    await view.click("#btn");
+    const events = await view.evaluate("JSON.stringify(__ev)");
+    expect(JSON.parse(events)).toEqual([{ trusted: true, x: 90, y: 100, target: "btn" }]);
+  } finally {
+    view.close();
+  }
+});
+
+it("click(selector) waits for element to appear", async () => {
+  const view = new Bun.WebView({ width: 300, height: 300 });
+  try {
+    await view.navigate(
+      "data:text/html," +
+        encodeURIComponent(`
+          <script>
+            window.__clicked = 0;
+            // Element doesn't exist yet — appears after 3 rAF frames.
+            // The page-side poll catches it; no host-side retry.
+            let n = 0;
+            requestAnimationFrame(function tick() {
+              if (++n < 3) return requestAnimationFrame(tick);
+              const b = document.createElement("button");
+              b.id = "late";
+              b.onclick = () => __clicked++;
+              b.style.cssText = "position:fixed;left:0;top:0;width:50px;height:50px";
+              document.body.appendChild(b);
+            });
+          </script>
+        `),
+    );
+    // callAsyncJavaScript: awaits the page-side Promise. The actionability
+    // loop rAF-polls until #late appears AND is stable for 2 frames AND
+    // elementFromPoint confirms it's not obscured. No timing assumptions
+    // on our side — just await.
+    await view.click("#late");
+    expect(await view.evaluate("String(__clicked)")).toBe("1");
+  } finally {
+    view.close();
+  }
+});
+
+it("click(selector) waits for element to stop animating", async () => {
+  const view = new Bun.WebView({ width: 300, height: 300 });
+  try {
+    await view.navigate(
+      "data:text/html," +
+        encodeURIComponent(`
+          <style>
+            @keyframes slide { from { left: 0px; } to { left: 100px; } }
+            #mover { position: fixed; top: 50px; width: 60px; height: 60px;
+                     animation: slide 100ms linear forwards; }
+          </style>
+          <button id=mover onclick="window.__hit=this.getBoundingClientRect().left">mv</button>
+        `),
+    );
+    // The stable-for-2-consecutive-frames check means we don't click until
+    // the animation stops. If we clicked mid-slide, __hit would be < 100.
+    await view.click("#mover");
+    const left = await view.evaluate("String(__hit)");
+    expect(Number(left)).toBe(100);
+  } finally {
+    view.close();
+  }
+});
+
+it("click(selector) rejects on timeout when obscured", async () => {
+  const view = new Bun.WebView({ width: 300, height: 300 });
+  try {
+    await view.navigate(
+      "data:text/html," +
+        encodeURIComponent(`
+          <button id=under style="position:fixed;left:0;top:0;width:100px;height:100px">under</button>
+          <div style="position:fixed;left:0;top:0;width:100px;height:100px;background:red">overlay</div>
+        `),
+    );
+    // elementFromPoint at the center returns the overlay div, not #under
+    // or a descendant of it — the actionability check never passes.
+    // callAsyncJavaScript: surfaces the page-side throw as
+    // WKErrorJavaScriptAsyncFunctionResultRejected.
+    await expect(view.click("#under", { timeout: 200 })).rejects.toThrow(/timeout waiting for '#under'/);
+  } finally {
+    view.close();
+  }
+});
+
+it("click(selector) with options", async () => {
+  const view = new Bun.WebView({ width: 300, height: 300 });
+  try {
+    await view.navigate(
+      "data:text/html," +
+        encodeURIComponent(`
+          <button id=b style="position:fixed;left:0;top:0;width:100px;height:100px"></button>
+          <script>
+            window.__ev = [];
+            b.addEventListener("mousedown", e => __ev.push({btn: e.button, shift: e.shiftKey, det: e.detail}));
+          </script>
+        `),
+    );
+    await view.click("#b", { button: "right", modifiers: ["Shift"], clickCount: 2 });
+    const ev = await view.evaluate("JSON.stringify(__ev)");
+    expect(JSON.parse(ev)).toEqual([{ btn: 2, shift: true, det: 2 }]);
+  } finally {
+    view.close();
+  }
+});
+
+it("click(selector) is injection-safe", async () => {
+  // The selector goes via callAsyncJavaScript:'s arguments: NSDictionary,
+  // not string interpolation. A selector containing JS syntax is passed
+  // as a literal string value to querySelector, which throws
+  // SyntaxError: not a valid selector — it doesn't execute.
+  const view = new Bun.WebView({ width: 300, height: 300 });
+  try {
+    await view.navigate("data:text/html,<body><script>window.__pwned=0</script></body>");
+    const bad = `"); window.__pwned = 1; //`;
+    await expect(view.click(bad, { timeout: 100 })).rejects.toThrow();
+    expect(await view.evaluate("String(__pwned)")).toBe("0");
+  } finally {
+    view.close();
+  }
+});
+
+it("scrollTo(selector) centers element in viewport", async () => {
+  const view = new Bun.WebView({ width: 200, height: 200 });
+  try {
+    await view.navigate(
+      "data:text/html," +
+        encodeURIComponent(`
+          <div style="height:2000px"></div>
+          <div id=target style="height:40px">target</div>
+          <div style="height:2000px"></div>
+        `),
+    );
+    // scrollIntoView runs page-side via callAsyncJavaScript: — atomic,
+    // no layout race between rect-read and scroll-fire. The await
+    // resolves when the async function body returns, which is after
+    // scrollIntoView has already updated scrollY. The scroll event fires
+    // on a later task (browser timing); we don't wait for it.
+    await view.scrollTo("#target");
+    const r = await view.evaluate(
+      "JSON.stringify({y: scrollY, top: document.getElementById('target').getBoundingClientRect().top})",
+    );
+    const { y, top } = JSON.parse(r);
+    // block:'center' default — element's center near viewport center.
+    // 40px tall element centered in 200px viewport → top ≈ 80.
+    expect(y).toBeGreaterThan(1800);
+    expect(top).toBeGreaterThan(60);
+    expect(top).toBeLessThan(100);
+  } finally {
+    view.close();
+  }
+});
+
+it("scrollTo(selector) waits for element to appear", async () => {
+  const view = new Bun.WebView({ width: 200, height: 200 });
+  try {
+    await view.navigate(
+      "data:text/html," +
+        encodeURIComponent(`
+          <div style="height:3000px"></div>
+          <script>
+            let n = 0;
+            requestAnimationFrame(function tick() {
+              if (++n < 3) return requestAnimationFrame(tick);
+              const d = document.createElement('div');
+              d.id = 'late';
+              d.style.height = '20px';
+              document.body.appendChild(d);
+            });
+          </script>
+        `),
+    );
+    // Same rAF-polled existence check as click(selector), but no stability
+    // or elementFromPoint requirement — just attached. The page-side loop
+    // catches the element as soon as it enters the DOM.
+    await view.scrollTo("#late");
+    expect(Number(await view.evaluate("String(scrollY)"))).toBeGreaterThan(2800);
+  } finally {
+    view.close();
+  }
+});
+
+it("scrollTo(selector, { block }) controls alignment", async () => {
+  const view = new Bun.WebView({ width: 200, height: 200 });
+  try {
+    await view.navigate(
+      "data:text/html," +
+        encodeURIComponent(`
+          <div style="height:2000px"></div>
+          <div id=t style="height:40px">t</div>
+          <div style="height:2000px"></div>
+        `),
+    );
+    await view.scrollTo("#t", { block: "start" });
+    const topStart = Number(await view.evaluate("document.getElementById('t').getBoundingClientRect().top"));
+    // block:'start' → element's top at viewport top (≈0 plus body margin).
+    expect(topStart).toBeLessThan(20);
+
+    await view.scrollTo("#t", { block: "end" });
+    const topEnd = Number(await view.evaluate("document.getElementById('t').getBoundingClientRect().top"));
+    // block:'end' → element's bottom at viewport bottom → top ≈ 200-40 = 160.
+    expect(topEnd).toBeGreaterThan(140);
+  } finally {
+    view.close();
+  }
+});
+
+it("scrollTo(selector) rejects on timeout", async () => {
+  const view = new Bun.WebView({ width: 200, height: 200 });
+  try {
+    await view.navigate("data:text/html,<body></body>");
+    await expect(view.scrollTo("#nonexistent", { timeout: 150 })).rejects.toThrow(/timeout waiting for '#nonexistent'/);
+  } finally {
+    view.close();
+  }
+});
+
 it("type inserts text via InsertText command, fires input/beforeinput", async () => {
   const view = new Bun.WebView({ width: 300, height: 300 });
   try {

@@ -534,6 +534,13 @@ JSPromise* JSWebView::click(JSGlobalObject* g, float x, float y, uint8_t button,
         payload.span().data(), static_cast<uint32_t>(payload.size()));
 }
 
+JSPromise* JSWebView::clickSelector(JSGlobalObject* g, const WTF::String& selector, uint32_t timeout, uint8_t button, uint8_t modifiers, uint8_t clickCount)
+{
+    auto payload = encode(ClickSelectorPayload{ timeout, button, modifiers, clickCount }, selector);
+    return sendOp(g, this, m_pendingMisc, Op::ClickSelector,
+        payload.span().data(), static_cast<uint32_t>(payload.size()));
+}
+
 JSPromise* JSWebView::type(JSGlobalObject* g, const WTF::String& text)
 {
     auto payload = encodeStr(text);
@@ -555,6 +562,13 @@ JSPromise* JSWebView::scroll(JSGlobalObject* g, double dx, double dy)
 {
     auto payload = encode(ScrollPayload{ static_cast<float>(dx), static_cast<float>(dy) });
     return sendOp(g, this, m_pendingMisc, Op::Scroll,
+        payload.span().data(), static_cast<uint32_t>(payload.size()));
+}
+
+JSPromise* JSWebView::scrollTo(JSGlobalObject* g, const WTF::String& selector, uint32_t timeout, uint8_t block)
+{
+    auto payload = encode(ScrollToPayload{ timeout, block }, selector);
+    return sendOp(g, this, m_pendingMisc, Op::ScrollTo,
         payload.span().data(), static_cast<uint32_t>(payload.size()));
 }
 

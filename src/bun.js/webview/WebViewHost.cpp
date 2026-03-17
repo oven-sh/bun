@@ -43,6 +43,20 @@ std::unique_ptr<WebViewHost> WebViewHost::createForIPC(uint32_t viewId, uint32_t
     // smart quotes by default — first view sets it off for all.
     host->m_webview.disableTextSubstitutions();
 
+    // visibilityState = "visible" so requestAnimationFrame fires. The
+    // window is still invisible (borderless, at -10000,-10000, policy
+    // Prohibited); orderFront: makes it "on screen" from AppKit's view,
+    // and disabling occlusion detection stops WKWebView from noticing
+    // that it's not actually visible. Without this the click(selector)
+    // actionability poll hangs — rAF never ticks on a hidden page.
+    host->m_webview.disableOcclusionDetection();
+    host->m_window.orderFront();
+
+    // The delegate also adopts WKUIDelegate to suppress the context menu
+    // (right-click would otherwise block in NSMenu's modal runloop now that
+    // the page is visible).
+    host->m_webview.setUIDelegate(host->m_delegate);
+
     return host;
 }
 
@@ -64,6 +78,7 @@ void WebViewHost::close()
     if (rt->m_screenshotTarget == this) rt->m_screenshotTarget = nullptr;
     if (rt->m_inputTarget == this) rt->m_inputTarget = nullptr;
     if (rt->m_scrollTarget == this) rt->m_scrollTarget = nullptr;
+    if (rt->m_selectorTarget == this) rt->m_selectorTarget = nullptr;
 
     if (m_webview) {
         m_webview.setNavigationDelegate(nullptr);
@@ -153,7 +168,12 @@ bool WebViewHost::clickIPC(float x, float y, uint8_t button, uint8_t modifiers, 
         hostWriter()->sendReplyStr(m_viewId, Reply::Error, "input operation already pending"_s);
         return true;
     }
+    doNativeClick(x, y, button, modifiers, clickCount);
+    return true;
+}
 
+void WebViewHost::doNativeClick(float x, float y, uint8_t button, uint8_t modifiers, uint8_t clickCount)
+{
     using NSEvent = objc::NSEvent;
     double wy = static_cast<double>(m_height) - y;  // viewport y-down → window y-up
     unsigned long mods = expandModifiers(modifiers);
@@ -184,9 +204,131 @@ bool WebViewHost::clickIPC(float x, float y, uint8_t button, uint8_t modifiers, 
     // queue drains — WebContent has processed both, synthesized click,
     // fired all JS handlers. No polling, no evaluateJavaScript hack.
     m_inputPending = true;
-    rt->m_inputTarget = this;
+    ObjCRuntime::tryLoad()->m_inputTarget = this;
     m_webview.doAfterPendingMouseEvents(mouseBarrierBlock());
+}
+
+// Actionability check: Playwright-style rAF-polled predicate. Runs entirely
+// page-side via callAsyncJavaScript: — WebKit awaits the returned Promise.
+// One IPC roundtrip regardless of how many frames the poll takes.
+//
+// The predicate: attached + has size + in viewport + stable for 2 frames +
+// elementFromPoint at center returns the element or a descendant (not
+// obscured). Returns "cx,cy" on success; throws on timeout.
+//
+// Arguments `sel` and `timeout` are passed via the arguments: NSDictionary,
+// not string-interpolated — the selector can contain any characters.
+static constexpr const char* kActionabilityJS = R"js(
+const deadline = performance.now() + timeout;
+let last;
+for (;;) {
+  const el = document.querySelector(sel);
+  if (el) {
+    const r = el.getBoundingClientRect();
+    const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+    if (r.width > 0 && r.height > 0 && cx >= 0 && cy >= 0 && cx < innerWidth && cy < innerHeight) {
+      if (last && last.l === r.left && last.t === r.top && last.w === r.width && last.h === r.height) {
+        const hit = document.elementFromPoint(cx, cy);
+        if (hit === el || el.contains(hit)) return cx + "," + cy;
+      }
+      last = { l: r.left, t: r.top, w: r.width, h: r.height };
+    } else last = undefined;
+  } else last = undefined;
+  if (performance.now() > deadline) throw "timeout waiting for '" + sel + "' to be actionable";
+  await new Promise(f => requestAnimationFrame(f));
+}
+)js";
+
+// Simpler than click's actionability: just wait for the element to exist,
+// then scrollIntoView. scrollIntoView itself handles "in viewport" and
+// "scrollable ancestor" logic — it's atomic page-side, no layout race.
+static constexpr const char* kScrollToJS = R"js(
+const deadline = performance.now() + timeout;
+for (;;) {
+  const el = document.querySelector(sel);
+  if (el) { el.scrollIntoView({ block, behavior: 'instant' }); return; }
+  if (performance.now() > deadline) throw "timeout waiting for '" + sel + "'";
+  await new Promise(f => requestAnimationFrame(f));
+}
+)js";
+
+bool WebViewHost::clickSelectorIPC(const WTF::String& selector, uint32_t timeout, uint8_t button, uint8_t modifiers, uint8_t clickCount)
+{
+    auto* rt = ObjCRuntime::tryLoad();
+    // Guards against both coord-click and another selector-click. The
+    // completion chains into doNativeClick which sets m_inputPending, so a
+    // concurrent coord-click would collide on the mouse barrier.
+    if (m_inputPending || rt->m_inputTarget || rt->m_selectorTarget) {
+        hostWriter()->sendReplyStr(m_viewId, Reply::Error, "input operation already pending"_s);
+        return true;
+    }
+
+    m_selButton = button;
+    m_selModifiers = modifiers;
+    m_selClickCount = clickCount;
+    rt->m_selectorTarget = this;
+    m_selIsScrollTo = false;
+
+    auto body = objc::NSString::fromWTF(WTF::String::fromUTF8(kActionabilityJS));
+    auto args = objc::NSDictionary::with2(
+        objc::NSString::fromWTF(selector).m_id,             objc::NSString::fromWTF("sel"_s).m_id,
+        objc::NSNumber::withDouble(static_cast<double>(timeout)).m_id, objc::NSString::fromWTF("timeout"_s).m_id);
+    m_webview.callAsync(body, args.m_id, selectorCompletionBlock());
     return true;
+}
+
+bool WebViewHost::scrollToIPC(const WTF::String& selector, uint32_t timeout, uint8_t block)
+{
+    auto* rt = ObjCRuntime::tryLoad();
+    if (rt->m_selectorTarget) {
+        hostWriter()->sendReplyStr(m_viewId, Reply::Error, "selector operation already pending"_s);
+        return true;
+    }
+
+    static constexpr ASCIILiteral blockNames[] = { "start"_s, "center"_s, "end"_s, "nearest"_s };
+    auto blockStr = blockNames[block < 4 ? block : 1];
+
+    rt->m_selectorTarget = this;
+    m_selIsScrollTo = true;
+
+    auto body = objc::NSString::fromWTF(WTF::String::fromUTF8(kScrollToJS));
+    auto args = objc::NSDictionary::with3(
+        objc::NSString::fromWTF(selector).m_id,                          objc::NSString::fromWTF("sel"_s).m_id,
+        objc::NSNumber::withDouble(static_cast<double>(timeout)).m_id,   objc::NSString::fromWTF("timeout"_s).m_id,
+        objc::NSString::fromWTF(blockStr).m_id,                          objc::NSString::fromWTF("block"_s).m_id);
+    m_webview.callAsync(body, args.m_id, selectorCompletionBlock());
+    return true;
+}
+
+void WebViewHost::onSelectorComplete(id result, id error)
+{
+    if (m_closed) return;
+    if (error) {
+        // WKErrorJavaScriptAsyncFunctionResultRejected carries the throw
+        // reason in userInfo["WKJavaScriptExceptionMessage"], not in
+        // localizedDescription (that's just "A JavaScript exception occurred").
+        objc::NSError err(error);
+        id msg = objc::NSDictionary(err.userInfo()).objectForKey(
+            objc::NSString::fromWTF("WKJavaScriptExceptionMessage"_s).m_id);
+        hostWriter()->sendReplyStr(m_viewId, Reply::Error,
+            msg ? objc::NSString(msg).toWTF() : err.localizedDescription());
+        return;
+    }
+    if (m_selIsScrollTo) {
+        // scrollIntoView already ran page-side; nothing to chain into.
+        hostWriter()->sendReply(m_viewId, Reply::Ack);
+        return;
+    }
+    // click(selector): result is the NSString "cx,cy". Parse two doubles.
+    WTF::String s = objc::NSString(result).toWTF();
+    auto comma = s.find(',');
+    if (comma == WTF::notFound) {
+        hostWriter()->sendReplyStr(m_viewId, Reply::Error, "malformed selector result"_s);
+        return;
+    }
+    float x = static_cast<float>(s.substring(0, comma).toDouble());
+    float y = static_cast<float>(s.substring(comma + 1).toDouble());
+    doNativeClick(x, y, m_selButton, m_selModifiers, m_selClickCount);
 }
 
 bool WebViewHost::typeIPC(const WTF::String& text)

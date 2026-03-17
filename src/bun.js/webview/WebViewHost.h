@@ -38,6 +38,8 @@ public:
     bool typeIPC(const WTF::String& text);
     bool pressIPC(WebViewProto::VirtualKey key, uint8_t modifiers, const WTF::String& character);
     bool scrollIPC(float dx, float dy);
+    bool clickSelectorIPC(const WTF::String& selector, uint32_t timeout, uint8_t button, uint8_t modifiers, uint8_t clickCount);
+    bool scrollToIPC(const WTF::String& selector, uint32_t timeout, uint8_t block);
     void onInputComplete();
     void onScrollBarrier();
 
@@ -54,10 +56,14 @@ public:
     void onNavigationFailed(const WTF::String& err);
     void onEvalComplete(id result, id error);
     void onScreenshotComplete(id nsimage, id error);
+    void onSelectorComplete(id result, id error);
 
 private:
     WebViewHost() = default;
     void close();
+    // clickIPC's mouse-event dispatch + barrier, without the guard.
+    // clickSelectorIPC enters here after the actionability check resolves.
+    void doNativeClick(float x, float y, uint8_t button, uint8_t modifiers, uint8_t clickCount);
 
     uint32_t m_viewId = 0;
     // One-at-a-time: the parent's WriteBarrier slot enforces serialization
@@ -80,6 +86,14 @@ private:
     float m_pendingScrollDx = 0;
     float m_pendingScrollDy = 0;
     bool m_scrollWheelFired = false;
+    // Stored for phase 2 of click(selector): callAsync completion parses
+    // coords, then doNativeClick fires with these. scrollTo(selector)
+    // shares m_selectorTarget but its completion just Acks — m_selIsScrollTo
+    // distinguishes.
+    uint8_t m_selButton = 0;
+    uint8_t m_selModifiers = 0;
+    uint8_t m_selClickCount = 0;
+    bool m_selIsScrollTo = false;
 };
 
 } // namespace Bun

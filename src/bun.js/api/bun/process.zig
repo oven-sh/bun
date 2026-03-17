@@ -86,6 +86,7 @@ pub const ProcessExitHandler = struct {
             ProcessHandle,
             MultiRunProcessHandle,
             SecurityScanSubprocess,
+            WebViewHostProcess,
             SyncProcess,
         },
     );
@@ -122,6 +123,10 @@ pub const ProcessExitHandler = struct {
             },
             @field(TaggedPointer.Tag, @typeName(SecurityScanSubprocess)) => {
                 const subprocess = this.ptr.as(SecurityScanSubprocess);
+                subprocess.onProcessExit(process, status, rusage);
+            },
+            @field(TaggedPointer.Tag, @typeName(WebViewHostProcess)) => {
+                const subprocess = this.ptr.as(WebViewHostProcess);
                 subprocess.onProcessExit(process, status, rusage);
             },
             @field(TaggedPointer.Tag, @typeName(SyncProcess)) => {
@@ -2261,3 +2266,4 @@ const SecurityScanSubprocess = bun.install.SecurityScanSubprocess;
 
 const jsc = bun.jsc;
 const Subprocess = jsc.Subprocess;
+const WebViewHostProcess = bun.api.WebViewHostProcess;

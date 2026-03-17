@@ -55,6 +55,7 @@
       "src/bun.js/bindings/node/http/*.cpp",
       "src/bun.js/bindings/v8/*.cpp",
       "src/bun.js/bindings/v8/shim/*.cpp",
+      "src/bun.js/webview/*.cpp",
       "src/bake/*.cpp",
       "src/deps/*.cpp",
       "src/vm/*.cpp",

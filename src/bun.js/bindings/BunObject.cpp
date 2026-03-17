@@ -99,6 +99,7 @@ static JSValue BunObject_lazyPropCb_wrap_ArrayBufferSink(VM& vm, JSObject* bunOb
 static JSValue constructCookieObject(VM& vm, JSObject* bunObject);
 static JSValue constructCookieMapObject(VM& vm, JSObject* bunObject);
 static JSValue constructSecretsObject(VM& vm, JSObject* bunObject);
+static JSValue constructWebViewObject(VM& vm, JSObject* bunObject);
 
 static JSValue constructEnvObject(VM& vm, JSObject* object)
 {
@@ -1044,6 +1045,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     Terminal                                       BunObject_lazyPropCb_wrap_Terminal                                  DontDelete|PropertyCallback
     unsafe                                         BunObject_lazyPropCb_wrap_unsafe                                    DontDelete|PropertyCallback
     version                                        constructBunVersion                                                 ReadOnly|DontDelete|PropertyCallback
+    WebView                                        constructWebViewObject                                              ReadOnly|DontDelete|PropertyCallback
     which                                          BunObject_callback_which                                            DontDelete|Function 1
     RedisClient                                    BunObject_lazyPropCb_wrap_ValkeyClient                              DontDelete|PropertyCallback
     redis                                          BunObject_lazyPropCb_wrap_valkey                                    DontDelete|PropertyCallback
@@ -1168,6 +1170,12 @@ static JSValue constructSecretsObject(VM& vm, JSObject* bunObject)
 {
     auto* zigGlobalObject = jsCast<Zig::GlobalObject*>(bunObject->globalObject());
     return Bun::createSecretsObject(vm, zigGlobalObject);
+}
+
+static JSValue constructWebViewObject(VM& vm, JSObject* bunObject)
+{
+    auto* zigGlobalObject = jsCast<Zig::GlobalObject*>(bunObject->globalObject());
+    return zigGlobalObject->m_JSWebViewClassStructure.constructor(zigGlobalObject);
 }
 
 JSC::JSObject* createBunObject(VM& vm, JSObject* globalObject)

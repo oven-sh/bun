@@ -1,0 +1,434 @@
+#include "root.h"
+
+#if OS(DARWIN)
+
+#include "ObjCRuntime.h"
+#include "WebViewHost.h"
+#include <dlfcn.h>
+#include <mach/mach.h>
+#include <wtf/NeverDestroyed.h>
+#include <wtf/HashMap.h>
+#include <mutex>
+
+namespace Bun {
+
+// --- Static storage for wrapper types --------------------------------------
+namespace objc {
+
+void* Ref::s_msgSend;
+SEL Ref::s_alloc;
+SEL Ref::s_init;
+SEL Ref::s_release;
+SEL Ref::s_retain;
+SEL Ref::s_description;
+
+Class NSString::cls;
+SEL NSString::s_stringWithUTF8String;
+SEL NSString::s_UTF8String;
+
+Class NSURL::cls;
+SEL NSURL::s_URLWithString;
+SEL NSURL::s_fileURLWithPath_isDirectory;
+SEL NSURL::s_absoluteString;
+
+Class NSURLRequest::cls;
+SEL NSURLRequest::s_requestWithURL;
+
+SEL NSError::s_localizedDescription;
+
+SEL NSData::s_bytes;
+SEL NSData::s_length;
+
+Class NSApplication::cls;
+SEL NSApplication::s_sharedApplication;
+SEL NSApplication::s_setActivationPolicy;
+
+Class NSWindow::cls;
+SEL NSWindow::s_initWithContentRect_styleMask_backing_defer;
+SEL NSWindow::s_setReleasedWhenClosed;
+SEL NSWindow::s_setContentView;
+SEL NSWindow::s_setContentSize;
+SEL NSWindow::s_close;
+
+SEL NSView::s_setFrame;
+
+Class NSBitmapImageRep::cls;
+SEL NSBitmapImageRep::s_initWithCGImage;
+SEL NSBitmapImageRep::s_representationUsingType_properties;
+
+SEL NSImage::s_CGImageForProposedRect_context_hints;
+
+SEL NSWindow::s_windowNumber;
+
+Class NSProcessInfo::cls;
+SEL NSProcessInfo::s_processInfo;
+SEL NSProcessInfo::s_systemUptime;
+
+Class NSEvent::cls;
+SEL NSEvent::s_mouseEventWithType;
+SEL NSEvent::s_keyEventWithType;
+
+SEL WKWebView::s_mouseDown;
+SEL WKWebView::s_mouseUp;
+SEL WKWebView::s_rightMouseDown;
+SEL WKWebView::s_rightMouseUp;
+SEL WKWebView::s_otherMouseDown;
+SEL WKWebView::s_otherMouseUp;
+SEL WKWebView::s_keyDown;
+SEL WKWebView::s_keyUp;
+SEL WKWebView::s_setAutomaticQuoteSubstitutionEnabled;
+SEL WKWebView::s_setAutomaticDashSubstitutionEnabled;
+SEL WKWebView::s_setAutomaticTextReplacementEnabled;
+SEL WKWebView::s_executeEditCommand;
+SEL WKWebView::s_doAfterPendingMouseEvents;
+
+Class WKWebViewConfiguration::cls;
+Class WKWebViewConfiguration::cls_WKWebsiteDataStore;
+Class WKWebViewConfiguration::cls_WKWebsiteDataStoreConfiguration;
+SEL WKWebViewConfiguration::s_nonPersistentDataStore;
+SEL WKWebViewConfiguration::s_initWithDirectory;
+SEL WKWebViewConfiguration::s_initWithConfiguration;
+
+// Keyed by directory path. Stores live for the process: each WKWebsiteDataStore
+// runs its own NetworkProcess session, so two instances at the same path don't
+// share committed state. Retained once on insert, never released.
+id WKWebViewConfiguration::persistentStoreForDirectory(const WTF::String& directory)
+{
+    static NeverDestroyed<HashMap<WTF::String, id>> cache;
+    auto it = cache->find(directory);
+    if (it != cache->end()) return it->value;
+
+    NSURL dirURL = NSURL::fileURL(NSString::fromWTF(directory), true);
+    Ref storeCfg(msgCls<id>(cls_WKWebsiteDataStoreConfiguration, s_alloc));
+    storeCfg.m_id = storeCfg.msg<id>(s_initWithDirectory, dirURL.m_id);
+    Ref store(msgCls<id>(cls_WKWebsiteDataStore, s_alloc));
+    store.m_id = store.msg<id>(s_initWithConfiguration, storeCfg.m_id);
+    storeCfg.release();
+
+    cache->add(directory, store.m_id);
+    return store.m_id;
+}
+SEL WKWebViewConfiguration::s_setWebsiteDataStore;
+
+Class WKWebView::cls;
+Class WKWebView::cls_WKSnapshotConfiguration;
+SEL WKWebView::s_initWithFrame_configuration;
+SEL WKWebView::s_setNavigationDelegate;
+SEL WKWebView::s_loadRequest;
+SEL WKWebView::s_evaluateJavaScript_completionHandler;
+SEL WKWebView::s_stopLoading;
+SEL WKWebView::s_reload;
+SEL WKWebView::s_canGoBack;
+SEL WKWebView::s_canGoForward;
+SEL WKWebView::s_goBack;
+SEL WKWebView::s_goForward;
+SEL WKWebView::s_isLoading;
+SEL WKWebView::s_URL;
+SEL WKWebView::s_title;
+SEL WKWebView::s_setAfterScreenUpdates;
+SEL WKWebView::s_takeSnapshotWithConfiguration_completionHandler;
+
+Class NavigationDelegate::cls;
+void (*NavigationDelegate::s_setAssoc)(id, const void*, id, uintptr_t);
+id (*NavigationDelegate::s_getAssoc)(id, const void*);
+char NavigationDelegate::s_hostKey = 0;
+
+} // namespace objc
+
+// --- Block storage ---------------------------------------------------------
+// Two static global blocks for evaluateJavaScript: and takeSnapshot:
+// completion handlers. No captures; correlation happens through
+// ObjCRuntime::m_evalTarget / m_screenshotTarget set just before send.
+
+using CompletionInvoke = void (*)(void*, id, id);
+static const BlockDescriptor g_blockDescriptor = { 0, sizeof(GlobalBlock<CompletionInvoke>) };
+
+static void evalBlockInvoke(void* /*blockSelf*/, id result, id error)
+{
+    auto* rt = ObjCRuntime::tryLoad();
+    auto* host = rt->m_evalTarget;
+    rt->m_evalTarget = nullptr;
+    if (host) host->onEvalComplete(result, error);
+}
+
+static void snapshotBlockInvoke(void* /*blockSelf*/, id nsimage, id error)
+{
+    auto* rt = ObjCRuntime::tryLoad();
+    auto* host = rt->m_screenshotTarget;
+    rt->m_screenshotTarget = nullptr;
+    if (host) host->onScreenshotComplete(nsimage, error);
+}
+
+// _executeEditCommand completion: void(^)(BOOL). We ignore the BOOL —
+// it's "was this command applicable", not "did it fail". The IPC round-trip
+// is the point; either way WebContent has processed.
+using EditCmdInvoke = void (*)(void*, signed char);
+static void editCmdBlockInvoke(void* /*blockSelf*/, signed char /*success*/)
+{
+    auto* rt = ObjCRuntime::tryLoad();
+    auto* host = rt->m_inputTarget;
+    rt->m_inputTarget = nullptr;
+    if (host) host->onInputComplete();
+}
+
+// _doAfterProcessingAllPendingMouseEvents: dispatch_block_t = void(^)().
+using VoidInvoke = void (*)(void*);
+static void mouseBarrierBlockInvoke(void* /*blockSelf*/)
+{
+    auto* rt = ObjCRuntime::tryLoad();
+    auto* host = rt->m_inputTarget;
+    rt->m_inputTarget = nullptr;
+    if (host) host->onInputComplete();
+}
+
+static GlobalBlock<CompletionInvoke> g_evalBlock;
+static GlobalBlock<CompletionInvoke> g_snapshotBlock;
+static GlobalBlock<EditCmdInvoke> g_editCmdBlock;
+static GlobalBlock<VoidInvoke> g_mouseBarrierBlock;
+
+void* evalCompletionBlock() { return &g_evalBlock; }
+void* snapshotCompletionBlock() { return &g_snapshotBlock; }
+void* editCommandCompletionBlock() { return &g_editCmdBlock; }
+void* mouseBarrierBlock() { return &g_mouseBarrierBlock; }
+
+// --- Delegate IMPs ---------------------------------------------------------
+// Installed on the runtime-registered BunWKNavigationDelegate class.
+
+extern "C" {
+
+static void delegateDidFinishNavigation(id self, SEL, id /*webView*/, id /*navigation*/)
+{
+    if (auto* host = objc::NavigationDelegate(self).host()) host->onNavigationFinished();
+}
+
+static void delegateDidFailNavigation(id self, SEL, id /*webView*/, id /*navigation*/, id error)
+{
+    if (auto* host = objc::NavigationDelegate(self).host()) {
+        host->onNavigationFailed(objc::NSError(error).localizedDescription());
+    }
+}
+
+static void delegateDidFailProvisionalNavigation(id self, SEL _cmd, id webView, id navigation, id error)
+{
+    delegateDidFailNavigation(self, _cmd, webView, navigation, error);
+}
+
+} // extern "C"
+
+// --- Loading ---------------------------------------------------------------
+
+bool ObjCRuntime::load()
+{
+    using namespace objc;
+
+    // --- libSystem (already linked) ---------------------------------------
+    void* nsConcreteGlobalBlock = dlsym(RTLD_DEFAULT, "_NSConcreteGlobalBlock");
+    if (!nsConcreteGlobalBlock) {
+        m_loadError = "libSystem _NSConcreteGlobalBlock unavailable"_s;
+        return false;
+    }
+
+    // --- dlopen frameworks ------------------------------------------------
+    void* libobjc = dlopen("/usr/lib/libobjc.A.dylib", RTLD_LAZY | RTLD_LOCAL);
+    if (!libobjc) {
+        m_loadError = WTF::String::fromUTF8(dlerror());
+        return false;
+    }
+
+    // AppKit pulls in Foundation (NSString, NSURL, NSWindow, NSBitmapImageRep).
+    // CoreFoundation is transitive. host_main.cpp dlopens CF separately for
+    // the CFFileDescriptor / CFRunLoop symbols it owns.
+    void* appkit = dlopen("/System/Library/Frameworks/AppKit.framework/AppKit", RTLD_LAZY | RTLD_LOCAL);
+    void* webkit = dlopen("/System/Library/Frameworks/WebKit.framework/WebKit", RTLD_LAZY | RTLD_LOCAL);
+    if (!appkit || !webkit) {
+        m_loadError = WTF::String::fromUTF8(dlerror());
+        return false;
+    }
+
+    // --- libobjc ----------------------------------------------------------
+#define SYM(var, handle, name)                                                   \
+    do {                                                                         \
+        var = reinterpret_cast<decltype(var)>(dlsym(handle, name));              \
+        if (!var) { m_loadError = "missing symbol: " name ""_s; return false; }  \
+    } while (0)
+
+    void* msgSend = dlsym(libobjc, "objc_msgSend");
+    Class (*getClass)(const char*);
+    SEL (*sel)(const char*);
+    Class (*allocateClassPair)(Class, const char*, size_t);
+    BOOL (*addMethod)(Class, SEL, IMP, const char*);
+    BOOL (*addProtocol)(Class, Protocol*);
+    Protocol* (*getProtocol)(const char*);
+    void (*registerClassPair)(Class);
+
+    SYM(getClass, libobjc, "objc_getClass");
+    SYM(sel, libobjc, "sel_registerName");
+    SYM(allocateClassPair, libobjc, "objc_allocateClassPair");
+    SYM(addMethod, libobjc, "class_addMethod");
+    SYM(addProtocol, libobjc, "class_addProtocol");
+    SYM(getProtocol, libobjc, "objc_getProtocol");
+    SYM(registerClassPair, libobjc, "objc_registerClassPair");
+    SYM(NavigationDelegate::s_setAssoc, libobjc, "objc_setAssociatedObject");
+    SYM(NavigationDelegate::s_getAssoc, libobjc, "objc_getAssociatedObject");
+    SYM(m_autoreleasePoolPush, libobjc, "objc_autoreleasePoolPush");
+    SYM(m_autoreleasePoolPop, libobjc, "objc_autoreleasePoolPop");
+    if (!msgSend) {
+        m_loadError = "missing symbol: objc_msgSend"_s;
+        return false;
+    }
+
+#undef SYM
+
+    // --- populate Ref (shared) --------------------------------------------
+    Ref::s_msgSend = msgSend;
+    Ref::s_alloc = sel("alloc");
+    Ref::s_init = sel("init");
+    Ref::s_release = sel("release");
+    Ref::s_retain = sel("retain");
+    Ref::s_description = sel("description");
+
+    // --- populate wrapper classes -----------------------------------------
+    // A missing class at load time beats a nil-message (silent no-op) at
+    // call time.
+#define CLS(var, name)                                                           \
+    do {                                                                         \
+        var = getClass(name);                                                    \
+        if (!var) { m_loadError = "missing class: " name ""_s; return false; }   \
+    } while (0)
+
+    CLS(NSString::cls, "NSString");
+    NSString::s_stringWithUTF8String = sel("stringWithUTF8String:");
+    NSString::s_UTF8String = sel("UTF8String");
+
+    CLS(NSURL::cls, "NSURL");
+    NSURL::s_URLWithString = sel("URLWithString:");
+    NSURL::s_fileURLWithPath_isDirectory = sel("fileURLWithPath:isDirectory:");
+    NSURL::s_absoluteString = sel("absoluteString");
+
+    CLS(NSURLRequest::cls, "NSURLRequest");
+    NSURLRequest::s_requestWithURL = sel("requestWithURL:");
+
+    NSError::s_localizedDescription = sel("localizedDescription");
+
+    NSData::s_bytes = sel("bytes");
+    NSData::s_length = sel("length");
+
+    CLS(NSApplication::cls, "NSApplication");
+    NSApplication::s_sharedApplication = sel("sharedApplication");
+    NSApplication::s_setActivationPolicy = sel("setActivationPolicy:");
+
+    CLS(NSWindow::cls, "NSWindow");
+    NSWindow::s_initWithContentRect_styleMask_backing_defer = sel("initWithContentRect:styleMask:backing:defer:");
+    NSWindow::s_setReleasedWhenClosed = sel("setReleasedWhenClosed:");
+    NSWindow::s_setContentView = sel("setContentView:");
+    NSWindow::s_setContentSize = sel("setContentSize:");
+    NSWindow::s_close = sel("close");
+
+    NSView::s_setFrame = sel("setFrame:");
+
+    CLS(NSBitmapImageRep::cls, "NSBitmapImageRep");
+    NSBitmapImageRep::s_initWithCGImage = sel("initWithCGImage:");
+    NSBitmapImageRep::s_representationUsingType_properties = sel("representationUsingType:properties:");
+
+    NSImage::s_CGImageForProposedRect_context_hints = sel("CGImageForProposedRect:context:hints:");
+
+    NSWindow::s_windowNumber = sel("windowNumber");
+
+    CLS(NSProcessInfo::cls, "NSProcessInfo");
+    NSProcessInfo::s_processInfo = sel("processInfo");
+    NSProcessInfo::s_systemUptime = sel("systemUptime");
+
+    CLS(NSEvent::cls, "NSEvent");
+    NSEvent::s_mouseEventWithType = sel("mouseEventWithType:location:modifierFlags:timestamp:windowNumber:context:eventNumber:clickCount:pressure:");
+    NSEvent::s_keyEventWithType = sel("keyEventWithType:location:modifierFlags:timestamp:windowNumber:context:characters:charactersIgnoringModifiers:isARepeat:keyCode:");
+
+    CLS(WKWebViewConfiguration::cls, "WKWebViewConfiguration");
+    CLS(WKWebViewConfiguration::cls_WKWebsiteDataStore, "WKWebsiteDataStore");
+    // _WKWebsiteDataStoreConfiguration is SPI but stable since macOS 10.13.
+    // initWithDirectory: is 15.2+.
+    CLS(WKWebViewConfiguration::cls_WKWebsiteDataStoreConfiguration, "_WKWebsiteDataStoreConfiguration");
+    WKWebViewConfiguration::s_nonPersistentDataStore = sel("nonPersistentDataStore");
+    WKWebViewConfiguration::s_initWithDirectory = sel("initWithDirectory:");
+    WKWebViewConfiguration::s_initWithConfiguration = sel("_initWithConfiguration:");
+    WKWebViewConfiguration::s_setWebsiteDataStore = sel("setWebsiteDataStore:");
+
+    CLS(WKWebView::cls, "WKWebView");
+    CLS(WKWebView::cls_WKSnapshotConfiguration, "WKSnapshotConfiguration");
+    WKWebView::s_initWithFrame_configuration = sel("initWithFrame:configuration:");
+    WKWebView::s_setNavigationDelegate = sel("setNavigationDelegate:");
+    WKWebView::s_loadRequest = sel("loadRequest:");
+    WKWebView::s_evaluateJavaScript_completionHandler = sel("evaluateJavaScript:completionHandler:");
+    WKWebView::s_stopLoading = sel("stopLoading");
+    WKWebView::s_reload = sel("reload");
+    WKWebView::s_canGoBack = sel("canGoBack");
+    WKWebView::s_canGoForward = sel("canGoForward");
+    WKWebView::s_goBack = sel("goBack");
+    WKWebView::s_goForward = sel("goForward");
+    WKWebView::s_isLoading = sel("isLoading");
+    WKWebView::s_URL = sel("URL");
+    WKWebView::s_title = sel("title");
+    WKWebView::s_setAfterScreenUpdates = sel("setAfterScreenUpdates:");
+    WKWebView::s_takeSnapshotWithConfiguration_completionHandler = sel("takeSnapshotWithConfiguration:completionHandler:");
+    WKWebView::s_mouseDown = sel("mouseDown:");
+    WKWebView::s_mouseUp = sel("mouseUp:");
+    WKWebView::s_rightMouseDown = sel("rightMouseDown:");
+    WKWebView::s_rightMouseUp = sel("rightMouseUp:");
+    WKWebView::s_otherMouseDown = sel("otherMouseDown:");
+    WKWebView::s_otherMouseUp = sel("otherMouseUp:");
+    WKWebView::s_keyDown = sel("keyDown:");
+    WKWebView::s_keyUp = sel("keyUp:");
+    WKWebView::s_setAutomaticQuoteSubstitutionEnabled = sel("setAutomaticQuoteSubstitutionEnabled:");
+    WKWebView::s_setAutomaticDashSubstitutionEnabled = sel("setAutomaticDashSubstitutionEnabled:");
+    WKWebView::s_setAutomaticTextReplacementEnabled = sel("setAutomaticTextReplacementEnabled:");
+    WKWebView::s_executeEditCommand = sel("_executeEditCommand:argument:completion:");
+    WKWebView::s_doAfterPendingMouseEvents = sel("_doAfterProcessingAllPendingMouseEvents:");
+#undef CLS
+
+    // --- initialize global blocks -----------------------------------------
+    g_evalBlock = { nsConcreteGlobalBlock, BLOCK_IS_GLOBAL, 0, evalBlockInvoke, &g_blockDescriptor };
+    g_snapshotBlock = { nsConcreteGlobalBlock, BLOCK_IS_GLOBAL, 0, snapshotBlockInvoke, &g_blockDescriptor };
+    // Block descriptor's size field is only read by Block_copy for stack
+    // blocks; BLOCK_IS_GLOBAL makes copy a no-op so the descriptor can be
+    // shared across signatures (it's {0, sizeof(anything)} and unchecked).
+    g_editCmdBlock = { nsConcreteGlobalBlock, BLOCK_IS_GLOBAL, 0, editCmdBlockInvoke, &g_blockDescriptor };
+    g_mouseBarrierBlock = { nsConcreteGlobalBlock, BLOCK_IS_GLOBAL, 0, mouseBarrierBlockInvoke, &g_blockDescriptor };
+
+    // --- register BunWKNavigationDelegate : NSObject <WKNavigationDelegate>
+    Class nsobject = getClass("NSObject");
+    NavigationDelegate::cls = allocateClassPair(nsobject, "BunWKNavigationDelegate", 0);
+    if (!NavigationDelegate::cls) {
+        m_loadError = "failed to allocate delegate class"_s;
+        return false;
+    }
+    // Type encodings: v = void, @ = id, : = SEL.
+    addMethod(NavigationDelegate::cls, sel("webView:didFinishNavigation:"),
+        reinterpret_cast<IMP>(delegateDidFinishNavigation), "v@:@@");
+    addMethod(NavigationDelegate::cls, sel("webView:didFailNavigation:withError:"),
+        reinterpret_cast<IMP>(delegateDidFailNavigation), "v@:@@@");
+    addMethod(NavigationDelegate::cls, sel("webView:didFailProvisionalNavigation:withError:"),
+        reinterpret_cast<IMP>(delegateDidFailProvisionalNavigation), "v@:@@@");
+    if (Protocol* proto = getProtocol("WKNavigationDelegate")) {
+        addProtocol(NavigationDelegate::cls, proto);
+    }
+    registerClassPair(NavigationDelegate::cls);
+
+    NSApplication::setActivationPolicyProhibited();
+
+    m_loaded = true;
+    return true;
+}
+
+ObjCRuntime* ObjCRuntime::tryLoad()
+{
+    static LazyNeverDestroyed<ObjCRuntime> runtime;
+    static std::once_flag onceFlag;
+    std::call_once(onceFlag, [&] {
+        runtime.construct();
+        runtime->load();
+    });
+    return &runtime.get();
+}
+
+} // namespace Bun
+
+#endif // OS(DARWIN)

@@ -1,0 +1,435 @@
+#include "root.h"
+
+#if OS(DARWIN)
+
+#include "WebViewHost.h"
+#include "ipc_protocol.h"
+
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <wtf/text/MakeString.h>
+
+namespace Bun {
+
+using namespace WebViewProto;
+
+// Defined in host_main.cpp.
+namespace WebViewProto { FrameWriter* hostWriter(); }
+
+std::unique_ptr<WebViewHost> WebViewHost::createForIPC(uint32_t viewId, uint32_t width, uint32_t height, const WTF::String& persistDir)
+{
+    ASSERT(ObjCRuntime::tryLoad()->m_loaded);
+
+    auto host = std::unique_ptr<WebViewHost>(new WebViewHost());
+    host->m_viewId = viewId;
+
+    auto cfg = persistDir.isEmpty()
+        ? objc::WKWebViewConfiguration::createEphemeral()
+        : objc::WKWebViewConfiguration::createPersistent(persistDir);
+    host->m_webview = objc::WKWebView::create(cfg, width, height);
+    if (!host->m_webview) return nullptr;
+
+    host->m_delegate = objc::NavigationDelegate::create(host.get());
+    host->m_webview.setNavigationDelegate(host->m_delegate);
+
+    host->m_window = objc::NSWindow::createOffscreen(width, height);
+    host->m_window.setContentView(host->m_webview);
+    host->m_height = height;
+
+    // Process-global TextChecker state. keyDown: → NSTextInputContext →
+    // smart quotes by default — first view sets it off for all.
+    host->m_webview.disableTextSubstitutions();
+
+    return host;
+}
+
+WebViewHost::~WebViewHost()
+{
+    close();
+}
+
+void WebViewHost::close()
+{
+    if (m_closed) return;
+    m_closed = true;
+    ObjCRuntime::ARPool pool;
+
+    // Break the delegate backlink first so late WebKit callbacks see null.
+    if (m_delegate) m_delegate.clearHost();
+    auto* rt = ObjCRuntime::tryLoad();
+    if (rt->m_evalTarget == this) rt->m_evalTarget = nullptr;
+    if (rt->m_screenshotTarget == this) rt->m_screenshotTarget = nullptr;
+    if (rt->m_inputTarget == this) rt->m_inputTarget = nullptr;
+
+    if (m_webview) {
+        m_webview.setNavigationDelegate(nullptr);
+        m_webview.stopLoading();
+    }
+    if (m_window) {
+        m_window.setContentView(nullptr);
+        m_window.close();
+        m_window.release();
+        m_window = {};
+    }
+    if (m_webview) {
+        m_webview.release();
+        m_webview = {};
+    }
+    if (m_delegate) {
+        m_delegate.release();
+        m_delegate = {};
+    }
+}
+
+// --- Requests --------------------------------------------------------------
+
+void WebViewHost::navigateIPC(const WTF::String& urlString)
+{
+    if (m_navPending) {
+        hostWriter()->sendReplyStr(m_viewId, Reply::NavFailed, "navigation already pending"_s);
+        return;
+    }
+    auto nsurl = objc::NSURL::fromString(objc::NSString::fromWTF(urlString));
+    if (!nsurl) {
+        hostWriter()->sendReplyStr(m_viewId, Reply::NavFailed, "invalid URL"_s);
+        return;
+    }
+    m_navPending = true;
+    m_webview.loadRequest(objc::NSURLRequest::fromURL(nsurl));
+}
+
+void WebViewHost::evaluateIPC(const WTF::String& script)
+{
+    auto* rt = ObjCRuntime::tryLoad();
+    if (m_evalPending || rt->m_evalTarget) {
+        hostWriter()->sendReplyStr(m_viewId, Reply::EvalFailed, "evaluate already pending"_s);
+        return;
+    }
+    m_evalPending = true;
+    rt->m_evalTarget = this;
+    m_webview.evaluate(objc::NSString::fromWTF(script), evalCompletionBlock());
+}
+
+void WebViewHost::screenshotIPC()
+{
+    auto* rt = ObjCRuntime::tryLoad();
+    if (m_screenshotPending || rt->m_screenshotTarget) {
+        hostWriter()->sendReplyStr(m_viewId, Reply::ScreenshotFailed, "screenshot already pending"_s);
+        return;
+    }
+    m_screenshotPending = true;
+    rt->m_screenshotTarget = this;
+    m_webview.takeSnapshot(snapshotCompletionBlock());
+}
+
+// --- Native input ----------------------------------------------------------
+// click() and type()/most of press() use WebKit's own completion barriers:
+//   _doAfterProcessingAllPendingMouseEvents: — fires when the UIProcess
+//     mouseEventQueue drains = WebContent has acked every mouse event.
+//   _executeEditCommand:argument:completion: — sendWithAsyncReply; the
+//     completion block fires when WebContent has run the command.
+// Return true if async (Ack from onInputComplete), false if synchronous.
+
+static unsigned long expandModifiers(uint8_t m)
+{
+    using namespace Bun::WebViewProto;
+    using NSEvent = objc::NSEvent;
+    unsigned long r = 0;
+    if (m & ModShift) r |= NSEvent::ModShift;
+    if (m & ModCtrl)  r |= NSEvent::ModControl;
+    if (m & ModAlt)   r |= NSEvent::ModOption;
+    if (m & ModMeta)  r |= NSEvent::ModCommand;
+    return r;
+}
+
+bool WebViewHost::clickIPC(float x, float y, uint8_t button, uint8_t modifiers, uint8_t clickCount)
+{
+    auto* rt = ObjCRuntime::tryLoad();
+    if (m_inputPending || rt->m_inputTarget) {
+        hostWriter()->sendReplyStr(m_viewId, Reply::Error, "input operation already pending"_s);
+        return true;
+    }
+
+    using NSEvent = objc::NSEvent;
+    double wy = static_cast<double>(m_height) - y;  // viewport y-down → window y-up
+    unsigned long mods = expandModifiers(modifiers);
+    double ts = objc::NSProcessInfo::systemUptime();
+    long win = m_window.windowNumber();
+
+    // [webview mouseDown:] direct. [window sendEvent:] needs
+    // makeKeyAndOrderFront: (the automation code does that) which would show
+    // the window. The responder method goes _impl->mouseDown → WebViewImpl →
+    // handleMouseEvent → mouseEventQueue → XPC. WebContent synthesizes click
+    // from the pair: pointerdown/mousedown/pointerup/mouseup/click all fire,
+    // isTrusted:true, :active CSS applies.
+    switch (button) {
+    case 1:
+        m_webview.rightMouseDown(NSEvent::mouseEvent(NSEvent::RightMouseDown, x, wy, mods, ts, win, clickCount));
+        m_webview.rightMouseUp(  NSEvent::mouseEvent(NSEvent::RightMouseUp,   x, wy, mods, ts, win, clickCount));
+        break;
+    case 2:
+        m_webview.otherMouseDown(NSEvent::mouseEvent(NSEvent::OtherMouseDown, x, wy, mods, ts, win, clickCount));
+        m_webview.otherMouseUp(  NSEvent::mouseEvent(NSEvent::OtherMouseUp,   x, wy, mods, ts, win, clickCount));
+        break;
+    default:
+        m_webview.mouseDown(NSEvent::mouseEvent(NSEvent::LeftMouseDown, x, wy, mods, ts, win, clickCount));
+        m_webview.mouseUp(  NSEvent::mouseEvent(NSEvent::LeftMouseUp,   x, wy, mods, ts, win, clickCount));
+    }
+
+    // Both events are now in mouseEventQueue. The barrier fires when the
+    // queue drains — WebContent has processed both, synthesized click,
+    // fired all JS handlers. No polling, no evaluateJavaScript hack.
+    m_inputPending = true;
+    rt->m_inputTarget = this;
+    m_webview.doAfterPendingMouseEvents(mouseBarrierBlock());
+    return true;
+}
+
+bool WebViewHost::typeIPC(const WTF::String& text)
+{
+    auto* rt = ObjCRuntime::tryLoad();
+    if (m_inputPending || rt->m_inputTarget) {
+        hostWriter()->sendReplyStr(m_viewId, Reply::Error, "input operation already pending"_s);
+        return true;
+    }
+
+    // InsertText is a WebCore editing command. _executeEditCommand goes
+    // WebPageProxy::executeEditCommand → sendWithAsyncReplyToProcessContainingFrame
+    // Messages::WebPage::ExecuteEditCommandWithCallback. The completion block
+    // fires when WebContent has inserted the text AND fired beforeinput/input.
+    //
+    // This bypasses WebViewImpl::interpretKeyEvent entirely — no IME, no
+    // holding tank, no smart-quote substitution (that happens at the
+    // NSTextInputContext layer we're skipping). No keydown fires — this is
+    // insertText semantics, same as paste. If keydown is needed, press().
+    m_inputPending = true;
+    rt->m_inputTarget = this;
+    m_webview.executeEditCommand(
+        objc::NSString::fromWTF("InsertText"_s),
+        objc::NSString::fromWTF(text),
+        editCommandCompletionBlock());
+    return true;
+}
+
+// VirtualKey → { editing command (with completion), or HID keyCode (keyDown
+// fallback) }. Indexed by enum value — no string compare. Commands from
+// EditorCommand.cpp's createCommandMap; keyCodes from HIToolbox/Events.h;
+// character codes are NSF-key range for nav keys.
+struct VKeyInfo {
+    ASCIILiteral command;   // non-null → _executeEditCommand path
+    uint16_t keyCode;
+    UChar ch;
+};
+static const VKeyInfo& vkeyInfo(VirtualKey k)
+{
+    // Escape and Space have no editing command. All others do, but only
+    // unmodified — Shift+ArrowLeft is MoveLeftAndModifySelection etc.,
+    // and mapping every chord is a lot; modified presses fall through to
+    // keyDown. Character stays {0,0,0}; caller supplies the char string.
+    static constexpr VKeyInfo table[] = {
+        /* Character */  { {},                         0,    0      },
+        /* Enter */      { "InsertNewline"_s,          0x24, '\r'   },
+        /* Tab */        { "InsertTab"_s,              0x30, '\t'   },
+        /* Space */      { {},                         0x31, ' '    },
+        /* Backspace */  { "DeleteBackward"_s,         0x33, 0x7f   },
+        /* Delete */     { "DeleteForward"_s,          0x75, 0xF728 },
+        /* Escape */     { {},                         0x35, 0x1b   },
+        /* ArrowLeft */  { "MoveLeft"_s,               0x7B, 0xF702 },
+        /* ArrowRight */ { "MoveRight"_s,              0x7C, 0xF703 },
+        /* ArrowUp */    { "MoveUp"_s,                 0x7E, 0xF700 },
+        /* ArrowDown */  { "MoveDown"_s,               0x7D, 0xF701 },
+        /* Home */       { "MoveToBeginningOfLine"_s,  0x73, 0xF729 },
+        /* End */        { "MoveToEndOfLine"_s,        0x77, 0xF72B },
+        /* PageUp */     { "ScrollPageBackward"_s,     0x74, 0xF72C },
+        /* PageDown */   { "ScrollPageForward"_s,      0x79, 0xF72D },
+    };
+    static_assert(std::size(table) == static_cast<size_t>(VirtualKey::PageDown) + 1);
+    return table[static_cast<uint8_t>(k)];
+}
+
+bool WebViewHost::pressIPC(VirtualKey key, uint8_t modifiers, const WTF::String& character)
+{
+    auto* rt = ObjCRuntime::tryLoad();
+    if (m_inputPending || rt->m_inputTarget) {
+        hostWriter()->sendReplyStr(m_viewId, Reply::Error, "input operation already pending"_s);
+        return true;
+    }
+
+    const auto& info = vkeyInfo(key);
+
+    // Editing-command path with proper completion. Only for unmodified
+    // named keys — modifiers change the meaning, and mapping chord→command
+    // is a lot of table for v1.
+    if (!modifiers && info.command) {
+        m_inputPending = true;
+        rt->m_inputTarget = this;
+        m_webview.executeEditCommand(
+            objc::NSString::fromWTF(info.command),
+            objc::NSString::fromWTF(""_s),
+            editCommandCompletionBlock());
+        return true;
+    }
+
+    // keyDown fallback: Escape, Space, any key with modifiers, Character.
+    // WebKit exposes no keyboard equivalent of _doAfterProcessingAllPendingMouseEvents:.
+    // interpretKeyEvent is async; each press() is one pair so no holding-
+    // tank burst, and the user's next await serializes via our single-
+    // threaded CFRunLoop dispatch.
+    using NSEvent = objc::NSEvent;
+    unsigned long mods = expandModifiers(modifiers);
+    double ts = objc::NSProcessInfo::systemUptime();
+    long win = m_window.windowNumber();
+
+    WTF::String charsStr;
+    uint16_t keyCode;
+    if (key == VirtualKey::Character) {
+        charsStr = character;
+        keyCode = 0;
+    } else {
+        charsStr = WTF::String(std::span<const UChar>(&info.ch, 1));
+        keyCode = info.keyCode;
+    }
+    auto chars = objc::NSString::fromWTF(charsStr);
+    m_webview.keyDown(NSEvent::keyEvent(NSEvent::KeyDown, mods, ts, win, chars, chars, keyCode));
+    m_webview.keyUp(  NSEvent::keyEvent(NSEvent::KeyUp,   mods, ts, win, chars, chars, keyCode));
+    return false;
+}
+
+void WebViewHost::onInputComplete()
+{
+    if (!std::exchange(m_inputPending, false)) return;
+    hostWriter()->sendReply(m_viewId, Reply::Ack);
+}
+
+void WebViewHost::resize(uint32_t width, uint32_t height)
+{
+    if (m_closed) return;
+    m_window.setContentSize(width, height);
+    objc::NSView(m_webview).setFrame(width, height);
+    m_height = height;
+}
+
+void WebViewHost::goBack()    { if (m_webview.canGoBack())    m_webview.goBack();    }
+void WebViewHost::goForward() { if (m_webview.canGoForward()) m_webview.goForward(); }
+void WebViewHost::reload()    { m_webview.reload(); }
+
+WTF::String WebViewHost::url()
+{
+    auto nsurl = m_webview.url();
+    return nsurl ? nsurl.absoluteString() : WTF::String();
+}
+
+WTF::String WebViewHost::title() { return m_webview.title(); }
+
+// --- Completions -----------------------------------------------------------
+// Inside CFRunLoop. Write the reply, clear the pending req_id.
+
+// Pack two inline strings: u32 alen + a + u32 blen + b.
+static WTF::Vector<uint8_t, 512> pack2(const WTF::String& a, const WTF::String& b)
+{
+    WTF::CString ca = a.utf8(), cb = b.utf8();
+    uint32_t na = static_cast<uint32_t>(ca.length()), nb = static_cast<uint32_t>(cb.length());
+    WTF::Vector<uint8_t, 512> out;
+    out.grow(8 + na + nb);
+    uint8_t* p = out.mutableSpan().data();
+    memcpy(p, &na, 4); p += 4; memcpy(p, ca.data(), na); p += na;
+    memcpy(p, &nb, 4); p += 4; memcpy(p, cb.data(), nb);
+    return out;
+}
+
+// Event before reply: the parent's `await navigate()` resumes on the reply's
+// microtask. If the event arrives after, the callback fires on a LATER tick —
+// `expect(callbackFired).toBe(true)` right after the await would see false.
+// Sending the event first means both are in the same onData batch, processed
+// in order, callback fires before the promise microtask runs.
+
+void WebViewHost::onNavigationFinished()
+{
+    if (!std::exchange(m_navPending, false)) return;
+    auto payload = pack2(url(), title());
+    hostWriter()->sendReply(m_viewId, Reply::NavEvent, payload.span().data(), static_cast<uint32_t>(payload.size()));
+    hostWriter()->sendReply(m_viewId, Reply::NavDone, payload.span().data(), static_cast<uint32_t>(payload.size()));
+}
+
+void WebViewHost::onNavigationFailed(const WTF::String& err)
+{
+    if (!std::exchange(m_navPending, false)) return;
+    hostWriter()->sendReplyStr(m_viewId, Reply::NavFailEvent, err);
+    hostWriter()->sendReplyStr(m_viewId, Reply::NavFailed, err);
+}
+
+void WebViewHost::onEvalComplete(id result, id error)
+{
+    if (!std::exchange(m_evalPending, false)) return;
+    if (error) {
+        hostWriter()->sendReplyStr(m_viewId, Reply::EvalFailed, objc::NSError(error).localizedDescription());
+        return;
+    }
+    // WebKit serializes the JS result to an NSObject; -description covers
+    // NSString/NSNumber/NSArray/NSDictionary/NSNull.
+    hostWriter()->sendReplyStr(m_viewId, Reply::EvalDone,
+        result ? objc::NSObject(result).describe() : WTF::String());
+}
+
+void WebViewHost::onScreenshotComplete(id nsimage, id error)
+{
+    if (!std::exchange(m_screenshotPending, false)) return;
+    if (error || !nsimage) {
+        hostWriter()->sendReplyStr(m_viewId, Reply::ScreenshotFailed,
+            error ? objc::NSError(error).localizedDescription() : "snapshot returned no image"_s);
+        return;
+    }
+
+    id cg = objc::NSImage(nsimage).cgImage();
+    if (!cg) { hostWriter()->sendReplyStr(m_viewId, Reply::ScreenshotFailed, "CGImage extraction failed"_s); return; }
+    auto png = objc::NSBitmapImageRep::pngFromCGImage(cg);
+    if (!png) { hostWriter()->sendReplyStr(m_viewId, Reply::ScreenshotFailed, "PNG encoding failed"_s); return; }
+    unsigned long length = png.length();
+
+    // PNG goes in POSIX shared memory — reply frame stays tiny. The parent
+    // shm_open's the same name, mmaps, wraps in a Uint8Array, then
+    // shm_unlink's (we unlink after the parent's reply-ack in principle,
+    // but it's simpler for the parent to own the unlink — it knows when
+    // the JS side is done with the bytes).
+    // Monotonic counter for unique names — the parent unlinks on receive,
+    // but if the same viewId screenshots twice before the first is read
+    // we'd collide with O_EXCL.
+    static uint32_t shmSeq = 0;
+    char name[48];
+    snprintf(name, sizeof(name), "/bun-webview-%d-%u", getpid(), ++shmSeq);
+    int fd = shm_open(name, O_CREAT | O_RDWR | O_EXCL, 0600);
+    if (fd < 0) {
+        hostWriter()->sendReplyStr(m_viewId, Reply::ScreenshotFailed, makeString("shm_open: "_s, WTF::String::fromUTF8(strerror(errno))));
+        return;
+    }
+    if (ftruncate(fd, static_cast<off_t>(length)) != 0) {
+        ::close(fd); shm_unlink(name);
+        hostWriter()->sendReplyStr(m_viewId, Reply::ScreenshotFailed, makeString("ftruncate: "_s, WTF::String::fromUTF8(strerror(errno))));
+        return;
+    }
+    void* map = mmap(nullptr, length, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    ::close(fd);
+    if (map == MAP_FAILED) {
+        shm_unlink(name);
+        hostWriter()->sendReplyStr(m_viewId, Reply::ScreenshotFailed, makeString("mmap: "_s, WTF::String::fromUTF8(strerror(errno))));
+        return;
+    }
+    memcpy(map, png.bytes(), length);
+    munmap(map, length);
+
+    // Payload: u32 nameLen + name + u32 pngLen.
+    uint32_t nameLen = static_cast<uint32_t>(strlen(name));
+    uint32_t pngLen = static_cast<uint32_t>(length);
+    WTF::Vector<uint8_t, 64> payload;
+    payload.grow(4 + nameLen + 4);
+    uint8_t* p = payload.mutableSpan().data();
+    memcpy(p, &nameLen, 4); p += 4; memcpy(p, name, nameLen); p += nameLen;
+    memcpy(p, &pngLen, 4);
+    hostWriter()->sendReply(m_viewId, Reply::ScreenshotDone, payload.span().data(), static_cast<uint32_t>(payload.size()));
+}
+
+} // namespace Bun
+
+#endif // OS(DARWIN)

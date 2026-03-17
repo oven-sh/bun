@@ -562,22 +562,14 @@ pub const ShellRmTask = struct {
             debug("DirTask: {s}", .{this.path});
             this.is_absolute = ResolvePath.Platform.auto.isAbsolute(this.path[0..this.path.len]);
             switch (this.task_manager.removeEntry(this, this.is_absolute)) {
-                .err => |err| {
-                    debug("[runFromThreadPoolImpl] DirTask({x}) failed: {s}: {s}", .{ @intFromPtr(this), @tagName(err.getErrno()), err.path });
-                    this.task_manager.err_mutex.lock();
-                    defer this.task_manager.err_mutex.unlock();
-                    if (this.task_manager.err == null) {
-                        this.task_manager.err = err;
-                        this.task_manager.error_signal.store(true, .seq_cst);
-                    } else {
-                        var err2 = err;
-                        err2.deinit();
-                    }
-                },
+                .err => |err| this.handleErr(err),
                 .result => {},
             }
         }
 
+        /// Stores the first error encountered; discards subsequent errors.
+        /// The kept error's path is owned by task_manager.err.
+        /// The discarded error's heap-allocated path is freed here.
         fn handleErr(this: *DirTask, err: Syscall.Error) void {
             debug("[handleErr] DirTask({x}) failed: {s}: {s}", .{ @intFromPtr(this), @tagName(err.getErrno()), err.path });
             this.task_manager.err_mutex.lock();
@@ -586,8 +578,9 @@ pub const ShellRmTask = struct {
                 this.task_manager.err = err;
                 this.task_manager.error_signal.store(true, .seq_cst);
             } else {
-                var err2 = err;
-                err2.deinit();
+                // Already have an error stored; free the discarded error's path.
+                var discarded = err;
+                discarded.deinit();
             }
         }
 
@@ -639,17 +632,7 @@ pub const ShellRmTask = struct {
             }
 
             switch (this.task_manager.removeEntryDirAfterChildren(this)) {
-                .err => |e| {
-                    debug("[deleteAfterWaitingForChildren] DirTask({x}) failed: {s}: {s}", .{ @intFromPtr(this), @tagName(e.getErrno()), e.path });
-                    this.task_manager.err_mutex.lock();
-                    defer this.task_manager.err_mutex.unlock();
-                    if (this.task_manager.err == null) {
-                        this.task_manager.err = e;
-                    } else {
-                        var err2 = e;
-                        err2.deinit();
-                    }
-                },
+                .err => |e| this.handleErr(e),
                 .result => |deleted| {
                     if (!deleted) {
                         do_post_run = false;
@@ -944,7 +927,7 @@ pub const ShellRmTask = struct {
 
                         return .{ .err = this.errorWithPath(e, path) };
                     },
-                    else => return .{ .err = e },
+                    else => return .{ .err = this.errorWithPath(e, path) },
                 }
             },
         }

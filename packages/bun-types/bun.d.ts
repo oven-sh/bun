@@ -7794,7 +7794,7 @@ declare module "bun" {
       button?: "left" | "right" | "middle";
       /** Modifier keys to hold during the click. */
       modifiers?: Modifier[];
-      /** Number of clicks (1 = single, 2 = double). @default 1 */
+      /** Number of clicks (1 = single, 2 = double, 3 = triple). @default 1 */
       clickCount?: 1 | 2 | 3;
     }
 
@@ -7887,7 +7887,7 @@ declare module "bun" {
      * Fired when a navigation fails. The callback runs before the
      * corresponding `navigate()` promise rejects.
      */
-    onNavigationFailed: ((error: string) => void) | null;
+    onNavigationFailed: ((error: Error) => void) | null;
 
     /**
      * Navigate to a URL. Resolves when the main frame's load completes
@@ -7908,8 +7908,11 @@ declare module "bun" {
      *
      * Only one `evaluate()` may be in flight at a time per view; a second
      * concurrent call throws `ERR_INVALID_STATE`.
+     *
+     * Resolves to `undefined` if the script's result is not serializable
+     * (e.g. returns `undefined`, a function, or a DOM node).
      */
-    evaluate(script: string): Promise<string>;
+    evaluate(script: string): Promise<string | undefined>;
 
     /**
      * Capture a PNG screenshot of the current viewport.

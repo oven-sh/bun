@@ -359,8 +359,14 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncPress, (JSGlobalObject * globalObject
     WTF::String key = keyArg.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
-    uint8_t mods = parseModifiers(globalObject, scope, callFrame->argument(1));
-    RETURN_IF_EXCEPTION(scope, {});
+    uint8_t mods = 0;
+    JSValue opts = callFrame->argument(1);
+    if (opts.isObject()) {
+        JSValue m = opts.getObject()->get(globalObject, Identifier::fromString(vm, "modifiers"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+        mods = parseModifiers(globalObject, scope, m);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
 
     VirtualKey vk = virtualKeyFromName(key);
     if (vk == VirtualKey::Character && key.length() != 1) {
@@ -457,8 +463,10 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncResize, (JSGlobalObject * globalObjec
     RETURN_IF_EXCEPTION(scope, {});
     uint32_t h = callFrame->argument(1).toUInt32(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    if (w == 0 || h == 0 || w > 16384 || h > 16384)
-        return Bun::ERR::OUT_OF_RANGE(scope, globalObject, "width/height"_s, 1, 16384, jsNumber(w));
+    if (w == 0 || w > 16384)
+        return Bun::ERR::OUT_OF_RANGE(scope, globalObject, "width"_s, 1, 16384, jsNumber(w));
+    if (h == 0 || h > 16384)
+        return Bun::ERR::OUT_OF_RANGE(scope, globalObject, "height"_s, 1, 16384, jsNumber(h));
 
     if (!checkSlot(globalObject, scope, thisObject->m_pendingMisc, "a simple operation"_s)) return {};
     return JSValue::encode(thisObject->resize(globalObject, w, h));

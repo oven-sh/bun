@@ -148,7 +148,17 @@ us_socket_t* hostOnOpen(us_socket_t* s, int, char*, int) { return s; }
 bool HostClient::ensureSpawned(Zig::GlobalObject* zig)
 {
     if (sock && !dead) return true;
-    if (dead) return false;
+
+    // Host died (rejectAllAndMarkDead ran). The Zig side cleared its
+    // instance in onProcessExit, so Bun__WebViewHost__ensure will spawn a
+    // fresh child. Clear stale state and try again — the old rx/txQueue
+    // bytes are for the dead socket.
+    if (dead) {
+        dead = false;
+        sock = nullptr;
+        rx.clear();
+        txQueue.clear();
+    }
 
     int fd = Bun__WebViewHost__ensure(zig);
     if (fd < 0) { dead = true; return false; }
@@ -586,10 +596,25 @@ JSPromise* JSWebView::reload(JSGlobalObject* g)    { return sendOp(g, this, m_pe
 void JSWebView::doClose()
 {
     m_closed = true;
+    auto& client = hostClient();
+
+    // Reject any pending promises before erasing from the routing table —
+    // otherwise the child's replies find no entry, the promises hang, and
+    // m_pendingActivityCount stays >0 so isReachableFromOpaqueRoots keeps
+    // this object alive forever. Same per-slot rejection as
+    // rejectAllAndMarkDead.
+    if (client.global) {
+        auto* g = client.global;
+        JSValue err = createError(g, "WebView closed"_s);
+        settle(g, this, m_pendingNavigate,   false, err);
+        settle(g, this, m_pendingEval,       false, err);
+        settle(g, this, m_pendingScreenshot, false, err);
+        settle(g, this, m_pendingMisc,       false, err);
+    }
+
     // Fire-and-forget: no slot (view is going away), child's Ack finds no
     // entry in viewsById and drops. Erase AFTER write so keep-alive stays
     // ref'd long enough for the frame to reach the socket buffer.
-    auto& client = hostClient();
     client.writeFrame(Op::Close, m_viewId, nullptr, 0);
     client.viewsById.erase(m_viewId);
     client.updateKeepAlive();

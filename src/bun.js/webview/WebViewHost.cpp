@@ -390,7 +390,8 @@ static const VKeyInfo& vkeyInfo(VirtualKey k)
         /* PageDown */   { "ScrollPageForward"_s,      0x79, 0xF72D },
     };
     static_assert(std::size(table) == static_cast<size_t>(VirtualKey::PageDown) + 1);
-    return table[static_cast<uint8_t>(k)];
+    uint8_t idx = static_cast<uint8_t>(k);
+    return table[idx < std::size(table) ? idx : 0];
 }
 
 bool WebViewHost::pressIPC(VirtualKey key, uint8_t modifiers, const WTF::String& character)
@@ -467,12 +468,23 @@ bool WebViewHost::scrollIPC(float dx, float dy)
     // Decoupled from click/type's m_inputTarget. If a scroll is already
     // pending, accumulate onto the scheduled barrier — the parent's
     // m_pendingMisc slot serializes from JS so this is rare.
+    auto* rt = ObjCRuntime::tryLoad();
+    // Cross-view: if another view's scroll barrier is in flight, don't
+    // stomp its target — the barrier block reads the global m_scrollTarget,
+    // and it would dispatch to us with the OTHER view's m_scrollPending
+    // stuck true and its parent-side promise orphaned. Same-view
+    // accumulate still works (m_scrollPending check below).
+    if (rt->m_scrollTarget && rt->m_scrollTarget != this) {
+        hostWriter()->sendReplyStr(m_viewId, Reply::Error, "scroll already pending on another view"_s);
+        return true;
+    }
+
     m_pendingScrollDx += dx;
     m_pendingScrollDy += dy;
     if (std::exchange(m_scrollPending, true)) return true;
 
     m_scrollWheelFired = false;
-    ObjCRuntime::tryLoad()->m_scrollTarget = this;
+    rt->m_scrollTarget = this;
     m_webview.doAfterNextPresentationUpdate(scrollBarrierBlock());
     return true;
 }
@@ -549,16 +561,20 @@ static WTF::Vector<uint8_t, 512> pack2(const WTF::String& a, const WTF::String& 
 
 void WebViewHost::onNavigationFinished()
 {
-    if (!std::exchange(m_navPending, false)) return;
+    // NavEvent is unsolicited — fires for back()/forward()/reload() too,
+    // which Ack immediately and don't set m_navPending. The parent updates
+    // url/title and runs onNavigated from NavEvent; NavDone only resolves
+    // the navigate() promise.
     auto payload = pack2(url(), title());
     hostWriter()->sendReply(m_viewId, Reply::NavEvent, payload.span().data(), static_cast<uint32_t>(payload.size()));
+    if (!std::exchange(m_navPending, false)) return;
     hostWriter()->sendReply(m_viewId, Reply::NavDone, payload.span().data(), static_cast<uint32_t>(payload.size()));
 }
 
 void WebViewHost::onNavigationFailed(const WTF::String& err)
 {
-    if (!std::exchange(m_navPending, false)) return;
     hostWriter()->sendReplyStr(m_viewId, Reply::NavFailEvent, err);
+    if (!std::exchange(m_navPending, false)) return;
     hostWriter()->sendReplyStr(m_viewId, Reply::NavFailed, err);
 }
 

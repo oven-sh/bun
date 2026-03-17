@@ -115,7 +115,7 @@ fn spawn(vm: *jsc.VirtualMachine) !*HostProcess {
             log("watch failed: {f}", .{e});
             self.process.deref();
             bun.destroy(self);
-            fds[0].close();
+            // errdefer at the top closes fds[0]; don't double-close here.
             return error.WatchFailed;
         },
     }

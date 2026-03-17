@@ -436,6 +436,31 @@ it("press dispatches virtual keys", async () => {
   }
 });
 
+it("press with modifiers fires keydown with modifier flags", async () => {
+  const view = new Bun.WebView({ width: 300, height: 300 });
+  try {
+    await view.navigate(
+      "data:text/html," +
+        encodeURIComponent(`
+          <script>
+            window.__keys = [];
+            addEventListener("keydown", e => __keys.push({key: e.key, shift: e.shiftKey, meta: e.metaKey}));
+          </script>
+        `),
+    );
+    // Modified keys skip the editing-command path and fall through to
+    // keyDown: — mapping every chord→command (Shift+ArrowLeft is
+    // MoveLeftAndModifySelection etc.) isn't done yet. The options object
+    // was being passed directly to parseModifiers which expects an array;
+    // the modifiers field is now extracted first.
+    await view.press("Escape", { modifiers: ["Shift"] });
+    const keys = await view.evaluate("JSON.stringify(__keys)");
+    expect(JSON.parse(keys)).toEqual([{ key: "Escape", shift: true, meta: false }]);
+  } finally {
+    view.close();
+  }
+});
+
 it("scroll dispatches native wheel event with isTrusted", async () => {
   const view = new Bun.WebView({ width: 200, height: 200 });
   try {
@@ -620,6 +645,41 @@ it("close() makes subsequent calls throw", async () => {
   expect(() => view.navigate("data:text/html,bye")).toThrow(/closed/i);
   // Second close is a no-op.
   view.close();
+});
+
+it("close() rejects pending promises", async () => {
+  const view = new Bun.WebView({ width: 200, height: 200 });
+  await view.navigate("data:text/html,<body>hi</body>");
+  // Start an evaluate that never resolves page-side (infinite loop would
+  // block WebContent; use a pending promise-like shape via a slow script
+  // instead — actually, just start the evaluate and close before it
+  // round-trips). The promise must reject, not hang. Without rejection,
+  // m_pendingActivityCount stays >0 and the view leaks.
+  const p = view.evaluate("new Promise(()=>{})" /* unsupported type → slow-ish */);
+  view.close();
+  await expect(p).rejects.toThrow(/closed/i);
+});
+
+it("reload() fires onNavigated", async () => {
+  const view = new Bun.WebView({ width: 200, height: 200 });
+  try {
+    await view.navigate("data:text/html," + encodeURIComponent("<body>hi</body>"));
+    expect(view.url).toStartWith("data:text/html");
+
+    // NavEvent is unsolicited now — fires for reload() even though
+    // reload() Acks immediately (m_pendingMisc, not m_pendingNavigate).
+    // Before this change, onNavigationFinished early-returned when
+    // m_navPending was false, so reload/back/forward never fired the
+    // callback and never updated view.url.
+    const { promise, resolve } = Promise.withResolvers<string>();
+    view.onNavigated = url => resolve(url);
+    await view.reload();
+    const navUrl = await promise;
+    expect(navUrl).toStartWith("data:text/html");
+    expect(view.url).toStartWith("data:text/html");
+  } finally {
+    view.close();
+  }
 });
 
 it("url/title return empty after close", () => {

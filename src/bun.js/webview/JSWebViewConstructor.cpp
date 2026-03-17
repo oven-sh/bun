@@ -127,9 +127,10 @@ JSC_DEFINE_HOST_FUNCTION(constructWebView, (JSGlobalObject * globalObject, CallF
         }
     }
 
-    if (width == 0 || height == 0 || width > 16384 || height > 16384) {
-        return Bun::ERR::OUT_OF_RANGE(scope, globalObject, "width/height"_s, 1, 16384, jsNumber(width));
-    }
+    if (width == 0 || width > 16384)
+        return Bun::ERR::OUT_OF_RANGE(scope, globalObject, "width"_s, 1, 16384, jsNumber(width));
+    if (height == 0 || height > 16384)
+        return Bun::ERR::OUT_OF_RANGE(scope, globalObject, "height"_s, 1, 16384, jsNumber(height));
 
     Structure* structure = zigGlobalObject->m_JSWebViewClassStructure.get(zigGlobalObject);
     JSValue newTarget = callFrame->newTarget();

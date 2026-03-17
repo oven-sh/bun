@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 // Regression test for https://github.com/oven-sh/bun/issues/28177
@@ -38,11 +38,7 @@ test("chained static imports do not cause use-after-poison in TranspilerJob pool
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stdout.trim()).toBe('{"value":42}');
   expect(exitCode).toBe(0);
@@ -59,10 +55,7 @@ test("concurrent dynamic imports stress TranspilerJob pool recycling", async () 
   }
 
   // Dynamically import all modules concurrently
-  const imports = Array.from(
-    { length: moduleCount },
-    (_, i) => `import("./dep_${i}.ts")`,
-  ).join(",\n    ");
+  const imports = Array.from({ length: moduleCount }, (_, i) => `import("./dep_${i}.ts")`).join(",\n    ");
 
   files["index.ts"] = `
     const results = await Promise.all([
@@ -82,11 +75,7 @@ test("concurrent dynamic imports stress TranspilerJob pool recycling", async () 
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   const expected = Array.from({ length: moduleCount }, (_, i) => i);
   expect(JSON.parse(stdout.trim())).toEqual(expected);

@@ -524,7 +524,7 @@ throw new Error('0');`,
           hotRunnerRoot,
           `// source content /*nonce:${nonce}*/
 ${comment_spam}
-${" ".repeat(counter * 2)}throw new Error(${counter});`,
+${Buffer.alloc(counter * 2, " ").toString()}throw new Error(${counter});`,
         );
       },
       verifyLine: (errorLine, nextLine, counter) => {
@@ -570,6 +570,7 @@ throw new Error('0');`,
       stderr: "pipe",
       stdin: "ignore",
     });
+    let done = false;
     const reloadCounter = await Promise.race([
       driveErrorReloadCycle(runner, {
         targetCount: 50,
@@ -579,7 +580,7 @@ throw new Error('0');`,
             `// source content /*nonce:${nonce}*/
 // etc etc
 // etc etc
-${" ".repeat(counter * 2)}throw new Error(${counter});`,
+${Buffer.alloc(counter * 2, " ").toString()}throw new Error(${counter});`,
           );
         },
         verifyLine: (_errorLine, nextLine, counter) => {
@@ -589,9 +590,10 @@ ${" ".repeat(counter * 2)}throw new Error(${counter});`,
           const col = match[1];
           expect(Number(col)).toBe(1 + "throw ".length + counter * 2);
         },
-      }),
+      }).finally(() => { done = true; }),
       bundler.exited.then(code => {
-        throw new Error(`bundler exited early with code ${code}`);
+        if (!done) throw new Error(`bundler exited early with code ${code}`);
+        return -1; // Ignored — race already resolved
       }),
     ]);
     expect(reloadCounter).toBe(50);
@@ -647,6 +649,7 @@ throw new Error('0');`,
       stderr: "pipe",
       stdin: "ignore",
     });
+    let done2 = false;
     const reloadCounter = await Promise.race([
       driveErrorReloadCycle(runner, {
         targetCount: 50,
@@ -656,7 +659,7 @@ throw new Error('0');`,
             `// ${long_comment} /*nonce:${nonce}*/
 console.error("RSS: %s", process.memoryUsage().rss);
 //
-${" ".repeat(counter * 2)}throw new Error(${counter});`,
+${Buffer.alloc(counter * 2, " ").toString()}throw new Error(${counter});`,
           );
         },
         verifyLine: (_errorLine, nextLine, counter) => {
@@ -666,9 +669,10 @@ ${" ".repeat(counter * 2)}throw new Error(${counter});`,
           const col = match[1];
           expect(Number(col)).toBe(1 + "throw ".length + counter * 2);
         },
-      }),
+      }).finally(() => { done2 = true; }),
       bundler.exited.then(code => {
-        throw new Error(`bundler exited early with code ${code}`);
+        if (!done2) throw new Error(`bundler exited early with code ${code}`);
+        return -1; // Ignored — race already resolved
       }),
     ]);
     expect(reloadCounter).toBe(50);

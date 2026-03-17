@@ -8,22 +8,18 @@
 #if OS(DARWIN)
 
 #include "DarwinFrameworks.h"
-#include <pthread.h>
 
 extern "C" int Bun__setProcessTitle(const char* title)
 {
-    // Always set the pthread name — works on headless macOS (CI, SSH)
-    // and is readable via pthread_getname_np. Truncates to 63 chars.
-    pthread_setname_np(title);
-
     auto* fw = DarwinFrameworks::get();
     if (!fw)
-        return 0;
+        return -1;
 
     {
         void* launch_services_bundle;
         void** display_name_key;
         void* asn;
+        int err = -1;
 
         // LaunchServices function pointers resolved from the bundle.
         void* (*pLSGetCurrentApplicationASN)(void) = nullptr;
@@ -99,6 +95,8 @@ extern "C" int Bun__setProcessTitle(const char* title)
             goto out;
         }
 
+        err = 0;
+
     out:
         fw->releaseCF(cfLaunchServicesId);
         fw->releaseCF(cfGetASN);
@@ -107,9 +105,9 @@ extern "C" int Bun__setProcessTitle(const char* title)
         fw->releaseCF(cfCheckIn);
         fw->releaseCF(cfSetConnStatus);
         fw->releaseCF(cfTitle);
-    }
 
-    return 0;
+        return err;
+    }
 }
 
 #elif OS(LINUX)

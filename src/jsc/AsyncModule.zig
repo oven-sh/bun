@@ -702,7 +702,11 @@ pub const AsyncModule = struct {
             dumpSource(jsc_vm, specifier, &printer);
         }
 
-        if (jsc_vm.isWatcherEnabled()) {
+        // The ref-counted watcher path creates Latin-1 strings, which cannot
+        // represent multi-byte UTF-8 sequences. If the output contains non-ASCII
+        // (from raw template literals or regex source), fall through to the
+        // normal path which uses cloneUTF8.
+        if (jsc_vm.isWatcherEnabled() and bun.strings.isAllASCII(printer.ctx.written)) {
             var resolved_source = jsc_vm.refCountedResolvedSource(printer.ctx.written, bun.String.init(specifier), path.text, null, false);
 
             if (parse_result.input_fd) |fd_| {

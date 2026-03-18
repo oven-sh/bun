@@ -30,7 +30,9 @@ pub fn main() void {
     // allocation triggers Environment initialization.
     // See: https://github.com/oven-sh/bun/issues/22349
     if (Environment.isWindows) {
-        _ = _bun.c._putenv("Malloc=1");
+        // _putenv returns 0 on success, -1 on failure. Failure here means
+        // bmalloc will use unimplemented libpas and crash later, so assert.
+        _bun.assert(_bun.c._putenv("Malloc=1") == 0);
     }
 
     if (Environment.isPosix) {

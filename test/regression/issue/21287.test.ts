@@ -45,13 +45,13 @@ test("bun build --splitting with --format=iife should error, not crash", async (
   expect(exitCode).not.toBe(0);
 });
 
-test("Bun.build splitting with format cjs should throw", async () => {
+test("Bun.build splitting with format cjs should throw", () => {
   using dir = tempDir("issue-21287-api", {
     "entry.ts": `export const a = 1;`,
   });
 
-  expect(async () => {
-    await Bun.build({
+  expect(() => {
+    Bun.build({
       entrypoints: [dir + "/entry.ts"],
       splitting: true,
       format: "cjs",
@@ -75,7 +75,8 @@ test("bun build --splitting with --format=esm should succeed", async () => {
     stdout: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
+  expect(stderr).toBe("");
   expect(exitCode).toBe(0);
 });

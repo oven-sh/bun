@@ -230,10 +230,12 @@ devTest("hmr handles rapid consecutive edits", {
     await new Promise<void>((resolve, reject) => {
       const timeout = setTimeout(() => {
         cleanup();
-        reject(new Error(
-          `Timed out waiting for "${finalRender}". ` +
-          `Messages received: [${client.messages.map(m => JSON.stringify(m)).join(", ")}]`
-        ));
+        reject(
+          new Error(
+            `Timed out waiting for "${finalRender}". ` +
+              `Messages received: [${client.messages.map(m => JSON.stringify(m)).join(", ")}]`,
+          ),
+        );
       }, 10_000);
       const check = () => {
         for (const msg of client.messages) {

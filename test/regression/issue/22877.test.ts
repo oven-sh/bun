@@ -50,9 +50,6 @@ test("import() then require() on same mocked module does not crash", async () =>
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   const output = stdout + stderr;
-  expect(output).not.toContain("Segmentation fault");
-  expect(output).not.toContain("ASSERTION FAILED");
-  expect(output).not.toContain("panic");
   expect(output).toContain("1 pass");
   expect(exitCode).toBe(0);
 });

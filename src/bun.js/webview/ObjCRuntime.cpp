@@ -216,7 +216,6 @@ bool ObjCRuntime::load()
 {
     using namespace objc;
 
-
     // --- dlopen frameworks ------------------------------------------------
     void* libobjc = dlopen("/usr/lib/libobjc.A.dylib", RTLD_LAZY | RTLD_LOCAL);
     if (!libobjc) {

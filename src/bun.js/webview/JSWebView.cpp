@@ -498,7 +498,7 @@ extern "C" void Bun__WebViewHost__childDied(int32_t signo)
 // elimination doesn't trigger because the TaggedPointer dispatch switch in
 // process.zig pulls in all ProcessExitHandler arms. spawn() itself is gated
 // on Environment.isMac so this is never called.
-extern "C" void Bun__WebViewHost__childDied(int32_t) { }
+extern "C" void Bun__WebViewHost__childDied(int32_t) {}
 #endif
 
 // --- JSWebView class -------------------------------------------------------

@@ -1,13 +1,10 @@
 import { cc } from "bun:ffi";
-import { describe, expect, it } from "bun:test";
-import { isArm64, isASAN, isWindows, tempDirWithFiles } from "harness";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { isASAN, isWindows, tempDirWithFiles } from "harness";
 
 // TinyCC's setjmp/longjmp error handling conflicts with ASan.
-// TinyCC (and all of bun:ffi) is disabled on Windows ARM64.
-const isFFIUnavailable = isWindows && isArm64;
-
-// TinyCC can't find system headers (string.h) on Windows CI, so skip there too.
-describe.skipIf(isASAN || isWindows || isFFIUnavailable)("FFI small buffer externalization", () => {
+// TinyCC can't find system headers on Windows CI.
+describe.skipIf(isASAN || isWindows)("FFI small buffer externalization", () => {
   const source = /* c */ `
     // Writes known data into a buffer within bounds.
     void fill_buffer(unsigned char* buffer, int size) {
@@ -28,7 +25,7 @@ describe.skipIf(isASAN || isWindows || isFFIUnavailable)("FFI small buffer exter
   let dir: string;
   let lib: ReturnType<typeof cc>;
 
-  it("setup", () => {
+  beforeAll(() => {
     dir = tempDirWithFiles("ffi-gc-test", {
       "test.c": source,
     });
@@ -52,6 +49,10 @@ describe.skipIf(isASAN || isWindows || isFFIUnavailable)("FFI small buffer exter
     });
   });
 
+  afterAll(() => {
+    lib.close();
+  });
+
   it("small buffer data is correctly accessible via FFI after externalization", () => {
     const { read_byte, write_byte } = lib.symbols;
 
@@ -70,7 +71,7 @@ describe.skipIf(isASAN || isWindows || isFFIUnavailable)("FFI small buffer exter
   });
 
   it("many small buffer FFI calls do not corrupt GC heap", () => {
-    const { fill_buffer, read_byte } = lib.symbols;
+    const { fill_buffer } = lib.symbols;
 
     // Run many iterations with small buffers to trigger GC and verify no
     // heap corruption. The original issue (#23446) caused a segfault in
@@ -115,9 +116,5 @@ describe.skipIf(isASAN || isWindows || isFFIUnavailable)("FFI small buffer exter
 
     // Verify FFI can still read correctly
     expect(read_byte(buf, 16)).toBe(16);
-  });
-
-  it("cleanup", () => {
-    lib.close();
   });
 });

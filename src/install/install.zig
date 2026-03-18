@@ -44,7 +44,8 @@ pub fn fmtStorePath(str: string) StorePathFormatter {
     };
 }
 
-// these alignment padding bytes are skipped on read
+// these bytes are skipped
+// so we just make it repeat bun bun bun bun bun bun bun bun bun
 pub const alignment_bytes_to_repeat_buffer = [_]u8{0} ** 144;
 
 pub fn initializeStore() void {

@@ -1791,7 +1791,9 @@ pub const internal = struct {
         global_cache.lock.lock();
         defer global_cache.lock.unlock();
 
-        req.valid = err == 0;
+        if (err != 0) {
+            req.valid = false;
+        }
         dns_cache_errors += @as(usize, @intFromBool(err != 0));
 
         bun.assert(req.refcount > 0);

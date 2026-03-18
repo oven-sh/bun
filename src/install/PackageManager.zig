@@ -574,7 +574,10 @@ pub fn init(
     const user_cwd: string = if (cli.global) brk: {
         const cwd = switch (bun.sys.getcwd(&user_cwd_buf)) {
             .result => |cwd| cwd,
-            .err => "",
+            .err => |e| {
+                Output.err(e, "failed to get current working directory", .{});
+                Global.crash();
+            },
         };
         break :brk bun.handleOom(ctx.allocator.dupe(u8, cwd));
     } else "";

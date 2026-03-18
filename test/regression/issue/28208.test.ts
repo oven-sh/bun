@@ -31,10 +31,11 @@ test("bun add with relative tarball path and --global should work", async () => 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   // Clean up: remove the globally installed package
-  Bun.spawnSync({
+  const removeResult = Bun.spawnSync({
     cmd: [bunExe(), "remove", "test-global-tarball-28208", "--global"],
     env: bunEnv,
   });
+  expect(removeResult.exitCode).toBe(0);
 
   expect(stderr).not.toContain("ENOENT extracting tarball");
   expect(stderr).not.toContain("failed to resolve");

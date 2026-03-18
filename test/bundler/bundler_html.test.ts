@@ -157,7 +157,8 @@ describe("bundler", () => {
     <img srcset="data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A//www.w3.org/2000/svg'%3E%3C/svg%3E 1x, data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A//www.w3.org/2000/svg'%3E%3C/svg%3E 2x">
     <img srcset="./logo.png 1x, ./logo-2x.png 2x">
     <img srcset="./logo.png, ./logo-2x.png">
-    <img srcset="./logo.png,./logo-2x.png">
+    <img id="space" srcset="./logo.png, ./logo-2x.png">
+    <img id="no-space" srcset="./logo.png,./logo-2x.png">
   </body>
 </html>`,
       "/logo.png": "fake image content",
@@ -169,7 +170,8 @@ describe("bundler", () => {
       api.expectFile("out/index.html").not.toContain("./logo-2x.png");
       api.expectFile("out/index.html").not.toContain("./logo.png");
       api.expectFile("out/index.html").toMatch(/srcset="(.*-[a-zA-Z0-9]+\.png [0-9]x,?\s*){2}"/);
-      api.expectFile("out/index.html").toMatch(/srcset="(.*-[a-zA-Z0-9]+\.png,?\s*){2}"/);
+      api.expectFile("out/index.html").toMatch(/id="space" srcset="(.*-[a-zA-Z0-9]+\.png,?\s*){2}"/);
+      api.expectFile("out/index.html").toMatch(/id="no-space" srcset="(.*-[a-zA-Z0-9]+\.png,?\s*){2}"/);
     },
   });
 

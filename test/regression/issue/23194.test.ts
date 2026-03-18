@@ -6,15 +6,13 @@ import { bunEnv, bunExe, tempDir } from "harness";
 // during high-frequency message passing between main thread and worker via Comlink.
 // The structured cloning + MessagePort transfer in Comlink's RPC protocol
 // triggers a null ScriptExecutionContext dereference in release builds.
-test(
-  "MessagePort does not segfault during rapid Comlink-style message passing",
-  async () => {
-    using dir = tempDir("issue-23194", {
-      "package.json": JSON.stringify({
-        dependencies: { comlink: "^4.4.2" },
-        type: "module",
-      }),
-      "main.js": `
+test("MessagePort does not segfault during rapid Comlink-style message passing", async () => {
+  using dir = tempDir("issue-23194", {
+    "package.json": JSON.stringify({
+      dependencies: { comlink: "^4.4.2" },
+      type: "module",
+    }),
+    "main.js": `
 import * as Comlink from 'comlink/dist/esm/comlink.js';
 
 let mainloop = true;
@@ -36,7 +34,7 @@ const main = {
   console.log("done");
 })();
 `,
-      "worker.js": `
+    "worker.js": `
 import * as Comlink from 'comlink/dist/esm/comlink.js';
 
 const TARGET_CALLBACKS = 200;
@@ -55,31 +53,29 @@ Comlink.expose({
   },
 });
 `,
-    });
+  });
 
-    // Install comlink
-    await using install = Bun.spawn({
-      cmd: [bunExe(), "install"],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const installExitCode = await install.exited;
-    expect(installExitCode).toBe(0);
+  // Install comlink
+  await using install = Bun.spawn({
+    cmd: [bunExe(), "install"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const installExitCode = await install.exited;
+  expect(installExitCode).toBe(0);
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "run", "main.js"],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", "main.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
 
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stdout).toContain("done");
-    expect(exitCode).toBe(0);
-  },
-  60000,
-);
+  expect(stdout).toContain("done");
+  expect(exitCode).toBe(0);
+}, 60000);

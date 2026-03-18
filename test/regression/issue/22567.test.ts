@@ -46,6 +46,9 @@ server.listen(0, () => {
         console.error("error:", err.message);
         process.exit(1);
       });
+    }).on("error", (err) => {
+      console.error("request error:", err.message);
+      process.exit(1);
     });
   }
 });

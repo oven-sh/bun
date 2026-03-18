@@ -494,11 +494,11 @@ bool WebViewHost::pressIPC(VirtualKey key, uint8_t modifiers, const WTF::String&
 
     // keyDown fallback: Escape, Space, any key with modifiers, Character.
     // WebKit exposes no keyboard equivalent of _doAfterProcessingAllPendingMouseEvents:.
-    // _doAfterNextPresentationUpdate: is the closest: the key event is
-    // XPC-ordered before DispatchAfterEnsuringDrawing on the WebContent
-    // connection, so by the time the commit arrives, interpretKeyEvent has
-    // run and keydown has fired. Not the precise barrier (no guarantee
-    // any JS scheduled by keydown has also run), but better than sync Ack.
+    // interpretKeyEvent is async; each press() is one pair so no holding-
+    // tank burst. Sync Ack — _doAfterNextPresentationUpdate: as a barrier
+    // doesn't fire reliably on macOS 13/14 CI (headless CA commit timing).
+    // The user's next await serializes via our single-threaded CFRunLoop
+    // dispatch, and the parent-side m_pendingMisc slot sequences ops.
     using NSEvent = objc::NSEvent;
     unsigned long mods = expandModifiers(modifiers);
     double ts = objc::NSProcessInfo::systemUptime();
@@ -516,10 +516,7 @@ bool WebViewHost::pressIPC(VirtualKey key, uint8_t modifiers, const WTF::String&
     auto chars = objc::NSString::fromWTF(charsStr);
     m_webview.keyDown(NSEvent::keyEvent(NSEvent::KeyDown, mods, ts, win, chars, chars, keyCode));
     m_webview.keyUp(NSEvent::keyEvent(NSEvent::KeyUp, mods, ts, win, chars, chars, keyCode));
-
-    m_inputPending = true;
-    m_webview.doAfterNextPresentationUpdate(makeHostBlock<&WebViewHost::onInputComplete>(*this));
-    return true;
+    return false;
 }
 
 bool WebViewHost::scrollIPC(float dx, float dy)

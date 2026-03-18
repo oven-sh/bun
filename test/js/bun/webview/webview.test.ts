@@ -101,17 +101,18 @@ it("evaluate() with statement sequence throws SyntaxError (use an IIFE)", async 
   }
 });
 
-it("scroll(NaN) throws before poisoning the accumulator", async () => {
+it("scroll(NaN/Infinity) throws before sending", () => {
+  // NaN would permanently poison m_pendingScrollDx/Dy (NaN + anything = NaN)
+  // and hit UB at the static_cast<int32_t> in CGEventCreateScrollWheelEvent.
+  // The check in JSWebViewPrototype.cpp throws before sendOp — no IPC sent,
+  // nothing to await. "Scroll actually works after" is covered by the
+  // dedicated scroll tests; here we just verify the guard.
   const view = new Bun.WebView({ width: 200, height: 200 });
   try {
-    await view.navigate("data:text/html," + encodeURIComponent("<div style='height:5000px'></div>"));
-    // NaN would permanently poison m_pendingScrollDx/Dy (NaN + anything = NaN)
-    // and hit UB at the static_cast<int32_t> in CGEventCreateScrollWheelEvent.
     expect(() => view.scroll(0, NaN)).toThrow(/must be finite/);
     expect(() => view.scroll(Infinity, 0)).toThrow(/must be finite/);
-    // Verify the accumulator isn't poisoned — a real scroll still works.
-    await view.scroll(0, 100);
-    expect(Number(await view.evaluate("String(window.scrollY)"))).toBeGreaterThan(0);
+    expect(() => view.scroll(-Infinity, 0)).toThrow(/must be finite/);
+    expect(() => view.scroll(0, 0 / 0)).toThrow(/must be finite/);
   } finally {
     view.close();
   }

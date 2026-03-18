@@ -303,7 +303,8 @@ function ClientRequest(input, options, cb) {
 
       if (!headers.host && !headers.Host) {
         const dp = protocol === "https:" ? 443 : 80;
-        head += port && port !== dp ? `Host: ${host}:${port}\r\n` : `Host: ${host}\r\n`;
+        const hostStr = isIPv6(host) ? `[${host}]` : host;
+        head += port && port !== dp ? `Host: ${hostStr}:${port}\r\n` : `Host: ${hostStr}\r\n`;
       }
 
       const chunks = this[kBodyChunks];
@@ -423,7 +424,9 @@ function ClientRequest(input, options, cb) {
     });
     socket.on("error", (err) => {
       if (isAbortError(err)) return;
-      try { this.emit("error", err); } catch {}
+      try { this.emit("error", err); } catch (e) {
+        if (!!$debug) globalReportError(e);
+      }
     });
     socket.on("end", () => {
       parser.finish();

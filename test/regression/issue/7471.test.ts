@@ -1,6 +1,5 @@
 import { test, expect, describe } from "bun:test";
-import { bunEnv, bunExe } from "harness";
-import { tmpdir } from "os";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
 describe("http.request createConnection", () => {
@@ -82,7 +81,8 @@ describe("http.request createConnection", () => {
 
   test("works with unix socket", async () => {
     if (process.platform === "win32") return;
-    const sockPath = join(tmpdir(), `bun-test-7471-${Date.now()}.sock`);
+    using dir = tempDir("bun-test-7471", {});
+    const sockPath = join(String(dir), "test.sock");
 
     await using proc = Bun.spawn({
       cmd: [

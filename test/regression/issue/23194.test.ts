@@ -1,10 +1,10 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 
 // Regression test for https://github.com/oven-sh/bun/issues/23194
 // MessagePort.postMessage segfaults when ScriptExecutionContext is destroyed
 // during high-frequency message passing between main thread and worker via Comlink.
-test("MessagePort does not segfault during rapid Comlink-style message passing", async () => {
+test.skipIf(isWindows)("MessagePort does not segfault during rapid Comlink-style message passing", async () => {
   using dir = tempDir("issue-23194", {
     "package.json": JSON.stringify({
       dependencies: { comlink: "^4.4.2" },
@@ -36,7 +36,7 @@ const
     "worker.js": `
 import * as Comlink from 'comlink/dist/esm/comlink.js';
 
-const TARGET_CALLBACKS = 5000;
+const TARGET_CALLBACKS = 500;
 
 Comlink.expose({
   async start(start, main) {

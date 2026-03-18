@@ -97,10 +97,15 @@ var getTemporaryDirectoryOnce = bun.once(struct {
             if (elapsed > std.time.ns_per_ms * 100) {
                 var path_buf: bun.PathBuffer = undefined;
                 const cache_dir_path = bun.getFdPath(.fromStdDir(cache_directory), &path_buf) catch "it";
-                Output.prettyErrorln(
-                    "<r><yellow>warn<r>: Slow filesystem detected. If {s} is a network drive, consider setting $BUN_INSTALL_CACHE_DIR to a local folder.",
-                    .{cache_dir_path},
-                );
+                // Only warn if the filesystem is actually a network filesystem.
+                // This avoids false positives on WSL2 where local ext4 filesystems
+                // can be slow due to the virtualization layer.
+                if (isNetworkFilesystem(cache_dir_path)) {
+                    Output.prettyErrorln(
+                        "<r><yellow>warn<r>: Slow filesystem detected. If {s} is a network drive, consider setting $BUN_INSTALL_CACHE_DIR to a local folder.",
+                        .{cache_dir_path},
+                    );
+                }
             }
         }
 
@@ -748,6 +753,45 @@ const PatchHashFmt = struct {
 };
 
 var using_fallback_temp_dir: bool = false;
+
+/// Checks whether the given path is on a network filesystem by inspecting
+/// the filesystem type via statfs(). Returns true for known network/remote
+/// filesystem types (NFS, CIFS, SMB, 9p, AFS, etc.) and also returns true
+/// if the check fails (to preserve the warning in ambiguous cases).
+/// Returns false for local filesystems like ext4, btrfs, xfs, etc.
+/// This avoids false "slow filesystem" warnings on WSL2, where local
+/// filesystems can appear slow due to the virtualization layer.
+fn isNetworkFilesystem(path: []const u8) bool {
+    if (comptime !Environment.isLinux) return true;
+
+    var path_buf: bun.PathBuffer = undefined;
+    const len = @min(path.len, path_buf.len - 1);
+    @memcpy(path_buf[0..len], path[0..len]);
+    path_buf[len] = 0;
+    const path_z: [:0]const u8 = path_buf[0..len :0];
+
+    const result = bun.sys.statfs(path_z);
+    switch (result) {
+        .result => |statfs_| {
+            const fs_type = statfs_.f_type;
+            return switch (fs_type) {
+                0x6969 => true, // NFS_SUPER_MAGIC
+                0xFF534D42 => true, // CIFS_SUPER_MAGIC
+                0xFE534D42 => true, // SMB2_SUPER_MAGIC
+                0x01021997 => true, // V9FS_MAGIC (Plan 9 / 9p, used for WSL1 Windows mounts)
+                0x5346414F => true, // AFS_SUPER_MAGIC
+                0x00C36400 => true, // CEPH_SUPER_MAGIC
+                0x7461636f => true, // OCFS2_SUPER_MAGIC
+                0xBEEFDEAD => true, // SMBFS_SUPER_MAGIC
+                0x47504653 => true, // GPFS_SUPER_MAGIC
+                0x0BD00BD0 => true, // LUSTRE_SUPER_MAGIC
+                0xAAD7AAEA => true, // PANFS_SUPER_MAGIC
+                else => false,
+            };
+        },
+        .err => return true, // If we can't determine, show the warning.
+    }
+}
 
 const string = []const u8;
 const stringZ = [:0]const u8;

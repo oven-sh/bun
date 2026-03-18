@@ -2399,8 +2399,9 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                         bun.default_allocator,
                     ) catch {}; // TODO: properly propagate exception upwards
                 } else {
-                    // This is the last chunk - clear the backpressure callback
-                    // since the RequestContext may be freed after this point.
+                    // This is the last chunk - resume and clear the backpressure
+                    // callback since the RequestContext may be freed after this point.
+                    readable.ptr.Bytes.backpressure.@"resume"();
                     readable.ptr.Bytes.backpressure.clear();
 
                     var strong = this.request_body_readable_stream_ref;
@@ -2554,9 +2555,11 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 
         /// Clear the backpressure callback on the request body's ByteStream,
         /// preventing it from referencing this RequestContext after it's freed.
+        /// Resumes the socket first so it doesn't stay paused after the callback is removed.
         fn clearRequestBodyBackpressure(this: *RequestContext) void {
             if (this.server) |server| {
                 if (this.request_body_readable_stream_ref.get(server.globalThis)) |readable| {
+                    readable.ptr.Bytes.backpressure.@"resume"();
                     readable.ptr.Bytes.backpressure.clear();
                 }
             }

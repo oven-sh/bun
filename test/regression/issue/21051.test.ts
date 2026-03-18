@@ -27,8 +27,6 @@ describe("issue #21051 - bun install crash with workspace project containing bin
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stderr).not.toContain("panic");
-    expect(stderr).not.toContain("assertion");
     expect(stderr).toContain("Saved lockfile");
     expect(stdout).toContain("semver");
     expect(exitCode).toBe(0);

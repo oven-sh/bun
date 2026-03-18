@@ -644,6 +644,8 @@ const fields = .{
 };
 const max_addressable_memory = std.math.maxInt(u56);
 
+extern "c" fn Bun__FFI__ensureExternalBackingStore(val: JSValue) ?*anyopaque;
+
 const std = @import("std");
 
 const bun = @import("bun");
@@ -659,5 +661,3 @@ const Bun = jsc.API.Bun;
 
 const DOMCall = jsc.host_fn.DOMCall;
 const DOMEffect = jsc.host_fn.DOMEffect;
-
-extern "c" fn Bun__FFI__ensureExternalBackingStore(val: JSValue) ?*anyopaque;

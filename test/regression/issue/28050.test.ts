@@ -105,28 +105,56 @@ test("process.title can be set multiple times", async () => {
   expect(exitCode).toBe(0);
 });
 
-test.skipIf(process.platform !== "darwin")("process.title setter works on macOS", async () => {
+test.skipIf(process.platform !== "darwin")("process.title setter updates LaunchServices display name on macOS", async () => {
   const customTitle = "bun-test-28050";
 
-  // On macOS, the OS-visible title is set via LaunchServices private APIs
-  // (Activity Monitor display name) which can't be read back programmatically.
-  // Verify the JS-level getter/setter round-trips correctly.
-  await using proc = Bun.spawn({
+  // Spawn a child that sets process.title, prints its PID, then waits for
+  // stdin to close. This keeps the process alive so the parent can query
+  // its LaunchServices display name via lsappinfo.
+  await using child = Bun.spawn({
     cmd: [
       bunExe(),
       "-e",
       `
       process.title = "${customTitle}";
-      console.log(JSON.stringify({ jsTitle: process.title }));
+      // Signal readiness with PID
+      console.log(JSON.stringify({ pid: process.pid, jsTitle: process.title }));
+      // Stay alive until parent closes stdin
+      await new Promise(resolve => process.stdin.on("end", resolve));
       `,
     ],
     env: bunEnv,
+    stdin: "pipe",
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // Read the child's PID from its stdout
+  const reader = child.stdout.getReader();
+  const { value } = await reader.read();
+  const info = JSON.parse(new TextDecoder().decode(value).trim());
+  expect(info.jsTitle).toBe(customTitle);
 
-  const result = JSON.parse(stdout.trim());
-  expect(result.jsTitle).toBe(customTitle);
-  expect(exitCode).toBe(0);
+  // Query LaunchServices for the child's display name via lsappinfo
+  await using lsProc = Bun.spawn({
+    cmd: ["lsappinfo", "info", "-only", "name", String(info.pid)],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [lsStdout, lsExitCode] = await Promise.all([lsProc.stdout.text(), lsProc.exited]);
+
+  // lsappinfo outputs: "LSDisplayName"="<title>"
+  const match = lsStdout.match(/"LSDisplayName"\s*=\s*"([^"]*)"/);
+
+  // Let child exit
+  child.stdin.end();
+  reader.releaseLock();
+  const childExit = await child.exited;
+
+  // On headless CI (no WindowServer), LaunchServices check-in may fail
+  // silently, so lsappinfo may not find the process. Only assert when
+  // lsappinfo actually returned data.
+  if (match) {
+    expect(match[1]).toBe(customTitle);
+  }
+  expect(childExit).toBe(0);
 });

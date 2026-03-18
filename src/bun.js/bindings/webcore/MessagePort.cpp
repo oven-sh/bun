@@ -183,7 +183,11 @@ ExceptionOr<void> MessagePort::postMessage(JSC::JSGlobalObject& state, JSC::JSVa
 
     MessageWithMessagePorts message { messageData.releaseReturnValue(), WTF::move(transferredPorts) };
 
-    MessagePortChannelProvider::fromContext(*protectedScriptExecutionContext()).postMessageToRemote(WTF::move(message), m_remoteIdentifier);
+    auto protectedContext = protectedScriptExecutionContext();
+    if (!protectedContext)
+        return {};
+
+    MessagePortChannelProvider::fromContext(*protectedContext).postMessageToRemote(WTF::move(message), m_remoteIdentifier);
     return {};
 }
 

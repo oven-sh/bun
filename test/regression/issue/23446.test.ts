@@ -50,7 +50,7 @@ describe.skipIf(isASAN || isWindows)("FFI small buffer externalization", () => {
   });
 
   afterAll(() => {
-    lib.close();
+    lib?.close();
   });
 
   it("small buffer data is correctly accessible via FFI after externalization", () => {

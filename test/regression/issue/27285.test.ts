@@ -39,7 +39,7 @@ process.exit(0);
     // This reproduces the node-pty scenario: create a tty.ReadStream on a
     // PTY master fd, let it encounter errors during reading, and verify the
     // fd is NOT auto-closed. With the bug, autoDestroy:true would close the
-    // fd within one event loop tick.
+    // fd within the first event loop tick.
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -61,18 +61,26 @@ const stream = new tty.ReadStream(fd);
 // node-pty adds an error handler and ignores EAGAIN
 stream.on("error", () => {});
 
-// After 200ms, check that the fd is still valid.
-// Before the fix, the fd would be closed within the first event loop tick
-// because autoDestroy:true caused the stream to destroy itself on errors.
-setTimeout(() => {
+// Check fd validity across multiple event loop ticks using setImmediate.
+// The bug caused the fd to be closed within the first tick due to
+// autoDestroy:true, so polling with setImmediate directly targets that.
+let ticksRemaining = 10;
+function checkFd() {
+  ticksRemaining--;
   try {
     fs.fstatSync(fd);
-    console.log("FD_STILL_VALID:true");
+    if (ticksRemaining > 0) {
+      setImmediate(checkFd);
+    } else {
+      console.log("FD_STILL_VALID:true");
+      process.exit(0);
+    }
   } catch {
     console.log("FD_STILL_VALID:false");
+    process.exit(0);
   }
-  process.exit(0);
-}, 200);
+}
+setImmediate(checkFd);
 `,
       ],
       env: bunEnv,

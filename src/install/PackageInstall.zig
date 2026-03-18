@@ -1310,7 +1310,7 @@ pub const PackageInstall = struct {
             switch (bun.sys.symlinkOrJunction(dest_z, target_z, null)) {
                 .err => |err_| brk: {
                     var err = err_;
-                    if (err.getErrno() == .EXIST) {
+                    if (err.getErrno() == .EXIST and !strings.eqlComptime(dest_path, ".")) {
                         _ = bun.sys.rmdirat(.fromStdDir(destination_dir), this.destination_dir_subpath);
                         switch (bun.sys.symlinkOrJunction(dest_z, target_z, null)) {
                             .err => |e| err = e,

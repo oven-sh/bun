@@ -549,7 +549,11 @@ pub fn transpileSourceCode(
 
             const module_info_deserialized: ?*anyopaque = if (module_info) |mi| @ptrCast(mi.asDeserialized()) else null;
 
-            if (jsc_vm.isWatcherEnabled()) {
+            // The ref-counted watcher path creates Latin-1 strings, which cannot
+            // represent multi-byte UTF-8 sequences. If the output contains non-ASCII
+            // (from raw template literals or regex source), fall through to the
+            // normal path which uses cloneUTF8.
+            if (jsc_vm.isWatcherEnabled() and bun.strings.isAllASCII(printer.ctx.written)) {
                 var resolved_source = jsc_vm.refCountedResolvedSource(printer.ctx.written, input_specifier, path.text, null, false);
                 resolved_source.is_commonjs_module = is_commonjs_module;
                 resolved_source.module_info = module_info_deserialized;

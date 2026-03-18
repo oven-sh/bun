@@ -316,6 +316,11 @@ pub const RuntimeTranspilerCache = struct {
                     if (read_bytes != this.metadata.output_byte_length) {
                         return error.MissingData;
                     }
+                    if (this.metadata.output_hash != 0) {
+                        if (hash(utf8) != this.metadata.output_hash) {
+                            return error.InvalidHash;
+                        }
+                    }
                     break :brk .{ .utf8 = utf8 };
                 },
                 .latin1 => brk: {

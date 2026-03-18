@@ -1990,6 +1990,8 @@ fn NewPrinter(
             // Raw template literals must preserve bytes verbatim because they are
             // exposed to JavaScript via the .raw property and String.raw. Escaping
             // non-ASCII characters to \uXXXX would change the runtime string value.
+            const saved = p.prefers_ascii;
+            defer p.prefers_ascii = saved;
             if (p.prefers_ascii and !strings.isAllASCII(bytes)) p.prefers_ascii = false;
             p.print(bytes);
         }
@@ -3201,10 +3203,14 @@ fn NewPrinter(
             // RegExp literals cannot be printed ascii-only because they expose a
             // .source property to JavaScript. Escaping non-ASCII would change the
             // runtime value of that property.
-            if (p.prefers_ascii and !strings.isAllASCII(e.value)) {
-                p.prefers_ascii = false;
+            {
+                const saved = p.prefers_ascii;
+                defer p.prefers_ascii = saved;
+                if (p.prefers_ascii and !strings.isAllASCII(e.value)) {
+                    p.prefers_ascii = false;
+                }
+                p.print(e.value);
             }
-            p.print(e.value);
 
             // Need a space before the next identifier to avoid it turning into flags
             p.prev_reg_exp_end = p.writer.written;

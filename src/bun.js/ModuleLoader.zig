@@ -387,7 +387,7 @@ pub fn transpileSourceCode(
                 const bytecode_slice = parse_result.already_bundled.bytecodeSlice();
                 return ResolvedSource{
                     .allocator = null,
-                    .source_code = bun.String.cloneLatin1(source.contents),
+                    .source_code = bun.String.cloneUTF8(source.contents),
                     .specifier = input_specifier,
                     .source_url = input_specifier.createIfDifferent(path.text),
                     .already_bundled = true,
@@ -570,7 +570,7 @@ pub fn transpileSourceCode(
                 .allocator = null,
                 .source_code = brk: {
                     const written = printer.ctx.getWritten();
-                    const result = cache.output_code orelse bun.String.cloneLatin1(written);
+                    const result = cache.output_code orelse bun.String.cloneUTF8(written);
 
                     if (written.len > 1024 * 1024 * 2 or jsc_vm.smol) {
                         printer.ctx.buffer.deinit();

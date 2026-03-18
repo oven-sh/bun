@@ -500,7 +500,7 @@ pub const RuntimeTranspilerStore = struct {
                 const bytecode_slice = parse_result.already_bundled.bytecodeSlice();
                 this.resolved_source = ResolvedSource{
                     .allocator = null,
-                    .source_code = bun.String.cloneLatin1(parse_result.source.contents),
+                    .source_code = bun.String.cloneUTF8(parse_result.source.contents),
                     .already_bundled = true,
                     .bytecode_cache = if (bytecode_slice.len > 0) bytecode_slice.ptr else null,
                     .bytecode_cache_size = bytecode_slice.len,
@@ -577,7 +577,7 @@ pub const RuntimeTranspilerStore = struct {
             const source_code = brk: {
                 const written = printer.ctx.getWritten();
 
-                const result = cache.output_code orelse bun.String.cloneLatin1(written);
+                const result = cache.output_code orelse bun.String.cloneUTF8(written);
 
                 if (written.len > 1024 * 1024 * 2 or vm.smol) {
                     printer.ctx.buffer.deinit();

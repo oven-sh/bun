@@ -146,6 +146,33 @@ describe("bundler", () => {
     },
   });
 
+  // Test srcset with data URL containing commas
+  itBundled("html/srcset-data-url-with-comma", {
+    outdir: "out/",
+    files: {
+      "/index.html": `
+<!DOCTYPE html>
+<html>
+  <body>
+    <img srcset="data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A//www.w3.org/2000/svg'%3E%3C/svg%3E 1x, data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A//www.w3.org/2000/svg'%3E%3C/svg%3E 2x">
+    <img srcset="./logo.png 1x, ./logo-2x.png 2x">
+    <img srcset="./logo.png, ./logo-2x.png">
+  </body>
+</html>`,
+      "/logo.png": "fake image content",
+      "/logo-2x.png": "fake image content",
+    },
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      api.expectFile("out/index.html").toMatch(/data:image\/svg\+xml,.* 1x, data:image\/svg\+xml/);
+      api.expectFile("out/index.html").not.toContain("./logo-2x.png");
+      api.expectFile("out/index.html").not.toContain("./logo.png");
+      api.expectFile("out/index.html").toMatch(/srcset="(.*-[a-zA-Z0-9]+\.png [0-9]x,?\s*){2}"/);
+      api.expectFile("out/index.html").toMatch(/srcset="(.*-[a-zA-Z0-9]+\.png,?\s*){2}"/);
+      console.log("index contents: " + api.readFile("out/index.html"));
+    },
+  });
+
   // Test mixed local and external assets
   itBundled("html/mixed-assets", {
     outdir: "out/",

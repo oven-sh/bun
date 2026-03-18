@@ -580,9 +580,7 @@ pub fn notifyNeedTermination(this: *WebWorker) callconv(.c) void {
         vm.eventLoop().wakeup();
     }
 
-    // Don't unref the parent event loop here. The worker must remain alive
-    // until exitAndDeinit runs, which will unref the parent after dispatching
-    // the exit/close events.
+    this.setRefInternal(false);
 }
 
 /// This handles cleanup, emitting the "close" event, and deinit.

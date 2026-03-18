@@ -3762,6 +3762,7 @@ JSC_DEFINE_CUSTOM_SETTER(setProcessTitle, (JSC::JSGlobalObject * globalObject, J
     BunString str = Bun::toStringRef(globalObject, jsString);
     RETURN_IF_EXCEPTION(scope, false);
     Bun__Process__setTitle(globalObject, &str);
+    RETURN_IF_EXCEPTION(scope, false);
     return true;
 }
 

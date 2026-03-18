@@ -69,10 +69,10 @@ public:
     using Base = JSC::JSNonFinalObject;
     static constexpr unsigned StructureFlags = Base::StructureFlags;
 
-    static JSWebViewPrototype* create(VM& vm, JSGlobalObject*, Structure* structure)
+    static JSWebViewPrototype* create(VM& vm, JSGlobalObject* globalObject, Structure* structure)
     {
         JSWebViewPrototype* prototype = new (NotNull, allocateCell<JSWebViewPrototype>(vm)) JSWebViewPrototype(vm, structure);
-        prototype->finishCreation(vm);
+        prototype->finishCreation(vm, globalObject);
         return prototype;
     }
 
@@ -94,11 +94,19 @@ private:
     {
     }
 
-    void finishCreation(VM& vm)
+    void finishCreation(VM& vm, JSGlobalObject* globalObject)
     {
         Base::finishCreation(vm);
         reifyStaticProperties(vm, JSWebView::info(), JSWebViewPrototypeTableValues, *this);
         JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+
+        // close() is synchronous: writes the Close frame, rejects any pending
+        // promises, erases from the routing table. `using` calls dispose;
+        // `await using` calls asyncDispose if present (else dispose). Both
+        // point to close — no async teardown to wait for.
+        auto* closeFn = JSFunction::create(vm, globalObject, 0, "close"_s, jsWebViewProtoFuncClose, ImplementationVisibility::Public);
+        putDirect(vm, vm.propertyNames->disposeSymbol, closeFn, PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | 0);
+        putDirect(vm, vm.propertyNames->asyncDisposeSymbol, closeFn, PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | 0);
     }
 };
 

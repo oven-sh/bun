@@ -920,4 +920,4 @@ it("ephemeral dataStore: localStorage does NOT survive across instances", async 
   }
 });
 
-it.todo("startFrameStream: onFrame fires with shm PNG");
+test.todo("startFrameStream: onFrame fires with shm PNG");

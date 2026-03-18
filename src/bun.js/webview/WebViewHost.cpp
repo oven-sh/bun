@@ -113,6 +113,24 @@ Ref<WebViewHost> WebViewHost::createForIPC(uint32_t viewId, uint32_t width, uint
     host->m_webview.setNavigationDelegate(host->m_delegate);
 
     host->m_window = objc::NSWindow::createOffscreen(width, height);
+
+    // orderFront BEFORE setContentView. WKWindowVisibilityObserver registers
+    // for NSWindowDidOrderOnScreenNotification in viewDidMoveToWindow, but
+    // the initial isViewVisible() evaluation happens AT setContentView —
+    // before the notification would fire. On macOS 15 the notification
+    // delivers synchronously inside orderFront: and a later
+    // activityStateDidChange fixes it; on macOS 13/14 that update doesn't
+    // land and visibilityState stays "hidden" → rAF never fires →
+    // click(selector) actionability hangs. Ordering the window first means
+    // viewDidMoveToWindow sees isVisible=1 from the start and the initial
+    // ActivityState::IsVisible is correct.
+    //
+    // The window is still invisible (borderless, at -10000,-10000, policy
+    // Prohibited); orderFront: makes it "on screen" from AppKit's view.
+    // Occlusion detection disabled so the windowIsOccluded() check in
+    // PageClientImpl::isViewVisible (WebViewImpl.mm) short-circuits false.
+    host->m_window.orderFront();
+    host->m_webview.disableOcclusionDetection();
     host->m_window.setContentView(host->m_webview);
     host->m_width = width;
     host->m_height = height;
@@ -120,15 +138,6 @@ Ref<WebViewHost> WebViewHost::createForIPC(uint32_t viewId, uint32_t width, uint
     // Process-global TextChecker state. keyDown: → NSTextInputContext →
     // smart quotes by default — first view sets it off for all.
     host->m_webview.disableTextSubstitutions();
-
-    // visibilityState = "visible" so requestAnimationFrame fires. The
-    // window is still invisible (borderless, at -10000,-10000, policy
-    // Prohibited); orderFront: makes it "on screen" from AppKit's view,
-    // and disabling occlusion detection stops WKWebView from noticing
-    // that it's not actually visible. Without this the click(selector)
-    // actionability poll hangs — rAF never ticks on a hidden page.
-    host->m_webview.disableOcclusionDetection();
-    host->m_window.orderFront();
 
     // The delegate also adopts WKUIDelegate to suppress the context menu
     // (right-click would otherwise block in NSMenu's modal runloop now that

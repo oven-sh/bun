@@ -702,13 +702,7 @@ pub const AsyncModule = struct {
             dumpSource(jsc_vm, specifier, &printer);
         }
 
-        // The ref-counted watcher path creates Latin-1 strings, which cannot
-        // represent multi-byte UTF-8 sequences. If the output contains non-ASCII
-        // (from raw template literals or regex source), fall through to the
-        // normal path which uses cloneUTF8.
-        if (jsc_vm.isWatcherEnabled() and bun.strings.isAllASCII(printer.ctx.written)) {
-            var resolved_source = jsc_vm.refCountedResolvedSource(printer.ctx.written, bun.String.init(specifier), path.text, null, false);
-
+        if (jsc_vm.isWatcherEnabled()) {
             if (parse_result.input_fd) |fd_| {
                 if (std.fs.path.isAbsolute(path.text) and !strings.contains(path.text, "node_modules")) {
                     _ = jsc_vm.bun_watcher.addFile(
@@ -723,9 +717,15 @@ pub const AsyncModule = struct {
                 }
             }
 
-            resolved_source.is_commonjs_module = parse_result.ast.has_commonjs_export_names or parse_result.ast.exports_kind == .cjs;
-
-            return resolved_source;
+            // The ref-counted watcher path creates Latin-1 strings, which cannot
+            // represent multi-byte UTF-8 sequences. If the output contains non-ASCII
+            // (from raw template literals or regex source), fall through to the
+            // normal path which uses cloneUTF8.
+            if (bun.strings.isAllASCII(printer.ctx.written)) {
+                var resolved_source = jsc_vm.refCountedResolvedSource(printer.ctx.written, bun.String.init(specifier), path.text, null, false);
+                resolved_source.is_commonjs_module = parse_result.ast.has_commonjs_export_names or parse_result.ast.exports_kind == .cjs;
+                return resolved_source;
+            }
         }
 
         return ResolvedSource{

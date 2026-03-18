@@ -1522,26 +1522,26 @@ test_napi_typeof_invalid_pointer(const Napi::CallbackInfo &info) {
   napi_valuetype type;
   napi_status status = napi_typeof(env, near_null, &type);
 
-  if (status != napi_ok) {
-    printf("PASS: napi_typeof(0x8 pointer) returned error status %d "
-           "instead of crashing\n",
-           status);
+  if (status == napi_invalid_arg) {
+    printf("PASS: napi_typeof(0x8 pointer) returned napi_invalid_arg "
+           "instead of crashing\n");
   } else {
-    printf("FAIL: napi_typeof(0x8 pointer) returned napi_ok with type %d\n",
-           type);
+    printf("FAIL: napi_typeof(0x8 pointer) returned status %d, "
+           "expected napi_invalid_arg (%d)\n",
+           status, napi_invalid_arg);
   }
 
   // Test with another near-null address to cover the pattern.
   napi_value near_null2 = reinterpret_cast<napi_value>(static_cast<uintptr_t>(0x40));
   status = napi_typeof(env, near_null2, &type);
 
-  if (status != napi_ok) {
-    printf("PASS: napi_typeof(0x40 pointer) returned error status %d "
-           "instead of crashing\n",
-           status);
+  if (status == napi_invalid_arg) {
+    printf("PASS: napi_typeof(0x40 pointer) returned napi_invalid_arg "
+           "instead of crashing\n");
   } else {
-    printf("FAIL: napi_typeof(0x40 pointer) returned napi_ok with type %d\n",
-           type);
+    printf("FAIL: napi_typeof(0x40 pointer) returned status %d, "
+           "expected napi_invalid_arg (%d)\n",
+           status, napi_invalid_arg);
   }
 
   return ok(env);

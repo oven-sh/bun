@@ -853,8 +853,8 @@ describe("cleanup hooks", () => {
       ]);
 
       expect(stderr).toBe("");
-      expect(stdout).toContain("PASS: napi_typeof(0x8 pointer) returned error status");
-      expect(stdout).toContain("PASS: napi_typeof(0x40 pointer) returned error status");
+      expect(stdout).toContain("PASS: napi_typeof(0x8 pointer) returned napi_invalid_arg");
+      expect(stdout).toContain("PASS: napi_typeof(0x40 pointer) returned napi_invalid_arg");
       expect(exitCode).toBe(0);
     });
 

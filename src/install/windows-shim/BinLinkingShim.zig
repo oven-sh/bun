@@ -192,7 +192,7 @@ pub const Shebang = struct {
             break :line contents[2..line_i];
         };
 
-        var tokenizer = std.mem.tokenizeScalar(u8, line, ' ');
+        var tokenizer = std.mem.tokenizeAny(u8, line, " \t");
         const first = tokenizer.next() orelse return parseFromBinPath(bin_path);
         if (eqlComptime(first, "/usr/bin/env") or eqlComptime(first, "/bin/env")) {
             // `env` accepts options and NAME=VALUE assignments before the command.

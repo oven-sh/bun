@@ -77,6 +77,21 @@ const cases: Case[] = [
     npm: null,
     npmWrong: "-u",
   },
+  {
+    // Tab-delimited shebangs: some editors/generators use tabs instead of spaces.
+    shebang: "#!/usr/bin/env\t-S\tnode",
+    bun: { launcher: "node", is_node_or_bun: true, is_node: true },
+    // npm's regex uses \s+ which matches tabs too.
+    npm: { prog: "node", args: "" },
+  },
+  {
+    // Mixed tabs and spaces in shebang. The launcher preserves the original
+    // whitespace between program and args (a tab here), which is fine — both
+    // spaces and tabs are whitespace in Windows command lines.
+    shebang: "#!/usr/bin/env\t-S node\t--no-warnings",
+    bun: { launcher: "node\t--no-warnings", is_node_or_bun: true, is_node: true },
+    npm: { prog: "node", args: "--no-warnings" },
+  },
 ];
 
 // Pins our understanding of npm's regex. Runs everywhere; doesn't test Bun.

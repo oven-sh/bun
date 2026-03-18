@@ -3730,12 +3730,24 @@ JSC_DEFINE_CUSTOM_GETTER(processTitle, (JSC::JSGlobalObject * globalObject, JSC:
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+#if !OS(WINDOWS)
     BunString str;
     Bun__Process__getTitle(globalObject, &str);
     auto value = str.transferToWTFString();
     auto* result = jsString(globalObject->vm(), WTF::move(value));
     RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(scope, JSValue::encode(result));
+#else
+    char title[1024];
+    title[0] = '\0';
+    if (uv_get_process_title(title, sizeof(title)) != 0 || title[0] == '\0') {
+        RELEASE_AND_RETURN(scope, JSValue::encode(jsString(vm, String("bun"_s))));
+    }
+
+    auto* result = jsString(vm, WTF::String::fromUTF8(title));
+    RETURN_IF_EXCEPTION(scope, {});
+    RELEASE_AND_RETURN(scope, JSValue::encode(result));
+#endif
 }
 
 JSC_DEFINE_CUSTOM_SETTER(setProcessTitle, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, JSC::PropertyName))

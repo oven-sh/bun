@@ -662,12 +662,26 @@ pub const IniTestingAPIs = struct {
             default_registry_email.deref();
         }
 
+        // Build scoped registries object for testing
+        const scoped_registries_obj = scoped_brk: {
+            const scoped = install.scoped orelse break :scoped_brk jsc.JSValue.jsNull();
+            const obj = jsc.JSValue.createEmptyObject(globalThis, scoped.scopes.keys().len);
+            for (scoped.scopes.keys(), scoped.scopes.values()) |scope, registry| {
+                const scope_obj = jsc.JSValue.createEmptyObject(globalThis, 2);
+                scope_obj.put(globalThis, "url", try bun.String.fromBytes(registry.url).toJS(globalThis));
+                scope_obj.put(globalThis, "token", try bun.String.fromBytes(registry.token).toJS(globalThis));
+                obj.put(globalThis, scope, scope_obj);
+            }
+            break :scoped_brk obj;
+        };
+
         return (try jsc.JSObject.create(.{
             .default_registry_url = default_registry_url,
             .default_registry_token = default_registry_token,
             .default_registry_username = default_registry_username,
             .default_registry_password = default_registry_password,
             .default_registry_email = default_registry_email,
+            .scoped_registries = scoped_registries_obj,
         }, globalThis)).toJS();
     }
 
@@ -1315,56 +1329,92 @@ pub fn loadNpmrc(
             }
         }
 
-        for (configs.items) |conf_item| {
-            const conf_item_url = bun.URL.parse(conf_item.registry_url);
+        // Track the best (longest matching path) config for each option type
+        // for the default registry, so that the most specific token wins.
+        var default_best_match_len: [std.meta.fields(ConfigIterator.Item.Opt).len]usize = .{0} ** std.meta.fields(ConfigIterator.Item.Opt).len;
 
-            if (std.mem.eql(u8, bun.strings.withoutTrailingSlash(default_registry_url.host), bun.strings.withoutTrailingSlash(conf_item_url.host)) and
-                std.mem.eql(u8, bun.strings.withoutTrailingSlash(default_registry_url.pathname), bun.strings.withoutTrailingSlash(conf_item_url.pathname)))
-            {
-                // Apply config to default registry
-                const v: *bun.schema.api.NpmRegistry = brk: {
-                    if (install.default_registry) |*r| break :brk r;
-                    install.default_registry = bun.schema.api.NpmRegistry{
-                        .password = "",
-                        .token = "",
-                        .username = "",
-                        .url = Registry.default_url,
-                        .email = "",
-                    };
-                    break :brk &install.default_registry.?;
-                };
+        // Same for scoped registries: track best match length per scope per option.
+        var scoped_best_match_lens = scoped_best_match_lens: {
+            var lens: [std.meta.fields(ConfigIterator.Item.Opt).len][]usize = undefined;
+            for (&lens) |*l| l.* = &.{};
 
-                switch (conf_item.optname) {
-                    ._authToken => {
-                        if (try conf_item.dupeValueDecoded(allocator, log, source)) |x| v.token = x;
-                    },
-                    .username => {
-                        if (try conf_item.dupeValueDecoded(allocator, log, source)) |x| v.username = x;
-                    },
-                    ._password => {
-                        if (try conf_item.dupeValueDecoded(allocator, log, source)) |x| v.password = x;
-                    },
-                    ._auth => {
-                        try @"handle _auth"(allocator, v, &conf_item, log, source);
-                    },
-                    .email => {
-                        if (try conf_item.dupeValueDecoded(allocator, log, source)) |x| v.email = x;
-                    },
-                    .certfile, .keyfile => unreachable,
+            if (registry_map.scopes.keys().len > 0) {
+                for (&lens) |*l| {
+                    const buf = try allocator.alloc(usize, registry_map.scopes.keys().len);
+                    @memset(buf, 0);
+                    l.* = buf;
                 }
             }
 
-            for (registry_map.scopes.keys(), registry_map.scopes.values()) |*k, *v| {
+            break :scoped_best_match_lens lens;
+        };
+
+        for (configs.items) |conf_item| {
+            const conf_item_url = bun.URL.parse(conf_item.registry_url);
+            const conf_path = bun.strings.withoutTrailingSlash(conf_item_url.pathname);
+
+            // npm-compatible path hierarchy matching: a config entry's path must be
+            // a prefix of (or equal to) the registry URL's path. Among all matching
+            // entries, the most specific (longest path) wins.
+            if (std.mem.eql(u8, bun.strings.withoutTrailingSlash(default_registry_url.host), bun.strings.withoutTrailingSlash(conf_item_url.host)) and
+                pathMatchesOrIsParentOf(bun.strings.withoutTrailingSlash(default_registry_url.pathname), conf_path))
+            {
+                const opt_idx = @intFromEnum(conf_item.optname);
+                if (conf_path.len >= default_best_match_len[opt_idx]) {
+                    default_best_match_len[opt_idx] = conf_path.len;
+
+                    // Apply config to default registry
+                    const v: *bun.schema.api.NpmRegistry = brk: {
+                        if (install.default_registry) |*r| break :brk r;
+                        install.default_registry = bun.schema.api.NpmRegistry{
+                            .password = "",
+                            .token = "",
+                            .username = "",
+                            .url = Registry.default_url,
+                            .email = "",
+                        };
+                        break :brk &install.default_registry.?;
+                    };
+
+                    switch (conf_item.optname) {
+                        ._authToken => {
+                            if (try conf_item.dupeValueDecoded(allocator, log, source)) |x| v.token = x;
+                        },
+                        .username => {
+                            if (try conf_item.dupeValueDecoded(allocator, log, source)) |x| v.username = x;
+                        },
+                        ._password => {
+                            if (try conf_item.dupeValueDecoded(allocator, log, source)) |x| v.password = x;
+                        },
+                        ._auth => {
+                            try @"handle _auth"(allocator, v, &conf_item, log, source);
+                        },
+                        .email => {
+                            if (try conf_item.dupeValueDecoded(allocator, log, source)) |x| v.email = x;
+                        },
+                        .certfile, .keyfile => unreachable,
+                    }
+                }
+            }
+
+            for (registry_map.scopes.keys(), registry_map.scopes.values(), 0..) |*k, *v, scope_idx| {
                 const url = url_map.get(k.*) orelse unreachable;
 
                 if (std.mem.eql(u8, bun.strings.withoutTrailingSlash(url.host), bun.strings.withoutTrailingSlash(conf_item_url.host)) and
-                    std.mem.eql(u8, bun.strings.withoutTrailingSlash(url.pathname), bun.strings.withoutTrailingSlash(conf_item_url.pathname)))
+                    pathMatchesOrIsParentOf(bun.strings.withoutTrailingSlash(url.pathname), conf_path))
                 {
                     if (conf_item_url.hostname.len > 0) {
                         if (!std.mem.eql(u8, bun.strings.withoutTrailingSlash(url.hostname), bun.strings.withoutTrailingSlash(conf_item_url.hostname))) {
                             continue;
                         }
                     }
+
+                    const opt_idx = @intFromEnum(conf_item.optname);
+                    if (conf_path.len < scoped_best_match_lens[opt_idx][scope_idx]) {
+                        continue;
+                    }
+                    scoped_best_match_lens[opt_idx][scope_idx] = conf_path.len;
+
                     // Apply config to scoped registry
                     switch (conf_item.optname) {
                         ._authToken => {
@@ -1390,6 +1440,30 @@ pub fn loadNpmrc(
             }
         }
     }
+}
+
+/// npm-compatible path matching: checks if `conf_path` is a parent of (or equal to) `registry_path`.
+/// Paths like "/" match everything. Paths like "/api/v4/" match "/api/v4/projects/123/".
+/// The comparison is done on normalized (no trailing slash) paths and checks segment boundaries
+/// to avoid "/api/v4" matching "/api/v41/".
+fn pathMatchesOrIsParentOf(registry_path: []const u8, conf_path: []const u8) bool {
+    // Root path "/" matches everything.
+    if (conf_path.len == 0 or std.mem.eql(u8, conf_path, "/")) return true;
+
+    // The config path can't be longer than the registry path.
+    if (conf_path.len > registry_path.len) return false;
+
+    // Exact match.
+    if (std.mem.eql(u8, registry_path, conf_path)) return true;
+
+    // Prefix match: conf_path must be a path prefix of registry_path.
+    // Check that registry_path starts with conf_path and the next character is '/'
+    // to ensure we match on segment boundaries (e.g. "/api/v4" shouldn't match "/api/v41").
+    if (std.mem.startsWith(u8, registry_path, conf_path)) {
+        return registry_path[conf_path.len] == '/';
+    }
+
+    return false;
 }
 
 fn @"handle _auth"(

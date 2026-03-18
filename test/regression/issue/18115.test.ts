@@ -83,6 +83,45 @@ test("RegExp source preserves non-ASCII characters", async () => {
   expect(exitCode).toBe(0);
 });
 
+test("String.raw with non-ASCII via runtime transpiler cache", async () => {
+  using dir = tempDir("string-raw-rtc", {
+    // Pad to >50KB to exceed MINIMUM_CACHE_SIZE in RuntimeTranspilerCache.zig
+    "index.ts": 'console.log(String.raw`æ™弟気👋`);' + " ".repeat(64 * 1024),
+  });
+  using cacheDir = tempDir("string-raw-rtc-cache", {});
+  const env = { ...bunEnv, BUN_RUNTIME_TRANSPILER_CACHE_PATH: String(cacheDir) };
+
+  // First run — populates the cache
+  await using proc1 = Bun.spawn({
+    cmd: [bunExe(), String(dir) + "/index.ts"],
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout1, , exitCode1] = await Promise.all([
+    new Response(proc1.stdout).text(),
+    new Response(proc1.stderr).text(),
+    proc1.exited,
+  ]);
+  expect(stdout1).toBe("æ™弟気👋\n");
+  expect(exitCode1).toBe(0);
+
+  // Second run — restores from cache
+  await using proc2 = Bun.spawn({
+    cmd: [bunExe(), String(dir) + "/index.ts"],
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout2, , exitCode2] = await Promise.all([
+    new Response(proc2.stdout).text(),
+    new Response(proc2.stderr).text(),
+    proc2.exited,
+  ]);
+  expect(stdout2).toBe("æ™弟気👋\n");
+  expect(exitCode2).toBe(0);
+});
+
 test("String.raw with non-ASCII after bun build", async () => {
   using dir = tempDir("string-raw-unicode", {
     "index.ts": "console.log(String.raw`æ™弟気👋`);",

@@ -13,7 +13,7 @@ test("server does not crash when requests arrive after stop() + GC", async () =>
       bunExe(),
       "-e",
       `
-      const server = Bun.serve({
+      let server = Bun.serve({
         port: 0,
         fetch(req) {
           return new Response("OK");
@@ -22,23 +22,33 @@ test("server does not crash when requests arrive after stop() + GC", async () =>
 
       const url = server.url;
 
-      // Establish a keep-alive connection
-      await fetch(url);
+      // Establish a keep-alive connection and consume the response body
+      const warmup = await fetch(url);
+      await warmup.text();
 
-      // Stop the server (downgrades JS ref to weak)
+      // Stop the server (downgrades JS ref to weak) and drop the strong reference
       server.stop();
+      server = null;
 
-      // Force GC to potentially collect the weak reference
+      // Force GC to collect the weak reference
       Bun.gc(true);
       Bun.gc(true);
 
       // Try making requests - these may arrive on keep-alive connections
       // after the JS wrapper has been collected
       const results = await Promise.allSettled(
-        Array.from({ length: 20 }, () => fetch(url).catch(() => null))
+        Array.from({ length: 20 }, () => fetch(url))
       );
 
-      // We don't care about the results, just that we didn't crash
+      // All requests should have either failed or returned non-200
+      // since the server is stopped
+      for (const r of results) {
+        if (r.status === "fulfilled") {
+          await r.value.text();
+        }
+      }
+
+      // We got here without crashing
       console.log("OK");
       `,
     ],
@@ -48,13 +58,7 @@ test("server does not crash when requests arrive after stop() + GC", async () =>
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).not.toContain("panic");
-  expect(stderr).not.toContain("Segmentation fault");
   expect(stdout).toContain("OK");
-  // The process should exit cleanly (0) or at worst with a connection error,
-  // but never with a signal-based crash (segfault = 139 on Linux, 134 for abort)
-  expect(exitCode).not.toBe(139);
-  expect(exitCode).not.toBe(134);
   expect(exitCode).toBe(0);
 });
 
@@ -64,25 +68,31 @@ test("server.fetch() does not crash after stop() + GC", async () => {
       bunExe(),
       "-e",
       `
-      const server = Bun.serve({
+      let server = Bun.serve({
         port: 0,
         fetch(req) {
           return new Response("OK");
         },
       });
 
-      // Stop the server
+      // Keep a reference to call server.fetch() later
+      const fetchFn = server.fetch.bind(server);
+
+      // Stop the server and drop the strong reference
       server.stop();
+      server = null;
 
-      // Force GC
+      // Force GC to collect the weak reference
       Bun.gc(true);
       Bun.gc(true);
 
-      // Try using server.fetch() after GC - should not segfault
+      // Try using server.fetch() after GC - should reject, not segfault
       try {
-        await server.fetch(new Request("http://localhost/"));
+        const res = await fetchFn(new Request("http://localhost/"));
+        // If it somehow resolves, consume the body
+        await res.text();
       } catch (e) {
-        // Expected to fail, but not crash
+        // Expected to reject with "Server is no longer available"
       }
 
       console.log("OK");
@@ -94,7 +104,6 @@ test("server.fetch() does not crash after stop() + GC", async () => {
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).not.toContain("Segmentation fault");
   expect(stdout).toContain("OK");
   expect(exitCode).toBe(0);
 });

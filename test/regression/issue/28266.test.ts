@@ -40,7 +40,7 @@ test("path.normalize result with non-ASCII Latin-1 chars can be used as header v
 
 test("various Latin-1 extended chars work as header values after path functions", () => {
   // Test multiple Latin-1 extended characters (0x80-0xFF range)
-  const chars = ["é", "ñ", "ü", "ß", "ø", "å", "ý"];
+  const chars = ["\x80", "é", "ñ", "ü", "ß", "ø", "å", "ý", "\xFF"];
   for (const ch of chars) {
     const filename = `${ch}.txt`;
     const result = basename(filename);

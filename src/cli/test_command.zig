@@ -1465,6 +1465,7 @@ pub const TestCommand = struct {
 
         var scanner = bun.handleOom(Scanner.init(ctx.allocator, &vm.transpiler, ctx.positionals.len));
         defer scanner.deinit();
+        scanner.path_ignore_patterns = ctx.test_options.path_ignore_patterns;
         const has_relative_path = for (ctx.positionals) |arg| {
             if (std.fs.path.isAbsolute(arg) or
                 strings.startsWith(arg, "./") or

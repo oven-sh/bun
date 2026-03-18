@@ -27,6 +27,28 @@ pub const JSGlobalObject = opaque {
         return bun.cpp.Bun__gregorianDateTimeToMS(this, year, month, day, hour, minute, second, millisecond);
     }
 
+    pub fn gregorianDateTimeToMSUTC(this: *jsc.JSGlobalObject, year: i32, month: i32, day: i32, hour: i32, minute: i32, second: i32, millisecond: i32) bun.JSError!f64 {
+        jsc.markBinding(@src());
+        return bun.cpp.Bun__gregorianDateTimeToMSUTC(this, year, month, day, hour, minute, second, millisecond);
+    }
+
+    pub const GregorianDateTime = struct {
+        year: i32,
+        month: i32,
+        day: i32,
+        hour: i32,
+        minute: i32,
+        second: i32,
+        weekday: i32,
+    };
+
+    pub fn msToGregorianDateTimeUTC(this: *jsc.JSGlobalObject, ms: f64) GregorianDateTime {
+        jsc.markBinding(@src());
+        var dt: GregorianDateTime = undefined;
+        bun.cpp.Bun__msToGregorianDateTimeUTC(this, ms, &dt.year, &dt.month, &dt.day, &dt.hour, &dt.minute, &dt.second, &dt.weekday);
+        return dt;
+    }
+
     pub fn throwTODO(this: *JSGlobalObject, msg: []const u8) bun.JSError {
         const err = this.createErrorInstance("{s}", .{msg});
         err.put(this, ZigString.static("name"), (bun.String.static("TODOError").toJS(this)) catch return error.JSError);

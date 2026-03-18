@@ -751,14 +751,19 @@ async function main() {
       |_|   |_|
 `.slice(1),
     );
-    console.error("Usage: bun src/codegen/cppbind src build/debug/codegen");
+    console.error("Usage: bun src/codegen/cppbind src build/debug/codegen [cxx-sources.txt]");
     process.exit(1);
   }
   await mkdir(dstDir, { recursive: true });
 
   const parser = cppParser;
 
-  const allCppFiles = (await Bun.file("cmake/sources/CxxSources.txt").text())
+  // Source list: explicit arg from the build system, or fall back to the
+  // cmake-generated file (until cmake is removed). The build system owns
+  // globbing and hands us the result — no filesystem dependency outside
+  // what we're given.
+  const cxxSourcesPath = args[2] ?? "cmake/sources/CxxSources.txt";
+  const allCppFiles = (await Bun.file(cxxSourcesPath).text())
     .trim()
     .split("\n")
     .map(q => q.trim())

@@ -171,6 +171,10 @@ debug_thread_id: if (Environment.allow_assert) std.Thread.Id else void,
 body_value_hive_allocator: webcore.Body.Value.HiveAllocator = undefined,
 
 is_inside_deferred_task_queue: bool = false,
+/// When true, drainMicrotasksWithGlobal is suppressed. Used by SpawnSyncEventLoop
+/// to prevent the isolated event loop from draining the shared JSC microtask queue
+/// (which would execute user JavaScript during spawnSync).
+suppress_microtask_drain: bool = false,
 
 // defaults off. .on("message") will set it to true unless overridden
 // process.channel.unref() will set it to false and mark it overridden
@@ -1267,11 +1271,18 @@ fn configureDebugger(this: *VirtualMachine, cli_flag: bun.cli.Command.Debugger) 
         },
     }
 
-    if (this.isInspectorEnabled() and this.debugger.?.mode != .connect) {
-        this.transpiler.options.minify_identifiers = false;
-        this.transpiler.options.minify_syntax = false;
-        this.transpiler.options.minify_whitespace = false;
-        this.transpiler.options.debugger = true;
+    if (this.isInspectorEnabled()) {
+        // The runtime transpiler cache does not store inline source maps needed
+        // by the debugger frontend. Disable it so the printer always runs and
+        // generates the inline sourceMappingURL for the inspector.
+        jsc.RuntimeTranspilerCache.is_disabled = true;
+
+        if (this.debugger.?.mode != .connect) {
+            this.transpiler.options.minify_identifiers = false;
+            this.transpiler.options.minify_syntax = false;
+            this.transpiler.options.minify_whitespace = false;
+            this.transpiler.options.debugger = true;
+        }
     }
 }
 

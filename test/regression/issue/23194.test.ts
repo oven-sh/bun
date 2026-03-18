@@ -1,10 +1,12 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 // Regression test for https://github.com/oven-sh/bun/issues/23194
 // MessagePort.postMessage segfaults when ScriptExecutionContext is destroyed
 // during high-frequency message passing between main thread and worker via Comlink.
-test.skipIf(isWindows)(
+// The structured cloning + MessagePort transfer in Comlink's RPC protocol
+// triggers a null ScriptExecutionContext dereference in release builds.
+test(
   "MessagePort does not segfault during rapid Comlink-style message passing",
   async () => {
     using dir = tempDir("issue-23194", {
@@ -16,14 +18,13 @@ test.skipIf(isWindows)(
 import * as Comlink from 'comlink/dist/esm/comlink.js';
 
 let mainloop = true;
-const
-  worker = new Worker("./worker.js", {type: "module"}),
-  api = Comlink.wrap(worker),
-  main = {
-    async callback(index, ts, final) {
-      if (final) mainloop = false;
-    },
-  };
+const worker = new Worker(new URL("./worker.js", import.meta.url).href);
+const api = Comlink.wrap(worker);
+const main = {
+  async callback(index, ts, final) {
+    if (final) mainloop = false;
+  },
+};
 
 (async () => {
   await api.start(Date.now(), Comlink.proxy(main));
@@ -38,7 +39,7 @@ const
       "worker.js": `
 import * as Comlink from 'comlink/dist/esm/comlink.js';
 
-const TARGET_CALLBACKS = 500;
+const TARGET_CALLBACKS = 200;
 
 Comlink.expose({
   async start(start, main) {

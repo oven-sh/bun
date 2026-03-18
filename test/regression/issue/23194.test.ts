@@ -46,7 +46,7 @@ Comlink.expose({
     setTimeout(() => {
       clearInterval(interval);
       main.callback(i, Date.now(), true);
-    }, 10000);
+    }, 3000);
   },
 });
 `,

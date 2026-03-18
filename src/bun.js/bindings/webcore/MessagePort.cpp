@@ -167,7 +167,7 @@ ExceptionOr<void> MessagePort::postMessage(JSC::JSGlobalObject& state, JSC::JSVa
         return {};
 
     auto context = protectedScriptExecutionContext();
-    if (!context)
+    if (!context || !context->globalObject())
         return {};
 
     Vector<TransferredMessagePort> transferredPorts;
@@ -227,12 +227,15 @@ void MessagePort::start()
     if (!isEntangled())
         return;
 
-    ASSERT(scriptExecutionContext());
+    auto* context = scriptExecutionContext();
+    if (!context)
+        return;
+
     if (m_started)
         return;
 
     m_started = true;
-    scriptExecutionContext()->processMessageWithMessagePortsSoon([pendingActivity = Ref { *this }] {});
+    context->processMessageWithMessagePortsSoon([pendingActivity = Ref { *this }] {});
 }
 
 void MessagePort::close()

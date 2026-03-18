@@ -2901,7 +2901,6 @@ pub fn getSlice(
             const end = end_.toInt64();
             // If end is negative, let relativeEnd be max((size + end), 0).
             if (end < 0) {
-                // If end is negative, let relativeEnd be max((size + end), 0).
                 relativeEnd = @as(i64, @intCast(@max(end +% @as(i64, @intCast(this.size)), 0)));
             } else {
                 // Otherwise, let relativeEnd be min(end, size).

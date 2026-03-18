@@ -1449,10 +1449,9 @@ pub const JSValue = enum(i64) {
     }
 
     /// Equivalent to `target[property]`. Calls userland getters/proxies.  Can
-    /// throw. Null indicates the property does not exist. JavaScript undefined
-    /// and JavaScript null can exist as a property and is different than zig
-    /// `null` (property does not exist), however javascript undefined will return
-    /// zig null.
+    /// throw. Zig null indicates the property does not exist OR its value is
+    /// JS undefined (the two are not distinguished). JS null passes through
+    /// as a value.
     ///
     /// `property` must be `[]const u8`. A comptime slice may defer to
     /// calling `fastGet`, which use a more optimal code path. This function is

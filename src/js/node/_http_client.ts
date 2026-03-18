@@ -381,8 +381,9 @@ function ClientRequest(input, options, cb) {
 
       // 1xx informational responses (100 Continue, 103 Early Hints, etc.)
       // are not terminal — emit "information" and let the parser continue
-      // waiting for the final response.
-      if (statusCode >= 100 && statusCode < 200) {
+      // waiting for the final response. Note: 101 Switching Protocols is
+      // handled below as an upgrade, not here.
+      if (statusCode >= 100 && statusCode < 200 && statusCode !== 101) {
         this.emit("information", {
           statusCode,
           statusMessage,
@@ -391,6 +392,20 @@ function ClientRequest(input, options, cb) {
           rawHeaders: headers,
         });
         return 1; // skip body, parser stays active for next response
+      }
+
+      // Upgrade (101 Switching Protocols) or CONNECT tunnel (200) —
+      // surface the live socket and stop HTTP parsing.
+      if (upgrade || (method === "CONNECT" && statusCode === 200)) {
+        const builtHeaders = buildHeaders(headers);
+        const head = Buffer.alloc(0);
+        if (upgrade) {
+          this.emit("upgrade", res || { statusCode, statusMessage, headers: builtHeaders, rawHeaders: headers }, socket, head);
+        } else {
+          this.emit("connect", res || { statusCode, statusMessage, headers: builtHeaders, rawHeaders: headers }, socket, head);
+        }
+        freeParser(parser, this, socket);
+        return 1; // skip body
       }
 
       const prevIsHTTPS = getIsNextIncomingMessageHTTPS();
@@ -464,10 +479,21 @@ function ClientRequest(input, options, cb) {
       }
     });
     socket.on("close", () => {
+      // Handle premature close
       if (res && !res.complete) {
         res.destroy(new ConnResetException("aborted"));
+      } else if (!res) {
+        // EOF before headers — emit error on the request
+        this.emit("error", new ConnResetException("aborted"));
       }
-      socketCloseListener();
+      // Mark the request as closed/destroyed without calling socketCloseListener(),
+      // which would re-emit "close" on this.socket (the real socket) causing duplicates.
+      this.destroyed = true;
+      if (!this._closed) {
+        this._closed = true;
+        callCloseCallback(this);
+        this.emit("close");
+      }
     });
 
     // Ensure socket is connected before writing

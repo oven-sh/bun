@@ -1,8 +1,8 @@
-import { test, expect } from "bun:test";
-import net from "node:net";
-import tls from "node:tls";
+import { expect, test } from "bun:test";
 import fs from "node:fs";
+import net from "node:net";
 import path from "node:path";
+import tls from "node:tls";
 
 const fixturesDir = path.join(import.meta.dirname, "../../js/node/tls/fixtures");
 const serverCert = fs.readFileSync(path.join(fixturesDir, "agent1-cert.pem"));

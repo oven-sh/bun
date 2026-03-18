@@ -191,8 +191,8 @@ pub fn memoryCost(this: *const ByteBlobLoader) usize {
     return 0;
 }
 
-const std = @import("std");
 const bun = @import("bun");
+const std = @import("std");
 
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;

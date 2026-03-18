@@ -1,5 +1,5 @@
-import { test, expect } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { expect, test } from "bun:test";
+import { tempDir } from "harness";
 
 // Regression test for https://github.com/oven-sh/bun/issues/23065
 // Streaming large files through ReadableStream drain path should not panic

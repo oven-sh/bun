@@ -652,3 +652,35 @@ devTest("barrel optimization: two export-from blocks pointing to the same source
     await c.expectMessage("got: function");
   },
 });
+
+// --- Regression test for #27356 ---
+
+devTest("cjs module with many sub-requires does not crash", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `import result from "./lib/index.js"; console.log(result);`,
+    "lib/index.js": `
+      const a = require("./mod1.js");
+      const b = require("./mod2.js");
+      const c = require("./mod3.js");
+      const d = require("./mod4.js");
+      const e = require("./mod5.js");
+      const f = require("./mod6.js");
+      const g = require("./mod7.js");
+      const h = require("./mod8.js");
+      module.exports = a + b + c + d + e + f + g + h;
+    `,
+    "lib/mod1.js": `module.exports = 1;`,
+    "lib/mod2.js": `module.exports = 2;`,
+    "lib/mod3.js": `module.exports = 3;`,
+    "lib/mod4.js": `module.exports = 4;`,
+    "lib/mod5.js": `module.exports = 5;`,
+    "lib/mod6.js": `module.exports = 6;`,
+    "lib/mod7.js": `module.exports = 7;`,
+    "lib/mod8.js": `module.exports = 8;`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage(36);
+  },
+});

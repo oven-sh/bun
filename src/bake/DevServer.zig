@@ -2047,7 +2047,7 @@ fn generateClientBundle(dev: *DevServer, route_bundle: *RouteBundle) bun.OOM![]u
     if (dev.framework.react_fast_refresh) |rfr| brk: {
         const rfr_index = dev.client_graph.getFileIndex(rfr.import_source) orelse
             break :brk;
-        if (!dev.client_graph.stale_files.isSet(rfr_index.get())) {
+        if (!dev.client_graph.stale_files.isSetAllowOutOfBound(rfr_index.get(), true)) {
             try dev.client_graph.traceImports(rfr_index, &gts, .find_client_modules);
             react_fast_refresh_id = rfr.import_source;
         }
@@ -3114,7 +3114,7 @@ pub fn isFileCached(dev: *DevServer, path: []const u8, side: bake.Graph) ?CacheE
             };
             const index = g.bundled_files.getIndex(path) orelse
                 return null; // non-existent files are considered stale
-            if (!g.stale_files.isSet(index)) {
+            if (!g.stale_files.isSetAllowOutOfBound(index, true)) {
                 return .{ .kind = g.getFileByIndex(.init(@intCast(index))).fileKind() };
             }
             return null;
@@ -3138,8 +3138,8 @@ fn appendOpaqueEntryPoint(
 
     const file_index = fromOpaqueFileId(side, file);
     if (switch (side) {
-        .server => dev.server_graph.stale_files.isSet(file_index.get()),
-        .client => dev.client_graph.stale_files.isSet(file_index.get()),
+        .server => dev.server_graph.stale_files.isSetAllowOutOfBound(file_index.get(), true),
+        .client => dev.client_graph.stale_files.isSetAllowOutOfBound(file_index.get(), true),
     }) {
         try entry_points.appendJs(alloc, file_names[file_index.get()], side.graph());
     }

@@ -1034,6 +1034,72 @@ static napi_value test_deferred_exceptions(const Napi::CallbackInfo &info) {
 
   puts("string retrieval succeeded");
 
+  // napi_create_error should succeed even with a pending exception,
+  // matching Node.js behavior. This is the bug from issue #22259 where
+  // @napi-rs/canvas would crash because napi_create_error returned an
+  // error status when called with a pending exception, causing napi-rs
+  // to call napi_fatal_error.
+  do_throw();
+
+  napi_value error_msg;
+  status = napi_create_string_utf8(env, "test error", NAPI_AUTO_LENGTH, &error_msg);
+
+  if (status != napi_ok) {
+    printf("napi_create_string_utf8 (for error) failed: %d\n", status);
+    return nullptr;
+  }
+
+  napi_value error_code;
+  status = napi_create_string_utf8(env, "ERR_TEST", NAPI_AUTO_LENGTH, &error_code);
+
+  if (status != napi_ok) {
+    printf("napi_create_string_utf8 (for error code) failed: %d\n", status);
+    return nullptr;
+  }
+
+  napi_value error_val;
+  status = napi_create_error(env, error_code, error_msg, &error_val);
+
+  if (status != napi_ok) {
+    printf("napi_create_error failed during pending exception: %d\n", status);
+    return nullptr;
+  }
+
+  napi_value type_error_val;
+  status = napi_create_type_error(env, error_code, error_msg, &type_error_val);
+
+  if (status != napi_ok) {
+    printf("napi_create_type_error failed during pending exception: %d\n", status);
+    return nullptr;
+  }
+
+  napi_value range_error_val;
+  status = napi_create_range_error(env, error_code, error_msg, &range_error_val);
+
+  if (status != napi_ok) {
+    printf("napi_create_range_error failed during pending exception: %d\n", status);
+    return nullptr;
+  }
+
+  puts("napi_create_error functions succeeded during pending exception");
+
+  clear();
+
+  // Verify the created error is a proper object
+  status = napi_typeof(env, error_val, &type);
+
+  if (status != napi_ok) {
+    printf("napi_typeof (error) failed: %d\n", status);
+    return nullptr;
+  }
+
+  if (type != napi_object) {
+    printf("error napi_typeof produced %d, expected object\n", type);
+    return nullptr;
+  }
+
+  puts("napi_create_error produced valid error object");
+
   napi_value function;
 
   expect_failure_during_exception("napi_create_function", [&] {

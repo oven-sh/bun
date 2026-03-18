@@ -1,5 +1,5 @@
-import { test, expect } from "bun:test";
-import { basename, join, normalize, resolve } from "path";
+import { expect, test } from "bun:test";
+import { basename, join, normalize } from "path";
 
 // https://github.com/oven-sh/bun/issues/28266
 // path.basename (and other path functions) internally converts Latin-1 strings

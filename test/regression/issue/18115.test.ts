@@ -1,10 +1,10 @@
-import { expect, test, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 describe("String.raw preserves non-ASCII characters", () => {
   test("Chinese characters", async () => {
     const proc = Bun.spawn({
-      cmd: [bunExe(), "-e", 'const text = String.raw`a中`; for (const char of text) { console.log(char); }'],
+      cmd: [bunExe(), "-e", "const text = String.raw`a中`; for (const char of text) { console.log(char); }"],
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
@@ -20,7 +20,7 @@ describe("String.raw preserves non-ASCII characters", () => {
 
   test("accented characters", async () => {
     const proc = Bun.spawn({
-      cmd: [bunExe(), "-e", 'console.log(String.raw`Redémarrage`)'],
+      cmd: [bunExe(), "-e", "console.log(String.raw`Redémarrage`)"],
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
@@ -36,7 +36,7 @@ describe("String.raw preserves non-ASCII characters", () => {
 
   test("emoji and CJK characters", async () => {
     const proc = Bun.spawn({
-      cmd: [bunExe(), "-e", 'console.log(String.raw`æ™弟気👋`)'],
+      cmd: [bunExe(), "-e", "console.log(String.raw`æ™弟気👋`)"],
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
@@ -69,7 +69,7 @@ describe("String.raw preserves non-ASCII characters", () => {
 
 test("RegExp source preserves non-ASCII characters", async () => {
   const proc = Bun.spawn({
-    cmd: [bunExe(), "-e", 'console.log(/æ™/.source)'],
+    cmd: [bunExe(), "-e", "console.log(/æ™/.source)"],
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",
@@ -85,7 +85,7 @@ test("RegExp source preserves non-ASCII characters", async () => {
 
 test("String.raw with non-ASCII after bun build", async () => {
   using dir = tempDir("string-raw-unicode", {
-    "index.ts": 'console.log(String.raw`æ™弟気👋`);',
+    "index.ts": "console.log(String.raw`æ™弟気👋`);",
   });
 
   // Build

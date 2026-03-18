@@ -1086,9 +1086,9 @@ fn handleResultSet(this: *MySQLConnection, comptime Context: type, reader: NewRe
                 }
 
                 // In CLIENT_DEPRECATE_EOF mode, the result set terminator is an
-                // OK packet with 0xFE header. 0x00 is not a valid terminator in the
-                // row phase — it's always the start of row data (length-encoded string).
-                if (packet_type == .EOF and this.#capabilities.CLIENT_DEPRECATE_EOF) {
+                // OK packet with 0xFE header and payload < 9 bytes. 0xFE with
+                // payload >= 9 is a length-encoded integer (row data >= 16MB).
+                if (packet_type == .EOF and header_length < 9 and this.#capabilities.CLIENT_DEPRECATE_EOF) {
                     // CLIENT_DEPRECATE_EOF mode: OK packet with 0xFE header
                     try ok.decode(reader);
                     defer ok.deinit();

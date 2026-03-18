@@ -207,11 +207,34 @@ db.run("PRAGMA journal_mode = WAL;");
 ```
 
 <Accordion title="What is WAL mode?">
-In WAL mode, writes to the database are written directly to a separate file called the "WAL file" (write-ahead log). This file will be later integrated into the main database file. Think of it as a buffer for pending writes. Refer to the [SQLite docs](https://www.sqlite.org/wal.html) for a more detailed overview.
-
-On macOS, WAL files may be persistent by default. This is not a bug, it is how macOS configured the system version of SQLite.
-
+In WAL mode, writes to the database are written directly to a separate file called the "WAL file" (`-wal`) alongside a shared-memory file (`-shm`). These will be later integrated into the main database file. Think of it as a buffer for pending writes. Refer to the [SQLite docs](https://www.sqlite.org/wal.html) for a more detailed overview.
 </Accordion>
+
+<Note title="WAL sidecar file cleanup">
+When using WAL mode, SQLite creates sidecar files (`-wal` and `-shm`) next to your database. The cleanup behavior of these files after calling `.close()` depends on which SQLite library is in use:
+
+- **Linux**: Bun statically links its own bundled SQLite, which cleans up sidecar files on close when no other connections are open.
+- **macOS**: Bun dynamically loads the system SQLite (`libsqlite3.dylib`) by default, which Apple ships with [`PERSIST_WAL`](https://www.sqlite.org/c3ref/c_fcntl_begin_atomic_write.html#sqlitefcntlpersistwal) enabled. This means `-wal` and `-shm` files persist after close. This is not a bug in Bun — it is how macOS configures its system SQLite.
+
+To disable persistent WAL on macOS, use [`.fileControl()`](#filecontrol-cmd-number-value-any) to clear the `PERSIST_WAL` flag, then checkpoint the WAL:
+
+```ts db.ts icon="/icons/typescript.svg"
+import { Database, constants } from "bun:sqlite";
+
+const db = new Database("mydb.sqlite");
+db.run("PRAGMA journal_mode = WAL;");
+db.fileControl(constants.SQLITE_FCNTL_PERSIST_WAL, 0);
+
+// ... use the database ...
+
+// Checkpoint merges WAL contents into the main database file
+db.run("PRAGMA wal_checkpoint(TRUNCATE)");
+db.close();
+// -wal and -shm files will be removed
+```
+
+Alternatively, on macOS you can point Bun at a vanilla (non-Apple) SQLite build via `Database.setCustomSQLite()`, which will not have `PERSIST_WAL` enabled by default. See [`.loadExtension()`](#loadextension) for details.
+</Note>
 
 ---
 

@@ -161,7 +161,7 @@ describe.concurrent.if(isWindows)("bun windows .bunx shebang parser", () => {
 
       // Where npm agrees: the program npm extracts is the first word of our launcher.
       if (c.npm) {
-        expect(got.launcher?.split(" ")[0]).toBe(c.npm.prog);
+        expect(got.launcher?.split(/\s+/)[0]).toBe(c.npm.prog);
       }
     });
   }

@@ -291,7 +291,7 @@ pub fn encodeInto(options: @This(), buf: []u8) !void {
 
     if (options.shebang) |s| {
         flags.is_node = bun.strings.hasPrefixComptime(s.launcher, "node") and
-            (s.launcher.len == 4 or s.launcher[4] == ' ');
+            (s.launcher.len == 4 or s.launcher[4] == ' ' or s.launcher[4] == '\t');
         if (flags.is_node) std.debug.assert(flags.is_node_or_bun);
 
         const encoded = bun.strings.convertUTF8toUTF16InBuffer(

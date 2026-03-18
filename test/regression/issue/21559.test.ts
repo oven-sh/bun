@@ -1,5 +1,4 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
 
 // Test that stopping a server and then sending a request doesn't crash with a segfault.
 // Previously, after server.stop() downgraded the JS reference to weak, GC could collect

@@ -1081,24 +1081,68 @@ static napi_value test_deferred_exceptions(const Napi::CallbackInfo &info) {
     return nullptr;
   }
 
+  napi_value syntax_error_val;
+  status = node_api_create_syntax_error(env, error_code, error_msg, &syntax_error_val);
+
+  if (status != napi_ok) {
+    printf("node_api_create_syntax_error failed during pending exception: %d\n", status);
+    return nullptr;
+  }
+
   puts("napi_create_error functions succeeded during pending exception");
 
   clear();
 
-  // Verify the created error is a proper object
+  // Verify each created error is a proper object
   status = napi_typeof(env, error_val, &type);
 
   if (status != napi_ok) {
-    printf("napi_typeof (error) failed: %d\n", status);
+    printf("napi_typeof (error_val) failed: %d\n", status);
     return nullptr;
   }
 
   if (type != napi_object) {
-    printf("error napi_typeof produced %d, expected object\n", type);
+    printf("error_val napi_typeof produced %d, expected object\n", type);
     return nullptr;
   }
 
-  puts("napi_create_error produced valid error object");
+  status = napi_typeof(env, type_error_val, &type);
+
+  if (status != napi_ok) {
+    printf("napi_typeof (type_error_val) failed: %d\n", status);
+    return nullptr;
+  }
+
+  if (type != napi_object) {
+    printf("type_error_val napi_typeof produced %d, expected object\n", type);
+    return nullptr;
+  }
+
+  status = napi_typeof(env, range_error_val, &type);
+
+  if (status != napi_ok) {
+    printf("napi_typeof (range_error_val) failed: %d\n", status);
+    return nullptr;
+  }
+
+  if (type != napi_object) {
+    printf("range_error_val napi_typeof produced %d, expected object\n", type);
+    return nullptr;
+  }
+
+  status = napi_typeof(env, syntax_error_val, &type);
+
+  if (status != napi_ok) {
+    printf("napi_typeof (syntax_error_val) failed: %d\n", status);
+    return nullptr;
+  }
+
+  if (type != napi_object) {
+    printf("syntax_error_val napi_typeof produced %d, expected object\n", type);
+    return nullptr;
+  }
+
+  puts("napi_create_error produced valid error objects");
 
   napi_value function;
 

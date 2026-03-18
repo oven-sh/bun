@@ -235,7 +235,7 @@ devTest("hmr handles rapid consecutive edits", {
       if (Date.now() >= deadline) {
         throw new Error(
           `Timed out waiting for "${finalRender}". ` +
-            `Messages received: [${client.messages.map((m) => JSON.stringify(m)).join(", ")}]`,
+            `Messages received: [${client.messages.map(m => JSON.stringify(m)).join(", ")}]`,
         );
       }
       await Bun.sleep(50);

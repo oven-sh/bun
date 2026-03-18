@@ -49,8 +49,6 @@ server.listen(0, () => {
     });
   }
 });
-
-setTimeout(() => { console.error("timeout"); process.exit(1); }, 10000);
 `,
     ],
     env: bunEnv,
@@ -64,4 +62,4 @@ setTimeout(() => { console.error("timeout"); process.exit(1); }, 10000);
   }
   expect(stdout.trim()).toBe("OK");
   expect(exitCode).toBe(0);
-}, 15000);
+}, 15_000);

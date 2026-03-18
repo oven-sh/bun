@@ -16,21 +16,11 @@ namespace Bun {
 
 class WebViewHost;
 
-// Hand-rolled block layout (clang -fblocks is not enabled).
-// BLOCK_IS_GLOBAL means Block_copy/release are no-ops.
-struct BlockDescriptor {
-    uintptr_t reserved;
-    uintptr_t size;
-};
-template<typename Invoke>
-struct GlobalBlock {
-    void *isa;
-    int32_t flags;
-    int32_t reserved;
-    Invoke invoke;
-    const BlockDescriptor *descriptor;
-};
-enum : int32_t { BLOCK_IS_GLOBAL = (1 << 28) };
+// Populated by ObjCRuntime::load() via dlsym(RTLD_DEFAULT, ...) — both
+// symbols live in libSystem (already linked). Exposed for the HostBlock
+// factory in WebViewHost.cpp.
+extern void* g_NSConcreteMallocBlock;
+extern void (*g_Block_release)(const void*);
 
 namespace objc {
 
@@ -614,15 +604,6 @@ public:
     WTF::String m_loadError;
     bool m_loaded = false;
 
-    // Block correlation: only one eval/screenshot outstanding at a time,
-    // and blocks fire synchronously inside CFRunLoop in the host process
-    // (single-threaded) — so a per-runtime target pointer is race-free.
-    WebViewHost *m_evalTarget = nullptr;
-    WebViewHost *m_screenshotTarget = nullptr;
-    WebViewHost *m_inputTarget = nullptr;
-    WebViewHost *m_scrollTarget = nullptr;
-    WebViewHost *m_selectorTarget = nullptr;
-
     static ObjCRuntime *tryLoad();
 
     // CFRunLoopRun in the host process doesn't install the NSApplication
@@ -646,15 +627,6 @@ private:
     bool load();
 };
 
-// Accessors for the static global blocks (defined in ObjCRuntime.cpp).
-void *evalCompletionBlock();
-void *snapshotCompletionBlock();
-// _executeEditCommand:completion: is void(^)(BOOL), _doAfterProcessingAllPendingMouseEvents: is void(^)().
-// Two block instances, both route to WebViewHost::onInputComplete.
-void *editCommandCompletionBlock();
-void *mouseBarrierBlock();
-void *scrollBarrierBlock();
-void *selectorCompletionBlock();
 
 } // namespace Bun
 

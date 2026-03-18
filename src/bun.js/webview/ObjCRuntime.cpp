@@ -159,92 +159,13 @@ char NavigationDelegate::s_hostKey = 0;
 
 } // namespace objc
 
-// --- Block storage ---------------------------------------------------------
-// Two static global blocks for evaluateJavaScript: and takeSnapshot:
-// completion handlers. No captures; correlation happens through
-// ObjCRuntime::m_evalTarget / m_screenshotTarget set just before send.
+// --- Block ABI symbols -----------------------------------------------------
+// Heap blocks (_NSConcreteMallocBlock) carry a Ref<WebViewHost> capture
+// per-call — see HostBlock in WebViewHost.cpp. No process-global targets,
+// so concurrent ops across views don't serialize.
 
-using CompletionInvoke = void (*)(void*, id, id);
-static const BlockDescriptor g_blockDescriptor = { 0, sizeof(GlobalBlock<CompletionInvoke>) };
-
-// These fire via main-dispatch-queue drain inside CFRunLoopRun — different
-// entry point from the IPC socket read (which ARPool's at host_main.cpp:213).
-// Downstream onEvalComplete/onSelectorComplete etc. allocate autoreleased
-// NSStrings; without a pool they accumulate forever.
-
-static void evalBlockInvoke(void* /*blockSelf*/, id result, id error)
-{
-    ObjCRuntime::ARPool pool;
-    auto* rt = ObjCRuntime::tryLoad();
-    auto* host = rt->m_evalTarget;
-    rt->m_evalTarget = nullptr;
-    if (host) host->onEvalComplete(result, error);
-}
-
-static void snapshotBlockInvoke(void* /*blockSelf*/, id nsimage, id error)
-{
-    ObjCRuntime::ARPool pool;
-    auto* rt = ObjCRuntime::tryLoad();
-    auto* host = rt->m_screenshotTarget;
-    rt->m_screenshotTarget = nullptr;
-    if (host) host->onScreenshotComplete(nsimage, error);
-}
-
-// _executeEditCommand completion: void(^)(BOOL). We ignore the BOOL —
-// it's "was this command applicable", not "did it fail". The IPC round-trip
-// is the point; either way WebContent has processed.
-using EditCmdInvoke = void (*)(void*, signed char);
-static void editCmdBlockInvoke(void* /*blockSelf*/, signed char /*success*/)
-{
-    ObjCRuntime::ARPool pool;
-    auto* rt = ObjCRuntime::tryLoad();
-    auto* host = rt->m_inputTarget;
-    rt->m_inputTarget = nullptr;
-    if (host) host->onInputComplete();
-}
-
-// _doAfterProcessingAllPendingMouseEvents: dispatch_block_t = void(^)().
-using VoidInvoke = void (*)(void*);
-static void mouseBarrierBlockInvoke(void* /*blockSelf*/)
-{
-    ObjCRuntime::ARPool pool;
-    auto* rt = ObjCRuntime::tryLoad();
-    auto* host = rt->m_inputTarget;
-    rt->m_inputTarget = nullptr;
-    if (host) host->onInputComplete();
-}
-static void scrollBarrierBlockInvoke(void* /*blockSelf*/)
-{
-    ObjCRuntime::ARPool pool;
-    auto* rt = ObjCRuntime::tryLoad();
-    auto* host = rt->m_scrollTarget;
-    rt->m_scrollTarget = nullptr;
-    if (host) host->onScrollBarrier();
-}
-
-// callAsyncJavaScript: completion — same signature as eval, (id result, id error).
-static void selectorBlockInvoke(void* /*blockSelf*/, id result, id error)
-{
-    ObjCRuntime::ARPool pool;
-    auto* rt = ObjCRuntime::tryLoad();
-    auto* host = rt->m_selectorTarget;
-    rt->m_selectorTarget = nullptr;
-    if (host) host->onSelectorComplete(result, error);
-}
-
-static GlobalBlock<CompletionInvoke> g_evalBlock;
-static GlobalBlock<CompletionInvoke> g_snapshotBlock;
-static GlobalBlock<EditCmdInvoke> g_editCmdBlock;
-static GlobalBlock<VoidInvoke> g_mouseBarrierBlock;
-static GlobalBlock<VoidInvoke> g_scrollBarrierBlock;
-static GlobalBlock<CompletionInvoke> g_selectorBlock;
-
-void* evalCompletionBlock() { return &g_evalBlock; }
-void* snapshotCompletionBlock() { return &g_snapshotBlock; }
-void* editCommandCompletionBlock() { return &g_editCmdBlock; }
-void* mouseBarrierBlock() { return &g_mouseBarrierBlock; }
-void* scrollBarrierBlock() { return &g_scrollBarrierBlock; }
-void* selectorCompletionBlock() { return &g_selectorBlock; }
+void* g_NSConcreteMallocBlock;
+void (*g_Block_release)(const void*);
 
 // --- Delegate IMPs ---------------------------------------------------------
 // Installed on the runtime-registered BunWKNavigationDelegate class.
@@ -304,9 +225,10 @@ bool ObjCRuntime::load()
     using namespace objc;
 
     // --- libSystem (already linked) ---------------------------------------
-    void* nsConcreteGlobalBlock = dlsym(RTLD_DEFAULT, "_NSConcreteGlobalBlock");
-    if (!nsConcreteGlobalBlock) {
-        m_loadError = "libSystem _NSConcreteGlobalBlock unavailable"_s;
+    g_NSConcreteMallocBlock = dlsym(RTLD_DEFAULT, "_NSConcreteMallocBlock");
+    g_Block_release = reinterpret_cast<decltype(g_Block_release)>(dlsym(RTLD_DEFAULT, "_Block_release"));
+    if (!g_NSConcreteMallocBlock || !g_Block_release) {
+        m_loadError = "libSystem block symbols unavailable"_s;
         return false;
     }
 
@@ -505,17 +427,6 @@ bool ObjCRuntime::load()
     WKWebView::s_pageWorld = sel("pageWorld");
     WKWebView::s_callAsyncJavaScript = sel("callAsyncJavaScript:arguments:inFrame:inContentWorld:completionHandler:");
 #undef CLS
-
-    // --- initialize global blocks -----------------------------------------
-    g_evalBlock = { nsConcreteGlobalBlock, BLOCK_IS_GLOBAL, 0, evalBlockInvoke, &g_blockDescriptor };
-    g_snapshotBlock = { nsConcreteGlobalBlock, BLOCK_IS_GLOBAL, 0, snapshotBlockInvoke, &g_blockDescriptor };
-    // Block descriptor's size field is only read by Block_copy for stack
-    // blocks; BLOCK_IS_GLOBAL makes copy a no-op so the descriptor can be
-    // shared across signatures (it's {0, sizeof(anything)} and unchecked).
-    g_editCmdBlock = { nsConcreteGlobalBlock, BLOCK_IS_GLOBAL, 0, editCmdBlockInvoke, &g_blockDescriptor };
-    g_mouseBarrierBlock = { nsConcreteGlobalBlock, BLOCK_IS_GLOBAL, 0, mouseBarrierBlockInvoke, &g_blockDescriptor };
-    g_scrollBarrierBlock = { nsConcreteGlobalBlock, BLOCK_IS_GLOBAL, 0, scrollBarrierBlockInvoke, &g_blockDescriptor };
-    g_selectorBlock = { nsConcreteGlobalBlock, BLOCK_IS_GLOBAL, 0, selectorBlockInvoke, &g_blockDescriptor };
 
     // --- register BunWKNavigationDelegate : NSObject <WKNavigationDelegate>
     Class nsobject = getClass("NSObject");

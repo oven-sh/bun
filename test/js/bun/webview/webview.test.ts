@@ -112,6 +112,35 @@ it("scroll(NaN) throws before poisoning the accumulator", async () => {
   }
 });
 
+it("concurrent evaluate() across two views works", async () => {
+  // Completion blocks carry Ref<WebViewHost> per-call (heap-allocated
+  // _NSConcreteMallocBlock, same layout as WTF::BlockPtr). No process-global
+  // target pointer — the Ref in the block routes the completion to the
+  // right host. Each view has its own WebContent process, so the
+  // evaluates genuinely run in parallel; we're testing that the
+  // completions don't cross wires.
+  const a = new Bun.WebView({ width: 200, height: 200 });
+  const b = new Bun.WebView({ width: 200, height: 200 });
+  try {
+    await Promise.all([a.navigate("data:text/html,<body>A</body>"), b.navigate("data:text/html,<body>B</body>")]);
+    // A deliberately slower (microtask roundtrip) so B's completion
+    // would fire first and stomp A's target under the old global-target
+    // design — A's eval would resolve with B's body text.
+    const [ra, rb] = await Promise.all([
+      a.evaluate("Promise.resolve().then(() => document.body.textContent)"),
+      b.evaluate("document.body.textContent"),
+    ]);
+    expect(ra).toBe("A");
+    expect(rb).toBe("B");
+
+    // Same for click/scrollTo (selectorCompletionBlock path).
+    await Promise.all([a.scrollTo("body"), b.scrollTo("body")]);
+  } finally {
+    a.close();
+    b.close();
+  }
+});
+
 it("url/title/loading getters reflect state", async () => {
   const view = new Bun.WebView({ width: 200, height: 200 });
   try {

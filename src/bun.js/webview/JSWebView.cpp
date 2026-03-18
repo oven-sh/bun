@@ -202,6 +202,10 @@ bool HostClient::ensureSpawned(Zig::GlobalObject* zig)
     // sole ref manager.
     sock = us_socket_from_fd(ctx, sizeof(void*), fd, 0);
     if (!sock) {
+        // us_socket_from_fd calls us_poll_free on failure but doesn't close
+        // the fd (ownership was ours). Leak it and the child stays alive
+        // forever with a dead read end.
+        ::close(fd);
         dead = true;
         return false;
     }
@@ -271,7 +275,12 @@ JSValue openShmScreenshot(JSGlobalObject* g, const char* name, uint32_t nameLen,
     auto* u8 = JSUint8Array::createUninitialized(g, g->m_typedArrayUint8.get(g), pngLen);
     if (scope.exception() || !u8) [[unlikely]] {
         munmap(map, pngLen);
-        return jsUndefined();
+        // createUninitialized threw (OOM). Propagate — the caller's
+        // TopExceptionScope reports and clears between frames. The promise
+        // rejects with jsUndefined (result.inherits<JSUint8Array>() is false),
+        // which isn't pretty, but OOM during a screenshot memcpy means we're
+        // about to die anyway.
+        RELEASE_AND_RETURN(scope, jsUndefined());
     }
     memcpy(u8->typedVector(), map, pngLen);
     munmap(map, pngLen);
@@ -335,6 +344,9 @@ void HostClient::handleReply(const Frame& h, Reader r)
         settle(g, view, view->m_pendingNavigate, true, jsUndefined());
         return;
     case Reply::NavFailed:
+        // navigateIPC sends NavFailed directly for invalid URLs — no
+        // NavFailEvent precedes it, so the only m_loading reset path is here.
+        view->m_loading = false;
         settle(g, view, view->m_pendingNavigate, false, createError(g, r.str()));
         return;
 
@@ -368,18 +380,15 @@ void HostClient::handleReply(const Frame& h, Reader r)
     case Reply::Ack:
         settle(g, view, view->m_pendingMisc, true, jsUndefined());
         return;
-    case Reply::Error: {
-        // Generic child-side failure (invalid viewId after Create failed,
-        // input-op contention). We don't know which slot the op used —
-        // the child doesn't echo the op in Error replies. Reject all;
-        // at most one is set (parent-side checkSlot serializes).
-        JSValue err = createError(g, r.str());
-        settle(g, view, view->m_pendingNavigate, false, err);
-        settle(g, view, view->m_pendingEval, false, err);
-        settle(g, view, view->m_pendingScreenshot, false, err);
-        settle(g, view, view->m_pendingMisc, false, err);
+    case Reply::Error:
+        // Child-side misc-op failure (input contention, selector timeout,
+        // malformed result). The child's view() lookup now sends op-specific
+        // failure types for invalid viewId (NavFailed/EvalFailed/etc.), so
+        // Error is exclusively misc-slot. Rejecting all slots here would
+        // spuriously kill a concurrent navigate.
+        view->m_loading = false;
+        settle(g, view, view->m_pendingMisc, false, createError(g, r.str()));
         return;
-    }
     }
 }
 

@@ -141,7 +141,7 @@ struct Host {
     CFFileDescriptorRef cffd = nullptr;
     FrameWriter writer;
 
-    std::unordered_map<uint32_t, std::unique_ptr<WebViewHost>> views;
+    std::unordered_map<uint32_t, Ref<WebViewHost>> views;
 
     // CFFileDescriptor delivers one callback then disarms; read until EAGAIN,
     // then re-enable. Incomplete frame at buffer tail stays until more bytes.
@@ -150,14 +150,28 @@ struct Host {
     void onReadable();
     void dispatch(uint32_t viewId, Op op, Reader payload);
 
-    WebViewHost* view(uint32_t viewId)
+    // Op → failure reply type. Lets "invalid viewId" reject the correct
+    // parent-side slot (Navigate → m_pendingNavigate, etc.) instead of
+    // always Reply::Error which is misc-only. Everything past Screenshot
+    // is a misc op.
+    static constexpr Reply failureFor(Op op)
+    {
+        switch (op) {
+        case Op::Navigate:   return Reply::NavFailed;
+        case Op::Evaluate:   return Reply::EvalFailed;
+        case Op::Screenshot: return Reply::ScreenshotFailed;
+        default:             return Reply::Error;
+        }
+    }
+
+    WebViewHost* view(uint32_t viewId, Op op)
     {
         auto it = views.find(viewId);
         if (it == views.end()) {
-            writer.sendReplyStr(viewId, Reply::Error, "invalid viewId"_s);
+            writer.sendReplyStr(viewId, failureFor(op), "invalid viewId"_s);
             return nullptr;
         }
-        return it->second.get();
+        return it->second.ptr();
     }
 };
 
@@ -219,23 +233,18 @@ void Host::dispatch(uint32_t viewId, Op op, Reader r)
         WTF::String persistDir;
         if (static_cast<DataStoreKind>(p.dataStoreKind) == DataStoreKind::Persistent)
             persistDir = r.str();
-        auto host = WebViewHost::createForIPC(viewId, p.width, p.height, persistDir);
-        if (!host) {
-            writer.sendReplyStr(viewId, Reply::Error, "WKWebView creation failed"_s);
-            return;
-        }
-        views.emplace(viewId, WTF::move(host));
+        views.emplace(viewId, WebViewHost::createForIPC(viewId, p.width, p.height, persistDir));
         // No Ack for Create — parent doesn't await it (fire-and-forget).
         return;
     }
     case Op::Navigate:
-        if (auto* v = view(viewId)) v->navigateIPC(r.str());
+        if (auto* v = view(viewId, op)) v->navigateIPC(r.str());
         return;
     case Op::Evaluate:
-        if (auto* v = view(viewId)) v->evaluateIPC(r.str());
+        if (auto* v = view(viewId, op)) v->evaluateIPC(r.str());
         return;
     case Op::Screenshot:
-        if (auto* v = view(viewId)) v->screenshotIPC();
+        if (auto* v = view(viewId, op)) v->screenshotIPC();
         return;
     case Op::Close:
         views.erase(viewId);
@@ -243,26 +252,26 @@ void Host::dispatch(uint32_t viewId, Op op, Reader r)
         return;
     case Op::Resize: {
         auto p = decode<ResizePayload>(r);
-        if (auto* v = view(viewId)) {
+        if (auto* v = view(viewId, op)) {
             v->resize(p.width, p.height);
             writer.sendReply(viewId, Reply::Ack);
         }
         return;
     }
     case Op::GoBack:
-        if (auto* v = view(viewId)) {
+        if (auto* v = view(viewId, op)) {
             v->goBack();
             writer.sendReply(viewId, Reply::Ack);
         }
         return;
     case Op::GoForward:
-        if (auto* v = view(viewId)) {
+        if (auto* v = view(viewId, op)) {
             v->goForward();
             writer.sendReply(viewId, Reply::Ack);
         }
         return;
     case Op::Reload:
-        if (auto* v = view(viewId)) {
+        if (auto* v = view(viewId, op)) {
             v->reload();
             writer.sendReply(viewId, Reply::Ack);
         }
@@ -270,13 +279,13 @@ void Host::dispatch(uint32_t viewId, Op op, Reader r)
     // Input ops: return true = async (completion block Acks), false = sync.
     case Op::Click: {
         auto p = decode<ClickPayload>(r);
-        if (auto* v = view(viewId)) {
+        if (auto* v = view(viewId, op)) {
             if (!v->clickIPC(p.x, p.y, p.button, p.modifiers, p.clickCount)) writer.sendReply(viewId, Reply::Ack);
         }
         return;
     }
     case Op::Type:
-        if (auto* v = view(viewId)) {
+        if (auto* v = view(viewId, op)) {
             if (!v->typeIPC(r.str())) writer.sendReply(viewId, Reply::Ack);
         }
         return;
@@ -284,28 +293,28 @@ void Host::dispatch(uint32_t viewId, Op op, Reader r)
         auto p = decode<PressPayload>(r);
         auto vk = static_cast<VirtualKey>(p.virtualKey);
         WTF::String ch = (vk == VirtualKey::Character) ? r.str() : WTF::String();
-        if (auto* v = view(viewId)) {
+        if (auto* v = view(viewId, op)) {
             if (!v->pressIPC(vk, p.modifiers, ch)) writer.sendReply(viewId, Reply::Ack);
         }
         return;
     }
     case Op::Scroll: {
         auto p = decode<ScrollPayload>(r);
-        if (auto* v = view(viewId)) {
+        if (auto* v = view(viewId, op)) {
             if (!v->scrollIPC(p.deltaX, p.deltaY)) writer.sendReply(viewId, Reply::Ack);
         }
         return;
     }
     case Op::ClickSelector: {
         auto p = decode<ClickSelectorPayload>(r);
-        if (auto* v = view(viewId)) {
+        if (auto* v = view(viewId, op)) {
             if (!v->clickSelectorIPC(r.str(), p.timeout, p.button, p.modifiers, p.clickCount)) writer.sendReply(viewId, Reply::Ack);
         }
         return;
     }
     case Op::ScrollTo: {
         auto p = decode<ScrollToPayload>(r);
-        if (auto* v = view(viewId)) {
+        if (auto* v = view(viewId, op)) {
             if (!v->scrollToIPC(r.str(), p.timeout, p.block)) writer.sendReply(viewId, Reply::Ack);
         }
         return;

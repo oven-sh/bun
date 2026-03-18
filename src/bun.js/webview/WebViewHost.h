@@ -6,7 +6,8 @@
 
 #include "ObjCRuntime.h"
 #include "ipc_protocol.h"
-#include <wtf/Noncopyable.h>
+#include <wtf/RefCounted.h>
+#include <wtf/Ref.h>
 #include <wtf/text/WTFString.h>
 
 namespace Bun {
@@ -15,11 +16,12 @@ namespace Bun {
 // CFRunLoopRun(). Completions (delegate IMPs, blocks) fire inside CFRunLoop
 // and write reply frames to the parent socket. viewId is both the routing
 // key and the frame header — no separate req_id.
-class WebViewHost {
-    WTF_MAKE_NONCOPYABLE(WebViewHost);
-
+// RefCounted so heap completion blocks can hold a strong ref and outlive
+// the views map erase on close(). The on*Complete methods check m_closed
+// and no-op — the block's dispose (~Ref) drops the last reference.
+class WebViewHost : public RefCounted<WebViewHost> {
 public:
-    static std::unique_ptr<WebViewHost> createForIPC(uint32_t viewId, uint32_t width, uint32_t height, const WTF::String& persistDir);
+    static Ref<WebViewHost> createForIPC(uint32_t viewId, uint32_t width, uint32_t height, const WTF::String& persistDir);
     ~WebViewHost();
 
     void navigateIPC(const WTF::String& url);
@@ -41,6 +43,8 @@ public:
     bool clickSelectorIPC(const WTF::String& selector, uint32_t timeout, uint8_t button, uint8_t modifiers, uint8_t clickCount);
     bool scrollToIPC(const WTF::String& selector, uint32_t timeout, uint8_t block);
     void onInputComplete();
+    // _executeEditCommand: is void(^)(BOOL) — block ABI needs the arg slot.
+    void onInputCompleteBool(signed char) { onInputComplete(); }
     void onScrollBarrier();
 
     void resize(uint32_t width, uint32_t height);

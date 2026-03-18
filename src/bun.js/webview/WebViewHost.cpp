@@ -20,20 +20,93 @@ namespace WebViewProto {
 FrameWriter* hostWriter();
 }
 
-std::unique_ptr<WebViewHost> WebViewHost::createForIPC(uint32_t viewId, uint32_t width, uint32_t height, const WTF::String& persistDir)
+// ---------------------------------------------------------------------------
+// Heap block factory. Each block carries Ref<WebViewHost> — one alloc per
+// call, but concurrent ops across views work (no process-global target).
+// WTF::BlockPtr does the same dance; this is the minimal non-templated-lambda
+// version for our 3 signatures (void(), void(BOOL), void(id,id)).
+//
+// Lifecycle: we allocate at refcount 1. WebKit Block_copy's (refcount→2, just
+// an atomic inc on _NSConcreteMallocBlock — no actual copy). Our handle
+// destructor _Block_release's (→1). WebKit calls invoke, then
+// _Block_release's (→0) → libBlocksRuntime calls dispose (runs ~Ref) → free.
+//
+// The block outlives the views map entry if close() races the completion —
+// Ref keeps the host alive, on*Complete sees m_closed and no-ops, then
+// dispose drops the last ref.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+struct HostBlockDescriptor {
+    uintptr_t reserved;
+    uintptr_t size;
+    void (*copy)(void*, const void*);   // null — MallocBlock Block_copy is refcount-only
+    void (*dispose)(const void*);
+};
+
+enum : int32_t {
+    BLOCK_NEEDS_FREE = 1 << 24,
+    BLOCK_HAS_COPY_DISPOSE = 1 << 25,
+};
+
+// RAII: _Block_release on scope exit. Pass via implicit operator void*.
+struct [[nodiscard]] HostBlockHandle {
+    void* ptr;
+    HostBlockHandle(void* p) : ptr(p) { }
+    HostBlockHandle(const HostBlockHandle&) = delete;
+    ~HostBlockHandle() { g_Block_release(ptr); }
+    operator void*() const { return ptr; }
+};
+
+// Member-function-pointer dispatch. Invoke forwards to (host->*Method)(args...);
+// dispose runs ~Ref. The descriptor is a per-instantiation static so its
+// size field is correct (libBlocksRuntime reads it for the free).
+template<auto Method, typename... Args>
+HostBlockHandle makeHostBlock(WebViewHost& host)
+{
+    struct Block {
+        void* isa;
+        int32_t flags;
+        int32_t reserved;
+        void (*invoke)(Block*, Args...);
+        const HostBlockDescriptor* descriptor;
+        Ref<WebViewHost> host;
+    };
+    static const HostBlockDescriptor desc {
+        0, sizeof(Block), nullptr,
+        [](const void* p) {
+            static_cast<Block*>(const_cast<void*>(p))->host.~Ref();
+        }
+    };
+    auto* b = static_cast<Block*>(malloc(sizeof(Block)));
+    b->isa = g_NSConcreteMallocBlock;
+    b->flags = BLOCK_NEEDS_FREE | BLOCK_HAS_COPY_DISPOSE | (1 << 1);  // refcount=1
+    b->reserved = 0;
+    b->invoke = [](Block* self, Args... args) {
+        ObjCRuntime::ARPool pool;
+        (self->host.get().*Method)(args...);
+    };
+    b->descriptor = &desc;
+    new (&b->host) Ref<WebViewHost>(host);
+    return { b };
+}
+
+} // anonymous namespace
+
+Ref<WebViewHost> WebViewHost::createForIPC(uint32_t viewId, uint32_t width, uint32_t height, const WTF::String& persistDir)
 {
     ASSERT(ObjCRuntime::tryLoad()->m_loaded);
 
-    auto host = std::unique_ptr<WebViewHost>(new WebViewHost());
+    auto host = adoptRef(*new WebViewHost());
     host->m_viewId = viewId;
 
     auto cfg = persistDir.isEmpty()
         ? objc::WKWebViewConfiguration::createEphemeral()
         : objc::WKWebViewConfiguration::createPersistent(persistDir);
     host->m_webview = objc::WKWebView::create(cfg, width, height);
-    if (!host->m_webview) return nullptr;
 
-    host->m_delegate = objc::NavigationDelegate::create(host.get());
+    host->m_delegate = objc::NavigationDelegate::create(host.ptr());
     host->m_webview.setNavigationDelegate(host->m_delegate);
 
     host->m_window = objc::NSWindow::createOffscreen(width, height);
@@ -73,14 +146,10 @@ void WebViewHost::close()
     m_closed = true;
     ObjCRuntime::ARPool pool;
 
-    // Break the delegate backlink first so late WebKit callbacks see null.
+    // Break the delegate backlink so late navigation callbacks see null.
+    // Block completions hold Ref<WebViewHost> and check m_closed; no
+    // target-pointer nulling needed.
     if (m_delegate) m_delegate.clearHost();
-    auto* rt = ObjCRuntime::tryLoad();
-    if (rt->m_evalTarget == this) rt->m_evalTarget = nullptr;
-    if (rt->m_screenshotTarget == this) rt->m_screenshotTarget = nullptr;
-    if (rt->m_inputTarget == this) rt->m_inputTarget = nullptr;
-    if (rt->m_scrollTarget == this) rt->m_scrollTarget = nullptr;
-    if (rt->m_selectorTarget == this) rt->m_selectorTarget = nullptr;
 
     if (m_webview) {
         m_webview.setNavigationDelegate(nullptr);
@@ -121,13 +190,11 @@ void WebViewHost::navigateIPC(const WTF::String& urlString)
 
 void WebViewHost::evaluateIPC(const WTF::String& script)
 {
-    auto* rt = ObjCRuntime::tryLoad();
-    if (m_evalPending || rt->m_evalTarget) {
+    if (m_evalPending) {
         hostWriter()->sendReplyStr(m_viewId, Reply::EvalFailed, "evaluate already pending"_s);
         return;
     }
     m_evalPending = true;
-    rt->m_evalTarget = this;
 
     // callAsyncJavaScript: wraps the body in an async function and awaits
     // the return value. JSON.stringify page-side means the result crossing
@@ -146,19 +213,18 @@ void WebViewHost::evaluateIPC(const WTF::String& script)
     // the string) → callAsync returns nil → parent resolves jsUndefined().
     // Functions/symbols become undefined. Circular refs throw → rejection.
     auto body = makeString("return JSON.stringify(await ("_s, script, "))"_s);
-    m_webview.callAsync(objc::NSString::fromWTF(body), nullptr /* no args */, evalCompletionBlock());
+    m_webview.callAsync(objc::NSString::fromWTF(body), nullptr,
+        makeHostBlock<&WebViewHost::onEvalComplete, id, id>(*this));
 }
 
 void WebViewHost::screenshotIPC()
 {
-    auto* rt = ObjCRuntime::tryLoad();
-    if (m_screenshotPending || rt->m_screenshotTarget) {
+    if (m_screenshotPending) {
         hostWriter()->sendReplyStr(m_viewId, Reply::ScreenshotFailed, "screenshot already pending"_s);
         return;
     }
     m_screenshotPending = true;
-    rt->m_screenshotTarget = this;
-    m_webview.takeSnapshot(snapshotCompletionBlock());
+    m_webview.takeSnapshot(makeHostBlock<&WebViewHost::onScreenshotComplete, id, id>(*this));
 }
 
 // --- Native input ----------------------------------------------------------
@@ -183,8 +249,7 @@ static unsigned long expandModifiers(uint8_t m)
 
 bool WebViewHost::clickIPC(float x, float y, uint8_t button, uint8_t modifiers, uint8_t clickCount)
 {
-    auto* rt = ObjCRuntime::tryLoad();
-    if (m_inputPending || rt->m_inputTarget || rt->m_selectorTarget) {
+    if (m_inputPending) {
         hostWriter()->sendReplyStr(m_viewId, Reply::Error, "input operation already pending"_s);
         return true;
     }
@@ -224,8 +289,7 @@ void WebViewHost::doNativeClick(float x, float y, uint8_t button, uint8_t modifi
     // queue drains — WebContent has processed both, synthesized click,
     // fired all JS handlers. No polling, no evaluateJavaScript hack.
     m_inputPending = true;
-    ObjCRuntime::tryLoad()->m_inputTarget = this;
-    m_webview.doAfterPendingMouseEvents(mouseBarrierBlock());
+    m_webview.doAfterPendingMouseEvents(makeHostBlock<&WebViewHost::onInputComplete>(*this));
 }
 
 // Actionability check: Playwright-style rAF-polled predicate. Runs entirely
@@ -274,11 +338,10 @@ for (;;) {
 
 bool WebViewHost::clickSelectorIPC(const WTF::String& selector, uint32_t timeout, uint8_t button, uint8_t modifiers, uint8_t clickCount)
 {
-    auto* rt = ObjCRuntime::tryLoad();
-    // Guards against both coord-click and another selector-click. The
-    // completion chains into doNativeClick which sets m_inputPending, so a
-    // concurrent coord-click would collide on the mouse barrier.
-    if (m_inputPending || rt->m_inputTarget || rt->m_selectorTarget) {
+    // Guards against a same-view overlap — the completion chains into
+    // doNativeClick which sets m_inputPending, so a concurrent coord-click
+    // on the same view would collide on the mouse barrier.
+    if (m_inputPending) {
         hostWriter()->sendReplyStr(m_viewId, Reply::Error, "input operation already pending"_s);
         return true;
     }
@@ -286,29 +349,22 @@ bool WebViewHost::clickSelectorIPC(const WTF::String& selector, uint32_t timeout
     m_selButton = button;
     m_selModifiers = modifiers;
     m_selClickCount = clickCount;
-    rt->m_selectorTarget = this;
     m_selIsScrollTo = false;
 
     auto body = objc::NSString::fromWTF(WTF::String::fromUTF8(kActionabilityJS));
     auto args = objc::NSDictionary::with2(
         objc::NSString::fromWTF(selector).m_id, objc::NSString::fromWTF("sel"_s).m_id,
         objc::NSNumber::withDouble(static_cast<double>(timeout)).m_id, objc::NSString::fromWTF("timeout"_s).m_id);
-    m_webview.callAsync(body, args.m_id, selectorCompletionBlock());
+    m_webview.callAsync(body, args.m_id,
+        makeHostBlock<&WebViewHost::onSelectorComplete, id, id>(*this));
     return true;
 }
 
 bool WebViewHost::scrollToIPC(const WTF::String& selector, uint32_t timeout, uint8_t block)
 {
-    auto* rt = ObjCRuntime::tryLoad();
-    if (rt->m_selectorTarget) {
-        hostWriter()->sendReplyStr(m_viewId, Reply::Error, "selector operation already pending"_s);
-        return true;
-    }
-
     static constexpr ASCIILiteral blockNames[] = { "start"_s, "center"_s, "end"_s, "nearest"_s };
     auto blockStr = blockNames[block < 4 ? block : 1];
 
-    rt->m_selectorTarget = this;
     m_selIsScrollTo = true;
 
     auto body = objc::NSString::fromWTF(WTF::String::fromUTF8(kScrollToJS));
@@ -316,7 +372,8 @@ bool WebViewHost::scrollToIPC(const WTF::String& selector, uint32_t timeout, uin
         objc::NSString::fromWTF(selector).m_id, objc::NSString::fromWTF("sel"_s).m_id,
         objc::NSNumber::withDouble(static_cast<double>(timeout)).m_id, objc::NSString::fromWTF("timeout"_s).m_id,
         objc::NSString::fromWTF(blockStr).m_id, objc::NSString::fromWTF("block"_s).m_id);
-    m_webview.callAsync(body, args.m_id, selectorCompletionBlock());
+    m_webview.callAsync(body, args.m_id,
+        makeHostBlock<&WebViewHost::onSelectorComplete, id, id>(*this));
     return true;
 }
 
@@ -352,8 +409,7 @@ void WebViewHost::onSelectorComplete(id result, id error)
 
 bool WebViewHost::typeIPC(const WTF::String& text)
 {
-    auto* rt = ObjCRuntime::tryLoad();
-    if (m_inputPending || rt->m_inputTarget || rt->m_selectorTarget) {
+    if (m_inputPending) {
         hostWriter()->sendReplyStr(m_viewId, Reply::Error, "input operation already pending"_s);
         return true;
     }
@@ -368,11 +424,10 @@ bool WebViewHost::typeIPC(const WTF::String& text)
     // NSTextInputContext layer we're skipping). No keydown fires — this is
     // insertText semantics, same as paste. If keydown is needed, press().
     m_inputPending = true;
-    rt->m_inputTarget = this;
     m_webview.executeEditCommand(
         objc::NSString::fromWTF("InsertText"_s),
         objc::NSString::fromWTF(text),
-        editCommandCompletionBlock());
+        makeHostBlock<&WebViewHost::onInputCompleteBool, signed char>(*this));
     return true;
 }
 
@@ -415,8 +470,7 @@ static const VKeyInfo& vkeyInfo(VirtualKey k)
 
 bool WebViewHost::pressIPC(VirtualKey key, uint8_t modifiers, const WTF::String& character)
 {
-    auto* rt = ObjCRuntime::tryLoad();
-    if (m_inputPending || rt->m_inputTarget || rt->m_selectorTarget) {
+    if (m_inputPending) {
         hostWriter()->sendReplyStr(m_viewId, Reply::Error, "input operation already pending"_s);
         return true;
     }
@@ -428,19 +482,20 @@ bool WebViewHost::pressIPC(VirtualKey key, uint8_t modifiers, const WTF::String&
     // is a lot of table for v1.
     if (!modifiers && info.command) {
         m_inputPending = true;
-        rt->m_inputTarget = this;
         m_webview.executeEditCommand(
             objc::NSString::fromWTF(info.command),
             objc::NSString::fromWTF(""_s),
-            editCommandCompletionBlock());
+            makeHostBlock<&WebViewHost::onInputCompleteBool, signed char>(*this));
         return true;
     }
 
     // keyDown fallback: Escape, Space, any key with modifiers, Character.
     // WebKit exposes no keyboard equivalent of _doAfterProcessingAllPendingMouseEvents:.
-    // interpretKeyEvent is async; each press() is one pair so no holding-
-    // tank burst, and the user's next await serializes via our single-
-    // threaded CFRunLoop dispatch.
+    // _doAfterNextPresentationUpdate: is the closest: the key event is
+    // XPC-ordered before DispatchAfterEnsuringDrawing on the WebContent
+    // connection, so by the time the commit arrives, interpretKeyEvent has
+    // run and keydown has fired. Not the precise barrier (no guarantee
+    // any JS scheduled by keydown has also run), but better than sync Ack.
     using NSEvent = objc::NSEvent;
     unsigned long mods = expandModifiers(modifiers);
     double ts = objc::NSProcessInfo::systemUptime();
@@ -458,7 +513,10 @@ bool WebViewHost::pressIPC(VirtualKey key, uint8_t modifiers, const WTF::String&
     auto chars = objc::NSString::fromWTF(charsStr);
     m_webview.keyDown(NSEvent::keyEvent(NSEvent::KeyDown, mods, ts, win, chars, chars, keyCode));
     m_webview.keyUp(NSEvent::keyEvent(NSEvent::KeyUp, mods, ts, win, chars, chars, keyCode));
-    return false;
+
+    m_inputPending = true;
+    m_webview.doAfterNextPresentationUpdate(makeHostBlock<&WebViewHost::onInputComplete>(*this));
+    return true;
 }
 
 bool WebViewHost::scrollIPC(float dx, float dy)
@@ -484,33 +542,24 @@ bool WebViewHost::scrollIPC(float dx, float dy)
     //    the WebContent connection, so the second commit reflects the
     //    scroll.
     //
-    // Decoupled from click/type's m_inputTarget. If a scroll is already
-    // pending, accumulate onto the scheduled barrier — the parent's
-    // m_pendingMisc slot serializes from JS so this is rare.
-    auto* rt = ObjCRuntime::tryLoad();
-    // Cross-view: if another view's scroll barrier is in flight, don't
-    // stomp its target — the barrier block reads the global m_scrollTarget,
-    // and it would dispatch to us with the OTHER view's m_scrollPending
-    // stuck true and its parent-side promise orphaned. Same-view
-    // accumulate still works (m_scrollPending check below).
-    if (rt->m_scrollTarget && rt->m_scrollTarget != this) {
-        hostWriter()->sendReplyStr(m_viewId, Reply::Error, "scroll already pending on another view"_s);
-        return true;
-    }
-
+    // If a scroll is already pending on this view, accumulate onto the
+    // scheduled barrier — the parent's m_pendingMisc slot serializes from
+    // JS so this is rare. Cross-view scrolls are independent (per-block
+    // Ref capture).
     m_pendingScrollDx += dx;
     m_pendingScrollDy += dy;
     if (std::exchange(m_scrollPending, true)) return true;
 
     m_scrollWheelFired = false;
-    rt->m_scrollTarget = this;
-    m_webview.doAfterNextPresentationUpdate(scrollBarrierBlock());
+    m_webview.doAfterNextPresentationUpdate(makeHostBlock<&WebViewHost::onScrollBarrier>(*this));
     return true;
 }
 
 void WebViewHost::onScrollBarrier()
 {
-    if (!m_scrollPending) return;
+    // m_closed must gate this — the second barrier re-arm calls
+    // scrollWheel: on a released WKWebView if close() raced.
+    if (m_closed || !m_scrollPending) return;
 
     if (!std::exchange(m_scrollWheelFired, true)) {
         float dx = std::exchange(m_pendingScrollDx, 0);
@@ -520,8 +569,7 @@ void WebViewHost::onScrollBarrier()
         m_webview.scrollWheel(objc::NSEvent::wheelEvent(
             dx, dy, m_window, m_width / 2.0, m_height / 2.0));
         // Re-arm: second barrier serializes the ScrollingThread roundtrip.
-        ObjCRuntime::tryLoad()->m_scrollTarget = this;
-        m_webview.doAfterNextPresentationUpdate(scrollBarrierBlock());
+        m_webview.doAfterNextPresentationUpdate(makeHostBlock<&WebViewHost::onScrollBarrier>(*this));
         return;
     }
 
@@ -531,7 +579,7 @@ void WebViewHost::onScrollBarrier()
 
 void WebViewHost::onInputComplete()
 {
-    if (!std::exchange(m_inputPending, false)) return;
+    if (m_closed || !std::exchange(m_inputPending, false)) return;
     hostWriter()->sendReply(m_viewId, Reply::Ack);
 }
 
@@ -610,7 +658,7 @@ void WebViewHost::onNavigationFailed(const WTF::String& err)
 
 void WebViewHost::onEvalComplete(id result, id error)
 {
-    if (!std::exchange(m_evalPending, false)) return;
+    if (m_closed || !std::exchange(m_evalPending, false)) return;
     if (error) {
         // callAsyncJavaScript:'s error carries the throw reason in
         // userInfo[WKJavaScriptExceptionMessage]; localizedDescription is
@@ -629,7 +677,7 @@ void WebViewHost::onEvalComplete(id result, id error)
 
 void WebViewHost::onScreenshotComplete(id nsimage, id error)
 {
-    if (!std::exchange(m_screenshotPending, false)) return;
+    if (m_closed || !std::exchange(m_screenshotPending, false)) return;
     if (error || !nsimage) {
         hostWriter()->sendReplyStr(m_viewId, Reply::ScreenshotFailed,
             error ? objc::NSError(error).localizedDescription() : "snapshot returned no image"_s);

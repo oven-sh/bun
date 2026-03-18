@@ -5,6 +5,9 @@ const first_high_surrogate = 0xD800;
 const first_low_surrogate = 0xDC00;
 const last_low_surrogate = 0xDFFF;
 
+/// For support JavaScriptCore
+const ascii_only_always_on_unless_minifying = true;
+
 fn formatUnsignedIntegerBetween(comptime len: u16, buf: *[len]u8, val: u64) void {
     comptime var i: u16 = len;
     var remainder = val;
@@ -23,11 +26,11 @@ pub fn writeModuleId(comptime Writer: type, writer: Writer, module_id: u32) void
     std.fmt.formatInt(module_id, 16, .lower, .{}, writer) catch unreachable;
 }
 
-pub fn canPrintWithoutEscape(comptime CodePointType: type, c: CodePointType, prefers_ascii: bool) bool {
+pub fn canPrintWithoutEscape(comptime CodePointType: type, c: CodePointType, comptime ascii_only: bool) bool {
     if (c <= last_ascii) {
         return c >= first_ascii and c != '\\' and c != '"' and c != '\'' and c != '`' and c != '$';
     } else {
-        return !prefers_ascii and c != 0xFEFF and c != 0x2028 and c != 0x2029 and (c < first_high_surrogate or c > last_low_surrogate);
+        return !ascii_only and c != 0xFEFF and c != 0x2028 and c != 0x2029 and (c < first_high_surrogate or c > last_low_surrogate);
     }
 }
 
@@ -106,7 +109,7 @@ fn ws(comptime str: []const u8) Whitespacer {
     return .{ .normal = Static.with, .minify = Static.without };
 }
 
-pub fn estimateLengthForUTF8(input: []const u8, comptime prefers_ascii: bool, comptime quote_char: u8) usize {
+pub fn estimateLengthForUTF8(input: []const u8, comptime ascii_only: bool, comptime quote_char: u8) usize {
     var remaining = input;
     var len: usize = 2; // for quotes
 
@@ -127,7 +130,7 @@ pub fn estimateLengthForUTF8(input: []const u8, comptime prefers_ascii: bool, co
             i32,
             0,
         );
-        if (canPrintWithoutEscape(i32, c, prefers_ascii)) {
+        if (canPrintWithoutEscape(i32, c, ascii_only)) {
             len += @as(usize, char_len);
         } else if (c <= 0xFFFF) {
             len += 6;
@@ -142,7 +145,7 @@ pub fn estimateLengthForUTF8(input: []const u8, comptime prefers_ascii: bool, co
     return len;
 }
 
-pub fn writePreQuotedString(text_in: []const u8, comptime Writer: type, writer: Writer, comptime quote_char: u8, prefers_ascii: bool, comptime json: bool, comptime encoding: strings.Encoding) !void {
+pub fn writePreQuotedString(text_in: []const u8, comptime Writer: type, writer: Writer, comptime quote_char: u8, comptime ascii_only: bool, comptime json: bool, comptime encoding: strings.Encoding) !void {
     const text = if (comptime encoding == .utf16) @as([]const u16, @alignCast(std.mem.bytesAsSlice(u16, text_in))) else text_in;
     if (comptime json and quote_char != '"') @compileError("for json, quote_char must be '\"'");
     var i: usize = 0;
@@ -180,7 +183,7 @@ pub fn writePreQuotedString(text_in: []const u8, comptime Writer: type, writer: 
                 break :brk @as(i32, text[i]);
             },
         };
-        if (canPrintWithoutEscape(i32, c, prefers_ascii)) {
+        if (canPrintWithoutEscape(i32, c, ascii_only)) {
             const remain = text[i + clamped_width ..];
 
             switch (encoding) {
@@ -335,12 +338,12 @@ pub fn writePreQuotedString(text_in: []const u8, comptime Writer: type, writer: 
         }
     }
 }
-pub fn quoteForJSON(text: []const u8, bytes: *MutableString, comptime prefers_ascii: bool) !void {
+pub fn quoteForJSON(text: []const u8, bytes: *MutableString, comptime ascii_only: bool) !void {
     const writer = bytes.writer();
 
-    try bytes.growIfNeeded(estimateLengthForUTF8(text, prefers_ascii, '"'));
+    try bytes.growIfNeeded(estimateLengthForUTF8(text, ascii_only, '"'));
     try bytes.appendChar('"');
-    try writePreQuotedString(text, @TypeOf(writer), writer, '"', prefers_ascii, true, .utf8);
+    try writePreQuotedString(text, @TypeOf(writer), writer, '"', ascii_only, true, .utf8);
     bytes.appendChar('"') catch unreachable;
 }
 
@@ -594,6 +597,7 @@ const ImportVariant = enum {
 };
 
 fn NewPrinter(
+    comptime ascii_only: bool,
     comptime Writer: type,
     comptime rewrite_esm_to_cjs: bool,
     comptime is_bun_platform: bool,
@@ -615,7 +619,6 @@ fn NewPrinter(
         prev_reg_exp_end: i32 = -1,
         call_target: ?Expr.Data = null,
         writer: Writer,
-        prefers_ascii: bool,
 
         has_printed_bundled_import_statement: bool = false,
 
@@ -1581,9 +1584,9 @@ fn NewPrinter(
         pub fn printStringCharactersUTF8(e: *Printer, text: []const u8, quote: u8) void {
             const writer = e.writer.stdWriter();
             (switch (quote) {
-                '\'' => writePreQuotedString(text, @TypeOf(writer), writer, '\'', e.prefers_ascii, false, .utf8),
-                '"' => writePreQuotedString(text, @TypeOf(writer), writer, '"', e.prefers_ascii, false, .utf8),
-                '`' => writePreQuotedString(text, @TypeOf(writer), writer, '`', e.prefers_ascii, false, .utf8),
+                '\'' => writePreQuotedString(text, @TypeOf(writer), writer, '\'', ascii_only, false, .utf8),
+                '"' => writePreQuotedString(text, @TypeOf(writer), writer, '"', ascii_only, false, .utf8),
+                '`' => writePreQuotedString(text, @TypeOf(writer), writer, '`', ascii_only, false, .utf8),
                 else => unreachable,
             }) catch |err| switch (err) {};
         }
@@ -1592,9 +1595,9 @@ fn NewPrinter(
 
             const writer = e.writer.stdWriter();
             (switch (quote) {
-                '\'' => writePreQuotedString(slice, @TypeOf(writer), writer, '\'', e.prefers_ascii, false, .utf16),
-                '"' => writePreQuotedString(slice, @TypeOf(writer), writer, '"', e.prefers_ascii, false, .utf16),
-                '`' => writePreQuotedString(slice, @TypeOf(writer), writer, '`', e.prefers_ascii, false, .utf16),
+                '\'' => writePreQuotedString(slice, @TypeOf(writer), writer, '\'', ascii_only, false, .utf16),
+                '"' => writePreQuotedString(slice, @TypeOf(writer), writer, '"', ascii_only, false, .utf16),
+                '`' => writePreQuotedString(slice, @TypeOf(writer), writer, '`', ascii_only, false, .utf16),
                 else => unreachable,
             }) catch |err| switch (err) {};
         }
@@ -1978,8 +1981,8 @@ fn NewPrinter(
             }
         }
 
-        pub inline fn canPrintIdentifierUTF16(p: *Printer, name: []const u16) bool {
-            if (p.prefers_ascii) {
+        pub inline fn canPrintIdentifierUTF16(_: *Printer, name: []const u16) bool {
+            if (comptime ascii_only or ascii_only_always_on_unless_minifying) {
                 return js_lexer.isLatin1Identifier([]const u16, name);
             } else {
                 return js_lexer.isIdentifierUTF16(name);
@@ -1990,9 +1993,6 @@ fn NewPrinter(
             // Raw template literals must preserve bytes verbatim because they are
             // exposed to JavaScript via the .raw property and String.raw. Escaping
             // non-ASCII characters to \uXXXX would change the runtime string value.
-            const saved = p.prefers_ascii;
-            defer p.prefers_ascii = saved;
-            if (p.prefers_ascii and !strings.isAllASCII(bytes)) p.prefers_ascii = false;
             p.print(bytes);
         }
 
@@ -3203,14 +3203,7 @@ fn NewPrinter(
             // RegExp literals cannot be printed ascii-only because they expose a
             // .source property to JavaScript. Escaping non-ASCII would change the
             // runtime value of that property.
-            {
-                const saved = p.prefers_ascii;
-                defer p.prefers_ascii = saved;
-                if (p.prefers_ascii and !strings.isAllASCII(e.value)) {
-                    p.prefers_ascii = false;
-                }
-                p.print(e.value);
-            }
+            p.print(e.value);
 
             // Need a space before the next identifier to avoid it turning into flags
             p.prev_reg_exp_end = p.writer.written;
@@ -5153,7 +5146,7 @@ fn NewPrinter(
         }
 
         pub fn printIdentifier(p: *Printer, identifier: string) void {
-            if (p.prefers_ascii) {
+            if (comptime ascii_only) {
                 p.printIdentifierAsciiOnly(identifier);
             } else {
                 p.print(identifier);
@@ -5205,7 +5198,7 @@ fn NewPrinter(
                     i += 1;
                 }
 
-                if (p.prefers_ascii and c > last_ascii) {
+                if ((comptime ascii_only) and c > last_ascii) {
                     switch (c) {
                         0...0xFFFF => {
                             p.print(
@@ -5338,7 +5331,6 @@ fn NewPrinter(
             opts: Options,
             renamer: bun.renamer.Renamer,
             source_map_builder: SourceMap.Chunk.Builder,
-            prefers_ascii: bool,
         ) Printer {
             var printer = Printer{
                 .import_records = import_records,
@@ -5346,7 +5338,6 @@ fn NewPrinter(
                 .writer = writer,
                 .renamer = renamer,
                 .source_map_builder = source_map_builder,
-                .prefers_ascii = prefers_ascii,
             };
             if (comptime generate_source_map) {
                 // This seems silly to cache but the .items() function apparently costs 1ms according to Instruments.
@@ -5833,7 +5824,7 @@ pub fn printAst(
     tree: Ast,
     symbols: js_ast.Symbol.Map,
     source: *const logger.Source,
-    comptime is_bun_platform: bool,
+    comptime ascii_only: bool,
     opts: Options,
     comptime generate_source_map: bool,
 ) !usize {
@@ -5912,9 +5903,11 @@ pub fn printAst(
     }
 
     const PrinterType = NewPrinter(
+        ascii_only,
         Writer,
         false,
-        is_bun_platform,
+        // if it's ascii_only, it is also bun
+        ascii_only,
         false,
         generate_source_map,
     );
@@ -5925,8 +5918,7 @@ pub fn printAst(
         tree.import_records.slice(),
         opts,
         renamer,
-        getSourceMapBuilder(if (generate_source_map) .lazy else .disable, is_bun_platform, opts, source, &tree),
-        is_bun_platform,
+        getSourceMapBuilder(if (generate_source_map) .lazy else .disable, ascii_only, opts, source, &tree),
     );
     defer {
         if (comptime generate_source_map) {
@@ -6016,7 +6008,7 @@ pub fn printJSON(
     source: *const logger.Source,
     opts: Options,
 ) !usize {
-    const PrinterType = NewPrinter(Writer, false, false, true, false);
+    const PrinterType = NewPrinter(false, Writer, false, false, true, false);
     const writer = _writer;
     var s_expr = S.SExpr{ .value = expr };
     const stmt = Stmt{ .loc = logger.Loc.Empty, .data = .{
@@ -6035,7 +6027,6 @@ pub fn printJSON(
         opts,
         renamer.toRenamer(),
         undefined,
-        false,
     );
     var bin_stack_heap = std.heap.stackFallback(1024, bun.default_allocator);
     printer.binary_expression_stack = std.array_list.Managed(PrinterType.BinaryExpressionVisitor).init(bin_stack_heap.get());
@@ -6127,6 +6118,8 @@ pub fn printWithWriterAndPlatform(
     bun.crash_handler.current_action = .{ .print = source.path.text };
 
     const PrinterType = NewPrinter(
+        // if it's bun, it is also ascii_only
+        is_bun_platform,
         Writer,
         false,
         is_bun_platform,
@@ -6139,7 +6132,6 @@ pub fn printWithWriterAndPlatform(
         opts,
         renamer,
         getSourceMapBuilder(if (generate_source_maps) .eager else .disable, is_bun_platform, opts, source, &ast),
-        is_bun_platform,
     );
     printer.was_lazy_export = ast.has_lazy_export;
     if (PrinterType.may_have_module_info) {
@@ -6209,7 +6201,7 @@ pub fn printCommonJS(
     tree: Ast,
     symbols: js_ast.Symbol.Map,
     source: *const logger.Source,
-    comptime prefers_ascii: bool,
+    comptime ascii_only: bool,
     opts: Options,
     comptime generate_source_map: bool,
 ) !usize {
@@ -6217,7 +6209,7 @@ pub fn printCommonJS(
     defer bun.crash_handler.current_action = prev_action;
     bun.crash_handler.current_action = .{ .print = source.path.text };
 
-    const PrinterType = NewPrinter(Writer, true, false, false, generate_source_map);
+    const PrinterType = NewPrinter(ascii_only, Writer, true, false, false, generate_source_map);
     const writer = _writer;
     var renamer = rename.NoOpRenamer.init(symbols, source);
     var printer = PrinterType.init(
@@ -6226,7 +6218,6 @@ pub fn printCommonJS(
         opts,
         renamer.toRenamer(),
         getSourceMapBuilder(if (generate_source_map) .lazy else .disable, false, opts, source, &tree),
-        prefers_ascii,
     );
     var bin_stack_heap = std.heap.stackFallback(1024, bun.default_allocator);
     printer.binary_expression_stack = std.array_list.Managed(PrinterType.BinaryExpressionVisitor).init(bin_stack_heap.get());

@@ -41,7 +41,7 @@ namespace {
 struct HostBlockDescriptor {
     uintptr_t reserved;
     uintptr_t size;
-    void (*copy)(void*, const void*);   // null — MallocBlock Block_copy is refcount-only
+    void (*copy)(void*, const void*); // null — MallocBlock Block_copy is refcount-only
     void (*dispose)(const void*);
 };
 
@@ -53,7 +53,10 @@ enum : int32_t {
 // RAII: _Block_release on scope exit. Pass via implicit operator void*.
 struct [[nodiscard]] HostBlockHandle {
     void* ptr;
-    HostBlockHandle(void* p) : ptr(p) { }
+    HostBlockHandle(void* p)
+        : ptr(p)
+    {
+    }
     HostBlockHandle(const HostBlockHandle&) = delete;
     ~HostBlockHandle() { g_Block_release(ptr); }
     operator void*() const { return ptr; }
@@ -81,7 +84,7 @@ HostBlockHandle makeHostBlock(WebViewHost& host)
     };
     auto* b = static_cast<Block*>(malloc(sizeof(Block)));
     b->isa = g_NSConcreteMallocBlock;
-    b->flags = BLOCK_NEEDS_FREE | BLOCK_HAS_COPY_DISPOSE | (1 << 1);  // refcount=1
+    b->flags = BLOCK_NEEDS_FREE | BLOCK_HAS_COPY_DISPOSE | (1 << 1); // refcount=1
     b->reserved = 0;
     b->invoke = [](Block* self, Args... args) {
         ObjCRuntime::ARPool pool;

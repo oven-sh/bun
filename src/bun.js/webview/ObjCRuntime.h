@@ -19,8 +19,8 @@ class WebViewHost;
 // Populated by ObjCRuntime::load() via dlsym(RTLD_DEFAULT, ...) — both
 // symbols live in libSystem (already linked). Exposed for the HostBlock
 // factory in WebViewHost.cpp.
-extern void* g_NSConcreteMallocBlock;
-extern void (*g_Block_release)(const void*);
+extern void *g_NSConcreteMallocBlock;
+extern void (*g_Block_release)(const void *);
 
 namespace objc {
 
@@ -626,7 +626,6 @@ public:
 private:
     bool load();
 };
-
 
 } // namespace Bun
 

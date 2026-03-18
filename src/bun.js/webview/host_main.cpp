@@ -157,10 +157,14 @@ struct Host {
     static constexpr Reply failureFor(Op op)
     {
         switch (op) {
-        case Op::Navigate:   return Reply::NavFailed;
-        case Op::Evaluate:   return Reply::EvalFailed;
-        case Op::Screenshot: return Reply::ScreenshotFailed;
-        default:             return Reply::Error;
+        case Op::Navigate:
+            return Reply::NavFailed;
+        case Op::Evaluate:
+            return Reply::EvalFailed;
+        case Op::Screenshot:
+            return Reply::ScreenshotFailed;
+        default:
+            return Reply::Error;
         }
     }
 

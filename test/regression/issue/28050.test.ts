@@ -105,56 +105,59 @@ test("process.title can be set multiple times", async () => {
   expect(exitCode).toBe(0);
 });
 
-test.skipIf(process.platform !== "darwin")("process.title setter updates LaunchServices display name on macOS", async () => {
-  const customTitle = "bun-test-28050";
+test.skipIf(process.platform !== "darwin")(
+  "process.title setter updates LaunchServices display name on macOS",
+  async () => {
+    const customTitle = "bun-test-28050";
 
-  // Spawn a child that sets process.title, prints its PID, then waits for
-  // stdin to close. This keeps the process alive so the parent can query
-  // its LaunchServices display name via lsappinfo.
-  await using child = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `
+    // Spawn a child that sets process.title, prints its PID, then waits for
+    // stdin to close. This keeps the process alive so the parent can query
+    // its LaunchServices display name via lsappinfo.
+    await using child = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
       process.title = "${customTitle}";
       // Signal readiness with PID
       console.log(JSON.stringify({ pid: process.pid, jsTitle: process.title }));
       // Stay alive until parent closes stdin
       await new Promise(resolve => process.stdin.on("end", resolve));
       `,
-    ],
-    env: bunEnv,
-    stdin: "pipe",
-    stderr: "pipe",
-  });
+      ],
+      env: bunEnv,
+      stdin: "pipe",
+      stderr: "pipe",
+    });
 
-  // Read the child's PID from its stdout
-  const reader = child.stdout.getReader();
-  const { value } = await reader.read();
-  const info = JSON.parse(new TextDecoder().decode(value).trim());
-  expect(info.jsTitle).toBe(customTitle);
+    // Read the child's PID from its stdout
+    const reader = child.stdout.getReader();
+    const { value } = await reader.read();
+    const info = JSON.parse(new TextDecoder().decode(value).trim());
+    expect(info.jsTitle).toBe(customTitle);
 
-  // Query LaunchServices for the child's display name via lsappinfo
-  await using lsProc = Bun.spawn({
-    cmd: ["lsappinfo", "info", "-only", "name", String(info.pid)],
-    env: bunEnv,
-    stderr: "pipe",
-  });
-  const [lsStdout, lsExitCode] = await Promise.all([lsProc.stdout.text(), lsProc.exited]);
+    // Query LaunchServices for the child's display name via lsappinfo
+    await using lsProc = Bun.spawn({
+      cmd: ["lsappinfo", "info", "-only", "name", String(info.pid)],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [lsStdout, lsExitCode] = await Promise.all([lsProc.stdout.text(), lsProc.exited]);
 
-  // lsappinfo outputs: "LSDisplayName"="<title>"
-  const match = lsStdout.match(/"LSDisplayName"\s*=\s*"([^"]*)"/);
+    // lsappinfo outputs: "LSDisplayName"="<title>"
+    const match = lsStdout.match(/"LSDisplayName"\s*=\s*"([^"]*)"/);
 
-  // Let child exit
-  child.stdin.end();
-  reader.releaseLock();
-  const childExit = await child.exited;
+    // Let child exit
+    child.stdin.end();
+    reader.releaseLock();
+    const childExit = await child.exited;
 
-  // On headless CI (no WindowServer), LaunchServices check-in may fail
-  // silently, so lsappinfo may not find the process. Only assert when
-  // lsappinfo actually returned data.
-  if (match) {
-    expect(match[1]).toBe(customTitle);
-  }
-  expect(childExit).toBe(0);
-});
+    // On headless CI (no WindowServer), LaunchServices check-in may fail
+    // silently, so lsappinfo may not find the process. Only assert when
+    // lsappinfo actually returned data.
+    if (match) {
+      expect(match[1]).toBe(customTitle);
+    }
+    expect(childExit).toBe(0);
+  },
+);

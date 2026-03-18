@@ -374,10 +374,10 @@ void HostClient::handleReply(const Frame& h, Reader r)
         // the child doesn't echo the op in Error replies. Reject all;
         // at most one is set (parent-side checkSlot serializes).
         JSValue err = createError(g, r.str());
-        settle(g, view, view->m_pendingNavigate,   false, err);
-        settle(g, view, view->m_pendingEval,       false, err);
+        settle(g, view, view->m_pendingNavigate, false, err);
+        settle(g, view, view->m_pendingEval, false, err);
         settle(g, view, view->m_pendingScreenshot, false, err);
-        settle(g, view, view->m_pendingMisc,       false, err);
+        settle(g, view, view->m_pendingMisc, false, err);
         return;
     }
     }

@@ -616,8 +616,7 @@ void WebViewHost::onEvalComplete(id result, id error)
         // userInfo[WKJavaScriptExceptionMessage]; localizedDescription is
         // generic. Same extraction as onSelectorComplete.
         objc::NSError err(error);
-        id msg = objc::NSDictionary(err.userInfo()).objectForKey(
-            objc::NSString::fromWTF("WKJavaScriptExceptionMessage"_s).m_id);
+        id msg = objc::NSDictionary(err.userInfo()).objectForKey(objc::NSString::fromWTF("WKJavaScriptExceptionMessage"_s).m_id);
         hostWriter()->sendReplyStr(m_viewId, Reply::EvalFailed,
             msg ? objc::NSString(msg).toWTF() : err.localizedDescription());
         return;

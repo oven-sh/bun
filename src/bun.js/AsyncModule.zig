@@ -726,7 +726,7 @@ pub const AsyncModule = struct {
 
         return ResolvedSource{
             .allocator = null,
-            .source_code = bun.String.cloneLatin1(printer.ctx.getWritten()),
+            .source_code = bun.String.cloneUTF8(printer.ctx.getWritten()),
             .specifier = String.init(specifier),
             .source_url = String.init(path.text),
             .is_commonjs_module = parse_result.ast.has_commonjs_export_names or parse_result.ast.exports_kind == .cjs,

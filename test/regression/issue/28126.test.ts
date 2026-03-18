@@ -49,6 +49,14 @@ const cases: Case[] = [
     npm: { prog: "node", args: "" },
   },
   {
+    // Covers the /bin/env alternate prefix branch in BinLinkingShim.parse().
+    // npm's regex only matches /usr/bin/env, so it sees /bin/env as the program.
+    shebang: "#!/bin/env -S node",
+    bun: { launcher: "node", is_node_or_bun: true, is_node: true },
+    npm: null,
+    npmWrong: "/bin/env",
+  },
+  {
     shebang: "#!/usr/bin/env -S node --no-warnings",
     bun: { launcher: "node --no-warnings", is_node_or_bun: true, is_node: true },
     npm: { prog: "node", args: "--no-warnings" },

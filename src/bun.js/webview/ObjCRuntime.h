@@ -16,11 +16,13 @@ namespace Bun {
 
 class WebViewHost;
 
-// Populated by ObjCRuntime::load() via dlsym(RTLD_DEFAULT, ...) — both
-// symbols live in libSystem (already linked). Exposed for the HostBlock
-// factory in WebViewHost.cpp.
-extern void *g_NSConcreteMallocBlock;
-extern void (*g_Block_release)(const void *);
+// Linker-resolved from libSystem (already in our 4 dylibs). <Block.h>
+// declares _Block_release + _NSConcreteGlobalBlock/StackBlock but not
+// _NSConcreteMallocBlock — declared here with the same shape as BlockPtr.h.
+// dlsym(RTLD_DEFAULT, ...) on macOS 13/14 may find a different copy in
+// the flat namespace; link-time resolution is what WebKit's own blocks use.
+#include <Block.h>
+extern "C" void *_NSConcreteMallocBlock[32];
 
 namespace objc {
 

@@ -159,14 +159,6 @@ char NavigationDelegate::s_hostKey = 0;
 
 } // namespace objc
 
-// --- Block ABI symbols -----------------------------------------------------
-// Heap blocks (_NSConcreteMallocBlock) carry a Ref<WebViewHost> capture
-// per-call — see HostBlock in WebViewHost.cpp. No process-global targets,
-// so concurrent ops across views don't serialize.
-
-void* g_NSConcreteMallocBlock;
-void (*g_Block_release)(const void*);
-
 // --- Delegate IMPs ---------------------------------------------------------
 // Installed on the runtime-registered BunWKNavigationDelegate class.
 
@@ -224,13 +216,6 @@ bool ObjCRuntime::load()
 {
     using namespace objc;
 
-    // --- libSystem (already linked) ---------------------------------------
-    g_NSConcreteMallocBlock = dlsym(RTLD_DEFAULT, "_NSConcreteMallocBlock");
-    g_Block_release = reinterpret_cast<decltype(g_Block_release)>(dlsym(RTLD_DEFAULT, "_Block_release"));
-    if (!g_NSConcreteMallocBlock || !g_Block_release) {
-        m_loadError = "libSystem block symbols unavailable"_s;
-        return false;
-    }
 
     // --- dlopen frameworks ------------------------------------------------
     void* libobjc = dlopen("/usr/lib/libobjc.A.dylib", RTLD_LAZY | RTLD_LOCAL);

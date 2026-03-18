@@ -4,6 +4,11 @@ import { bunEnv, bunExe, isMacOS, tempDir } from "harness";
 // Bun.WebView only exists on darwin for now.
 const it = isMacOS ? test : test.skip;
 
+// NSURL URLWithString: strictly follows RFC 3986 on x64 macOS system
+// libraries — unencoded <> return nil. arm64 builds of the same OS are
+// lenient (different dyld shared cache builds per arch).
+const html = (h: string) => "data:text/html," + encodeURIComponent(h);
+
 test("constructor throws on non-darwin", () => {
   if (isMacOS) {
     const view = new Bun.WebView({ width: 100, height: 100 });
@@ -31,7 +36,7 @@ it("headless: false throws NOT_IMPLEMENTED", () => {
 it("navigate + evaluate round-trip", async () => {
   const view = new Bun.WebView({ width: 200, height: 200 });
   try {
-    await view.navigate("data:text/html,<h1 id=t>hi</h1>");
+    await view.navigate(html("<h1 id=t>hi</h1>"));
     const result = await view.evaluate("document.getElementById('t').textContent");
     expect(result).toBe("hi");
   } finally {
@@ -42,7 +47,7 @@ it("navigate + evaluate round-trip", async () => {
 it("evaluate() returns native JS values via page-side JSON.stringify + parent JSONParse", async () => {
   const view = new Bun.WebView({ width: 200, height: 200 });
   try {
-    await view.navigate("data:text/html,<body></body>");
+    await view.navigate(html("<body></body>"));
     // The body is wrapped as `return JSON.stringify(await (${script}))` via
     // callAsyncJavaScript:. JSON.stringify runs in WebContent's JSC — the
     // only serialization. Result crosses as NSString (WebKit never allocs
@@ -68,7 +73,7 @@ it("evaluate() returns native JS values via page-side JSON.stringify + parent JS
 it("evaluate() awaits Promises", async () => {
   const view = new Bun.WebView({ width: 200, height: 200 });
   try {
-    await view.navigate("data:text/html,<body></body>");
+    await view.navigate(html("<body></body>"));
     // await (expr) — thenables unwrap, non-thenables pass through identity.
     expect(await view.evaluate("Promise.resolve(42)")).toBe(42);
     // Microtask roundtrip.
@@ -85,7 +90,7 @@ it("evaluate() awaits Promises", async () => {
 it("evaluate() with statement sequence throws SyntaxError (use an IIFE)", async () => {
   const view = new Bun.WebView({ width: 200, height: 200 });
   try {
-    await view.navigate("data:text/html,<body></body>");
+    await view.navigate(html("<body></body>"));
     // The wrap is `await (${script})` — parenthesization forces expression
     // context. `(let x=1; x)` is a syntax error.
     await expect(view.evaluate("let x = 1; x + 1")).rejects.toThrow(/SyntaxError|Unexpected/);
@@ -122,7 +127,7 @@ it("concurrent evaluate() across two views works", async () => {
   const a = new Bun.WebView({ width: 200, height: 200 });
   const b = new Bun.WebView({ width: 200, height: 200 });
   try {
-    await Promise.all([a.navigate("data:text/html,<body>A</body>"), b.navigate("data:text/html,<body>B</body>")]);
+    await Promise.all([a.navigate(html("<body>A</body>")), b.navigate(html("<body>B</body>"))]);
     // A deliberately slower (microtask roundtrip) so B's completion
     // would fire first and stomp A's target under the old global-target
     // design — A's eval would resolve with B's body text.
@@ -145,7 +150,7 @@ it("url/title/loading getters reflect state", async () => {
   const view = new Bun.WebView({ width: 200, height: 200 });
   try {
     expect(view.url).toBe("");
-    await view.navigate("data:text/html,<title>hello world</title><p>body</p>");
+    await view.navigate(html("<title>hello world</title><p>body</p>"));
     expect(view.url).toStartWith("data:text/html");
     // WKWebView populates .title via a separate IPC round-trip after
     // didFinishNavigation; the child reads it at reply time, which may be
@@ -164,7 +169,7 @@ it("onNavigated callback fires", async () => {
     view.onNavigated = (url: string) => {
       navigatedUrl = url;
     };
-    await view.navigate("data:text/html,<title>cb test</title>ok");
+    await view.navigate(html("<title>cb test</title>ok"));
     expect(navigatedUrl).toStartWith("data:text/html");
 
     // Can be cleared.
@@ -193,7 +198,7 @@ it("onNavigationFailed callback fires", async () => {
 it("screenshot returns PNG bytes", async () => {
   const view = new Bun.WebView({ width: 200, height: 150 });
   try {
-    await view.navigate("data:text/html,<body style='background:#f00'>red</body>");
+    await view.navigate(html("<body style='background:#f00'>red</body>"));
     const png = await view.screenshot();
     expect(png).toBeInstanceOf(Uint8Array);
     expect(png.length).toBeGreaterThan(8);
@@ -367,7 +372,7 @@ it("click(selector) is injection-safe", async () => {
   // SyntaxError: not a valid selector — it doesn't execute.
   const view = new Bun.WebView({ width: 300, height: 300 });
   try {
-    await view.navigate("data:text/html,<body><script>window.__pwned=0</script></body>");
+    await view.navigate(html("<body><script>window.__pwned=0</script></body>"));
     const bad = `"); window.__pwned = 1; //`;
     await expect(view.click(bad, { timeout: 100 })).rejects.toThrow();
     expect(await view.evaluate("String(__pwned)")).toBe("0");
@@ -464,7 +469,7 @@ it("scrollTo(selector, { block }) controls alignment", async () => {
 it("scrollTo(selector) rejects on timeout", async () => {
   const view = new Bun.WebView({ width: 200, height: 200 });
   try {
-    await view.navigate("data:text/html,<body></body>");
+    await view.navigate(html("<body></body>"));
     await expect(view.scrollTo("#nonexistent", { timeout: 150 })).rejects.toThrow(/timeout waiting for '#nonexistent'/);
   } finally {
     view.close();
@@ -698,7 +703,7 @@ it("scroll: targets inner scrollable under view center", async () => {
 it("resize changes inner dimensions", async () => {
   const view = new Bun.WebView({ width: 200, height: 200 });
   try {
-    await view.navigate("data:text/html,<body>hi</body>");
+    await view.navigate(html("<body>hi</body>"));
     view.resize(400, 300);
     const result = await view.evaluate("window.innerWidth + 'x' + window.innerHeight");
     // WebKit may apply asynchronously; just check it's not still 200x200.
@@ -711,7 +716,7 @@ it("resize changes inner dimensions", async () => {
 it("second evaluate() while pending rejects with INVALID_STATE", async () => {
   const view = new Bun.WebView({ width: 200, height: 200 });
   try {
-    await view.navigate("data:text/html,<body>hi</body>");
+    await view.navigate(html("<body>hi</body>"));
     // Fire two concurrently — the second should throw synchronously
     // (not return a promise).
     const p1 = view.evaluate("1+1");
@@ -729,7 +734,7 @@ it("large evaluate() payload spans kernel socket buffer", async () => {
   // buffering in both onData and onReadable.
   const view = new Bun.WebView({ width: 100, height: 100 });
   try {
-    await view.navigate("data:text/html,<body>ok</body>");
+    await view.navigate(html("<body>ok</body>"));
     // Buffer.alloc instead of "x".repeat — debug JSC's repeat is slow.
     const big = Buffer.alloc(2 * 1024 * 1024, "x").toString();
     const script = `(() => { const s = ${JSON.stringify(big)}; return s.length + ":" + s.slice(0, 4); })()`;
@@ -751,7 +756,7 @@ it("close() makes subsequent calls throw", async () => {
 
 it("close() rejects pending promises", async () => {
   const view = new Bun.WebView({ width: 200, height: 200 });
-  await view.navigate("data:text/html,<body>hi</body>");
+  await view.navigate(html("<body>hi</body>"));
   // Start an evaluate that never resolves page-side (infinite loop would
   // block WebContent; use a pending promise-like shape via a slow script
   // instead — actually, just start the evaluate and close before it
@@ -798,8 +803,8 @@ it("two views have independent JS contexts", async () => {
   const a = new Bun.WebView({ width: 100, height: 100 });
   const b = new Bun.WebView({ width: 100, height: 100 });
   try {
-    await a.navigate("data:text/html,<body>a</body>");
-    await b.navigate("data:text/html,<body>b</body>");
+    await a.navigate(html("<body>a</body>"));
+    await b.navigate(html("<body>b</body>"));
     await a.evaluate("window.__marker = 'from-a'");
     const got = await b.evaluate("String(window.__marker)");
     expect(got).toBe("undefined");

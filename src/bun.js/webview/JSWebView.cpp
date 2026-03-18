@@ -493,6 +493,14 @@ extern "C" void Bun__WebViewHost__childDied(int32_t signo)
 
 #endif // OS(DARWIN)
 
+#if !OS(DARWIN)
+// HostProcess.zig references this unconditionally via @extern; Zig's dead-code
+// elimination doesn't trigger because the TaggedPointer dispatch switch in
+// process.zig pulls in all ProcessExitHandler arms. spawn() itself is gated
+// on Environment.isMac so this is never called.
+extern "C" void Bun__WebViewHost__childDied(int32_t) { }
+#endif
+
 // --- JSWebView class -------------------------------------------------------
 
 JSWebView::JSWebView(VM& vm, Structure* structure)

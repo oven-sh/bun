@@ -58,7 +58,7 @@ struct [[nodiscard]] HostBlockHandle {
     {
     }
     HostBlockHandle(const HostBlockHandle&) = delete;
-    ~HostBlockHandle() { g_Block_release(ptr); }
+    ~HostBlockHandle() { _Block_release(ptr); }
     operator void*() const { return ptr; }
 };
 
@@ -83,7 +83,7 @@ HostBlockHandle makeHostBlock(WebViewHost& host)
         }
     };
     auto* b = static_cast<Block*>(malloc(sizeof(Block)));
-    b->isa = g_NSConcreteMallocBlock;
+    b->isa = _NSConcreteMallocBlock;
     b->flags = BLOCK_NEEDS_FREE | BLOCK_HAS_COPY_DISPOSE | (1 << 1); // refcount=1
     b->reserved = 0;
     b->invoke = [](Block* self, Args... args) {

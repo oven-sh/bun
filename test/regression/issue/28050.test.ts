@@ -145,7 +145,7 @@ test.skipIf(process.platform !== "darwin")(
 
     // Query LaunchServices for the child's display name via lsappinfo
     await using lsProc = Bun.spawn({
-      cmd: ["lsappinfo", "info", "-only", "name", String(info.pid)],
+      cmd: ["lsappinfo", "info", "-only", "name", `pid=${info.pid}`],
       env: bunEnv,
       stderr: "pipe",
     });

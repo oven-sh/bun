@@ -89,6 +89,9 @@ extern "C" int Bun__setProcessTitle(const char* title)
             goto out;
 
         cfTitle = fw->createCFString(title);
+        if (!cfTitle)
+            goto out;
+
         if (pLSSetApplicationInformationItem(-2, asn, *display_name_key,
                 cfTitle, NULL)
             != 0) {

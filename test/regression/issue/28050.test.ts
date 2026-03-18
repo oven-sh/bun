@@ -139,6 +139,7 @@ test.skipIf(process.platform !== "darwin")(
     // Read the child's PID from its stdout
     const reader = child.stdout.getReader();
     const { value } = await reader.read();
+    if (!value) throw new Error("child closed stdout without writing JSON");
     const info = JSON.parse(new TextDecoder().decode(value).trim());
     expect(info.jsTitle).toBe(customTitle);
 

@@ -133,6 +133,7 @@ function decodeBunx(bytes: Buffer) {
   let launcher: string | null = null;
   if (has_shebang) {
     const mark = bytes.indexOf(QUOTE_NUL);
+    expect(mark).toBeGreaterThanOrEqual(0);
     launcher = bytes.subarray(mark + QUOTE_NUL.length, bytes.length - TRAILER).toString("utf16le");
   }
   return {

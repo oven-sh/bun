@@ -404,6 +404,12 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncScroll, (JSGlobalObject * globalObjec
     RETURN_IF_EXCEPTION(scope, {});
     double dy = callFrame->argument(1).toNumber(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
+    // NaN/Inf permanently poison the m_pendingScrollDx/Dy accumulators
+    // in the host (NaN + anything = NaN), and static_cast<int32_t>(NaN)
+    // at the CGEvent call site is UB.
+    if (!std::isfinite(dx) || !std::isfinite(dy))
+        return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "dx/dy"_s,
+            jsNumber(std::isfinite(dx) ? dy : dx), "must be finite"_s);
 
     if (!checkSlot(globalObject, scope, thisObject->m_pendingMisc, "a simple operation"_s)) return {};
     return JSValue::encode(thisObject->scroll(globalObject, dx, dy));

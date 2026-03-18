@@ -140,7 +140,6 @@ SEL WKWebView::s_initWithFrame_configuration;
 SEL WKWebView::s_setNavigationDelegate;
 SEL WKWebView::s_setUIDelegate;
 SEL WKWebView::s_loadRequest;
-SEL WKWebView::s_evaluateJavaScript_completionHandler;
 SEL WKWebView::s_stopLoading;
 SEL WKWebView::s_reload;
 SEL WKWebView::s_canGoBack;
@@ -168,8 +167,14 @@ char NavigationDelegate::s_hostKey = 0;
 using CompletionInvoke = void (*)(void*, id, id);
 static const BlockDescriptor g_blockDescriptor = { 0, sizeof(GlobalBlock<CompletionInvoke>) };
 
+// These fire via main-dispatch-queue drain inside CFRunLoopRun — different
+// entry point from the IPC socket read (which ARPool's at host_main.cpp:213).
+// Downstream onEvalComplete/onSelectorComplete etc. allocate autoreleased
+// NSStrings; without a pool they accumulate forever.
+
 static void evalBlockInvoke(void* /*blockSelf*/, id result, id error)
 {
+    ObjCRuntime::ARPool pool;
     auto* rt = ObjCRuntime::tryLoad();
     auto* host = rt->m_evalTarget;
     rt->m_evalTarget = nullptr;
@@ -178,6 +183,7 @@ static void evalBlockInvoke(void* /*blockSelf*/, id result, id error)
 
 static void snapshotBlockInvoke(void* /*blockSelf*/, id nsimage, id error)
 {
+    ObjCRuntime::ARPool pool;
     auto* rt = ObjCRuntime::tryLoad();
     auto* host = rt->m_screenshotTarget;
     rt->m_screenshotTarget = nullptr;
@@ -190,6 +196,7 @@ static void snapshotBlockInvoke(void* /*blockSelf*/, id nsimage, id error)
 using EditCmdInvoke = void (*)(void*, signed char);
 static void editCmdBlockInvoke(void* /*blockSelf*/, signed char /*success*/)
 {
+    ObjCRuntime::ARPool pool;
     auto* rt = ObjCRuntime::tryLoad();
     auto* host = rt->m_inputTarget;
     rt->m_inputTarget = nullptr;
@@ -200,6 +207,7 @@ static void editCmdBlockInvoke(void* /*blockSelf*/, signed char /*success*/)
 using VoidInvoke = void (*)(void*);
 static void mouseBarrierBlockInvoke(void* /*blockSelf*/)
 {
+    ObjCRuntime::ARPool pool;
     auto* rt = ObjCRuntime::tryLoad();
     auto* host = rt->m_inputTarget;
     rt->m_inputTarget = nullptr;
@@ -207,6 +215,7 @@ static void mouseBarrierBlockInvoke(void* /*blockSelf*/)
 }
 static void scrollBarrierBlockInvoke(void* /*blockSelf*/)
 {
+    ObjCRuntime::ARPool pool;
     auto* rt = ObjCRuntime::tryLoad();
     auto* host = rt->m_scrollTarget;
     rt->m_scrollTarget = nullptr;
@@ -216,6 +225,7 @@ static void scrollBarrierBlockInvoke(void* /*blockSelf*/)
 // callAsyncJavaScript: completion — same signature as eval, (id result, id error).
 static void selectorBlockInvoke(void* /*blockSelf*/, id result, id error)
 {
+    ObjCRuntime::ARPool pool;
     auto* rt = ObjCRuntime::tryLoad();
     auto* host = rt->m_selectorTarget;
     rt->m_selectorTarget = nullptr;
@@ -243,11 +253,13 @@ extern "C" {
 
 static void delegateDidFinishNavigation(id self, SEL, id /*webView*/, id /*navigation*/)
 {
+    ObjCRuntime::ARPool pool;
     if (auto* host = objc::NavigationDelegate(self).host()) host->onNavigationFinished();
 }
 
 static void delegateDidFailNavigation(id self, SEL, id /*webView*/, id /*navigation*/, id error)
 {
+    ObjCRuntime::ARPool pool;
     if (auto* host = objc::NavigationDelegate(self).host()) {
         host->onNavigationFailed(objc::NSError(error).localizedDescription());
     }
@@ -462,7 +474,6 @@ bool ObjCRuntime::load()
     WKWebView::s_setNavigationDelegate = sel("setNavigationDelegate:");
     WKWebView::s_setUIDelegate = sel("setUIDelegate:");
     WKWebView::s_loadRequest = sel("loadRequest:");
-    WKWebView::s_evaluateJavaScript_completionHandler = sel("evaluateJavaScript:completionHandler:");
     WKWebView::s_stopLoading = sel("stopLoading");
     WKWebView::s_reload = sel("reload");
     WKWebView::s_canGoBack = sel("canGoBack");

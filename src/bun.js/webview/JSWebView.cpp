@@ -14,6 +14,7 @@
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/TypedArrayInlines.h>
 #include <JavaScriptCore/JSTypedArrays.h>
+#include <JavaScriptCore/JSONObject.h>
 #include <JavaScriptCore/Weak.h>
 #include <JavaScriptCore/WeakInlines.h>
 #include <JavaScriptCore/WeakHandleOwner.h>
@@ -339,8 +340,13 @@ void HostClient::handleReply(const Frame& h, Reader r)
 
     case Reply::EvalDone: {
         WTF::String s = r.str();
-        settle(g, view, view->m_pendingEval, true,
-            s.isEmpty() ? JSValue(jsUndefined()) : JSValue(jsString(vm, s)));
+        // Child serialized via JSON.stringify page-side; this is the one
+        // deserialization. Empty string = script returned undefined (or a
+        // function/symbol — JSON.stringify collapses those to undefined).
+        // JSONParse returns {} on malformed input; the child's output is
+        // JSC's own JSON.stringify so it's well-formed by construction.
+        JSValue v = s.isEmpty() ? jsUndefined() : JSONParse(g, s);
+        settle(g, view, view->m_pendingEval, true, v ? v : jsUndefined());
         return;
     }
     case Reply::EvalFailed:
@@ -362,9 +368,18 @@ void HostClient::handleReply(const Frame& h, Reader r)
     case Reply::Ack:
         settle(g, view, view->m_pendingMisc, true, jsUndefined());
         return;
-    case Reply::Error:
-        settle(g, view, view->m_pendingMisc, false, createError(g, r.str()));
+    case Reply::Error: {
+        // Generic child-side failure (invalid viewId after Create failed,
+        // input-op contention). We don't know which slot the op used —
+        // the child doesn't echo the op in Error replies. Reject all;
+        // at most one is set (parent-side checkSlot serializes).
+        JSValue err = createError(g, r.str());
+        settle(g, view, view->m_pendingNavigate,   false, err);
+        settle(g, view, view->m_pendingEval,       false, err);
+        settle(g, view, view->m_pendingScreenshot, false, err);
+        settle(g, view, view->m_pendingMisc,       false, err);
         return;
+    }
     }
 }
 
@@ -378,6 +393,7 @@ void HostClient::rejectAllAndMarkDead(const WTF::String& reason)
     for (auto& [id, weak] : viewsById) {
         JSWebView* v = weak.get();
         if (!v) continue;
+        v->m_loading = false;
         settle(g, v, v->m_pendingNavigate, false, err);
         settle(g, v, v->m_pendingEval, false, err);
         settle(g, v, v->m_pendingScreenshot, false, err);
@@ -540,10 +556,13 @@ const ClassInfo JSWebView::s_info = { "WebView"_s, &Base::s_info, nullptr, nullp
 
 JSPromise* JSWebView::navigate(JSGlobalObject* g, const WTF::String& url)
 {
-    m_loading = true;
     auto payload = encodeStr(url);
-    return sendOp(g, this, m_pendingNavigate, Op::Navigate,
+    auto* promise = sendOp(g, this, m_pendingNavigate, Op::Navigate,
         payload.span().data(), static_cast<uint32_t>(payload.size()));
+    // After sendOp so m_loading isn't stuck true if the host is dead and
+    // sendOp rejected without ever touching the slot.
+    if (m_pendingNavigate) m_loading = true;
+    return promise;
 }
 
 JSPromise* JSWebView::evaluate(JSGlobalObject* g, const WTF::String& script)

@@ -39,6 +39,79 @@ it("navigate + evaluate round-trip", async () => {
   }
 });
 
+it("evaluate() returns native JS values via page-side JSON.stringify + parent JSONParse", async () => {
+  const view = new Bun.WebView({ width: 200, height: 200 });
+  try {
+    await view.navigate("data:text/html,<body></body>");
+    // The body is wrapped as `return JSON.stringify(await (${script}))` via
+    // callAsyncJavaScript:. JSON.stringify runs in WebContent's JSC — the
+    // only serialization. Result crosses as NSString (WebKit never allocs
+    // NSArray/NSNumber intermediates). Parent JSONParse's once. Same path
+    // as WebAutomationSessionProxy.js (the WebDriver backend).
+    expect(await view.evaluate("true")).toBe(true);
+    expect(await view.evaluate("false")).toBe(false);
+    expect(await view.evaluate("42")).toBe(42);
+    expect(await view.evaluate("3.14")).toBe(3.14);
+    expect(await view.evaluate("null")).toBeNull();
+    expect(await view.evaluate("'hello'")).toBe("hello");
+    expect(await view.evaluate("[1, 2, 3]")).toEqual([1, 2, 3]);
+    expect(await view.evaluate("({a: 1, b: true, c: [null]})")).toEqual({ a: 1, b: true, c: [null] });
+    // JSON.stringify(undefined) evaluates to undefined → nil → jsUndefined.
+    expect(await view.evaluate("undefined")).toBeUndefined();
+    // Functions/symbols collapse to undefined too (JSON.stringify drops them).
+    expect(await view.evaluate("() => 1")).toBeUndefined();
+  } finally {
+    view.close();
+  }
+});
+
+it("evaluate() awaits Promises", async () => {
+  const view = new Bun.WebView({ width: 200, height: 200 });
+  try {
+    await view.navigate("data:text/html,<body></body>");
+    // await (expr) — thenables unwrap, non-thenables pass through identity.
+    expect(await view.evaluate("Promise.resolve(42)")).toBe(42);
+    // Microtask roundtrip.
+    expect(await view.evaluate("Promise.resolve().then(() => [1, 2])")).toEqual([1, 2]);
+    // Macrotask — setTimeout fires, completion waits for it.
+    expect(await view.evaluate("new Promise(r => setTimeout(() => r('delayed'), 5))")).toBe("delayed");
+    // Rejected promise propagates as rejection.
+    await expect(view.evaluate("Promise.reject(new Error('boom'))")).rejects.toThrow(/boom/);
+  } finally {
+    view.close();
+  }
+});
+
+it("evaluate() with statement sequence throws SyntaxError (use an IIFE)", async () => {
+  const view = new Bun.WebView({ width: 200, height: 200 });
+  try {
+    await view.navigate("data:text/html,<body></body>");
+    // The wrap is `await (${script})` — parenthesization forces expression
+    // context. `(let x=1; x)` is a syntax error.
+    await expect(view.evaluate("let x = 1; x + 1")).rejects.toThrow(/SyntaxError|Unexpected/);
+    // Wrap in an IIFE for statement sequences.
+    expect(await view.evaluate("(() => { let x = 1; return x + 1 })()")).toBe(2);
+  } finally {
+    view.close();
+  }
+});
+
+it("scroll(NaN) throws before poisoning the accumulator", async () => {
+  const view = new Bun.WebView({ width: 200, height: 200 });
+  try {
+    await view.navigate("data:text/html," + encodeURIComponent("<div style='height:5000px'></div>"));
+    // NaN would permanently poison m_pendingScrollDx/Dy (NaN + anything = NaN)
+    // and hit UB at the static_cast<int32_t> in CGEventCreateScrollWheelEvent.
+    expect(() => view.scroll(0, NaN)).toThrow(/must be finite/);
+    expect(() => view.scroll(Infinity, 0)).toThrow(/must be finite/);
+    // Verify the accumulator isn't poisoned — a real scroll still works.
+    await view.scroll(0, 100);
+    expect(Number(await view.evaluate("String(window.scrollY)"))).toBeGreaterThan(0);
+  } finally {
+    view.close();
+  }
+});
+
 it("url/title/loading getters reflect state", async () => {
   const view = new Bun.WebView({ width: 200, height: 200 });
   try {
@@ -416,7 +489,7 @@ it("press dispatches virtual keys", async () => {
           </script>
         `),
     );
-    await view.evaluate("var i=document.getElementById('i');i.focus();i.setSelectionRange(5,5)");
+    await view.evaluate("(() => { let i=document.getElementById('i');i.focus();i.setSelectionRange(5,5) })()");
     // Backspace/Enter/ArrowLeft map to editing commands (DeleteBackward/
     // InsertNewline/MoveLeft) — _executeEditCommand sendWithAsyncReply,
     // await resolves when WebContent has processed. Escape has no editing

@@ -382,7 +382,7 @@ struct NSEvent : Ref {
     {
         void *cgEvent = s_CGEventCreateScrollWheelEvent(
             nullptr, /* kCGScrollEventUnitPixel */ 0, /* wheelCount */ 2,
-            -static_cast<int32_t>(deltaY), -static_cast<int32_t>(deltaX));
+            static_cast<int32_t>(lroundf(-deltaY)), static_cast<int32_t>(lroundf(-deltaX)));
         CGPoint screen = window.convertPointToScreen(wx, wy);
         double firstScreenH = s_CGDisplayBounds(s_CGMainDisplayID()).size.height;
         s_CGEventSetLocation(cgEvent, CGPointMake(screen.x, firstScreenH - screen.y));
@@ -440,7 +440,6 @@ struct WKWebView : Ref {
     static SEL s_initWithFrame_configuration;
     static SEL s_setNavigationDelegate;
     static SEL s_loadRequest;
-    static SEL s_evaluateJavaScript_completionHandler;
     static SEL s_stopLoading;
     static SEL s_reload;
     static SEL s_canGoBack;
@@ -465,7 +464,6 @@ struct WKWebView : Ref {
     static SEL s_setUIDelegate;
     void setUIDelegate(id d) { msg<void>(s_setUIDelegate, d); }
     void loadRequest(NSURLRequest r) { msg<void>(s_loadRequest, r.m_id); }
-    void evaluate(NSString script, void *block) { msg<void>(s_evaluateJavaScript_completionHandler, script.m_id, block); }
 
     // callAsyncJavaScript:arguments:inFrame:inContentWorld:completionHandler:
     // (public API, macOS 11.0+). The body is wrapped in an async function;

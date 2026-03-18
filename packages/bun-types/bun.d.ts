@@ -7956,10 +7956,10 @@ declare module "bun" {
     }
 
     interface ConstructorOptions {
-      /** Viewport width in pixels. Range: [1, 16384]. */
-      width: number;
-      /** Viewport height in pixels. Range: [1, 16384]. */
-      height: number;
+      /** Viewport width in pixels. Range: [1, 16384]. @default 800 */
+      width?: number;
+      /** Viewport height in pixels. Range: [1, 16384]. @default 600 */
+      height?: number;
       /** Only `true` (headless) is implemented. @default true */
       headless?: boolean;
       /**
@@ -7997,7 +7997,7 @@ declare module "bun" {
     /**
      * @throws on non-macOS platforms (not yet implemented).
      */
-    constructor(options: WebView.ConstructorOptions);
+    constructor(options?: WebView.ConstructorOptions);
 
     /** The last-navigated URL. Updated when a navigation completes. */
     readonly url: string;
@@ -8030,17 +8030,32 @@ declare module "bun" {
     navigate(url: string): Promise<void>;
 
     /**
-     * Run JavaScript in the page's main frame and return the result.
-     * The result must be JSON-serializable (string, number, boolean, null,
-     * or a structure of those).
+     * Run a JavaScript expression in the page's main frame and return the
+     * result as a native JS value.
+     *
+     * The expression is wrapped as `await (${script})` — if it evaluates
+     * to a Promise, the promise is awaited. The resolved value is
+     * serialized page-side via `JSON.stringify` and deserialized here, so
+     * arrays and objects come back as real structures:
+     *
+     * ```ts
+     * await view.evaluate("document.title");        // string
+     * await view.evaluate("[1, 2, 3]");              // number[]
+     * await view.evaluate("({ a: 1, b: true })");    // { a: number, b: boolean }
+     * await view.evaluate("fetch('/api').then(r => r.json())");  // awaited
+     * ```
+     *
+     * **`script` must be an expression.** For statement sequences, wrap in
+     * an IIFE: `evaluate("(() => { let x = f(); return x + 1 })()")`.
+     *
+     * Values that `JSON.stringify` collapses to `undefined` (functions,
+     * symbols, `undefined` itself) resolve to `undefined`. Circular
+     * references reject.
      *
      * Only one `evaluate()` may be in flight at a time per view; a second
      * concurrent call throws `ERR_INVALID_STATE`.
-     *
-     * Resolves to `undefined` if the script's result is not serializable
-     * (e.g. returns `undefined`, a function, or a DOM node).
      */
-    evaluate(script: string): Promise<string | undefined>;
+    evaluate<T = unknown>(script: string): Promise<T>;
 
     /**
      * Capture a PNG screenshot of the current viewport.

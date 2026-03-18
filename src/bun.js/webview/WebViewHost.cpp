@@ -128,7 +128,25 @@ void WebViewHost::evaluateIPC(const WTF::String& script)
     }
     m_evalPending = true;
     rt->m_evalTarget = this;
-    m_webview.evaluate(objc::NSString::fromWTF(script), evalCompletionBlock());
+
+    // callAsyncJavaScript: wraps the body in an async function and awaits
+    // the return value. JSON.stringify page-side means the result crossing
+    // to us is ALWAYS an NSString (or nil for undefined) — WebKit never
+    // materializes NSArray/NSNumber/NSDictionary intermediates. Same
+    // serialization path as WebAutomationSessionProxy.js (the WebDriver
+    // backend does exactly JSON.stringify page-side). One serialize in
+    // WebContent's JSC, one JSONParse in the parent's JSC; our layer is
+    // pure string transport.
+    //
+    // await (expr) unwraps thenables; identity for non-thenables. The
+    // parenthesization forces expression context — statement sequences
+    // need an IIFE wrapper: evaluate("(() => { ...; return x })()").
+    //
+    // JSON.stringify(undefined) evaluates to undefined (the value, not
+    // the string) → callAsync returns nil → parent resolves jsUndefined().
+    // Functions/symbols become undefined. Circular refs throw → rejection.
+    auto body = makeString("return JSON.stringify(await ("_s, script, "))"_s);
+    m_webview.callAsync(objc::NSString::fromWTF(body), nullptr /* no args */, evalCompletionBlock());
 }
 
 void WebViewHost::screenshotIPC()
@@ -166,7 +184,7 @@ static unsigned long expandModifiers(uint8_t m)
 bool WebViewHost::clickIPC(float x, float y, uint8_t button, uint8_t modifiers, uint8_t clickCount)
 {
     auto* rt = ObjCRuntime::tryLoad();
-    if (m_inputPending || rt->m_inputTarget) {
+    if (m_inputPending || rt->m_inputTarget || rt->m_selectorTarget) {
         hostWriter()->sendReplyStr(m_viewId, Reply::Error, "input operation already pending"_s);
         return true;
     }
@@ -335,7 +353,7 @@ void WebViewHost::onSelectorComplete(id result, id error)
 bool WebViewHost::typeIPC(const WTF::String& text)
 {
     auto* rt = ObjCRuntime::tryLoad();
-    if (m_inputPending || rt->m_inputTarget) {
+    if (m_inputPending || rt->m_inputTarget || rt->m_selectorTarget) {
         hostWriter()->sendReplyStr(m_viewId, Reply::Error, "input operation already pending"_s);
         return true;
     }
@@ -398,7 +416,7 @@ static const VKeyInfo& vkeyInfo(VirtualKey k)
 bool WebViewHost::pressIPC(VirtualKey key, uint8_t modifiers, const WTF::String& character)
 {
     auto* rt = ObjCRuntime::tryLoad();
-    if (m_inputPending || rt->m_inputTarget) {
+    if (m_inputPending || rt->m_inputTarget || rt->m_selectorTarget) {
         hostWriter()->sendReplyStr(m_viewId, Reply::Error, "input operation already pending"_s);
         return true;
     }
@@ -594,13 +612,20 @@ void WebViewHost::onEvalComplete(id result, id error)
 {
     if (!std::exchange(m_evalPending, false)) return;
     if (error) {
-        hostWriter()->sendReplyStr(m_viewId, Reply::EvalFailed, objc::NSError(error).localizedDescription());
+        // callAsyncJavaScript:'s error carries the throw reason in
+        // userInfo[WKJavaScriptExceptionMessage]; localizedDescription is
+        // generic. Same extraction as onSelectorComplete.
+        objc::NSError err(error);
+        id msg = objc::NSDictionary(err.userInfo()).objectForKey(
+            objc::NSString::fromWTF("WKJavaScriptExceptionMessage"_s).m_id);
+        hostWriter()->sendReplyStr(m_viewId, Reply::EvalFailed,
+            msg ? objc::NSString(msg).toWTF() : err.localizedDescription());
         return;
     }
-    // WebKit serializes the JS result to an NSObject; -description covers
-    // NSString/NSNumber/NSArray/NSDictionary/NSNull.
+    // Body returns JSON.stringify(...) — result is NSString or nil.
+    // Empty reply → parent resolves jsUndefined(); non-empty → JSONParse.
     hostWriter()->sendReplyStr(m_viewId, Reply::EvalDone,
-        result ? objc::NSObject(result).describe() : WTF::String());
+        result ? objc::NSString(result).toWTF() : WTF::String());
 }
 
 void WebViewHost::onScreenshotComplete(id nsimage, id error)

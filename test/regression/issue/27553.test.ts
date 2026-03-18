@@ -25,6 +25,7 @@ test("String.raw preserves null bytes in tagged template literals", async () => 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stdout).toBe("1\n0\n");
+  expect(stderr).toBe("");
   expect(exitCode).toBe(0);
 });
 
@@ -50,6 +51,7 @@ test("null bytes in untagged template literals are preserved", async () => {
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stdout).toBe("1\n0\n");
+  expect(stderr).toBe("");
   expect(exitCode).toBe(0);
 });
 
@@ -75,5 +77,6 @@ test("null bytes in String.raw with surrounding content", async () => {
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stdout).toBe("11\n0\n");
+  expect(stderr).toBe("");
   expect(exitCode).toBe(0);
 });

@@ -51,10 +51,10 @@ pub const HeapRequestBodyBuffer = struct {
 
     pub fn put(this: *@This()) void {
         if (bun.http.http_thread.lazy_request_body_buffer == null) {
-            // This case hypothetically should never happen
             this.fixed_buffer_allocator.reset();
             bun.http.http_thread.lazy_request_body_buffer = this;
         } else {
+            // This case hypothetically should never happen
             this.deinit();
         }
     }

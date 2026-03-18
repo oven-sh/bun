@@ -29,6 +29,7 @@
     macro(ValkeyClient) \
     macro(argv) \
     macro(assetPrefix) \
+    macro(cron) \
     macro(cwd) \
     macro(embeddedFiles) \
     macro(enableANSIColors) \

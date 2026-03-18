@@ -59,6 +59,8 @@ const {
 const { HTTPParser, freeParser } = require("node:_http_common");
 
 const { globalAgent } = require("node:_http_agent");
+const { getLazy } = require("internal/shared");
+const tls = getLazy(() => require("node:tls"));
 const { IncomingMessage } = require("node:_http_incoming");
 const { OutgoingMessage } = require("node:_http_outgoing");
 
@@ -399,11 +401,8 @@ function ClientRequest(input, options, cb) {
       if (upgrade || (method === "CONNECT" && statusCode === 200)) {
         const builtHeaders = buildHeaders(headers);
         const head = Buffer.alloc(0);
-        if (upgrade) {
-          this.emit("upgrade", res || { statusCode, statusMessage, headers: builtHeaders, rawHeaders: headers }, socket, head);
-        } else {
-          this.emit("connect", res || { statusCode, statusMessage, headers: builtHeaders, rawHeaders: headers }, socket, head);
-        }
+        const infoRes = { statusCode, statusMessage, headers: builtHeaders, rawHeaders: headers };
+        this.emit(upgrade ? "upgrade" : "connect", infoRes, socket, head);
         freeParser(parser, this, socket);
         return 1; // skip body
       }
@@ -486,6 +485,8 @@ function ClientRequest(input, options, cb) {
         // EOF before headers — emit error on the request
         this.emit("error", new ConnResetException("aborted"));
       }
+      // Free parser resources on any close to avoid leaks
+      freeParser(parser, this, socket);
       // Mark the request as closed/destroyed without calling socketCloseListener(),
       // which would re-emit "close" on this.socket (the real socket) causing duplicates.
       this.destroyed = true;
@@ -496,10 +497,12 @@ function ClientRequest(input, options, cb) {
       }
     });
 
-    // Ensure socket is connected before writing
-    let connected = !socket.connecting && !socket.secureConnecting;
+    // Ensure socket is connected before writing.
+    // Use instanceof for deterministic TLS detection, matching http2.ts pattern.
+    const isTLSSocket = socket instanceof tls().TLSSocket;
+    let connected = !socket.connecting && !(isTLSSocket && socket.secureConnecting);
     if (!connected) {
-      const connectEvent = socket.secureConnecting ? "secureConnect" : "connect";
+      const connectEvent = isTLSSocket ? "secureConnect" : "connect";
       socket.once(connectEvent, () => {
         connected = true;
         if (this.finished) writeRequest();

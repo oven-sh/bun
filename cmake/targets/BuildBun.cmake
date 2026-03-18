@@ -1265,6 +1265,14 @@ if(BUN_LINK_ONLY)
 endif()
 
 if(WIN32)
+  # bmalloc/libpas causes GC crashes on Windows under memory pressure
+  # (see https://github.com/oven-sh/bun/issues/21569). Bun overrides
+  # bmalloc's SystemHeap on Windows (BmallocSystemHeapOverride.cpp) to use
+  # mimalloc instead of the unimplemented stubs. Combined with setting
+  # Malloc=1 at startup, this bypasses libpas for all allocations.
+  # bmalloc.lib is still linked because WTF.lib references bmalloc symbols.
+  # Once oven-sh/WebKit prebuilts are rebuilt without libpas on Windows,
+  # bmalloc.lib can be removed entirely.
   if(DEBUG)
     target_link_libraries(${bun} PRIVATE
       ${WEBKIT_LIB_PATH}/WTF.lib

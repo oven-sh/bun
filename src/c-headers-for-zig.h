@@ -59,6 +59,7 @@
 #if WINDOWS
 #include <windows.h>
 #include <winternl.h>
+#include <stdlib.h> // _putenv
 #endif
 
 #undef lstat

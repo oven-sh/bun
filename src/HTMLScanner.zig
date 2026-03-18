@@ -62,24 +62,35 @@ pub fn onHTMLParseError(this: *HTMLScanner, message: []const u8) void {
 }
 
 pub fn onTag(this: *HTMLScanner, _: *lol.Element, path: []const u8, url_attribute: []const u8, kind: ImportKind) void {
-    if (std.mem.eql(u8, url_attribute, "srcset")) {
-        // srcset can have multiple URLs, we need to split them and create import records for each one
-        var start: usize = 0;
-        while (start < path.len) {
-            // URLS in srcset are separated by commas, pixel density descriptors (e.g. "image.png 2x") or width descriptors (e.g. "image.png 100w"), so we need to split on commas and then trim the resulting URLs
-            const comma_index = std.mem.indexOfScalar(u8, path[start..], ',') orelse path.len - start;
-            const url_with_descriptor = path[start .. start + comma_index];
-            // Trim whitespace and descriptors from the URL
-            var url_start: usize = 0;
-            while (url_start < url_with_descriptor.len and std.ascii.isWhitespace(url_with_descriptor[url_start])) : (url_start += 1) {}
-            var url_end: usize = url_start;
-            while (url_end < url_with_descriptor.len and !std.ascii.isWhitespace(url_with_descriptor[url_end])) : (url_end += 1) {}
-            const clean_url = url_with_descriptor[url_start..url_end];
+    if (bun.strings.eqlComptime(url_attribute, "srcset")) {
+        // srcset can have multiple URLs
+        var i: usize = 0;
+        while (i < path.len) {
+            // Skip leading whitespace
+            while (i < path.len and std.ascii.isWhitespace(path[i])) : (i += 1) {}
+            if (i >= path.len) break;
 
-            if (clean_url.len > 0) {
-                this.createImportRecord(clean_url, kind) catch {};
+            // Read the URL until first whitespace
+            const url_start = i;
+            while (i < path.len and !std.ascii.isWhitespace(path[i])) : (i += 1) {}
+            const raw_end = i;
+
+            // Strip any trailing commas
+            var url_end = raw_end;
+            while (url_end > url_start and path[url_end - 1] == ',') : (url_end -= 1) {}
+
+            if (url_end > url_start) {
+                this.createImportRecord(path[url_start..url_end], kind) catch {};
             }
-            start += comma_index + 1;
+
+            if (raw_end > url_end) {
+                // If url ended on comma, start parsing next URL
+                continue;
+            }
+
+            // Read until next comma to find start of next URL
+            while (i < path.len and path[i] != ',') : (i += 1) {}
+            if (i < path.len) i += 1;
         }
         return;
     }

@@ -1,6 +1,6 @@
-import { expect, test, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { existsSync, mkdirSync, writeFileSync } from "fs";
 import { bunEnv, bunExe } from "harness";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 
 // Test for https://github.com/oven-sh/bun/issues/28220

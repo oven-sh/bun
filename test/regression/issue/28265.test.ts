@@ -94,9 +94,10 @@ describe("REPL thrown values should show 'Uncaught' prefix", () => {
   });
 
   test("REPL continues after throwing null/undefined", async () => {
-    const { stdout, exitCode } = await runRepl(["throw null", "1 + 1", ".exit"]);
+    const { stdout, exitCode } = await runRepl(["throw null", "throw undefined", "1 + 1", ".exit"]);
     const lines = getOutputLines(stdout);
     expect(lines).toContainEqual("Uncaught null");
+    expect(lines).toContainEqual("Uncaught undefined");
     expect(lines).toContainEqual("2");
     expect(exitCode).toBe(0);
   });

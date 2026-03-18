@@ -98,7 +98,7 @@ const BunBuildOptions = struct {
 
     pub fn windowsShim(this: *BunBuildOptions, b: *Build) WindowsShim {
         return this.windows_shim orelse {
-            this.windows_shim = WindowsShim.create(b);
+            this.windows_shim = WindowsShim.create(b, this.arch);
             return this.windows_shim.?;
         };
     }
@@ -759,7 +759,6 @@ fn configureObj(b: *Build, opts: *BunBuildOptions, obj: *Compile) void {
 
     obj.no_link_obj = opts.os != .windows and !opts.no_llvm;
 
-
     if (opts.enable_asan and !enableFastBuild(b)) {
         if (@hasField(Build.Module, "sanitize_address")) {
             if (opts.enable_fuzzilli) {
@@ -986,10 +985,16 @@ const WindowsShim = struct {
     exe: *Compile,
     dbg: *Compile,
 
-    fn create(b: *Build) WindowsShim {
+    fn create(b: *Build, arch: Arch) WindowsShim {
         const target = b.resolveTargetQuery(.{
-            .cpu_model = .{ .explicit = &std.Target.x86.cpu.nehalem },
-            .cpu_arch = .x86_64,
+            .cpu_model = switch (arch) {
+                .aarch64 => .baseline,
+                else => .{ .explicit = &std.Target.x86.cpu.nehalem },
+            },
+            .cpu_arch = switch (arch) {
+                .aarch64 => .aarch64,
+                else => .x86_64,
+            },
             .os_tag = .windows,
             .os_version_min = getOSVersionMin(.windows),
         });

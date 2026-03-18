@@ -5149,7 +5149,7 @@ restart:
 
             RETURN_IF_EXCEPTION(scope, void());
             for (auto& property : properties) {
-                if (property.isEmpty() || property.isNull()) [[unlikely]]
+                if (property.isNull()) [[unlikely]]
                     continue;
 
                 // ignore constructor
@@ -5179,9 +5179,6 @@ restart:
                 visitedProperties.append(property);
 
                 ZigString key = toZigString(property.isSymbol() && !property.isPrivateName() ? property.impl() : property.string());
-
-                if (key.len == 0)
-                    continue;
 
                 JSC::JSValue propertyValue = jsUndefined();
 
@@ -5323,7 +5320,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] bool JSC__isBigIntInInt64Range(JSC::EncodedJS
     auto clientData = WebCore::clientData(vm);
 
     for (auto property : vector) {
-        if (property.isEmpty() || property.isNull()) [[unlikely]]
+        if (property.isNull()) [[unlikely]]
             continue;
 
         // ignore constructor
@@ -5647,6 +5644,34 @@ extern "C" [[ZIG_EXPORT(check_slow)]] double Bun__gregorianDateTimeToMS(JSC::JSG
     dateTime.setMinute(minute);
     dateTime.setSecond(second);
     return vm.dateCache.gregorianDateTimeToMS(dateTime, millisecond, WTF::TimeType::LocalTime);
+}
+
+extern "C" [[ZIG_EXPORT(check_slow)]] double Bun__gregorianDateTimeToMSUTC(JSC::JSGlobalObject* globalObject, int year, int month, int day, int hour, int minute, int second, int millisecond)
+{
+    auto& vm = JSC::getVM(globalObject);
+    WTF::GregorianDateTime dateTime;
+    dateTime.setYear(year);
+    dateTime.setMonth(month - 1);
+    dateTime.setMonthDay(day);
+    dateTime.setHour(hour);
+    dateTime.setMinute(minute);
+    dateTime.setSecond(second);
+    return vm.dateCache.gregorianDateTimeToMS(dateTime, millisecond, WTF::TimeType::UTCTime);
+}
+
+extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__msToGregorianDateTimeUTC(JSC::JSGlobalObject* globalObject, double ms,
+    int* year, int* month, int* day, int* hour, int* minute, int* second, int* weekday)
+{
+    auto& vm = JSC::getVM(globalObject);
+    WTF::GregorianDateTime dt;
+    vm.dateCache.msToGregorianDateTime(ms, WTF::TimeType::UTCTime, dt);
+    *year = dt.year();
+    *month = dt.month() + 1;
+    *day = dt.monthDay();
+    *hour = dt.hour();
+    *minute = dt.minute();
+    *second = dt.second();
+    *weekday = dt.weekDay();
 }
 
 extern "C" EncodedJSValue JSC__JSValue__dateInstanceFromNumber(JSC::JSGlobalObject* globalObject, double unixTimestamp)

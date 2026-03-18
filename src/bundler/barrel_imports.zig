@@ -18,6 +18,9 @@ const BarrelExportResolution = struct {
     import_record_index: u32,
     /// The original alias in the source module (e.g. "d" for `export { d as c }`)
     original_alias: ?[]const u8,
+    /// True when the underlying import is `import * as ns` — propagation
+    /// through this export must treat the target as needing all exports.
+    alias_is_star: bool,
 };
 
 /// Look up an export name → import_record_index by chasing
@@ -26,7 +29,7 @@ const BarrelExportResolution = struct {
 fn resolveBarrelExport(alias: []const u8, named_exports: JSAst.NamedExports, named_imports: JSAst.NamedImports) ?BarrelExportResolution {
     const export_entry = named_exports.get(alias) orelse return null;
     const import_entry = named_imports.get(export_entry.ref) orelse return null;
-    return .{ .import_record_index = import_entry.import_record_index, .original_alias = import_entry.alias };
+    return .{ .import_record_index = import_entry.import_record_index, .original_alias = import_entry.alias, .alias_is_star = import_entry.alias_is_star };
 }
 
 /// Analyze a parsed file to determine if it's a barrel and mark unneeded
@@ -301,10 +304,9 @@ pub fn scheduleBarrelDeferredImports(this: *BundleV2, result: *ParseTask.Result.
     // Handle import records without named bindings (not in named_imports).
     // - `import "x"` (bare statement): tree-shakeable with sideEffects: false — skip.
     // - `require("x")`: synchronous, needs full module — always mark as .all.
-    // - `import("x")`: mark as .all ONLY if the barrel has no prior requests,
-    //   meaning this is the sole reference. If the barrel already has a .partial
-    //   entry from a static import, the dynamic import is likely a secondary
-    //   (possibly circular) reference and should not escalate requirements.
+    // - `import("x")`: returns the full module namespace at runtime — consumer
+    //   can destructure or access any export. Must mark as .all. We cannot
+    //   safely assume which exports will be used.
     for (file_import_records.slice(), 0..) |ir, idx| {
         const target = if (ir.source_index.isValid())
             ir.source_index.get()
@@ -319,10 +321,9 @@ pub fn scheduleBarrelDeferredImports(this: *BundleV2, result: *ParseTask.Result.
             const gop = try this.requested_exports.getOrPut(this.allocator(), target);
             gop.value_ptr.* = .all;
         } else if (ir.kind == .dynamic) {
-            // Only escalate to .all if no prior requests exist for this target.
-            if (!this.requested_exports.contains(target)) {
-                try this.requested_exports.put(this.allocator(), target, .all);
-            }
+            // import() returns the full module namespace — must preserve all exports.
+            const gop = try this.requested_exports.getOrPut(this.allocator(), target);
+            gop.value_ptr.* = .all;
         }
     }
 
@@ -354,8 +355,8 @@ pub fn scheduleBarrelDeferredImports(this: *BundleV2, result: *ParseTask.Result.
         }
     }
 
-    // Add bare require/dynamic-import targets to BFS as star imports (matching
-    // the seeding logic above — require always, dynamic only when sole reference).
+    // Add bare require/dynamic-import targets to BFS as star imports — both
+    // always need the full namespace.
     for (file_import_records.slice(), 0..) |ir, idx| {
         const target = if (ir.source_index.isValid())
             ir.source_index.get()
@@ -366,8 +367,7 @@ pub fn scheduleBarrelDeferredImports(this: *BundleV2, result: *ParseTask.Result.
         if (ir.flags.is_internal) continue;
         if (named_ir_indices.contains(@intCast(idx))) continue;
         if (ir.flags.was_originally_bare_import) continue;
-        const is_all = if (this.requested_exports.get(target)) |re| re == .all else false;
-        const should_add = ir.kind == .require or (ir.kind == .dynamic and is_all);
+        const should_add = ir.kind == .require or ir.kind == .dynamic;
         if (should_add) {
             try queue.append(queue_alloc, .{ .barrel_source_index = target, .alias = "", .is_star = true });
         }
@@ -486,7 +486,9 @@ pub fn scheduleBarrelDeferredImports(this: *BundleV2, result: *ParseTask.Result.
                 rec = barrel_ir.slice()[resolution.import_record_index];
             }
             if (rec.source_index.isValid()) {
-                try queue.append(queue_alloc, .{ .barrel_source_index = rec.source_index.get(), .alias = propagate_alias, .is_star = false });
+                // When the barrel re-exports a namespace import (`import * as X; export { X }`),
+                // propagate as a star import so the target barrel loads all exports.
+                try queue.append(queue_alloc, .{ .barrel_source_index = rec.source_index.get(), .alias = propagate_alias, .is_star = resolution.alias_is_star });
             }
         }
     }

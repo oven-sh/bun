@@ -887,12 +887,14 @@ declare module "bun" {
      *
      * When a `TypedArray` is passed, the bytes are parsed directly without
      * copying if the content is ASCII. Optional `start` and `end` parameters
-     * allow slicing without copying, and `read` will be a byte offset into
-     * the original typed array.
+     * select a window of the input without copying. For typed arrays these
+     * are byte offsets and `read` will be a byte offset into the original
+     * typed array. For strings these are character offsets and `read` will
+     * be a character offset into the original string.
      *
      * @param input The JSONL string or typed array to parse
-     * @param start Byte offset to start parsing from (typed array only, default: 0)
-     * @param end Byte offset to stop parsing at (typed array only, default: input.byteLength)
+     * @param start Offset to start parsing from (bytes for typed arrays, characters for strings, default: 0)
+     * @param end Offset to stop parsing at (bytes for typed arrays, characters for strings, default: input length)
      * @returns An object with `values`, `read`, `done`, and `error` properties
      *
      * @example
@@ -907,9 +909,8 @@ declare module "bun" {
      * }
      * ```
      */
-    export function parseChunk(input: string): ParseChunkResult;
     export function parseChunk(
-      input: NodeJS.TypedArray | DataView<ArrayBuffer> | ArrayBufferLike,
+      input: string | NodeJS.TypedArray | DataView<ArrayBuffer> | ArrayBufferLike,
       start?: number,
       end?: number,
     ): ParseChunkResult;
@@ -1193,10 +1194,20 @@ declare module "bun" {
       ordered: boolean;
       /** The start number for ordered lists. */
       start?: number;
+      /** Nesting depth. `0` for a top-level list, `1` for a list inside a list item, etc. */
+      depth: number;
     }
 
     /** Meta passed to the `listItem` callback. */
     interface ListItemMeta {
+      /** 0-based index of this item within its parent list. */
+      index: number;
+      /** Nesting depth of the parent list. `0` for items in a top-level list. */
+      depth: number;
+      /** Whether the parent list is ordered. */
+      ordered: boolean;
+      /** The start number of the parent list (only set when `ordered` is true). */
+      start?: number;
       /** Task list checked state. Set for `- [x]` / `- [ ]` items. */
       checked?: boolean;
     }
@@ -1234,8 +1245,8 @@ declare module "bun" {
       code?: (children: string, meta?: CodeBlockMeta) => string | null | undefined;
       /** Ordered or unordered list. `start` is the first item number for ordered lists. */
       list?: (children: string, meta: ListMeta) => string | null | undefined;
-      /** List item. `meta.checked` is set for task list items (`- [x]` / `- [ ]`). Only passed for task list items. */
-      listItem?: (children: string, meta?: ListItemMeta) => string | null | undefined;
+      /** List item. `meta` always includes `{index, depth, ordered}`. `meta.start` is set for ordered lists; `meta.checked` is set for task list items. */
+      listItem?: (children: string, meta: ListItemMeta) => string | null | undefined;
       /** Horizontal rule. */
       hr?: (children: string) => string | null | undefined;
       /** Table. */
@@ -2573,6 +2584,21 @@ declare module "bun" {
     plugins?: BunPlugin[];
     // manifest?: boolean; // whether to return manifest
     external?: string[];
+    /**
+     * Control whether dynamic `import()`, `require()`, or `require.resolve()` specifiers (non-literal
+     * arguments like `` `./locales/${lang}.json` ``) are allowed to pass through
+     * to runtime without being bundled.
+     *
+     * - `["*"]` (default) — allow all dynamic specifiers
+     * - `[]` — fail the build on any dynamic specifier
+     * - `["./locales/*.json", ...]` — allow only specifiers whose static
+     *   template parts match one of these glob patterns
+     *
+     * Add `""` to the list to allow fully opaque specifiers like `import(fn())`.
+     *
+     * @default ["*"]
+     */
+    allowUnresolved?: string[];
     packages?: "bundle" | "external";
     publicPath?: string;
     define?: Record<string, string>;
@@ -7313,6 +7339,134 @@ declare module "bun" {
     cmds: string[],
     options?: SpawnOptions.SpawnSyncOptions<In, Out, Err>,
   ): SyncSubprocess<Out, Err>;
+
+  /**
+   * Controller object passed to the `scheduled()` handler when a cron job fires.
+   *
+   * Compatible with [Cloudflare Workers' ScheduledController](https://developers.cloudflare.com/workers/runtime-apis/handlers/scheduled/).
+   */
+  interface CronController {
+    /** The type of event that triggered the handler. Always `"scheduled"`. */
+    readonly type: "scheduled";
+    /** The cron expression that triggered this invocation. */
+    readonly cron: string;
+    /** Timestamp (ms since epoch) when the job was scheduled to run. */
+    readonly scheduledTime: number;
+  }
+
+  /**
+   * A cron schedule: a 5-field expression (`minute hour day month weekday`) or a nickname.
+   *
+   * Nicknames: `@yearly`, `@annually`, `@monthly`, `@weekly`, `@daily`, `@midnight`, `@hourly`.
+   *
+   * Fields support `*`, numbers, ranges (`1-5`), steps (`1-30/2`),
+   * comma lists (`1,5,10`), and month/weekday names (`JAN`-`DEC`, `SUN`-`SAT`).
+   *
+   * Validated at runtime by the cron parser.
+   */
+  type CronWithAutocomplete =
+    | "@yearly"
+    | "@annually"
+    | "@monthly"
+    | "@weekly"
+    | "@daily"
+    | "@midnight"
+    | "@hourly"
+    | "* * * * *"
+    | "0 * * * *"
+    | "0 0 * * *"
+    | "0 0 * * 0"
+    | "0 0 1 * *"
+    | "0 0 1 1 *"
+    | `${string} ${string} ${string} ${string} ${string}`
+    | (string & {});
+
+  /**
+   * Register an OS-level cron job that runs a JavaScript/TypeScript module on a schedule.
+   *
+   * The module must export a `default` object with a `scheduled(controller)` method,
+   * conforming to the [Cloudflare Workers Cron Triggers API](https://developers.cloudflare.com/workers/runtime-apis/handlers/scheduled/).
+   *
+   * On Linux, registers with [crontab](https://man7.org/linux/man-pages/man5/crontab.5.html).
+   * On macOS, registers with [launchd](https://developer.apple.com/library/archive/documentation/MacOSX/Conceptual/BPSystemStartup/Chapters/CreatingLaunchdJobs.html).
+   * On Windows, registers with [Task Scheduler](https://learn.microsoft.com/en-us/windows/win32/taskschd/task-scheduler-start-page).
+   *
+   * **Cron expression syntax** (5 fields: `minute hour day month weekday`):
+   *
+   * | Field | Values | Special |
+   * |-------|--------|---------|
+   * | Minute | `0-59` | `*` `,` `-` `/` |
+   * | Hour | `0-23` | `*` `,` `-` `/` |
+   * | Day of month | `1-31` | `*` `,` `-` `/` |
+   * | Month | `1-12` or `JAN-DEC` | `*` `,` `-` `/` |
+   * | Day of week | `0-7` or `SUN-SAT` | `*` `,` `-` `/` |
+   *
+   * - `0` and `7` both mean Sunday in the weekday field.
+   * - Month/day names are case-insensitive (`MON`, `Mon`, `Monday` all work).
+   * - Predefined nicknames: `@yearly`, `@annually`, `@monthly`, `@weekly`, `@daily`, `@midnight`, `@hourly`.
+   * - When both day-of-month and day-of-week are specified (neither is `*`),
+   *   the job runs when **either** field matches ([POSIX cron](https://pubs.opengroup.org/onlinepubs/9699919799/utilities/crontab.html) behavior).
+   *
+   * @param path - Path to the script to run (resolved relative to caller)
+   * @param schedule - Cron expression or predefined nickname (e.g. `"30 2 * * MON"`, `"@daily"`)
+   * @param title - Unique identifier for this cron job (alphanumeric, hyphens, underscores only)
+   * @returns Promise that resolves when the cron job is registered
+   * @throws If the expression is invalid, the title contains invalid characters, or registration fails
+   *
+   * @example
+   * ```ts
+   * // Run every Monday at 2:30 AM
+   * await Bun.cron("./worker.ts", "30 2 * * MON", "weekly-report");
+   *
+   * // Run daily at midnight
+   * await Bun.cron("./cleanup.ts", "@daily", "daily-cleanup");
+   * ```
+   */
+  const cron: {
+    (path: string, schedule: CronWithAutocomplete, title: string): Promise<void>;
+    /**
+     * Remove a previously registered cron job by its title.
+     *
+     * @param title - The title of the cron job to remove
+     * @returns Promise that resolves when the cron job is removed
+     *
+     * @example
+     * ```ts
+     * await Bun.cron.remove("weekly-report");
+     * ```
+     */
+    remove(title: string): Promise<void>;
+    /**
+     * Parse a cron expression and return the next matching UTC Date.
+     *
+     * Supports the same syntax as {@link Bun.cron} — 5-field expressions, named
+     * days/months, and predefined nicknames like `@daily`.
+     *
+     * When both day-of-month and day-of-week are specified (neither is `*`),
+     * matching uses OR logic per [POSIX cron](https://pubs.opengroup.org/onlinepubs/9699919799/utilities/crontab.html):
+     * a date matches if **either** field matches.
+     *
+     * @param expression - A cron expression or nickname (e.g. `"0,15,30,45 * * * *"`, `"0 9 * * MON-FRI"`, `"@hourly"`)
+     * @param relativeDate - Starting point for the search (defaults to `Date.now()`). Accepts a `Date` or milliseconds since epoch.
+     * @returns The next `Date` matching the expression (UTC), or `null` if no match exists within ~4 years (e.g. `"0 0 30 2 *"` — Feb 30 never occurs)
+     * @throws If the expression is invalid or `relativeDate` is `NaN`/`Infinity`
+     *
+     * @example
+     * ```ts
+     * // Next weekday at 09:30 UTC
+     * const next = Bun.cron.parse("30 9 * * MON-FRI");
+     *
+     * // Chain calls to get a sequence
+     * const from = new Date();
+     * const first = Bun.cron.parse("@hourly", from);
+     * const second = first ? Bun.cron.parse("@hourly", first) : null;
+     *
+     * // With a specific starting point
+     * const nextJan1 = Bun.cron.parse("0 0 1 JAN *", Date.UTC(2025, 0, 1));
+     * ```
+     */
+    parse(expression: CronWithAutocomplete, relativeDate?: Date | number): Date | null;
+  };
 
   /** Utility type for any process from {@link Bun.spawn()} with both stdout and stderr set to `"pipe"` */
   type ReadableSubprocess = Subprocess<any, "pipe", "pipe">;

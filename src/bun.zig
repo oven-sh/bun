@@ -2552,6 +2552,64 @@ pub noinline fn outOfMemory() noreturn {
 
 pub const handleOom = @import("./handle_oom.zig").handleOom;
 
+/// Like `std.heap.StackFallbackAllocator` but takes a runtime-provided buffer
+/// instead of a comptime-sized inline array. Use this when the "stack" buffer
+/// is heap-cached (e.g. in RareData) and you want the same try-fixed-then-fallback
+/// semantics without putting a large buffer on the actual call stack.
+pub const StackFallbackAllocator = struct {
+    fixed: std.heap.FixedBufferAllocator,
+    fallback: std.mem.Allocator,
+
+    pub fn init(buf: []u8, fallback: std.mem.Allocator) StackFallbackAllocator {
+        return .{
+            .fixed = std.heap.FixedBufferAllocator.init(buf),
+            .fallback = fallback,
+        };
+    }
+
+    pub fn get(self: *StackFallbackAllocator) std.mem.Allocator {
+        return .{
+            .ptr = self,
+            .vtable = &.{
+                .alloc = alloc,
+                .resize = resize,
+                .remap = remap,
+                .free = free,
+            },
+        };
+    }
+
+    fn alloc(ctx: *anyopaque, n: usize, alignment: std.mem.Alignment, ra: usize) ?[*]u8 {
+        const self: *StackFallbackAllocator = @ptrCast(@alignCast(ctx));
+        return std.heap.FixedBufferAllocator.alloc(&self.fixed, n, alignment, ra) orelse
+            self.fallback.rawAlloc(n, alignment, ra);
+    }
+
+    fn resize(ctx: *anyopaque, buf: []u8, alignment: std.mem.Alignment, new_len: usize, ra: usize) bool {
+        const self: *StackFallbackAllocator = @ptrCast(@alignCast(ctx));
+        if (self.fixed.ownsPtr(buf.ptr)) {
+            return std.heap.FixedBufferAllocator.resize(&self.fixed, buf, alignment, new_len, ra);
+        }
+        return self.fallback.rawResize(buf, alignment, new_len, ra);
+    }
+
+    fn remap(ctx: *anyopaque, mem: []u8, alignment: std.mem.Alignment, new_len: usize, ra: usize) ?[*]u8 {
+        const self: *StackFallbackAllocator = @ptrCast(@alignCast(ctx));
+        if (self.fixed.ownsPtr(mem.ptr)) {
+            return std.heap.FixedBufferAllocator.remap(&self.fixed, mem, alignment, new_len, ra);
+        }
+        return self.fallback.rawRemap(mem, alignment, new_len, ra);
+    }
+
+    fn free(ctx: *anyopaque, buf: []u8, alignment: std.mem.Alignment, ra: usize) void {
+        const self: *StackFallbackAllocator = @ptrCast(@alignCast(ctx));
+        if (self.fixed.ownsPtr(buf.ptr)) {
+            return std.heap.FixedBufferAllocator.free(&self.fixed, buf, alignment, ra);
+        }
+        return self.fallback.rawFree(buf, alignment, ra);
+    }
+};
+
 pub fn todoPanic(
     src: std.builtin.SourceLocation,
     comptime format: []const u8,

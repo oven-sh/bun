@@ -1507,7 +1507,6 @@ static int64_t indexOfBuffer(JSC::JSGlobalObject* lexicalGlobalObject, bool last
 static int64_t indexOf(JSC::JSGlobalObject* lexicalGlobalObject, ThrowScope& scope, JSC::CallFrame* callFrame, typename IDLOperation<JSArrayBufferView>::ClassParameter buffer, bool last)
 {
     bool dir = !last;
-    const uint8_t* typedVector = buffer->typedVector();
     size_t byteLength = buffer->byteLength();
     std::optional<BufferEncodingType> encoding = std::nullopt;
     double byteOffsetD = 0;
@@ -1523,17 +1522,41 @@ static int64_t indexOf(JSC::JSGlobalObject* lexicalGlobalObject, ThrowScope& sco
         byteOffsetValue = jsUndefined();
         byteOffsetD = 0;
     } else {
+        // toNumber() can trigger JavaScript execution (valueOf/Symbol.toPrimitive),
+        // which could detach the underlying ArrayBuffer. We must re-fetch the
+        // pointer and length after this call.
         byteOffsetD = byteOffsetValue.toNumber(lexicalGlobalObject);
         RETURN_IF_EXCEPTION(scope, -1);
         if (byteOffsetD > 0x7fffffffp0f) byteOffsetD = 0x7fffffffp0f;
         if (byteOffsetD < -0x80000000p0f) byteOffsetD = -0x80000000p0f;
     }
 
+    // After any call that can trigger JS execution (toNumber, toWTFString,
+    // toString), the buffer may have been detached. We must re-fetch typedVector
+    // and byteLength from the buffer right before use, and check for detachment
+    // after all JS calls in each code path are complete.
+
+    // Helper: re-fetch buffer state after JS calls. Returns false if the buffer
+    // was detached; caller treats this as an empty buffer (matches Node.js: -1).
+    auto refetchBufferState = [&](const uint8_t*& typedVector, size_t& len) -> bool {
+        if (buffer->isDetached()) [[unlikely]] {
+            typedVector = nullptr;
+            len = 0;
+            return false;
+        }
+        typedVector = buffer->typedVector();
+        len = buffer->byteLength();
+        return true;
+    };
+
     if (std::isnan(byteOffsetD)) byteOffsetD = dir ? 0 : byteLength;
 
     if (valueValue.isNumber()) {
         auto byteValue = static_cast<uint8_t>((valueValue.toInt32(lexicalGlobalObject)) % 256);
         RETURN_IF_EXCEPTION(scope, -1);
+        const uint8_t* typedVector;
+        if (!refetchBufferState(typedVector, byteLength)) return -1;
+        if (byteLength == 0) return -1;
         return indexOfNumber(lexicalGlobalObject, last, typedVector, byteLength, byteOffsetD, byteValue);
     }
 
@@ -1550,13 +1573,26 @@ static int64_t indexOf(JSC::JSGlobalObject* lexicalGlobalObject, ThrowScope& sco
         if (!encoding.has_value()) {
             return Bun::ERR::UNKNOWN_ENCODING(scope, lexicalGlobalObject, encodingString);
         }
-        auto* str = valueValue.toStringOrNull(lexicalGlobalObject);
+        auto* str = valueValue.toString(lexicalGlobalObject);
         RETURN_IF_EXCEPTION(scope, -1);
+        const uint8_t* typedVector;
+        if (!refetchBufferState(typedVector, byteLength)) return -1;
+        if (byteLength == 0) return -1;
         return indexOfString(lexicalGlobalObject, last, typedVector, byteLength, byteOffsetD, str, encoding.value());
     }
 
     if (auto* array = JSC::jsDynamicCast<JSC::JSUint8Array*>(valueValue)) {
         if (!encoding.has_value()) encoding = BufferEncodingType::utf8;
+        const uint8_t* typedVector;
+        if (!refetchBufferState(typedVector, byteLength)) return -1;
+        if (byteLength == 0) return -1;
+        // The needle's backing buffer may also have been detached by a
+        // valueOf/toPrimitive callback during toNumber/toWTFString above.
+        // Treat a detached needle as an empty buffer (matches Node.js:
+        // returns the computed byteOffset for a zero-length match).
+        if (array->isDetached()) [[unlikely]] {
+            return indexOfOffset(byteLength, byteOffsetD, 0, !last);
+        }
         return indexOfBuffer(lexicalGlobalObject, last, typedVector, byteLength, byteOffsetD, array, encoding.value());
     }
 

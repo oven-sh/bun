@@ -1227,7 +1227,7 @@ pub const internal = struct {
         can_retry_for_addrconfig: bool = default_hints.flags.ADDRCONFIG,
 
         pub fn isExpired(this: *Request, timestamp_to_store: *u32) bool {
-            if (this.refcount > 0 or this.result == null) {
+            if (this.result == null) {
                 return false;
             }
 
@@ -1284,9 +1284,11 @@ pub const internal = struct {
                 if (entry.key.hash == key.hash and entry.valid) {
                     if (entry.isExpired(timestamp_to_store)) {
                         log("get: expired entry", .{});
-                        _ = this.deleteEntryAt(len, i);
-                        entry.deinit();
-                        len = this.len;
+                        if (entry.refcount == 0) {
+                            _ = this.deleteEntryAt(len, i);
+                            entry.deinit();
+                            len = this.len;
+                        }
                         continue;
                     }
 

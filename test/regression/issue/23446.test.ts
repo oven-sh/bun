@@ -6,23 +6,22 @@ import { isArm64, isASAN, isWindows, tempDirWithFiles } from "harness";
 // TinyCC (and all of bun:ffi) is disabled on Windows ARM64.
 const isFFIUnavailable = isWindows && isArm64;
 
-describe.skipIf(isASAN || isFFIUnavailable)("FFI small buffer externalization", () => {
+// TinyCC can't find system headers (string.h) on Windows CI, so skip there too.
+describe.skipIf(isASAN || isWindows || isFFIUnavailable)("FFI small buffer externalization", () => {
   const source = /* c */ `
-    #include <string.h>
-
     // Writes known data into a buffer within bounds.
-    void fill_buffer(void* buffer, int size) {
-      memset(buffer, 0x42, size);
+    void fill_buffer(unsigned char* buffer, int size) {
+      for (int i = 0; i < size; i++) buffer[i] = 0x42;
     }
 
     // Reads a single byte from the buffer at offset.
-    unsigned char read_byte(void* buffer, int offset) {
-      return ((unsigned char*)buffer)[offset];
+    unsigned char read_byte(unsigned char* buffer, int offset) {
+      return buffer[offset];
     }
 
     // Writes a byte at a specific offset.
-    void write_byte(void* buffer, int offset, unsigned char value) {
-      ((unsigned char*)buffer)[offset] = value;
+    void write_byte(unsigned char* buffer, int offset, unsigned char value) {
+      buffer[offset] = value;
     }
   `;
 

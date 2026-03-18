@@ -55,7 +55,13 @@ test("process.title setter handles empty string", async () => {
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   const result = JSON.parse(stdout.trim());
-  expect(result.title).toBe("");
+  // On Windows, the getter reads via uv_get_process_title which returns
+  // empty for "", and the getter falls back to "bun".
+  if (process.platform === "win32") {
+    expect(result.title).toBe("bun");
+  } else {
+    expect(result.title).toBe("");
+  }
   expect(exitCode).toBe(0);
 });
 

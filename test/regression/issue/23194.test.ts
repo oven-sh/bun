@@ -1,6 +1,5 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
-import { join } from "path";
 
 // Regression test for https://github.com/oven-sh/bun/issues/23194
 // MessagePort.postMessage segfaults when ScriptExecutionContext is destroyed

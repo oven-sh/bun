@@ -517,7 +517,8 @@ pub const CAresNameInfo = struct {
         const globalThis = this.globalThis;
         this.promise = .{};
         if (result == .zero) {
-            const exception = globalThis.tryTakeException() orelse .js_undefined;
+            const exception = globalThis.tryTakeException() orelse
+                globalThis.createErrorInstance("DNS resolution failed", .{});
             promise.rejectTask(globalThis, exception) catch {};
         } else {
             promise.resolveTask(globalThis, result) catch {};
@@ -938,7 +939,8 @@ pub const CAresReverse = struct {
         const globalThis = this.globalThis;
         this.promise = .{};
         if (result == .zero) {
-            const exception = globalThis.tryTakeException() orelse .js_undefined;
+            const exception = globalThis.tryTakeException() orelse
+                globalThis.createErrorInstance("DNS resolution failed", .{});
             promise.rejectTask(globalThis, exception) catch {};
         } else {
             promise.resolveTask(globalThis, result) catch {};
@@ -1024,7 +1026,8 @@ pub fn CAresLookup(comptime cares_type: type, comptime type_name: []const u8) ty
             const globalThis = this.globalThis;
             this.promise = .{};
             if (result == .zero) {
-                const exception = globalThis.tryTakeException() orelse .js_undefined;
+                const exception = globalThis.tryTakeException() orelse
+                    globalThis.createErrorInstance("DNS resolution failed", .{});
                 promise.rejectTask(globalThis, exception) catch {};
             } else {
                 promise.resolveTask(globalThis, result) catch {};
@@ -1124,7 +1127,8 @@ pub const DNSLookup = struct {
         this.promise = .{};
         const globalThis = this.globalThis;
         if (result == .zero) {
-            const exception = globalThis.tryTakeException() orelse .js_undefined;
+            const exception = globalThis.tryTakeException() orelse
+                globalThis.createErrorInstance("DNS resolution failed", .{});
             promise.rejectTask(globalThis, exception) catch {};
         } else {
             promise.resolveTask(globalThis, result) catch {};

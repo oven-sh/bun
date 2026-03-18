@@ -5,23 +5,15 @@ import { bunEnv, bunExe } from "harness";
 // DNS promise should reject (not segfault) when result-to-JS conversion fails.
 test("Bun.dns.lookup rejects on invalid hostname without crashing", async () => {
   // This should reject with a DNS error, not segfault
-  try {
+  expect(async () => {
     await Bun.dns.lookup("example.invalid");
-  } catch (e: any) {
-    expect(e.code).toBe("DNS_ENOTFOUND");
-    return;
-  }
-  // If it didn't throw, that's also fine (e.g. some DNS resolvers may resolve anything)
+  }).toThrow();
 });
 
 test("Bun.dns.reverse rejects on unresolvable address without crashing", async () => {
-  try {
+  expect(async () => {
     await Bun.dns.reverse("192.0.2.1"); // TEST-NET, should not reverse-resolve
-  } catch (e: any) {
-    expect(e).toBeDefined();
-    return;
-  }
-  // If it didn't throw, that's also fine
+  }).toThrow();
 });
 
 test("dns operations do not crash when result conversion could fail", async () => {
@@ -37,10 +29,9 @@ test("dns operations do not crash when result conversion could fail", async () =
           Bun.dns.reverse("192.0.2.1"),
           Bun.dns.lookup("this-domain-does-not-exist.invalid"),
         ]);
-        // All should be settled (rejected), not crash
         for (const r of results) {
-          if (r.status === "rejected") {
-            // expected
+          if (r.status !== "rejected") {
+            throw new Error("expected rejection, got: " + r.status);
           }
         }
         console.log("OK");

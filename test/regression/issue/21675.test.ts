@@ -23,7 +23,11 @@ test("concurrent readdirSync from worker threads does not crash", async () => {
           worker.on("message", (msg) => {
             if (msg.error) errors.push(msg.error);
           });
-          worker.on("exit", () => {
+          worker.on("error", (err) => {
+            errors.push(err && err.message || String(err));
+          });
+          worker.on("exit", (code) => {
+            if (code !== 0) errors.push("worker exit code " + code);
             finished++;
             if (finished === workerCount) {
               if (errors.length > 0) {
@@ -63,5 +67,6 @@ test("concurrent readdirSync from worker threads does not crash", async () => {
   ]);
 
   expect(stdout.trim()).toBe("OK");
+  expect(stderr.trim()).toBe("");
   expect(exitCode).toBe(0);
 }, 30_000);

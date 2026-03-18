@@ -362,6 +362,63 @@ describe("http.request createConnection", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("handles chunked extensions and trailer headers", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const http = require("http");
+        const net = require("net");
+
+        // Use a raw TCP server to send a response with chunked extensions and trailers
+        const server = net.createServer((sock) => {
+          sock.on("data", () => {
+            sock.write(
+              "HTTP/1.1 200 OK\\r\\n" +
+              "Transfer-Encoding: chunked\\r\\n" +
+              "Trailer: X-Checksum\\r\\n" +
+              "\\r\\n" +
+              "5;ext=val\\r\\nhello\\r\\n" +
+              "6\\r\\n world\\r\\n" +
+              "0\\r\\n" +
+              "X-Checksum: abc123\\r\\n" +
+              "\\r\\n"
+            );
+            sock.end();
+          });
+        });
+        server.listen(0, () => {
+          http.get({
+            port: server.address().port,
+            createConnection: (opts) => net.connect(opts),
+          }, (res) => {
+            let d = "";
+            res.on("data", (c) => d += c);
+            res.on("end", () => {
+              console.log(JSON.stringify({
+                data: d,
+                status: res.statusCode,
+                trailers: res.trailers,
+              }));
+              server.close();
+            });
+          });
+        });
+        `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const r = JSON.parse(stdout.trim());
+    expect(r.data).toBe("hello world");
+    expect(r.status).toBe(200);
+    expect(r.trailers).toEqual({ "x-checksum": "abc123" });
+    expect(exitCode).toBe(0);
+  });
+
   test("works without createConnection (no regression)", async () => {
     await using proc = Bun.spawn({
       cmd: [

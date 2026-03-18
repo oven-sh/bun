@@ -56,6 +56,8 @@ const {
   statusMessageSymbol,
 } = require("internal/http");
 
+const { HTTPParser, freeParser } = require("node:_http_common");
+
 const { globalAgent } = require("node:_http_agent");
 const { IncomingMessage } = require("node:_http_incoming");
 const { OutgoingMessage } = require("node:_http_outgoing");
@@ -327,13 +329,14 @@ function ClientRequest(input, options, cb) {
       if (body) socket.write(body);
     };
 
-    // --- Parse HTTP/1.1 response ---
-    let hdrBuf = Buffer.alloc(0);
-    let hdrDone = false;
-    let cLen = -1;
-    let chunked = false;
-    let bodyRcvd = 0;
-    let chkBuf = Buffer.alloc(0);
+    // --- Parse HTTP/1.1 response using llhttp (via HTTPParser) ---
+    const parser = new HTTPParser();
+    parser._headers = [];
+    parser._url = "";
+    parser.maxHeaderPairs = 2000;
+    parser.socket = socket;
+    parser.initialize(HTTPParser.RESPONSE, {});
+
     let res: any = null;
 
     const responseComplete = () => {
@@ -344,53 +347,27 @@ function ClientRequest(input, options, cb) {
       this[kClearTimeout]();
       fetching = false;
       this[kFetchRequest] = null;
+      freeParser(parser, this, socket);
       maybeEmitClose();
     };
 
-    const feedBody = (data: Buffer) => {
-      if (!res || res._dumped) return;
-      if (chunked) {
-        chkBuf = chkBuf.length ? Buffer.concat([chkBuf, data]) : data;
-        while (true) {
-          const nl = chkBuf.indexOf("\r\n");
-          if (nl === -1) break;
-          const sz = parseInt(chkBuf.slice(0, nl).toString(), 16);
-          if (isNaN(sz)) { socket.destroy(); return; }
-          if (sz === 0) { responseComplete(); return; }
-          if (chkBuf.length < nl + 2 + sz + 2) break;
-          res.push(chkBuf.slice(nl + 2, nl + 2 + sz));
-          chkBuf = chkBuf.slice(nl + 2 + sz + 2);
-        }
-      } else if (cLen >= 0) {
-        bodyRcvd += data.length;
-        res.push(data);
-        if (bodyRcvd >= cLen) responseComplete();
-      } else {
-        res.push(data);
+    // Build headers object from the flat [key, val, key, val, ...] array llhttp produces
+    const buildHeaders = (rawHeaders: string[]) => {
+      const headers: any = Object.create(null);
+      for (let i = 0; i < rawHeaders.length; i += 2) {
+        const lk = rawHeaders[i].toLowerCase();
+        const v = rawHeaders[i + 1];
+        if (lk === "set-cookie") headers[lk] = headers[lk] ? [...headers[lk], v] : [v];
+        else headers[lk] = v;
       }
+      return headers;
     };
 
-    const onHeaders = (sep: number) => {
-      const lines = hdrBuf.slice(0, sep).toString("latin1").split("\r\n");
-      const statusLine = lines[0];
-      const sp1 = statusLine.indexOf(" ");
-      const sp2 = statusLine.indexOf(" ", sp1 + 1);
-      const statusCode = parseInt(sp2 === -1 ? statusLine.slice(sp1 + 1) : statusLine.slice(sp1 + 1, sp2), 10);
-      const statusMessage = sp2 === -1 ? "" : statusLine.slice(sp2 + 1);
-
-      const respHeaders: any = Object.create(null);
-      const rawHeaders: string[] = [];
-      for (let i = 1; i < lines.length; i++) {
-        const colon = lines[i].indexOf(":");
-        if (colon === -1) continue;
-        const k = lines[i].slice(0, colon), v = lines[i].slice(colon + 1).trim(), lk = k.toLowerCase();
-        rawHeaders.push(k, v);
-        if (lk === "set-cookie") respHeaders[lk] = respHeaders[lk] ? [...respHeaders[lk], v] : [v];
-        else respHeaders[lk] = v;
-        if (lk === "content-length") cLen = parseInt(v, 10);
-        else if (lk === "transfer-encoding" && v.toLowerCase().includes("chunked")) chunked = true;
+    parser[HTTPParser.kOnHeadersComplete] = (vMaj, vMin, headers, _method, _url, statusCode, statusMessage, upgrade, shouldKeepAlive) => {
+      if (headers === undefined) {
+        headers = parser._headers;
+        parser._headers = [];
       }
-      hdrDone = true;
 
       const prevIsHTTPS = getIsNextIncomingMessageHTTPS();
       setIsNextIncomingMessageHTTPS(protocol === "https:");
@@ -399,34 +376,49 @@ function ClientRequest(input, options, cb) {
 
       res[statusCodeSymbol] = statusCode;
       res[statusMessageSymbol] = statusMessage;
-      res.headers = respHeaders;
-      res.rawHeaders = rawHeaders;
+      res.httpVersion = `${vMaj}.${vMin}`;
+      res.headers = buildHeaders(headers);
+      res.rawHeaders = headers;
       res[bodyStreamSymbol] = true; // Prevent _read from accessing fetch APIs
       res.socket = socket;
       this.res = res;
       res.req = this;
       this[kClearTimeout]();
 
-      if (this.aborted) { maybeEmitClose(); return; }
+      if (this.aborted) { maybeEmitClose(); return 2; }
       if (!this.emit("response", res)) res._dump();
       maybeEmitClose();
 
-      if (method === "HEAD" || cLen === 0 || statusCode === 204 || statusCode === 304) {
-        responseComplete();
-        return;
-      }
+      // Return value: 0 = parse body, 1 = skip body (HEAD)
+      return method === "HEAD" ? 1 : 0;
+    };
 
-      const rest = hdrBuf.slice(sep + 4);
-      if (rest.length > 0) feedBody(rest);
+    parser[HTTPParser.kOnBody] = (chunk) => {
+      if (res && !res._dumped) res.push(chunk);
+    };
+
+    parser[HTTPParser.kOnMessageComplete] = () => {
+      // Handle trailing headers — override the noop prototype getter/setter
+      if (parser._headers.length && res) {
+        const trailers = buildHeaders(parser._headers);
+        const rawTrailers = parser._headers.slice();
+        Object.defineProperty(res, "trailers", { value: trailers, writable: true, enumerable: true, configurable: true });
+        Object.defineProperty(res, "rawTrailers", { value: rawTrailers, writable: true, enumerable: true, configurable: true });
+        parser._headers = [];
+      }
+      responseComplete();
+    };
+
+    parser[HTTPParser.kOnHeaders] = (headers) => {
+      // Accumulate trailing headers (called when headers arrive in fragments or as trailers)
+      parser._headers.push(...headers);
     };
 
     socket.on("data", (chunk) => {
-      if (!hdrDone) {
-        hdrBuf = hdrBuf.length ? Buffer.concat([hdrBuf, chunk]) : chunk;
-        const sep = hdrBuf.indexOf("\r\n\r\n");
-        if (sep !== -1) onHeaders(sep);
-      } else {
-        feedBody(chunk);
+      const ret = parser.execute(chunk);
+      if (ret instanceof Error) {
+        socket.destroy();
+        this.emit("error", ret);
       }
     });
     socket.on("error", (err) => {
@@ -434,7 +426,8 @@ function ClientRequest(input, options, cb) {
       try { this.emit("error", err); } catch {}
     });
     socket.on("end", () => {
-      if (hdrDone && !chunked && cLen < 0 && res && !res.complete) responseComplete();
+      parser.finish();
+      if (res && !res.complete) responseComplete();
     });
     socket.on("close", () => {
       if (res && !res.complete) responseComplete();

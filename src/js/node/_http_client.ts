@@ -51,6 +51,9 @@ const {
   reqSymbol,
   callCloseCallback,
   emitCloseNTAndComplete,
+  bodyStreamSymbol,
+  statusCodeSymbol,
+  statusMessageSymbol,
 } = require("internal/http");
 
 const { globalAgent } = require("node:_http_agent");
@@ -266,9 +269,199 @@ function ClientRequest(input, options, cb) {
 
   let fetching = false;
 
+  const startFetchViaSocket = () => {
+    fetching = true;
+
+    const method = this[kMethod];
+    const path = this[kPath];
+    const host = this[kHost];
+    const port = this[kPort];
+    const protocol = this[kProtocol];
+    const socketPath = this[kSocketPath];
+
+    // Pass full options to createConnection, matching Node.js behavior.
+    // The options object is compatible with net.connect() / tls.connect().
+    const connectOptions = { ...options, host, port, path: socketPath || undefined };
+
+    let socket;
+    try {
+      socket = createConnection(connectOptions);
+    } catch (err) {
+      process.nextTick((self, e) => self.emit("error", e), this, err);
+      return false;
+    }
+
+    this.socket = socket;
+    this[kAbortController]?.signal?.addEventListener("abort", () => socket.destroy(), { once: true });
+
+    // --- Write HTTP/1.1 request ---
+    const writeRequest = () => {
+      const headers = this.getHeaders();
+      let head = `${method} ${path} HTTP/1.1\r\n`;
+
+      if (!headers.host && !headers.Host) {
+        const dp = protocol === "https:" ? 443 : 80;
+        head += port && port !== dp ? `Host: ${host}:${port}\r\n` : `Host: ${host}\r\n`;
+      }
+
+      const chunks = this[kBodyChunks];
+      let body;
+      if (chunks?.length > 0) {
+        const bufs = chunks.map(c => (typeof c === "string" ? Buffer.from(c) : c));
+        body = bufs.length === 1 ? bufs[0] : Buffer.concat(bufs);
+      }
+
+      for (const key of Object.keys(headers)) {
+        const val = headers[key];
+        if (val === undefined) continue;
+        if ($isJSArray(val)) {
+          for (const v of val) head += `${key}: ${v}\r\n`;
+        } else {
+          head += `${key}: ${val}\r\n`;
+        }
+      }
+
+      if (body) head += `Content-Length: ${body.byteLength}\r\n`;
+      head += "\r\n";
+      socket.write(head);
+      if (body) socket.write(body);
+    };
+
+    // --- Parse HTTP/1.1 response ---
+    let hdrBuf = Buffer.alloc(0);
+    let hdrDone = false;
+    let cLen = -1;
+    let chunked = false;
+    let bodyRcvd = 0;
+    let chkBuf = Buffer.alloc(0);
+    let res: any = null;
+
+    const responseComplete = () => {
+      if (res && !res.complete) {
+        res.push(null);
+        res.complete = true;
+      }
+      this[kClearTimeout]();
+      fetching = false;
+      this[kFetchRequest] = null;
+      maybeEmitClose();
+    };
+
+    const feedBody = (data: Buffer) => {
+      if (!res || res._dumped) return;
+      if (chunked) {
+        chkBuf = chkBuf.length ? Buffer.concat([chkBuf, data]) : data;
+        while (true) {
+          const nl = chkBuf.indexOf("\r\n");
+          if (nl === -1) break;
+          const sz = parseInt(chkBuf.slice(0, nl).toString(), 16);
+          if (isNaN(sz)) { socket.destroy(); return; }
+          if (sz === 0) { responseComplete(); return; }
+          if (chkBuf.length < nl + 2 + sz + 2) break;
+          res.push(chkBuf.slice(nl + 2, nl + 2 + sz));
+          chkBuf = chkBuf.slice(nl + 2 + sz + 2);
+        }
+      } else if (cLen >= 0) {
+        bodyRcvd += data.length;
+        res.push(data);
+        if (bodyRcvd >= cLen) responseComplete();
+      } else {
+        res.push(data);
+      }
+    };
+
+    const onHeaders = (sep: number) => {
+      const lines = hdrBuf.slice(0, sep).toString("latin1").split("\r\n");
+      const statusLine = lines[0];
+      const sp1 = statusLine.indexOf(" ");
+      const sp2 = statusLine.indexOf(" ", sp1 + 1);
+      const statusCode = parseInt(sp2 === -1 ? statusLine.slice(sp1 + 1) : statusLine.slice(sp1 + 1, sp2), 10);
+      const statusMessage = sp2 === -1 ? "" : statusLine.slice(sp2 + 1);
+
+      const respHeaders: any = Object.create(null);
+      const rawHeaders: string[] = [];
+      for (let i = 1; i < lines.length; i++) {
+        const colon = lines[i].indexOf(":");
+        if (colon === -1) continue;
+        const k = lines[i].slice(0, colon), v = lines[i].slice(colon + 1).trim(), lk = k.toLowerCase();
+        rawHeaders.push(k, v);
+        if (lk === "set-cookie") respHeaders[lk] = respHeaders[lk] ? [...respHeaders[lk], v] : [v];
+        else respHeaders[lk] = v;
+        if (lk === "content-length") cLen = parseInt(v, 10);
+        else if (lk === "transfer-encoding" && v.toLowerCase().includes("chunked")) chunked = true;
+      }
+      hdrDone = true;
+
+      const prevIsHTTPS = getIsNextIncomingMessageHTTPS();
+      setIsNextIncomingMessageHTTPS(protocol === "https:");
+      res = new IncomingMessage(null, {});
+      setIsNextIncomingMessageHTTPS(prevIsHTTPS);
+
+      res[statusCodeSymbol] = statusCode;
+      res[statusMessageSymbol] = statusMessage;
+      res.headers = respHeaders;
+      res.rawHeaders = rawHeaders;
+      res[bodyStreamSymbol] = true; // Prevent _read from accessing fetch APIs
+      res.socket = socket;
+      this.res = res;
+      res.req = this;
+      this[kClearTimeout]();
+
+      if (this.aborted) { maybeEmitClose(); return; }
+      if (!this.emit("response", res)) res._dump();
+      maybeEmitClose();
+
+      if (method === "HEAD" || cLen === 0 || statusCode === 204 || statusCode === 304) {
+        responseComplete();
+        return;
+      }
+
+      const rest = hdrBuf.slice(sep + 4);
+      if (rest.length > 0) feedBody(rest);
+    };
+
+    socket.on("data", (chunk) => {
+      if (!hdrDone) {
+        hdrBuf = hdrBuf.length ? Buffer.concat([hdrBuf, chunk]) : chunk;
+        const sep = hdrBuf.indexOf("\r\n\r\n");
+        if (sep !== -1) onHeaders(sep);
+      } else {
+        feedBody(chunk);
+      }
+    });
+    socket.on("error", (err) => {
+      if (isAbortError(err)) return;
+      try { this.emit("error", err); } catch {}
+    });
+    socket.on("end", () => {
+      if (hdrDone && !chunked && cLen < 0 && res && !res.complete) responseComplete();
+    });
+    socket.on("close", () => {
+      if (res && !res.complete) responseComplete();
+      socketCloseListener();
+    });
+
+    // Wait for connection (TCP or TLS handshake) before writing, matching http2 pattern
+    if (socket.connecting || socket.secureConnecting) {
+      const connectEvent = socket.secureConnecting ? "secureConnect" : "connect";
+      socket.once(connectEvent, writeRequest);
+    } else {
+      process.nextTick(writeRequest);
+    }
+
+    return true;
+  };
+
   const startFetch = (customBody?) => {
     if (fetching) {
       return false;
+    }
+
+    // Socket-based path: when createConnection is provided, bypass the fetch
+    // infrastructure and use raw HTTP/1.1 over the user-provided socket.
+    if (typeof createConnection === "function") {
+      if (!this.finished) return false; // Wait until end() is called
+      return startFetchViaSocket();
     }
 
     fetching = true;
@@ -917,6 +1110,8 @@ function ClientRequest(input, options, cb) {
 
   const { signal: _signal, ...optsWithoutSignal } = options;
   this[kOptions] = optsWithoutSignal;
+
+  const createConnection = options.createConnection;
 
   this._httpMessage = this;
 

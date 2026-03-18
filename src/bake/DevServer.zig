@@ -2577,8 +2577,13 @@ pub fn finalizeBundle(
                     try dev.makeArrayForServerComponentsPatch(dev.vm.global, dev.incremental_result.client_components_added.items),
                     try dev.makeArrayForServerComponentsPatch(dev.vm.global, dev.incremental_result.client_components_removed.items),
                 },
-            )) |_| {
-                // TODO: handle returned errors
+            )) |update_result| {
+                // The HMR runtime's registerUpdate returns a Promise<void>.
+                // If it somehow returned an error value, log it for debugging.
+                if (update_result.isAnyError()) {
+                    dev.vm.printErrorLikeObjectToConsole(update_result);
+                    Output.prettyError("<red>error<r>: HMR module update returned an error.\n", .{});
+                }
             } else |err| {
                 // One module replacement error should NOT prevent follow-up
                 // module replacements to fail. It is the HMR runtime's

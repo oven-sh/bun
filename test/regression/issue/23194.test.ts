@@ -60,7 +60,8 @@ Comlink.expose({
     stdout: "pipe",
     stderr: "pipe",
   });
-  await install.exited;
+  const installExitCode = await install.exited;
+  expect(installExitCode).toBe(0);
 
   await using proc = Bun.spawn({
     cmd: [bunExe(), "run", "main.js"],
@@ -72,9 +73,6 @@ Comlink.expose({
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  // Should not crash with a segfault
-  expect(stderr).not.toContain("Segmentation fault");
-  expect(stderr).not.toContain("has crashed");
   expect(stdout).toContain("done");
   expect(exitCode).toBe(0);
 }, 60000);

@@ -139,11 +139,14 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
                     if (i >= path.len) break;
                     const url_start = i;
 
-                    // Find the end of the URL, which is either whitespace or a comma
-                    while (i < path.len and !std.ascii.isWhitespace(path[i])) : (i += 1) {}
-                    const raw_end = i;
-                    var url_end = raw_end;
-                    while (url_end > url_start and path[url_end - 1] == ',') : (url_end -= 1) {}
+                    // data: URLs can contain commas, so only treat commas as terminators for non-data URLs.
+                    const is_data_url = strings.hasPrefix(path[url_start..], "data:");
+                    if (is_data_url) {
+                        while (i < path.len and !std.ascii.isWhitespace(path[i])) : (i += 1) {}
+                    } else {
+                        while (i < path.len and !std.ascii.isWhitespace(path[i]) and path[i] != ',') : (i += 1) {}
+                    }
+                    const url_end = i;
 
                     const replacement = brk: {
                         switch (this.getTagAction()) {
@@ -159,10 +162,6 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
                     bun.handleOom(rewritten.appendSlice(path[last_emit..url_start]));
                     bun.handleOom(rewritten.appendSlice(replacement));
                     last_emit = url_end;
-
-                    if (raw_end > url_end) {
-                        continue;
-                    }
 
                     while (i < path.len and path[i] != ',') : (i += 1) {}
                     if (i < path.len) i += 1;

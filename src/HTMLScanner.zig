@@ -69,23 +69,19 @@ pub fn onTag(this: *HTMLScanner, _: *lol.Element, path: []const u8, url_attribut
             // Skip leading whitespace
             while (i < path.len and std.ascii.isWhitespace(path[i])) : (i += 1) {}
             if (i >= path.len) break;
-
-            // Read the URL until first whitespace
             const url_start = i;
-            while (i < path.len and !std.ascii.isWhitespace(path[i])) : (i += 1) {}
-            const raw_end = i;
 
-            // Strip any trailing commas
-            var url_end = raw_end;
-            while (url_end > url_start and path[url_end - 1] == ',') : (url_end -= 1) {}
+            // data: URLs can contain commas, so only treat commas as terminators for non-data URLs.
+            const is_data_url = bun.strings.hasPrefix(path[url_start..], "data:");
+            if (is_data_url) {
+                while (i < path.len and !std.ascii.isWhitespace(path[i])) : (i += 1) {}
+            } else {
+                while (i < path.len and !std.ascii.isWhitespace(path[i]) and path[i] != ',') : (i += 1) {}
+            }
+            const url_end = i;
 
             if (url_end > url_start) {
                 this.createImportRecord(path[url_start..url_end], kind) catch {};
-            }
-
-            if (raw_end > url_end) {
-                // If url ended on comma, start parsing next URL
-                continue;
             }
 
             // Read until next comma to find start of next URL

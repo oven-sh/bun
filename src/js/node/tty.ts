@@ -16,7 +16,7 @@ function ReadStream(fd): void {
   if (!(this instanceof ReadStream)) {
     return new ReadStream(fd);
   }
-  fs.ReadStream.$apply(this, ["", { fd }]);
+  fs.ReadStream.$apply(this, ["", { fd, autoClose: false }]);
   this.isRaw = false;
   // Only set isTTY to true if the fd is actually a TTY
   this.isTTY = isatty(fd);

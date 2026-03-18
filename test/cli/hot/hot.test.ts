@@ -492,7 +492,8 @@ it(
   timeout,
 );
 
-const comment_spam = ("//" + "B".repeat(2000) + "\n").repeat(1000);
+const comment_line = "//" + Buffer.alloc(2000, "B").toString() + "\n";
+const comment_spam = Buffer.alloc(comment_line.length * 1000, comment_line).toString();
 it(
   "should work with sourcemap generation",
   async () => {
@@ -598,7 +599,7 @@ ${Buffer.alloc(counter * 2, " ").toString()}throw new Error(${counter});`,
   timeout,
 );
 
-const long_comment = "BBBB".repeat(100000);
+const long_comment = Buffer.alloc(400000, "BBBB").toString();
 
 it(
   "should work with sourcemap loading with large files",

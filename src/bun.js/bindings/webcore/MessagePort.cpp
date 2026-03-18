@@ -165,7 +165,10 @@ ExceptionOr<void> MessagePort::postMessage(JSC::JSGlobalObject& state, JSC::JSVa
 
     if (!isEntangled())
         return {};
-    ASSERT(scriptExecutionContext());
+
+    auto context = protectedScriptExecutionContext();
+    if (!context)
+        return {};
 
     Vector<TransferredMessagePort> transferredPorts;
     // Make sure we aren't connected to any of the passed-in ports.
@@ -183,7 +186,7 @@ ExceptionOr<void> MessagePort::postMessage(JSC::JSGlobalObject& state, JSC::JSVa
 
     MessageWithMessagePorts message { messageData.releaseReturnValue(), WTF::move(transferredPorts) };
 
-    MessagePortChannelProvider::fromContext(*protectedScriptExecutionContext()).postMessageToRemote(WTF::move(message), m_remoteIdentifier);
+    MessagePortChannelProvider::fromContext(*context).postMessageToRemote(WTF::move(message), m_remoteIdentifier);
     return {};
 }
 

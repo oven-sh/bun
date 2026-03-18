@@ -36,17 +36,19 @@ const
     "worker.js": `
 import * as Comlink from 'comlink/dist/esm/comlink.js';
 
+const TARGET_CALLBACKS = 5000;
+
 Comlink.expose({
   async start(start, main) {
     let i = 0;
-    const interval = setInterval(
-      () => main.callback(i++, Date.now() - start),
-      1,
-    );
-    setTimeout(() => {
-      clearInterval(interval);
-      main.callback(i, Date.now(), true);
-    }, 3000);
+    const interval = setInterval(() => {
+      if (i >= TARGET_CALLBACKS) {
+        clearInterval(interval);
+        main.callback(i, Date.now() - start, true);
+        return;
+      }
+      main.callback(i++, Date.now() - start);
+    }, 1);
   },
 });
 `,

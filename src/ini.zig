@@ -1348,6 +1348,10 @@ pub fn loadNpmrc(
 
             break :scoped_best_match_lens lens;
         };
+        defer for (&scoped_best_match_lens) |*l| {
+            if (l.len > 0) allocator.free(l.*);
+            l.* = &.{};
+        };
 
         for (configs.items) |conf_item| {
             const conf_item_url = bun.URL.parse(conf_item.registry_url);

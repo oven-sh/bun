@@ -31,8 +31,9 @@ const stripAnsi = Bun.stripANSI;
 // prompt/echo lines (contain \r), and blank lines.
 function getOutputLines(stdout: string): string[] {
   return stripAnsi(stdout)
+    .replace(/\r/g, "")
     .split("\n")
-    .filter(l => !l.includes("\r") && !l.startsWith("Welcome to") && !l.startsWith("Type ") && l.trim() !== "");
+    .filter(l => !l.startsWith("Welcome to") && !l.startsWith("Type ") && l.trim() !== "");
 }
 
 describe("REPL thrown values should show 'Uncaught' prefix", () => {

@@ -631,9 +631,11 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             return globalThis.throw2("Server() is not a constructor", .{});
         }
 
-        pub fn jsValueAssertAlive(server: *ThisServer) jsc.JSValue {
-            bun.assert(server.js_value.isNotEmpty());
-            return server.js_value.tryGet().?;
+        /// Returns the server's JS wrapper value, or null if it has been
+        /// finalized (e.g. after stop() + GC).  Callers that originate from
+        /// uWS callbacks must handle the null case gracefully (e.g. 503).
+        pub fn tryGetJSValue(server: *ThisServer) ?jsc.JSValue {
+            return server.js_value.tryGet();
         }
 
         pub fn requestIP(this: *ThisServer, request: *jsc.WebCore.Request) bun.JSError!jsc.JSValue {
@@ -1249,9 +1251,12 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             var request = Request.new(existing_request);
 
             bun.assert(this.config.onRequest != .zero); // confirmed above
+            const server_js = this.tryGetJSValue() orelse {
+                return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(ctx, ZigString.init("Server is shutting down").toErrorInstance(ctx));
+            };
             const response_value = this.config.onRequest.call(
                 this.globalThis,
-                this.jsValueAssertAlive(),
+                server_js,
                 &[_]jsc.JSValue{request.toJS(this.globalThis)},
             ) catch |err| this.globalThis.takeException(err);
 
@@ -2047,14 +2052,20 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             const server = user_route.server;
             const index = user_route.id;
 
+            const server_js = server.tryGetJSValue() orelse {
+                resp.writeStatus("503 Service Unavailable");
+                resp.endWithoutBody(true);
+                return;
+            };
+
             var should_deinit_context = false;
             var prepared = server.prepareJsRequestContext(req, resp, &should_deinit_context, .no, switch (user_route.route.method) {
                 .any => null,
                 .specific => |m| m,
             }) orelse return;
 
-            const server_request_list = js.routeListGetCached(server.jsValueAssertAlive()).?;
-            const response_value = bun.jsc.fromJSHostCall(server.globalThis, @src(), Bun__ServerRouteList__callRoute, .{ server.globalThis, index, prepared.request_object, server.jsValueAssertAlive(), server_request_list, &prepared.js_request, req }) catch |err| server.globalThis.takeException(err);
+            const server_request_list = js.routeListGetCached(server_js).?;
+            const response_value = bun.jsc.fromJSHostCall(server.globalThis, @src(), Bun__ServerRouteList__callRoute, .{ server.globalThis, index, prepared.request_object, server_js, server_request_list, &prepared.js_request, req }) catch |err| server.globalThis.takeException(err);
 
             server.handleRequest(&should_deinit_context, prepared, req, response_value);
         }
@@ -2089,16 +2100,21 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
         }
 
         pub fn onRequest(this: *ThisServer, req: *uws.Request, resp: *App.Response) void {
+            const server_js = this.tryGetJSValue() orelse {
+                resp.writeStatus("503 Service Unavailable");
+                resp.endWithoutBody(true);
+                return;
+            };
+
             var should_deinit_context = false;
             const prepared = this.prepareJsRequestContext(req, resp, &should_deinit_context, .yes, null) orelse return;
 
             bun.assert(this.config.onRequest != .zero);
 
-            const js_value = this.jsValueAssertAlive();
             const response_value = this.config.onRequest.call(
                 this.globalThis,
-                js_value,
-                &.{ prepared.js_request, js_value },
+                server_js,
+                &.{ prepared.js_request, server_js },
             ) catch |err|
                 this.globalThis.takeException(err);
 
@@ -2124,10 +2140,16 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             const ctx = prepared.ctx;
 
             bun.assert(callback != .zero);
+            const server_js = this.tryGetJSValue() orelse {
+                // Server JS wrapper was finalized; reject with 503.
+                resp.writeStatus("503 Service Unavailable");
+                resp.endWithoutBody(true);
+                return;
+            };
             const args = .{prepared.js_request} ++ extra_args;
             const response_value = callback.call(
                 this.globalThis,
-                this.jsValueAssertAlive(),
+                server_js,
                 &args,
             ) catch |err|
                 this.globalThis.takeException(err);
@@ -2318,11 +2340,17 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             const server = this.server;
             const index = this.id;
 
+            const server_js = server.tryGetJSValue() orelse {
+                resp.writeStatus("503 Service Unavailable");
+                resp.endWithoutBody(true);
+                return;
+            };
+
             var should_deinit_context = false;
             var prepared = server.prepareJsRequestContext(req, resp, &should_deinit_context, .no, method) orelse return;
             prepared.ctx.upgrade_context = upgrade_ctx; // set the upgrade context
-            const server_request_list = js.routeListGetCached(server.jsValueAssertAlive()).?;
-            const response_value = bun.jsc.fromJSHostCall(server.globalThis, @src(), Bun__ServerRouteList__callRoute, .{ server.globalThis, index, prepared.request_object, server.jsValueAssertAlive(), server_request_list, &prepared.js_request, req }) catch |err| server.globalThis.takeException(err);
+            const server_request_list = js.routeListGetCached(server_js).?;
+            const response_value = bun.jsc.fromJSHostCall(server.globalThis, @src(), Bun__ServerRouteList__callRoute, .{ server.globalThis, index, prepared.request_object, server_js, server_request_list, &prepared.js_request, req }) catch |err| server.globalThis.takeException(err);
 
             server.handleRequest(&should_deinit_context, prepared, req, response_value);
         }
@@ -2347,6 +2375,11 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 resp.endWithoutBody(true);
                 return;
             }
+            const server_js = this.tryGetJSValue() orelse {
+                resp.writeStatus("503 Service Unavailable");
+                resp.endWithoutBody(true);
+                return;
+            };
             this.pending_requests += 1;
             req.setYield(false);
             var ctx = bun.handleOom(this.request_pool_allocator.tryGet());
@@ -2370,12 +2403,12 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             // We keep the Request object alive for the duration of the request so that we can remove the pointer to the UWS request object.
             var args = [_]jsc.JSValue{
                 request_object.toJS(this.globalThis),
-                this.jsValueAssertAlive(),
+                server_js,
             };
             const request_value = args[0];
             request_value.ensureStillAlive();
 
-            const response_value = this.config.onRequest.call(this.globalThis, this.jsValueAssertAlive(), &args) catch |err|
+            const response_value = this.config.onRequest.call(this.globalThis, server_js, &args) catch |err|
                 this.globalThis.takeException(err);
             defer {
                 // uWS request will not live longer than this function

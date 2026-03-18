@@ -1,6 +1,6 @@
 import { expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
 import { existsSync } from "fs";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
 setDefaultTimeout(30_000);

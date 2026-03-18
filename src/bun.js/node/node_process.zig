@@ -31,7 +31,7 @@ pub fn setTitle(globalObject: *JSGlobalObject, newvalue: *bun.String) callconv(.
         return;
     };
 
-    if (bun.cli.Bun__Node__ProcessTitle) |slice| bun.default_allocator.free(slice);
+    if (bun.cli.Bun__Node__ProcessTitle) |old| bun.default_allocator.free(old);
     bun.cli.Bun__Node__ProcessTitle = new_title_z;
 
     // Update the OS-visible process title (Activity Monitor on macOS,

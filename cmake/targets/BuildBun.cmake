@@ -1265,6 +1265,12 @@ if(BUN_LINK_ONLY)
 endif()
 
 if(WIN32)
+  # bmalloc.lib is still linked because WTF.lib references bmalloc symbols.
+  # However, bmalloc's SystemHeap is unimplemented on Windows (all methods
+  # crash), so BmallocSystemHeapOverride.cpp provides a working implementation
+  # using mimalloc. Combined with setting Malloc=1 at startup (main.zig), this
+  # bypasses libpas for all allocations.
+  # See: https://github.com/oven-sh/bun/issues/22349
   if(DEBUG)
     target_link_libraries(${bun} PRIVATE
       ${WEBKIT_LIB_PATH}/WTF.lib

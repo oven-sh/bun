@@ -202,10 +202,13 @@ devTest("using runtime import", {
   },
 });
 devTest("hmr handles rapid consecutive edits", {
+  // Regression coverage for https://github.com/oven-sh/bun/issues/19736.
   // Rapid unsynchronized writes can cause the HMR system to fall back to a
   // full page reload (the previous module's `import.meta.hot.accept()` may no
   // longer be valid). Allow unlimited reloads so the client doesn't die, and
-  // bump the timeout for slow Windows CI runners.
+  // bump the timeout for slow Windows CI runners. If the #19736 fix were
+  // reverted, the "Unknown HMR script" error would fire console.error in the
+  // HMR runtime, killing the client-fixture, so "render 10" would never arrive.
   timeoutMultiplier: 3,
   files: {
     "index.html": emptyHtmlFile({
@@ -222,38 +225,21 @@ devTest("hmr handles rapid consecutive edits", {
       await Bun.sleep(1);
     }
 
-    // Wait event-driven for "render 10" to appear. Intermediate renders may
-    // be skipped (watcher coalescing) and the final render may fire multiple
-    // times (duplicate reloads / full-page reloads), so we just listen for
-    // any occurrence.
+    // Wait for "render 10" to appear. Intermediate renders may be skipped
+    // (watcher coalescing) and the final render may fire multiple times
+    // (duplicate reloads / full-page reloads), so we just check for any
+    // occurrence.
     const finalRender = "render 10";
-    await new Promise<void>((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        cleanup();
-        reject(
-          new Error(
-            `Timed out waiting for "${finalRender}". ` +
-              `Messages received: [${client.messages.map(m => JSON.stringify(m)).join(", ")}]`,
-          ),
+    const deadline = Date.now() + 10_000;
+    while (!client.messages.includes(finalRender)) {
+      if (Date.now() >= deadline) {
+        throw new Error(
+          `Timed out waiting for "${finalRender}". ` +
+            `Messages received: [${client.messages.map((m) => JSON.stringify(m)).join(", ")}]`,
         );
-      }, 10_000);
-      const check = () => {
-        for (const msg of client.messages) {
-          if (msg === finalRender) {
-            cleanup();
-            resolve();
-            return;
-          }
-        }
-      };
-      const cleanup = () => {
-        clearTimeout(timeout);
-        client.off("message", check);
-      };
-      client.on("message", check);
-      // Check messages already buffered.
-      check();
-    });
+      }
+      await Bun.sleep(50);
+    }
     // Drain all buffered messages — intermediate renders and possible
     // duplicates of the final render are expected and harmless.
     client.messages.length = 0;

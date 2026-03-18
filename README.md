@@ -406,6 +406,10 @@ bun upgrade --canary
   - [Copy a file to another location](https://bun.com/guides/write-file/file-cp)
   - [Write a ReadableStream to a file](https://bun.com/guides/write-file/stream)
 
+## Fun fact
+
+Why do JavaScript developers prefer Bun? Because they're tired of _loafing_ around waiting for `npm install`.
+
 ## Contributing
 
 Refer to the [Project > Contributing](https://bun.com/docs/project/contributing) guide to start contributing to Bun.

@@ -2476,15 +2476,6 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     this.request_body_buf.ensureTotalCapacityPrecise(this.allocator, @min(this.request_body_content_len, max_request_body_preallocate_length)) catch @panic("Out of memory while allocating request body buffer");
                 }
                 this.request_body_buf.appendSlice(this.allocator, chunk) catch @panic("Out of memory while allocating request body");
-
-                // Pause the HTTP socket when the pre-stream buffer grows too large.
-                // This prevents unbounded memory growth when data arrives faster than
-                // the JS fetch handler can set up a ReadableStream consumer.
-                // The socket is resumed in onStartStreamingRequestBody (streaming path)
-                // or onStartBuffering (buffered path like req.text()).
-                if (this.request_body_buf.items.len >= max_request_body_preallocate_length) {
-                    resp.pause();
-                }
             }
         }
 
@@ -2494,13 +2485,6 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 return jsc.WebCore.DrainResult{
                     .aborted = {},
                 };
-            }
-
-            // Resume the HTTP socket if it was paused during pre-stream buffering.
-            // The ByteStream backpressure (wired up right after this call) will
-            // take over pause/resume management from here.
-            if (this.resp) |r| {
-                r.@"resume"();
             }
 
             // This means we have received part of the body but not the whole thing
@@ -2526,12 +2510,6 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
         pub fn onStartBuffering(this: *RequestContext) void {
             if (this.server) |server| {
                 ctxLog("onStartBuffering", .{});
-                // Resume the HTTP socket if it was paused during pre-stream buffering.
-                // For buffered consumption (req.text(), req.json(), etc.) we want all
-                // data to arrive as fast as possible.
-                if (this.resp) |r| {
-                    r.@"resume"();
-                }
                 // TODO: check if is someone calling onStartBuffering other than onStartBufferingCallback
                 // if is not, this should be removed and only keep protect + setAbortHandler
                 if (this.flags.is_transfer_encoding == false and this.request_body_content_len == 0) {

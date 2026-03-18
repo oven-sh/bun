@@ -86,7 +86,7 @@ test("RegExp source preserves non-ASCII characters", async () => {
 test("String.raw with non-ASCII via runtime transpiler cache", async () => {
   using dir = tempDir("string-raw-rtc", {
     // Pad to >50KB to exceed MINIMUM_CACHE_SIZE in RuntimeTranspilerCache.zig
-    "index.ts": "console.log(String.raw`æ™弟気👋`);" + " ".repeat(64 * 1024),
+    "index.ts": "console.log(String.raw`æ™弟気👋`);" + Buffer.alloc(64 * 1024, " ").toString(),
   });
   using cacheDir = tempDir("string-raw-rtc-cache", {});
   const env = { ...bunEnv, BUN_RUNTIME_TRANSPILER_CACHE_PATH: String(cacheDir) };

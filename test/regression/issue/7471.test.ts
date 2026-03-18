@@ -419,6 +419,95 @@ describe("http.request createConnection", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("handles 100 Continue before final response", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const http = require("http");
+        const net = require("net");
+        // Raw TCP server that sends 100 Continue then 200
+        const server = net.createServer((sock) => {
+          sock.on("data", () => {
+            sock.write("HTTP/1.1 100 Continue\\r\\n\\r\\nHTTP/1.1 200 OK\\r\\nContent-Length: 4\\r\\n\\r\\ndone");
+            sock.end();
+          });
+        });
+        server.listen(0, () => {
+          let infoReceived = false;
+          const req = http.request({
+            port: server.address().port,
+            method: "POST",
+            headers: { "Expect": "100-continue" },
+            createConnection: (opts) => net.connect(opts),
+          }, (res) => {
+            let d = "";
+            res.on("data", (c) => d += c);
+            res.on("end", () => {
+              console.log(JSON.stringify({ data: d, status: res.statusCode, infoReceived }));
+              server.close();
+            });
+          });
+          req.on("information", (info) => {
+            infoReceived = info.statusCode === 100;
+          });
+          req.end("body");
+        });
+        `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const r = JSON.parse(stdout.trim());
+    expect(r).toEqual({ data: "done", status: 200, infoReceived: true });
+    expect(exitCode).toBe(0);
+  });
+
+  test("does not duplicate Content-Length when caller sets it", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const http = require("http");
+        const net = require("net");
+        const server = http.createServer((req, res) => {
+          // Echo back the content-length header(s) the server received
+          const cl = req.headers["content-length"];
+          res.end("cl:" + cl);
+        });
+        server.listen(0, () => {
+          const body = "hello";
+          const req = http.request({
+            port: server.address().port,
+            method: "POST",
+            headers: { "Content-Length": Buffer.byteLength(body) },
+            createConnection: (opts) => net.connect(opts),
+          }, (res) => {
+            let d = "";
+            res.on("data", (c) => d += c);
+            res.on("end", () => {
+              console.log(JSON.stringify({ data: d }));
+              server.close();
+            });
+          });
+          req.end(body);
+        });
+        `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const r = JSON.parse(stdout.trim());
+    expect(r.data).toBe("cl:5");
+    expect(exitCode).toBe(0);
+  });
+
   test("works without createConnection (no regression)", async () => {
     await using proc = Bun.spawn({
       cmd: [

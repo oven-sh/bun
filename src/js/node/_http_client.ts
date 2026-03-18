@@ -314,7 +314,13 @@ function ClientRequest(input, options, cb) {
         body = bufs.length === 1 ? bufs[0] : Buffer.concat(bufs);
       }
 
+      // Check if caller already set framing headers
+      let hasContentLength = false;
+      let hasTransferEncoding = false;
       for (const key of Object.keys(headers)) {
+        const lk = key.toLowerCase();
+        if (lk === "content-length") hasContentLength = true;
+        else if (lk === "transfer-encoding") hasTransferEncoding = true;
         const val = headers[key];
         if (val === undefined) continue;
         if ($isJSArray(val)) {
@@ -324,7 +330,10 @@ function ClientRequest(input, options, cb) {
         }
       }
 
-      if (body) head += `Content-Length: ${body.byteLength}\r\n`;
+      // Only add Content-Length if caller didn't set framing headers
+      if (body && !hasContentLength && !hasTransferEncoding) {
+        head += `Content-Length: ${body.byteLength}\r\n`;
+      }
       head += "\r\n";
       socket.write(head);
       if (body) socket.write(body);
@@ -370,6 +379,20 @@ function ClientRequest(input, options, cb) {
         parser._headers = [];
       }
 
+      // 1xx informational responses (100 Continue, 103 Early Hints, etc.)
+      // are not terminal — emit "information" and let the parser continue
+      // waiting for the final response.
+      if (statusCode >= 100 && statusCode < 200) {
+        this.emit("information", {
+          statusCode,
+          statusMessage,
+          httpVersion: `${vMaj}.${vMin}`,
+          headers: buildHeaders(headers),
+          rawHeaders: headers,
+        });
+        return 1; // skip body, parser stays active for next response
+      }
+
       const prevIsHTTPS = getIsNextIncomingMessageHTTPS();
       setIsNextIncomingMessageHTTPS(protocol === "https:");
       res = new IncomingMessage(null, {});
@@ -386,7 +409,7 @@ function ClientRequest(input, options, cb) {
       res.req = this;
       this[kClearTimeout]();
 
-      if (this.aborted) { maybeEmitClose(); return 2; }
+      if (this.aborted) { maybeEmitClose(); return 1; }
       if (!this.emit("response", res)) res._dump();
       maybeEmitClose();
 
@@ -399,8 +422,12 @@ function ClientRequest(input, options, cb) {
     };
 
     parser[HTTPParser.kOnMessageComplete] = () => {
+      // For 1xx informational responses, res is not set — don't free the parser,
+      // just let it continue parsing the next (final) response.
+      if (!res) return;
+
       // Handle trailing headers — override the noop prototype getter/setter
-      if (parser._headers.length && res) {
+      if (parser._headers.length) {
         const trailers = buildHeaders(parser._headers);
         const rawTrailers = parser._headers.slice();
         Object.defineProperty(res, "trailers", { value: trailers, writable: true, enumerable: true, configurable: true });
@@ -430,19 +457,42 @@ function ClientRequest(input, options, cb) {
     });
     socket.on("end", () => {
       parser.finish();
-      if (res && !res.complete) responseComplete();
+      // If the response is still incomplete after parser.finish(), the connection
+      // was closed prematurely — surface an error instead of silently completing.
+      if (res && !res.complete) {
+        res.destroy(new ConnResetException("aborted"));
+      }
     });
     socket.on("close", () => {
-      if (res && !res.complete) responseComplete();
+      if (res && !res.complete) {
+        res.destroy(new ConnResetException("aborted"));
+      }
       socketCloseListener();
     });
 
-    // Wait for connection (TCP or TLS handshake) before writing, matching http2 pattern
-    if (socket.connecting || socket.secureConnecting) {
+    // Ensure socket is connected before writing
+    let connected = !socket.connecting && !socket.secureConnecting;
+    if (!connected) {
       const connectEvent = socket.secureConnecting ? "secureConnect" : "connect";
-      socket.once(connectEvent, writeRequest);
-    } else {
+      socket.once(connectEvent, () => {
+        connected = true;
+        if (this.finished) writeRequest();
+      });
+    }
+
+    // Write request when both connected and body is ready.
+    // If end() was already called (this.finished), write immediately.
+    // Otherwise, the send() function will trigger writing via resolveNextChunk.
+    if (this.finished && connected) {
       process.nextTick(writeRequest);
+    } else if (!this.finished) {
+      // Override resolveNextChunk so that when end() signals completion,
+      // we write the request to the socket.
+      const origResolve = resolveNextChunk;
+      resolveNextChunk = (end) => {
+        origResolve?.(end);
+        if (end && connected) writeRequest();
+      };
     }
 
     return true;
@@ -456,7 +506,6 @@ function ClientRequest(input, options, cb) {
     // Socket-based path: when createConnection is provided, bypass the fetch
     // infrastructure and use raw HTTP/1.1 over the user-provided socket.
     if (typeof createConnection === "function") {
-      if (!this.finished) return false; // Wait until end() is called
       return startFetchViaSocket();
     }
 

@@ -1,5 +1,7 @@
 import { expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { existsSync } from "fs";
+import { join } from "path";
 
 setDefaultTimeout(30_000);
 
@@ -10,10 +12,12 @@ test("bun add with relative tarball path and --global should work", async () => 
   });
 
   // Create the tarball
-  Bun.spawnSync({
+  const tarResult = Bun.spawnSync({
     cmd: ["tar", "czf", "test.tgz", "-C", "test-pkg", "."],
     cwd: String(dir),
   });
+  expect(tarResult.exitCode).toBe(0);
+  expect(existsSync(join(String(dir), "test.tgz"))).toBe(true);
 
   // Test: bun add ./test.tgz --global with a relative path
   await using proc = Bun.spawn({

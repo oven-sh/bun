@@ -296,7 +296,7 @@ pub fn callback(task: *ThreadPool.Task) void {
 /// Resolve a local tarball path. For global installs, relative paths are resolved
 /// against the user's original working directory instead of the global install directory.
 fn resolveLocalTarball(manager: *const PackageManager, raw_url: string, abs_buf: *bun.PathBuffer) struct { string, bool } {
-    if (manager.user_cwd.len > 0 and !std.fs.path.isAbsolute(raw_url)) {
+    if (manager.user_cwd.len > 0 and !Path.Platform.isAbsolute(.auto, raw_url)) {
         return .{
             Path.joinAbsStringBuf(
                 manager.user_cwd,

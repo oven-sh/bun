@@ -655,10 +655,10 @@ TLSSocket.prototype.setSession = function setSession(session) {
   return this._handle?.setSession?.(session);
 };
 
-TLSSocket.prototype.getPeerCertificate = function getPeerCertificate(abbreviated) {
+TLSSocket.prototype.getPeerCertificate = function getPeerCertificate(detailed) {
   if (this._handle) {
     const cert =
-      arguments.length < 1 ? this._handle.getPeerCertificate?.() : this._handle.getPeerCertificate?.(abbreviated);
+      arguments.length < 1 ? this._handle.getPeerCertificate?.() : this._handle.getPeerCertificate?.(detailed);
     if (cert) {
       return translatePeerCertificate(cert);
     }

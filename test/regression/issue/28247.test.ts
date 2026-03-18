@@ -45,7 +45,7 @@ globalBinDir = "${globalBinDir.replace(/\\/g, "\\\\")}"
     },
   });
 
-  const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+  const [stderr, , exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
 
   // The workspace deps can't be resolved, so we expect an error exit - but NOT a crash/panic.
   expect(stderr).not.toContain("panic");

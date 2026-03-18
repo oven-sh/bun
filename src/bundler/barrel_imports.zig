@@ -575,6 +575,7 @@ fn persistBarrelExport(dev: *bun.bake.DevServer, barrel_path: []const u8, alias:
     }
 }
 
+const PathToSourceIndexMap = @import("./PathToSourceIndexMap.zig");
 const std = @import("std");
 const BundleV2 = @import("./bundle_v2.zig").BundleV2;
 const ParseTask = @import("./ParseTask.zig").ParseTask;
@@ -585,4 +586,3 @@ const Output = bun.Output;
 
 const Index = bun.ast.Index;
 const JSAst = bun.ast.BundledAst;
-const PathToSourceIndexMap = @import("./PathToSourceIndexMap.zig");

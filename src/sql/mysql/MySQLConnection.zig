@@ -1085,7 +1085,7 @@ fn handleResultSet(this: *MySQLConnection, comptime Context: type, reader: NewRe
                     return;
                 }
 
-                if (packet_type == .OK or packet_type == .EOF) {
+                if (packet_type == .OK or (packet_type == .EOF and this.#capabilities.CLIENT_DEPRECATE_EOF)) {
                     if (request.isSimple() or packet_type == .EOF) {
                         // CLIENT_DEPRECATE_EOF mode: OK packet (possibly with 0xFE header)
                         try ok.decode(reader);

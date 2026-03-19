@@ -2277,9 +2277,10 @@ const Output = bun.Output;
 const PosixSpawn = bun.spawn;
 const Maybe = bun.sys.Maybe;
 const ShellSubprocess = bun.shell.ShellSubprocess;
-const WebViewHostProcess = bun.api.WebViewHostProcess;
-const ChromeProcess = bun.api.ChromeProcess;
 const uv = bun.windows.libuv;
+
+const ChromeProcess = bun.api.ChromeProcess;
+const WebViewHostProcess = bun.api.WebViewHostProcess;
 
 const LifecycleScriptSubprocess = bun.install.LifecycleScriptSubprocess;
 const SecurityScanSubprocess = bun.install.SecurityScanSubprocess;

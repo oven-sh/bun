@@ -121,8 +121,10 @@ std::span<const char> jsonString(std::span<const char> field)
     // cheap). Then peel the quotes.
     const char* p = field.data();
     const char* end = p + field.size();
-    while (p < end && (*p == ' ' || *p == '\t')) ++p;
-    while (end > p && (end[-1] == ' ' || end[-1] == '\t')) --end;
+    while (p < end && (*p == ' ' || *p == '\t'))
+        ++p;
+    while (end > p && (end[-1] == ' ' || end[-1] == '\t'))
+        --end;
     if (end - p < 2 || *p != '"' || end[-1] != '"') return {};
     return { p + 1, static_cast<size_t>(end - p - 2) };
 }

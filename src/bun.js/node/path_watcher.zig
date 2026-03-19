@@ -153,145 +153,209 @@ pub const PathWatcherManager = struct {
 
         const timestamp = std.time.milliTimestamp();
 
-        this.mutex.lock();
-        defer this.mutex.unlock();
+        // Subdirectories created during this batch that recursive watchers need
+        // to register. Collected under the lock, processed after releasing it
+        // because _fdFromAbsolutePathZ and _addDirectory both take this.mutex.
+        const NewSubdir = struct { watcher: *PathWatcher, path: [:0]u8 };
+        var new_subdirs: bun.BabyList(NewSubdir) = .{};
+        defer {
+            for (new_subdirs.slice()) |item| bun.default_allocator.free(item.path);
+            new_subdirs.deinit(bun.default_allocator);
+        }
 
-        const watchers = this.watchers.slice();
+        {
+            this.mutex.lock();
+            defer this.mutex.unlock();
 
-        for (events) |event| {
-            if (event.index >= file_paths.len) continue;
-            const file_path = file_paths[event.index];
-            const update_count = counts[event.index] + 1;
-            counts[event.index] = update_count;
-            const kind = kinds[event.index];
+            const watchers = this.watchers.slice();
+
+            for (events) |event| {
+                if (event.index >= file_paths.len) continue;
+                const file_path = file_paths[event.index];
+                const update_count = counts[event.index] + 1;
+                counts[event.index] = update_count;
+                const kind = kinds[event.index];
+
+                if (comptime Environment.isDebug) {
+                    log("[watch] {s} ({s}, {f})", .{ file_path, @tagName(kind), event.op });
+                }
+
+                switch (kind) {
+                    .file => {
+                        if (event.op.delete) {
+                            ctx.removeAtIndex(
+                                event.index,
+                                0,
+                                &.{},
+                                .file,
+                            );
+                        }
+
+                        if (event.op.write or event.op.delete or event.op.rename or event.op.metadata) {
+                            const event_type: PathWatcher.EventType = if (event.op.delete or event.op.rename or event.op.move_to) .rename else .change;
+                            const hash = Watcher.getHash(file_path);
+
+                            for (watchers) |w| {
+                                if (w) |watcher| {
+                                    if (comptime Environment.isMac) {
+                                        if (watcher.fsevents_watcher != null) continue;
+                                    }
+                                    const entry_point = watcher.path.dirname;
+                                    var path = file_path;
+
+                                    if (path.len < entry_point.len) {
+                                        continue;
+                                    }
+                                    if (watcher.path.is_file) {
+                                        if (watcher.path.hash != hash) {
+                                            continue;
+                                        }
+                                    } else {
+                                        if (!bun.strings.startsWith(path, entry_point)) {
+                                            continue;
+                                        }
+                                    }
+                                    // Remove common prefix, unless the watched folder is "/"
+                                    if (!(path.len == 1 and entry_point[0] == '/')) {
+                                        path = path[entry_point.len..];
+
+                                        // Ignore events with path equal to directory itself
+                                        if (path.len <= 1) {
+                                            continue;
+                                        }
+
+                                        if (bun.strings.startsWithChar(path, '/')) {
+                                            // Skip forward slash
+                                            path = path[1..];
+                                        }
+                                    }
+
+                                    // Do not emit events from subdirectories (without option set)
+                                    if (path.len == 0 or (bun.strings.containsChar(path, '/') and !watcher.recursive)) {
+                                        continue;
+                                    }
+                                    watcher.emit(event_type.toEvent(path), hash, timestamp, true);
+                                }
+                            }
+                        }
+                    },
+                    .directory => {
+                        const affected = event.names(changed_files);
+
+                        for (affected) |changed_name_| {
+                            const changed_name: []const u8 = bun.asByteSlice(changed_name_.?);
+                            if (changed_name.len == 0) continue;
+
+                            const file_path_without_trailing_slash = std.mem.trimRight(u8, file_path, std.fs.path.sep_str);
+
+                            @memcpy(_on_file_update_path_buf[0..file_path_without_trailing_slash.len], file_path_without_trailing_slash);
+
+                            _on_file_update_path_buf[file_path_without_trailing_slash.len] = std.fs.path.sep;
+
+                            @memcpy(_on_file_update_path_buf[file_path_without_trailing_slash.len + 1 ..][0..changed_name.len], changed_name);
+                            const len = file_path_without_trailing_slash.len + changed_name.len;
+                            const path_slice = _on_file_update_path_buf[0 .. len + 1];
+
+                            const hash = Watcher.getHash(path_slice);
+
+                            // If it's a create, delete, rename, or move event, emit "rename".
+                            // If it's a write (modify) or metadata (attrib) event, emit "change".
+                            const event_type: PathWatcher.EventType = if (event.op.create or event.op.delete or event.op.rename or event.op.move_to) .rename else .change;
+
+                            // A subdirectory was created or moved in — recursive
+                            // watchers need an inotify watch on it to see changes
+                            // inside. Queue registration for after we release the
+                            // lock. We may over-queue if files and subdirs arrive
+                            // in the same merged event (is_dir is OR'd), but the
+                            // registration path handles non-directories gracefully.
+                            const maybe_new_subdir = Environment.isLinux and event.op.is_dir and (event.op.create or event.op.move_to);
+
+                            for (watchers) |w| {
+                                if (w) |watcher| {
+                                    if (comptime Environment.isMac) {
+                                        if (watcher.fsevents_watcher != null) continue;
+                                    }
+                                    const entry_point = watcher.path.dirname;
+                                    var path = path_slice;
+
+                                    if (watcher.path.is_file or path.len < entry_point.len or !bun.strings.startsWith(path, entry_point)) {
+                                        continue;
+                                    }
+                                    // Remove common prefix, unless the watched folder is "/"
+                                    if (!(path.len == 1 and entry_point[0] == '/')) {
+                                        path = path[entry_point.len..];
+
+                                        // Skip leading slash
+                                        if (bun.strings.startsWithChar(path, '/')) {
+                                            path = path[1..];
+                                        }
+                                    }
+
+                                    // Do not emit events from subdirectories (without option set)
+                                    if (path.len == 0 or (bun.strings.containsChar(path, '/') and !watcher.recursive)) {
+                                        continue;
+                                    }
+
+                                    if (maybe_new_subdir and watcher.recursive and !watcher.isClosed()) {
+                                        _on_file_update_path_buf[len + 1] = 0;
+                                        const abs_path_z = _on_file_update_path_buf[0 .. len + 1 :0];
+                                        const dup = bun.handleOom(bun.default_allocator.dupeZ(u8, abs_path_z));
+                                        bun.handleOom(new_subdirs.append(bun.default_allocator, .{ .watcher = watcher, .path = dup }));
+                                    }
+
+                                    watcher.emit(event_type.toEvent(path), hash, timestamp, false);
+                                }
+                            }
+                        }
+                    },
+                }
+            }
 
             if (comptime Environment.isDebug) {
-                log("[watch] {s} ({s}, {f})", .{ file_path, @tagName(kind), event.op });
+                Output.flush();
             }
-
-            switch (kind) {
-                .file => {
-                    if (event.op.delete) {
-                        ctx.removeAtIndex(
-                            event.index,
-                            0,
-                            &.{},
-                            .file,
-                        );
-                    }
-
-                    if (event.op.write or event.op.delete or event.op.rename) {
-                        const event_type: PathWatcher.EventType = if (event.op.delete or event.op.rename or event.op.move_to) .rename else .change;
-                        const hash = Watcher.getHash(file_path);
-
-                        for (watchers) |w| {
-                            if (w) |watcher| {
-                                if (comptime Environment.isMac) {
-                                    if (watcher.fsevents_watcher != null) continue;
-                                }
-                                const entry_point = watcher.path.dirname;
-                                var path = file_path;
-
-                                if (path.len < entry_point.len) {
-                                    continue;
-                                }
-                                if (watcher.path.is_file) {
-                                    if (watcher.path.hash != hash) {
-                                        continue;
-                                    }
-                                } else {
-                                    if (!bun.strings.startsWith(path, entry_point)) {
-                                        continue;
-                                    }
-                                }
-                                // Remove common prefix, unless the watched folder is "/"
-                                if (!(path.len == 1 and entry_point[0] == '/')) {
-                                    path = path[entry_point.len..];
-
-                                    // Ignore events with path equal to directory itself
-                                    if (path.len <= 1) {
-                                        continue;
-                                    }
-
-                                    if (bun.strings.startsWithChar(path, '/')) {
-                                        // Skip forward slash
-                                        path = path[1..];
-                                    }
-                                }
-
-                                // Do not emit events from subdirectories (without option set)
-                                if (path.len == 0 or (bun.strings.containsChar(path, '/') and !watcher.recursive)) {
-                                    continue;
-                                }
-                                watcher.emit(event_type.toEvent(path), hash, timestamp, true);
-                            }
-                        }
-                    }
-                },
-                .directory => {
-                    const affected = event.names(changed_files);
-
-                    for (affected) |changed_name_| {
-                        const changed_name: []const u8 = bun.asByteSlice(changed_name_.?);
-                        if (changed_name.len == 0 or changed_name[0] == '~' or changed_name[0] == '.') continue;
-
-                        const file_path_without_trailing_slash = std.mem.trimRight(u8, file_path, std.fs.path.sep_str);
-
-                        @memcpy(_on_file_update_path_buf[0..file_path_without_trailing_slash.len], file_path_without_trailing_slash);
-
-                        _on_file_update_path_buf[file_path_without_trailing_slash.len] = std.fs.path.sep;
-
-                        @memcpy(_on_file_update_path_buf[file_path_without_trailing_slash.len + 1 ..][0..changed_name.len], changed_name);
-                        const len = file_path_without_trailing_slash.len + changed_name.len;
-                        const path_slice = _on_file_update_path_buf[0 .. len + 1];
-
-                        const hash = Watcher.getHash(path_slice);
-
-                        // skip consecutive duplicates
-                        // If it's a create, delete, rename, or move event, emit "rename"
-                        // If it's a pure write (modify) event, emit "change"
-                        const event_type: PathWatcher.EventType = if (event.op.create or event.op.delete or event.op.rename or event.op.move_to) .rename else .change;
-                        for (watchers) |w| {
-                            if (w) |watcher| {
-                                if (comptime Environment.isMac) {
-                                    if (watcher.fsevents_watcher != null) continue;
-                                }
-                                const entry_point = watcher.path.dirname;
-                                var path = path_slice;
-
-                                if (watcher.path.is_file or path.len < entry_point.len or !bun.strings.startsWith(path, entry_point)) {
-                                    continue;
-                                }
-                                // Remove common prefix, unless the watched folder is "/"
-                                if (!(path.len == 1 and entry_point[0] == '/')) {
-                                    path = path[entry_point.len..];
-
-                                    // Skip leading slash
-                                    if (bun.strings.startsWithChar(path, '/')) {
-                                        path = path[1..];
-                                    }
-                                }
-
-                                // Do not emit events from subdirectories (without option set)
-                                if (path.len == 0 or (bun.strings.containsChar(path, '/') and !watcher.recursive)) {
-                                    continue;
-                                }
-
-                                watcher.emit(event_type.toEvent(path), hash, timestamp, false);
-                            }
-                        }
-                    }
-                },
+            for (watchers) |w| {
+                if (w) |watcher| {
+                    if (watcher.needs_flush) watcher.flush();
+                }
             }
         }
 
-        if (comptime Environment.isDebug) {
-            Output.flush();
+        // Process subdirectory registrations outside the lock.
+        for (new_subdirs.slice()) |item| {
+            this._registerNewSubdirectory(item.watcher, item.path);
         }
-        for (watchers) |w| {
-            if (w) |watcher| {
-                if (watcher.needs_flush) watcher.flush();
-            }
+    }
+
+    // Called when a recursive watcher observes IN_CREATE|IN_ISDIR or
+    // IN_MOVED_TO|IN_ISDIR for a child. Adds an inotify watch on the new
+    // subdirectory and schedules a scan of its children. Must be called
+    // WITHOUT this.mutex held.
+    fn _registerNewSubdirectory(this: *PathWatcherManager, watcher: *PathWatcher, path_z: [:0]const u8) void {
+        if (watcher.isClosed()) return;
+
+        const child_path = switch (this._fdFromAbsolutePathZ(path_z)) {
+            .result => |r| r,
+            .err => return, // race: moved/deleted, or not actually a directory
+        };
+
+        if (child_path.is_file) {
+            this._decrementPathRefAndClose(path_z);
+            return;
+        }
+
+        {
+            watcher.mutex.lock();
+            defer watcher.mutex.unlock();
+            watcher.file_paths.append(bun.default_allocator, child_path.path) catch {
+                this._decrementPathRefAndClose(path_z);
+                return;
+            };
+        }
+
+        switch (this._addDirectory(watcher, child_path)) {
+            .err => |err| log("[watch] failed to register new subdirectory {s}: {f}", .{ path_z, err }),
+            .result => {},
         }
     }
 
@@ -411,12 +475,21 @@ pub const PathWatcherManager = struct {
         ) bun.sys.Maybe(void) {
             if (Environment.isWindows) @compileError("use win_watcher.zig");
 
+            // For non-recursive watches, the directory-level inotify watch
+            // already reports changes (IN_MODIFY/IN_CREATE/IN_DELETE) with the
+            // child filename, so per-file watches are unnecessary. This matches
+            // libuv's uv_fs_event_start(), which calls inotify_add_watch once
+            // on the target path and never iterates directory contents.
+            if (!watcher.recursive) return .success;
+
+            // For recursive watches, we only need to discover subdirectories so
+            // we can add inotify watches on them. Individual files are covered
+            // by their parent directory's inotify watch.
             const manager = this.manager;
             const path = this.path;
             const fd = path.fd;
             var iter = fd.stdDir().iterate();
 
-            // now we iterate over all files and directories
             while (iter.next() catch |err| {
                 return .{
                     .err = .{
@@ -431,6 +504,12 @@ pub const PathWatcherManager = struct {
                     },
                 };
             }) |entry| {
+                // Skip regular files — directory inotify already covers them.
+                // .sym_link and .unknown (NFS/FUSE d_type) are probed by
+                // _fdFromAbsolutePathZ which determines the real kind via open().
+                if (entry.kind != .directory and entry.kind != .sym_link and entry.kind != .unknown) continue;
+                if (watcher.isClosed()) break;
+
                 var parts = [2]string{ path.path, entry.name };
                 const entry_path = Path.joinAbsStringBuf(
                     Fs.FileSystem.instance.topLevelDirWithoutTrailingSlash(),
@@ -444,14 +523,37 @@ pub const PathWatcherManager = struct {
 
                 const child_path = switch (manager._fdFromAbsolutePathZ(entry_path_z)) {
                     .result => |result| result,
-                    .err => |e| return .{ .err = e },
+                    .err => |e| {
+                        // Skip entries we can't open — permission errors,
+                        // dangling/circular symlinks, or races with deletion.
+                        // Node.js's recursive_watch.js only ignores ENOENT,
+                        // but since we never open files (only directories),
+                        // EACCES here means an unreadable subdirectory which
+                        // we can't watch anyway — skipping matches user intent.
+                        if (e.errno == @intFromEnum(bun.sys.E.ACCES) or
+                            e.errno == @intFromEnum(bun.sys.E.PERM) or
+                            e.errno == @intFromEnum(bun.sys.E.NOENT) or
+                            e.errno == @intFromEnum(bun.sys.E.NOTDIR) or
+                            e.errno == @intFromEnum(bun.sys.E.LOOP))
+                        {
+                            continue;
+                        }
+                        return .{ .err = e };
+                    },
                 };
+
+                // Symlink/unknown entry that resolved to a file — release the
+                // fd and ref. We only hold resources for directories.
+                if (child_path.is_file) {
+                    manager._decrementPathRefAndClose(entry_path_z);
+                    continue;
+                }
 
                 {
                     watcher.mutex.lock();
                     defer watcher.mutex.unlock();
                     watcher.file_paths.append(bun.default_allocator, child_path.path) catch |err| {
-                        manager._decrementPathRef(entry_path_z);
+                        manager._decrementPathRefAndClose(entry_path_z);
                         return switch (err) {
                             error.OutOfMemory => .{ .err = .{
                                 .errno = @truncate(@intFromEnum(bun.sys.E.NOMEM)),
@@ -461,28 +563,12 @@ pub const PathWatcherManager = struct {
                     };
                 }
 
-                // we need to call this unlocked
-                if (child_path.is_file) {
-                    switch (manager.main_watcher.addFile(
-                        child_path.fd,
-                        child_path.path,
-                        child_path.hash,
-                        options.Loader.file,
-                        .invalid,
-                        null,
-                        false,
-                    )) {
-                        .err => |err| return .{ .err = err },
-                        .result => {},
-                    }
-                } else {
-                    if (watcher.recursive and !watcher.isClosed()) {
-                        // this may trigger another thread with is desired when available to watch long trees
-                        switch (manager._addDirectory(watcher, child_path)) {
-                            .err => |err| return .{ .err = err.withPath(child_path.path) },
-                            .result => {},
-                        }
-                    }
+                // Add inotify watch on the subdirectory and schedule a task
+                // to scan its children. On failure, the fd stays in file_paths
+                // and watcher.file_paths — cleanup happens in unregisterWatcher.
+                switch (manager._addDirectory(watcher, child_path)) {
+                    .err => |err| return .{ .err = err.withPath(child_path.path) },
+                    .result => {},
                 }
             }
             return .success;
@@ -602,6 +688,26 @@ pub const PathWatcherManager = struct {
         this.mutex.lock();
         defer this.mutex.unlock();
         this._decrementPathRefNoLock(file_path);
+    }
+
+    // Like _decrementPathRef, but also closes the fd under the lock when
+    // refs reach zero. Used for paths that were opened by _fdFromAbsolutePathZ
+    // but never handed to main_watcher (so main_watcher.remove won't close them).
+    fn _decrementPathRefAndClose(this: *PathWatcherManager, file_path: [:0]const u8) void {
+        this.mutex.lock();
+        defer this.mutex.unlock();
+        if (this.file_paths.getEntry(file_path)) |entry| {
+            var path = entry.value_ptr;
+            if (path.refs > 0) {
+                path.refs -= 1;
+                if (path.refs == 0) {
+                    const path_ = path.path;
+                    path.fd.close();
+                    _ = this.file_paths.remove(path_);
+                    bun.default_allocator.free(path_);
+                }
+            }
+        }
     }
 
     // unregister is always called form main thread

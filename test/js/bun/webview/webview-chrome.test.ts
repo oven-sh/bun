@@ -125,22 +125,29 @@ it("chrome: type inserts text", async () => {
 it("chrome: scroll dispatches wheel event", async () => {
   const view = new Bun.WebView({ backend: "chrome", width: 300, height: 300 });
   try {
-    await view.navigate(
-      html(`
-        <script>
-          window.__wheel = new Promise(resolve => {
-            addEventListener("wheel", e => resolve({dy: e.deltaY, trusted: e.isTrusted}), {once: true, passive: true});
-          });
-        </script>
-        <body style='height:2000px'></body>
-      `),
-    );
-    // Input.dispatchMouseEvent's reply means the event was DISPATCHED to
-    // the page — the compositor roundtrip is done, but the JS handler's
-    // microtask might not have run yet. await the page-side Promise.
+    await view.navigate(html("<body style='height:2000px'></body>"));
     await view.scroll(0, 100);
-    const ev = await view.evaluate("__wheel");
-    expect(ev).toEqual({ dy: 100, trusted: true });
+    // Input.dispatchMouseEvent's reply means the event was QUEUED — the
+    // compositor applies the scroll asynchronously. Playwright's own wheel
+    // tests do page.waitForFunction('window.scrollY === 100') for exactly
+    // this reason (wheel.spec.ts:56). Our evaluate() awaits a page-side
+    // promise; rAF-polling until scrollY > 0 is the same mechanism.
+    //
+    // Not checking exact value — Chromium on macOS scales deltaY by device
+    // pixel ratio (crbug/1324819; Playwright skips delta assertions on
+    // mac+chromium for this reason, wheel.spec.ts:26). scrollY > 0 proves
+    // the trusted wheel reached the compositor and scrolled.
+    const y = await view.evaluate(`
+      new Promise((resolve, reject) => {
+        const deadline = performance.now() + 2000;
+        requestAnimationFrame(function tick() {
+          if (window.scrollY > 0) return resolve(window.scrollY);
+          if (performance.now() > deadline) return reject("scrollY never moved");
+          requestAnimationFrame(tick);
+        });
+      })
+    `);
+    expect(y).toBeGreaterThan(0);
   } finally {
     view.close();
   }

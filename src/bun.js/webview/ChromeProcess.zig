@@ -68,22 +68,30 @@ pub fn onProcessExit(this: *ChromeProcess, _: *bun.spawn.Process, status: bun.sp
 
 /// Auto-detect the Chrome binary. chrome-headless-shell is the ~100MB
 /// stripped variant (no GPU compositor, no extensions) — ships with
-/// puppeteer/playwright installs. Falls through to the full app bundles.
+/// playwright installs. Falls through to the full app bundles.
+///
+/// Playwright registry layout (packages/playwright-core/src/server/registry):
+///   mac:   ~/Library/Caches/ms-playwright/chromium_headless_shell-<rev>/
+///            chrome-headless-shell-mac-<arch>/chrome-headless-shell
+///   linux: ~/.cache/ms-playwright/chromium_headless_shell-<rev>/
+///            chrome-headless-shell-linux64/chrome-headless-shell
+///            (arm64 non-cft builds use chrome-linux/headless_shell instead)
 fn findChrome(alloc: std.mem.Allocator) !?[:0]const u8 {
     // Env override first — lets tests pin a specific binary.
     if (std.process.getEnvVarOwned(alloc, "BUN_CHROME_PATH")) |p| {
         return try alloc.dupeZ(u8, p);
     } else |_| {}
 
+    // Playwright cache — readdir for the newest chromium_headless_shell-<rev>.
+    // <rev> is numeric and monotonic per Playwright's browsers.json.
+    if (findPlaywrightShell(alloc)) |p| return p;
+
     const candidates = if (comptime bun.Environment.isMac) [_][]const u8{
-        // Playwright/puppeteer cache — most likely on a dev box.
-        "~/.cache/ms-playwright/chromium_headless_shell-*/chrome-mac/headless_shell",
         "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
         "/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary",
         "/Applications/Chromium.app/Contents/MacOS/Chromium",
         "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
     } else if (comptime bun.Environment.isLinux) [_][]const u8{
-        "~/.cache/ms-playwright/chromium_headless_shell-*/chrome-linux/headless_shell",
         "/usr/bin/google-chrome-stable",
         "/usr/bin/google-chrome",
         "/usr/bin/chromium-browser",
@@ -92,27 +100,82 @@ fn findChrome(alloc: std.mem.Allocator) !?[:0]const u8 {
         "/usr/bin/microsoft-edge",
     } else [_][]const u8{};
 
-    // Glob expansion for the playwright cache path is TODO — the version
-    // suffix changes per install. App-bundle paths cover the common case.
     for (candidates) |c| {
-        // Star in path → glob. Skip for now.
-        if (bun.strings.indexOfChar(c, '*')) |_| continue;
-
-        var expanded_buf: bun.PathBuffer = undefined;
-        const expanded: [:0]const u8 = if (c[0] == '~') blk: {
-            const home = std.process.getEnvVarOwned(alloc, "HOME") catch continue;
-            defer alloc.free(home);
-            const parts = [_][]const u8{ home, c[2..] };
-            break :blk bun.path.joinStringBufZ(&expanded_buf, &parts, .auto);
-        } else blk: {
-            @memcpy(expanded_buf[0..c.len], c);
-            expanded_buf[c.len] = 0;
-            break :blk expanded_buf[0..c.len :0];
-        };
-
-        switch (bun.sys.stat(expanded)) {
-            .result => return try alloc.dupeZ(u8, expanded),
+        var buf: bun.PathBuffer = undefined;
+        const z = bun.path.z(c, &buf);
+        switch (bun.sys.stat(z)) {
+            .result => return try alloc.dupeZ(u8, c),
             .err => continue,
+        }
+    }
+    return null;
+}
+
+/// Scan the Playwright cache dir for chromium_headless_shell-<rev> entries,
+/// pick the highest rev, stat the binary inside. Returns null if no cache
+/// dir, no matching entries, or binary missing.
+fn findPlaywrightShell(alloc: std.mem.Allocator) ?[:0]const u8 {
+    const home = std.process.getEnvVarOwned(alloc, "HOME") catch return null;
+    defer alloc.free(home);
+
+    var dir_buf: bun.PathBuffer = undefined;
+    const cache_subpath = if (comptime bun.Environment.isMac)
+        "Library/Caches/ms-playwright"
+    else
+        ".cache/ms-playwright";
+    const parts = [_][]const u8{ home, cache_subpath };
+    const cache_dir = bun.path.joinStringBufZ(&dir_buf, &parts, .auto);
+
+    const fd = switch (bun.sys.open(cache_dir, bun.O.RDONLY | bun.O.DIRECTORY, 0)) {
+        .result => |f| f,
+        .err => return null,
+    };
+    defer fd.close();
+
+    // Scan for chromium_headless_shell-<rev> and track max rev.
+    var best_rev: u32 = 0;
+    var best_name: [64]u8 = undefined;
+    var best_len: usize = 0;
+    const prefix = "chromium_headless_shell-";
+
+    var iter = bun.DirIterator.iterate(fd, .u8);
+    while (iter.next().unwrap() catch return null) |entry| {
+        if (entry.kind != .directory) continue;
+        const name = entry.name.slice();
+        if (!bun.strings.hasPrefixComptime(name, prefix)) continue;
+        const rev_str = name[prefix.len..];
+        const rev = std.fmt.parseInt(u32, rev_str, 10) catch continue;
+        if (rev > best_rev) {
+            best_rev = rev;
+            best_len = @min(name.len, best_name.len);
+            @memcpy(best_name[0..best_len], name[0..best_len]);
+        }
+    }
+    if (best_rev == 0) return null;
+
+    // Build the binary path. Two possible subdir layouts:
+    //   cft:     chrome-headless-shell-<plat>-<arch>/chrome-headless-shell
+    //   non-cft: chrome-linux/headless_shell   (linux arm64 only)
+    const arch = if (comptime bun.Environment.isAarch64) "arm64" else "x64";
+    const plat = if (comptime bun.Environment.isMac) "mac" else "linux";
+    const subdir_cft = std.fmt.allocPrint(alloc, "chrome-headless-shell-{s}-{s}/chrome-headless-shell", .{ plat, arch }) catch return null;
+    defer alloc.free(subdir_cft);
+
+    var bin_buf: bun.PathBuffer = undefined;
+    const bin_parts = [_][]const u8{ cache_dir, best_name[0..best_len], subdir_cft };
+    const bin = bun.path.joinStringBufZ(&bin_buf, &bin_parts, .auto);
+    switch (bun.sys.stat(bin)) {
+        .result => return alloc.dupeZ(u8, bin) catch return null,
+        .err => {},
+    }
+
+    // Fall back to the non-cft linux arm64 layout.
+    if (comptime bun.Environment.isLinux and bun.Environment.isAarch64) {
+        const bin_parts2 = [_][]const u8{ cache_dir, best_name[0..best_len], "chrome-linux/headless_shell" };
+        const bin2 = bun.path.joinStringBufZ(&bin_buf, &bin_parts2, .auto);
+        switch (bun.sys.stat(bin2)) {
+            .result => return alloc.dupeZ(u8, bin2) catch return null,
+            .err => {},
         }
     }
     return null;

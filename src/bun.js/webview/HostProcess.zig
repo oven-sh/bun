@@ -23,6 +23,19 @@ parent_fd: bun.FileDescriptor,
 
 var instance: ?*HostProcess = null;
 
+/// Bun__atexit-registered: SIGKILL the child if still alive at process
+/// exit. Socket EOF handles normal parent-death (including SIGKILL of Bun
+/// — kernel closes fds, child reads 0, CFRunLoopStop). This catches the
+/// clean-exit path where the child hasn't yet noticed EOF before we're
+/// about to return from main(). WKWebView's own WebContent/GPU/Network
+/// helpers are XPC-connected to the child — when the child dies they
+/// get the connection-invalidated callback and exit.
+fn killOnExit() callconv(.c) void {
+    if (instance) |i| {
+        _ = i.process.kill(9);
+    }
+}
+
 /// Lazy: first `new Bun.WebView()` calls this via C++. Returns the parent
 /// socket fd (>= 0) or -1 on spawn failure. Idempotent — second call returns
 /// the same fd if the child is still alive, -1 if it died.
@@ -110,6 +123,10 @@ fn spawn(vm: *jsc.VirtualMachine) !*HostProcess {
             // dead process (kernel discards). If we ref'd, parent would
             // stay alive forever waiting on a child that is waiting on us.
             self.process.disableKeepingEventLoopAlive();
+            // Belt-and-braces — SIGKILL on Bun exit if the child hasn't
+            // already exited via socket EOF. atexit covers clean exit +
+            // caught signals; EOF covers SIGKILL-of-parent.
+            bun.Global.addExitCallback(killOnExit);
         },
         .err => |e| {
             log("watch failed: {f}", .{e});

@@ -44,6 +44,33 @@ it("navigate + evaluate round-trip", async () => {
   }
 });
 
+it("url constructor option fires navigate()", async () => {
+  // `url:` is sugar for navigate() right after Create. The promise lands in
+  // m_pendingNavigate; the user's next await serializes behind it. Here
+  // evaluate() blocks until the navigate's NavDone clears the slot and the
+  // eval IPC goes out behind it — so by the time evaluate resolves, the
+  // page has loaded.
+  const view = new Bun.WebView({ width: 200, height: 200, url: html("<h1 id=t>from-ctor</h1>") });
+  try {
+    // No explicit navigate() — the constructor fired it. evaluate() will
+    // wait for the pending navigate to complete (checkSlot serializes).
+    // Actually — evaluate uses m_pendingEval, not m_pendingNavigate, so
+    // they don't serialize against each other on the JS side. The child
+    // processes the Create+Navigate+Evaluate frames in order from the same
+    // socket batch; evaluate lands after navigate in the child's dispatch
+    // loop, but callAsyncJavaScript doesn't wait for didFinishNavigation.
+    // The eval may race the load. Await onNavigated to be sure.
+    const { promise, resolve } = Promise.withResolvers<void>();
+    view.onNavigated = () => resolve();
+    await promise;
+    const result = await view.evaluate("document.getElementById('t').textContent");
+    expect(result).toBe("from-ctor");
+    expect(view.url).toStartWith("data:text/html");
+  } finally {
+    view.close();
+  }
+});
+
 it("evaluate() returns native JS values via page-side JSON.stringify + parent JSONParse", async () => {
   const view = new Bun.WebView({ width: 200, height: 200 });
   try {

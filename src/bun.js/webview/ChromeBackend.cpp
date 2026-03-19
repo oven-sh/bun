@@ -18,6 +18,7 @@
 #include <errno.h>
 #include <mutex>
 #include <stdio.h>
+#include <stdlib.h>
 
 #include "libusockets.h"
 #include "_libusockets.h"
@@ -191,8 +192,6 @@ bool Transport::ensureSpawned(Zig::GlobalObject* zig, const WTF::String& userDat
     // with ENOTSOCK silently misread as EOF).
     m_writeFd = fd;
     m_global = zig;
-    if (s_debugCDP)
-        fprintf(stderr, "[cdp] transport fd=%d\n", fd);
 
     if (!m_ctx) {
         us_loop_t* loop = uws_get_loop();

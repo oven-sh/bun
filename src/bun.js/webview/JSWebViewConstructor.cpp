@@ -80,6 +80,7 @@ JSC_DEFINE_HOST_FUNCTION(constructWebView, (JSGlobalObject * globalObject, CallF
 
     uint32_t width = 800, height = 600;
     WTF::String persistDir;
+    WTF::String initialUrl;
     WebViewBackend backend = WebViewBackend::WebKit;
 
     JSValue options = callFrame->argument(0);
@@ -112,6 +113,21 @@ JSC_DEFINE_HOST_FUNCTION(constructWebView, (JSGlobalObject * globalObject, CallF
             else if (s != "webkit"_s)
                 return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_VALUE,
                     "backend must be \"webkit\" or \"chrome\""_s);
+        }
+
+        // Initial URL — the navigate() is fired off immediately after
+        // Create. The promise lives in m_pendingNavigate; the user's first
+        // await (navigate, evaluate, etc.) will serialize after it. For
+        // WKWebView the Create frame is fire-and-forget, so Navigate lands
+        // right behind it in the same socket write batch.
+        JSValue url = opts->get(globalObject, Identifier::fromString(vm, "url"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+        if (url.isString()) {
+            initialUrl = url.toWTFString(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+        } else if (!url.isUndefined()) {
+            return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE,
+                "url must be a string"_s);
         }
 
         JSValue dataStore = opts->get(globalObject, Identifier::fromString(vm, "dataStore"_s));
@@ -157,6 +173,7 @@ JSC_DEFINE_HOST_FUNCTION(constructWebView, (JSGlobalObject * globalObject, CallF
             return Bun::throwError(globalObject, scope, ErrorCode::ERR_DLOPEN_FAILED,
                 "Failed to spawn Chrome (set BUN_CHROME_PATH or install Chrome/Chromium)"_s);
         }
+        if (!initialUrl.isEmpty()) view->navigate(globalObject, initialUrl);
         return JSValue::encode(view);
     }
 
@@ -169,6 +186,14 @@ JSC_DEFINE_HOST_FUNCTION(constructWebView, (JSGlobalObject * globalObject, CallF
         return Bun::throwError(globalObject, scope, ErrorCode::ERR_DLOPEN_FAILED,
             "Failed to spawn WebView host process"_s);
     }
+    // Navigate promise lands in m_pendingNavigate; the user's first await
+    // (including the next navigate()) serializes behind it. If it rejects
+    // (bad URL), the next op's checkSlot sees the slot cleared and proceeds;
+    // the rejection is unobserved unless the user explicitly awaits the
+    // first navigate via view.onNavigated or a second navigate that picks
+    // up the pending state. Same semantics as `view.navigate(url)` right
+    // after construction — just one line shorter.
+    if (!initialUrl.isEmpty()) view->navigate(globalObject, initialUrl);
     return JSValue::encode(view);
 #endif
 }

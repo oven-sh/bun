@@ -774,12 +774,18 @@ static JSPromise* navigateChrome(JSGlobalObject* g, JSWebView* view, const WTF::
     // The Navigate slot promise is created now; it resolves much later on
     // Page.loadEventFired. The chain carries the same Weak<view> forward
     // so the pending activity count keeps this object rooted the whole time.
+    //
+    // newWindow:true is required for width/height — without it Chrome
+    // reuses an existing window and rejects position params. Headless has
+    // no visible window either way; "new window" just means "new top-level
+    // browsing context".
     view->m_pendingChromeNavigateUrl = url;
     uint32_t id = t.nextId();
     return sendChromeOp(g, view, view->m_pendingNavigate, PendingSlot::Navigate,
         Method::TargetCreateTarget, id,
         Command(id, "Target.createTarget"_s)
             .str("url"_s, "about:blank"_s)
+            .boolean("newWindow"_s, true)
             .num("width"_s, static_cast<int32_t>(view->m_width))
             .num("height"_s, static_cast<int32_t>(view->m_height))
             .finish());

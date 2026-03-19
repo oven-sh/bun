@@ -125,11 +125,22 @@ it("chrome: type inserts text", async () => {
 it("chrome: scroll dispatches wheel event", async () => {
   const view = new Bun.WebView({ backend: "chrome", width: 300, height: 300 });
   try {
-    await view.navigate(html("<body style='height:2000px'></body>"));
+    await view.navigate(
+      html(`
+        <script>
+          window.__wheels = [];
+          addEventListener("wheel", e => __wheels.push({dy: e.deltaY, trusted: e.isTrusted}), {passive: true});
+        </script>
+        <body style='height:2000px'></body>
+      `),
+    );
     await view.scroll(0, 100);
-    // mouseWheel deltaY > 0 scrolls down. Chrome applies it sync.
-    const y = await view.evaluate("window.scrollY");
-    expect(y).toBeGreaterThan(0);
+    const wheels = await view.evaluate("JSON.stringify(__wheels)");
+    // The wheel EVENT is dispatched (isTrusted:true, correct delta). Whether
+    // the page scrolls depends on Chrome's async compositor — the reply
+    // means the event was processed, not that the scroll committed. WKWebView
+    // has the same asymmetry (double presentation-barrier there).
+    expect(JSON.parse(wheels)).toEqual([{ dy: 100, trusted: true }]);
   } finally {
     view.close();
   }

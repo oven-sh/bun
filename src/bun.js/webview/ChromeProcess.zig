@@ -27,6 +27,17 @@ fd: bun.FileDescriptor,
 
 var instance: ?*ChromeProcess = null;
 
+/// Bun__atexit-registered: SIGKILL Chrome if still alive at process exit.
+/// Chrome spawns its own renderer/gpu/utility children (a Chrome "process
+/// model" zygote tree); they're tracked by Chrome's own ProcessSingleton
+/// and exit when the browser process dies. SIGKILL here takes the browser
+/// process, the zygote tree follows.
+fn killOnExit() callconv(.c) void {
+    if (instance) |i| {
+        _ = i.process.kill(9);
+    }
+}
+
 /// Lazy: first `new Bun.WebView({ backend: "chrome" })` or first target
 /// create calls this via C++. Returns {write_fd, read_fd} packed as i64
 /// (high 32 write, low 32 read), or -1 on spawn failure. Idempotent.
@@ -205,6 +216,9 @@ fn spawn(vm: *jsc.VirtualMachine, userDataDir: ?[*:0]const u8) !*ChromeProcess {
             // Same weak-handle reasoning as HostProcess: parent exit →
             // Chrome's fd 3 EOFs → DevToolsPipeHandler::Shutdown → exit.
             self.process.disableKeepingEventLoopAlive();
+            // Belt-and-braces — SIGKILL on Bun exit if Chrome hasn't
+            // already exited via pipe EOF.
+            bun.Global.addExitCallback(killOnExit);
         },
         .err => |e| {
             log("watch failed: {f}", .{e});

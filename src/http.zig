@@ -1524,8 +1524,8 @@ pub fn handleOnDataHeaders(
         // we reset the pending_response each time wich means that on parse error this will be always be empty
         this.state.pending_response = picohttp.Response{};
 
-        // minimal http/1.1 request size is 16 bytes without headers and 26 with Host header
-        // if is less than 16 will always be a ShortRead
+        // minimal http/1.1 response is 16 bytes ("HTTP/1.1 200\r\n\r\n")
+        // if less than 16 it will always be a ShortRead
         if (to_read.len < 16) {
             log("handleShortRead", .{});
             this.handleShortRead(is_ssl, incoming_data, socket, needs_move);
@@ -1926,7 +1926,7 @@ pub const HTTPClientResult = struct {
     metadata: ?HTTPResponseMetadata = null,
 
     /// For Http Client requests
-    /// when Content-Length is provided this represents the whole size of the request
+    /// when Content-Length is provided this represents the whole size of the response body
     /// If chunked encoded this will represent the total received size (ignoring the chunk headers)
     /// If is not chunked encoded and Content-Length is not provided this will be unknown
     body_size: BodySize = .unknown,

@@ -890,6 +890,59 @@ static JSPromise* clickChrome(JSGlobalObject* g, JSWebView* view, float x, float
             .finish());
 }
 
+// Selector ops: Runtime.evaluate runs the rAF-polled actionability check
+// (same predicate as WKWebView's kActionabilityJS). The IIFE takes
+// (sel, timeout) — we appendQuotedJSONString the selector so any chars
+// pass through. Response chains into dispatchMouseEvent.
+static JSPromise* clickSelectorChrome(JSGlobalObject* g, JSWebView* view, const WTF::String& selector, uint32_t timeout, uint8_t button, uint8_t modifiers, uint8_t clickCount)
+{
+    using namespace CDP;
+    auto& t = transport();
+
+    view->m_selButton = button;
+    view->m_selModifiers = modifiers;
+    view->m_selClickCount = clickCount;
+
+    // Build: kActionabilityIIFE + "(" + JSON(selector) + "," + timeout + ")"
+    // The IIFE body is a fixed literal; only the call-site args are dynamic.
+    WTF::StringBuilder sb;
+    sb.append(kActionabilityIIFE, '(');
+    sb.appendQuotedJSONString(selector);
+    sb.append(',', timeout, ')');
+
+    uint32_t id = t.nextId();
+    return sendChromeOp(g, view, view->m_pendingMisc, PendingSlot::Misc,
+        Method::ClickSelectorEval, id,
+        Command(id, "Runtime.evaluate"_s, sidSpan(view->m_sessionId))
+            .str("expression"_s, sb.toString())
+            .boolean("returnByValue"_s, true)
+            .boolean("awaitPromise"_s, true)
+            .finish());
+}
+
+static JSPromise* scrollToChrome(JSGlobalObject* g, JSWebView* view, const WTF::String& selector, uint32_t timeout, uint8_t block)
+{
+    using namespace CDP;
+    auto& t = transport();
+
+    static constexpr ASCIILiteral blockNames[] = { "start"_s, "center"_s, "end"_s, "nearest"_s };
+    auto blockStr = blockNames[block < 4 ? block : 1];
+
+    WTF::StringBuilder sb;
+    sb.append(kScrollToIIFE, '(');
+    sb.appendQuotedJSONString(selector);
+    sb.append(',', timeout, ",\""_s, blockStr, "\")"_s);
+
+    uint32_t id = t.nextId();
+    return sendChromeOp(g, view, view->m_pendingMisc, PendingSlot::Misc,
+        Method::ScrollToSelectorEval, id,
+        Command(id, "Runtime.evaluate"_s, sidSpan(view->m_sessionId))
+            .str("expression"_s, sb.toString())
+            .boolean("returnByValue"_s, true)
+            .boolean("awaitPromise"_s, true)
+            .finish());
+}
+
 static JSPromise* typeChrome(JSGlobalObject* g, JSWebView* view, const WTF::String& text)
 {
     using namespace CDP;
@@ -1037,22 +1090,8 @@ JSPromise* JSWebView::click(JSGlobalObject* g, float x, float y, uint8_t button,
 
 JSPromise* JSWebView::clickSelector(JSGlobalObject* g, const WTF::String& selector, uint32_t timeout, uint8_t button, uint8_t modifiers, uint8_t clickCount)
 {
-    if (m_backend == WebViewBackend::Chrome) {
-        // clickSelector = actionability check + click. The actionability check
-        // runs page-side via Runtime.evaluate (same rAF-polled script as
-        // WKWebView), returning the center coords. A second CDP roundtrip
-        // sends the click. TODO: implement the two-phase flow.
-        // For now, stub-reject so tests fail loud rather than hang.
-        UNUSED_PARAM(selector);
-        UNUSED_PARAM(timeout);
-        UNUSED_PARAM(button);
-        UNUSED_PARAM(modifiers);
-        UNUSED_PARAM(clickCount);
-        auto& vm = g->vm();
-        auto* p = JSPromise::create(vm, g->promiseStructure());
-        p->reject(vm, g, createError(g, "click(selector) not yet implemented for Chrome backend"_s));
-        return p;
-    }
+    if (m_backend == WebViewBackend::Chrome)
+        return clickSelectorChrome(g, this, selector, timeout, button, modifiers, clickCount);
 #if OS(DARWIN)
     return clickSelectorWebKit(g, this, selector, timeout, button, modifiers, clickCount);
 #else
@@ -1101,15 +1140,8 @@ JSPromise* JSWebView::scroll(JSGlobalObject* g, double dx, double dy)
 
 JSPromise* JSWebView::scrollTo(JSGlobalObject* g, const WTF::String& selector, uint32_t timeout, uint8_t block)
 {
-    if (m_backend == WebViewBackend::Chrome) {
-        UNUSED_PARAM(selector);
-        UNUSED_PARAM(timeout);
-        UNUSED_PARAM(block);
-        auto& vm = g->vm();
-        auto* p = JSPromise::create(vm, g->promiseStructure());
-        p->reject(vm, g, createError(g, "scrollTo(selector) not yet implemented for Chrome backend"_s));
-        return p;
-    }
+    if (m_backend == WebViewBackend::Chrome)
+        return scrollToChrome(g, this, selector, timeout, block);
 #if OS(DARWIN)
     return scrollToWebKit(g, this, selector, timeout, block);
 #else

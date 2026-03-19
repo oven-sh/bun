@@ -52,6 +52,12 @@ public:
     WTF::String m_sessionId;
     WTF::String m_targetId;
     WTF::String m_pendingChromeNavigateUrl;
+    // clickSelector stash — the actionability eval chains into a
+    // dispatchMouseEvent that needs these. WebViewHost has the same fields
+    // on its side (m_selButton etc.) for the same chain.
+    uint8_t m_selButton = 0;
+    uint8_t m_selModifiers = 0;
+    uint8_t m_selClickCount = 1;
 
     JSC::WriteBarrier<JSC::JSObject> m_onNavigated;
     JSC::WriteBarrier<JSC::JSObject> m_onNavigationFailed;

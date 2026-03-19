@@ -243,7 +243,19 @@ fn spawn(vm: *jsc.VirtualMachine, userDataDir: ?[*:0]const u8) !bun.FileDescript
     // may still load. --disable-background-networking shuts up GCM/update.
     try argv.append(alloc, "--disable-extensions");
     try argv.append(alloc, "--disable-background-networking");
+    // Throttling suite (playwright's chromiumSwitches.ts subset). These
+    // gate rAF/setTimeout firing when the tab thinks it's backgrounded.
+    // A headless target is "occluded" by definition; without these Chrome
+    // throttles timers to 1 Hz and pauses rAF entirely.
     try argv.append(alloc, "--disable-background-timer-throttling");
+    try argv.append(alloc, "--disable-backgrounding-occluded-windows");
+    try argv.append(alloc, "--disable-renderer-backgrounding");
+    // CDP message rate limiter — a burst of evaluates/clicks in a test
+    // loop hits it otherwise. Playwright and puppeteer both ship this.
+    try argv.append(alloc, "--disable-ipc-flooding-protection");
+    // No startup window — targets are Target.createTarget'd, not the
+    // default about:blank. Saves one tab and the visual-complete wait.
+    try argv.append(alloc, "--no-startup-window");
     try argv.append(alloc, null);
 
     const env = try vm.transpiler.env.map.createNullDelimitedEnvMap(alloc);

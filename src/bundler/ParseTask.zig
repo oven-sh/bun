@@ -1245,6 +1245,8 @@ fn runWithSourceCode(
     } else .none;
 
     opts.framework = transpiler.options.framework;
+    opts.compile = transpiler.options.compile;
+    opts.compile_root_dir = transpiler.options.root_dir;
 
     opts.ignore_dce_annotations = transpiler.options.ignore_dce_annotations and !source.index.isRuntime();
 

@@ -3975,6 +3975,20 @@ pub fn NewParser_(
             }
         }
 
+        /// For `--compile` mode, compute the `$bunfs` virtual filesystem path
+        /// corresponding to the given source filesystem path. This transforms
+        /// e.g. `/tmp/project/node_modules/mylib/index.js` into
+        /// `/$bunfs/root/node_modules/mylib/index.js`.
+        pub fn compileBunfsPath(p: *P, source_path: []const u8) []const u8 {
+            const root_dir = p.options.compile_root_dir;
+            const prefix = bun.StandaloneModuleGraph.base_public_path_with_default_suffix;
+            if (root_dir.len > 0) {
+                const rel = bun.path.relativePlatform(root_dir, source_path, .posix, false);
+                return std.fmt.allocPrint(p.allocator, "{s}{s}", .{ prefix, rel }) catch bun.outOfMemory();
+            }
+            return std.fmt.allocPrint(p.allocator, "{s}{s}", .{ prefix, source_path }) catch bun.outOfMemory();
+        }
+
         pub fn keepExprSymbolName(_: *P, _value: Expr, _: string) Expr {
             return _value;
             // var start = p.expr_list.items.len;

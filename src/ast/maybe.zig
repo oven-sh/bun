@@ -410,18 +410,34 @@ pub fn AstMaybe(
                         }, .loc = loc };
                     }
 
-                    // Inline import.meta properties for Bake
-                    if (p.options.framework != null or (p.options.bundle and p.options.output_format == .cjs)) {
+                    // Inline import.meta properties for Bake and --compile
+                    // For --compile, we must inline these per-module so that
+                    // bundled dependencies resolve paths relative to their
+                    // original source file, not the entry-point chunk.
+                    if (p.options.framework != null or (p.options.bundle and (p.options.output_format == .cjs or p.options.compile))) {
                         if (strings.eqlComptime(name, "dir") or strings.eqlComptime(name, "dirname")) {
+                            if (p.options.compile) {
+                                return p.newExpr(E.String.init(p.compileBunfsPath(p.source.path.name.dir)), name_loc);
+                            }
                             // Inline import.meta.dir
                             return p.newExpr(E.String.init(p.source.path.name.dir), name_loc);
                         } else if (strings.eqlComptime(name, "file")) {
                             // Inline import.meta.file (filename only)
                             return p.newExpr(E.String.init(p.source.path.name.filename), name_loc);
                         } else if (strings.eqlComptime(name, "path")) {
+                            if (p.options.compile) {
+                                return p.newExpr(E.String.init(p.compileBunfsPath(p.source.path.text)), name_loc);
+                            }
                             // Inline import.meta.path (full path)
                             return p.newExpr(E.String.init(p.source.path.text), name_loc);
                         } else if (strings.eqlComptime(name, "url")) {
+                            if (p.options.compile) {
+                                const bunfs_path = p.compileBunfsPath(p.source.path.text);
+                                const bunstr = bun.String.fromBytes(bunfs_path);
+                                defer bunstr.deref();
+                                const url = std.fmt.allocPrint(p.allocator, "{f}", .{jsc.URL.fileURLFromString(bunstr)}) catch unreachable;
+                                return p.newExpr(E.String.init(url), name_loc);
+                            }
                             // Inline import.meta.url as file:// URL
                             const bunstr = bun.String.fromBytes(p.source.path.text);
                             defer bunstr.deref();

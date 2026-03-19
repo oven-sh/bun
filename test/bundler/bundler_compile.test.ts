@@ -936,4 +936,58 @@ const server = serve({
     const result = await Bun.$`./app`.cwd(dir).env(bunEnv).nothrow();
     expect(result.stdout.toString().trim()).toBe("IT WORKS");
   });
+
+  // https://github.com/oven-sh/bun/issues/27464
+  // Worker with string relative path (e.g. "./worker.js") should resolve
+  // against the $bunfs virtual filesystem in standalone executables.
+  itBundled("compile/WorkerStringRelativePathJSExtension", {
+    backend: "cli",
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        import {rmSync} from 'fs';
+        rmSync("./worker.js", {force: true});
+        console.log("Hello, world!");
+        new Worker("./worker.js");
+      `,
+      "/worker.ts": /* js */ `
+        console.log("Worker loaded!");
+    `.trim(),
+    },
+    entryPointsRaw: ["./entry.ts", "./worker.ts"],
+    outfile: "dist/out",
+    run: { stdout: "Hello, world!\nWorker loaded!\n", file: "dist/out", setCwd: true },
+  });
+  // https://github.com/oven-sh/bun/issues/27464
+  // When a dependency is bundled into an entry point, import.meta.url should
+  // still reflect the original source module path so that new URL("./sibling",
+  // import.meta.url) resolves correctly in the $bunfs virtual filesystem.
+  itBundled("compile/WorkerDepImportMetaURL", {
+    backend: "cli",
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        import {rmSync} from 'fs';
+        import { runWorker } from "./node_modules/mylib/index.js";
+        // Delete files to make sure we're loading from $bunfs
+        rmSync("./node_modules", {recursive: true, force: true});
+        runWorker();
+      `,
+      "/node_modules/mylib/package.json": `{ "name": "mylib", "main": "index.js" }`,
+      "/node_modules/mylib/index.js": /* js */ `
+        export function runWorker() {
+            const workerURL = new URL("./worker.js", import.meta.url);
+            const w = new Worker(workerURL);
+            w.onmessage = (e) => { console.log(e.data); process.exit(0); };
+            w.onerror = (e) => { console.log("ERROR:", e.message); process.exit(1); };
+        }
+      `,
+      "/node_modules/mylib/worker.js": /* js */ `
+        self.postMessage("Hello from dep worker!");
+    `.trim(),
+    },
+    entryPointsRaw: ["./entry.ts", "./node_modules/mylib/worker.js"],
+    outfile: "dist/out",
+    run: { stdout: "Hello from dep worker!\n", file: "dist/out", setCwd: true },
+  });
 });

@@ -667,11 +667,12 @@ pub const IniTestingAPIs = struct {
             const scoped = install.scoped orelse break :scoped_brk jsc.JSValue.jsNull();
             const obj = jsc.JSValue.createEmptyObject(globalThis, scoped.scopes.keys().len);
             for (scoped.scopes.keys(), scoped.scopes.values()) |scope, registry| {
-                const scope_obj = jsc.JSValue.createEmptyObject(globalThis, 4);
+                const scope_obj = jsc.JSValue.createEmptyObject(globalThis, 5);
                 scope_obj.put(globalThis, "url", try bun.String.fromBytes(registry.url).toJS(globalThis));
                 scope_obj.put(globalThis, "token", try bun.String.fromBytes(registry.token).toJS(globalThis));
                 scope_obj.put(globalThis, "username", try bun.String.fromBytes(registry.username).toJS(globalThis));
                 scope_obj.put(globalThis, "password", try bun.String.fromBytes(registry.password).toJS(globalThis));
+                scope_obj.put(globalThis, "email", try bun.String.fromBytes(registry.email).toJS(globalThis));
                 obj.put(globalThis, scope, scope_obj);
             }
             break :scoped_brk obj;
@@ -1376,6 +1377,7 @@ pub fn loadNpmrc(
                         v.token = "";
                         v.username = "";
                         v.password = "";
+                        v.email = "";
                     }
 
                     switch (conf_item.optname) {
@@ -1421,6 +1423,7 @@ pub fn loadNpmrc(
                         v.token = "";
                         v.username = "";
                         v.password = "";
+                        v.email = "";
                     }
 
                     // Apply config to scoped registry

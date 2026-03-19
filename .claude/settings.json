@@ -6,6 +6,15 @@
         "hooks": [
           {
             "type": "command",
+            "command": "npx block-no-verify@1.1.2"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
             "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/pre-bash-zig-build.js"
           }
         ]

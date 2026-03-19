@@ -20,10 +20,6 @@
 const ChromeProcess = @This();
 
 process: *bun.spawn.Process,
-/// Parent's socketpair end. Bidirectional — writes here go to Chrome's
-/// fd 3 (read), reads here come from Chrome's fd 4 (write). Adopted into
-/// usockets for onData; writes go through writeRaw with direct write().
-fd: bun.FileDescriptor,
 
 var instance: ?*ChromeProcess = null;
 
@@ -38,22 +34,27 @@ fn killOnExit() callconv(.c) void {
     }
 }
 
-/// Lazy: first `new Bun.WebView({ backend: "chrome" })` or first target
-/// create calls this via C++. Returns {write_fd, read_fd} packed as i64
-/// (high 32 write, low 32 read), or -1 on spawn failure. Idempotent.
+/// Lazy: first `new Bun.WebView({ backend: "chrome" })` calls this via
+/// C++. Returns the parent's socketpair fd (C++ adopts into usockets and
+/// owns it from then on), or -1 on spawn failure / already-running.
+/// C++'s Transport::ensureSpawned checks its own m_readSock before calling
+/// here, so instance-already-exists → -1 means "you already have the fd,
+/// this is a bug" not "spawn failed". We deliberately don't store the fd —
+/// usockets owns it; re-returning a fd usockets may have already closed
+/// would be a use-after-close.
 ///
 /// Windows TODO — fd.cast() returns a HANDLE there, and pipe() / fcntl
 /// nonblocking have no direct equivalents. The spawn would need to use
 /// named pipes or libuv. For now -1 and C++ throws not-implemented.
 pub export fn Bun__Chrome__ensure(global: *jsc.JSGlobalObject, userDataDir: ?[*:0]const u8) i32 {
     if (comptime bun.Environment.isWindows) return -1;
-    if (instance) |i| return i.fd.cast();
+    if (instance != null) return -1; // C++ already holds the fd
 
-    instance = spawn(global.bunVM(), userDataDir) catch |err| {
+    const fd = spawn(global.bunVM(), userDataDir) catch |err| {
         log("spawn failed: {s}", .{@errorName(err)});
         return -1;
     };
-    return instance.?.fd.cast();
+    return fd.cast();
 }
 
 pub fn onProcessExit(this: *ChromeProcess, _: *bun.spawn.Process, status: bun.spawn.Status, _: *const bun.spawn.Rusage) void {
@@ -117,7 +118,7 @@ fn findChrome(alloc: std.mem.Allocator) !?[:0]const u8 {
     return null;
 }
 
-fn spawn(vm: *jsc.VirtualMachine, userDataDir: ?[*:0]const u8) !*ChromeProcess {
+fn spawn(vm: *jsc.VirtualMachine, userDataDir: ?[*:0]const u8) !bun.FileDescriptor {
     if (comptime bun.Environment.isWindows) return error.Unsupported;
 
     var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
@@ -208,7 +209,6 @@ fn spawn(vm: *jsc.VirtualMachine, userDataDir: ?[*:0]const u8) !*ChromeProcess {
 
     const self = bun.new(ChromeProcess, .{
         .process = spawned.toProcess(vm.eventLoop(), false),
-        .fd = fds[0],
     });
     self.process.setExitHandler(self);
     switch (self.process.watch()) {
@@ -224,10 +224,14 @@ fn spawn(vm: *jsc.VirtualMachine, userDataDir: ?[*:0]const u8) !*ChromeProcess {
             log("watch failed: {f}", .{e});
             self.process.deref();
             bun.destroy(self);
+            fds[0].close();
             return error.WatchFailed;
         },
     }
-    return self;
+    instance = self;
+    // fd returned to C++ which adopts it into usockets. Not stored here —
+    // usockets owns it; we only own the process lifetime.
+    return fds[0];
 }
 
 // Implemented in ChromeBackend.cpp. Rejects all pending CDP promises.

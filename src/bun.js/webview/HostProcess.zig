@@ -17,10 +17,6 @@
 const HostProcess = @This();
 
 process: *bun.spawn.Process,
-/// Parent's end of the socketpair. Handed to C++ which adopts it into usockets.
-/// Not owned after ensure() returns — usockets/C++ closes it.
-parent_fd: bun.FileDescriptor,
-
 var instance: ?*HostProcess = null;
 
 /// Bun__atexit-registered: SIGKILL the child if still alive at process
@@ -37,17 +33,21 @@ fn killOnExit() callconv(.c) void {
 }
 
 /// Lazy: first `new Bun.WebView()` calls this via C++. Returns the parent
-/// socket fd (>= 0) or -1 on spawn failure. Idempotent — second call returns
-/// the same fd if the child is still alive, -1 if it died.
+/// socket fd (C++ adopts into usockets and owns it from then on), or -1.
+/// C++'s HostClient::ensureSpawned checks its own sock before calling here,
+/// so instance-already-exists → -1 means "you already have the fd, this is
+/// a bug" not "spawn failed". We deliberately don't store the fd — usockets
+/// owns it; re-returning a fd usockets may have already closed would be a
+/// use-after-close. Zig only owns process lifetime (watch + killOnExit).
 pub export fn Bun__WebViewHost__ensure(global: *jsc.JSGlobalObject) i32 {
     if (comptime !bun.Environment.isMac) return -1;
-    if (instance) |i| return i.parent_fd.cast();
+    if (instance != null) return -1; // C++ already holds the fd
 
-    instance = spawn(global.bunVM()) catch |err| {
+    const fd = spawn(global.bunVM()) catch |err| {
         log("spawn failed: {s}", .{@errorName(err)});
         return -1;
     };
-    return instance.?.parent_fd.cast();
+    return fd.cast();
 }
 
 /// Child died (EVFILT_PROC fired). Socket onClose may have fired already
@@ -62,7 +62,7 @@ pub fn onProcessExit(this: *HostProcess, _: *bun.spawn.Process, status: bun.spaw
     instance = null;
 }
 
-fn spawn(vm: *jsc.VirtualMachine) !*HostProcess {
+fn spawn(vm: *jsc.VirtualMachine) !bun.FileDescriptor {
     if (comptime !bun.Environment.isMac) return error.Unsupported;
 
     var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
@@ -113,7 +113,6 @@ fn spawn(vm: *jsc.VirtualMachine) !*HostProcess {
 
     const self = bun.new(HostProcess, .{
         .process = spawned.toProcess(vm.eventLoop(), false),
-        .parent_fd = fds[0],
     });
     self.process.setExitHandler(self);
     switch (self.process.watch()) {
@@ -136,7 +135,10 @@ fn spawn(vm: *jsc.VirtualMachine) !*HostProcess {
             return error.WatchFailed;
         },
     }
-    return self;
+    instance = self;
+    // fd handed to C++ which adopts it into usockets. Not stored here —
+    // usockets owns the socket; Zig only owns process lifetime.
+    return fds[0];
 }
 
 // Implemented in JSWebView.cpp. Rejects all pending promises, marks the

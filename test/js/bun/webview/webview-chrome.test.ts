@@ -128,19 +128,19 @@ it("chrome: scroll dispatches wheel event", async () => {
     await view.navigate(
       html(`
         <script>
-          window.__wheels = [];
-          addEventListener("wheel", e => __wheels.push({dy: e.deltaY, trusted: e.isTrusted}), {passive: true});
+          window.__wheel = new Promise(resolve => {
+            addEventListener("wheel", e => resolve({dy: e.deltaY, trusted: e.isTrusted}), {once: true, passive: true});
+          });
         </script>
         <body style='height:2000px'></body>
       `),
     );
+    // Input.dispatchMouseEvent's reply means the event was DISPATCHED to
+    // the page — the compositor roundtrip is done, but the JS handler's
+    // microtask might not have run yet. await the page-side Promise.
     await view.scroll(0, 100);
-    const wheels = await view.evaluate("JSON.stringify(__wheels)");
-    // The wheel EVENT is dispatched (isTrusted:true, correct delta). Whether
-    // the page scrolls depends on Chrome's async compositor — the reply
-    // means the event was processed, not that the scroll committed. WKWebView
-    // has the same asymmetry (double presentation-barrier there).
-    expect(JSON.parse(wheels)).toEqual([{ dy: 100, trusted: true }]);
+    const ev = await view.evaluate("__wheel");
+    expect(ev).toEqual({ dy: 100, trusted: true });
   } finally {
     view.close();
   }

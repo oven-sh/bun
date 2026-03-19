@@ -229,12 +229,10 @@ uint32_t Transport::send(const WTF::CString& frame)
     return m_nextId; // returned for convenience; caller already has it
 }
 
-// Write to Chrome's fd 3. Direct syscall — usockets doesn't own this fd.
-// On EAGAIN, queue and retry from the read socket's onWritable (the read
-// pipe's writable event isn't meaningful, but usockets still fires it;
-// we piggyback off it as a "something happened on the loop" tick). If the
-// queue backs up past a cap, we're blocking on Chrome and something is
-// wrong — Chrome reads fd 3 on a dedicated thread, it shouldn't back up.
+// Direct write() to the socketpair — usockets polls the same fd but its
+// us_socket_write path adds framing we don't want. On EAGAIN, queue; the
+// onWritable callback (usockets DOES poll WRITABLE on a socketpair) drains.
+// Chrome reads fd 3 on a dedicated thread so the queue shouldn't back up.
 void Transport::writeRaw(const char* data, size_t len)
 {
     if (m_dead || m_writeFd < 0) return;
@@ -256,11 +254,8 @@ void Transport::writeRaw(const char* data, size_t len)
         m_txQueue.append(std::span<const uint8_t>(
             reinterpret_cast<const uint8_t*>(data), len));
     }
-    // usockets doesn't poll m_writeFd. We retry opportunistically from
-    // onWritable (fires often enough on the read socket) and from the next
-    // writeRaw call. If Chrome really is blocked, onData won't fire either
-    // and we're stuck anyway — fd 3 EAGAIN with a drained fd 4 is "Chrome
-    // is dead", not "try harder".
+    // usockets polls the socketpair WRITABLE — onWritable fires when the
+    // kernel send buffer drains. cdpOnWritable calls our onWritable().
 }
 
 void Transport::onWritable()
@@ -605,11 +600,11 @@ void Transport::onClose()
 void Transport::rejectAllAndMarkDead(const WTF::String& reason)
 {
     m_dead = true;
+    // usockets owns the socket; it closes the fd when the us_socket_t is
+    // freed. m_writeFd is the SAME fd (socketpair, one end for both
+    // read+write) — don't double-close.
     m_readSock = nullptr;
-    if (m_writeFd >= 0) {
-        ::close(m_writeFd);
-        m_writeFd = -1;
-    }
+    m_writeFd = -1;
     if (!m_global) return;
     auto* g = m_global;
     JSValue err = createError(g, reason);

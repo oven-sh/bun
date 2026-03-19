@@ -177,10 +177,12 @@ enum class Method : uint8_t {
 };
 
 // --- Transport singleton ---------------------------------------------------
-// Mirror of HostClient but NUL-framed JSON instead of binary. The read side
-// is fd 4 adopted into usockets; the write side is fd 3 with a direct
-// write() + EAGAIN queue (usockets doesn't handle write-only-pipe-fds
-// cleanly — it wants bidirectional sockets).
+// Mirror of HostClient but NUL-framed JSON instead of binary. One socketpair
+// — the child gets the peer end dup'd to fd 3 AND fd 4 (Chrome reads fd 3,
+// writes fd 4; both hit our socket). Adopted into usockets for onData;
+// writes go through the same fd via direct write(). Socketpair not two
+// pipes because usockets' bsd_recv calls recv() which fails ENOTSOCK on a
+// pipe — the error was misread as EOF and onClose fired before any data.
 //
 // pending maps CDP id → {methodTag, slot selector, weak view}. Promises
 // live in the WriteBarrier slots on JSWebView (visitChildren marks them);
@@ -225,6 +227,8 @@ public:
 
     Zig::GlobalObject* m_global = nullptr;
     us_socket_context_t* m_ctx = nullptr;
+    // Same underlying fd — m_readSock is usockets' wrapper, m_writeFd is
+    // the raw int for direct ::write(). usockets owns the close.
     us_socket_t* m_readSock = nullptr;
     int m_writeFd = -1;
     bool m_dead = false;

@@ -29,7 +29,12 @@ var instance: ?*ChromeProcess = null;
 /// Lazy: first `new Bun.WebView({ backend: "chrome" })` or first target
 /// create calls this via C++. Returns {write_fd, read_fd} packed as i64
 /// (high 32 write, low 32 read), or -1 on spawn failure. Idempotent.
+///
+/// Windows TODO — fd.cast() returns a HANDLE there, and pipe() / fcntl
+/// nonblocking have no direct equivalents. The spawn would need to use
+/// named pipes or libuv. For now -1 and C++ throws not-implemented.
 pub export fn Bun__Chrome__ensure(global: *jsc.JSGlobalObject, userDataDir: ?[*:0]const u8) i64 {
+    if (comptime bun.Environment.isWindows) return -1;
     if (instance) |i| return pack(i.write_fd, i.read_fd);
 
     instance = spawn(global.bunVM(), userDataDir) catch |err| {
@@ -40,6 +45,7 @@ pub export fn Bun__Chrome__ensure(global: *jsc.JSGlobalObject, userDataDir: ?[*:
 }
 
 fn pack(w: bun.FileDescriptor, r: bun.FileDescriptor) i64 {
+    if (comptime bun.Environment.isWindows) return -1;
     const wi: u32 = @bitCast(w.cast());
     const ri: u32 = @bitCast(r.cast());
     return @bitCast((@as(u64, wi) << 32) | ri);
@@ -107,6 +113,8 @@ fn findChrome(alloc: std.mem.Allocator) !?[:0]const u8 {
 }
 
 fn spawn(vm: *jsc.VirtualMachine, userDataDir: ?[*:0]const u8) !*ChromeProcess {
+    if (comptime bun.Environment.isWindows) return error.Unsupported;
+
     var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
     defer arena.deinit();
     const alloc = arena.allocator();

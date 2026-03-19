@@ -296,7 +296,7 @@ pub const PathWatcherManager = struct {
                                         continue;
                                     }
 
-                                    if (maybe_new_subdir and watcher.recursive and !watcher.isClosed()) {
+                                    if (maybe_new_subdir and watcher.recursive and watcher.refPendingDirectory()) {
                                         _on_file_update_path_buf[len + 1] = 0;
                                         const abs_path_z = _on_file_update_path_buf[0 .. len + 1 :0];
                                         const dup = bun.handleOom(bun.default_allocator.dupeZ(u8, abs_path_z));
@@ -321,9 +321,12 @@ pub const PathWatcherManager = struct {
             }
         }
 
-        // Process subdirectory registrations outside the lock.
+        // Process subdirectory registrations outside the lock. Each entry
+        // holds a refPendingDirectory() — unref after processing so the
+        // watcher can't be destroyed mid-registration.
         for (new_subdirs.slice()) |item| {
             this._registerNewSubdirectory(item.watcher, item.path);
+            item.watcher.unrefPendingDirectory();
         }
     }
 
@@ -332,6 +335,7 @@ pub const PathWatcherManager = struct {
     // subdirectory and schedules a scan of its children. Must be called
     // WITHOUT this.mutex held.
     fn _registerNewSubdirectory(this: *PathWatcherManager, watcher: *PathWatcher, path_z: [:0]const u8) void {
+        // Caller holds a refPendingDirectory() on watcher.
         if (watcher.isClosed()) return;
 
         const child_path = switch (this._fdFromAbsolutePathZ(path_z)) {

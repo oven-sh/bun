@@ -114,24 +114,29 @@ Ref<WebViewHost> WebViewHost::createForIPC(uint32_t viewId, uint32_t width, uint
 
     host->m_window = objc::NSWindow::createOffscreen(width, height);
 
-    // orderFront BEFORE setContentView. WKWindowVisibilityObserver registers
-    // for NSWindowDidOrderOnScreenNotification in viewDidMoveToWindow, but
-    // the initial isViewVisible() evaluation happens AT setContentView —
-    // before the notification would fire. On macOS 15 the notification
-    // delivers synchronously inside orderFront: and a later
-    // activityStateDidChange fixes it; on macOS 13/14 that update doesn't
-    // land and visibilityState stays "hidden" → rAF never fires →
-    // click(selector) actionability hangs. Ordering the window first means
-    // viewDidMoveToWindow sees isVisible=1 from the start and the initial
-    // ActivityState::IsVisible is correct.
-    //
-    // The window is still invisible (borderless, at -10000,-10000, policy
-    // Prohibited); orderFront: makes it "on screen" from AppKit's view.
-    // Occlusion detection disabled so the windowIsOccluded() check in
-    // PageClientImpl::isViewVisible (WebViewImpl.mm) short-circuits false.
-    host->m_window.orderFront();
+    // Occlusion detection off before the view enters a window —
+    // PageClientImpl::isViewVisible's windowIsOccluded() check (WebViewImpl.mm)
+    // reads m_windowOcclusionDetectionEnabled. If true AND occlusionState lacks
+    // NSWindowOcclusionStateVisible (which it will for an offscreen window once
+    // the window server composites), the view is "not visible" → rAF throttled.
+    // This is a plain bool; setting it before any activityStateDidChange path
+    // means every evaluation sees the correct value.
     host->m_webview.disableOcclusionDetection();
     host->m_window.setContentView(host->m_webview);
+
+    // orderFront: AFTER setContentView. WKWindowVisibilityObserver registers
+    // for NSWindowDidOrderOnScreenNotification inside viewWillMoveToWindow:
+    // (which fires during setContentView:). Ordering now lets the observer
+    // see the notification and queue an activityStateDidChange. The
+    // load-bearing evaluation is finishAttachingToWebProcess →
+    // updateActivityState() → creationParameters → WebContent gets
+    // parameters.activityState with IsVisible. That reads [window isVisible]
+    // at loadRequest time, which orderFront: has set synchronously.
+    //
+    // WebKitTestRunner uses the same ordering (TestControllerCocoa.mm:381).
+    // The window is borderless at -10000,-10000; orderFront makes it "on
+    // screen" to AppKit (isVisible=YES) without drawing anything visible.
+    host->m_window.orderFront();
     host->m_width = width;
     host->m_height = height;
 

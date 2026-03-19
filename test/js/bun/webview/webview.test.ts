@@ -234,6 +234,25 @@ it("screenshot returns PNG bytes", async () => {
   }
 });
 
+// Probe test — if click(selector) times out on CI, this tells us whether
+// the page sees itself as visible (rAF throttling root cause) vs. something
+// in the actionability script itself.
+it("document.visibilityState is visible and rAF fires", async () => {
+  const view = new Bun.WebView({ width: 200, height: 200 });
+  try {
+    await view.navigate(html("<body></body>"));
+    const state = await view.evaluate("document.visibilityState");
+    expect(state).toBe("visible");
+    // rAF is gated on ActivityState::IsVisible in WebContent. If the initial
+    // activity state was wrong (window not visible at process launch), the
+    // callback never fires and this evaluate() hangs at the test timeout.
+    const fired = await view.evaluate("new Promise(r => requestAnimationFrame(() => r('fired')))");
+    expect(fired).toBe("fired");
+  } finally {
+    view.close();
+  }
+});
+
 it("click dispatches native mousedown/mouseup/click with isTrusted", async () => {
   const view = new Bun.WebView({ width: 300, height: 300 });
   try {

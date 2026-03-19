@@ -446,7 +446,7 @@ bool ObjCRuntime::load()
         reinterpret_cast<IMP>(windowNoResponderFor), "v@::");
     registerClassPair(NSWindow::hostCls);
 
-    NSApplication::setActivationPolicyProhibited();
+    NSApplication::setActivationPolicyAccessory();
 
     m_loaded = true;
     return true;

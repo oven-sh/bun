@@ -179,10 +179,13 @@ struct NSApplication : Ref {
     static SEL s_sharedApplication;
     static SEL s_setActivationPolicy;
 
-    static void setActivationPolicyProhibited()
+    static void setActivationPolicyAccessory()
     {
+        // Accessory, not Prohibited. Prohibited's docs: "may not create
+        // windows". Accessory permits windows but still hides the dock tile
+        // and menu bar. We never activate, so the difference is invisible.
         Ref app(msgCls<id>(cls, s_sharedApplication));
-        app.msg<void>(s_setActivationPolicy, (long)2 /* NSApplicationActivationPolicyProhibited */);
+        app.msg<void>(s_setActivationPolicy, (long)1 /* NSApplicationActivationPolicyAccessory */);
     }
 };
 
@@ -528,7 +531,7 @@ struct WKWebView : Ref {
     // window at (-10000,-10000) is fully occluded. Disabling occlusion
     // detection + orderFront: = visibilityState "visible" + rAF ticks at
     // display rate. The window is still invisible to the user: borderless,
-    // offscreen, ActivationPolicyProhibited means it can't be activated.
+    // offscreen, ActivationPolicyAccessory means no dock/menu bar.
     static SEL s_setWindowOcclusionDetectionEnabled;
     void disableOcclusionDetection()
     {

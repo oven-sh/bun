@@ -391,12 +391,25 @@ static WTF::String jsonUnescape(std::span<const char> s)
         if (c == '\\' && i + 1 < s.size()) {
             char n = s[++i];
             switch (n) {
-            case 'n': out.append('\n'); break;
-            case '"': out.append('"'); break;
-            case '\\': out.append('\\'); break;
-            case 't': out.append('\t'); break;
-            case 'r': out.append('\r'); break;
-            default: out.append('\\'); out.append(n); break;
+            case 'n':
+                out.append('\n');
+                break;
+            case '"':
+                out.append('"');
+                break;
+            case '\\':
+                out.append('\\');
+                break;
+            case 't':
+                out.append('\t');
+                break;
+            case 'r':
+                out.append('\r');
+                break;
+            default:
+                out.append('\\');
+                out.append(n);
+                break;
             }
         } else {
             out.append(c);
@@ -447,8 +460,14 @@ static JSValue errorFromExceptionDetails(JSGlobalObject* g, std::span<const char
     auto cn = jsonField(excDetails, { "columnNumber", 12 });
     auto url = jsonString(jsonField(excDetails, { "url", 3 }));
     unsigned line = 0, col = 0;
-    for (char c : ln) { if (c < '0' || c > '9') break; line = line * 10 + (c - '0'); }
-    for (char c : cn) { if (c < '0' || c > '9') break; col = col * 10 + (c - '0'); }
+    for (char c : ln) {
+        if (c < '0' || c > '9') break;
+        line = line * 10 + (c - '0');
+    }
+    for (char c : cn) {
+        if (c < '0' || c > '9') break;
+        col = col * 10 + (c - '0');
+    }
 
     return ErrorInstance::create(g,
         WTF::String(message), ErrorType::Error,

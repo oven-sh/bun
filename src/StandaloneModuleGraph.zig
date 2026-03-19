@@ -1397,6 +1397,22 @@ pub const StandaloneModuleGraph = struct {
         return false;
     }
 
+    /// Try to open the executable via argv[0] using PATH resolution.
+    fn openFromArgv() std.fs.OpenSelfExeError!bun.FileDescriptor {
+        if (bun.argv.len > 0) {
+            var whichbuf: bun.PathBuffer = undefined;
+            if (bun.which(
+                &whichbuf,
+                bun.env_var.PATH.get() orelse return error.FileNotFound,
+                "",
+                bun.argv[0],
+            )) |path| {
+                return .fromStdFile(try std.fs.cwd().openFileZ(path, .{}));
+            }
+        }
+        return error.FileNotFound;
+    }
+
     fn openSelf() std.fs.OpenSelfExeError!bun.FileDescriptor {
         if (!Environment.isWindows) {
             const argv = bun.argv;
@@ -1410,22 +1426,26 @@ pub const StandaloneModuleGraph = struct {
         switch (Environment.os) {
             .linux => {
                 if (std.fs.openFileAbsoluteZ("/proc/self/exe", .{})) |easymode| {
-                    return .fromStdFile(easymode);
-                } else |_| {
+                    // When invoked via the dynamic linker (e.g., /lib/ld-linux.so ./binary),
+                    // /proc/self/exe resolves to the dynamic linker, not the actual binary.
+                    // Detect this by comparing basenames and fall back to argv[0].
                     if (bun.argv.len > 0) {
-                        // The user doesn't have /proc/ mounted, so now we just guess and hope for the best.
-                        var whichbuf: bun.PathBuffer = undefined;
-                        if (bun.which(
-                            &whichbuf,
-                            bun.env_var.PATH.get() orelse return error.FileNotFound,
-                            "",
-                            bun.argv[0],
-                        )) |path| {
-                            return .fromStdFile(try std.fs.cwd().openFileZ(path, .{}));
+                        var readlinkbuf: bun.PathBuffer = undefined;
+                        switch (bun.sys.readlink("/proc/self/exe", &readlinkbuf)) {
+                            .result => |self_exe_path| {
+                                const self_basename = std.fs.path.basename(@as([]const u8, self_exe_path));
+                                const argv_basename = std.fs.path.basename(@as([]const u8, bun.argv[0]));
+                                if (!std.mem.eql(u8, self_basename, argv_basename)) {
+                                    easymode.close();
+                                    return openFromArgv();
+                                }
+                            },
+                            .err => {},
                         }
                     }
-
-                    return error.FileNotFound;
+                    return .fromStdFile(easymode);
+                } else |_| {
+                    return openFromArgv();
                 }
             },
             .mac => {

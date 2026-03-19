@@ -281,4 +281,289 @@ it("chrome: two views have independent sessions", async () => {
 
 test("backend option validates", () => {
   expect(() => new Bun.WebView({ backend: "invalid" as any })).toThrow(/webkit.*chrome/i);
+  expect(() => new Bun.WebView({ backend: { type: "invalid" } as any })).toThrow(/webkit.*chrome/i);
+  expect(() => new Bun.WebView({ backend: { type: "chrome", path: 123 } as any })).toThrow(/path must be a string/);
+  expect(() => new Bun.WebView({ backend: { type: "chrome", argv: [1] } as any })).toThrow(
+    /argv entries must be strings/,
+  );
+});
+
+it("backend: { type: 'chrome' } object form works", async () => {
+  const view = new Bun.WebView({ backend: { type: "chrome" }, width: 200, height: 200 });
+  try {
+    await view.navigate(html("<body>obj</body>"));
+    expect(await view.evaluate("document.body.textContent")).toBe("obj");
+  } finally {
+    view.close();
+  }
+});
+
+it("backend.argv appends after core flags", async () => {
+  // --user-agent is a Chrome switch we don't set — passing it via argv
+  // proves user flags reach Chrome. Last-wins for duplicates means this
+  // could also override our --disable-gpu etc.
+  const view = new Bun.WebView({
+    backend: { type: "chrome", argv: ["--user-agent=BunWebViewTest/1.0"] },
+    width: 200,
+    height: 200,
+  });
+  try {
+    await view.navigate(html("<body></body>"));
+    const ua = await view.evaluate("navigator.userAgent");
+    expect(ua).toBe("BunWebViewTest/1.0");
+  } finally {
+    view.close();
+  }
+});
+
+// --- Error handling --------------------------------------------------------
+
+it("chrome: evaluate() throwing Error carries page-side stack", async () => {
+  const view = new Bun.WebView({ backend: "chrome", width: 200, height: 200 });
+  try {
+    await view.navigate(html("<body></body>"));
+    // CDP exceptionDetails.exception.description is V8's formatted stack.
+    // errorFromExceptionDetails splits at first \n for .message and stamps
+    // the full description on .stack — the user sees page frames, not the
+    // test callsite.
+    const err = await view
+      .evaluate(
+        `
+        function inner() { throw new Error("page boom"); }
+        function outer() { inner(); }
+        outer();
+      `,
+      )
+      .catch(e => e);
+    expect(err).toBeInstanceOf(Error);
+    expect(err.message).toContain("page boom");
+    // The stack should name the page functions.
+    expect(err.stack).toContain("inner");
+    expect(err.stack).toContain("outer");
+  } finally {
+    view.close();
+  }
+});
+
+it("chrome: evaluate() rejected Promise carries rejection reason", async () => {
+  const view = new Bun.WebView({ backend: "chrome", width: 200, height: 200 });
+  try {
+    await view.navigate(html("<body></body>"));
+    await expect(view.evaluate("Promise.reject(new TypeError('bad'))")).rejects.toThrow(/bad/);
+  } finally {
+    view.close();
+  }
+});
+
+it("chrome: evaluate() with circular reference throws", async () => {
+  const view = new Bun.WebView({ backend: "chrome", width: 200, height: 200 });
+  try {
+    await view.navigate(html("<body></body>"));
+    // returnByValue can't serialize circular — Chrome throws page-side.
+    await expect(view.evaluate("const a = {}; a.self = a; a")).rejects.toThrow();
+  } finally {
+    view.close();
+  }
+});
+
+it("chrome: click(selector) rejects on invalid selector syntax", async () => {
+  const view = new Bun.WebView({ backend: "chrome", width: 200, height: 200 });
+  try {
+    await view.navigate(html("<body></body>"));
+    // querySelector throws SyntaxError page-side; the IIFE rejects.
+    await expect(view.click(":::invalid")).rejects.toThrow();
+  } finally {
+    view.close();
+  }
+});
+
+// --- Input variants --------------------------------------------------------
+
+it("chrome: click with right button fires contextmenu", async () => {
+  const view = new Bun.WebView({ backend: "chrome", width: 300, height: 300 });
+  try {
+    await view.navigate(
+      html(`
+        <script>
+          window.__ev = new Promise(r =>
+            document.addEventListener("contextmenu", e => { e.preventDefault(); r({button: e.button, trusted: e.isTrusted}); }, {once: true}));
+        </script>
+        <div style="position:fixed;left:0;top:0;width:200px;height:200px"></div>
+      `),
+    );
+    // button: "right" → cdpButton(1) = "right" → Chrome fires contextmenu.
+    await view.click(100, 100, { button: "right" });
+    const ev = await view.evaluate("__ev");
+    expect(ev).toEqual({ button: 2, trusted: true });
+  } finally {
+    view.close();
+  }
+});
+
+it("chrome: click with modifiers sets MouseEvent flags", async () => {
+  const view = new Bun.WebView({ backend: "chrome", width: 300, height: 300 });
+  try {
+    await view.navigate(
+      html(`
+        <script>
+          window.__ev = new Promise(r =>
+            document.addEventListener("click", e => r({shift: e.shiftKey, ctrl: e.ctrlKey, alt: e.altKey, meta: e.metaKey}), {once: true}));
+        </script>
+        <div style="position:fixed;left:0;top:0;width:200px;height:200px"></div>
+      `),
+    );
+    await view.click(100, 100, { modifiers: ["Shift", "Meta"] });
+    const ev = await view.evaluate("__ev");
+    expect(ev).toEqual({ shift: true, ctrl: false, alt: false, meta: true });
+  } finally {
+    view.close();
+  }
+});
+
+it("chrome: click(selector) is injection-safe", async () => {
+  const view = new Bun.WebView({ backend: "chrome", width: 300, height: 300 });
+  try {
+    // Selector contains quotes + backslash — would break naive string
+    // interpolation. The IIFE call-site goes through appendQuotedJSONString
+    // so it round-trips as a proper JSON string argument.
+    await view.navigate(
+      html(`
+        <button id="weird'\\"" data-sel="weird" onclick="window.__hit=1" style="position:fixed;left:0;top:0;width:50px;height:50px"></button>
+      `),
+    );
+    await view.click(`[id="weird'\\""]`);
+    expect(await view.evaluate("String(window.__hit)")).toBe("1");
+  } finally {
+    view.close();
+  }
+});
+
+it("chrome: click(selector) waits for animation to stop", async () => {
+  const view = new Bun.WebView({ backend: "chrome", width: 300, height: 300 });
+  try {
+    await view.navigate(
+      html(`
+        <style>
+          @keyframes slide { from { left: 0; } to { left: 100px; } }
+          #mover { position: fixed; top: 50px; width: 60px; height: 60px;
+                   animation: slide 80ms linear forwards; }
+        </style>
+        <button id=mover onclick="window.__hit=this.getBoundingClientRect().left">mv</button>
+      `),
+    );
+    // Stable-for-2-frames check — the click lands after the animation stops.
+    await view.click("#mover");
+    const left = Number(await view.evaluate("String(__hit)"));
+    expect(left).toBe(100);
+  } finally {
+    view.close();
+  }
+});
+
+// --- scrollTo variants -----------------------------------------------------
+
+it("chrome: scrollTo with block: start aligns top", async () => {
+  const view = new Bun.WebView({ backend: "chrome", width: 300, height: 300 });
+  try {
+    await view.navigate(
+      html(`
+        <div style="height:1000px"></div>
+        <div id=t style="height:100px;background:red">target</div>
+        <div style="height:1000px"></div>
+      `),
+    );
+    await view.scrollTo("#t", { block: "start" });
+    // block: start → target's top aligns with viewport top.
+    const top = await view.evaluate("document.getElementById('t').getBoundingClientRect().top");
+    expect(Math.abs(top)).toBeLessThan(2);
+  } finally {
+    view.close();
+  }
+});
+
+// --- Lifecycle -------------------------------------------------------------
+
+it("chrome: resize changes viewport dimensions", async () => {
+  const view = new Bun.WebView({ backend: "chrome", width: 300, height: 300 });
+  try {
+    await view.navigate(html("<body></body>"));
+    await view.resize(500, 400);
+    // Emulation.setDeviceMetricsOverride — the reply means the metrics are
+    // applied. innerWidth/innerHeight reflect them on the next layout.
+    const dims = await view.evaluate("({w: innerWidth, h: innerHeight})");
+    expect(dims).toEqual({ w: 500, h: 400 });
+  } finally {
+    view.close();
+  }
+});
+
+it("chrome: reload fires loadEventFired", async () => {
+  const view = new Bun.WebView({ backend: "chrome", width: 200, height: 200 });
+  try {
+    await view.navigate(html("<script>window.__n = (window.__n||0)+1</script>"));
+    expect(await view.evaluate("__n")).toBe(1);
+    // Page.reload → loadEventFired resolves the Misc slot. The script re-runs.
+    await view.reload();
+    // reload doesn't wait for loadEventFired (it's Misc slot, not Navigate).
+    // rAF-poll until the script re-ran — same mechanism as scroll.
+    const n = await view.evaluate(`
+      new Promise((resolve, reject) => {
+        const deadline = performance.now() + 2000;
+        requestAnimationFrame(function tick() {
+          if (window.__n === 1) return resolve(1);
+          if (performance.now() > deadline) return reject("reload didn't re-run script");
+          requestAnimationFrame(tick);
+        });
+      })
+    `);
+    expect(n).toBe(1);
+  } finally {
+    view.close();
+  }
+});
+
+it("chrome: sequential navigates work", async () => {
+  const view = new Bun.WebView({ backend: "chrome", width: 200, height: 200 });
+  try {
+    // First navigate does the attach chain; subsequent go direct.
+    await view.navigate(html("<body>A</body>"));
+    expect(await view.evaluate("document.body.textContent")).toBe("A");
+    await view.navigate(html("<body>B</body>"));
+    expect(await view.evaluate("document.body.textContent")).toBe("B");
+    await view.navigate(html("<body>C</body>"));
+    expect(await view.evaluate("document.body.textContent")).toBe("C");
+  } finally {
+    view.close();
+  }
+});
+
+it("chrome: onNavigated fires with committed URL", async () => {
+  const view = new Bun.WebView({ backend: "chrome", width: 200, height: 200 });
+  try {
+    const urls: string[] = [];
+    view.onNavigated = (url: string) => urls.push(url);
+    const url = html("<body>test</body>");
+    await view.navigate(url);
+    // Page.frameNavigated fires before loadEventFired; the callback runs
+    // inside onData before the promise microtask.
+    expect(urls.length).toBeGreaterThanOrEqual(1);
+    expect(urls[urls.length - 1]).toContain("data:text/html");
+  } finally {
+    view.close();
+  }
+});
+
+it("chrome: large evaluate payload crosses the pipe", async () => {
+  const view = new Bun.WebView({ backend: "chrome", width: 200, height: 200 });
+  try {
+    await view.navigate(html("<body></body>"));
+    // 100KB string. The socketpair buffer is ~256KB default; a single
+    // write may EAGAIN partway through. The tx queue + onWritable drain
+    // handles it; the response comes back intact.
+    const big = "x".repeat(100_000);
+    const result = await view.evaluate(`${JSON.stringify(big)}.length`);
+    expect(result).toBe(100_000);
+  } finally {
+    view.close();
+  }
 });

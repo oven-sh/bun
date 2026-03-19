@@ -5,6 +5,7 @@
 #include "BunClientData.h"
 
 #include <JavaScriptCore/JSCInlines.h>
+#include <JavaScriptCore/ErrorInstance.h>
 #include <JavaScriptCore/TopExceptionScope.h>
 #include <JavaScriptCore/WeakInlines.h>
 #include <JavaScriptCore/JSONObject.h>
@@ -32,7 +33,10 @@ using namespace JSC;
 static bool s_debugCDP = getenv("BUN_DEBUG_CDP") != nullptr;
 
 // From ChromeProcess.zig. Returns the parent's socketpair fd (bidirectional).
-extern "C" int32_t Bun__Chrome__ensure(Zig::GlobalObject*, const char* userDataDir);
+// path overrides auto-detection; extraArgv (count entries, each NUL-
+// terminated) appends after core flags. All pointers nullable.
+extern "C" int32_t Bun__Chrome__ensure(Zig::GlobalObject*, const char* userDataDir,
+    const char* path, const char* const* extraArgv, uint32_t extraArgvLen);
 extern "C" void Bun__eventLoop__incrementRefConcurrently(void* bunVM, int delta);
 extern "C" void Bun__EventLoop__enter(Zig::GlobalObject*);
 extern "C" void Bun__EventLoop__exit(Zig::GlobalObject*);
@@ -167,7 +171,8 @@ static us_socket_t* cdpOnEnd(us_socket_t* s)
 }
 static us_socket_t* cdpOnOpen(us_socket_t* s, int, char*, int) { return s; }
 
-bool Transport::ensureSpawned(Zig::GlobalObject* zig, const WTF::String& userDataDir)
+bool Transport::ensureSpawned(Zig::GlobalObject* zig, const WTF::String& userDataDir,
+    const WTF::String& path, const WTF::Vector<WTF::String>& extraArgv)
 {
     if (m_readSock && !m_dead) return true;
     if (m_dead) {
@@ -181,7 +186,20 @@ bool Transport::ensureSpawned(Zig::GlobalObject* zig, const WTF::String& userDat
     // isNull), which on the Zig side passes "" into --user-data-dir= and
     // Chrome falls back to the default profile → ProcessSingleton abort.
     WTF::CString dir = userDataDir.utf8();
-    int32_t fd = Bun__Chrome__ensure(zig, dir.length() ? dir.data() : nullptr);
+    WTF::CString pathC = path.utf8();
+    // Two-level pack: CString owns the bytes, ptrVec holds data() pointers.
+    // Both live until Bun__Chrome__ensure returns (spawn copies argv).
+    WTF::Vector<WTF::CString, 8> argvC;
+    WTF::Vector<const char*, 8> argvPtrs;
+    for (auto& s : extraArgv) {
+        argvC.append(s.utf8());
+        argvPtrs.append(argvC.last().data());
+    }
+    int32_t fd = Bun__Chrome__ensure(zig,
+        dir.length() ? dir.data() : nullptr,
+        pathC.length() ? pathC.data() : nullptr,
+        argvPtrs.isEmpty() ? nullptr : argvPtrs.span().data(),
+        static_cast<uint32_t>(argvPtrs.size()));
     if (fd < 0) {
         m_dead = true;
         return false;
@@ -360,6 +378,85 @@ static void settle(JSGlobalObject* g, JSWebView* view, PendingSlot slot, bool ok
         p->reject(g->vm(), g, v);
 }
 
+// Unescape the JSON-string control sequences we actually expect in V8's
+// exception.description: \n, \", \\. Chrome doesn't emit others here
+// (the description is V8's Error.prototype.toString + stack formatter,
+// which stays in printable-ASCII-or-\n). Leaves unknown \x as-is.
+static WTF::String jsonUnescape(std::span<const char> s)
+{
+    WTF::Vector<char, 256> out;
+    out.reserveInitialCapacity(s.size());
+    for (size_t i = 0; i < s.size(); ++i) {
+        char c = s[i];
+        if (c == '\\' && i + 1 < s.size()) {
+            char n = s[++i];
+            switch (n) {
+            case 'n': out.append('\n'); break;
+            case '"': out.append('"'); break;
+            case '\\': out.append('\\'); break;
+            case 't': out.append('\t'); break;
+            case 'r': out.append('\r'); break;
+            default: out.append('\\'); out.append(n); break;
+            }
+        } else {
+            out.append(c);
+        }
+    }
+    return WTF::String::fromUTF8(out.span());
+}
+
+// Build an Error from CDP exceptionDetails. exception.description is V8's
+// Error.prototype.toString() + stack formatter:
+//   "Error: msg\n    at functionName (url:line:col)\n    at ..."
+// We split at the first \n — before is the message line, after is the stack
+// body. The Error gets .message = message, .stack = full description (V8
+// convention: stack starts with the message line). If description is empty
+// or there's no exception object (non-Error throw), fall back to .text.
+//
+// ErrorInstance::create(globalObject, message, ErrorType, LineColumn,
+// sourceURL, stackString) constructs without capturing the JSC-side stack
+// (which would show ChromeBackend.cpp frames, not page frames). The
+// stackString overload sets .stack directly; no captureStackTrace runs.
+static JSValue errorFromExceptionDetails(JSGlobalObject* g, std::span<const char> excDetails)
+{
+    auto desc = jsonString(jsonField(
+        jsonField(excDetails, { "exception", 9 }), { "description", 11 }));
+    auto text = jsonString(jsonField(excDetails, { "text", 4 }));
+
+    // description has \n escaped in the JSON string — our jsonString strips
+    // the quotes but doesn't unescape. Manual unescape for the sequences
+    // V8's formatter actually emits (\n, \", \\; printable-ASCII otherwise).
+    auto fullStr = jsonUnescape(desc.empty() ? text : desc);
+
+    // Split at first newline. Message line is "Error: msg" or just "msg"
+    // for non-Error throws. Strip "ErrorName: " so .message matches what
+    // page-side catch sees on e.message.
+    auto firstNewline = fullStr.find('\n');
+    auto messageLine = firstNewline == WTF::notFound
+        ? fullStr
+        : fullStr.substring(0, firstNewline);
+    auto colonSpace = messageLine.find(": "_s);
+    auto message = colonSpace != WTF::notFound && colonSpace < 32
+        ? messageLine.substring(colonSpace + 2)
+        : messageLine;
+
+    // lineNumber/columnNumber are at the top level of exceptionDetails
+    // (the throw site, 0-based). url may be absent (anonymous scripts
+    // from evaluate()). Parse what's there; default to 0/empty.
+    auto ln = jsonField(excDetails, { "lineNumber", 10 });
+    auto cn = jsonField(excDetails, { "columnNumber", 12 });
+    auto url = jsonString(jsonField(excDetails, { "url", 3 }));
+    unsigned line = 0, col = 0;
+    for (char c : ln) { if (c < '0' || c > '9') break; line = line * 10 + (c - '0'); }
+    for (char c : cn) { if (c < '0' || c > '9') break; col = col * 10 + (c - '0'); }
+
+    return ErrorInstance::create(g,
+        WTF::String(message), ErrorType::Error,
+        LineColumn { line + 1, col + 1 }, // CDP 0-based → JS 1-based
+        WTF::String::fromUTF8(url),
+        WTF::move(fullStr));
+}
+
 // Per-method result handlers. Each knows the schema of its result object
 // and extracts just what the JS side needs. The m_pending entry is erased
 // BEFORE the JS call so re-entrant sends don't see a stale map entry.
@@ -474,11 +571,7 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         // JSON-serialized return. exceptionDetails present → script threw.
         auto excDetails = jsonField(result, { "exceptionDetails", 16 });
         if (!excDetails.empty()) {
-            auto desc = jsonString(jsonField(
-                jsonField(excDetails, { "exception", 9 }), { "description", 11 }));
-            auto text = jsonString(jsonField(excDetails, { "text", 4 }));
-            auto msg = desc.empty() ? text : desc;
-            settle(g, view, entry.slot, false, createError(g, WTF::String::fromUTF8(msg)));
+            settle(g, view, entry.slot, false, errorFromExceptionDetails(g, excDetails));
             return;
         }
         // result.result.value — the inner result object's value field.
@@ -537,9 +630,7 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         // scrollIntoView ran page-side. exceptionDetails if timeout threw.
         auto excDetails = jsonField(result, { "exceptionDetails", 16 });
         if (!excDetails.empty()) {
-            auto desc = jsonString(jsonField(
-                jsonField(excDetails, { "exception", 9 }), { "description", 11 }));
-            settle(g, view, entry.slot, false, createError(g, WTF::String::fromUTF8(desc)));
+            settle(g, view, entry.slot, false, errorFromExceptionDetails(g, excDetails));
         } else {
             settle(g, view, entry.slot, true, jsUndefined());
         }
@@ -550,9 +641,7 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         // Actionability check returned [cx, cy] or threw timeout.
         auto excDetails = jsonField(result, { "exceptionDetails", 16 });
         if (!excDetails.empty()) {
-            auto desc = jsonString(jsonField(
-                jsonField(excDetails, { "exception", 9 }), { "description", 11 }));
-            settle(g, view, entry.slot, false, createError(g, WTF::String::fromUTF8(desc)));
+            settle(g, view, entry.slot, false, errorFromExceptionDetails(g, excDetails));
             return;
         }
         // result.result.value = [cx, cy]. jsonField gives us the array

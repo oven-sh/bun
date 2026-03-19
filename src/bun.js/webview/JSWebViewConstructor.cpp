@@ -82,6 +82,8 @@ JSC_DEFINE_HOST_FUNCTION(constructWebView, (JSGlobalObject * globalObject, CallF
     WTF::String persistDir;
     WTF::String initialUrl;
     WebViewBackend backend = WebViewBackend::WebKit;
+    WTF::String chromePath;
+    WTF::Vector<WTF::String> chromeArgv;
 
     JSValue options = callFrame->argument(0);
     if (options.isObject()) {
@@ -103,16 +105,68 @@ JSC_DEFINE_HOST_FUNCTION(constructWebView, (JSGlobalObject * globalObject, CallF
                 "headless: false is not yet implemented"_s);
         }
 
+        // backend: "chrome" | "webkit" | { type: "chrome", path?, argv? }
+        // The object form lets the user override the auto-detected binary
+        // and append extra flags (e.g. --enable-features=...). argv entries
+        // go after our core flags so they can override defaults.
         JSValue be = opts->get(globalObject, Identifier::fromString(vm, "backend"_s));
         RETURN_IF_EXCEPTION(scope, {});
+        auto parseBackendType = [&](const WTF::String& s) -> bool {
+            if (s == "chrome"_s) {
+                backend = WebViewBackend::Chrome;
+                return true;
+            }
+            if (s == "webkit"_s) {
+                backend = WebViewBackend::WebKit;
+                return true;
+            }
+            Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_VALUE,
+                "backend.type must be \"webkit\" or \"chrome\""_s);
+            return false;
+        };
         if (be.isString()) {
             WTF::String s = be.toWTFString(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
-            if (s == "chrome"_s)
-                backend = WebViewBackend::Chrome;
-            else if (s != "webkit"_s)
-                return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_VALUE,
-                    "backend must be \"webkit\" or \"chrome\""_s);
+            if (!parseBackendType(s)) return {};
+        } else if (be.isObject()) {
+            JSObject* beObj = be.getObject();
+            JSValue type = beObj->get(globalObject, Identifier::fromString(vm, "type"_s));
+            RETURN_IF_EXCEPTION(scope, {});
+            if (!type.isString()) {
+                return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE,
+                    "backend.type must be a string"_s);
+            }
+            if (!parseBackendType(type.toWTFString(globalObject))) return {};
+            RETURN_IF_EXCEPTION(scope, {});
+
+            JSValue path = beObj->get(globalObject, Identifier::fromString(vm, "path"_s));
+            RETURN_IF_EXCEPTION(scope, {});
+            if (path.isString()) {
+                chromePath = path.toWTFString(globalObject);
+                RETURN_IF_EXCEPTION(scope, {});
+            } else if (!path.isUndefined()) {
+                return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE,
+                    "backend.path must be a string"_s);
+            }
+
+            JSValue argvVal = beObj->get(globalObject, Identifier::fromString(vm, "argv"_s));
+            RETURN_IF_EXCEPTION(scope, {});
+            if (auto* arr = jsDynamicCast<JSArray*>(argvVal)) {
+                unsigned len = arr->length();
+                for (unsigned i = 0; i < len; ++i) {
+                    JSValue item = arr->get(globalObject, i);
+                    RETURN_IF_EXCEPTION(scope, {});
+                    if (!item.isString()) {
+                        return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE,
+                            "backend.argv entries must be strings"_s);
+                    }
+                    chromeArgv.append(item.toWTFString(globalObject));
+                    RETURN_IF_EXCEPTION(scope, {});
+                }
+            } else if (!argvVal.isUndefined()) {
+                return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE,
+                    "backend.argv must be an array of strings"_s);
+            }
         }
 
         // Initial URL — the navigate() is fired off immediately after
@@ -168,10 +222,11 @@ JSC_DEFINE_HOST_FUNCTION(constructWebView, (JSGlobalObject * globalObject, CallF
     }
 
     if (backend == WebViewBackend::Chrome) {
-        JSWebView* view = JSWebView::createChrome(globalObject, structure, width, height, persistDir);
+        JSWebView* view = JSWebView::createChrome(globalObject, structure, width, height,
+            persistDir, chromePath, chromeArgv);
         if (!view) {
             return Bun::throwError(globalObject, scope, ErrorCode::ERR_DLOPEN_FAILED,
-                "Failed to spawn Chrome (set BUN_CHROME_PATH or install Chrome/Chromium)"_s);
+                "Failed to spawn Chrome (set BUN_CHROME_PATH, backend.path, or install Chrome/Chromium)"_s);
         }
         if (!initialUrl.isEmpty()) view->navigate(globalObject, initialUrl);
         return JSValue::encode(view);

@@ -112,11 +112,13 @@ public:
 #endif
 
     // Chrome constructor. Lazy-spawns Chrome; stores width/height for the
-    // Target.createTarget that the first navigate() sends. Works on all
-    // platforms where Chrome runs (not just Darwin). Returns nullptr if
-    // Chrome spawn failed.
+    // Target.createTarget that the first navigate() sends. path overrides
+    // auto-detection; extraArgv appends to the built-in flags. Works on
+    // all platforms where Chrome runs (not just Darwin). Returns nullptr
+    // if Chrome spawn failed.
     static JSWebView* createChrome(JSC::JSGlobalObject*, JSC::Structure*,
-        uint32_t width, uint32_t height, const WTF::String& userDataDir);
+        uint32_t width, uint32_t height, const WTF::String& userDataDir,
+        const WTF::String& path, const WTF::Vector<WTF::String>& extraArgv);
 
     void finishCreation(JSC::VM&);
     static JSC::Structure* createStructure(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue prototype);

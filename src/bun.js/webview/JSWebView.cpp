@@ -1204,11 +1204,12 @@ void JSWebView::doClose()
 // --- Constructor entry -----------------------------------------------------
 
 JSWebView* JSWebView::createChrome(JSGlobalObject* g, Structure* structure,
-    uint32_t width, uint32_t height, const WTF::String& userDataDir)
+    uint32_t width, uint32_t height, const WTF::String& userDataDir,
+    const WTF::String& path, const WTF::Vector<WTF::String>& extraArgv)
 {
     auto* zig = defaultGlobalObject(g);
     auto& t = CDP::transport();
-    if (!t.ensureSpawned(zig, userDataDir)) return nullptr;
+    if (!t.ensureSpawned(zig, userDataDir, path, extraArgv)) return nullptr;
 
     JSWebView* view = create(g->vm(), structure);
     view->m_backend = WebViewBackend::Chrome;

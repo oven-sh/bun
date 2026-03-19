@@ -283,7 +283,13 @@ struct Pending {
 class Transport {
 public:
     // Lazy-spawn Chrome. Returns false on spawn failure; caller throws.
-    bool ensureSpawned(Zig::GlobalObject*, const WTF::String& userDataDir = {});
+    // Lazy-spawn Chrome. path overrides auto-detection (BUN_CHROME_PATH >
+    // path > app bundles > playwright cache). extraArgv appends after the
+    // core flags so user flags can override built-ins. Spawn args apply
+    // only on the FIRST call — subsequent views share the one Chrome, so
+    // mismatched path/argv across views get the first-call's config.
+    bool ensureSpawned(Zig::GlobalObject*, const WTF::String& userDataDir = {},
+        const WTF::String& path = {}, const WTF::Vector<WTF::String>& extraArgv = {});
 
     // Next CDP id — caller uses it with Command(id, ...) then calls send().
     uint32_t nextId() { return m_nextId++; }

@@ -46,11 +46,18 @@ fn killOnExit() callconv(.c) void {
 /// Windows TODO — fd.cast() returns a HANDLE there, and pipe() / fcntl
 /// nonblocking have no direct equivalents. The spawn would need to use
 /// named pipes or libuv. For now -1 and C++ throws not-implemented.
-pub export fn Bun__Chrome__ensure(global: *jsc.JSGlobalObject, userDataDir: ?[*:0]const u8) i32 {
+pub export fn Bun__Chrome__ensure(
+    global: *jsc.JSGlobalObject,
+    userDataDir: ?[*:0]const u8,
+    path: ?[*:0]const u8,
+    extraArgv: ?[*]const [*:0]const u8,
+    extraArgvLen: u32,
+) i32 {
     if (comptime bun.Environment.isWindows) return -1;
     if (instance != null) return -1; // C++ already holds the fd
 
-    const fd = spawn(global.bunVM(), userDataDir) catch |err| {
+    const extra: []const [*:0]const u8 = if (extraArgv) |a| a[0..extraArgvLen] else &.{};
+    const fd = spawn(global.bunVM(), userDataDir, path, extra) catch |err| {
         log("spawn failed: {s}", .{@errorName(err)});
         return -1;
     };
@@ -76,16 +83,21 @@ pub fn onProcessExit(this: *ChromeProcess, _: *bun.spawn.Process, status: bun.sp
 ///   linux: ~/.cache/ms-playwright/chromium_headless_shell-<rev>/
 ///            chrome-headless-shell-linux64/chrome-headless-shell
 ///            (arm64 non-cft builds use chrome-linux/headless_shell instead)
-fn findChrome(alloc: std.mem.Allocator) !?[:0]const u8 {
-    // Env override first — lets tests pin a specific binary.
+fn findChrome(alloc: std.mem.Allocator, explicitPath: ?[*:0]const u8) !?[:0]const u8 {
+    // Precedence: backend.path > BUN_CHROME_PATH > signed bundles > playwright.
+    // backend.path is per-Bun.WebView call (first wins — later views reuse
+    // the already-spawned Chrome); env var is per-process.
+    if (explicitPath) |p| {
+        return try alloc.dupeZ(u8, std.mem.span(p));
+    }
     if (std.process.getEnvVarOwned(alloc, "BUN_CHROME_PATH")) |p| {
         return try alloc.dupeZ(u8, p);
     } else |_| {}
 
-    // Playwright cache — readdir for the newest chromium_headless_shell-<rev>.
-    // <rev> is numeric and monotonic per Playwright's browsers.json.
-    if (findPlaywrightShell(alloc)) |p| return p;
-
+    // Signed app bundles first — enterprise endpoint-protection (Gatekeeper,
+    // Santa) allowlists notarized bundles but blocks unsigned binaries in
+    // cache dirs. Playwright's chrome-headless-shell is unsigned; on a
+    // locked-down dev machine it SIGKILLs at exec while Chrome.app runs.
     const candidates = if (comptime bun.Environment.isMac) [_][]const u8{
         "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
         "/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary",
@@ -108,6 +120,12 @@ fn findChrome(alloc: std.mem.Allocator) !?[:0]const u8 {
             .err => continue,
         }
     }
+
+    // Playwright cache — readdir for the newest chromium_headless_shell-<rev>.
+    // Last resort: smaller binary (~100MB), but unsigned. CI Linux runners
+    // usually have this and nothing else.
+    if (findPlaywrightShell(alloc)) |p| return p;
+
     return null;
 }
 
@@ -181,14 +199,14 @@ fn findPlaywrightShell(alloc: std.mem.Allocator) ?[:0]const u8 {
     return null;
 }
 
-fn spawn(vm: *jsc.VirtualMachine, userDataDir: ?[*:0]const u8) !bun.FileDescriptor {
+fn spawn(vm: *jsc.VirtualMachine, userDataDir: ?[*:0]const u8, explicitPath: ?[*:0]const u8, extraArgv: []const [*:0]const u8) !bun.FileDescriptor {
     if (comptime bun.Environment.isWindows) return error.Unsupported;
 
     var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
     defer arena.deinit();
     const alloc = arena.allocator();
 
-    const chrome = try findChrome(alloc) orelse return error.ChromeNotFound;
+    const chrome = try findChrome(alloc, explicitPath) orelse return error.ChromeNotFound;
     log("using chrome: {s}", .{chrome});
 
     // One socketpair. Parent keeps fds[0], child gets fds[1] dup'd to BOTH
@@ -258,6 +276,11 @@ fn spawn(vm: *jsc.VirtualMachine, userDataDir: ?[*:0]const u8) !bun.FileDescript
     // No startup window — targets are Target.createTarget'd, not the
     // default about:blank. Saves one tab and the visual-complete wait.
     try argv.append(alloc, "--no-startup-window");
+    // User extras last so they can override built-in flags (Chrome's
+    // CommandLine last-wins for duplicate switches). Memory is the caller's
+    // CString Vector — lives until Bun__Chrome__ensure returns, after which
+    // posix_spawn has copied argv into the child.
+    for (extraArgv) |a| try argv.append(alloc, a);
     try argv.append(alloc, null);
 
     const env = try vm.transpiler.env.map.createNullDelimitedEnvMap(alloc);

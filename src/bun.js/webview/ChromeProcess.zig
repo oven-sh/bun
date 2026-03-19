@@ -211,9 +211,11 @@ fn spawn(vm: *jsc.VirtualMachine, userDataDir: ?[*:0]const u8) !bun.FileDescript
     try bun.sys.setNonblocking(fds[0]).unwrap();
 
     // Minimal flags. --remote-debugging-pipe is the one that matters;
-    // --headless=new uses the real browser with no UI (not the legacy
-    // headless_shell compositor). --no-first-run / --no-default-browser-check
-    // skip modal prompts that would block startup on a fresh profile.
+    // --headless works on both full Chrome (switches to headless mode) and
+    // chrome-headless-shell (no-op, it's already headless). --headless=new
+    // breaks chrome-headless-shell (it IS the new headless mode; =new is a
+    // full-Chrome-only switch). Playwright passes plain --headless
+    // (chromium.js:293).
     //
     // --user-data-dir MUST precede --remote-debugging-pipe in argv. Chrome's
     // CommandLine::Init stops at the first -- after argv[0] on some builds;
@@ -234,7 +236,7 @@ fn spawn(vm: *jsc.VirtualMachine, userDataDir: ?[*:0]const u8) !bun.FileDescript
     try argv.append(alloc, chrome.ptr);
     try argv.append(alloc, dataDir.ptr);
     try argv.append(alloc, "--remote-debugging-pipe");
-    try argv.append(alloc, "--headless=new");
+    try argv.append(alloc, "--headless");
     try argv.append(alloc, "--no-first-run");
     try argv.append(alloc, "--no-default-browser-check");
     try argv.append(alloc, "--disable-gpu"); // headless CI has no GPU context

@@ -219,14 +219,13 @@ bool Transport::ensureSpawned(Zig::GlobalObject* zig, const WTF::String& userDat
     return true;
 }
 
-uint32_t Transport::send(const WTF::CString& frame)
+void Transport::send(Command&& cmd)
 {
-    if (s_debugCDP) [[unlikely]]
-        fprintf(stderr, "[cdp tx] %.*s\n", static_cast<int>(frame.length()), frame.data());
-    // length()+1 — the CString's terminating NUL is the frame delimiter.
-    // Chrome's DevToolsPipeHandler does read-until-\0 on fd 3.
-    writeRaw(frame.data(), frame.length() + 1);
-    return m_nextId; // returned for convenience; caller already has it
+    cmd.finishAndWrite([this](const char* d, size_t n) {
+        if (s_debugCDP && n > 1) [[unlikely]]
+            fprintf(stderr, "[cdp tx] %.*s\n", static_cast<int>(n - (d[n - 1] == '\0' ? 1 : 0)), d);
+        writeRaw(d, n);
+    });
 }
 
 // Direct write() to the socketpair — usockets polls the same fd but its
@@ -400,7 +399,7 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         send(Command(cid, "Target.attachToTarget"_s)
                 .str("targetId"_s, view->m_targetId)
                 .boolean("flatten"_s, true)
-                .finish());
+                );
         return;
     }
     case Method::TargetAttachToTarget: {
@@ -419,7 +418,7 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         std::span<const char> sidSpan(ss.data(), ss.length());
         uint32_t cid = nextId();
         m_pending.add(cid, Pending { Method::PageEnable, entry.slot, WTF::move(entry.view) });
-        send(Command(cid, "Page.enable"_s, sidSpan).finish());
+        send(Command(cid, "Page.enable"_s, sidSpan));
         return;
     }
     case Method::PageEnable: {
@@ -431,7 +430,7 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         // Runtime.enable — fire-and-forget, untracked. We don't need to
         // wait for its reply before navigating.
         uint32_t rid = nextId();
-        send(Command(rid, "Runtime.enable"_s, sidSpan).finish());
+        send(Command(rid, "Runtime.enable"_s, sidSpan));
 
         // Page.navigate with the url stashed by the first navigate() call.
         // The response confirms the navigation STARTED; Page.loadEventFired
@@ -441,7 +440,7 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         m_pending.add(cid, Pending { Method::PageNavigate, entry.slot, WTF::move(entry.view) });
         send(Command(cid, "Page.navigate"_s, sidSpan)
                 .str("url"_s, view->m_pendingChromeNavigateUrl)
-                .finish());
+                );
         view->m_pendingChromeNavigateUrl = WTF::String();
         return;
     }
@@ -535,6 +534,88 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         // presentation-barrier dance, no mouseEventQueue drain wait.
         settle(g, view, entry.slot, true, jsUndefined());
         return;
+
+    case Method::ScrollToSelectorEval: {
+        // scrollIntoView ran page-side. exceptionDetails if timeout threw.
+        auto excDetails = jsonField(result, { "exceptionDetails", 16 });
+        if (!excDetails.empty()) {
+            auto desc = jsonString(jsonField(
+                jsonField(excDetails, { "exception", 9 }), { "description", 11 }));
+            settle(g, view, entry.slot, false, createError(g, WTF::String::fromUTF8(desc)));
+        } else {
+            settle(g, view, entry.slot, true, jsUndefined());
+        }
+        return;
+    }
+
+    case Method::ClickSelectorEval: {
+        // Actionability check returned [cx, cy] or threw timeout.
+        auto excDetails = jsonField(result, { "exceptionDetails", 16 });
+        if (!excDetails.empty()) {
+            auto desc = jsonString(jsonField(
+                jsonField(excDetails, { "exception", 9 }), { "description", 11 }));
+            settle(g, view, entry.slot, false, createError(g, WTF::String::fromUTF8(desc)));
+            return;
+        }
+        // result.result.value = [cx, cy]. jsonField gives us the array
+        // slice "[<cx>,<cy>]"; scan for the comma.
+        auto inner = jsonField(result, { "result", 6 });
+        auto value = jsonField(inner, { "value", 5 });
+        // Skip leading '['
+        const char* p = value.data();
+        const char* end = p + value.size();
+        while (p < end && (*p == '[' || *p == ' '))
+            ++p;
+        // Parse cx (float until comma)
+        char* ep;
+        float cx = strtof(p, &ep);
+        p = ep;
+        while (p < end && (*p == ',' || *p == ' '))
+            ++p;
+        float cy = strtof(p, nullptr);
+
+        // Chain into dispatchMouseEvent. Same down+up pair as clickChrome.
+        auto ss = view->m_sessionId.utf8();
+        std::span<const char> sid(ss.data(), ss.length());
+
+        // CDP button enum string. Same mapping as cdpButton in JSWebView.cpp
+        // — duplicated here because that's static in another TU.
+        ASCIILiteral btn;
+        switch (view->m_selButton) {
+        case 1: btn = "\"right\""_s; break;
+        case 2: btn = "\"middle\""_s; break;
+        default: btn = "\"left\""_s;
+        }
+        int32_t mods = 0;
+        // ipc_protocol.h Mod* → CDP modifier bits (Alt=1 Ctrl=2 Meta=4 Shift=8)
+        if (view->m_selModifiers & 4) mods |= 1; // Alt
+        if (view->m_selModifiers & 2) mods |= 2; // Ctrl
+        if (view->m_selModifiers & 8) mods |= 4; // Meta
+        if (view->m_selModifiers & 1) mods |= 8; // Shift
+
+        // Pressed — untracked fire-and-forget.
+        uint32_t idDown = nextId();
+        send(Command(idDown, "Input.dispatchMouseEvent"_s, sid)
+                .raw("type"_s, "\"mousePressed\""_s)
+                .num("x"_s, cx)
+                .num("y"_s, cy)
+                .raw("button"_s, btn)
+                .num("clickCount"_s, static_cast<int32_t>(view->m_selClickCount))
+                .num("modifiers"_s, mods)
+                );
+        // Released — tracked, resolves the slot.
+        uint32_t idUp = nextId();
+        m_pending.add(idUp, Pending { Method::InputDispatchMouseEvent, entry.slot, WTF::move(entry.view) });
+        send(Command(idUp, "Input.dispatchMouseEvent"_s, sid)
+                .raw("type"_s, "\"mouseReleased\""_s)
+                .num("x"_s, cx)
+                .num("y"_s, cy)
+                .raw("button"_s, btn)
+                .num("clickCount"_s, static_cast<int32_t>(view->m_selClickCount))
+                .num("modifiers"_s, mods)
+                );
+        return;
+    }
     }
 }
 

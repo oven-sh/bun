@@ -109,6 +109,93 @@ it("chrome: click dispatches mousedown/mouseup/click", async () => {
   }
 });
 
+it("chrome: click(selector) waits for actionability, clicks center", async () => {
+  const view = new Bun.WebView({ backend: "chrome", width: 300, height: 300 });
+  try {
+    await view.navigate(
+      html(`
+        <script>
+          window.__ev = [];
+          document.addEventListener("click", e => __ev.push({
+            trusted: e.isTrusted, x: e.clientX, y: e.clientY, target: e.target.id,
+          }), true);
+        </script>
+        <button id=btn style="position:fixed;left:40px;top:60px;width:100px;height:80px">btn</button>
+      `),
+    );
+    // Same rAF-polled actionability predicate as WKWebView. IIFE with
+    // JSON-escaped selector — no injection. Two-phase: Runtime.evaluate →
+    // [cx, cy] → Input.dispatchMouseEvent down+up.
+    await view.click("#btn");
+    const events = await view.evaluate("JSON.stringify(__ev)");
+    expect(JSON.parse(events)).toEqual([{ trusted: true, x: 90, y: 100, target: "btn" }]);
+  } finally {
+    view.close();
+  }
+});
+
+it("chrome: click(selector) waits for element to appear", async () => {
+  const view = new Bun.WebView({ backend: "chrome", width: 300, height: 300 });
+  try {
+    await view.navigate(
+      html(`
+        <script>
+          window.__clicked = 0;
+          let n = 0;
+          requestAnimationFrame(function tick() {
+            if (++n < 3) return requestAnimationFrame(tick);
+            const b = document.createElement("button");
+            b.id = "late";
+            b.onclick = () => __clicked++;
+            b.style.cssText = "position:fixed;left:0;top:0;width:50px;height:50px";
+            document.body.appendChild(b);
+          });
+        </script>
+      `),
+    );
+    await view.click("#late");
+    expect(await view.evaluate("String(__clicked)")).toBe("1");
+  } finally {
+    view.close();
+  }
+});
+
+it("chrome: click(selector) rejects on timeout when obscured", async () => {
+  const view = new Bun.WebView({ backend: "chrome", width: 300, height: 300 });
+  try {
+    await view.navigate(
+      html(`
+        <button id=under style="position:fixed;left:0;top:0;width:100px;height:100px">under</button>
+        <div style="position:fixed;left:0;top:0;width:100px;height:100px;background:red">overlay</div>
+      `),
+    );
+    // elementFromPoint returns the overlay — actionability never passes,
+    // the IIFE throws, exceptionDetails carries the message.
+    await expect(view.click("#under", { timeout: 200 })).rejects.toThrow(/timeout.*actionable/);
+  } finally {
+    view.close();
+  }
+});
+
+it("chrome: scrollTo(selector) scrolls element into view", async () => {
+  const view = new Bun.WebView({ backend: "chrome", width: 300, height: 300 });
+  try {
+    await view.navigate(
+      html(`
+        <div style="height:2000px"></div>
+        <div id=target style="height:100px;background:red">target</div>
+      `),
+    );
+    // scrollIntoView runs page-side — the IIFE waits for the element then
+    // calls scrollIntoView atomically. No second CDP roundtrip.
+    await view.scrollTo("#target");
+    const y = await view.evaluate("window.scrollY");
+    expect(y).toBeGreaterThan(1000);
+  } finally {
+    view.close();
+  }
+});
+
 it("chrome: type inserts text", async () => {
   const view = new Bun.WebView({ backend: "chrome", width: 300, height: 300 });
   try {

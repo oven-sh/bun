@@ -593,12 +593,12 @@ static void settleSlot(JSGlobalObject* g, JSWebView* v,
 }
 
 // Allocate promise, store in slot, add to Transport pending map, send frame.
-// Caller guarantees the slot is empty and m_closed == false. Frame comes
-// from CDP::Command(...).finish(); id was allocated via t.nextId() before
-// building the command (the id is baked into the frame).
+// Caller guarantees the slot is empty and m_closed == false. Command is
+// moved in; t.send() calls finishAndWrite which zero-copies to the pipe
+// when the body is all-ASCII.
 static JSPromise* sendChromeOp(JSGlobalObject* g, JSWebView* v,
     WriteBarrier<JSPromise>& slot, CDP::PendingSlot ps, CDP::Method m,
-    uint32_t id, const WTF::CString& frame)
+    uint32_t id, CDP::Command&& cmd)
 {
     auto& vm = g->vm();
     auto& t = CDP::transport();
@@ -610,7 +610,7 @@ static JSPromise* sendChromeOp(JSGlobalObject* g, JSWebView* v,
     v->m_pendingActivityCount.fetch_add(1, std::memory_order_release);
     slot.set(vm, v, promise);
     t.m_pending.add(id, CDP::Pending { m, ps, Weak<JSWebView>(v, &webViewWeakOwner()) });
-    t.send(frame);
+    t.send(WTF::move(cmd));
     t.updateKeepAlive();
     return promise;
 }
@@ -766,7 +766,7 @@ static JSPromise* navigateChrome(JSGlobalObject* g, JSWebView* view, const WTF::
             Method::PageNavigate, id,
             Command(id, "Page.navigate"_s, sidSpan(view->m_sessionId))
                 .str("url"_s, url)
-                .finish());
+                );
     }
 
     // First navigate: start the chain. Stash url; the PageEnable response
@@ -788,7 +788,7 @@ static JSPromise* navigateChrome(JSGlobalObject* g, JSWebView* view, const WTF::
             .boolean("newWindow"_s, true)
             .num("width"_s, static_cast<int32_t>(view->m_width))
             .num("height"_s, static_cast<int32_t>(view->m_height))
-            .finish());
+            );
 }
 
 // Runtime.evaluate with returnByValue + awaitPromise. Chrome JSON-serializes
@@ -809,7 +809,7 @@ static JSPromise* evaluateChrome(JSGlobalObject* g, JSWebView* view, const WTF::
             .str("expression"_s, body)
             .boolean("returnByValue"_s, true)
             .boolean("awaitPromise"_s, true)
-            .finish());
+            );
 }
 
 static JSPromise* screenshotChrome(JSGlobalObject* g, JSWebView* view)
@@ -821,7 +821,7 @@ static JSPromise* screenshotChrome(JSGlobalObject* g, JSWebView* view)
         Method::PageCaptureScreenshot, id,
         Command(id, "Page.captureScreenshot"_s, sidSpan(view->m_sessionId))
             .raw("format"_s, "\"png\""_s)
-            .finish());
+            );
 }
 
 // Bun click button → CDP button enum string. CDP's Input.dispatchMouseEvent
@@ -875,7 +875,7 @@ static JSPromise* clickChrome(JSGlobalObject* g, JSWebView* view, float x, float
             .raw("button"_s, btn)
             .num("clickCount"_s, static_cast<int32_t>(clickCount))
             .num("modifiers"_s, mods)
-            .finish());
+            );
     // Released — tracked, resolves the promise.
     uint32_t idUp = t.nextId();
     return sendChromeOp(g, view, view->m_pendingMisc, PendingSlot::Misc,
@@ -887,7 +887,7 @@ static JSPromise* clickChrome(JSGlobalObject* g, JSWebView* view, float x, float
             .raw("button"_s, btn)
             .num("clickCount"_s, static_cast<int32_t>(clickCount))
             .num("modifiers"_s, mods)
-            .finish());
+            );
 }
 
 // Selector ops: Runtime.evaluate runs the rAF-polled actionability check
@@ -917,7 +917,7 @@ static JSPromise* clickSelectorChrome(JSGlobalObject* g, JSWebView* view, const 
             .str("expression"_s, sb.toString())
             .boolean("returnByValue"_s, true)
             .boolean("awaitPromise"_s, true)
-            .finish());
+            );
 }
 
 static JSPromise* scrollToChrome(JSGlobalObject* g, JSWebView* view, const WTF::String& selector, uint32_t timeout, uint8_t block)
@@ -940,7 +940,7 @@ static JSPromise* scrollToChrome(JSGlobalObject* g, JSWebView* view, const WTF::
             .str("expression"_s, sb.toString())
             .boolean("returnByValue"_s, true)
             .boolean("awaitPromise"_s, true)
-            .finish());
+            );
 }
 
 static JSPromise* typeChrome(JSGlobalObject* g, JSWebView* view, const WTF::String& text)
@@ -954,7 +954,7 @@ static JSPromise* typeChrome(JSGlobalObject* g, JSWebView* view, const WTF::Stri
         Method::InputInsertText, id,
         Command(id, "Input.insertText"_s, sidSpan(view->m_sessionId))
             .str("text"_s, text)
-            .finish());
+            );
 }
 
 static JSPromise* scrollChrome(JSGlobalObject* g, JSWebView* view, double dx, double dy)
@@ -972,7 +972,7 @@ static JSPromise* scrollChrome(JSGlobalObject* g, JSWebView* view, double dx, do
             .num("y"_s, view->m_height / 2.0)
             .num("deltaX"_s, dx)
             .num("deltaY"_s, dy)
-            .finish());
+            );
 }
 
 static JSPromise* resizeChrome(JSGlobalObject* g, JSWebView* view, uint32_t width, uint32_t height)
@@ -989,7 +989,7 @@ static JSPromise* resizeChrome(JSGlobalObject* g, JSWebView* view, uint32_t widt
             .num("height"_s, static_cast<int32_t>(height))
             .num("deviceScaleFactor"_s, 1)
             .boolean("mobile"_s, false)
-            .finish());
+            );
 }
 
 static JSPromise* reloadChrome(JSGlobalObject* g, JSWebView* view)
@@ -999,7 +999,7 @@ static JSPromise* reloadChrome(JSGlobalObject* g, JSWebView* view)
     uint32_t id = t.nextId();
     return sendChromeOp(g, view, view->m_pendingMisc, PendingSlot::Misc,
         Method::PageReload, id,
-        Command(id, "Page.reload"_s, sidSpan(view->m_sessionId)).finish());
+        Command(id, "Page.reload"_s, sidSpan(view->m_sessionId)));
 }
 
 static void doCloseChrome(JSWebView* view)
@@ -1020,7 +1020,7 @@ static void doCloseChrome(JSWebView* view)
         uint32_t id = t.nextId();
         t.send(CDP::Command(id, "Target.closeTarget"_s)
                 .str("targetId"_s, view->m_targetId)
-                .finish());
+                );
         t.m_sessions.remove(view->m_sessionId);
     }
     t.updateKeepAlive();

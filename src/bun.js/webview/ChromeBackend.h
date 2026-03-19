@@ -85,57 +85,81 @@ public:
     }
 
     // Named string param. appendQuotedJSONString adds the quotes + escapes.
-    Command& str(ASCIILiteral key, const WTF::String& value)
+    // Rvalue-ref-qualified returns Command&& so chaining on a temporary
+    // (the usual `send(Command(...).str(...).num(...))` pattern) stays an
+    // rvalue and binds to send(Command&&).
+    Command&& str(ASCIILiteral key, const WTF::String& value) &&
     {
         comma();
         m_sb.append('"', key, "\":"_s);
         m_sb.appendQuotedJSONString(value);
-        return *this;
+        return WTF::move(*this);
     }
 
     // Named number param. StringBuilder's variadic append has a double
     // StringTypeAdapter (FormattedNumber::fixedPrecision).
-    Command& num(ASCIILiteral key, double value)
+    Command&& num(ASCIILiteral key, double value) &&
     {
         comma();
         m_sb.append('"', key, "\":"_s, value);
-        return *this;
+        return WTF::move(*this);
     }
 
-    Command& num(ASCIILiteral key, int32_t value)
+    Command&& num(ASCIILiteral key, int32_t value) &&
     {
         comma();
         m_sb.append('"', key, "\":"_s, value);
-        return *this;
+        return WTF::move(*this);
     }
 
     // Named boolean param.
-    Command& boolean(ASCIILiteral key, bool value)
+    Command&& boolean(ASCIILiteral key, bool value) &&
     {
         comma();
         m_sb.append('"', key, "\":"_s, value ? "true"_s : "false"_s);
-        return *this;
+        return WTF::move(*this);
     }
 
     // Raw JSON fragment (pre-validated object/array). Used for nested params
     // like Input.dispatchMouseEvent's button enum — caller knows the value
     // is a fixed literal string, not user input.
-    Command& raw(ASCIILiteral key, ASCIILiteral fragment)
+    Command&& raw(ASCIILiteral key, ASCIILiteral fragment) &&
     {
         comma();
         m_sb.append('"', key, "\":"_s, fragment);
-        return *this;
+        return WTF::move(*this);
     }
 
-    // Finish: close params and the outer object. Caller writes the returned
-    // CString's data() for length()+1 bytes — the +1 is the CString's own
-    // terminating NUL, which is the frame delimiter Chrome reads for.
-    // (ASCIILiteral "}}\0"_s stops at the first NUL, so appending a literal
-    // \0 char doesn't work; CString's terminator IS the NUL we want.)
-    WTF::CString finish()
+    // Finish + write to a raw-byte sink. If the builder is 8-bit and all-
+    // ASCII (the common case — the template IS ASCII, URLs/selectors
+    // usually are), span8() aliases the buffer directly; zero-copy.
+    // Non-ASCII Latin1 (bytes 128-255 passed through by appendQuotedJSON-
+    // String) or UTF-16 (user string had a non-Latin1 codepoint) need the
+    // utf8() transcode — one copy into the CString buffer, unavoidable.
+    //
+    // The trailing NUL frame delimiter: we write sink(body, len) then
+    // sink("\0", 1). Two syscalls in the best case; a writev would be
+    // one, but the pipe buffer coalesces anyway.
+    template<typename Sink> // void(const char*, size_t)
+    void finishAndWrite(Sink&& sink)
     {
         m_sb.append("}}"_s);
-        return m_sb.toString().utf8();
+        if (m_sb.is8Bit()) [[likely]] {
+            auto s = m_sb.span8();
+            // OR-accumulate: all bytes < 0x80 → no high bit → valid ASCII.
+            // One pass, no branching. Commands are typically <512B.
+            Latin1Character acc = 0;
+            for (auto c : s) acc |= c;
+            if (!(acc & 0x80)) [[likely]] {
+                sink(reinterpret_cast<const char*>(s.data()), s.size());
+                sink("\0", 1);
+                return;
+            }
+        }
+        // Non-ASCII path: transcode. The CString has its own NUL terminator
+        // at data()[length()], so length()+1 covers the frame delimiter.
+        auto utf8 = m_sb.toString().utf8();
+        sink(utf8.data(), utf8.length() + 1);
     }
 
 private:
@@ -263,9 +287,9 @@ public:
     // Next CDP id — caller uses it with Command(id, ...) then calls send().
     uint32_t nextId() { return m_nextId++; }
 
-    // Write a NUL-terminated frame to Chrome's fd 3. The frame came from
-    // Command::finish() which appended the NUL.
-    uint32_t send(const WTF::CString& frame);
+    // Finish the command and write to the pipe. Zero-copy when the command
+    // body is all-ASCII (the common case). See Command::finishAndWrite.
+    void send(Command&& cmd);
 
     // Called from usockets onData. Parses complete NUL-delimited messages
     // out of rx, dispatches each to handleMessage.

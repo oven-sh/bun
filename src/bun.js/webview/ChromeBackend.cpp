@@ -210,9 +210,10 @@ bool Transport::ensureSpawned(Zig::GlobalObject* zig, const WTF::String& userDat
 
 uint32_t Transport::send(const WTF::CString& frame)
 {
+    // Caller built the frame with Command(nextId(), ...). This just writes.
+    // The NUL terminator is inside the CString (finish() appended "}}\0").
     writeRaw(frame.data(), frame.length());
-    return m_nextId - 1; // caller pre-incremented via Command ctor — actually no,
-                         // the Command ctor takes id; caller allocates. See sendCommand().
+    return m_nextId; // returned for convenience; caller already has it
 }
 
 // Write to Chrome's fd 3. Direct syscall — usockets doesn't own this fd.
@@ -316,13 +317,42 @@ void Transport::handleMessage(std::span<const char> msg)
 
 // --- Response dispatch -----------------------------------------------------
 
-// Per-method result handlers. Each knows the schema of its result object
-// and extracts just what the JS side needs. The promise resolves with a
-// JS value built from the extracted slice(s).
-//
-// The m_pending entry is erased BEFORE the JS call so re-entrant sends
-// from .then() don't see a stale map entry.
+// Slot → barrier member on JSWebView. Mirrors HostClient's reply-type→slot.
+static WriteBarrier<JSPromise>& slotFor(JSWebView* view, PendingSlot s)
+{
+    switch (s) {
+    case PendingSlot::Navigate:
+        return view->m_pendingNavigate;
+    case PendingSlot::Evaluate:
+        return view->m_pendingEval;
+    case PendingSlot::Screenshot:
+        return view->m_pendingScreenshot;
+    case PendingSlot::Misc:
+        return view->m_pendingMisc;
+    }
+    ASSERT_NOT_REACHED();
+    return view->m_pendingMisc;
+}
 
+// Same settle semantics as JSWebView.cpp's — slot cleared BEFORE JS call so
+// re-entrant sends from .then() see an empty slot; activity decremented
+// AFTER clear (GC seeing count>0 with a clear slot is benign).
+static void settle(JSGlobalObject* g, JSWebView* view, PendingSlot slot, bool ok, JSValue v)
+{
+    auto& barrier = slotFor(view, slot);
+    JSPromise* p = barrier.get();
+    if (!p) return;
+    barrier.clear();
+    view->m_pendingActivityCount.fetch_sub(1, std::memory_order_release);
+    if (ok)
+        p->resolve(g, v);
+    else
+        p->reject(g->vm(), g, v);
+}
+
+// Per-method result handlers. Each knows the schema of its result object
+// and extracts just what the JS side needs. The m_pending entry is erased
+// BEFORE the JS call so re-entrant sends don't see a stale map entry.
 void Transport::handleResponse(uint32_t id, std::span<const char> result, std::span<const char> error)
 {
     auto it = m_pending.find(id);
@@ -331,119 +361,103 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
     m_pending.remove(it);
 
     auto* g = m_global;
-    auto& vm = g->vm();
-
     JSWebView* view = entry.view.get();
-    if (view) view->m_pendingActivityCount.fetch_sub(1, std::memory_order_release);
-    JSPromise* promise = entry.promise.get();
-    if (!promise) return;
+    if (!view) return; // user dropped both view and the awaited promise
 
     if (!error.empty()) {
         // {"code":-32000,"message":"..."}
         auto msgSlice = jsonString(jsonField(error, { "message", 7 }));
         auto errStr = WTF::String::fromUTF8(std::span<const char>(msgSlice));
-        promise->reject(vm, g, createError(g, errStr.isEmpty() ? "CDP error"_s : errStr));
+        settle(g, view, entry.slot, false,
+            createError(g, errStr.isEmpty() ? "CDP error"_s : errStr));
         return;
     }
 
     switch (entry.method) {
     case Method::TargetCreateTarget: {
-        // {"targetId":"<hex>"} — caller (createAndSend) stores it on the
-        // view and immediately sends Target.attachToTarget. Resolve with
-        // undefined; the targetId lives on the JSWebView.
+        // {"targetId":"<hex>"} — stash on the view, chain into attachToTarget.
+        // TODO: internal handler; not exposed to JS yet.
         auto tid = jsonString(jsonField(result, { "targetId", 8 }));
-        // The view's m_chromeTargetId is set by the caller that holds the
-        // view reference — we don't touch JSWebView internals here. Resolve
-        // with the targetId string so the caller can chain.
-        promise->resolve(g, jsString(vm, WTF::String::fromUTF8(tid)));
+        settle(g, view, entry.slot, true, jsString(g->vm(), WTF::String::fromUTF8(tid)));
         return;
     }
     case Method::TargetAttachToTarget: {
-        // {"sessionId":"<base64ish>"} — store in m_sessions for event routing.
+        // {"sessionId":"<base64ish>"} — register in m_sessions for event routing.
         auto sid = jsonString(jsonField(result, { "sessionId", 9 }));
-        auto sidStr = WTF::String::fromUTF8(sid);
-        // Re-root the view under its sessionId — events now route by it.
-        // The Weak's owner predicate keeps the view alive while pending > 0.
-        // TODO: move the view reference from a caller-side map to here.
-        promise->resolve(g, jsString(vm, sidStr));
+        // TODO: m_sessions.add here once the view has Chrome state to hold sid.
+        settle(g, view, entry.slot, true, jsString(g->vm(), WTF::String::fromUTF8(sid)));
         return;
     }
     case Method::TargetCloseTarget:
-        promise->resolve(g, jsUndefined());
+        settle(g, view, entry.slot, true, jsUndefined());
         return;
 
     case Method::PageNavigate: {
         // {"frameId":"...","loaderId":"..."} or {"frameId":"...","errorText":"..."}
-        // errorText present → navigation failed synchronously (bad URL etc.).
-        // Otherwise the frameId is valid; Page.frameNavigated event signals
-        // completion. For v1 we resolve here and let onNavigated handle the
-        // event — same semantics as WKWebView's NavDone.
+        // errorText present → navigation failed synchronously (bad URL, net
+        // error resolved before the response). Otherwise frameId is valid;
+        // Page.frameNavigated event signals commit. For v1 we resolve here
+        // — same "fire and let onNavigated catch up" semantics as WKWebView's
+        // NavDone. Proper load-complete waits for Page.loadEventFired.
         auto err = jsonString(jsonField(result, { "errorText", 9 }));
-        if (!err.empty()) {
-            promise->reject(vm, g, createError(g, WTF::String::fromUTF8(err)));
-        } else {
-            // TODO: defer resolve to Page.frameNavigated for proper
-            // load-complete semantics. For now resolve immediately so the
-            // basic navigate → evaluate flow works.
-            promise->resolve(g, jsUndefined());
-        }
+        if (!err.empty())
+            settle(g, view, entry.slot, false, createError(g, WTF::String::fromUTF8(err)));
+        else
+            settle(g, view, entry.slot, true, jsUndefined());
         return;
     }
 
     case Method::RuntimeEvaluate: {
         // {"result":{"type":"...","value":...},"exceptionDetails":{...}?}
-        // With returnByValue:true + awaitPromise:true, result.value is the
-        // JSON-serialized return value. If exceptionDetails present, the
-        // script threw — reject with the exception description.
+        // returnByValue:true + awaitPromise:true → result.value is the
+        // JSON-serialized return. exceptionDetails present → script threw.
         auto excDetails = jsonField(result, { "exceptionDetails", 16 });
         if (!excDetails.empty()) {
-            auto text = jsonString(jsonField(excDetails, { "text", 4 }));
             auto desc = jsonString(jsonField(
                 jsonField(excDetails, { "exception", 9 }), { "description", 11 }));
+            auto text = jsonString(jsonField(excDetails, { "text", 4 }));
             auto msg = desc.empty() ? text : desc;
-            promise->reject(vm, g, createError(g, WTF::String::fromUTF8(msg)));
+            settle(g, view, entry.slot, false, createError(g, WTF::String::fromUTF8(msg)));
             return;
         }
         // result.result.value — the inner result object's value field.
+        // type:"undefined" → no value field → resolve undefined.
         auto inner = jsonField(result, { "result", 6 });
         auto type = jsonString(jsonField(inner, { "type", 4 }));
         auto valueSlice = jsonField(inner, { "value", 5 });
-        // type:"undefined" → no value field → resolve undefined.
         if (valueSlice.empty() || (type.size() == 9 && memcmp(type.data(), "undefined", 9) == 0)) {
-            promise->resolve(g, jsUndefined());
+            settle(g, view, entry.slot, true, jsUndefined());
             return;
         }
         // JSONParse the value slice directly. Same 1-parse as WKWebView's
         // EvalDone — the slice IS JSON (returnByValue serialized it).
         JSValue v = JSONParse(g, WTF::String::fromUTF8(valueSlice));
-        promise->resolve(g, v ? v : jsUndefined());
+        settle(g, view, entry.slot, true, v ? v : jsUndefined());
         return;
     }
 
     case Method::PageCaptureScreenshot: {
-        // {"data":"<base64 PNG>"} — decode into a Uint8Array. The slice
-        // excludes quotes (jsonString peeled them). WTF::base64Decode
-        // allocates its own Vector<uint8_t> then we memcpy into the JS
-        // heap — two copies of the PNG in memory at peak (b64 source +
-        // decoded Vector), then the decoded Vector drops after the memcpy.
-        // A zero-copy decode-into-buffer would need a WTF API we don't
-        // have; Chrome's SIMD base64 path in bun.base64 is available but
-        // wiring it here costs more than the memcpy saves. TODO.
+        // {"data":"<base64 PNG>"} — decode into a Uint8Array. WTF::
+        // base64Decode allocates its own Vector then we memcpy into the JS
+        // heap. Two copies at peak (b64 source + decoded Vector), Vector
+        // drops after memcpy. Zero-copy decode-into-JSUint8Array-backing
+        // would need a WTF API we don't have; bun.base64's SIMD path is
+        // available but wiring it here costs more than the memcpy saves.
         auto b64 = jsonString(jsonField(result, { "data", 4 }));
         auto decoded = WTF::base64Decode(
             std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(b64.data()), b64.size()));
         if (!decoded) {
-            promise->reject(vm, g, createError(g, "screenshot: invalid base64"_s));
+            settle(g, view, entry.slot, false, createError(g, "screenshot: invalid base64"_s));
             return;
         }
         auto* u8 = JSUint8Array::createUninitialized(g, g->m_typedArrayUint8.get(g),
             static_cast<uint32_t>(decoded->size()));
         if (!u8) {
-            promise->reject(vm, g, createError(g, "screenshot: OOM"_s));
+            settle(g, view, entry.slot, false, createError(g, "screenshot: OOM"_s));
             return;
         }
         memcpy(u8->typedVector(), decoded->span().data(), decoded->size());
-        promise->resolve(g, u8);
+        settle(g, view, entry.slot, true, u8);
         return;
     }
 
@@ -451,10 +465,10 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
     case Method::InputDispatchKeyEvent:
     case Method::InputInsertText:
     case Method::EmulationSetDeviceMetricsOverride:
-        // Input.* and Emulation.* reply with empty result on success.
-        // Sync-reply — no _doAfter* barrier dance, the event has been
-        // processed by the time we get the reply.
-        promise->resolve(g, jsUndefined());
+        // Input.* / Emulation.* reply with empty result on success. Sync-
+        // reply — the event has been processed by the time we get this. No
+        // presentation-barrier dance, no mouseEventQueue drain wait.
+        settle(g, view, entry.slot, true, jsUndefined());
         return;
     }
 }
@@ -512,11 +526,13 @@ void Transport::rejectAllAndMarkDead(const WTF::String& reason)
     if (!m_global) return;
     auto* g = m_global;
     JSValue err = createError(g, reason);
+    // Reject each view's slots via settle(). Multiple pending ids may point
+    // at the same view (different slots); settle() is idempotent on an
+    // already-cleared slot — the first settle for a slot rejects, the rest
+    // find barrier.get() == null and no-op.
     for (auto& [id, entry] : m_pending) {
         if (JSWebView* v = entry.view.get())
-            v->m_pendingActivityCount.fetch_sub(1, std::memory_order_release);
-        if (JSPromise* p = entry.promise.get())
-            p->reject(g->vm(), g, err);
+            settle(g, v, entry.slot, false, err);
     }
     m_pending.clear();
     m_sessions.clear();

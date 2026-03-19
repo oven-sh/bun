@@ -168,12 +168,27 @@ enum class Method : uint8_t {
 // write() + EAGAIN queue (usockets doesn't handle write-only-pipe-fds
 // cleanly — it wants bidirectional sockets).
 //
-// pending maps CDP id → {promise, methodTag, weak view}. The Weak has the
-// same isReachableFromOpaqueRoots predicate as HostClient's viewsById.
+// pending maps CDP id → {methodTag, slot selector, weak view}. Promises
+// live in the WriteBarrier slots on JSWebView (visitChildren marks them);
+// the id map routes the response to the right slot. The Weak's owner
+// predicate reads m_pendingActivityCount — same GC root pattern as
+// HostClient's viewsById.
+//
+// One slot per op type means one pending op of each type per view. Chrome
+// has no intrinsic serialization (every id is independent), so this caps
+// concurrency artificially. Lifting the cap needs a per-view HashMap of
+// barriers on JSWebView with a custom visitChildren — v2.
+enum class PendingSlot : uint8_t {
+    Navigate,
+    Evaluate,
+    Screenshot,
+    Misc,
+};
+
 struct Pending {
-    JSC::WriteBarrier<JSC::JSPromise> promise;
     Method method;
-    JSC::Weak<JSWebView> view; // for sessionId routing + GC root via activity count
+    PendingSlot slot;
+    JSC::Weak<JSWebView> view;
 };
 
 class Transport {
@@ -181,9 +196,11 @@ public:
     // Lazy-spawn Chrome. Returns false on spawn failure; caller throws.
     bool ensureSpawned(Zig::GlobalObject*, const WTF::String& userDataDir = {});
 
-    // Allocate a CDP id and send a command. Returns the id for the
-    // pending-map insert. Commands go to the browser endpoint (no sessionId)
-    // for Target.* methods, or to a specific page via sessionId for the rest.
+    // Next CDP id — caller uses it with Command(id, ...) then calls send().
+    uint32_t nextId() { return m_nextId++; }
+
+    // Write a NUL-terminated frame to Chrome's fd 3. The frame came from
+    // Command::finish() which appended the NUL.
     uint32_t send(const WTF::CString& frame);
 
     // Called from usockets onData. Parses complete NUL-delimited messages

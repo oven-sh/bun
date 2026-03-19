@@ -121,6 +121,22 @@ JSC_DEFINE_HOST_FUNCTION(jsGetCiphers, (JSC::JSGlobalObject * lexicalGlobalObjec
     EVP_CIPHER_do_all_sorted(callback, &ctx);
     RETURN_IF_EXCEPTION(scope, {});
 
+#ifdef OPENSSL_IS_BORINGSSL
+    // BoringSSL's EVP_CIPHER_do_all_sorted omits AES-CCM; append names if EVP has them.
+    static constexpr const char* ccmCipherNames[] = {
+        "aes-128-ccm",
+        "aes-192-ccm",
+        "aes-256-ccm",
+    };
+    for (auto cipherName : ccmCipherNames) {
+        if (EVP_get_cipherbyname(cipherName) != nullptr) {
+            auto cipherStr = JSC::jsString(vm, String::fromUTF8(cipherName));
+            result->putDirectIndex(lexicalGlobalObject, ctx.index++, cipherStr);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+    }
+#endif
+
     return JSValue::encode(result);
 }
 

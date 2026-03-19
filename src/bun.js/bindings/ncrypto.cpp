@@ -1986,8 +1986,7 @@ const EVP_MD* getDigestByName(const WTF::StringView name)
 
 const EVP_CIPHER* getCipherByName(const WTF::StringView name)
 {
-    auto nameUtf8 = name.utf8();
-    return EVP_get_cipherbyname(nameUtf8.data());
+    return Cipher::FromName(name).get();
 }
 
 bool checkHkdfLength(const Digest& md, size_t length)
@@ -3146,7 +3145,6 @@ bool SSLCtxPointer::setCipherSuites(WTF::StringView ciphers)
 
 const Cipher Cipher::FromName(WTF::StringView name)
 {
-
     if (name.startsWithIgnoringASCIICase("aes"_s)) {
         auto remain = name.substring(3);
         if (remain == "128"_s) return Cipher::AES_128_CBC();
@@ -3155,7 +3153,10 @@ const Cipher Cipher::FromName(WTF::StringView name)
     }
 
     auto nameUtf8 = name.utf8();
-    return Cipher(EVP_get_cipherbyname(nameUtf8.data()));
+    if (const EVP_CIPHER* fromEvp = EVP_get_cipherbyname(nameUtf8.data()))
+        return Cipher(fromEvp);
+
+    return Cipher();
 }
 
 const Cipher Cipher::FromNid(int nid)

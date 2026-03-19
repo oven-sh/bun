@@ -1337,14 +1337,11 @@ pub fn loadNpmrc(
         var default_best_match_len: usize = 0;
 
         // Same for scoped registries: track best match length per scope.
-        const scoped_best_match_lens: []usize = if (registry_map.scopes.keys().len > 0)
-            scoped_best_match_lens: {
-                const buf = try allocator.alloc(usize, registry_map.scopes.keys().len);
-                @memset(buf, 0);
-                break :scoped_best_match_lens buf;
-            }
-        else
-            &.{};
+        const scoped_best_match_lens: []usize = if (registry_map.scopes.keys().len > 0) scoped_best_match_lens: {
+            const buf = try allocator.alloc(usize, registry_map.scopes.keys().len);
+            @memset(buf, 0);
+            break :scoped_best_match_lens buf;
+        } else &.{};
         defer if (scoped_best_match_lens.len > 0) allocator.free(scoped_best_match_lens);
 
         for (configs.items) |conf_item| {

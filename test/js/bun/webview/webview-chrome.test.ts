@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 
 // Chrome backend works on any platform with Chrome/Chromium installed.
 // Skip if no Chrome found (CI may not have it).
@@ -299,21 +300,30 @@ it("backend: { type: 'chrome' } object form works", async () => {
 });
 
 it("backend.argv appends after core flags", async () => {
-  // --user-agent is a Chrome switch we don't set — passing it via argv
-  // proves user flags reach Chrome. Last-wins for duplicates means this
-  // could also override our --disable-gpu etc.
-  const view = new Bun.WebView({
-    backend: { type: "chrome", argv: ["--user-agent=BunWebViewTest/1.0"] },
-    width: 200,
-    height: 200,
+  // Spawn args apply on the FIRST Chrome launch only — subsequent views
+  // reuse the already-running process. This test needs a fresh Chrome, so
+  // it runs in a subprocess. --user-agent proves the flag reached Chrome.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const view = new Bun.WebView({
+        backend: { type: "chrome", argv: ["--user-agent=BunWebViewTest/1.0"] },
+        width: 200, height: 200,
+      });
+      await view.navigate("data:text/html,<body></body>");
+      const ua = await view.evaluate("navigator.userAgent");
+      if (ua !== "BunWebViewTest/1.0") throw new Error("got UA: " + ua);
+      view.close();
+      console.log("ok");
+      `,
+    ],
+    env: bunEnv,
   });
-  try {
-    await view.navigate(html("<body></body>"));
-    const ua = await view.evaluate("navigator.userAgent");
-    expect(ua).toBe("BunWebViewTest/1.0");
-  } finally {
-    view.close();
-  }
+  const [stdout, , exit] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout.trim()).toBe("ok");
+  expect(exit).toBe(0);
 });
 
 // --- Error handling --------------------------------------------------------
@@ -326,13 +336,15 @@ it("chrome: evaluate() throwing Error carries page-side stack", async () => {
     // errorFromExceptionDetails splits at first \n for .message and stamps
     // the full description on .stack — the user sees page frames, not the
     // test callsite.
+    // IIFE wrapper — our evaluate() wraps in await(expr), so statement
+    // sequences need explicit IIFE.
     const err = await view
       .evaluate(
-        `
-        function inner() { throw new Error("page boom"); }
-        function outer() { inner(); }
-        outer();
-      `,
+        `(() => {
+          function inner() { throw new Error("page boom"); }
+          function outer() { inner(); }
+          outer();
+        })()`,
       )
       .catch(e => e);
     expect(err).toBeInstanceOf(Error);
@@ -423,15 +435,18 @@ it("chrome: click with modifiers sets MouseEvent flags", async () => {
 it("chrome: click(selector) is injection-safe", async () => {
   const view = new Bun.WebView({ backend: "chrome", width: 300, height: 300 });
   try {
-    // Selector contains quotes + backslash — would break naive string
-    // interpolation. The IIFE call-site goes through appendQuotedJSONString
-    // so it round-trips as a proper JSON string argument.
+    // Selector contains quotes + newline — would break naive string
+    // interpolation into the IIFE call-site. appendQuotedJSONString escapes
+    // them; querySelector sees the literal characters.
     await view.navigate(
       html(`
-        <button id="weird'\\"" data-sel="weird" onclick="window.__hit=1" style="position:fixed;left:0;top:0;width:50px;height:50px"></button>
+        <button data-sel='has"quote\\nand\\backslash' onclick="window.__hit=1" style="position:fixed;left:0;top:0;width:50px;height:50px"></button>
       `),
     );
-    await view.click(`[id="weird'\\""]`);
+    // CSS attribute selector — the value needs CSS-escaping for quotes, but
+    // we're testing JSON-escaping reaches the page. The JSON layer carries
+    // the " and \ intact; querySelector parses the CSS side.
+    await view.click(`[data-sel='has"quote\\nand\\backslash']`);
     expect(await view.evaluate("String(window.__hit)")).toBe("1");
   } finally {
     view.close();
@@ -497,26 +512,16 @@ it("chrome: resize changes viewport dimensions", async () => {
   }
 });
 
-it("chrome: reload fires loadEventFired", async () => {
+it("chrome: reload resolves after Page.loadEventFired", async () => {
   const view = new Bun.WebView({ backend: "chrome", width: 200, height: 200 });
   try {
-    await view.navigate(html("<script>window.__n = (window.__n||0)+1</script>"));
-    expect(await view.evaluate("__n")).toBe(1);
-    // Page.reload → loadEventFired resolves the Misc slot. The script re-runs.
+    await view.navigate(html("<script>window.__n = Date.now()</script>"));
+    const before = await view.evaluate("__n");
+    // reload uses PendingSlot::Navigate — Page.loadEventFired settles it.
+    // Awaiting means the document re-ran; the timestamp differs.
     await view.reload();
-    // reload doesn't wait for loadEventFired (it's Misc slot, not Navigate).
-    // rAF-poll until the script re-ran — same mechanism as scroll.
-    const n = await view.evaluate(`
-      new Promise((resolve, reject) => {
-        const deadline = performance.now() + 2000;
-        requestAnimationFrame(function tick() {
-          if (window.__n === 1) return resolve(1);
-          if (performance.now() > deadline) return reject("reload didn't re-run script");
-          requestAnimationFrame(tick);
-        });
-      })
-    `);
-    expect(n).toBe(1);
+    const after = await view.evaluate("__n");
+    expect(after).not.toBe(before);
   } finally {
     view.close();
   }

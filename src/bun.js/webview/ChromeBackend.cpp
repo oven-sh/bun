@@ -246,40 +246,34 @@ void Transport::send(Command&& cmd)
     });
 }
 
-// Direct write() to the socketpair — usockets polls the same fd but its
-// us_socket_write path adds framing we don't want. On EAGAIN, queue; the
-// onWritable callback (usockets DOES poll WRITABLE on a socketpair) drains.
-// Chrome reads fd 3 on a dedicated thread so the queue shouldn't back up.
+// us_socket_write through usockets' own write path — it sets
+// last_write_failed on partial so the dispatch loop keeps WRITABLE polling
+// armed and re-fires onWritable. Direct ::write() bypassed that flag and
+// stopped the poll after the first fire, hanging large frames.
 void Transport::writeRaw(const char* data, size_t len)
 {
-    if (m_dead || m_writeFd < 0) return;
+    if (m_dead || !m_readSock) return;
 
     if (m_txQueue.isEmpty()) {
-        ssize_t w = ::write(m_writeFd, data, len);
-        if (w == static_cast<ssize_t>(len)) return;
-        if (w < 0) {
-            if (errno != EAGAIN && errno != EWOULDBLOCK) {
-                // EPIPE — Chrome closed fd 3. onClose via fd 4 EOF is
-                // coming; queuing more would be dead bytes.
-                return;
-            }
-            w = 0;
-        }
+        int w = us_socket_write(0, m_readSock, data, static_cast<int>(len));
+        if (w == static_cast<int>(len)) return;
+        // Partial (including 0 on EAGAIN). us_socket_write already set
+        // last_write_failed; queue the tail for onWritable.
         m_txQueue.append(std::span<const uint8_t>(
             reinterpret_cast<const uint8_t*>(data) + w, len - w));
     } else {
         m_txQueue.append(std::span<const uint8_t>(
             reinterpret_cast<const uint8_t*>(data), len));
     }
-    // usockets polls the socketpair WRITABLE — onWritable fires when the
-    // kernel send buffer drains. cdpOnWritable calls our onWritable().
 }
 
 void Transport::onWritable()
 {
     while (!m_txQueue.isEmpty()) {
-        ssize_t w = ::write(m_writeFd, m_txQueue.span().data(), m_txQueue.size());
-        if (w < 0) return; // EAGAIN; next onWritable retries
+        int w = us_socket_write(0, m_readSock,
+            reinterpret_cast<const char*>(m_txQueue.span().data()),
+            static_cast<int>(m_txQueue.size()));
+        if (w == 0) return; // EAGAIN — last_write_failed set, next fire retries
         m_txQueue.removeAt(0, static_cast<size_t>(w));
     }
 }

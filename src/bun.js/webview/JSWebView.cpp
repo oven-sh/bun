@@ -986,7 +986,11 @@ static JSPromise* reloadChrome(JSGlobalObject* g, JSWebView* view)
     using namespace CDP;
     auto& t = transport();
     uint32_t id = t.nextId();
-    return sendChromeOp(g, view, view->m_pendingMisc, PendingSlot::Misc,
+    // Navigate slot — reload IS a navigation. Page.loadEventFired only
+    // settles PendingSlot::Navigate; using Misc would hang waiting for a
+    // settle that never comes. WKWebView's reload uses Misc because its
+    // Op::Reload Ack is synchronous.
+    return sendChromeOp(g, view, view->m_pendingNavigate, PendingSlot::Navigate,
         Method::PageReload, id,
         Command(id, "Page.reload"_s, sidSpan(view->m_sessionId)));
 }

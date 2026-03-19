@@ -480,7 +480,12 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncReload, (JSGlobalObject * globalObjec
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = unwrapThis(globalObject, scope, callFrame, "reload"_s);
     RETURN_IF_EXCEPTION(scope, {});
-    if (!checkSlot(globalObject, scope, thisObject->m_pendingMisc, "a simple operation"_s)) return {};
+    // Chrome reload uses the Navigate slot (Page.loadEventFired settles it);
+    // WebKit reload uses Misc (Op::Reload Ack is sync). Check the backend's.
+    auto& slot = thisObject->m_backend == WebViewBackend::Chrome
+        ? thisObject->m_pendingNavigate
+        : thisObject->m_pendingMisc;
+    if (!checkSlot(globalObject, scope, slot, "a navigation"_s)) return {};
     return JSValue::encode(thisObject->reload(globalObject));
 }
 

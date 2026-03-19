@@ -34,14 +34,10 @@ it("headless: false throws NOT_IMPLEMENTED", () => {
 });
 
 it("navigate + evaluate round-trip", async () => {
-  const view = new Bun.WebView({ width: 200, height: 200 });
-  try {
-    await view.navigate(html("<h1 id=t>hi</h1>"));
-    const result = await view.evaluate("document.getElementById('t').textContent");
-    expect(result).toBe("hi");
-  } finally {
-    view.close();
-  }
+  await using view = new Bun.WebView({ width: 200, height: 200 });
+  await view.navigate(html("<h1 id=t>hi</h1>"));
+  const result = await view.evaluate("document.getElementById('t').textContent");
+  expect(result).toBe("hi");
 });
 
 it("url constructor option fires navigate()", async () => {
@@ -50,82 +46,66 @@ it("url constructor option fires navigate()", async () => {
   // evaluate() blocks until the navigate's NavDone clears the slot and the
   // eval IPC goes out behind it — so by the time evaluate resolves, the
   // page has loaded.
-  const view = new Bun.WebView({ width: 200, height: 200, url: html("<h1 id=t>from-ctor</h1>") });
-  try {
-    // No explicit navigate() — the constructor fired it. evaluate() will
-    // wait for the pending navigate to complete (checkSlot serializes).
-    // Actually — evaluate uses m_pendingEval, not m_pendingNavigate, so
-    // they don't serialize against each other on the JS side. The child
-    // processes the Create+Navigate+Evaluate frames in order from the same
-    // socket batch; evaluate lands after navigate in the child's dispatch
-    // loop, but callAsyncJavaScript doesn't wait for didFinishNavigation.
-    // The eval may race the load. Await onNavigated to be sure.
-    const { promise, resolve } = Promise.withResolvers<void>();
-    view.onNavigated = () => resolve();
-    await promise;
-    const result = await view.evaluate("document.getElementById('t').textContent");
-    expect(result).toBe("from-ctor");
-    expect(view.url).toStartWith("data:text/html");
-  } finally {
-    view.close();
-  }
+  await using view = new Bun.WebView({ width: 200, height: 200, url: html("<h1 id=t>from-ctor</h1>") });
+  // No explicit navigate() — the constructor fired it. evaluate() will
+  // wait for the pending navigate to complete (checkSlot serializes).
+  // Actually — evaluate uses m_pendingEval, not m_pendingNavigate, so
+  // they don't serialize against each other on the JS side. The child
+  // processes the Create+Navigate+Evaluate frames in order from the same
+  // socket batch; evaluate lands after navigate in the child's dispatch
+  // loop, but callAsyncJavaScript doesn't wait for didFinishNavigation.
+  // The eval may race the load. Await onNavigated to be sure.
+  const { promise, resolve } = Promise.withResolvers<void>();
+  view.onNavigated = () => resolve();
+  await promise;
+  const result = await view.evaluate("document.getElementById('t').textContent");
+  expect(result).toBe("from-ctor");
+  expect(view.url).toStartWith("data:text/html");
 });
 
 it("evaluate() returns native JS values via page-side JSON.stringify + parent JSONParse", async () => {
-  const view = new Bun.WebView({ width: 200, height: 200 });
-  try {
-    await view.navigate(html("<body></body>"));
-    // The body is wrapped as `return JSON.stringify(await (${script}))` via
-    // callAsyncJavaScript:. JSON.stringify runs in WebContent's JSC — the
-    // only serialization. Result crosses as NSString (WebKit never allocs
-    // NSArray/NSNumber intermediates). Parent JSONParse's once. Same path
-    // as WebAutomationSessionProxy.js (the WebDriver backend).
-    expect(await view.evaluate("true")).toBe(true);
-    expect(await view.evaluate("false")).toBe(false);
-    expect(await view.evaluate("42")).toBe(42);
-    expect(await view.evaluate("3.14")).toBe(3.14);
-    expect(await view.evaluate("null")).toBeNull();
-    expect(await view.evaluate("'hello'")).toBe("hello");
-    expect(await view.evaluate("[1, 2, 3]")).toEqual([1, 2, 3]);
-    expect(await view.evaluate("({a: 1, b: true, c: [null]})")).toEqual({ a: 1, b: true, c: [null] });
-    // JSON.stringify(undefined) evaluates to undefined → nil → jsUndefined.
-    expect(await view.evaluate("undefined")).toBeUndefined();
-    // Functions/symbols collapse to undefined too (JSON.stringify drops them).
-    expect(await view.evaluate("() => 1")).toBeUndefined();
-  } finally {
-    view.close();
-  }
+  await using view = new Bun.WebView({ width: 200, height: 200 });
+  await view.navigate(html("<body></body>"));
+  // The body is wrapped as `return JSON.stringify(await (${script}))` via
+  // callAsyncJavaScript:. JSON.stringify runs in WebContent's JSC — the
+  // only serialization. Result crosses as NSString (WebKit never allocs
+  // NSArray/NSNumber intermediates). Parent JSONParse's once. Same path
+  // as WebAutomationSessionProxy.js (the WebDriver backend).
+  expect(await view.evaluate("true")).toBe(true);
+  expect(await view.evaluate("false")).toBe(false);
+  expect(await view.evaluate("42")).toBe(42);
+  expect(await view.evaluate("3.14")).toBe(3.14);
+  expect(await view.evaluate("null")).toBeNull();
+  expect(await view.evaluate("'hello'")).toBe("hello");
+  expect(await view.evaluate("[1, 2, 3]")).toEqual([1, 2, 3]);
+  expect(await view.evaluate("({a: 1, b: true, c: [null]})")).toEqual({ a: 1, b: true, c: [null] });
+  // JSON.stringify(undefined) evaluates to undefined → nil → jsUndefined.
+  expect(await view.evaluate("undefined")).toBeUndefined();
+  // Functions/symbols collapse to undefined too (JSON.stringify drops them).
+  expect(await view.evaluate("() => 1")).toBeUndefined();
 });
 
 it("evaluate() awaits Promises", async () => {
-  const view = new Bun.WebView({ width: 200, height: 200 });
-  try {
-    await view.navigate(html("<body></body>"));
-    // await (expr) — thenables unwrap, non-thenables pass through identity.
-    expect(await view.evaluate("Promise.resolve(42)")).toBe(42);
-    // Microtask roundtrip.
-    expect(await view.evaluate("Promise.resolve().then(() => [1, 2])")).toEqual([1, 2]);
-    // Macrotask — setTimeout fires, completion waits for it.
-    expect(await view.evaluate("new Promise(r => setTimeout(() => r('delayed'), 5))")).toBe("delayed");
-    // Rejected promise propagates as rejection.
-    await expect(view.evaluate("Promise.reject(new Error('boom'))")).rejects.toThrow(/boom/);
-  } finally {
-    view.close();
-  }
+  await using view = new Bun.WebView({ width: 200, height: 200 });
+  await view.navigate(html("<body></body>"));
+  // await (expr) — thenables unwrap, non-thenables pass through identity.
+  expect(await view.evaluate("Promise.resolve(42)")).toBe(42);
+  // Microtask roundtrip.
+  expect(await view.evaluate("Promise.resolve().then(() => [1, 2])")).toEqual([1, 2]);
+  // Macrotask — setTimeout fires, completion waits for it.
+  expect(await view.evaluate("new Promise(r => setTimeout(() => r('delayed'), 5))")).toBe("delayed");
+  // Rejected promise propagates as rejection.
+  await expect(view.evaluate("Promise.reject(new Error('boom'))")).rejects.toThrow(/boom/);
 });
 
 it("evaluate() with statement sequence throws SyntaxError (use an IIFE)", async () => {
-  const view = new Bun.WebView({ width: 200, height: 200 });
-  try {
-    await view.navigate(html("<body></body>"));
-    // The wrap is `await (${script})` — parenthesization forces expression
-    // context. `(let x=1; x)` is a syntax error.
-    await expect(view.evaluate("let x = 1; x + 1")).rejects.toThrow(/SyntaxError|Unexpected/);
-    // Wrap in an IIFE for statement sequences.
-    expect(await view.evaluate("(() => { let x = 1; return x + 1 })()")).toBe(2);
-  } finally {
-    view.close();
-  }
+  await using view = new Bun.WebView({ width: 200, height: 200 });
+  await view.navigate(html("<body></body>"));
+  // The wrap is `await (${script})` — parenthesization forces expression
+  // context. `(let x=1; x)` is a syntax error.
+  await expect(view.evaluate("let x = 1; x + 1")).rejects.toThrow(/SyntaxError|Unexpected/);
+  // Wrap in an IIFE for statement sequences.
+  expect(await view.evaluate("(() => { let x = 1; return x + 1 })()")).toBe(2);
 });
 
 it("scroll(NaN/Infinity) throws before sending", () => {
@@ -134,15 +114,11 @@ it("scroll(NaN/Infinity) throws before sending", () => {
   // The check in JSWebViewPrototype.cpp throws before sendOp — no IPC sent,
   // nothing to await. "Scroll actually works after" is covered by the
   // dedicated scroll tests; here we just verify the guard.
-  const view = new Bun.WebView({ width: 200, height: 200 });
-  try {
-    expect(() => view.scroll(0, NaN)).toThrow(/must be finite/);
-    expect(() => view.scroll(Infinity, 0)).toThrow(/must be finite/);
-    expect(() => view.scroll(-Infinity, 0)).toThrow(/must be finite/);
-    expect(() => view.scroll(0, 0 / 0)).toThrow(/must be finite/);
-  } finally {
-    view.close();
-  }
+  using view = new Bun.WebView({ width: 200, height: 200 });
+  expect(() => view.scroll(0, NaN)).toThrow(/must be finite/);
+  expect(() => view.scroll(Infinity, 0)).toThrow(/must be finite/);
+  expect(() => view.scroll(-Infinity, 0)).toThrow(/must be finite/);
+  expect(() => view.scroll(0, 0 / 0)).toThrow(/must be finite/);
 });
 
 it("Symbol.dispose / Symbol.asyncDispose call close()", async () => {
@@ -173,264 +149,215 @@ it("concurrent evaluate() across two views works", async () => {
   // right host. Each view has its own WebContent process, so the
   // evaluates genuinely run in parallel; we're testing that the
   // completions don't cross wires.
-  const a = new Bun.WebView({ width: 200, height: 200 });
-  const b = new Bun.WebView({ width: 200, height: 200 });
-  try {
-    await Promise.all([a.navigate(html("<body>A</body>")), b.navigate(html("<body>B</body>"))]);
-    // A deliberately slower (microtask roundtrip) so B's completion
-    // would fire first and stomp A's target under the old global-target
-    // design — A's eval would resolve with B's body text.
-    const [ra, rb] = await Promise.all([
-      a.evaluate("Promise.resolve().then(() => document.body.textContent)"),
-      b.evaluate("document.body.textContent"),
-    ]);
-    expect(ra).toBe("A");
-    expect(rb).toBe("B");
+  await using a = new Bun.WebView({ width: 200, height: 200 });
+  await using b = new Bun.WebView({ width: 200, height: 200 });
+  await Promise.all([a.navigate(html("<body>A</body>")), b.navigate(html("<body>B</body>"))]);
+  // A deliberately slower (microtask roundtrip) so B's completion
+  // would fire first and stomp A's target under the old global-target
+  // design — A's eval would resolve with B's body text.
+  const [ra, rb] = await Promise.all([
+    a.evaluate("Promise.resolve().then(() => document.body.textContent)"),
+    b.evaluate("document.body.textContent"),
+  ]);
+  expect(ra).toBe("A");
+  expect(rb).toBe("B");
 
-    // Same for click/scrollTo (selectorCompletionBlock path).
-    await Promise.all([a.scrollTo("body"), b.scrollTo("body")]);
-  } finally {
-    a.close();
-    b.close();
-  }
+  // Same for click/scrollTo (selectorCompletionBlock path).
+  await Promise.all([a.scrollTo("body"), b.scrollTo("body")]);
 });
 
 it("url/title/loading getters reflect state", async () => {
-  const view = new Bun.WebView({ width: 200, height: 200 });
-  try {
-    expect(view.url).toBe("");
-    await view.navigate(html("<title>hello world</title><p>body</p>"));
-    expect(view.url).toStartWith("data:text/html");
-    // WKWebView populates .title via a separate IPC round-trip after
-    // didFinishNavigation; the child reads it at reply time, which may be
-    // before the title arrives. Accept either — the point is url/loading.
-    expect(["", "hello world"]).toContain(view.title);
-    expect(view.loading).toBe(false);
-  } finally {
-    view.close();
-  }
+  await using view = new Bun.WebView({ width: 200, height: 200 });
+  expect(view.url).toBe("");
+  await view.navigate(html("<title>hello world</title><p>body</p>"));
+  expect(view.url).toStartWith("data:text/html");
+  // WKWebView populates .title via a separate IPC round-trip after
+  // didFinishNavigation; the child reads it at reply time, which may be
+  // before the title arrives. Accept either — the point is url/loading.
+  expect(["", "hello world"]).toContain(view.title);
+  expect(view.loading).toBe(false);
 });
 
 it("onNavigated callback fires", async () => {
-  const view = new Bun.WebView({ width: 200, height: 200 });
-  try {
-    let navigatedUrl = "";
-    view.onNavigated = (url: string) => {
-      navigatedUrl = url;
-    };
-    await view.navigate(html("<title>cb test</title>ok"));
-    expect(navigatedUrl).toStartWith("data:text/html");
+  await using view = new Bun.WebView({ width: 200, height: 200 });
+  let navigatedUrl = "";
+  view.onNavigated = (url: string) => {
+    navigatedUrl = url;
+  };
+  await view.navigate(html("<title>cb test</title>ok"));
+  expect(navigatedUrl).toStartWith("data:text/html");
 
-    // Can be cleared.
-    view.onNavigated = null;
-    expect(view.onNavigated).toBe(null);
-  } finally {
-    view.close();
-  }
+  // Can be cleared.
+  view.onNavigated = null;
+  expect(view.onNavigated).toBe(null);
 });
 
 it("onNavigationFailed callback fires", async () => {
-  const view = new Bun.WebView({ width: 200, height: 200 });
-  try {
-    let failed = false;
-    view.onNavigationFailed = () => {
-      failed = true;
-    };
-    // .invalid is RFC-2606 reserved — NXDOMAIN is guaranteed, fast.
-    await expect(view.navigate("http://does-not-exist.invalid/")).rejects.toThrow();
-    expect(failed).toBe(true);
-  } finally {
-    view.close();
-  }
+  await using view = new Bun.WebView({ width: 200, height: 200 });
+  let failed = false;
+  view.onNavigationFailed = () => {
+    failed = true;
+  };
+  // .invalid is RFC-2606 reserved — NXDOMAIN is guaranteed, fast.
+  await expect(view.navigate("http://does-not-exist.invalid/")).rejects.toThrow();
+  expect(failed).toBe(true);
 });
 
 it("screenshot returns PNG bytes", async () => {
-  const view = new Bun.WebView({ width: 200, height: 150 });
-  try {
-    await view.navigate(html("<body style='background:#f00'>red</body>"));
-    const png = await view.screenshot();
-    expect(png).toBeInstanceOf(Uint8Array);
-    expect(png.length).toBeGreaterThan(8);
-    // PNG magic: 89 50 4E 47 0D 0A 1A 0A
-    expect(png[0]).toBe(0x89);
-    expect(png[1]).toBe(0x50);
-    expect(png[2]).toBe(0x4e);
-    expect(png[3]).toBe(0x47);
-  } finally {
-    view.close();
-  }
+  await using view = new Bun.WebView({ width: 200, height: 150 });
+  await view.navigate(html("<body style='background:#f00'>red</body>"));
+  const png = await view.screenshot();
+  expect(png).toBeInstanceOf(Uint8Array);
+  expect(png.length).toBeGreaterThan(8);
+  // PNG magic: 89 50 4E 47 0D 0A 1A 0A
+  expect(png[0]).toBe(0x89);
+  expect(png[1]).toBe(0x50);
+  expect(png[2]).toBe(0x4e);
+  expect(png[3]).toBe(0x47);
 });
 
 // Probe test — if click(selector) times out on CI, this tells us whether
 // the page sees itself as visible (rAF throttling root cause) vs. something
 // in the actionability script itself.
 it("document.visibilityState is visible and rAF fires", async () => {
-  const view = new Bun.WebView({ width: 200, height: 200 });
-  try {
-    await view.navigate(html("<body></body>"));
-    const state = await view.evaluate("document.visibilityState");
-    expect(state).toBe("visible");
-    // rAF is gated on ActivityState::IsVisible in WebContent. If the initial
-    // activity state was wrong (window not visible at process launch), the
-    // callback never fires and this evaluate() hangs at the test timeout.
-    const fired = await view.evaluate("new Promise(r => requestAnimationFrame(() => r('fired')))");
-    expect(fired).toBe("fired");
-  } finally {
-    view.close();
-  }
+  await using view = new Bun.WebView({ width: 200, height: 200 });
+  await view.navigate(html("<body></body>"));
+  const state = await view.evaluate("document.visibilityState");
+  expect(state).toBe("visible");
+  // rAF is gated on ActivityState::IsVisible in WebContent. If the initial
+  // activity state was wrong (window not visible at process launch), the
+  // callback never fires and this evaluate() hangs at the test timeout.
+  const fired = await view.evaluate("new Promise(r => requestAnimationFrame(() => r('fired')))");
+  expect(fired).toBe("fired");
 });
 
 it("click dispatches native mousedown/mouseup/click with isTrusted", async () => {
-  const view = new Bun.WebView({ width: 300, height: 300 });
-  try {
-    await view.navigate(
-      "data:text/html," +
-        encodeURIComponent(`
-          <script>
-            window.__ev = [];
-            document.addEventListener("mousedown", e => __ev.push("down:"+e.isTrusted+"@"+e.clientX+","+e.clientY), true);
-            document.addEventListener("mouseup", e => __ev.push("up:"+e.isTrusted), true);
-            document.addEventListener("click", e => __ev.push("click:"+e.isTrusted), true);
-          </script>
-          <button onclick="window.__clicked=1" style="position:fixed;left:0;top:0;width:100px;height:100px">btn</button>
-        `),
-    );
-    // _doAfterProcessingAllPendingMouseEvents: fires when WebContent has
-    // acked both events — all JS handlers including the synthesized click
-    // have run by the time await resolves.
-    await view.click(50, 50);
-    const events = await view.evaluate("JSON.stringify(window.__ev)");
-    const clicked = await view.evaluate("String(window.__clicked)");
-    expect(JSON.parse(events)).toEqual(["down:true@50,50", "up:true", "click:true"]);
-    expect(clicked).toBe("1");
-  } finally {
-    view.close();
-  }
+  await using view = new Bun.WebView({ width: 300, height: 300 });
+  await view.navigate(
+    "data:text/html," +
+      encodeURIComponent(`
+        <script>
+          window.__ev = [];
+          document.addEventListener("mousedown", e => __ev.push("down:"+e.isTrusted+"@"+e.clientX+","+e.clientY), true);
+          document.addEventListener("mouseup", e => __ev.push("up:"+e.isTrusted), true);
+          document.addEventListener("click", e => __ev.push("click:"+e.isTrusted), true);
+        </script>
+        <button onclick="window.__clicked=1" style="position:fixed;left:0;top:0;width:100px;height:100px">btn</button>
+      `),
+  );
+  // _doAfterProcessingAllPendingMouseEvents: fires when WebContent has
+  // acked both events — all JS handlers including the synthesized click
+  // have run by the time await resolves.
+  await view.click(50, 50);
+  const events = await view.evaluate("JSON.stringify(window.__ev)");
+  const clicked = await view.evaluate("String(window.__clicked)");
+  expect(JSON.parse(events)).toEqual(["down:true@50,50", "up:true", "click:true"]);
+  expect(clicked).toBe("1");
 });
 
 it("click(selector) waits for actionability, clicks center", async () => {
-  const view = new Bun.WebView({ width: 300, height: 300 });
-  try {
-    await view.navigate(
-      "data:text/html," +
-        encodeURIComponent(`
-          <script>
-            window.__ev = [];
-            document.addEventListener("click", e => __ev.push({
-              trusted: e.isTrusted, x: e.clientX, y: e.clientY,
-              target: e.target.id,
-            }), true);
-          </script>
-          <button id=btn style="position:fixed;left:40px;top:60px;width:100px;height:80px">btn</button>
-        `),
-    );
-    // No coord math on our side — the rAF-polled actionability check
-    // resolves the center page-side and returns it. Button center is
-    // (40+50, 60+40) = (90, 100).
-    await view.click("#btn");
-    const events = await view.evaluate("JSON.stringify(__ev)");
-    expect(JSON.parse(events)).toEqual([{ trusted: true, x: 90, y: 100, target: "btn" }]);
-  } finally {
-    view.close();
-  }
+  await using view = new Bun.WebView({ width: 300, height: 300 });
+  await view.navigate(
+    "data:text/html," +
+      encodeURIComponent(`
+        <script>
+          window.__ev = [];
+          document.addEventListener("click", e => __ev.push({
+            trusted: e.isTrusted, x: e.clientX, y: e.clientY,
+            target: e.target.id,
+          }), true);
+        </script>
+        <button id=btn style="position:fixed;left:40px;top:60px;width:100px;height:80px">btn</button>
+      `),
+  );
+  // No coord math on our side — the rAF-polled actionability check
+  // resolves the center page-side and returns it. Button center is
+  // (40+50, 60+40) = (90, 100).
+  await view.click("#btn");
+  const events = await view.evaluate("JSON.stringify(__ev)");
+  expect(JSON.parse(events)).toEqual([{ trusted: true, x: 90, y: 100, target: "btn" }]);
 });
 
 it("click(selector) waits for element to appear", async () => {
-  const view = new Bun.WebView({ width: 300, height: 300 });
-  try {
-    await view.navigate(
-      "data:text/html," +
-        encodeURIComponent(`
-          <script>
-            window.__clicked = 0;
-            // Element doesn't exist yet — appears after 3 rAF frames.
-            // The page-side poll catches it; no host-side retry.
-            let n = 0;
-            requestAnimationFrame(function tick() {
-              if (++n < 3) return requestAnimationFrame(tick);
-              const b = document.createElement("button");
-              b.id = "late";
-              b.onclick = () => __clicked++;
-              b.style.cssText = "position:fixed;left:0;top:0;width:50px;height:50px";
-              document.body.appendChild(b);
-            });
-          </script>
-        `),
-    );
-    // callAsyncJavaScript: awaits the page-side Promise. The actionability
-    // loop rAF-polls until #late appears AND is stable for 2 frames AND
-    // elementFromPoint confirms it's not obscured. No timing assumptions
-    // on our side — just await.
-    await view.click("#late");
-    expect(await view.evaluate("String(__clicked)")).toBe("1");
-  } finally {
-    view.close();
-  }
+  await using view = new Bun.WebView({ width: 300, height: 300 });
+  await view.navigate(
+    "data:text/html," +
+      encodeURIComponent(`
+        <script>
+          window.__clicked = 0;
+          // Element doesn't exist yet — appears after 3 rAF frames.
+          // The page-side poll catches it; no host-side retry.
+          let n = 0;
+          requestAnimationFrame(function tick() {
+            if (++n < 3) return requestAnimationFrame(tick);
+            const b = document.createElement("button");
+            b.id = "late";
+            b.onclick = () => __clicked++;
+            b.style.cssText = "position:fixed;left:0;top:0;width:50px;height:50px";
+            document.body.appendChild(b);
+          });
+        </script>
+      `),
+  );
+  // callAsyncJavaScript: awaits the page-side Promise. The actionability
+  // loop rAF-polls until #late appears AND is stable for 2 frames AND
+  // elementFromPoint confirms it's not obscured. No timing assumptions
+  // on our side — just await.
+  await view.click("#late");
+  expect(await view.evaluate("String(__clicked)")).toBe("1");
 });
 
 it("click(selector) waits for element to stop animating", async () => {
-  const view = new Bun.WebView({ width: 300, height: 300 });
-  try {
-    await view.navigate(
-      "data:text/html," +
-        encodeURIComponent(`
-          <style>
-            @keyframes slide { from { left: 0px; } to { left: 100px; } }
-            #mover { position: fixed; top: 50px; width: 60px; height: 60px;
-                     animation: slide 100ms linear forwards; }
-          </style>
-          <button id=mover onclick="window.__hit=this.getBoundingClientRect().left">mv</button>
-        `),
-    );
-    // The stable-for-2-consecutive-frames check means we don't click until
-    // the animation stops. If we clicked mid-slide, __hit would be < 100.
-    await view.click("#mover");
-    const left = await view.evaluate("String(__hit)");
-    expect(Number(left)).toBe(100);
-  } finally {
-    view.close();
-  }
+  await using view = new Bun.WebView({ width: 300, height: 300 });
+  await view.navigate(
+    "data:text/html," +
+      encodeURIComponent(`
+        <style>
+          @keyframes slide { from { left: 0px; } to { left: 100px; } }
+          #mover { position: fixed; top: 50px; width: 60px; height: 60px;
+                   animation: slide 100ms linear forwards; }
+        </style>
+        <button id=mover onclick="window.__hit=this.getBoundingClientRect().left">mv</button>
+      `),
+  );
+  // The stable-for-2-consecutive-frames check means we don't click until
+  // the animation stops. If we clicked mid-slide, __hit would be < 100.
+  await view.click("#mover");
+  const left = await view.evaluate("String(__hit)");
+  expect(Number(left)).toBe(100);
 });
 
 it("click(selector) rejects on timeout when obscured", async () => {
-  const view = new Bun.WebView({ width: 300, height: 300 });
-  try {
-    await view.navigate(
-      "data:text/html," +
-        encodeURIComponent(`
-          <button id=under style="position:fixed;left:0;top:0;width:100px;height:100px">under</button>
-          <div style="position:fixed;left:0;top:0;width:100px;height:100px;background:red">overlay</div>
-        `),
-    );
-    // elementFromPoint at the center returns the overlay div, not #under
-    // or a descendant of it — the actionability check never passes.
-    // callAsyncJavaScript: surfaces the page-side throw as
-    // WKErrorJavaScriptAsyncFunctionResultRejected.
-    await expect(view.click("#under", { timeout: 200 })).rejects.toThrow(/timeout waiting for '#under'/);
-  } finally {
-    view.close();
-  }
+  await using view = new Bun.WebView({ width: 300, height: 300 });
+  await view.navigate(
+    "data:text/html," +
+      encodeURIComponent(`
+        <button id=under style="position:fixed;left:0;top:0;width:100px;height:100px">under</button>
+        <div style="position:fixed;left:0;top:0;width:100px;height:100px;background:red">overlay</div>
+      `),
+  );
+  // elementFromPoint at the center returns the overlay div, not #under
+  // or a descendant of it — the actionability check never passes.
+  // callAsyncJavaScript: surfaces the page-side throw as
+  // WKErrorJavaScriptAsyncFunctionResultRejected.
+  await expect(view.click("#under", { timeout: 200 })).rejects.toThrow(/timeout waiting for '#under'/);
 });
 
 it("click(selector) with options", async () => {
-  const view = new Bun.WebView({ width: 300, height: 300 });
-  try {
-    await view.navigate(
-      "data:text/html," +
-        encodeURIComponent(`
-          <button id=b style="position:fixed;left:0;top:0;width:100px;height:100px"></button>
-          <script>
-            window.__ev = [];
-            b.addEventListener("mousedown", e => __ev.push({btn: e.button, shift: e.shiftKey, det: e.detail}));
-          </script>
-        `),
-    );
-    await view.click("#b", { button: "right", modifiers: ["Shift"], clickCount: 2 });
-    const ev = await view.evaluate("JSON.stringify(__ev)");
-    expect(JSON.parse(ev)).toEqual([{ btn: 2, shift: true, det: 2 }]);
-  } finally {
-    view.close();
-  }
+  await using view = new Bun.WebView({ width: 300, height: 300 });
+  await view.navigate(
+    "data:text/html," +
+      encodeURIComponent(`
+        <button id=b style="position:fixed;left:0;top:0;width:100px;height:100px"></button>
+        <script>
+          window.__ev = [];
+          b.addEventListener("mousedown", e => __ev.push({btn: e.button, shift: e.shiftKey, det: e.detail}));
+        </script>
+      `),
+  );
+  await view.click("#b", { button: "right", modifiers: ["Shift"], clickCount: 2 });
+  const ev = await view.evaluate("JSON.stringify(__ev)");
+  expect(JSON.parse(ev)).toEqual([{ btn: 2, shift: true, det: 2 }]);
 });
 
 it("click(selector) is injection-safe", async () => {
@@ -438,361 +365,297 @@ it("click(selector) is injection-safe", async () => {
   // not string interpolation. A selector containing JS syntax is passed
   // as a literal string value to querySelector, which throws
   // SyntaxError: not a valid selector — it doesn't execute.
-  const view = new Bun.WebView({ width: 300, height: 300 });
-  try {
-    await view.navigate(html("<body><script>window.__pwned=0</script></body>"));
-    const bad = `"); window.__pwned = 1; //`;
-    await expect(view.click(bad, { timeout: 100 })).rejects.toThrow();
-    expect(await view.evaluate("String(__pwned)")).toBe("0");
-  } finally {
-    view.close();
-  }
+  await using view = new Bun.WebView({ width: 300, height: 300 });
+  await view.navigate(html("<body><script>window.__pwned=0</script></body>"));
+  const bad = `"); window.__pwned = 1; //`;
+  await expect(view.click(bad, { timeout: 100 })).rejects.toThrow();
+  expect(await view.evaluate("String(__pwned)")).toBe("0");
 });
 
 it("scrollTo(selector) centers element in viewport", async () => {
-  const view = new Bun.WebView({ width: 200, height: 200 });
-  try {
-    await view.navigate(
-      "data:text/html," +
-        encodeURIComponent(`
-          <div style="height:2000px"></div>
-          <div id=target style="height:40px">target</div>
-          <div style="height:2000px"></div>
-        `),
-    );
-    // scrollIntoView runs page-side via callAsyncJavaScript: — atomic,
-    // no layout race between rect-read and scroll-fire. The await
-    // resolves when the async function body returns, which is after
-    // scrollIntoView has already updated scrollY. The scroll event fires
-    // on a later task (browser timing); we don't wait for it.
-    await view.scrollTo("#target");
-    const r = await view.evaluate(
-      "JSON.stringify({y: scrollY, top: document.getElementById('target').getBoundingClientRect().top})",
-    );
-    const { y, top } = JSON.parse(r);
-    // block:'center' default — element's center near viewport center.
-    // 40px tall element centered in 200px viewport → top ≈ 80.
-    expect(y).toBeGreaterThan(1800);
-    expect(top).toBeGreaterThan(60);
-    expect(top).toBeLessThan(100);
-  } finally {
-    view.close();
-  }
+  await using view = new Bun.WebView({ width: 200, height: 200 });
+  await view.navigate(
+    "data:text/html," +
+      encodeURIComponent(`
+        <div style="height:2000px"></div>
+        <div id=target style="height:40px">target</div>
+        <div style="height:2000px"></div>
+      `),
+  );
+  // scrollIntoView runs page-side via callAsyncJavaScript: — atomic,
+  // no layout race between rect-read and scroll-fire. The await
+  // resolves when the async function body returns, which is after
+  // scrollIntoView has already updated scrollY. The scroll event fires
+  // on a later task (browser timing); we don't wait for it.
+  await view.scrollTo("#target");
+  const r = await view.evaluate(
+    "JSON.stringify({y: scrollY, top: document.getElementById('target').getBoundingClientRect().top})",
+  );
+  const { y, top } = JSON.parse(r);
+  // block:'center' default — element's center near viewport center.
+  // 40px tall element centered in 200px viewport → top ≈ 80.
+  expect(y).toBeGreaterThan(1800);
+  expect(top).toBeGreaterThan(60);
+  expect(top).toBeLessThan(100);
 });
 
 it("scrollTo(selector) waits for element to appear", async () => {
-  const view = new Bun.WebView({ width: 200, height: 200 });
-  try {
-    await view.navigate(
-      "data:text/html," +
-        encodeURIComponent(`
-          <div style="height:3000px"></div>
-          <script>
-            let n = 0;
-            requestAnimationFrame(function tick() {
-              if (++n < 3) return requestAnimationFrame(tick);
-              const d = document.createElement('div');
-              d.id = 'late';
-              d.style.height = '20px';
-              document.body.appendChild(d);
-            });
-          </script>
-        `),
-    );
-    // Same rAF-polled existence check as click(selector), but no stability
-    // or elementFromPoint requirement — just attached. The page-side loop
-    // catches the element as soon as it enters the DOM.
-    await view.scrollTo("#late");
-    expect(Number(await view.evaluate("String(scrollY)"))).toBeGreaterThan(2800);
-  } finally {
-    view.close();
-  }
+  await using view = new Bun.WebView({ width: 200, height: 200 });
+  await view.navigate(
+    "data:text/html," +
+      encodeURIComponent(`
+        <div style="height:3000px"></div>
+        <script>
+          let n = 0;
+          requestAnimationFrame(function tick() {
+            if (++n < 3) return requestAnimationFrame(tick);
+            const d = document.createElement('div');
+            d.id = 'late';
+            d.style.height = '20px';
+            document.body.appendChild(d);
+          });
+        </script>
+      `),
+  );
+  // Same rAF-polled existence check as click(selector), but no stability
+  // or elementFromPoint requirement — just attached. The page-side loop
+  // catches the element as soon as it enters the DOM.
+  await view.scrollTo("#late");
+  expect(Number(await view.evaluate("String(scrollY)"))).toBeGreaterThan(2800);
 });
 
 it("scrollTo(selector, { block }) controls alignment", async () => {
-  const view = new Bun.WebView({ width: 200, height: 200 });
-  try {
-    await view.navigate(
-      "data:text/html," +
-        encodeURIComponent(`
-          <div style="height:2000px"></div>
-          <div id=t style="height:40px">t</div>
-          <div style="height:2000px"></div>
-        `),
-    );
-    await view.scrollTo("#t", { block: "start" });
-    const topStart = Number(await view.evaluate("document.getElementById('t').getBoundingClientRect().top"));
-    // block:'start' → element's top at viewport top (≈0 plus body margin).
-    expect(topStart).toBeLessThan(20);
+  await using view = new Bun.WebView({ width: 200, height: 200 });
+  await view.navigate(
+    "data:text/html," +
+      encodeURIComponent(`
+        <div style="height:2000px"></div>
+        <div id=t style="height:40px">t</div>
+        <div style="height:2000px"></div>
+      `),
+  );
+  await view.scrollTo("#t", { block: "start" });
+  const topStart = Number(await view.evaluate("document.getElementById('t').getBoundingClientRect().top"));
+  // block:'start' → element's top at viewport top (≈0 plus body margin).
+  expect(topStart).toBeLessThan(20);
 
-    await view.scrollTo("#t", { block: "end" });
-    const topEnd = Number(await view.evaluate("document.getElementById('t').getBoundingClientRect().top"));
-    // block:'end' → element's bottom at viewport bottom → top ≈ 200-40 = 160.
-    expect(topEnd).toBeGreaterThan(140);
-  } finally {
-    view.close();
-  }
+  await view.scrollTo("#t", { block: "end" });
+  const topEnd = Number(await view.evaluate("document.getElementById('t').getBoundingClientRect().top"));
+  // block:'end' → element's bottom at viewport bottom → top ≈ 200-40 = 160.
+  expect(topEnd).toBeGreaterThan(140);
 });
 
 it("scrollTo(selector) rejects on timeout", async () => {
-  const view = new Bun.WebView({ width: 200, height: 200 });
-  try {
-    await view.navigate(html("<body></body>"));
-    await expect(view.scrollTo("#nonexistent", { timeout: 150 })).rejects.toThrow(/timeout waiting for '#nonexistent'/);
-  } finally {
-    view.close();
-  }
+  await using view = new Bun.WebView({ width: 200, height: 200 });
+  await view.navigate(html("<body></body>"));
+  await expect(view.scrollTo("#nonexistent", { timeout: 150 })).rejects.toThrow(/timeout waiting for '#nonexistent'/);
 });
 
 it("type inserts text via InsertText command, fires input/beforeinput", async () => {
-  const view = new Bun.WebView({ width: 300, height: 300 });
-  try {
-    await view.navigate(
-      "data:text/html," +
-        encodeURIComponent(`
-          <input id=i style="position:fixed;left:0;top:0">
-          <script>
-            let fired = [];
-            i.addEventListener("beforeinput", e => fired.push("before:"+e.isTrusted));
-            i.addEventListener("input", e => fired.push("input:"+e.isTrusted));
-            i.addEventListener("keydown", e => fired.push("kd:"+e.isTrusted));
-            window.__fired = fired;
-          </script>
-        `),
-    );
-    await view.evaluate("document.getElementById('i').focus()");
-    // Straight apostrophe: no smart-quote substitution — InsertText command
-    // bypasses NSTextInputContext entirely.
-    await view.type("hello 'world'");
-    const value = await view.evaluate("document.getElementById('i').value");
-    const fired = await view.evaluate("JSON.stringify(window.__fired)");
-    expect(value).toBe("hello 'world'");
-    // No keydown — this is the InsertText editing command, not a keyboard
-    // event. beforeinput/input fire from the editing pipeline, trusted.
-    // _executeEditCommand:completion: is sendWithAsyncReply so await
-    // resolves after WebContent has processed.
-    expect(JSON.parse(fired)).toEqual(["before:true", "input:true"]);
-  } finally {
-    view.close();
-  }
+  await using view = new Bun.WebView({ width: 300, height: 300 });
+  await view.navigate(
+    "data:text/html," +
+      encodeURIComponent(`
+        <input id=i style="position:fixed;left:0;top:0">
+        <script>
+          let fired = [];
+          i.addEventListener("beforeinput", e => fired.push("before:"+e.isTrusted));
+          i.addEventListener("input", e => fired.push("input:"+e.isTrusted));
+          i.addEventListener("keydown", e => fired.push("kd:"+e.isTrusted));
+          window.__fired = fired;
+        </script>
+      `),
+  );
+  await view.evaluate("document.getElementById('i').focus()");
+  // Straight apostrophe: no smart-quote substitution — InsertText command
+  // bypasses NSTextInputContext entirely.
+  await view.type("hello 'world'");
+  const value = await view.evaluate("document.getElementById('i').value");
+  const fired = await view.evaluate("JSON.stringify(window.__fired)");
+  expect(value).toBe("hello 'world'");
+  // No keydown — this is the InsertText editing command, not a keyboard
+  // event. beforeinput/input fire from the editing pipeline, trusted.
+  // _executeEditCommand:completion: is sendWithAsyncReply so await
+  // resolves after WebContent has processed.
+  expect(JSON.parse(fired)).toEqual(["before:true", "input:true"]);
 });
 
 it("press dispatches virtual keys", async () => {
-  const view = new Bun.WebView({ width: 300, height: 300 });
-  try {
-    await view.navigate(
-      "data:text/html," +
-        encodeURIComponent(`
-          <input id=i value="hello" style="position:fixed;left:0;top:0">
-          <script>
-            let keys = [];
-            document.addEventListener("keydown", e => keys.push(e.key));
-            window.__keys = keys;
-          </script>
-        `),
-    );
-    await view.evaluate("(() => { let i=document.getElementById('i');i.focus();i.setSelectionRange(5,5) })()");
-    // Backspace/Enter/ArrowLeft map to editing commands (DeleteBackward/
-    // InsertNewline/MoveLeft) — _executeEditCommand sendWithAsyncReply,
-    // await resolves when WebContent has processed. Escape has no editing
-    // command — keyDown fallback, no completion barrier.
-    await view.press("Backspace");
-    await view.press("Enter");
-    await view.press("ArrowLeft");
-    await view.press("Escape");
-    const value = await view.evaluate("document.getElementById('i').value");
-    const keys = await view.evaluate("JSON.stringify(window.__keys)");
-    expect(value).toBe("hell");
-    // Editing commands don't fire keydown — they're direct editing ops.
-    // Only Escape (keyDown path) fires a keydown event.
-    expect(JSON.parse(keys)).toEqual(["Escape"]);
-  } finally {
-    view.close();
-  }
+  await using view = new Bun.WebView({ width: 300, height: 300 });
+  await view.navigate(
+    "data:text/html," +
+      encodeURIComponent(`
+        <input id=i value="hello" style="position:fixed;left:0;top:0">
+        <script>
+          let keys = [];
+          document.addEventListener("keydown", e => keys.push(e.key));
+          window.__keys = keys;
+        </script>
+      `),
+  );
+  await view.evaluate("(() => { let i=document.getElementById('i');i.focus();i.setSelectionRange(5,5) })()");
+  // Backspace/Enter/ArrowLeft map to editing commands (DeleteBackward/
+  // InsertNewline/MoveLeft) — _executeEditCommand sendWithAsyncReply,
+  // await resolves when WebContent has processed. Escape has no editing
+  // command — keyDown fallback, no completion barrier.
+  await view.press("Backspace");
+  await view.press("Enter");
+  await view.press("ArrowLeft");
+  await view.press("Escape");
+  const value = await view.evaluate("document.getElementById('i').value");
+  const keys = await view.evaluate("JSON.stringify(window.__keys)");
+  expect(value).toBe("hell");
+  // Editing commands don't fire keydown — they're direct editing ops.
+  // Only Escape (keyDown path) fires a keydown event.
+  expect(JSON.parse(keys)).toEqual(["Escape"]);
 });
 
 it("press with modifiers fires keydown with modifier flags", async () => {
-  const view = new Bun.WebView({ width: 300, height: 300 });
-  try {
-    await view.navigate(
-      "data:text/html," +
-        encodeURIComponent(`
-          <script>
-            window.__keys = [];
-            addEventListener("keydown", e => __keys.push({key: e.key, shift: e.shiftKey, meta: e.metaKey}));
-          </script>
-        `),
-    );
-    // Modified keys skip the editing-command path and fall through to
-    // keyDown: — mapping every chord→command (Shift+ArrowLeft is
-    // MoveLeftAndModifySelection etc.) isn't done yet. The options object
-    // was being passed directly to parseModifiers which expects an array;
-    // the modifiers field is now extracted first.
-    await view.press("Escape", { modifiers: ["Shift"] });
-    const keys = await view.evaluate("JSON.stringify(__keys)");
-    expect(JSON.parse(keys)).toEqual([{ key: "Escape", shift: true, meta: false }]);
-  } finally {
-    view.close();
-  }
+  await using view = new Bun.WebView({ width: 300, height: 300 });
+  await view.navigate(
+    "data:text/html," +
+      encodeURIComponent(`
+        <script>
+          window.__keys = [];
+          addEventListener("keydown", e => __keys.push({key: e.key, shift: e.shiftKey, meta: e.metaKey}));
+        </script>
+      `),
+  );
+  // Modified keys skip the editing-command path and fall through to
+  // keyDown: — mapping every chord→command (Shift+ArrowLeft is
+  // MoveLeftAndModifySelection etc.) isn't done yet. The options object
+  // was being passed directly to parseModifiers which expects an array;
+  // the modifiers field is now extracted first.
+  await view.press("Escape", { modifiers: ["Shift"] });
+  const keys = await view.evaluate("JSON.stringify(__keys)");
+  expect(JSON.parse(keys)).toEqual([{ key: "Escape", shift: true, meta: false }]);
 });
 
 it("scroll dispatches native wheel event with isTrusted", async () => {
-  const view = new Bun.WebView({ width: 200, height: 200 });
-  try {
-    await view.navigate(
-      "data:text/html," +
-        encodeURIComponent(`
-          <div style="height:5000px;width:5000px">tall</div>
-          <script>
-            window.__w = [];
-            addEventListener("wheel", e => __w.push({
-              dy: e.deltaY, dx: e.deltaX,
-              trusted: e.isTrusted,
-              x: e.clientX, y: e.clientY,
-              mode: e.deltaMode,
-            }), { passive: true });
-          </script>
-        `),
-    );
-    await view.scroll(0, 100);
-    const result = await view.evaluate("JSON.stringify({y: scrollY, w: __w})");
-    const { y, w } = JSON.parse(result);
-    // The double presentation-update barrier: first ensures the scrolling
-    // tree is populated (commitScrollingTreeState in the layer commit),
-    // second serializes against the ScrollingThread roundtrip so await
-    // resolves after sendWheelEvent has fired. No polling.
-    expect(y).toBe(100);
-    // Wheel fires at view center — wheelEvent() passes (W/2, H/2) through
-    // convertPointToScreen: + screen-height flip + _eventRelativeToWindow:
-    // and lands exactly at locationInWindow=(100,100) in a 200×200 view.
-    expect(w).toEqual([{ dy: 100, dx: 0, trusted: true, x: 100, y: 100, mode: 0 }]);
-  } finally {
-    view.close();
-  }
+  await using view = new Bun.WebView({ width: 200, height: 200 });
+  await view.navigate(
+    "data:text/html," +
+      encodeURIComponent(`
+        <div style="height:5000px;width:5000px">tall</div>
+        <script>
+          window.__w = [];
+          addEventListener("wheel", e => __w.push({
+            dy: e.deltaY, dx: e.deltaX,
+            trusted: e.isTrusted,
+            x: e.clientX, y: e.clientY,
+            mode: e.deltaMode,
+          }), { passive: true });
+        </script>
+      `),
+  );
+  await view.scroll(0, 100);
+  const result = await view.evaluate("JSON.stringify({y: scrollY, w: __w})");
+  const { y, w } = JSON.parse(result);
+  // The double presentation-update barrier: first ensures the scrolling
+  // tree is populated (commitScrollingTreeState in the layer commit),
+  // second serializes against the ScrollingThread roundtrip so await
+  // resolves after sendWheelEvent has fired. No polling.
+  expect(y).toBe(100);
+  // Wheel fires at view center — wheelEvent() passes (W/2, H/2) through
+  // convertPointToScreen: + screen-height flip + _eventRelativeToWindow:
+  // and lands exactly at locationInWindow=(100,100) in a 200×200 view.
+  expect(w).toEqual([{ dy: 100, dx: 0, trusted: true, x: 100, y: 100, mode: 0 }]);
 });
 
 it("scroll: sequential calls in same view", async () => {
-  const view = new Bun.WebView({ width: 200, height: 200 });
-  try {
-    await view.navigate("data:text/html," + encodeURIComponent(`<div style="height:5000px">tall</div>`));
-    // Each scroll runs the full double-barrier: both presentation-update
-    // callbacks fire, m_scrollWheelFired resets to false at the top of
-    // the next scrollIPC. If the state machine didn't re-arm, the second
-    // scroll would hang (barrier never fires) or no-op.
-    await view.scroll(0, 100);
-    await view.scroll(0, 50);
-    await view.scroll(0, -30);
-    const y = await view.evaluate("String(scrollY)");
-    expect(Number(y)).toBe(120);
-  } finally {
-    view.close();
-  }
+  await using view = new Bun.WebView({ width: 200, height: 200 });
+  await view.navigate("data:text/html," + encodeURIComponent(`<div style="height:5000px">tall</div>`));
+  // Each scroll runs the full double-barrier: both presentation-update
+  // callbacks fire, m_scrollWheelFired resets to false at the top of
+  // the next scrollIPC. If the state machine didn't re-arm, the second
+  // scroll would hang (barrier never fires) or no-op.
+  await view.scroll(0, 100);
+  await view.scroll(0, 50);
+  await view.scroll(0, -30);
+  const y = await view.evaluate("String(scrollY)");
+  expect(Number(y)).toBe(120);
 });
 
 it("scroll: horizontal", async () => {
-  const view = new Bun.WebView({ width: 200, height: 200 });
-  try {
-    await view.navigate("data:text/html," + encodeURIComponent(`<div style="width:5000px;height:100px">wide</div>`));
-    await view.scroll(80, 0);
-    const x = await view.evaluate("String(scrollX)");
-    // CGEventCreateScrollWheelEvent takes (wheel1, wheel2) = (-dy, -dx) —
-    // y is the primary wheel. wheelEvent() passes wheelCount=2 for both.
-    expect(Number(x)).toBe(80);
-  } finally {
-    view.close();
-  }
+  await using view = new Bun.WebView({ width: 200, height: 200 });
+  await view.navigate("data:text/html," + encodeURIComponent(`<div style="width:5000px;height:100px">wide</div>`));
+  await view.scroll(80, 0);
+  const x = await view.evaluate("String(scrollX)");
+  // CGEventCreateScrollWheelEvent takes (wheel1, wheel2) = (-dy, -dx) —
+  // y is the primary wheel. wheelEvent() passes wheelCount=2 for both.
+  expect(Number(x)).toBe(80);
 });
 
 it("scroll: interleaved with click in same view", async () => {
   // Scroll uses m_scrollTarget, click uses m_inputTarget — decoupled so a
   // late-firing mouse barrier doesn't clear the scroll barrier's target.
-  const view = new Bun.WebView({ width: 200, height: 200 });
-  try {
-    await view.navigate(
-      "data:text/html," +
-        encodeURIComponent(`
-          <div style="height:5000px">tall</div>
-          <button id=b style="position:fixed;left:0;top:0;width:50px;height:50px" onclick="window.__c=(window.__c||0)+1">b</button>
-        `),
-    );
-    await view.click(25, 25);
-    await view.scroll(0, 100);
-    await view.click(25, 25);
-    await view.scroll(0, 50);
-    const r = await view.evaluate("JSON.stringify({y:scrollY,c:__c})");
-    expect(JSON.parse(r)).toEqual({ y: 150, c: 2 });
-  } finally {
-    view.close();
-  }
+  await using view = new Bun.WebView({ width: 200, height: 200 });
+  await view.navigate(
+    "data:text/html," +
+      encodeURIComponent(`
+        <div style="height:5000px">tall</div>
+        <button id=b style="position:fixed;left:0;top:0;width:50px;height:50px" onclick="window.__c=(window.__c||0)+1">b</button>
+      `),
+  );
+  await view.click(25, 25);
+  await view.scroll(0, 100);
+  await view.click(25, 25);
+  await view.scroll(0, 50);
+  const r = await view.evaluate("JSON.stringify({y:scrollY,c:__c})");
+  expect(JSON.parse(r)).toEqual({ y: 150, c: 2 });
 });
 
 it("scroll: survives navigate (fresh scrolling tree)", async () => {
   // Second navigate gets a fresh scrolling tree. The first presentation-
   // update barrier has to wait for the NEW tree's commit, not a stale one
   // from the previous page.
-  const view = new Bun.WebView({ width: 200, height: 200 });
-  try {
-    await view.navigate("data:text/html," + encodeURIComponent(`<div style="height:5000px">a</div>`));
-    await view.scroll(0, 200);
-    expect(await view.evaluate("String(scrollY)")).toBe("200");
-    await view.navigate("data:text/html," + encodeURIComponent(`<div style="height:5000px">b</div>`));
-    expect(await view.evaluate("String(scrollY)")).toBe("0");
-    await view.scroll(0, 75);
-    expect(await view.evaluate("String(scrollY)")).toBe("75");
-  } finally {
-    view.close();
-  }
+  await using view = new Bun.WebView({ width: 200, height: 200 });
+  await view.navigate("data:text/html," + encodeURIComponent(`<div style="height:5000px">a</div>`));
+  await view.scroll(0, 200);
+  expect(await view.evaluate("String(scrollY)")).toBe("200");
+  await view.navigate("data:text/html," + encodeURIComponent(`<div style="height:5000px">b</div>`));
+  expect(await view.evaluate("String(scrollY)")).toBe("0");
+  await view.scroll(0, 75);
+  expect(await view.evaluate("String(scrollY)")).toBe("75");
 });
 
 it("scroll: targets inner scrollable under view center", async () => {
   // Wheel location is always (W/2, H/2). If a scrollable element covers
   // the center, it receives the wheel and scrolls — the scrolling tree
   // hit-test finds the inner node, not the document root.
-  const view = new Bun.WebView({ width: 200, height: 200 });
-  try {
-    await view.navigate(
-      "data:text/html," +
-        encodeURIComponent(`
-          <div id=inner style="position:fixed;left:50px;top:50px;width:100px;height:100px;overflow:auto">
-            <div style="height:1000px">inner content</div>
-          </div>
-        `),
-    );
-    await view.scroll(0, 60);
-    const r = await view.evaluate("JSON.stringify({inner: document.getElementById('inner').scrollTop, doc: scrollY})");
-    const { inner, doc } = JSON.parse(r);
-    expect(inner).toBe(60);
-    expect(doc).toBe(0);
-  } finally {
-    view.close();
-  }
+  await using view = new Bun.WebView({ width: 200, height: 200 });
+  await view.navigate(
+    "data:text/html," +
+      encodeURIComponent(`
+        <div id=inner style="position:fixed;left:50px;top:50px;width:100px;height:100px;overflow:auto">
+          <div style="height:1000px">inner content</div>
+        </div>
+      `),
+  );
+  await view.scroll(0, 60);
+  const r = await view.evaluate("JSON.stringify({inner: document.getElementById('inner').scrollTop, doc: scrollY})");
+  const { inner, doc } = JSON.parse(r);
+  expect(inner).toBe(60);
+  expect(doc).toBe(0);
 });
 
 it("resize changes inner dimensions", async () => {
-  const view = new Bun.WebView({ width: 200, height: 200 });
-  try {
-    await view.navigate(html("<body>hi</body>"));
-    view.resize(400, 300);
-    const result = await view.evaluate("window.innerWidth + 'x' + window.innerHeight");
-    // WebKit may apply asynchronously; just check it's not still 200x200.
-    expect(result).not.toBe("200x200");
-  } finally {
-    view.close();
-  }
+  await using view = new Bun.WebView({ width: 200, height: 200 });
+  await view.navigate(html("<body>hi</body>"));
+  view.resize(400, 300);
+  const result = await view.evaluate("window.innerWidth + 'x' + window.innerHeight");
+  // WebKit may apply asynchronously; just check it's not still 200x200.
+  expect(result).not.toBe("200x200");
 });
 
 it("second evaluate() while pending rejects with INVALID_STATE", async () => {
-  const view = new Bun.WebView({ width: 200, height: 200 });
-  try {
-    await view.navigate(html("<body>hi</body>"));
-    // Fire two concurrently — the second should throw synchronously
-    // (not return a promise).
-    const p1 = view.evaluate("1+1");
-    expect(() => view.evaluate("2+2")).toThrow(/pending/i);
-    await p1;
-  } finally {
-    view.close();
-  }
+  await using view = new Bun.WebView({ width: 200, height: 200 });
+  await view.navigate(html("<body>hi</body>"));
+  // Fire two concurrently — the second should throw synchronously
+  // (not return a promise).
+  const p1 = view.evaluate("1+1");
+  expect(() => view.evaluate("2+2")).toThrow(/pending/i);
+  await p1;
 });
 
 it("large evaluate() payload spans kernel socket buffer", async () => {
@@ -801,17 +664,13 @@ it("large evaluate() payload spans kernel socket buffer", async () => {
   // for the script, child→parent for the result). Exercises partial-frame
   // buffering in both onData and onReadable, and the write() EAGAIN + queue
   // path in FrameWriter / writeRaw.
-  const view = new Bun.WebView({ width: 100, height: 100 });
-  try {
-    await view.navigate(html("<body>ok</body>"));
-    // Buffer.alloc instead of "x".repeat — debug JSC's repeat is slow.
-    const big = Buffer.alloc(5 * 1024 * 1024, "x").toString();
-    const script = `(() => { const s = ${JSON.stringify(big)}; return s.length + ":" + s.slice(0, 4); })()`;
-    const result = await view.evaluate(script);
-    expect(result).toBe(`${big.length}:xxxx`);
-  } finally {
-    view.close();
-  }
+  await using view = new Bun.WebView({ width: 100, height: 100 });
+  await view.navigate(html("<body>ok</body>"));
+  // Buffer.alloc instead of "x".repeat — debug JSC's repeat is slow.
+  const big = Buffer.alloc(5 * 1024 * 1024, "x").toString();
+  const script = `(() => { const s = ${JSON.stringify(big)}; return s.length + ":" + s.slice(0, 4); })()`;
+  const result = await view.evaluate(script);
+  expect(result).toBe(`${big.length}:xxxx`);
 });
 
 it("close() makes subsequent calls throw", async () => {
@@ -837,25 +696,21 @@ it("close() rejects pending promises", async () => {
 });
 
 it("reload() fires onNavigated", async () => {
-  const view = new Bun.WebView({ width: 200, height: 200 });
-  try {
-    await view.navigate("data:text/html," + encodeURIComponent("<body>hi</body>"));
-    expect(view.url).toStartWith("data:text/html");
+  await using view = new Bun.WebView({ width: 200, height: 200 });
+  await view.navigate("data:text/html," + encodeURIComponent("<body>hi</body>"));
+  expect(view.url).toStartWith("data:text/html");
 
-    // NavEvent is unsolicited now — fires for reload() even though
-    // reload() Acks immediately (m_pendingMisc, not m_pendingNavigate).
-    // Before this change, onNavigationFinished early-returned when
-    // m_navPending was false, so reload/back/forward never fired the
-    // callback and never updated view.url.
-    const { promise, resolve } = Promise.withResolvers<string>();
-    view.onNavigated = url => resolve(url);
-    await view.reload();
-    const navUrl = await promise;
-    expect(navUrl).toStartWith("data:text/html");
-    expect(view.url).toStartWith("data:text/html");
-  } finally {
-    view.close();
-  }
+  // NavEvent is unsolicited now — fires for reload() even though
+  // reload() Acks immediately (m_pendingMisc, not m_pendingNavigate).
+  // Before this change, onNavigationFinished early-returned when
+  // m_navPending was false, so reload/back/forward never fired the
+  // callback and never updated view.url.
+  const { promise, resolve } = Promise.withResolvers<string>();
+  view.onNavigated = url => resolve(url);
+  await view.reload();
+  const navUrl = await promise;
+  expect(navUrl).toStartWith("data:text/html");
+  expect(view.url).toStartWith("data:text/html");
 });
 
 it("url/title return empty after close", () => {
@@ -869,31 +724,22 @@ it("url/title return empty after close", () => {
 it("two views have independent JS contexts", async () => {
   // data: URLs have opaque origins (no localStorage), so we verify isolation
   // via globals — each view is a separate WebContent process.
-  const a = new Bun.WebView({ width: 100, height: 100 });
-  const b = new Bun.WebView({ width: 100, height: 100 });
-  try {
-    await a.navigate(html("<body>a</body>"));
-    await b.navigate(html("<body>b</body>"));
-    await a.evaluate("window.__marker = 'from-a'");
-    const got = await b.evaluate("String(window.__marker)");
-    expect(got).toBe("undefined");
-  } finally {
-    a.close();
-    b.close();
-  }
+  await using a = new Bun.WebView({ width: 100, height: 100 });
+  await using b = new Bun.WebView({ width: 100, height: 100 });
+  await a.navigate(html("<body>a</body>"));
+  await b.navigate(html("<body>b</body>"));
+  await a.evaluate("window.__marker = 'from-a'");
+  const got = await b.evaluate("String(window.__marker)");
+  expect(got).toBe("undefined");
 });
 
 it("callback setter rejects non-functions", () => {
-  const view = new Bun.WebView({ width: 100, height: 100 });
-  try {
-    expect(() => {
-      view.onNavigated = 42 as any;
-    }).toThrow();
-    view.onNavigated = () => {};
-    expect(typeof view.onNavigated).toBe("function");
-  } finally {
-    view.close();
-  }
+  using view = new Bun.WebView({ width: 100, height: 100 });
+  expect(() => {
+    view.onNavigated = 42 as any;
+  }).toThrow();
+  view.onNavigated = () => {};
+  expect(typeof view.onNavigated).toBe("function");
 });
 
 it("GC: drop reference, collect, no crash", () => {
@@ -941,24 +787,16 @@ it("persistent dataStore: localStorage survives across instances", async () => {
   const dataStore = { directory: String(dir) };
 
   {
-    const a = new Bun.WebView({ width: 100, height: 100, dataStore });
-    try {
-      await a.navigate(url);
-      await a.evaluate("localStorage.setItem('k', 'survives')");
-    } finally {
-      a.close();
-    }
+    await using a = new Bun.WebView({ width: 100, height: 100, dataStore });
+    await a.navigate(url);
+    await a.evaluate("localStorage.setItem('k', 'survives')");
   }
 
   // Fresh view, same directory — storage persists.
-  const b = new Bun.WebView({ width: 100, height: 100, dataStore });
-  try {
-    await b.navigate(url);
-    const got = await b.evaluate("String(localStorage.getItem('k'))");
-    expect(got).toBe("survives");
-  } finally {
-    b.close();
-  }
+  await using b = new Bun.WebView({ width: 100, height: 100, dataStore });
+  await b.navigate(url);
+  const got = await b.evaluate("String(localStorage.getItem('k'))");
+  expect(got).toBe("survives");
 });
 
 it("ephemeral dataStore: localStorage does NOT survive across instances", async () => {
@@ -969,23 +807,15 @@ it("ephemeral dataStore: localStorage does NOT survive across instances", async 
   const url = `http://127.0.0.1:${server.port}/`;
 
   {
-    const a = new Bun.WebView({ width: 100, height: 100 }); // default: ephemeral
-    try {
-      await a.navigate(url);
-      await a.evaluate("localStorage.setItem('k', 'leaks?')");
-    } finally {
-      a.close();
-    }
+    await using a = new Bun.WebView({ width: 100, height: 100 }); // default: ephemeral
+    await a.navigate(url);
+    await a.evaluate("localStorage.setItem('k', 'leaks?')");
   }
 
-  const b = new Bun.WebView({ width: 100, height: 100 });
-  try {
-    await b.navigate(url);
-    const got = await b.evaluate("String(localStorage.getItem('k'))");
-    expect(got).toBe("null");
-  } finally {
-    b.close();
-  }
+  await using b = new Bun.WebView({ width: 100, height: 100 });
+  await b.navigate(url);
+  const got = await b.evaluate("String(localStorage.getItem('k'))");
+  expect(got).toBe("null");
 });
 
 test.todo("startFrameStream: onFrame fires with shm PNG");

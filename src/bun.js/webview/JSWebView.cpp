@@ -974,13 +974,13 @@ static void doCloseChrome(JSWebView* view)
 #if !OS(DARWIN)
 // Off-Darwin stubs — m_backend can only be Chrome here, so these never run.
 // Present only so the compiler finds a definition for the non-Chrome branch.
-#define WK_UNREACHABLE(...)                                       \
-    do {                                                          \
+#define WK_UNREACHABLE(...)                                           \
+    do {                                                              \
         ASSERT_NOT_REACHED_WITH_MESSAGE("WebKit backend off-Darwin"); \
-        auto& vm = g->vm();                                       \
-        auto* p = JSPromise::create(vm, g->promiseStructure());   \
-        p->reject(vm, g, createError(g, "unreachable"_s));        \
-        return p;                                                 \
+        auto& vm = g->vm();                                           \
+        auto* p = JSPromise::create(vm, g->promiseStructure());       \
+        p->reject(vm, g, createError(g, "unreachable"_s));            \
+        return p;                                                     \
     } while (0)
 #endif
 

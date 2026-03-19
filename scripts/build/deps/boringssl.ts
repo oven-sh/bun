@@ -11,6 +11,12 @@ export const boringssl: Dependency = {
   name: "boringssl",
   versionMacro: "BORINGSSL",
 
+  patches: [
+    "patches/boringssl/cipher.h.patch",
+    "patches/boringssl/e_aesccm.cc.inc.patch",
+    "patches/boringssl/get_cipher.cc.patch",
+  ],
+
   source: () => ({
     kind: "github-archive",
     repo: "oven-sh/boringssl",

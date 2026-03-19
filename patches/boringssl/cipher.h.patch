@@ -1,0 +1,12 @@
+--- a/include/openssl/cipher.h
++++ b/include/openssl/cipher.h
+@@ -539,6 +539,9 @@
+ // not act on it until the entire operation is complete.
+ OPENSSL_EXPORT const EVP_CIPHER *EVP_aes_128_gcm(void);
+ OPENSSL_EXPORT const EVP_CIPHER *EVP_aes_256_gcm(void);
++OPENSSL_EXPORT const EVP_CIPHER *EVP_aes_128_ccm(void);
++OPENSSL_EXPORT const EVP_CIPHER *EVP_aes_192_ccm(void);
++OPENSSL_EXPORT const EVP_CIPHER *EVP_aes_256_ccm(void);
+ 
+ // These are deprecated, 192-bit version of AES.
+ OPENSSL_EXPORT const EVP_CIPHER *EVP_aes_192_ecb(void);

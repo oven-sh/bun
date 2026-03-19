@@ -765,8 +765,7 @@ static JSPromise* navigateChrome(JSGlobalObject* g, JSWebView* view, const WTF::
         return sendChromeOp(g, view, view->m_pendingNavigate, PendingSlot::Navigate,
             Method::PageNavigate, id,
             Command(id, "Page.navigate"_s, sidSpan(view->m_sessionId))
-                .str("url"_s, url)
-                );
+                .str("url"_s, url));
     }
 
     // First navigate: start the chain. Stash url; the PageEnable response
@@ -787,8 +786,7 @@ static JSPromise* navigateChrome(JSGlobalObject* g, JSWebView* view, const WTF::
             .str("url"_s, "about:blank"_s)
             .boolean("newWindow"_s, true)
             .num("width"_s, static_cast<int32_t>(view->m_width))
-            .num("height"_s, static_cast<int32_t>(view->m_height))
-            );
+            .num("height"_s, static_cast<int32_t>(view->m_height)));
 }
 
 // Runtime.evaluate with returnByValue + awaitPromise. Chrome JSON-serializes
@@ -808,8 +806,7 @@ static JSPromise* evaluateChrome(JSGlobalObject* g, JSWebView* view, const WTF::
         Command(id, "Runtime.evaluate"_s, sidSpan(view->m_sessionId))
             .str("expression"_s, body)
             .boolean("returnByValue"_s, true)
-            .boolean("awaitPromise"_s, true)
-            );
+            .boolean("awaitPromise"_s, true));
 }
 
 static JSPromise* screenshotChrome(JSGlobalObject* g, JSWebView* view)
@@ -820,8 +817,7 @@ static JSPromise* screenshotChrome(JSGlobalObject* g, JSWebView* view)
     return sendChromeOp(g, view, view->m_pendingScreenshot, PendingSlot::Screenshot,
         Method::PageCaptureScreenshot, id,
         Command(id, "Page.captureScreenshot"_s, sidSpan(view->m_sessionId))
-            .raw("format"_s, "\"png\""_s)
-            );
+            .raw("format"_s, "\"png\""_s));
 }
 
 // Bun click button → CDP button enum string. CDP's Input.dispatchMouseEvent
@@ -874,8 +870,7 @@ static JSPromise* clickChrome(JSGlobalObject* g, JSWebView* view, float x, float
             .num("y"_s, y)
             .raw("button"_s, btn)
             .num("clickCount"_s, static_cast<int32_t>(clickCount))
-            .num("modifiers"_s, mods)
-            );
+            .num("modifiers"_s, mods));
     // Released — tracked, resolves the promise.
     uint32_t idUp = t.nextId();
     return sendChromeOp(g, view, view->m_pendingMisc, PendingSlot::Misc,
@@ -886,8 +881,7 @@ static JSPromise* clickChrome(JSGlobalObject* g, JSWebView* view, float x, float
             .num("y"_s, y)
             .raw("button"_s, btn)
             .num("clickCount"_s, static_cast<int32_t>(clickCount))
-            .num("modifiers"_s, mods)
-            );
+            .num("modifiers"_s, mods));
 }
 
 // Selector ops: Runtime.evaluate runs the rAF-polled actionability check
@@ -916,8 +910,7 @@ static JSPromise* clickSelectorChrome(JSGlobalObject* g, JSWebView* view, const 
         Command(id, "Runtime.evaluate"_s, sidSpan(view->m_sessionId))
             .str("expression"_s, sb.toString())
             .boolean("returnByValue"_s, true)
-            .boolean("awaitPromise"_s, true)
-            );
+            .boolean("awaitPromise"_s, true));
 }
 
 static JSPromise* scrollToChrome(JSGlobalObject* g, JSWebView* view, const WTF::String& selector, uint32_t timeout, uint8_t block)
@@ -939,8 +932,7 @@ static JSPromise* scrollToChrome(JSGlobalObject* g, JSWebView* view, const WTF::
         Command(id, "Runtime.evaluate"_s, sidSpan(view->m_sessionId))
             .str("expression"_s, sb.toString())
             .boolean("returnByValue"_s, true)
-            .boolean("awaitPromise"_s, true)
-            );
+            .boolean("awaitPromise"_s, true));
 }
 
 static JSPromise* typeChrome(JSGlobalObject* g, JSWebView* view, const WTF::String& text)
@@ -953,8 +945,7 @@ static JSPromise* typeChrome(JSGlobalObject* g, JSWebView* view, const WTF::Stri
     return sendChromeOp(g, view, view->m_pendingMisc, PendingSlot::Misc,
         Method::InputInsertText, id,
         Command(id, "Input.insertText"_s, sidSpan(view->m_sessionId))
-            .str("text"_s, text)
-            );
+            .str("text"_s, text));
 }
 
 static JSPromise* scrollChrome(JSGlobalObject* g, JSWebView* view, double dx, double dy)
@@ -971,8 +962,7 @@ static JSPromise* scrollChrome(JSGlobalObject* g, JSWebView* view, double dx, do
             .num("x"_s, view->m_width / 2.0)
             .num("y"_s, view->m_height / 2.0)
             .num("deltaX"_s, dx)
-            .num("deltaY"_s, dy)
-            );
+            .num("deltaY"_s, dy));
 }
 
 static JSPromise* resizeChrome(JSGlobalObject* g, JSWebView* view, uint32_t width, uint32_t height)
@@ -988,8 +978,7 @@ static JSPromise* resizeChrome(JSGlobalObject* g, JSWebView* view, uint32_t widt
             .num("width"_s, static_cast<int32_t>(width))
             .num("height"_s, static_cast<int32_t>(height))
             .num("deviceScaleFactor"_s, 1)
-            .boolean("mobile"_s, false)
-            );
+            .boolean("mobile"_s, false));
 }
 
 static JSPromise* reloadChrome(JSGlobalObject* g, JSWebView* view)
@@ -1019,8 +1008,7 @@ static void doCloseChrome(JSWebView* view)
     if (!view->m_sessionId.isEmpty() && !view->m_targetId.isEmpty()) {
         uint32_t id = t.nextId();
         t.send(CDP::Command(id, "Target.closeTarget"_s)
-                .str("targetId"_s, view->m_targetId)
-                );
+                .str("targetId"_s, view->m_targetId));
         t.m_sessions.remove(view->m_sessionId);
     }
     t.updateKeepAlive();

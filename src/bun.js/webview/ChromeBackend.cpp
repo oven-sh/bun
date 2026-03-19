@@ -398,8 +398,7 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         m_pending.add(cid, Pending { Method::TargetAttachToTarget, entry.slot, WTF::move(entry.view) });
         send(Command(cid, "Target.attachToTarget"_s)
                 .str("targetId"_s, view->m_targetId)
-                .boolean("flatten"_s, true)
-                );
+                .boolean("flatten"_s, true));
         return;
     }
     case Method::TargetAttachToTarget: {
@@ -439,8 +438,7 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         uint32_t cid = nextId();
         m_pending.add(cid, Pending { Method::PageNavigate, entry.slot, WTF::move(entry.view) });
         send(Command(cid, "Page.navigate"_s, sidSpan)
-                .str("url"_s, view->m_pendingChromeNavigateUrl)
-                );
+                .str("url"_s, view->m_pendingChromeNavigateUrl));
         view->m_pendingChromeNavigateUrl = WTF::String();
         return;
     }
@@ -582,9 +580,14 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         // — duplicated here because that's static in another TU.
         ASCIILiteral btn;
         switch (view->m_selButton) {
-        case 1: btn = "\"right\""_s; break;
-        case 2: btn = "\"middle\""_s; break;
-        default: btn = "\"left\""_s;
+        case 1:
+            btn = "\"right\""_s;
+            break;
+        case 2:
+            btn = "\"middle\""_s;
+            break;
+        default:
+            btn = "\"left\""_s;
         }
         int32_t mods = 0;
         // ipc_protocol.h Mod* → CDP modifier bits (Alt=1 Ctrl=2 Meta=4 Shift=8)
@@ -601,8 +604,7 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
                 .num("y"_s, cy)
                 .raw("button"_s, btn)
                 .num("clickCount"_s, static_cast<int32_t>(view->m_selClickCount))
-                .num("modifiers"_s, mods)
-                );
+                .num("modifiers"_s, mods));
         // Released — tracked, resolves the slot.
         uint32_t idUp = nextId();
         m_pending.add(idUp, Pending { Method::InputDispatchMouseEvent, entry.slot, WTF::move(entry.view) });
@@ -612,8 +614,7 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
                 .num("y"_s, cy)
                 .raw("button"_s, btn)
                 .num("clickCount"_s, static_cast<int32_t>(view->m_selClickCount))
-                .num("modifiers"_s, mods)
-                );
+                .num("modifiers"_s, mods));
         return;
     }
     }

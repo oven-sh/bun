@@ -443,7 +443,8 @@ static JSValue errorFromExceptionDetails(JSGlobalObject* g, std::span<const char
     // description has \n escaped in the JSON string — our jsonString strips
     // the quotes but doesn't unescape. Manual unescape for the sequences
     // V8's formatter actually emits (\n, \", \\; printable-ASCII otherwise).
-    auto src = !desc.empty() ? desc : !value.empty() ? value : text;
+    auto src = !desc.empty() ? desc : !value.empty() ? value
+                                                     : text;
     auto fullStr = jsonUnescape(src);
 
     // Split at first newline. Message line is "Error: msg" or just "msg"

@@ -5,6 +5,8 @@
 
 #include "root.h"
 #include "JSWebView.h"
+#include "ChromeBackend.h"
+#include "ipc_protocol.h"
 #include "ZigGlobalObject.h"
 #include "BunClientData.h"
 #include <JavaScriptCore/JSCInlines.h>
@@ -23,7 +25,6 @@
 #include <mutex>
 
 #if OS(DARWIN)
-#include "ipc_protocol.h"
 #include "libusockets.h"
 #include "_libusockets.h"
 #include <sys/mman.h>
@@ -35,10 +36,36 @@
 namespace Bun {
 
 using namespace JSC;
+using namespace WebViewProto;
+
+// ---------------------------------------------------------------------------
+// Shared weak owner. Both backends (WebKit's HostClient.viewsById and
+// Chrome's Transport.m_pending/.m_sessions) hold Weak<JSWebView>. The
+// isReachableFromOpaqueRoots predicate reads the atomic activity count:
+// under `bun test` the closure → view → m_pendingNavigate → promise →
+// reaction → closure cycle has no external root (the test-function promise
+// goes out of Zig scope after runTestCallback returns). This IS the root.
+// ---------------------------------------------------------------------------
+
+class JSWebViewWeakOwner final : public JSC::WeakHandleOwner {
+    bool isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, JSC::AbstractSlotVisitor&, ASCIILiteral* reason) final
+    {
+        auto* view = jsCast<JSWebView*>(handle.slot()->asCell());
+        if (view->m_pendingActivityCount.load(std::memory_order_acquire) == 0)
+            return false;
+        if (reason) [[unlikely]]
+            *reason = "WebView with pending operation"_s;
+        return true;
+    }
+};
+
+WeakHandleOwner& webViewWeakOwner()
+{
+    static NeverDestroyed<JSWebViewWeakOwner> owner;
+    return owner.get();
+}
 
 #if OS(DARWIN)
-
-using namespace WebViewProto;
 
 // Spawn + process-exit watch in Zig (reuses bun.spawn.Process / EVFILT_PROC).
 extern "C" int32_t Bun__WebViewHost__ensure(Zig::GlobalObject*);
@@ -61,32 +88,8 @@ extern "C" void Bun__EventLoop__runCallback2(JSC::JSGlobalObject*, JSC::EncodedJ
 // JSWebView; the frame header carries viewId. Reply arrives → viewsById[viewId]
 // (Weak) → Reply type picks the slot. If the user drops view + promise, GC
 // takes both; the reply finds a dead Weak and discards.
-//
-// The viewsById Weak<> has a WeakHandleOwner: isReachableFromOpaqueRoots
-// reads the atomic activity count. Under `bun test` the closure → view →
-// m_pendingNavigate → promise → reaction → closure cycle has no external
-// root (the test-function promise goes out of Zig scope after runTestCallback
-// returns). This predicate IS the root.
 // ---------------------------------------------------------------------------
 namespace {
-
-class JSWebViewWeakOwner final : public JSC::WeakHandleOwner {
-    bool isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, JSC::AbstractSlotVisitor&, ASCIILiteral* reason) final
-    {
-        auto* view = jsCast<JSWebView*>(handle.slot()->asCell());
-        if (view->m_pendingActivityCount.load(std::memory_order_acquire) == 0)
-            return false;
-        if (reason) [[unlikely]]
-            *reason = "WebView with pending operation"_s;
-        return true;
-    }
-};
-
-JSWebViewWeakOwner& webViewWeakOwner()
-{
-    static NeverDestroyed<JSWebViewWeakOwner> owner;
-    return owner.get();
-}
 
 struct HostClient {
     us_socket_context_t* ctx = nullptr;
@@ -523,13 +526,19 @@ void JSWebView::finishCreation(VM& vm)
 
 JSWebView::~JSWebView()
 {
-#if OS(DARWIN)
     // We do NOT send Close from here. The destructor runs during GC;
-    // JSPromise::create is unsafe (allocating in collection), and a
-    // req_id=0 frame would be misrouted as an unsolicited event by the
-    // parent's reply handler. The child-side view leaks for process
-    // lifetime — bounded, and the user was supposed to call close().
-    if (!m_closed && m_viewId) {
+    // JSPromise::create is unsafe (allocating in collection). The peer-side
+    // view/target leaks for process lifetime — bounded, and the user was
+    // supposed to call close().
+    if (m_closed) return;
+    if (m_backend == WebViewBackend::Chrome) {
+        auto& t = CDP::transport();
+        if (!m_sessionId.isEmpty()) t.m_sessions.remove(m_sessionId);
+        t.updateKeepAlive();
+        return;
+    }
+#if OS(DARWIN)
+    if (m_viewId) {
         auto& client = hostClient();
         client.viewsById.erase(m_viewId);
         client.updateKeepAlive();
@@ -565,128 +574,155 @@ DEFINE_VISIT_CHILDREN(JSWebView);
 
 const ClassInfo JSWebView::s_info = { "WebView"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSWebView) };
 
-#if OS(DARWIN)
+// --- Chrome backend helpers ------------------------------------------------
+// Same settle semantics as WebKit's. Slot cleared BEFORE JS call so
+// re-entrant sends from .then() see an empty slot; activity dec AFTER.
+// Duplicated here because WebKit's settle is in a Darwin-gated anon ns.
 
-// --- Instance operations ---------------------------------------------------
-// Called from JSWebViewPrototype.cpp after arg validation. Wire encoding is
-// the typed payload structs from ipc_protocol.h; no inline memcpy here.
-
-JSPromise* JSWebView::navigate(JSGlobalObject* g, const WTF::String& url)
+static void settleSlot(JSGlobalObject* g, JSWebView* v,
+    WriteBarrier<JSPromise>& slot, bool ok, JSValue value)
 {
-    auto payload = encodeStr(url);
-    auto* promise = sendOp(g, this, m_pendingNavigate, Op::Navigate,
-        payload.span().data(), static_cast<uint32_t>(payload.size()));
-    // After sendOp so m_loading isn't stuck true if the host is dead and
-    // sendOp rejected without ever touching the slot.
-    if (m_pendingNavigate) m_loading = true;
+    JSPromise* p = slot.get();
+    if (!p) return;
+    slot.clear();
+    v->m_pendingActivityCount.fetch_sub(1, std::memory_order_release);
+    if (ok)
+        p->resolve(g, value);
+    else
+        p->reject(g->vm(), g, value);
+}
+
+// Allocate promise, store in slot, add to Transport pending map, send frame.
+// Caller guarantees the slot is empty and m_closed == false. Frame comes
+// from CDP::Command(...).finish(); id was allocated via t.nextId() before
+// building the command (the id is baked into the frame).
+static JSPromise* sendChromeOp(JSGlobalObject* g, JSWebView* v,
+    WriteBarrier<JSPromise>& slot, CDP::PendingSlot ps, CDP::Method m,
+    uint32_t id, const WTF::CString& frame)
+{
+    auto& vm = g->vm();
+    auto& t = CDP::transport();
+    auto* promise = JSPromise::create(vm, g->promiseStructure());
+    if (t.m_dead || !t.m_readSock) {
+        promise->reject(vm, g, createError(g, "Chrome process is not running"_s));
+        return promise;
+    }
+    v->m_pendingActivityCount.fetch_add(1, std::memory_order_release);
+    slot.set(vm, v, promise);
+    t.m_pending.add(id, CDP::Pending { m, ps, Weak<JSWebView>(v, &webViewWeakOwner()) });
+    t.send(frame);
+    t.updateKeepAlive();
     return promise;
 }
 
-JSPromise* JSWebView::evaluate(JSGlobalObject* g, const WTF::String& script)
+// sessionId → span<const char> for CDP::Command. sessionId is base64-ish
+// (ASCII only) so Latin1 cast is safe — no UTF-8 multi-byte to worry about.
+static std::span<const char> sidSpan(const WTF::String& s)
+{
+    if (s.isEmpty()) return {};
+    ASSERT(s.is8Bit());
+    auto span = s.span8();
+    return { reinterpret_cast<const char*>(span.data()), span.size() };
+}
+
+#if OS(DARWIN)
+
+// --- WebKit instance operations --------------------------------------------
+// Called from JSWebViewPrototype.cpp after arg validation. Wire encoding is
+// the typed payload structs from ipc_protocol.h.
+
+static JSPromise* navigateWebKit(JSGlobalObject* g, JSWebView* view, const WTF::String& url)
+{
+    auto payload = encodeStr(url);
+    auto* promise = sendOp(g, view, view->m_pendingNavigate, Op::Navigate,
+        payload.span().data(), static_cast<uint32_t>(payload.size()));
+    if (view->m_pendingNavigate) view->m_loading = true;
+    return promise;
+}
+
+static JSPromise* evaluateWebKit(JSGlobalObject* g, JSWebView* view, const WTF::String& script)
 {
     auto payload = encodeStr(script);
-    return sendOp(g, this, m_pendingEval, Op::Evaluate,
+    return sendOp(g, view, view->m_pendingEval, Op::Evaluate,
         payload.span().data(), static_cast<uint32_t>(payload.size()));
 }
 
-JSPromise* JSWebView::screenshot(JSGlobalObject* g)
+static JSPromise* screenshotWebKit(JSGlobalObject* g, JSWebView* view)
 {
-    return sendOp(g, this, m_pendingScreenshot, Op::Screenshot, nullptr, 0);
+    return sendOp(g, view, view->m_pendingScreenshot, Op::Screenshot, nullptr, 0);
 }
 
-JSPromise* JSWebView::click(JSGlobalObject* g, float x, float y, uint8_t button, uint8_t modifiers, uint8_t clickCount)
+static JSPromise* clickWebKit(JSGlobalObject* g, JSWebView* view, float x, float y, uint8_t button, uint8_t modifiers, uint8_t clickCount)
 {
     auto payload = encode(ClickPayload { x, y, button, modifiers, clickCount });
-    return sendOp(g, this, m_pendingMisc, Op::Click,
+    return sendOp(g, view, view->m_pendingMisc, Op::Click,
         payload.span().data(), static_cast<uint32_t>(payload.size()));
 }
 
-JSPromise* JSWebView::clickSelector(JSGlobalObject* g, const WTF::String& selector, uint32_t timeout, uint8_t button, uint8_t modifiers, uint8_t clickCount)
+static JSPromise* clickSelectorWebKit(JSGlobalObject* g, JSWebView* view, const WTF::String& selector, uint32_t timeout, uint8_t button, uint8_t modifiers, uint8_t clickCount)
 {
     auto payload = encode(ClickSelectorPayload { timeout, button, modifiers, clickCount }, selector);
-    return sendOp(g, this, m_pendingMisc, Op::ClickSelector,
+    return sendOp(g, view, view->m_pendingMisc, Op::ClickSelector,
         payload.span().data(), static_cast<uint32_t>(payload.size()));
 }
 
-JSPromise* JSWebView::type(JSGlobalObject* g, const WTF::String& text)
+static JSPromise* typeWebKit(JSGlobalObject* g, JSWebView* view, const WTF::String& text)
 {
     auto payload = encodeStr(text);
-    return sendOp(g, this, m_pendingMisc, Op::Type,
+    return sendOp(g, view, view->m_pendingMisc, Op::Type,
         payload.span().data(), static_cast<uint32_t>(payload.size()));
 }
 
-JSPromise* JSWebView::press(JSGlobalObject* g, VirtualKey key, uint8_t modifiers, const WTF::String& character)
+static JSPromise* pressWebKit(JSGlobalObject* g, JSWebView* view, VirtualKey key, uint8_t modifiers, const WTF::String& character)
 {
-    // Tail string is null for named keys, present for VirtualKey::Character.
-    // encode() skips the tail encoding when the string is null.
     auto payload = encode(PressPayload { static_cast<uint8_t>(key), modifiers },
         key == VirtualKey::Character ? character : WTF::String());
-    return sendOp(g, this, m_pendingMisc, Op::Press,
+    return sendOp(g, view, view->m_pendingMisc, Op::Press,
         payload.span().data(), static_cast<uint32_t>(payload.size()));
 }
 
-JSPromise* JSWebView::scroll(JSGlobalObject* g, double dx, double dy)
+static JSPromise* scrollWebKit(JSGlobalObject* g, JSWebView* view, double dx, double dy)
 {
     auto payload = encode(ScrollPayload { static_cast<float>(dx), static_cast<float>(dy) });
-    return sendOp(g, this, m_pendingMisc, Op::Scroll,
+    return sendOp(g, view, view->m_pendingMisc, Op::Scroll,
         payload.span().data(), static_cast<uint32_t>(payload.size()));
 }
 
-JSPromise* JSWebView::scrollTo(JSGlobalObject* g, const WTF::String& selector, uint32_t timeout, uint8_t block)
+static JSPromise* scrollToWebKit(JSGlobalObject* g, JSWebView* view, const WTF::String& selector, uint32_t timeout, uint8_t block)
 {
     auto payload = encode(ScrollToPayload { timeout, block }, selector);
-    return sendOp(g, this, m_pendingMisc, Op::ScrollTo,
+    return sendOp(g, view, view->m_pendingMisc, Op::ScrollTo,
         payload.span().data(), static_cast<uint32_t>(payload.size()));
 }
 
-JSPromise* JSWebView::resize(JSGlobalObject* g, uint32_t width, uint32_t height)
+static JSPromise* resizeWebKit(JSGlobalObject* g, JSWebView* view, uint32_t width, uint32_t height)
 {
     auto payload = encode(ResizePayload { width, height });
-    return sendOp(g, this, m_pendingMisc, Op::Resize,
+    return sendOp(g, view, view->m_pendingMisc, Op::Resize,
         payload.span().data(), static_cast<uint32_t>(payload.size()));
 }
 
-JSPromise* JSWebView::goBack(JSGlobalObject* g) { return sendOp(g, this, m_pendingMisc, Op::GoBack, nullptr, 0); }
-JSPromise* JSWebView::goForward(JSGlobalObject* g) { return sendOp(g, this, m_pendingMisc, Op::GoForward, nullptr, 0); }
-JSPromise* JSWebView::reload(JSGlobalObject* g) { return sendOp(g, this, m_pendingMisc, Op::Reload, nullptr, 0); }
-
-void JSWebView::doClose()
+static void doCloseWebKit(JSWebView* view)
 {
-    m_closed = true;
     auto& client = hostClient();
-
-    // Reject any pending promises before erasing from the routing table —
-    // otherwise the child's replies find no entry, the promises hang, and
-    // m_pendingActivityCount stays >0 so isReachableFromOpaqueRoots keeps
-    // this object alive forever. Same per-slot rejection as
-    // rejectAllAndMarkDead.
     if (client.global) {
         auto* g = client.global;
         JSValue err = createError(g, "WebView closed"_s);
-        settle(g, this, m_pendingNavigate, false, err);
-        settle(g, this, m_pendingEval, false, err);
-        settle(g, this, m_pendingScreenshot, false, err);
-        settle(g, this, m_pendingMisc, false, err);
+        settle(g, view, view->m_pendingNavigate, false, err);
+        settle(g, view, view->m_pendingEval, false, err);
+        settle(g, view, view->m_pendingScreenshot, false, err);
+        settle(g, view, view->m_pendingMisc, false, err);
     }
-
-    // Fire-and-forget: no slot (view is going away), child's Ack finds no
-    // entry in viewsById and drops. Erase AFTER write so keep-alive stays
-    // ref'd long enough for the frame to reach the socket buffer.
-    client.writeFrame(Op::Close, m_viewId, nullptr, 0);
-    client.viewsById.erase(m_viewId);
+    client.writeFrame(Op::Close, view->m_viewId, nullptr, 0);
+    client.viewsById.erase(view->m_viewId);
     client.updateKeepAlive();
 }
-
-// --- Constructor entry -----------------------------------------------------
 
 JSWebView* JSWebView::createAndSend(JSGlobalObject* g, Structure* structure,
     uint32_t width, uint32_t height, const WTF::String& persistDir)
 {
     auto* zig = defaultGlobalObject(g);
     auto& client = hostClient();
-    // Lazy-spawn the host. Synchronous — spawn returns after fork+exec,
-    // before the child finishes init. The socket is writable immediately
-    // (kernel buffers); the child reads on its first CFRunLoop tick.
     if (!client.ensureSpawned(zig)) return nullptr;
 
     JSWebView* view = create(g->vm(), structure);
@@ -694,9 +730,6 @@ JSWebView* JSWebView::createAndSend(JSGlobalObject* g, Structure* structure,
     client.viewsById.emplace(view->m_viewId, Weak<JSWebView>(view, &webViewWeakOwner()));
     client.updateKeepAlive();
 
-    // Fire-and-forget — no promise, no slot. If WKWebView alloc fails
-    // (exceedingly rare), subsequent ops get Reply::Error from the child's
-    // "invalid viewId" lookup. Simpler than an async constructor.
     bool persistent = !persistDir.isEmpty();
     auto payload = encode(
         CreatePayload { width, height,
@@ -709,6 +742,457 @@ JSWebView* JSWebView::createAndSend(JSGlobalObject* g, Structure* structure,
 }
 
 #endif // OS(DARWIN)
+
+// --- Chrome instance operations --------------------------------------------
+// One CDP::Command per op. Input.* and Page.captureScreenshot are
+// synchronous-reply — the response means the operation completed, so these
+// settle immediately on response. Page.navigate's response means the
+// navigation started; actual load completion arrives via Page.loadEventFired
+// (handled in ChromeBackend.cpp's event dispatch).
+
+// The first navigate() kicks off the attach chain: Target.createTarget
+// (browser-level, no sessionId) → Target.attachToTarget → Page.enable →
+// Page.navigate(url). Each response chains into the next command; the
+// Navigate slot promise resolves on Page.loadEventFired, not on any
+// response. Subsequent navigates skip straight to Page.navigate.
+static JSPromise* navigateChrome(JSGlobalObject* g, JSWebView* view, const WTF::String& url)
+{
+    using namespace CDP;
+    auto& t = transport();
+
+    if (!view->m_sessionId.isEmpty()) {
+        uint32_t id = t.nextId();
+        return sendChromeOp(g, view, view->m_pendingNavigate, PendingSlot::Navigate,
+            Method::PageNavigate, id,
+            Command(id, "Page.navigate"_s, sidSpan(view->m_sessionId))
+                .str("url"_s, url)
+                .finish());
+    }
+
+    // First navigate: start the chain. Stash url; the PageEnable response
+    // handler in ChromeBackend.cpp reads it and sends the Page.navigate.
+    // The Navigate slot promise is created now; it resolves much later on
+    // Page.loadEventFired. The chain carries the same Weak<view> forward
+    // so the pending activity count keeps this object rooted the whole time.
+    view->m_pendingChromeNavigateUrl = url;
+    uint32_t id = t.nextId();
+    return sendChromeOp(g, view, view->m_pendingNavigate, PendingSlot::Navigate,
+        Method::TargetCreateTarget, id,
+        Command(id, "Target.createTarget"_s)
+            .str("url"_s, "about:blank"_s)
+            .num("width"_s, static_cast<int32_t>(view->m_width))
+            .num("height"_s, static_cast<int32_t>(view->m_height))
+            .finish());
+}
+
+// Runtime.evaluate with returnByValue + awaitPromise. Chrome JSON-serializes
+// the result internally (same mechanism as WKWebView's page-side
+// JSON.stringify but implicit). exceptionDetails present → script threw.
+static JSPromise* evaluateChrome(JSGlobalObject* g, JSWebView* view, const WTF::String& script)
+{
+    using namespace CDP;
+    auto& t = transport();
+    uint32_t id = t.nextId();
+    // Same "await (expr)" wrap as WKWebView: forces expression context,
+    // unwraps thenables. Chrome's awaitPromise does the await part; we
+    // just need the paren-wrap for statement-sequence rejection consistency.
+    auto body = makeString("(async()=>{return await ("_s, script, ")})()"_s);
+    return sendChromeOp(g, view, view->m_pendingEval, PendingSlot::Evaluate,
+        Method::RuntimeEvaluate, id,
+        Command(id, "Runtime.evaluate"_s, sidSpan(view->m_sessionId))
+            .str("expression"_s, body)
+            .boolean("returnByValue"_s, true)
+            .boolean("awaitPromise"_s, true)
+            .finish());
+}
+
+static JSPromise* screenshotChrome(JSGlobalObject* g, JSWebView* view)
+{
+    using namespace CDP;
+    auto& t = transport();
+    uint32_t id = t.nextId();
+    return sendChromeOp(g, view, view->m_pendingScreenshot, PendingSlot::Screenshot,
+        Method::PageCaptureScreenshot, id,
+        Command(id, "Page.captureScreenshot"_s, sidSpan(view->m_sessionId))
+            .raw("format"_s, "\"png\""_s)
+            .finish());
+}
+
+// Bun click button → CDP button enum string. CDP's Input.dispatchMouseEvent
+// takes a string: "none", "left", "middle", "right".
+static constexpr ASCIILiteral cdpButton(uint8_t b)
+{
+    switch (b) {
+    case 1:
+        return "\"right\""_s;
+    case 2:
+        return "\"middle\""_s;
+    default:
+        return "\"left\""_s;
+    }
+}
+
+// Bun modifier bits → CDP modifier integer. CDP uses bit 0=Alt, 1=Ctrl,
+// 2=Meta, 3=Shift. ipc_protocol.h's ModShift=1 ModCtrl=2 ModAlt=4 ModMeta=8.
+static constexpr int32_t cdpModifiers(uint8_t m)
+{
+    int32_t r = 0;
+    if (m & ModAlt) r |= 1;
+    if (m & ModCtrl) r |= 2;
+    if (m & ModMeta) r |= 4;
+    if (m & ModShift) r |= 8;
+    return r;
+}
+
+// One mousePressed + one mouseReleased. CDP's Input.dispatchMouseEvent is
+// synchronous-reply — Chrome processes the event, dispatches to the page,
+// and THEN replies. No mouseEventQueue-drain SPI dance needed.
+//
+// The response to the Released event resolves the promise; the Pressed
+// event is fire-and-forget (id allocated but not tracked in m_pending —
+// Chrome sends a reply we ignore). Both frames go in one write().
+static JSPromise* clickChrome(JSGlobalObject* g, JSWebView* view, float x, float y, uint8_t button, uint8_t modifiers, uint8_t clickCount)
+{
+    using namespace CDP;
+    auto& t = transport();
+    auto sid = sidSpan(view->m_sessionId);
+    auto btn = cdpButton(button);
+    int32_t mods = cdpModifiers(modifiers);
+
+    // Pressed — untracked. Chrome replies but we don't need the ack; the
+    // Released event's reply confirms both were processed.
+    uint32_t idDown = t.nextId();
+    t.send(Command(idDown, "Input.dispatchMouseEvent"_s, sid)
+            .raw("type"_s, "\"mousePressed\""_s)
+            .num("x"_s, x)
+            .num("y"_s, y)
+            .raw("button"_s, btn)
+            .num("clickCount"_s, static_cast<int32_t>(clickCount))
+            .num("modifiers"_s, mods)
+            .finish());
+    // Released — tracked, resolves the promise.
+    uint32_t idUp = t.nextId();
+    return sendChromeOp(g, view, view->m_pendingMisc, PendingSlot::Misc,
+        Method::InputDispatchMouseEvent, idUp,
+        Command(idUp, "Input.dispatchMouseEvent"_s, sid)
+            .raw("type"_s, "\"mouseReleased\""_s)
+            .num("x"_s, x)
+            .num("y"_s, y)
+            .raw("button"_s, btn)
+            .num("clickCount"_s, static_cast<int32_t>(clickCount))
+            .num("modifiers"_s, mods)
+            .finish());
+}
+
+static JSPromise* typeChrome(JSGlobalObject* g, JSWebView* view, const WTF::String& text)
+{
+    using namespace CDP;
+    auto& t = transport();
+    uint32_t id = t.nextId();
+    // Input.insertText does exactly what WKWebView's _executeEditCommand:
+    // InsertText does — inserts text at the caret without keydown events.
+    return sendChromeOp(g, view, view->m_pendingMisc, PendingSlot::Misc,
+        Method::InputInsertText, id,
+        Command(id, "Input.insertText"_s, sidSpan(view->m_sessionId))
+            .str("text"_s, text)
+            .finish());
+}
+
+static JSPromise* scrollChrome(JSGlobalObject* g, JSWebView* view, double dx, double dy)
+{
+    using namespace CDP;
+    auto& t = transport();
+    uint32_t id = t.nextId();
+    // mouseWheel at the center. No presentation-barrier dance — Chrome's
+    // reply means the scroll was processed.
+    return sendChromeOp(g, view, view->m_pendingMisc, PendingSlot::Misc,
+        Method::InputDispatchMouseEvent, id,
+        Command(id, "Input.dispatchMouseEvent"_s, sidSpan(view->m_sessionId))
+            .raw("type"_s, "\"mouseWheel\""_s)
+            .num("x"_s, view->m_width / 2.0)
+            .num("y"_s, view->m_height / 2.0)
+            .num("deltaX"_s, dx)
+            .num("deltaY"_s, dy)
+            .finish());
+}
+
+static JSPromise* resizeChrome(JSGlobalObject* g, JSWebView* view, uint32_t width, uint32_t height)
+{
+    using namespace CDP;
+    auto& t = transport();
+    view->m_width = width;
+    view->m_height = height;
+    uint32_t id = t.nextId();
+    return sendChromeOp(g, view, view->m_pendingMisc, PendingSlot::Misc,
+        Method::EmulationSetDeviceMetricsOverride, id,
+        Command(id, "Emulation.setDeviceMetricsOverride"_s, sidSpan(view->m_sessionId))
+            .num("width"_s, static_cast<int32_t>(width))
+            .num("height"_s, static_cast<int32_t>(height))
+            .num("deviceScaleFactor"_s, 1)
+            .boolean("mobile"_s, false)
+            .finish());
+}
+
+static JSPromise* reloadChrome(JSGlobalObject* g, JSWebView* view)
+{
+    using namespace CDP;
+    auto& t = transport();
+    uint32_t id = t.nextId();
+    return sendChromeOp(g, view, view->m_pendingMisc, PendingSlot::Misc,
+        Method::PageReload, id,
+        Command(id, "Page.reload"_s, sidSpan(view->m_sessionId)).finish());
+}
+
+static void doCloseChrome(JSWebView* view)
+{
+    auto& t = CDP::transport();
+    if (t.m_global) {
+        auto* g = t.m_global;
+        JSValue err = createError(g, "WebView closed"_s);
+        settleSlot(g, view, view->m_pendingNavigate, false, err);
+        settleSlot(g, view, view->m_pendingEval, false, err);
+        settleSlot(g, view, view->m_pendingScreenshot, false, err);
+        settleSlot(g, view, view->m_pendingMisc, false, err);
+    }
+    // Target.closeTarget — fire-and-forget. Chrome tears down the tab and
+    // sends Target.targetDestroyed which we ignore. Erase sessionId from the
+    // routing table so late events drop.
+    if (!view->m_sessionId.isEmpty() && !view->m_targetId.isEmpty()) {
+        uint32_t id = t.nextId();
+        t.send(CDP::Command(id, "Target.closeTarget"_s)
+                .str("targetId"_s, view->m_targetId)
+                .finish());
+        t.m_sessions.remove(view->m_sessionId);
+    }
+    t.updateKeepAlive();
+}
+
+// --- Dispatching instance methods ------------------------------------------
+// Each branches on m_backend. WebKit paths are Darwin-gated; calling one
+// with backend=WebKit off-Darwin is unreachable (constructor threw).
+
+#if !OS(DARWIN)
+// Off-Darwin stubs — m_backend can only be Chrome here, so these never run.
+// Present only so the compiler finds a definition for the non-Chrome branch.
+#define WK_UNREACHABLE(...)                                       \
+    do {                                                          \
+        ASSERT_NOT_REACHED_WITH_MESSAGE("WebKit backend off-Darwin"); \
+        auto& vm = g->vm();                                       \
+        auto* p = JSPromise::create(vm, g->promiseStructure());   \
+        p->reject(vm, g, createError(g, "unreachable"_s));        \
+        return p;                                                 \
+    } while (0)
+#endif
+
+JSPromise* JSWebView::navigate(JSGlobalObject* g, const WTF::String& url)
+{
+    if (m_backend == WebViewBackend::Chrome) {
+        auto* p = navigateChrome(g, this, url);
+        if (m_pendingNavigate) m_loading = true;
+        return p;
+    }
+#if OS(DARWIN)
+    return navigateWebKit(g, this, url);
+#else
+    WK_UNREACHABLE();
+#endif
+}
+
+JSPromise* JSWebView::evaluate(JSGlobalObject* g, const WTF::String& script)
+{
+    if (m_backend == WebViewBackend::Chrome) return evaluateChrome(g, this, script);
+#if OS(DARWIN)
+    return evaluateWebKit(g, this, script);
+#else
+    WK_UNREACHABLE();
+#endif
+}
+
+JSPromise* JSWebView::screenshot(JSGlobalObject* g)
+{
+    if (m_backend == WebViewBackend::Chrome) return screenshotChrome(g, this);
+#if OS(DARWIN)
+    return screenshotWebKit(g, this);
+#else
+    WK_UNREACHABLE();
+#endif
+}
+
+JSPromise* JSWebView::click(JSGlobalObject* g, float x, float y, uint8_t button, uint8_t modifiers, uint8_t clickCount)
+{
+    if (m_backend == WebViewBackend::Chrome)
+        return clickChrome(g, this, x, y, button, modifiers, clickCount);
+#if OS(DARWIN)
+    return clickWebKit(g, this, x, y, button, modifiers, clickCount);
+#else
+    WK_UNREACHABLE();
+#endif
+}
+
+JSPromise* JSWebView::clickSelector(JSGlobalObject* g, const WTF::String& selector, uint32_t timeout, uint8_t button, uint8_t modifiers, uint8_t clickCount)
+{
+    if (m_backend == WebViewBackend::Chrome) {
+        // clickSelector = actionability check + click. The actionability check
+        // runs page-side via Runtime.evaluate (same rAF-polled script as
+        // WKWebView), returning the center coords. A second CDP roundtrip
+        // sends the click. TODO: implement the two-phase flow.
+        // For now, stub-reject so tests fail loud rather than hang.
+        UNUSED_PARAM(selector);
+        UNUSED_PARAM(timeout);
+        UNUSED_PARAM(button);
+        UNUSED_PARAM(modifiers);
+        UNUSED_PARAM(clickCount);
+        auto& vm = g->vm();
+        auto* p = JSPromise::create(vm, g->promiseStructure());
+        p->reject(vm, g, createError(g, "click(selector) not yet implemented for Chrome backend"_s));
+        return p;
+    }
+#if OS(DARWIN)
+    return clickSelectorWebKit(g, this, selector, timeout, button, modifiers, clickCount);
+#else
+    WK_UNREACHABLE();
+#endif
+}
+
+JSPromise* JSWebView::type(JSGlobalObject* g, const WTF::String& text)
+{
+    if (m_backend == WebViewBackend::Chrome) return typeChrome(g, this, text);
+#if OS(DARWIN)
+    return typeWebKit(g, this, text);
+#else
+    WK_UNREACHABLE();
+#endif
+}
+
+JSPromise* JSWebView::press(JSGlobalObject* g, VirtualKey key, uint8_t modifiers, const WTF::String& character)
+{
+    if (m_backend == WebViewBackend::Chrome) {
+        // VirtualKey → CDP key/code/keyCode mapping is a table. TODO.
+        UNUSED_PARAM(key);
+        UNUSED_PARAM(modifiers);
+        UNUSED_PARAM(character);
+        auto& vm = g->vm();
+        auto* p = JSPromise::create(vm, g->promiseStructure());
+        p->reject(vm, g, createError(g, "press() not yet implemented for Chrome backend"_s));
+        return p;
+    }
+#if OS(DARWIN)
+    return pressWebKit(g, this, key, modifiers, character);
+#else
+    WK_UNREACHABLE();
+#endif
+}
+
+JSPromise* JSWebView::scroll(JSGlobalObject* g, double dx, double dy)
+{
+    if (m_backend == WebViewBackend::Chrome) return scrollChrome(g, this, dx, dy);
+#if OS(DARWIN)
+    return scrollWebKit(g, this, dx, dy);
+#else
+    WK_UNREACHABLE();
+#endif
+}
+
+JSPromise* JSWebView::scrollTo(JSGlobalObject* g, const WTF::String& selector, uint32_t timeout, uint8_t block)
+{
+    if (m_backend == WebViewBackend::Chrome) {
+        UNUSED_PARAM(selector);
+        UNUSED_PARAM(timeout);
+        UNUSED_PARAM(block);
+        auto& vm = g->vm();
+        auto* p = JSPromise::create(vm, g->promiseStructure());
+        p->reject(vm, g, createError(g, "scrollTo(selector) not yet implemented for Chrome backend"_s));
+        return p;
+    }
+#if OS(DARWIN)
+    return scrollToWebKit(g, this, selector, timeout, block);
+#else
+    WK_UNREACHABLE();
+#endif
+}
+
+JSPromise* JSWebView::resize(JSGlobalObject* g, uint32_t width, uint32_t height)
+{
+    if (m_backend == WebViewBackend::Chrome) return resizeChrome(g, this, width, height);
+#if OS(DARWIN)
+    return resizeWebKit(g, this, width, height);
+#else
+    WK_UNREACHABLE();
+#endif
+}
+
+JSPromise* JSWebView::goBack(JSGlobalObject* g)
+{
+    if (m_backend == WebViewBackend::Chrome) {
+        // Page.navigateToHistoryEntry or Runtime.evaluate("history.back()").
+        // TODO.
+        auto& vm = g->vm();
+        auto* p = JSPromise::create(vm, g->promiseStructure());
+        p->reject(vm, g, createError(g, "goBack() not yet implemented for Chrome backend"_s));
+        return p;
+    }
+#if OS(DARWIN)
+    return sendOp(g, this, m_pendingMisc, Op::GoBack, nullptr, 0);
+#else
+    WK_UNREACHABLE();
+#endif
+}
+
+JSPromise* JSWebView::goForward(JSGlobalObject* g)
+{
+    if (m_backend == WebViewBackend::Chrome) {
+        auto& vm = g->vm();
+        auto* p = JSPromise::create(vm, g->promiseStructure());
+        p->reject(vm, g, createError(g, "goForward() not yet implemented for Chrome backend"_s));
+        return p;
+    }
+#if OS(DARWIN)
+    return sendOp(g, this, m_pendingMisc, Op::GoForward, nullptr, 0);
+#else
+    WK_UNREACHABLE();
+#endif
+}
+
+JSPromise* JSWebView::reload(JSGlobalObject* g)
+{
+    if (m_backend == WebViewBackend::Chrome) return reloadChrome(g, this);
+#if OS(DARWIN)
+    return sendOp(g, this, m_pendingMisc, Op::Reload, nullptr, 0);
+#else
+    WK_UNREACHABLE();
+#endif
+}
+
+void JSWebView::doClose()
+{
+    m_closed = true;
+    if (m_backend == WebViewBackend::Chrome) {
+        doCloseChrome(this);
+        return;
+    }
+#if OS(DARWIN)
+    doCloseWebKit(this);
+#endif
+}
+
+// --- Constructor entry -----------------------------------------------------
+
+JSWebView* JSWebView::createChrome(JSGlobalObject* g, Structure* structure,
+    uint32_t width, uint32_t height, const WTF::String& userDataDir)
+{
+    auto* zig = defaultGlobalObject(g);
+    auto& t = CDP::transport();
+    if (!t.ensureSpawned(zig, userDataDir)) return nullptr;
+
+    JSWebView* view = create(g->vm(), structure);
+    view->m_backend = WebViewBackend::Chrome;
+    view->m_width = width;
+    view->m_height = height;
+    // Target.createTarget deferred to first navigate() — keeps the constructor
+    // synchronous and the attach chain owned by the navigate promise (which
+    // resolves on Page.loadEventFired, so one await covers the whole sequence).
+    return view;
+}
 
 // --- Setup -----------------------------------------------------------------
 

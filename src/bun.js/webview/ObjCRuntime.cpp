@@ -221,6 +221,20 @@ static void windowNoResponderFor(id, SEL, SEL) {}
 static signed char windowIsVisible(id, SEL) { return 1; }
 static signed char windowIsKeyWindow(id, SEL) { return 1; }
 
+// -screen override — at (-10000,-10000) the real NSWindow.screen is nil.
+// WebViewImpl::windowDidChangeScreen reads it and passes displayID=0 to
+// the DisplayLink. On macOS 15 CVDisplayLinkCreateWithCGDisplay(0) binds
+// to the main display and ticks; on macOS 13/14 the 0-display link doesn't
+// reliably fire, rAF hangs. Forcing mainScreen means WebKit gets a real
+// displayID and the CVDisplayLink actually ticks. (The window stays at
+// -10000,-10000 — screen is just what WebKit reads for the display link.)
+static Class s_NSScreenClass;
+static SEL s_mainScreenSel;
+static id windowScreen(id, SEL)
+{
+    return objc::Ref::msgCls<id>(s_NSScreenClass, s_mainScreenSel);
+}
+
 } // extern "C"
 
 // --- Loading ---------------------------------------------------------------
@@ -462,6 +476,13 @@ bool ObjCRuntime::load()
         reinterpret_cast<IMP>(windowIsVisible), "c@:");
     addMethod(NSWindow::hostCls, sel("isKeyWindow"),
         reinterpret_cast<IMP>(windowIsKeyWindow), "c@:");
+    // '@' = id return. windowScreen reads file-static s_NSScreenClass which
+    // we populate here, not a wrapper struct — NSScreen is only used in the
+    // override's body, nowhere else.
+    s_NSScreenClass = getClass("NSScreen");
+    s_mainScreenSel = sel("mainScreen");
+    addMethod(NSWindow::hostCls, sel("screen"),
+        reinterpret_cast<IMP>(windowScreen), "@@:");
     registerClassPair(NSWindow::hostCls);
 
     NSApplication::setActivationPolicyAccessory();

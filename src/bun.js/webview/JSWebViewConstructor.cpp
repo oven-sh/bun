@@ -76,14 +76,11 @@ JSC_DEFINE_HOST_FUNCTION(constructWebView, (JSGlobalObject * globalObject, CallF
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-#if !OS(DARWIN)
-    return Bun::throwError(globalObject, scope, ErrorCode::ERR_METHOD_NOT_IMPLEMENTED,
-        "Bun.WebView is not yet implemented on this platform"_s);
-#else
     auto* zigGlobalObject = defaultGlobalObject(globalObject);
 
     uint32_t width = 800, height = 600;
     WTF::String persistDir;
+    WebViewBackend backend = WebViewBackend::WebKit;
 
     JSValue options = callFrame->argument(0);
     if (options.isObject()) {
@@ -103,6 +100,18 @@ JSC_DEFINE_HOST_FUNCTION(constructWebView, (JSGlobalObject * globalObject, CallF
         if (headless.isBoolean() && !headless.asBoolean()) {
             return Bun::throwError(globalObject, scope, ErrorCode::ERR_METHOD_NOT_IMPLEMENTED,
                 "headless: false is not yet implemented"_s);
+        }
+
+        JSValue be = opts->get(globalObject, Identifier::fromString(vm, "backend"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+        if (be.isString()) {
+            WTF::String s = be.toWTFString(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (s == "chrome"_s)
+                backend = WebViewBackend::Chrome;
+            else if (s != "webkit"_s)
+                return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_VALUE,
+                    "backend must be \"webkit\" or \"chrome\""_s);
         }
 
         JSValue dataStore = opts->get(globalObject, Identifier::fromString(vm, "dataStore"_s));
@@ -142,6 +151,19 @@ JSC_DEFINE_HOST_FUNCTION(constructWebView, (JSGlobalObject * globalObject, CallF
         RETURN_IF_EXCEPTION(scope, {});
     }
 
+    if (backend == WebViewBackend::Chrome) {
+        JSWebView* view = JSWebView::createChrome(globalObject, structure, width, height, persistDir);
+        if (!view) {
+            return Bun::throwError(globalObject, scope, ErrorCode::ERR_DLOPEN_FAILED,
+                "Failed to spawn Chrome (set BUN_CHROME_PATH or install Chrome/Chromium)"_s);
+        }
+        return JSValue::encode(view);
+    }
+
+#if !OS(DARWIN)
+    return Bun::throwError(globalObject, scope, ErrorCode::ERR_METHOD_NOT_IMPLEMENTED,
+        "Bun.WebView with backend \"webkit\" is only available on macOS; use backend: \"chrome\""_s);
+#else
     JSWebView* view = JSWebView::createAndSend(globalObject, structure, width, height, persistDir);
     if (!view) {
         return Bun::throwError(globalObject, scope, ErrorCode::ERR_DLOPEN_FAILED,

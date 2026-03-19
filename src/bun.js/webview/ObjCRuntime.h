@@ -199,6 +199,10 @@ struct NSWindow : Ref {
     //                    same — PageClientImpl::isViewVisible reads it
     //                    directly; orderFront's real flag raced on 13/14)
     //   isKeyWindow      YES (WindowIsActive, not rAF-gating but free)
+    //   screen           [NSScreen mainScreen] (at -10000,-10000 the real
+    //                    screen is nil → displayID=0 → CVDisplayLink(0)
+    //                    doesn't reliably tick on macOS 13/14; a real
+    //                    displayID binds to the main display's vsync)
     static Class hostCls;
     static SEL s_initWithContentRect_styleMask_backing_defer;
     static SEL s_setReleasedWhenClosed;

@@ -127,11 +127,14 @@ public:
         return *this;
     }
 
-    // Finish: close params and the outer object, append NUL. The Vector is
-    // the builder's own buffer — no extra copy. Caller writes it to the pipe.
+    // Finish: close params and the outer object. Caller writes the returned
+    // CString's data() for length()+1 bytes — the +1 is the CString's own
+    // terminating NUL, which is the frame delimiter Chrome reads for.
+    // (ASCIILiteral "}}\0"_s stops at the first NUL, so appending a literal
+    // \0 char doesn't work; CString's terminator IS the NUL we want.)
     WTF::CString finish()
     {
-        m_sb.append("}}\0"_s);
+        m_sb.append("}}"_s);
         return m_sb.toString().utf8();
     }
 
@@ -149,16 +152,27 @@ private:
 // --- Method tags -----------------------------------------------------------
 // The response handler dispatches on {id → methodTag} without re-reading
 // the method string. Adding a method means adding a tag + a handler arm.
+//
+// TargetCreateTarget + TargetAttachToTarget + PageEnable form an internal
+// chain kicked off by the first navigate() on a view. Their responses
+// don't settle a user promise; the last one (PageEnable) sends the actual
+// Page.navigate and the promise resolves on Page.loadEventFired.
 enum class Method : uint8_t {
+    // Internal attach chain — responses chain into the next command.
     TargetCreateTarget,
     TargetAttachToTarget,
+    PageEnable,
+    RuntimeEnable,
+    // User-facing ops — responses settle (or errors reject) a slot.
     TargetCloseTarget,
     PageNavigate,
+    PageReload,
     PageCaptureScreenshot,
     RuntimeEvaluate,
     InputDispatchMouseEvent,
     InputDispatchKeyEvent,
     InputInsertText,
+    InputDispatchScrollEvent,
     EmulationSetDeviceMetricsOverride,
 };
 

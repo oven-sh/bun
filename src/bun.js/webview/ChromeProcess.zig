@@ -9,20 +9,21 @@
 //!   3 = Chrome reads CDP commands from us  (parent writes → child reads)
 //!   4 = Chrome writes CDP replies to us    (child writes  → parent reads)
 //!
-//! Two unidirectional pipes, not one socketpair. DevToolsPipeHandler
-//! (content/browser/devtools/devtools_pipe_handler.cc) does plain read(3)
-//! on a dedicated thread and write(4) from the IO thread — mixing them on
-//! one fd works but isn't what Chrome expects.
+//! One socketpair, the child end dup'd to BOTH fd 3 and fd 4. Chrome's
+//! DevToolsPipeHandler does read(3) and write(4) — it doesn't care that
+//! both fds point at the same socket. usockets' bsd_recv() calls recv()
+//! which fails ENOTSOCK on a pipe fd (the earlier two-pipes layout broke
+//! here: recv(readFd) returned -1 → loop treated as close → onClose fired
+//! before any data); socketpair gives us a proper socket for the read path
+//! and the write path can share it.
 
 const ChromeProcess = @This();
 
 process: *bun.spawn.Process,
-/// Parent writes here → Chrome fd 3 reads. usockets doesn't handle write-
-/// only fds well; C++ writes directly with write() + EAGAIN queue.
-write_fd: bun.FileDescriptor,
-/// Parent reads here ← Chrome fd 4 writes. Adopted into usockets for the
-/// onData callback — same pattern as HostClient's socket.
-read_fd: bun.FileDescriptor,
+/// Parent's socketpair end. Bidirectional — writes here go to Chrome's
+/// fd 3 (read), reads here come from Chrome's fd 4 (write). Adopted into
+/// usockets for onData; writes go through writeRaw with direct write().
+fd: bun.FileDescriptor,
 
 var instance: ?*ChromeProcess = null;
 
@@ -33,22 +34,15 @@ var instance: ?*ChromeProcess = null;
 /// Windows TODO — fd.cast() returns a HANDLE there, and pipe() / fcntl
 /// nonblocking have no direct equivalents. The spawn would need to use
 /// named pipes or libuv. For now -1 and C++ throws not-implemented.
-pub export fn Bun__Chrome__ensure(global: *jsc.JSGlobalObject, userDataDir: ?[*:0]const u8) i64 {
+pub export fn Bun__Chrome__ensure(global: *jsc.JSGlobalObject, userDataDir: ?[*:0]const u8) i32 {
     if (comptime bun.Environment.isWindows) return -1;
-    if (instance) |i| return pack(i.write_fd, i.read_fd);
+    if (instance) |i| return i.fd.cast();
 
     instance = spawn(global.bunVM(), userDataDir) catch |err| {
         log("spawn failed: {s}", .{@errorName(err)});
         return -1;
     };
-    return pack(instance.?.write_fd, instance.?.read_fd);
-}
-
-fn pack(w: bun.FileDescriptor, r: bun.FileDescriptor) i64 {
-    if (comptime bun.Environment.isWindows) return -1;
-    const wi: u32 = @bitCast(w.cast());
-    const ri: u32 = @bitCast(r.cast());
-    return @bitCast((@as(u64, wi) << 32) | ri);
+    return instance.?.fd.cast();
 }
 
 pub fn onProcessExit(this: *ChromeProcess, _: *bun.spawn.Process, status: bun.spawn.Status, _: *const bun.spawn.Rusage) void {
@@ -122,49 +116,59 @@ fn spawn(vm: *jsc.VirtualMachine, userDataDir: ?[*:0]const u8) !*ChromeProcess {
     const chrome = try findChrome(alloc) orelse return error.ChromeNotFound;
     log("using chrome: {s}", .{chrome});
 
-    // Two unidirectional pipes. pipe() gives [read, write]; we keep the
-    // end Chrome doesn't, dup2 the other to the child fd.
-    //   to_chrome:   parent keeps write (to_chrome[1]), child fd 3 = to_chrome[0]
-    //   from_chrome: parent keeps read  (from_chrome[0]), child fd 4 = from_chrome[1]
-    const to_chrome = try bun.sys.pipe().unwrap();
+    // One socketpair. Parent keeps fds[0], child gets fds[1] dup'd to BOTH
+    // fd 3 and fd 4. Chrome read(3)'s commands and write(4)'s replies —
+    // both hit the same socket. Parent end nonblocking so usockets recv
+    // returns EAGAIN; child end BLOCKING for Chrome's dedicated-thread
+    // read loop. O_NONBLOCK lives on the open file description (shared
+    // across dup2), so set it on fds[0] only — fds[0] and fds[1] are two
+    // different descriptions (peer sockets), the flag isn't shared across.
+    const fds = try bun.sys.socketpair(
+        std.posix.AF.UNIX,
+        std.posix.SOCK.STREAM,
+        0,
+        .blocking,
+    ).unwrap();
     errdefer {
-        to_chrome[0].close();
-        to_chrome[1].close();
+        fds[0].close();
+        fds[1].close();
     }
-    const from_chrome = try bun.sys.pipe().unwrap();
-    errdefer {
-        from_chrome[0].close();
-        from_chrome[1].close();
-    }
-
-    // Parent ends nonblocking — the write side queues on EAGAIN, the read
-    // side goes into usockets. Child ends stay blocking; Chrome's pipe
-    // handler does blocking read(3) on a dedicated thread.
-    try bun.sys.setNonblocking(to_chrome[1]).unwrap();
-    try bun.sys.setNonblocking(from_chrome[0]).unwrap();
+    try bun.sys.setNonblocking(fds[0]).unwrap();
 
     // Minimal flags. --remote-debugging-pipe is the one that matters;
     // --headless=new uses the real browser with no UI (not the legacy
     // headless_shell compositor). --no-first-run / --no-default-browser-check
     // skip modal prompts that would block startup on a fresh profile.
+    //
+    // --user-data-dir MUST precede --remote-debugging-pipe in argv. Chrome's
+    // CommandLine::Init stops at the first -- after argv[0] on some builds;
+    // order-insensitive on most, but --user-data-dir-first is the defensive
+    // layout every headless harness uses. Without it, ProcessSingleton locks
+    // the default profile (~/Library/Application Support/Google/Chrome) and
+    // aborts if a real Chrome is already running.
+    const dataDir = if (userDataDir) |d|
+        try std.fmt.allocPrintSentinel(alloc, "--user-data-dir={s}", .{d}, 0)
+    else blk: {
+        // pid_t → u32 cast so {d} formats. Fresh dir per parent process;
+        // multiple Bun.WebView instances in one process share the Chrome.
+        const pid: u32 = @intCast(std.c.getpid());
+        break :blk try std.fmt.allocPrintSentinel(alloc, "--user-data-dir=/tmp/bun-chrome-{d}", .{pid}, 0);
+    };
+
     var argv: std.ArrayListUnmanaged(?[*:0]const u8) = .{};
     try argv.append(alloc, chrome.ptr);
+    try argv.append(alloc, dataDir.ptr);
     try argv.append(alloc, "--remote-debugging-pipe");
     try argv.append(alloc, "--headless=new");
     try argv.append(alloc, "--no-first-run");
     try argv.append(alloc, "--no-default-browser-check");
     try argv.append(alloc, "--disable-gpu"); // headless CI has no GPU context
-    // --user-data-dir is per-Chrome-process; all views share the dir. The
-    // only impedance mismatch vs WKWebView (where dataStore is per-view).
-    if (userDataDir) |dir| {
-        const flag = try std.fmt.allocPrintSentinel(alloc, "--user-data-dir={s}", .{dir}, 0);
-        try argv.append(alloc, flag.ptr);
-    } else {
-        // Fresh ephemeral profile in a throwaway dir. Chrome won't start
-        // without SOME user-data-dir; an empty one keeps it ephemeral.
-        const tmp = try std.fmt.allocPrintSentinel(alloc, "--user-data-dir=/tmp/bun-chrome-{d}", .{std.c.getpid()}, 0);
-        try argv.append(alloc, tmp.ptr);
-    }
+    // Enterprise policy can force-install extensions (webRequest spam on
+    // stderr). --disable-extensions is best-effort; mandatory extensions
+    // may still load. --disable-background-networking shuts up GCM/update.
+    try argv.append(alloc, "--disable-extensions");
+    try argv.append(alloc, "--disable-background-networking");
+    try argv.append(alloc, "--disable-background-timer-throttling");
     try argv.append(alloc, null);
 
     const env = try vm.transpiler.env.map.createNullDelimitedEnvMap(alloc);
@@ -173,8 +177,10 @@ fn spawn(vm: *jsc.VirtualMachine, userDataDir: ?[*:0]const u8) !*ChromeProcess {
         .stdin = .ignore,
         .stdout = .inherit,
         .stderr = .inherit,
-        // fd 3 = to_chrome[0] (Chrome reads), fd 4 = from_chrome[1] (Chrome writes)
-        .extra_fds = &.{ .{ .pipe = to_chrome[0] }, .{ .pipe = from_chrome[1] } },
+        // fd 3 AND fd 4 both point at fds[1]. spawnProcess dup2's each
+        // .pipe entry to 3+index; passing the same fd twice gives Chrome
+        // the same socket at both positions.
+        .extra_fds = &.{ .{ .pipe = fds[1] }, .{ .pipe = fds[1] } },
         .argv0 = chrome.ptr,
     };
 
@@ -184,16 +190,14 @@ fn spawn(vm: *jsc.VirtualMachine, userDataDir: ?[*:0]const u8) !*ChromeProcess {
         @ptrCast(env.ptr),
     )).unwrap();
 
-    // Parent doesn't need the child's ends. spawnProcess dup2'd them into
-    // the child; these copies are dead weight that keep the pipe open past
-    // Chrome's death otherwise.
-    to_chrome[0].close();
-    from_chrome[1].close();
+    // Parent doesn't need the child's end. POSIX_SPAWN_CLOEXEC_DEFAULT
+    // already closed our copy in the child (only fd 3/4 survive the exec);
+    // close our reference so Chrome's death EOF's our end.
+    fds[1].close();
 
     const self = bun.new(ChromeProcess, .{
         .process = spawned.toProcess(vm.eventLoop(), false),
-        .write_fd = to_chrome[1],
-        .read_fd = from_chrome[0],
+        .fd = fds[0],
     });
     self.process.setExitHandler(self);
     switch (self.process.watch()) {

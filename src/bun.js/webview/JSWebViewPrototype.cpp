@@ -11,9 +11,7 @@
 #include <JavaScriptCore/VMTrapsInlines.h>
 #include <wtf/text/MakeString.h>
 
-#if OS(DARWIN)
 #include "ipc_protocol.h" // VirtualKey, Mod*
-#endif
 
 namespace Bun {
 
@@ -120,14 +118,6 @@ JSObject* createJSWebViewPrototype(VM& vm, JSGlobalObject* globalObject)
 
 // --- Helpers ----------------------------------------------------------------
 
-#define WEBVIEW_UNIMPLEMENTED_BODY(method)                                             \
-    VM& vm = globalObject->vm();                                                       \
-    auto scope = DECLARE_THROW_SCOPE(vm);                                              \
-    return Bun::throwError(globalObject, scope, ErrorCode::ERR_METHOD_NOT_IMPLEMENTED, \
-        "Bun.WebView." method " is not yet implemented on this platform"_s);
-
-#if OS(DARWIN)
-
 using WebViewProto::VirtualKey;
 
 static JSWebView* unwrapThis(JSGlobalObject* globalObject, ThrowScope& scope, CallFrame* callFrame, ASCIILiteral method)
@@ -208,15 +198,10 @@ static VirtualKey virtualKeyFromName(const WTF::String& s)
     return VirtualKey::Character;
 }
 
-#endif // OS(DARWIN)
-
 // --- Core ops ---------------------------------------------------------------
 
 JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncNavigate, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
-#if !OS(DARWIN)
-    WEBVIEW_UNIMPLEMENTED_BODY("navigate")
-#else
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = unwrapThis(globalObject, scope, callFrame, "navigate"_s);
@@ -230,14 +215,10 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncNavigate, (JSGlobalObject * globalObj
 
     if (!checkSlot(globalObject, scope, thisObject->m_pendingNavigate, "a navigation"_s)) return {};
     return JSValue::encode(thisObject->navigate(globalObject, url));
-#endif
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncEvaluate, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
-#if !OS(DARWIN)
-    WEBVIEW_UNIMPLEMENTED_BODY("evaluate")
-#else
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = unwrapThis(globalObject, scope, callFrame, "evaluate"_s);
@@ -251,30 +232,22 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncEvaluate, (JSGlobalObject * globalObj
 
     if (!checkSlot(globalObject, scope, thisObject->m_pendingEval, "an evaluate()"_s)) return {};
     return JSValue::encode(thisObject->evaluate(globalObject, script));
-#endif
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncScreenshot, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
-#if !OS(DARWIN)
-    WEBVIEW_UNIMPLEMENTED_BODY("screenshot")
-#else
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = unwrapThis(globalObject, scope, callFrame, "screenshot"_s);
     RETURN_IF_EXCEPTION(scope, {});
     if (!checkSlot(globalObject, scope, thisObject->m_pendingScreenshot, "a screenshot()"_s)) return {};
     return JSValue::encode(thisObject->screenshot(globalObject));
-#endif
 }
 
 // --- Native input -----------------------------------------------------------
 
 JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncClick, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
-#if !OS(DARWIN)
-    WEBVIEW_UNIMPLEMENTED_BODY("click")
-#else
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = unwrapThis(globalObject, scope, callFrame, "click"_s);
@@ -337,14 +310,10 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncClick, (JSGlobalObject * globalObject
     if (!checkSlot(globalObject, scope, thisObject->m_pendingMisc, "a simple operation"_s)) return {};
     return JSValue::encode(thisObject->click(globalObject,
         static_cast<float>(x), static_cast<float>(y), button, mods, clickCount));
-#endif
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncType, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
-#if !OS(DARWIN)
-    WEBVIEW_UNIMPLEMENTED_BODY("type")
-#else
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = unwrapThis(globalObject, scope, callFrame, "type"_s);
@@ -358,14 +327,10 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncType, (JSGlobalObject * globalObject,
 
     if (!checkSlot(globalObject, scope, thisObject->m_pendingMisc, "a simple operation"_s)) return {};
     return JSValue::encode(thisObject->type(globalObject, text));
-#endif
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncPress, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
-#if !OS(DARWIN)
-    WEBVIEW_UNIMPLEMENTED_BODY("press")
-#else
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = unwrapThis(globalObject, scope, callFrame, "press"_s);
@@ -395,14 +360,10 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncPress, (JSGlobalObject * globalObject
     if (!checkSlot(globalObject, scope, thisObject->m_pendingMisc, "a simple operation"_s)) return {};
     return JSValue::encode(thisObject->press(globalObject, vk, mods,
         vk == VirtualKey::Character ? key : WTF::String()));
-#endif
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncScroll, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
-#if !OS(DARWIN)
-    WEBVIEW_UNIMPLEMENTED_BODY("scroll")
-#else
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = unwrapThis(globalObject, scope, callFrame, "scroll"_s);
@@ -421,14 +382,10 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncScroll, (JSGlobalObject * globalObjec
 
     if (!checkSlot(globalObject, scope, thisObject->m_pendingMisc, "a simple operation"_s)) return {};
     return JSValue::encode(thisObject->scroll(globalObject, dx, dy));
-#endif
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncScrollTo, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
-#if !OS(DARWIN)
-    WEBVIEW_UNIMPLEMENTED_BODY("scrollTo")
-#else
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = unwrapThis(globalObject, scope, callFrame, "scrollTo"_s);
@@ -475,14 +432,10 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncScrollTo, (JSGlobalObject * globalObj
 
     if (!checkSlot(globalObject, scope, thisObject->m_pendingMisc, "a simple operation"_s)) return {};
     return JSValue::encode(thisObject->scrollTo(globalObject, selector, timeout, block));
-#endif
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncResize, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
-#if !OS(DARWIN)
-    WEBVIEW_UNIMPLEMENTED_BODY("resize")
-#else
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = unwrapThis(globalObject, scope, callFrame, "resize"_s);
@@ -499,61 +452,44 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncResize, (JSGlobalObject * globalObjec
 
     if (!checkSlot(globalObject, scope, thisObject->m_pendingMisc, "a simple operation"_s)) return {};
     return JSValue::encode(thisObject->resize(globalObject, w, h));
-#endif
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncBack, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
-#if !OS(DARWIN)
-    WEBVIEW_UNIMPLEMENTED_BODY("back")
-#else
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = unwrapThis(globalObject, scope, callFrame, "back"_s);
     RETURN_IF_EXCEPTION(scope, {});
     if (!checkSlot(globalObject, scope, thisObject->m_pendingMisc, "a simple operation"_s)) return {};
     return JSValue::encode(thisObject->goBack(globalObject));
-#endif
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncForward, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
-#if !OS(DARWIN)
-    WEBVIEW_UNIMPLEMENTED_BODY("forward")
-#else
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = unwrapThis(globalObject, scope, callFrame, "forward"_s);
     RETURN_IF_EXCEPTION(scope, {});
     if (!checkSlot(globalObject, scope, thisObject->m_pendingMisc, "a simple operation"_s)) return {};
     return JSValue::encode(thisObject->goForward(globalObject));
-#endif
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncReload, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
-#if !OS(DARWIN)
-    WEBVIEW_UNIMPLEMENTED_BODY("reload")
-#else
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = unwrapThis(globalObject, scope, callFrame, "reload"_s);
     RETURN_IF_EXCEPTION(scope, {});
     if (!checkSlot(globalObject, scope, thisObject->m_pendingMisc, "a simple operation"_s)) return {};
     return JSValue::encode(thisObject->reload(globalObject));
-#endif
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncClose, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
-#if !OS(DARWIN)
-    return JSValue::encode(jsUndefined());
-#else
     auto* thisObject = jsDynamicCast<JSWebView*>(callFrame->thisValue());
     if (!thisObject || thisObject->m_closed) return JSValue::encode(jsUndefined());
     thisObject->doClose();
     return JSValue::encode(jsUndefined());
-#endif
 }
 
 // --- Getters ----------------------------------------------------------------

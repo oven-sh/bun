@@ -17,6 +17,7 @@
 #include <unistd.h>
 #include <errno.h>
 #include <mutex>
+#include <stdio.h>
 
 #include "libusockets.h"
 #include "_libusockets.h"
@@ -26,8 +27,11 @@ namespace CDP {
 
 using namespace JSC;
 
-// From ChromeProcess.zig. Packed {write_fd<<32 | read_fd}.
-extern "C" int64_t Bun__Chrome__ensure(Zig::GlobalObject*, const char* userDataDir);
+// One env check, shared across all Transport instances.
+static bool s_debugCDP = getenv("BUN_DEBUG_CDP") != nullptr;
+
+// From ChromeProcess.zig. Returns the parent's socketpair fd (bidirectional).
+extern "C" int32_t Bun__Chrome__ensure(Zig::GlobalObject*, const char* userDataDir);
 extern "C" void Bun__eventLoop__incrementRefConcurrently(void* bunVM, int delta);
 extern "C" void Bun__EventLoop__enter(Zig::GlobalObject*);
 extern "C" void Bun__EventLoop__exit(Zig::GlobalObject*);
@@ -172,15 +176,23 @@ bool Transport::ensureSpawned(Zig::GlobalObject* zig, const WTF::String& userDat
         m_txQueue.clear();
     }
 
+    // Empty string ≠ null. WTF::String() utf8's to an empty CString (not
+    // isNull), which on the Zig side passes "" into --user-data-dir= and
+    // Chrome falls back to the default profile → ProcessSingleton abort.
     WTF::CString dir = userDataDir.utf8();
-    int64_t packed = Bun__Chrome__ensure(zig, dir.isNull() ? nullptr : dir.data());
-    if (packed < 0) {
+    int32_t fd = Bun__Chrome__ensure(zig, dir.length() ? dir.data() : nullptr);
+    if (fd < 0) {
         m_dead = true;
         return false;
     }
-    m_writeFd = static_cast<int>(static_cast<uint64_t>(packed) >> 32);
-    int readFd = static_cast<int>(static_cast<uint64_t>(packed) & 0xFFFFFFFF);
+    // Socketpair — same fd for read + write. Chrome's end is dup'd to its
+    // fd 3 and fd 4; read(3)+write(4) both hit our socketpair peer. usockets'
+    // bsd_recv calls recv() which needs a real socket (pipe fds broke here
+    // with ENOTSOCK silently misread as EOF).
+    m_writeFd = fd;
     m_global = zig;
+    if (s_debugCDP)
+        fprintf(stderr, "[cdp] transport fd=%d\n", fd);
 
     if (!m_ctx) {
         us_loop_t* loop = uws_get_loop();
@@ -198,10 +210,10 @@ bool Transport::ensureSpawned(Zig::GlobalObject* zig, const WTF::String& userDat
     // care about READABLE — writable events on a read-end pipe fire
     // constantly, but onWritable is a no-op when m_txQueue is empty so
     // they're harmless.
-    m_readSock = us_socket_from_fd(m_ctx, sizeof(void*), readFd, 0);
+    m_readSock = us_socket_from_fd(m_ctx, sizeof(void*), fd, 0);
     if (!m_readSock) {
-        ::close(readFd);
-        ::close(m_writeFd);
+        ::close(fd);
+        m_writeFd = -1;
         m_dead = true;
         return false;
     }
@@ -210,9 +222,11 @@ bool Transport::ensureSpawned(Zig::GlobalObject* zig, const WTF::String& userDat
 
 uint32_t Transport::send(const WTF::CString& frame)
 {
-    // Caller built the frame with Command(nextId(), ...). This just writes.
-    // The NUL terminator is inside the CString (finish() appended "}}\0").
-    writeRaw(frame.data(), frame.length());
+    if (s_debugCDP) [[unlikely]]
+        fprintf(stderr, "[cdp tx] %.*s\n", static_cast<int>(frame.length()), frame.data());
+    // length()+1 — the CString's terminating NUL is the frame delimiter.
+    // Chrome's DevToolsPipeHandler does read-until-\0 on fd 3.
+    writeRaw(frame.data(), frame.length() + 1);
     return m_nextId; // returned for convenience; caller already has it
 }
 
@@ -297,6 +311,9 @@ void Transport::onData(const char* data, int length)
 
 void Transport::handleMessage(std::span<const char> msg)
 {
+    if (s_debugCDP) [[unlikely]]
+        fprintf(stderr, "[cdp rx] %.*s\n", static_cast<int>(msg.size()), msg.data());
+
     // CDP messages are either responses {id,result/error} or events
     // {method,params,sessionId?}. Responses dispatch via m_pending[id];
     // events dispatch via m_sessions[sessionId] or a browser-level handler
@@ -374,38 +391,91 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
     }
 
     switch (entry.method) {
+    // --- Attach chain --------------------------------------------------
+    // First navigate() sends Target.createTarget; each response chains
+    // into the next command by re-adding to m_pending with WTFMove'd
+    // Weak. The chain carries entry.slot (= Navigate) so errors at any
+    // stage reject the right promise. The promise RESOLVES on
+    // Page.loadEventFired — not on any response in this chain.
     case Method::TargetCreateTarget: {
-        // {"targetId":"<hex>"} — stash on the view, chain into attachToTarget.
-        // TODO: internal handler; not exposed to JS yet.
+        // {"targetId":"<hex>"}
         auto tid = jsonString(jsonField(result, { "targetId", 8 }));
-        settle(g, view, entry.slot, true, jsString(g->vm(), WTF::String::fromUTF8(tid)));
+        view->m_targetId = WTF::String::fromUTF8(tid);
+        uint32_t cid = nextId();
+        m_pending.add(cid, Pending { Method::TargetAttachToTarget, entry.slot, WTF::move(entry.view) });
+        send(Command(cid, "Target.attachToTarget"_s)
+                .str("targetId"_s, view->m_targetId)
+                .boolean("flatten"_s, true)
+                .finish());
         return;
     }
     case Method::TargetAttachToTarget: {
-        // {"sessionId":"<base64ish>"} — register in m_sessions for event routing.
+        // {"sessionId":"<base64ish>"}
         auto sid = jsonString(jsonField(result, { "sessionId", 9 }));
-        // TODO: m_sessions.add here once the view has Chrome state to hold sid.
-        settle(g, view, entry.slot, true, jsString(g->vm(), WTF::String::fromUTF8(sid)));
+        view->m_sessionId = WTF::String::fromUTF8(sid);
+        // Route events to this view. The Weak's owner is the same
+        // pending-activity predicate; a view with a slot set is rooted.
+        m_sessions.add(view->m_sessionId,
+            Weak<JSWebView>(view, &webViewWeakOwner()));
+        updateKeepAlive();
+
+        // Page.enable lets us receive frameNavigated / loadEventFired.
+        // sessionId now available — the remaining chain goes to the page.
+        auto ss = view->m_sessionId.utf8();
+        std::span<const char> sidSpan(ss.data(), ss.length());
+        uint32_t cid = nextId();
+        m_pending.add(cid, Pending { Method::PageEnable, entry.slot, WTF::move(entry.view) });
+        send(Command(cid, "Page.enable"_s, sidSpan).finish());
         return;
     }
+    case Method::PageEnable: {
+        // Chain into Runtime.enable (for consoleAPICalled later) then
+        // Page.navigate to the stashed url.
+        auto ss = view->m_sessionId.utf8();
+        std::span<const char> sidSpan(ss.data(), ss.length());
+
+        // Runtime.enable — fire-and-forget, untracked. We don't need to
+        // wait for its reply before navigating.
+        uint32_t rid = nextId();
+        send(Command(rid, "Runtime.enable"_s, sidSpan).finish());
+
+        // Page.navigate with the url stashed by the first navigate() call.
+        // The response confirms the navigation STARTED; Page.loadEventFired
+        // confirms completion. We keep the pending entry alive for the
+        // response so errorText rejects the right slot.
+        uint32_t cid = nextId();
+        m_pending.add(cid, Pending { Method::PageNavigate, entry.slot, WTF::move(entry.view) });
+        send(Command(cid, "Page.navigate"_s, sidSpan)
+                .str("url"_s, view->m_pendingChromeNavigateUrl)
+                .finish());
+        view->m_pendingChromeNavigateUrl = WTF::String();
+        return;
+    }
+    case Method::RuntimeEnable:
+        // Untracked fire-and-forget — shouldn't reach here, but drop.
+        return;
+
     case Method::TargetCloseTarget:
         settle(g, view, entry.slot, true, jsUndefined());
         return;
 
     case Method::PageNavigate: {
         // {"frameId":"...","loaderId":"..."} or {"frameId":"...","errorText":"..."}
-        // errorText present → navigation failed synchronously (bad URL, net
-        // error resolved before the response). Otherwise frameId is valid;
-        // Page.frameNavigated event signals commit. For v1 we resolve here
-        // — same "fire and let onNavigated catch up" semantics as WKWebView's
-        // NavDone. Proper load-complete waits for Page.loadEventFired.
+        // errorText present → navigation failed synchronously (bad URL,
+        // net::ERR_* resolved before commit). Reject now. Otherwise the
+        // navigation is underway; Page.loadEventFired resolves. Keep the
+        // pending entry so the event handler can look up the view by
+        // sessionId — actually the event handler uses m_sessions, not
+        // m_pending, so we just drop here.
         auto err = jsonString(jsonField(result, { "errorText", 9 }));
         if (!err.empty())
             settle(g, view, entry.slot, false, createError(g, WTF::String::fromUTF8(err)));
-        else
-            settle(g, view, entry.slot, true, jsUndefined());
+        // Else: don't settle — Page.loadEventFired does.
         return;
     }
+    case Method::PageReload:
+        // Same as navigate: don't settle, Page.loadEventFired does.
+        return;
 
     case Method::RuntimeEvaluate: {
         // {"result":{"type":"...","value":...},"exceptionDetails":{...}?}
@@ -463,6 +533,7 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
 
     case Method::InputDispatchMouseEvent:
     case Method::InputDispatchKeyEvent:
+    case Method::InputDispatchScrollEvent:
     case Method::InputInsertText:
     case Method::EmulationSetDeviceMetricsOverride:
         // Input.* / Emulation.* reply with empty result on success. Sync-
@@ -475,30 +546,33 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
 
 void Transport::handleEvent(std::span<const char> method, std::span<const char> params, std::span<const char> sessionId)
 {
-    // Target.attachedToTarget — browser-level, sessionId in params routes
-    // the new session to the view that requested the attach. Target.targetDestroyed
-    // unhooks it. Page.frameNavigated fires the onNavigated callback.
-    //
-    // For v1 we handle Page.frameNavigated only. Target lifecycle is driven
-    // by the command-response path (attachToTarget's result carries sessionId).
-
     auto* g = m_global;
     auto& vm = g->vm();
 
-    // Page.frameNavigated — fire onNavigated with the URL.
-    if (method.size() == 18 && memcmp(method.data(), "Page.frameNavigated", 18) == 0) {
-        auto sidStr = WTF::String::fromUTF8(sessionId);
-        auto it = m_sessions.find(sidStr);
-        if (it == m_sessions.end()) return;
-        JSWebView* view = it->value.get();
-        if (!view) return;
+    // Route by sessionId. Target.* browser-level events have no sessionId
+    // and we don't handle them yet (Target.targetDestroyed would clean up
+    // m_sessions but close() does that eagerly).
+    if (sessionId.empty()) return;
+    auto sidStr = WTF::String::fromUTF8(sessionId);
+    auto it = m_sessions.find(sidStr);
+    if (it == m_sessions.end()) return;
+    JSWebView* view = it->value.get();
+    if (!view) {
+        // Weak died (user dropped view during a load). Chrome will keep
+        // sending events; erasing here stops the lookup thrash.
+        m_sessions.remove(it);
+        return;
+    }
 
-        // params.frame.url — the committed URL.
+    // Page.frameNavigated — commit. Update m_url and fire onNavigated.
+    // Same timing as WKWebView's NavDone (didFinishNavigation): the URL is
+    // now the new document, resources may still be loading.
+    if (method.size() == 19 && memcmp(method.data(), "Page.frameNavigated", 19) == 0) {
         auto frame = jsonField(params, { "frame", 5 });
         auto url = jsonString(jsonField(frame, { "url", 3 }));
         auto urlStr = WTF::String::fromUTF8(url);
         view->m_url = urlStr;
-        view->m_loading = false;
+        // m_loading stays true — loadEventFired flips it.
 
         if (JSObject* cb = view->m_onNavigated.get()) {
             Bun__EventLoop__runCallback2(g, JSValue::encode(cb), JSValue::encode(jsUndefined()),
@@ -507,7 +581,21 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
         return;
     }
 
-    // TODO: Page.loadEventFired, Target.targetDestroyed, Runtime.consoleAPICalled.
+    // Page.loadEventFired — load complete. This is what navigate() awaits.
+    // WKWebView's NavDone fires at didFinishNavigation which is roughly
+    // frameNavigated timing; Chrome's loadEventFired is the window.onload
+    // fire, a bit later. For await-then-evaluate patterns loadEventFired
+    // is the safer barrier — the document is fully parsed and scripts ran.
+    if (method.size() == 19 && memcmp(method.data(), "Page.loadEventFired", 19) == 0) {
+        view->m_loading = false;
+        // Settle the navigate promise. If no navigate pending (e.g. a
+        // same-document navigation we didn't initiate, or a redirect
+        // landing after we already settled), this no-ops.
+        settle(g, view, PendingSlot::Navigate, true, jsUndefined());
+        return;
+    }
+
+    // TODO: Target.targetDestroyed (cleanup m_sessions), Runtime.consoleAPICalled.
 }
 
 void Transport::onClose()

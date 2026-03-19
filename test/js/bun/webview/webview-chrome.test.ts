@@ -197,11 +197,14 @@ it("chrome: scrollTo(selector) scrolls element into view", async () => {
   }
 });
 
-it("chrome: type inserts text", async () => {
+it("chrome: type inserts text at focused element", async () => {
   const view = new Bun.WebView({ backend: "chrome", width: 300, height: 300 });
   try {
-    await view.navigate(html("<input id=i autofocus>"));
-    // Input.insertText — same semantics as WKWebView's InsertText command.
+    await view.navigate(html("<input id=i>"));
+    // Input.insertText inserts at the caret — need focus first. autofocus
+    // only applies on user-initiated loads; for CDP-driven navigation the
+    // input may not have focus. Explicit focus via evaluate.
+    await view.evaluate("document.getElementById('i').focus()");
     await view.type("hello");
     const val = await view.evaluate("document.getElementById('i').value");
     expect(val).toBe("hello");
@@ -320,10 +323,10 @@ it("backend.argv appends after core flags", async () => {
       `,
     ],
     env: bunEnv,
+    stderr: "pipe",
   });
   const [stdout, , exit] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stdout.trim()).toBe("ok");
-  expect(exit).toBe(0);
+  expect({ stdout: stdout.trim(), exit }).toEqual({ stdout: "ok", exit: 0 });
 });
 
 // --- Error handling --------------------------------------------------------
@@ -435,18 +438,16 @@ it("chrome: click with modifiers sets MouseEvent flags", async () => {
 it("chrome: click(selector) is injection-safe", async () => {
   const view = new Bun.WebView({ backend: "chrome", width: 300, height: 300 });
   try {
-    // Selector contains quotes + newline — would break naive string
-    // interpolation into the IIFE call-site. appendQuotedJSONString escapes
-    // them; querySelector sees the literal characters.
+    // Selector string contains double-quote + close-paren + close-brace —
+    // characters that would break naive `")(sel,${timeout})` interpolation
+    // into the IIFE call-site. appendQuotedJSONString escapes the quote;
+    // the parens/braces are inert inside a JSON string.
     await view.navigate(
-      html(`
-        <button data-sel='has"quote\\nand\\backslash' onclick="window.__hit=1" style="position:fixed;left:0;top:0;width:50px;height:50px"></button>
-      `),
+      html(
+        `<button data-k='x")}' onclick="window.__hit=1" style="position:fixed;left:0;top:0;width:50px;height:50px"></button>`,
+      ),
     );
-    // CSS attribute selector — the value needs CSS-escaping for quotes, but
-    // we're testing JSON-escaping reaches the page. The JSON layer carries
-    // the " and \ intact; querySelector parses the CSS side.
-    await view.click(`[data-sel='has"quote\\nand\\backslash']`);
+    await view.click(`[data-k='x")}']`);
     expect(await view.evaluate("String(window.__hit)")).toBe("1");
   } finally {
     view.close();

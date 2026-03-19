@@ -32,6 +32,11 @@ read_ptr: ?struct {
 watch_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
 /// nanoseconds
 coalesce_interval: isize = 100_000,
+/// Extra inotify mask bits OR'd into watch_file_mask/watch_dir_mask. Used by
+/// fs.watch() to subscribe to IN_ATTRIB (chmod/chown) and IN_MOVED_FROM
+/// (files moved out), matching libuv's mask. The bundler's watcher leaves
+/// this at 0 to avoid spurious rebuilds on metadata-only changes.
+extra_mask: u32 = 0,
 
 pub const EventListIndex = c_int;
 pub const Event = extern struct {
@@ -62,12 +67,17 @@ pub const Event = extern struct {
     }
 };
 
+// Baseline masks used by the bundler's hot-reload watcher. fs.watch()
+// (src/bun.js/node/path_watcher.zig) sets extra_mask to add IN_ATTRIB and
+// IN_MOVED_FROM so chmod/chown/move-out emit events like libuv does.
+const watch_file_mask = IN.EXCL_UNLINK | IN.MOVE_SELF | IN.DELETE_SELF | IN.MOVED_TO | IN.MODIFY;
+const watch_dir_mask = IN.EXCL_UNLINK | IN.DELETE | IN.DELETE_SELF | IN.CREATE | IN.MOVE_SELF | IN.ONLYDIR | IN.MOVED_TO | IN.MODIFY;
+
 pub fn watchPath(this: *INotifyWatcher, pathname: [:0]const u8) bun.sys.Maybe(EventListIndex) {
     bun.assert(this.loaded);
     const old_count = this.watch_count.fetchAdd(1, .release);
     defer if (old_count == 0) Futex.wake(&this.watch_count, 10);
-    const watch_file_mask = IN.EXCL_UNLINK | IN.ATTRIB | IN.MOVE_SELF | IN.DELETE_SELF | IN.MOVED_TO | IN.MODIFY;
-    const rc = system.inotify_add_watch(this.fd.cast(), pathname, watch_file_mask);
+    const rc = system.inotify_add_watch(this.fd.cast(), pathname, watch_file_mask | this.extra_mask);
     log("inotify_add_watch({f}) = {}", .{ this.fd, rc });
     return bun.sys.Maybe(EventListIndex).errnoSysP(rc, .watch, pathname) orelse
         .{ .result = rc };
@@ -77,8 +87,7 @@ pub fn watchDir(this: *INotifyWatcher, pathname: [:0]const u8) bun.sys.Maybe(Eve
     bun.assert(this.loaded);
     const old_count = this.watch_count.fetchAdd(1, .release);
     defer if (old_count == 0) Futex.wake(&this.watch_count, 10);
-    const watch_dir_mask = IN.EXCL_UNLINK | IN.ATTRIB | IN.DELETE | IN.DELETE_SELF | IN.CREATE | IN.MOVE_SELF | IN.ONLYDIR | IN.MOVED_FROM | IN.MOVED_TO | IN.MODIFY;
-    const rc = system.inotify_add_watch(this.fd.cast(), pathname, watch_dir_mask);
+    const rc = system.inotify_add_watch(this.fd.cast(), pathname, watch_dir_mask | this.extra_mask);
     log("inotify_add_watch({f}) = {}", .{ this.fd, rc });
     return bun.sys.Maybe(EventListIndex).errnoSysP(rc, .watch, pathname) orelse
         .{ .result = rc };

@@ -131,6 +131,9 @@ pub const PathWatcherManager = struct {
         };
 
         this.* = manager;
+        if (comptime Environment.isLinux) {
+            this.main_watcher.platform.extra_mask = std.os.linux.IN.ATTRIB | std.os.linux.IN.MOVED_FROM;
+        }
         try this.main_watcher.start();
         return this;
     }
@@ -389,7 +392,18 @@ pub const PathWatcherManager = struct {
         }
 
         switch (this._addDirectory(watcher, child_path)) {
-            .err => |err| log("[watch] failed to register new subdirectory {s}: {f}", .{ path_z, err }),
+            .err => |err| {
+                log("[watch] failed to register new subdirectory {s}: {f}", .{ path_z, err });
+                // inotify_add_watch failed (e.g. ENOSPC) so main_watcher never
+                // owns the fd. Clean up: pop the file_paths entry we just
+                // pushed, then close the fd and drop the ref.
+                {
+                    watcher.mutex.lock();
+                    defer watcher.mutex.unlock();
+                    _ = watcher.file_paths.pop();
+                }
+                this._decrementPathRefAndClose(path_z);
+            },
             .result => {},
         }
     }
@@ -510,16 +524,13 @@ pub const PathWatcherManager = struct {
         ) bun.sys.Maybe(void) {
             if (Environment.isWindows) @compileError("use win_watcher.zig");
 
-            // For non-recursive watches, the directory-level inotify watch
-            // already reports changes (IN_MODIFY/IN_CREATE/IN_DELETE) with the
-            // child filename, so per-file watches are unnecessary. This matches
-            // libuv's uv_fs_event_start(), which calls inotify_add_watch once
-            // on the target path and never iterates directory contents.
-            if (!watcher.recursive) return .success;
-
-            // For recursive watches, we only need to discover subdirectories so
+            // For recursive watches, enumerate to discover subdirectories so
             // we can add inotify watches on them. Individual files are covered
-            // by their parent directory's inotify watch.
+            // by their parent directory's inotify watch. Non-recursive watches
+            // never reach this function — _addDirectory short-circuits before
+            // scheduling the task.
+            bun.debugAssert(watcher.recursive);
+
             const manager = this.manager;
             const path = this.path;
             const fd = path.fd;
@@ -539,10 +550,10 @@ pub const PathWatcherManager = struct {
                     },
                 };
             }) |entry| {
-                // Skip regular files — directory inotify already covers them.
-                // .sym_link and .unknown (NFS/FUSE d_type) are probed by
-                // _fdFromAbsolutePathZ which determines the real kind via open().
-                if (entry.kind != .directory and entry.kind != .sym_link and entry.kind != .unknown) continue;
+                // Only recurse into subdirectories. Node.js's recursive_watch.js
+                // recurses only if file.isDirectory() && !file.isSymbolicLink(),
+                // so we match that — no symlink following, no .unknown probing.
+                if (entry.kind != .directory) continue;
                 if (watcher.isClosed()) break;
 
                 var parts = [2]string{ path.path, entry.name };
@@ -558,31 +569,16 @@ pub const PathWatcherManager = struct {
 
                 const child_path = switch (manager._fdFromAbsolutePathZ(entry_path_z)) {
                     .result => |result| result,
-                    .err => |e| {
-                        // Skip entries we can't open — permission errors,
-                        // dangling/circular symlinks, or races with deletion.
-                        // Node.js's recursive_watch.js only ignores ENOENT,
-                        // but since we never open files (only directories),
-                        // EACCES here means an unreadable subdirectory which
-                        // we can't watch anyway — skipping matches user intent.
-                        if (e.errno == @intFromEnum(bun.sys.E.ACCES) or
-                            e.errno == @intFromEnum(bun.sys.E.PERM) or
-                            e.errno == @intFromEnum(bun.sys.E.NOENT) or
-                            e.errno == @intFromEnum(bun.sys.E.NOTDIR) or
-                            e.errno == @intFromEnum(bun.sys.E.LOOP))
-                        {
-                            continue;
-                        }
-                        return .{ .err = e };
+                    .err => |e| switch (e.getErrno()) {
+                        // Skip subdirectories we can't open: permission denied,
+                        // raced with deletion, raced with replacement by a file.
+                        .ACCES, .PERM, .NOENT, .NOTDIR, .LOOP => continue,
+                        else => return .{ .err = e },
                     },
                 };
-
-                // Symlink/unknown entry that resolved to a file — release the
-                // fd and ref. We only hold resources for directories.
-                if (child_path.is_file) {
-                    manager._decrementPathRefAndClose(entry_path_z);
-                    continue;
-                }
+                // d_type said .directory so _fdFromAbsolutePathZ opened with
+                // O_DIRECTORY — is_file would require a race covered by NOTDIR.
+                bun.debugAssert(!child_path.is_file);
 
                 {
                     watcher.mutex.lock();
@@ -643,6 +639,11 @@ pub const PathWatcherManager = struct {
             .err => |err| return .{ .err = err.withPath(path.path) },
             .result => {},
         }
+
+        // Non-recursive watches need only the directory inotify watch — no
+        // child enumeration. This matches libuv's uv_fs_event_start(), which
+        // calls inotify_add_watch once and never iterates directory contents.
+        if (!watcher.recursive) return .success;
 
         return .{
             .result = DirectoryRegisterTask.schedule(this, watcher, path) catch |err| return .{

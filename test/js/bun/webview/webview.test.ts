@@ -796,15 +796,16 @@ it("second evaluate() while pending rejects with INVALID_STATE", async () => {
 });
 
 it("large evaluate() payload spans kernel socket buffer", async () => {
-  // macOS AF_UNIX SO_SNDBUF default is ~8KB; a 2MB script guarantees the
+  // macOS AF_UNIX SO_SNDBUF default is ~8KB; a 5MB script guarantees the
   // frame is split across many writes/reads on BOTH directions (parent→child
   // for the script, child→parent for the result). Exercises partial-frame
-  // buffering in both onData and onReadable.
+  // buffering in both onData and onReadable, and the write() EAGAIN + queue
+  // path in FrameWriter / writeRaw.
   const view = new Bun.WebView({ width: 100, height: 100 });
   try {
     await view.navigate(html("<body>ok</body>"));
     // Buffer.alloc instead of "x".repeat — debug JSC's repeat is slow.
-    const big = Buffer.alloc(2 * 1024 * 1024, "x").toString();
+    const big = Buffer.alloc(5 * 1024 * 1024, "x").toString();
     const script = `(() => { const s = ${JSON.stringify(big)}; return s.length + ":" + s.slice(0, 4); })()`;
     const result = await view.evaluate(script);
     expect(result).toBe(`${big.length}:xxxx`);

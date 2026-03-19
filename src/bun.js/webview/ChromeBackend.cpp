@@ -432,14 +432,19 @@ static WTF::String jsonUnescape(std::span<const char> s)
 // stackString overload sets .stack directly; no captureStackTrace runs.
 static JSValue errorFromExceptionDetails(JSGlobalObject* g, std::span<const char> excDetails)
 {
-    auto desc = jsonString(jsonField(
-        jsonField(excDetails, { "exception", 9 }), { "description", 11 }));
+    auto exception = jsonField(excDetails, { "exception", 9 });
+    auto desc = jsonString(jsonField(exception, { "description", 11 }));
+    // Thrown string: {"type":"string","value":"msg"}. description is empty;
+    // value IS the message. Check before text — text is the generic
+    // "Uncaught (in promise)" wrapper which loses the actual thrown string.
+    auto value = jsonString(jsonField(exception, { "value", 5 }));
     auto text = jsonString(jsonField(excDetails, { "text", 4 }));
 
     // description has \n escaped in the JSON string — our jsonString strips
     // the quotes but doesn't unescape. Manual unescape for the sequences
     // V8's formatter actually emits (\n, \", \\; printable-ASCII otherwise).
-    auto fullStr = jsonUnescape(desc.empty() ? text : desc);
+    auto src = !desc.empty() ? desc : !value.empty() ? value : text;
+    auto fullStr = jsonUnescape(src);
 
     // Split at first newline. Message line is "Error: msg" or just "msg"
     // for non-Error throws. Strip "ErrorName: " so .message matches what

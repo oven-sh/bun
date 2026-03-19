@@ -154,14 +154,16 @@ pub const PathWatcherManager = struct {
         const timestamp = std.time.milliTimestamp();
 
         // Subdirectories created during this batch that recursive watchers need
-        // to register. Collected under the lock, processed after releasing it
-        // because _fdFromAbsolutePathZ and _addDirectory both take this.mutex.
-        const NewSubdir = struct { watcher: *PathWatcher, path: [:0]u8 };
-        var new_subdirs: bun.BabyList(NewSubdir) = .{};
-        defer {
-            for (new_subdirs.slice()) |item| bun.default_allocator.free(item.path);
+        // to register. Collected under manager.mutex, then handed to a WorkPool
+        // task because _fdFromAbsolutePathZ/_addDirectory take manager.mutex
+        // AND main_watcher.addDirectory takes Watcher.mutex — both of which are
+        // held by the caller (watchLoopCycle) at this point.
+        var new_subdirs: bun.BabyList(NewSubdirBatch.Entry) = .{};
+        defer if (new_subdirs.len > 0) {
+            NewSubdirBatch.schedule(this, new_subdirs);
+        } else {
             new_subdirs.deinit(bun.default_allocator);
-        }
+        };
 
         {
             this.mutex.lock();
@@ -320,22 +322,51 @@ pub const PathWatcherManager = struct {
                 }
             }
         }
-
-        // Process subdirectory registrations outside the lock. Each entry
-        // holds a refPendingDirectory() — unref after processing so the
-        // watcher can't be destroyed mid-registration.
-        for (new_subdirs.slice()) |item| {
-            this._registerNewSubdirectory(item.watcher, item.path);
-            item.watcher.unrefPendingDirectory();
-        }
     }
 
-    // Called when a recursive watcher observes IN_CREATE|IN_ISDIR or
-    // IN_MOVED_TO|IN_ISDIR for a child. Adds an inotify watch on the new
-    // subdirectory and schedules a scan of its children. Must be called
-    // WITHOUT this.mutex held.
+    // When a recursive watcher observes IN_CREATE|IN_ISDIR or
+    // IN_MOVED_TO|IN_ISDIR, the new subdirectory needs an inotify watch so
+    // changes inside it are reported. Registration must happen on a WorkPool
+    // thread because onFileUpdate is called with Watcher.mutex held (from
+    // INotifyWatcher.watchLoopCycle) and _addDirectory → addDirectory re-locks it.
+    const NewSubdirBatch = struct {
+        manager: *PathWatcherManager,
+        entries: bun.BabyList(Entry),
+        task: jsc.WorkPoolTask = .{ .callback = callback },
+
+        const Entry = struct { watcher: *PathWatcher, path: [:0]u8 };
+
+        fn schedule(manager: *PathWatcherManager, entries: bun.BabyList(Entry)) void {
+            if (!manager.refPendingTask()) {
+                for (entries.slice()) |item| {
+                    item.watcher.unrefPendingDirectory();
+                    bun.default_allocator.free(item.path);
+                }
+                var mutable = entries;
+                mutable.deinit(bun.default_allocator);
+                return;
+            }
+            const batch = bun.handleOom(bun.default_allocator.create(NewSubdirBatch));
+            batch.* = .{ .manager = manager, .entries = entries };
+            jsc.WorkPool.schedule(&batch.task);
+        }
+
+        fn callback(task: *jsc.WorkPoolTask) void {
+            const batch: *NewSubdirBatch = @fieldParentPtr("task", task);
+            defer {
+                for (batch.entries.slice()) |item| bun.default_allocator.free(item.path);
+                batch.entries.deinit(bun.default_allocator);
+                batch.manager.unrefPendingTask();
+                bun.default_allocator.destroy(batch);
+            }
+            for (batch.entries.slice()) |item| {
+                batch.manager._registerNewSubdirectory(item.watcher, item.path);
+                item.watcher.unrefPendingDirectory();
+            }
+        }
+    };
+
     fn _registerNewSubdirectory(this: *PathWatcherManager, watcher: *PathWatcher, path_z: [:0]const u8) void {
-        // Caller holds a refPendingDirectory() on watcher.
         if (watcher.isClosed()) return;
 
         const child_path = switch (this._fdFromAbsolutePathZ(path_z)) {

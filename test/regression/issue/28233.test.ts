@@ -121,6 +121,47 @@ registry=https://somehost.com/org1/npm/registry/
   expect(result.default_registry_token).toBe("");
 });
 
+test("default registry: more specific _auth is not overridden by less specific _authToken", () => {
+  // npm finds the single longest-matching nerf dart and takes ALL auth from
+  // that level. A root-level _authToken should NOT override a more specific _auth.
+  const ini = `
+registry=https://host.com/path/to/npm/
+//host.com/path/to/npm/:_auth=dXNlcjE6cGFzczE=
+//host.com/:_authToken=root-token
+`;
+  const result = loadNpmrc(ini);
+  // The most specific path (/path/to/npm) has _auth → Basic auth (user1:pass1).
+  // The root-level _authToken should be ignored since it's less specific.
+  expect(result.default_registry_username).toBe("user1");
+  expect(result.default_registry_password).toBe("pass1");
+  expect(result.default_registry_token).toBe("");
+});
+
+test("default registry: more specific _authToken is not overridden by less specific _auth", () => {
+  // Reverse scenario: specific _authToken should not be mixed with root _auth.
+  const ini = `
+registry=https://host.com/path/to/npm/
+//host.com/path/to/npm/:_authToken=specific-token
+//host.com/:_auth=dXNlcjE6cGFzczE=
+`;
+  const result = loadNpmrc(ini);
+  expect(result.default_registry_token).toBe("specific-token");
+  expect(result.default_registry_username).toBe("");
+  expect(result.default_registry_password).toBe("");
+});
+
+test("scoped registry: more specific _auth is not overridden by less specific _authToken", () => {
+  const ini = `
+@some-scope:registry=https://host.com/path/to/npm/
+//host.com/path/to/npm/:_auth=dXNlcjE6cGFzczE=
+//host.com/:_authToken=root-token
+`;
+  const result = loadNpmrc(ini);
+  expect(result.scoped_registries?.["some-scope"]?.username).toBe("user1");
+  expect(result.scoped_registries?.["some-scope"]?.password).toBe("pass1");
+  expect(result.scoped_registries?.["some-scope"]?.token).toBe("");
+});
+
 test("path matching respects segment boundaries", () => {
   // /api/v4 should NOT match /api/v41/... (partial segment match)
   const ini = `

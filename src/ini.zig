@@ -667,9 +667,11 @@ pub const IniTestingAPIs = struct {
             const scoped = install.scoped orelse break :scoped_brk jsc.JSValue.jsNull();
             const obj = jsc.JSValue.createEmptyObject(globalThis, scoped.scopes.keys().len);
             for (scoped.scopes.keys(), scoped.scopes.values()) |scope, registry| {
-                const scope_obj = jsc.JSValue.createEmptyObject(globalThis, 2);
+                const scope_obj = jsc.JSValue.createEmptyObject(globalThis, 4);
                 scope_obj.put(globalThis, "url", try bun.String.fromBytes(registry.url).toJS(globalThis));
                 scope_obj.put(globalThis, "token", try bun.String.fromBytes(registry.token).toJS(globalThis));
+                scope_obj.put(globalThis, "username", try bun.String.fromBytes(registry.username).toJS(globalThis));
+                scope_obj.put(globalThis, "password", try bun.String.fromBytes(registry.password).toJS(globalThis));
                 obj.put(globalThis, scope, scope_obj);
             }
             break :scoped_brk obj;
@@ -1329,29 +1331,21 @@ pub fn loadNpmrc(
             }
         }
 
-        // Track the best (longest matching path) config for each option type
-        // for the default registry, so that the most specific token wins.
-        var default_best_match_len: [std.meta.fields(ConfigIterator.Item.Opt).len]usize = .{0} ** std.meta.fields(ConfigIterator.Item.Opt).len;
+        // Track the best (longest matching path) for the default registry.
+        // npm finds the single longest-matching nerf dart and takes ALL auth
+        // from that level — credentials from different path depths are never mixed.
+        var default_best_match_len: usize = 0;
 
-        // Same for scoped registries: track best match length per scope per option.
-        var scoped_best_match_lens = scoped_best_match_lens: {
-            var lens: [std.meta.fields(ConfigIterator.Item.Opt).len][]usize = undefined;
-            for (&lens) |*l| l.* = &.{};
-
-            if (registry_map.scopes.keys().len > 0) {
-                for (&lens) |*l| {
-                    const buf = try allocator.alloc(usize, registry_map.scopes.keys().len);
-                    @memset(buf, 0);
-                    l.* = buf;
-                }
+        // Same for scoped registries: track best match length per scope.
+        const scoped_best_match_lens: []usize = if (registry_map.scopes.keys().len > 0)
+            scoped_best_match_lens: {
+                const buf = try allocator.alloc(usize, registry_map.scopes.keys().len);
+                @memset(buf, 0);
+                break :scoped_best_match_lens buf;
             }
-
-            break :scoped_best_match_lens lens;
-        };
-        defer for (&scoped_best_match_lens) |*l| {
-            if (l.len > 0) allocator.free(l.*);
-            l.* = &.{};
-        };
+        else
+            &.{};
+        defer if (scoped_best_match_lens.len > 0) allocator.free(scoped_best_match_lens);
 
         for (configs.items) |conf_item| {
             const conf_item_url = bun.URL.parse(conf_item.registry_url);
@@ -1363,10 +1357,7 @@ pub fn loadNpmrc(
             if (std.mem.eql(u8, bun.strings.withoutTrailingSlash(default_registry_url.host), bun.strings.withoutTrailingSlash(conf_item_url.host)) and
                 pathMatchesOrIsParentOf(bun.strings.withoutTrailingSlash(default_registry_url.pathname), conf_path))
             {
-                const opt_idx = @intFromEnum(conf_item.optname);
-                if (conf_path.len >= default_best_match_len[opt_idx]) {
-                    default_best_match_len[opt_idx] = conf_path.len;
-
+                if (conf_path.len >= default_best_match_len) {
                     // Apply config to default registry
                     const v: *bun.schema.api.NpmRegistry = brk: {
                         if (install.default_registry) |*r| break :brk r;
@@ -1379,6 +1370,16 @@ pub fn loadNpmrc(
                         };
                         break :brk &install.default_registry.?;
                     };
+
+                    // A more specific path supersedes all auth from shorter paths.
+                    // npm finds the single longest nerf dart and takes all auth
+                    // from that level; credentials from different depths are never mixed.
+                    if (conf_path.len > default_best_match_len) {
+                        default_best_match_len = conf_path.len;
+                        v.token = "";
+                        v.username = "";
+                        v.password = "";
+                    }
 
                     switch (conf_item.optname) {
                         ._authToken => {
@@ -1413,11 +1414,17 @@ pub fn loadNpmrc(
                         }
                     }
 
-                    const opt_idx = @intFromEnum(conf_item.optname);
-                    if (conf_path.len < scoped_best_match_lens[opt_idx][scope_idx]) {
+                    if (conf_path.len < scoped_best_match_lens[scope_idx]) {
                         continue;
                     }
-                    scoped_best_match_lens[opt_idx][scope_idx] = conf_path.len;
+
+                    // A more specific path supersedes all auth from shorter paths.
+                    if (conf_path.len > scoped_best_match_lens[scope_idx]) {
+                        scoped_best_match_lens[scope_idx] = conf_path.len;
+                        v.token = "";
+                        v.username = "";
+                        v.password = "";
+                    }
 
                     // Apply config to scoped registry
                     switch (conf_item.optname) {

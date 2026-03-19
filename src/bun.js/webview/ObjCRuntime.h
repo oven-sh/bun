@@ -192,9 +192,13 @@ struct NSApplication : Ref {
 struct NSWindow : Ref {
     using Ref::Ref;
     static Class cls;
-    // BunHostWindow — runtime-registered subclass with noResponderFor:
-    // overridden to no-op. NSResponder's default beeps on unhandled
-    // keyDown: (press("Escape") when the page doesn't preventDefault).
+    // BunHostWindow — runtime-registered subclass. Overrides:
+    //   noResponderFor:  no-op (NSResponder's default beeps on unhandled
+    //                    keyDown — press("Escape") without preventDefault)
+    //   isVisible        YES (TestWebKitAPI/OffscreenWindow.mm does the
+    //                    same — PageClientImpl::isViewVisible reads it
+    //                    directly; orderFront's real flag raced on 13/14)
+    //   isKeyWindow      YES (WindowIsActive, not rAF-gating but free)
     static Class hostCls;
     static SEL s_initWithContentRect_styleMask_backing_defer;
     static SEL s_setReleasedWhenClosed;
@@ -218,8 +222,8 @@ struct NSWindow : Ref {
     void setContentSize(double w, double h) { msg<void>(s_setContentSize, CGSizeMake(w, h)); }
     void close() { msg<void>(s_close); }
 
-    static SEL s_orderFront;
-    void orderFront() { msg<void>(s_orderFront, (id) nullptr); }
+    static SEL s_orderBack;
+    void orderBack() { msg<void>(s_orderBack, (id) nullptr); }
 
     static SEL s_windowNumber;
     long windowNumber() const { return msg<long>(s_windowNumber); }
@@ -523,15 +527,12 @@ struct WKWebView : Ref {
         msg<void>(s_setAutomaticTextReplacementEnabled, (signed char)0);
     }
 
-    // With the window offscreen and never orderFront'd, visibilityState is
-    // "hidden" and requestAnimationFrame never fires — spec'd behavior,
-    // the display link is gated on page visibility. orderFront: alone
-    // doesn't help because WKWebView's occlusion detection (via
-    // NSWindowDidChangeOcclusionStateNotification) correctly sees the
-    // window at (-10000,-10000) is fully occluded. Disabling occlusion
-    // detection + orderFront: = visibilityState "visible" + rAF ticks at
-    // display rate. The window is still invisible to the user: borderless,
-    // offscreen, ActivationPolicyAccessory means no dock/menu bar.
+    // PageClientImpl::isViewVisible's last gate: windowIsOccluded() reads
+    // NSWindow.occlusionState, which the window server updates after
+    // compositing. At -10000,-10000 the window is fully occluded, so even
+    // with isVisible overridden, occlusion detection would gate rAF. This
+    // is a plain bool on WebViewImpl — set before any isViewVisible()
+    // evaluation and every check short-circuits false.
     static SEL s_setWindowOcclusionDetectionEnabled;
     void disableOcclusionDetection()
     {

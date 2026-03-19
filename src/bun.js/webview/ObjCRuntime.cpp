@@ -69,7 +69,7 @@ SEL NSImage::s_CGImageForProposedRect_context_hints;
 
 SEL NSWindow::s_windowNumber;
 SEL NSWindow::s_convertPointToScreen;
-SEL NSWindow::s_orderFront;
+SEL NSWindow::s_orderBack;
 
 Class NSProcessInfo::cls;
 SEL NSProcessInfo::s_processInfo;
@@ -184,9 +184,9 @@ static void delegateDidFailProvisionalNavigation(id self, SEL _cmd, id webView, 
 }
 
 // _webView:getContextMenuFromProposedMenu:forElement:userInfo:completionHandler:
-// (WKUIDelegatePrivate, macOS 10.14+). With the page visible (orderFront +
-// occlusion detection off), right-click actually opens NSMenu's modal runloop
-// — rightMouseDown → XPC contextmenu → WebContextMenuProxyMac::show blocks.
+// (WKUIDelegatePrivate, macOS 10.14+). With ActivityState::IsVisible set,
+// right-click opens NSMenu's modal runloop — rightMouseDown → XPC
+// contextmenu → WebContextMenuProxyMac::show blocks in runModalForWindow.
 // Calling the completion with nil suppresses it without touching the page's
 // own contextmenu handling.
 static void delegateGetContextMenu(id, SEL, id /*web*/, id /*menu*/, id /*element*/, id /*userInfo*/, void* handler)
@@ -207,6 +207,19 @@ static void delegateGetContextMenu(id, SEL, id /*web*/, id /*menu*/, id /*elemen
 // WebContent doesn't consume press("Escape") (page listener observes but
 // doesn't preventDefault) → bounces up the chain → ding. Swallow it.
 static void windowNoResponderFor(id, SEL, SEL) {}
+
+// -isVisible / -isKeyWindow overrides — same as WebKit's own
+// TestWebKitAPI/OffscreenWindow.mm. PageClientImpl::isViewVisible checks
+// activeViewWindow.isVisible directly; orderFront: sets the flag but on
+// macOS 13/14 the catch-up activityStateDidChange doesn't reliably land
+// before the first navigate() launches the WebContent process, so
+// creationParameters ships IsVisible=false and rAF never ticks.
+// Unconditional YES sidesteps the orderFront timing entirely —
+// isViewVisible() sees visible from the first evaluation, regardless of
+// when (or whether) NSWindowDidOrderOnScreenNotification fires.
+// isKeyWindow is for WindowIsActive (not rAF-gating but free to add).
+static signed char windowIsVisible(id, SEL) { return 1; }
+static signed char windowIsKeyWindow(id, SEL) { return 1; }
 
 } // extern "C"
 
@@ -336,7 +349,7 @@ bool ObjCRuntime::load()
 
     NSWindow::s_windowNumber = sel("windowNumber");
     NSWindow::s_convertPointToScreen = sel("convertPointToScreen:");
-    NSWindow::s_orderFront = sel("orderFront:");
+    NSWindow::s_orderBack = sel("orderBack:");
 
     CLS(NSProcessInfo::cls, "NSProcessInfo");
     NSProcessInfo::s_processInfo = sel("processInfo");
@@ -444,6 +457,11 @@ bool ObjCRuntime::load()
     }
     addMethod(NSWindow::hostCls, sel("noResponderFor:"),
         reinterpret_cast<IMP>(windowNoResponderFor), "v@::");
+    // 'c' = signed char = BOOL on all our targets (arm64 & x64 macOS).
+    addMethod(NSWindow::hostCls, sel("isVisible"),
+        reinterpret_cast<IMP>(windowIsVisible), "c@:");
+    addMethod(NSWindow::hostCls, sel("isKeyWindow"),
+        reinterpret_cast<IMP>(windowIsKeyWindow), "c@:");
     registerClassPair(NSWindow::hostCls);
 
     NSApplication::setActivationPolicyAccessory();

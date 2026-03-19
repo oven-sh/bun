@@ -114,29 +114,28 @@ Ref<WebViewHost> WebViewHost::createForIPC(uint32_t viewId, uint32_t width, uint
 
     host->m_window = objc::NSWindow::createOffscreen(width, height);
 
-    // Occlusion detection off before the view enters a window —
-    // PageClientImpl::isViewVisible's windowIsOccluded() check (WebViewImpl.mm)
-    // reads m_windowOcclusionDetectionEnabled. If true AND occlusionState lacks
-    // NSWindowOcclusionStateVisible (which it will for an offscreen window once
-    // the window server composites), the view is "not visible" → rAF throttled.
-    // This is a plain bool; setting it before any activityStateDidChange path
-    // means every evaluation sees the correct value.
+    // PageClientImpl::isViewVisible (UIProcess/mac/PageClientImplMac.mm) has
+    // three gates. All three must pass for ActivityState::IsVisible — and
+    // that flag is what WebContent keys rendering-update scheduling on. The
+    // actionability rAF-poll hangs forever without it.
+    //
+    //   activeWindow exists  — setContentView puts the view in this window
+    //   [window isVisible]   — BunHostWindow overrides the getter to YES
+    //                          (same as TestWebKitAPI/OffscreenWindow.mm)
+    //   !windowIsOccluded    — disableOcclusionDetection short-circuits false
+    //
+    // An earlier orderFront-before-setContentView attempt relied on the real
+    // NSWindow isVisible flag being set synchronously. Worked on macOS 15;
+    // on macOS 13/14 CI the catch-up activityStateDidChange raced
+    // finishAttachingToWebProcess → creationParameters shipped IsVisible=false
+    // about half the time. The override makes every isViewVisible()
+    // evaluation see YES from the first call, no race to lose.
+    //
+    // orderBack so windowNumber() is assigned — NSEvent synthesis needs a
+    // real window number; an unordered window returns 0.
     host->m_webview.disableOcclusionDetection();
     host->m_window.setContentView(host->m_webview);
-
-    // orderFront: AFTER setContentView. WKWindowVisibilityObserver registers
-    // for NSWindowDidOrderOnScreenNotification inside viewWillMoveToWindow:
-    // (which fires during setContentView:). Ordering now lets the observer
-    // see the notification and queue an activityStateDidChange. The
-    // load-bearing evaluation is finishAttachingToWebProcess →
-    // updateActivityState() → creationParameters → WebContent gets
-    // parameters.activityState with IsVisible. That reads [window isVisible]
-    // at loadRequest time, which orderFront: has set synchronously.
-    //
-    // WebKitTestRunner uses the same ordering (TestControllerCocoa.mm:381).
-    // The window is borderless at -10000,-10000; orderFront makes it "on
-    // screen" to AppKit (isVisible=YES) without drawing anything visible.
-    host->m_window.orderFront();
+    host->m_window.orderBack();
     host->m_width = width;
     host->m_height = height;
 

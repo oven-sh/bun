@@ -1397,17 +1397,32 @@ pub const StandaloneModuleGraph = struct {
         return false;
     }
 
-    /// Try to open the executable via argv[0] using PATH resolution.
+    /// Try to open the executable via argv[0], first directly if it contains
+    /// a path separator, then falling back to PATH resolution.
     fn openFromArgv() std.fs.OpenSelfExeError!bun.FileDescriptor {
-        if (bun.argv.len > 0) {
-            var whichbuf: bun.PathBuffer = undefined;
-            if (bun.which(
-                &whichbuf,
-                bun.env_var.PATH.get() orelse return error.FileNotFound,
-                "",
-                bun.argv[0],
-            )) |path| {
-                return .fromStdFile(try std.fs.cwd().openFileZ(path, .{}));
+        if (bun.argv.len == 0) return error.FileNotFound;
+        const argv0 = bun.argv[0];
+
+        // Fast-path: if argv[0] is an explicit path (contains '/'),
+        // try opening it directly without PATH lookup.
+        if (bun.strings.containsChar(argv0, '/')) {
+            switch (bun.sys.open(argv0, bun.O.RDONLY, 0)) {
+                .result => |fd| return fd,
+                .err => {},
+            }
+        }
+
+        // Fall back to PATH resolution.
+        var whichbuf: bun.PathBuffer = undefined;
+        if (bun.which(
+            &whichbuf,
+            bun.env_var.PATH.get() orelse return error.FileNotFound,
+            "",
+            argv0,
+        )) |path| {
+            switch (bun.sys.open(path, bun.O.RDONLY, 0)) {
+                .result => |fd| return fd,
+                .err => {},
             }
         }
         return error.FileNotFound;
@@ -1428,14 +1443,15 @@ pub const StandaloneModuleGraph = struct {
                 if (std.fs.openFileAbsoluteZ("/proc/self/exe", .{})) |easymode| {
                     // When invoked via the dynamic linker (e.g., /lib/ld-linux.so ./binary),
                     // /proc/self/exe resolves to the dynamic linker, not the actual binary.
-                    // Detect this by comparing basenames and fall back to argv[0].
-                    if (bun.argv.len > 0) {
+                    // Only attempt detection when argv[0] is an explicit path (contains '/'),
+                    // since bare command names cannot be reliably resolved.
+                    if (bun.argv.len > 0 and bun.strings.containsChar(bun.argv[0], '/')) {
                         var readlinkbuf: bun.PathBuffer = undefined;
                         switch (bun.sys.readlink("/proc/self/exe", &readlinkbuf)) {
                             .result => |self_exe_path| {
-                                const self_basename = std.fs.path.basename(@as([]const u8, self_exe_path));
-                                const argv_basename = std.fs.path.basename(@as([]const u8, bun.argv[0]));
-                                if (!std.mem.eql(u8, self_basename, argv_basename)) {
+                                const self_basename = bun.path.basename(@as([]const u8, self_exe_path));
+                                const argv_basename = bun.path.basename(@as([]const u8, bun.argv[0]));
+                                if (!bun.strings.eql(self_basename, argv_basename)) {
                                     easymode.close();
                                     return openFromArgv();
                                 }

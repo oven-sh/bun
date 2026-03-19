@@ -226,6 +226,8 @@ await Bun.cron("./worker.ts", "30 2 * * MON", "weekly-report");
 
 Re-registering with the same `title` overwrites the existing job in-place — the old schedule is replaced, not duplicated.
 
+The cron job runs with the working directory set to `process.cwd()` at registration time, so `.env` files and relative paths resolve correctly.
+
 ```ts
 await Bun.cron("./worker.ts", "0 * * * *", "my-job"); // every hour
 await Bun.cron("./worker.ts", "*/15 * * * *", "my-job"); // replaces: every 15 min
@@ -258,7 +260,7 @@ Bun uses [crontab](https://man7.org/linux/man-pages/man5/crontab.5.html) to regi
 The crontab entry looks like:
 
 ```
-<schedule> '<bun-path>' run --cron-title=<title> --cron-period='<schedule>' '<script-path>'
+<schedule> '<bun-path>' run --cwd='<working-dir>' --cron-title=<title> --cron-period='<schedule>' '<script-path>'
 ```
 
 When the cron daemon fires the job, Bun imports your module and calls the `scheduled()` handler.

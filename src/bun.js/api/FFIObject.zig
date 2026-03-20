@@ -70,16 +70,30 @@ pub const Reader = struct {
         if (arguments.len == 0 or !arguments[0].isNumber()) {
             return globalObject.throwInvalidArguments("Expected a pointer", .{});
         }
-        const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @as(usize, @intCast(arguments[1].to(i32))) else @as(usize, 0);
-        if (addr < 4096 or addr == 0xDEADBEEF or addr == 0xaaaaaaaa or addr == 0xAAAAAAAA or addr > max_addressable_memory) {
+        var addr = arguments[0].asPtrAddress();
+        if (arguments.len > 1) {
+            const offset = arguments[1].to(i32);
+            if (offset < 0) {
+                addr -|= @as(usize, @intCast(-offset));
+            } else {
+                addr +|= @as(usize, @intCast(offset));
+            }
+        }
+        if (addr < 4096 or addr == 0xDEADBEEF or addr == 0xAAAAAAAA or addr > max_addressable_memory) {
             return globalObject.throwInvalidArguments("Invalid pointer", .{});
         }
         return addr;
     }
 
     fn validateAddrFast(raw_addr: i64, offset: i32) ?usize {
-        const addr = @as(usize, @intCast(raw_addr)) + @as(usize, @intCast(offset));
-        if (addr < 4096 or addr == 0xDEADBEEF or addr == 0xaaaaaaaa or addr == 0xAAAAAAAA or addr > max_addressable_memory) {
+        if (raw_addr < 0) return null;
+        var addr = @as(usize, @intCast(raw_addr));
+        if (offset < 0) {
+            addr -|= @as(usize, @intCast(-offset));
+        } else {
+            addr +|= @as(usize, @intCast(offset));
+        }
+        if (addr < 4096 or addr == 0xDEADBEEF or addr == 0xAAAAAAAA or addr > max_addressable_memory) {
             return null;
         }
         return addr;

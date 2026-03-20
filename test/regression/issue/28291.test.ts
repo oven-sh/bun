@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import fs from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import path from "path";
-import fs from "fs";
 
 const HISTORY_FILENAME = ".bun_repl_history";
 

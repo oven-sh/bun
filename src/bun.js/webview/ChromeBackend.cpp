@@ -28,11 +28,14 @@
 #if OS(WINDOWS)
 // Bun__Chrome__ensure returns -1 on Windows (no socketpair/pipe fcntl);
 // the ::close call in the us_socket_from_fd failure path never runs.
-// Stub it so the compiler doesn't need unistd.h.
+// Don't use a function-style macro for this — `#define close _close`
+// also rewrites CDP::Ops::close → _close and the linker can't find the
+// declared name.
 #include <io.h>
-#define close _close
+static inline int closefd(int fd) { return ::_close(fd); }
 #else
 #include <unistd.h>
+static inline int closefd(int fd) { return ::close(fd); }
 #endif
 
 #include "libusockets.h"
@@ -243,7 +246,7 @@ bool Transport::ensureSpawned(Zig::GlobalObject* zig, const WTF::String& userDat
     // they're harmless.
     m_readSock = us_socket_from_fd(m_ctx, sizeof(void*), fd, 0);
     if (!m_readSock) {
-        ::close(fd);
+        closefd(fd);
         m_writeFd = -1;
         m_dead = true;
         return false;

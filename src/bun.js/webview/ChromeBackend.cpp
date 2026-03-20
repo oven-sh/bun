@@ -851,10 +851,14 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
             // error/warn coloring and stderr routing.
             using JSC::MessageLevel;
             MessageLevel ml = MessageLevel::Log;
-            if (type == "error"_s || type == "assert"_s) ml = MessageLevel::Error;
-            else if (type == "warning"_s) ml = MessageLevel::Warning;
-            else if (type == "debug"_s) ml = MessageLevel::Debug;
-            else if (type == "info"_s) ml = MessageLevel::Info;
+            if (type == "error"_s || type == "assert"_s)
+                ml = MessageLevel::Error;
+            else if (type == "warning"_s)
+                ml = MessageLevel::Warning;
+            else if (type == "debug"_s)
+                ml = MessageLevel::Debug;
+            else if (type == "info"_s)
+                ml = MessageLevel::Info;
 
             WTF::Vector<Strong<Unknown>> strongArgs;
             strongArgs.reserveInitialCapacity(args.size());
@@ -872,7 +876,8 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
         if (callData.type == CallData::Type::None) return;
         MarkedArgumentBuffer cbArgs;
         cbArgs.append(jsString(vm, type.isEmpty() ? "log"_s : type));
-        for (unsigned i = 0; i < args.size(); ++i) cbArgs.append(args.at(i));
+        for (unsigned i = 0; i < args.size(); ++i)
+            cbArgs.append(args.at(i));
         call(g, cb, callData, jsUndefined(), cbArgs);
         return;
     }

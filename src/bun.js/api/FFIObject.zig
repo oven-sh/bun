@@ -202,105 +202,123 @@ pub const Reader = struct {
         return JSValue.fromUInt64NoTruncate(globalObject, value);
     }
 
+    fn getFastAddr(globalObject: *JSGlobalObject, raw_addr: i64, offset: i32) ?usize {
+        if (raw_addr < 0) {
+            globalObject.throwInvalidArguments("Pointer is invalid, that would segfault Bun", .{}) catch {};
+            return null;
+        }
+        var addr: usize = @intCast(raw_addr);
+        if (offset < 0) {
+            addr -|= @as(usize, @intCast(-offset));
+        } else {
+            addr +|= @as(usize, @intCast(offset));
+        }
+        if (addr < std.heap.page_size_min or addr > max_addressable_memory) {
+            globalObject.throwInvalidArguments("Pointer is invalid, that would segfault Bun", .{}) catch {};
+            return null;
+        }
+        return addr;
+    }
+
     pub fn u8WithoutTypeChecks(
-        _: *JSGlobalObject,
+        globalObject: *JSGlobalObject,
         _: *anyopaque,
         raw_addr: i64,
         offset: i32,
     ) callconv(jsc.conv) JSValue {
-        const addr = @as(usize, @intCast(raw_addr)) + @as(usize, @intCast(offset));
+        const addr = getFastAddr(globalObject, raw_addr, offset) orelse return .zero;
         const value = @as(*align(1) u8, @ptrFromInt(addr)).*;
         return JSValue.jsNumber(value);
     }
     pub fn u16WithoutTypeChecks(
-        _: *JSGlobalObject,
+        globalObject: *JSGlobalObject,
         _: *anyopaque,
         raw_addr: i64,
         offset: i32,
     ) callconv(jsc.conv) JSValue {
-        const addr = @as(usize, @intCast(raw_addr)) + @as(usize, @intCast(offset));
+        const addr = getFastAddr(globalObject, raw_addr, offset) orelse return .zero;
         const value = @as(*align(1) u16, @ptrFromInt(addr)).*;
         return JSValue.jsNumber(value);
     }
     pub fn u32WithoutTypeChecks(
-        _: *JSGlobalObject,
+        globalObject: *JSGlobalObject,
         _: *anyopaque,
         raw_addr: i64,
         offset: i32,
     ) callconv(jsc.conv) JSValue {
-        const addr = @as(usize, @intCast(raw_addr)) + @as(usize, @intCast(offset));
+        const addr = getFastAddr(globalObject, raw_addr, offset) orelse return .zero;
         const value = @as(*align(1) u32, @ptrFromInt(addr)).*;
         return JSValue.jsNumber(value);
     }
     pub fn ptrWithoutTypeChecks(
-        _: *JSGlobalObject,
+        globalObject: *JSGlobalObject,
         _: *anyopaque,
         raw_addr: i64,
         offset: i32,
     ) callconv(jsc.conv) JSValue {
-        const addr = @as(usize, @intCast(raw_addr)) + @as(usize, @intCast(offset));
+        const addr = getFastAddr(globalObject, raw_addr, offset) orelse return .zero;
         const value = @as(*align(1) u64, @ptrFromInt(addr)).*;
         return JSValue.jsNumber(value);
     }
     pub fn i8WithoutTypeChecks(
-        _: *JSGlobalObject,
+        globalObject: *JSGlobalObject,
         _: *anyopaque,
         raw_addr: i64,
         offset: i32,
     ) callconv(jsc.conv) JSValue {
-        const addr = @as(usize, @intCast(raw_addr)) + @as(usize, @intCast(offset));
+        const addr = getFastAddr(globalObject, raw_addr, offset) orelse return .zero;
         const value = @as(*align(1) i8, @ptrFromInt(addr)).*;
         return JSValue.jsNumber(value);
     }
     pub fn i16WithoutTypeChecks(
-        _: *JSGlobalObject,
+        globalObject: *JSGlobalObject,
         _: *anyopaque,
         raw_addr: i64,
         offset: i32,
     ) callconv(jsc.conv) JSValue {
-        const addr = @as(usize, @intCast(raw_addr)) + @as(usize, @intCast(offset));
+        const addr = getFastAddr(globalObject, raw_addr, offset) orelse return .zero;
         const value = @as(*align(1) i16, @ptrFromInt(addr)).*;
         return JSValue.jsNumber(value);
     }
     pub fn i32WithoutTypeChecks(
-        _: *JSGlobalObject,
+        globalObject: *JSGlobalObject,
         _: *anyopaque,
         raw_addr: i64,
         offset: i32,
     ) callconv(jsc.conv) JSValue {
-        const addr = @as(usize, @intCast(raw_addr)) + @as(usize, @intCast(offset));
+        const addr = getFastAddr(globalObject, raw_addr, offset) orelse return .zero;
         const value = @as(*align(1) i32, @ptrFromInt(addr)).*;
         return JSValue.jsNumber(value);
     }
     pub fn intptrWithoutTypeChecks(
-        _: *JSGlobalObject,
+        globalObject: *JSGlobalObject,
         _: *anyopaque,
         raw_addr: i64,
         offset: i32,
     ) callconv(jsc.conv) JSValue {
-        const addr = @as(usize, @intCast(raw_addr)) + @as(usize, @intCast(offset));
+        const addr = getFastAddr(globalObject, raw_addr, offset) orelse return .zero;
         const value = @as(*align(1) i64, @ptrFromInt(addr)).*;
         return JSValue.jsNumber(value);
     }
 
     pub fn f32WithoutTypeChecks(
-        _: *JSGlobalObject,
+        globalObject: *JSGlobalObject,
         _: *anyopaque,
         raw_addr: i64,
         offset: i32,
     ) callconv(jsc.conv) JSValue {
-        const addr = @as(usize, @intCast(raw_addr)) + @as(usize, @intCast(offset));
+        const addr = getFastAddr(globalObject, raw_addr, offset) orelse return .zero;
         const value = @as(*align(1) f32, @ptrFromInt(addr)).*;
         return JSValue.jsNumber(value);
     }
 
     pub fn f64WithoutTypeChecks(
-        _: *JSGlobalObject,
+        globalObject: *JSGlobalObject,
         _: *anyopaque,
         raw_addr: i64,
         offset: i32,
     ) callconv(jsc.conv) JSValue {
-        const addr = @as(usize, @intCast(raw_addr)) + @as(usize, @intCast(offset));
+        const addr = getFastAddr(globalObject, raw_addr, offset) orelse return .zero;
         const value = @as(*align(1) f64, @ptrFromInt(addr)).*;
         return JSValue.jsNumber(value);
     }
@@ -311,7 +329,7 @@ pub const Reader = struct {
         raw_addr: i64,
         offset: i32,
     ) callconv(jsc.conv) JSValue {
-        const addr = @as(usize, @intCast(raw_addr)) + @as(usize, @intCast(offset));
+        const addr = getFastAddr(global, raw_addr, offset) orelse return .zero;
         const value = @as(*align(1) u64, @ptrFromInt(addr)).*;
         return JSValue.fromUInt64NoTruncate(global, value);
     }
@@ -322,7 +340,7 @@ pub const Reader = struct {
         raw_addr: i64,
         offset: i32,
     ) callconv(jsc.conv) JSValue {
-        const addr = @as(usize, @intCast(raw_addr)) + @as(usize, @intCast(offset));
+        const addr = getFastAddr(global, raw_addr, offset) orelse return .zero;
         const value = @as(*align(1) i64, @ptrFromInt(addr)).*;
         return JSValue.fromInt64NoTruncate(global, value);
     }

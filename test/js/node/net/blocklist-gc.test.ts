@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { BlockList } from "node:net";
 
-test("BlockList estimatedSize works after structuredClone and GC", () => {
+test("BlockList structuredClone preserves rules after GC", () => {
   const bl = new BlockList();
   bl.addAddress("1.2.3.4");
   const bl2 = structuredClone(bl);

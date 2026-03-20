@@ -12,10 +12,7 @@ test("require of nonexistent module does not crash", async () => {
     stderr: "pipe",
   });
 
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  const exitCode = await proc.exited;
 
-  expect(stderr).not.toContain("AddressSanitizer");
-  expect(exitCode).not.toBe(null);
-  // Should exit cleanly or with a non-crash error, not SIGABRT (134)
-  expect(exitCode).not.toBe(134);
+  expect(exitCode).toBe(0);
 });

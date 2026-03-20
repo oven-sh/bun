@@ -6104,7 +6104,7 @@ pub fn NewParser_(
         /// specifiers that were imported. We enforce that they line up exactly
         /// with ones that were imported, so that it can share an import record.
         ///
-        /// This function replaces all specifier strings with `e_require_resolve_string`
+        /// This function replaces all specifier strings with `e_special.resolved_specifier_string`
         pub fn handleImportMetaHotAcceptCall(p: *@This(), call: *E.Call) void {
             if (call.args.len == 0) return;
             switch (call.args.at(0).data) {

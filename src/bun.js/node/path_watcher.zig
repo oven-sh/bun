@@ -28,6 +28,10 @@ pub const PathWatcherManager = struct {
     fn refPendingTask(this: *PathWatcherManager) bool {
         this.mutex.lock();
         defer this.mutex.unlock();
+        return this.refPendingTaskNoLock();
+    }
+
+    fn refPendingTaskNoLock(this: *PathWatcherManager) bool {
         if (this.deinit_on_last_task) return false;
         this.pending_tasks += 1;
         this.has_pending_tasks.store(true, .release);
@@ -190,11 +194,19 @@ pub const PathWatcherManager = struct {
         // to register. Collected under manager.mutex, then handed to a WorkPool
         // task because _fdFromAbsolutePathZ/_addDirectory take manager.mutex
         // AND main_watcher.addDirectory takes Watcher.mutex — both of which are
-        // held by the caller (watchLoopCycle) at this point.
+        // held by the caller (watchLoopCycle) at this point. The pending-task
+        // ref is taken inside the manager.mutex scoped block to avoid an AB/BA
+        // deadlock with unregisterWatcher (which takes manager.mutex then
+        // Watcher.mutex via main_watcher.remove).
         var new_subdirs: bun.BabyList(NewSubdirBatch.Entry) = .{};
-        defer if (new_subdirs.len > 0) {
-            NewSubdirBatch.schedule(this, new_subdirs);
+        var task_referenced = false;
+        defer if (task_referenced) {
+            NewSubdirBatch.scheduleAlreadyReferenced(this, new_subdirs);
         } else {
+            for (new_subdirs.slice()) |item| {
+                item.watcher.unrefPendingDirectory();
+                bun.default_allocator.free(item.path);
+            }
             new_subdirs.deinit(bun.default_allocator);
         };
 
@@ -354,6 +366,10 @@ pub const PathWatcherManager = struct {
                     if (watcher.needs_flush) watcher.flush();
                 }
             }
+
+            if (new_subdirs.len > 0) {
+                task_referenced = this.refPendingTaskNoLock();
+            }
         }
     }
 
@@ -369,16 +385,7 @@ pub const PathWatcherManager = struct {
 
         const Entry = struct { watcher: *PathWatcher, path: [:0]u8 };
 
-        fn schedule(manager: *PathWatcherManager, entries: bun.BabyList(Entry)) void {
-            if (!manager.refPendingTask()) {
-                for (entries.slice()) |item| {
-                    item.watcher.unrefPendingDirectory();
-                    bun.default_allocator.free(item.path);
-                }
-                var mutable = entries;
-                mutable.deinit(bun.default_allocator);
-                return;
-            }
+        fn scheduleAlreadyReferenced(manager: *PathWatcherManager, entries: bun.BabyList(Entry)) void {
             const batch = bun.handleOom(bun.default_allocator.create(NewSubdirBatch));
             batch.* = .{ .manager = manager, .entries = entries };
             jsc.WorkPool.schedule(&batch.task);
@@ -679,7 +686,12 @@ pub const PathWatcherManager = struct {
     // this should only be called if thread pool is not null
     fn _addDirectory(this: *PathWatcherManager, watcher: *PathWatcher, path: PathInfo) bun.sys.Maybe(void) {
         const fd = path.fd;
-        switch (this.main_watcher.addDirectory(fd, path.path, path.hash, false)) {
+        // clone_file_path=true so the watchlist owns its own copy of the
+        // path string. This decouples watchlist lifetime from file_paths
+        // hashmap lifetime — _decrementPathRefNoLock can free the hashmap
+        // string without leaving a dangling .file_path in the watchlist
+        // that inotify events would dereference before flushEvictions runs.
+        switch (this.main_watcher.addDirectory(fd, path.path, path.hash, true)) {
             .err => |err| return .{ .err = err.withPath(path.path) },
             .result => {},
         }
@@ -757,11 +769,12 @@ pub const PathWatcherManager = struct {
                 if (path.refs == 0) {
                     const path_ = path.path;
                     const fd = path.fd;
-                    // If the hash was in main_watcher's watchlist,
-                    // flushEvictions owns the fd close. If remove()
-                    // found nothing (e.g. inotify_add_watch failed so
-                    // the watchlist entry was never appended), close
-                    // here to avoid leaking the fd.
+                    // The watchlist holds its own clone of the path string
+                    // (addDirectory uses clone_file_path=true), so freeing
+                    // our hashmap string here is safe. If the hash was in
+                    // the watchlist, flushEvictions owns the fd close; if
+                    // not (inotify_add_watch failed so the entry was never
+                    // appended), close here to avoid leaking the fd.
                     const evicted = this.main_watcher.remove(path.hash);
                     _ = this.file_paths.remove(path_);
                     if (!evicted) fd.close();

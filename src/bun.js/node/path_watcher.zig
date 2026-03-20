@@ -1128,8 +1128,13 @@ pub const PathWatcher = struct {
                 };
 
                 const time_diff = time_stamp - this.last_change_event.time_stamp;
+                // Skip consecutive duplicates: same event type AND same
+                // file (hash) within 1ms. Both conditions must match to
+                // suppress — different files with the same timestamp
+                // (e.g. synthetic events from directory scan) must not
+                // be dropped.
                 if (!((this.last_change_event.time_stamp == 0 or time_diff > 1) or
-                    this.last_change_event.event_type != event_type and
+                    this.last_change_event.event_type != event_type or
                         this.last_change_event.hash != hash))
                 {
                     // skip consecutive duplicates
@@ -1138,6 +1143,7 @@ pub const PathWatcher = struct {
 
                 this.last_change_event.time_stamp = time_stamp;
                 this.last_change_event.event_type = event_type;
+                this.last_change_event.hash = hash;
             },
             else => {},
         }

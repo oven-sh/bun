@@ -81,11 +81,17 @@ describe.skipIf(isFFIUnavailable)("FFI error messages", () => {
     expect(() => toBuffer(2637)).toThrow("ptr to invalid memory");
     expect(() => toBuffer(1)).toThrow("ptr to invalid memory");
     expect(() => toBuffer(0)).toThrow();
+    expect(() => toBuffer(NaN)).toThrow("ptr must be a number");
+    expect(() => toBuffer(Infinity)).toThrow("ptr must be a number");
+    expect(() => toBuffer(-Infinity)).toThrow("ptr must be a number");
   });
 
   test("toArrayBuffer with low invalid pointer does not crash", () => {
     expect(() => toArrayBuffer(2637)).toThrow("ptr to invalid memory");
     expect(() => toArrayBuffer(1)).toThrow("ptr to invalid memory");
     expect(() => toArrayBuffer(0)).toThrow();
+    expect(() => toArrayBuffer(NaN)).toThrow("ptr must be a number");
+    expect(() => toArrayBuffer(Infinity)).toThrow("ptr must be a number");
+    expect(() => toArrayBuffer(-Infinity)).toThrow("ptr must be a number");
   });
 });

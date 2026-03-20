@@ -489,10 +489,19 @@ pub const CronRegisterJob = struct {
             bun.default_allocator.free(abs_path);
             return globalObject.throw("Failed to get current working directory", .{});
         };
-        if (bun.strings.indexOfAny(cwd_owned, "'%\"\n") != null) {
-            bun.default_allocator.free(cwd_owned);
-            bun.default_allocator.free(abs_path);
-            return globalObject.throwInvalidArguments("Working directory must not contain quotes, percent signs, or newlines", .{});
+        // Validate cwd has no single quotes (shell escaping in crontab) or
+        // percent signs (cron interprets % as newline before the shell sees it)
+        for (cwd_owned) |c| {
+            if (c == '\'') {
+                bun.default_allocator.free(cwd_owned);
+                bun.default_allocator.free(abs_path);
+                return globalObject.throwInvalidArguments("Working directory must not contain single quotes", .{});
+            }
+            if (c == '%') {
+                bun.default_allocator.free(cwd_owned);
+                bun.default_allocator.free(abs_path);
+                return globalObject.throwInvalidArguments("Working directory must not contain percent signs (cron interprets % as newline)", .{});
+            }
         }
 
         const job = bun.handleOom(bun.default_allocator.create(CronRegisterJob));

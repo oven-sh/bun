@@ -13,7 +13,7 @@ test("expect.assertions does not crash when argument has Symbol.toPrimitive retu
       `,
     ],
     env: bunEnv,
-    stdout: "pipe",
+    stdout: "ignore",
     stderr: "pipe",
   });
 

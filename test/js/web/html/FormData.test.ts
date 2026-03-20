@@ -277,6 +277,25 @@ describe("FormData", () => {
     expect(fd.toJSON()).toEqual({ "1": "1" });
   });
 
+  test("FormData.toJSON handles duplicate numeric keys", () => {
+    const fd = new FormData();
+    fd.append("42", "a");
+    fd.append("42", "b");
+    fd.append("42", "c");
+    // @ts-expect-error - toJSON is a Bun extension
+    expect(fd.toJSON()).toEqual({ "42": ["a", "b", "c"] });
+  });
+
+  test("FormData.toJSON handles mixed numeric and named duplicate keys", () => {
+    const fd = new FormData();
+    fd.append("0", "a");
+    fd.append("name", "x");
+    fd.append("0", "b");
+    fd.append("name", "y");
+    // @ts-expect-error - toJSON is a Bun extension
+    expect(fd.toJSON()).toEqual({ "0": ["a", "b"], name: ["x", "y"] });
+  });
+
   test("FormData.from throws on very large input instead of crashing", () => {
     // This test verifies that FormData.from throws an exception instead of crashing
     // when given input larger than WebKit's String::MaxLength (INT32_MAX ~= 2GB).

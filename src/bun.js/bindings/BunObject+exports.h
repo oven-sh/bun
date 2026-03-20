@@ -93,7 +93,12 @@ FOR_EACH_GETTER(DECLARE_ZIG_BUN_OBJECT_GETTER);
 
 // definition of the C++ wrapper to call the Zig function
 #define DEFINE_ZIG_BUN_OBJECT_GETTER_WRAPPER(name) static JSC::JSValue BunObject_lazyPropCb_wrap_##name(JSC::VM &vm, JSC::JSObject *object) { \
-    return JSC::JSValue::decode(BunObject_lazyPropCb_##name(object->globalObject(), object)); \
+    auto result = JSC::JSValue::decode(BunObject_lazyPropCb_##name(object->globalObject(), object)); \
+    if (result.isEmpty()) [[unlikely]] { \
+        DECLARE_TOP_EXCEPTION_SCOPE(vm).clearException(); \
+        return JSC::jsUndefined(); \
+    } \
+    return result; \
 } \
 
 FOR_EACH_GETTER(DEFINE_ZIG_BUN_OBJECT_GETTER_WRAPPER);

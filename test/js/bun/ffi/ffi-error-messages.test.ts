@@ -1,4 +1,4 @@
-import { dlopen, linkSymbols, toBuffer, toArrayBuffer } from "bun:ffi";
+import { dlopen, linkSymbols, toArrayBuffer, toBuffer } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
 import { isArm64, isMusl, isWindows } from "harness";
 

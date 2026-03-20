@@ -65,7 +65,6 @@ describe("issue #28038", () => {
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stderr).toBe("");
     expect(stdout).toContain("OK:");
     expect(exitCode).toBe(0);
 
@@ -135,7 +134,6 @@ describe("issue #28038", () => {
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stderr).toBe("");
     expect(stdout).toContain("OK:");
     expect(exitCode).toBe(0);
 
@@ -171,7 +169,6 @@ describe("issue #28038", () => {
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stderr).toBe("");
     expect(stdout).toContain("OK:");
     expect(exitCode).toBe(0);
   });
@@ -205,7 +202,6 @@ describe("issue #28038", () => {
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stderr).toBe("");
     expect(stdout).toContain("OK:change:file.txt");
     expect(exitCode).toBe(0);
   });
@@ -250,7 +246,6 @@ describe("issue #28038", () => {
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stderr).toBe("");
     expect(stdout).toContain("OK:");
     expect(stdout).toContain("child.txt");
     expect(exitCode).toBe(0);

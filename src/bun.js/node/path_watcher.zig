@@ -966,11 +966,17 @@ pub const PathWatcher = struct {
     }
 
     pub fn unrefPendingDirectory(this: *PathWatcher) void {
-        this.mutex.lock();
-        defer this.mutex.unlock();
-        this.pending_directories -= 1;
-        if (this.isClosed() and this.pending_directories == 0) {
-            this.has_pending_directories.store(false, .release);
+        const should_deinit = blk: {
+            this.mutex.lock();
+            defer this.mutex.unlock();
+            this.pending_directories -= 1;
+            if (this.pending_directories == 0) {
+                this.has_pending_directories.store(false, .release);
+                break :blk this.isClosed();
+            }
+            break :blk false;
+        };
+        if (should_deinit) {
             this.deinit();
         }
     }

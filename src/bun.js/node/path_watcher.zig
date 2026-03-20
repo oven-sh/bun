@@ -480,9 +480,6 @@ pub const PathWatcherManager = struct {
         }
 
         fn schedule(manager: *PathWatcherManager, watcher: *PathWatcher, path: PathInfo) !void {
-            // keep the path alive
-            manager._incrementPathRef(path.path);
-            errdefer manager._decrementPathRef(path.path);
             var routine: *DirectoryRegisterTask = undefined;
             {
                 manager.mutex.lock();
@@ -510,16 +507,28 @@ pub const PathWatcherManager = struct {
                     return;
                 }
 
-                routine = try bun.default_allocator.create(DirectoryRegisterTask);
+                // Only increment path ref for new tasks — the reuse path
+                // above doesn't need an extra ref since the existing task
+                // already holds one via its initial schedule() call.
+                manager._incrementPathRef(path.path);
+
+                routine = bun.default_allocator.create(DirectoryRegisterTask) catch |err| {
+                    manager._decrementPathRefNoLock(path.path);
+                    return err;
+                };
                 routine.* = DirectoryRegisterTask{
                     .manager = manager,
                     .path = path,
                     .watcher_list = bun.BabyList(*PathWatcher).initCapacity(bun.default_allocator, 1) catch |err| {
+                        manager._decrementPathRefNoLock(path.path);
                         bun.default_allocator.destroy(routine);
                         return err;
                     },
                 };
-                errdefer routine.deinit();
+                errdefer {
+                    routine.deinit();
+                    manager._decrementPathRef(path.path);
+                }
                 if (watcher.refPendingDirectory()) {
                     routine.watcher_list.append(bun.default_allocator, watcher) catch |err| {
                         watcher.unrefPendingDirectory();

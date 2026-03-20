@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
-describe("FFI read rejects invalid pointers", () => {
+describe.concurrent("FFI read rejects invalid pointers", () => {
   const types = ["u8", "u16", "u32", "i8", "i16", "i32", "i64", "u64", "f32", "f64", "ptr", "intptr"] as const;
 
   for (const type of types) {

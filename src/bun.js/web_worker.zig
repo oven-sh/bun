@@ -614,6 +614,9 @@ pub fn exitAndDeinit(this: *WebWorker) noreturn {
     // Release the parent's keep-alive now, not in destroy() — the
     // C++ Worker may hold its ref until GC, and we don't want to
     // keep the parent's event loop alive waiting for that.
+    // Note: notifyNeedTermination() may have already called this —
+    // double-unref is safe because KeepAlive tracks internal state
+    // and permits idempotent unrefs.
     this.parent_poll_ref.unrefConcurrently(this.parent);
     bun.analytics.Features.workers_terminated += 1;
 

@@ -142,6 +142,9 @@ bool Worker::updatePtr()
     if (!WebWorker__updatePtr(impl_, this)) {
         m_onlineClosingFlags = ClosingFlag;
         m_terminationFlags.fetch_or(TerminatedFlag);
+        // Release the C++ ref on the Zig WebWorker — the destructor
+        // won't do this since we're about to null impl_.
+        WebWorker__release(impl_);
         impl_ = nullptr;
         // Balance the ref() taken in create() — the Zig thread never
         // started so WebWorker__dispatchExit will never run.

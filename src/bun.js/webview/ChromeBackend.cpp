@@ -642,13 +642,31 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         const char* elemStart = p;
         for (; p < end && idx < targetIdx; ++p) {
             char c = *p;
-            if (esc) { esc = false; continue; }
-            if (c == '\\') { esc = true; continue; }
-            if (c == '"') { inStr = !inStr; continue; }
+            if (esc) {
+                esc = false;
+                continue;
+            }
+            if (c == '\\') {
+                esc = true;
+                continue;
+            }
+            if (c == '"') {
+                inStr = !inStr;
+                continue;
+            }
             if (inStr) continue;
-            if (c == '{' || c == '[') { ++depth; continue; }
-            if (c == '}' || c == ']') { --depth; continue; }
-            if (c == ',' && depth == 0) { ++idx; elemStart = p + 1; }
+            if (c == '{' || c == '[') {
+                ++depth;
+                continue;
+            }
+            if (c == '}' || c == ']') {
+                --depth;
+                continue;
+            }
+            if (c == ',' && depth == 0) {
+                ++idx;
+                elemStart = p + 1;
+            }
         }
         if (idx < targetIdx || p >= end) {
             settle(g, view, entry.slot, true, jsUndefined()); // past end; no-op

@@ -7955,6 +7955,58 @@ declare module "bun" {
       modifiers?: Modifier[];
     }
 
+    /**
+     * Browser backend selection.
+     *
+     * - `"webkit"` (default): WKWebView. macOS only. Zero external
+     *   dependencies — uses the system WebKit.framework.
+     * - `"chrome"`: Chrome/Chromium via DevTools Protocol over
+     *   `--remote-debugging-pipe`. Works anywhere Chrome is installed.
+     *   Auto-detects the binary in standard locations; override with
+     *   `backend.path` or the `BUN_CHROME_PATH` environment variable.
+     *
+     * The object form lets you pass extra launch flags. Chrome switches are
+     * last-wins for duplicates, so `argv` can override the defaults.
+     *
+     * **Chrome is spawned once per process** — the first `new Bun.WebView()`
+     * call's `path`/`argv`/`dataStore.directory` win; subsequent views reuse
+     * the same Chrome instance via `Target.createTarget`.
+     *
+     * Default flags: `--remote-debugging-pipe --headless --no-first-run
+     * --no-default-browser-check --disable-gpu --user-data-dir=<temp>`.
+     */
+    type Backend =
+      | "webkit"
+      | "chrome"
+      | {
+          type: "chrome";
+          /** Path to the Chrome/Chromium executable. Overrides auto-detection. */
+          path?: string;
+          /**
+           * Extra command-line arguments appended after the default flags.
+           * Chrome's CommandLine does last-wins for duplicate switches, so
+           * `["--headless=new"]` would override the default `--headless`.
+           */
+          argv?: string[];
+        };
+
+    /**
+     * Console capture. Called for each `console.*` invocation in the page.
+     *
+     * - `globalThis.console`: forward directly to the parent's console.
+     *   `console.log("hi")` in the page prints `hi` to stdout with Bun's
+     *   formatter; `console.error` goes to stderr. Zero JS overhead per call
+     *   — dispatches through `ConsoleClient` directly.
+     * - `(type, ...args) => void`: custom callback. `type` is the method
+     *   name (`"log"` | `"warn"` | `"error"` | `"info"` | `"debug"` | ...).
+     *   Primitive args unwrap to their raw values; object args arrive as a
+     *   structured descriptor — for Chrome, the CDP `RemoteObject` with
+     *   `.type`/`.className`/`.description`/`.preview.properties`; for
+     *   WebKit, the JSON round-trip of the object (lossy for functions/
+     *   circular refs, which stringify to their `String(...)` coercion).
+     */
+    type ConsoleCapture = typeof console | ((type: string, ...args: unknown[]) => void);
+
     interface ConstructorOptions {
       /** Viewport width in pixels. Range: [1, 16384]. @default 800 */
       width?: number;
@@ -7963,39 +8015,70 @@ declare module "bun" {
       /** Only `true` (headless) is implemented. @default true */
       headless?: boolean;
       /**
+       * Browser backend. Defaults to `"webkit"` on macOS, throws on other
+       * platforms unless `"chrome"` is specified.
+       * @default "webkit"
+       */
+      backend?: Backend;
+      /**
+       * Initial URL to navigate to. The navigation starts before the
+       * constructor returns; `await view.navigate(otherUrl)` or any other
+       * operation will wait for it to complete first.
+       *
+       * Equivalent to calling `view.navigate(url)` immediately after
+       * construction.
+       */
+      url?: string;
+      /** Capture page-side `console.*` calls. See {@link ConsoleCapture}. */
+      console?: ConsoleCapture;
+      /**
        * Storage backing for cookies, localStorage, IndexedDB, etc.
        *
        * - `"ephemeral"` (default): in-memory only, nothing written to disk.
        * - `{ directory }`: persistent storage rooted at the given path.
        *   Multiple views with the same directory share state.
+       *
+       * **Chrome backend**: `directory` is per-Chrome-process
+       * (`--user-data-dir`), not per-view. The first view's directory
+       * applies to all views spawned in the same Bun process.
        */
       dataStore?: "ephemeral" | { directory: string };
     }
   }
 
   /**
-   * A headless WKWebView for browser automation. Currently macOS-only.
+   * A headless browser view for automation. WKWebView on macOS (zero
+   * dependencies), Chrome DevTools Protocol elsewhere (or with
+   * `backend: "chrome"`).
    *
-   * Each view runs its page in a separate WebContent process (WebKit2
-   * architecture). All input methods dispatch **native** events — mouse
-   * events go through the NSResponder chain, wheel events are synthesized
-   * via CGEvent, and the resulting DOM events have `isTrusted: true`.
+   * Each view runs its page in a separate renderer process. All input
+   * methods dispatch **native** events — the resulting DOM events have
+   * `isTrusted: true`.
    *
    * @example
    * ```ts
-   * const view = new Bun.WebView({ width: 800, height: 600 });
+   * await using view = new Bun.WebView({ width: 800, height: 600 });
    * await view.navigate("https://example.com");
    * await view.click("button[type=submit]");  // waits for actionability
    * const title = await view.evaluate("document.title");
    * const png = await view.screenshot();
-   * view.close();
+   * ```
+   *
+   * @example
+   * ```ts
+   * // Forward page console.log to parent stdout
+   * const view = new Bun.WebView({
+   *   backend: "chrome",
+   *   console: globalThis.console,
+   * });
    * ```
    *
    * @experimental
    */
   class WebView {
     /**
-     * @throws on non-macOS platforms (not yet implemented).
+     * @throws on non-macOS platforms when `backend` is `"webkit"` (the
+     * default). Pass `backend: "chrome"` for cross-platform support.
      */
     constructor(options?: WebView.ConstructorOptions);
 

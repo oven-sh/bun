@@ -165,6 +165,14 @@ pub const WatchEvent = struct {
     }
 
     pub fn merge(this: *WatchEvent, other: WatchEvent) void {
+        // If the base event has no name but the merged one does, adopt
+        // the merged event's remapped name_off so names() indexes
+        // correctly.  Without this, a nameless IN_ATTRIB event sorted
+        // before a named IN_CREATE keeps its stale name_off, causing
+        // an OOB access in names().
+        if (this.name_len == 0 and other.name_len > 0) {
+            this.name_off = other.name_off;
+        }
         this.name_len += other.name_len;
         this.op = Op.merge(this.op, other.op);
     }

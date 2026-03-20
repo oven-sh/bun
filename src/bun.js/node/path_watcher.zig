@@ -485,6 +485,13 @@ pub const PathWatcherManager = struct {
                 if (manager.current_fd_task.getEntry(path.fd)) |entry| {
                     routine = entry.value_ptr.*;
 
+                    // Dedup: don't add the same watcher twice for the same
+                    // directory (can happen when processWatcher and
+                    // _registerNewSubdirectory race on the same subdirectory).
+                    for (routine.watcher_list.slice()) |w| {
+                        if (w == watcher) return;
+                    }
+
                     if (watcher.refPendingDirectory()) {
                         routine.watcher_list.append(bun.default_allocator, watcher) catch |err| {
                             watcher.unrefPendingDirectory();

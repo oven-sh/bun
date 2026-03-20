@@ -833,7 +833,7 @@ pub const FFI = struct {
     pub fn closeCallback(globalThis: *JSGlobalObject, ctx: JSValue) bun.JSError!JSValue {
         if (!ctx.isNumber()) return globalThis.throwInvalidArguments("Expected a FFI callback context", .{});
         const num = ctx.asNumber();
-        if (!std.math.isFinite(num) or !(num >= @as(f64, @floatFromInt(std.heap.page_size_min))) or num >= @as(f64, @floatFromInt(std.math.maxInt(usize))))
+        if (!std.math.isFinite(num) or num != @trunc(num) or !(num >= @as(f64, @floatFromInt(std.heap.page_size_min))) or num >= @as(f64, @floatFromInt(std.math.maxInt(usize))))
             return globalThis.throwInvalidArguments("Expected a FFI callback context", .{});
         const function: *Function = @ptrFromInt(@as(usize, @intFromFloat(num)));
         function.deinit(globalThis);

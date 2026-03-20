@@ -20,11 +20,20 @@
 #include <wtf/text/MakeString.h>
 #include <wtf/text/Base64.h>
 
-#include <unistd.h>
 #include <errno.h>
 #include <mutex>
 #include <stdio.h>
 #include <stdlib.h>
+
+#if OS(WINDOWS)
+// Bun__Chrome__ensure returns -1 on Windows (no socketpair/pipe fcntl);
+// the ::close call in the us_socket_from_fd failure path never runs.
+// Stub it so the compiler doesn't need unistd.h.
+#include <io.h>
+#define close _close
+#else
+#include <unistd.h>
+#endif
 
 #include "libusockets.h"
 #include "_libusockets.h"

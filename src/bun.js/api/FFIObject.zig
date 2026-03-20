@@ -66,15 +66,31 @@ pub const Reader = struct {
         return obj;
     }
 
+    fn validateAddr(globalObject: *JSGlobalObject, arguments: []const JSValue) bun.JSError!usize {
+        if (arguments.len == 0 or !arguments[0].isNumber()) {
+            return globalObject.throwInvalidArguments("Expected a pointer", .{});
+        }
+        const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @as(usize, @intCast(arguments[1].to(i32))) else @as(usize, 0);
+        if (addr < 4096 or addr == 0xDEADBEEF or addr == 0xaaaaaaaa or addr == 0xAAAAAAAA or addr > max_addressable_memory) {
+            return globalObject.throwInvalidArguments("Invalid pointer", .{});
+        }
+        return addr;
+    }
+
+    fn validateAddrFast(raw_addr: i64, offset: i32) ?usize {
+        const addr = @as(usize, @intCast(raw_addr)) + @as(usize, @intCast(offset));
+        if (addr < 4096 or addr == 0xDEADBEEF or addr == 0xaaaaaaaa or addr == 0xAAAAAAAA or addr > max_addressable_memory) {
+            return null;
+        }
+        return addr;
+    }
+
     pub fn @"u8"(
         globalObject: *JSGlobalObject,
         _: JSValue,
         arguments: []const JSValue,
     ) bun.JSError!JSValue {
-        if (arguments.len == 0 or !arguments[0].isNumber()) {
-            return globalObject.throwInvalidArguments("Expected a pointer", .{});
-        }
-        const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @as(usize, @intCast(arguments[1].to(i32))) else @as(usize, 0);
+        const addr = try validateAddr(globalObject, arguments);
         const value = @as(*align(1) u8, @ptrFromInt(addr)).*;
         return JSValue.jsNumber(value);
     }
@@ -83,10 +99,7 @@ pub const Reader = struct {
         _: JSValue,
         arguments: []const JSValue,
     ) bun.JSError!JSValue {
-        if (arguments.len == 0 or !arguments[0].isNumber()) {
-            return globalObject.throwInvalidArguments("Expected a pointer", .{});
-        }
-        const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @as(usize, @intCast(arguments[1].to(i32))) else @as(usize, 0);
+        const addr = try validateAddr(globalObject, arguments);
         const value = @as(*align(1) u16, @ptrFromInt(addr)).*;
         return JSValue.jsNumber(value);
     }
@@ -95,10 +108,7 @@ pub const Reader = struct {
         _: JSValue,
         arguments: []const JSValue,
     ) bun.JSError!JSValue {
-        if (arguments.len == 0 or !arguments[0].isNumber()) {
-            return globalObject.throwInvalidArguments("Expected a pointer", .{});
-        }
-        const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @as(usize, @intCast(arguments[1].to(i32))) else @as(usize, 0);
+        const addr = try validateAddr(globalObject, arguments);
         const value = @as(*align(1) u32, @ptrFromInt(addr)).*;
         return JSValue.jsNumber(value);
     }
@@ -107,10 +117,7 @@ pub const Reader = struct {
         _: JSValue,
         arguments: []const JSValue,
     ) bun.JSError!JSValue {
-        if (arguments.len == 0 or !arguments[0].isNumber()) {
-            return globalObject.throwInvalidArguments("Expected a pointer", .{});
-        }
-        const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @as(usize, @intCast(arguments[1].to(i32))) else @as(usize, 0);
+        const addr = try validateAddr(globalObject, arguments);
         const value = @as(*align(1) u64, @ptrFromInt(addr)).*;
         return JSValue.jsNumber(value);
     }
@@ -119,10 +126,7 @@ pub const Reader = struct {
         _: JSValue,
         arguments: []const JSValue,
     ) bun.JSError!JSValue {
-        if (arguments.len == 0 or !arguments[0].isNumber()) {
-            return globalObject.throwInvalidArguments("Expected a pointer", .{});
-        }
-        const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @as(usize, @intCast(arguments[1].to(i32))) else @as(usize, 0);
+        const addr = try validateAddr(globalObject, arguments);
         const value = @as(*align(1) i8, @ptrFromInt(addr)).*;
         return JSValue.jsNumber(value);
     }
@@ -131,10 +135,7 @@ pub const Reader = struct {
         _: JSValue,
         arguments: []const JSValue,
     ) bun.JSError!JSValue {
-        if (arguments.len == 0 or !arguments[0].isNumber()) {
-            return globalObject.throwInvalidArguments("Expected a pointer", .{});
-        }
-        const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @as(usize, @intCast(arguments[1].to(i32))) else @as(usize, 0);
+        const addr = try validateAddr(globalObject, arguments);
         const value = @as(*align(1) i16, @ptrFromInt(addr)).*;
         return JSValue.jsNumber(value);
     }
@@ -143,10 +144,7 @@ pub const Reader = struct {
         _: JSValue,
         arguments: []const JSValue,
     ) bun.JSError!JSValue {
-        if (arguments.len == 0 or !arguments[0].isNumber()) {
-            return globalObject.throwInvalidArguments("Expected a pointer", .{});
-        }
-        const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @as(usize, @intCast(arguments[1].to(i32))) else @as(usize, 0);
+        const addr = try validateAddr(globalObject, arguments);
         const value = @as(*align(1) i32, @ptrFromInt(addr)).*;
         return JSValue.jsNumber(value);
     }
@@ -155,10 +153,7 @@ pub const Reader = struct {
         _: JSValue,
         arguments: []const JSValue,
     ) bun.JSError!JSValue {
-        if (arguments.len == 0 or !arguments[0].isNumber()) {
-            return globalObject.throwInvalidArguments("Expected a pointer", .{});
-        }
-        const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @as(usize, @intCast(arguments[1].to(i32))) else @as(usize, 0);
+        const addr = try validateAddr(globalObject, arguments);
         const value = @as(*align(1) i64, @ptrFromInt(addr)).*;
         return JSValue.jsNumber(value);
     }
@@ -168,10 +163,7 @@ pub const Reader = struct {
         _: JSValue,
         arguments: []const JSValue,
     ) bun.JSError!JSValue {
-        if (arguments.len == 0 or !arguments[0].isNumber()) {
-            return globalObject.throwInvalidArguments("Expected a pointer", .{});
-        }
-        const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @as(usize, @intCast(arguments[1].to(i32))) else @as(usize, 0);
+        const addr = try validateAddr(globalObject, arguments);
         const value = @as(*align(1) f32, @ptrFromInt(addr)).*;
         return JSValue.jsNumber(value);
     }
@@ -181,10 +173,7 @@ pub const Reader = struct {
         _: JSValue,
         arguments: []const JSValue,
     ) bun.JSError!JSValue {
-        if (arguments.len == 0 or !arguments[0].isNumber()) {
-            return globalObject.throwInvalidArguments("Expected a pointer", .{});
-        }
-        const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @as(usize, @intCast(arguments[1].to(i32))) else @as(usize, 0);
+        const addr = try validateAddr(globalObject, arguments);
         const value = @as(*align(1) f64, @ptrFromInt(addr)).*;
         return JSValue.jsNumber(value);
     }
@@ -194,10 +183,7 @@ pub const Reader = struct {
         _: JSValue,
         arguments: []const JSValue,
     ) bun.JSError!JSValue {
-        if (arguments.len == 0 or !arguments[0].isNumber()) {
-            return globalObject.throwInvalidArguments("Expected a pointer", .{});
-        }
-        const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @as(usize, @intCast(arguments[1].to(i32))) else @as(usize, 0);
+        const addr = try validateAddr(globalObject, arguments);
         const value = @as(*align(1) i64, @ptrFromInt(addr)).*;
         return JSValue.fromInt64NoTruncate(globalObject, value);
     }
@@ -207,10 +193,7 @@ pub const Reader = struct {
         _: JSValue,
         arguments: []const JSValue,
     ) bun.JSError!JSValue {
-        if (arguments.len == 0 or !arguments[0].isNumber()) {
-            return globalObject.throwInvalidArguments("Expected a pointer", .{});
-        }
-        const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @as(usize, @intCast(arguments[1].to(i32))) else @as(usize, 0);
+        const addr = try validateAddr(globalObject, arguments);
         const value = @as(*align(1) u64, @ptrFromInt(addr)).*;
         return JSValue.fromUInt64NoTruncate(globalObject, value);
     }
@@ -221,7 +204,7 @@ pub const Reader = struct {
         raw_addr: i64,
         offset: i32,
     ) callconv(jsc.conv) JSValue {
-        const addr = @as(usize, @intCast(raw_addr)) + @as(usize, @intCast(offset));
+        const addr = validateAddrFast(raw_addr, offset) orelse return .zero;
         const value = @as(*align(1) u8, @ptrFromInt(addr)).*;
         return JSValue.jsNumber(value);
     }
@@ -231,7 +214,7 @@ pub const Reader = struct {
         raw_addr: i64,
         offset: i32,
     ) callconv(jsc.conv) JSValue {
-        const addr = @as(usize, @intCast(raw_addr)) + @as(usize, @intCast(offset));
+        const addr = validateAddrFast(raw_addr, offset) orelse return .zero;
         const value = @as(*align(1) u16, @ptrFromInt(addr)).*;
         return JSValue.jsNumber(value);
     }
@@ -241,7 +224,7 @@ pub const Reader = struct {
         raw_addr: i64,
         offset: i32,
     ) callconv(jsc.conv) JSValue {
-        const addr = @as(usize, @intCast(raw_addr)) + @as(usize, @intCast(offset));
+        const addr = validateAddrFast(raw_addr, offset) orelse return .zero;
         const value = @as(*align(1) u32, @ptrFromInt(addr)).*;
         return JSValue.jsNumber(value);
     }
@@ -251,7 +234,7 @@ pub const Reader = struct {
         raw_addr: i64,
         offset: i32,
     ) callconv(jsc.conv) JSValue {
-        const addr = @as(usize, @intCast(raw_addr)) + @as(usize, @intCast(offset));
+        const addr = validateAddrFast(raw_addr, offset) orelse return .zero;
         const value = @as(*align(1) u64, @ptrFromInt(addr)).*;
         return JSValue.jsNumber(value);
     }
@@ -261,7 +244,7 @@ pub const Reader = struct {
         raw_addr: i64,
         offset: i32,
     ) callconv(jsc.conv) JSValue {
-        const addr = @as(usize, @intCast(raw_addr)) + @as(usize, @intCast(offset));
+        const addr = validateAddrFast(raw_addr, offset) orelse return .zero;
         const value = @as(*align(1) i8, @ptrFromInt(addr)).*;
         return JSValue.jsNumber(value);
     }
@@ -271,7 +254,7 @@ pub const Reader = struct {
         raw_addr: i64,
         offset: i32,
     ) callconv(jsc.conv) JSValue {
-        const addr = @as(usize, @intCast(raw_addr)) + @as(usize, @intCast(offset));
+        const addr = validateAddrFast(raw_addr, offset) orelse return .zero;
         const value = @as(*align(1) i16, @ptrFromInt(addr)).*;
         return JSValue.jsNumber(value);
     }
@@ -281,7 +264,7 @@ pub const Reader = struct {
         raw_addr: i64,
         offset: i32,
     ) callconv(jsc.conv) JSValue {
-        const addr = @as(usize, @intCast(raw_addr)) + @as(usize, @intCast(offset));
+        const addr = validateAddrFast(raw_addr, offset) orelse return .zero;
         const value = @as(*align(1) i32, @ptrFromInt(addr)).*;
         return JSValue.jsNumber(value);
     }
@@ -291,7 +274,7 @@ pub const Reader = struct {
         raw_addr: i64,
         offset: i32,
     ) callconv(jsc.conv) JSValue {
-        const addr = @as(usize, @intCast(raw_addr)) + @as(usize, @intCast(offset));
+        const addr = validateAddrFast(raw_addr, offset) orelse return .zero;
         const value = @as(*align(1) i64, @ptrFromInt(addr)).*;
         return JSValue.jsNumber(value);
     }
@@ -302,7 +285,7 @@ pub const Reader = struct {
         raw_addr: i64,
         offset: i32,
     ) callconv(jsc.conv) JSValue {
-        const addr = @as(usize, @intCast(raw_addr)) + @as(usize, @intCast(offset));
+        const addr = validateAddrFast(raw_addr, offset) orelse return .zero;
         const value = @as(*align(1) f32, @ptrFromInt(addr)).*;
         return JSValue.jsNumber(value);
     }
@@ -313,7 +296,7 @@ pub const Reader = struct {
         raw_addr: i64,
         offset: i32,
     ) callconv(jsc.conv) JSValue {
-        const addr = @as(usize, @intCast(raw_addr)) + @as(usize, @intCast(offset));
+        const addr = validateAddrFast(raw_addr, offset) orelse return .zero;
         const value = @as(*align(1) f64, @ptrFromInt(addr)).*;
         return JSValue.jsNumber(value);
     }
@@ -324,7 +307,7 @@ pub const Reader = struct {
         raw_addr: i64,
         offset: i32,
     ) callconv(jsc.conv) JSValue {
-        const addr = @as(usize, @intCast(raw_addr)) + @as(usize, @intCast(offset));
+        const addr = validateAddrFast(raw_addr, offset) orelse return .zero;
         const value = @as(*align(1) u64, @ptrFromInt(addr)).*;
         return JSValue.fromUInt64NoTruncate(global, value);
     }
@@ -335,7 +318,7 @@ pub const Reader = struct {
         raw_addr: i64,
         offset: i32,
     ) callconv(jsc.conv) JSValue {
-        const addr = @as(usize, @intCast(raw_addr)) + @as(usize, @intCast(offset));
+        const addr = validateAddrFast(raw_addr, offset) orelse return .zero;
         const value = @as(*align(1) i64, @ptrFromInt(addr)).*;
         return JSValue.fromInt64NoTruncate(global, value);
     }

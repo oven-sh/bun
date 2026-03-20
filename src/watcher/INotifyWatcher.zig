@@ -243,6 +243,14 @@ pub fn watchLoopCycle(this: *bun.Watcher) bun.sys.Maybe(void) {
     };
     if (events.len == 0) return .success;
 
+    // Hold Watcher.mutex for the entire event batch so watchlist cannot be
+    // reallocated by concurrent addDirectory/addFile calls (from WorkPool
+    // threads via DirectoryRegisterTask or NewSubdirBatch in path_watcher).
+    // Previously the lock was only held inside processINotifyEventBatch, but
+    // eventlist_index is captured here and used across multiple batches.
+    this.mutex.lock();
+    defer this.mutex.unlock();
+
     const eventlist_index = this.watchlist.items(.eventlist_index);
 
     var event_id: usize = 0;
@@ -356,8 +364,7 @@ fn processINotifyEventBatch(this: *bun.Watcher, event_count: usize, temp_name_li
     }
     if (all_events.len == 0) return .success;
 
-    this.mutex.lock();
-    defer this.mutex.unlock();
+    // Watcher.mutex is held by watchLoopCycle for the entire event batch.
     if (this.running) {
         // all_events.len == 0 is checked above, so last_event_index + 1 is safe
         this.writeTraceEvents(all_events[0 .. last_event_index + 1], this.changed_filepaths[0..name_off]);

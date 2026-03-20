@@ -554,17 +554,22 @@ pub const PathWatcherManager = struct {
         ) bun.sys.Maybe(void) {
             if (Environment.isWindows) @compileError("use win_watcher.zig");
 
-            // For recursive watches, enumerate to discover subdirectories so
-            // we can add inotify watches on them. Individual files are covered
-            // by their parent directory's inotify watch. Non-recursive watches
-            // never reach this function — _addDirectory short-circuits before
-            // scheduling the task.
+            // For recursive watches, enumerate all children. Emit a synthetic
+            // 'rename' for each (matching Node.js's recursive_watch.js, which
+            // emits on discovery). This also covers the race where a file is
+            // created in a new subdirectory before the inotify watch is added —
+            // the inotify IN_CREATE is missed but the scan finds the file.
+            // For subdirectories, also register an inotify watch and recurse.
+            // Non-recursive watches never reach this function — _addDirectory
+            // short-circuits before scheduling the task.
             bun.debugAssert(watcher.recursive);
 
             const manager = this.manager;
             const path = this.path;
             const fd = path.fd;
             var iter = fd.stdDir().iterate();
+            const timestamp = std.time.milliTimestamp();
+            const entry_point = watcher.path.dirname;
 
             while (iter.next() catch |err| {
                 return .{
@@ -580,10 +585,6 @@ pub const PathWatcherManager = struct {
                     },
                 };
             }) |entry| {
-                // Only recurse into subdirectories. Node.js's recursive_watch.js
-                // recurses only if file.isDirectory() && !file.isSymbolicLink(),
-                // so we match that — no symlink following, no .unknown probing.
-                if (entry.kind != .directory) continue;
                 if (watcher.isClosed()) break;
 
                 var parts = [2]string{ path.path, entry.name };
@@ -593,7 +594,22 @@ pub const PathWatcherManager = struct {
                     &parts,
                     .auto,
                 );
+                const hash = Watcher.getHash(entry_path);
 
+                // Emit 'rename' for this entry, relative to the watch root.
+                // Skip if the entry is outside the root (shouldn't happen in
+                // practice, but the same guard exists in onFileUpdate).
+                if (entry_path.len > entry_point.len and bun.strings.startsWith(entry_path, entry_point)) {
+                    var rel: []const u8 = entry_path[entry_point.len..];
+                    if (bun.strings.startsWithChar(rel, '/')) rel = rel[1..];
+                    if (rel.len > 0) {
+                        watcher.emit(PathWatcher.EventType.rename.toEvent(rel), hash, timestamp, entry.kind != .directory);
+                    }
+                }
+
+                // Only recurse into subdirectories. Node.js's recursive_watch.js
+                // recurses only if file.isDirectory() && !file.isSymbolicLink().
+                if (entry.kind != .directory) continue;
                 buf[entry_path.len] = 0;
                 const entry_path_z = buf[0..entry_path.len :0];
 

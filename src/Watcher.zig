@@ -125,6 +125,13 @@ pub fn deinit(this: *Watcher, close_descriptors: bool) void {
                 fd.close();
             }
         }
+        // Free cloned file_path strings before freeing the backing arrays.
+        const slice = this.watchlist.slice();
+        const file_paths = slice.items(.file_path);
+        const owns = slice.items(.owns_file_path);
+        for (file_paths, owns) |fp, owned| {
+            if (owned) this.allocator.free(fp);
+        }
         this.watchlist.deinit(this.allocator);
         const allocator = this.allocator;
         allocator.destroy(this);
@@ -228,6 +235,9 @@ pub const WatchItem = struct {
     kind: Kind,
     package_json: ?*PackageJSON,
     eventlist_index: if (Environment.isLinux) Platform.EventListIndex else u0 = 0,
+    /// true when file_path was heap-allocated by dupeZ (clone_file_path=true)
+    /// and must be freed on eviction/deinit.
+    owns_file_path: bool = false,
 
     pub const Kind = enum { file, directory };
 };
@@ -258,6 +268,15 @@ fn threadMain(this: *Watcher) !void {
             fd.close();
         }
     }
+    // Free cloned file_path strings before freeing backing arrays.
+    {
+        const slice = this.watchlist.slice();
+        const file_paths = slice.items(.file_path);
+        const owns = slice.items(.owns_file_path);
+        for (file_paths, owns) |fp, owned| {
+            if (owned) this.allocator.free(fp);
+        }
+    }
     this.watchlist.deinit(this.allocator);
 
     // Close trace file if open
@@ -283,6 +302,8 @@ pub fn flushEvictions(this: *Watcher) void {
 
     var slice = this.watchlist.slice();
     const fds = slice.items(.fd);
+    const file_paths = slice.items(.file_path);
+    const owns = slice.items(.owns_file_path);
     var last_item = no_watch_item;
 
     for (this.evict_list[0..this.evict_list_i]) |item| {
@@ -295,6 +316,10 @@ pub fn flushEvictions(this: *Watcher) void {
             if (fds[item].isValid()) {
                 fds[item].close();
             }
+        }
+        // Free cloned file_path strings (from clone_file_path=true).
+        if (owns[item]) {
+            this.allocator.free(file_paths[item]);
         }
         last_item = item;
     }
@@ -396,6 +421,7 @@ fn appendFileAssumeCapacity(
         .parent_hash = parent_hash,
         .package_json = package_json,
         .kind = .file,
+        .owns_file_path = clone_file_path,
     };
 
     if (comptime Environment.isMac) {
@@ -458,6 +484,7 @@ fn appendDirectoryAssumeCapacity(
         .parent_hash = parent_hash,
         .kind = .directory,
         .package_json = null,
+        .owns_file_path = clone_file_path,
     };
 
     if (Environment.isMac) {

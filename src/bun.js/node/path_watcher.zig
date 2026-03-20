@@ -803,8 +803,17 @@ pub const PathWatcherManager = struct {
     // _decrementPathRefNoLock always closes fds when refs reach 0.
     const _decrementPathRefAndClose = _decrementPathRef;
 
-    // unregister is always called form main thread
+    // unregister is always called from main thread.
+    // Collects paths to decrement under manager.mutex, then decrements
+    // outside it to avoid AB/BA deadlock with Watcher.mutex (held by
+    // the watcher thread during onFileUpdate → manager.mutex).
     fn unregisterWatcher(this: *PathWatcherManager, watcher: *PathWatcher) void {
+        // Collect paths to decrement — _decrementPathRef locks manager.mutex
+        // internally and may call main_watcher.remove which locks Watcher.mutex,
+        // so we must NOT hold manager.mutex when calling it.
+        var paths_to_decrement: bun.BabyList([:0]const u8) = .{};
+        defer paths_to_decrement.deinit(bun.default_allocator);
+
         const should_deinit = blk: {
             this.mutex.lock();
             defer this.mutex.unlock();
@@ -815,24 +824,26 @@ pub const PathWatcherManager = struct {
                 if (w) |item| {
                     if (item == watcher) {
                         watchers[i] = null;
-                        // if is the last one just pop
                         if (i == watchers.len - 1) {
                             this.watchers.len -= 1;
                         }
                         this.watcher_count -= 1;
 
-                        this._decrementPathRefNoLock(watcher.path.path);
+                        // Collect the watcher's own path
+                        paths_to_decrement.append(bun.default_allocator, watcher.path.path) catch {};
+
                         if (comptime Environment.isMac) {
                             if (watcher.fsevents_watcher != null) {
                                 break;
                             }
                         }
 
+                        // Collect all sub-paths
                         {
                             watcher.mutex.lock();
                             defer watcher.mutex.unlock();
                             while (watcher.file_paths.pop()) |file_path| {
-                                this._decrementPathRefNoLock(file_path);
+                                paths_to_decrement.append(bun.default_allocator, file_path) catch {};
                             }
                         }
                         break;
@@ -842,6 +853,15 @@ pub const PathWatcherManager = struct {
 
             break :blk this.deinit_on_last_watcher and this.watcher_count == 0;
         };
+
+        // Decrement refs outside manager.mutex to avoid AB/BA deadlock.
+        // _decrementPathRef locks manager.mutex → main_watcher.remove locks
+        // Watcher.mutex. If we held manager.mutex here, the watcher thread
+        // (holding Watcher.mutex → onFileUpdate → manager.mutex) would deadlock.
+        for (paths_to_decrement.slice()) |file_path| {
+            this._decrementPathRef(file_path);
+        }
+
         if (should_deinit) {
             this.deinit();
         }

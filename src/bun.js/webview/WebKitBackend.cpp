@@ -19,6 +19,9 @@
 #include <JavaScriptCore/JSONObject.h>
 #include <JavaScriptCore/Weak.h>
 #include <JavaScriptCore/WeakInlines.h>
+#include <JavaScriptCore/ConsoleClient.h>
+#include <JavaScriptCore/ScriptArguments.h>
+#include <JavaScriptCore/Strong.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/NeverDestroyed.h>
 #include <mutex>
@@ -262,6 +265,54 @@ void HostClient::handleReply(const Frame& h, Reader r)
             Bun__EventLoop__runCallback2(g, JSValue::encode(cb), JSValue::encode(jsUndefined()),
                 JSValue::encode(createError(g, err)), JSValue::encode(jsUndefined()));
         }
+        return;
+    }
+
+    case Reply::ConsoleEvent: {
+        if (!view->m_consoleIsGlobal && !view->m_onConsole) return;
+        WTF::String type = r.str();
+        uint32_t argCount = r.u32();
+
+        MarkedArgumentBuffer args;
+        for (uint32_t i = 0; i < argCount; ++i) {
+            WTF::String s = r.str();
+            // Each arg was JSON.stringify'd page-side; JSONParse to recover
+            // the structured value. Primitives round-trip losslessly; objects
+            // get their JSON representation. Values JSON.stringify can't
+            // serialize (functions, undefined) fell back to String(x) in the
+            // user script — JSONParse returns {} for those.
+            JSValue v = s.isEmpty() ? jsUndefined() : JSONParse(g, s);
+            args.append(v ? v : jsUndefined());
+        }
+
+        if (view->m_consoleIsGlobal) {
+            // ConsoleClient::logWithLevel — same path as native
+            // console.log(). trace/dir render through Log level.
+            using JSC::MessageLevel;
+            MessageLevel ml = MessageLevel::Log;
+            if (type == "error"_s) ml = MessageLevel::Error;
+            else if (type == "warn"_s) ml = MessageLevel::Warning;
+            else if (type == "debug"_s) ml = MessageLevel::Debug;
+            else if (type == "info"_s) ml = MessageLevel::Info;
+
+            WTF::Vector<Strong<Unknown>> strongArgs;
+            strongArgs.reserveInitialCapacity(args.size());
+            for (unsigned i = 0; i < args.size(); ++i)
+                strongArgs.append(Strong<Unknown>(vm, args.at(i)));
+            auto scriptArgs = Inspector::ScriptArguments::create(g, WTF::move(strongArgs));
+            if (auto clientRef = g->consoleClient())
+                clientRef->logWithLevel(g, WTF::move(scriptArgs), ml);
+            return;
+        }
+
+        // Custom callback: (type, ...args).
+        JSObject* cb = view->m_onConsole.get();
+        auto callData = getCallData(cb);
+        if (callData.type == CallData::Type::None) return;
+        MarkedArgumentBuffer cbArgs;
+        cbArgs.append(jsString(vm, type.isEmpty() ? "log"_s : type));
+        for (unsigned i = 0; i < args.size(); ++i) cbArgs.append(args.at(i));
+        call(g, cb, callData, jsUndefined(), cbArgs);
         return;
     }
 

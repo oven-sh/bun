@@ -216,6 +216,13 @@ enum class Reply : uint8_t {
     // NavDone/NavFailed reply so the callback fires before `await` resumes.
     NavEvent = 10, // u32 urlLen, url, u32 titleLen, title
     NavFailEvent = 11, // u32 errLen, err
+
+    // Unsolicited — fires the console callback or forwards to the global
+    // console. A user-script wrap of console.{log,warn,...} posts via
+    // WKScriptMessageHandler; the delegate packs and ships this event.
+    // Payload: str type + u32 argCount + (str arg)*, where each arg is
+    // the page-side JSON.stringify of the console argument.
+    ConsoleEvent = 12,
 };
 
 enum class DataStoreKind : uint8_t {

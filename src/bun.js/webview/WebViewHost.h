@@ -61,6 +61,9 @@ public:
     void onEvalComplete(id result, id error);
     void onScreenshotComplete(id nsimage, id error);
     void onSelectorComplete(id result, id error);
+    // WKScriptMessageHandler — the console-capture user script posts
+    // {type, args}; pack str type + u32 count + str[count] and IPC.
+    void onConsoleMessage(id type, id args);
 
 private:
     WebViewHost() = default;

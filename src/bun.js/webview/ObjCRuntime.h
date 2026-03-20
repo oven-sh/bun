@@ -140,6 +140,15 @@ struct NSNumber : Ref {
     static NSNumber withDouble(double d) { return msgCls<id>(cls, s_numberWithDouble, d); }
 };
 
+struct NSArray : Ref {
+    using Ref::Ref;
+    static SEL s_count;
+    static SEL s_objectAtIndex;
+
+    unsigned long count() const { return msg<unsigned long>(s_count); }
+    id objectAtIndex(unsigned long i) const { return msg<id>(s_objectAtIndex, i); }
+};
+
 struct NSDictionary : Ref {
     using Ref::Ref;
     static Class cls;
@@ -432,8 +441,51 @@ struct WKWebViewConfiguration : Ref {
         return cfg;
     }
 
+    // WKWebViewConfiguration owns a WKUserContentController — the hook
+    // for user scripts (injected at document-start/end) and script
+    // message handlers (the JS → native bridge the console wrap uses).
+    static SEL s_userContentController;
+    id userContentController() const { return msg<id>(s_userContentController); }
+
 private:
     static id persistentStoreForDirectory(const WTF::String &directory);
+};
+
+struct WKUserScript : Ref {
+    using Ref::Ref;
+    static Class cls;
+    static SEL s_initWithSource_injectionTime_forMainFrameOnly;
+
+    // +1 retained. WKUserScriptInjectionTimeAtDocumentStart = 0;
+    // forMainFrameOnly NO so subframes get the wrap too.
+    static WKUserScript createAtDocumentStart(NSString source)
+    {
+        WKUserScript s(msgCls<id>(cls, s_alloc));
+        s.m_id = s.msg<id>(s_initWithSource_injectionTime_forMainFrameOnly,
+            source.m_id, (long)0, (signed char)0);
+        return s;
+    }
+};
+
+struct WKUserContentController : Ref {
+    using Ref::Ref;
+    static SEL s_addScriptMessageHandler_name;
+    static SEL s_addUserScript;
+
+    void addScriptMessageHandler(id handler, NSString name)
+    {
+        msg<void>(s_addScriptMessageHandler_name, handler, name.m_id);
+    }
+    void addUserScript(WKUserScript script) { msg<void>(s_addUserScript, script.m_id); }
+};
+
+struct WKScriptMessage : Ref {
+    using Ref::Ref;
+    static SEL s_body;
+
+    // NSNumber, NSString, NSDate, NSArray, NSDictionary, or NSNull — a
+    // serialized copy of what JS passed to postMessage.
+    id body() const { return msg<id>(s_body); }
 };
 
 struct WKWebView : Ref {

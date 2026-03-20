@@ -43,6 +43,9 @@ SEL NSData::s_length;
 Class NSNumber::cls;
 SEL NSNumber::s_numberWithDouble;
 
+SEL NSArray::s_count;
+SEL NSArray::s_objectAtIndex;
+
 Class NSDictionary::cls;
 SEL NSDictionary::s_dictionaryWithObjects_forKeys_count;
 SEL NSDictionary::s_objectForKey;
@@ -133,6 +136,15 @@ id WKWebViewConfiguration::persistentStoreForDirectory(const WTF::String& direct
     return store.m_id;
 }
 SEL WKWebViewConfiguration::s_setWebsiteDataStore;
+SEL WKWebViewConfiguration::s_userContentController;
+
+Class WKUserScript::cls;
+SEL WKUserScript::s_initWithSource_injectionTime_forMainFrameOnly;
+
+SEL WKUserContentController::s_addScriptMessageHandler_name;
+SEL WKUserContentController::s_addUserScript;
+
+SEL WKScriptMessage::s_body;
 
 Class WKWebView::cls;
 Class WKWebView::cls_WKSnapshotConfiguration;
@@ -181,6 +193,21 @@ static void delegateDidFailNavigation(id self, SEL, id /*webView*/, id /*navigat
 static void delegateDidFailProvisionalNavigation(id self, SEL _cmd, id webView, id navigation, id error)
 {
     delegateDidFailNavigation(self, _cmd, webView, navigation, error);
+}
+
+// userContentController:didReceiveScriptMessage:
+// (WKScriptMessageHandler). The console-capture user script posts
+// {type: NSString, args: NSArray<NSString>} — each arg is a
+// JSON.stringify of the console argument. Pack and IPC to the parent.
+static void delegateDidReceiveScriptMessage(id self, SEL, id /*controller*/, id message)
+{
+    ObjCRuntime::ARPool pool;
+    auto* host = objc::NavigationDelegate(self).host();
+    if (!host) return;
+    objc::NSDictionary body(objc::WKScriptMessage(message).body());
+    id type = body.objectForKey(objc::NSString::fromWTF("type"_s).m_id);
+    id args = body.objectForKey(objc::NSString::fromWTF("args"_s).m_id);
+    host->onConsoleMessage(type, args);
 }
 
 // _webView:getContextMenuFromProposedMenu:forElement:userInfo:completionHandler:
@@ -338,6 +365,9 @@ bool ObjCRuntime::load()
     CLS(NSNumber::cls, "NSNumber");
     NSNumber::s_numberWithDouble = sel("numberWithDouble:");
 
+    NSArray::s_count = sel("count");
+    NSArray::s_objectAtIndex = sel("objectAtIndex:");
+
     CLS(NSDictionary::cls, "NSDictionary");
     NSDictionary::s_dictionaryWithObjects_forKeys_count = sel("dictionaryWithObjects:forKeys:count:");
     NSDictionary::s_objectForKey = sel("objectForKey:");
@@ -400,6 +430,15 @@ bool ObjCRuntime::load()
     WKWebViewConfiguration::s_initWithDirectory = sel("initWithDirectory:");
     WKWebViewConfiguration::s_initWithConfiguration = sel("_initWithConfiguration:");
     WKWebViewConfiguration::s_setWebsiteDataStore = sel("setWebsiteDataStore:");
+    WKWebViewConfiguration::s_userContentController = sel("userContentController");
+
+    CLS(WKUserScript::cls, "WKUserScript");
+    WKUserScript::s_initWithSource_injectionTime_forMainFrameOnly = sel("initWithSource:injectionTime:forMainFrameOnly:");
+
+    WKUserContentController::s_addScriptMessageHandler_name = sel("addScriptMessageHandler:name:");
+    WKUserContentController::s_addUserScript = sel("addUserScript:");
+
+    WKScriptMessage::s_body = sel("body");
 
     CLS(WKWebView::cls, "WKWebView");
     CLS(WKWebView::cls_WKSnapshotConfiguration, "WKSnapshotConfiguration");
@@ -459,8 +498,12 @@ bool ObjCRuntime::load()
     addMethod(NavigationDelegate::cls,
         sel("_webView:getContextMenuFromProposedMenu:forElement:userInfo:completionHandler:"),
         reinterpret_cast<IMP>(delegateGetContextMenu), "v@:@@@@@?");
+    addMethod(NavigationDelegate::cls,
+        sel("userContentController:didReceiveScriptMessage:"),
+        reinterpret_cast<IMP>(delegateDidReceiveScriptMessage), "v@:@@");
     if (Protocol* proto = getProtocol("WKNavigationDelegate")) addProtocol(NavigationDelegate::cls, proto);
     if (Protocol* proto = getProtocol("WKUIDelegate")) addProtocol(NavigationDelegate::cls, proto);
+    if (Protocol* proto = getProtocol("WKScriptMessageHandler")) addProtocol(NavigationDelegate::cls, proto);
     registerClassPair(NavigationDelegate::cls);
 
     // --- register BunHostWindow : NSWindow -------------------------------

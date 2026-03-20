@@ -192,6 +192,24 @@ it("onNavigated callback fires", async () => {
   expect(view.onNavigated).toBe(null);
 });
 
+it("console callback receives (type, ...args)", async () => {
+  const calls: [string, ...unknown[]][] = [];
+  await using view = new Bun.WebView({
+    width: 200,
+    height: 200,
+    console: (type: string, ...args: unknown[]) => calls.push([type, ...args]),
+  });
+  await view.navigate(html("<body></body>"));
+  // WKScriptMessage posts and callAsyncJavaScript completions share the
+  // same WebContent→UIProcess IPC connection — ordered. The postMessage
+  // inside the evaluate body delivers before the evaluate completion, so
+  // calls[] is populated by the time await resumes.
+  await view.evaluate("console.log('hello', 42, true)");
+  await view.evaluate("console.warn('w')");
+  expect(calls[0]).toEqual(["log", "hello", 42, true]);
+  expect(calls[1]).toEqual(["warn", "w"]);
+});
+
 it("onNavigationFailed callback fires", async () => {
   await using view = new Bun.WebView({ width: 200, height: 200 });
   let failed = false;

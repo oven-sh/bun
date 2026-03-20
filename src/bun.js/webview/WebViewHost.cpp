@@ -95,6 +95,24 @@ HostBlockHandle makeHostBlock(WebViewHost& host)
     return { b };
 }
 
+// Console capture: wrap console.{log,warn,...} to postMessage the args
+// (each JSON.stringify'd) via webkit.messageHandlers.bunConsole before
+// calling the original. Injected at document-start for all frames.
+// postMessage is fire-and-forget on the WebContent side but queues on the
+// same IPC connection as callAsyncJavaScript completions — so a
+// console.log inside an evaluate() body delivers before the evaluate's
+// completion, and the parent-side callback fires before the await resumes.
+static constexpr const char* kConsoleCaptureJS = R"js(
+(() => {
+  const h = webkit.messageHandlers.bunConsole;
+  const wrap = (t, orig) => (...a) => {
+    try { h.postMessage({type: t, args: a.map(x => { try { return JSON.stringify(x) ?? String(x) } catch { return String(x) } })}); } catch {}
+    return orig.apply(console, a);
+  };
+  for (const t of ['log','warn','error','info','debug','trace','dir']) console[t] = wrap(t, console[t]);
+})();
+)js";
+
 } // anonymous namespace
 
 Ref<WebViewHost> WebViewHost::createForIPC(uint32_t viewId, uint32_t width, uint32_t height, const WTF::String& persistDir)
@@ -107,9 +125,21 @@ Ref<WebViewHost> WebViewHost::createForIPC(uint32_t viewId, uint32_t width, uint
     auto cfg = persistDir.isEmpty()
         ? objc::WKWebViewConfiguration::createEphemeral()
         : objc::WKWebViewConfiguration::createPersistent(persistDir);
-    host->m_webview = objc::WKWebView::create(cfg, width, height);
 
     host->m_delegate = objc::NavigationDelegate::create(host.ptr());
+
+    // Console capture: delegate also adopts WKScriptMessageHandler.
+    // WKUserContentController strongly retains the handler; the delegate's
+    // backlink to WebViewHost is OBJC_ASSOCIATION_ASSIGN (non-retaining) so
+    // there's no cycle. clearHost() on close makes late posts no-op.
+    objc::WKUserContentController ucc(cfg.userContentController());
+    ucc.addScriptMessageHandler(host->m_delegate, objc::NSString::fromWTF("bunConsole"_s));
+    auto script = objc::WKUserScript::createAtDocumentStart(
+        objc::NSString::fromWTF(WTF::String::fromUTF8(kConsoleCaptureJS)));
+    ucc.addUserScript(script);
+    script.release();
+
+    host->m_webview = objc::WKWebView::create(cfg, width, height);
     host->m_webview.setNavigationDelegate(host->m_delegate);
 
     host->m_window = objc::NSWindow::createOffscreen(width, height);
@@ -667,6 +697,37 @@ void WebViewHost::onNavigationFailed(const WTF::String& err)
     hostWriter()->sendReplyStr(m_viewId, Reply::NavFailEvent, err);
     if (!std::exchange(m_navPending, false)) return;
     hostWriter()->sendReplyStr(m_viewId, Reply::NavFailed, err);
+}
+
+void WebViewHost::onConsoleMessage(id type, id args)
+{
+    if (m_closed) return;
+    // type is NSString, args is NSArray<NSString> — each a page-side
+    // JSON.stringify. Payload: str type + u32 argCount + str[argCount].
+    WTF::CString typeC = objc::NSString(type).toWTF().utf8();
+    uint32_t typeLen = static_cast<uint32_t>(typeC.length());
+    objc::NSArray arr(args);
+    uint32_t argCount = args ? static_cast<uint32_t>(arr.count()) : 0;
+
+    WTF::Vector<uint8_t, 256> out;
+    out.grow(4 + typeLen + 4);
+    uint8_t* p = out.mutableSpan().data();
+    memcpy(p, &typeLen, 4);
+    memcpy(p + 4, typeC.data(), typeLen);
+    memcpy(p + 4 + typeLen, &argCount, 4);
+
+    for (uint32_t i = 0; i < argCount; ++i) {
+        WTF::CString argC = objc::NSString(arr.objectAtIndex(i)).toWTF().utf8();
+        uint32_t argLen = static_cast<uint32_t>(argC.length());
+        size_t was = out.size();
+        out.grow(was + 4 + argLen);
+        p = out.mutableSpan().data() + was;
+        memcpy(p, &argLen, 4);
+        memcpy(p + 4, argC.data(), argLen);
+    }
+
+    hostWriter()->sendReply(m_viewId, Reply::ConsoleEvent,
+        out.span().data(), static_cast<uint32_t>(out.size()));
 }
 
 void WebViewHost::onEvalComplete(id result, id error)

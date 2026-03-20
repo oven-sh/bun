@@ -37,7 +37,7 @@ const main = {
     "worker.js": `
 import * as Comlink from 'comlink/dist/esm/comlink.js';
 
-const TARGET_CALLBACKS = 200;
+const TARGET_CALLBACKS = 500;
 
 Comlink.expose({
   async start(start, main) {

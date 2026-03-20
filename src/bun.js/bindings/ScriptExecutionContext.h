@@ -149,6 +149,11 @@ public:
         m_vm = &globalObject->vm();
     }
 
+    void clearGlobalObject()
+    {
+        m_globalObject = nullptr;
+    }
+
     BunBroadcastChannelRegistry& broadcastChannelRegistry() { return m_broadcastChannelRegistry.get(*this); }
 
     static ScriptExecutionContext* getMainThreadScriptExecutionContext();

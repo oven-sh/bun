@@ -395,13 +395,11 @@ pub const PathWatcherManager = struct {
             .err => |err| {
                 log("[watch] failed to register new subdirectory {s}: {f}", .{ path_z, err });
                 // inotify_add_watch failed (e.g. ENOSPC) so main_watcher never
-                // owns the fd. Clean up: pop the file_paths entry we just
-                // pushed, then close the fd and drop the ref.
-                {
-                    watcher.mutex.lock();
-                    defer watcher.mutex.unlock();
-                    _ = watcher.file_paths.pop();
-                }
+                // owns the fd. Close it and drop the ref. The stale entry in
+                // watcher.file_paths is harmless — unregisterWatcher will call
+                // _decrementPathRefNoLock which no-ops since refs are already 0.
+                // We don't pop() because another thread may have appended
+                // between our unlock and now, making pop() remove the wrong entry.
                 this._decrementPathRefAndClose(path_z);
             },
             .result => {},

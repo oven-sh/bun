@@ -10,6 +10,7 @@
 #include <JavaScriptCore/TopExceptionScope.h>
 #include <JavaScriptCore/WeakInlines.h>
 #include <JavaScriptCore/JSONObject.h>
+#include <wtf/JSONValues.h>
 #include <JavaScriptCore/TypedArrayInlines.h>
 #include <JavaScriptCore/JSTypedArrays.h>
 #include <wtf/NeverDestroyed.h>
@@ -400,108 +401,53 @@ static void settle(JSGlobalObject* g, JSWebView* view, PendingSlot slot, bool ok
     settleSlot(g, view, slotFor(view, slot), ok, v);
 }
 
-// Unescape the JSON-string control sequences we actually expect in V8's
-// exception.description: \n, \", \\. Chrome doesn't emit others here
-// (the description is V8's Error.prototype.toString + stack formatter,
-// which stays in printable-ASCII-or-\n). Leaves unknown \x as-is.
-static WTF::String jsonUnescape(std::span<const char> s)
-{
-    WTF::Vector<char, 256> out;
-    out.reserveInitialCapacity(s.size());
-    for (size_t i = 0; i < s.size(); ++i) {
-        char c = s[i];
-        if (c == '\\' && i + 1 < s.size()) {
-            char n = s[++i];
-            switch (n) {
-            case 'n':
-                out.append('\n');
-                break;
-            case '"':
-                out.append('"');
-                break;
-            case '\\':
-                out.append('\\');
-                break;
-            case 't':
-                out.append('\t');
-                break;
-            case 'r':
-                out.append('\r');
-                break;
-            default:
-                out.append('\\');
-                out.append(n);
-                break;
-            }
-        } else {
-            out.append(c);
-        }
-    }
-    return WTF::String::fromUTF8(out.span());
-}
-
 // Build an Error from CDP exceptionDetails. exception.description is V8's
-// Error.prototype.toString() + stack formatter:
+// Error.prototype.stack formatter:
 //   "Error: msg\n    at functionName (url:line:col)\n    at ..."
-// We split at the first \n — before is the message line, after is the stack
-// body. The Error gets .message = message, .stack = full description (V8
-// convention: stack starts with the message line). If description is empty
-// or there's no exception object (non-Error throw), fall back to .text.
 //
-// ErrorInstance::create(globalObject, message, ErrorType, LineColumn,
-// sourceURL, stackString) constructs without capturing the JSC-side stack
-// (which would show ChromeBackend.cpp frames, not page frames). The
-// stackString overload sets .stack directly; no captureStackTrace runs.
+// WTF::JSON parses to a C++ tree — no JSValue allocation, no GC pressure.
+// The tree is small (exceptionDetails is error-path only, ~200B). Stamp
+// .stack with description directly; Bun's V8StackTraceIterator
+// (ZigException.cpp) already parses V8 stacks when it needs frames.
+// ErrorInstance::create stackString overload sets .stack without capturing
+// a JSC-side trace (which would show ChromeBackend.cpp, not page frames).
 static JSValue errorFromExceptionDetails(JSGlobalObject* g, std::span<const char> excDetails)
 {
-    auto exception = jsonField(excDetails, { "exception", 9 });
-    auto desc = jsonString(jsonField(exception, { "description", 11 }));
-    // Thrown string: {"type":"string","value":"msg"}. description is empty;
-    // value IS the message. Check before text — text is the generic
-    // "Uncaught (in promise)" wrapper which loses the actual thrown string.
-    auto value = jsonString(jsonField(exception, { "value", 5 }));
-    auto text = jsonString(jsonField(excDetails, { "text", 4 }));
+    auto root = JSON::Value::parseJSON(
+        StringView::fromLatin1(std::span<const Latin1Character>(
+            reinterpret_cast<const Latin1Character*>(excDetails.data()), excDetails.size())));
+    auto d = root ? root->asObject() : nullptr;
+    if (!d) return createError(g, "JavaScript exception"_s);
 
-    // description has \n escaped in the JSON string — our jsonString strips
-    // the quotes but doesn't unescape. Manual unescape for the sequences
-    // V8's formatter actually emits (\n, \", \\; printable-ASCII otherwise).
-    auto src = !desc.empty() ? desc : !value.empty() ? value
-                                                     : text;
-    auto fullStr = jsonUnescape(src);
-
-    // Split at first newline. Message line is "Error: msg" or just "msg"
-    // for non-Error throws. Strip "ErrorName: " so .message matches what
-    // page-side catch sees on e.message.
-    auto firstNewline = fullStr.find('\n');
-    auto messageLine = firstNewline == WTF::notFound
-        ? fullStr
-        : fullStr.substring(0, firstNewline);
-    auto colonSpace = messageLine.find(": "_s);
-    auto message = colonSpace != WTF::notFound && colonSpace < 32
-        ? messageLine.substring(colonSpace + 2)
-        : messageLine;
-
-    // lineNumber/columnNumber are at the top level of exceptionDetails
-    // (the throw site, 0-based). url may be absent (anonymous scripts
-    // from evaluate()). Parse what's there; default to 0/empty.
-    auto ln = jsonField(excDetails, { "lineNumber", 10 });
-    auto cn = jsonField(excDetails, { "columnNumber", 12 });
-    auto url = jsonString(jsonField(excDetails, { "url", 3 }));
-    unsigned line = 0, col = 0;
-    for (char c : ln) {
-        if (c < '0' || c > '9') break;
-        line = line * 10 + (c - '0');
+    // exception.description (thrown Error) → full V8 stack string.
+    // exception.value (thrown string) → the string itself.
+    // text ("Uncaught (in promise)") → fallback only.
+    WTF::String stack;
+    if (auto exc = d->getObject("exception"_s)) {
+        stack = exc->getString("description"_s);
+        if (stack.isEmpty()) stack = exc->getString("value"_s);
     }
-    for (char c : cn) {
-        if (c < '0' || c > '9') break;
-        col = col * 10 + (c - '0');
-    }
+    if (stack.isEmpty()) stack = d->getString("text"_s);
+    if (stack.isEmpty()) stack = "JavaScript exception"_s;
 
-    return ErrorInstance::create(g,
-        WTF::String(message), ErrorType::Error,
+    // Message: first line past "ErrorName: " prefix. V8's first line is
+    // Error.prototype.toString() which is `${name}: ${message}` (or just
+    // `${name}` if message empty). Frame parsing is V8StackTraceIterator's
+    // job; we only need the message here.
+    auto nl = stack.find('\n');
+    auto firstLine = (nl == WTF::notFound) ? stack : stack.substring(0, nl);
+    auto colon = firstLine.find(": "_s);
+    auto message = (colon != WTF::notFound && colon < 32)
+        ? firstLine.substring(colon + 2)
+        : firstLine;
+
+    unsigned line = static_cast<unsigned>(d->getInteger("lineNumber"_s).value_or(0));
+    unsigned col = static_cast<unsigned>(d->getInteger("columnNumber"_s).value_or(0));
+    WTF::String url = d->getString("url"_s);
+
+    return ErrorInstance::create(g, WTF::move(message), ErrorType::Error,
         LineColumn { line + 1, col + 1 }, // CDP 0-based → JS 1-based
-        WTF::String::fromUTF8(url),
-        WTF::move(fullStr));
+        WTF::move(url), WTF::move(stack));
 }
 
 // Per-method result handlers. Each knows the schema of its result object
@@ -615,72 +561,27 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
     case Method::PageGetNavigationHistory: {
         // {"currentIndex":N,"entries":[{"id":N,"url":"..."},...]}
         // Pick entries[currentIndex + delta].id and chain into
-        // navigateToHistoryEntry. If the target index is out of range, we're
-        // at the boundary — resolve undefined (same as WKWebView's goBack
-        // when canGoBack is false).
-        auto ci = jsonField(result, { "currentIndex", 12 });
-        auto entries = jsonField(result, { "entries", 7 });
-        int32_t currentIdx = 0;
-        for (char c : ci) {
-            if (c < '0' || c > '9') break;
-            currentIdx = currentIdx * 10 + (c - '0');
-        }
-        int32_t targetIdx = currentIdx + view->m_chromeHistoryDelta;
-        if (targetIdx < 0) {
-            settle(g, view, entry.slot, true, jsUndefined()); // at start; no-op
+        // navigateToHistoryEntry. WTF::JSON parses to a C++ tree — no
+        // JSValue allocation for a structure we only read once.
+        auto root = JSON::Value::parseJSON(
+            StringView::fromLatin1(std::span<const Latin1Character>(
+                reinterpret_cast<const Latin1Character*>(result.data()), result.size())));
+        auto o = root ? root->asObject() : nullptr;
+        if (!o) {
+            settle(g, view, entry.slot, false, createError(g, "malformed history response"_s));
             return;
         }
-        // entries is a JSON array. Walk to the targetIdx'th element by
-        // counting commas at array depth 1 (same depth-counter as jsonField
-        // but for array indices). Then extract its "id" field.
-        const char* p = entries.data();
-        const char* end = p + entries.size();
-        if (p < end && *p == '[') ++p;
-        int idx = 0;
-        int depth = 0;
-        bool inStr = false, esc = false;
-        const char* elemStart = p;
-        for (; p < end && idx < targetIdx; ++p) {
-            char c = *p;
-            if (esc) {
-                esc = false;
-                continue;
-            }
-            if (c == '\\') {
-                esc = true;
-                continue;
-            }
-            if (c == '"') {
-                inStr = !inStr;
-                continue;
-            }
-            if (inStr) continue;
-            if (c == '{' || c == '[') {
-                ++depth;
-                continue;
-            }
-            if (c == '}' || c == ']') {
-                --depth;
-                continue;
-            }
-            if (c == ',' && depth == 0) {
-                ++idx;
-                elemStart = p + 1;
-            }
-        }
-        if (idx < targetIdx || p >= end) {
-            settle(g, view, entry.slot, true, jsUndefined()); // past end; no-op
+        int32_t cur = o->getInteger("currentIndex"_s).value_or(0);
+        int32_t target = cur + view->m_chromeHistoryDelta;
+        auto entries = o->getArray("entries"_s);
+        if (!entries || target < 0 || static_cast<unsigned>(target) >= entries->length()) {
+            // At history boundary — resolve undefined, same as WKWebView's
+            // goBack no-op when canGoBack is false.
+            settle(g, view, entry.slot, true, jsUndefined());
             return;
         }
-        // elemStart points at the target element's opening. Find its id field
-        // within the element bounds (up to next depth-0 comma or ]).
-        std::span<const char> elem(elemStart, static_cast<size_t>(end - elemStart));
-        auto idSlice = jsonField(elem, { "id", 2 });
-        int32_t entryId = 0;
-        for (char c : idSlice) {
-            if (c < '0' || c > '9') break;
-            entryId = entryId * 10 + (c - '0');
-        }
+        auto elem = entries->get(static_cast<unsigned>(target))->asObject();
+        int32_t entryId = elem ? elem->getInteger("id"_s).value_or(0) : 0;
         // Chain into navigateToHistoryEntry. Page.loadEventFired settles.
         uint32_t cid = nextId();
         m_pending.add(cid, Pending { Method::PageNavigateToHistoryEntry, entry.slot, WTF::move(entry.view) });

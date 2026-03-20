@@ -559,6 +559,71 @@ it("chrome: onNavigated fires with committed URL", async () => {
   }
 });
 
+it("chrome: press() dispatches keydown/keyup pair", async () => {
+  await using view = new Bun.WebView({ backend: "chrome", width: 200, height: 200 });
+  // Listeners in the HTML so they're live before any press. evaluate() wraps
+  // as `await (${script})` — statement sequences need IIFE, but putting the
+  // setup in the navigate body sidesteps that entirely.
+  await view.navigate(
+    html(`
+    <body><script>
+      window.__keys = [];
+      addEventListener('keydown', e => __keys.push('d:' + e.key));
+      addEventListener('keyup', e => __keys.push('u:' + e.key));
+    </script></body>
+  `),
+  );
+  // Named key (rawKeyDown — no text, just keydown/keyup).
+  await view.press("Escape");
+  // Text-producing key (keyDown — fires keydown + input).
+  await view.press("Enter");
+  const keys = await view.evaluate("__keys.join(',')");
+  expect(keys).toBe("d:Escape,u:Escape,d:Enter,u:Enter");
+});
+
+it("chrome: press() with modifiers", async () => {
+  await using view = new Bun.WebView({ backend: "chrome", width: 200, height: 200 });
+  await view.navigate(
+    html(`
+    <body><script>
+      window.__ev = new Promise(r =>
+        addEventListener('keydown', e => r({key: e.key, shift: e.shiftKey, ctrl: e.ctrlKey}), {once: true}));
+    </script></body>
+  `),
+  );
+  await view.press("ArrowLeft", { modifiers: ["Shift", "Control"] });
+  expect(await view.evaluate("__ev")).toEqual({ key: "ArrowLeft", shift: true, ctrl: true });
+});
+
+it("chrome: goBack/goForward navigates history", async () => {
+  await using view = new Bun.WebView({ backend: "chrome", width: 200, height: 200 });
+  await view.navigate(html("<body>A</body>"));
+  await view.navigate(html("<body>B</body>"));
+  await view.navigate(html("<body>C</body>"));
+  // Page.getNavigationHistory → entries[currentIndex-1].id →
+  // Page.navigateToHistoryEntry → loadEventFired settles.
+  await view.goBack();
+  expect(await view.evaluate("document.body.textContent")).toBe("B");
+  await view.goBack();
+  expect(await view.evaluate("document.body.textContent")).toBe("A");
+  await view.goForward();
+  expect(await view.evaluate("document.body.textContent")).toBe("B");
+});
+
+it("chrome: goBack at history start resolves undefined (no-op)", async () => {
+  await using view = new Bun.WebView({ backend: "chrome", width: 200, height: 200 });
+  await view.navigate(html("<body>only</body>"));
+  // Target.createTarget({url:"about:blank"}) means history[0]=about:blank,
+  // history[1]=our page after navigate. goBack once → about:blank.
+  await view.goBack();
+  expect(await view.evaluate("document.body.textContent")).toBe("");
+  // Now at index 0. Second goBack hits the boundary — target=-1 → out of
+  // range → resolve undefined. Same semantics as WKWebView's goBack no-op.
+  const r = await view.goBack();
+  expect(r).toBeUndefined();
+  expect(await view.evaluate("document.body.textContent")).toBe("");
+});
+
 it("chrome: large evaluate payload crosses the pipe", async () => {
   const view = new Bun.WebView({ backend: "chrome", width: 200, height: 200 });
   try {

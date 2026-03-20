@@ -49,8 +49,8 @@ static const HashTableValue JSWebViewPrototypeTableValues[] = {
     { "scroll"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWebViewProtoFuncScroll, 2 } },
     { "scrollTo"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWebViewProtoFuncScrollTo, 1 } },
     { "resize"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWebViewProtoFuncResize, 2 } },
-    { "back"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWebViewProtoFuncBack, 0 } },
-    { "forward"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWebViewProtoFuncForward, 0 } },
+    { "goBack"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWebViewProtoFuncBack, 0 } },
+    { "goForward"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWebViewProtoFuncForward, 0 } },
     { "reload"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWebViewProtoFuncReload, 0 } },
     { "close"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWebViewProtoFuncClose, 0 } },
     { "url"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsWebViewGetter_url, 0 } },
@@ -160,11 +160,11 @@ static uint8_t parseModifiers(JSGlobalObject* g, ThrowScope& scope, JSValue v)
         RETURN_IF_EXCEPTION(scope, 0);
         if (s == "Shift"_s || s == "shift"_s)
             mods |= ModShift;
-        else if (s == "Control"_s || s == "ctrl"_s || s == "control"_s)
+        else if (s == "Control"_s || s == "Ctrl"_s || s == "ctrl"_s || s == "control"_s)
             mods |= ModCtrl;
-        else if (s == "Alt"_s || s == "alt"_s || s == "option"_s)
+        else if (s == "Alt"_s || s == "alt"_s || s == "Option"_s || s == "option"_s)
             mods |= ModAlt;
-        else if (s == "Meta"_s || s == "meta"_s || s == "cmd"_s || s == "command"_s)
+        else if (s == "Meta"_s || s == "meta"_s || s == "Cmd"_s || s == "cmd"_s || s == "Command"_s || s == "command"_s)
             mods |= ModMeta;
     }
     return mods;
@@ -458,7 +458,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncBack, (JSGlobalObject * globalObject,
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* thisObject = unwrapThis(globalObject, scope, callFrame, "back"_s);
+    auto* thisObject = unwrapThis(globalObject, scope, callFrame, "goBack"_s);
     RETURN_IF_EXCEPTION(scope, {});
     if (!checkSlot(globalObject, scope, thisObject->m_pendingMisc, "a simple operation"_s)) return {};
     return JSValue::encode(thisObject->goBack(globalObject));
@@ -468,7 +468,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncForward, (JSGlobalObject * globalObje
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* thisObject = unwrapThis(globalObject, scope, callFrame, "forward"_s);
+    auto* thisObject = unwrapThis(globalObject, scope, callFrame, "goForward"_s);
     RETURN_IF_EXCEPTION(scope, {});
     if (!checkSlot(globalObject, scope, thisObject->m_pendingMisc, "a simple operation"_s)) return {};
     return JSValue::encode(thisObject->goForward(globalObject));

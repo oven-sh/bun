@@ -252,7 +252,7 @@ const History = struct {
             bun.FD.cwd().makePath(u8, parent) catch {};
         }
 
-        const file = switch (bun.sys.openA(path, bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC, 0o644)) {
+        const file = switch (bun.sys.openA(path, bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC, 0o600)) {
             .result => |fd| bun.sys.File{ .handle = fd },
             .err => return,
         };

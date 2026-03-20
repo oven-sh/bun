@@ -14,8 +14,8 @@ async function runReplWithEnv(env: Record<string, string>): Promise<number> {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "repl"],
     stdin: Buffer.from("1+1\n.exit\n"),
-    stdout: "pipe",
-    stderr: "pipe",
+    stdout: "ignore",
+    stderr: "ignore",
     env: {
       ...bunEnv,
       TERM: "dumb",
@@ -27,7 +27,7 @@ async function runReplWithEnv(env: Record<string, string>): Promise<number> {
 }
 
 describe("REPL history respects XDG_DATA_HOME and BUN_INSTALL", () => {
-  test("uses $XDG_DATA_HOME/bun/ when XDG_DATA_HOME is set", async () => {
+  test.concurrent("uses $XDG_DATA_HOME/bun/ when XDG_DATA_HOME is set", async () => {
     using dir = tempDir("repl-xdg", {
       "xdg-data": { ".keep": "" },
       "home": { ".keep": "" },
@@ -48,7 +48,7 @@ describe("REPL history respects XDG_DATA_HOME and BUN_INSTALL", () => {
     expect(fs.existsSync(path.join(fakeHome, HISTORY_FILENAME))).toBe(false);
   });
 
-  test("uses $BUN_INSTALL when BUN_INSTALL is set and XDG_DATA_HOME is not", async () => {
+  test.concurrent("uses $BUN_INSTALL when BUN_INSTALL is set and XDG_DATA_HOME is not", async () => {
     using dir = tempDir("repl-install", {
       "bun-install": { ".keep": "" },
       "home": { ".keep": "" },
@@ -69,7 +69,7 @@ describe("REPL history respects XDG_DATA_HOME and BUN_INSTALL", () => {
     expect(fs.existsSync(path.join(fakeHome, HISTORY_FILENAME))).toBe(false);
   });
 
-  test("falls back to home dir when neither XDG_DATA_HOME nor BUN_INSTALL is set", async () => {
+  test.concurrent("falls back to home dir when neither XDG_DATA_HOME nor BUN_INSTALL is set", async () => {
     using dir = tempDir("repl-home", { ".keep": "" });
     const fakeHome = String(dir);
 
@@ -84,7 +84,7 @@ describe("REPL history respects XDG_DATA_HOME and BUN_INSTALL", () => {
     expect(fs.existsSync(expectedPath)).toBe(true);
   });
 
-  test("XDG_DATA_HOME takes priority over BUN_INSTALL", async () => {
+  test.concurrent("XDG_DATA_HOME takes priority over BUN_INSTALL", async () => {
     using dir = tempDir("repl-priority", {
       "xdg-data": { ".keep": "" },
       "bun-install": { ".keep": "" },

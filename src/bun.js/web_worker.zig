@@ -381,23 +381,29 @@ pub fn start(
     vm.global.vm().holdAPILock(this, callback);
 }
 
-/// Clean up owned resources. Called before the ref count drops the struct.
-fn deinit(this: *WebWorker) void {
-    log("[{d}] deinit", .{this.execution_context_id});
+/// Free owned heap data (name, source specifier, preloads). Called from
+/// exitAndDeinit so large allocations are released synchronously at
+/// worker exit, not held until the C++ Worker is GC'd and releases its
+/// ref. Idempotent — destroy() also calls this for early-failure paths
+/// (thread spawn failure) that never reach exitAndDeinit.
+fn releaseResources(this: *WebWorker) void {
     if (this.name.len > 0) {
         bun.default_allocator.free(this.name);
+        this.name = "";
     }
     bun.default_allocator.free(this.unresolved_specifier);
+    this.unresolved_specifier = "";
     for (this.preloads) |preload| {
         bun.default_allocator.free(preload);
     }
     bun.default_allocator.free(this.preloads);
+    this.preloads = &.{};
 }
 
 /// Called when the ref count reaches zero. Both sides have released.
 fn destroy(this: *WebWorker) void {
     log("[{d}] destroy", .{this.execution_context_id});
-    this.deinit();
+    this.releaseResources();
     bun.destroy(this);
 }
 
@@ -631,9 +637,13 @@ pub fn exitAndDeinit(this: *WebWorker) noreturn {
     var arena = this.arena;
 
     WebWorker__dispatchExit(globalObject, cpp_worker, exit_code);
-    // Unref parent keep-alive AFTER posting the exit event, so the
-    // parent doesn't exit its event loop before seeing the event.
+    // destroy() might not run here if C++ still holds its ref. Release
+    // resources that would otherwise wait on GC: parent keep-alive
+    // (blocks parent exit) and source specifier / preloads (can be
+    // large for eval workers). Must be after dispatchExit so the posted
+    // close-event task is queued while the parent loop is still ref'd.
     this.parent_poll_ref.unrefConcurrently(this.parent);
+    this.releaseResources();
     if (loop) |loop_| {
         loop_.internal_loop_data.jsc_vm = null;
     }

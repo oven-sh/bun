@@ -826,12 +826,13 @@ GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure, WebCore::Scri
 GlobalObject::~GlobalObject()
 {
     if (auto* ctx = scriptExecutionContext()) {
-        // Clear the back-pointer first so that any code still holding a
-        // RefPtr<ScriptExecutionContext> (e.g. MessagePort::postMessage via
-        // protectedScriptExecutionContext()) will see globalObject() == nullptr
-        // and bail out instead of dereferencing a dangling GlobalObject pointer.
-        ctx->clearGlobalObject();
+        // Remove from the map first so no cross-thread postTaskTo() can
+        // find this context, then null the back-pointer so any code still
+        // holding a RefPtr<ScriptExecutionContext> (e.g. via
+        // protectedScriptExecutionContext()) sees globalObject() == nullptr
+        // and bails out instead of dereferencing a dangling GlobalObject.
         ctx->removeFromContextsMap();
+        ctx->clearGlobalObject();
         ctx->deref();
     }
 }

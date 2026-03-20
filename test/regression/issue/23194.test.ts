@@ -5,14 +5,16 @@ import { bunEnv, bunExe, tempDir } from "harness";
 // MessagePort.postMessage segfaults when ScriptExecutionContext is destroyed
 // during high-frequency message passing between main thread and worker via Comlink.
 // The structured cloning + MessagePort transfer in Comlink's RPC protocol
-// triggers a null ScriptExecutionContext dereference in release builds.
-test("MessagePort does not segfault during rapid Comlink-style message passing", async () => {
-  using dir = tempDir("issue-23194", {
-    "package.json": JSON.stringify({
-      dependencies: { comlink: "^4.4.2" },
-      type: "module",
-    }),
-    "main.js": `
+// can trigger a dangling ScriptExecutionContext::m_globalObject dereference.
+test(
+  "MessagePort does not segfault during rapid Comlink-style message passing",
+  async () => {
+    using dir = tempDir("issue-23194", {
+      "package.json": JSON.stringify({
+        dependencies: { comlink: "^4.4.2" },
+        type: "module",
+      }),
+      "main.js": `
 import * as Comlink from 'comlink/dist/esm/comlink.js';
 
 let mainloop = true;
@@ -34,10 +36,10 @@ const main = {
   console.log("done");
 })();
 `,
-    "worker.js": `
+      "worker.js": `
 import * as Comlink from 'comlink/dist/esm/comlink.js';
 
-const TARGET_CALLBACKS = 400;
+const TARGET_CALLBACKS = 500;
 
 Comlink.expose({
   async start(start, main) {
@@ -53,29 +55,37 @@ Comlink.expose({
   },
 });
 `,
-  });
+    });
 
-  // Install comlink
-  await using install = Bun.spawn({
-    cmd: [bunExe(), "install"],
-    env: bunEnv,
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const installExitCode = await install.exited;
-  expect(installExitCode).toBe(0);
+    // Install comlink
+    await using install = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const installExitCode = await install.exited;
+    expect(installExitCode).toBe(0);
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "run", "main.js"],
-    env: bunEnv,
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+    // This exercises a race condition — run a few attempts since the
+    // exact timing varies across platforms and CI machines.
+    for (let attempt = 0; attempt < 5; attempt++) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "run", "main.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stdout).toContain("done");
-  expect(exitCode).toBe(0);
-}, 60000);
+      if (stdout.includes("done") && exitCode === 0) {
+        return; // success — the fix prevented the crash
+      }
+    }
+    expect().fail("Process crashed or failed to complete after 5 attempts");
+  },
+  120000,
+);

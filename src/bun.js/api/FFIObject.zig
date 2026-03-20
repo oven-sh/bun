@@ -66,15 +66,23 @@ pub const Reader = struct {
         return obj;
     }
 
+    fn getAddr(globalObject: *JSGlobalObject, arguments: []const JSValue) bun.JSError!usize {
+        if (arguments.len == 0 or !arguments[0].isNumber()) {
+            return globalObject.throwInvalidArguments("Expected a pointer", .{});
+        }
+        const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @as(usize, @intCast(arguments[1].to(i32))) else @as(usize, 0);
+        if (addr < std.heap.page_size_min or addr > max_addressable_memory) {
+            return globalObject.throwInvalidArguments("Pointer is invalid, that would segfault Bun", .{});
+        }
+        return addr;
+    }
+
     pub fn @"u8"(
         globalObject: *JSGlobalObject,
         _: JSValue,
         arguments: []const JSValue,
     ) bun.JSError!JSValue {
-        if (arguments.len == 0 or !arguments[0].isNumber()) {
-            return globalObject.throwInvalidArguments("Expected a pointer", .{});
-        }
-        const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @as(usize, @intCast(arguments[1].to(i32))) else @as(usize, 0);
+        const addr = try getAddr(globalObject, arguments);
         const value = @as(*align(1) u8, @ptrFromInt(addr)).*;
         return JSValue.jsNumber(value);
     }
@@ -83,10 +91,7 @@ pub const Reader = struct {
         _: JSValue,
         arguments: []const JSValue,
     ) bun.JSError!JSValue {
-        if (arguments.len == 0 or !arguments[0].isNumber()) {
-            return globalObject.throwInvalidArguments("Expected a pointer", .{});
-        }
-        const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @as(usize, @intCast(arguments[1].to(i32))) else @as(usize, 0);
+        const addr = try getAddr(globalObject, arguments);
         const value = @as(*align(1) u16, @ptrFromInt(addr)).*;
         return JSValue.jsNumber(value);
     }
@@ -95,10 +100,7 @@ pub const Reader = struct {
         _: JSValue,
         arguments: []const JSValue,
     ) bun.JSError!JSValue {
-        if (arguments.len == 0 or !arguments[0].isNumber()) {
-            return globalObject.throwInvalidArguments("Expected a pointer", .{});
-        }
-        const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @as(usize, @intCast(arguments[1].to(i32))) else @as(usize, 0);
+        const addr = try getAddr(globalObject, arguments);
         const value = @as(*align(1) u32, @ptrFromInt(addr)).*;
         return JSValue.jsNumber(value);
     }
@@ -107,10 +109,7 @@ pub const Reader = struct {
         _: JSValue,
         arguments: []const JSValue,
     ) bun.JSError!JSValue {
-        if (arguments.len == 0 or !arguments[0].isNumber()) {
-            return globalObject.throwInvalidArguments("Expected a pointer", .{});
-        }
-        const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @as(usize, @intCast(arguments[1].to(i32))) else @as(usize, 0);
+        const addr = try getAddr(globalObject, arguments);
         const value = @as(*align(1) u64, @ptrFromInt(addr)).*;
         return JSValue.jsNumber(value);
     }
@@ -119,10 +118,7 @@ pub const Reader = struct {
         _: JSValue,
         arguments: []const JSValue,
     ) bun.JSError!JSValue {
-        if (arguments.len == 0 or !arguments[0].isNumber()) {
-            return globalObject.throwInvalidArguments("Expected a pointer", .{});
-        }
-        const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @as(usize, @intCast(arguments[1].to(i32))) else @as(usize, 0);
+        const addr = try getAddr(globalObject, arguments);
         const value = @as(*align(1) i8, @ptrFromInt(addr)).*;
         return JSValue.jsNumber(value);
     }
@@ -131,10 +127,7 @@ pub const Reader = struct {
         _: JSValue,
         arguments: []const JSValue,
     ) bun.JSError!JSValue {
-        if (arguments.len == 0 or !arguments[0].isNumber()) {
-            return globalObject.throwInvalidArguments("Expected a pointer", .{});
-        }
-        const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @as(usize, @intCast(arguments[1].to(i32))) else @as(usize, 0);
+        const addr = try getAddr(globalObject, arguments);
         const value = @as(*align(1) i16, @ptrFromInt(addr)).*;
         return JSValue.jsNumber(value);
     }
@@ -143,10 +136,7 @@ pub const Reader = struct {
         _: JSValue,
         arguments: []const JSValue,
     ) bun.JSError!JSValue {
-        if (arguments.len == 0 or !arguments[0].isNumber()) {
-            return globalObject.throwInvalidArguments("Expected a pointer", .{});
-        }
-        const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @as(usize, @intCast(arguments[1].to(i32))) else @as(usize, 0);
+        const addr = try getAddr(globalObject, arguments);
         const value = @as(*align(1) i32, @ptrFromInt(addr)).*;
         return JSValue.jsNumber(value);
     }
@@ -155,10 +145,7 @@ pub const Reader = struct {
         _: JSValue,
         arguments: []const JSValue,
     ) bun.JSError!JSValue {
-        if (arguments.len == 0 or !arguments[0].isNumber()) {
-            return globalObject.throwInvalidArguments("Expected a pointer", .{});
-        }
-        const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @as(usize, @intCast(arguments[1].to(i32))) else @as(usize, 0);
+        const addr = try getAddr(globalObject, arguments);
         const value = @as(*align(1) i64, @ptrFromInt(addr)).*;
         return JSValue.jsNumber(value);
     }
@@ -168,10 +155,7 @@ pub const Reader = struct {
         _: JSValue,
         arguments: []const JSValue,
     ) bun.JSError!JSValue {
-        if (arguments.len == 0 or !arguments[0].isNumber()) {
-            return globalObject.throwInvalidArguments("Expected a pointer", .{});
-        }
-        const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @as(usize, @intCast(arguments[1].to(i32))) else @as(usize, 0);
+        const addr = try getAddr(globalObject, arguments);
         const value = @as(*align(1) f32, @ptrFromInt(addr)).*;
         return JSValue.jsNumber(value);
     }
@@ -181,10 +165,7 @@ pub const Reader = struct {
         _: JSValue,
         arguments: []const JSValue,
     ) bun.JSError!JSValue {
-        if (arguments.len == 0 or !arguments[0].isNumber()) {
-            return globalObject.throwInvalidArguments("Expected a pointer", .{});
-        }
-        const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @as(usize, @intCast(arguments[1].to(i32))) else @as(usize, 0);
+        const addr = try getAddr(globalObject, arguments);
         const value = @as(*align(1) f64, @ptrFromInt(addr)).*;
         return JSValue.jsNumber(value);
     }
@@ -194,10 +175,7 @@ pub const Reader = struct {
         _: JSValue,
         arguments: []const JSValue,
     ) bun.JSError!JSValue {
-        if (arguments.len == 0 or !arguments[0].isNumber()) {
-            return globalObject.throwInvalidArguments("Expected a pointer", .{});
-        }
-        const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @as(usize, @intCast(arguments[1].to(i32))) else @as(usize, 0);
+        const addr = try getAddr(globalObject, arguments);
         const value = @as(*align(1) i64, @ptrFromInt(addr)).*;
         return JSValue.fromInt64NoTruncate(globalObject, value);
     }
@@ -207,10 +185,7 @@ pub const Reader = struct {
         _: JSValue,
         arguments: []const JSValue,
     ) bun.JSError!JSValue {
-        if (arguments.len == 0 or !arguments[0].isNumber()) {
-            return globalObject.throwInvalidArguments("Expected a pointer", .{});
-        }
-        const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @as(usize, @intCast(arguments[1].to(i32))) else @as(usize, 0);
+        const addr = try getAddr(globalObject, arguments);
         const value = @as(*align(1) u64, @ptrFromInt(addr)).*;
         return JSValue.fromUInt64NoTruncate(globalObject, value);
     }

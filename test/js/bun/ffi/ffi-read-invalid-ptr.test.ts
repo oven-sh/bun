@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 
 test("FFI read functions throw on invalid pointer instead of crashing", () => {
   const read = Bun.FFI.read;

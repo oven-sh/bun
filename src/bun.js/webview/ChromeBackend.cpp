@@ -1,6 +1,7 @@
 #include "root.h"
 #include "ChromeBackend.h"
 #include "JSWebView.h"
+#include "ipc_protocol.h"
 #include "ZigGlobalObject.h"
 #include "BunClientData.h"
 
@@ -339,6 +340,43 @@ void Transport::handleMessage(std::span<const char> msg)
 
 // --- Response dispatch -----------------------------------------------------
 
+// sessionId → span<const char> for CDP::Command. sessionId is base64-ish
+// (ASCII only) so Latin1 cast is safe — no UTF-8 multi-byte to worry about.
+static std::span<const char> sidSpan(const WTF::String& s)
+{
+    if (s.isEmpty()) return {};
+    ASSERT(s.is8Bit());
+    auto span = s.span8();
+    return { reinterpret_cast<const char*>(span.data()), span.size() };
+}
+
+// Bun click button → CDP button enum string. CDP's Input.dispatchMouseEvent
+// takes a string: "none", "left", "middle", "right".
+static constexpr ASCIILiteral cdpButton(uint8_t b)
+{
+    switch (b) {
+    case 1:
+        return "\"right\""_s;
+    case 2:
+        return "\"middle\""_s;
+    default:
+        return "\"left\""_s;
+    }
+}
+
+// Bun modifier bits → CDP modifier integer. CDP uses bit 0=Alt, 1=Ctrl,
+// 2=Meta, 3=Shift. ipc_protocol.h's ModShift=1 ModCtrl=2 ModAlt=4 ModMeta=8.
+static constexpr int32_t cdpModifiers(uint8_t m)
+{
+    using namespace WebViewProto;
+    int32_t r = 0;
+    if (m & ModAlt) r |= 1;
+    if (m & ModCtrl) r |= 2;
+    if (m & ModMeta) r |= 4;
+    if (m & ModShift) r |= 8;
+    return r;
+}
+
 // Slot → barrier member on JSWebView. Mirrors HostClient's reply-type→slot.
 static WriteBarrier<JSPromise>& slotFor(JSWebView* view, PendingSlot s)
 {
@@ -356,20 +394,10 @@ static WriteBarrier<JSPromise>& slotFor(JSWebView* view, PendingSlot s)
     return view->m_pendingMisc;
 }
 
-// Same settle semantics as JSWebView.cpp's — slot cleared BEFORE JS call so
-// re-entrant sends from .then() see an empty slot; activity decremented
-// AFTER clear (GC seeing count>0 with a clear slot is benign).
+// Wraps settleSlot (JSWebView.cpp) with PendingSlot → barrier lookup.
 static void settle(JSGlobalObject* g, JSWebView* view, PendingSlot slot, bool ok, JSValue v)
 {
-    auto& barrier = slotFor(view, slot);
-    JSPromise* p = barrier.get();
-    if (!p) return;
-    barrier.clear();
-    view->m_pendingActivityCount.fetch_sub(1, std::memory_order_release);
-    if (ok)
-        p->resolve(g, v);
-    else
-        p->reject(g->vm(), g, v);
+    settleSlot(g, view, slotFor(view, slot), ok, v);
 }
 
 // Unescape the JSON-string control sequences we actually expect in V8's
@@ -680,29 +708,12 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
             ++p;
         float cy = strtof(p, nullptr);
 
-        // Chain into dispatchMouseEvent. Same down+up pair as clickChrome.
+        // Chain into dispatchMouseEvent. Same down+up pair as Ops::click.
         auto ss = view->m_sessionId.utf8();
         std::span<const char> sid(ss.data(), ss.length());
 
-        // CDP button enum string. Same mapping as cdpButton in JSWebView.cpp
-        // — duplicated here because that's static in another TU.
-        ASCIILiteral btn;
-        switch (view->m_selButton) {
-        case 1:
-            btn = "\"right\""_s;
-            break;
-        case 2:
-            btn = "\"middle\""_s;
-            break;
-        default:
-            btn = "\"left\""_s;
-        }
-        int32_t mods = 0;
-        // ipc_protocol.h Mod* → CDP modifier bits (Alt=1 Ctrl=2 Meta=4 Shift=8)
-        if (view->m_selModifiers & 4) mods |= 1; // Alt
-        if (view->m_selModifiers & 2) mods |= 2; // Ctrl
-        if (view->m_selModifiers & 8) mods |= 4; // Meta
-        if (view->m_selModifiers & 1) mods |= 8; // Shift
+        auto btn = cdpButton(view->m_selButton);
+        int32_t mods = cdpModifiers(view->m_selModifiers);
 
         // Pressed — untracked fire-and-forget.
         uint32_t idDown = nextId();
@@ -819,6 +830,305 @@ void Transport::updateKeepAlive()
     Bun__eventLoop__incrementRefConcurrently(
         WebCore::clientData(m_global->vm())->bunVM, want ? 1 : -1);
 }
+
+// --- CDP::Ops --------------------------------------------------------------
+// One CDP::Command per op. Input.* and Page.captureScreenshot are
+// synchronous-reply — the response means the operation completed, so these
+// settle immediately on response. Page.navigate's response means the
+// navigation started; actual load completion arrives via Page.loadEventFired
+// (handled in Transport::handleEvent).
+
+namespace Ops {
+
+// Allocate promise, store in slot, add to Transport pending map, send frame.
+// Caller guarantees the slot is empty and m_closed == false. Command is
+// moved in; t.send() calls finishAndWrite which zero-copies to the pipe
+// when the body is all-ASCII.
+static JSPromise* sendChromeOp(JSGlobalObject* g, JSWebView* v,
+    WriteBarrier<JSPromise>& slot, PendingSlot ps, Method m,
+    uint32_t id, Command&& cmd)
+{
+    auto& vm = g->vm();
+    auto& t = transport();
+    auto* promise = JSPromise::create(vm, g->promiseStructure());
+    if (t.m_dead || !t.m_readSock) {
+        promise->reject(vm, g, createError(g, "Chrome process is not running"_s));
+        return promise;
+    }
+    v->m_pendingActivityCount.fetch_add(1, std::memory_order_release);
+    slot.set(vm, v, promise);
+    t.m_pending.add(id, Pending { m, ps, Weak<JSWebView>(v, &webViewWeakOwner()) });
+    t.send(WTF::move(cmd));
+    t.updateKeepAlive();
+    return promise;
+}
+
+// The first navigate() kicks off the attach chain: Target.createTarget
+// (browser-level, no sessionId) → Target.attachToTarget → Page.enable →
+// Page.navigate(url). Each response chains into the next command; the
+// Navigate slot promise resolves on Page.loadEventFired, not on any
+// response. Subsequent navigates skip straight to Page.navigate.
+JSPromise* navigate(JSGlobalObject* g, JSWebView* view, const WTF::String& url)
+{
+    auto& t = transport();
+
+    if (!view->m_sessionId.isEmpty()) {
+        uint32_t id = t.nextId();
+        return sendChromeOp(g, view, view->m_pendingNavigate, PendingSlot::Navigate,
+            Method::PageNavigate, id,
+            Command(id, "Page.navigate"_s, sidSpan(view->m_sessionId))
+                .str("url"_s, url));
+    }
+
+    // First navigate: start the chain. Stash url; the PageEnable response
+    // handler in Transport::handleResponse reads it and sends Page.navigate.
+    // The Navigate slot promise is created now; it resolves much later on
+    // Page.loadEventFired. The chain carries the same Weak<view> forward
+    // so the pending activity count keeps this object rooted the whole time.
+    //
+    // newWindow:true is required for width/height — without it Chrome
+    // reuses an existing window and rejects position params. Headless has
+    // no visible window either way; "new window" just means "new top-level
+    // browsing context".
+    view->m_pendingChromeNavigateUrl = url;
+    uint32_t id = t.nextId();
+    return sendChromeOp(g, view, view->m_pendingNavigate, PendingSlot::Navigate,
+        Method::TargetCreateTarget, id,
+        Command(id, "Target.createTarget"_s)
+            .str("url"_s, "about:blank"_s)
+            .boolean("newWindow"_s, true)
+            .num("width"_s, static_cast<int32_t>(view->m_width))
+            .num("height"_s, static_cast<int32_t>(view->m_height)));
+}
+
+// Runtime.evaluate with returnByValue + awaitPromise. Chrome JSON-serializes
+// the result internally (same mechanism as WKWebView's page-side
+// JSON.stringify but implicit). exceptionDetails present → script threw.
+JSPromise* evaluate(JSGlobalObject* g, JSWebView* view, const WTF::String& script)
+{
+    auto& t = transport();
+    uint32_t id = t.nextId();
+    // Same "await (expr)" wrap as WKWebView: forces expression context,
+    // unwraps thenables. Chrome's awaitPromise does the await part; we
+    // just need the paren-wrap for statement-sequence rejection consistency.
+    auto body = makeString("(async()=>{return await ("_s, script, ")})()"_s);
+    return sendChromeOp(g, view, view->m_pendingEval, PendingSlot::Evaluate,
+        Method::RuntimeEvaluate, id,
+        Command(id, "Runtime.evaluate"_s, sidSpan(view->m_sessionId))
+            .str("expression"_s, body)
+            .boolean("returnByValue"_s, true)
+            .boolean("awaitPromise"_s, true));
+}
+
+JSPromise* screenshot(JSGlobalObject* g, JSWebView* view)
+{
+    auto& t = transport();
+    uint32_t id = t.nextId();
+    return sendChromeOp(g, view, view->m_pendingScreenshot, PendingSlot::Screenshot,
+        Method::PageCaptureScreenshot, id,
+        Command(id, "Page.captureScreenshot"_s, sidSpan(view->m_sessionId))
+            .raw("format"_s, "\"png\""_s));
+}
+
+// One mousePressed + one mouseReleased. CDP's Input.dispatchMouseEvent is
+// synchronous-reply — Chrome processes the event, dispatches to the page,
+// and THEN replies. No mouseEventQueue-drain SPI dance needed.
+//
+// The response to the Released event resolves the promise; the Pressed
+// event is fire-and-forget (id allocated but not tracked in m_pending —
+// Chrome sends a reply we ignore). Both frames go in one write().
+JSPromise* click(JSGlobalObject* g, JSWebView* view, float x, float y, uint8_t button, uint8_t modifiers, uint8_t clickCount)
+{
+    auto& t = transport();
+    auto sid = sidSpan(view->m_sessionId);
+    auto btn = cdpButton(button);
+    int32_t mods = cdpModifiers(modifiers);
+
+    // Pressed — untracked. Chrome replies but we don't need the ack; the
+    // Released event's reply confirms both were processed.
+    uint32_t idDown = t.nextId();
+    t.send(Command(idDown, "Input.dispatchMouseEvent"_s, sid)
+            .raw("type"_s, "\"mousePressed\""_s)
+            .num("x"_s, x)
+            .num("y"_s, y)
+            .raw("button"_s, btn)
+            .num("clickCount"_s, static_cast<int32_t>(clickCount))
+            .num("modifiers"_s, mods));
+    // Released — tracked, resolves the promise.
+    uint32_t idUp = t.nextId();
+    return sendChromeOp(g, view, view->m_pendingMisc, PendingSlot::Misc,
+        Method::InputDispatchMouseEvent, idUp,
+        Command(idUp, "Input.dispatchMouseEvent"_s, sid)
+            .raw("type"_s, "\"mouseReleased\""_s)
+            .num("x"_s, x)
+            .num("y"_s, y)
+            .raw("button"_s, btn)
+            .num("clickCount"_s, static_cast<int32_t>(clickCount))
+            .num("modifiers"_s, mods));
+}
+
+// Selector ops: Runtime.evaluate runs the rAF-polled actionability check
+// (same predicate as WKWebView's kActionabilityJS). The IIFE takes
+// (sel, timeout) — we appendQuotedJSONString the selector so any chars
+// pass through. Response chains into dispatchMouseEvent.
+JSPromise* clickSelector(JSGlobalObject* g, JSWebView* view, const WTF::String& selector, uint32_t timeout, uint8_t button, uint8_t modifiers, uint8_t clickCount)
+{
+    auto& t = transport();
+
+    view->m_selButton = button;
+    view->m_selModifiers = modifiers;
+    view->m_selClickCount = clickCount;
+
+    // Build: kActionabilityIIFE + "(" + JSON(selector) + "," + timeout + ")"
+    // The IIFE body is a fixed literal; only the call-site args are dynamic.
+    WTF::StringBuilder sb;
+    sb.append(kActionabilityIIFE, '(');
+    sb.appendQuotedJSONString(selector);
+    sb.append(',', timeout, ')');
+
+    uint32_t id = t.nextId();
+    return sendChromeOp(g, view, view->m_pendingMisc, PendingSlot::Misc,
+        Method::ClickSelectorEval, id,
+        Command(id, "Runtime.evaluate"_s, sidSpan(view->m_sessionId))
+            .str("expression"_s, sb.toString())
+            .boolean("returnByValue"_s, true)
+            .boolean("awaitPromise"_s, true));
+}
+
+JSPromise* scrollTo(JSGlobalObject* g, JSWebView* view, const WTF::String& selector, uint32_t timeout, uint8_t block)
+{
+    auto& t = transport();
+
+    static constexpr ASCIILiteral blockNames[] = { "start"_s, "center"_s, "end"_s, "nearest"_s };
+    auto blockStr = blockNames[block < 4 ? block : 1];
+
+    WTF::StringBuilder sb;
+    sb.append(kScrollToIIFE, '(');
+    sb.appendQuotedJSONString(selector);
+    sb.append(',', timeout, ",\""_s, blockStr, "\")"_s);
+
+    uint32_t id = t.nextId();
+    return sendChromeOp(g, view, view->m_pendingMisc, PendingSlot::Misc,
+        Method::ScrollToSelectorEval, id,
+        Command(id, "Runtime.evaluate"_s, sidSpan(view->m_sessionId))
+            .str("expression"_s, sb.toString())
+            .boolean("returnByValue"_s, true)
+            .boolean("awaitPromise"_s, true));
+}
+
+JSPromise* type(JSGlobalObject* g, JSWebView* view, const WTF::String& text)
+{
+    auto& t = transport();
+    uint32_t id = t.nextId();
+    // Input.insertText does exactly what WKWebView's _executeEditCommand:
+    // InsertText does — inserts text at the caret without keydown events.
+    return sendChromeOp(g, view, view->m_pendingMisc, PendingSlot::Misc,
+        Method::InputInsertText, id,
+        Command(id, "Input.insertText"_s, sidSpan(view->m_sessionId))
+            .str("text"_s, text));
+}
+
+JSPromise* press(JSGlobalObject* g, JSWebView* view, uint8_t key, uint8_t modifiers, const WTF::String& character)
+{
+    // VirtualKey → CDP key/code/keyCode mapping is a table. TODO.
+    UNUSED_PARAM(view);
+    UNUSED_PARAM(key);
+    UNUSED_PARAM(modifiers);
+    UNUSED_PARAM(character);
+    auto& vm = g->vm();
+    auto* p = JSPromise::create(vm, g->promiseStructure());
+    p->reject(vm, g, createError(g, "press() not yet implemented for Chrome backend"_s));
+    return p;
+}
+
+JSPromise* scroll(JSGlobalObject* g, JSWebView* view, double dx, double dy)
+{
+    auto& t = transport();
+    uint32_t id = t.nextId();
+    // mouseWheel at the center. No presentation-barrier dance — Chrome's
+    // reply means the scroll was processed.
+    return sendChromeOp(g, view, view->m_pendingMisc, PendingSlot::Misc,
+        Method::InputDispatchMouseEvent, id,
+        Command(id, "Input.dispatchMouseEvent"_s, sidSpan(view->m_sessionId))
+            .raw("type"_s, "\"mouseWheel\""_s)
+            .num("x"_s, view->m_width / 2.0)
+            .num("y"_s, view->m_height / 2.0)
+            .num("deltaX"_s, dx)
+            .num("deltaY"_s, dy));
+}
+
+JSPromise* resize(JSGlobalObject* g, JSWebView* view, uint32_t width, uint32_t height)
+{
+    auto& t = transport();
+    view->m_width = width;
+    view->m_height = height;
+    uint32_t id = t.nextId();
+    return sendChromeOp(g, view, view->m_pendingMisc, PendingSlot::Misc,
+        Method::EmulationSetDeviceMetricsOverride, id,
+        Command(id, "Emulation.setDeviceMetricsOverride"_s, sidSpan(view->m_sessionId))
+            .num("width"_s, static_cast<int32_t>(width))
+            .num("height"_s, static_cast<int32_t>(height))
+            .num("deviceScaleFactor"_s, 1)
+            .boolean("mobile"_s, false));
+}
+
+JSPromise* goBack(JSGlobalObject* g, JSWebView* view)
+{
+    // Page.navigateToHistoryEntry or Runtime.evaluate("history.back()").
+    // TODO.
+    UNUSED_PARAM(view);
+    auto& vm = g->vm();
+    auto* p = JSPromise::create(vm, g->promiseStructure());
+    p->reject(vm, g, createError(g, "goBack() not yet implemented for Chrome backend"_s));
+    return p;
+}
+
+JSPromise* goForward(JSGlobalObject* g, JSWebView* view)
+{
+    UNUSED_PARAM(view);
+    auto& vm = g->vm();
+    auto* p = JSPromise::create(vm, g->promiseStructure());
+    p->reject(vm, g, createError(g, "goForward() not yet implemented for Chrome backend"_s));
+    return p;
+}
+
+JSPromise* reload(JSGlobalObject* g, JSWebView* view)
+{
+    auto& t = transport();
+    uint32_t id = t.nextId();
+    // Navigate slot — reload IS a navigation. Page.loadEventFired only
+    // settles PendingSlot::Navigate; using Misc would hang waiting for a
+    // settle that never comes. WKWebView's reload uses Misc because its
+    // Op::Reload Ack is synchronous.
+    return sendChromeOp(g, view, view->m_pendingNavigate, PendingSlot::Navigate,
+        Method::PageReload, id,
+        Command(id, "Page.reload"_s, sidSpan(view->m_sessionId)));
+}
+
+void close(JSWebView* view)
+{
+    auto& t = transport();
+    if (t.m_global) {
+        auto* g = t.m_global;
+        JSValue err = createError(g, "WebView closed"_s);
+        settleSlot(g, view, view->m_pendingNavigate, false, err);
+        settleSlot(g, view, view->m_pendingEval, false, err);
+        settleSlot(g, view, view->m_pendingScreenshot, false, err);
+        settleSlot(g, view, view->m_pendingMisc, false, err);
+    }
+    // Target.closeTarget — fire-and-forget. Chrome tears down the tab and
+    // sends Target.targetDestroyed which we ignore. Erase sessionId from the
+    // routing table so late events drop.
+    if (!view->m_sessionId.isEmpty() && !view->m_targetId.isEmpty()) {
+        uint32_t id = t.nextId();
+        t.send(Command(id, "Target.closeTarget"_s)
+                .str("targetId"_s, view->m_targetId));
+        t.m_sessions.remove(view->m_sessionId);
+    }
+    t.updateKeepAlive();
+}
+
+} // namespace Ops
 
 } // namespace CDP
 

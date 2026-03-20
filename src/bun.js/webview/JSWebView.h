@@ -149,6 +149,13 @@ void setupJSWebViewClassStructure(JSC::LazyClassStructure::Initializer&);
 // .m_sessions. Roots a view while m_pendingActivityCount > 0.
 JSC::WeakHandleOwner& webViewWeakOwner();
 
+// Settle = read, clear, dec activity, resolve-or-reject. Slot cleared BEFORE
+// the call into JS so a re-entrant navigate() inside a .then() sees an empty
+// slot. Activity decremented AFTER clear (GC seeing count>0 with a clear
+// slot is benign — one extra mark cycle). Shared by all backends.
+void settleSlot(JSC::JSGlobalObject*, JSWebView*,
+    JSC::WriteBarrier<JSC::JSPromise>& slot, bool ok, JSC::JSValue);
+
 // Implemented in JSWebViewPrototype.cpp / JSWebViewConstructor.cpp.
 // setupJSWebViewClassStructure calls these.
 JSC::JSObject* createJSWebViewPrototype(JSC::VM&, JSC::JSGlobalObject*);

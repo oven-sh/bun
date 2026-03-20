@@ -332,6 +332,31 @@ public:
 
 Transport& transport();
 
+// --- CDP::Ops --------------------------------------------------------------
+// Per-view ops. Each builds a CDP JSON command via Command (the one user-
+// controlled string goes through appendQuotedJSONString), stores a promise
+// in the right WriteBarrier slot, adds to Transport.m_pending, and writes
+// the frame. Caller has already validated args and checked m_closed +
+// slot-empty.
+namespace Ops {
+
+JSC::JSPromise* navigate(JSC::JSGlobalObject*, JSWebView*, const WTF::String& url);
+JSC::JSPromise* evaluate(JSC::JSGlobalObject*, JSWebView*, const WTF::String& script);
+JSC::JSPromise* screenshot(JSC::JSGlobalObject*, JSWebView*);
+JSC::JSPromise* click(JSC::JSGlobalObject*, JSWebView*, float x, float y, uint8_t button, uint8_t modifiers, uint8_t clickCount);
+JSC::JSPromise* clickSelector(JSC::JSGlobalObject*, JSWebView*, const WTF::String& selector, uint32_t timeout, uint8_t button, uint8_t modifiers, uint8_t clickCount);
+JSC::JSPromise* type(JSC::JSGlobalObject*, JSWebView*, const WTF::String& text);
+JSC::JSPromise* press(JSC::JSGlobalObject*, JSWebView*, uint8_t virtualKey, uint8_t modifiers, const WTF::String& character);
+JSC::JSPromise* scroll(JSC::JSGlobalObject*, JSWebView*, double dx, double dy);
+JSC::JSPromise* scrollTo(JSC::JSGlobalObject*, JSWebView*, const WTF::String& selector, uint32_t timeout, uint8_t block);
+JSC::JSPromise* resize(JSC::JSGlobalObject*, JSWebView*, uint32_t width, uint32_t height);
+JSC::JSPromise* goBack(JSC::JSGlobalObject*, JSWebView*);
+JSC::JSPromise* goForward(JSC::JSGlobalObject*, JSWebView*);
+JSC::JSPromise* reload(JSC::JSGlobalObject*, JSWebView*);
+void close(JSWebView*);
+
+} // namespace Ops
+
 } // namespace CDP
 
 } // namespace Bun

@@ -12,7 +12,7 @@
 //! handles the child end. Socket EOF = parent died = child exits.
 //!
 //! This file owns process lifetime only. The usockets client lives in C++
-//! (JSWebView.cpp) — usockets is a C API and the frame protocol is C structs.
+//! (WebKitBackend.cpp) — usockets is a C API and the frame protocol is C structs.
 
 const HostProcess = @This();
 
@@ -141,7 +141,7 @@ fn spawn(vm: *jsc.VirtualMachine) !bun.FileDescriptor {
     return fds[0];
 }
 
-// Implemented in JSWebView.cpp. Rejects all pending promises, marks the
+// Implemented in WebKitBackend.cpp. Rejects all pending promises, marks the
 // host socket dead. `signo` is the signal that killed the child (0 if it
 // exited cleanly).
 extern fn Bun__WebViewHost__childDied(signo: i32) void;

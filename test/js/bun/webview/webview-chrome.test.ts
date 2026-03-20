@@ -2,18 +2,28 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
 // Chrome backend works on any platform with Chrome/Chromium installed.
-// Skip if no Chrome found (CI may not have it).
-const chromePath =
-  process.env.BUN_CHROME_PATH ||
-  (process.platform === "darwin"
-    ? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-    : "/usr/bin/google-chrome-stable");
-
-let hasChrome = false;
-try {
-  const { existsSync } = await import("node:fs");
-  hasChrome = existsSync(chromePath);
-} catch {}
+// Skip if no Chrome found (CI may not have it). Candidate list mirrors
+// ChromeProcess.zig's findChrome() — if the runtime can find it, the
+// test should too.
+import { existsSync } from "node:fs";
+const candidates = process.env.BUN_CHROME_PATH
+  ? [process.env.BUN_CHROME_PATH]
+  : process.platform === "darwin"
+    ? [
+        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        "/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary",
+        "/Applications/Chromium.app/Contents/MacOS/Chromium",
+      ]
+    : process.platform === "linux"
+      ? [
+          "/usr/bin/google-chrome-stable",
+          "/usr/bin/google-chrome",
+          "/usr/bin/chromium-browser",
+          "/usr/bin/chromium",
+          "/snap/bin/chromium",
+        ]
+      : []; // Windows TODO — ChromeProcess.zig doesn't support it yet
+const hasChrome = candidates.some(existsSync);
 
 const it = hasChrome ? test : test.skip;
 

@@ -39,11 +39,17 @@ pub const PathWatcherManager = struct {
     }
 
     fn unrefPendingTask(this: *PathWatcherManager) void {
-        this.mutex.lock();
-        defer this.mutex.unlock();
-        this.pending_tasks -= 1;
-        if (this.deinit_on_last_task and this.pending_tasks == 0) {
-            this.has_pending_tasks.store(false, .release);
+        const should_deinit = blk: {
+            this.mutex.lock();
+            defer this.mutex.unlock();
+            this.pending_tasks -= 1;
+            if (this.pending_tasks == 0) {
+                this.has_pending_tasks.store(false, .release);
+                break :blk this.deinit_on_last_task;
+            }
+            break :blk false;
+        };
+        if (should_deinit) {
             this.deinit();
         }
     }
@@ -413,13 +419,13 @@ pub const PathWatcherManager = struct {
         switch (this._addDirectory(watcher, child_path)) {
             .err => |err| {
                 log("[watch] failed to register new subdirectory {s}: {f}", .{ path_z, err });
-                // inotify_add_watch failed (e.g. ENOSPC) so main_watcher never
-                // owns the fd. Close it and drop the ref. The stale entry in
-                // watcher.file_paths is harmless — unregisterWatcher will call
-                // _decrementPathRefNoLock which no-ops since refs are already 0.
-                // We don't pop() because another thread may have appended
-                // between our unlock and now, making pop() remove the wrong entry.
-                this._decrementPathRefAndClose(path_z);
+                // Don't clean up here — the path is in both manager.file_paths
+                // (with refs=1) and watcher.file_paths. Calling
+                // _decrementPathRefAndClose would free the path string while
+                // watcher.file_paths still holds the pointer (use-after-free).
+                // unregisterWatcher will drain watcher.file_paths and call
+                // _decrementPathRefNoLock for each, which handles both the
+                // main_watcher.remove and fd close correctly.
             },
             .result => {},
         }
@@ -727,8 +733,14 @@ pub const PathWatcherManager = struct {
                 path.refs -= 1;
                 if (path.refs == 0) {
                     const path_ = path.path;
+                    const fd = path.fd;
                     this.main_watcher.remove(path.hash);
                     _ = this.file_paths.remove(path_);
+                    // Close the fd. main_watcher.remove only evicts from the
+                    // watchlist; the fd itself must be closed here. If the hash
+                    // was never added (e.g. _addDirectory failed), remove is a
+                    // no-op and this close prevents an fd leak.
+                    fd.close();
                     bun.default_allocator.free(path_);
                 }
             }
@@ -741,65 +753,51 @@ pub const PathWatcherManager = struct {
         this._decrementPathRefNoLock(file_path);
     }
 
-    // Like _decrementPathRef, but also closes the fd under the lock when
-    // refs reach zero. Used for paths that were opened by _fdFromAbsolutePathZ
-    // but never handed to main_watcher (so main_watcher.remove won't close them).
-    fn _decrementPathRefAndClose(this: *PathWatcherManager, file_path: [:0]const u8) void {
-        this.mutex.lock();
-        defer this.mutex.unlock();
-        if (this.file_paths.getEntry(file_path)) |entry| {
-            var path = entry.value_ptr;
-            if (path.refs > 0) {
-                path.refs -= 1;
-                if (path.refs == 0) {
-                    const path_ = path.path;
-                    path.fd.close();
-                    _ = this.file_paths.remove(path_);
-                    bun.default_allocator.free(path_);
-                }
-            }
-        }
-    }
+    // _decrementPathRefAndClose is now equivalent to _decrementPathRef since
+    // _decrementPathRefNoLock always closes fds when refs reach 0.
+    const _decrementPathRefAndClose = _decrementPathRef;
 
     // unregister is always called form main thread
     fn unregisterWatcher(this: *PathWatcherManager, watcher: *PathWatcher) void {
-        this.mutex.lock();
-        defer this.mutex.unlock();
+        const should_deinit = blk: {
+            this.mutex.lock();
+            defer this.mutex.unlock();
 
-        var watchers = this.watchers.slice();
-        defer {
-            if (this.deinit_on_last_watcher and this.watcher_count == 0) {
-                this.deinit();
-            }
-        }
+            var watchers = this.watchers.slice();
 
-        for (watchers, 0..) |w, i| {
-            if (w) |item| {
-                if (item == watcher) {
-                    watchers[i] = null;
-                    // if is the last one just pop
-                    if (i == watchers.len - 1) {
-                        this.watchers.len -= 1;
-                    }
-                    this.watcher_count -= 1;
-
-                    this._decrementPathRefNoLock(watcher.path.path);
-                    if (comptime Environment.isMac) {
-                        if (watcher.fsevents_watcher != null) {
-                            break;
+            for (watchers, 0..) |w, i| {
+                if (w) |item| {
+                    if (item == watcher) {
+                        watchers[i] = null;
+                        // if is the last one just pop
+                        if (i == watchers.len - 1) {
+                            this.watchers.len -= 1;
                         }
-                    }
+                        this.watcher_count -= 1;
 
-                    {
-                        watcher.mutex.lock();
-                        defer watcher.mutex.unlock();
-                        while (watcher.file_paths.pop()) |file_path| {
-                            this._decrementPathRefNoLock(file_path);
+                        this._decrementPathRefNoLock(watcher.path.path);
+                        if (comptime Environment.isMac) {
+                            if (watcher.fsevents_watcher != null) {
+                                break;
+                            }
                         }
+
+                        {
+                            watcher.mutex.lock();
+                            defer watcher.mutex.unlock();
+                            while (watcher.file_paths.pop()) |file_path| {
+                                this._decrementPathRefNoLock(file_path);
+                            }
+                        }
+                        break;
                     }
-                    break;
                 }
             }
+
+            break :blk this.deinit_on_last_watcher and this.watcher_count == 0;
+        };
+        if (should_deinit) {
+            this.deinit();
         }
     }
 

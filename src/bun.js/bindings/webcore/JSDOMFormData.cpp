@@ -646,8 +646,15 @@ JSC::JSValue getInternalProperties(JSC::VM& vm, JSGlobalObject* lexicalGlobalObj
         auto& key = entry.name;
         auto& value = entry.data;
         auto ident = Identifier::fromString(vm, key);
+        auto index = JSC::parseIndex(ident);
         if (seenKeys.contains(key)) {
-            JSValue jsValue = obj->getDirect(vm, ident);
+            JSValue jsValue;
+            if (index.has_value()) [[unlikely]] {
+                jsValue = obj->getDirectIndex(lexicalGlobalObject, index.value());
+                RETURN_IF_EXCEPTION(throwScope, {});
+            } else {
+                jsValue = obj->getDirect(vm, ident);
+            }
             if (jsValue.isString() || jsValue.inherits<JSBlob>()) {
                 // Make sure this runs before the deferral scope is called.
                 JSValue resultValue = toJSValue(value);
@@ -670,7 +677,12 @@ JSC::JSValue getInternalProperties(JSC::VM& vm, JSGlobalObject* lexicalGlobalObj
                     array->initializeIndex(initializationScope, 1, resultValue);
                 }
 
-                obj->putDirect(vm, ident, array, 0);
+                if (index.has_value()) [[unlikely]] {
+                    obj->putDirectIndex(lexicalGlobalObject, index.value(), array);
+                    RETURN_IF_EXCEPTION(throwScope, {});
+                } else {
+                    obj->putDirect(vm, ident, array, 0);
+                }
             } else if (jsValue.isObject() && jsValue.getObject()->inherits<JSC::JSArray>()) {
                 JSC::JSArray* array = jsCast<JSC::JSArray*>(jsValue.getObject());
                 JSValue jsValue = toJSValue(value);
@@ -685,8 +697,12 @@ JSC::JSValue getInternalProperties(JSC::VM& vm, JSGlobalObject* lexicalGlobalObj
             seenKeys.add(key);
             JSValue jsValue = toJSValue(value);
             RETURN_IF_EXCEPTION(throwScope, {});
-            obj->putDirectMayBeIndex(lexicalGlobalObject, ident, jsValue);
-            RETURN_IF_EXCEPTION(throwScope, {});
+            if (index.has_value()) [[unlikely]] {
+                obj->putDirectIndex(lexicalGlobalObject, index.value(), jsValue);
+                RETURN_IF_EXCEPTION(throwScope, {});
+            } else {
+                obj->putDirect(vm, ident, jsValue);
+            }
         }
     }
 

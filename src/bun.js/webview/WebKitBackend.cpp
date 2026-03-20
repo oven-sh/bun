@@ -290,10 +290,14 @@ void HostClient::handleReply(const Frame& h, Reader r)
             // console.log(). trace/dir render through Log level.
             using JSC::MessageLevel;
             MessageLevel ml = MessageLevel::Log;
-            if (type == "error"_s) ml = MessageLevel::Error;
-            else if (type == "warn"_s) ml = MessageLevel::Warning;
-            else if (type == "debug"_s) ml = MessageLevel::Debug;
-            else if (type == "info"_s) ml = MessageLevel::Info;
+            if (type == "error"_s)
+                ml = MessageLevel::Error;
+            else if (type == "warn"_s)
+                ml = MessageLevel::Warning;
+            else if (type == "debug"_s)
+                ml = MessageLevel::Debug;
+            else if (type == "info"_s)
+                ml = MessageLevel::Info;
 
             WTF::Vector<Strong<Unknown>> strongArgs;
             strongArgs.reserveInitialCapacity(args.size());
@@ -311,7 +315,8 @@ void HostClient::handleReply(const Frame& h, Reader r)
         if (callData.type == CallData::Type::None) return;
         MarkedArgumentBuffer cbArgs;
         cbArgs.append(jsString(vm, type.isEmpty() ? "log"_s : type));
-        for (unsigned i = 0; i < args.size(); ++i) cbArgs.append(args.at(i));
+        for (unsigned i = 0; i < args.size(); ++i)
+            cbArgs.append(args.at(i));
         call(g, cb, callData, jsUndefined(), cbArgs);
         return;
     }

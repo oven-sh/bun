@@ -1120,6 +1120,11 @@ pub const PathWatcher = struct {
     }
 
     pub fn emit(this: *PathWatcher, event: Event, hash: Watcher.HashType, time_stamp: i64, is_file: bool) void {
+        // Serialize access — emit can be called from both the watcher thread
+        // (onFileUpdate) and WorkPool threads (processWatcher, error paths).
+        this.mutex.lock();
+        defer this.mutex.unlock();
+
         switch (event) {
             .change, .rename => {
                 const event_type = switch (event) {
@@ -1156,6 +1161,8 @@ pub const PathWatcher = struct {
     }
 
     pub fn flush(this: *PathWatcher) void {
+        this.mutex.lock();
+        defer this.mutex.unlock();
         this.needs_flush = false;
         if (this.isClosed()) return;
         this.flushCallback(this.ctx);
@@ -1166,8 +1173,16 @@ pub const PathWatcher = struct {
     }
 
     pub fn deinit(this: *PathWatcher) void {
-        this.setClosed();
-        if (this.hasPendingDirectories()) {
+        // Atomically set closed and check pending_directories under a single
+        // mutex scope to prevent TOCTOU race with unrefPendingDirectory —
+        // without this, both threads could decide to run the cleanup path.
+        const has_pending = blk: {
+            this.mutex.lock();
+            defer this.mutex.unlock();
+            this.closed.store(true, .release);
+            break :blk this.pending_directories > 0;
+        };
+        if (has_pending) {
             // will be freed on last directory
             return;
         }

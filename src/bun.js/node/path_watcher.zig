@@ -568,15 +568,19 @@ pub const PathWatcherManager = struct {
                 const child_path = switch (manager._fdFromAbsolutePathZ(entry_path_z)) {
                     .result => |result| result,
                     .err => |e| switch (e.getErrno()) {
-                        // Skip subdirectories we can't open: permission denied,
-                        // raced with deletion, raced with replacement by a file.
-                        .ACCES, .PERM, .NOENT, .NOTDIR, .LOOP => continue,
+                        // Skip subdirectories we can't open: permission
+                        // denied, raced with deletion, or circular symlink.
+                        .ACCES, .PERM, .NOENT, .LOOP => continue,
                         else => return .{ .err = e },
                     },
                 };
-                // d_type said .directory so _fdFromAbsolutePathZ opened with
-                // O_DIRECTORY — is_file would require a race covered by NOTDIR.
-                bun.debugAssert(!child_path.is_file);
+                // If the directory was replaced by a file between readdir
+                // and open(O_DIRECTORY), _fdFromAbsolutePathZ falls back to
+                // opening as a regular file. Skip it.
+                if (child_path.is_file) {
+                    manager._decrementPathRefAndClose(entry_path_z);
+                    continue;
+                }
 
                 {
                     watcher.mutex.lock();

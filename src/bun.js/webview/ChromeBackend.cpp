@@ -69,65 +69,69 @@ extern "C" void Bun__EventLoop__runCallback2(JSGlobalObject*, EncodedJSValue cb,
 // memchr for the key's quoted form ("key":), then depth-counted walk to
 // the value end. Returns empty span if not found.
 //
-// The CDP envelope has no nesting in the keys we scan (id, method, result,
-// error, params, sessionId). result/params VALUES may be nested objects,
-// which the depth counter handles.
+// Scan a value slice from where the key matched. Depth counts braces/
+// brackets; inStr tracks quoted regions (commas inside strings don't
+// terminate). Depth-0 comma or enclosing-close ends it.
+static std::span<const char> scanValue(const char* vstart, const char* end)
+{
+    int depth = 0;
+    bool inStr = false, esc = false;
+    const char* v = vstart;
+    for (; v < end; ++v) {
+        char c = *v;
+        if (esc) { esc = false; continue; }
+        if (c == '\\') { esc = true; continue; }
+        if (c == '"') { inStr = !inStr; continue; }
+        if (inStr) continue;
+        if (c == '{' || c == '[') { ++depth; continue; }
+        if (c == '}' || c == ']') {
+            if (depth == 0) break; // enclosing close ended the value
+            --depth;
+            continue;
+        }
+        if (c == ',' && depth == 0) break;
+    }
+    return { vstart, static_cast<size_t>(v - vstart) };
+}
+
+// Depth-counted walk: matches "key": only at depth 1 (inside the outermost
+// object). {"result":{"id":2},"id":1} with key="id" returns the outer 1, not
+// the nested 2 — the nested one is at depth 2. Chrome's encoder emits
+// id-first in responses so a naive memchr happened to work, but CDP doesn't
+// guarantee key ordering; a proxy or Chrome version change would surface
+// the misparse as promise hangs (handleResponse's find(wrong-id)==end()
+// drops the reply).
 std::span<const char> jsonField(std::span<const char> json, std::span<const char> key)
 {
-    // Look for "key": — the key is always at depth 1 in the envelope, so
-    // the first quoted match at the right nesting IS the field. We could
-    // walk depth-counted from the start, but memchr for the opening quote
-    // of the key is much faster and the CDP envelope has no string values
-    // that look like `"id":` before the actual id field.
     const char* p = json.data();
     const char* end = p + json.size();
     size_t klen = key.size();
 
-    while (p + klen + 3 < end) {
-        // Scan for the next quote.
-        const char* q = static_cast<const char*>(memchr(p, '"', end - p));
-        if (!q) return {};
-        // Check if it's our key: "key":
-        if (q + klen + 2 < end
-            && memcmp(q + 1, key.data(), klen) == 0
-            && q[klen + 1] == '"' && q[klen + 2] == ':') {
-            const char* vstart = q + klen + 3;
-            // Walk the value to its end. Depth counts braces/brackets;
-            // inString tracks quoted regions (commas inside strings don't
-            // terminate). Depth 0 comma or closing brace at depth 0 is done.
-            int depth = 0;
-            bool inStr = false;
-            bool esc = false;
-            const char* v = vstart;
-            for (; v < end; ++v) {
-                char c = *v;
-                if (esc) {
-                    esc = false;
-                    continue;
-                }
-                if (c == '\\') {
-                    esc = true;
-                    continue;
-                }
-                if (c == '"') {
-                    inStr = !inStr;
-                    continue;
-                }
-                if (inStr) continue;
-                if (c == '{' || c == '[') {
-                    ++depth;
-                    continue;
-                }
-                if (c == '}' || c == ']') {
-                    if (depth == 0) break; // value ended at enclosing close
-                    --depth;
-                    continue;
-                }
-                if (c == ',' && depth == 0) break;
-            }
-            return { vstart, static_cast<size_t>(v - vstart) };
+    int depth = 0;
+    bool inStr = false, esc = false;
+    for (; p + klen + 3 < end; ++p) {
+        char c = *p;
+        if (esc) { esc = false; continue; }
+        if (c == '\\') { esc = true; continue; }
+        if (c == '"') {
+            // Opening quote outside a string at depth 1 → a key start.
+            // Chrome's encoder emits no whitespace; "key": is contiguous.
+            // String VALUES at depth 1 are preceded by a colon so the
+            // quote before them has inStr transitioning true→false and
+            // the next quote (the value's opening) sees depth 1 with
+            // inStr false again — but that quote's byte+1 isn't going to
+            // match the key (it's the value's first char), so the memcmp
+            // fails and we flip inStr for the string body.
+            if (!inStr && depth == 1
+                && memcmp(p + 1, key.data(), klen) == 0
+                && p[klen + 1] == '"' && p[klen + 2] == ':')
+                return scanValue(p + klen + 3, end);
+            inStr = !inStr;
+            continue;
         }
-        p = q + 1;
+        if (inStr) continue;
+        if (c == '{' || c == '[') { ++depth; continue; }
+        if (c == '}' || c == ']') { --depth; continue; }
     }
     return {};
 }
@@ -551,11 +555,11 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         return;
     }
     case Method::RuntimeEnable:
-        // Untracked fire-and-forget — shouldn't reach here, but drop.
-        return;
-
     case Method::TargetCloseTarget:
-        settle(g, view, entry.slot, true, jsUndefined());
+        // Untracked fire-and-forget — close() sends TargetCloseTarget
+        // without adding to m_pending (the view is going away). Chrome's
+        // reply finds no entry, handleResponse's find()==end() drops it.
+        // This case arm is unreachable; present for switch completeness.
         return;
 
     case Method::PageNavigate: {
@@ -1295,15 +1299,26 @@ void close(JSWebView* view)
         settleSlot(g, view, view->m_pendingScreenshot, false, err);
         settleSlot(g, view, view->m_pendingMisc, false, err);
     }
-    // Target.closeTarget — fire-and-forget. Chrome tears down the tab and
-    // sends Target.targetDestroyed which we ignore. Erase sessionId from the
-    // routing table so late events drop.
-    if (!view->m_sessionId.isEmpty() && !view->m_targetId.isEmpty()) {
-        uint32_t id = t.nextId();
-        t.send(Command(id, "Target.closeTarget"_s)
+    // Prune m_pending entries for this view — the attach chain
+    // (TargetCreateTarget → TargetAttachToTarget → PageEnable →
+    // PageNavigate) holds Weak<view> per step and each step chains to the
+    // next on reply. If close() lands mid-chain, the next reply would
+    // continue on a closed view: m_sessions.add re-registers it,
+    // PageEnable sends Page.navigate, the tab navigates after dispose.
+    // removeIf breaks the chain at the next reply — handleResponse's
+    // find(id)==end() early-return drops it.
+    t.m_pending.removeIf([view](auto& pair) {
+        return pair.value.view.get() == view;
+    });
+    // Target.closeTarget — fire-and-forget. targetId is stashed at
+    // TargetCreateTarget's reply (before sessionId) so it's populated
+    // earlier in the chain. Chrome tears down the tab; we ignore the
+    // Target.targetDestroyed event. Erase sessionId so late events drop.
+    if (!view->m_targetId.isEmpty()) {
+        t.send(Command(t.nextId(), "Target.closeTarget"_s)
                 .str("targetId"_s, view->m_targetId));
-        t.m_sessions.remove(view->m_sessionId);
     }
+    if (!view->m_sessionId.isEmpty()) t.m_sessions.remove(view->m_sessionId);
     t.updateKeepAlive();
 }
 

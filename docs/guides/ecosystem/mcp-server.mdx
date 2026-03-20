@@ -12,7 +12,7 @@ The server URL is:
 https://bun.com/docs/mcp
 ```
 
-It uses Streamable HTTP transport and requires no authentication.
+It uses Streamable HTTP transport and requires no authentication or API key. There are no usage limits.
 
 ## Claude Code
 
@@ -58,6 +58,22 @@ Add to `~/.codeium/windsurf/mcp_config.json`:
   "mcpServers": {
     "bun-docs": {
       "serverUrl": "https://bun.com/docs/mcp"
+    }
+  }
+}
+```
+
+## Zed
+
+Add to Zed's settings (`Zed > Settings > Open Settings`), under `"context_servers"`:
+
+```json
+{
+  "context_servers": {
+    "bun-docs": {
+      "settings": {
+        "url": "https://bun.com/docs/mcp"
+      }
     }
   }
 }

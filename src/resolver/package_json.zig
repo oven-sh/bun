@@ -1472,6 +1472,12 @@ pub const ESModule = struct {
                 parseSubpath(&package.subpath, specifier[package.name.len..], subpath_buf);
             }
 
+            // Validate the final package name (after version splitting) against
+            // the npm package name allowlist. This prevents names with characters
+            // like <, >, spaces, quotes, etc. from reaching the auto-install path.
+            if (!strings.isNPMPackageNameIgnoreLength(package.name))
+                return null;
+
             return package;
         }
 

@@ -454,7 +454,9 @@ pub const PathWatcherManager = struct {
             };
         }
 
-        switch (this._addDirectory(watcher, child_path)) {
+        // inline_scan so synthetic rename events are queued synchronously
+        // before any inotify events for the new subdir can be processed.
+        switch (this._addDirectoryImpl(watcher, child_path, .inline_scan)) {
             .err => |err| {
                 log("[watch] failed to register new subdirectory {s}: {f}", .{ path_z, err });
                 // Don't clean up here — the path is in both manager.file_paths
@@ -467,6 +469,7 @@ pub const PathWatcherManager = struct {
             },
             .result => {},
         }
+        if (watcher.needs_flush) watcher.flush();
     }
 
     pub fn onError(
@@ -608,20 +611,26 @@ pub const PathWatcherManager = struct {
             watcher: *PathWatcher,
             buf: *bun.PathBuffer,
         ) bun.sys.Maybe(void) {
-            if (Environment.isWindows) @compileError("use win_watcher.zig");
+            return scanDirectory(this.manager, watcher, this.path, buf);
+        }
 
-            // For recursive watches, enumerate all children. Emit a synthetic
-            // 'rename' for each (matching Node.js's recursive_watch.js, which
-            // emits on discovery). This also covers the race where a file is
-            // created in a new subdirectory before the inotify watch is added —
-            // the inotify IN_CREATE is missed but the scan finds the file.
-            // For subdirectories, also register an inotify watch and recurse.
-            // Non-recursive watches never reach this function — _addDirectory
-            // short-circuits before scheduling the task.
+        /// Enumerate `path`'s children. Emit a synthetic 'rename' for each
+        /// (matching Node.js's recursive_watch.js discovery events). For
+        /// subdirectories, add an inotify watch and schedule a recursive scan.
+        /// Called synchronously from _addDirectoryImpl(.inline_scan) so the
+        /// rename events are queued before any inotify events for the new
+        /// subdir — avoids a race where writeFileSync's open(O_CREAT) happens
+        /// before the watch is added (IN_CREATE missed) but write() happens
+        /// after (IN_MODIFY fires as 'change' before the scan's 'rename').
+        fn scanDirectory(
+            manager: *PathWatcherManager,
+            watcher: *PathWatcher,
+            path: PathInfo,
+            buf: *bun.PathBuffer,
+        ) bun.sys.Maybe(void) {
+            if (Environment.isWindows) @compileError("use win_watcher.zig");
             bun.debugAssert(watcher.recursive);
 
-            const manager = this.manager;
-            const path = this.path;
             const fd = path.fd;
             var iter = fd.stdDir().iterate();
             const timestamp = std.time.milliTimestamp();
@@ -735,6 +744,15 @@ pub const PathWatcherManager = struct {
 
     // this should only be called if thread pool is not null
     fn _addDirectory(this: *PathWatcherManager, watcher: *PathWatcher, path: PathInfo) bun.sys.Maybe(void) {
+        return this._addDirectoryImpl(watcher, path, .schedule_scan);
+    }
+
+    fn _addDirectoryImpl(
+        this: *PathWatcherManager,
+        watcher: *PathWatcher,
+        path: PathInfo,
+        comptime scan_mode: enum { schedule_scan, inline_scan },
+    ) bun.sys.Maybe(void) {
         const fd = path.fd;
         // clone_file_path=true so the watchlist owns its own copy of the
         // path string. This decouples watchlist lifetime from file_paths
@@ -750,6 +768,18 @@ pub const PathWatcherManager = struct {
         // child enumeration. This matches libuv's uv_fs_event_start(), which
         // calls inotify_add_watch once and never iterates directory contents.
         if (!watcher.recursive) return .success;
+
+        // inline_scan: scan synchronously right after inotify_add_watch so
+        // synthetic rename events are queued before any inotify events for
+        // the new subdir. This closes the race where writeFileSync's
+        // open(O_CREAT) happens before the watch is added (IN_CREATE missed)
+        // but write() happens after (IN_MODIFY fires as 'change'). Without
+        // the synchronous scan, the 'change' can arrive before the scan's
+        // 'rename', tripping tests that assert event === 'rename'.
+        if (scan_mode == .inline_scan) {
+            var buf: bun.PathBuffer = undefined;
+            return DirectoryRegisterTask.scanDirectory(this, watcher, path, &buf);
+        }
 
         return .{
             .result = DirectoryRegisterTask.schedule(this, watcher, path) catch |err| return .{

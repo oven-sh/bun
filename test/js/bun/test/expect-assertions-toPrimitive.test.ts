@@ -17,7 +17,8 @@ test("expect.assertions does not crash when argument has Symbol.toPrimitive retu
     stderr: "pipe",
   });
 
-  const exitCode = await proc.exited;
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
+  expect(stderr).not.toContain("error:");
   expect(exitCode).toBe(0);
 });

@@ -234,7 +234,7 @@ JSC::JSValue CookieMap::toJSON(JSC::JSGlobalObject* globalObject) const
     // Add modified cookies to the object
     for (const auto& cookie : m_modifiedCookies) {
         if (!cookie->value().isEmpty()) {
-            object->putDirect(vm, JSC::Identifier::fromString(vm, cookie->name()), JSC::jsString(vm, cookie->value()));
+            object->putDirectMayBeIndex(globalObject, JSC::Identifier::fromString(vm, cookie->name()), JSC::jsString(vm, cookie->value()));
             RETURN_IF_EXCEPTION(scope, {});
         }
     }
@@ -243,7 +243,7 @@ JSC::JSValue CookieMap::toJSON(JSC::JSGlobalObject* globalObject) const
     for (const auto& cookie : m_originalCookies) {
         // Skip if this cookie name was already added from modified cookies
         if (!object->hasProperty(globalObject, JSC::Identifier::fromString(vm, cookie.key))) {
-            object->putDirect(vm, JSC::Identifier::fromString(vm, cookie.key), JSC::jsString(vm, cookie.value));
+            object->putDirectMayBeIndex(globalObject, JSC::Identifier::fromString(vm, cookie.key), JSC::jsString(vm, cookie.value));
             RETURN_IF_EXCEPTION(scope, {});
         }
     }

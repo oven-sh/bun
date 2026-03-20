@@ -238,6 +238,15 @@ describe("Bun.Cookie and Bun.CookieMap", () => {
     `);
   });
 
+  test("CookieMap.toJSON() handles numeric cookie names", () => {
+    const map = new Bun.CookieMap("0=first; 1=second; 42=answer");
+    expect(map.toJSON()).toEqual({
+      "0": "first",
+      "1": "second",
+      "42": "answer",
+    });
+  });
+
   test("CookieMap works with cookies with advanced attributes", () => {
     const map = new Bun.CookieMap();
 

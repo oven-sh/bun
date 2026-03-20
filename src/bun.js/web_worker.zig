@@ -81,8 +81,9 @@ export fn WebWorker__updatePtr(worker: *WebWorker, ptr: *anyopaque) bool {
         .{worker},
     ) catch {
         // Spawn failed — the worker thread never started so exitAndDeinit
-        // will never run. requestTermination → notifyNeedTermination handles
-        // unreffing parent_poll_ref via setRefInternal(false).
+        // will never run. Manually unref the parent keep-alive and request
+        // termination.
+        worker.parent_poll_ref.unrefConcurrently(worker.parent);
         worker.requestTermination();
         worker.deref();
         return false;

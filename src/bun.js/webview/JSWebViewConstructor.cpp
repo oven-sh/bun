@@ -84,6 +84,8 @@ JSC_DEFINE_HOST_FUNCTION(constructWebView, (JSGlobalObject * globalObject, CallF
     WebViewBackend backend = WebViewBackend::WebKit;
     WTF::String chromePath;
     WTF::Vector<WTF::String> chromeArgv;
+    bool consoleIsGlobal = false;
+    JSObject* consoleCallback = nullptr;
 
     JSValue options = callFrame->argument(0);
     if (options.isObject()) {
@@ -184,6 +186,26 @@ JSC_DEFINE_HOST_FUNCTION(constructWebView, (JSGlobalObject * globalObject, CallF
                 "url must be a string"_s);
         }
 
+        // console: globalThis.console → direct ConsoleClient dispatch (no
+        // JS call per console.log). console: (type, ...args) => {} → custom
+        // callback. The globalThis.console check is reference equality —
+        // passing the actual console object is the opt-in signal.
+        JSValue consoleOpt = opts->get(globalObject, Identifier::fromString(vm, "console"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!consoleOpt.isUndefined()) {
+            JSValue globalConsole = globalObject->get(globalObject,
+                Identifier::fromString(vm, "console"_s));
+            RETURN_IF_EXCEPTION(scope, {});
+            if (consoleOpt == globalConsole) {
+                consoleIsGlobal = true;
+            } else if (consoleOpt.isCallable()) {
+                consoleCallback = consoleOpt.getObject();
+            } else {
+                return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE,
+                    "console must be globalThis.console or a function"_s);
+            }
+        }
+
         JSValue dataStore = opts->get(globalObject, Identifier::fromString(vm, "dataStore"_s));
         RETURN_IF_EXCEPTION(scope, {});
         if (dataStore.isObject()) {
@@ -228,6 +250,8 @@ JSC_DEFINE_HOST_FUNCTION(constructWebView, (JSGlobalObject * globalObject, CallF
             return Bun::throwError(globalObject, scope, ErrorCode::ERR_DLOPEN_FAILED,
                 "Failed to spawn Chrome (set BUN_CHROME_PATH, backend.path, or install Chrome/Chromium)"_s);
         }
+        view->m_consoleIsGlobal = consoleIsGlobal;
+        if (consoleCallback) view->m_onConsole.set(vm, view, consoleCallback);
         if (!initialUrl.isEmpty()) view->navigate(globalObject, initialUrl);
         return JSValue::encode(view);
     }
@@ -241,6 +265,8 @@ JSC_DEFINE_HOST_FUNCTION(constructWebView, (JSGlobalObject * globalObject, CallF
         return Bun::throwError(globalObject, scope, ErrorCode::ERR_DLOPEN_FAILED,
             "Failed to spawn WebView host process"_s);
     }
+    view->m_consoleIsGlobal = consoleIsGlobal;
+    if (consoleCallback) view->m_onConsole.set(vm, view, consoleCallback);
     // Navigate promise lands in m_pendingNavigate; the user's first await
     // (including the next navigate()) serializes behind it. If it rejects
     // (bad URL), the next op's checkSlot sees the slot cleared and proceeds;

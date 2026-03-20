@@ -124,6 +124,7 @@ void JSWebView::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_onNavigated);
     visitor.append(thisObject->m_onNavigationFailed);
+    visitor.append(thisObject->m_onConsole);
     visitor.append(thisObject->m_pendingNavigate);
     visitor.append(thisObject->m_pendingEval);
     visitor.append(thisObject->m_pendingScreenshot);

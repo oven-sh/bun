@@ -624,6 +624,72 @@ it("chrome: goBack at history start resolves undefined (no-op)", async () => {
   expect(await view.evaluate("document.body.textContent")).toBe("");
 });
 
+// --- Console capture -------------------------------------------------------
+
+it("chrome: console callback receives (type, ...args)", async () => {
+  const calls: [string, ...unknown[]][] = [];
+  await using view = new Bun.WebView({
+    backend: "chrome",
+    width: 200,
+    height: 200,
+    console: (type: string, ...args: unknown[]) => calls.push([type, ...args]),
+  });
+  await view.navigate(html("<body></body>"));
+  // Runtime.consoleAPICalled fires for each console.* call. Primitives
+  // unwrap to raw values; objects come as JSONParsed RemoteObject wrappers.
+  await view.evaluate("console.log('hello', 42, true)");
+  await view.evaluate("console.warn('warning', {a: 1})");
+  await view.evaluate("console.error('boom')");
+
+  expect(calls[0]).toEqual(["log", "hello", 42, true]);
+  expect(calls[1][0]).toBe("warning");
+  expect(calls[1][1]).toBe("warning");
+  // Object arg is the RemoteObject — preview.properties has the structure.
+  expect(calls[1][2]).toHaveProperty("type", "object");
+  expect(calls[2]).toEqual(["error", "boom"]);
+});
+
+it("chrome: console: globalThis.console forwards to parent's stdout", async () => {
+  // Subprocess so stdout capture is clean and the globalThis.console
+  // identity check hits the subprocess's own console.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const view = new Bun.WebView({
+        backend: "chrome", width: 200, height: 200,
+        console: globalThis.console,
+      });
+      await view.navigate("data:text/html,<body></body>");
+      await view.evaluate("console.log('from page', 1, 2)");
+      await view.evaluate("console.error('page error')");
+      view.close();
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exit] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // ConsoleClient::logWithLevel — Bun's formatter applies. Log → stdout,
+  // Error → stderr. The args forward with Bun's util.inspect formatting.
+  expect(stdout).toContain("from page");
+  expect(stdout).toContain("1");
+  expect(stdout).toContain("2");
+  expect(stderr).toContain("page error");
+  expect(exit).toBe(0);
+});
+
+it("chrome: console option validates", () => {
+  expect(() => new Bun.WebView({ backend: "chrome", console: 42 } as any)).toThrow(
+    /console must be globalThis.console or a function/,
+  );
+  expect(() => new Bun.WebView({ backend: "chrome", console: {} } as any)).toThrow(
+    /console must be globalThis.console or a function/,
+  );
+});
+
 it("chrome: large evaluate payload crosses the pipe", async () => {
   const view = new Bun.WebView({ backend: "chrome", width: 200, height: 200 });
   try {

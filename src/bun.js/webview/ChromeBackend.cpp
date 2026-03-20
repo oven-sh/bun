@@ -4,6 +4,9 @@
 #include "ipc_protocol.h"
 #include "ZigGlobalObject.h"
 #include "BunClientData.h"
+#include <JavaScriptCore/ConsoleClient.h>
+#include <JavaScriptCore/ScriptArguments.h>
+#include <JavaScriptCore/Strong.h>
 
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/ErrorInstance.h>
@@ -725,10 +728,31 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
     auto* g = m_global;
     auto& vm = g->vm();
 
-    // Route by sessionId. Target.* browser-level events have no sessionId
-    // and we don't handle them yet (Target.targetDestroyed would clean up
-    // m_sessions but close() does that eagerly).
-    if (sessionId.empty()) return;
+    // Target.detachedFromTarget — fires when an attached session's target
+    // dies (renderer crash, OOM, kill). params: {sessionId, targetId}.
+    // Browser-level (no sessionId on the envelope). close() handles user-
+    // initiated closes eagerly; this is the only notification for external
+    // death. Without it, pending evaluates on the dead view hang forever.
+    if (sessionId.empty()) {
+        if (method.size() != 25 || memcmp(method.data(), "Target.detachedFromTarget", 25) != 0)
+            return;
+        auto sid = jsonString(jsonField(params, { "sessionId", 9 }));
+        auto sidStr = WTF::String::fromUTF8(sid);
+        auto it = m_sessions.find(sidStr);
+        if (it == m_sessions.end()) return;
+        JSWebView* view = it->value.get();
+        m_sessions.remove(it);
+        if (!view) return;
+        // Reject all pending slots. settle() is idempotent on empty slots.
+        auto* err = createError(g, "page detached (crashed or closed)"_s);
+        for (auto s : { PendingSlot::Navigate, PendingSlot::Evaluate, PendingSlot::Screenshot, PendingSlot::Misc })
+            settle(g, view, s, false, err);
+        // Erase stale m_pending entries — replies won't come.
+        m_pending.removeIf([&](auto& kv) { return kv.value.view.get() == view; });
+        view->m_closed = true;
+        updateKeepAlive();
+        return;
+    }
     auto sidStr = WTF::String::fromUTF8(sessionId);
     auto it = m_sessions.find(sidStr);
     if (it == m_sessions.end()) return;
@@ -771,7 +795,87 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
         return;
     }
 
-    // TODO: Target.targetDestroyed (cleanup m_sessions), Runtime.consoleAPICalled.
+    // Runtime.consoleAPICalled — fires for every console.* call in the page.
+    // params: {"type":"log","args":[<RemoteObject>,...],"stackTrace":{...}}.
+    if (method.size() == 24 && memcmp(method.data(), "Runtime.consoleAPICalled", 24) == 0) {
+        if (!view->m_consoleIsGlobal && !view->m_onConsole) return;
+
+        // WTF::JSON parse — small payload per call, console-path-only.
+        auto root = JSON::Value::parseJSON(WTF::String::fromUTF8(params));
+        auto o = root ? root->asObject() : nullptr;
+        if (!o) return;
+        auto type = o->getString("type"_s);
+        auto argsArr = o->getArray("args"_s);
+
+        // RemoteObject → JSValue. Primitives unwrap to raw values (so
+        // console.log("hi") forwards as "hi", not {type:"string",value:"hi"}).
+        // Object/function RemoteObjects JSONParse whole — the user (or
+        // util.inspect) sees {className, description, preview:{properties}}
+        // which is the best we get without a Runtime.getProperties roundtrip.
+        auto remoteToJS = [&](RefPtr<JSON::Object> ao) -> JSValue {
+            auto t = ao->getString("type"_s);
+            if (t == "string"_s) return jsString(vm, ao->getString("value"_s));
+            if (t == "number"_s) return jsNumber(ao->getDouble("value"_s).value_or(0));
+            if (t == "boolean"_s) return jsBoolean(ao->getBoolean("value"_s).value_or(false));
+            if (t == "undefined"_s) return jsUndefined();
+            if (t == "bigint"_s || t == "symbol"_s)
+                // No .value — .description is "42n" / "Symbol(foo)".
+                return jsString(vm, ao->getString("description"_s));
+            // object / function. JSONParse the whole RemoteObject so the
+            // caller can inspect preview.properties. toJSONString round-
+            // trips the WTF::JSON tree back to a string; JSC::JSONParse
+            // builds the JSValue tree.
+            auto s = ao->toJSONString();
+            auto v = JSONParse(g, s);
+            return v ? v : jsNull();
+        };
+
+        MarkedArgumentBuffer args;
+        if (argsArr) {
+            for (auto& a : *argsArr) {
+                auto ao = a->asObject();
+                args.append(ao ? remoteToJS(ao) : jsUndefined());
+            }
+        }
+
+        if (view->m_consoleIsGlobal) {
+            // ConsoleClient::logWithLevel — the same path console.log()
+            // takes after argument collection. ScriptArguments holds
+            // Vector<Strong<Unknown>> which GC-roots across the call
+            // (util.format allocates). Inspector forwarding + Bun's
+            // console formatter apply.
+            //
+            // CDP type → MessageLevel. trace/dir/table/assert all render
+            // through Log level with their formatting intact (the args
+            // carry the structure); level distinction matters for
+            // error/warn coloring and stderr routing.
+            using JSC::MessageLevel;
+            MessageLevel ml = MessageLevel::Log;
+            if (type == "error"_s || type == "assert"_s) ml = MessageLevel::Error;
+            else if (type == "warning"_s) ml = MessageLevel::Warning;
+            else if (type == "debug"_s) ml = MessageLevel::Debug;
+            else if (type == "info"_s) ml = MessageLevel::Info;
+
+            WTF::Vector<Strong<Unknown>> strongArgs;
+            strongArgs.reserveInitialCapacity(args.size());
+            for (unsigned i = 0; i < args.size(); ++i)
+                strongArgs.append(Strong<Unknown>(vm, args.at(i)));
+            auto scriptArgs = Inspector::ScriptArguments::create(g, WTF::move(strongArgs));
+            if (auto clientRef = g->consoleClient())
+                clientRef->logWithLevel(g, WTF::move(scriptArgs), ml);
+            return;
+        }
+
+        // Custom callback: (type, ...args).
+        JSObject* cb = view->m_onConsole.get();
+        auto callData = getCallData(cb);
+        if (callData.type == CallData::Type::None) return;
+        MarkedArgumentBuffer cbArgs;
+        cbArgs.append(jsString(vm, type.isEmpty() ? "log"_s : type));
+        for (unsigned i = 0; i < args.size(); ++i) cbArgs.append(args.at(i));
+        call(g, cb, callData, jsUndefined(), cbArgs);
+        return;
+    }
 }
 
 void Transport::onClose()

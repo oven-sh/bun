@@ -64,6 +64,14 @@ public:
 
     JSC::WriteBarrier<JSC::JSObject> m_onNavigated;
     JSC::WriteBarrier<JSC::JSObject> m_onNavigationFailed;
+    // Console capture. If the user passed `console: globalThis.console`,
+    // m_consoleIsGlobal is set and dispatch goes straight to the
+    // ConsoleClient (Bun__ConsoleObject__messageWithTypeAndLevel) — no JS
+    // call. Otherwise m_onConsole holds a (type, ...args) callback. Chrome
+    // fires from Runtime.consoleAPICalled; WebKit from a WKScriptMessage
+    // handler receiving a user-script wrap of console.*.
+    JSC::WriteBarrier<JSC::JSObject> m_onConsole;
+    bool m_consoleIsGlobal = false;
     // One slot per operation type. The req_id map in HostClient has no JS
     // refs — just {req_id → viewId, slot}. If GC collects this object
     // (user dropped both view and the awaited promise), the reply finds a

@@ -817,8 +817,7 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
     if (method.size() == 19 && memcmp(method.data(), "Page.loadEventFired", 19) == 0) {
         view->m_loading = false;
         uint32_t tid = nextId();
-        m_pending.add(tid, Pending { Method::PageTitle, PendingSlot::Navigate,
-            JSC::Weak<JSWebView>(view, &webViewWeakOwner(), view) });
+        m_pending.add(tid, Pending { Method::PageTitle, PendingSlot::Navigate, JSC::Weak<JSWebView>(view, &webViewWeakOwner(), view) });
         send(Command(tid, "Runtime.evaluate"_s, sidSpan(view->m_sessionId))
                 .str("expression"_s, "document.title"_s)
                 .boolean("returnByValue"_s, true));

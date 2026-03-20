@@ -327,6 +327,15 @@ pub const CronRegisterJob = struct {
         };
         this.tmp_path = plist_path;
 
+        // Derive the script's directory for WorkingDirectory (equivalent to import.meta.dir)
+        const script_dir = bun.path.dirname(this.abs_path, .auto);
+        const xml_script_dir = xmlEscape(if (script_dir.len == 0) "/" else script_dir) catch {
+            this.setErr("Out of memory", .{});
+            this.finish();
+            return;
+        };
+        defer bun.default_allocator.free(xml_script_dir);
+
         // XML-escape all dynamic values
         const xml_title = xmlEscape(this.title) catch {
             this.setErr("Out of memory", .{});
@@ -370,6 +379,8 @@ pub const CronRegisterJob = struct {
             \\    </array>
             \\    <key>StartCalendarInterval</key>
             \\{s}
+            \\    <key>WorkingDirectory</key>
+            \\    <string>{s}</string>
             \\    <key>StandardOutPath</key>
             \\    <string>{s}/bun.cron.{s}.stdout.log</string>
             \\    <key>StandardErrorPath</key>
@@ -377,7 +388,7 @@ pub const CronRegisterJob = struct {
             \\</dict>
             \\</plist>
             \\
-        , .{ xml_title, xml_bun, xml_title, xml_sched, xml_path, calendar_xml, xml_log_dir, xml_title, xml_log_dir, xml_title }) catch {
+        , .{ xml_title, xml_bun, xml_title, xml_sched, xml_path, calendar_xml, xml_script_dir, xml_log_dir, xml_title, xml_log_dir, xml_title }) catch {
             this.setErr("Out of memory", .{});
             this.finish();
             return;

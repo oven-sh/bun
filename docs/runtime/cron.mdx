@@ -219,6 +219,8 @@ Bun uses [launchd](https://developer.apple.com/library/archive/documentation/Mac
 
 The plist uses `StartCalendarInterval` to define the schedule. Complex patterns with ranges, lists, or steps are supported — Bun expands them into multiple `StartCalendarInterval` dicts via Cartesian product.
 
+**Working directory:** The job's working directory is set to the directory containing the script file (equivalent to `import.meta.dir`), so relative paths in your cron job resolve from the script's location.
+
 **Viewing registered jobs:**
 
 ```sh

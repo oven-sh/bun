@@ -1073,6 +1073,20 @@ describe.skipIf(!hasLaunchctl)("cron registration (macOS)", () => {
     }
   });
 
+  test("plist sets WorkingDirectory to the script's directory", async () => {
+    using dir = tempDir("bun-cron-test", {
+      "job.ts": `export default { scheduled() {} };`,
+    });
+    try {
+      await Bun.cron(`${dir}/job.ts`, "0 0 * * *", "test-mac-workdir");
+      const plist = await Bun.file(plistPath("test-mac-workdir")).text();
+      expect(plist).toContain("<key>WorkingDirectory</key>");
+      expect(plist).toContain(`<string>${dir}</string>`);
+    } finally {
+      removeLaunchdJob("test-mac-workdir");
+    }
+  });
+
   test("registers multiple different jobs", async () => {
     using dir = tempDir("bun-cron-test", {
       "a.ts": `export default { scheduled() {} };`,

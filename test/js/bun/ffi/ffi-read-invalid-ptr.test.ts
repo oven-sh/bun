@@ -28,5 +28,29 @@ describe("FFI read rejects invalid pointers", () => {
       expect(stderr).toContain("Pointer is invalid");
       expect(exitCode).not.toBe(0);
     });
+
+    test(`read.${type} throws on oversized address`, async () => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", `Bun.FFI.read.${type}(Number.MAX_VALUE)`],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain("Pointer is invalid");
+      expect(exitCode).not.toBe(0);
+    });
+
+    test(`read.${type} throws on i32.min offset`, async () => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", `Bun.FFI.read.${type}(4096, -2147483648)`],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain("Pointer is invalid");
+      expect(exitCode).not.toBe(0);
+    });
   }
 });

@@ -71,14 +71,14 @@ pub const Reader = struct {
             return globalObject.throwInvalidArguments("Expected a pointer", .{});
         }
         const num = arguments[0].asNumber();
-        if (!std.math.isFinite(num) or num < 0) {
+        if (!std.math.isFinite(num) or num < 0 or num > @as(f64, @floatFromInt(max_addressable_memory))) {
             return globalObject.throwInvalidArguments("Pointer is invalid, that would segfault Bun", .{});
         }
         var addr: usize = @intFromFloat(num);
         if (arguments.len > 1) {
             const offset = arguments[1].to(i32);
             if (offset < 0) {
-                addr -|= @as(usize, @intCast(-offset));
+                addr -|= @as(usize, @intCast(-@as(i64, offset)));
             } else {
                 addr +|= @as(usize, @intCast(offset));
             }
@@ -209,7 +209,7 @@ pub const Reader = struct {
         }
         var addr: usize = @intCast(raw_addr);
         if (offset < 0) {
-            addr -|= @as(usize, @intCast(-offset));
+            addr -|= @as(usize, @intCast(-@as(i64, offset)));
         } else {
             addr +|= @as(usize, @intCast(offset));
         }

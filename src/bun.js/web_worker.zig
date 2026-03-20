@@ -80,9 +80,10 @@ export fn WebWorker__updatePtr(worker: *WebWorker, ptr: *anyopaque) bool {
         startWithErrorHandling,
         .{worker},
     ) catch {
-        // Spawn failed — run the normal termination path so the parent
-        // keep-alive is unwound even though the thread never started.
+        // Spawn failed — the worker thread never started so exitAndDeinit
+        // will never run. Manually unref parent keep-alive and mark terminated.
         worker.requestTermination();
+        worker.parent_poll_ref.unrefConcurrently(worker.parent);
         worker.deref();
         return false;
     };
@@ -585,7 +586,9 @@ pub fn exit(this: *WebWorker) void {
     this.requestTermination();
 }
 
-/// Request a terminate. May be called from either thread via requestTermination().
+/// Wake the worker event loop so it exits. Does NOT unref parent_poll_ref —
+/// that is handled exclusively by exitAndDeinit() to ensure it happens after
+/// the exit event is posted to the parent.
 fn notifyNeedTermination(this: *WebWorker) void {
     if (this.status.load(.acquire) == .terminated) {
         return;
@@ -595,10 +598,6 @@ fn notifyNeedTermination(this: *WebWorker) void {
     if (this.vm) |vm| {
         vm.eventLoop().wakeup();
     }
-
-    // Use the concurrent variant since this may be called from the parent
-    // thread (via C++ Worker::terminate → requestTermination).
-    this.parent_poll_ref.unrefConcurrently(this.parent);
 }
 
 /// This handles cleanup, emitting the "close" event, and deinit.
@@ -611,13 +610,6 @@ pub fn exitAndDeinit(this: *WebWorker) noreturn {
     // parent thread is a no-op. Idempotent — exit() or C++ terminate()
     // may have already set this.
     this.requested_terminate.store(true, .release);
-    // Release the parent's keep-alive now, not in destroy() — the
-    // C++ Worker may hold its ref until GC, and we don't want to
-    // keep the parent's event loop alive waiting for that.
-    // Note: notifyNeedTermination() may have already called this —
-    // double-unref is safe because KeepAlive tracks internal state
-    // and permits idempotent unrefs.
-    this.parent_poll_ref.unrefConcurrently(this.parent);
     bun.analytics.Features.workers_terminated += 1;
 
     log("[{d}] exitAndDeinit", .{this.execution_context_id});
@@ -638,6 +630,9 @@ pub fn exitAndDeinit(this: *WebWorker) noreturn {
     var arena = this.arena;
 
     WebWorker__dispatchExit(globalObject, cpp_worker, exit_code);
+    // Unref parent keep-alive AFTER posting the exit event, so the
+    // parent doesn't exit its event loop before seeing the event.
+    this.parent_poll_ref.unrefConcurrently(this.parent);
     if (loop) |loop_| {
         loop_.internal_loop_data.jsc_vm = null;
     }

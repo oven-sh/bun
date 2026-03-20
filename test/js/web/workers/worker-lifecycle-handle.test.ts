@@ -31,6 +31,35 @@ test("worker double terminate does not crash", async () => {
   expect(exitCode).toBe(0);
 });
 
+test("worker concurrent terminate does not crash", async () => {
+  // Fire two terminate() calls without awaiting the first — the racy case.
+  // Don't await the promises (the second one hangs due to a pre-existing
+  // JS-side bug), but verify the process exits cleanly via the exit event.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const { Worker } = require("worker_threads");
+      const w = new Worker("setTimeout(() => {}, 100000)", { eval: true });
+      w.on("online", () => {
+        w.terminate();
+        w.terminate();
+        w.on("exit", (code) => console.log("ok", code));
+      });
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout).toContain("ok");
+  expect(exitCode).toBe(0);
+});
+
 test("worker terminate then GC does not crash", async () => {
   await using proc = Bun.spawn({
     cmd: [

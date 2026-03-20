@@ -49,8 +49,14 @@ namespace CDP {
 
 using namespace JSC;
 
-// One env check, shared across all Transport instances.
-static bool s_debugCDP = getenv("BUN_DEBUG_CDP") != nullptr;
+// Lazy — getenv() at file scope runs at image-load time (a static
+// initializer; one syscall on every bun start even without WebView).
+// Function-local static defers to first use (threadsafe per C++11).
+static bool debugCDP()
+{
+    static const bool enabled = getenv("BUN_DEBUG_CDP") != nullptr;
+    return enabled;
+}
 
 // From ChromeProcess.zig. Returns the parent's socketpair fd (bidirectional).
 // path overrides auto-detection; extraArgv (count entries, each NUL-
@@ -288,7 +294,7 @@ bool Transport::ensureSpawned(Zig::GlobalObject* zig, const WTF::String& userDat
 void Transport::send(Command&& cmd)
 {
     cmd.finishAndWrite([this](const char* d, size_t n) {
-        if (s_debugCDP && n > 1) [[unlikely]]
+        if (debugCDP() && n > 1) [[unlikely]]
             fprintf(stderr, "[cdp tx] %.*s\n", static_cast<int>(n - (d[n - 1] == '\0' ? 1 : 0)), d);
         writeRaw(d, n);
     });
@@ -364,7 +370,7 @@ void Transport::onData(const char* data, int length)
 
 void Transport::handleMessage(std::span<const char> msg)
 {
-    if (s_debugCDP) [[unlikely]]
+    if (debugCDP()) [[unlikely]]
         fprintf(stderr, "[cdp rx] %.*s\n", static_cast<int>(msg.size()), msg.data());
 
     // CDP messages are either responses {id,result/error} or events

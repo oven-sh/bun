@@ -24,6 +24,7 @@
 #include <errno.h>
 
 #include <unordered_map>
+#include <wtf/NeverDestroyed.h>
 
 namespace Bun {
 namespace WebViewProto {
@@ -179,8 +180,13 @@ struct Host {
     }
 };
 
-static Host g_host;
-FrameWriter* hostWriter() { return &g_host.writer; }
+// Lazy construct — a file-scope `static Host g_host;` would run
+// unordered_map/Vector constructors at image-load in the PARENT process
+// (same binary, the code is linked in even though only the child calls
+// hostMain). LazyNeverDestroyed defers to first .construct(), which is
+// in hostMain() on the child's thread 0.
+static LazyNeverDestroyed<Host> g_host;
+FrameWriter* hostWriter() { return &g_host->writer; }
 
 void Host::onReadable()
 {
@@ -329,8 +335,8 @@ void Host::dispatch(uint32_t viewId, Op op, Reader r)
 
 static void cfCallback(CFFileDescriptorRef, CFOptionFlags flags, void*)
 {
-    if (flags & kCFFileDescriptorReadCallBack) g_host.onReadable();
-    if (flags & kCFFileDescriptorWriteCallBack) g_host.writer.onWritable();
+    if (flags & kCFFileDescriptorReadCallBack) g_host->onReadable();
+    if (flags & kCFFileDescriptorWriteCallBack) g_host->writer.onWritable();
 }
 
 } // namespace WebViewProto
@@ -373,13 +379,14 @@ extern "C" [[noreturn]] void Bun__WebView__hostMain(int fd)
         objc::NSProcessInfo::disableAppNap();
     }
 
-    g_host.fd = fd;
-    g_host.cffd = cf.CFFileDescriptorCreate(nullptr, fd, /*closeOnInvalidate*/ true, cfCallback, nullptr);
-    g_host.writer.init(fd, g_host.cffd);
+    g_host.construct();
+    g_host->fd = fd;
+    g_host->cffd = cf.CFFileDescriptorCreate(nullptr, fd, /*closeOnInvalidate*/ true, cfCallback, nullptr);
+    g_host->writer.init(fd, g_host->cffd);
 
-    CFRunLoopSourceRef src = cf.CFFileDescriptorCreateRunLoopSource(nullptr, g_host.cffd, 0);
+    CFRunLoopSourceRef src = cf.CFFileDescriptorCreateRunLoopSource(nullptr, g_host->cffd, 0);
     cf.CFRunLoopAddSource(cf.CFRunLoopGetCurrent(), src, cf.kCFRunLoopDefaultMode);
-    cf.CFFileDescriptorEnableCallBacks(g_host.cffd, kCFFileDescriptorReadCallBack);
+    cf.CFFileDescriptorEnableCallBacks(g_host->cffd, kCFFileDescriptorReadCallBack);
 
     cf.CFRunLoopRun();
     // Reached on socket EOF (parent died) or explicit stop. Views are

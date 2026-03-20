@@ -669,10 +669,10 @@ pub const PathWatcherManager = struct {
                     .err => |err| {
                         log("[watch] error registering directory: {f}", .{err});
                         watcher.emit(.{ .@"error" = err }, 0, std.time.milliTimestamp(), false);
-                        watcher.flush();
                     },
                     .result => {},
                 }
+                if (watcher.needs_flush) watcher.flush();
             }
 
             this.manager.unrefPendingTask();

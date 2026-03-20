@@ -68,7 +68,9 @@ Comlink.expose({
 
   // This exercises a race condition — run a few attempts since the
   // exact timing varies across platforms and CI machines.
-  let lastStdout = "", lastStderr = "", lastExitCode = -1;
+  let lastStdout = "",
+    lastStderr = "",
+    lastExitCode = -1;
   for (let attempt = 0; attempt < 5; attempt++) {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "run", "main.js"],

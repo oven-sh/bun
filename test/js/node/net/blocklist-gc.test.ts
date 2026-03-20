@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { BlockList } from "node:net";
 
 test("BlockList does not crash during GC", () => {

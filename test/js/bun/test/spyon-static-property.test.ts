@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
-test("spyOn works on static hash table function properties", async () => {
+test.concurrent("spyOn works on static hash table function properties", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -30,7 +30,7 @@ test("spyOn works on static hash table function properties", async () => {
   expect(exitCode).toBe(0);
 });
 
-test("spyOn preserves correct attributes after mockRestore", async () => {
+test.concurrent("spyOn preserves correct attributes after mockRestore", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),

@@ -481,6 +481,8 @@ pub const PathWatcherManager = struct {
 
         fn schedule(manager: *PathWatcherManager, watcher: *PathWatcher, path: PathInfo) !void {
             var routine: *DirectoryRegisterTask = undefined;
+            var pending_removal: ?PendingRemoval = null;
+            defer if (pending_removal) |r| PendingRemoval.flush(&.{r}, manager.main_watcher);
             {
                 manager.mutex.lock();
                 defer manager.mutex.unlock();
@@ -513,14 +515,14 @@ pub const PathWatcherManager = struct {
                 manager._incrementPathRef(path.path);
 
                 routine = bun.default_allocator.create(DirectoryRegisterTask) catch |err| {
-                    manager._decrementPathRefNoLock(path.path);
+                    pending_removal = manager._decrementPathRefNoLock(path.path);
                     return err;
                 };
                 routine.* = DirectoryRegisterTask{
                     .manager = manager,
                     .path = path,
                     .watcher_list = bun.BabyList(*PathWatcher).initCapacity(bun.default_allocator, 1) catch |err| {
-                        manager._decrementPathRefNoLock(path.path);
+                        pending_removal = manager._decrementPathRefNoLock(path.path);
                         bun.default_allocator.destroy(routine);
                         return err;
                     },
@@ -550,16 +552,20 @@ pub const PathWatcherManager = struct {
         }
 
         fn getNext(this: *DirectoryRegisterTask) ?*PathWatcher {
-            this.manager.mutex.lock();
-            defer this.manager.mutex.unlock();
+            var removal: ?PendingRemoval = null;
+            const watcher = blk: {
+                this.manager.mutex.lock();
+                defer this.manager.mutex.unlock();
 
-            const watcher = this.watcher_list.pop();
-            if (watcher == null) {
-                // no more work todo, release the fd and path
-                _ = this.manager.current_fd_task.remove(this.path.fd);
-                this.manager._decrementPathRefNoLock(this.path.path);
-                return null;
-            }
+                const w = this.watcher_list.pop();
+                if (w == null) {
+                    _ = this.manager.current_fd_task.remove(this.path.fd);
+                    removal = this.manager._decrementPathRefNoLock(this.path.path);
+                    break :blk @as(?*PathWatcher, null);
+                }
+                break :blk w;
+            };
+            if (removal) |r| PendingRemoval.flush(&.{r}, this.manager.main_watcher);
             return watcher;
         }
 
@@ -770,7 +776,32 @@ pub const PathWatcherManager = struct {
         }
     }
 
-    fn _decrementPathRefNoLock(this: *PathWatcherManager, file_path: [:0]const u8) void {
+    const PendingRemoval = struct {
+        hash: Watcher.HashType,
+        fd: bun.FileDescriptor,
+        path: [:0]const u8,
+
+        // Called WITHOUT manager.mutex held. main_watcher.remove takes
+        // Watcher.mutex — calling it under manager.mutex would AB/BA with
+        // the watcher thread (watchLoopCycle holds Watcher.mutex, then
+        // onFileUpdate takes manager.mutex).
+        fn flush(removals: []const PendingRemoval, main_watcher: *Watcher) void {
+            for (removals) |r| {
+                // Watchlist holds its own clone (clone_file_path=true), so
+                // freeing r.path is safe regardless of evict outcome.
+                // flushEvictions closes the fd + frees the clone; if the
+                // entry was never in the watchlist, close here.
+                const evicted = main_watcher.remove(r.hash);
+                if (!evicted) r.fd.close();
+                bun.default_allocator.free(r.path);
+            }
+        }
+    };
+
+    // Decrements refcount under manager.mutex. If refs reach zero, removes
+    // the hashmap entry and returns the hash/fd/path for the caller to
+    // flush OUTSIDE manager.mutex (via PendingRemoval.flush).
+    fn _decrementPathRefNoLock(this: *PathWatcherManager, file_path: [:0]const u8) ?PendingRemoval {
         if (this.file_paths.getEntry(file_path)) |entry| {
             var path = entry.value_ptr;
             if (path.refs > 0) {
@@ -778,41 +809,38 @@ pub const PathWatcherManager = struct {
                 if (path.refs == 0) {
                     const path_ = path.path;
                     const fd = path.fd;
-                    // The watchlist holds its own clone of the path string
-                    // (addDirectory uses clone_file_path=true), so freeing
-                    // our hashmap string here is safe. If the hash was in
-                    // the watchlist, flushEvictions owns the fd close; if
-                    // not (inotify_add_watch failed so the entry was never
-                    // appended), close here to avoid leaking the fd.
-                    const evicted = this.main_watcher.remove(path.hash);
+                    const hash = path.hash;
                     _ = this.file_paths.remove(path_);
-                    if (!evicted) fd.close();
-                    bun.default_allocator.free(path_);
+                    return .{ .hash = hash, .fd = fd, .path = path_ };
                 }
             }
         }
+        return null;
     }
 
     fn _decrementPathRef(this: *PathWatcherManager, file_path: [:0]const u8) void {
-        this.mutex.lock();
-        defer this.mutex.unlock();
-        this._decrementPathRefNoLock(file_path);
+        const removal = blk: {
+            this.mutex.lock();
+            defer this.mutex.unlock();
+            break :blk this._decrementPathRefNoLock(file_path);
+        };
+        if (removal) |r| {
+            PendingRemoval.flush(&.{r}, this.main_watcher);
+        }
     }
 
-    // _decrementPathRefAndClose is now equivalent to _decrementPathRef since
-    // _decrementPathRefNoLock always closes fds when refs reach 0.
     const _decrementPathRefAndClose = _decrementPathRef;
 
     // unregister is always called from main thread.
-    // Collects paths to decrement under manager.mutex, then decrements
-    // outside it to avoid AB/BA deadlock with Watcher.mutex (held by
-    // the watcher thread during onFileUpdate → manager.mutex).
+    // Phase 1 (under manager.mutex): remove watcher from the list, collect
+    //   pending removals from refcount decrements.
+    // Phase 2 (outside manager.mutex): call main_watcher.remove + close fd
+    //   + free path for each removal. main_watcher.remove takes Watcher.mutex
+    //   which the watcher thread holds during onFileUpdate → manager.mutex,
+    //   so holding manager.mutex here would AB/BA deadlock.
     fn unregisterWatcher(this: *PathWatcherManager, watcher: *PathWatcher) void {
-        // Collect paths to decrement — _decrementPathRef locks manager.mutex
-        // internally and may call main_watcher.remove which locks Watcher.mutex,
-        // so we must NOT hold manager.mutex when calling it.
-        var paths_to_decrement: bun.BabyList([:0]const u8) = .{};
-        defer paths_to_decrement.deinit(bun.default_allocator);
+        var removals: bun.BabyList(PendingRemoval) = .{};
+        defer removals.deinit(bun.default_allocator);
 
         const should_deinit = blk: {
             this.mutex.lock();
@@ -829,8 +857,9 @@ pub const PathWatcherManager = struct {
                         }
                         this.watcher_count -= 1;
 
-                        // Collect the watcher's own path
-                        paths_to_decrement.append(bun.default_allocator, watcher.path.path) catch {};
+                        if (this._decrementPathRefNoLock(watcher.path.path)) |r| {
+                            bun.handleOom(removals.append(bun.default_allocator, r));
+                        }
 
                         if (comptime Environment.isMac) {
                             if (watcher.fsevents_watcher != null) {
@@ -838,12 +867,13 @@ pub const PathWatcherManager = struct {
                             }
                         }
 
-                        // Collect all sub-paths
                         {
                             watcher.mutex.lock();
                             defer watcher.mutex.unlock();
                             while (watcher.file_paths.pop()) |file_path| {
-                                paths_to_decrement.append(bun.default_allocator, file_path) catch {};
+                                if (this._decrementPathRefNoLock(file_path)) |r| {
+                                    bun.handleOom(removals.append(bun.default_allocator, r));
+                                }
                             }
                         }
                         break;
@@ -854,13 +884,7 @@ pub const PathWatcherManager = struct {
             break :blk this.deinit_on_last_watcher and this.watcher_count == 0;
         };
 
-        // Decrement refs outside manager.mutex to avoid AB/BA deadlock.
-        // _decrementPathRef locks manager.mutex → main_watcher.remove locks
-        // Watcher.mutex. If we held manager.mutex here, the watcher thread
-        // (holding Watcher.mutex → onFileUpdate → manager.mutex) would deadlock.
-        for (paths_to_decrement.slice()) |file_path| {
-            this._decrementPathRef(file_path);
-        }
+        PendingRemoval.flush(removals.slice(), this.main_watcher);
 
         if (should_deinit) {
             this.deinit();

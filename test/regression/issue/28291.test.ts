@@ -1,9 +1,14 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import path from "path";
 import fs from "fs";
 
 const HISTORY_FILENAME = ".bun_repl_history";
+
+// On Windows, bun.env_var.HOME reads USERPROFILE instead of HOME.
+function homeEnv(dir: string): Record<string, string> {
+  return isWindows ? { USERPROFILE: dir } : { HOME: dir };
+}
 
 async function runReplWithEnv(env: Record<string, string>): Promise<number> {
   await using proc = Bun.spawn({
@@ -31,7 +36,7 @@ describe("REPL history respects XDG_DATA_HOME and BUN_INSTALL", () => {
     const fakeHome = path.join(String(dir), "home");
 
     const exitCode = await runReplWithEnv({
-      HOME: fakeHome,
+      ...homeEnv(fakeHome),
       XDG_DATA_HOME: xdgDataHome,
       BUN_INSTALL: "",
     });
@@ -39,7 +44,7 @@ describe("REPL history respects XDG_DATA_HOME and BUN_INSTALL", () => {
 
     const expectedPath = path.join(xdgDataHome, "bun", HISTORY_FILENAME);
     expect(fs.existsSync(expectedPath)).toBe(true);
-    // Should NOT be written to $HOME
+    // Should NOT be written to home dir
     expect(fs.existsSync(path.join(fakeHome, HISTORY_FILENAME))).toBe(false);
   });
 
@@ -52,7 +57,7 @@ describe("REPL history respects XDG_DATA_HOME and BUN_INSTALL", () => {
     const fakeHome = path.join(String(dir), "home");
 
     const exitCode = await runReplWithEnv({
-      HOME: fakeHome,
+      ...homeEnv(fakeHome),
       XDG_DATA_HOME: "",
       BUN_INSTALL: bunInstall,
     });
@@ -60,16 +65,16 @@ describe("REPL history respects XDG_DATA_HOME and BUN_INSTALL", () => {
 
     const expectedPath = path.join(bunInstall, HISTORY_FILENAME);
     expect(fs.existsSync(expectedPath)).toBe(true);
-    // Should NOT be written to $HOME
+    // Should NOT be written to home dir
     expect(fs.existsSync(path.join(fakeHome, HISTORY_FILENAME))).toBe(false);
   });
 
-  test("falls back to $HOME when neither XDG_DATA_HOME nor BUN_INSTALL is set", async () => {
+  test("falls back to home dir when neither XDG_DATA_HOME nor BUN_INSTALL is set", async () => {
     using dir = tempDir("repl-home", { ".keep": "" });
     const fakeHome = String(dir);
 
     const exitCode = await runReplWithEnv({
-      HOME: fakeHome,
+      ...homeEnv(fakeHome),
       XDG_DATA_HOME: "",
       BUN_INSTALL: "",
     });
@@ -90,7 +95,7 @@ describe("REPL history respects XDG_DATA_HOME and BUN_INSTALL", () => {
     const fakeHome = path.join(String(dir), "home");
 
     const exitCode = await runReplWithEnv({
-      HOME: fakeHome,
+      ...homeEnv(fakeHome),
       XDG_DATA_HOME: xdgDataHome,
       BUN_INSTALL: bunInstall,
     });

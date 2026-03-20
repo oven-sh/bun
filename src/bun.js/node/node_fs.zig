@@ -5627,7 +5627,7 @@ pub const NodeFS = struct {
                     // One of the path components was not a directory.
                     // This error is unreachable if `sub_path` does not contain a path separator.
                     error.NotDir => .NOTDIR,
-                    // On Windows, file paths must be valid Unicode.
+                    // On Windows, file paths must be valid WTF-8.
                     error.InvalidUtf8 => .INVAL,
                     error.InvalidWtf8 => .INVAL,
 

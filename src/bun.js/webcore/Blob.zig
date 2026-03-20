@@ -54,7 +54,7 @@ name: bun.String = .dead,
 pub const Ref = bun.ptr.ExternalShared(Blob);
 
 /// Max int of double precision
-/// 9 petabytes is probably enough for awhile
+/// ~4.5 petabytes is probably enough for awhile
 /// We want to avoid coercing to a BigInt because that's a heap allocation
 /// and it's generally just harder to use
 pub const SizeType = u52;
@@ -2901,10 +2901,9 @@ pub fn getSlice(
             const end = end_.toInt64();
             // If end is negative, let relativeEnd be max((size + end), 0).
             if (end < 0) {
-                // If the optional start parameter is negative, let relativeStart be start + size.
                 relativeEnd = @as(i64, @intCast(@max(end +% @as(i64, @intCast(this.size)), 0)));
             } else {
-                // Otherwise, let relativeStart be start.
+                // Otherwise, let relativeEnd be min(end, size).
                 relativeEnd = @min(@as(i64, @intCast(end)), @as(i64, @intCast(this.size)));
             }
         }

@@ -1542,7 +1542,7 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
         break;
     }
     // globalThis is only equal to globalThis
-    // NOTE: Zig::GlobalObject is tagged as GlobalProxyType
+    // NOTE: globalThis from JS is a JSGlobalProxy (GlobalProxyType) wrapping Zig::GlobalObject (GlobalObjectType)
     case GlobalObjectType: {
         if (c1Type != c2Type) return false;
         auto* g1 = jsDynamicCast<JSC::JSGlobalObject*, JSCell>(c1);

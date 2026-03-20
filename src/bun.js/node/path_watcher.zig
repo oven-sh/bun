@@ -203,11 +203,16 @@ pub const PathWatcherManager = struct {
         defer if (task_referenced) {
             NewSubdirBatch.scheduleAlreadyReferenced(this, new_subdirs);
         } else {
-            for (new_subdirs.slice()) |item| {
-                item.watcher.unrefPendingDirectory();
-                bun.default_allocator.free(item.path);
+            // Can't call unrefPendingDirectory synchronously here because
+            // onFileUpdate runs inside watchLoopCycle which holds Watcher.mutex.
+            // If unref triggers deinit → unregisterWatcher → _decrementPathRef
+            // → main_watcher.remove → Watcher.mutex.lock, we'd self-deadlock.
+            // Schedule cleanup on a WorkPool thread instead.
+            if (new_subdirs.len > 0) {
+                NewSubdirBatch.scheduleCleanupOnly(this, new_subdirs);
+            } else {
+                new_subdirs.deinit(bun.default_allocator);
             }
-            new_subdirs.deinit(bun.default_allocator);
         };
 
         {
@@ -391,6 +396,17 @@ pub const PathWatcherManager = struct {
             jsc.WorkPool.schedule(&batch.task);
         }
 
+        /// Schedule a WorkPool task that only unrefs pending directories and
+        /// frees paths — no registration. Used when refPendingTask fails
+        /// (manager shutting down) but we still hold refPendingDirectory refs
+        /// that can't be released synchronously (Watcher.mutex is held).
+        fn scheduleCleanupOnly(manager: *PathWatcherManager, entries: bun.BabyList(Entry)) void {
+            const batch = bun.handleOom(bun.default_allocator.create(NewSubdirBatch));
+            batch.* = .{ .manager = manager, .entries = entries };
+            batch.task = .{ .callback = cleanupCallback };
+            jsc.WorkPool.schedule(&batch.task);
+        }
+
         fn callback(task: *jsc.WorkPoolTask) void {
             const batch: *NewSubdirBatch = @fieldParentPtr("task", task);
             defer {
@@ -401,6 +417,18 @@ pub const PathWatcherManager = struct {
             }
             for (batch.entries.slice()) |item| {
                 batch.manager._registerNewSubdirectory(item.watcher, item.path);
+                item.watcher.unrefPendingDirectory();
+            }
+        }
+
+        fn cleanupCallback(task: *jsc.WorkPoolTask) void {
+            const batch: *NewSubdirBatch = @fieldParentPtr("task", task);
+            defer {
+                for (batch.entries.slice()) |item| bun.default_allocator.free(item.path);
+                batch.entries.deinit(bun.default_allocator);
+                bun.default_allocator.destroy(batch);
+            }
+            for (batch.entries.slice()) |item| {
                 item.watcher.unrefPendingDirectory();
             }
         }
@@ -512,7 +540,10 @@ pub const PathWatcherManager = struct {
                 // Only increment path ref for new tasks — the reuse path
                 // above doesn't need an extra ref since the existing task
                 // already holds one via its initial schedule() call.
-                manager._incrementPathRef(path.path);
+                // Inline the increment since we already hold manager.mutex.
+                if (manager.file_paths.getEntry(path.path)) |entry| {
+                    if (entry.value_ptr.refs > 0) entry.value_ptr.refs += 1;
+                }
 
                 routine = bun.default_allocator.create(DirectoryRegisterTask) catch |err| {
                     pending_removal = manager._decrementPathRefNoLock(path.path);
@@ -529,7 +560,7 @@ pub const PathWatcherManager = struct {
                 };
                 errdefer {
                     routine.deinit();
-                    manager._decrementPathRef(path.path);
+                    pending_removal = manager._decrementPathRefNoLock(path.path);
                 }
                 if (watcher.refPendingDirectory()) {
                     routine.watcher_list.append(bun.default_allocator, watcher) catch |err| {

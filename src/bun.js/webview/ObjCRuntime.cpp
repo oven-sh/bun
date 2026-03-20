@@ -77,6 +77,7 @@ SEL NSWindow::s_orderBack;
 Class NSProcessInfo::cls;
 SEL NSProcessInfo::s_processInfo;
 SEL NSProcessInfo::s_systemUptime;
+SEL NSProcessInfo::s_beginActivityWithOptions_reason;
 
 Class NSEvent::cls;
 SEL NSEvent::s_mouseEventWithType;
@@ -137,6 +138,8 @@ id WKWebViewConfiguration::persistentStoreForDirectory(const WTF::String& direct
 }
 SEL WKWebViewConfiguration::s_setWebsiteDataStore;
 SEL WKWebViewConfiguration::s_userContentController;
+SEL WKWebViewConfiguration::s_preferences;
+SEL WKWebViewConfiguration::s_setPageVisibilityBasedProcessSuppressionEnabled;
 
 Class WKUserScript::cls;
 SEL WKUserScript::s_initWithSource_injectionTime_forMainFrameOnly;
@@ -404,6 +407,7 @@ bool ObjCRuntime::load()
     CLS(NSProcessInfo::cls, "NSProcessInfo");
     NSProcessInfo::s_processInfo = sel("processInfo");
     NSProcessInfo::s_systemUptime = sel("systemUptime");
+    NSProcessInfo::s_beginActivityWithOptions_reason = sel("beginActivityWithOptions:reason:");
 
     CLS(NSEvent::cls, "NSEvent");
     NSEvent::s_mouseEventWithType = sel("mouseEventWithType:location:modifierFlags:timestamp:windowNumber:context:eventNumber:clickCount:pressure:");
@@ -437,6 +441,8 @@ bool ObjCRuntime::load()
     WKWebViewConfiguration::s_initWithConfiguration = sel("_initWithConfiguration:");
     WKWebViewConfiguration::s_setWebsiteDataStore = sel("setWebsiteDataStore:");
     WKWebViewConfiguration::s_userContentController = sel("userContentController");
+    WKWebViewConfiguration::s_preferences = sel("preferences");
+    WKWebViewConfiguration::s_setPageVisibilityBasedProcessSuppressionEnabled = sel("_setPageVisibilityBasedProcessSuppressionEnabled:");
 
     CLS(WKUserScript::cls, "WKUserScript");
     WKUserScript::s_initWithSource_injectionTime_forMainFrameOnly = sel("initWithSource:injectionTime:forMainFrameOnly:");

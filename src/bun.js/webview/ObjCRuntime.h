@@ -285,18 +285,47 @@ struct NSImage : Ref {
     }
 };
 
-// NSProcessInfo — we only need systemUptime for event timestamps. AppKit's
+// NSProcessInfo — systemUptime for event timestamps, beginActivityWithOptions
+// to disable App Nap in the host process. AppKit's
 // event clock is uptime-relative, not wall-clock.
 struct NSProcessInfo : Ref {
     using Ref::Ref;
     static Class cls;
     static SEL s_processInfo;
     static SEL s_systemUptime;
+    static SEL s_beginActivityWithOptions_reason;
 
     static double systemUptime()
     {
         Ref info(msgCls<id>(cls, s_processInfo));
         return info.msg<double>(s_systemUptime);
+    }
+
+    // WebKitTestRunner does this (main.mm:59 disableAppNapInUIProcess). App
+    // Nap suppresses timers and throttles processes it deems "inactive" —
+    // on CI (no user interaction, background-policy app) both the host and
+    // WebContent qualify. The activity assertion tells macOS we're doing
+    // latency-sensitive work. The returned id is the assertion; we leak it
+    // intentionally (process-lifetime). Options match WebKitTestRunner:
+    // UserInitiatedAllowingIdleSystemSleep | LatencyCritical, minus the
+    // termination-disable flags (not needed — the child exits on parent
+    // socket EOF).
+    static void disableAppNap()
+    {
+        // NSActivityUserInitiatedAllowingIdleSystemSleep = 0xFFFFFFull & ~(1ull<<20)
+        // NSActivityLatencyCritical = 0xFF00000000ull
+        // & ~(NSActivitySuddenTerminationDisabled | NSActivityAutomaticTerminationDisabled)
+        //   = & ~((1ull<<14) | (1ull<<15))
+        // WebKitTestRunner's exact mask:
+        constexpr unsigned long long opts =
+            ((0xFFFFFFull & ~(1ull << 20)) | 0xFF00000000ull)
+            & ~((1ull << 14) | (1ull << 15));
+        Ref info(msgCls<id>(cls, s_processInfo));
+        // Leak the assertion — process-lifetime. The return is autoreleased;
+        // retain so ARPool pop doesn't release and end the activity.
+        id assertion = info.msg<id>(s_beginActivityWithOptions_reason, opts,
+            NSString::fromWTF("Bun WebView host"_s).m_id);
+        Ref(assertion).msg<id>(s_retain);
     }
 };
 
@@ -424,6 +453,7 @@ struct WKWebViewConfiguration : Ref {
         cfg.m_id = cfg.msg<id>(s_init);
         id store = msgCls<id>(cls_WKWebsiteDataStore, s_nonPersistentDataStore);
         cfg.msg<void>(s_setWebsiteDataStore, store);
+        cfg.disableProcessSuppression();
         return cfg;
     }
 
@@ -438,6 +468,7 @@ struct WKWebViewConfiguration : Ref {
         WKWebViewConfiguration cfg(msgCls<id>(cls, s_alloc));
         cfg.m_id = cfg.msg<id>(s_init);
         cfg.msg<void>(s_setWebsiteDataStore, persistentStoreForDirectory(directory));
+        cfg.disableProcessSuppression();
         return cfg;
     }
 
@@ -446,6 +477,22 @@ struct WKWebViewConfiguration : Ref {
     // message handlers (the JS → native bridge the console wrap uses).
     static SEL s_userContentController;
     id userContentController() const { return msg<id>(s_userContentController); }
+
+    // WKPreferences._pageVisibilityBasedProcessSuppressionEnabled = NO.
+    // WebContent gets AppNapped when the page is "backgrounded" (App Nap
+    // sees no user interaction → process suppression → timers don't fire,
+    // CVDisplayLink callback doesn't reach it). With our isVisible override
+    // the page reports visible but macOS's App Nap doesn't consult that —
+    // it uses its own heuristics. WebKitTestRunner disables this via
+    // WKPreferencesSetPageVisibilityBasedProcessSuppressionEnabled
+    // (main.mm:75 comment). macOS 10.12+.
+    static SEL s_preferences;
+    static SEL s_setPageVisibilityBasedProcessSuppressionEnabled;
+    void disableProcessSuppression()
+    {
+        Ref prefs(msg<id>(s_preferences));
+        prefs.msg<void>(s_setPageVisibilityBasedProcessSuppressionEnabled, (signed char)0);
+    }
 
 private:
     static id persistentStoreForDirectory(const WTF::String &directory);

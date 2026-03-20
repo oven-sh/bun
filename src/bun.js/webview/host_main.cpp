@@ -362,6 +362,17 @@ extern "C" [[noreturn]] void Bun__WebView__hostMain(int fd)
         _exit(70);
     }
 
+    // App Nap suppresses the host process on CI — no user interaction, no
+    // visible window, ActivationPolicyAccessory. The CVDisplayLink callback
+    // fires but the main run loop is throttled; the IPC send to WebContent
+    // doesn't reach it, rAF never fires. WebKitTestRunner disables it
+    // (main.mm:59). WebContent-side App Nap is handled separately via
+    // WKPreferences._pageVisibilityBasedProcessSuppressionEnabled = NO.
+    {
+        ObjCRuntime::ARPool pool;
+        objc::NSProcessInfo::disableAppNap();
+    }
+
     g_host.fd = fd;
     g_host.cffd = cf.CFFileDescriptorCreate(nullptr, fd, /*closeOnInvalidate*/ true, cfCallback, nullptr);
     g_host.writer.init(fd, g_host.cffd);

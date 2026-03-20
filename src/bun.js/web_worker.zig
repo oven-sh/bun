@@ -597,13 +597,8 @@ pub fn exit(this: *WebWorker) void {
     this.requestTermination();
 }
 
-/// Wake the worker event loop so it notices the termination request and
-/// exits. The parent keep-alive stays ref'd until exitAndDeinit runs —
-/// unreffing here would let the parent drain its event loop before the
-/// worker's 'exit' event is delivered (the dispatchExit posted task
-/// needs the parent loop alive to process it). See Node.js semantics:
-/// terminate() returns a Promise that resolves with the exit code,
-/// which requires the 'exit' event to actually fire.
+/// Wake the worker event loop so it exits and unref the parent keep-alive
+/// so the parent doesn't hang waiting for the worker.
 fn notifyNeedTermination(this: *WebWorker) void {
     if (this.status.load(.acquire) == .terminated) {
         return;
@@ -613,6 +608,8 @@ fn notifyNeedTermination(this: *WebWorker) void {
     if (this.vm) |vm| {
         vm.eventLoop().wakeup();
     }
+
+    this.setRefInternal(false);
 }
 
 /// This handles cleanup, emitting the "close" event, and deinit.

@@ -468,6 +468,10 @@ pub fn getPtrSlice(globalThis: *JSGlobalObject, value: JSValue, byteOffset: ?JSV
         return .{ .err = globalThis.toInvalidArguments("ptr to invalid memory, that would segfault Bun :(", .{}) };
     }
 
+    if (addr < std.heap.page_size_min) {
+        return .{ .err = globalThis.toInvalidArguments("ptr to invalid memory, that would segfault Bun :(", .{}) };
+    }
+
     if (byteLength) |valueLength| {
         if (!valueLength.isEmptyOrUndefinedOrNull()) {
             if (!valueLength.isNumber()) {

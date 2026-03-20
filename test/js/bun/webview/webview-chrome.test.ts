@@ -543,6 +543,28 @@ it("chrome: sequential navigates work", async () => {
   }
 });
 
+it("chrome: close() during attach chain doesn't leak the tab", async () => {
+  // close() settles all slots and prunes m_pending entries for the view.
+  // If the attach chain (createTarget → attach → Page.enable → navigate)
+  // is in-flight, the next chain reply drops on m_pending.find()==end().
+  // Without the prune, the chain would continue: m_sessions.add would
+  // re-register a closed view, PageEnable would send Page.navigate, the
+  // tab would navigate and fire Page.frameNavigated → onNavigated on a
+  // disposed view.
+  const navigated: string[] = [];
+  const view = new Bun.WebView({ backend: "chrome", width: 100, height: 100 });
+  view.onNavigated = (u: string) => navigated.push(u);
+  // navigate() kicks off the chain; don't await.
+  const navP = view.navigate("data:text/html,<body>leaked</body>");
+  view.close(); // close mid-chain
+  // The navigate promise rejects with "WebView closed". It never resolves
+  // because the chain was pruned at close(), not continued.
+  await expect(navP).rejects.toThrow(/closed/i);
+  // Give Chrome a moment — if the tab leaked, we'd see onNavigated fire.
+  await new Promise(r => setTimeout(r, 200));
+  expect(navigated).toEqual([]);
+});
+
 it("chrome: url/title getters populated after navigate", async () => {
   await using view = new Bun.WebView({ backend: "chrome", width: 200, height: 200 });
   await view.navigate(html("<title>Page Title</title><body>hi</body>"));

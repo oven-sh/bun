@@ -391,13 +391,17 @@ fn releaseResources(this: *WebWorker) void {
         bun.default_allocator.free(this.name);
         this.name = "";
     }
-    bun.default_allocator.free(this.unresolved_specifier);
-    this.unresolved_specifier = "";
+    if (this.unresolved_specifier.len > 0) {
+        bun.default_allocator.free(this.unresolved_specifier);
+        this.unresolved_specifier = &.{};
+    }
     for (this.preloads) |preload| {
         bun.default_allocator.free(preload);
     }
-    bun.default_allocator.free(this.preloads);
-    this.preloads = &.{};
+    if (this.preloads.len > 0) {
+        bun.default_allocator.free(this.preloads);
+        this.preloads = &.{};
+    }
 }
 
 /// Called when the ref count reaches zero. Both sides have released.

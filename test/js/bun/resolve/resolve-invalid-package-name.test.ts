@@ -11,7 +11,7 @@ test("require with invalid package name containing special chars", async () => {
     // 33 bytes, contains <, >, ", space — all invalid in npm package names
     "run.js": [
       "const t = Bun.nanoseconds();",
-      'try { require(\'<a name="undefined">38391</a>\'); } catch {}',
+      "try { require('<a name=\"undefined\">38391</a>'); } catch {}",
       "const ms = (Bun.nanoseconds() - t) / 1e6;",
       "// Without the fix: auto-install is attempted (100-300ms network roundtrip)",
       "// With the fix: ESModule.Package.parse rejects the name (<50ms)",

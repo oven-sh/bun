@@ -197,7 +197,7 @@ pub fn installWithManager(
                 // workspace dependencies (e.g. from `turbo prune`), the lockfile
                 // is a superset of what's needed. Treat this as no diff so the
                 // lockfile stays intact and the frozen-lockfile check passes.
-                if (had_any_diffs and manager.options.enable.frozen_lockfile and manager.summary.hasOnlyRemovals()) {
+                if (had_any_diffs and manager.options.enable.frozen_lockfile and manager.summary.hasOnlyWorkspaceRemovals()) {
                     had_any_diffs = false;
                 }
 

@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import { join } from "path";
+import { readFileSync, writeFileSync } from "fs";
 
 // Test for https://github.com/oven-sh/bun/issues/26973
 // `bun install --frozen-lockfile` should succeed on a pruned monorepo
@@ -127,6 +128,44 @@ test("frozen-lockfile still fails when a new workspace is added", async () => {
   const frozenResult = Bun.spawnSync({
     cmd: [bunExe(), "install", "--frozen-lockfile", "--ignore-scripts"],
     cwd: modifiedDir,
+    env: bunEnv,
+  });
+
+  const stderr = frozenResult.stderr.toString();
+  expect(stderr).toContain("lockfile had changes, but lockfile is frozen");
+  expect(frozenResult.exitCode).not.toBe(0);
+});
+
+test("frozen-lockfile still fails when a non-workspace dependency is removed", async () => {
+  // Removing a regular npm dependency from package.json should still be
+  // caught by --frozen-lockfile — only workspace removals are allowed.
+  const dir = tempDirWithFiles("frozen-fail-dep-removal", {
+    "package.json": JSON.stringify({
+      name: "test-project",
+      dependencies: {
+        "is-even": "1.0.0",
+      },
+    }),
+  });
+
+  // Install to generate a lockfile that includes is-even
+  const installResult = Bun.spawnSync({
+    cmd: [bunExe(), "install", "--save-text-lockfile", "--ignore-scripts"],
+    cwd: dir,
+    env: bunEnv,
+  });
+  expect(installResult.exitCode).toBe(0);
+
+  // Now remove the dependency from package.json but keep the lockfile
+  writeFileSync(
+    join(dir, "package.json"),
+    JSON.stringify({ name: "test-project" }),
+  );
+
+  // This should fail because we removed a non-workspace dependency
+  const frozenResult = Bun.spawnSync({
+    cmd: [bunExe(), "install", "--frozen-lockfile", "--ignore-scripts"],
+    cwd: dir,
     env: bunEnv,
   });
 

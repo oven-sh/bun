@@ -247,7 +247,8 @@ const History = struct {
         }
 
         // Ensure parent directory exists (e.g. $XDG_DATA_HOME/bun/).
-        if (std.fs.path.dirnamePosix(path) orelse std.fs.path.dirnameWindows(path)) |dir| {
+        const dir = bun.path.dirname(path, .auto);
+        if (dir.len > 0) {
             bun.makePath(bun.FD.cwd().stdDir(), dir) catch {};
         }
 

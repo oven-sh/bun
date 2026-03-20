@@ -964,18 +964,15 @@ pub const PathWatcherManager = struct {
             default_manager = null;
         }
 
-        // only deinit if no watchers are registered
-        if (this.watcher_count > 0) {
-            // wait last watcher to close
-            this.deinit_on_last_watcher = true;
-            return;
-        }
-
         {
             this.mutex.lock();
             defer this.mutex.unlock();
-            // Check pending_tasks under the lock to avoid TOCTOU with
-            // unrefPendingTask — same pattern as PathWatcher.deinit.
+            // Check watcher_count and pending_tasks under the lock to
+            // avoid TOCTOU with unregisterWatcher/unrefPendingTask.
+            if (this.watcher_count > 0) {
+                this.deinit_on_last_watcher = true;
+                return;
+            }
             if (this.pending_tasks > 0) {
                 this.deinit_on_last_task = true;
                 return;

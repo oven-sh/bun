@@ -317,8 +317,7 @@ struct NSProcessInfo : Ref {
         // & ~(NSActivitySuddenTerminationDisabled | NSActivityAutomaticTerminationDisabled)
         //   = & ~((1ull<<14) | (1ull<<15))
         // WebKitTestRunner's exact mask:
-        constexpr unsigned long long opts =
-            ((0xFFFFFFull & ~(1ull << 20)) | 0xFF00000000ull)
+        constexpr unsigned long long opts = ((0xFFFFFFull & ~(1ull << 20)) | 0xFF00000000ull)
             & ~((1ull << 14) | (1ull << 15));
         Ref info(msgCls<id>(cls, s_processInfo));
         // Leak the assertion — process-lifetime. The return is autoreleased;

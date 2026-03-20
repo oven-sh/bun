@@ -446,7 +446,10 @@ pub const PathWatcherManager = struct {
             watcher.mutex.lock();
             defer watcher.mutex.unlock();
             watcher.file_paths.append(bun.default_allocator, child_path.path) catch {
-                this._decrementPathRefAndClose(path_z);
+                // Don't call _decrementPathRefAndClose here — watcher.mutex
+                // is held and _decrementPathRef would lock manager.mutex
+                // (AB/BA with unregisterWatcher on OOM). Let
+                // unregisterWatcher handle cleanup.
                 return;
             };
         }
@@ -725,6 +728,7 @@ pub const PathWatcherManager = struct {
         }
 
         fn deinit(this: *DirectoryRegisterTask) void {
+            this.watcher_list.deinit(bun.default_allocator);
             bun.default_allocator.destroy(this);
         }
     };

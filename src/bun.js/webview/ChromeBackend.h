@@ -192,6 +192,10 @@ enum class Method : uint8_t {
     TargetCloseTarget,
     PageNavigate,
     PageReload,
+    // Chained from Page.loadEventFired: Runtime.evaluate("document.title")
+    // → set m_title, settle Navigate. Makes `await navigate(); view.title`
+    // work like WKWebView (which packs title in NavDone).
+    PageTitle,
     // goBack/goForward chain: getNavigationHistory → navigateToHistoryEntry.
     // The first picks entries[currentIndex + delta].id; the second navigates.
     // Page.loadEventFired settles, same as navigate/reload.

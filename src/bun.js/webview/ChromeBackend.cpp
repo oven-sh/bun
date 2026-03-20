@@ -26,20 +26,23 @@
 #include <stdlib.h>
 
 #if OS(WINDOWS)
-// Bun__Chrome__ensure returns -1 on Windows (no socketpair/pipe fcntl);
-// the ::close call in the us_socket_from_fd failure path never runs.
-// Don't use a function-style macro for this — `#define close _close`
-// also rewrites CDP::Ops::close → _close and the linker can't find the
-// declared name.
-#include <io.h>
-static inline int closefd(int fd) { return ::_close(fd); }
+#include <winsock2.h>
 #else
 #include <unistd.h>
-static inline int closefd(int fd) { return ::close(fd); }
 #endif
 
 #include "libusockets.h"
 #include "_libusockets.h"
+
+// LIBUS_SOCKET_DESCRIPTOR is SOCKET on Windows, int on POSIX. us_socket_
+// from_fd takes one; its failure-path close needs the matching close.
+// Bun__Chrome__ensure returns -1 on Windows (no socketpair) so the branch
+// is unreachable there, but the compiler needs the decl to type-check.
+#if OS(WINDOWS)
+static inline void closefd(LIBUS_SOCKET_DESCRIPTOR s) { closesocket(s); }
+#else
+static inline void closefd(LIBUS_SOCKET_DESCRIPTOR fd) { ::close(fd); }
+#endif
 
 namespace Bun {
 namespace CDP {
@@ -573,6 +576,16 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         // Same as navigate: don't settle, Page.loadEventFired does.
         return;
 
+    case Method::PageTitle: {
+        // Runtime.evaluate("document.title") chained from loadEventFired.
+        // result.result.value is the string. Set m_title, settle Navigate.
+        auto inner = jsonField(result, { "result", 6 });
+        auto value = jsonString(jsonField(inner, { "value", 5 }));
+        view->m_title = WTF::String::fromUTF8(value);
+        settle(g, view, entry.slot, true, jsUndefined());
+        return;
+    }
+
     case Method::PageGetNavigationHistory: {
         // {"currentIndex":N,"entries":[{"id":N,"url":"..."},...]}
         // Pick entries[currentIndex + delta].id and chain into
@@ -793,17 +806,22 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
         return;
     }
 
-    // Page.loadEventFired — load complete. This is what navigate() awaits.
-    // WKWebView's NavDone fires at didFinishNavigation which is roughly
-    // frameNavigated timing; Chrome's loadEventFired is the window.onload
-    // fire, a bit later. For await-then-evaluate patterns loadEventFired
-    // is the safer barrier — the document is fully parsed and scripts ran.
+    // Page.loadEventFired — load complete. Chain a document.title fetch
+    // so view.title is populated when navigate() resolves — matches
+    // WKWebView's NavDone which packs url+title in one reply. One extra
+    // roundtrip (~1ms), but the user-visible guarantee is worth it:
+    // `await view.navigate(); view.title` just works.
+    //
+    // If no navigate is pending (uninitiated navigation, redirect), the
+    // PageTitle handler settles a no-op and m_title still updates.
     if (method.size() == 19 && memcmp(method.data(), "Page.loadEventFired", 19) == 0) {
         view->m_loading = false;
-        // Settle the navigate promise. If no navigate pending (e.g. a
-        // same-document navigation we didn't initiate, or a redirect
-        // landing after we already settled), this no-ops.
-        settle(g, view, PendingSlot::Navigate, true, jsUndefined());
+        uint32_t tid = nextId();
+        m_pending.add(tid, Pending { Method::PageTitle, PendingSlot::Navigate,
+            JSC::Weak<JSWebView>(view, &webViewWeakOwner(), view) });
+        send(Command(tid, "Runtime.evaluate"_s, sidSpan(view->m_sessionId))
+                .str("expression"_s, "document.title"_s)
+                .boolean("returnByValue"_s, true));
         return;
     }
 

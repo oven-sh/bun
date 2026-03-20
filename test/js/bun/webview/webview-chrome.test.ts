@@ -543,6 +543,19 @@ it("chrome: sequential navigates work", async () => {
   }
 });
 
+it("chrome: url/title getters populated after navigate", async () => {
+  await using view = new Bun.WebView({ backend: "chrome", width: 200, height: 200 });
+  await view.navigate(html("<title>Page Title</title><body>hi</body>"));
+  // Page.loadEventFired chains Runtime.evaluate("document.title") before
+  // settling — navigate() resolves with m_title populated. Same guarantee
+  // as WKWebView's NavDone packing url+title.
+  expect(view.title).toBe("Page Title");
+  expect(view.url).toContain("data:text/html");
+  // Second navigate updates both.
+  await view.navigate(html("<title>Second</title>"));
+  expect(view.title).toBe("Second");
+});
+
 it("chrome: onNavigated fires with committed URL", async () => {
   const view = new Bun.WebView({ backend: "chrome", width: 200, height: 200 });
   try {

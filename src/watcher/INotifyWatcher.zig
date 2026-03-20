@@ -257,7 +257,6 @@ pub fn watchLoopCycle(this: *bun.Watcher) bun.sys.Maybe(void) {
     var events_processed: usize = 0;
 
     while (events_processed < events.len) {
-        var name_off: u8 = 0;
         var temp_name_list: [128]?[:0]u8 = undefined;
         var temp_name_off: u8 = 0;
 
@@ -274,7 +273,6 @@ pub fn watchLoopCycle(this: *bun.Watcher) bun.sys.Maybe(void) {
                 }
                 // Reset event_id to start a new batch
                 event_id = 0;
-                name_off = 0;
                 temp_name_off = 0;
             }
 
@@ -288,7 +286,6 @@ pub fn watchLoopCycle(this: *bun.Watcher) bun.sys.Maybe(void) {
                         .result => {},
                     }
                     event_id = 0;
-                    name_off = 0;
                     temp_name_off = 0;
                 }
             }

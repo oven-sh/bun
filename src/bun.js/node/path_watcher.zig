@@ -368,7 +368,7 @@ pub const PathWatcherManager = struct {
             }
             for (watchers) |w| {
                 if (w) |watcher| {
-                    if (watcher.needs_flush) watcher.flush();
+                    if (watcher.needs_flush.load(.acquire)) watcher.flush();
                 }
             }
 
@@ -469,7 +469,7 @@ pub const PathWatcherManager = struct {
             },
             .result => {},
         }
-        if (watcher.needs_flush) watcher.flush();
+        if (watcher.needs_flush.load(.acquire)) watcher.flush();
     }
 
     pub fn onError(
@@ -730,7 +730,7 @@ pub const PathWatcherManager = struct {
                     },
                     .result => {},
                 }
-                if (watcher.needs_flush) watcher.flush();
+                if (watcher.needs_flush.load(.acquire)) watcher.flush();
             }
 
             this.manager.unrefPendingTask();
@@ -971,12 +971,15 @@ pub const PathWatcherManager = struct {
             return;
         }
 
-        if (this.hasPendingTasks()) {
+        {
             this.mutex.lock();
             defer this.mutex.unlock();
-            // deinit when all tasks are done
-            this.deinit_on_last_task = true;
-            return;
+            // Check pending_tasks under the lock to avoid TOCTOU with
+            // unrefPendingTask — same pattern as PathWatcher.deinit.
+            if (this.pending_tasks > 0) {
+                this.deinit_on_last_task = true;
+                return;
+            }
         }
 
         this.main_watcher.deinit(false);
@@ -1011,7 +1014,7 @@ pub const PathWatcher = struct {
     flushCallback: UpdateEndCallback,
     manager: ?*PathWatcherManager,
     recursive: bool,
-    needs_flush: bool = false,
+    needs_flush: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
     ctx: ?*anyopaque,
     // all watched file paths (including subpaths) except by path it self
     file_paths: bun.BabyList([:0]const u8) = .{},
@@ -1183,7 +1186,7 @@ pub const PathWatcher = struct {
             else => {},
         }
 
-        this.needs_flush = true;
+        this.needs_flush.store(true, .release);
         if (this.isClosed()) {
             return;
         }
@@ -1193,7 +1196,7 @@ pub const PathWatcher = struct {
     pub fn flush(this: *PathWatcher) void {
         this.mutex.lock();
         defer this.mutex.unlock();
-        this.needs_flush = false;
+        this.needs_flush.store(false, .release);
         if (this.isClosed()) return;
         this.flushCallback(this.ctx);
     }

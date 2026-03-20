@@ -757,13 +757,14 @@ pub const PathWatcherManager = struct {
                 if (path.refs == 0) {
                     const path_ = path.path;
                     const fd = path.fd;
-                    this.main_watcher.remove(path.hash);
+                    // If the hash was in main_watcher's watchlist,
+                    // flushEvictions owns the fd close. If remove()
+                    // found nothing (e.g. inotify_add_watch failed so
+                    // the watchlist entry was never appended), close
+                    // here to avoid leaking the fd.
+                    const evicted = this.main_watcher.remove(path.hash);
                     _ = this.file_paths.remove(path_);
-                    // Close the fd. main_watcher.remove only evicts from the
-                    // watchlist; the fd itself must be closed here. If the hash
-                    // was never added (e.g. _addDirectory failed), remove is a
-                    // no-op and this close prevents an fd leak.
-                    fd.close();
+                    if (!evicted) fd.close();
                     bun.default_allocator.free(path_);
                 }
             }

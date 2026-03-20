@@ -741,12 +741,14 @@ pub fn indexOf(this: *Watcher, hash: HashType) ?u32 {
     return null;
 }
 
-pub fn remove(this: *Watcher, hash: HashType) void {
+pub fn remove(this: *Watcher, hash: HashType) bool {
     this.mutex.lock();
     defer this.mutex.unlock();
     if (this.indexOf(hash)) |index| {
         this.removeAtIndex(@truncate(index), hash, &[_]HashType{}, .file);
+        return true;
     }
+    return false;
 }
 
 pub fn removeAtIndex(this: *Watcher, index: WatchItemIndex, hash: HashType, parents: []HashType, comptime kind: WatchItem.Kind) void {

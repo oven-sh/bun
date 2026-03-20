@@ -2,30 +2,91 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
 // Chrome backend works on any platform with Chrome/Chromium installed.
-// Skip if no Chrome found (CI may not have it). Candidate list mirrors
-// ChromeProcess.zig's findChrome() — if the runtime can find it, the
-// test should too.
-import { existsSync } from "node:fs";
-const candidates = process.env.BUN_CHROME_PATH
-  ? [process.env.BUN_CHROME_PATH]
-  : process.platform === "darwin"
-    ? [
-        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-        "/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary",
-        "/Applications/Chromium.app/Contents/MacOS/Chromium",
-      ]
-    : process.platform === "linux"
-      ? [
-          "/usr/bin/google-chrome-stable",
-          "/usr/bin/google-chrome",
-          "/usr/bin/chromium-browser",
-          "/usr/bin/chromium",
-          "/snap/bin/chromium",
-        ]
-      : []; // Windows TODO — ChromeProcess.zig doesn't support it yet
-const hasChrome = candidates.some(existsSync);
+// Mark tests todo if no Chrome found (CI may not have it). Mirrors
+// ChromeProcess.zig's findChrome() — $PATH names, then hardcoded absolute
+// paths, then Playwright cache — so the test detects Chrome whenever the
+// runtime would.
+import { accessSync, constants as fsConstants, readdirSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
-const it = hasChrome ? test : test.skip;
+function findChrome(): string | undefined {
+  const isExecutable = (p: string) => {
+    try {
+      accessSync(p, fsConstants.X_OK);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  if (process.env.BUN_CHROME_PATH) {
+    return isExecutable(process.env.BUN_CHROME_PATH) ? process.env.BUN_CHROME_PATH : undefined;
+  }
+
+  // $PATH — same as `which google-chrome` etc.
+  const names = ["google-chrome-stable", "google-chrome", "chromium-browser", "chromium", "microsoft-edge", "chrome"];
+  for (const n of names) {
+    const found = Bun.which(n);
+    if (found) return found;
+  }
+
+  // Hardcoded absolute paths — app bundles aren't in $PATH on macOS.
+  if (process.platform === "darwin") {
+    const bundles = [
+      "Google Chrome.app/Contents/MacOS/Google Chrome",
+      "Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary",
+      "Chromium.app/Contents/MacOS/Chromium",
+      "Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+    ];
+    for (const b of bundles) {
+      const sys = join("/Applications", b);
+      if (isExecutable(sys)) return sys;
+      const user = join(homedir(), "Applications", b);
+      if (isExecutable(user)) return user;
+    }
+  } else if (process.platform === "linux") {
+    const absolute = [
+      "/usr/bin/google-chrome-stable",
+      "/usr/bin/google-chrome",
+      "/usr/bin/chromium-browser",
+      "/usr/bin/chromium",
+      "/snap/bin/chromium",
+      "/usr/bin/microsoft-edge",
+    ];
+    for (const c of absolute) if (isExecutable(c)) return c;
+  } // Windows TODO — ChromeProcess.zig doesn't support it yet
+
+  // Playwright cache fallback — mirrors findPlaywrightShell().
+  const cacheDir =
+    process.platform === "darwin"
+      ? join(homedir(), "Library/Caches/ms-playwright")
+      : join(homedir(), ".cache/ms-playwright");
+  let bestRev = 0;
+  let bestName = "";
+  try {
+    for (const name of readdirSync(cacheDir)) {
+      const m = name.match(/^chromium_headless_shell-(\d+)$/);
+      if (m && +m[1] > bestRev) {
+        bestRev = +m[1];
+        bestName = name;
+      }
+    }
+  } catch {}
+  if (!bestRev) return undefined;
+  const arch = process.arch === "arm64" ? "arm64" : "x64";
+  const plat = process.platform === "darwin" ? "mac" : "linux";
+  const bin = join(cacheDir, bestName, `chrome-headless-shell-${plat}-${arch}`, "chrome-headless-shell");
+  if (isExecutable(bin)) return bin;
+  if (process.platform === "linux" && process.arch === "arm64") {
+    const bin2 = join(cacheDir, bestName, "chrome-linux/headless_shell");
+    if (isExecutable(bin2)) return bin2;
+  }
+  return undefined;
+}
+
+const chromePath = findChrome();
+const it = chromePath ? test : test.todo;
 
 const html = (h: string) => "data:text/html," + encodeURIComponent(h);
 

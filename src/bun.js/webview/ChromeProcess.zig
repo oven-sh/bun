@@ -84,7 +84,7 @@ pub fn onProcessExit(this: *ChromeProcess, _: *bun.spawn.Process, status: bun.sp
 ///            chrome-headless-shell-linux64/chrome-headless-shell
 ///            (arm64 non-cft builds use chrome-linux/headless_shell instead)
 fn findChrome(alloc: std.mem.Allocator, explicitPath: ?[*:0]const u8) !?[:0]const u8 {
-    // Precedence: backend.path > BUN_CHROME_PATH > signed bundles > playwright.
+    // Precedence: backend.path > BUN_CHROME_PATH > $PATH > hardcoded > playwright.
     // backend.path is per-Bun.WebView call (first wins — later views reuse
     // the already-spawned Chrome); env var is per-process.
     if (explicitPath) |p| {
@@ -94,30 +94,63 @@ fn findChrome(alloc: std.mem.Allocator, explicitPath: ?[*:0]const u8) !?[:0]cons
         return try alloc.dupeZ(u8, p);
     } else |_| {}
 
-    // Signed app bundles first — enterprise endpoint-protection (Gatekeeper,
-    // Santa) allowlists notarized bundles but blocks unsigned binaries in
-    // cache dirs. Playwright's chrome-headless-shell is unsigned; on a
-    // locked-down dev machine it SIGKILLs at exec while Chrome.app runs.
-    const candidates = if (comptime bun.Environment.isMac) [_][]const u8{
-        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-        "/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary",
-        "/Applications/Chromium.app/Contents/MacOS/Chromium",
-        "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
-    } else if (comptime bun.Environment.isLinux) [_][]const u8{
-        "/usr/bin/google-chrome-stable",
-        "/usr/bin/google-chrome",
-        "/usr/bin/chromium-browser",
-        "/usr/bin/chromium",
-        "/snap/bin/chromium",
-        "/usr/bin/microsoft-edge",
-    } else [_][]const u8{};
+    const buf = bun.path_buffer_pool.get();
+    defer bun.path_buffer_pool.put(buf);
 
-    for (candidates) |c| {
-        var buf: bun.PathBuffer = undefined;
-        const z = bun.path.z(c, &buf);
-        switch (bun.sys.stat(z)) {
-            .result => return try alloc.dupeZ(u8, c),
-            .err => continue,
+    // $PATH first — `brew install chromium`, distro packages, manual symlinks
+    // all land here. Same precedence as `which` at a shell prompt.
+    const path = bun.env_var.PATH.get() orelse "";
+    const names = [_][]const u8{
+        "google-chrome-stable",
+        "google-chrome",
+        "chromium-browser",
+        "chromium",
+        "microsoft-edge",
+        "chrome", // brew cask symlink, some CI setups
+    };
+    for (names) |n| {
+        if (bun.which(buf, path, "", n)) |found| {
+            return try alloc.dupeZ(u8, found);
+        }
+    }
+
+    // Hardcoded absolute paths — macOS app bundles aren't in $PATH, and
+    // snap on Linux doesn't always export /snap/bin. Signed bundles before
+    // Playwright: enterprise endpoint-protection (Gatekeeper, Santa)
+    // allowlists notarized bundles but blocks unsigned binaries in cache
+    // dirs; Playwright's chrome-headless-shell is unsigned and SIGKILLs at
+    // exec on a locked-down dev machine while Chrome.app runs.
+    if (comptime bun.Environment.isMac) {
+        const bundles = [_][]const u8{
+            "Google Chrome.app/Contents/MacOS/Google Chrome",
+            "Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary",
+            "Chromium.app/Contents/MacOS/Chromium",
+            "Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+        };
+        // /Applications then ~/Applications — per-user installs (non-admin
+        // or drag-to-home-folder) land in the latter.
+        const home = bun.env_var.HOME.get() orelse "";
+        for (bundles) |b| {
+            const sys_parts = [_][]const u8{ "/Applications", b };
+            const sys = bun.path.joinStringBufZ(buf, &sys_parts, .auto);
+            if (bun.sys.isExecutableFilePath(sys)) return try alloc.dupeZ(u8, sys);
+            if (home.len > 0) {
+                const user_parts = [_][]const u8{ home, "Applications", b };
+                const user = bun.path.joinStringBufZ(buf, &user_parts, .auto);
+                if (bun.sys.isExecutableFilePath(user)) return try alloc.dupeZ(u8, user);
+            }
+        }
+    } else if (comptime bun.Environment.isLinux) {
+        const absolute = [_][:0]const u8{
+            "/usr/bin/google-chrome-stable",
+            "/usr/bin/google-chrome",
+            "/usr/bin/chromium-browser",
+            "/usr/bin/chromium",
+            "/snap/bin/chromium",
+            "/usr/bin/microsoft-edge",
+        };
+        for (absolute) |c| {
+            if (bun.sys.isExecutableFilePath(c)) return try alloc.dupeZ(u8, c);
         }
     }
 
@@ -133,16 +166,16 @@ fn findChrome(alloc: std.mem.Allocator, explicitPath: ?[*:0]const u8) !?[:0]cons
 /// pick the highest rev, stat the binary inside. Returns null if no cache
 /// dir, no matching entries, or binary missing.
 fn findPlaywrightShell(alloc: std.mem.Allocator) ?[:0]const u8 {
-    const home = std.process.getEnvVarOwned(alloc, "HOME") catch return null;
-    defer alloc.free(home);
+    const home = bun.env_var.HOME.get() orelse return null;
 
-    var dir_buf: bun.PathBuffer = undefined;
+    const dir_buf = bun.path_buffer_pool.get();
+    defer bun.path_buffer_pool.put(dir_buf);
     const cache_subpath = if (comptime bun.Environment.isMac)
         "Library/Caches/ms-playwright"
     else
         ".cache/ms-playwright";
     const parts = [_][]const u8{ home, cache_subpath };
-    const cache_dir = bun.path.joinStringBufZ(&dir_buf, &parts, .auto);
+    const cache_dir = bun.path.joinStringBufZ(dir_buf, &parts, .auto);
 
     const fd = switch (bun.sys.open(cache_dir, bun.O.RDONLY | bun.O.DIRECTORY, 0)) {
         .result => |f| f,
@@ -179,22 +212,17 @@ fn findPlaywrightShell(alloc: std.mem.Allocator) ?[:0]const u8 {
     const subdir_cft = std.fmt.allocPrint(alloc, "chrome-headless-shell-{s}-{s}/chrome-headless-shell", .{ plat, arch }) catch return null;
     defer alloc.free(subdir_cft);
 
-    var bin_buf: bun.PathBuffer = undefined;
+    const bin_buf = bun.path_buffer_pool.get();
+    defer bun.path_buffer_pool.put(bin_buf);
     const bin_parts = [_][]const u8{ cache_dir, best_name[0..best_len], subdir_cft };
-    const bin = bun.path.joinStringBufZ(&bin_buf, &bin_parts, .auto);
-    switch (bun.sys.stat(bin)) {
-        .result => return alloc.dupeZ(u8, bin) catch return null,
-        .err => {},
-    }
+    const bin = bun.path.joinStringBufZ(bin_buf, &bin_parts, .auto);
+    if (bun.sys.isExecutableFilePath(bin)) return alloc.dupeZ(u8, bin) catch return null;
 
     // Fall back to the non-cft linux arm64 layout.
     if (comptime bun.Environment.isLinux and bun.Environment.isAarch64) {
         const bin_parts2 = [_][]const u8{ cache_dir, best_name[0..best_len], "chrome-linux/headless_shell" };
-        const bin2 = bun.path.joinStringBufZ(&bin_buf, &bin_parts2, .auto);
-        switch (bun.sys.stat(bin2)) {
-            .result => return alloc.dupeZ(u8, bin2) catch return null,
-            .err => {},
-        }
+        const bin2 = bun.path.joinStringBufZ(bin_buf, &bin_parts2, .auto);
+        if (bun.sys.isExecutableFilePath(bin2)) return alloc.dupeZ(u8, bin2) catch return null;
     }
     return null;
 }

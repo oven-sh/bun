@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 
 test("server.url does not crash when unix socket path produces invalid URL", () => {
   // Passing an object as the unix socket path causes the URL formatter to produce

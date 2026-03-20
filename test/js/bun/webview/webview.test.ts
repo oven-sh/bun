@@ -9,13 +9,14 @@ const it = isMacOS ? test : test.skip;
 // lenient (different dyld shared cache builds per arch).
 const html = (h: string) => "data:text/html," + encodeURIComponent(h);
 
-test("constructor throws on non-darwin", () => {
+test("constructor throws on non-darwin without backend: chrome", () => {
   if (isMacOS) {
     const view = new Bun.WebView({ width: 100, height: 100 });
     expect(view).toBeInstanceOf(Bun.WebView);
     view.close();
   } else {
-    expect(() => new Bun.WebView({ width: 100, height: 100 })).toThrow(/not.*implemented/i);
+    // WebKit backend is macOS-only. Error directs to backend: "chrome".
+    expect(() => new Bun.WebView({ width: 100, height: 100 })).toThrow(/only available on macOS.*backend.*chrome/i);
   }
 });
 

@@ -317,6 +317,9 @@ pub const Transpiler = struct {
         this.log = log;
         this.linker.log = log;
         this.resolver.log = log;
+        if (this.resolver.package_manager) |pm| {
+            pm.log = log;
+        }
     }
 
     // TODO: remove this method. it does not make sense

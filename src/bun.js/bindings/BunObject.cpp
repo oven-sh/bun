@@ -790,7 +790,15 @@ JSC_DEFINE_HOST_FUNCTION(functionPathToFileURL, (JSC::JSGlobalObject * lexicalGl
     {
         WTF::String pathString = pathValue.toWTFString(lexicalGlobalObject);
         RETURN_IF_EXCEPTION(throwScope, {});
-        pathString = pathResolveWTFString(lexicalGlobalObject, pathString);
+        if (!isAbsolutePath(pathString)) {
+            BunString in = Bun::toString(pathString);
+            BunString out = ResolvePath__joinAbsStringBufCurrentPlatformBunString(lexicalGlobalObject, in);
+            if (out.tag == BunStringTag::Dead) {
+                throwScope.throwException(lexicalGlobalObject, JSC::createRangeError(lexicalGlobalObject, "Path is too long"_s));
+                return {};
+            }
+            pathString = out.transferToWTFString();
+        }
 
         auto fileURL = WTF::URL::fileURLWithFileSystemPath(pathString);
         auto object = WebCore::DOMURL::create(fileURL.string(), String());

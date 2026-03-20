@@ -1,6 +1,17 @@
 const HTTPThread = @This();
 
-var custom_ssl_context_map = std.AutoArrayHashMap(*SSLConfig, *NewHTTPContext(true)).init(bun.default_allocator);
+/// SSL context cache keyed by interned SSLConfig pointer.
+/// Since configs are interned via SSLConfig.GlobalRegistry, pointer equality
+/// is sufficient for lookup. Each entry holds a ref on its SSLConfig.
+const SslContextCacheEntry = struct {
+    ctx: *NewHTTPContext(true),
+    last_used_ns: u64,
+    /// Strong ref held by the cache entry (released on eviction).
+    config_ref: SSLConfig.SharedPtr,
+};
+const ssl_context_cache_max_size = 60;
+const ssl_context_cache_ttl_ns = 30 * std.time.ns_per_min;
+var custom_ssl_context_map = std.AutoArrayHashMap(*SSLConfig, SslContextCacheEntry).init(bun.default_allocator);
 
 loop: *jsc.MiniEventLoop,
 http_context: NewHTTPContext(false),
@@ -40,10 +51,10 @@ pub const HeapRequestBodyBuffer = struct {
 
     pub fn put(this: *@This()) void {
         if (bun.http.http_thread.lazy_request_body_buffer == null) {
-            // This case hypothetically should never happen
             this.fixed_buffer_allocator.reset();
             bun.http.http_thread.lazy_request_body_buffer = this;
         } else {
+            // This case hypothetically should never happen
             this.deinit();
         }
     }
@@ -223,35 +234,36 @@ pub fn connect(this: *@This(), client: *HTTPClient, comptime is_ssl: bool) !NewH
         return try this.context(is_ssl).connectSocket(client, client.unix_socket_path.slice());
     }
 
-    if (comptime is_ssl) {
-        const needs_own_context = client.tls_props != null and client.tls_props.?.requires_custom_request_ctx;
-        if (needs_own_context) {
-            var requested_config = client.tls_props.?;
-            for (custom_ssl_context_map.keys()) |other_config| {
-                if (requested_config.isSame(other_config)) {
-                    // we free the callers config since we have a existing one
-                    if (requested_config != client.tls_props) {
-                        requested_config.deinit();
-                        bun.default_allocator.destroy(requested_config);
-                    }
-                    client.tls_props = other_config;
-                    if (client.http_proxy) |url| {
-                        return try custom_ssl_context_map.get(other_config).?.connect(client, url.hostname, url.getPortAuto());
-                    } else {
-                        return try custom_ssl_context_map.get(other_config).?.connect(client, client.url.hostname, client.url.getPortAuto());
-                    }
+    if (comptime is_ssl) custom_ctx: {
+        if (client.tls_props) |tls| {
+            if (!tls.get().requires_custom_request_ctx) break :custom_ctx;
+            const requested_config = tls.get();
+
+            // Evict stale entries from the cache
+            evictStaleSslContexts(this);
+
+            // Look up by pointer equality (configs are interned)
+            if (custom_ssl_context_map.getPtr(requested_config)) |entry| {
+                // Cache hit - reuse existing SSL context
+                entry.last_used_ns = this.timer.read();
+                client.custom_ssl_ctx = entry.ctx;
+                // Keepalive is now supported for custom SSL contexts
+                if (client.http_proxy) |url| {
+                    return try entry.ctx.connect(client, url.hostname, url.getPortAuto());
+                } else {
+                    return try entry.ctx.connect(client, client.url.hostname, client.url.getPortAuto());
                 }
             }
-            // we need the config so dont free it
-            var custom_context = try bun.default_allocator.create(NewHTTPContext(is_ssl));
-            custom_context.initWithClientConfig(client) catch |err| {
-                client.tls_props = null;
 
-                requested_config.deinit();
-                bun.default_allocator.destroy(requested_config);
+            // Cache miss - create new SSL context
+            var custom_context = try bun.default_allocator.create(NewHTTPContext(is_ssl));
+            custom_context.* = .{
+                .pending_sockets = NewHTTPContext(is_ssl).PooledSocketHiveAllocator.empty,
+                .us_socket_context = undefined,
+            };
+            custom_context.initWithClientConfig(client) catch |err| {
                 bun.default_allocator.destroy(custom_context);
 
-                // TODO: these error names reach js. figure out how they should be handled
                 return switch (err) {
                     error.FailedToOpenSocket => |e| e,
                     error.InvalidCA => error.FailedToOpenSocket,
@@ -259,14 +271,25 @@ pub fn connect(this: *@This(), client: *HTTPClient, comptime is_ssl: bool) !NewH
                     error.LoadCAFile => error.FailedToOpenSocket,
                 };
             };
-            try custom_ssl_context_map.put(requested_config, custom_context);
-            // We might deinit the socket context, so we disable keepalive to make sure we don't
-            // free it while in use.
-            client.flags.disable_keepalive = true;
+
+            const now = this.timer.read();
+            bun.handleOom(custom_ssl_context_map.put(requested_config, .{
+                .ctx = custom_context,
+                .last_used_ns = now,
+                // Clone a strong ref for the cache entry; client.tls_props keeps its own.
+                .config_ref = tls.clone(),
+            }));
+
+            // Enforce max cache size - evict oldest entry
+            if (custom_ssl_context_map.count() > ssl_context_cache_max_size) {
+                evictOldestSslContext();
+            }
+
+            client.custom_ssl_ctx = custom_context;
+            // Keepalive is now supported for custom SSL contexts
             if (client.http_proxy) |url| {
-                // https://github.com/oven-sh/bun/issues/11343
                 if (url.protocol.len == 0 or strings.eqlComptime(url.protocol, "https") or strings.eqlComptime(url.protocol, "http")) {
-                    return try this.context(is_ssl).connect(client, url.hostname, url.getPortAuto());
+                    return try custom_context.connect(client, url.hostname, url.getPortAuto());
                 }
                 return error.UnsupportedProxyProtocol;
             }
@@ -287,6 +310,39 @@ pub fn connect(this: *@This(), client: *HTTPClient, comptime is_ssl: bool) !NewH
 
 pub fn context(this: *@This(), comptime is_ssl: bool) *NewHTTPContext(is_ssl) {
     return if (is_ssl) &this.https_context else &this.http_context;
+}
+
+/// Evict SSL context cache entries that haven't been used for ssl_context_cache_ttl_ns.
+fn evictStaleSslContexts(this: *@This()) void {
+    const now = this.timer.read();
+    var i: usize = 0;
+    while (i < custom_ssl_context_map.count()) {
+        var entry = custom_ssl_context_map.values()[i];
+        if (now -| entry.last_used_ns > ssl_context_cache_ttl_ns) {
+            custom_ssl_context_map.swapRemoveAt(i);
+            entry.ctx.deinit();
+            entry.config_ref.deinit();
+        } else {
+            i += 1;
+        }
+    }
+}
+
+/// Evict the least-recently-used SSL context cache entry.
+fn evictOldestSslContext() void {
+    if (custom_ssl_context_map.count() == 0) return;
+    var oldest_idx: usize = 0;
+    var oldest_time: u64 = std.math.maxInt(u64);
+    for (custom_ssl_context_map.values(), 0..) |entry, i| {
+        if (entry.last_used_ns < oldest_time) {
+            oldest_time = entry.last_used_ns;
+            oldest_idx = i;
+        }
+    }
+    var entry = custom_ssl_context_map.values()[oldest_idx];
+    custom_ssl_context_map.swapRemoveAt(oldest_idx);
+    entry.ctx.deinit();
+    entry.config_ref.deinit();
 }
 
 fn drainQueuedShutdowns(this: *@This()) void {

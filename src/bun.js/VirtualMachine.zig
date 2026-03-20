@@ -171,6 +171,10 @@ debug_thread_id: if (Environment.allow_assert) std.Thread.Id else void,
 body_value_hive_allocator: webcore.Body.Value.HiveAllocator = undefined,
 
 is_inside_deferred_task_queue: bool = false,
+/// When true, drainMicrotasksWithGlobal is suppressed. Used by SpawnSyncEventLoop
+/// to prevent the isolated event loop from draining the shared JSC microtask queue
+/// (which would execute user JavaScript during spawnSync).
+suppress_microtask_drain: bool = false,
 
 // defaults off. .on("message") will set it to true unless overridden
 // process.channel.unref() will set it to false and mark it overridden
@@ -1267,11 +1271,18 @@ fn configureDebugger(this: *VirtualMachine, cli_flag: bun.cli.Command.Debugger) 
         },
     }
 
-    if (this.isInspectorEnabled() and this.debugger.?.mode != .connect) {
-        this.transpiler.options.minify_identifiers = false;
-        this.transpiler.options.minify_syntax = false;
-        this.transpiler.options.minify_whitespace = false;
-        this.transpiler.options.debugger = true;
+    if (this.isInspectorEnabled()) {
+        // The runtime transpiler cache does not store inline source maps needed
+        // by the debugger frontend. Disable it so the printer always runs and
+        // generates the inline sourceMappingURL for the inspector.
+        jsc.RuntimeTranspilerCache.is_disabled = true;
+
+        if (this.debugger.?.mode != .connect) {
+            this.transpiler.options.minify_identifiers = false;
+            this.transpiler.options.minify_syntax = false;
+            this.transpiler.options.minify_whitespace = false;
+            this.transpiler.options.debugger = true;
+        }
     }
 }
 
@@ -1684,9 +1695,18 @@ fn _resolve(
                     const buster_name = name: {
                         if (std.fs.path.isAbsolute(normalized_specifier)) {
                             if (std.fs.path.dirname(normalized_specifier)) |dir| {
+                                if (dir.len > specifier_cache_resolver_buf.len) {
+                                    return error.ModuleNotFound;
+                                }
                                 // Normalized without trailing slash
                                 break :name bun.strings.normalizeSlashesOnly(&specifier_cache_resolver_buf, dir, std.fs.path.sep);
                             }
+                        }
+
+                        // If the specifier is too long to join, it can't name a real
+                        // directory — skip the cache bust and fail.
+                        if (source_to_use.len + normalized_specifier.len + 4 >= specifier_cache_resolver_buf.len) {
+                            return error.ModuleNotFound;
                         }
 
                         var parts = [_]string{
@@ -2669,7 +2689,7 @@ pub fn remapZigException(
     allow_source_code_preview: bool,
 ) void {
     error_instance.toZigException(this.global, exception);
-    const enable_source_code_preview = allow_source_code_preview and
+    var enable_source_code_preview = allow_source_code_preview and
         !(bun.feature_flag.BUN_DISABLE_SOURCE_CODE_PREVIEW.get() or
             bun.feature_flag.BUN_DISABLE_TRANSPILED_SOURCE_CODE_PREVIEW.get());
 
@@ -2764,6 +2784,12 @@ pub fn remapZigException(
         }
     }
 
+    // Don't show source code preview for REPL frames - it would show the
+    // transformed IIFE wrapper code, not what the user typed.
+    if (top.source_url.eqlComptime("[repl]")) {
+        enable_source_code_preview = false;
+    }
+
     var top_source_url = top.source_url.toUTF8(bun.default_allocator);
     defer top_source_url.deinit();
 
@@ -2815,7 +2841,6 @@ pub fn remapZigException(
                 // Avoid printing "export default 'native'"
                 break :code ZigString.Slice.empty;
             }
-
             var log = logger.Log.init(bun.default_allocator);
             defer log.deinit();
 

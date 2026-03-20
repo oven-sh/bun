@@ -462,43 +462,41 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
 
         JSValue expectedArrayValue = expectArrayContaining->m_arrayValue.get();
 
-        if (JSC::isArray(globalObject, otherProp)) {
-            if (JSC::isArray(globalObject, expectedArrayValue)) {
-                JSArray* expectedArray = jsDynamicCast<JSArray*>(expectedArrayValue);
-                JSArray* otherArray = jsDynamicCast<JSArray*>(otherProp);
+        // Note: isArray() accepts Proxy->Array, but jsDynamicCast returns null for Proxy.
+        JSArray* expectedArray = jsDynamicCast<JSArray*>(expectedArrayValue);
+        JSArray* otherArray = jsDynamicCast<JSArray*>(otherProp);
+        if (expectedArray && otherArray) {
+            unsigned expectedLength = expectedArray->length();
+            unsigned otherLength = otherArray->length();
 
-                unsigned expectedLength = expectedArray->length();
-                unsigned otherLength = otherArray->length();
-
-                // A empty array is all array's subset
-                if (expectedLength == 0) {
-                    return AsymmetricMatcherResult::PASS;
-                }
-
-                // O(m*n) but works for now
-                for (unsigned m = 0; m < expectedLength; m++) {
-                    JSValue expectedValue = expectedArray->getIndex(globalObject, m);
-                    bool found = false;
-
-                    for (unsigned n = 0; n < otherLength; n++) {
-                        JSValue otherValue = otherArray->getIndex(globalObject, n);
-                        Vector<std::pair<JSValue, JSValue>, 16> stack;
-                        MarkedArgumentBuffer gcBuffer;
-                        bool foundNow = Bun__deepEquals<false, true>(globalObject, expectedValue, otherValue, gcBuffer, stack, throwScope, true);
-                        RETURN_IF_EXCEPTION(throwScope, AsymmetricMatcherResult::FAIL);
-                        if (foundNow) {
-                            found = true;
-                            break;
-                        }
-                    }
-
-                    if (!found) {
-                        return AsymmetricMatcherResult::FAIL;
-                    }
-                }
-
+            // A empty array is all array's subset
+            if (expectedLength == 0) {
                 return AsymmetricMatcherResult::PASS;
             }
+
+            // O(m*n) but works for now
+            for (unsigned m = 0; m < expectedLength; m++) {
+                JSValue expectedValue = expectedArray->getIndex(globalObject, m);
+                bool found = false;
+
+                for (unsigned n = 0; n < otherLength; n++) {
+                    JSValue otherValue = otherArray->getIndex(globalObject, n);
+                    Vector<std::pair<JSValue, JSValue>, 16> stack;
+                    MarkedArgumentBuffer gcBuffer;
+                    bool foundNow = Bun__deepEquals<false, true>(globalObject, expectedValue, otherValue, gcBuffer, stack, throwScope, true);
+                    RETURN_IF_EXCEPTION(throwScope, AsymmetricMatcherResult::FAIL);
+                    if (foundNow) {
+                        found = true;
+                        break;
+                    }
+                }
+
+                if (!found) {
+                    return AsymmetricMatcherResult::FAIL;
+                }
+            }
+
+            return AsymmetricMatcherResult::PASS;
         }
 
         return AsymmetricMatcherResult::FAIL;
@@ -1544,7 +1542,7 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
         break;
     }
     // globalThis is only equal to globalThis
-    // NOTE: Zig::GlobalObject is tagged as GlobalProxyType
+    // NOTE: globalThis from JS is a JSGlobalProxy (GlobalProxyType) wrapping Zig::GlobalObject (GlobalObjectType)
     case GlobalObjectType: {
         if (c1Type != c2Type) return false;
         auto* g1 = jsDynamicCast<JSC::JSGlobalObject*, JSCell>(c1);
@@ -3550,13 +3548,11 @@ void JSC__JSPromise__rejectOnNextTickWithHandled(JSC::JSPromise* promise, JSC::J
 
         promise->internalField(JSC::JSPromise::Field::Flags).set(vm, promise, jsNumber(flags | JSC::JSPromise::isFirstResolvingFunctionCalledFlag));
         auto* globalObject = jsCast<Zig::GlobalObject*>(promise->globalObject());
-        auto microtaskFunction = globalObject->performMicrotaskFunction();
         auto rejectPromiseFunction = globalObject->rejectPromiseFunction();
 
         auto asyncContext = globalObject->m_asyncContextData.get()->getInternalField(0);
 
 #if ASSERT_ENABLED
-        ASSERT_WITH_MESSAGE(microtaskFunction, "Invalid microtask function");
         ASSERT_WITH_MESSAGE(rejectPromiseFunction, "Invalid microtask callback");
         ASSERT_WITH_MESSAGE(!value.isEmpty(), "Invalid microtask value");
 #endif
@@ -3569,7 +3565,8 @@ void JSC__JSPromise__rejectOnNextTickWithHandled(JSC::JSPromise* promise, JSC::J
             value = jsUndefined();
         }
 
-        JSC::QueuedTask task { nullptr, JSC::InternalMicrotask::BunPerformMicrotaskJob, 0, globalObject, microtaskFunction, rejectPromiseFunction, globalObject->m_asyncContextData.get()->getInternalField(0), promise, value };
+        // BunPerformMicrotaskJob: rejectPromiseFunction, asyncContext, promise, value
+        JSC::QueuedTask task { nullptr, JSC::InternalMicrotask::BunPerformMicrotaskJob, 0, globalObject, rejectPromiseFunction, globalObject->m_asyncContextData.get()->getInternalField(0), promise, value };
         globalObject->vm().queueMicrotask(WTF::move(task));
         RETURN_IF_EXCEPTION(scope, );
     }
@@ -5152,7 +5149,7 @@ restart:
 
             RETURN_IF_EXCEPTION(scope, void());
             for (auto& property : properties) {
-                if (property.isEmpty() || property.isNull()) [[unlikely]]
+                if (property.isNull()) [[unlikely]]
                     continue;
 
                 // ignore constructor
@@ -5182,9 +5179,6 @@ restart:
                 visitedProperties.append(property);
 
                 ZigString key = toZigString(property.isSymbol() && !property.isPrivateName() ? property.impl() : property.string());
-
-                if (key.len == 0)
-                    continue;
 
                 JSC::JSValue propertyValue = jsUndefined();
 
@@ -5326,7 +5320,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] bool JSC__isBigIntInInt64Range(JSC::EncodedJS
     auto clientData = WebCore::clientData(vm);
 
     for (auto property : vector) {
-        if (property.isEmpty() || property.isNull()) [[unlikely]]
+        if (property.isNull()) [[unlikely]]
             continue;
 
         // ignore constructor
@@ -5450,9 +5444,7 @@ extern "C" void JSC__JSGlobalObject__queueMicrotaskJob(JSC::JSGlobalObject* arg0
     if (microtaskArgs[3].isEmpty()) {
         microtaskArgs[3] = jsUndefined();
     }
-    JSC::JSFunction* microTaskFunction = globalObject->performMicrotaskFunction();
 #if ASSERT_ENABLED
-    ASSERT_WITH_MESSAGE(microTaskFunction, "Invalid microtask function");
     auto& vm = globalObject->vm();
     if (microtaskArgs[0].isCell()) {
         JSC::Integrity::auditCellFully(vm, microtaskArgs[0].asCell());
@@ -5472,7 +5464,8 @@ extern "C" void JSC__JSGlobalObject__queueMicrotaskJob(JSC::JSGlobalObject* arg0
 
 #endif
 
-    JSC::QueuedTask task { nullptr, JSC::InternalMicrotask::BunPerformMicrotaskJob, 0, globalObject, microTaskFunction, WTF::move(microtaskArgs[0]), WTF::move(microtaskArgs[1]), WTF::move(microtaskArgs[2]), WTF::move(microtaskArgs[3]) };
+    // BunPerformMicrotaskJob: job, asyncContext, arg0, arg1
+    JSC::QueuedTask task { nullptr, JSC::InternalMicrotask::BunPerformMicrotaskJob, 0, globalObject, WTF::move(microtaskArgs[0]), WTF::move(microtaskArgs[1]), WTF::move(microtaskArgs[2]), WTF::move(microtaskArgs[3]) };
     globalObject->vm().queueMicrotask(WTF::move(task));
 }
 
@@ -5651,6 +5644,34 @@ extern "C" [[ZIG_EXPORT(check_slow)]] double Bun__gregorianDateTimeToMS(JSC::JSG
     dateTime.setMinute(minute);
     dateTime.setSecond(second);
     return vm.dateCache.gregorianDateTimeToMS(dateTime, millisecond, WTF::TimeType::LocalTime);
+}
+
+extern "C" [[ZIG_EXPORT(check_slow)]] double Bun__gregorianDateTimeToMSUTC(JSC::JSGlobalObject* globalObject, int year, int month, int day, int hour, int minute, int second, int millisecond)
+{
+    auto& vm = JSC::getVM(globalObject);
+    WTF::GregorianDateTime dateTime;
+    dateTime.setYear(year);
+    dateTime.setMonth(month - 1);
+    dateTime.setMonthDay(day);
+    dateTime.setHour(hour);
+    dateTime.setMinute(minute);
+    dateTime.setSecond(second);
+    return vm.dateCache.gregorianDateTimeToMS(dateTime, millisecond, WTF::TimeType::UTCTime);
+}
+
+extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__msToGregorianDateTimeUTC(JSC::JSGlobalObject* globalObject, double ms,
+    int* year, int* month, int* day, int* hour, int* minute, int* second, int* weekday)
+{
+    auto& vm = JSC::getVM(globalObject);
+    WTF::GregorianDateTime dt;
+    vm.dateCache.msToGregorianDateTime(ms, WTF::TimeType::UTCTime, dt);
+    *year = dt.year();
+    *month = dt.month() + 1;
+    *day = dt.monthDay();
+    *hour = dt.hour();
+    *minute = dt.minute();
+    *second = dt.second();
+    *weekday = dt.weekDay();
 }
 
 extern "C" EncodedJSValue JSC__JSValue__dateInstanceFromNumber(JSC::JSGlobalObject* globalObject, double unixTimestamp)
@@ -6151,6 +6172,166 @@ CPP_DECL [[ZIG_EXPORT(nothrow)]] unsigned int Bun__CallFrame__getLineNumber(JSC:
     }
 
     return lineColumn.line;
+}
+
+// REPL evaluation function - evaluates JavaScript code in the global scope
+// Returns the result value, or undefined if an exception was thrown
+// If an exception is thrown, the exception value is stored in *exception
+extern "C" JSC::EncodedJSValue Bun__REPL__evaluate(
+    JSC::JSGlobalObject* globalObject,
+    const unsigned char* sourcePtr,
+    size_t sourceLen,
+    const unsigned char* filenamePtr,
+    size_t filenameLen,
+    JSC::EncodedJSValue* exception)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+
+    WTF::String source = WTF::String::fromUTF8(std::span { sourcePtr, sourceLen });
+    WTF::String filename = filenameLen > 0
+        ? WTF::String::fromUTF8(std::span { filenamePtr, filenameLen })
+        : "[repl]"_s;
+
+    JSC::SourceCode sourceCode = JSC::makeSource(
+        source,
+        JSC::SourceOrigin {},
+        JSC::SourceTaintedOrigin::Untainted,
+        filename,
+        WTF::TextPosition(),
+        JSC::SourceProviderSourceType::Program);
+
+    WTF::NakedPtr<JSC::Exception> evalException;
+    JSC::JSValue result = JSC::evaluate(globalObject, sourceCode, globalObject->globalThis(), evalException);
+
+    if (evalException) {
+        *exception = JSC::JSValue::encode(evalException->value());
+        // Set _error on the globalObject directly (not globalThis proxy)
+        globalObject->putDirect(vm, JSC::Identifier::fromString(vm, "_error"_s), evalException->value());
+        scope.clearException();
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    }
+
+    if (scope.exception()) {
+        *exception = JSC::JSValue::encode(scope.exception()->value());
+        // Set _error on the globalObject directly (not globalThis proxy)
+        globalObject->putDirect(vm, JSC::Identifier::fromString(vm, "_error"_s), scope.exception()->value());
+        scope.clearException();
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    }
+
+    // Note: _ is now set in Zig code (repl.zig) after extracting the value from
+    // the REPL transform wrapper. We don't set it here anymore.
+
+    return JSC::JSValue::encode(result);
+}
+
+// REPL completion function - gets completions for a partial property access
+// Returns an array of completion strings, or undefined if no completions
+extern "C" JSC::EncodedJSValue Bun__REPL__getCompletions(
+    JSC::JSGlobalObject* globalObject,
+    JSC::EncodedJSValue targetValue,
+    const unsigned char* prefixPtr,
+    size_t prefixLen)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSC::JSValue target = JSC::JSValue::decode(targetValue);
+    if (!target || target.isUndefined() || target.isNull()) {
+        target = globalObject->globalThis();
+    }
+
+    if (!target.isObject()) {
+        JSObject* boxed = target.toObject(globalObject);
+        RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
+        target = boxed;
+    }
+
+    WTF::String prefix = prefixLen > 0
+        ? WTF::String::fromUTF8(std::span { prefixPtr, prefixLen })
+        : WTF::String();
+
+    JSC::JSObject* object = target.getObject();
+    JSC::PropertyNameArrayBuilder propertyNames(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
+    object->getPropertyNames(globalObject, propertyNames, DontEnumPropertiesMode::Include);
+    RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
+
+    JSC::JSArray* completions = JSC::constructEmptyArray(globalObject, nullptr, 0);
+    RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
+
+    unsigned completionIndex = 0;
+    for (const auto& propertyName : propertyNames) {
+        WTF::String name = propertyName.string();
+        if (prefix.isEmpty() || name.startsWith(prefix)) {
+            completions->putDirectIndex(globalObject, completionIndex++, JSC::jsString(vm, name));
+            RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
+        }
+    }
+
+    // Also check the prototype chain
+    JSC::JSValue proto = object->getPrototype(globalObject);
+    RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(completions));
+
+    while (proto && proto.isObject()) {
+        JSC::JSObject* protoObj = proto.getObject();
+        JSC::PropertyNameArrayBuilder protoNames(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
+        protoObj->getPropertyNames(globalObject, protoNames, DontEnumPropertiesMode::Include);
+        RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(completions));
+
+        for (const auto& propertyName : protoNames) {
+            WTF::String name = propertyName.string();
+            if (prefix.isEmpty() || name.startsWith(prefix)) {
+                completions->putDirectIndex(globalObject, completionIndex++, JSC::jsString(vm, name));
+                RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(completions));
+            }
+        }
+
+        proto = protoObj->getPrototype(globalObject);
+        RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(completions));
+    }
+
+    return JSC::JSValue::encode(completions);
+}
+
+// Format a value for REPL output using util.inspect style
+extern "C" JSC::EncodedJSValue Bun__REPL__formatValue(
+    JSC::JSGlobalObject* globalObject,
+    JSC::EncodedJSValue valueEncoded,
+    int32_t depth,
+    bool colors)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // Get the util.inspect function from the global object
+    auto* bunGlobal = jsCast<Zig::GlobalObject*>(globalObject);
+    JSC::JSValue inspectFn = bunGlobal->utilInspectFunction();
+
+    if (!inspectFn || !inspectFn.isCallable()) {
+        // Fallback to toString if util.inspect is not available
+        JSC::JSValue value = JSC::JSValue::decode(valueEncoded);
+        JSString* str = value.toString(globalObject);
+        RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
+        return JSC::JSValue::encode(str);
+    }
+
+    // Create options object
+    JSC::JSObject* options = JSC::constructEmptyObject(globalObject);
+    options->putDirect(vm, JSC::Identifier::fromString(vm, "depth"_s), JSC::jsNumber(depth));
+    options->putDirect(vm, JSC::Identifier::fromString(vm, "colors"_s), JSC::jsBoolean(colors));
+    options->putDirect(vm, JSC::Identifier::fromString(vm, "maxArrayLength"_s), JSC::jsNumber(100));
+    options->putDirect(vm, JSC::Identifier::fromString(vm, "maxStringLength"_s), JSC::jsNumber(10000));
+    options->putDirect(vm, JSC::Identifier::fromString(vm, "breakLength"_s), JSC::jsNumber(80));
+
+    JSC::MarkedArgumentBuffer args;
+    args.append(JSC::JSValue::decode(valueEncoded));
+    args.append(options);
+
+    JSC::JSValue result = JSC::call(globalObject, inspectFn, JSC::ArgList(args), "util.inspect"_s);
+    RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
+
+    return JSC::JSValue::encode(result);
 }
 
 extern "C" void JSC__ArrayBuffer__ref(JSC::ArrayBuffer* self) { self->ref(); }

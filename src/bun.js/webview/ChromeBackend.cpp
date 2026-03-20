@@ -612,6 +612,68 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         // Same as navigate: don't settle, Page.loadEventFired does.
         return;
 
+    case Method::PageGetNavigationHistory: {
+        // {"currentIndex":N,"entries":[{"id":N,"url":"..."},...]}
+        // Pick entries[currentIndex + delta].id and chain into
+        // navigateToHistoryEntry. If the target index is out of range, we're
+        // at the boundary — resolve undefined (same as WKWebView's goBack
+        // when canGoBack is false).
+        auto ci = jsonField(result, { "currentIndex", 12 });
+        auto entries = jsonField(result, { "entries", 7 });
+        int32_t currentIdx = 0;
+        for (char c : ci) {
+            if (c < '0' || c > '9') break;
+            currentIdx = currentIdx * 10 + (c - '0');
+        }
+        int32_t targetIdx = currentIdx + view->m_chromeHistoryDelta;
+        if (targetIdx < 0) {
+            settle(g, view, entry.slot, true, jsUndefined()); // at start; no-op
+            return;
+        }
+        // entries is a JSON array. Walk to the targetIdx'th element by
+        // counting commas at array depth 1 (same depth-counter as jsonField
+        // but for array indices). Then extract its "id" field.
+        const char* p = entries.data();
+        const char* end = p + entries.size();
+        if (p < end && *p == '[') ++p;
+        int idx = 0;
+        int depth = 0;
+        bool inStr = false, esc = false;
+        const char* elemStart = p;
+        for (; p < end && idx < targetIdx; ++p) {
+            char c = *p;
+            if (esc) { esc = false; continue; }
+            if (c == '\\') { esc = true; continue; }
+            if (c == '"') { inStr = !inStr; continue; }
+            if (inStr) continue;
+            if (c == '{' || c == '[') { ++depth; continue; }
+            if (c == '}' || c == ']') { --depth; continue; }
+            if (c == ',' && depth == 0) { ++idx; elemStart = p + 1; }
+        }
+        if (idx < targetIdx || p >= end) {
+            settle(g, view, entry.slot, true, jsUndefined()); // past end; no-op
+            return;
+        }
+        // elemStart points at the target element's opening. Find its id field
+        // within the element bounds (up to next depth-0 comma or ]).
+        std::span<const char> elem(elemStart, static_cast<size_t>(end - elemStart));
+        auto idSlice = jsonField(elem, { "id", 2 });
+        int32_t entryId = 0;
+        for (char c : idSlice) {
+            if (c < '0' || c > '9') break;
+            entryId = entryId * 10 + (c - '0');
+        }
+        // Chain into navigateToHistoryEntry. Page.loadEventFired settles.
+        uint32_t cid = nextId();
+        m_pending.add(cid, Pending { Method::PageNavigateToHistoryEntry, entry.slot, WTF::move(entry.view) });
+        send(Command(cid, "Page.navigateToHistoryEntry"_s, sidSpan(view->m_sessionId))
+                .num("entryId"_s, entryId));
+        return;
+    }
+    case Method::PageNavigateToHistoryEntry:
+        // Response is empty {} on success. Page.loadEventFired settles.
+        return;
+
     case Method::RuntimeEvaluate: {
         // {"result":{"type":"...","value":...},"exceptionDetails":{...}?}
         // returnByValue:true + awaitPromise:true → result.value is the
@@ -1028,17 +1090,78 @@ JSPromise* type(JSGlobalObject* g, JSWebView* view, const WTF::String& text)
             .str("text"_s, text));
 }
 
+// VirtualKey → CDP key/code/windowsVirtualKeyCode. DOM key names from
+// UIEvents-key spec (https://w3c.github.io/uievents-key/). Windows VK codes
+// from WinUser.h. key == code for all named keys (e.g., "Enter" is both);
+// Character has no code (layout-dependent) so we leave it empty.
+struct CDPKeyInfo {
+    ASCIILiteral key; // DOM key string; empty for Character (use char param)
+    int32_t vk; // Windows virtual key code
+    ASCIILiteral text; // char for keyDown type (generates input); empty for control keys
+};
+static const CDPKeyInfo& cdpKeyInfo(uint8_t k)
+{
+    // Indexed by VirtualKey enum value. text is the char a keyDown
+    // produces — control keys like Arrow* produce none (rawKeyDown).
+    static constexpr CDPKeyInfo table[] = {
+        /* Character */ { {}, 0, {} },
+        /* Enter */ { "Enter"_s, 13, "\r"_s },
+        /* Tab */ { "Tab"_s, 9, "\t"_s },
+        /* Space */ { " "_s, 32, " "_s },
+        /* Backspace */ { "Backspace"_s, 8, {} },
+        /* Delete */ { "Delete"_s, 46, {} },
+        /* Escape */ { "Escape"_s, 27, {} },
+        /* ArrowLeft */ { "ArrowLeft"_s, 37, {} },
+        /* ArrowRight */ { "ArrowRight"_s, 39, {} },
+        /* ArrowUp */ { "ArrowUp"_s, 38, {} },
+        /* ArrowDown */ { "ArrowDown"_s, 40, {} },
+        /* Home */ { "Home"_s, 36, {} },
+        /* End */ { "End"_s, 35, {} },
+        /* PageUp */ { "PageUp"_s, 33, {} },
+        /* PageDown */ { "PageDown"_s, 34, {} },
+    };
+    return table[k < std::size(table) ? k : 0];
+}
+
 JSPromise* press(JSGlobalObject* g, JSWebView* view, uint8_t key, uint8_t modifiers, const WTF::String& character)
 {
-    // VirtualKey → CDP key/code/keyCode mapping is a table. TODO.
-    UNUSED_PARAM(view);
-    UNUSED_PARAM(key);
-    UNUSED_PARAM(modifiers);
-    UNUSED_PARAM(character);
-    auto& vm = g->vm();
-    auto* p = JSPromise::create(vm, g->promiseStructure());
-    p->reject(vm, g, createError(g, "press() not yet implemented for Chrome backend"_s));
-    return p;
+    auto& t = transport();
+    auto sid = sidSpan(view->m_sessionId);
+    int32_t mods = cdpModifiers(modifiers);
+    const auto& info = cdpKeyInfo(key);
+
+    // Character key: use the provided character for key/text. For named
+    // keys, use the table. keyDown generates input events (beforeinput/
+    // input); rawKeyDown fires keydown only. We want keydown + input for
+    // text-producing keys (Enter, Tab, Space, Character), rawKeyDown for
+    // control keys (Arrows, Escape, etc.) — same as WKWebView's editing-
+    // command vs keyDown split.
+    WTF::String keyStr = info.key ? WTF::String(info.key) : character;
+    WTF::String textStr = info.text ? WTF::String(info.text)
+        : key == 0                  ? character // Character
+                                    : WTF::String();
+    bool hasText = !textStr.isEmpty();
+
+    // keyDown — always fire. Chrome's Input.dispatchKeyEvent is sync-reply;
+    // the event is processed (keydown fired, default action run, input
+    // fired if text present) by the time we get the reply. No _doAfter*
+    // dance like WKWebView's press().
+    uint32_t idDown = t.nextId();
+    t.send(Command(idDown, "Input.dispatchKeyEvent"_s, sid)
+            .raw("type"_s, hasText ? "\"keyDown\""_s : "\"rawKeyDown\""_s)
+            .str("key"_s, keyStr)
+            .str("text"_s, textStr)
+            .num("windowsVirtualKeyCode"_s, info.vk)
+            .num("modifiers"_s, mods));
+    // keyUp — tracked, resolves the promise.
+    uint32_t idUp = t.nextId();
+    return sendChromeOp(g, view, view->m_pendingMisc, PendingSlot::Misc,
+        Method::InputDispatchKeyEvent, idUp,
+        Command(idUp, "Input.dispatchKeyEvent"_s, sid)
+            .raw("type"_s, "\"keyUp\""_s)
+            .str("key"_s, keyStr)
+            .num("windowsVirtualKeyCode"_s, info.vk)
+            .num("modifiers"_s, mods));
 }
 
 JSPromise* scroll(JSGlobalObject* g, JSWebView* view, double dx, double dy)
@@ -1072,25 +1195,24 @@ JSPromise* resize(JSGlobalObject* g, JSWebView* view, uint32_t width, uint32_t h
             .boolean("mobile"_s, false));
 }
 
-JSPromise* goBack(JSGlobalObject* g, JSWebView* view)
+// Page.getNavigationHistory → Page.navigateToHistoryEntry chain. Playwright
+// does the same (crPage.ts:_go). The response handler for GetNavigationHistory
+// reads currentIndex and entries, picks entries[currentIndex + delta].id,
+// chains into navigateToHistoryEntry. delta is stashed on the view.
+static JSPromise* historyGo(JSGlobalObject* g, JSWebView* view, int8_t delta)
 {
-    // Page.navigateToHistoryEntry or Runtime.evaluate("history.back()").
-    // TODO.
-    UNUSED_PARAM(view);
-    auto& vm = g->vm();
-    auto* p = JSPromise::create(vm, g->promiseStructure());
-    p->reject(vm, g, createError(g, "goBack() not yet implemented for Chrome backend"_s));
-    return p;
+    auto& t = transport();
+    view->m_chromeHistoryDelta = delta;
+    uint32_t id = t.nextId();
+    // Navigate slot — navigateToHistoryEntry IS a navigation and
+    // Page.loadEventFired settles PendingSlot::Navigate only.
+    return sendChromeOp(g, view, view->m_pendingNavigate, PendingSlot::Navigate,
+        Method::PageGetNavigationHistory, id,
+        Command(id, "Page.getNavigationHistory"_s, sidSpan(view->m_sessionId)));
 }
 
-JSPromise* goForward(JSGlobalObject* g, JSWebView* view)
-{
-    UNUSED_PARAM(view);
-    auto& vm = g->vm();
-    auto* p = JSPromise::create(vm, g->promiseStructure());
-    p->reject(vm, g, createError(g, "goForward() not yet implemented for Chrome backend"_s));
-    return p;
-}
+JSPromise* goBack(JSGlobalObject* g, JSWebView* view) { return historyGo(g, view, -1); }
+JSPromise* goForward(JSGlobalObject* g, JSWebView* view) { return historyGo(g, view, +1); }
 
 JSPromise* reload(JSGlobalObject* g, JSWebView* view)
 {

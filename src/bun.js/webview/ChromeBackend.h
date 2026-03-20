@@ -192,6 +192,11 @@ enum class Method : uint8_t {
     TargetCloseTarget,
     PageNavigate,
     PageReload,
+    // goBack/goForward chain: getNavigationHistory → navigateToHistoryEntry.
+    // The first picks entries[currentIndex + delta].id; the second navigates.
+    // Page.loadEventFired settles, same as navigate/reload.
+    PageGetNavigationHistory,
+    PageNavigateToHistoryEntry,
     PageCaptureScreenshot,
     RuntimeEvaluate,
     InputDispatchMouseEvent,

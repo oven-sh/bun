@@ -58,6 +58,9 @@ public:
     uint8_t m_selButton = 0;
     uint8_t m_selModifiers = 0;
     uint8_t m_selClickCount = 1;
+    // goBack/goForward stash — PageGetNavigationHistory chains into
+    // navigateToHistoryEntry with entries[currentIndex + delta].id.
+    int8_t m_chromeHistoryDelta = 0;
 
     JSC::WriteBarrier<JSC::JSObject> m_onNavigated;
     JSC::WriteBarrier<JSC::JSObject> m_onNavigationFailed;

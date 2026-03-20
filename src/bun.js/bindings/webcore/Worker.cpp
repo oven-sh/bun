@@ -142,6 +142,10 @@ bool Worker::updatePtr()
     if (!WebWorker__updatePtr(impl_, this)) {
         m_onlineClosingFlags = ClosingFlag;
         m_terminationFlags.fetch_or(TerminatedFlag);
+        impl_ = nullptr;
+        // Balance the ref() taken in create() — the Zig thread never
+        // started so WebWorker__dispatchExit will never run.
+        deref();
         return false;
     }
 

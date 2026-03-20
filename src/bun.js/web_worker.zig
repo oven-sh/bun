@@ -80,9 +80,9 @@ export fn WebWorker__updatePtr(worker: *WebWorker, ptr: *anyopaque) bool {
         startWithErrorHandling,
         .{worker},
     ) catch {
-        // Spawn failed — release the worker thread's ref. C++ still
-        // holds its ref and will release via WebWorker__release.
-        worker.requested_terminate.store(true, .release);
+        // Spawn failed — run the normal termination path so the parent
+        // keep-alive is unwound even though the thread never started.
+        worker.requestTermination();
         worker.deref();
         return false;
     };
@@ -383,6 +383,9 @@ pub fn start(
 /// Clean up owned resources. Called before the ref count drops the struct.
 fn deinit(this: *WebWorker) void {
     log("[{d}] deinit", .{this.execution_context_id});
+    if (this.name.len > 0) {
+        bun.default_allocator.free(this.name);
+    }
     bun.default_allocator.free(this.unresolved_specifier);
     for (this.preloads) |preload| {
         bun.default_allocator.free(preload);

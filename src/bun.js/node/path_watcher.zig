@@ -490,8 +490,13 @@ pub const PathWatcherManager = struct {
                     watcher.flush();
                 }
             }
+        }
 
-            // we need a new manager at this point
+        // Release manager.mutex before acquiring default_manager_mutex to
+        // maintain consistent lock ordering (default_manager_mutex → manager.mutex).
+        // deinit() acquires them in this order; holding manager.mutex here
+        // while taking default_manager_mutex would create an AB/BA deadlock.
+        {
             default_manager_mutex.lock();
             defer default_manager_mutex.unlock();
             default_manager = null;

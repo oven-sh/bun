@@ -16,6 +16,11 @@ using namespace JSC;
 
 static JSC_DECLARE_HOST_FUNCTION(callWebView);
 static JSC_DECLARE_HOST_FUNCTION(constructWebView);
+static JSC_DECLARE_HOST_FUNCTION(jsWebViewConstructorCloseAll);
+
+extern "C" void Bun__WebView__closeAllForTermination();
+extern "C" size_t Bun__Feature__webview_chrome;
+extern "C" size_t Bun__Feature__webview_webkit;
 
 class JSWebViewConstructor final : public JSC::InternalFunction {
 public:
@@ -50,6 +55,9 @@ private:
         Base::finishCreation(vm, 1, "WebView"_s);
         putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype,
             PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+        putDirectNativeFunction(vm, globalObject(), Identifier::fromString(vm, "closeAll"_s),
+            0, jsWebViewConstructorCloseAll, ImplementationVisibility::Public, NoIntrinsic,
+            PropertyAttribute::Function | PropertyAttribute::DontEnum);
     }
 };
 
@@ -71,6 +79,17 @@ JSC_DEFINE_HOST_FUNCTION(callWebView, (JSGlobalObject * globalObject, CallFrame*
         "Class constructor WebView cannot be invoked without 'new'"_s);
 }
 
+// SIGKILLs both browser subprocesses. The onProcessExit path (EVFILT_PROC →
+// Bun__Chrome__died / Bun__WebViewHost__childDied) rejects pending promises
+// and marks transports dead on the next event loop tick — we don't touch JS
+// state here. Calling on an already-dead process is a no-op (kill(9) returns
+// ESRCH, discarded).
+JSC_DEFINE_HOST_FUNCTION(jsWebViewConstructorCloseAll, (JSGlobalObject*, CallFrame*))
+{
+    Bun__WebView__closeAllForTermination();
+    return JSValue::encode(jsUndefined());
+}
+
 JSC_DEFINE_HOST_FUNCTION(constructWebView, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
@@ -90,6 +109,8 @@ JSC_DEFINE_HOST_FUNCTION(constructWebView, (JSGlobalObject * globalObject, CallF
 #endif
     WTF::String chromePath;
     WTF::Vector<WTF::String> chromeArgv;
+    bool stdoutInherit = false;
+    bool stderrInherit = false;
     bool consoleIsGlobal = false;
     JSObject* consoleCallback = nullptr;
 
@@ -175,6 +196,36 @@ JSC_DEFINE_HOST_FUNCTION(constructWebView, (JSGlobalObject * globalObject, CallF
                 return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE,
                     "backend.argv must be an array of strings"_s);
             }
+
+            // stdout/stderr: "inherit" | "ignore" — whether the subprocess's
+            // streams flow to Bun's. Chrome is chatty on stderr (GCM
+            // registration errors, updater noise, font-config warnings) even
+            // with our flag suite; default ignore keeps test output clean.
+            // "inherit" is useful when Chrome crashes silently (the crash
+            // report goes to stderr). stdout is mostly quiet for both
+            // backends — the WebKit host only prints on panic.
+            auto parseStdio = [&](ASCIILiteral key, bool& out) -> bool {
+                JSValue v = beObj->get(globalObject, Identifier::fromString(vm, key));
+                RETURN_IF_EXCEPTION(scope, false);
+                if (v.isUndefined()) return true;
+                if (!v.isString()) {
+                    Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE,
+                        makeString("backend."_s, key, " must be \"inherit\" or \"ignore\""_s));
+                    return false;
+                }
+                WTF::String s = v.toWTFString(globalObject);
+                RETURN_IF_EXCEPTION(scope, false);
+                if (s == "inherit"_s) {
+                    out = true;
+                    return true;
+                }
+                if (s == "ignore"_s) return true;
+                Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_VALUE,
+                    makeString("backend."_s, key, " must be \"inherit\" or \"ignore\""_s));
+                return false;
+            };
+            if (!parseStdio("stdout"_s, stdoutInherit)) return {};
+            if (!parseStdio("stderr"_s, stderrInherit)) return {};
         }
 
         // Initial URL — the navigate() is fired off immediately after
@@ -250,8 +301,9 @@ JSC_DEFINE_HOST_FUNCTION(constructWebView, (JSGlobalObject * globalObject, CallF
     }
 
     if (backend == WebViewBackend::Chrome) {
+        Bun__Feature__webview_chrome += 1;
         JSWebView* view = JSWebView::createChrome(globalObject, structure, width, height,
-            persistDir, chromePath, chromeArgv);
+            persistDir, chromePath, chromeArgv, stdoutInherit, stderrInherit);
         if (!view) {
             return Bun::throwError(globalObject, scope, ErrorCode::ERR_DLOPEN_FAILED,
                 "Failed to spawn Chrome (set BUN_CHROME_PATH, backend.path, or install Chrome/Chromium)"_s);
@@ -266,7 +318,9 @@ JSC_DEFINE_HOST_FUNCTION(constructWebView, (JSGlobalObject * globalObject, CallF
     return Bun::throwError(globalObject, scope, ErrorCode::ERR_METHOD_NOT_IMPLEMENTED,
         "Bun.WebView with backend \"webkit\" is only available on macOS; use backend: \"chrome\""_s);
 #else
-    JSWebView* view = JSWebView::createAndSend(globalObject, structure, width, height, persistDir);
+    Bun__Feature__webview_webkit += 1;
+    JSWebView* view = JSWebView::createAndSend(globalObject, structure, width, height, persistDir,
+        stdoutInherit, stderrInherit);
     if (!view) {
         return Bun::throwError(globalObject, scope, ErrorCode::ERR_DLOPEN_FAILED,
             "Failed to spawn WebView host process"_s);

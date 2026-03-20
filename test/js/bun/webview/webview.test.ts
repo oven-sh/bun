@@ -719,6 +719,38 @@ it("close() rejects pending promises", async () => {
   await expect(p).rejects.toThrow(/closed/i);
 });
 
+it("WebView.closeAll() kills the host subprocess and pending promises reject", async () => {
+  // Subprocess-isolated — closeAll() SIGKILLs the one shared WKWebView host,
+  // which would break subsequent tests. ensureSpawned respawns on the next
+  // WebView construction, but only after EVFILT_PROC has cleared the Zig
+  // instance global — race prone in-process.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const view = new Bun.WebView({ width: 200, height: 200 });
+        await view.navigate("data:text/html,<body>test</body>");
+        const p = view.evaluate("new Promise(() => {})"); // never resolves
+        Bun.WebView.closeAll();
+        // SIGKILL → socket EOF or EVFILT_PROC (whichever wins) →
+        // rejectAllAndMarkDead on next tick. Both paths reject; the message
+        // differs ("host process died" vs "killed by signal").
+        await p.then(
+          () => { throw new Error("should have rejected"); },
+          e => { if (!/died|signal|killed/i.test(e.message)) throw e; },
+        );
+        console.log("rejected");
+      `,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout.trim()).toBe("rejected");
+  expect(exitCode).toBe(0);
+});
+
 it("reload() fires onNavigated", async () => {
   await using view = new Bun.WebView({ width: 200, height: 200 });
   await view.navigate("data:text/html," + encodeURIComponent("<body>hi</body>"));

@@ -28,7 +28,6 @@
 #include <wtf/HashMap.h>
 #include <wtf/text/StringBuilder.h>
 
-struct us_socket_context_t;
 struct us_socket_t;
 
 namespace Zig {
@@ -292,13 +291,15 @@ struct Pending {
 class Transport {
 public:
     // Lazy-spawn Chrome. Returns false on spawn failure; caller throws.
-    // Lazy-spawn Chrome. path overrides auto-detection (BUN_CHROME_PATH >
-    // path > app bundles > playwright cache). extraArgv appends after the
-    // core flags so user flags can override built-ins. Spawn args apply
-    // only on the FIRST call — subsequent views share the one Chrome, so
-    // mismatched path/argv across views get the first-call's config.
+    // path overrides auto-detection (BUN_CHROME_PATH > path > app bundles >
+    // playwright cache). extraArgv appends after the core flags so user
+    // flags can override built-ins. stdoutInherit/stderrInherit route
+    // Chrome's output (chatty on stderr — GCM/updater/font-config noise).
+    // Spawn args apply only on the FIRST call — subsequent views share the
+    // one Chrome, so mismatched args across views get the first-call's.
     bool ensureSpawned(Zig::GlobalObject*, const WTF::String& userDataDir = {},
-        const WTF::String& path = {}, const WTF::Vector<WTF::String>& extraArgv = {});
+        const WTF::String& path = {}, const WTF::Vector<WTF::String>& extraArgv = {},
+        bool stdoutInherit = false, bool stderrInherit = false);
 
     // Next CDP id — caller uses it with Command(id, ...) then calls send().
     uint32_t nextId() { return m_nextId++; }
@@ -314,11 +315,7 @@ public:
     void onClose();
 
     Zig::GlobalObject* m_global = nullptr;
-    us_socket_context_t* m_ctx = nullptr;
-    // Same underlying fd — m_readSock is usockets' wrapper, m_writeFd is
-    // the raw int for direct ::write(). usockets owns the close.
     us_socket_t* m_readSock = nullptr;
-    int m_writeFd = -1;
     bool m_dead = false;
 
     uint32_t m_nextId = 1;

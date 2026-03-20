@@ -253,11 +253,12 @@ void JSWebView::doClose()
 
 #if OS(DARWIN)
 JSWebView* JSWebView::createAndSend(JSGlobalObject* g, Structure* structure,
-    uint32_t width, uint32_t height, const WTF::String& persistDir)
+    uint32_t width, uint32_t height, const WTF::String& persistDir,
+    bool stdoutInherit, bool stderrInherit)
 {
     auto* zig = defaultGlobalObject(g);
     auto& c = WK::client();
-    if (!c.ensureSpawned(zig)) return nullptr;
+    if (!c.ensureSpawned(zig, stdoutInherit, stderrInherit)) return nullptr;
 
     JSWebView* view = create(g->vm(), structure);
     view->m_viewId = c.nextViewId++;
@@ -278,11 +279,12 @@ JSWebView* JSWebView::createAndSend(JSGlobalObject* g, Structure* structure,
 
 JSWebView* JSWebView::createChrome(JSGlobalObject* g, Structure* structure,
     uint32_t width, uint32_t height, const WTF::String& userDataDir,
-    const WTF::String& path, const WTF::Vector<WTF::String>& extraArgv)
+    const WTF::String& path, const WTF::Vector<WTF::String>& extraArgv,
+    bool stdoutInherit, bool stderrInherit)
 {
     auto* zig = defaultGlobalObject(g);
     auto& t = CDP::transport();
-    if (!t.ensureSpawned(zig, userDataDir, path, extraArgv)) return nullptr;
+    if (!t.ensureSpawned(zig, userDataDir, path, extraArgv, stdoutInherit, stderrInherit)) return nullptr;
 
     JSWebView* view = create(g->vm(), structure);
     view->m_backend = WebViewBackend::Chrome;
@@ -307,3 +309,24 @@ void setupJSWebViewClassStructure(LazyClassStructure::Initializer& init)
 }
 
 } // namespace Bun
+
+// ---------------------------------------------------------------------------
+// Termination hook. Called from dispatchOnExit (same path as SQLite's
+// Bun__closeAllSQLiteDatabasesForTermination) and from WebView.closeAll().
+// SIGKILLs both browser subprocesses — no CDP Browser.close, no promise
+// rejection, no socket teardown. At dispatchOnExit the event loop is past
+// the point of processing any reply; the only thing that matters is the
+// subprocesses don't outlive us. Chrome's zygote tree (renderer/gpu/utility)
+// exits when the browser process dies; WebKit's WebContent/GPU/Network
+// helpers exit via XPC-invalidated when the host dies. Idempotent: kill(9)
+// on a reaped pid returns ESRCH and we discard it.
+// ---------------------------------------------------------------------------
+
+extern "C" void Bun__Chrome__kill();
+extern "C" void Bun__WebViewHost__kill();
+
+extern "C" void Bun__WebView__closeAllForTermination()
+{
+    Bun__Chrome__kill();
+    Bun__WebViewHost__kill();
+}

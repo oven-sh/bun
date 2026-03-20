@@ -354,6 +354,80 @@ it("chrome: two views have independent sessions", async () => {
   }
 });
 
+test("WebView.closeAll is a static function", () => {
+  expect(typeof Bun.WebView.closeAll).toBe("function");
+  // No-op when no subprocesses are alive — verifies the idempotent fast path.
+  Bun.WebView.closeAll();
+});
+
+it("chrome: closeAll() kills the subprocess and pending promises reject", async () => {
+  // Subprocess-isolated — closeAll() SIGKILLs the one shared Chrome, which
+  // would break subsequent tests in this file. ensureSpawned respawns on
+  // the next WebView construction, but only after EVFILT_PROC has cleared
+  // the Zig instance global — race prone in-process.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const view = new Bun.WebView({ backend: "chrome", width: 200, height: 200 });
+        await view.navigate("data:text/html,<body>test</body>");
+        const p = view.evaluate("new Promise(() => {})"); // never resolves
+        Bun.WebView.closeAll();
+        // SIGKILL → socket EOF or EVFILT_PROC (whichever the event loop sees
+        // first) → rejectAllAndMarkDead on next tick. Both race outcomes
+        // reject; the message differs ("closed the pipe" vs "killed by signal").
+        await p.then(
+          () => { throw new Error("should have rejected"); },
+          e => { if (!/closed the pipe|signal|killed/i.test(e.message)) throw e; },
+        );
+        console.log("rejected");
+      `,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout.trim()).toBe("rejected");
+  expect(exitCode).toBe(0);
+});
+
+it("chrome: backend.stderr defaults to ignore (Chrome noise hidden)", async () => {
+  // Subprocess-isolated — first spawn's stdio config wins for the shared
+  // Chrome. Chrome prints GCM/updater/policy noise to stderr on launch;
+  // default "ignore" keeps our stderr empty.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const view = new Bun.WebView({ backend: "chrome", width: 200, height: 200 });
+        await view.navigate("data:text/html,<body>test</body>");
+        view.close();
+      `,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  // Chrome stderr contains "ERROR:" prefixed lines (chromium_log.cc format).
+  // With .ignore, none of that reaches us.
+  expect(stderr).not.toContain("ERROR:");
+  expect(exitCode).toBe(0);
+});
+
+test("backend.stderr validates", () => {
+  expect(() => new Bun.WebView({ backend: { type: "chrome", stderr: "pipe" as any } })).toThrow(
+    /must be "inherit" or "ignore"/,
+  );
+  expect(() => new Bun.WebView({ backend: { type: "chrome", stderr: 123 as any } })).toThrow(
+    /must be "inherit" or "ignore"/,
+  );
+  expect(() => new Bun.WebView({ backend: { type: "chrome", stdout: "foo" as any } })).toThrow(
+    /must be "inherit" or "ignore"/,
+  );
+});
+
 test("backend option validates", () => {
   expect(() => new Bun.WebView({ backend: "invalid" as any })).toThrow(/webkit.*chrome/i);
   expect(() => new Bun.WebView({ backend: { type: "invalid" } as any })).toThrow(/webkit.*chrome/i);

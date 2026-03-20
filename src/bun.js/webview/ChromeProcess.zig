@@ -23,12 +23,13 @@ process: *bun.spawn.Process,
 
 var instance: ?*ChromeProcess = null;
 
-/// Bun__atexit-registered: SIGKILL Chrome if still alive at process exit.
-/// Chrome spawns its own renderer/gpu/utility children (a Chrome "process
-/// model" zygote tree); they're tracked by Chrome's own ProcessSingleton
-/// and exit when the browser process dies. SIGKILL here takes the browser
-/// process, the zygote tree follows.
-fn killOnExit() callconv(.c) void {
+/// Called from WebView.closeAll() and dispatchOnExit. Chrome spawns its own
+/// renderer/gpu/utility children (the "process model" zygote tree) — tracked
+/// by Chrome's own ProcessSingleton, they exit when the browser process
+/// dies. SIGKILL here takes the browser process, the zygote tree follows.
+/// The C++ side doesn't touch JS state; EVFILT_PROC → Bun__Chrome__died →
+/// rejectAllAndMarkDead handles promise rejection on the next loop tick.
+pub export fn Bun__Chrome__kill() void {
     if (instance) |i| {
         _ = i.process.kill(9);
     }
@@ -52,12 +53,14 @@ pub export fn Bun__Chrome__ensure(
     path: ?[*:0]const u8,
     extraArgv: ?[*]const [*:0]const u8,
     extraArgvLen: u32,
+    stdoutInherit: bool,
+    stderrInherit: bool,
 ) i32 {
     if (comptime bun.Environment.isWindows) return -1;
     if (instance != null) return -1; // C++ already holds the fd
 
     const extra: []const [*:0]const u8 = if (extraArgv) |a| a[0..extraArgvLen] else &.{};
-    const fd = spawn(global.bunVM(), userDataDir, path, extra) catch |err| {
+    const fd = spawn(global.bunVM(), userDataDir, path, extra, stdoutInherit, stderrInherit) catch |err| {
         log("spawn failed: {s}", .{@errorName(err)});
         return -1;
     };
@@ -227,7 +230,7 @@ fn findPlaywrightShell(alloc: std.mem.Allocator) ?[:0]const u8 {
     return null;
 }
 
-fn spawn(vm: *jsc.VirtualMachine, userDataDir: ?[*:0]const u8, explicitPath: ?[*:0]const u8, extraArgv: []const [*:0]const u8) !bun.FileDescriptor {
+fn spawn(vm: *jsc.VirtualMachine, userDataDir: ?[*:0]const u8, explicitPath: ?[*:0]const u8, extraArgv: []const [*:0]const u8, stdoutInherit: bool, stderrInherit: bool) !bun.FileDescriptor {
     if (comptime bun.Environment.isWindows) return error.Unsupported;
 
     var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
@@ -315,8 +318,8 @@ fn spawn(vm: *jsc.VirtualMachine, userDataDir: ?[*:0]const u8, explicitPath: ?[*
 
     var opts: bun.spawn.SpawnOptions = .{
         .stdin = .ignore,
-        .stdout = .inherit,
-        .stderr = .inherit,
+        .stdout = if (stdoutInherit) .inherit else .ignore,
+        .stderr = if (stderrInherit) .inherit else .ignore,
         // fd 3 AND fd 4 both point at fds[1]. spawnProcess dup2's each
         // .pipe entry to 3+index; passing the same fd twice gives Chrome
         // the same socket at both positions.
@@ -343,10 +346,8 @@ fn spawn(vm: *jsc.VirtualMachine, userDataDir: ?[*:0]const u8, explicitPath: ?[*
         .result => {
             // Same weak-handle reasoning as HostProcess: parent exit →
             // Chrome's fd 3 EOFs → DevToolsPipeHandler::Shutdown → exit.
+            // dispatchOnExit also SIGKILLs via Bun__Chrome__kill.
             self.process.disableKeepingEventLoopAlive();
-            // Belt-and-braces — SIGKILL on Bun exit if Chrome hasn't
-            // already exited via pipe EOF.
-            bun.Global.addExitCallback(killOnExit);
         },
         .err => |e| {
             log("watch failed: {f}", .{e});

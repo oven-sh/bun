@@ -119,7 +119,8 @@ public:
     // in the Weak routing table, write the Create frame. Returns nullptr if
     // host spawn failed (caller throws).
     static JSWebView* createAndSend(JSC::JSGlobalObject*, JSC::Structure*,
-        uint32_t width, uint32_t height, const WTF::String& persistDir);
+        uint32_t width, uint32_t height, const WTF::String& persistDir,
+        bool stdoutInherit, bool stderrInherit);
 #endif
 
     // Chrome constructor. Lazy-spawns Chrome; stores width/height for the
@@ -129,7 +130,8 @@ public:
     // if Chrome spawn failed.
     static JSWebView* createChrome(JSC::JSGlobalObject*, JSC::Structure*,
         uint32_t width, uint32_t height, const WTF::String& userDataDir,
-        const WTF::String& path, const WTF::Vector<WTF::String>& extraArgv);
+        const WTF::String& path, const WTF::Vector<WTF::String>& extraArgv,
+        bool stdoutInherit, bool stderrInherit);
 
     void finishCreation(JSC::VM&);
     static JSC::Structure* createStructure(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue prototype);

@@ -19,14 +19,13 @@ const HostProcess = @This();
 process: *bun.spawn.Process,
 var instance: ?*HostProcess = null;
 
-/// Bun__atexit-registered: SIGKILL the child if still alive at process
-/// exit. Socket EOF handles normal parent-death (including SIGKILL of Bun
-/// — kernel closes fds, child reads 0, CFRunLoopStop). This catches the
-/// clean-exit path where the child hasn't yet noticed EOF before we're
-/// about to return from main(). WKWebView's own WebContent/GPU/Network
-/// helpers are XPC-connected to the child — when the child dies they
-/// get the connection-invalidated callback and exit.
-fn killOnExit() callconv(.c) void {
+/// Called from WebView.closeAll() and dispatchOnExit. Socket EOF handles
+/// normal parent-death (including SIGKILL of Bun — kernel closes fds, child
+/// reads 0, CFRunLoopStop). This catches the clean-exit path where the child
+/// hasn't yet noticed EOF before we return from main(). WKWebView's own
+/// WebContent/GPU/Network helpers are XPC-connected to the child — when the
+/// child dies they get connection-invalidated and exit.
+pub export fn Bun__WebViewHost__kill() void {
     if (instance) |i| {
         _ = i.process.kill(9);
     }
@@ -38,12 +37,12 @@ fn killOnExit() callconv(.c) void {
 /// so instance-already-exists → -1 means "you already have the fd, this is
 /// a bug" not "spawn failed". We deliberately don't store the fd — usockets
 /// owns it; re-returning a fd usockets may have already closed would be a
-/// use-after-close. Zig only owns process lifetime (watch + killOnExit).
-pub export fn Bun__WebViewHost__ensure(global: *jsc.JSGlobalObject) i32 {
+/// use-after-close. Zig only owns process lifetime (watch + kill).
+pub export fn Bun__WebViewHost__ensure(global: *jsc.JSGlobalObject, stdoutInherit: bool, stderrInherit: bool) i32 {
     if (comptime !bun.Environment.isMac) return -1;
     if (instance != null) return -1; // C++ already holds the fd
 
-    const fd = spawn(global.bunVM()) catch |err| {
+    const fd = spawn(global.bunVM(), stdoutInherit, stderrInherit) catch |err| {
         log("spawn failed: {s}", .{@errorName(err)});
         return -1;
     };
@@ -62,7 +61,7 @@ pub fn onProcessExit(this: *HostProcess, _: *bun.spawn.Process, status: bun.spaw
     instance = null;
 }
 
-fn spawn(vm: *jsc.VirtualMachine) !bun.FileDescriptor {
+fn spawn(vm: *jsc.VirtualMachine, stdoutInherit: bool, stderrInherit: bool) !bun.FileDescriptor {
     if (comptime !bun.Environment.isMac) return error.Unsupported;
 
     var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
@@ -96,11 +95,11 @@ fn spawn(vm: *jsc.VirtualMachine) !bun.FileDescriptor {
 
     var opts: bun.spawn.SpawnOptions = .{
         .stdin = .ignore,
-        // Inherit stdout/stderr so child-side panics/logs land somewhere
-        // visible. Noise should be minimal — the child runs no JS, no
-        // user code.
-        .stdout = .inherit,
-        .stderr = .inherit,
+        // Default ignore — the child runs no JS or user code, so output is
+        // only panics/NSLog from WebKit. Opt-in via backend.stderr when
+        // debugging a silent host crash.
+        .stdout = if (stdoutInherit) .inherit else .ignore,
+        .stderr = if (stderrInherit) .inherit else .ignore,
         .extra_fds = &.{.{ .pipe = fds[1] }},
         .argv0 = exe.ptr,
     };
@@ -121,11 +120,8 @@ fn spawn(vm: *jsc.VirtualMachine) !bun.FileDescriptor {
             // child gets socket EOF and exits, EVFILT_PROC fires into a
             // dead process (kernel discards). If we ref'd, parent would
             // stay alive forever waiting on a child that is waiting on us.
+            // dispatchOnExit also SIGKILLs via Bun__WebViewHost__kill.
             self.process.disableKeepingEventLoopAlive();
-            // Belt-and-braces — SIGKILL on Bun exit if the child hasn't
-            // already exited via socket EOF. atexit covers clean exit +
-            // caught signals; EOF covers SIGKILL-of-parent.
-            bun.Global.addExitCallback(killOnExit);
         },
         .err => |e| {
             log("watch failed: {f}", .{e});

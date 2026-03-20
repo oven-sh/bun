@@ -53,7 +53,8 @@ using namespace JSC;
 // path overrides auto-detection; extraArgv (count entries, each NUL-
 // terminated) appends after core flags. All pointers nullable.
 extern "C" int32_t Bun__Chrome__ensure(Zig::GlobalObject*, const char* userDataDir,
-    const char* path, const char* const* extraArgv, uint32_t extraArgvLen);
+    const char* path, const char* const* extraArgv, uint32_t extraArgvLen,
+    bool stdoutInherit, bool stderrInherit);
 extern "C" void Bun__eventLoop__incrementRefConcurrently(void* bunVM, int delta);
 extern "C" void Bun__EventLoop__enter(Zig::GlobalObject*);
 extern "C" void Bun__EventLoop__exit(Zig::GlobalObject*);
@@ -193,6 +194,11 @@ Transport& transport()
     return instance.get();
 }
 
+// One context per process — reused across Chrome respawns. Not a Transport
+// member because there's no reason to reset it; us_socket_context_t holds
+// only the callback table, no per-socket state.
+static us_socket_context_t* s_cdpCtx = nullptr;
+
 // usockets callbacks — thin trampolines into the singleton.
 static us_socket_t* cdpOnData(us_socket_t* s, char* d, int n)
 {
@@ -217,7 +223,8 @@ static us_socket_t* cdpOnEnd(us_socket_t* s)
 static us_socket_t* cdpOnOpen(us_socket_t* s, int, char*, int) { return s; }
 
 bool Transport::ensureSpawned(Zig::GlobalObject* zig, const WTF::String& userDataDir,
-    const WTF::String& path, const WTF::Vector<WTF::String>& extraArgv)
+    const WTF::String& path, const WTF::Vector<WTF::String>& extraArgv,
+    bool stdoutInherit, bool stderrInherit)
 {
     if (m_readSock && !m_dead) return true;
     if (m_dead) {
@@ -244,7 +251,8 @@ bool Transport::ensureSpawned(Zig::GlobalObject* zig, const WTF::String& userDat
         dir.length() ? dir.data() : nullptr,
         pathC.length() ? pathC.data() : nullptr,
         argvPtrs.isEmpty() ? nullptr : argvPtrs.span().data(),
-        static_cast<uint32_t>(argvPtrs.size()));
+        static_cast<uint32_t>(argvPtrs.size()),
+        stdoutInherit, stderrInherit);
     if (fd < 0) {
         m_dead = true;
         return false;
@@ -253,29 +261,27 @@ bool Transport::ensureSpawned(Zig::GlobalObject* zig, const WTF::String& userDat
     // fd 3 and fd 4; read(3)+write(4) both hit our socketpair peer. usockets'
     // bsd_recv calls recv() which needs a real socket (pipe fds broke here
     // with ENOTSOCK silently misread as EOF).
-    m_writeFd = fd;
     m_global = zig;
 
-    if (!m_ctx) {
+    if (!s_cdpCtx) {
         us_loop_t* loop = uws_get_loop();
         us_socket_context_options_t opts;
         memset(&opts, 0, sizeof(opts));
-        m_ctx = us_create_socket_context(0, loop, sizeof(void*), opts);
-        us_socket_context_on_data(0, m_ctx, cdpOnData);
-        us_socket_context_on_writable(0, m_ctx, cdpOnWritable);
-        us_socket_context_on_close(0, m_ctx, cdpOnClose);
-        us_socket_context_on_end(0, m_ctx, cdpOnEnd);
-        us_socket_context_on_open(0, m_ctx, cdpOnOpen);
+        s_cdpCtx = us_create_socket_context(0, loop, sizeof(void*), opts);
+        us_socket_context_on_data(0, s_cdpCtx, cdpOnData);
+        us_socket_context_on_writable(0, s_cdpCtx, cdpOnWritable);
+        us_socket_context_on_close(0, s_cdpCtx, cdpOnClose);
+        us_socket_context_on_end(0, s_cdpCtx, cdpOnEnd);
+        us_socket_context_on_open(0, s_cdpCtx, cdpOnOpen);
     }
 
     // Adopt read fd only. usockets polls it READABLE|WRITABLE but we only
     // care about READABLE — writable events on a read-end pipe fire
     // constantly, but onWritable is a no-op when m_txQueue is empty so
     // they're harmless.
-    m_readSock = us_socket_from_fd(m_ctx, sizeof(void*), fd, 0);
+    m_readSock = us_socket_from_fd(s_cdpCtx, sizeof(void*), fd, 0);
     if (!m_readSock) {
         closefd(fd);
-        m_writeFd = -1;
         m_dead = true;
         return false;
     }
@@ -678,13 +684,22 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
             settle(g, view, entry.slot, false, createError(g, "screenshot: invalid base64"_s));
             return;
         }
+        auto& vm = g->vm();
+        auto scope = DECLARE_THROW_SCOPE(vm);
         auto* u8 = JSUint8Array::createUninitialized(g, g->m_typedArrayUint8.get(g),
             static_cast<uint32_t>(decoded->size()));
-        if (!u8) {
-            settle(g, view, entry.slot, false, createError(g, "screenshot: OOM"_s));
+        if (auto* ex = scope.exception()) [[unlikely]] {
+            // createUninitialized threw (OOM for a large PNG). Reject with
+            // the exception itself — createError would allocate again and
+            // either OOM or succeed-then-be-shadowed-by the pending exception.
+            JSValue err = ex->value();
+            (void)scope.tryClearException();
+            scope.release();
+            settle(g, view, entry.slot, false, err);
             return;
         }
         memcpy(u8->typedVector(), decoded->span().data(), decoded->size());
+        scope.release();
         settle(g, view, entry.slot, true, u8);
         return;
     }
@@ -854,6 +869,15 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
         auto type = o->getString("type"_s);
         auto argsArr = o->getArray("args"_s);
 
+        // remoteToJS allocates (jsString/JSONParse). Both dispatch paths
+        // re-enter JS — logWithLevel via ConsoleClient, the custom callback
+        // via call() — and each opens its own ThrowScope which asserts
+        // under validateExceptionChecks if a prior simulated throw wasn't
+        // checked. Check after building args; release before dispatch so
+        // the nested scope takes over. Real exceptions propagate to
+        // onData's TopExceptionScope.
+        auto scope = DECLARE_THROW_SCOPE(vm);
+
         // RemoteObject → JSValue. Primitives unwrap to raw values (so
         // console.log("hi") forwards as "hi", not {type:"string",value:"hi"}).
         // Object/function RemoteObjects JSONParse whole — the user (or
@@ -881,7 +905,9 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
         if (argsArr) {
             for (auto& a : *argsArr) {
                 auto ao = a->asObject();
-                args.append(ao ? remoteToJS(ao) : jsUndefined());
+                JSValue v = ao ? remoteToJS(ao) : jsUndefined();
+                RETURN_IF_EXCEPTION(scope, void());
+                args.append(v);
             }
         }
 
@@ -912,6 +938,7 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
             for (unsigned i = 0; i < args.size(); ++i)
                 strongArgs.append(Strong<Unknown>(vm, args.at(i)));
             auto scriptArgs = Inspector::ScriptArguments::create(g, WTF::move(strongArgs));
+            scope.release();
             if (auto clientRef = g->consoleClient())
                 clientRef->logWithLevel(g, WTF::move(scriptArgs), ml);
             return;
@@ -921,10 +948,13 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
         JSObject* cb = view->m_onConsole.get();
         auto callData = getCallData(cb);
         if (callData.type == CallData::Type::None) return;
+        JSValue typeStr = jsString(vm, type.isEmpty() ? "log"_s : type);
+        RETURN_IF_EXCEPTION(scope, void());
         MarkedArgumentBuffer cbArgs;
-        cbArgs.append(jsString(vm, type.isEmpty() ? "log"_s : type));
+        cbArgs.append(typeStr);
         for (unsigned i = 0; i < args.size(); ++i)
             cbArgs.append(args.at(i));
+        scope.release();
         call(g, cb, callData, jsUndefined(), cbArgs);
         return;
     }
@@ -937,12 +967,15 @@ void Transport::onClose()
 
 void Transport::rejectAllAndMarkDead(const WTF::String& reason)
 {
+    if (m_dead) return;
     m_dead = true;
-    // usockets owns the socket; it closes the fd when the us_socket_t is
-    // freed. m_writeFd is the SAME fd (socketpair, one end for both
-    // read+write) — don't double-close.
-    m_readSock = nullptr;
-    m_writeFd = -1;
+    // us_socket_close is idempotent (checks is_closed internally) so calling
+    // it from the cdpOnClose path is a no-op. When this runs via
+    // Bun__Chrome__died (EVFILT_PROC won the race against EOF) the socket
+    // is still polling — close it. us_socket_close fires cdpOnClose
+    // synchronously; the m_dead guard above short-circuits that reentrant
+    // call so the caller's `reason` survives.
+    if (auto* s = std::exchange(m_readSock, nullptr)) us_socket_close(0, s, 0, nullptr);
     if (!m_global) return;
     auto* g = m_global;
     JSValue err = createError(g, reason);

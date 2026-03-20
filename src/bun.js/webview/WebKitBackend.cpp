@@ -39,7 +39,7 @@ using namespace JSC;
 using namespace WebViewProto;
 
 // Spawn + process-exit watch in Zig (reuses bun.spawn.Process / EVFILT_PROC).
-extern "C" int32_t Bun__WebViewHost__ensure(Zig::GlobalObject*);
+extern "C" int32_t Bun__WebViewHost__ensure(Zig::GlobalObject*, bool stdoutInherit, bool stderrInherit);
 extern "C" void Bun__eventLoop__incrementRefConcurrently(void* bunVM, int delta);
 // Bracket the whole onData batch. exit() drains microtasks when outermost,
 // so all the promise reactions from this batch run before we return to usockets.
@@ -68,6 +68,10 @@ HostClient& client()
     std::call_once(once, [] { instance.construct(); });
     return instance.get();
 }
+
+// One context per process — reused across host respawns. Holds only the
+// callback table, no per-socket state.
+static us_socket_context_t* s_hostCtx = nullptr;
 
 static us_socket_t* hostOnData(us_socket_t* s, char* data, int length)
 {
@@ -104,7 +108,7 @@ void HostClient::updateKeepAlive()
         WebCore::clientData(global->vm())->bunVM, want ? 1 : -1);
 }
 
-bool HostClient::ensureSpawned(Zig::GlobalObject* zig)
+bool HostClient::ensureSpawned(Zig::GlobalObject* zig, bool stdoutInherit, bool stderrInherit)
 {
     if (sock && !dead) return true;
 
@@ -119,7 +123,7 @@ bool HostClient::ensureSpawned(Zig::GlobalObject* zig)
         txQueue.clear();
     }
 
-    int fd = Bun__WebViewHost__ensure(zig);
+    int fd = Bun__WebViewHost__ensure(zig, stdoutInherit, stderrInherit);
     if (fd < 0) {
         dead = true;
         return false;
@@ -129,23 +133,23 @@ bool HostClient::ensureSpawned(Zig::GlobalObject* zig)
     // Socket context — once. usockets needs all callbacks set even for
     // adopted fds; on_open won't fire (us_socket_from_fd doesn't call it)
     // but leaving it null segfaults on a misrouted event.
-    if (!ctx) {
+    if (!s_hostCtx) {
         us_loop_t* loop = uws_get_loop();
         us_socket_context_options_t opts;
         memset(&opts, 0, sizeof(opts));
-        ctx = us_create_socket_context(0, loop, sizeof(void*), opts);
-        us_socket_context_on_data(0, ctx, hostOnData);
-        us_socket_context_on_writable(0, ctx, hostOnWritable);
-        us_socket_context_on_close(0, ctx, hostOnClose);
-        us_socket_context_on_end(0, ctx, hostOnEnd);
-        us_socket_context_on_open(0, ctx, hostOnOpen);
+        s_hostCtx = us_create_socket_context(0, loop, sizeof(void*), opts);
+        us_socket_context_on_data(0, s_hostCtx, hostOnData);
+        us_socket_context_on_writable(0, s_hostCtx, hostOnWritable);
+        us_socket_context_on_close(0, s_hostCtx, hostOnClose);
+        us_socket_context_on_end(0, s_hostCtx, hostOnEnd);
+        us_socket_context_on_open(0, s_hostCtx, hostOnOpen);
     }
 
     // us_socket_from_fd sets nonblocking/nodelay/no-sigpipe and polls
     // READABLE|WRITABLE. ipc=0 — we're not doing SCM_RIGHTS fd passing.
     // us_poll_start_rc doesn't touch loop.active; updateKeepAlive is the
     // sole ref manager.
-    sock = us_socket_from_fd(ctx, sizeof(void*), fd, 0);
+    sock = us_socket_from_fd(s_hostCtx, sizeof(void*), fd, 0);
     if (!sock) {
         // us_socket_from_fd calls us_poll_free on failure but doesn't close
         // the fd (ownership was ours). Leak it and the child stays alive
@@ -376,8 +380,13 @@ void HostClient::handleReply(const Frame& h, Reader r)
 
 void HostClient::rejectAllAndMarkDead(const WTF::String& reason)
 {
+    if (dead) return;
     dead = true;
-    sock = nullptr;
+    // us_socket_close is idempotent (checks is_closed internally). When
+    // this runs via Bun__WebViewHost__childDied (EVFILT_PROC won the race
+    // against EOF) the socket is still polling — close it. The dead guard
+    // above short-circuits the reentrant onClose.
+    if (auto* s = std::exchange(sock, nullptr)) us_socket_close(0, s, 0, nullptr);
     if (!global) return;
     auto* g = global;
     JSValue err = createError(g, reason);

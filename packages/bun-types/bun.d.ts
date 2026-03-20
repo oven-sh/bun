@@ -7988,6 +7988,30 @@ declare module "bun" {
            * `["--headless=new"]` would override the default `--headless`.
            */
           argv?: string[];
+          /**
+           * Route the subprocess's stdout to Bun's. Chrome is mostly quiet
+           * here. @default "ignore"
+           */
+          stdout?: "inherit" | "ignore";
+          /**
+           * Route the subprocess's stderr to Bun's. Chrome is chatty (GCM
+           * registration, updater noise, font-config warnings) even with a
+           * minimal flag set. Set to `"inherit"` when Chrome crashes silently
+           * — the crash report lands here. @default "ignore"
+           */
+          stderr?: "inherit" | "ignore";
+        }
+      | {
+          type: "webkit";
+          /**
+           * Route the host process's stdout to Bun's. The host runs no JS
+           * — only panic/NSLog output. @default "ignore"
+           */
+          stdout?: "inherit" | "ignore";
+          /**
+           * Route the host process's stderr to Bun's. @default "ignore"
+           */
+          stderr?: "inherit" | "ignore";
         };
 
     /**
@@ -8081,6 +8105,16 @@ declare module "bun" {
      * default). Pass `backend: "chrome"` for cross-platform support.
      */
     constructor(options?: WebView.ConstructorOptions);
+
+    /**
+     * Force-kill all browser subprocesses (Chrome and the WKWebView host).
+     * Pending promises on all views reject on the next event loop tick.
+     *
+     * Called automatically at process exit. Call manually to reclaim browser
+     * resources early — subsequent `new Bun.WebView()` calls will respawn.
+     * Idempotent: calling when no subprocesses are alive is a no-op.
+     */
+    static closeAll(): void;
 
     /** The last-navigated URL. Updated when a navigation completes. */
     readonly url: string;

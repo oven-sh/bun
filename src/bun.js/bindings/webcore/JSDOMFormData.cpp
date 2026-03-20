@@ -671,7 +671,10 @@ JSC::JSValue getInternalProperties(JSC::VM& vm, JSGlobalObject* lexicalGlobalObj
                         initializationScope, &deferralContext,
                         lexicalGlobalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous),
                         2);
-                    RELEASE_ASSERT(array);
+                    if (!array) [[unlikely]] {
+                        throwScope.throwException(lexicalGlobalObject, createOutOfMemoryError(lexicalGlobalObject));
+                        return {};
+                    }
 
                     array->initializeIndex(initializationScope, 0, jsValue);
                     array->initializeIndex(initializationScope, 1, resultValue);

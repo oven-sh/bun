@@ -154,8 +154,9 @@ async function calculateMemoryLeak(fn: (url: URL) => Promise<void>, url: URL) {
 // If it was leaking the body, the memory usage would be at least 512 KB * 10_000 = 5 GB
 // If it ends up around 280 MB, it's probably not leaking the body.
 //
-// Skip on ASAN: RSS-based memory leak detection is not meaningful under ASAN,
-// which adds massive memory overhead and has its own leak detection.
+// Skip on ASAN: its quarantine (default 256MB) and allocator metadata inflate
+// RSS enough to break the `end_memory ≤ 512MB` threshold even without leaks,
+// and the 2x slowdown can hit the 40/60s timeout with 20k requests per case.
 for (const test_info of [
   ["#10265 should not leak memory when ignoring the body", callIgnore, false, 64],
   ["should not leak memory when buffering the body", callBuffering, false, 64],

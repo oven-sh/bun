@@ -52,11 +52,35 @@ pub const PathWatcherManager = struct {
         this: *PathWatcherManager,
         path: [:0]const u8,
     ) bun.sys.Maybe(PathInfo) {
+        return this._fdFromAbsolutePathZImpl(path, .allow_file);
+    }
+
+    // Open path as a directory only. If it's a file (or was replaced by one
+    // since readdir), return NOTDIR instead of falling back to a file open.
+    // Used by recursive subdirectory discovery where we never want file fds.
+    fn _dirFdFromAbsolutePathZ(
+        this: *PathWatcherManager,
+        path: [:0]const u8,
+    ) bun.sys.Maybe(PathInfo) {
+        return this._fdFromAbsolutePathZImpl(path, .dir_only);
+    }
+
+    fn _fdFromAbsolutePathZImpl(
+        this: *PathWatcherManager,
+        path: [:0]const u8,
+        comptime mode: enum { allow_file, dir_only },
+    ) bun.sys.Maybe(PathInfo) {
         this.mutex.lock();
         defer this.mutex.unlock();
 
         if (this.file_paths.getEntry(path)) |entry| {
             var info = entry.value_ptr;
+            if (mode == .dir_only and info.is_file) {
+                return .{ .err = .{
+                    .errno = @intFromEnum(bun.sys.E.NOTDIR),
+                    .syscall = .open,
+                } };
+            }
             info.refs += 1;
             return .{ .result = info.* };
         }
@@ -67,7 +91,7 @@ pub const PathWatcherManager = struct {
             .windows => bun.sys.openDirAtWindowsA(bun.FD.cwd(), path, .{ .iterable = true, .read_only = true }),
         }) {
             .err => |e| {
-                if (e.errno == @intFromEnum(bun.sys.E.NOTDIR)) {
+                if (mode == .allow_file and e.errno == @intFromEnum(bun.sys.E.NOTDIR)) {
                     const file = switch (bun.sys.open(path, 0, 0)) {
                         .err => |file_err| return .{ .err = file_err.withPath(path) },
                         .result => |r| r,
@@ -372,15 +396,10 @@ pub const PathWatcherManager = struct {
     fn _registerNewSubdirectory(this: *PathWatcherManager, watcher: *PathWatcher, path_z: [:0]const u8) void {
         if (watcher.isClosed()) return;
 
-        const child_path = switch (this._fdFromAbsolutePathZ(path_z)) {
+        const child_path = switch (this._dirFdFromAbsolutePathZ(path_z)) {
             .result => |r| r,
-            .err => return, // race: moved/deleted, or not actually a directory
+            .err => return, // race: moved/deleted/replaced, or not a directory
         };
-
-        if (child_path.is_file) {
-            this._decrementPathRefAndClose(path_z);
-            return;
-        }
 
         {
             watcher.mutex.lock();
@@ -565,22 +584,16 @@ pub const PathWatcherManager = struct {
                 buf[entry_path.len] = 0;
                 const entry_path_z = buf[0..entry_path.len :0];
 
-                const child_path = switch (manager._fdFromAbsolutePathZ(entry_path_z)) {
+                const child_path = switch (manager._dirFdFromAbsolutePathZ(entry_path_z)) {
                     .result => |result| result,
                     .err => |e| switch (e.getErrno()) {
                         // Skip subdirectories we can't open: permission
-                        // denied, raced with deletion, or circular symlink.
-                        .ACCES, .PERM, .NOENT, .LOOP => continue,
+                        // denied, raced with deletion or replacement by a
+                        // non-directory, or circular symlink.
+                        .ACCES, .PERM, .NOENT, .NOTDIR, .LOOP => continue,
                         else => return .{ .err = e },
                     },
                 };
-                // If the directory was replaced by a file between readdir
-                // and open(O_DIRECTORY), _fdFromAbsolutePathZ falls back to
-                // opening as a regular file. Skip it.
-                if (child_path.is_file) {
-                    manager._decrementPathRefAndClose(entry_path_z);
-                    continue;
-                }
 
                 {
                     watcher.mutex.lock();

@@ -304,14 +304,26 @@ function createTest(arg0: unknown, arg1: unknown, arg2: unknown) {
   checkNotInsideTest(ctx, "test");
   const context = new TestContext(true, name, Bun.main, ctx);
 
-  const runTest = async () => {
+  // Use a zero-parameter wrapper to avoid bun:test detecting a done-callback
+  // (fn.length >= 1 triggers done-callback mode). Preserve sync/async behavior:
+  // if fn() returns a Promise, chain context restoration via .then/.catch;
+  // if fn() is sync, restore context immediately.
+  const runTest = () => {
     const originalContext = ctx;
     ctx = context;
+    let result: unknown;
     try {
-      await fn(context);
-    } finally {
+      result = fn(context);
+    } catch (error) {
       ctx = originalContext;
+      throw error;
     }
+    if (result instanceof Promise) {
+      return (result as Promise<unknown>).finally(() => {
+        ctx = originalContext;
+      });
+    }
+    ctx = originalContext;
   };
 
   // Node.js node:test has no default timeout — only apply timeout: 0 (unlimited)
@@ -365,9 +377,11 @@ function parseHookOptions(arg0: unknown, arg1: unknown) {
 function createHook(arg0: unknown, arg1: unknown) {
   const { fn, options } = parseHookOptions(arg0, arg1);
 
-  const runHook = async () => {
-    await fn();
-  };
+  // Use a zero-parameter wrapper to avoid bun:test detecting a done-callback
+  // (fn.length >= 1 triggers done-callback mode). Preserve sync/async behavior
+  // by returning the result directly — if fn() returns a Promise, the wrapper
+  // returns a Promise; if fn() is sync, the wrapper is sync.
+  const runHook = () => fn();
 
   // Node.js node:test has no default timeout — only apply timeout: 0 (unlimited)
   // when the user hasn't explicitly set one via node:test options.

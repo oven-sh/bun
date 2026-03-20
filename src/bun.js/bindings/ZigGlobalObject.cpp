@@ -207,6 +207,7 @@
 #include "NodeFSStatBinding.h"
 #include "NodeFSStatFSBinding.h"
 #include "NodeDirent.h"
+#include "../webview/JSWebView.h"
 
 #if !OS(WINDOWS)
 #include <dlfcn.h>
@@ -1653,6 +1654,10 @@ void GlobalObject::finishCreation(VM& vm)
 
     m_JSX509CertificateClassStructure.initLater([](LazyClassStructure::Initializer& init) {
         setupX509CertificateClassStructure(init);
+    });
+
+    m_JSWebViewClassStructure.initLater([](LazyClassStructure::Initializer& init) {
+        Bun::setupJSWebViewClassStructure(init);
     });
 
     m_JSSignClassStructure.initLater(

@@ -79,11 +79,23 @@ static std::span<const char> scanValue(const char* vstart, const char* end)
     const char* v = vstart;
     for (; v < end; ++v) {
         char c = *v;
-        if (esc) { esc = false; continue; }
-        if (c == '\\') { esc = true; continue; }
-        if (c == '"') { inStr = !inStr; continue; }
+        if (esc) {
+            esc = false;
+            continue;
+        }
+        if (c == '\\') {
+            esc = true;
+            continue;
+        }
+        if (c == '"') {
+            inStr = !inStr;
+            continue;
+        }
         if (inStr) continue;
-        if (c == '{' || c == '[') { ++depth; continue; }
+        if (c == '{' || c == '[') {
+            ++depth;
+            continue;
+        }
         if (c == '}' || c == ']') {
             if (depth == 0) break; // enclosing close ended the value
             --depth;
@@ -111,8 +123,14 @@ std::span<const char> jsonField(std::span<const char> json, std::span<const char
     bool inStr = false, esc = false;
     for (; p + klen + 3 < end; ++p) {
         char c = *p;
-        if (esc) { esc = false; continue; }
-        if (c == '\\') { esc = true; continue; }
+        if (esc) {
+            esc = false;
+            continue;
+        }
+        if (c == '\\') {
+            esc = true;
+            continue;
+        }
         if (c == '"') {
             // Opening quote outside a string at depth 1 → a key start.
             // Chrome's encoder emits no whitespace; "key": is contiguous.
@@ -130,8 +148,14 @@ std::span<const char> jsonField(std::span<const char> json, std::span<const char
             continue;
         }
         if (inStr) continue;
-        if (c == '{' || c == '[') { ++depth; continue; }
-        if (c == '}' || c == ']') { --depth; continue; }
+        if (c == '{' || c == '[') {
+            ++depth;
+            continue;
+        }
+        if (c == '}' || c == ']') {
+            --depth;
+            continue;
+        }
     }
     return {};
 }

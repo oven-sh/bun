@@ -9,7 +9,7 @@ test("require of nonexistent module does not crash", async () => {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", `try { require("nonexistent-pkg-38391"); } catch (e) {}`],
     env: { ...bunEnv, BUN_INSTALL_GLOBAL_DIR: String(installDir) },
-    stderr: "pipe",
+    stderr: "inherit",
   });
 
   const exitCode = await proc.exited;

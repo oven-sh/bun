@@ -12,7 +12,7 @@ test("require of nonexistent module does not crash", async () => {
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
   expect(stderr).not.toContain("AddressSanitizer");
   expect(exitCode).not.toBe(null);

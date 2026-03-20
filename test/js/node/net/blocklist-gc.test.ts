@@ -1,11 +1,12 @@
 import { expect, test } from "bun:test";
 import { BlockList } from "node:net";
 
-test("BlockList does not crash during GC", () => {
-  for (let i = 0; i < 10; i++) {
-    const bl = new BlockList();
-    bl.addAddress("1.2.3.4");
-  }
+test("BlockList estimatedSize works after structuredClone and GC", () => {
+  const bl = new BlockList();
+  bl.addAddress("1.2.3.4");
+  const bl2 = structuredClone(bl);
   Bun.gc(true);
-  expect(true).toBe(true);
+  // Verify the cloned BlockList still works after GC
+  expect(bl2.check("1.2.3.4")).toBe(true);
+  expect(bl2.check("5.6.7.8")).toBe(false);
 });

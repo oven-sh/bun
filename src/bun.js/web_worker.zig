@@ -389,6 +389,10 @@ fn deinit(this: *WebWorker) void {
 fn destroy(this: *WebWorker) void {
     log("[{d}] destroy", .{this.execution_context_id});
     const handle = this.lifecycle_handle;
+    // Detach the handle so the C++ side cannot observe a dangling pointer
+    // after the struct is freed. On natural exit paths (event loop drains),
+    // requestTermination() was never called, so handle.worker still points here.
+    _ = handle.worker.swap(null, .acq_rel);
     this.deinit();
     bun.destroy(this);
     // Release the worker's own ref on the lifecycle handle.
@@ -582,7 +586,7 @@ pub fn exit(this: *WebWorker) void {
     this.lifecycle_handle.requestTermination();
 }
 
-/// Request a terminate from the worker thread only.
+/// Request a terminate. May be called from either thread via requestTermination().
 fn notifyNeedTermination(this: *WebWorker) void {
     if (this.status.load(.acquire) == .terminated) {
         return;
@@ -593,7 +597,9 @@ fn notifyNeedTermination(this: *WebWorker) void {
         vm.eventLoop().wakeup();
     }
 
-    this.setRefInternal(false);
+    // Use the concurrent variant since this may be called from the parent
+    // thread (via C++ Worker::terminate → requestTermination).
+    this.parent_poll_ref.unrefConcurrently(this.parent);
 }
 
 /// This handles cleanup, emitting the "close" event, and deinit.

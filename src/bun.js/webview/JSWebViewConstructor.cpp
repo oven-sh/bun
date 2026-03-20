@@ -81,7 +81,13 @@ JSC_DEFINE_HOST_FUNCTION(constructWebView, (JSGlobalObject * globalObject, CallF
     uint32_t width = 800, height = 600;
     WTF::String persistDir;
     WTF::String initialUrl;
+    // Default: WebKit on Darwin (lighter than Chrome, always present);
+    // Chrome elsewhere (WebKit needs the system framework, Darwin-only).
+#if OS(DARWIN)
     WebViewBackend backend = WebViewBackend::WebKit;
+#else
+    WebViewBackend backend = WebViewBackend::Chrome;
+#endif
     WTF::String chromePath;
     WTF::Vector<WTF::String> chromeArgv;
     bool consoleIsGlobal = false;

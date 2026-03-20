@@ -75,6 +75,9 @@ export fn WebWorker__updatePtr(handle: *WebWorkerLifecycleHandle, ptr: *anyopaqu
         startWithErrorHandling,
         .{worker},
     ) catch {
+        // Detach the handle before freeing the worker so the C++ side
+        // cannot observe a pointer to freed memory.
+        _ = handle.worker.swap(null, .acq_rel);
         worker.deref();
         return false;
     };
@@ -599,6 +602,9 @@ fn notifyNeedTermination(this: *WebWorker) void {
 pub fn exitAndDeinit(this: *WebWorker) noreturn {
     jsc.markBinding(@src());
     this.setStatus(.terminated);
+    // Detach the handle so the C++ side cannot observe a pointer to
+    // the worker after it is freed by deref() below.
+    _ = this.lifecycle_handle.worker.swap(null, .acq_rel);
     bun.analytics.Features.workers_terminated += 1;
 
     log("[{d}] exitAndDeinit", .{this.execution_context_id});

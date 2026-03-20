@@ -50,6 +50,36 @@ test("worker terminate then GC does not crash", async () => {
   expect(exitCode).toBe(0);
 });
 
+test("worker natural exit then GC does not crash", async () => {
+  // Worker finishes normally (event loop drains) without process.exit().
+  // Exercises the exitAndDeinit() path where handle.worker must be detached.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const { Worker } = require("worker_threads");
+      const w = new Worker("postMessage('hello')", { eval: true });
+      await new Promise(r => w.on("exit", r));
+      Bun.gc(true);
+      console.log("ok");
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([
+    proc.stdout.text(),
+    proc.stderr.text(),
+    proc.exited,
+  ]);
+
+  expect(stdout).toContain("ok");
+  expect(exitCode).toBe(0);
+});
+
 test("worker immediate terminate does not crash", async () => {
   // Terminate immediately after creation, before the worker thread starts.
   await using proc = Bun.spawn({

@@ -208,8 +208,6 @@ ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const S
         execArgv.size(),
         preloadModules.begin(),
         preloadModules.size());
-    // now referenced by Zig
-    worker->ref();
 
     preloadModuleStrings.clear();
 
@@ -217,6 +215,8 @@ ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const S
         return Exception { TypeError, errorMessage.toWTFString(BunString::ZeroCopy) };
     }
 
+    // now referenced by Zig
+    worker->ref();
     worker->lifecycleHandle_ = lifecycleHandle;
     worker->m_workerCreationTime = MonotonicTime::now();
 

@@ -144,25 +144,32 @@ Ref<WebViewHost> WebViewHost::createForIPC(uint32_t viewId, uint32_t width, uint
 
     host->m_window = objc::NSWindow::createOffscreen(width, height);
 
-    // PageClientImpl::isViewVisible (UIProcess/mac/PageClientImplMac.mm) has
-    // three gates. All three must pass for ActivityState::IsVisible — and
-    // that flag is what WebContent keys rendering-update scheduling on. The
-    // actionability rAF-poll hangs forever without it.
-    //
+    // PageClientImpl::isViewVisible has three gates:
     //   activeWindow exists  — setContentView puts the view in this window
-    //   [window isVisible]   — BunHostWindow overrides the getter to YES
-    //                          (same as TestWebKitAPI/OffscreenWindow.mm)
+    //   [window isVisible]   — genuinely YES: window is at (0,0) alpha=0,
+    //                          orderBack puts it on screen behind everything
     //   !windowIsOccluded    — disableOcclusionDetection short-circuits false
     //
-    // An earlier orderFront-before-setContentView attempt relied on the real
-    // NSWindow isVisible flag being set synchronously. Worked on macOS 15;
-    // on macOS 13/14 CI the catch-up activityStateDidChange raced
-    // finishAttachingToWebProcess → creationParameters shipped IsVisible=false
-    // about half the time. The override makes every isViewVisible()
-    // evaluation see YES from the first call, no race to lose.
+    // All pass → ActivityState::IsVisible is set → WebContent schedules
+    // rendering updates via DisplayLink (UIProcess CVDisplayLink fires →
+    // IPC to WebContent → rAF callbacks run). Without IsVisible, rAF is
+    // suspended and the actionability poll hangs.
     //
-    // orderBack so windowNumber() is assigned — NSEvent synthesis needs a
-    // real window number; an unordered window returns 0.
+    // The window is at (0,0) not (-10000,-10000) so AppKit's real isVisible
+    // is YES, window.screen is the genuine firstObject (valid displayID),
+    // and the physical display stays awake (has an on-screen window).
+    // CVDisplayLink needs the display's vsync signal; an asleep display
+    // doesn't provide one. TestWKWebView (Tools/TestWebKitAPI) uses a real
+    // on-screen window for the same reason — the -10000 OffscreenWindow is
+    // only for tests that don't need rendering.
+    //
+    // alpha=0 + ignoresMouseEvents makes it user-invisible. The
+    // BunHostWindow overrides (isVisible/isKeyWindow/screen all forced) are
+    // redundant with a real on-screen window but kept as belt-and-suspenders
+    // against the orderBack-before-setContentView timing on older macOS.
+    //
+    // orderBack assigns windowNumber (NSEvent synthesis needs a real one;
+    // unordered returns 0).
     host->m_webview.disableOcclusionDetection();
     host->m_window.setContentView(host->m_webview);
     host->m_window.orderBack();

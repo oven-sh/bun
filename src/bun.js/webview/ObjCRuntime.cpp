@@ -73,6 +73,8 @@ SEL NSImage::s_CGImageForProposedRect_context_hints;
 SEL NSWindow::s_windowNumber;
 SEL NSWindow::s_convertPointToScreen;
 SEL NSWindow::s_orderBack;
+SEL NSWindow::s_setAlphaValue;
+SEL NSWindow::s_setIgnoresMouseEvents;
 
 Class NSProcessInfo::cls;
 SEL NSProcessInfo::s_processInfo;
@@ -403,6 +405,8 @@ bool ObjCRuntime::load()
     NSWindow::s_windowNumber = sel("windowNumber");
     NSWindow::s_convertPointToScreen = sel("convertPointToScreen:");
     NSWindow::s_orderBack = sel("orderBack:");
+    NSWindow::s_setAlphaValue = sel("setAlphaValue:");
+    NSWindow::s_setIgnoresMouseEvents = sel("setIgnoresMouseEvents:");
 
     CLS(NSProcessInfo::cls, "NSProcessInfo");
     NSProcessInfo::s_processInfo = sel("processInfo");

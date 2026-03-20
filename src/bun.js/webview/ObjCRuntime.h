@@ -219,16 +219,37 @@ struct NSWindow : Ref {
     static SEL s_setContentSize;
     static SEL s_close;
 
-    // +1 retained. Borderless, buffered, offscreen.
+    // +1 retained. Borderless, buffered, on-screen at (0,0) with alpha=0.
+    //
+    // Not at (-10000,-10000) — a window entirely off all screens means
+    // AppKit's real isVisible stays NO after orderFront:, window.screen is
+    // nil (displayID=0), and the physical display may sleep (no on-screen
+    // window keeping it awake). CVDisplayLink needs the display's vsync
+    // signal; an asleep display doesn't provide one, rAF never fires.
+    //
+    // A 1×1 borderless window at (0,0) with alphaValue=0 is genuinely on
+    // screen (isVisible=YES, window.screen=firstObject, valid displayID)
+    // but invisible to the user — alpha=0 makes the window transparent and
+    // ignoresMouseEvents=YES makes clicks fall through. The content view
+    // is still the requested w×h (setContentSize after init); the tiny
+    // window frame doesn't constrain it since we never draw.
+    //
+    // TestWKWebView (Tools/TestWebKitAPI/cocoa/TestWKWebView.mm:1093) uses
+    // a real on-screen window for the same reason — OffscreenWindow at
+    // -10000 is only for tests that don't need rendering/rAF.
+    static SEL s_setAlphaValue;
+    static SEL s_setIgnoresMouseEvents;
     static NSWindow createOffscreen(double w, double h)
     {
         NSWindow win(msgCls<id>(hostCls, s_alloc));
         win.m_id = win.msg<id>(s_initWithContentRect_styleMask_backing_defer,
-            CGRectMake(-10000, -10000, w, h),
+            CGRectMake(0, 0, w, h),
             (unsigned long)0 /* NSWindowStyleMaskBorderless */,
             (unsigned long)2 /* NSBackingStoreBuffered */,
             (signed char)0 /* defer: NO */);
         win.msg<void>(s_setReleasedWhenClosed, (signed char)0);
+        win.msg<void>(s_setAlphaValue, (double)0.0);
+        win.msg<void>(s_setIgnoresMouseEvents, (signed char)1);
         return win;
     }
     void setContentView(id view) { msg<void>(s_setContentView, view); }

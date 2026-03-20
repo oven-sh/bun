@@ -249,17 +249,23 @@ static signed char windowIsVisible(id, SEL) { return 1; }
 static signed char windowIsKeyWindow(id, SEL) { return 1; }
 
 // -screen override — at (-10000,-10000) the real NSWindow.screen is nil.
-// WebViewImpl::windowDidChangeScreen reads it and passes displayID=0 to
-// the DisplayLink. On macOS 15 CVDisplayLinkCreateWithCGDisplay(0) binds
-// to the main display and ticks; on macOS 13/14 the 0-display link doesn't
-// reliably fire, rAF hangs. Forcing mainScreen means WebKit gets a real
-// displayID and the CVDisplayLink actually ticks. (The window stays at
-// -10000,-10000 — screen is just what WebKit reads for the display link.)
+// WebViewImpl::windowDidChangeScreen reads it for displayID. nil → 0 →
+// CVDisplayLinkCreateWithCGDisplay(0): on macOS 15 it binds to the main
+// display and ticks; on macOS 13/14 it doesn't reliably fire and rAF hangs.
+//
+// [[NSScreen screens] firstObject] is the screen with the menu bar —
+// always present when WindowServer has a session. [NSScreen mainScreen]
+// is documented as "the screen with the key window" which is nil until
+// some window becomes key (our isKeyWindow override doesn't make AppKit's
+// internal _keyWindow point at us). WebKitTestRunner uses firstObject
+// (PlatformWebViewMac.mm:77) for the same reason.
 static Class s_NSScreenClass;
-static SEL s_mainScreenSel;
+static SEL s_screensSel;
+static SEL s_firstObjectSel;
 static id windowScreen(id, SEL)
 {
-    return objc::Ref::msgCls<id>(s_NSScreenClass, s_mainScreenSel);
+    id screens = objc::Ref::msgCls<id>(s_NSScreenClass, s_screensSel);
+    return objc::Ref(screens).msg<id>(s_firstObjectSel);
 }
 
 } // extern "C"
@@ -523,7 +529,8 @@ bool ObjCRuntime::load()
     // we populate here, not a wrapper struct — NSScreen is only used in the
     // override's body, nowhere else.
     s_NSScreenClass = getClass("NSScreen");
-    s_mainScreenSel = sel("mainScreen");
+    s_screensSel = sel("screens");
+    s_firstObjectSel = sel("firstObject");
     addMethod(NSWindow::hostCls, sel("screen"),
         reinterpret_cast<IMP>(windowScreen), "@@:");
     registerClassPair(NSWindow::hostCls);

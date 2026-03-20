@@ -1,9 +1,12 @@
-import { test, expect } from "bun:test";
-import { bunExe, bunEnv } from "harness";
+import { expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 
 test("spyOn works on static hash table function properties", async () => {
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", `
+    cmd: [
+      bunExe(),
+      "-e",
+      `
       const { spyOn, jest } = Bun.jest(import.meta.path);
       const spy = spyOn(Bun, "gc");
       Bun.gc(true);
@@ -13,17 +16,14 @@ test("spyOn works on static hash table function properties", async () => {
       spy.mockRestore();
       Bun.gc(true);
       console.log("OK");
-    `],
+    `,
+    ],
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stdout.trim()).toBe("OK");
   expect(exitCode).toBe(0);
@@ -31,7 +31,10 @@ test("spyOn works on static hash table function properties", async () => {
 
 test("spyOn preserves correct attributes after mockRestore", async () => {
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", `
+    cmd: [
+      bunExe(),
+      "-e",
+      `
       const { spyOn, jest } = Bun.jest(import.meta.path);
       const spy = spyOn(Bun, "peek");
       spy.mockRestore();
@@ -42,17 +45,14 @@ test("spyOn preserves correct attributes after mockRestore", async () => {
         throw new Error("Expected 42, got " + val);
       }
       console.log("OK");
-    `],
+    `,
+    ],
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stdout.trim()).toBe("OK");
   expect(exitCode).toBe(0);

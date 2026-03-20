@@ -68,6 +68,7 @@ Comlink.expose({
 
   // This exercises a race condition — run a few attempts since the
   // exact timing varies across platforms and CI machines.
+  let lastStdout = "", lastStderr = "", lastExitCode = -1;
   for (let attempt = 0; attempt < 5; attempt++) {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "run", "main.js"],
@@ -77,11 +78,16 @@ Comlink.expose({
       stderr: "pipe",
     });
 
-    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    lastStdout = stdout;
+    lastStderr = stderr;
+    lastExitCode = exitCode;
 
     if (stdout.includes("done") && exitCode === 0) {
       return; // success — the fix prevented the crash
     }
   }
-  expect().fail("Process crashed or failed to complete after 5 attempts");
+  expect().fail(
+    `Process crashed or failed to complete after 5 attempts. Last attempt: exitCode=${lastExitCode}, stdout=${JSON.stringify(lastStdout)}, stderr=${JSON.stringify(lastStderr.slice(0, 500))}`,
+  );
 }, 120000);

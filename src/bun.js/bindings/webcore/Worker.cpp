@@ -69,8 +69,8 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(Worker);
 
-extern "C" void WebWorkerLifecycleHandle__requestTermination(WebWorkerLifecycleHandle* handle);
-extern "C" void WebWorkerLifecycleHandle__release(WebWorkerLifecycleHandle* handle);
+extern "C" void WebWorker__requestTermination(void* worker);
+extern "C" void WebWorker__release(void* worker);
 
 static Lock allWorkersLock;
 static HashMap<ScriptExecutionContextIdentifier, Worker*>& allWorkers() WTF_REQUIRES_LOCK(allWorkersLock)
@@ -108,8 +108,8 @@ Worker::Worker(ScriptExecutionContext& context, WorkerOptions&& options)
     auto addResult = allWorkers().add(m_clientIdentifier, this);
     ASSERT_UNUSED(addResult, addResult.isNewEntry);
 }
-extern "C" bool WebWorker__updatePtr(WebWorkerLifecycleHandle* handle, Worker* ptr);
-extern "C" WebWorkerLifecycleHandle* WebWorkerLifecycleHandle__createWebWorker(
+extern "C" bool WebWorker__updatePtr(void* worker, Worker* ptr);
+extern "C" void* WebWorker__create(
     Worker* worker,
     void* parent,
     BunString name,
@@ -128,18 +128,18 @@ extern "C" WebWorkerLifecycleHandle* WebWorkerLifecycleHandle__createWebWorker(
     BunString* preloadModulesPtr,
     size_t preloadModulesLen);
 extern "C" void WebWorker__setRef(
-    WebWorkerLifecycleHandle* handle,
+    void* worker,
     bool ref);
 
 void Worker::setKeepAlive(bool keepAlive)
 {
-    if (lifecycleHandle_)
-        WebWorker__setRef(lifecycleHandle_, keepAlive);
+    if (impl_)
+        WebWorker__setRef(impl_, keepAlive);
 }
 
 bool Worker::updatePtr()
 {
-    if (!WebWorker__updatePtr(lifecycleHandle_, this)) {
+    if (!WebWorker__updatePtr(impl_, this)) {
         m_onlineClosingFlags = ClosingFlag;
         m_terminationFlags.fetch_or(TerminatedFlag);
         return false;
@@ -190,7 +190,7 @@ ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const S
                                                    return { reinterpret_cast<WTF::StringImpl**>(vec.begin()), vec.size() };
                                                })
                                                .value_or(std::span<WTF::StringImpl*> {});
-    WebWorkerLifecycleHandle* lifecycleHandle = WebWorkerLifecycleHandle__createWebWorker(
+    void* impl = WebWorker__create(
         worker.ptr(),
         bunVM(context.jsGlobalObject()),
         nameStr,
@@ -211,13 +211,13 @@ ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const S
 
     preloadModuleStrings.clear();
 
-    if (!lifecycleHandle) {
+    if (!impl) {
         return Exception { TypeError, errorMessage.toWTFString(BunString::ZeroCopy) };
     }
 
     // now referenced by Zig
     worker->ref();
-    worker->lifecycleHandle_ = lifecycleHandle;
+    worker->impl_ = impl;
     worker->m_workerCreationTime = MonotonicTime::now();
 
     return worker;
@@ -230,11 +230,9 @@ Worker::~Worker()
         allWorkers().remove(m_clientIdentifier);
     }
 
-    if (lifecycleHandle_) {
-        auto* handle = lifecycleHandle_;
-        lifecycleHandle_ = nullptr;
-        WebWorkerLifecycleHandle__requestTermination(handle);
-        WebWorkerLifecycleHandle__release(handle);
+    if (auto* impl = std::exchange(impl_, nullptr)) {
+        WebWorker__requestTermination(impl);
+        WebWorker__release(impl);
     }
 }
 
@@ -269,13 +267,8 @@ ExceptionOr<void> Worker::postMessage(JSC::JSGlobalObject& state, JSC::JSValue m
 void Worker::terminate()
 {
     m_terminationFlags.fetch_or(TerminateRequestedFlag);
-
-    if (lifecycleHandle_) {
-        auto* handle = lifecycleHandle_;
-        lifecycleHandle_ = nullptr;
-        WebWorkerLifecycleHandle__requestTermination(handle);
-        WebWorkerLifecycleHandle__release(handle);
-    }
+    if (impl_)
+        WebWorker__requestTermination(impl_);
 }
 
 // const char* Worker::activeDOMObjectName() const

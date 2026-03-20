@@ -247,6 +247,15 @@ describe("Bun.Cookie and Bun.CookieMap", () => {
     });
   });
 
+  test("CookieMap.toJSON() handles cookie names matching Object.prototype properties", () => {
+    const map = new Bun.CookieMap("toString=hello; constructor=world; valueOf=test");
+    expect(map.toJSON()).toEqual({
+      "toString": "hello",
+      "constructor": "world",
+      "valueOf": "test",
+    });
+  });
+
   test("CookieMap works with cookies with advanced attributes", () => {
     const map = new Bun.CookieMap();
 

@@ -247,9 +247,9 @@ const History = struct {
         }
 
         // Ensure parent directory exists (e.g. $XDG_DATA_HOME/bun/).
-        const dir = bun.path.dirname(path, .auto);
-        if (dir.len > 0) {
-            bun.makePath(bun.FD.cwd().stdDir(), dir) catch {};
+        const parent = bun.path.dirname(path, .auto);
+        if (parent.len > 0) {
+            bun.FD.cwd().makePath(u8, parent) catch {};
         }
 
         const file = switch (bun.sys.openA(path, bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC, 0o644)) {

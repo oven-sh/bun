@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
 // Regression test for null pointer dereference in reifyStaticProperty.
@@ -15,11 +15,7 @@ test("lazy BunObject getter returning empty value does not crash", async () => {
   // reifyStaticProperty -> putDirect -> isGetterSetter with a null
   // pointer dereference on JSCell.
   await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      'try { Bun.redis } catch {} console.log("OK")',
-    ],
+    cmd: [bunExe(), "-e", 'try { Bun.redis } catch {} console.log("OK")'],
     env: { ...bunEnv, REDIS_URL: "notavalidprotocol://x" },
     stdout: "pipe",
     stderr: "pipe",

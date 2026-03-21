@@ -958,7 +958,7 @@ pub const FFI = struct {
         const obj = object.getObject() orelse return invalidOptionsArg(global);
 
         var symbols = bun.StringArrayHashMapUnmanaged(Function){};
-        if (generateSymbols(global, bun.default_allocator, &symbols, obj) catch jsc.JSValue.zero) |val| {
+        if (try generateSymbols(global, bun.default_allocator, &symbols, obj)) |val| {
             // an error while validating symbols
             for (symbols.keys()) |key| {
                 allocator.free(@constCast(key));
@@ -967,7 +967,7 @@ pub const FFI = struct {
                 function_.arg_types.deinit(allocator);
             }
             symbols.clearAndFree(allocator);
-            return val;
+            return global.throwValue(val);
         }
         jsc.markBinding(@src());
         var strs = bun.handleOom(std.array_list.Managed(bun.String).initCapacity(allocator, symbols.count()));

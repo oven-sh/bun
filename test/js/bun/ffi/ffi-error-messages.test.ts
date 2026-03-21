@@ -1,4 +1,4 @@
-import { dlopen, linkSymbols } from "bun:ffi";
+import { dlopen, linkSymbols, toArrayBuffer, toBuffer } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
 import { isArm64, isMusl, isWindows } from "harness";
 
@@ -85,5 +85,21 @@ describe.skipIf(isFFIUnavailable)("FFI error messages", () => {
         },
       });
     }).toThrow('you must provide a "ptr" field with the memory address of the native function.');
+  });
+
+  test("toArrayBuffer throws for invalid pointer addresses instead of crashing", () => {
+    expect(() => toArrayBuffer(0)).toThrow();
+    expect(() => toArrayBuffer(1)).toThrow();
+    expect(() => toArrayBuffer(75)).toThrow();
+    expect(() => toArrayBuffer(4095)).toThrow();
+    expect(() => toArrayBuffer(0xdeadbeef)).toThrow();
+  });
+
+  test("toBuffer throws for invalid pointer addresses instead of crashing", () => {
+    expect(() => toBuffer(0)).toThrow();
+    expect(() => toBuffer(1)).toThrow();
+    expect(() => toBuffer(75)).toThrow();
+    expect(() => toBuffer(4095)).toThrow();
+    expect(() => toBuffer(0xdeadbeef)).toThrow();
   });
 });

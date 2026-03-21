@@ -9,6 +9,11 @@ import { bunEnv, bunExe } from "harness";
 //
 // The fix checks global_object.hasException() in VM.throwError and returns
 // early if an exception is already pending instead of trying to throw on top.
+//
+// Note: the crash only manifests in debug/ASAN builds where ci_assert is
+// enabled. In release builds assertNoException is a no-op, so this test
+// passes on both fixed and unfixed release binaries. CI debug/ASAN jobs
+// are the authoritative regression guard.
 test("VM.throwError does not crash when a termination exception is already pending", async () => {
   const proc = Bun.spawn({
     cmd: [

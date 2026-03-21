@@ -27,9 +27,7 @@ new F();
     proc.exited,
   ]);
 
-  // Should not crash - a RangeError from stack overflow is acceptable
-  expect(exitCode).not.toBe(null);
-  // Should not be a signal-based termination (crash)
-  expect(exitCode).not.toBe(6); // SIGABRT
-  expect(exitCode).not.toBe(11); // SIGSEGV
+  expect(stderr).toContain("RangeError");
+  // Exits with 1 from uncaught RangeError, not a crash signal
+  expect(exitCode).toBe(1);
 });

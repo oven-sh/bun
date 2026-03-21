@@ -952,13 +952,20 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
 DEFINE_SAFE_PROPERTY_CALLBACK(safe_constructBunShell, constructBunShell)
 DEFINE_SAFE_PROPERTY_CALLBACK(safe_constructDNSObject, constructDNSObject)
 DEFINE_SAFE_PROPERTY_CALLBACK(safe_constructEnvObject, constructEnvObject)
+DEFINE_SAFE_PROPERTY_CALLBACK(safe_constructBunFetchObject, constructBunFetchObject)
 DEFINE_SAFE_PROPERTY_CALLBACK(safe_constructBunPeekObject, constructBunPeekObject)
+DEFINE_SAFE_PROPERTY_CALLBACK(safe_constructPasswordObject, constructPasswordObject)
+DEFINE_SAFE_PROPERTY_CALLBACK(safe_constructPluginObject, constructPluginObject)
 DEFINE_SAFE_PROPERTY_CALLBACK(safe_defaultBunSQLObject, defaultBunSQLObject)
 DEFINE_SAFE_PROPERTY_CALLBACK(safe_constructBunSQLObject, constructBunSQLObject)
 DEFINE_SAFE_PROPERTY_CALLBACK(safe_constructJSONLObject, constructJSONLObject)
 DEFINE_SAFE_PROPERTY_CALLBACK(safe_constructCookieObject, constructCookieObject)
 DEFINE_SAFE_PROPERTY_CALLBACK(safe_constructCookieMapObject, constructCookieMapObject)
 DEFINE_SAFE_PROPERTY_CALLBACK(safe_constructSecretsObject, constructSecretsObject)
+DEFINE_SAFE_PROPERTY_CALLBACK(safe_constructIsMainThread, constructIsMainThread)
+DEFINE_SAFE_PROPERTY_CALLBACK(safe_constructBunVersion, constructBunVersion)
+DEFINE_SAFE_PROPERTY_CALLBACK(safe_constructBunRevision, constructBunRevision)
+DEFINE_SAFE_PROPERTY_CALLBACK(safe_constructBunVersionWithSha, constructBunVersionWithSha)
 
 #undef DEFINE_SAFE_PROPERTY_CALLBACK
 
@@ -1007,7 +1014,7 @@ DEFINE_SAFE_PROPERTY_CALLBACK(safe_constructSecretsObject, constructSecretsObjec
     enableANSIColors                               BunObject_lazyPropCb_wrap_enableANSIColors                          DontDelete|PropertyCallback
     env                                            safe_constructEnvObject                                             ReadOnly|DontDelete|PropertyCallback
     escapeHTML                                     functionBunEscapeHTML                                               DontDelete|Function 2
-    fetch                                          constructBunFetchObject                                             ReadOnly|DontDelete|PropertyCallback
+    fetch                                          safe_constructBunFetchObject                                        ReadOnly|DontDelete|PropertyCallback
     file                                           BunObject_callback_file                                             DontDelete|Function 1
     fileURLToPath                                  functionFileURLToPath                                               DontDelete|Function 1
     gc                                             Generated::BunObject::jsGc                                          DontDelete|Function 1
@@ -1018,7 +1025,7 @@ DEFINE_SAFE_PROPERTY_CALLBACK(safe_constructSecretsObject, constructSecretsObjec
     indexOfLine                                    BunObject_callback_indexOfLine                                      DontDelete|Function 1
     inflateSync                                    BunObject_callback_inflateSync                                      DontDelete|Function 1
     inspect                                        BunObject_lazyPropCb_wrap_inspect                                   DontDelete|PropertyCallback
-    isMainThread                                   constructIsMainThread                                               ReadOnly|DontDelete|PropertyCallback
+    isMainThread                                   safe_constructIsMainThread                                          ReadOnly|DontDelete|PropertyCallback
     jest                                           BunObject_callback_jest                                             DontEnum|DontDelete|Function 1
     listen                                         BunObject_callback_listen                                           DontDelete|Function 1
     udpSocket                                      BunObject_callback_udpSocket                                        DontDelete|Function 1
@@ -1027,11 +1034,11 @@ DEFINE_SAFE_PROPERTY_CALLBACK(safe_constructSecretsObject, constructSecretsObjec
     nanoseconds                                    functionBunNanoseconds                                              DontDelete|Function 0
     openInEditor                                   BunObject_callback_openInEditor                                     DontDelete|Function 1
     origin                                         BunObject_lazyPropCb_wrap_origin                                    DontEnum|ReadOnly|DontDelete|PropertyCallback
-    version_with_sha                               constructBunVersionWithSha                                          DontEnum|ReadOnly|DontDelete|PropertyCallback
-    password                                       constructPasswordObject                                             DontDelete|PropertyCallback
+    version_with_sha                               safe_constructBunVersionWithSha                                     DontEnum|ReadOnly|DontDelete|PropertyCallback
+    password                                       safe_constructPasswordObject                                        DontDelete|PropertyCallback
     pathToFileURL                                  functionPathToFileURL                                               DontDelete|Function 1
     peek                                           safe_constructBunPeekObject                                         DontDelete|PropertyCallback
-    plugin                                         constructPluginObject                                               ReadOnly|DontDelete|PropertyCallback
+    plugin                                         safe_constructPluginObject                                          ReadOnly|DontDelete|PropertyCallback
     randomUUIDv7                                   Bun__randomUUIDv7                                                   DontDelete|Function 2
     randomUUIDv5                                   Bun__randomUUIDv5                                                   DontDelete|Function 3
     readableStreamToArray                          JSBuiltin                                                           Builtin|Function 1
@@ -1044,7 +1051,7 @@ DEFINE_SAFE_PROPERTY_CALLBACK(safe_constructSecretsObject, constructSecretsObjec
     registerMacro                                  BunObject_callback_registerMacro                                    DontEnum|DontDelete|Function 1
     resolve                                        BunObject_callback_resolve                                          DontDelete|Function 1
     resolveSync                                    BunObject_callback_resolveSync                                      DontDelete|Function 1
-    revision                                       constructBunRevision                                                ReadOnly|DontDelete|PropertyCallback
+    revision                                       safe_constructBunRevision                                           ReadOnly|DontDelete|PropertyCallback
     semver                                         BunObject_lazyPropCb_wrap_semver                                    ReadOnly|DontDelete|PropertyCallback
     sql                                            safe_defaultBunSQLObject                                            DontDelete|PropertyCallback
     postgres                                       safe_defaultBunSQLObject                                            DontDelete|PropertyCallback
@@ -1065,7 +1072,7 @@ DEFINE_SAFE_PROPERTY_CALLBACK(safe_constructSecretsObject, constructSecretsObjec
     wrapAnsi                                       jsFunctionBunWrapAnsi                                               DontDelete|Function 3
     Terminal                                       BunObject_lazyPropCb_wrap_Terminal                                  DontDelete|PropertyCallback
     unsafe                                         BunObject_lazyPropCb_wrap_unsafe                                    DontDelete|PropertyCallback
-    version                                        constructBunVersion                                                 ReadOnly|DontDelete|PropertyCallback
+    version                                        safe_constructBunVersion                                            ReadOnly|DontDelete|PropertyCallback
     which                                          BunObject_callback_which                                            DontDelete|Function 1
     RedisClient                                    BunObject_lazyPropCb_wrap_ValkeyClient                              DontDelete|PropertyCallback
     redis                                          BunObject_lazyPropCb_wrap_valkey                                    DontDelete|PropertyCallback

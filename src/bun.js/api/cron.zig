@@ -295,7 +295,7 @@ pub const CronRegisterJob = struct {
         };
         defer bun.default_allocator.free(launch_agents_dir);
         bun.FD.cwd().makePath(u8, launch_agents_dir) catch {
-            this.setErr("Failed to create ~/Library/LaunchAgents directory", .{});
+            this.setErr("Failed to create {s} directory", .{launch_agents_dir});
             this.finish();
             return;
         };
@@ -309,7 +309,7 @@ pub const CronRegisterJob = struct {
         };
         defer bun.default_allocator.free(log_dir);
         bun.FD.cwd().makePath(u8, log_dir) catch {
-            this.setErr("Failed to create ~/Library/Logs/bun/cron directory", .{});
+            this.setErr("Failed to create {s} directory", .{log_dir});
             this.finish();
             return;
         };
@@ -436,7 +436,8 @@ pub const CronRegisterJob = struct {
         };
         defer bun.default_allocator.free(uid_str);
         var argv = [_:null]?[*:0]const u8{ "/bin/launchctl", "bootstrap", uid_str.ptr, plist_path.ptr, null };
-        this.tmp_path = null; // don't delete the installed plist
+        this.tmp_path = null; // don't delete the installed plist; free the path string only
+        defer bun.default_allocator.free(plist_path);
         this.spawnCmd(&argv, .ignore, .ignore);
     }
 

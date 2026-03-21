@@ -351,7 +351,7 @@ function ClientRequest(input, options, cb) {
       }
       head += "\r\n";
       socket.write(head);
-      if (body) {
+      if (body && body.byteLength > 0) {
         if (hasTransferEncoding) {
           // Apply chunked framing per RFC 7230 §4.1
           socket.write(body.byteLength.toString(16) + "\r\n");

@@ -215,7 +215,7 @@ void MessagePort::messageAvailable()
     // This MessagePort object might be disentangled because the port is being transferred,
     // in which case we'll notify it that messages are available once a new end point is created.
     auto* context = scriptExecutionContext();
-    if (!context || context->activeDOMObjectsAreSuspended())
+    if (!context || !context->globalObject() || context->activeDOMObjectsAreSuspended())
         return;
 
     context->processMessageWithMessagePortsSoon([pendingActivity = Ref { *this }] {});

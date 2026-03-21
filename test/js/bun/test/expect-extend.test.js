@@ -371,7 +371,7 @@ it("works on prototypes", () => {
   expect(123)._toBeBaz();
 });
 
-it("works on classes", () => {
+it("works on plain objects", () => {
   // Only own enumerable properties are registered (matching Jest behavior).
   const matchers = {
     _toBeBar2() {

@@ -945,9 +945,10 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
 // Safe wrappers for C++ PropertyCallback functions that may return empty JSValue on exception.
 // reifyStaticProperty calls putDirect with the result, which crashes on null JSValue.
 #define DEFINE_SAFE_PROPERTY_CALLBACK(name, impl) \
-    static JSValue name(VM& vm, JSObject* obj) { \
-        auto result = impl(vm, obj); \
-        return result ? result : jsUndefined(); \
+    static JSValue name(VM& vm, JSObject* obj)    \
+    {                                             \
+        auto result = impl(vm, obj);              \
+        return result ? result : jsUndefined();   \
     }
 
 DEFINE_SAFE_PROPERTY_CALLBACK(safe_constructBunShell, constructBunShell)

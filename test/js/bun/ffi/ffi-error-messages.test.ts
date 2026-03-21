@@ -1,6 +1,6 @@
 import { dlopen, linkSymbols } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
-import { isArm64, isMusl, isWindows } from "harness";
+import { bunEnv, bunExe, isArm64, isMusl, isWindows } from "harness";
 
 // TinyCC (and all of bun:ffi) is disabled on Windows ARM64
 const isFFIUnavailable = isWindows && isArm64;
@@ -75,5 +75,35 @@ describe.skipIf(isFFIUnavailable)("FFI error messages", () => {
         },
       });
     }).toThrow('you must provide a "ptr" field with the memory address of the native function.');
+  });
+
+  test("closeCallback with invalid argument does not crash", async () => {
+    // Bun.FFI.closeCallback is available before `bun:ffi` module init
+    // runs (which deletes it). Using `-e` without importing `bun:ffi`
+    // lets us access the native binding directly.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const closeCallback = Bun.FFI.closeCallback;
+        if (typeof closeCallback !== "function") throw new Error("closeCallback not found on Bun.FFI");
+        let caught = 0;
+        for (const v of ["str", {}, 0, -1, 1.5, NaN, Infinity, 1e20, 2**64]) {
+          try { closeCallback(v); } catch { caught++; }
+        }
+        if (caught !== 9) throw new Error("expected 9 catches, got " + caught);
+        console.log("ok");
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toBe("ok\n");
+    expect(exitCode).toBe(0);
   });
 });

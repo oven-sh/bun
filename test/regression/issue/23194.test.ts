@@ -95,5 +95,4 @@ Comlink.expose({
       `Process crashed or failed to complete after 5 attempts. Last attempt: exitCode=${lastExitCode}, stdout=${JSON.stringify(lastStdout)}, stderr=${JSON.stringify(lastStderr.slice(0, 500))}`,
     );
   },
-  120000,
 );

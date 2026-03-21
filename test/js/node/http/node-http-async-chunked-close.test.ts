@@ -5,13 +5,13 @@ import * as net from "node:net";
 test("http.Server closes connection after async chunked response with Connection: close", async () => {
   // Server that responds asynchronously with chunked encoding
   const server = http.createServer((req, res) => {
-    setTimeout(() => {
+    setImmediate(() => {
       res.writeHead(200, { "Content-Type": "text/plain" });
       res.write("chunk1");
       res.write("chunk2");
       res.write("chunk3");
       res.end();
-    }, 10);
+    });
   });
 
   await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));

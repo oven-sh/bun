@@ -363,14 +363,21 @@ function ClientRequest(input, options, cb) {
       maybeEmitClose();
     };
 
-    // Build headers object from the flat [key, val, key, val, ...] array llhttp produces
+    // Build headers object from the flat [key, val, key, val, ...] array llhttp produces.
+    // Matches Node.js behavior: set-cookie is kept as an array, all other
+    // duplicate headers are joined with ", ".
     const buildHeaders = (rawHeaders: string[]) => {
       const headers: any = Object.create(null);
       for (let i = 0; i < rawHeaders.length; i += 2) {
         const lk = rawHeaders[i].toLowerCase();
         const v = rawHeaders[i + 1];
-        if (lk === "set-cookie") headers[lk] = headers[lk] ? [...headers[lk], v] : [v];
-        else headers[lk] = v;
+        if (lk === "set-cookie") {
+          headers[lk] = headers[lk] ? [...headers[lk], v] : [v];
+        } else if (headers[lk] !== undefined) {
+          headers[lk] += ", " + v;
+        } else {
+          headers[lk] = v;
+        }
       }
       return headers;
     };

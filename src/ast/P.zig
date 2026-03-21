@@ -433,6 +433,11 @@ pub fn NewParser_(
         temp_refs_to_declare: List(TempRef) = .{},
         temp_ref_count: i32 = 0,
 
+        // Counter for generating unique decorator helper symbol names.
+        // Separate from temp_ref_count which resets to 0 in
+        // visitStmtsAndPrependTempRefs for each function body.
+        decorator_sym_count: u32 = 0,
+
         // When bundling, hoisted top-level local variables declared with "var" in
         // nested scopes are moved up to be declared in the top-level scope instead.
         // The old "var" statements are turned into regular assignments instead. This

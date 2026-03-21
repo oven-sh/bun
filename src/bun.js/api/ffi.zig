@@ -830,8 +830,19 @@ pub const FFI = struct {
         return js_object;
     }
 
-    pub fn closeCallback(globalThis: *JSGlobalObject, ctx: JSValue) JSValue {
-        var function: *Function = @ptrFromInt(ctx.asPtrAddress());
+    pub fn closeCallback(globalThis: *JSGlobalObject, ctx: JSValue) bun.JSError!JSValue {
+        if (!ctx.isNumber()) return globalThis.throwInvalidArguments("Expected a callback context", .{});
+        const num = ctx.asNumber();
+        if (!std.math.isFinite(num) or num < 1 or num != @trunc(num)) {
+            return globalThis.throwInvalidArguments("Expected a callback context", .{});
+        }
+        const max_addr = comptime @as(f64, @floatFromInt(@as(u128, std.math.maxInt(usize)) + 1));
+        if (num >= max_addr) {
+            return globalThis.throwInvalidArguments("Expected a callback context", .{});
+        }
+        const addr: usize = @intFromFloat(num);
+        if (addr == 0 or addr % @alignOf(Function) != 0) return globalThis.throwInvalidArguments("Expected a callback context", .{});
+        var function: *Function = @ptrFromInt(addr);
         function.deinit(globalThis);
         return .js_undefined;
     }

@@ -445,6 +445,7 @@ function ClientRequest(input, options, cb) {
       // bytes (head) from the same TCP segment after the 101 headers.
       if (upgrade || (method === "CONNECT" && statusCode === 200)) {
         upgraded = true;
+        this[kClearTimeout]();
         // Build a proper IncomingMessage for the upgrade response,
         // matching Node.js API contract.
         const prevIsHTTPS = getIsNextIncomingMessageHTTPS();
@@ -566,7 +567,13 @@ function ClientRequest(input, options, cb) {
     };
     const onEnd = () => {
       if (parserFreed) return;
-      parser.finish();
+      const ret = parser.finish();
+      if (ret instanceof Error) {
+        this.destroyed = true;
+        socket.destroy();
+        this.emit("error", ret);
+        return;
+      }
       // If the response is still incomplete after parser.finish(), the connection
       // was closed prematurely — surface an error instead of silently completing.
       if (res && !res.complete) {

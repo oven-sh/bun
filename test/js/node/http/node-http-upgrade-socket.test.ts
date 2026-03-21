@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
-describe("node:http server upgrade", () => {
+describe.concurrent("node:http server upgrade", () => {
   test("socket.write() sends data to the client", async () => {
     await using proc = Bun.spawn({
       cmd: [

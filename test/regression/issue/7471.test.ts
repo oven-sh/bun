@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
-describe("http.request createConnection", () => {
+describe.concurrent("http.request createConnection", () => {
   test("is called for GET requests", async () => {
     await using proc = Bun.spawn({
       cmd: [

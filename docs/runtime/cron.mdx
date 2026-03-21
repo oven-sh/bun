@@ -270,7 +270,8 @@ On headless servers and CI environments where the current user's [Security Ident
 #### Trigger limit
 
 :::caution
-Windows Task Scheduler enforces a limit of [48 triggers per task](https://learn.microsoft.com/en-us/windows/win32/taskschd/taskschedulerschema-triggers-tasktype-element) (the `CalendarTrigger` element has [`maxOccurs="48"`](https://learn.microsoft.com/en-us/windows/win32/taskschd/taskschedulerschema-calendartrigger-triggergroup-element)). Some cron expressions that work on Linux and macOS exceed this limit on Windows.
+Windows Task Scheduler enforces a limit of [48 triggers per task](https://learn.microsoft.com/en-us/windows/win32/taskschd/taskschedulerschema-triggers-tasktype-element) (the `CalendarTrigger` element has [`maxOccurs="48"`](https://learn.microsoft.com/en-us/windows/win32/taskschd/taskschedulerschema-calendartrigger-triggergroup-element)). Some cron expressions that work on Linux and macOS exceed this limit on Windows. When a pattern exceeds the limit, `Bun.cron()` rejects it with an error message.
+:::
 
 **Expressions that work on all platforms:**
 
@@ -296,7 +297,7 @@ Windows Task Scheduler enforces a limit of [48 triggers per task](https://learn.
 
 The key factor is whether the expression can use a [`Repetition`](https://learn.microsoft.com/en-us/windows/win32/taskschd/taskschedulerschema-repetition-triggerbasetype-element) interval (single trigger) or must expand to individual `CalendarTrigger` elements. Minute steps that **evenly divide 60** (`*/1`, `*/2`, `*/3`, `*/4`, `*/5`, `*/6`, `*/10`, `*/12`, `*/15`, `*/20`, `*/30`) use Repetition and work regardless of other fields. Steps that don't divide 60 (`*/7`, `*/8`, `*/9`, `*/11`, `*/13`, etc.) must be expanded, and with 24 hours active, the count quickly exceeds 48.
 
-When a pattern exceeds the limit, `Bun.cron()` rejects it with an error message. To work around it, simplify the expression or restrict the hour range:
+To work around it, simplify the expression or restrict the hour range:
 
 ```ts
 // ❌ Fails on Windows: */7 with all hours = 216 triggers
@@ -308,8 +309,6 @@ await Bun.cron("./job.ts", "*/7 9-13 * * *", "my-job");
 // ✅ Works: use a divisor of 60 instead (Repetition, 1 trigger)
 await Bun.cron("./job.ts", "*/5 * * * *", "my-job");
 ```
-
-:::
 
 #### Windows containers
 

@@ -13,6 +13,8 @@
 #include <JavaScriptCore/TopExceptionScope.h>
 #include <JavaScriptCore/WeakInlines.h>
 #include <JavaScriptCore/JSONObject.h>
+#include <JavaScriptCore/ObjectConstructor.h>
+#include "JSBuffer.h"
 #include <wtf/JSONValues.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/text/MakeString.h>
@@ -27,6 +29,8 @@
 #include <winsock2.h>
 #else
 #include <unistd.h>
+#include <sys/mman.h>
+#include <fcntl.h>
 #endif
 
 #include "libusockets.h"
@@ -505,6 +509,7 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
     m_pending.remove(it);
 
     auto* g = m_global;
+    auto& vm = g->vm();
     JSWebView* view = entry.view.get();
     if (!view) return; // user dropped both view and the awaited promise
 
@@ -673,28 +678,97 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
     }
 
     case Method::PageCaptureScreenshot: {
-        // {"data":"<base64 PNG>"} — decode into a Blob with image/png type.
-        // WTF::base64Decode allocates its own Vector then Blob__fromBytes
-        // copies into a Zig-owned store. Two copies at peak (b64 source +
-        // decoded Vector), Vector drops after Blob takes the bytes. The
-        // Blob's type carries the MIME so `Bun.write(path, blob)` and
-        // `new Response(blob)` work without the user remembering it's PNG.
+        // {"data":"<base64 encoded image>"} — the base64 string is the ONLY
+        // representation CDP gives us. All encodings except Base64 need to
+        // decode first. m_screenshotEncoding stashed by screenshot() before
+        // dispatch picks the JS shape.
         auto b64 = jsonString(jsonField(result, { "data", 4 }));
+        auto enc = view->m_screenshotEncoding;
+
+        if (enc == ScreenshotEncoding::Base64) {
+            // Zero decode — hand back the CDP "data" string as-is. The user
+            // wanted base64; CDP gave us base64. The string is allocated
+            // fresh (jsonString returns a span into the rx buffer, not
+            // safe to hold past the next onData), so one copy into the JS
+            // heap via fromUTF8 → jsString.
+            settle(g, view, entry.slot, true,
+                jsString(vm, WTF::String::fromUTF8(
+                    std::span<const char>(b64.data(), b64.size()))));
+            return;
+        }
+
         auto decoded = WTF::base64Decode(
             std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(b64.data()), b64.size()));
         if (!decoded) {
             settle(g, view, entry.slot, false, createError(g, "screenshot: invalid base64"_s));
             return;
         }
-        // Blob__fromBytes allocates via mimalloc (bun.default_allocator), not
-        // the JS heap — handleOom crashes on failure rather than throwing, so
-        // no scope needed here. Blob__create wraps it in a JSBlob cell.
-        // m_screenshotFormat was stashed by JSWebView::screenshot before the
-        // CDP command went out; it tells us which MIME to stamp.
+
+        if (enc == ScreenshotEncoding::Buffer) {
+            // createBuffer(span) copies into a JSC-allocated ArrayBuffer.
+            // decoded Vector drops after; one copy. We can't
+            // adopt-the-Vector because WTF::Vector uses WTF's bmalloc, not
+            // the JSC ArrayBuffer allocator — destructors wouldn't match.
+            settle(g, view, entry.slot, true,
+                createBuffer(g, decoded->span()));
+            return;
+        }
+
+#if !OS(WINDOWS)
+        if (enc == ScreenshotEncoding::Shmem) {
+            // Create a fresh POSIX shm segment, write decoded bytes, return
+            // {name, size}. Caller (or Kitty via t=s) owns shm_unlink.
+            // Name uses our pid + a monotonic counter — same scheme as the
+            // WebKit child, different namespace (chrome- prefix) so they
+            // never collide even if someone mixes backends in one process.
+            static uint32_t shmSeq = 0;
+            char name[48];
+            snprintf(name, sizeof(name), "/bun-chrome-%d-%u", getpid(), ++shmSeq);
+            int fd = shm_open(name, O_CREAT | O_RDWR | O_EXCL, 0600);
+            if (fd < 0) {
+                settle(g, view, entry.slot, false,
+                    createError(g, makeString("shm_open: "_s, WTF::String::fromUTF8(strerror(errno)))));
+                return;
+            }
+            size_t sz = decoded->size();
+            if (ftruncate(fd, static_cast<off_t>(sz)) != 0) {
+                ::close(fd);
+                shm_unlink(name);
+                settle(g, view, entry.slot, false,
+                    createError(g, makeString("ftruncate: "_s, WTF::String::fromUTF8(strerror(errno)))));
+                return;
+            }
+            void* map = mmap(nullptr, sz, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+            ::close(fd);
+            if (map == MAP_FAILED) {
+                shm_unlink(name);
+                settle(g, view, entry.slot, false,
+                    createError(g, makeString("mmap: "_s, WTF::String::fromUTF8(strerror(errno)))));
+                return;
+            }
+            memcpy(map, decoded->span().data(), sz);
+            munmap(map, sz);
+            // Don't unlink — the name IS the return value. User (Kitty)
+            // unlinks after shm_open'ing.
+            auto* obj = constructEmptyObject(g);
+            obj->putDirect(vm, Identifier::fromString(vm, "name"_s),
+                jsString(vm, WTF::String::fromUTF8(
+                    std::span<const char>(name, strlen(name)))));
+            obj->putDirect(vm, Identifier::fromString(vm, "size"_s),
+                jsNumber(static_cast<double>(sz)));
+            settle(g, view, entry.slot, true, obj);
+            return;
+        }
+#endif
+
+        // Blob — the default. Blob__fromBytes copies via mimalloc
+        // (handleOom crashes on failure, no JS exception). m_screenshotFormat
+        // picks the MIME so `Bun.write(path, blob)` / `new Response(blob)`
+        // don't need the user to remember what format they asked for.
         void* impl = Blob__fromBytesWithType(g, decoded->span().data(), decoded->size(),
             screenshotMimeType(view->m_screenshotFormat));
-        JSValue blob = JSValue::decode(Blob__create(defaultGlobalObject(g), impl));
-        settle(g, view, entry.slot, true, blob);
+        settle(g, view, entry.slot, true,
+            JSValue::decode(Blob__create(defaultGlobalObject(g), impl)));
         return;
     }
 

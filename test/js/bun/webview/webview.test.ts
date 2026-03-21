@@ -1,5 +1,51 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isCI, isMacOS, tempDir } from "harness";
+import { dlopen, FFIType, ptr, toArrayBuffer } from "bun:ffi";
+
+// FFI shm access for encoding:"shmem" tests. In real use Kitty (or
+// whoever opens the segment) does this — shm_open + mmap + read + unlink.
+// The test does the same to verify end-to-end that the bytes landed in
+// the segment and are readable from another "process" (same-process,
+// different fd — good enough to prove the IPC boundary).
+const libc = isMacOS
+  ? dlopen("libc.dylib", {
+      shm_open: { args: [FFIType.cstring, FFIType.i32, FFIType.u16], returns: FFIType.i32 },
+      shm_unlink: { args: [FFIType.cstring], returns: FFIType.i32 },
+      mmap: {
+        args: [FFIType.ptr, FFIType.u64, FFIType.i32, FFIType.i32, FFIType.i32, FFIType.i64],
+        returns: FFIType.ptr,
+      },
+      munmap: { args: [FFIType.ptr, FFIType.u64], returns: FFIType.i32 },
+      close: { args: [FFIType.i32], returns: FFIType.i32 },
+    })
+  : null;
+function shmUnlink(name: string): void {
+  libc?.symbols.shm_unlink(ptr(Buffer.from(name + "\0")));
+}
+// Read the first `n` bytes from a named POSIX shm segment. Mirrors what
+// Kitty does for t=s transmission. Returns a fresh Buffer (copy —
+// we unmap immediately).
+function shmRead(name: string, n: number): Buffer {
+  const O_RDONLY = 0;
+  const PROT_READ = 1;
+  const MAP_SHARED = 1;
+  const namez = Buffer.from(name + "\0");
+  const fd = libc!.symbols.shm_open(ptr(namez), O_RDONLY, 0);
+  if (fd < 0) throw new Error(`shm_open(${name}) failed`);
+  const map = libc!.symbols.mmap(0, n, PROT_READ, MAP_SHARED, fd, 0);
+  libc!.symbols.close(fd);
+  // mmap returns MAP_FAILED = (void*)-1; ptr arithmetic over bigint.
+  // A valid mapping is page-aligned (low bits zero), so any nonzero
+  // return here means we got pages.
+  if (!map) throw new Error("mmap failed");
+  // Copy into a JS-owned Buffer — the mapping goes away with munmap.
+  // `toBuffer(ptr, byteOffset, byteLength)` wraps without copying;
+  // `Buffer.from(...)` then copies so munmap is safe.
+  const live = new Uint8Array(toArrayBuffer(map, 0, n));
+  const out = Buffer.from(live); // copies
+  libc!.symbols.munmap(map, n);
+  return out;
+}
 
 // Bun.WebView only exists on darwin for now.
 const it = isMacOS ? test : test.skip;
@@ -316,6 +362,47 @@ it("screenshot format options", async () => {
 
   // cdp() is Chrome-only.
   expect(() => view.cdp("Page.enable")).toThrow(/chrome/i);
+});
+
+it("screenshot encoding options", async () => {
+  await using view = new Bun.WebView({ width: 200, height: 150 });
+  await view.navigate(html("<body style='background:#00f'>blue</body>"));
+
+  // buffer — zero-copy mmap-backed on WebKit. Same PNG magic.
+  const buf = await view.screenshot({ encoding: "buffer" });
+  expect(Buffer.isBuffer(buf)).toBe(true);
+  expect(buf[0]).toBe(0x89);
+  expect(buf[1]).toBe(0x50);
+  expect(buf[2]).toBe(0x4e);
+  expect(buf[3]).toBe(0x47);
+  // Mutate the buffer — the ArrayBuffer adopts the mapping PROT_WRITE,
+  // so this is safe (writes the mmap'd page; munmap's on GC).
+  buf[0] = 0xff;
+  expect(buf[0]).toBe(0xff);
+
+  // base64 — string encoding. Decodes to the same PNG bytes.
+  const b64 = await view.screenshot({ encoding: "base64" });
+  expect(typeof b64).toBe("string");
+  const decoded = Buffer.from(b64, "base64");
+  expect(decoded[0]).toBe(0x89);
+  expect(decoded[1]).toBe(0x50);
+
+  // shmem — POSIX shm name + size. We don't unlink; the user (Kitty)
+  // does after shm_open'ing. Verify end-to-end by reading the segment
+  // ourselves — same thing Kitty does.
+  const shm = await view.screenshot({ encoding: "shmem" });
+  expect(typeof shm.name).toBe("string");
+  expect(shm.name.startsWith("/bun-webview-")).toBe(true);
+  expect(shm.size).toBeGreaterThan(100);
+  // shm_open + mmap + read — proves the bytes landed in the segment
+  // and are PNG. This is what Kitty's t=s handler does.
+  const bytes = shmRead(shm.name, 8);
+  expect(bytes[0]).toBe(0x89);
+  expect(bytes[1]).toBe(0x50);
+  expect(bytes[2]).toBe(0x4e);
+  expect(bytes[3]).toBe(0x47);
+  // Clean up — Kitty does this after reading.
+  shmUnlink(shm.name);
 });
 
 it("screenshot Blob survives GC (mmap-backed store)", async () => {

@@ -8177,20 +8177,42 @@ declare module "bun" {
     /**
      * Capture a screenshot of the current viewport.
      *
-     * The returned `Blob` carries the right MIME type (`image/png`,
-     * `image/jpeg`, or `image/webp`) — composes with
-     * `Bun.write(path, blob)`, `new Response(blob)`, and `blob.bytes()`.
+     * **`encoding` controls the return type:**
+     * - `"blob"` (default) — `Blob` with the right MIME type. WebKit:
+     *   zero-copy mmap-backed store. Composes with `Bun.write()`,
+     *   `new Response()`, `blob.bytes()`.
+     * - `"buffer"` — Node `Buffer`. WebKit: zero-copy (the same mmap'd
+     *   pages wrapped as an `ArrayBuffer` that munmap's on GC).
+     * - `"base64"` — base64-encoded `string`. Chrome: zero decode (CDP
+     *   returns base64 natively). Direct Kitty `t=d` transmission.
+     * - `"shmem"` — `{ name, size }`. The POSIX shm name is left linked;
+     *   caller owns `shm_unlink`. Kitty `t=s` transmission: pass `name`
+     *   as the payload, Kitty unlinks after reading. Not on Windows.
      *
-     * On the **WebKit backend**, the image bytes live in a shared-memory
-     * segment mmap'd directly into the Blob's store — no copy. The mapping
-     * is released when the Blob is garbage-collected.
-     *
-     * @param options.format Image format. `"webp"` requires the Chrome
-     *   backend. @default `"png"`
+     * @param options.format Image format. `"webp"` requires Chrome.
+     *   @default `"png"`
      * @param options.quality Compression quality for JPEG/WebP, 0-100.
      *   Ignored for PNG. @default `80`
+     * @param options.encoding Return-type encoding. @default `"blob"`
+     *
+     * @example Kitty graphics protocol, shared-memory transmission
+     * ```ts
+     * const { name, size } = await view.screenshot({ encoding: "shmem" });
+     * process.stdout.write(
+     *   `\x1b_Gf=100,t=s,a=T,S=${size};${btoa(name)}\x1b\\`
+     * );
+     * // Kitty shm_open's the name, reads ${size} PNG bytes, unlinks.
+     * ```
      */
-    screenshot(options?: { format?: "png" | "jpeg" | "webp"; quality?: number }): Promise<Blob>;
+    screenshot(options?: { encoding?: "blob"; format?: "png" | "jpeg" | "webp"; quality?: number }): Promise<Blob>;
+    screenshot(options: { encoding: "buffer"; format?: "png" | "jpeg" | "webp"; quality?: number }): Promise<Buffer>;
+    screenshot(options: { encoding: "base64"; format?: "png" | "jpeg" | "webp"; quality?: number }): Promise<string>;
+    screenshot(options: { encoding: "shmem"; format?: "png" | "jpeg" | "webp"; quality?: number }): Promise<{
+      /** POSIX shm name (pass to `shm_open(2)` or Kitty `t=s`). */
+      name: string;
+      /** Encoded image size in bytes. */
+      size: number;
+    }>;
 
     /**
      * Send a raw Chrome DevTools Protocol command. **Chrome backend only.**

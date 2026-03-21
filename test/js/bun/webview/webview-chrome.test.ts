@@ -6,8 +6,26 @@ import { bunEnv, bunExe } from "harness";
 // ChromeProcess.zig's findChrome() — $PATH names, then hardcoded absolute
 // paths, then Playwright cache — so the test detects Chrome whenever the
 // runtime would.
-import { accessSync, constants as fsConstants, readdirSync } from "node:fs";
+import { accessSync, constants as fsConstants, readdirSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
+import { dlopen, FFIType, ptr } from "bun:ffi";
+
+// shm_unlink for encoding:"shmem" test cleanup. macOS has no /dev/shm
+// filesystem mount, so we go through libc. Linux exposes POSIX shm at
+// /dev/shm/<name-without-leading-slash> — a plain unlink works.
+const libcShm =
+  process.platform === "darwin"
+    ? dlopen("libc.dylib", {
+        shm_unlink: { args: [FFIType.cstring], returns: FFIType.i32 },
+      })
+    : null;
+function shmUnlinkChrome(name: string): void {
+  if (process.platform === "darwin") {
+    libcShm!.symbols.shm_unlink(ptr(Buffer.from(name + "\0")));
+  } else if (process.platform === "linux") {
+    rmSync("/dev/shm" + name, { force: true });
+  }
+}
 import { join } from "node:path";
 
 function findChrome(): string | undefined {
@@ -182,6 +200,41 @@ it("chrome: screenshot format options produce the right magic bytes", async () =
     // WebP should be smaller than PNG for a gradient (lossy wins).
     const png = await view.screenshot({ format: "png" });
     expect(webp.size).toBeLessThan(png.size);
+  } finally {
+    view.close();
+  }
+});
+
+it("chrome: screenshot encoding options", async () => {
+  const view = new Bun.WebView({ backend: "chrome", width: 200, height: 200 });
+  try {
+    await view.navigate(html("<body style='background:red'></body>"));
+
+    const buf = await view.screenshot({ encoding: "buffer" });
+    expect(Buffer.isBuffer(buf)).toBe(true);
+    expect(buf[0]).toBe(0x89); // PNG magic
+
+    // base64 — zero decode (CDP returns base64 natively). Same PNG
+    // after we decode it.
+    const b64 = await view.screenshot({ encoding: "base64" });
+    expect(typeof b64).toBe("string");
+    const decoded = Buffer.from(b64, "base64");
+    expect(decoded[0]).toBe(0x89);
+    expect(decoded[1]).toBe(0x50);
+
+    // shmem — fresh segment written by the parent (Chrome doesn't use
+    // shm internally, we create one after decoding). Name uses the
+    // bun-chrome- prefix to disambiguate from WebKit's child-created
+    // segments.
+    if (process.platform !== "win32") {
+      const shm = await view.screenshot({ encoding: "shmem" });
+      expect(typeof shm.name).toBe("string");
+      expect(shm.name.startsWith("/bun-chrome-")).toBe(true);
+      expect(shm.size).toBeGreaterThan(100);
+      // Clean up — the test owns it since we told the backend not to.
+      // Kitty does this in real use after shm_open'ing.
+      shmUnlinkChrome(shm.name);
+    }
   } finally {
     view.close();
   }

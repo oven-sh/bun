@@ -252,6 +252,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncScreenshot, (JSGlobalObject * globalO
     if (!checkSlot(globalObject, scope, thisObject->m_pendingScreenshot, "a screenshot()"_s)) return {};
 
     ScreenshotFormat format = ScreenshotFormat::Png;
+    ScreenshotEncoding encoding = ScreenshotEncoding::Blob;
     uint8_t quality = 80; // CDP default for jpeg/webp. Ignored for png.
 
     JSValue optsVal = callFrame->argument(0);
@@ -292,8 +293,39 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncScreenshot, (JSGlobalObject * globalO
         } else if (!qVal.isUndefined())
             return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE,
                 "quality must be a number"_s);
+
+        // encoding: how the bytes are handed back. "shmem" is for Kitty
+        // graphics protocol t=s — returns {name, size}, we skip our
+        // shm_unlink, the terminal handles cleanup.
+        JSValue encVal = opts->get(globalObject, Identifier::fromString(vm, "encoding"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+        if (encVal.isString()) {
+            auto s = encVal.toWTFString(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (s == "blob"_s)
+                encoding = ScreenshotEncoding::Blob;
+            else if (s == "buffer"_s)
+                encoding = ScreenshotEncoding::Buffer;
+            else if (s == "base64"_s)
+                encoding = ScreenshotEncoding::Base64;
+            else if (s == "shmem"_s) {
+#if OS(WINDOWS)
+                // No POSIX shm. Kitty on Windows uses temp files (t=t)
+                // or direct (t=d) transmission anyway.
+                return Bun::throwError(globalObject, scope, ErrorCode::ERR_METHOD_NOT_IMPLEMENTED,
+                    "encoding: \"shmem\" is not supported on Windows"_s);
+#else
+                encoding = ScreenshotEncoding::Shmem;
+#endif
+            } else
+                return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_VALUE,
+                    "encoding must be \"blob\", \"buffer\", \"base64\", or \"shmem\""_s);
+        } else if (!encVal.isUndefined())
+            return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE,
+                "encoding must be a string"_s);
     }
 
+    thisObject->m_screenshotEncoding = encoding;
     return JSValue::encode(thisObject->screenshot(globalObject, format, quality));
 }
 

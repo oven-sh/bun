@@ -15,12 +15,14 @@
 #include <JavaScriptCore/TopExceptionScope.h>
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/JSONObject.h>
+#include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/Weak.h>
 #include <JavaScriptCore/WeakInlines.h>
 #include <JavaScriptCore/ConsoleClient.h>
 #include <JavaScriptCore/ScriptArguments.h>
 #include <JavaScriptCore/Strong.h>
 #include <wtf/text/MakeString.h>
+#include <wtf/text/Base64.h>
 #include <wtf/NeverDestroyed.h>
 #include <mutex>
 
@@ -40,6 +42,7 @@ using namespace WebViewProto;
 extern "C" int32_t Bun__WebViewHost__ensure(Zig::GlobalObject*, bool stdoutInherit, bool stderrInherit);
 extern "C" void* Blob__fromMmapWithType(JSC::JSGlobalObject*, uint8_t* ptr, size_t len, const char* mime);
 extern "C" JSC::EncodedJSValue SYSV_ABI Blob__create(Zig::GlobalObject*, void* impl);
+extern "C" JSC::EncodedJSValue JSBuffer__fromMmap(Zig::GlobalObject*, void* ptr, size_t length);
 extern "C" void Bun__eventLoop__incrementRefConcurrently(void* bunVM, int delta);
 // Bracket the whole onData batch. exit() drains microtasks when outermost,
 // so all the promise reactions from this batch run before we return to usockets.
@@ -199,45 +202,100 @@ void HostClient::onWritable()
     }
 }
 
-// Returns a Blob on success, JS Error on failure. The Blob adopts the
-// mmap'd shm region directly — no copy. Its store's allocator vtable
-// munmap's on free (when the last ref drops). The shm segment survives
-// the name-unlink because the mapping is a live reference; the physical
-// pages free when the user drops the Blob AND the child's write-side
-// mapping is gone (child unmaps after sendReply, so by the time we're
-// here the child side is already dropped — our mapping is the only one).
-static JSValue openShmScreenshot(JSGlobalObject* g, const char* name, uint32_t nameLen, uint32_t byteLen, const char* mime, bool& ok)
+// Open + mmap the child-written shm segment. The child already munmapped
+// its side before sendReply, so we're the sole mapper. O_RDWR + PROT_WRITE
+// because the Zig allocator wrapper poisons with @memset(undefined) in
+// safe builds BEFORE the vtable free (which munmap's) — a PROT_READ
+// mapping SIGBUS'd on that poison. MAP_SHARED is required for POSIX shm
+// objects on macOS — MAP_PRIVATE returns EINVAL (the kernel's posix_shm
+// vfs doesn't implement VM_BEHAVIOR_COPY). Returns nullptr on failure
+// with errno set; caller reports it.
+static void* mapShm(const char* zname, size_t byteLen)
+{
+    int fd = shm_open(zname, O_RDWR, 0);
+    if (fd < 0) return nullptr;
+    void* map = mmap(nullptr, byteLen, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    ::close(fd);
+    if (map == MAP_FAILED) return nullptr;
+    return map;
+}
+
+// Dispatch the child-written shm segment to the requested JS shape. For
+// Blob/Buffer the mapping is adopted zero-copy — the JS object's
+// destructor munmap's. For Base64 we map, encode into a JS string, unmap
+// (one materialization, unavoidable). For Shmem we don't touch the
+// segment at all — just hand back the name + size for Kitty graphics
+// protocol t=s transmission (or manual shm_open from another process);
+// caller owns shm_unlink.
+static JSValue openShmScreenshot(JSGlobalObject* g, const char* name, uint32_t nameLen, uint32_t byteLen, const char* mime, ScreenshotEncoding enc, bool& ok)
 {
     ok = false;
+    auto& vm = g->vm();
 
     WTF::Vector<char, 64> zname;
     zname.grow(nameLen + 1);
     memcpy(zname.mutableSpan().data(), name, nameLen);
     zname[nameLen] = '\0';
 
-    // O_RDWR + PROT_WRITE — the Zig allocator wrapper poisons freed memory
-    // with @memset(undefined) in safe builds BEFORE calling the vtable's
-    // free (which munmap's). A PROT_READ mapping SIGBUS'd on that poison.
-    // MAP_SHARED is required for POSIX shm objects on macOS — MAP_PRIVATE
-    // returns EINVAL (the kernel's posix_shm vfs doesn't implement the
-    // VM_BEHAVIOR_COPY path). The child already munmapped its side before
-    // sendReply, so we're the sole mapper; writes don't race with anyone.
-    // The name is unlinked next, so no third process can shm_open it.
-    int fd = shm_open(zname.span().data(), O_RDWR, 0);
-    if (fd < 0)
-        return createError(g, makeString("shm_open: "_s, WTF::String::fromUTF8(strerror(errno))));
-    void* map = mmap(nullptr, byteLen, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-    ::close(fd);
-    shm_unlink(zname.span().data());
-    if (map == MAP_FAILED)
-        return createError(g, makeString("mmap: "_s, WTF::String::fromUTF8(strerror(errno))));
+    // Shmem: return {name, size} without opening. The name is the child-
+    // picked /bun-webview-<pid>-<seq> — the user (or Kitty) shm_open's it.
+    // We don't unlink; the caller owns cleanup. The child already
+    // munmapped its side, so the ONLY live ref is the name itself — if the
+    // user drops the name without unlinking, the pages leak until process
+    // exit (macOS POSIX shm is per-login-session, not system-wide). Kitty
+    // unlinks immediately after reading (verified: kitty/shm.c shm_unlink
+    // right after mmap), so the normal path doesn't leak.
+    if (enc == ScreenshotEncoding::Shmem) {
+        auto* obj = JSC::constructEmptyObject(g);
+        obj->putDirect(vm, Identifier::fromString(vm, "name"_s),
+            jsString(vm, WTF::String::fromUTF8(std::span<const char>(name, nameLen))));
+        obj->putDirect(vm, Identifier::fromString(vm, "size"_s), jsNumber(byteLen));
+        ok = true;
+        return obj;
+    }
 
-    // Blob adopts the mapping — no copy. Store's allocator.free munmap's
-    // when the Blob's refcount drops to zero. `await blob.bytes()` reads
-    // directly from these pages; `Bun.write(path, blob)` writes from them.
-    void* impl = Blob__fromMmapWithType(g, static_cast<uint8_t*>(map), byteLen, mime);
-    ok = true;
-    return JSValue::decode(Blob__create(defaultGlobalObject(g), impl));
+    void* map = mapShm(zname.span().data(), byteLen);
+    // Unlink after we have a mapping — the name can go away, the physical
+    // pages live until the last mapping drops. For the error path
+    // (map==null), we still unlink to avoid leaking the name; the user
+    // gets an Error and there's nothing to read anyway.
+    shm_unlink(zname.span().data());
+    if (!map)
+        return createError(g, makeString("shm: "_s, WTF::String::fromUTF8(strerror(errno))));
+
+    switch (enc) {
+    case ScreenshotEncoding::Blob: {
+        // Blob adopts the mapping — no copy. Store's allocator.free
+        // munmap's when the Blob's refcount drops to zero.
+        // `await blob.bytes()` reads directly from these pages.
+        void* impl = Blob__fromMmapWithType(g, static_cast<uint8_t*>(map), byteLen, mime);
+        ok = true;
+        return JSValue::decode(Blob__create(defaultGlobalObject(g), impl));
+    }
+    case ScreenshotEncoding::Buffer: {
+        // ArrayBuffer adopts the mapping — createFromBytes + a
+        // SharedTask<void(void*)> destructor that munmap's. Same
+        // zero-copy as Blob, just wrapped as a Node Buffer
+        // (JSUint8Array with JSBufferSubclassStructure).
+        ok = true;
+        return JSValue::decode(JSBuffer__fromMmap(defaultGlobalObject(g), map, byteLen));
+    }
+    case ScreenshotEncoding::Base64: {
+        // base64Encode copies into the output String — one
+        // materialization, unavoidable (the user explicitly wants the
+        // text form). WTF's encoder is vectorized (SIMD on the 3→4
+        // table-lookup). Unmap after — the string owns its own copy.
+        WTF::String b64 = WTF::base64EncodeToString(
+            std::span<const uint8_t>(static_cast<const uint8_t*>(map), byteLen));
+        munmap(map, byteLen);
+        ok = true;
+        return jsString(vm, WTF::move(b64));
+    }
+    case ScreenshotEncoding::Shmem:
+        RELEASE_ASSERT_NOT_REACHED(); // handled above
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+    return jsUndefined();
 }
 
 void HostClient::handleReply(const Frame& h, Reader r)
@@ -361,7 +419,8 @@ void HostClient::handleReply(const Frame& h, Reader r)
         uint32_t pngLen = r.u32();
         bool ok;
         JSValue result = openShmScreenshot(g, name, nameLen, pngLen,
-            screenshotMimeType(view->m_screenshotFormat), ok);
+            screenshotMimeType(view->m_screenshotFormat),
+            view->m_screenshotEncoding, ok);
         settleSlot(g, view, view->m_pendingScreenshot, ok, result);
         return;
     }

@@ -27,6 +27,24 @@ enum class ScreenshotFormat : uint8_t {
           // WebKit via CGImageDestination with public.webp UTI (macOS 11+).
 };
 
+// How the image bytes are handed back to JS. The child (WebKit host,
+// Chrome) always produces encoded image bytes; only the parent-side
+// post-receive handling differs.
+enum class ScreenshotEncoding : uint8_t {
+    Blob, // default. WebKit: mmap'd shm → Blob store (zero-copy).
+          // Chrome: base64-decode → Blob.
+    Buffer, // WebKit: mmap'd shm → ArrayBuffer with munmap destructor
+            // (zero-copy — same mapping as Blob, just wrapped as a
+            // JSUint8Array Buffer). Chrome: base64-decode → Buffer.
+    Base64, // WebKit: mmap → base64Encode → string, munmap.
+            // Chrome: return the CDP "data" field as-is (zero decode).
+    Shmem, // POSIX shm name + size. Parent does NOT shm_unlink —
+           // caller (or Kitty via its t=s transmission mode) owns
+           // cleanup. WebKit: the child already wrote here; just skip
+           // our unlink. Chrome: create a fresh shm, write decoded
+           // bytes, return name. Not supported on Windows.
+};
+
 inline const char* screenshotMimeType(ScreenshotFormat f)
 {
     switch (f) {
@@ -86,11 +104,13 @@ public:
     // goBack/goForward stash — PageGetNavigationHistory chains into
     // navigateToHistoryEntry with entries[currentIndex + delta].id.
     int8_t m_chromeHistoryDelta = 0;
-    // Screenshot format stash — set by screenshot() before dispatch, read
-    // by both backends' response handlers to stamp the right MIME type on
-    // the Blob. The CDP/IPC payloads don't echo the format; stashing here
-    // is simpler than threading it through Pending/viewId routing.
+    // Screenshot format/encoding stash — set by screenshot() before
+    // dispatch, read by both backends' response handlers. CDP/IPC payloads
+    // don't echo these; stashing here is simpler than threading them
+    // through Pending/viewId routing. format → MIME type on the Blob;
+    // encoding → how the bytes are wrapped (Blob/Buffer/base64/shmem).
     ScreenshotFormat m_screenshotFormat = ScreenshotFormat::Png;
+    ScreenshotEncoding m_screenshotEncoding = ScreenshotEncoding::Blob;
 
     JSC::WriteBarrier<JSC::JSObject> m_onNavigated;
     JSC::WriteBarrier<JSC::JSObject> m_onNavigationFailed;

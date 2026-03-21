@@ -9,7 +9,7 @@ describe("FFI toBuffer/toArrayBuffer with low pointer addresses", () => {
     expect(() => toBuffer(1)).toThrow();
     expect(() => toBuffer(64)).toThrow();
     expect(() => toBuffer(4095)).toThrow();
-    expect(() => toBuffer(HIGH_PTR, -HIGH_PTR)).toThrow();
+    expect(() => toBuffer(HIGH_PTR + 64, -HIGH_PTR)).toThrow();
   });
 
   test("toArrayBuffer rejects addresses in the zero page", () => {
@@ -18,6 +18,6 @@ describe("FFI toBuffer/toArrayBuffer with low pointer addresses", () => {
     expect(() => toArrayBuffer(1)).toThrow();
     expect(() => toArrayBuffer(64)).toThrow();
     expect(() => toArrayBuffer(4095)).toThrow();
-    expect(() => toArrayBuffer(HIGH_PTR, -HIGH_PTR)).toThrow();
+    expect(() => toArrayBuffer(HIGH_PTR + 64, -HIGH_PTR)).toThrow();
   });
 });

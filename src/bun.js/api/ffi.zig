@@ -831,7 +831,10 @@ pub const FFI = struct {
     }
 
     pub fn closeCallback(globalThis: *JSGlobalObject, ctx: JSValue) JSValue {
-        var function: *Function = @ptrFromInt(ctx.asPtrAddress());
+        if (!ctx.isNumber()) return .js_undefined;
+        const addr = ctx.asPtrAddress();
+        if (addr == 0 or !std.mem.isAligned(addr, @alignOf(Function))) return .js_undefined;
+        var function: *Function = @ptrFromInt(addr);
         function.deinit(globalThis);
         return .js_undefined;
     }

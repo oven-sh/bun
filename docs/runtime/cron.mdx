@@ -269,9 +269,9 @@ On headless servers and CI environments where the current user's [Security Ident
 
 #### Trigger limit
 
-:::caution
+<Warning>
 Windows Task Scheduler enforces a limit of [48 triggers per task](https://learn.microsoft.com/en-us/windows/win32/taskschd/taskschedulerschema-triggers-tasktype-element) (the `CalendarTrigger` element has [`maxOccurs="48"`](https://learn.microsoft.com/en-us/windows/win32/taskschd/taskschedulerschema-calendartrigger-triggergroup-element)). Some cron expressions that work on Linux and macOS exceed this limit on Windows. When a pattern exceeds the limit, `Bun.cron()` rejects it with an error message.
-:::
+</Warning>
 
 **Expressions that work on all platforms:**
 
@@ -312,9 +312,9 @@ await Bun.cron("./job.ts", "*/5 * * * *", "my-job");
 
 #### Windows containers
 
-:::caution
+<Warning>
 `Bun.cron()` is not supported in Windows Docker containers. The Task Scheduler service is not running in `servercore` or `nanoserver` images. Use an in-process scheduler for containerized workloads.
-:::
+</Warning>
 
 **Viewing registered jobs:**
 

@@ -291,6 +291,8 @@ void MessagePort::dispatchMessages()
             // });
 
             ScriptExecutionContext::postTaskTo(context->identifier(), [protectedThis = Ref { *this }, ports = WTF::move(ports), message = WTF::move(message)](ScriptExecutionContext& context) mutable {
+                if (!context.globalObject())
+                    return;
                 auto event = MessageEvent::create(*context.jsGlobalObject(), message.message.releaseNonNull(), {}, {}, {}, WTF::move(ports));
                 protectedThis->dispatchEvent(event.event);
             });

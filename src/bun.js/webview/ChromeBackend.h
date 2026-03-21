@@ -84,6 +84,36 @@ public:
         m_sb.append(",\"params\":{"_s);
     }
 
+    // Raw passthrough — user-provided method string and pre-serialized
+    // params JSON (JSON.stringify on the JS side; arrives here as UTF-8).
+    // method goes through appendQuotedJSONString (a user can pass
+    // `Page.navigate"` with a stray quote — the method string IS user input
+    // for this entry point). paramsJson is trusted JSON — it came from
+    // JSON.stringify which guarantees well-formed output. The builder's
+    // finishAndWrite appends the closing }} so paramsJson must be the inner
+    // object without the outer braces; we write it verbatim and skip the
+    // normal str()/num() comma machinery.
+    struct RawTag {};
+    Command(RawTag, uint32_t id, const WTF::String& method, std::span<const char> sessionId, const WTF::String& paramsJson)
+    {
+        m_sb.append("{\"id\":"_s, id, ",\"method\":"_s);
+        m_sb.appendQuotedJSONString(method);
+        if (!sessionId.empty()) {
+            m_sb.append(",\"sessionId\":\""_s);
+            m_sb.append(std::span<const Latin1Character>(
+                reinterpret_cast<const Latin1Character*>(sessionId.data()), sessionId.size()));
+            m_sb.append('"');
+        }
+        // paramsJson is an object or {} — the user passed `params` or
+        // nothing. JSON.stringify already handled escapes/encoding. We
+        // write `,"params":` then the verbatim JSON, then cheat: set
+        // m_paramsRaw so finishAndWrite appends a single } (the frame
+        // close) instead of }} (frame close + our implicit params brace).
+        m_sb.append(",\"params\":"_s);
+        m_sb.append(paramsJson);
+        m_paramsRaw = true;
+    }
+
     // Named string param. appendQuotedJSONString adds the quotes + escapes.
     // Rvalue-ref-qualified returns Command&& so chaining on a temporary
     // (the usual `send(Command(...).str(...).num(...))` pattern) stays an
@@ -143,7 +173,10 @@ public:
     template<typename Sink> // void(const char*, size_t)
     void finishAndWrite(Sink&& sink)
     {
-        m_sb.append("}}"_s);
+        // RawTag constructor already wrote the complete params object;
+        // only the outer frame brace remains. Normal path needs both the
+        // params brace and the frame brace.
+        m_sb.append(m_paramsRaw ? "}"_s : "}}"_s);
         if (m_sb.is8Bit()) [[likely]] {
             auto s = m_sb.span8();
             // OR-accumulate: all bytes < 0x80 → no high bit → valid ASCII.
@@ -172,6 +205,7 @@ private:
 
     WTF::StringBuilder m_sb;
     bool m_hasParam = false;
+    bool m_paramsRaw = false;
 };
 
 // --- Method tags -----------------------------------------------------------
@@ -215,6 +249,11 @@ enum class Method : uint8_t {
     // block.
     ClickSelectorEval, // actionability → "cx,cy" → dispatchMouseEvent
     ScrollToSelectorEval, // scrollIntoView ran page-side → settle
+    // User-supplied raw command via view.cdp(method, params). Response
+    // handler runs the result/error JSON through JSC's JSONParse and
+    // settles the promise with the decoded JSValue — caller gets the
+    // same object shape CDP documents.
+    UserRaw,
 };
 
 // Shared actionability/scrollTo JS — same predicate as WKWebView's
@@ -281,6 +320,10 @@ enum class PendingSlot : uint8_t {
     Evaluate,
     Screenshot,
     Misc,
+    // Raw view.cdp() escape hatch. Separate slot so it doesn't block
+    // resize/goBack/etc. Still one-at-a-time (slot model, not id-keyed
+    // promise map) — lift in v2 when/if someone needs burst CDP.
+    Cdp,
 };
 
 struct Pending {
@@ -360,6 +403,10 @@ JSC::JSPromise* resize(JSC::JSGlobalObject*, JSWebView*, uint32_t width, uint32_
 JSC::JSPromise* goBack(JSC::JSGlobalObject*, JSWebView*);
 JSC::JSPromise* goForward(JSC::JSGlobalObject*, JSWebView*);
 JSC::JSPromise* reload(JSC::JSGlobalObject*, JSWebView*);
+// paramsJson is the output of JSON.stringify(params) — a well-formed JSON
+// object string, or "{}" if the user passed nothing. method is the CDP
+// domain-qualified name ("Page.captureScreenshot" etc.).
+JSC::JSPromise* cdp(JSC::JSGlobalObject*, JSWebView*, const WTF::String& method, const WTF::String& paramsJson);
 void close(JSWebView*);
 
 } // namespace Ops

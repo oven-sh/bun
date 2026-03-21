@@ -111,6 +111,9 @@ public:
     JSC::WriteBarrier<JSC::JSPromise> m_pendingScreenshot;
     // Resize/Back/Forward/Reload/Close — one at a time, the child is fast.
     JSC::WriteBarrier<JSC::JSPromise> m_pendingMisc;
+    // Chrome-only: raw view.cdp(method, params) escape hatch. Separate
+    // slot so it doesn't block resize/goBack. Still one raw op at a time.
+    JSC::WriteBarrier<JSC::JSPromise> m_pendingCdp;
     // Read by isReachableFromOpaqueRoots on the GC thread — the barriers
     // themselves are not safe to read there. Inc BEFORE slot.set(), dec
     // AFTER slot.clear(), so GC never sees a set slot with count==0.
@@ -134,6 +137,10 @@ public:
     JSC::JSPromise* navigate(JSC::JSGlobalObject*, const WTF::String& url);
     JSC::JSPromise* evaluate(JSC::JSGlobalObject*, const WTF::String& script);
     JSC::JSPromise* screenshot(JSC::JSGlobalObject*, ScreenshotFormat, uint8_t quality);
+    // Chrome-only. Raw CDP escape hatch — method is "Domain.method",
+    // paramsJson is JSON.stringify(params) or "{}". Returns the decoded
+    // result object from the CDP response.
+    JSC::JSPromise* cdp(JSC::JSGlobalObject*, const WTF::String& method, const WTF::String& paramsJson);
     JSC::JSPromise* click(JSC::JSGlobalObject*, float x, float y, uint8_t button, uint8_t modifiers, uint8_t clickCount);
     JSC::JSPromise* clickSelector(JSC::JSGlobalObject*, const WTF::String& selector, uint32_t timeout, uint8_t button, uint8_t modifiers, uint8_t clickCount);
     JSC::JSPromise* type(JSC::JSGlobalObject*, const WTF::String& text);

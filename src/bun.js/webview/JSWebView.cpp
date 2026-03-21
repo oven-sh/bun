@@ -157,6 +157,7 @@ void JSWebView::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_pendingEval);
     visitor.append(thisObject->m_pendingScreenshot);
     visitor.append(thisObject->m_pendingMisc);
+    visitor.append(thisObject->m_pendingCdp);
 }
 
 DEFINE_VISIT_CHILDREN(JSWebView);
@@ -198,6 +199,15 @@ JSPromise* JSWebView::screenshot(JSGlobalObject* g, ScreenshotFormat format, uin
     m_screenshotFormat = format;
     if (m_backend == WebViewBackend::Chrome) return CDP::Ops::screenshot(g, this, format, quality);
     WK_DISPATCH(WK::Ops::screenshot(g, this, format, quality));
+}
+
+JSPromise* JSWebView::cdp(JSGlobalObject* g, const WTF::String& method, const WTF::String& paramsJson)
+{
+    // Chrome-only — the prototype function already threw for WebKit. The
+    // backend check here is defensive (RELEASE_ASSERT would work but costs
+    // nothing to return a rejected promise instead).
+    ASSERT(m_backend == WebViewBackend::Chrome);
+    return CDP::Ops::cdp(g, this, method, paramsJson);
 }
 
 JSPromise* JSWebView::click(JSGlobalObject* g, float x, float y, uint8_t button, uint8_t modifiers, uint8_t clickCount)

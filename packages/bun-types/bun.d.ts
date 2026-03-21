@@ -8193,6 +8193,38 @@ declare module "bun" {
     screenshot(options?: { format?: "png" | "jpeg" | "webp"; quality?: number }): Promise<Blob>;
 
     /**
+     * Send a raw Chrome DevTools Protocol command. **Chrome backend only.**
+     *
+     * The command is scoped to this view's session (targets the current
+     * tab). Returns the decoded `result` object from the CDP response, or
+     * rejects with the `error.message` if Chrome reports a protocol error.
+     *
+     * Call `await view.navigate(...)` at least once before using `cdp()` —
+     * the first navigate sets up the CDP session.
+     *
+     * @param method Domain-qualified method name, e.g.
+     *   `"Runtime.evaluate"`, `"DOM.querySelector"`,
+     *   `"Emulation.setUserAgentOverride"`.
+     * @param params Command parameters. Must be JSON-serializable.
+     *
+     * @example
+     * ```ts
+     * const view = new Bun.WebView({ backend: "chrome" });
+     * await view.navigate("https://example.com");
+     *
+     * const { root } = await view.cdp("DOM.getDocument");
+     * const { nodeId } = await view.cdp("DOM.querySelector", {
+     *   nodeId: root.nodeId,
+     *   selector: "input#search",
+     * });
+     * await view.cdp("DOM.focus", { nodeId });
+     * ```
+     *
+     * @see https://chromedevtools.github.io/devtools-protocol/
+     */
+    cdp<T = unknown>(method: string, params?: Record<string, unknown>): Promise<T>;
+
+    /**
      * Click at the given viewport coordinates.
      *
      * Fires native `pointerdown`/`mousedown`/`pointerup`/`mouseup`/`click`

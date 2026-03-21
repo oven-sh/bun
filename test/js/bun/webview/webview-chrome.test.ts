@@ -187,6 +187,55 @@ it("chrome: screenshot format options produce the right magic bytes", async () =
   }
 });
 
+it("chrome: cdp() raw passthrough", async () => {
+  const view = new Bun.WebView({ backend: "chrome", width: 200, height: 200 });
+  try {
+    await view.navigate(html("<body><input id=q value='hello'></body>"));
+
+    // DOM.getDocument → root nodeId. The result shape is documented CDP.
+    const doc = await view.cdp<{ root: { nodeId: number } }>("DOM.getDocument");
+    expect(typeof doc.root.nodeId).toBe("number");
+
+    // DOM.querySelector chained through the nodeId.
+    const { nodeId } = await view.cdp<{ nodeId: number }>("DOM.querySelector", {
+      nodeId: doc.root.nodeId,
+      selector: "#q",
+    });
+    expect(nodeId).toBeGreaterThan(0);
+
+    // Runtime.evaluate as a sanity check — same mechanism as view.evaluate()
+    // but we get the raw CDP result object (including .type).
+    const r = await view.cdp<{ result: { type: string; value: string } }>("Runtime.evaluate", {
+      expression: "document.querySelector('#q').value",
+      returnByValue: true,
+    });
+    expect(r.result.type).toBe("string");
+    expect(r.result.value).toBe("hello");
+
+    // Unknown method rejects with Chrome's -32601.
+    await expect(view.cdp("NotADomain.nope")).rejects.toThrow(/wasn't found|method/i);
+
+    // Empty result object (Input.* style) — should resolve {}.
+    const empty = await view.cdp<object>("Page.bringToFront");
+    expect(empty).toEqual({});
+  } finally {
+    view.close();
+  }
+});
+
+it("chrome: cdp() guards — WebKit backend and before navigate", async () => {
+  // Chrome before first navigate → no sessionId → INVALID_STATE.
+  const crView = new Bun.WebView({ backend: "chrome", width: 100, height: 100 });
+  try {
+    expect(() => crView.cdp("Page.enable")).toThrow(/session.*navigate/i);
+    // params validation: non-object rejected before any I/O.
+    await crView.navigate(html("<body></body>"));
+    expect(() => crView.cdp("Page.enable", 42 as any)).toThrow(/object/);
+  } finally {
+    crView.close();
+  }
+});
+
 it("chrome: screenshot quality option affects JPEG size", async () => {
   const view = new Bun.WebView({ backend: "chrome", width: 200, height: 200 });
   try {

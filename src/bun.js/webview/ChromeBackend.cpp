@@ -432,6 +432,8 @@ static WriteBarrier<JSPromise>& slotFor(JSWebView* view, PendingSlot s)
         return view->m_pendingScreenshot;
     case PendingSlot::Misc:
         return view->m_pendingMisc;
+    case PendingSlot::Cdp:
+        return view->m_pendingCdp;
     }
     ASSERT_NOT_REACHED();
     return view->m_pendingMisc;
@@ -770,6 +772,18 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
                 .num("modifiers"_s, mods));
         return;
     }
+
+    case Method::UserRaw: {
+        // User-supplied raw command via view.cdp(). result is the verbatim
+        // CDP result object JSON; JSONParse it into a JSValue so the user
+        // gets the same object shape CDP documents. The error path is
+        // handled earlier in this function (error span non-empty → reject
+        // with createError). Some CDP methods legitimately return `{}`
+        // (Input.*, Page.reload) — JSONParse gives an empty JSObject.
+        JSValue v = JSONParse(g, WTF::String::fromUTF8(result));
+        settle(g, view, entry.slot, true, v ? v : jsUndefined());
+        return;
+    }
     }
 }
 
@@ -795,7 +809,7 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
         if (!view) return;
         // Reject all pending slots. settle() is idempotent on empty slots.
         auto* err = createError(g, "page detached (crashed or closed)"_s);
-        for (auto s : { PendingSlot::Navigate, PendingSlot::Evaluate, PendingSlot::Screenshot, PendingSlot::Misc })
+        for (auto s : { PendingSlot::Navigate, PendingSlot::Evaluate, PendingSlot::Screenshot, PendingSlot::Misc, PendingSlot::Cdp })
             settle(g, view, s, false, err);
         // Erase stale m_pending entries — replies won't come.
         m_pending.removeIf([&](auto& kv) { return kv.value.view.get() == view; });
@@ -1080,6 +1094,29 @@ JSPromise* evaluate(JSGlobalObject* g, JSWebView* view, const WTF::String& scrip
             .str("expression"_s, body)
             .boolean("returnByValue"_s, true)
             .boolean("awaitPromise"_s, true));
+}
+
+// Raw CDP escape hatch. method is the domain-qualified name
+// ("Page.captureScreenshot", "DOM.querySelector", etc.); paramsJson is the
+// output of JSON.stringify(params) — a well-formed JSON object or "{}".
+// The Command::RawTag constructor passes both through: method gets
+// appendQuotedJSONString (it's user input, could have a stray quote),
+// paramsJson is inserted verbatim (JSON.stringify guarantees well-formed).
+// Response handler JSONParse's the result object and settles with the
+// decoded JSValue — caller gets the same object shape CDP documents.
+//
+// Scoped to the view's sessionId, so commands target THIS tab. Browser-
+// level commands (Target.*, Browser.*) need the sessionId omitted —
+// if m_sessionId is empty (first-navigate chain not yet complete) we send
+// browser-level. For explicit browser-level after attach, the user can
+// construct a second WebView or await Bun-side Target APIs (v2).
+JSPromise* cdp(JSGlobalObject* g, JSWebView* view, const WTF::String& method, const WTF::String& paramsJson)
+{
+    auto& t = transport();
+    uint32_t id = t.nextId();
+    return sendChromeOp(g, view, view->m_pendingCdp, PendingSlot::Cdp,
+        Method::UserRaw, id,
+        Command(Command::RawTag {}, id, method, sidSpan(view->m_sessionId), paramsJson));
 }
 
 JSPromise* screenshot(JSGlobalObject* g, JSWebView* view, ScreenshotFormat format, uint8_t quality)

@@ -305,6 +305,9 @@ it("screenshot format options", async () => {
   // quality validation
   expect(() => view.screenshot({ quality: 101 } as any)).toThrow(/quality.*0.*100/);
   expect(() => view.screenshot({ format: "gif" } as any)).toThrow(/png.*jpeg.*webp/i);
+
+  // cdp() is Chrome-only.
+  expect(() => view.cdp("Page.enable")).toThrow(/chrome/i);
 });
 
 it("screenshot Blob survives GC (mmap-backed store)", async () => {

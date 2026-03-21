@@ -9,6 +9,7 @@
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
+#include <JavaScriptCore/JSONObject.h>
 #include <wtf/text/MakeString.h>
 
 #include "ipc_protocol.h" // VirtualKey, Mod*
@@ -20,6 +21,7 @@ using namespace JSC;
 static JSC_DECLARE_HOST_FUNCTION(jsWebViewProtoFuncNavigate);
 static JSC_DECLARE_HOST_FUNCTION(jsWebViewProtoFuncEvaluate);
 static JSC_DECLARE_HOST_FUNCTION(jsWebViewProtoFuncScreenshot);
+static JSC_DECLARE_HOST_FUNCTION(jsWebViewProtoFuncCdp);
 static JSC_DECLARE_HOST_FUNCTION(jsWebViewProtoFuncClick);
 static JSC_DECLARE_HOST_FUNCTION(jsWebViewProtoFuncType);
 static JSC_DECLARE_HOST_FUNCTION(jsWebViewProtoFuncPress);
@@ -43,6 +45,7 @@ static const HashTableValue JSWebViewPrototypeTableValues[] = {
     { "navigate"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWebViewProtoFuncNavigate, 1 } },
     { "evaluate"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWebViewProtoFuncEvaluate, 1 } },
     { "screenshot"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWebViewProtoFuncScreenshot, 0 } },
+    { "cdp"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWebViewProtoFuncCdp, 1 } },
     { "click"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWebViewProtoFuncClick, 2 } },
     { "type"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWebViewProtoFuncType, 1 } },
     { "press"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWebViewProtoFuncPress, 1 } },
@@ -292,6 +295,69 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncScreenshot, (JSGlobalObject * globalO
     }
 
     return JSValue::encode(thisObject->screenshot(globalObject, format, quality));
+}
+
+// Raw Chrome DevTools Protocol escape hatch. view.cdp("Domain.method",
+// {params}) → JSON.parse(response.result). Chrome-only: WebKit's host
+// subprocess speaks a binary frame protocol, not CDP. WKWebView DOES have
+// _WKInspector SPI but wiring it through the host process + shm is a
+// different project.
+//
+// params is JSON.stringify'd here and inserted verbatim into the CDP
+// envelope. JSONStringify rejects cycles and non-serializable values with
+// a TypeError — same as `JSON.stringify(params)` in user code.
+//
+// The command carries this view's sessionId, so it targets THIS tab.
+// Domain-qualified: "Page.captureScreenshot", "Runtime.evaluate",
+// "DOM.querySelector", etc. Not validated here — Chrome returns a
+// {"code":-32601,"message":"'Foo.bar' wasn't found"} error which rejects
+// the promise.
+JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncCdp, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* thisObject = unwrapThis(globalObject, scope, callFrame, "cdp"_s);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    if (thisObject->m_backend != WebViewBackend::Chrome)
+        return Bun::throwError(globalObject, scope, ErrorCode::ERR_METHOD_NOT_IMPLEMENTED,
+            "WebView.cdp() requires backend: \"chrome\""_s);
+
+    // Must have attached (first navigate() completes the target→session
+    // chain). Before attach there's no sessionId; a browser-level CDP
+    // command here would reach the wrong target. The user can `await
+    // navigate(...)` first to get a session, or use Bun.WebView.chrome()
+    // for browser-level commands (v2).
+    if (thisObject->m_sessionId.isEmpty())
+        return Bun::ERR::INVALID_STATE(scope, globalObject,
+            "WebView.cdp(): no session - await navigate() first"_s);
+
+    JSValue methodArg = callFrame->argument(0);
+    if (!methodArg.isString())
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "method"_s, "string"_s, methodArg);
+    WTF::String method = methodArg.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    // params: JSON.stringify or default to "{}". JSONStringify handles
+    // escape/encoding; its output is well-formed JSON we can insert
+    // verbatim into the CDP envelope. undefined/null → "{}" (most CDP
+    // methods accept empty params).
+    JSValue paramsArg = callFrame->argument(1);
+    WTF::String paramsJson;
+    if (paramsArg.isUndefinedOrNull()) {
+        paramsJson = "{}"_s;
+    } else {
+        paramsJson = JSONStringify(globalObject, paramsArg, 0);
+        RETURN_IF_EXCEPTION(scope, {});
+        // JSONStringify returns empty for non-serializable (function,
+        // symbol as root). CDP params must be an object.
+        if (paramsJson.isEmpty() || paramsJson[0] != '{')
+            return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE,
+                "params must be a JSON-serializable object"_s);
+    }
+
+    if (!checkSlot(globalObject, scope, thisObject->m_pendingCdp, "a cdp()"_s)) return {};
+    return JSValue::encode(thisObject->cdp(globalObject, method, paramsJson));
 }
 
 // --- Native input -----------------------------------------------------------

@@ -7,4 +7,9 @@ test("FFI.closeCallback with invalid argument does not crash", () => {
   expect(() => FFI.closeCallback({})).toThrow();
   expect(() => FFI.closeCallback(undefined)).toThrow();
   expect(() => FFI.closeCallback(null)).toThrow();
+  expect(() => FFI.closeCallback(0)).toThrow();
+  expect(() => FFI.closeCallback(NaN)).toThrow();
+  expect(() => FFI.closeCallback(Infinity)).toThrow();
+  expect(() => FFI.closeCallback(-Infinity)).toThrow();
+  expect(() => FFI.closeCallback(-1)).toThrow();
 });

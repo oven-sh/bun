@@ -831,7 +831,8 @@ pub const FFI = struct {
     }
 
     pub fn closeCallback(globalThis: *JSGlobalObject, ctx: JSValue) bun.JSError!JSValue {
-        if (!ctx.isNumber()) {
+        const max_addr = @as(f64, @as(comptime_float, std.math.maxInt(usize)));
+        if (!ctx.isNumber() or !(ctx.asNumber() >= 0 and ctx.asNumber() <= max_addr)) {
             return globalThis.throwInvalidArguments("Expected a FFI callback context", .{});
         }
         const addr = ctx.asPtrAddress();

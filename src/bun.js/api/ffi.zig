@@ -830,8 +830,11 @@ pub const FFI = struct {
         return js_object;
     }
 
-    pub fn closeCallback(globalThis: *JSGlobalObject, ctx: JSValue) JSValue {
-        var function: *Function = @ptrFromInt(ctx.asPtrAddress());
+    pub fn closeCallback(globalThis: *JSGlobalObject, ctx: JSValue) bun.JSError!JSValue {
+        if (!ctx.isNumber()) return globalThis.throwInvalidArguments("Expected a pointer", .{});
+        const addr = ctx.asPtrAddress();
+        if (addr == 0) return globalThis.throwInvalidArguments("Expected a non-null pointer", .{});
+        var function: *Function = @ptrFromInt(addr);
         function.deinit(globalThis);
         return .js_undefined;
     }

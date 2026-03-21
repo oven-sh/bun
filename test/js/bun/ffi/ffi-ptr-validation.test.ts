@@ -1,5 +1,4 @@
-import { toArrayBuffer, CString } from "bun:ffi";
-import { describe, expect, test } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
 test("toArrayBuffer with small invalid pointer does not crash", async () => {
@@ -10,11 +9,7 @@ test("toArrayBuffer with small invalid pointer does not crash", async () => {
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stdout).toBe("ok\n");
   expect(exitCode).toBe(0);
@@ -28,11 +23,7 @@ test("CString with small invalid pointer does not crash", async () => {
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stdout).toBe("ok\n");
   expect(exitCode).toBe(0);

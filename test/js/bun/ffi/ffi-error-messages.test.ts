@@ -1,4 +1,4 @@
-import { dlopen, linkSymbols } from "bun:ffi";
+import { CString, dlopen, linkSymbols } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
 import { isArm64, isMusl, isWindows } from "harness";
 
@@ -74,6 +74,14 @@ describe.skipIf(isFFIUnavailable)("FFI error messages", () => {
     expect(() => {
       linkSymbols({ a: "hello", b: 123, c: true });
     }).toThrow("Expected an object");
+  });
+
+  test("CString with invalid low address does not crash", () => {
+    // Addresses below the page size are in unmapped memory and must not segfault
+    expect(String(new CString(512))).toContain("invalid memory");
+    expect(String(new CString(1))).toContain("invalid memory");
+    // Low base address with byteOffset that crosses page boundary must also be rejected
+    expect(String(new CString(512, 3585))).toContain("invalid memory");
   });
 
   test("linkSymbols with non-number ptr does not crash", () => {

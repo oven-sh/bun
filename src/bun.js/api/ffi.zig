@@ -831,16 +831,17 @@ pub const FFI = struct {
     }
 
     pub fn closeCallback(globalThis: *JSGlobalObject, ctx: JSValue) bun.JSError!JSValue {
-        const max_addr = @as(f64, @as(comptime_float, std.math.maxInt(usize)));
-        if (!ctx.isNumber() or !(ctx.asNumber() >= 0 and ctx.asNumber() <= max_addr)) {
+        const max_addr_exclusive = @as(f64, @as(comptime_float, @as(u128, std.math.maxInt(usize)) + 1));
+        if (!ctx.isNumber() or !(ctx.asNumber() >= 0 and ctx.asNumber() < max_addr_exclusive)) {
             return globalThis.throwInvalidArguments("Expected a FFI callback context", .{});
         }
         const addr = ctx.asPtrAddress();
         if (addr == 0) {
             return globalThis.throwInvalidArguments("Expected a FFI callback context", .{});
         }
-        var function: *Function = @ptrFromInt(addr);
+        const function: *Function = @ptrFromInt(addr);
         function.deinit(globalThis);
+        bun.default_allocator.destroy(function);
         return .js_undefined;
     }
 

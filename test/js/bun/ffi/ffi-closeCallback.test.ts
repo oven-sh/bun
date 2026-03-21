@@ -7,5 +7,10 @@ test("FFI closeCallback does not crash with invalid arguments", () => {
   expect(() => ffi.closeCallback({})).toThrow("Expected a number");
   expect(() => ffi.closeCallback("str")).toThrow("Expected a number");
   expect(() => ffi.closeCallback(new Float64Array(1))).toThrow("Expected a number");
+  expect(() => ffi.closeCallback(NaN)).toThrow("Expected a number");
+  expect(() => ffi.closeCallback(Infinity)).toThrow("Expected a number");
+  expect(() => ffi.closeCallback(-Infinity)).toThrow("Expected a number");
   expect(() => ffi.closeCallback(0)).toThrow("Expected a non-zero pointer");
+  expect(() => ffi.closeCallback(-1)).toThrow("Expected a non-zero pointer");
+  expect(() => ffi.closeCallback(1.5)).toThrow("Expected a non-zero pointer");
 });

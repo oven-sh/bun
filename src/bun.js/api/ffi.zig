@@ -831,13 +831,14 @@ pub const FFI = struct {
     }
 
     pub fn closeCallback(globalThis: *JSGlobalObject, ctx: JSValue) JSValue {
-        if (!ctx.isNumber()) {
+        if (!ctx.isFinite()) {
             return globalThis.toInvalidArguments("Expected a number", .{});
         }
-        const addr = ctx.asPtrAddress();
-        if (addr == 0) {
+        const num = ctx.asNumber();
+        if (num < 1 or num != @trunc(num)) {
             return globalThis.toInvalidArguments("Expected a non-zero pointer", .{});
         }
+        const addr: usize = @intFromFloat(num);
         var function: *Function = @ptrFromInt(addr);
         function.deinit(globalThis);
         return .js_undefined;

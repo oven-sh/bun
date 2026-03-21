@@ -357,18 +357,20 @@ it("should support asymmetric matchers", () => {
 
 it("works on prototypes", () => {
   const Bar = {
-    _toBeBar() {
+    _toBeInherited() {
       return { pass: true };
     },
   };
   const Foo = Object.create(Bar);
-  Foo._toBeBaz = function () {
+  Foo._toBeOwned = function () {
     return { pass: true };
   };
 
   // Only own properties are registered (matching Jest behavior)
   expect.extend(Foo);
-  expect(123)._toBeBaz();
+  expect(123)._toBeOwned();
+  // Inherited matchers should not be registered
+  expect(() => expect(123)._toBeInherited()).toThrow();
 });
 
 it("works on plain objects", () => {

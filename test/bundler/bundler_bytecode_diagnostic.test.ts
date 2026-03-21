@@ -1,6 +1,6 @@
 // Diagnostic test to narrow down where bytecode compilation hangs on Linux CI.
 // Each step is a separate test so we can see exactly which one fails.
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 

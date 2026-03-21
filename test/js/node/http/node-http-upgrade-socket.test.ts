@@ -145,9 +145,11 @@ describe("node:http server upgrade", () => {
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    const actual = Number(stdout.match(/bytesWritten:(\d+)/)?.[1]);
-    const expected = Number(stdout.match(/expected:(\d+)/)?.[1]);
-    expect(actual).toBe(expected);
+    const actualMatch = stdout.match(/bytesWritten:(\d+)/);
+    const expectedMatch = stdout.match(/expected:(\d+)/);
+    expect(actualMatch).not.toBeNull();
+    expect(expectedMatch).not.toBeNull();
+    expect(Number(actualMatch![1])).toBe(Number(expectedMatch![1]));
     expect(exitCode).toBe(0);
   });
 
@@ -305,6 +307,7 @@ describe("node:http server upgrade", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     const lines = stdout.trim().split("\n");
+    expect(lines.find(l => l.startsWith("FAIL:"))).toBeUndefined();
     expect(lines).toContain("request-event");
     expect(lines.find(l => l.startsWith("status:"))).toBe("status:HTTP/1.1 200 OK");
     expect(exitCode).toBe(0);

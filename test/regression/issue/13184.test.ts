@@ -35,7 +35,7 @@ async function testServerCloseCompletes(
   client.connect(addr.port, "127.0.0.1", onClientConnect);
 
   await clientConnected;
-  client.write("hello world ".repeat(100));
+  client.write(Buffer.alloc(1200, "hello world ").toString());
 
   // Teardown the client and wait for the server-side socket to close
   client[teardown]();

@@ -286,7 +286,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncScreenshot, (JSGlobalObject * globalO
         RETURN_IF_EXCEPTION(scope, {});
         if (qVal.isNumber()) {
             double q = qVal.asNumber();
-            if (q < 0 || q > 100)
+            if (!std::isfinite(q) || q < 0 || q > 100)
                 return Bun::ERR::OUT_OF_RANGE(scope, globalObject, "quality"_s, 0, 100, qVal);
             quality = static_cast<uint8_t>(q);
         } else if (!qVal.isUndefined())

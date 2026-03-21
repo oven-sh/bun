@@ -1385,6 +1385,7 @@ void close(JSWebView* view)
         settleSlot(g, view, view->m_pendingEval, false, err);
         settleSlot(g, view, view->m_pendingScreenshot, false, err);
         settleSlot(g, view, view->m_pendingMisc, false, err);
+        settleSlot(g, view, view->m_pendingCdp, false, err);
     }
     // Prune m_pending entries for this view — the attach chain
     // (TargetCreateTarget → TargetAttachToTarget → PageEnable →

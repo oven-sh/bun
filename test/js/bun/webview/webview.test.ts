@@ -48,10 +48,11 @@ it("dispatchEvent fires addEventListener callbacks", () => {
   try {
     let fired = 0;
     let target: EventTarget | null = null;
-    view.addEventListener("test", e => {
+    const handler = (e: Event) => {
       fired++;
       target = e.target;
-    });
+    };
+    view.addEventListener("test", handler);
     const dispatched = view.dispatchEvent(new Event("test"));
     expect(dispatched).toBe(true);
     expect(fired).toBe(1);
@@ -59,10 +60,15 @@ it("dispatchEvent fires addEventListener callbacks", () => {
     // impl→wrapper Weak — returns the JSWebView instance.
     expect(target).toBe(view);
 
-    // removeEventListener unhooks.
-    view.removeEventListener("test", view.addEventListener as any); // wrong fn, no-op
+    // removeEventListener with a different function reference is a no-op.
+    view.removeEventListener("test", () => {});
     view.dispatchEvent(new Event("test"));
     expect(fired).toBe(2); // still registered
+
+    // removeEventListener with the exact reference unhooks.
+    view.removeEventListener("test", handler);
+    view.dispatchEvent(new Event("test"));
+    expect(fired).toBe(2); // unchanged — handler removed
 
     // Multiple listeners on same event fire in registration order.
     const order: number[] = [];
@@ -302,8 +308,10 @@ it("screenshot format options", async () => {
   // Thrown synchronously (arg validation), not promise-rejection.
   expect(() => view.screenshot({ format: "webp" })).toThrow(/webp.*chrome/i);
 
-  // quality validation
+  // quality validation — NaN/Infinity are rejected (isfinite check).
   expect(() => view.screenshot({ quality: 101 } as any)).toThrow(/quality.*0.*100/);
+  expect(() => view.screenshot({ quality: NaN } as any)).toThrow(/quality.*0.*100/);
+  expect(() => view.screenshot({ quality: Infinity } as any)).toThrow(/quality.*0.*100/);
   expect(() => view.screenshot({ format: "gif" } as any)).toThrow(/png.*jpeg.*webp/i);
 
   // cdp() is Chrome-only.

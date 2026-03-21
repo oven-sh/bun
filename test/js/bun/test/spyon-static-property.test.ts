@@ -1,4 +1,4 @@
-import { expect, test, spyOn } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 
 test("spyOn works on static hash table function properties", () => {
   const spy = spyOn(Bun, "gc");

@@ -24,5 +24,6 @@ try { new F(); } catch (e) {}
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stdout).toBe("");
+  expect(stderr).toContain("RangeError");
   expect(exitCode).toBe(1);
 });

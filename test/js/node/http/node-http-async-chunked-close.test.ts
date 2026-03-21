@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import * as http from "node:http";
 import * as net from "node:net";
 

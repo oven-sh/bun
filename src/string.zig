@@ -240,6 +240,10 @@ pub const String = extern struct {
         return this.tag == .Empty or this.length() == 0;
     }
 
+    pub fn isSymbol(this: String) bool {
+        return this.tag == .WTFStringImpl and this.value.WTFStringImpl.isSymbol();
+    }
+
     pub fn dupeRef(this: String) String {
         this.ref();
         return this;

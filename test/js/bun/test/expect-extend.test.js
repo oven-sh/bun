@@ -422,3 +422,14 @@ it("does not crash when prototype has non-function properties like Symbol.toStri
   expect.extend(matchers);
   expect(42)._toBeOwnProp(42);
 });
+
+it("skips own symbol-keyed properties", () => {
+  // Own symbol properties should be silently skipped (matching Jest's Object.keys behavior)
+  expect.extend({
+    [Symbol.toStringTag]: "MyMatchers",
+    _toBeOwnSymbolTest(actual, expected) {
+      return { pass: actual === expected, message: () => `expected ${actual} to be ${expected}` };
+    },
+  });
+  expect(42)._toBeOwnSymbolTest(42);
+});

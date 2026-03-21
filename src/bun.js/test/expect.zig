@@ -944,6 +944,7 @@ pub const Expect = struct {
             defer iter.deinit();
 
             while (try iter.next()) |*matcher_name| {
+                if (matcher_name.isSymbol()) continue;
                 const matcher_fn: JSValue = iter.value;
 
                 if (!matcher_fn.jsType().isFunction()) {

@@ -352,6 +352,7 @@ function ClientRequest(input, options, cb) {
     let res: any = null;
     let upgraded = false;
     let pendingUpgrade: any = null;
+    let parserFreed = false;
 
     const responseComplete = () => {
       if (res && !res.complete) {
@@ -361,7 +362,10 @@ function ClientRequest(input, options, cb) {
       this[kClearTimeout]();
       fetching = false;
       this[kFetchRequest] = null;
-      freeParser(parser, this, socket);
+      if (!parserFreed) {
+        parserFreed = true;
+        freeParser(parser, this, socket);
+      }
       maybeEmitClose();
     };
 
@@ -421,13 +425,24 @@ function ClientRequest(input, options, cb) {
       // bytes (head) from the same TCP segment after the 101 headers.
       if (upgrade || (method === "CONNECT" && statusCode === 200)) {
         upgraded = true;
+        // Build a proper IncomingMessage for the upgrade response,
+        // matching Node.js API contract.
+        const prevIsHTTPS = getIsNextIncomingMessageHTTPS();
+        setIsNextIncomingMessageHTTPS(protocol === "https:");
+        const upgradeRes = new IncomingMessage(null, {});
+        setIsNextIncomingMessageHTTPS(prevIsHTTPS);
+        upgradeRes[statusCodeSymbol] = statusCode;
+        upgradeRes[statusMessageSymbol] = statusMessage;
+        upgradeRes.httpVersion = `${vMaj}.${vMin}`;
+        upgradeRes.headers = buildHeaders(headers);
+        upgradeRes.rawHeaders = headers;
+        upgradeRes[bodyStreamSymbol] = true;
+        upgradeRes.socket = socket;
         pendingUpgrade = {
-          headers: buildHeaders(headers),
-          rawHeaders: headers,
-          statusCode,
-          statusMessage,
+          res: upgradeRes,
           isUpgrade: !!upgrade,
         };
+        parserFreed = true;
         freeParser(parser, this, socket);
         return 1; // skip body — parser pauses, returns bytes consumed
       }
@@ -494,7 +509,20 @@ function ClientRequest(input, options, cb) {
       parser._headers.push(...headers);
     };
 
-    socket.on("data", chunk => {
+    const onData = chunk => {
+      if (parserFreed) {
+        // After upgrade, if there's a pending emit, do it with leftover bytes.
+        if (pendingUpgrade) {
+          const info = pendingUpgrade;
+          pendingUpgrade = null;
+          // Remove parser-related listeners since the socket is now in raw mode.
+          socket.removeListener("data", onData);
+          socket.removeListener("end", onEnd);
+          // Re-emit leftover data so the upgrade consumer sees it.
+          this.emit(info.isUpgrade ? "upgrade" : "connect", info.res, socket, chunk);
+        }
+        return;
+      }
       const ret = parser.execute(chunk);
       if (ret instanceof Error) {
         socket.destroy();
@@ -506,16 +534,23 @@ function ClientRequest(input, options, cb) {
       if (pendingUpgrade) {
         const info = pendingUpgrade;
         pendingUpgrade = null;
+        // Remove parser-related listeners since the socket is now in raw mode.
+        socket.removeListener("data", onData);
+        socket.removeListener("end", onEnd);
         const head = typeof ret === "number" && ret < chunk.length ? chunk.slice(ret) : Buffer.alloc(0);
-        const infoRes = {
-          statusCode: info.statusCode,
-          statusMessage: info.statusMessage,
-          headers: info.headers,
-          rawHeaders: info.rawHeaders,
-        };
-        this.emit(info.isUpgrade ? "upgrade" : "connect", infoRes, socket, head);
+        this.emit(info.isUpgrade ? "upgrade" : "connect", info.res, socket, head);
       }
-    });
+    };
+    const onEnd = () => {
+      if (parserFreed) return;
+      parser.finish();
+      // If the response is still incomplete after parser.finish(), the connection
+      // was closed prematurely — surface an error instead of silently completing.
+      if (res && !res.complete) {
+        res.destroy(new ConnResetException("aborted"));
+      }
+    };
+    socket.on("data", onData);
     socket.on("error", err => {
       if (isAbortError(err)) return;
       try {
@@ -524,14 +559,7 @@ function ClientRequest(input, options, cb) {
         if (!!$debug) globalReportError(e);
       }
     });
-    socket.on("end", () => {
-      parser.finish();
-      // If the response is still incomplete after parser.finish(), the connection
-      // was closed prematurely — surface an error instead of silently completing.
-      if (res && !res.complete) {
-        res.destroy(new ConnResetException("aborted"));
-      }
-    });
+    socket.on("end", onEnd);
     socket.on("close", () => {
       // Handle premature close
       if (res && !res.complete) {
@@ -542,7 +570,10 @@ function ClientRequest(input, options, cb) {
         this.emit("error", new ConnResetException("aborted"));
       }
       // Free parser resources on any close to avoid leaks
-      freeParser(parser, this, socket);
+      if (!parserFreed) {
+        parserFreed = true;
+        freeParser(parser, this, socket);
+      }
       // Mark the request as closed/destroyed without calling socketCloseListener(),
       // which would re-emit "close" on this.socket (the real socket) causing duplicates.
       this.destroyed = true;

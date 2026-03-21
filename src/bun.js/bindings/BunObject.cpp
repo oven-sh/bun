@@ -99,6 +99,7 @@ static JSValue BunObject_lazyPropCb_wrap_ArrayBufferSink(VM& vm, JSObject* bunOb
 static JSValue constructCookieObject(VM& vm, JSObject* bunObject);
 static JSValue constructCookieMapObject(VM& vm, JSObject* bunObject);
 static JSValue constructSecretsObject(VM& vm, JSObject* bunObject);
+static JSValue constructWebViewObject(VM& vm, JSObject* bunObject);
 
 static JSValue constructEnvObject(VM& vm, JSObject* object)
 {
@@ -966,6 +967,8 @@ DEFINE_SAFE_PROPERTY_CALLBACK(safe_constructIsMainThread, constructIsMainThread)
 DEFINE_SAFE_PROPERTY_CALLBACK(safe_constructBunVersion, constructBunVersion)
 DEFINE_SAFE_PROPERTY_CALLBACK(safe_constructBunRevision, constructBunRevision)
 DEFINE_SAFE_PROPERTY_CALLBACK(safe_constructBunVersionWithSha, constructBunVersionWithSha)
+DEFINE_SAFE_PROPERTY_CALLBACK(safe_constructWebViewObject, constructWebViewObject)
+DEFINE_SAFE_PROPERTY_CALLBACK(safe_BunObject_lazyPropCb_wrap_ArrayBufferSink, BunObject_lazyPropCb_wrap_ArrayBufferSink)
 
 #undef DEFINE_SAFE_PROPERTY_CALLBACK
 
@@ -973,7 +976,7 @@ DEFINE_SAFE_PROPERTY_CALLBACK(safe_constructBunVersionWithSha, constructBunVersi
 @begin bunObjectTable
     $                                              safe_constructBunShell                                              DontDelete|PropertyCallback
     Archive                                        BunObject_lazyPropCb_wrap_Archive                                   DontDelete|PropertyCallback
-    ArrayBufferSink                                BunObject_lazyPropCb_wrap_ArrayBufferSink                           DontDelete|PropertyCallback
+    ArrayBufferSink                                safe_BunObject_lazyPropCb_wrap_ArrayBufferSink                      DontDelete|PropertyCallback
     Cookie                                         safe_constructCookieObject                                          DontDelete|ReadOnly|PropertyCallback
     CookieMap                                      safe_constructCookieMapObject                                      DontDelete|ReadOnly|PropertyCallback
     CryptoHasher                                   BunObject_lazyPropCb_wrap_CryptoHasher                              DontDelete|PropertyCallback
@@ -1073,6 +1076,7 @@ DEFINE_SAFE_PROPERTY_CALLBACK(safe_constructBunVersionWithSha, constructBunVersi
     Terminal                                       BunObject_lazyPropCb_wrap_Terminal                                  DontDelete|PropertyCallback
     unsafe                                         BunObject_lazyPropCb_wrap_unsafe                                    DontDelete|PropertyCallback
     version                                        safe_constructBunVersion                                            ReadOnly|DontDelete|PropertyCallback
+    WebView                                        safe_constructWebViewObject                                         ReadOnly|DontDelete|PropertyCallback
     which                                          BunObject_callback_which                                            DontDelete|Function 1
     RedisClient                                    BunObject_lazyPropCb_wrap_ValkeyClient                              DontDelete|PropertyCallback
     redis                                          BunObject_lazyPropCb_wrap_valkey                                    DontDelete|PropertyCallback
@@ -1154,19 +1158,22 @@ static JSC_DEFINE_CUSTOM_SETTER(setBunObjectMain, (JSC::JSGlobalObject * globalO
 static JSValue BunObject_lazyPropCb_wrap_stdin(VM& vm, JSObject* bunObject)
 {
     auto* zigGlobalObject = jsCast<Zig::GlobalObject*>(bunObject->globalObject());
-    return zigGlobalObject->m_bunStdin.getInitializedOnMainThread(zigGlobalObject);
+    auto result = zigGlobalObject->m_bunStdin.getInitializedOnMainThread(zigGlobalObject);
+    return result ? result : jsUndefined();
 }
 
 static JSValue BunObject_lazyPropCb_wrap_stderr(VM& vm, JSObject* bunObject)
 {
     auto* zigGlobalObject = jsCast<Zig::GlobalObject*>(bunObject->globalObject());
-    return zigGlobalObject->m_bunStderr.getInitializedOnMainThread(zigGlobalObject);
+    auto result = zigGlobalObject->m_bunStderr.getInitializedOnMainThread(zigGlobalObject);
+    return result ? result : jsUndefined();
 }
 
 static JSValue BunObject_lazyPropCb_wrap_stdout(VM& vm, JSObject* bunObject)
 {
     auto* zigGlobalObject = jsCast<Zig::GlobalObject*>(bunObject->globalObject());
-    return zigGlobalObject->m_bunStdout.getInitializedOnMainThread(zigGlobalObject);
+    auto result = zigGlobalObject->m_bunStdout.getInitializedOnMainThread(zigGlobalObject);
+    return result ? result : jsUndefined();
 }
 
 #include "BunObject.lut.h"
@@ -1197,6 +1204,12 @@ static JSValue constructSecretsObject(VM& vm, JSObject* bunObject)
 {
     auto* zigGlobalObject = jsCast<Zig::GlobalObject*>(bunObject->globalObject());
     return Bun::createSecretsObject(vm, zigGlobalObject);
+}
+
+static JSValue constructWebViewObject(VM& vm, JSObject* bunObject)
+{
+    auto* zigGlobalObject = jsCast<Zig::GlobalObject*>(bunObject->globalObject());
+    return zigGlobalObject->m_JSWebViewClassStructure.constructor(zigGlobalObject);
 }
 
 JSC::JSObject* createBunObject(VM& vm, JSObject* globalObject)

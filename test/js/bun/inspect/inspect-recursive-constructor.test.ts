@@ -27,6 +27,7 @@ new F();
     proc.exited,
   ]);
 
+  expect(stdout).toBe("");
   expect(stderr).toContain("RangeError");
   // Exits with 1 from uncaught RangeError, not a crash signal
   expect(exitCode).toBe(1);

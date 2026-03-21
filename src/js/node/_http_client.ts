@@ -375,7 +375,7 @@ function ClientRequest(input, options, cb) {
       return headers;
     };
 
-    parser[HTTPParser.kOnHeadersComplete] = (vMaj, vMin, headers, _method, _url, statusCode, statusMessage, upgrade, shouldKeepAlive) => {
+    parser[HTTPParser.kOnHeadersComplete] = (vMaj, vMin, headers, _method, _url, statusCode, statusMessage, upgrade, _shouldKeepAlive) => {
       if (headers === undefined) {
         headers = parser._headers;
         parser._headers = [];

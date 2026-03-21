@@ -932,8 +932,7 @@ function expectBundled(
       const success = exitCode === 0;
       if (buildProc.signalCode) {
         throw new Error(
-          prefix +
-            `'bun build' subprocess killed by ${buildProc.signalCode}\n` +
+          `[${id}] 'bun build' subprocess killed by ${buildProc.signalCode}\n` +
             `cmd: ${cmd.join(" ")}\n` +
             `STDOUT: ${stdout.toUnixString().slice(0, 2000)}\n` +
             `STDERR: ${stderr.toUnixString().slice(0, 2000)}`,

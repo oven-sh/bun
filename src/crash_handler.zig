@@ -840,9 +840,6 @@ fn handleSegfaultPosix(sig: i32, info: *const std.posix.siginfo_t, _: ?*const an
             std.posix.SIG.ILL => .{ .illegal_instruction = addr },
             std.posix.SIG.BUS => .{ .bus_error = addr },
             std.posix.SIG.FPE => .{ .floating_point_error = addr },
-            // WebKit's RELEASE_ASSERT/CRASH() raises SIGTRAP via int3/brk.
-            // Report as illegal_instruction to keep bun.report decoder compatible.
-            std.posix.SIG.TRAP => .{ .illegal_instruction = addr },
 
             // we do not register this handler for other signals
             else => unreachable,
@@ -875,11 +872,6 @@ fn updatePosixSegfaultHandler(act: ?*std.posix.Sigaction) !void {
     std.posix.sigaction(std.posix.SIG.ILL, act, null);
     std.posix.sigaction(std.posix.SIG.BUS, act, null);
     std.posix.sigaction(std.posix.SIG.FPE, act, null);
-    // WebKit's RELEASE_ASSERT/CRASH() now raises SIGTRAP on Linux release
-    // builds (via WTFBreakpointTrap: int3 on x64, brk on arm64). Without
-    // this, a failed assertion falls through to __builtin_unreachable()
-    // after SIGTRAP is ignored, causing hangs instead of crashes.
-    std.posix.sigaction(std.posix.SIG.TRAP, act, null);
 }
 
 var windows_segfault_handle: ?windows.HANDLE = null;

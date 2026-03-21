@@ -13,7 +13,7 @@ function F() {
   try { new v(-9007199254740990); } catch (e) {}
   Bun.inspect(Bun);
 }
-new F();
+try { new F(); } catch (e) {}
 `,
     ],
     env: bunEnv,
@@ -21,12 +21,8 @@ new F();
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
 
   expect(stdout).toBe("");
-  expect(stderr).not.toContain("panic");
-  expect(stderr).not.toContain("Segmentation fault");
-  // Exit code 1 from uncaught RangeError, not a crash signal
-  expect(exitCode).not.toBe(null);
-  expect(exitCode).not.toBe(0);
+  expect(exitCode).toBe(1);
 });

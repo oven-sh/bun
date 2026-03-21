@@ -31,7 +31,11 @@ test.concurrent("CString with small invalid pointer does not crash", async () =>
 
 test.concurrent("read.u8 with small invalid pointer throws TypeError", async () => {
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", `let ok=false; try { Bun.FFI.read.u8(1929); } catch(e) { ok = e instanceof TypeError; } if (!ok) process.exit(1); console.log("ok");`],
+    cmd: [
+      bunExe(),
+      "-e",
+      `let ok=false; try { Bun.FFI.read.u8(1929); } catch(e) { ok = e instanceof TypeError; } if (!ok) process.exit(1); console.log("ok");`,
+    ],
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",

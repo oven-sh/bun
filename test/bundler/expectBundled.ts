@@ -915,11 +915,12 @@ function expectBundled(
         }
       }
 
-      const buildProc = Bun.spawn({
+      await using buildProc = Bun.spawn({
         cmd,
         cwd: root,
         stdio: ["ignore", "pipe", "pipe"],
         env: bundlerEnv,
+        timeout: 60_000,
       });
       const [stdoutBytes, stderrBytes, exitCode] = await Promise.all([
         buildProc.stdout.bytes(),
@@ -1662,7 +1663,7 @@ for (const [key, blob] of build.outputs) {
           ...(run.args ?? []),
         ] as [string, ...string[]];
 
-        const runProc = Bun.spawn({
+        await using runProc = Bun.spawn({
           cmd: args,
           env: {
             ...bunEnv,
@@ -1670,6 +1671,7 @@ for (const [key, blob] of build.outputs) {
             FORCE_COLOR: "0",
             IS_TEST_RUNNER: "1",
           },
+          timeout: 60_000,
           stdio: ["ignore", "pipe", "pipe"],
           cwd: run.setCwd ? root : originalCwd,
         });

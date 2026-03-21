@@ -111,7 +111,7 @@ void CryptoAlgorithmX25519::deriveBits(const CryptoAlgorithmParameters& paramete
             callback(WTF::move(*derivedKey));
             return;
         }
-        auto lengthInBytes = std::ceil(length / 8.);
+        auto lengthInBytes = static_cast<size_t>(std::ceil(length / 8.));
         if (lengthInBytes > (*derivedKey).size()) {
             exceptionCallback(ExceptionCode::OperationError, ""_s);
             return;

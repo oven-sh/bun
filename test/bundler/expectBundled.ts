@@ -930,6 +930,15 @@ function expectBundled(
       const stdout = Buffer.from(stdoutBytes);
       const stderr = Buffer.from(stderrBytes);
       const success = exitCode === 0;
+      if (buildProc.signalCode) {
+        throw new Error(
+          prefix +
+            `'bun build' subprocess killed by ${buildProc.signalCode}\n` +
+            `cmd: ${cmd.join(" ")}\n` +
+            `STDOUT: ${stdout.toUnixString().slice(0, 2000)}\n` +
+            `STDERR: ${stderr.toUnixString().slice(0, 2000)}`,
+        );
+      }
 
       // Check for errors
       if (!success) {
@@ -1685,8 +1694,14 @@ for (const [key, blob] of build.outputs) {
         const signalCode = runProc.signalCode ?? undefined;
         const success = exitCode === 0;
 
-        if (signalCode === "SIGTRAP") {
-          throw new Error(prefix + "Runtime failed\n" + stdout!.toUnixString() + "\n" + stderr!.toUnixString());
+        if (signalCode) {
+          throw new Error(
+            prefix +
+              `Runtime failed with ${signalCode}\n` +
+              `cmd: ${args.join(" ")}\n` +
+              `STDOUT: ${stdout!.toUnixString().slice(0, 2000)}\n` +
+              `STDERR: ${stderr!.toUnixString().slice(0, 2000)}`,
+          );
         }
 
         if (run.error) {

@@ -347,6 +347,9 @@ function ClientRequest(input, options, cb) {
         } else {
           socket.write(body);
         }
+      } else if (hasTransferEncoding) {
+        // Empty chunked body still requires the terminal chunk per RFC 7230 §4.1
+        socket.write("0\r\n\r\n");
       }
     };
 
@@ -562,6 +565,7 @@ function ClientRequest(input, options, cb) {
     socket.on("data", onData);
     socket.on("error", err => {
       if (isAbortError(err)) return;
+      this.destroyed = true;
       try {
         this.emit("error", err);
       } catch (e) {
@@ -573,9 +577,9 @@ function ClientRequest(input, options, cb) {
       // Handle premature close
       if (res && !res.complete) {
         res.destroy(new ConnResetException("aborted"));
-      } else if (!res && !upgraded) {
+      } else if (!res && !upgraded && !this.destroyed) {
         // EOF before headers — emit error on the request.
-        // Skip if upgraded: the socket closing after an upgrade is normal.
+        // Skip if upgraded (normal close) or already destroyed (error already emitted).
         this.emit("error", new ConnResetException("aborted"));
       }
       // Free parser resources on any close to avoid leaks

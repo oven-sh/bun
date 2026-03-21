@@ -3,7 +3,7 @@ const FFIObject = @This();
 pub fn newCString(globalThis: *JSGlobalObject, value: JSValue, byteOffset: ?JSValue, lengthValue: ?JSValue) bun.JSError!jsc.JSValue {
     switch (FFIObject.getPtrSlice(globalThis, value, byteOffset, lengthValue)) {
         .err => |err| {
-            return err;
+            return globalThis.throwValue(err);
         },
         .slice => |slice| {
             return bun.String.createUTF8ForJS(globalThis, slice);
@@ -464,7 +464,7 @@ pub fn getPtrSlice(globalThis: *JSGlobalObject, value: JSValue, byteOffset: ?JSV
         }
     }
 
-    if (addr == 0xDEADBEEF or addr == 0xaaaaaaaa or addr == 0xAAAAAAAA) {
+    if (addr == 0xDEADBEEF or addr == 0xaaaaaaaa or addr == 0xAAAAAAAA or addr < std.heap.page_size_min) {
         return .{ .err = globalThis.toInvalidArguments("ptr to invalid memory, that would segfault Bun :(", .{}) };
     }
 
@@ -520,7 +520,7 @@ pub fn toArrayBuffer(
 ) bun.JSError!jsc.JSValue {
     switch (getPtrSlice(globalThis, value, byteOffset, valueLength)) {
         .err => |erro| {
-            return erro;
+            return globalThis.throwValue(erro);
         },
         .slice => |slice| {
             var callback: jsc.C.JSTypedArrayBytesDeallocator = null;
@@ -562,7 +562,7 @@ pub fn toBuffer(
 ) bun.JSError!jsc.JSValue {
     switch (getPtrSlice(globalThis, value, byteOffset, valueLength)) {
         .err => |err| {
-            return err;
+            return globalThis.throwValue(err);
         },
         .slice => |slice| {
             var callback: jsc.C.JSTypedArrayBytesDeallocator = null;
@@ -575,17 +575,17 @@ pub fn toBuffer(
                         if (getCPtr(ctx_value)) |ctx_ptr| {
                             ctx = @as(*anyopaque, @ptrFromInt(ctx_ptr));
                         } else if (!ctx_value.isEmptyOrUndefinedOrNull()) {
-                            return globalThis.toInvalidArguments("Expected user data to be a C pointer (number or BigInt)", .{});
+                            return globalThis.throwInvalidArguments("Expected user data to be a C pointer (number or BigInt)", .{});
                         }
                     }
                 } else if (!callback_value.isEmptyOrUndefinedOrNull()) {
-                    return globalThis.toInvalidArguments("Expected callback to be a C pointer (number or BigInt)", .{});
+                    return globalThis.throwInvalidArguments("Expected callback to be a C pointer (number or BigInt)", .{});
                 }
             } else if (finalizationCtxOrPtr) |callback_value| {
                 if (getCPtr(callback_value)) |callback_ptr| {
                     callback = @as(jsc.C.JSTypedArrayBytesDeallocator, @ptrFromInt(callback_ptr));
                 } else if (!callback_value.isEmptyOrUndefinedOrNull()) {
-                    return globalThis.toInvalidArguments("Expected callback to be a C pointer (number or BigInt)", .{});
+                    return globalThis.throwInvalidArguments("Expected callback to be a C pointer (number or BigInt)", .{});
                 }
             }
 
@@ -603,10 +603,10 @@ pub fn toCStringBuffer(
     value: JSValue,
     byteOffset: ?JSValue,
     valueLength: ?JSValue,
-) jsc.JSValue {
+) bun.JSError!jsc.JSValue {
     switch (getPtrSlice(globalThis, value, byteOffset, valueLength)) {
         .err => |err| {
-            return err;
+            return globalThis.throwValue(err);
         },
         .slice => |slice| {
             return jsc.JSValue.createBuffer(globalThis, slice, null);

@@ -66,6 +66,12 @@ describe.skipIf(isFFIUnavailable)("FFI error messages", () => {
     }).toThrow(/myFunction.*ptr.*(linkSymbols|CFunction)/);
   });
 
+  test("CString with small integer pointer does not crash", () => {
+    expect(() => {
+      Bun.FFI.CString(2313);
+    }).toThrow("ptr to invalid memory");
+  });
+
   test("linkSymbols with non-number ptr does not crash", () => {
     expect(() => {
       linkSymbols({

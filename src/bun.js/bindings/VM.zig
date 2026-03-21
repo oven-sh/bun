@@ -157,6 +157,11 @@ pub const VM = opaque {
 
     extern fn JSC__VM__throwError(*VM, *JSGlobalObject, JSValue) void;
     pub fn throwError(vm: *VM, global_object: *JSGlobalObject, value: JSValue) error{JSError} {
+        // If an exception is already pending (e.g. a termination exception that
+        // could not be cleared during error-object creation), skip throwing a
+        // new one – just propagate the existing exception.
+        if (global_object.hasException())
+            return error.JSError;
         var scope: bun.jsc.ExceptionValidationScope = undefined;
         scope.init(global_object, @src());
         defer scope.deinit();

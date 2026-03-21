@@ -403,4 +403,11 @@ describe("MatcherContext", () => {
       expect(123).toBeCustomColor(456);
     });
   });
+
+  test("does not crash when error creation races with termination", () => {
+    // Regression: calling extend with non-function matchers should throw
+    // a clean TypeError, not crash with an assertion failure.
+    expect(() => expect.extend({ _badMatcher: {} })).toThrow(TypeError);
+    expect(() => expect.extend({ _goodMatcher: () => ({ pass: true }), _badMatcher: 42 })).toThrow(TypeError);
+  });
 });

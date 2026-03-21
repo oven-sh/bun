@@ -285,10 +285,12 @@ pub fn ParseTypescript(
                     // run the renamer. For external-facing things the renamer will avoid
                     // collisions automatically so this isn't important for correctness.
                     arg_ref = p.newSymbol(.hoisted, strings.cat(p.allocator, "_", name_text) catch unreachable) catch unreachable;
-                    bun.handleOom(p.current_scope.generated.append(p.allocator, arg_ref));
                 } else {
                     arg_ref = p.newSymbol(.hoisted, name_text) catch unreachable;
                 }
+                // Always add to scope.generated so the renamer can see it and
+                // avoid collisions with same-named symbols from other files.
+                bun.handleOom(p.current_scope.generated.append(p.allocator, arg_ref));
                 ts_namespace.arg_ref = arg_ref;
             }
             p.popScope();

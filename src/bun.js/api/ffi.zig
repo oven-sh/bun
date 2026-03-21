@@ -833,7 +833,7 @@ pub const FFI = struct {
     pub fn closeCallback(globalThis: *JSGlobalObject, ctx: JSValue) JSValue {
         if (!ctx.isNumber()) return .js_undefined;
         const num = ctx.asNumber();
-        if (!std.math.isFinite(num) or num < 0 or num > @as(f64, @as(comptime_float, std.math.maxInt(usize)))) return .js_undefined;
+        if (!std.math.isFinite(num) or num < 0 or num >= @as(f64, @as(comptime_float, std.math.maxInt(usize)))) return .js_undefined;
         const addr: usize = @intFromFloat(num);
         if (addr == 0 or !std.mem.isAligned(addr, @alignOf(Function))) return .js_undefined;
         var function: *Function = @ptrFromInt(addr);

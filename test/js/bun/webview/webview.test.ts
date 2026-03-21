@@ -34,10 +34,10 @@ function shmRead(name: string, n: number): Buffer {
   if (fd < 0) throw new Error(`shm_open(${name}) failed`);
   const map = libc!.symbols.mmap(0, n, PROT_READ, MAP_SHARED, fd, 0);
   libc!.symbols.close(fd);
-  // mmap returns MAP_FAILED = (void*)-1; ptr arithmetic over bigint.
-  // A valid mapping is page-aligned (low bits zero), so any nonzero
-  // return here means we got pages.
-  if (!map) throw new Error("mmap failed");
+  // MAP_FAILED = (void*)-1 — all bits set, so low 12 bits are 0xfff.
+  // A valid mapping is page-aligned: low 12 bits zero. FFIType.ptr
+  // returns a JS number; we mask the low bits to distinguish.
+  if (!map || (Number(map) & 0xfff) !== 0) throw new Error("mmap failed");
   // Copy into a JS-owned Buffer — the mapping goes away with munmap.
   // `toBuffer(ptr, byteOffset, byteLength)` wraps without copying;
   // `Buffer.from(...)` then copies so munmap is safe.

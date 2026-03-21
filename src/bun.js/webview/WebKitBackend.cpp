@@ -242,9 +242,7 @@ static JSValue openShmScreenshot(JSGlobalObject* g, const char* name, uint32_t n
     // We don't unlink; the caller owns cleanup. The child already
     // munmapped its side, so the ONLY live ref is the name itself — if the
     // user drops the name without unlinking, the pages leak until process
-    // exit (macOS POSIX shm is per-login-session, not system-wide). Kitty
-    // unlinks immediately after reading (verified: kitty/shm.c shm_unlink
-    // right after mmap), so the normal path doesn't leak.
+    // exit (macOS POSIX shm is per-login-session, not system-wide).
     if (enc == ScreenshotEncoding::Shmem) {
         auto* obj = JSC::constructEmptyObject(g);
         obj->putDirect(vm, Identifier::fromString(vm, "name"_s),

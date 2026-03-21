@@ -19,7 +19,7 @@ test("bun install updates bun.lock when root package name changes", async () => 
     stdout: "pipe",
     stderr: "pipe",
   });
-  await proc1.exited;
+  expect(await proc1.exited).toBe(0);
 
   // Verify initial lockfile has original-name
   const lockfile1 = await Bun.file(`${dir}/bun.lock`).text();
@@ -38,7 +38,7 @@ test("bun install updates bun.lock when root package name changes", async () => 
     stdout: "pipe",
     stderr: "pipe",
   });
-  await proc2.exited;
+  expect(await proc2.exited).toBe(0);
 
   // Verify lockfile now has another-name and not original-name
   const lockfile2 = await Bun.file(`${dir}/bun.lock`).text();
@@ -63,7 +63,7 @@ test("bun install updates bun.lock when root package name is added", async () =>
     stdout: "pipe",
     stderr: "pipe",
   });
-  await proc1.exited;
+  expect(await proc1.exited).toBe(0);
 
   const lockfile1 = await Bun.file(`${dir}/bun.lock`).text();
   expect(lockfile1).not.toContain('"name"');
@@ -81,8 +81,63 @@ test("bun install updates bun.lock when root package name is added", async () =>
     stdout: "pipe",
     stderr: "pipe",
   });
-  await proc2.exited;
+  expect(await proc2.exited).toBe(0);
 
   const lockfile2 = await Bun.file(`${dir}/bun.lock`).text();
   expect(lockfile2).toContain('"name": "new-name"');
+});
+
+test("bun install updates bun.lock when workspace sub-package name changes", async () => {
+  using dir = tempDir("issue-28411-ws", {
+    "package.json": JSON.stringify({
+      name: "my-monorepo",
+      workspaces: ["packages/*"],
+    }),
+    "packages/my-pkg/package.json": JSON.stringify({
+      name: "original-name",
+      version: "1.0.0",
+      dependencies: {
+        "is-even": "1.0.0",
+      },
+    }),
+  });
+
+  // Initial install
+  await using proc1 = Bun.spawn({
+    cmd: [bunExe(), "install"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  expect(await proc1.exited).toBe(0);
+
+  const lockfile1 = await Bun.file(`${dir}/bun.lock`).text();
+  expect(lockfile1).toContain('"name": "original-name"');
+
+  // Rename workspace sub-package
+  await Bun.write(
+    `${dir}/packages/my-pkg/package.json`,
+    JSON.stringify({
+      name: "another-name",
+      version: "1.0.0",
+      dependencies: {
+        "is-even": "1.0.0",
+      },
+    }),
+  );
+
+  // Re-install
+  await using proc2 = Bun.spawn({
+    cmd: [bunExe(), "install"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  expect(await proc2.exited).toBe(0);
+
+  const lockfile2 = await Bun.file(`${dir}/bun.lock`).text();
+  expect(lockfile2).toContain('"name": "another-name"');
+  expect(lockfile2).not.toContain('"name": "original-name"');
 });

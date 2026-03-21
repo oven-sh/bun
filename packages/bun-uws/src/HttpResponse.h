@@ -239,6 +239,7 @@ public:
                             if (((AsyncSocket<SSL> *) this)->getBufferedAmount() == 0) {
                                 ((AsyncSocket<SSL> *) this)->shutdown();
                                 ((AsyncSocket<SSL> *) this)->close();
+                                return true;
                             }
                         }
                     }

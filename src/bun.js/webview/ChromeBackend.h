@@ -37,6 +37,7 @@ class GlobalObject;
 namespace Bun {
 
 class JSWebView;
+enum class ScreenshotFormat : uint8_t;
 
 namespace CDP {
 
@@ -348,7 +349,7 @@ namespace Ops {
 
 JSC::JSPromise* navigate(JSC::JSGlobalObject*, JSWebView*, const WTF::String& url);
 JSC::JSPromise* evaluate(JSC::JSGlobalObject*, JSWebView*, const WTF::String& script);
-JSC::JSPromise* screenshot(JSC::JSGlobalObject*, JSWebView*);
+JSC::JSPromise* screenshot(JSC::JSGlobalObject*, JSWebView*, ScreenshotFormat, uint8_t quality);
 JSC::JSPromise* click(JSC::JSGlobalObject*, JSWebView*, float x, float y, uint8_t button, uint8_t modifiers, uint8_t clickCount);
 JSC::JSPromise* clickSelector(JSC::JSGlobalObject*, JSWebView*, const WTF::String& selector, uint32_t timeout, uint8_t button, uint8_t modifiers, uint8_t clickCount);
 JSC::JSPromise* type(JSC::JSGlobalObject*, JSWebView*, const WTF::String& text);

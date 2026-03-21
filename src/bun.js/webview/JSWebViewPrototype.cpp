@@ -112,7 +112,13 @@ const ClassInfo JSWebViewPrototype::s_info = { "WebView"_s, &Base::s_info, nullp
 
 JSObject* createJSWebViewPrototype(VM& vm, JSGlobalObject* globalObject)
 {
-    auto* structure = JSWebViewPrototype::createStructure(vm, globalObject, globalObject->objectPrototype());
+    // Chain to EventTarget.prototype — addEventListener/removeEventListener/
+    // dispatchEvent live there and unwrap `this` via jsDynamicCast<JSEventTarget*>,
+    // which succeeds for JSWebView : JSEventTarget. WebView.prototype.__proto__
+    // === EventTarget.prototype; `view instanceof EventTarget` is true.
+    auto* domGlobal = jsCast<WebCore::JSDOMGlobalObject*>(globalObject);
+    auto* etProto = WebCore::JSEventTarget::prototype(vm, *domGlobal);
+    auto* structure = JSWebViewPrototype::createStructure(vm, globalObject, etProto);
     return JSWebViewPrototype::create(vm, globalObject, structure);
 }
 
@@ -241,7 +247,51 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncScreenshot, (JSGlobalObject * globalO
     auto* thisObject = unwrapThis(globalObject, scope, callFrame, "screenshot"_s);
     RETURN_IF_EXCEPTION(scope, {});
     if (!checkSlot(globalObject, scope, thisObject->m_pendingScreenshot, "a screenshot()"_s)) return {};
-    return JSValue::encode(thisObject->screenshot(globalObject));
+
+    ScreenshotFormat format = ScreenshotFormat::Png;
+    uint8_t quality = 80; // CDP default for jpeg/webp. Ignored for png.
+
+    JSValue optsVal = callFrame->argument(0);
+    if (optsVal.isObject()) {
+        JSObject* opts = optsVal.getObject();
+        JSValue fmtVal = opts->get(globalObject, Identifier::fromString(vm, "format"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+        if (fmtVal.isString()) {
+            auto s = fmtVal.toWTFString(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (s == "png"_s)
+                format = ScreenshotFormat::Png;
+            else if (s == "jpeg"_s)
+                format = ScreenshotFormat::Jpeg;
+            else if (s == "webp"_s) {
+                // NSBitmapImageRep's representationUsingType: has no WebP
+                // enum value — would need ImageIO's CGImageDestination with
+                // public.webp UTI (macOS 11+), which is a separate dlsym
+                // surface not yet wired. Chrome-only until then.
+                if (thisObject->m_backend != WebViewBackend::Chrome)
+                    return Bun::throwError(globalObject, scope, ErrorCode::ERR_METHOD_NOT_IMPLEMENTED,
+                        "format: \"webp\" requires backend: \"chrome\""_s);
+                format = ScreenshotFormat::Webp;
+            } else
+                return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_VALUE,
+                    "format must be \"png\", \"jpeg\", or \"webp\""_s);
+        } else if (!fmtVal.isUndefined())
+            return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE,
+                "format must be a string"_s);
+
+        JSValue qVal = opts->get(globalObject, Identifier::fromString(vm, "quality"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+        if (qVal.isNumber()) {
+            double q = qVal.asNumber();
+            if (q < 0 || q > 100)
+                return Bun::ERR::OUT_OF_RANGE(scope, globalObject, "quality"_s, 0, 100, qVal);
+            quality = static_cast<uint8_t>(q);
+        } else if (!qVal.isUndefined())
+            return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE,
+                "quality must be a number"_s);
+    }
+
+    return JSValue::encode(thisObject->screenshot(globalObject, format, quality));
 }
 
 // --- Native input -----------------------------------------------------------

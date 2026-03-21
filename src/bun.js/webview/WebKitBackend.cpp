@@ -14,8 +14,6 @@
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/TopExceptionScope.h>
 #include <JavaScriptCore/JSPromise.h>
-#include <JavaScriptCore/TypedArrayInlines.h>
-#include <JavaScriptCore/JSTypedArrays.h>
 #include <JavaScriptCore/JSONObject.h>
 #include <JavaScriptCore/Weak.h>
 #include <JavaScriptCore/WeakInlines.h>
@@ -40,6 +38,8 @@ using namespace WebViewProto;
 
 // Spawn + process-exit watch in Zig (reuses bun.spawn.Process / EVFILT_PROC).
 extern "C" int32_t Bun__WebViewHost__ensure(Zig::GlobalObject*, bool stdoutInherit, bool stderrInherit);
+extern "C" void* Blob__fromMmapWithType(JSC::JSGlobalObject*, uint8_t* ptr, size_t len, const char* mime);
+extern "C" JSC::EncodedJSValue SYSV_ABI Blob__create(Zig::GlobalObject*, void* impl);
 extern "C" void Bun__eventLoop__incrementRefConcurrently(void* bunVM, int delta);
 // Bracket the whole onData batch. exit() drains microtasks when outermost,
 // so all the promise reactions from this batch run before we return to usockets.
@@ -199,41 +199,45 @@ void HostClient::onWritable()
     }
 }
 
-// Returns Uint8Array on success, JS Error on failure. May throw (OOM in
-// createUninitialized); onData's TopExceptionScope reports + clears.
-static JSValue openShmScreenshot(JSGlobalObject* g, const char* name, uint32_t nameLen, uint32_t pngLen)
+// Returns a Blob on success, JS Error on failure. The Blob adopts the
+// mmap'd shm region directly — no copy. Its store's allocator vtable
+// munmap's on free (when the last ref drops). The shm segment survives
+// the name-unlink because the mapping is a live reference; the physical
+// pages free when the user drops the Blob AND the child's write-side
+// mapping is gone (child unmaps after sendReply, so by the time we're
+// here the child side is already dropped — our mapping is the only one).
+static JSValue openShmScreenshot(JSGlobalObject* g, const char* name, uint32_t nameLen, uint32_t byteLen, const char* mime, bool& ok)
 {
-    auto& vm = g->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    ok = false;
 
-    // Parent owns the unlink — we know when the JS side is done with the bytes.
     WTF::Vector<char, 64> zname;
     zname.grow(nameLen + 1);
     memcpy(zname.mutableSpan().data(), name, nameLen);
     zname[nameLen] = '\0';
 
-    int fd = shm_open(zname.span().data(), O_RDONLY, 0);
+    // O_RDWR + PROT_WRITE — the Zig allocator wrapper poisons freed memory
+    // with @memset(undefined) in safe builds BEFORE calling the vtable's
+    // free (which munmap's). A PROT_READ mapping SIGBUS'd on that poison.
+    // MAP_SHARED is required for POSIX shm objects on macOS — MAP_PRIVATE
+    // returns EINVAL (the kernel's posix_shm vfs doesn't implement the
+    // VM_BEHAVIOR_COPY path). The child already munmapped its side before
+    // sendReply, so we're the sole mapper; writes don't race with anyone.
+    // The name is unlinked next, so no third process can shm_open it.
+    int fd = shm_open(zname.span().data(), O_RDWR, 0);
     if (fd < 0)
-        RELEASE_AND_RETURN(scope, createError(g, makeString("shm_open: "_s, WTF::String::fromUTF8(strerror(errno)))));
-    void* map = mmap(nullptr, pngLen, PROT_READ, MAP_SHARED, fd, 0);
+        return createError(g, makeString("shm_open: "_s, WTF::String::fromUTF8(strerror(errno))));
+    void* map = mmap(nullptr, byteLen, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
     ::close(fd);
     shm_unlink(zname.span().data());
     if (map == MAP_FAILED)
-        RELEASE_AND_RETURN(scope, createError(g, makeString("mmap: "_s, WTF::String::fromUTF8(strerror(errno)))));
+        return createError(g, makeString("mmap: "_s, WTF::String::fromUTF8(strerror(errno))));
 
-    auto* u8 = JSUint8Array::createUninitialized(g, g->m_typedArrayUint8.get(g), pngLen);
-    if (scope.exception() || !u8) [[unlikely]] {
-        munmap(map, pngLen);
-        // createUninitialized threw (OOM). Propagate — the caller's
-        // TopExceptionScope reports and clears between frames. The promise
-        // rejects with jsUndefined (result.inherits<JSUint8Array>() is false),
-        // which isn't pretty, but OOM during a screenshot memcpy means we're
-        // about to die anyway.
-        RELEASE_AND_RETURN(scope, jsUndefined());
-    }
-    memcpy(u8->typedVector(), map, pngLen);
-    munmap(map, pngLen);
-    RELEASE_AND_RETURN(scope, u8);
+    // Blob adopts the mapping — no copy. Store's allocator.free munmap's
+    // when the Blob's refcount drops to zero. `await blob.bytes()` reads
+    // directly from these pages; `Bun.write(path, blob)` writes from them.
+    void* impl = Blob__fromMmapWithType(g, static_cast<uint8_t*>(map), byteLen, mime);
+    ok = true;
+    return JSValue::decode(Blob__create(defaultGlobalObject(g), impl));
 }
 
 void HostClient::handleReply(const Frame& h, Reader r)
@@ -355,8 +359,10 @@ void HostClient::handleReply(const Frame& h, Reader r)
         uint32_t nameLen = r.u32();
         const char* name = reinterpret_cast<const char*>(r.bytes(nameLen));
         uint32_t pngLen = r.u32();
-        JSValue result = openShmScreenshot(g, name, nameLen, pngLen);
-        settleSlot(g, view, view->m_pendingScreenshot, result.inherits<JSUint8Array>(), result);
+        bool ok;
+        JSValue result = openShmScreenshot(g, name, nameLen, pngLen,
+            screenshotMimeType(view->m_screenshotFormat), ok);
+        settleSlot(g, view, view->m_pendingScreenshot, ok, result);
         return;
     }
     case Reply::ScreenshotFailed:
@@ -434,7 +440,7 @@ void HostClient::onData(const char* data, int length)
         off += sizeof(Frame) + h.len;
 
         handleReply(h, r);
-        // createError/jsString/createUninitialized can throw (OOM). Report +
+        // createError/jsString/Blob__create can throw (OOM). Report +
         // clear so one bad frame doesn't poison the rest of the batch.
         if (auto* exception = catchScope.exception()) [[unlikely]] {
             if (!catchScope.clearExceptionExceptTermination()) break;
@@ -491,9 +497,16 @@ JSPromise* evaluate(JSGlobalObject* g, JSWebView* view, const WTF::String& scrip
         payload.span().data(), static_cast<uint32_t>(payload.size()));
 }
 
-JSPromise* screenshot(JSGlobalObject* g, JSWebView* view)
+JSPromise* screenshot(JSGlobalObject* g, JSWebView* view, ScreenshotFormat format, uint8_t quality)
 {
-    return sendOp(g, view, view->m_pendingScreenshot, Op::Screenshot, nullptr, 0);
+    // Two bytes: format enum + quality. Child picks the CGImageDestination
+    // UTI (public.png / public.jpeg / public.webp) and
+    // kCGImageDestinationLossyCompressionQuality. The reply's pngLen field
+    // is misnamed — it's byteLen regardless of format. The response handler
+    // reads view->m_screenshotFormat (stashed by JSWebView::screenshot) to
+    // stamp the right MIME on the Blob.
+    uint8_t payload[2] = { static_cast<uint8_t>(format), quality };
+    return sendOp(g, view, view->m_pendingScreenshot, Op::Screenshot, payload, sizeof(payload));
 }
 
 JSPromise* click(JSGlobalObject* g, JSWebView* view, float x, float y, uint8_t button, uint8_t modifiers, uint8_t clickCount)

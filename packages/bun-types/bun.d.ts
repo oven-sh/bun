@@ -8099,7 +8099,7 @@ declare module "bun" {
    *
    * @experimental
    */
-  class WebView {
+  class WebView extends EventTarget {
     /**
      * @throws on non-macOS platforms when `backend` is `"webkit"` (the
      * default). Pass `backend: "chrome"` for cross-platform support.
@@ -8175,9 +8175,22 @@ declare module "bun" {
     evaluate<T = unknown>(script: string): Promise<T>;
 
     /**
-     * Capture a PNG screenshot of the current viewport.
+     * Capture a screenshot of the current viewport.
+     *
+     * The returned `Blob` carries the right MIME type (`image/png`,
+     * `image/jpeg`, or `image/webp`) — composes with
+     * `Bun.write(path, blob)`, `new Response(blob)`, and `blob.bytes()`.
+     *
+     * On the **WebKit backend**, the image bytes live in a shared-memory
+     * segment mmap'd directly into the Blob's store — no copy. The mapping
+     * is released when the Blob is garbage-collected.
+     *
+     * @param options.format Image format. `"webp"` requires the Chrome
+     *   backend. @default `"png"`
+     * @param options.quality Compression quality for JPEG/WebP, 0-100.
+     *   Ignored for PNG. @default `80`
      */
-    screenshot(): Promise<Uint8Array>;
+    screenshot(options?: { format?: "png" | "jpeg" | "webp"; quality?: number }): Promise<Blob>;
 
     /**
      * Click at the given viewport coordinates.

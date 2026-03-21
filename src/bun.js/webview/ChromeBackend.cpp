@@ -14,8 +14,6 @@
 #include <JavaScriptCore/WeakInlines.h>
 #include <JavaScriptCore/JSONObject.h>
 #include <wtf/JSONValues.h>
-#include <JavaScriptCore/TypedArrayInlines.h>
-#include <JavaScriptCore/JSTypedArrays.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/Base64.h>
@@ -55,6 +53,8 @@ using namespace JSC;
 extern "C" int32_t Bun__Chrome__ensure(Zig::GlobalObject*, const char* userDataDir,
     const char* path, const char* const* extraArgv, uint32_t extraArgvLen,
     bool stdoutInherit, bool stderrInherit);
+extern "C" void* Blob__fromBytesWithType(JSC::JSGlobalObject*, const uint8_t* ptr, size_t len, const char* mime);
+extern "C" JSC::EncodedJSValue SYSV_ABI Blob__create(Zig::GlobalObject*, void* impl);
 extern "C" void Bun__eventLoop__incrementRefConcurrently(void* bunVM, int delta);
 extern "C" void Bun__EventLoop__enter(Zig::GlobalObject*);
 extern "C" void Bun__EventLoop__exit(Zig::GlobalObject*);
@@ -671,12 +671,12 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
     }
 
     case Method::PageCaptureScreenshot: {
-        // {"data":"<base64 PNG>"} — decode into a Uint8Array. WTF::
-        // base64Decode allocates its own Vector then we memcpy into the JS
-        // heap. Two copies at peak (b64 source + decoded Vector), Vector
-        // drops after memcpy. Zero-copy decode-into-JSUint8Array-backing
-        // would need a WTF API we don't have; bun.base64's SIMD path is
-        // available but wiring it here costs more than the memcpy saves.
+        // {"data":"<base64 PNG>"} — decode into a Blob with image/png type.
+        // WTF::base64Decode allocates its own Vector then Blob__fromBytes
+        // copies into a Zig-owned store. Two copies at peak (b64 source +
+        // decoded Vector), Vector drops after Blob takes the bytes. The
+        // Blob's type carries the MIME so `Bun.write(path, blob)` and
+        // `new Response(blob)` work without the user remembering it's PNG.
         auto b64 = jsonString(jsonField(result, { "data", 4 }));
         auto decoded = WTF::base64Decode(
             std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(b64.data()), b64.size()));
@@ -684,23 +684,15 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
             settle(g, view, entry.slot, false, createError(g, "screenshot: invalid base64"_s));
             return;
         }
-        auto& vm = g->vm();
-        auto scope = DECLARE_THROW_SCOPE(vm);
-        auto* u8 = JSUint8Array::createUninitialized(g, g->m_typedArrayUint8.get(g),
-            static_cast<uint32_t>(decoded->size()));
-        if (auto* ex = scope.exception()) [[unlikely]] {
-            // createUninitialized threw (OOM for a large PNG). Reject with
-            // the exception itself — createError would allocate again and
-            // either OOM or succeed-then-be-shadowed-by the pending exception.
-            JSValue err = ex->value();
-            (void)scope.tryClearException();
-            scope.release();
-            settle(g, view, entry.slot, false, err);
-            return;
-        }
-        memcpy(u8->typedVector(), decoded->span().data(), decoded->size());
-        scope.release();
-        settle(g, view, entry.slot, true, u8);
+        // Blob__fromBytes allocates via mimalloc (bun.default_allocator), not
+        // the JS heap — handleOom crashes on failure rather than throwing, so
+        // no scope needed here. Blob__create wraps it in a JSBlob cell.
+        // m_screenshotFormat was stashed by JSWebView::screenshot before the
+        // CDP command went out; it tells us which MIME to stamp.
+        void* impl = Blob__fromBytesWithType(g, decoded->span().data(), decoded->size(),
+            screenshotMimeType(view->m_screenshotFormat));
+        JSValue blob = JSValue::decode(Blob__create(defaultGlobalObject(g), impl));
+        settle(g, view, entry.slot, true, blob);
         return;
     }
 
@@ -1090,14 +1082,25 @@ JSPromise* evaluate(JSGlobalObject* g, JSWebView* view, const WTF::String& scrip
             .boolean("awaitPromise"_s, true));
 }
 
-JSPromise* screenshot(JSGlobalObject* g, JSWebView* view)
+JSPromise* screenshot(JSGlobalObject* g, JSWebView* view, ScreenshotFormat format, uint8_t quality)
 {
     auto& t = transport();
     uint32_t id = t.nextId();
+    // CDP takes format as a JSON string. quality is ignored for PNG by
+    // Chrome; for JPEG/WebP it's 0-100. Pass it unconditionally — Chrome
+    // silently ignores quality for PNG, and the builder's && ref-qualifier
+    // means conditionals break the chain (lvalue after materialization).
+    // The response handler reads view->m_screenshotFormat (stashed by
+    // JSWebView::screenshot before dispatch) to stamp the right MIME type
+    // on the Blob.
+    ASCIILiteral fmtLit = format == ScreenshotFormat::Jpeg ? "\"jpeg\""_s
+        : format == ScreenshotFormat::Webp ? "\"webp\""_s
+        : "\"png\""_s;
     return sendChromeOp(g, view, view->m_pendingScreenshot, PendingSlot::Screenshot,
         Method::PageCaptureScreenshot, id,
         Command(id, "Page.captureScreenshot"_s, sidSpan(view->m_sessionId))
-            .raw("format"_s, "\"png\""_s));
+            .raw("format"_s, fmtLit)
+            .num("quality"_s, static_cast<int32_t>(quality)));
 }
 
 // One mousePressed + one mouseReleased. CDP's Input.dispatchMouseEvent is

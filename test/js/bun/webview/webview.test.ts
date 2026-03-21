@@ -27,6 +27,54 @@ test("calling without new throws", () => {
   expect(() => (Bun.WebView as any)({ width: 100, height: 100 })).toThrow(/without 'new'/);
 });
 
+it("is an EventTarget", () => {
+  const view = new Bun.WebView({ width: 100, height: 100 });
+  try {
+    expect(view).toBeInstanceOf(EventTarget);
+    expect(Object.getPrototypeOf(Object.getPrototypeOf(view))).toBe(EventTarget.prototype);
+    // addEventListener/removeEventListener/dispatchEvent inherited from
+    // EventTarget.prototype — unwrap via jsDynamicCast<JSEventTarget*>
+    // which succeeds for JSWebView : JSEventTarget.
+    expect(typeof view.addEventListener).toBe("function");
+    expect(typeof view.removeEventListener).toBe("function");
+    expect(typeof view.dispatchEvent).toBe("function");
+  } finally {
+    view.close();
+  }
+});
+
+it("dispatchEvent fires addEventListener callbacks", () => {
+  const view = new Bun.WebView({ width: 100, height: 100 });
+  try {
+    let fired = 0;
+    let target: EventTarget | null = null;
+    view.addEventListener("test", e => {
+      fired++;
+      target = e.target;
+    });
+    const dispatched = view.dispatchEvent(new Event("test"));
+    expect(dispatched).toBe(true);
+    expect(fired).toBe(1);
+    // event.target resolved via WebViewEventTarget's ScriptWrappable →
+    // impl→wrapper Weak — returns the JSWebView instance.
+    expect(target).toBe(view);
+
+    // removeEventListener unhooks.
+    view.removeEventListener("test", view.addEventListener as any); // wrong fn, no-op
+    view.dispatchEvent(new Event("test"));
+    expect(fired).toBe(2); // still registered
+
+    // Multiple listeners on same event fire in registration order.
+    const order: number[] = [];
+    view.addEventListener("multi", () => order.push(1));
+    view.addEventListener("multi", () => order.push(2));
+    view.dispatchEvent(new Event("multi"));
+    expect(order).toEqual([1, 2]);
+  } finally {
+    view.close();
+  }
+});
+
 it("width/height validation", () => {
   expect(() => new Bun.WebView({ width: 0, height: 100 })).toThrow();
   expect(() => new Bun.WebView({ width: 100, height: 0 })).toThrow();
@@ -225,17 +273,52 @@ it("onNavigationFailed callback fires", async () => {
   expect(failed).toBe(true);
 });
 
-it("screenshot returns PNG bytes", async () => {
+it("screenshot returns a PNG Blob", async () => {
   await using view = new Bun.WebView({ width: 200, height: 150 });
   await view.navigate(html("<body style='background:#f00'>red</body>"));
-  const png = await view.screenshot();
-  expect(png).toBeInstanceOf(Uint8Array);
-  expect(png.length).toBeGreaterThan(8);
+  const blob = await view.screenshot();
+  expect(blob).toBeInstanceOf(Blob);
+  expect(blob.type).toBe("image/png");
+  expect(blob.size).toBeGreaterThan(8);
+  const bytes = new Uint8Array(await blob.arrayBuffer());
   // PNG magic: 89 50 4E 47 0D 0A 1A 0A
-  expect(png[0]).toBe(0x89);
-  expect(png[1]).toBe(0x50);
-  expect(png[2]).toBe(0x4e);
-  expect(png[3]).toBe(0x47);
+  expect(bytes[0]).toBe(0x89);
+  expect(bytes[1]).toBe(0x50);
+  expect(bytes[2]).toBe(0x4e);
+  expect(bytes[3]).toBe(0x47);
+});
+
+it("screenshot format options", async () => {
+  await using view = new Bun.WebView({ width: 200, height: 150 });
+  await view.navigate(html("<body style='background:linear-gradient(red,blue)'></body>"));
+
+  const jpeg = await view.screenshot({ format: "jpeg", quality: 90 });
+  expect(jpeg.type).toBe("image/jpeg");
+  const jb = new Uint8Array(await jpeg.arrayBuffer());
+  // JPEG magic: FF D8 FF
+  expect([jb[0], jb[1], jb[2]]).toEqual([0xff, 0xd8, 0xff]);
+
+  // WebP rejected on WebKit — NSBitmapImageRep has no WebP in its enum.
+  // Thrown synchronously (arg validation), not promise-rejection.
+  expect(() => view.screenshot({ format: "webp" })).toThrow(/webp.*chrome/i);
+
+  // quality validation
+  expect(() => view.screenshot({ quality: 101 } as any)).toThrow(/quality.*0.*100/);
+  expect(() => view.screenshot({ format: "gif" } as any)).toThrow(/png.*jpeg.*webp/i);
+});
+
+it("screenshot Blob survives GC (mmap-backed store)", async () => {
+  // The WebKit path mmap's the shm segment directly into the Blob's store
+  // — no copy. The store's allocator vtable munmap's on free (when the
+  // Blob's refcount drops). This verifies the mapping is valid across a
+  // GC cycle and that `await blob.bytes()` reads live pages.
+  await using view = new Bun.WebView({ width: 200, height: 150 });
+  await view.navigate(html("<body style='background:#0f0'>green</body>"));
+  const blob = await view.screenshot();
+  Bun.gc(true);
+  const bytes = await blob.bytes();
+  expect(bytes[0]).toBe(0x89); // PNG magic still readable
+  expect(bytes.length).toBe(blob.size);
 });
 
 // Probe test — if click(selector) times out on CI, this tells us whether

@@ -141,17 +141,62 @@ it("chrome: evaluate awaits Promises", async () => {
   }
 });
 
-it("chrome: screenshot returns PNG bytes", async () => {
+it("chrome: screenshot returns a PNG Blob", async () => {
   const view = new Bun.WebView({ backend: "chrome", width: 200, height: 200 });
   try {
     await view.navigate(html("<body style='background:red'></body>"));
-    const png = await view.screenshot();
-    expect(png).toBeInstanceOf(Uint8Array);
+    const blob = await view.screenshot();
+    expect(blob).toBeInstanceOf(Blob);
+    expect(blob.type).toBe("image/png");
+    const bytes = new Uint8Array(await blob.arrayBuffer());
     // PNG magic: 89 50 4E 47
-    expect(png[0]).toBe(0x89);
-    expect(png[1]).toBe(0x50);
-    expect(png[2]).toBe(0x4e);
-    expect(png[3]).toBe(0x47);
+    expect(bytes[0]).toBe(0x89);
+    expect(bytes[1]).toBe(0x50);
+    expect(bytes[2]).toBe(0x4e);
+    expect(bytes[3]).toBe(0x47);
+    // Bun.write accepts the Blob directly — the MIME type carries through.
+    expect(blob.size).toBeGreaterThan(100);
+  } finally {
+    view.close();
+  }
+});
+
+it("chrome: screenshot format options produce the right magic bytes", async () => {
+  const view = new Bun.WebView({ backend: "chrome", width: 200, height: 200 });
+  try {
+    await view.navigate(html("<body style='background:linear-gradient(red,blue)'></body>"));
+
+    const jpeg = await view.screenshot({ format: "jpeg", quality: 90 });
+    expect(jpeg.type).toBe("image/jpeg");
+    const jb = new Uint8Array(await jpeg.arrayBuffer());
+    // JPEG magic: FF D8 FF
+    expect([jb[0], jb[1], jb[2]]).toEqual([0xff, 0xd8, 0xff]);
+
+    const webp = await view.screenshot({ format: "webp", quality: 80 });
+    expect(webp.type).toBe("image/webp");
+    const wb = new Uint8Array(await webp.arrayBuffer());
+    // WebP magic: "RIFF" <4-byte size> "WEBP"
+    expect(String.fromCharCode(wb[0], wb[1], wb[2], wb[3])).toBe("RIFF");
+    expect(String.fromCharCode(wb[8], wb[9], wb[10], wb[11])).toBe("WEBP");
+
+    // WebP should be smaller than PNG for a gradient (lossy wins).
+    const png = await view.screenshot({ format: "png" });
+    expect(webp.size).toBeLessThan(png.size);
+  } finally {
+    view.close();
+  }
+});
+
+it("chrome: screenshot quality option affects JPEG size", async () => {
+  const view = new Bun.WebView({ backend: "chrome", width: 200, height: 200 });
+  try {
+    // Gradient + text → lossy compression has work to do.
+    await view.navigate(
+      html("<body style='background:linear-gradient(red,blue);color:white;font-size:40px'>Hello</body>"),
+    );
+    const lo = await view.screenshot({ format: "jpeg", quality: 10 });
+    const hi = await view.screenshot({ format: "jpeg", quality: 95 });
+    expect(lo.size).toBeLessThan(hi.size);
   } finally {
     view.close();
   }

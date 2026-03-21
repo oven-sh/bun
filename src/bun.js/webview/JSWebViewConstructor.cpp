@@ -65,7 +65,13 @@ const ClassInfo JSWebViewConstructor::s_info = { "WebView"_s, &Base::s_info, nul
 
 InternalFunction* createJSWebViewConstructor(VM& vm, JSGlobalObject* globalObject, JSObject* prototype)
 {
-    auto* structure = JSWebViewConstructor::createStructure(vm, globalObject, globalObject->functionPrototype());
+    // Bun.WebView.__proto__ === EventTarget (constructor chain, not instance
+    // prototype). Matches DOM convention: BroadcastChannel.__proto__ ===
+    // EventTarget. Lets static-method lookup fall through, and `extends
+    // Bun.WebView` in user code transitively picks up EventTarget's own
+    // static Symbol.hasInstance-less instanceof behavior.
+    auto* etCtor = WebCore::JSEventTarget::getConstructor(vm, globalObject).getObject();
+    auto* structure = JSWebViewConstructor::createStructure(vm, globalObject, etCtor);
     return JSWebViewConstructor::create(vm, structure, prototype);
 }
 

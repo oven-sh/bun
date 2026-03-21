@@ -15,7 +15,7 @@ import { bunEnv, bunExe } from "harness";
 // passes on both fixed and unfixed release binaries. CI debug/ASAN jobs
 // are the authoritative regression guard.
 test("VM.throwError does not crash when a termination exception is already pending", async () => {
-  const proc = Bun.spawn({
+  await using proc = Bun.spawn({
     cmd: [
       bunExe(),
       "-e",

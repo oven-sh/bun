@@ -82,9 +82,11 @@ Comlink.expose({
 
     // Bound each attempt to 15s to prevent hangs from blocking the retry loop
     const result = await Promise.race([
-      Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]).then(
-        ([stdout, stderr, exitCode]) => ({ stdout, stderr, exitCode }),
-      ),
+      Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]).then(([stdout, stderr, exitCode]) => ({
+        stdout,
+        stderr,
+        exitCode,
+      })),
       Bun.sleep(15_000).then(() => {
         proc.kill();
         return { stdout: "", stderr: "timeout", exitCode: -1 };

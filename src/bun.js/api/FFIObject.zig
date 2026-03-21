@@ -443,6 +443,10 @@ pub fn getPtrSlice(globalThis: *JSGlobalObject, value: JSValue, byteOffset: ?JSV
 
     if (byteOffset) |byte_off| {
         if (byte_off.isNumber()) {
+            if (!std.math.isFinite(byte_off.asNumber())) {
+                return .{ .err = globalThis.toInvalidArguments("ptr must be a finite number.", .{}) };
+            }
+
             const off = byte_off.toInt64();
             if (off < 0) {
                 addr -|= @as(usize, @intCast(off * -1));
@@ -452,10 +456,6 @@ pub fn getPtrSlice(globalThis: *JSGlobalObject, value: JSValue, byteOffset: ?JSV
 
             if (addr == 0) {
                 return .{ .err = globalThis.toInvalidArguments("ptr cannot be zero, that would segfault Bun :(", .{}) };
-            }
-
-            if (!std.math.isFinite(byte_off.asNumber())) {
-                return .{ .err = globalThis.toInvalidArguments("ptr must be a finite number.", .{}) };
             }
         } else if (!byte_off.isEmptyOrUndefinedOrNull()) {
             // do nothing

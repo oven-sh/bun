@@ -23,5 +23,6 @@ test("toArrayBuffer/toBuffer with small invalid pointer throws instead of crashi
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stdout).toBe("true\ntrue\ntrue\n");
+  expect(stderr).not.toContain("panic");
   expect(exitCode).toBe(0);
 });

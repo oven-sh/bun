@@ -384,7 +384,17 @@ function ClientRequest(input, options, cb) {
       return headers;
     };
 
-    parser[HTTPParser.kOnHeadersComplete] = (vMaj, vMin, headers, _method, _url, statusCode, statusMessage, upgrade, _shouldKeepAlive) => {
+    parser[HTTPParser.kOnHeadersComplete] = (
+      vMaj,
+      vMin,
+      headers,
+      _method,
+      _url,
+      statusCode,
+      statusMessage,
+      upgrade,
+      _shouldKeepAlive,
+    ) => {
       if (headers === undefined) {
         headers = parser._headers;
         parser._headers = [];
@@ -438,7 +448,10 @@ function ClientRequest(input, options, cb) {
       res.req = this;
       this[kClearTimeout]();
 
-      if (this.aborted) { maybeEmitClose(); return 1; }
+      if (this.aborted) {
+        maybeEmitClose();
+        return 1;
+      }
       if (!this.emit("response", res)) res._dump();
       maybeEmitClose();
 
@@ -446,7 +459,7 @@ function ClientRequest(input, options, cb) {
       return method === "HEAD" ? 1 : 0;
     };
 
-    parser[HTTPParser.kOnBody] = (chunk) => {
+    parser[HTTPParser.kOnBody] = chunk => {
       if (res && !res._dumped) res.push(chunk);
     };
 
@@ -459,19 +472,29 @@ function ClientRequest(input, options, cb) {
       if (parser._headers.length) {
         const trailers = buildHeaders(parser._headers);
         const rawTrailers = parser._headers.slice();
-        Object.defineProperty(res, "trailers", { value: trailers, writable: true, enumerable: true, configurable: true });
-        Object.defineProperty(res, "rawTrailers", { value: rawTrailers, writable: true, enumerable: true, configurable: true });
+        Object.defineProperty(res, "trailers", {
+          value: trailers,
+          writable: true,
+          enumerable: true,
+          configurable: true,
+        });
+        Object.defineProperty(res, "rawTrailers", {
+          value: rawTrailers,
+          writable: true,
+          enumerable: true,
+          configurable: true,
+        });
         parser._headers = [];
       }
       responseComplete();
     };
 
-    parser[HTTPParser.kOnHeaders] = (headers) => {
+    parser[HTTPParser.kOnHeaders] = headers => {
       // Accumulate trailing headers (called when headers arrive in fragments or as trailers)
       parser._headers.push(...headers);
     };
 
-    socket.on("data", (chunk) => {
+    socket.on("data", chunk => {
       const ret = parser.execute(chunk);
       if (ret instanceof Error) {
         socket.destroy();
@@ -484,13 +507,20 @@ function ClientRequest(input, options, cb) {
         const info = pendingUpgrade;
         pendingUpgrade = null;
         const head = typeof ret === "number" && ret < chunk.length ? chunk.slice(ret) : Buffer.alloc(0);
-        const infoRes = { statusCode: info.statusCode, statusMessage: info.statusMessage, headers: info.headers, rawHeaders: info.rawHeaders };
+        const infoRes = {
+          statusCode: info.statusCode,
+          statusMessage: info.statusMessage,
+          headers: info.headers,
+          rawHeaders: info.rawHeaders,
+        };
         this.emit(info.isUpgrade ? "upgrade" : "connect", infoRes, socket, head);
       }
     });
-    socket.on("error", (err) => {
+    socket.on("error", err => {
       if (isAbortError(err)) return;
-      try { this.emit("error", err); } catch (e) {
+      try {
+        this.emit("error", err);
+      } catch (e) {
         if (!!$debug) globalReportError(e);
       }
     });
@@ -544,7 +574,7 @@ function ClientRequest(input, options, cb) {
       // Override resolveNextChunk so that when end() signals completion,
       // we write the request to the socket.
       const origResolve = resolveNextChunk;
-      resolveNextChunk = (end) => {
+      resolveNextChunk = end => {
         origResolve?.(end);
         if (end && connected) writeRequest();
       };

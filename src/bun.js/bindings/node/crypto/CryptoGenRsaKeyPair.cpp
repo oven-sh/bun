@@ -158,6 +158,7 @@ std::optional<RsaKeyPairJobCtx> RsaKeyPairJobCtx::fromJS(JSC::JSGlobalObject* gl
         RETURN_IF_EXCEPTION(scope, std::nullopt);
         hashString = hashAlgorithmValue.toString(globalObject);
         RETURN_IF_EXCEPTION(scope, std::nullopt);
+        auto _ = JSC::EnsureStillAliveScope(hashString);
         hashView = hashString->view(globalObject);
         RETURN_IF_EXCEPTION(scope, std::nullopt);
     }
@@ -166,6 +167,7 @@ std::optional<RsaKeyPairJobCtx> RsaKeyPairJobCtx::fromJS(JSC::JSGlobalObject* gl
         RETURN_IF_EXCEPTION(scope, std::nullopt);
         mgf1HashAlgorithmString = mgf1HashAlgorithmValue.toString(globalObject);
         RETURN_IF_EXCEPTION(scope, std::nullopt);
+        auto _ = JSC::EnsureStillAliveScope(mgf1HashAlgorithmString);
         mgf1HashView = mgf1HashAlgorithmString->view(globalObject);
         RETURN_IF_EXCEPTION(scope, std::nullopt);
     }
@@ -176,6 +178,7 @@ std::optional<RsaKeyPairJobCtx> RsaKeyPairJobCtx::fromJS(JSC::JSGlobalObject* gl
         RETURN_IF_EXCEPTION(scope, std::nullopt);
         hashString = hashValue.toString(globalObject);
         RETURN_IF_EXCEPTION(scope, std::nullopt);
+        auto _ = JSC::EnsureStillAliveScope(hashString);
         hashView = hashString->view(globalObject);
         RETURN_IF_EXCEPTION(scope, std::nullopt);
         if (!hashAlgorithmView->isNull() && hashAlgorithmView != hashView) {
@@ -190,6 +193,7 @@ std::optional<RsaKeyPairJobCtx> RsaKeyPairJobCtx::fromJS(JSC::JSGlobalObject* gl
         RETURN_IF_EXCEPTION(scope, std::nullopt);
         mgf1HashString = mgf1HashValue.toString(globalObject);
         RETURN_IF_EXCEPTION(scope, std::nullopt);
+        auto _ = JSC::EnsureStillAliveScope(mgf1HashString);
         mgf1HashView = mgf1HashString->view(globalObject);
         RETURN_IF_EXCEPTION(scope, std::nullopt);
         if (!mgf1HashAlgorithmView->isNull() && mgf1HashAlgorithmView != mgf1HashView) {

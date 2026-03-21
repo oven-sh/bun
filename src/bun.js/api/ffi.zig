@@ -960,6 +960,9 @@ pub const FFI = struct {
             for (symbols.keys()) |key| {
                 allocator.free(@constCast(key));
             }
+            for (symbols.values()) |*function_| {
+                function_.arg_types.deinit(allocator);
+            }
             symbols.clearAndFree(allocator);
             return val;
         }
@@ -1051,6 +1054,9 @@ pub const FFI = struct {
             // an error while validating symbols
             for (symbols.keys()) |key| {
                 bun.default_allocator.free(@constCast(key));
+            }
+            for (symbols.values()) |*function_| {
+                function_.arg_types.deinit(bun.default_allocator);
             }
             symbols.clearAndFree(bun.default_allocator);
             return val;
@@ -1194,6 +1200,9 @@ pub const FFI = struct {
             // an error while validating symbols
             for (symbols.keys()) |key| {
                 allocator.free(@constCast(key));
+            }
+            for (symbols.values()) |*function_| {
+                function_.arg_types.deinit(allocator);
             }
             symbols.clearAndFree(allocator);
             return val;

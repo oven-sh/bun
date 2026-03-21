@@ -23,5 +23,7 @@ test("accessing Bun.$ after stack overflow does not crash", async () => {
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+  expect(stdout).toBe("");
+  expect(stderr).not.toContain("error:");
   expect(exitCode).toBe(0);
 });

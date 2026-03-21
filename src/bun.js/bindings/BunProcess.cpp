@@ -195,7 +195,7 @@ static JSValue constructVersions(VM& vm, JSObject* processObject)
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* globalObject = processObject->globalObject();
     JSC::JSObject* object = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 24);
-    RETURN_IF_EXCEPTION(scope, {});
+    RETURN_IF_EXCEPTION(scope, jsUndefined());
 
     object->putDirect(vm, JSC::Identifier::fromString(vm, "node"_s), JSC::jsOwnedString(vm, makeAtomString(ASCIILiteral::fromLiteralUnsafe(REPORTED_NODEJS_VERSION))));
     object->putDirect(vm, JSC::Identifier::fromString(vm, "bun"_s), JSC::jsOwnedString(vm, String(ASCIILiteral::fromLiteralUnsafe(Bun__version)).substring(1)));
@@ -2468,7 +2468,7 @@ static JSValue constructProcessChannel(VM& vm, JSObject* processObject)
         JSC::CallData callData = JSC::getCallData(getControl);
 
         auto result = JSC::profiledCall(globalObject, ProfilingReason::API, getControl, callData, globalObject->globalThis(), args);
-        RETURN_IF_EXCEPTION(scope, {});
+        RETURN_IF_EXCEPTION(scope, jsUndefined());
         return result;
     } else {
         return jsUndefined();

@@ -5127,7 +5127,7 @@ restart:
                         }
                     }
                 }
-                // Ignore exceptions from Proxy "getPrototype" trap.
+                // Ignore exceptions from Proxy "getPrototypeOf" trap.
                 CLEAR_IF_EXCEPTION(scope);
             }
             return;
@@ -5239,7 +5239,7 @@ restart:
             if (iterating == globalObject)
                 break;
             JSValue proto = iterating->getPrototype(globalObject);
-            // Ignore exceptions from Proxy "getPrototype" trap.
+            // Ignore exceptions from Proxy "getPrototypeOf" trap.
             if (scope.exception()) [[unlikely]] {
                 (void)scope.tryClearException();
                 break;

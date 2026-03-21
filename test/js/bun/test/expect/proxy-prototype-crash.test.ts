@@ -25,6 +25,7 @@ test("Bun.inspect does not crash when prototype is a Proxy with throwing getProt
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stdout).toContain("OK");
+  expect(stderr).toBe("");
+  expect(stdout).toBe("OK\n");
   expect(exitCode).toBe(0);
 });

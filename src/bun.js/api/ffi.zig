@@ -835,7 +835,7 @@ pub const FFI = struct {
             return globalThis.toInvalidArguments("Expected a number", .{});
         }
         const num = ctx.asNumber();
-        if (num < 1 or num != @trunc(num)) {
+        if (num < 1 or num != @trunc(num) or num > @as(f64, @floatFromInt(std.math.maxInt(usize)))) {
             return globalThis.toInvalidArguments("Expected a non-zero pointer", .{});
         }
         const addr: usize = @intFromFloat(num);

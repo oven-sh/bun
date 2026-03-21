@@ -13,4 +13,6 @@ test("FFI closeCallback does not crash with invalid arguments", () => {
   expect(() => ffi.closeCallback(0)).toThrow("Expected a non-zero pointer");
   expect(() => ffi.closeCallback(-1)).toThrow("Expected a non-zero pointer");
   expect(() => ffi.closeCallback(1.5)).toThrow("Expected a non-zero pointer");
+  expect(() => ffi.closeCallback(1e20)).toThrow("Expected a non-zero pointer");
+  expect(() => ffi.closeCallback(Number.MAX_VALUE)).toThrow("Expected a non-zero pointer");
 });

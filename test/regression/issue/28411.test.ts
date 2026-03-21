@@ -87,6 +87,48 @@ test("bun install updates bun.lock when root package name is added", async () =>
   expect(lockfile2).toContain('"name": "new-name"');
 });
 
+test("bun add updates bun.lock when root package name was changed", async () => {
+  using dir = tempDir("issue-28411-add-cmd", {
+    "package.json": JSON.stringify({
+      name: "original-name",
+      dependencies: {
+        "is-even": "1.0.0",
+      },
+    }),
+  });
+
+  // Initial install
+  await using proc1 = Bun.spawn({
+    cmd: [bunExe(), "install"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  expect(await proc1.exited).toBe(0);
+
+  const lockfile1 = await Bun.file(`${dir}/bun.lock`).text();
+  expect(lockfile1).toContain('"name": "original-name"');
+
+  // Rename the package and add a new dependency via bun add
+  const pkg = JSON.parse(await Bun.file(`${dir}/package.json`).text());
+  pkg.name = "renamed-pkg";
+  await Bun.write(`${dir}/package.json`, JSON.stringify(pkg));
+
+  await using proc2 = Bun.spawn({
+    cmd: [bunExe(), "add", "is-odd@0.1.2"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  expect(await proc2.exited).toBe(0);
+
+  const lockfile2 = await Bun.file(`${dir}/bun.lock`).text();
+  expect(lockfile2).toContain('"name": "renamed-pkg"');
+  expect(lockfile2).not.toContain("original-name");
+});
+
 test("bun install updates bun.lock when workspace sub-package name changes", async () => {
   using dir = tempDir("issue-28411-ws", {
     "package.json": JSON.stringify({

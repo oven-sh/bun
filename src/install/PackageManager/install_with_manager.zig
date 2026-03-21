@@ -51,7 +51,6 @@ pub fn installWithManager(
     // this defaults to false
     // but we force allowing updates to the lockfile when you do bun add
     var had_any_diffs = false;
-    var root_name_changed = false;
     manager.progress = .{};
 
     switch (load_result) {
@@ -194,32 +193,18 @@ pub fn installWithManager(
 
                 had_any_diffs = manager.summary.hasDiffs();
 
-                // Check if root package name changed
-                root_name_changed = root.name_hash != maybe_root.name_hash or
-                    (root.name_hash == 0 and maybe_root.name_hash == 0 and
-                    !root.name.eql(maybe_root.name, manager.lockfile.buffers.string_bytes.items, lockfile.buffers.string_bytes.items));
-
                 if (!had_any_diffs) {
-                    // always grab latest scripts and name for root package
+                    // always grab latest scripts for root package
                     var builder_ = manager.lockfile.stringBuilder();
                     var builder = &builder_;
 
                     maybe_root.scripts.count(lockfile.buffers.string_bytes.items, *Lockfile.StringBuilder, builder);
-                    if (root_name_changed) {
-                        const new_name = maybe_root.name.slice(lockfile.buffers.string_bytes.items);
-                        builder.count(new_name);
-                    }
                     try builder.allocate();
                     manager.lockfile.packages.items(.scripts)[0] = maybe_root.scripts.clone(
                         lockfile.buffers.string_bytes.items,
                         *Lockfile.StringBuilder,
                         builder,
                     );
-                    if (root_name_changed) {
-                        const new_name = maybe_root.name.slice(lockfile.buffers.string_bytes.items);
-                        manager.lockfile.packages.items(.name)[0] = builder.append(String, new_name);
-                        manager.lockfile.packages.items(.name_hash)[0] = maybe_root.name_hash;
-                    }
                     builder.clamp();
                 } else {
                     var builder_ = manager.lockfile.stringBuilder();
@@ -239,7 +224,7 @@ pub fn installWithManager(
                     lockfile.overrides.count(&lockfile, builder);
                     lockfile.catalogs.count(&lockfile, builder);
                     maybe_root.scripts.count(lockfile.buffers.string_bytes.items, *Lockfile.StringBuilder, builder);
-                    if (root_name_changed) {
+                    if (manager.summary.root_name_changed) {
                         builder.count(maybe_root.name.slice(lockfile.buffers.string_bytes.items));
                     }
 
@@ -308,7 +293,7 @@ pub fn installWithManager(
                         builder,
                     );
 
-                    if (root_name_changed) {
+                    if (manager.summary.root_name_changed) {
                         const new_name = maybe_root.name.slice(lockfile.buffers.string_bytes.items);
                         manager.lockfile.packages.items(.name)[0] = builder.append(String, new_name);
                         manager.lockfile.packages.items(.name_hash)[0] = maybe_root.name_hash;
@@ -785,7 +770,9 @@ pub fn installWithManager(
     const packages_len_before_install = manager.lockfile.packages.len;
 
     if (manager.options.enable.frozen_lockfile and load_result != .not_found) frozen_lockfile: {
-        if (load_result.loadedFromTextLockfile()) {
+        if (had_any_diffs) {
+            // hasDiffs() includes dependency, override, catalog, patched dependency, and root name changes
+        } else if (load_result.loadedFromTextLockfile()) {
             if (bun.handleOom(manager.lockfile.eql(lockfile_before_clean, packages_len_before_install, manager.allocator))) {
                 break :frozen_lockfile;
             }
@@ -904,7 +891,6 @@ pub fn installWithManager(
         (manager.options.do.save_lockfile and
             (did_meta_hash_change or
                 had_any_diffs or
-                root_name_changed or
                 manager.update_requests.len > 0 or
                 (load_result == .ok and (load_result.ok.serializer_result.packages_need_update or load_result.ok.serializer_result.migrated_from_lockb_v2)) or
                 manager.lockfile.isEmpty() or

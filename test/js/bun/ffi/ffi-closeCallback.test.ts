@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 
 test("FFI closeCallback does not crash with invalid arguments", () => {
   const ffi = Bun.FFI;

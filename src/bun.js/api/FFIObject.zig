@@ -431,7 +431,7 @@ pub fn getPtrSlice(globalThis: *JSGlobalObject, value: JSValue, byteOffset: ?JSV
     }
 
     const num = value.asPtrAddress();
-    if (num == 0) {
+    if (num < std.heap.page_size_min) {
         return .{ .err = globalThis.toInvalidArguments("ptr cannot be zero, that would segfault Bun :(", .{}) };
     }
 
@@ -450,7 +450,7 @@ pub fn getPtrSlice(globalThis: *JSGlobalObject, value: JSValue, byteOffset: ?JSV
                 addr +|= @as(usize, @intCast(off));
             }
 
-            if (addr == 0) {
+            if (addr < std.heap.page_size_min) {
                 return .{ .err = globalThis.toInvalidArguments("ptr cannot be zero, that would segfault Bun :(", .{}) };
             }
 

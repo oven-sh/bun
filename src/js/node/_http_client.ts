@@ -226,7 +226,7 @@ function ClientRequest(input, options, cb) {
 
     // If request is destroyed we abort the current response
     this[kAbortController]?.abort?.();
-    this.socket.destroy(err);
+    this.socket?.destroy(err);
 
     return this;
   };
@@ -291,7 +291,15 @@ function ClientRequest(input, options, cb) {
     try {
       socket = createConnection(connectOptions);
     } catch (err) {
-      process.nextTick((self, e) => self.emit("error", e), this, err);
+      fetching = false;
+      process.nextTick(
+        (self, e) => {
+          self.emit("error", e);
+          maybeEmitClose();
+        },
+        this,
+        err,
+      );
       return false;
     }
 
@@ -450,6 +458,8 @@ function ClientRequest(input, options, cb) {
         upgradeRes.rawHeaders = headers;
         upgradeRes[bodyStreamSymbol] = true;
         upgradeRes.socket = socket;
+        upgradeRes.req = this;
+        this.res = upgradeRes;
         pendingUpgrade = {
           res: upgradeRes,
           isUpgrade: !!upgrade,
@@ -537,6 +547,7 @@ function ClientRequest(input, options, cb) {
       }
       const ret = parser.execute(chunk);
       if (ret instanceof Error) {
+        this.destroyed = true;
         socket.destroy();
         this.emit("error", ret);
         return;
@@ -565,6 +576,7 @@ function ClientRequest(input, options, cb) {
     socket.on("data", onData);
     socket.on("error", err => {
       if (isAbortError(err)) return;
+      if (upgraded) return; // Post-upgrade errors belong to the socket owner
       this.destroyed = true;
       try {
         this.emit("error", err);

@@ -350,6 +350,8 @@ function ClientRequest(input, options, cb) {
     parser.initialize(HTTPParser.RESPONSE, {});
 
     let res: any = null;
+    let upgraded = false;
+    let pendingUpgrade: any = null;
 
     const responseComplete = () => {
       if (res && !res.complete) {
@@ -405,13 +407,19 @@ function ClientRequest(input, options, cb) {
 
       // Upgrade (101 Switching Protocols) or CONNECT tunnel (200) —
       // surface the live socket and stop HTTP parsing.
+      // We defer the emit to the data handler so we can capture leftover
+      // bytes (head) from the same TCP segment after the 101 headers.
       if (upgrade || (method === "CONNECT" && statusCode === 200)) {
-        const builtHeaders = buildHeaders(headers);
-        const head = Buffer.alloc(0);
-        const infoRes = { statusCode, statusMessage, headers: builtHeaders, rawHeaders: headers };
-        this.emit(upgrade ? "upgrade" : "connect", infoRes, socket, head);
+        upgraded = true;
+        pendingUpgrade = {
+          headers: buildHeaders(headers),
+          rawHeaders: headers,
+          statusCode,
+          statusMessage,
+          isUpgrade: !!upgrade,
+        };
         freeParser(parser, this, socket);
-        return 1; // skip body
+        return 1; // skip body — parser pauses, returns bytes consumed
       }
 
       const prevIsHTTPS = getIsNextIncomingMessageHTTPS();
@@ -468,6 +476,16 @@ function ClientRequest(input, options, cb) {
       if (ret instanceof Error) {
         socket.destroy();
         this.emit("error", ret);
+        return;
+      }
+      // After parser.execute, if an upgrade was detected, emit the deferred
+      // upgrade/connect event with any leftover bytes from the same TCP segment.
+      if (pendingUpgrade) {
+        const info = pendingUpgrade;
+        pendingUpgrade = null;
+        const head = typeof ret === "number" && ret < chunk.length ? chunk.slice(ret) : Buffer.alloc(0);
+        const infoRes = { statusCode: info.statusCode, statusMessage: info.statusMessage, headers: info.headers, rawHeaders: info.rawHeaders };
+        this.emit(info.isUpgrade ? "upgrade" : "connect", infoRes, socket, head);
       }
     });
     socket.on("error", (err) => {
@@ -488,8 +506,9 @@ function ClientRequest(input, options, cb) {
       // Handle premature close
       if (res && !res.complete) {
         res.destroy(new ConnResetException("aborted"));
-      } else if (!res) {
-        // EOF before headers — emit error on the request
+      } else if (!res && !upgraded) {
+        // EOF before headers — emit error on the request.
+        // Skip if upgraded: the socket closing after an upgrade is normal.
         this.emit("error", new ConnResetException("aborted"));
       }
       // Free parser resources on any close to avoid leaks

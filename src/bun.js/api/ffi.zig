@@ -831,6 +831,10 @@ pub const FFI = struct {
     }
 
     pub fn closeCallback(globalThis: *JSGlobalObject, ctx: JSValue) JSValue {
+        if (!ctx.isNumber()) {
+            globalThis.throw("Expected a number as the first argument", .{}) catch {};
+            return .zero;
+        }
         var function: *Function = @ptrFromInt(ctx.asPtrAddress());
         function.deinit(globalThis);
         return .js_undefined;

@@ -1,6 +1,6 @@
 import { dlopen, linkSymbols } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
-import { isArm64, isMusl, isWindows } from "harness";
+import { bunEnv, bunExe, isArm64, isMusl, isWindows } from "harness";
 
 // TinyCC (and all of bun:ffi) is disabled on Windows ARM64
 const isFFIUnavailable = isWindows && isArm64;
@@ -64,6 +64,18 @@ describe.skipIf(isFFIUnavailable)("FFI error messages", () => {
         },
       });
     }).toThrow(/myFunction.*ptr.*(linkSymbols|CFunction)/);
+  });
+
+  test("closeCallback with non-number argument throws instead of crashing", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `try { Bun.FFI.closeCallback({}); } catch(e) { console.log(e.message); }`],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toContain("Expected a number");
+    expect(exitCode).toBe(0);
   });
 
   test("linkSymbols with non-number ptr does not crash", () => {

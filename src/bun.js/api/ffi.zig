@@ -1431,6 +1431,7 @@ pub const FFI = struct {
             if (try generateSymbolForFunction(global, allocator, value, &function)) |val| {
                 return val;
             }
+            errdefer function.arg_types.deinit(allocator);
             function.base_name = try prop.toOwnedSliceZ(allocator);
 
             symbols.putAssumeCapacity(bun.asByteSlice(function.base_name.?), function);

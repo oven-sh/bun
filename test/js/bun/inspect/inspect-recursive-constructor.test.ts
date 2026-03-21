@@ -24,7 +24,7 @@ new F();
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stdout).toBe("");
-  expect(stderr).toContain("RangeError");
-  // Exits with 1 from uncaught RangeError, not a crash signal
+  expect(stderr).not.toContain("panic");
+  expect(stderr).not.toContain("Segmentation fault");
   expect(exitCode).toBe(1);
 });

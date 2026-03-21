@@ -156,12 +156,13 @@ fn messageWithTypeAndLevel_(
         return;
     }
 
-    const enable_colors = if (level == .Warning or level == .Error)
+    const use_stderr = level == .Warning or level == .Error or message_type == .Trace;
+    const enable_colors = if (use_stderr)
         Output.enable_ansi_colors_stderr
     else
         Output.enable_ansi_colors_stdout;
 
-    const writer = if (level == .Warning or level == .Error)
+    const writer = if (use_stderr)
         console.error_writer
     else
         console.writer;

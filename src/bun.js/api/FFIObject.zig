@@ -432,7 +432,7 @@ pub fn getPtrSlice(globalThis: *JSGlobalObject, value: JSValue, byteOffset: ?JSV
 
     const num = value.asPtrAddress();
     if (num < std.heap.page_size_min) {
-        return .{ .err = globalThis.toInvalidArguments("ptr cannot be zero, that would segfault Bun :(", .{}) };
+        return .{ .err = globalThis.toInvalidArguments("ptr is in low unmapped memory and would segfault Bun :(", .{}) };
     }
 
     // if (!std.math.isFinite(num)) {
@@ -451,7 +451,7 @@ pub fn getPtrSlice(globalThis: *JSGlobalObject, value: JSValue, byteOffset: ?JSV
             }
 
             if (addr < std.heap.page_size_min) {
-                return .{ .err = globalThis.toInvalidArguments("ptr cannot be zero, that would segfault Bun :(", .{}) };
+                return .{ .err = globalThis.toInvalidArguments("ptr is in low unmapped memory and would segfault Bun :(", .{}) };
             }
 
             if (!std.math.isFinite(byte_off.asNumber())) {

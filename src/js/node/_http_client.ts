@@ -304,7 +304,12 @@ function ClientRequest(input, options, cb) {
     }
 
     this.socket = socket;
-    this[kAbortController]?.signal?.addEventListener("abort", () => socket.destroy(), { once: true });
+    // Remove any pre-existing onAbort listener from flushHeaders/send — socketCloseListener
+    // would emit synthetic "close" on this.socket (the real socket), causing duplicates.
+    // Our socket.on("close") handler handles all cleanup for the createConnection path.
+    if (this[kAbortController]) {
+      this[kAbortController].signal.addEventListener("abort", () => socket.destroy(), { once: true });
+    }
 
     // --- Write HTTP/1.1 request ---
     const writeRequest = () => {
@@ -491,10 +496,15 @@ function ClientRequest(input, options, cb) {
         return 1;
       }
       if (!this.emit("response", res)) res._dump();
-      maybeEmitClose();
+      // Do not call maybeEmitClose() here — the body has not been received yet.
+      // responseComplete() will call it after kOnMessageComplete fires.
 
       // Return value: 0 = parse body, 1 = skip body (HEAD)
-      return method === "HEAD" ? 1 : 0;
+      if (method === "HEAD") {
+        responseComplete();
+        return 1;
+      }
+      return 0;
     };
 
     parser[HTTPParser.kOnBody] = chunk => {

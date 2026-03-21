@@ -941,13 +941,34 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     return JSC::JSValue::encode(JSC::jsString(vm, fileSystemPath));
 }
 
+// Safe wrappers for C++ PropertyCallback functions that may return empty JSValue on exception.
+// reifyStaticProperty calls putDirect with the result, which crashes on null JSValue.
+#define DEFINE_SAFE_PROPERTY_CALLBACK(name, impl) \
+    static JSValue name(VM& vm, JSObject* obj) { \
+        auto result = impl(vm, obj); \
+        return result ? result : jsUndefined(); \
+    }
+
+DEFINE_SAFE_PROPERTY_CALLBACK(safe_constructBunShell, constructBunShell)
+DEFINE_SAFE_PROPERTY_CALLBACK(safe_constructDNSObject, constructDNSObject)
+DEFINE_SAFE_PROPERTY_CALLBACK(safe_constructEnvObject, constructEnvObject)
+DEFINE_SAFE_PROPERTY_CALLBACK(safe_constructBunPeekObject, constructBunPeekObject)
+DEFINE_SAFE_PROPERTY_CALLBACK(safe_defaultBunSQLObject, defaultBunSQLObject)
+DEFINE_SAFE_PROPERTY_CALLBACK(safe_constructBunSQLObject, constructBunSQLObject)
+DEFINE_SAFE_PROPERTY_CALLBACK(safe_constructJSONLObject, constructJSONLObject)
+DEFINE_SAFE_PROPERTY_CALLBACK(safe_constructCookieObject, constructCookieObject)
+DEFINE_SAFE_PROPERTY_CALLBACK(safe_constructCookieMapObject, constructCookieMapObject)
+DEFINE_SAFE_PROPERTY_CALLBACK(safe_constructSecretsObject, constructSecretsObject)
+
+#undef DEFINE_SAFE_PROPERTY_CALLBACK
+
 /* Source for BunObject.lut.h
 @begin bunObjectTable
-    $                                              constructBunShell                                                   DontDelete|PropertyCallback
+    $                                              safe_constructBunShell                                              DontDelete|PropertyCallback
     Archive                                        BunObject_lazyPropCb_wrap_Archive                                   DontDelete|PropertyCallback
     ArrayBufferSink                                BunObject_lazyPropCb_wrap_ArrayBufferSink                           DontDelete|PropertyCallback
-    Cookie                                         constructCookieObject                                               DontDelete|ReadOnly|PropertyCallback
-    CookieMap                                      constructCookieMapObject                                            DontDelete|ReadOnly|PropertyCallback
+    Cookie                                         safe_constructCookieObject                                          DontDelete|ReadOnly|PropertyCallback
+    CookieMap                                      safe_constructCookieMapObject                                      DontDelete|ReadOnly|PropertyCallback
     CryptoHasher                                   BunObject_lazyPropCb_wrap_CryptoHasher                              DontDelete|PropertyCallback
     FFI                                            BunObject_lazyPropCb_wrap_FFI                                       DontDelete|PropertyCallback
     FileSystemRouter                               BunObject_lazyPropCb_wrap_FileSystemRouter                          DontDelete|PropertyCallback
@@ -962,7 +983,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     SHA512_256                                     BunObject_lazyPropCb_wrap_SHA512_256                                DontDelete|PropertyCallback
     JSONC                                          BunObject_lazyPropCb_wrap_JSONC                                     DontDelete|PropertyCallback
     JSON5                                          BunObject_lazyPropCb_wrap_JSON5                                     DontDelete|PropertyCallback
-    JSONL                                          constructJSONLObject                                                ReadOnly|DontDelete|PropertyCallback
+    JSONL                                          safe_constructJSONLObject                                           ReadOnly|DontDelete|PropertyCallback
     markdown                                         BunObject_lazyPropCb_wrap_markdown                                  DontDelete|PropertyCallback
     TOML                                           BunObject_lazyPropCb_wrap_TOML                                      DontDelete|PropertyCallback
     YAML                                           BunObject_lazyPropCb_wrap_YAML                                      DontDelete|PropertyCallback
@@ -982,9 +1003,9 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     deepEquals                                     functionBunDeepEquals                                               DontDelete|Function 2
     deepMatch                                      functionBunDeepMatch                                                DontDelete|Function 2
     deflateSync                                    BunObject_callback_deflateSync                                      DontDelete|Function 1
-    dns                                            constructDNSObject                                                  ReadOnly|DontDelete|PropertyCallback
+    dns                                            safe_constructDNSObject                                             ReadOnly|DontDelete|PropertyCallback
     enableANSIColors                               BunObject_lazyPropCb_wrap_enableANSIColors                          DontDelete|PropertyCallback
-    env                                            constructEnvObject                                                  ReadOnly|DontDelete|PropertyCallback
+    env                                            safe_constructEnvObject                                             ReadOnly|DontDelete|PropertyCallback
     escapeHTML                                     functionBunEscapeHTML                                               DontDelete|Function 2
     fetch                                          constructBunFetchObject                                             ReadOnly|DontDelete|PropertyCallback
     file                                           BunObject_callback_file                                             DontDelete|Function 1
@@ -1009,7 +1030,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     version_with_sha                               constructBunVersionWithSha                                          DontEnum|ReadOnly|DontDelete|PropertyCallback
     password                                       constructPasswordObject                                             DontDelete|PropertyCallback
     pathToFileURL                                  functionPathToFileURL                                               DontDelete|Function 1
-    peek                                           constructBunPeekObject                                              DontDelete|PropertyCallback
+    peek                                           safe_constructBunPeekObject                                         DontDelete|PropertyCallback
     plugin                                         constructPluginObject                                               ReadOnly|DontDelete|PropertyCallback
     randomUUIDv7                                   Bun__randomUUIDv7                                                   DontDelete|Function 2
     randomUUIDv5                                   Bun__randomUUIDv5                                                   DontDelete|Function 3
@@ -1025,9 +1046,9 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     resolveSync                                    BunObject_callback_resolveSync                                      DontDelete|Function 1
     revision                                       constructBunRevision                                                ReadOnly|DontDelete|PropertyCallback
     semver                                         BunObject_lazyPropCb_wrap_semver                                    ReadOnly|DontDelete|PropertyCallback
-    sql                                            defaultBunSQLObject                                                 DontDelete|PropertyCallback
-    postgres                                       defaultBunSQLObject                                                 DontDelete|PropertyCallback
-    SQL                                            constructBunSQLObject                                               DontDelete|PropertyCallback
+    sql                                            safe_defaultBunSQLObject                                            DontDelete|PropertyCallback
+    postgres                                       safe_defaultBunSQLObject                                            DontDelete|PropertyCallback
+    SQL                                            safe_constructBunSQLObject                                          DontDelete|PropertyCallback
     serve                                          BunObject_callback_serve                                            DontDelete|Function 1
     sha                                            BunObject_callback_sha                                              DontDelete|Function 1
     shrink                                         BunObject_callback_shrink                                           DontDelete|Function 1
@@ -1048,7 +1069,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     which                                          BunObject_callback_which                                            DontDelete|Function 1
     RedisClient                                    BunObject_lazyPropCb_wrap_ValkeyClient                              DontDelete|PropertyCallback
     redis                                          BunObject_lazyPropCb_wrap_valkey                                    DontDelete|PropertyCallback
-    secrets                                        constructSecretsObject                                              DontDelete|PropertyCallback
+    secrets                                        safe_constructSecretsObject                                         DontDelete|PropertyCallback
     write                                          BunObject_callback_write                                            DontDelete|Function 1
     zstdCompressSync                               BunObject_callback_zstdCompressSync                                DontDelete|Function 1
     zstdDecompressSync                             BunObject_callback_zstdDecompressSync                              DontDelete|Function 1

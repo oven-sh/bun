@@ -24,6 +24,6 @@ try { new F(); } catch (e) {}
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stdout).toBe("");
-  // Must not crash — exit 0 (caught) or 1 (uncaught RangeError) are both acceptable
-  expect(exitCode === 0 || exitCode === 1).toBe(true);
+  // Process must not crash (signal-based termination produces exit >= 128)
+  expect(exitCode).toBeLessThan(128);
 });

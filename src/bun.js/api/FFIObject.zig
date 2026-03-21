@@ -435,6 +435,10 @@ pub fn getPtrSlice(globalThis: *JSGlobalObject, value: JSValue, byteOffset: ?JSV
         return .{ .err = globalThis.toInvalidArguments("ptr cannot be zero, that would segfault Bun :(", .{}) };
     }
 
+    if (num < std.heap.pageSize()) {
+        return .{ .err = globalThis.toInvalidArguments("ptr to invalid memory, that would segfault Bun :(", .{}) };
+    }
+
     // if (!std.math.isFinite(num)) {
     //     return .{ .err = globalThis.toInvalidArguments("ptr must be a finite number.", .{}) };
     // }
@@ -444,12 +448,12 @@ pub fn getPtrSlice(globalThis: *JSGlobalObject, value: JSValue, byteOffset: ?JSV
     if (byteOffset) |byte_off| {
         if (byte_off.isNumber()) {
             if (!std.math.isFinite(byte_off.asNumber())) {
-                return .{ .err = globalThis.toInvalidArguments("ptr must be a finite number.", .{}) };
+                return .{ .err = globalThis.toInvalidArguments("byteOffset must be a finite number.", .{}) };
             }
 
             const off = byte_off.toInt64();
             if (off < 0) {
-                addr -|= @as(usize, @intCast(off * -1));
+                addr -|= @abs(off);
             } else {
                 addr +|= @as(usize, @intCast(off));
             }
@@ -458,13 +462,11 @@ pub fn getPtrSlice(globalThis: *JSGlobalObject, value: JSValue, byteOffset: ?JSV
                 return .{ .err = globalThis.toInvalidArguments("ptr cannot be zero, that would segfault Bun :(", .{}) };
             }
         } else if (!byte_off.isEmptyOrUndefinedOrNull()) {
-            // do nothing
-        } else {
             return .{ .err = globalThis.toInvalidArguments("Expected number for byteOffset", .{}) };
         }
     }
 
-    if (addr == 0xDEADBEEF or addr == 0xaaaaaaaa or addr == 0xAAAAAAAA or addr < std.heap.page_size_min) {
+    if (addr == 0xDEADBEEF or addr == 0xaaaaaaaa or addr == 0xAAAAAAAA or addr < std.heap.pageSize() or addr > max_addressable_memory) {
         return .{ .err = globalThis.toInvalidArguments("ptr to invalid memory, that would segfault Bun :(", .{}) };
     }
 

@@ -362,21 +362,25 @@ it("works on prototypes", () => {
     },
   };
   const Foo = Object.create(Bar);
+  Foo._toBeBaz = function () {
+    return { pass: true };
+  };
 
+  // Only own properties are registered (matching Jest behavior)
   expect.extend(Foo);
-  expect(123)._toBeBar();
+  expect(123)._toBeBaz();
 });
 
 it("works on classes", () => {
-  class Bar {
-    _toBeBar() {
+  // Only own enumerable properties are registered (matching Jest behavior).
+  const matchers = {
+    _toBeBar2() {
       return { pass: true };
-    }
-  }
-  class Foo extends Bar {}
+    },
+  };
 
-  expect.extend(new Foo());
-  expect(123)._toBeBar();
+  expect.extend(matchers);
+  expect(123)._toBeBar2();
 });
 
 test("expect.extend with numeric index keys does not crash", () => {
@@ -403,4 +407,16 @@ describe("MatcherContext", () => {
       expect(123).toBeCustomColor(456);
     });
   });
+});
+
+it("does not crash when prototype has non-function properties like Symbol.toStringTag", () => {
+  const proto = { [Symbol.toStringTag]: "CustomMatcher", inheritedProp: "not a function" };
+  const matchers = Object.create(proto);
+  matchers._toBeOwnProp = function (actual, expected) {
+    return { pass: actual === expected, message: () => `expected ${actual} to be ${expected}` };
+  };
+
+  // Should not throw due to inherited non-function properties on the prototype
+  expect.extend(matchers);
+  expect(42)._toBeOwnProp(42);
 });

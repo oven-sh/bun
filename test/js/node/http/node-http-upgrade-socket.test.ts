@@ -117,6 +117,7 @@ describe("node:http server upgrade", () => {
 
           socket.write(response, () => {
             console.log("bytesWritten:" + socket.bytesWritten);
+            console.log("expected:" + Buffer.byteLength(response));
             socket.destroy();
             server.close();
           });
@@ -144,9 +145,9 @@ describe("node:http server upgrade", () => {
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    const match = stdout.match(/bytesWritten:(\d+)/);
-    expect(match).not.toBeNull();
-    expect(Number(match![1])).toBeGreaterThan(0);
+    const actual = Number(stdout.match(/bytesWritten:(\d+)/)?.[1]);
+    const expected = Number(stdout.match(/expected:(\d+)/)?.[1]);
+    expect(actual).toBe(expected);
     expect(exitCode).toBe(0);
   });
 

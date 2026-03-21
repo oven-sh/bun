@@ -8,4 +8,8 @@ test("FFI.closeCallback does not crash with invalid arguments", () => {
   expect(() => closeCallback(undefined)).not.toThrow();
   expect(() => closeCallback("hello")).not.toThrow();
   expect(() => closeCallback(null)).not.toThrow();
+  expect(() => closeCallback(NaN)).not.toThrow();
+  expect(() => closeCallback(Infinity)).not.toThrow();
+  expect(() => closeCallback(-1)).not.toThrow();
+  expect(() => closeCallback(1e20)).not.toThrow();
 });

@@ -830,8 +830,19 @@ pub const FFI = struct {
         return js_object;
     }
 
-    pub fn closeCallback(globalThis: *JSGlobalObject, ctx: JSValue) JSValue {
-        var function: *Function = @ptrFromInt(ctx.asPtrAddress());
+    var live_callbacks_mu: bun.Mutex = .{};
+    var live_callbacks: std.AutoHashMapUnmanaged(*Function, void) = .empty;
+
+    pub fn closeCallback(globalThis: *JSGlobalObject, ctx: JSValue) bun.JSError!JSValue {
+        if (!ctx.isFinite() or ctx.asNumber() < 0) return globalThis.throwInvalidArguments("Expected a callback context", .{});
+        const addr = ctx.asPtrAddress();
+        if (addr == 0 or !std.mem.isAligned(addr, @alignOf(Function))) return globalThis.throwInvalidArguments("Expected a callback context", .{});
+        const function: *Function = @ptrFromInt(addr);
+        {
+            live_callbacks_mu.lock();
+            defer live_callbacks_mu.unlock();
+            if (live_callbacks.fetchRemove(function) == null) return globalThis.throwInvalidArguments("Expected a callback context", .{});
+        }
         function.deinit(globalThis);
         return .js_undefined;
     }
@@ -877,6 +888,11 @@ pub const FFI = struct {
             .compiled => {
                 const function_ = bun.default_allocator.create(Function) catch unreachable;
                 function_.* = func.*;
+                {
+                    live_callbacks_mu.lock();
+                    defer live_callbacks_mu.unlock();
+                    bun.handleOom(live_callbacks.put(bun.default_allocator, function_, {}));
+                }
                 return JSValue.createObject2(
                     globalThis,
                     ZigString.static("ptr"),

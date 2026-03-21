@@ -86,4 +86,11 @@ describe.skipIf(isFFIUnavailable)("FFI error messages", () => {
       });
     }).toThrow('you must provide a "ptr" field with the memory address of the native function.');
   });
+
+  test("linkSymbols with non-object symbol value does not crash", () => {
+    expect(() => {
+      // @ts-expect-error - intentionally passing wrong types
+      linkSymbols({ myFunc: 1603 });
+    }).toThrow(/Expected an object/);
+  });
 });

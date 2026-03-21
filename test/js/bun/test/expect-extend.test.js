@@ -403,5 +403,4 @@ describe("MatcherContext", () => {
       expect(123).toBeCustomColor(456);
     });
   });
-
 });

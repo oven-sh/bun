@@ -72,7 +72,7 @@ Comlink.expose({
     lastStderr = "",
     lastExitCode = -1;
   for (let attempt = 0; attempt < 5; attempt++) {
-    await using proc = Bun.spawn({
+    const proc = Bun.spawn({
       cmd: [bunExe(), "run", "main.js"],
       env: bunEnv,
       cwd: String(dir),
@@ -80,12 +80,22 @@ Comlink.expose({
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    lastStdout = stdout;
-    lastStderr = stderr;
-    lastExitCode = exitCode;
+    // Bound each attempt to 15s to prevent hangs from blocking the retry loop
+    const result = await Promise.race([
+      Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]).then(
+        ([stdout, stderr, exitCode]) => ({ stdout, stderr, exitCode }),
+      ),
+      Bun.sleep(15_000).then(() => {
+        proc.kill();
+        return { stdout: "", stderr: "timeout", exitCode: -1 };
+      }),
+    ]);
 
-    if (stdout.includes("done") && exitCode === 0) {
+    lastStdout = result.stdout;
+    lastStderr = result.stderr;
+    lastExitCode = result.exitCode;
+
+    if (result.stdout.includes("done") && result.exitCode === 0) {
       return; // success — the fix prevented the crash
     }
   }

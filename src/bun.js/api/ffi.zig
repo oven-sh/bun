@@ -1411,7 +1411,7 @@ pub const FFI = struct {
         while (try symbols_iter.next()) |prop| {
             const value = symbols_iter.value;
 
-            if (value.isEmptyOrUndefinedOrNull()) {
+            if (value.isEmptyOrUndefinedOrNull() or !value.isObject()) {
                 return global.toTypeError(.INVALID_ARG_VALUE, "Expected an object for key \"{f}\"", .{prop});
             }
 

@@ -154,6 +154,19 @@ public:
                 }
             } else {
                 this->uncork();
+                /* After uncorking, check if we should close this connection.
+                 * This handles the case where writeHead corked the socket outside
+                 * the uWS request handler (async response), so the close check
+                 * in HttpContext's onData handler never runs for this response. */
+                if (httpResponseData->state & HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE) {
+                    if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) == 0) {
+                        if (((AsyncSocket<SSL> *) this)->getBufferedAmount() == 0) {
+                            ((AsyncSocket<SSL> *) this)->shutdown();
+                            ((AsyncSocket<SSL> *) this)->close();
+                            return true;
+                        }
+                    }
+                }
             }
 
             /* tryEnd can never fail when in chunked mode, since we do not have tryWrite (yet), only write */
@@ -219,6 +232,16 @@ public:
                     }
                 }  else {
                     this->uncork();
+                    /* After uncorking, check if we should close this connection.
+                     * Same fix as the chunked path above. */
+                    if (httpResponseData->state & HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE) {
+                        if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) == 0) {
+                            if (((AsyncSocket<SSL> *) this)->getBufferedAmount() == 0) {
+                                ((AsyncSocket<SSL> *) this)->shutdown();
+                                ((AsyncSocket<SSL> *) this)->close();
+                            }
+                        }
+                    }
                 }
             }
 

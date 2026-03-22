@@ -224,9 +224,11 @@ pub const S3Client = struct {
         };
 
         const options = args.nextEat();
-        var blob = try S3File.constructS3FileWithS3CredentialsAndOptions(globalThis, path, options, ptr.credentials, ptr.options, ptr.acl, ptr.storage_class, ptr.request_payer);
-        // Path ownership transferred — neutralize errdefer.
+        // constructS3FileWithS3CredentialsAndOptions takes ownership of path
+        // (has its own errdefer) — neutralize ours before the call.
+        const owned_path = path;
         path = .{ .string = bun.PathString.empty };
+        var blob = try S3File.constructS3FileWithS3CredentialsAndOptions(globalThis, owned_path, options, ptr.credentials, ptr.options, ptr.acl, ptr.storage_class, ptr.request_payer);
         defer blob.detach();
         var blob_internal: PathOrBlob = .{ .blob = blob };
         return Blob.writeFileInternal(globalThis, &blob_internal, data, .{

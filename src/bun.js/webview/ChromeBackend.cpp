@@ -680,9 +680,7 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         view->m_targetId = WTF::String::fromUTF8(tid);
         uint32_t cid = nextId();
         m_pending.add(cid, Pending { Method::TargetAttachToTarget, entry.slot, entry.viewId });
-        send(cid, Command(cid, "Target.attachToTarget"_s)
-                .str("targetId"_s, view->m_targetId)
-                .boolean("flatten"_s, true));
+        send(cid, Command(cid, "Target.attachToTarget"_s).str("targetId"_s, view->m_targetId).boolean("flatten"_s, true));
         return;
     }
     case Method::TargetAttachToTarget: {
@@ -721,8 +719,7 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         // response so errorText rejects the right slot.
         uint32_t cid = nextId();
         m_pending.add(cid, Pending { Method::PageNavigate, entry.slot, entry.viewId });
-        send(cid, Command(cid, "Page.navigate"_s, sidSpan)
-                .str("url"_s, view->m_pendingChromeNavigateUrl));
+        send(cid, Command(cid, "Page.navigate"_s, sidSpan).str("url"_s, view->m_pendingChromeNavigateUrl));
         view->m_pendingChromeNavigateUrl = WTF::String();
         return;
     }
@@ -789,8 +786,7 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         // Chain into navigateToHistoryEntry. Page.loadEventFired settles.
         uint32_t cid = nextId();
         m_pending.add(cid, Pending { Method::PageNavigateToHistoryEntry, entry.slot, entry.viewId });
-        send(cid, Command(cid, "Page.navigateToHistoryEntry"_s, sidSpan(view->m_sessionId))
-                .num("entryId"_s, entryId));
+        send(cid, Command(cid, "Page.navigateToHistoryEntry"_s, sidSpan(view->m_sessionId)).num("entryId"_s, entryId));
         return;
     }
     case Method::PageNavigateToHistoryEntry:
@@ -972,23 +968,11 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
 
         // Pressed — untracked fire-and-forget.
         uint32_t idDown = nextId();
-        send(0, Command(idDown, "Input.dispatchMouseEvent"_s, sid)
-                .raw("type"_s, "\"mousePressed\""_s)
-                .num("x"_s, cx)
-                .num("y"_s, cy)
-                .raw("button"_s, btn)
-                .num("clickCount"_s, static_cast<int32_t>(view->m_selClickCount))
-                .num("modifiers"_s, mods));
+        send(0, Command(idDown, "Input.dispatchMouseEvent"_s, sid).raw("type"_s, "\"mousePressed\""_s).num("x"_s, cx).num("y"_s, cy).raw("button"_s, btn).num("clickCount"_s, static_cast<int32_t>(view->m_selClickCount)).num("modifiers"_s, mods));
         // Released — tracked, resolves the slot.
         uint32_t idUp = nextId();
         m_pending.add(idUp, Pending { Method::InputDispatchMouseEvent, entry.slot, entry.viewId });
-        send(idUp, Command(idUp, "Input.dispatchMouseEvent"_s, sid)
-                .raw("type"_s, "\"mouseReleased\""_s)
-                .num("x"_s, cx)
-                .num("y"_s, cy)
-                .raw("button"_s, btn)
-                .num("clickCount"_s, static_cast<int32_t>(view->m_selClickCount))
-                .num("modifiers"_s, mods));
+        send(idUp, Command(idUp, "Input.dispatchMouseEvent"_s, sid).raw("type"_s, "\"mouseReleased\""_s).num("x"_s, cx).num("y"_s, cy).raw("button"_s, btn).num("clickCount"_s, static_cast<int32_t>(view->m_selClickCount)).num("modifiers"_s, mods));
         return;
     }
 
@@ -1079,9 +1063,7 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
         view->m_loading = false;
         uint32_t tid = nextId();
         m_pending.add(tid, Pending { Method::PageTitle, PendingSlot::Navigate, view->m_viewId });
-        send(tid, Command(tid, "Runtime.evaluate"_s, sidSpan(view->m_sessionId))
-                .str("expression"_s, "document.title"_s)
-                .boolean("returnByValue"_s, true));
+        send(tid, Command(tid, "Runtime.evaluate"_s, sidSpan(view->m_sessionId)).str("expression"_s, "document.title"_s).boolean("returnByValue"_s, true));
         return;
     }
 
@@ -1427,13 +1409,7 @@ JSPromise* click(JSGlobalObject* g, JSWebView* view, float x, float y, uint8_t b
     // Pressed — untracked. Chrome replies but we don't need the ack; the
     // Released event's reply confirms both were processed.
     uint32_t idDown = t.nextId();
-    t.send(0, Command(idDown, "Input.dispatchMouseEvent"_s, sid)
-            .raw("type"_s, "\"mousePressed\""_s)
-            .num("x"_s, x)
-            .num("y"_s, y)
-            .raw("button"_s, btn)
-            .num("clickCount"_s, static_cast<int32_t>(clickCount))
-            .num("modifiers"_s, mods));
+    t.send(0, Command(idDown, "Input.dispatchMouseEvent"_s, sid).raw("type"_s, "\"mousePressed\""_s).num("x"_s, x).num("y"_s, y).raw("button"_s, btn).num("clickCount"_s, static_cast<int32_t>(clickCount)).num("modifiers"_s, mods));
     // Released — tracked, resolves the promise.
     uint32_t idUp = t.nextId();
     return sendChromeOp(g, view, view->m_pendingMisc, PendingSlot::Misc,
@@ -1565,12 +1541,7 @@ JSPromise* press(JSGlobalObject* g, JSWebView* view, uint8_t key, uint8_t modifi
     // fired if text present) by the time we get the reply. No _doAfter*
     // dance like WKWebView's press().
     uint32_t idDown = t.nextId();
-    t.send(0, Command(idDown, "Input.dispatchKeyEvent"_s, sid)
-            .raw("type"_s, hasText ? "\"keyDown\""_s : "\"rawKeyDown\""_s)
-            .str("key"_s, keyStr)
-            .str("text"_s, textStr)
-            .num("windowsVirtualKeyCode"_s, info.vk)
-            .num("modifiers"_s, mods));
+    t.send(0, Command(idDown, "Input.dispatchKeyEvent"_s, sid).raw("type"_s, hasText ? "\"keyDown\""_s : "\"rawKeyDown\""_s).str("key"_s, keyStr).str("text"_s, textStr).num("windowsVirtualKeyCode"_s, info.vk).num("modifiers"_s, mods));
     // keyUp — tracked, resolves the promise.
     uint32_t idUp = t.nextId();
     return sendChromeOp(g, view, view->m_pendingMisc, PendingSlot::Misc,
@@ -1673,8 +1644,7 @@ void close(JSWebView* view)
     // earlier in the chain. Chrome tears down the tab; we ignore the
     // Target.targetDestroyed event. Erase sessionId so late events drop.
     if (!view->m_targetId.isEmpty()) {
-        t.send(0, Command(t.nextId(), "Target.closeTarget"_s)
-                .str("targetId"_s, view->m_targetId));
+        t.send(0, Command(t.nextId(), "Target.closeTarget"_s).str("targetId"_s, view->m_targetId));
     }
     if (!view->m_sessionId.isEmpty()) t.m_sessions.remove(view->m_sessionId);
     t.m_views.remove(view->m_viewId);

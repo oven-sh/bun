@@ -389,6 +389,7 @@ pub const Value = union(Tag) {
     pub fn memoryCost(this: *const Value) usize {
         return switch (this.*) {
             .InternalBlob => this.InternalBlob.bytes.items.len,
+            .Blob => if (this.Blob.store) |store| store.memoryCost() else 0,
             .WTFStringImpl => this.WTFStringImpl.memoryCost(),
             .Locked => this.Locked.sizeHint(),
             // .InlineBlob => this.InlineBlob.sliceConst().len,
@@ -399,6 +400,7 @@ pub const Value = union(Tag) {
     pub fn estimatedSize(this: *const Value) usize {
         return switch (this.*) {
             .InternalBlob => this.InternalBlob.sliceConst().len,
+            .Blob => if (this.Blob.store) |store| store.memoryCost() else 0,
             .WTFStringImpl => this.WTFStringImpl.byteSlice().len,
             .Locked => this.Locked.sizeHint(),
             // .InlineBlob => this.InlineBlob.sliceConst().len,
@@ -568,16 +570,7 @@ pub const Value = union(Tag) {
                 }
 
                 return Body.Value{
-                    .InternalBlob = .{
-                        .bytes = std.array_list.Managed(u8){
-                            .items = bun.default_allocator.dupe(u8, bytes) catch {
-                                return globalThis.throwValue(ZigString.static("Failed to clone ArrayBufferView").toErrorInstance(globalThis));
-                            },
-                            .capacity = bytes.len,
-                            .allocator = bun.default_allocator,
-                        },
-                        .was_string = false,
-                    },
+                    .Blob = try Blob.tryCreate(bytes, bun.default_allocator, globalThis, false),
                 };
             }
         }

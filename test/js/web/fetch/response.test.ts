@@ -176,3 +176,27 @@ describe("clone()", () => {
     expect(clonedText).toBe("Hello, world!");
   });
 });
+
+test("Response from large TypedArray can be read back", async () => {
+  // Use a moderately large buffer to exercise the Blob.tryCreate path
+  // without consuming too much memory in CI.
+  const size = 16 * 1024 * 1024; // 16MB
+  const input = new Uint8Array(size);
+  input[0] = 0xde;
+  input[size - 1] = 0xad;
+
+  const response = new Response(input);
+  const output = new Uint8Array(await response.arrayBuffer());
+
+  expect(output.length).toBe(size);
+  expect(output[0]).toBe(0xde);
+  expect(output[size - 1]).toBe(0xad);
+});
+
+test("Response from TypedArray body stream works", async () => {
+  const input = new Uint8Array([1, 2, 3, 4, 5]);
+  const response = new Response(input);
+  const reader = response.body!.getReader();
+  const { value } = await reader.read();
+  expect(new Uint8Array(value!)).toEqual(input);
+});

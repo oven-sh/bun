@@ -83,6 +83,18 @@ pub fn presign(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.J
                 return globalThis.throwInvalidArguments("Expected a S3 or path to presign", .{});
             }
             const options = args.nextEat();
+
+            // Validate credentials before constructing the blob to produce
+            // the error without interaction with deferred blob cleanup.
+            const existing_credentials = globalThis.bunVM().transpiler.env.getS3Credentials();
+            if (existing_credentials.accessKeyId.len == 0 or existing_credentials.secretAccessKey.len == 0) {
+                var aws_options = try S3.S3Credentials.getCredentialsWithOptions(existing_credentials, .{}, options, null, null, false, globalThis);
+                defer aws_options.deinit();
+                if (aws_options.credentials.accessKeyId.len == 0 or aws_options.credentials.secretAccessKey.len == 0) {
+                    return globalThis.ERR(.S3_MISSING_CREDENTIALS, "Missing S3 credentials. 'accessKeyId', 'secretAccessKey', 'bucket', and 'endpoint' are required", .{}).throw();
+                }
+            }
+
             var blob = try constructS3FileInternalStore(globalThis, path.path, options);
             defer blob.deinit();
             return try getPresignUrlFrom(&blob, globalThis, options);

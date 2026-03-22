@@ -427,7 +427,6 @@ pub const FilePoll = struct {
                 var handler: *TerminalPoll = ptr.as(TerminalPoll);
                 handler.onPoll(size_or_offset, poll.flags.contains(.hup));
             },
-
             else => {
                 const possible_name = Owner.typeNameFromTag(@intFromEnum(ptr.tag()));
                 log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {f}) disconnected? (maybe: {s})", .{ poll.fd, possible_name orelse "<unknown>" });

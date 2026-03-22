@@ -545,6 +545,9 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
             // Pass the pipelined data (head buffer) if any was received with the CONNECT request
             const head = connectHead ? connectHead : kEmptyBuffer;
             server.emit("connect", http_req, socket, head);
+            // Mark as upgraded so Zig-level guards (onReject, onDrain, etc.)
+            // treat this socket correctly as a raw tunnel.
+            handle.markAsUpgraded();
             return promise;
           } else {
             // Node.js will close the socket and will NOT respond with 400 Bad Request

@@ -297,15 +297,6 @@ fn loadBunfig(allocator: std.mem.Allocator, auto_loaded: bool, config_path: [:0]
     ctx.log.level = logger.Log.Level.warn;
     ctx.debug.loaded_bunfig = true;
     try Bunfig.parse(allocator, &source, ctx, cmd);
-
-    // Check version pinning after each bunfig is loaded (skip for upgrade command).
-    // No once-only guard: a project-local bunfig may tighten the constraint set
-    // by a global ~/.bunfig.toml, so we re-check with the latest pinned_version.
-    if (comptime cmd != .UpgradeCommand) {
-        if (ctx.pinned_version) |pinned| {
-            VersionManager.checkPinnedVersion(pinned, allocator);
-        }
-    }
 }
 
 fn getHomeConfigPath(buf: *bun.PathBuffer) ?[:0]const u8 {
@@ -400,6 +391,15 @@ pub fn loadConfig(allocator: std.mem.Allocator, user_config_path_: ?string, ctx:
         Output.err(err, "failed to load bunfig", .{});
         Global.crash();
     };
+
+    // Check version pinning once after all bunfig files are loaded (global + project).
+    // This ensures the final effective ctx.pinned_version is validated, avoiding
+    // duplicate warnings or spurious checks from intermediate config states.
+    if (comptime cmd != .UpgradeCommand) {
+        if (ctx.pinned_version) |pinned| {
+            VersionManager.checkPinnedVersion(pinned, allocator);
+        }
+    }
 }
 
 pub fn loadConfigWithCmdArgs(

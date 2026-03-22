@@ -55,7 +55,11 @@ pub fn checkPinnedVersion(pinned_version_str: []const u8, allocator: std.mem.All
         return;
     };
 
-    if (!strings.startsWith(self_exe, install_dir)) {
+    // Verify self_exe is actually inside install_dir (boundary check to avoid
+    // matching /home/user/.bun-custom against /home/user/.bun)
+    if (!strings.startsWith(self_exe, install_dir) or
+        (self_exe.len > install_dir.len and self_exe[install_dir.len] != '/'))
+    {
         Output.prettyErrorln(
             "<r><yellow>warn<r>: This project requires Bun <cyan>{s}<r> but you have <b>v{s}<r>\n" ++
                 "      Automatic version switching is only available for bun installed in <b>{s}<r>",
@@ -132,14 +136,14 @@ pub fn checkPinnedVersion(pinned_version_str: []const u8, allocator: std.mem.All
         const bin_path_z = bun.default_allocator.dupeZ(u8, bin_path) catch return;
         defer bun.default_allocator.free(bin_path_z);
 
-        std.posix.rename(bun_bin_z, outdated_z) catch {
+        bun.sys.moveFileZ(.cwd(), bun_bin_z, .cwd(), outdated_z) catch {
             Output.prettyErrorln("<r><red>error<r>: Failed to rename current executable", .{});
             return;
         };
 
         bun.sys.moveFileZ(.cwd(), bin_path_z, .cwd(), bun_bin_z) catch {
             // Restore original
-            std.posix.rename(outdated_z, bun_bin_z) catch {};
+            bun.sys.moveFileZ(.cwd(), outdated_z, .cwd(), bun_bin_z) catch {};
             Output.prettyErrorln("<r><red>error<r>: Failed to install new version", .{});
             return;
         };
@@ -166,7 +170,7 @@ fn printMismatchWarning(pinned_version_str: []const u8, current_str: []const u8)
 fn getUserConfirmation() bool {
     var buf: [16]u8 = undefined;
     const n = bun.sys.read(bun.FD.stdin(), &buf).unwrap() catch return false;
-    if (n == 0) return true; // EOF = default yes
+    if (n == 0) return false; // EOF (stdin closed/redirected) = decline
     const response = strings.trim(buf[0..n], " \t\r\n");
     if (response.len == 0) return true; // empty = default yes
     return strings.eqlCaseInsensitiveASCII(response, "y", true) or
@@ -205,10 +209,9 @@ fn resolveTargetVersion(
     pinned_version_str: []const u8,
     allocator: std.mem.Allocator,
 ) ?[]const u8 {
-    if (group.getExactVersion()) |exact| {
-        return std.fmt.allocPrint(allocator, "{d}.{d}.{d}", .{
-            exact.major, exact.minor, exact.patch,
-        }) catch null;
+    if (group.getExactVersion()) |_| {
+        // Preserve the original string to keep pre-release suffixes like -canary.1
+        return allocator.dupe(u8, pinned_version_str) catch null;
     }
 
     return queryLatestMatchingRelease(group, pinned_version_str, allocator);
@@ -364,26 +367,39 @@ fn downloadVersion(version_str: []const u8, dest_dir: []const u8, allocator: std
 
     // Write zip to temp file in dest dir
     const tmpname = "bun-download.zip";
+    var zip_path_buf: bun.PathBuffer = undefined;
+    const zip_path = std.fmt.bufPrint(&zip_path_buf, "{s}/{s}", .{ dest_dir, tmpname }) catch return false;
+    const zip_path_z = allocator.dupeZ(u8, zip_path) catch return false;
+    defer allocator.free(zip_path_z);
+
+    const zip_fd = switch (bun.sys.open(zip_path_z, bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC, 0o644)) {
+        .result => |fd| fd,
+        .err => {
+            Output.prettyErrorln("<r><red>error<r>: Failed to create temp file", .{});
+            return false;
+        },
+    };
+
+    var written: usize = 0;
+    while (written < bytes.len) {
+        const n = bun.sys.write(zip_fd, bytes[written..]).unwrap() catch {
+            zip_fd.close();
+            _ = bun.sys.unlink(zip_path_z);
+            Output.prettyErrorln("<r><red>error<r>: Failed to write zip file", .{});
+            return false;
+        };
+        written += n;
+    }
+    zip_fd.close();
+
+    defer _ = bun.sys.unlink(zip_path_z);
+
+    // Open dest dir handle for moveFileZ later
     var dest_dir_handle = std.fs.cwd().openDir(dest_dir, .{}) catch {
         Output.prettyErrorln("<r><red>error<r>: Failed to open directory {s}", .{dest_dir});
         return false;
     };
     defer dest_dir_handle.close();
-
-    var zip_file = dest_dir_handle.createFile(tmpname, .{ .truncate = true }) catch {
-        Output.prettyErrorln("<r><red>error<r>: Failed to create temp file", .{});
-        return false;
-    };
-
-    _ = zip_file.writeAll(bytes) catch {
-        zip_file.close();
-        dest_dir_handle.deleteFile(tmpname) catch {};
-        Output.prettyErrorln("<r><red>error<r>: Failed to write zip file", .{});
-        return false;
-    };
-    zip_file.close();
-
-    defer dest_dir_handle.deleteFile(tmpname) catch {};
 
     // Unzip using bun.spawnSync on all platforms
     if (comptime Environment.isPosix) {
@@ -588,7 +604,8 @@ fn reExec(exe_path: []const u8) noreturn {
                 .result => Global.exit(1),
             }
         } else {
-            std.posix.execveZ(exe_path_z, newargv, envp_ptr) catch {};
+            const err = std.posix.execveZ(exe_path_z, newargv, envp_ptr);
+            Output.prettyErrorln("<r><red>error<r>: Failed to exec new bun version: {s}", .{@errorName(err)});
             Global.exit(1);
         }
     } else if (comptime Environment.isWindows) {

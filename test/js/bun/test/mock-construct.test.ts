@@ -1,4 +1,4 @@
-import { test, expect, jest } from "bun:test";
+import { expect, jest, test } from "bun:test";
 
 test("constructing a mock function with no implementation does not crash", () => {
   const fn = jest.fn();

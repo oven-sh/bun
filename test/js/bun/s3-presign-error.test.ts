@@ -1,5 +1,5 @@
-import { test, expect } from "bun:test";
-import { bunExe, bunEnv } from "harness";
+import { expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 
 test("s3 presign with missing credentials throws instead of crashing", async () => {
   // Scrub AWS credential/config env vars so the test always hits the

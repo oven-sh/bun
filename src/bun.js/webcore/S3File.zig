@@ -504,6 +504,7 @@ pub fn presignFromCredentials(globalThis: *jsc.JSGlobalObject, request_path: []c
         .request_payer = credentialsWithOptions.request_payer,
         .content_disposition = credentialsWithOptions.content_disposition,
         .content_type = credentialsWithOptions.content_type,
+        .content_encoding = credentialsWithOptions.content_encoding,
     }, false, .{ .expires = expires }) catch |sign_err| {
         return S3.throwSignError(sign_err, globalThis);
     };

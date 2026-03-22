@@ -4,14 +4,12 @@ describe("toMatchObject should not mutate actual object", () => {
   test("should not mutate properties matched by expect.any()", () => {
     const obj = { foo: "foo", bar: "bar" };
     expect(obj).toMatchObject({ bar: expect.any(String) });
-    // After toMatchObject, obj.bar should still be "bar", not the matcher
     expect(obj.bar).toBe("bar");
   });
 
   test("consecutive toMatchObject calls should work", () => {
     const obj = { foo: "foo", bar: "bar" };
     expect(obj).toMatchObject({ bar: expect.any(String) });
-    // Second call should also pass since object wasn't mutated
     expect(obj).toMatchObject({ bar: expect.any(String) });
   });
 
@@ -23,7 +21,6 @@ describe("toMatchObject should not mutate actual object", () => {
       ...(hasExtra ? { extra: expect.any(String) } : {}),
     };
     expect(actual).toMatchObject(expected);
-    // Verify actual wasn't mutated by the match
     expect(actual.extra).toBe("test extra");
   });
 

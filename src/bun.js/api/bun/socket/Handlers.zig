@@ -300,7 +300,7 @@ pub const SocketConfig = struct {
         if (result.fd != null) {
             // If a user passes a file descriptor then prefer it over hostname or unix
         } else if (generated.unix_.get()) |unix| {
-            bun.assertf(unix.length() > 0, "truthy bindgen string shouldn't be empty", .{});
+            if (unix.length() == 0) return global.throwInvalidArguments("Expected a non-empty \"unix\" path", .{});
             result.hostname_or_unix = unix.toUTF8(bun.default_allocator);
             const slice = result.hostname_or_unix.slice();
             if (strings.hasPrefixComptime(slice, "file://") or
@@ -312,7 +312,7 @@ pub const SocketConfig = struct {
                 result.hostname_or_unix = .init(bun.default_allocator, without_prefix);
             }
         } else if (generated.hostname.get()) |hostname| {
-            bun.assertf(hostname.length() > 0, "truthy bindgen string shouldn't be empty", .{});
+            if (hostname.length() == 0) return global.throwInvalidArguments("Expected a non-empty \"hostname\"", .{});
             result.hostname_or_unix = hostname.toUTF8(bun.default_allocator);
             const slice = result.hostname_or_unix.slice();
             result.port = generated.port orelse bun.URL.parse(slice).getPort() orelse {

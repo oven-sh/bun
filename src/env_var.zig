@@ -105,6 +105,10 @@ pub const JENKINS_URL = New(kind.string, "JENKINS_URL", .{});
 pub const MI_VERBOSE = New(kind.boolean, "MI_VERBOSE", .{ .default = false });
 pub const NO_COLOR = New(kind.boolean, "NO_COLOR", .{ .default = false });
 pub const NODE_CHANNEL_FD = New(kind.string, "NODE_CHANNEL_FD", .{});
+/// Set by HostProcess.zig when spawning the WebView host subprocess. The
+/// child's cli.zig checks this before anything else and hands off to C++
+/// Bun__WebView__hostMain. Never returns — no JSC, no VM.
+pub const BUN_INTERNAL_WEBVIEW_HOST = New(kind.string, "BUN_INTERNAL_WEBVIEW_HOST", .{});
 pub const NODE_PRESERVE_SYMLINKS_MAIN = New(kind.boolean, "NODE_PRESERVE_SYMLINKS_MAIN", .{ .default = false });
 pub const NODE_USE_SYSTEM_CA = New(kind.boolean, "NODE_USE_SYSTEM_CA", .{ .default = false });
 pub const npm_lifecycle_event = New(kind.string, "npm_lifecycle_event", .{});

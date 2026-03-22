@@ -240,7 +240,7 @@ fn fetchImpl(
     };
     var url_type = URLType.remote;
 
-    var ssl_config: ?*SSLConfig = null;
+    var ssl_config: ?SSLConfig.SharedPtr = null;
     var reject_unauthorized = vm.getTLSRejectUnauthorized();
     var check_server_identity: JSValue = .zero;
 
@@ -273,10 +273,9 @@ fn fetchImpl(
             range = null;
         }
 
-        if (ssl_config) |conf| {
-            ssl_config = null;
+        if (ssl_config) |*conf| {
             conf.deinit();
-            bun.default_allocator.destroy(conf);
+            ssl_config = null;
         }
     }
 
@@ -466,9 +465,8 @@ fn fetchImpl(
                             is_error = true;
                             return .zero;
                         }) |config| {
-                            const ssl_config_object = bun.handleOom(bun.default_allocator.create(SSLConfig));
-                            ssl_config_object.* = config;
-                            break :extract_ssl_config ssl_config_object;
+                            // Intern via GlobalRegistry for deduplication and pointer equality
+                            break :extract_ssl_config SSLConfig.GlobalRegistry.intern(config);
                         }
                     }
                 }

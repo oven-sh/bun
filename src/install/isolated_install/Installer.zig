@@ -560,9 +560,11 @@ pub const Installer = struct {
                                             0,
                                         );
 
-                                        if (src_path_len == 0) {
-                                            const e = bun.windows.Win32Error.get();
-                                            const err = e.toSystemErrno() orelse .EUNKNOWN;
+                                        if (src_path_len == 0 or src_path_len >= src_path.buf().len) {
+                                            const err: bun.sys.SystemErrno = if (src_path_len == 0)
+                                                (bun.windows.Win32Error.get().toSystemErrno() orelse .EUNKNOWN)
+                                            else
+                                                .ENAMETOOLONG;
                                             return .failure(
                                                 .{ .link_package = .{ .errno = @intFromEnum(err), .syscall = .copyfile } },
                                             );

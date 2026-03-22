@@ -229,7 +229,7 @@ void JSMessageChannel::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     auto* thisObject = jsCast<JSMessageChannel*>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    thisObject->visitAdditionalChildren(visitor);
+    thisObject->visitAdditionalChildrenInGCThread(visitor);
 }
 
 DEFINE_VISIT_CHILDREN(JSMessageChannel);
@@ -240,7 +240,7 @@ void JSMessageChannel::visitOutputConstraints(JSCell* cell, Visitor& visitor)
     auto* thisObject = jsCast<JSMessageChannel*>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitOutputConstraints(thisObject, visitor);
-    thisObject->visitAdditionalChildren(visitor);
+    thisObject->visitAdditionalChildrenInGCThread(visitor);
 }
 
 template void JSMessageChannel::visitOutputConstraints(JSCell*, AbstractSlotVisitor&);

@@ -51,6 +51,8 @@ pub const Flags = packed struct(u8) {
 };
 pub const Handlers = struct {
     ctx: *anyopaque,
+    ref_ctx: *const fn (*anyopaque) void,
+    deref_ctx: *const fn (*anyopaque) void,
     onOpen: *const fn (*anyopaque) void,
     onHandshake: *const fn (*anyopaque, bool, uws.us_bun_verify_error_t) void,
     onData: *const fn (*anyopaque, []const u8) void,
@@ -271,7 +273,16 @@ pub fn from(
         .handlers = handlers,
     };
 }
+pub fn ref(this: *WindowsNamedPipe) void {
+    this.handlers.ref_ctx(this.handlers.ctx);
+}
+
+pub fn deref(this: *WindowsNamedPipe) void {
+    this.handlers.deref_ctx(this.handlers.ctx);
+}
+
 fn onConnect(this: *WindowsNamedPipe, status: uv.ReturnCode) void {
+    defer this.deref();
     if (this.pipe) |pipe| {
         _ = pipe.unref();
     }
@@ -376,6 +387,7 @@ pub fn open(this: *WindowsNamedPipe, fd: bun.FileDescriptor, ssl_options: ?jsc.A
         return openResult;
     }
 
+    this.ref();
     onConnect(this, uv.ReturnCode.zero);
     return .success;
 }
@@ -410,7 +422,12 @@ pub fn connect(this: *WindowsNamedPipe, path: []const u8, ssl_options: ?jsc.API.
     }
 
     this.connect_req.data = this;
-    return this.pipe.?.connect(&this.connect_req, path, this, onConnect);
+    const result = this.pipe.?.connect(&this.connect_req, path, this, onConnect);
+    if (result.asErr() != null) {
+        return result;
+    }
+    this.ref();
+    return result;
 }
 pub fn startTLS(this: *WindowsNamedPipe, ssl_options: jsc.API.ServerConfig.SSLConfig, is_client: bool) !void {
     this.flags.is_ssl = true;

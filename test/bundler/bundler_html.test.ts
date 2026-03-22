@@ -899,4 +899,75 @@ body {
       expect(entry2Html).toMatch(/src=".*\.js"/);
     },
   });
+
+  // Test manifest.json is copied as an asset and link href is rewritten
+  itBundled("html/manifest-json", {
+    outdir: "out/",
+    files: {
+      "/index.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <link rel="manifest" href="./manifest.json" />
+  </head>
+  <body>
+    <h1>App</h1>
+    <script src="./app.js"></script>
+  </body>
+</html>`,
+      "/manifest.json": JSON.stringify({
+        name: "My App",
+        short_name: "App",
+        start_url: "/",
+        display: "standalone",
+        background_color: "#ffffff",
+        theme_color: "#000000",
+      }),
+      "/app.js": "console.log('hello')",
+    },
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      const htmlContent = api.readFile("out/index.html");
+
+      // The original manifest.json reference should be rewritten to a hashed filename
+      expect(htmlContent).not.toContain('manifest.json"');
+      expect(htmlContent).toMatch(/href="(?:\.\/|\/)?manifest-[a-zA-Z0-9]+\.json"/);
+
+      // Extract the hashed manifest filename and verify its content
+      const manifestMatch = htmlContent.match(/href="(?:\.\/|\/)?(manifest-[a-zA-Z0-9]+\.json)"/);
+      expect(manifestMatch).not.toBeNull();
+      const manifestContent = api.readFile("out/" + manifestMatch![1]);
+      expect(manifestContent).toContain('"name"');
+      expect(manifestContent).toContain('"My App"');
+    },
+  });
+
+  // Test that other non-JS/CSS file types referenced via URL imports are copied as assets
+  itBundled("html/xml-asset", {
+    outdir: "out/",
+    files: {
+      "/index.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <link rel="manifest" href="./site.webmanifest" />
+  </head>
+  <body>
+    <h1>App</h1>
+  </body>
+</html>`,
+      "/site.webmanifest": JSON.stringify({
+        name: "My App",
+        icons: [{ src: "/icon.png", sizes: "192x192" }],
+      }),
+    },
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      const htmlContent = api.readFile("out/index.html");
+
+      // The webmanifest reference should be rewritten to a hashed filename
+      expect(htmlContent).not.toContain("site.webmanifest");
+      expect(htmlContent).toMatch(/href=".*\.webmanifest"/);
+    },
+  });
 });

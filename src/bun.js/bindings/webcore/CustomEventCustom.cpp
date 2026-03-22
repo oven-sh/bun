@@ -43,12 +43,12 @@ JSC::JSValue JSCustomEvent::detail(JSC::JSGlobalObject& lexicalGlobalObject) con
 }
 
 template<typename Visitor>
-void JSCustomEvent::visitAdditionalChildren(Visitor& visitor)
+void JSCustomEvent::visitAdditionalChildrenInGCThread(Visitor& visitor)
 {
     wrapped().detail().visit(visitor);
     wrapped().cachedDetail().visit(visitor);
 }
 
-DEFINE_VISIT_ADDITIONAL_CHILDREN(JSCustomEvent);
+DEFINE_VISIT_ADDITIONAL_CHILDREN_IN_GC_THREAD(JSCustomEvent);
 
 } // namespace WebCore

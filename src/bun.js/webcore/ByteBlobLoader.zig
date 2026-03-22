@@ -105,6 +105,7 @@ pub fn toAnyBlob(this: *ByteBlobLoader, globalThis: *JSGlobalObject) ?Blob.Any {
         if (this.offset == 0 and this.remain == store.size() and this.content_type.len == 0) {
             if (store.toAnyBlob()) |blob| {
                 defer store.deref();
+                this.parent().is_closed = true;
                 return blob;
             }
         }
@@ -180,7 +181,9 @@ pub fn toBufferedValue(this: *ByteBlobLoader, globalThis: *JSGlobalObject, actio
         return blob.toPromise(globalThis, action);
     }
 
-    return .zero;
+    this.parent().is_closed = true;
+    var empty: Blob.Any = .{ .Blob = Blob.initEmpty(globalThis) };
+    return empty.toPromise(globalThis, action);
 }
 
 pub fn memoryCost(this: *const ByteBlobLoader) usize {

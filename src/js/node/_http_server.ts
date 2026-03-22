@@ -607,10 +607,6 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           socket.destroy();
         } else if (is_upgrade) {
           if (server.listenerCount("upgrade") > 0) {
-            // Mark the underlying uWS response as a connect-like request so that
-            // subsequent data is forwarded as raw bytes (not parsed as HTTP).
-            // This enables bidirectional streaming after the upgrade handshake.
-            handle.markAsUpgraded();
             // Enable raw socket streaming so that socket.write() actually sends data
             socket[kEnableStreaming](true);
             const { promise, resolve } = $newPromiseCapability(Promise);
@@ -618,6 +614,10 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
             // Pass the pipelined data (head buffer) if any was received with the upgrade request
             const head = connectHead ? connectHead : kEmptyBuffer;
             server.emit("upgrade", http_req, socket, head);
+            // Mark as upgraded AFTER the upgrade handler has written the 101 response.
+            // This switches uWS to raw byte forwarding mode for bidirectional streaming.
+            // Must be after emit("upgrade") so the HTTP 101 response is sent correctly.
+            handle.markAsUpgraded();
             return promise;
           }
           // No upgrade listener — fall through to normal "request" event,

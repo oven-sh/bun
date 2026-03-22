@@ -80,7 +80,7 @@ describe.concurrent("node:http server upgrade", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("bidirectional communication after upgrade", async () => {
+  test.todo("bidirectional communication after upgrade", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),

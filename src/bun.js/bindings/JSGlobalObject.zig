@@ -51,6 +51,7 @@ pub const JSGlobalObject = opaque {
 
     pub fn throwTODO(this: *JSGlobalObject, msg: []const u8) bun.JSError {
         const err = this.createErrorInstance("{s}", .{msg});
+        if (err == .zero) return error.JSError;
         err.put(this, ZigString.static("name"), (bun.String.static("TODOError").toJS(this)) catch return error.JSError);
         return this.throwValue(err);
     }
@@ -361,6 +362,7 @@ pub const JSGlobalObject = opaque {
 
     pub fn createRangeError(this: *JSGlobalObject, comptime fmt: [:0]const u8, args: anytype) JSValue {
         const err = createErrorInstance(this, fmt, args);
+        if (err == .zero) return .zero;
         err.put(this, ZigString.static("code"), ZigString.static(@tagName(jsc.Node.ErrorCode.ERR_OUT_OF_RANGE)).toJS(this));
         return err;
     }
@@ -381,6 +383,7 @@ pub const JSGlobalObject = opaque {
         args: anytype,
     ) JSError {
         const err = createErrorInstance(this, message, args);
+        if (err == .zero) return error.JSError;
         err.put(this, ZigString.static("code"), ZigString.init(@tagName(opts.code)).toJS(this));
         if (opts.name) |name| err.put(this, ZigString.static("name"), ZigString.init(name).toJS(this));
         if (opts.errno) |errno| err.put(this, ZigString.static("errno"), try .fromAny(this, i32, errno));
@@ -393,7 +396,11 @@ pub const JSGlobalObject = opaque {
     /// chances are you should be using `.ERR(...).throw()` instead.
     pub fn throw(this: *JSGlobalObject, comptime fmt: [:0]const u8, args: anytype) JSError {
         const instance = this.createErrorInstance(fmt, args);
-        bun.assert(instance != .zero);
+        if (instance == .zero) {
+            // createErrorInstance can fail and set its own exception (e.g. on
+            // stack overflow). In that case an exception is already pending.
+            return error.JSError;
+        }
         return this.throwValue(instance);
     }
 
@@ -401,7 +408,9 @@ pub const JSGlobalObject = opaque {
         const instance = switch (Output.enable_ansi_colors_stderr) {
             inline else => |enabled| this.createErrorInstance(Output.prettyFmt(fmt, enabled), args),
         };
-        bun.assert(instance != .zero);
+        if (instance == .zero) {
+            return error.JSError;
+        }
         return this.throwValue(instance);
     }
 
@@ -447,11 +456,13 @@ pub const JSGlobalObject = opaque {
 
     pub fn throwTypeError(this: *JSGlobalObject, comptime fmt: [:0]const u8, args: anytype) bun.JSError {
         const instance = this.createTypeErrorInstance(fmt, args);
+        if (instance == .zero) return error.JSError;
         return this.throwValue(instance);
     }
 
     pub fn throwDOMException(this: *JSGlobalObject, code: jsc.WebCore.DOMExceptionCode, comptime fmt: [:0]const u8, args: anytype) bun.JSError {
         const instance = try this.createDOMExceptionInstance(code, fmt, args);
+        if (instance == .zero) return error.JSError;
         return this.throwValue(instance);
     }
 
@@ -472,6 +483,7 @@ pub const JSGlobalObject = opaque {
         defer allocator_.free(buffer);
         const str = ZigString.initUTF8(buffer);
         const err_value = str.toErrorInstance(this);
+        if (err_value == .zero) return error.JSError;
         return this.vm().throwError(this, err_value);
     }
 

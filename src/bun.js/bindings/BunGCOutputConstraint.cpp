@@ -45,7 +45,7 @@
  *
  * How does it work?
  * -----------------
- * 1. During GC, objects are marked through their visitChildren/visitAdditionalChildren methods
+ * 1. During GC, objects are marked through their visitChildren/visitAdditionalChildrenInGCThread methods
  * 2. JavaScript execution resumes (mutator runs)
  * 3. New references may be created or changed during JS execution
  * 4. DOMGCOutputConstraint runs and calls visitOutputConstraints on relevant objects
@@ -66,7 +66,7 @@
  * Relevant WebKit files for reference:
  * ------------------------------------
  * - Source/WebCore/bindings/js/DOMGCOutputConstraint.cpp (original implementation)
- * - Source/WebCore/bindings/js/JSEventTargetCustom.cpp (visitAdditionalChildren example)
+ * - Source/WebCore/bindings/js/JSEventTargetCustom.cpp (visitAdditionalChildrenInGCThread example)
  * - Source/WebCore/bindings/js/JSDocumentCustom.cpp (complex marking example)
  * - Source/WebCore/bindings/js/JSMessagePortCustom.cpp (cross-context references)
  * - Source/WebCore/dom/EventTarget.idl (JSCustomMarkFunction attribute)

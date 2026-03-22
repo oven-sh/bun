@@ -24,13 +24,17 @@ const cleanEnv = {
 
 test("S3 presign with missing credentials throws instead of crashing", async () => {
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", `
+    cmd: [
+      bunExe(),
+      "-e",
+      `
       try { Bun.s3.presign("test-path"); } catch(e) { console.log(e.code); }
       try { new Bun.S3Client().presign("test-path"); } catch(e) { console.log(e.code); }
       try { Bun.S3Client.presign("test-path"); } catch(e) { console.log(e.code); }
       Bun.gc(true);
       console.log("ok");
-    `],
+    `,
+    ],
     env: cleanEnv,
     stdout: "pipe",
     stderr: "pipe",
@@ -42,8 +46,6 @@ test("S3 presign with missing credentials throws instead of crashing", async () 
     proc.exited,
   ]);
 
-  expect(stdout.trim()).toBe(
-    "ERR_S3_MISSING_CREDENTIALS\nERR_S3_MISSING_CREDENTIALS\nERR_S3_MISSING_CREDENTIALS\nok",
-  );
+  expect(stdout.trim()).toBe("ERR_S3_MISSING_CREDENTIALS\nERR_S3_MISSING_CREDENTIALS\nERR_S3_MISSING_CREDENTIALS\nok");
   expect(exitCode).toBe(0);
 });

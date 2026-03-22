@@ -349,6 +349,10 @@ pub fn BabyList(comptime Type: type) type {
             bun.strings.sortAsc(this.slice());
         }
 
+        pub fn sort(this: *Self, comptime Context: type, context: Context) void {
+            std.sort.pdq(Type, this.slice(), context, Context.lessThan);
+        }
+
         pub fn writableSlice(
             this: *Self,
             allocator: std.mem.Allocator,

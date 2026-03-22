@@ -44,6 +44,10 @@ void node_module_register(void* opaque_mod)
     auto* mod = reinterpret_cast<struct node_module*>(opaque_mod);
 
     auto keyStr = WTF::String::fromUTF8(mod->nm_modname);
+
+    // Append to GlobalObject vector so BunProcess.cpp can save ALL registrations after dlopen completes
+    globalObject->m_pendingV8Modules.append(mod);
+
     globalObject->napiModuleRegisterCallCount++;
     JSValue pendingNapiModule = globalObject->m_pendingNapiModuleAndExports[0].get();
     JSObject* object = (pendingNapiModule && pendingNapiModule.isObject()) ? pendingNapiModule.getObject()

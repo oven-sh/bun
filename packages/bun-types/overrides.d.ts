@@ -86,7 +86,7 @@ declare global {
       reallyExit(code?: number): never;
       dlopen(module: { exports: any }, filename: string, flags?: number): void;
       _exiting: boolean;
-      noDeprecation: boolean;
+      noDeprecation?: boolean | undefined;
 
       binding(m: "constants"): {
         os: typeof import("node:os").constants;

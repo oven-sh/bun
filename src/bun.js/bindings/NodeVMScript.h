@@ -91,8 +91,8 @@ private:
 
     NodeVMScript(JSC::VM& vm, JSC::Structure* structure, JSC::SourceCode source, ScriptOptions options)
         : Base(vm, structure)
-        , m_source(WTFMove(source))
-        , m_options(WTFMove(options))
+        , m_source(WTF::move(source))
+        , m_options(WTF::move(options))
     {
     }
 

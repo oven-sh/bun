@@ -1031,7 +1031,7 @@ pub const PackageJSON = struct {
                                     const name_prop = prop.key orelse continue;
                                     const name_str = name_prop.asString(allocator) orelse continue;
                                     const name_hash = String.Builder.stringHash(name_str);
-                                    const name = String.init(name_str, name_str);
+                                    const name = String.init(package_json.dependencies.source_buf, name_str);
                                     const version_value = prop.value orelse continue;
                                     const version_str = version_value.asString(allocator) orelse continue;
                                     const sliced_str = Semver.SlicedString.init(version_str, version_str);
@@ -1476,6 +1476,10 @@ pub const ESModule = struct {
         }
 
         pub fn parseSubpath(subpath: *[]const u8, specifier: string, subpath_buf: []u8) void {
+            if (specifier.len + 1 > subpath_buf.len) {
+                subpath.* = "";
+                return;
+            }
             subpath_buf[0] = '.';
             bun.copy(u8, subpath_buf[1..], specifier);
             subpath.* = subpath_buf[0 .. specifier.len + 1];

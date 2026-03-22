@@ -73,7 +73,7 @@ extern "C" bool is_executable_file(const char* path)
 {
 #if defined(O_EXEC)
     // O_EXEC is macOS specific
-    int fd = open(path, O_EXEC | O_CLOEXEC, 0);
+    int fd = open(path, O_EXEC | O_CLOEXEC | O_NONBLOCK | O_NOCTTY, 0);
     if (fd < 0)
         return false;
     close(fd);
@@ -200,15 +200,19 @@ extern "C" void windows_enable_stdio_inheritance()
 #define CLOSE_RANGE_CLOEXEC (1U << 2)
 #endif
 
+#ifndef __NR_close_range
+// True for architectures we support:
+// - arch/arm64/include/asm/unistd32.h
+// - include/uapi/asm-generic/unistd.h
+// Not true for:
+// - DEC Alpha AXP (Alpha architecture)
+#define __NR_close_range 436
+#endif
+
 // close_range is glibc > 2.33, which is very new
 extern "C" ssize_t bun_close_range(unsigned int start, unsigned int end, unsigned int flags)
 {
-// https://github.com/oven-sh/bun/issues/9669
-#ifdef __NR_close_range
     return syscall(__NR_close_range, start, end, flags);
-#else
-    return ENOSYS;
-#endif
 }
 
 static void unset_cloexec(int fd)
@@ -906,6 +910,10 @@ extern "C" void Bun__signpost_emit(os_log_t log, os_signpost_type_t type, os_sig
 #undef EMIT_SIGNPOST
 #undef FOR_EACH_TRACE_EVENT
 
+#endif // OS(DARWIN) signpost code
+
+#if OS(DARWIN) || defined(__linux__)
+
 #define BLOB_HEADER_ALIGNMENT 16 * 1024
 
 extern "C" {
@@ -915,12 +923,25 @@ struct BlobHeader {
 } __attribute__((aligned(BLOB_HEADER_ALIGNMENT)));
 }
 
+#if OS(DARWIN)
+
 extern "C" BlobHeader __attribute__((section("__BUN,__bun"))) BUN_COMPILED = { 0, 0 };
 
 extern "C" uint64_t* Bun__getStandaloneModuleGraphMachoLength()
 {
     return &BUN_COMPILED.size;
 }
+
+#else // __linux__
+
+extern "C" BlobHeader __attribute__((section(".bun"), aligned(BLOB_HEADER_ALIGNMENT), used)) BUN_COMPILED = { 0 };
+
+extern "C" uint64_t* Bun__getStandaloneModuleGraphELFVaddr()
+{
+    return &BUN_COMPILED.size;
+}
+
+#endif // OS(DARWIN) / __linux__
 
 #elif defined(_WIN32)
 // Windows PE section handling

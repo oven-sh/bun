@@ -3,12 +3,16 @@
 
 // --- Getters ---
 #define FOR_EACH_GETTER(macro) \
+    macro(Archive) \
     macro(CSRF) \
     macro(CryptoHasher) \
     macro(FFI) \
     macro(FileSystemRouter) \
     macro(Glob) \
+    macro(JSON5) \
+    macro(JSONC) \
     macro(MD4) \
+    macro(markdown) \
     macro(MD5) \
     macro(S3Client) \
     macro(SHA1) \
@@ -19,10 +23,12 @@
     macro(SHA512_256) \
     macro(TOML) \
     macro(YAML) \
+    macro(Terminal) \
     macro(Transpiler) \
     macro(ValkeyClient) \
     macro(argv) \
     macro(assetPrefix) \
+    macro(cron) \
     macro(cwd) \
     macro(embeddedFiles) \
     macro(enableANSIColors) \

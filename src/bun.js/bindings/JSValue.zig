@@ -329,6 +329,26 @@ pub const JSValue = enum(i64) {
         JSC__JSValue__put(value, global, key, result);
     }
 
+    extern fn JSC__JSValue__deleteProperty(target: JSValue, global: *JSGlobalObject, key: *const ZigString) bool;
+    /// Delete a property from an object by key. Returns true if the property was deleted.
+    pub fn deleteProperty(target: JSValue, global: *JSGlobalObject, key: anytype) bool {
+        const Key = @TypeOf(key);
+        if (comptime @typeInfo(Key) == .pointer) {
+            const Elem = @typeInfo(Key).pointer.child;
+            if (Elem == ZigString) {
+                return JSC__JSValue__deleteProperty(target, global, key);
+            } else if (std.meta.Elem(Key) == u8) {
+                return JSC__JSValue__deleteProperty(target, global, &ZigString.init(key));
+            } else {
+                @compileError("Unsupported key type in deleteProperty(). Expected ZigString or string literal, got " ++ @typeName(Elem));
+            }
+        } else if (comptime Key == ZigString) {
+            return JSC__JSValue__deleteProperty(target, global, &key);
+        } else {
+            @compileError("Unsupported key type in deleteProperty(). Expected ZigString or string literal, got " ++ @typeName(Key));
+        }
+    }
+
     extern "c" fn JSC__JSValue__putBunString(value: JSValue, global: *JSGlobalObject, key: *const bun.String, result: jsc.JSValue) void;
     fn putBunString(value: JSValue, global: *JSGlobalObject, key: *const bun.String, result: jsc.JSValue) void {
         if (comptime bun.Environment.isDebug)
@@ -364,7 +384,6 @@ pub const JSValue = enum(i64) {
             @compileError("Unsupported key type in put(). Expected ZigString or bun.String, got " ++ @typeName(Key));
         }
     }
-    /// Note: key can't be numeric (if so, use putMayBeIndex instead)
     /// Same as `.put` but accepts both non-numeric and numeric keys.
     /// Prefer to use `.put` if the key is guaranteed to be non-numeric (e.g. known at comptime)
     pub fn putMayBeIndex(this: JSValue, globalObject: *JSGlobalObject, key: *const String, value: JSValue) bun.JSError!void {
@@ -838,8 +857,8 @@ pub const JSValue = enum(i64) {
     }
 
     /// Decimal values are truncated without rounding.
-    /// `-Infinity` and `NaN` coerce to -minInt(64)
-    /// `Infinity` coerces to maxInt(64)
+    /// `NaN` coerces to 0. `-Infinity` coerces to minInt(i64).
+    /// `Infinity` coerces to maxInt(i64).
     pub fn toInt64(this: JSValue) i64 {
         if (this.isInt32()) {
             return this.asInt32();
@@ -1202,6 +1221,15 @@ pub const JSValue = enum(i64) {
         return bun.jsc.fromJSHostCallGeneric(globalThis, @src(), JSC__JSValue__jsonStringify, .{ this, globalThis, indent, out });
     }
 
+    extern fn JSC__JSValue__jsonStringifyFast(this: JSValue, globalThis: *JSGlobalObject, out: *bun.String) void;
+
+    /// Fast version of JSON.stringify that uses JSC's FastStringifier optimization.
+    /// When space is undefined (as opposed to 0), JSC uses a highly optimized SIMD-based
+    /// serialization path. This is significantly faster for most common use cases.
+    pub fn jsonStringifyFast(this: JSValue, globalThis: *JSGlobalObject, out: *bun.String) bun.JSError!void {
+        return bun.jsc.fromJSHostCallGeneric(globalThis, @src(), JSC__JSValue__jsonStringifyFast, .{ this, globalThis, out });
+    }
+
     /// Call `toString()` on the JSValue and clone the result.
     pub fn toSliceOrNull(this: JSValue, globalThis: *JSGlobalObject) bun.JSError!ZigString.Slice {
         const str = try bun.String.fromJS(this, globalThis);
@@ -1217,14 +1245,14 @@ pub const JSValue = enum(i64) {
     }
 
     /// Call `toString()` on the JSValue and clone the result.
-    /// On exception or out of memory, this returns null.
+    /// On exception or out of memory, this returns a JSError.
     ///
     /// Remember that `Symbol` throws an exception when you call `toString()`.
     pub fn toSliceClone(this: JSValue, globalThis: *JSGlobalObject) bun.JSError!ZigString.Slice {
         return this.toSliceCloneWithAllocator(globalThis, bun.default_allocator);
     }
 
-    /// On exception or out of memory, this returns null, to make exception checks clearer.
+    /// On exception or out of memory, this returns a JSError.
     pub fn toSliceCloneWithAllocator(
         this: JSValue,
         globalThis: *JSGlobalObject,
@@ -1255,7 +1283,7 @@ pub const JSValue = enum(i64) {
 
     /// Unwraps Number, Boolean, String, and BigInt objects to their primitive forms.
     pub fn unwrapBoxedPrimitive(this: JSValue, global: *JSGlobalObject) JSError!JSValue {
-        var scope: CatchScope = undefined;
+        var scope: TopExceptionScope = undefined;
         scope.init(global, @src());
         defer scope.deinit();
         const result = JSC__JSValue__unwrapBoxedPrimitive(global, this);
@@ -1370,7 +1398,7 @@ pub const JSValue = enum(i64) {
     extern fn JSC__JSValue__getPropertyValue(target: JSValue, global: *JSGlobalObject, ptr: [*]const u8, len: u32) JSValue;
     extern fn JSC__JSValue__getIfPropertyExistsFromPath(this: JSValue, global: *JSGlobalObject, path: JSValue) JSValue;
     pub fn getIfPropertyExistsFromPath(this: JSValue, global: *JSGlobalObject, path: JSValue) JSError!JSValue {
-        var scope: CatchScope = undefined;
+        var scope: TopExceptionScope = undefined;
         scope.init(global, @src());
         defer scope.deinit();
         const result = JSC__JSValue__getIfPropertyExistsFromPath(this, global, path);
@@ -1399,7 +1427,7 @@ pub const JSValue = enum(i64) {
     }
 
     pub fn then2(this: JSValue, global: *JSGlobalObject, ctx: JSValue, resolve: *const jsc.JSHostFn, reject: *const jsc.JSHostFn) bun.JSTerminated!void {
-        var scope: CatchScope = undefined;
+        var scope: TopExceptionScope = undefined;
         scope.init(global, @src());
         defer scope.deinit();
         JSC__JSValue___then(this, global, ctx, resolve, reject);
@@ -1407,7 +1435,7 @@ pub const JSValue = enum(i64) {
     }
 
     pub fn then(this: JSValue, global: *JSGlobalObject, ctx: ?*anyopaque, resolve: jsc.JSHostFnZig, reject: jsc.JSHostFnZig) bun.JSTerminated!void {
-        var scope: CatchScope = undefined;
+        var scope: TopExceptionScope = undefined;
         scope.init(global, @src());
         defer scope.deinit();
         this._then(global, JSValue.fromPtrAddress(@intFromPtr(ctx)), resolve, reject);
@@ -1421,10 +1449,9 @@ pub const JSValue = enum(i64) {
     }
 
     /// Equivalent to `target[property]`. Calls userland getters/proxies.  Can
-    /// throw. Null indicates the property does not exist. JavaScript undefined
-    /// and JavaScript null can exist as a property and is different than zig
-    /// `null` (property does not exist), however javascript undefined will return
-    /// zig null.
+    /// throw. Zig null indicates the property does not exist OR its value is
+    /// JS undefined (the two are not distinguished). JS null passes through
+    /// as a value.
     ///
     /// `property` must be `[]const u8`. A comptime slice may defer to
     /// calling `fastGet`, which use a more optimal code path. This function is
@@ -1457,9 +1484,9 @@ pub const JSValue = enum(i64) {
     }
 
     /// Equivalent to `target[property]`. Calls userland getters/proxies.  Can
-    /// throw. Null indicates the property does not exist. JavaScript undefined
-    /// and JavaScript null can exist as a property and is different than zig
-    /// `null` (property does not exist).
+    /// throw. Zig null indicates the property does not exist OR its value is
+    /// JS undefined (the two are not distinguished). JS null passes through
+    /// as a value.
     ///
     /// Can handle numeric index property names.
     ///
@@ -1480,7 +1507,7 @@ pub const JSValue = enum(i64) {
     /// Get *own* property value (i.e. does not resolve property in the prototype chain)
     pub fn getOwn(this: JSValue, global: *JSGlobalObject, property_name: anytype) bun.JSError!?JSValue {
         var property_name_str = bun.String.init(property_name);
-        var scope: CatchScope = undefined;
+        var scope: TopExceptionScope = undefined;
         scope.init(global, @src());
         defer scope.deinit();
         const value = JSC__JSValue__getOwn(this, global, &property_name_str);
@@ -1583,7 +1610,7 @@ pub const JSValue = enum(i64) {
     /// - .js_undefined
     /// - an empty string
     pub fn getStringish(this: JSValue, global: *JSGlobalObject, property: []const u8) bun.JSError!?bun.String {
-        var scope: CatchScope = undefined;
+        var scope: TopExceptionScope = undefined;
         scope.init(global, @src());
         defer scope.deinit();
         const prop = try get(this, global, property) orelse return null;
@@ -1765,7 +1792,7 @@ pub const JSValue = enum(i64) {
     }
 
     /// Many Bun API are loose and simply want to check if a value is truthy
-    /// Missing value, null, and undefined return `null`
+    /// Missing value and undefined return zig `null`. JS null returns `false`.
     pub inline fn getBooleanLoose(this: JSValue, global: *JSGlobalObject, comptime property_name: []const u8) JSError!?bool {
         const prop = try this.get(global, property_name) orelse return null;
         return prop.toBoolean();
@@ -2071,7 +2098,6 @@ pub const JSValue = enum(i64) {
     /// - Map (size)
     /// - WeakMap (size)
     /// - Set (size)
-    /// - WeakSet (size)
     /// - ArrayBuffer (byteLength)
     /// - anything with a .length property returning a number
     ///
@@ -2208,7 +2234,7 @@ pub const JSValue = enum(i64) {
         _padding: u6 = 0,
     };
 
-    /// Throws a JS exception and returns null if the serialization fails, otherwise returns a SerializedScriptValue.
+    /// Throws a JSError if serialization fails, otherwise returns a SerializedScriptValue.
     /// Must be freed when you are done with the bytes.
     pub inline fn serialize(this: JSValue, global: *JSGlobalObject, flags: SerializedFlags) bun.JSError!SerializedScriptValue {
         var flags_u8: u8 = 0;
@@ -2406,7 +2432,6 @@ const jsc = bun.jsc;
 const AnyPromise = jsc.AnyPromise;
 const ArrayBuffer = jsc.ArrayBuffer;
 const C_API = bun.jsc.C;
-const CatchScope = jsc.CatchScope;
 const DOMURL = jsc.DOMURL;
 const JSArrayIterator = jsc.JSArrayIterator;
 const JSCell = jsc.JSCell;
@@ -2415,6 +2440,7 @@ const JSInternalPromise = jsc.JSInternalPromise;
 const JSObject = jsc.JSObject;
 const JSPromise = jsc.JSPromise;
 const JSString = jsc.JSString;
+const TopExceptionScope = jsc.TopExceptionScope;
 const VM = jsc.VM;
 const ZigException = jsc.ZigException;
 const ZigString = jsc.ZigString;

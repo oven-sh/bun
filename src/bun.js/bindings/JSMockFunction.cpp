@@ -14,6 +14,7 @@
 #include <JavaScriptCore/LazyProperty.h>
 #include <JavaScriptCore/JSCJSValueInlines.h>
 #include <JavaScriptCore/JSInternalPromise.h>
+#include <JavaScriptCore/JSPromiseConstructor.h>
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
 #include <JavaScriptCore/Weak.h>
@@ -250,7 +251,7 @@ public:
     DECLARE_INFO;
 
     DECLARE_VISIT_CHILDREN;
-    template<typename Visitor> void visitAdditionalChildren(Visitor&);
+    template<typename Visitor> void visitAdditionalChildrenInGCThread(Visitor&);
     DECLARE_VISIT_OUTPUT_CONSTRAINTS;
 
     JSC::LazyProperty<JSMockFunction, JSObject> mock;
@@ -293,7 +294,7 @@ public:
 
     void copyNameAndLength(JSC::VM& vm, JSGlobalObject* global, JSC::JSValue value)
     {
-        auto catcher = DECLARE_CATCH_SCOPE(vm);
+        auto catcher = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         WTF::String nameToUse;
         if (auto* fn = jsDynamicCast<JSFunction*>(value)) {
             nameToUse = fn->name(vm);
@@ -314,7 +315,7 @@ public:
         this->setName(nameToUse);
 
         if (catcher.exception()) {
-            catcher.clearException();
+            (void)catcher.tryClearException();
         }
     }
 
@@ -468,7 +469,7 @@ public:
 };
 
 template<typename Visitor>
-void JSMockFunction::visitAdditionalChildren(Visitor& visitor)
+void JSMockFunction::visitAdditionalChildrenInGCThread(Visitor& visitor)
 {
     JSMockFunction* fn = this;
     ASSERT_GC_OBJECT_INHERITS(fn, info());
@@ -491,7 +492,7 @@ void JSMockFunction::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     JSMockFunction* fn = jsCast<JSMockFunction*>(cell);
     ASSERT_GC_OBJECT_INHERITS(fn, info());
     Base::visitChildren(fn, visitor);
-    fn->visitAdditionalChildren<Visitor>(visitor);
+    fn->visitAdditionalChildrenInGCThread<Visitor>(visitor);
 }
 
 template<typename Visitor>
@@ -499,11 +500,11 @@ void JSMockFunction::visitOutputConstraintsImpl(JSCell* cell, Visitor& visitor)
 {
     JSMockFunction* thisObject = jsCast<JSMockFunction*>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
-    thisObject->visitAdditionalChildren<Visitor>(visitor);
+    thisObject->visitAdditionalChildrenInGCThread<Visitor>(visitor);
 }
 
 DEFINE_VISIT_CHILDREN(JSMockFunction);
-DEFINE_VISIT_ADDITIONAL_CHILDREN(JSMockFunction);
+DEFINE_VISIT_ADDITIONAL_CHILDREN_IN_GC_THREAD(JSMockFunction);
 DEFINE_VISIT_OUTPUT_CONSTRAINTS(JSMockFunction);
 
 static void pushImpl(JSMockFunction* fn, JSGlobalObject* jsGlobalObject, JSMockImplementation::Kind kind, JSValue value)
@@ -930,15 +931,15 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionCall, (JSGlobalObject * lexicalGlobalObje
 
             setReturnValue(createMockResult(vm, globalObject, "incomplete"_s, jsUndefined()));
 
-            auto catchScope = DECLARE_CATCH_SCOPE(vm);
+            auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
             JSValue returnValue = Bun::call(globalObject, result, callData, thisValue, args);
 
-            if (auto* exc = catchScope.exception()) {
+            if (auto* exc = topExceptionScope.exception()) {
                 if (auto* returnValuesArray = fn->returnValues.get()) {
                     returnValuesArray->putDirectIndex(globalObject, returnValueIndex, createMockResult(vm, globalObject, "throw"_s, exc->value()));
                     fn->returnValues.set(vm, fn, returnValuesArray);
-                    catchScope.clearException();
+                    (void)topExceptionScope.tryClearException();
                     JSC::throwException(globalObject, scope, exc);
                     return {};
                 }
@@ -966,6 +967,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionCall, (JSGlobalObject * lexicalGlobalObje
         }
         case JSMockImplementation::Kind::RejectedValue: {
             JSValue rejectedPromise = JSC::JSPromise::rejectedPromise(globalObject, impl->underlyingValue.get());
+            RETURN_IF_EXCEPTION(scope, {});
             setReturnValue(createMockResult(vm, globalObject, "return"_s, rejectedPromise));
             return JSValue::encode(rejectedPromise);
         }
@@ -986,6 +988,10 @@ void JSMockFunctionPrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* g
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 
     this->putDirect(vm, Identifier::fromString(vm, "_isMockFunction"_s), jsBoolean(true), 0);
+
+    // Support `using spy = spyOn(...)` — auto-restores when leaving scope.
+    JSValue restoreFn = this->getDirect(vm, Identifier::fromString(vm, "mockRestore"_s));
+    this->putDirect(vm, vm.propertyNames->disposeSymbol, restoreFn, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsMockFunctionGetMockImplementation, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))

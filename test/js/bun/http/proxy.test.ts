@@ -1,7 +1,7 @@
 import axios from "axios";
 import type { Server } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { tls as tlsCert } from "harness";
+import { bunEnv, bunExe, tls as tlsCert } from "harness";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import { once } from "node:events";
 import net from "node:net";
@@ -246,6 +246,144 @@ test("unsupported protocol", async () => {
       code: "UnsupportedProxyProtocol",
     }),
   );
+});
+
+/**
+ * Creates an HTTP proxy server that captures Proxy-Authorization headers.
+ * The server forwards requests to their destination and pipes responses back.
+ */
+async function createAuthCapturingProxy() {
+  const capturedAuths: string[] = [];
+  const server = net.createServer((clientSocket: net.Socket) => {
+    clientSocket.once("data", data => {
+      const request = data.toString();
+      const lines = request.split("\r\n");
+      for (const line of lines) {
+        if (line.toLowerCase().startsWith("proxy-authorization:")) {
+          capturedAuths.push(line.substring("proxy-authorization:".length).trim());
+        }
+      }
+
+      const [method, path] = request.split(" ");
+      let host: string;
+      let port: number | string = 0;
+      let request_path = "";
+      if (path.indexOf("http") !== -1) {
+        const url = new URL(path);
+        host = url.hostname;
+        port = url.port;
+        request_path = url.pathname + (url.search || "");
+      } else {
+        [host, port] = path.split(":");
+      }
+      const destinationPort = Number.parseInt((port || "80").toString(), 10);
+      const destinationHost = host || "";
+
+      const serverSocket = net.connect(destinationPort, destinationHost, () => {
+        serverSocket.write(`${method} ${request_path} HTTP/1.1\r\n`);
+        serverSocket.write(data.slice(request.indexOf("\r\n") + 2));
+        serverSocket.pipe(clientSocket);
+      });
+      clientSocket.on("error", () => {});
+      serverSocket.on("error", () => {
+        clientSocket.end();
+      });
+    });
+  });
+
+  server.listen(0);
+  await once(server, "listening");
+  const port = (server.address() as net.AddressInfo).port;
+
+  return {
+    server,
+    port,
+    capturedAuths,
+    async close() {
+      server.close();
+      await once(server, "close");
+    },
+  };
+}
+
+test("proxy with long password (> 4096 chars) sends correct authorization", async () => {
+  const proxy = await createAuthCapturingProxy();
+
+  // Create a password longer than 4096 chars (e.g., simulating a JWT token)
+  // Use Buffer.alloc which is faster in debug JavaScriptCore builds
+  const longPassword = Buffer.alloc(5000, "a").toString();
+  const username = "testuser";
+  const proxyUrl = `http://${username}:${longPassword}@localhost:${proxy.port}`;
+
+  try {
+    const response = await fetch(httpServer.url, {
+      method: "GET",
+      proxy: proxyUrl,
+      keepalive: false,
+    });
+    expect(response.ok).toBe(true);
+    expect(response.status).toBe(200);
+
+    // Verify the auth header was sent and contains both username and password
+    expect(proxy.capturedAuths.length).toBeGreaterThanOrEqual(1);
+    const capturedAuth = proxy.capturedAuths[0];
+    expect(capturedAuth.startsWith("Basic ")).toBe(true);
+
+    // Decode and verify
+    const encoded = capturedAuth.substring("Basic ".length);
+    const decoded = Buffer.from(encoded, "base64url").toString();
+    expect(decoded).toBe(`${username}:${longPassword}`);
+  } finally {
+    await proxy.close();
+  }
+});
+
+test("proxy with long password (> 4096 chars) works correctly after redirect", async () => {
+  // This test verifies that the reset() code path (used during redirects)
+  // also handles long passwords correctly
+  const proxy = await createAuthCapturingProxy();
+
+  // Create a server that issues a redirect
+  using redirectServer = Bun.serve({
+    port: 0,
+    fetch(req) {
+      if (req.url.endsWith("/redirect")) {
+        return Response.redirect("/final", 302);
+      }
+      return new Response("OK", { status: 200 });
+    },
+  });
+
+  // Use Buffer.alloc which is faster in debug JavaScriptCore builds
+  const longPassword = Buffer.alloc(5000, "a").toString();
+  const username = "testuser";
+  const proxyUrl = `http://${username}:${longPassword}@localhost:${proxy.port}`;
+
+  try {
+    const response = await fetch(`${redirectServer.url.origin}/redirect`, {
+      method: "GET",
+      proxy: proxyUrl,
+      keepalive: false,
+    });
+    expect(response.ok).toBe(true);
+    expect(response.status).toBe(200);
+    const text = await response.text();
+    expect(text).toBe("OK");
+
+    // Verify auth was sent on requests. Due to connection reuse, the proxy may
+    // only see one request even though a redirect occurred (the redirected
+    // request reuses the same connection). We verify at least one auth was sent
+    // and that all captured auths are correct.
+    expect(proxy.capturedAuths.length).toBeGreaterThanOrEqual(1);
+    for (const capturedAuth of proxy.capturedAuths) {
+      expect(capturedAuth.startsWith("Basic ")).toBe(true);
+      const encoded = capturedAuth.substring("Basic ".length);
+      const decoded = Buffer.from(encoded, "base64url").toString();
+      expect(decoded).toBe(`${username}:${longPassword}`);
+    }
+  } finally {
+    await proxy.close();
+  }
 });
 
 test("axios with https-proxy-agent", async () => {
@@ -719,5 +857,86 @@ describe("proxy object format with headers", () => {
     // The request should succeed (without proxy, since URL object is ignored)
     expect(response.ok).toBe(true);
     expect(response.status).toBe(200);
+  });
+});
+
+describe.concurrent("NO_PROXY with explicit proxy option", () => {
+  // These tests use subprocess spawning because NO_PROXY is read from the
+  // process environment at startup. A dead proxy that immediately closes
+  // connections is used so that if NO_PROXY doesn't work, the fetch fails
+  // with a connection error.
+  let deadProxyPort: number;
+  let deadProxy: ReturnType<typeof Bun.listen>;
+
+  beforeAll(() => {
+    deadProxy = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open(socket) {
+          socket.end();
+        },
+        data() {},
+      },
+    });
+    deadProxyPort = deadProxy.port;
+  });
+
+  afterAll(() => {
+    deadProxy.stop(true);
+  });
+
+  test("NO_PROXY bypasses explicit proxy for fetch", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const resp = await fetch("http://localhost:${httpServer.port}", { proxy: "http://127.0.0.1:${deadProxyPort}" }); console.log(resp.status);`,
+      ],
+      env: { ...bunEnv, NO_PROXY: "localhost" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (exitCode !== 0) console.error("stderr:", stderr);
+    expect(stdout.trim()).toBe("200");
+    expect(exitCode).toBe(0);
+  });
+
+  test("NO_PROXY with port bypasses explicit proxy for fetch", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const resp = await fetch("http://localhost:${httpServer.port}", { proxy: "http://127.0.0.1:${deadProxyPort}" }); console.log(resp.status);`,
+      ],
+      env: { ...bunEnv, NO_PROXY: `localhost:${httpServer.port}` },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (exitCode !== 0) console.error("stderr:", stderr);
+    expect(stdout.trim()).toBe("200");
+    expect(exitCode).toBe(0);
+  });
+
+  test("NO_PROXY non-match does not bypass explicit proxy", async () => {
+    // NO_PROXY doesn't match, so fetch should try the dead proxy and fail
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `try { await fetch("http://localhost:${httpServer.port}", { proxy: "http://127.0.0.1:${deadProxyPort}" }); process.exit(1); } catch { process.exit(0); }`,
+      ],
+      env: { ...bunEnv, NO_PROXY: "other.com" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const exitCode = await proc.exited;
+    // exit(0) means fetch threw (proxy connection failed), proving proxy was used
+    expect(exitCode).toBe(0);
   });
 });

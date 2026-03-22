@@ -167,7 +167,7 @@ pub fn onMessage(
     }
 
     if (result.asAnyPromise()) |promise| {
-        switch (promise.status(globalObject.vm())) {
+        switch (promise.status()) {
             .rejected => {
                 _ = promise.result(globalObject.vm());
                 return;
@@ -1113,7 +1113,7 @@ pub fn terminate(
 pub fn getBinaryType(
     this: *ServerWebSocket,
     globalThis: *jsc.JSGlobalObject,
-) JSValue {
+) bun.JSError!JSValue {
     log("getBinaryType()", .{});
 
     return switch (this.#flags.binary_type) {

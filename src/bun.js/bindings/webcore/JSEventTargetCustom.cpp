@@ -47,7 +47,7 @@ using namespace JSC;
 
 JSValue toJSNewlyCreated(JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<EventTarget>&& value)
 {
-    return createWrapper<EventTarget>(globalObject, WTFMove(value));
+    return createWrapper<EventTarget>(globalObject, WTF::move(value));
 }
 
 EventTarget* JSEventTarget::toWrapped(VM& vm, JSValue value)
@@ -87,11 +87,11 @@ std::unique_ptr<JSEventTargetWrapper> jsEventTargetCast(VM& vm, JSValue thisValu
 }
 
 template<typename Visitor>
-void JSEventTarget::visitAdditionalChildren(Visitor& visitor)
+void JSEventTarget::visitAdditionalChildrenInGCThread(Visitor& visitor)
 {
     wrapped().visitJSEventListeners(visitor);
 }
 
-DEFINE_VISIT_ADDITIONAL_CHILDREN(JSEventTarget);
+DEFINE_VISIT_ADDITIONAL_CHILDREN_IN_GC_THREAD(JSEventTarget);
 
 } // namespace WebCore

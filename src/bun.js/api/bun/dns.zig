@@ -155,7 +155,7 @@ const LibC = struct {
         ) catch |err| bun.handleOom(err);
         const promise_value = request.head.promise.value();
 
-        var io = bun.handleOom(GetAddrInfoRequest.Task.createOnJSThread(this.vm.allocator, globalThis, request));
+        var io = GetAddrInfoRequest.Task.createOnJSThread(this.vm.allocator, globalThis, request);
 
         io.schedule();
         this.requestSent(globalThis.bunVM());
@@ -1227,7 +1227,7 @@ pub const internal = struct {
         can_retry_for_addrconfig: bool = default_hints.flags.ADDRCONFIG,
 
         pub fn isExpired(this: *Request, timestamp_to_store: *u32) bool {
-            if (this.refcount > 0 or this.result == null) {
+            if (this.result == null) {
                 return false;
             }
 
@@ -1284,9 +1284,11 @@ pub const internal = struct {
                 if (entry.key.hash == key.hash and entry.valid) {
                     if (entry.isExpired(timestamp_to_store)) {
                         log("get: expired entry", .{});
-                        _ = this.deleteEntryAt(len, i);
-                        entry.deinit();
-                        len = this.len;
+                        if (entry.refcount == 0) {
+                            _ = this.deleteEntryAt(len, i);
+                            entry.deinit();
+                            len = this.len;
+                        }
                         continue;
                     }
 
@@ -1789,7 +1791,9 @@ pub const internal = struct {
         global_cache.lock.lock();
         defer global_cache.lock.unlock();
 
-        req.valid = err == 0;
+        if (err != 0) {
+            req.valid = false;
+        }
         dns_cache_errors += @as(usize, @intFromBool(err != 0));
 
         bun.assert(req.refcount > 0);
@@ -2659,7 +2663,7 @@ pub const Resolver = struct {
         const channel: *c_ares.Channel = switch (this.getChannel()) {
             .result => |res| res,
             .err => |err| {
-                return globalThis.throwValue(err.toJSWithSyscallAndHostname(globalThis, "getHostByAddr", ip));
+                return globalThis.throwValue(try err.toJSWithSyscallAndHostname(globalThis, "getHostByAddr", ip));
             },
         };
 
@@ -3038,7 +3042,7 @@ pub const Resolver = struct {
         var channel: *c_ares.Channel = switch (this.getChannel()) {
             .result => |res| res,
             .err => |err| {
-                return globalThis.throwValue(err.toJSWithSyscall(globalThis, "query" ++ &[_]u8{std.ascii.toUpper(type_name[0])} ++ type_name[1..]));
+                return globalThis.throwValue(try err.toJSWithSyscall(globalThis, "query" ++ &[_]u8{std.ascii.toUpper(type_name[0])} ++ type_name[1..]));
             },
         };
 

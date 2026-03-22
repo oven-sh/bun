@@ -32,7 +32,7 @@ public:
     using Base = JSDOMWrapper<PerformanceObserver>;
     static JSPerformanceObserver* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<PerformanceObserver>&& impl)
     {
-        JSPerformanceObserver* ptr = new (NotNull, JSC::allocateCell<JSPerformanceObserver>(globalObject->vm())) JSPerformanceObserver(structure, *globalObject, WTFMove(impl));
+        JSPerformanceObserver* ptr = new (NotNull, JSC::allocateCell<JSPerformanceObserver>(globalObject->vm())) JSPerformanceObserver(structure, *globalObject, WTF::move(impl));
         ptr->finishCreation(globalObject->vm());
         return ptr;
     }
@@ -58,7 +58,7 @@ public:
     }
     static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm);
     DECLARE_VISIT_CHILDREN;
-    template<typename Visitor> void visitAdditionalChildren(Visitor&);
+    template<typename Visitor> void visitAdditionalChildrenInGCThread(Visitor&);
 
     template<typename Visitor> static void visitOutputConstraints(JSCell*, Visitor&);
     static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);

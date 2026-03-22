@@ -951,19 +951,23 @@ pub const UnresolvedColor = union(enum) {
                 options: *const css.ParserOptions,
                 parser: *ComponentParser,
                 pub fn parsefn(this: *@This(), input2: *css.Parser) Result(UnresolvedColor) {
-                    const light = switch (input2.parseUntilBefore(css.Delimiters{ .comma = true }, TokenList, this, @This().parsefn2)) {
+                    // errdefer doesn't fire on `return .{ .err = ... }` — Result(T) is a
+                    // tagged union, not an error union. Clean up `light` inline.
+                    var light = switch (input2.parseUntilBefore(css.Delimiters{ .comma = true }, TokenList, this, @This().parsefn2)) {
                         .result => |vv| vv,
                         .err => |e| return .{ .err = e },
                     };
-                    // TODO: fix this
-                    errdefer light.deinit();
-                    if (input2.expectComma().asErr()) |e| return .{ .err = e };
+                    if (input2.expectComma().asErr()) |e| {
+                        light.deinit(input2.allocator());
+                        return .{ .err = e };
+                    }
                     const dark = switch (TokenListFns.parse(input2, this.options, 0)) {
                         .result => |vv| vv,
-                        .err => |e| return .{ .err = e },
+                        .err => |e| {
+                            light.deinit(input2.allocator());
+                            return .{ .err = e };
+                        },
                     };
-                    // TODO: fix this
-                    errdefer dark.deinit();
                     return .{ .result = UnresolvedColor{
                         .light_dark = .{
                             .light = light,

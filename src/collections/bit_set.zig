@@ -880,7 +880,7 @@ pub const DynamicBitSetUnmanaged = struct {
     }
 
     pub fn bytes(self: Self) []const u8 {
-        return std.mem.sliceAsBytes(self.masks[0 .. numMasks(self.bit_length) + 1]);
+        return std.mem.sliceAsBytes(self.masks[0..numMasks(self.bit_length)]);
     }
 
     /// Returns the total number of set bits in this bit set.

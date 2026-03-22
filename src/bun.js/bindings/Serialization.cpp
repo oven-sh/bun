@@ -33,7 +33,7 @@ extern "C" SerializedValueSlice Bun__serializeJSValue(JSGlobalObject* globalObje
     auto forStorage = (static_cast<uint8_t>(flags) & static_cast<uint8_t>(SerializedFlags::ForStorage)) ? SerializationForStorage::Yes : SerializationForStorage::No;
     auto context = SerializationContext::Default;
     auto forTransferEnum = (static_cast<uint8_t>(flags) & static_cast<uint8_t>(SerializedFlags::ForCrossProcessTransfer)) ? SerializationForCrossProcessTransfer::Yes : SerializationForCrossProcessTransfer::No;
-    ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*globalObject, value, WTFMove(transferList), dummyPorts, forStorage, context, forTransferEnum);
+    ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*globalObject, value, WTF::move(transferList), dummyPorts, forStorage, context, forTransferEnum);
 
     EXCEPTION_ASSERT(!!scope.exception() == serialized.hasException());
     if (serialized.hasException()) {
@@ -54,13 +54,15 @@ extern "C" SerializedValueSlice Bun__serializeJSValue(JSGlobalObject* globalObje
 
 extern "C" void Bun__SerializedScriptSlice__free(SerializedScriptValue* value)
 {
-    delete value;
+    // Use deref() instead of delete to properly handle CHECK_REF_COUNTED_LIFECYCLE.
+    // The value was leaked via leakRef() which leaves refcount at 1, so deref() will delete it.
+    value->deref();
 }
 
 extern "C" EncodedJSValue Bun__JSValue__deserialize(JSGlobalObject* globalObject, const uint8_t* bytes, size_t size)
 {
     Vector<uint8_t> vector(std::span { bytes, size });
     /// ?! did i just give ownership of these bytes to JSC?
-    auto scriptValue = SerializedScriptValue::createFromWireBytes(WTFMove(vector));
+    auto scriptValue = SerializedScriptValue::createFromWireBytes(WTF::move(vector));
     return JSValue::encode(scriptValue->deserialize(*globalObject, globalObject));
 }

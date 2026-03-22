@@ -4,6 +4,8 @@
 #include <JavaScriptCore/VM.h>
 #include <JavaScriptCore/Heap.h>
 
+extern "C" int Bun__defaultRemainingRunsUntilSkipReleaseAccess;
+
 extern "C" void Bun__JSC_onBeforeWait(JSC::VM* _Nonnull vm)
 {
     ASSERT(vm);
@@ -46,7 +48,7 @@ extern "C" void Bun__JSC_onBeforeWait(JSC::VM* _Nonnull vm)
         // finalizers that might've been waiting to be run is a good idea.
         // But if you haven't, like if the process is just waiting on I/O
         // then don't bother.
-        static constexpr int defaultRemainingRunsUntilSkipReleaseAccess = 10;
+        const int defaultRemainingRunsUntilSkipReleaseAccess = Bun__defaultRemainingRunsUntilSkipReleaseAccess;
 
         static thread_local int remainingRunsUntilSkipReleaseAccess = 0;
 

@@ -801,7 +801,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRunMain, (JSGlobalObject * globalObject, JSC:
     RETURN_IF_EXCEPTION(scope, {});
     JSC::JSNativeStdFunction* resolverFunction = JSC::JSNativeStdFunction::create(vm, globalObject, 1, String(), resolverFunctionCallback);
 
-    auto result = promise->then(globalObject, resolverFunction, nullptr);
+    auto result = promise->then(globalObject, resolverFunction, globalObject->promiseEmptyOnRejectedFunction());
     RETURN_IF_EXCEPTION(scope, {});
     Bun__VirtualMachine__setOverrideModuleRunMainPromise(defaultGlobalObject(globalObject)->bunVM(), result);
 
@@ -1150,12 +1150,12 @@ void generateNativeModule_NodeModule(JSC::JSGlobalObject* lexicalGlobalObject,
 {
     Zig::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
     auto& vm = JSC::getVM(globalObject);
-    auto catchScope = DECLARE_CATCH_SCOPE(vm);
+    auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto* constructor = globalObject->m_nodeModuleConstructor.getInitializedOnMainThread(globalObject);
     if (constructor->hasNonReifiedStaticProperties()) {
         constructor->reifyAllStaticProperties(globalObject);
-        if (catchScope.exception()) {
-            catchScope.clearException();
+        if (topExceptionScope.exception()) {
+            (void)topExceptionScope.tryClearException();
         }
     }
 
@@ -1170,9 +1170,9 @@ void generateNativeModule_NodeModule(JSC::JSGlobalObject* lexicalGlobalObject,
         const auto& property = Identifier::fromString(vm, entry.m_key);
         JSValue value = constructor->get(globalObject, property);
 
-        if (catchScope.exception()) [[unlikely]] {
+        if (topExceptionScope.exception()) [[unlikely]] {
             value = {};
-            catchScope.clearException();
+            (void)topExceptionScope.tryClearException();
         }
 
         exportNames.append(property);

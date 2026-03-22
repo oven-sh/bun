@@ -4,7 +4,7 @@
 #include "../../../packages/bun-native-bundler-plugin-api/bundler_plugin.h"
 #include "JavaScriptCore/CallData.h"
 #include "headers-handwritten.h"
-#include <JavaScriptCore/CatchScope.h>
+#include <JavaScriptCore/TopExceptionScope.h>
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/JSTypeInfo.h>
 #include <JavaScriptCore/Structure.h>
@@ -71,7 +71,7 @@ void BundlerPlugin::NamespaceList::append(JSC::VM& vm, JSC::RegExp* filter, Stri
 
     auto pattern = filter->pattern();
     auto filter_regexp = FilterRegExp(pattern, filter->flags());
-    nsGroup->append(WTFMove(filter_regexp));
+    nsGroup->append(WTF::move(filter_regexp));
 }
 
 static bool anyMatchesForNamespace(JSC::VM& vm, BundlerPlugin::NamespaceList& list, const BunString* namespaceStr, const BunString* path)
@@ -158,7 +158,7 @@ public:
     DECLARE_VISIT_CHILDREN;
     DECLARE_VISIT_OUTPUT_CONSTRAINTS;
 
-    template<typename Visitor> void visitAdditionalChildren(Visitor&);
+    template<typename Visitor> void visitAdditionalChildrenInGCThread(Visitor&);
 
     Bun::BundlerPlugin plugin;
     /// These are defined in BundlerPlugin.ts
@@ -188,7 +188,7 @@ private:
 };
 
 template<typename Visitor>
-void JSBundlerPlugin::visitAdditionalChildren(Visitor& visitor)
+void JSBundlerPlugin::visitAdditionalChildrenInGCThread(Visitor& visitor)
 {
     this->onLoadFunction.visit(visitor);
     this->onResolveFunction.visit(visitor);
@@ -202,16 +202,17 @@ void JSBundlerPlugin::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     JSBundlerPlugin* thisObject = jsCast<JSBundlerPlugin*>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    thisObject->visitAdditionalChildren(visitor);
+    thisObject->visitAdditionalChildrenInGCThread(visitor);
 }
 DEFINE_VISIT_CHILDREN(JSBundlerPlugin);
+DEFINE_VISIT_ADDITIONAL_CHILDREN_IN_GC_THREAD(JSBundlerPlugin);
 
 template<typename Visitor>
 void JSBundlerPlugin::visitOutputConstraintsImpl(JSCell* cell, Visitor& visitor)
 {
     JSBundlerPlugin* thisObject = jsCast<JSBundlerPlugin*>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
-    thisObject->visitAdditionalChildren(visitor);
+    thisObject->visitAdditionalChildrenInGCThread(visitor);
 }
 DEFINE_VISIT_OUTPUT_CONSTRAINTS(JSBundlerPlugin);
 
@@ -260,7 +261,7 @@ void BundlerPlugin::NativePluginList::append(JSC::VM& vm, JSC::RegExp* filter, S
 
         auto pattern = filter->pattern();
         auto filter_regexp = FilterRegExp(pattern, filter->flags());
-        nsGroup->append(WTFMove(filter_regexp));
+        nsGroup->append(WTF::move(filter_regexp));
     }
 
     if (index == std::numeric_limits<unsigned>::max()) {
@@ -280,8 +281,7 @@ void BundlerPlugin::NativePluginList::append(JSC::VM& vm, JSC::RegExp* filter, S
 bool BundlerPlugin::FilterRegExp::match(JSC::VM& vm, const String& path)
 {
     WTF::Locker locker { lock };
-    constexpr bool usesPatternContextBuffer = false;
-    Yarr::MatchingContextHolder regExpContext(vm, usesPatternContextBuffer, nullptr, Yarr::MatchFrom::CompilerThread);
+    Yarr::MatchingContextHolder regExpContext(vm, nullptr, Yarr::MatchFrom::CompilerThread);
     return regex.match(path) != -1;
 }
 
@@ -523,7 +523,7 @@ extern "C" void JSBundlerPlugin__matchOnLoad(Bun::JSBundlerPlugin* plugin, const
     if (callData.type == JSC::CallData::Type::None) [[unlikely]]
         return;
 
-    auto scope = DECLARE_CATCH_SCOPE(plugin->vm());
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(plugin->vm());
     JSC::MarkedArgumentBuffer arguments;
     arguments.append(WRAP_BUNDLER_PLUGIN(context));
     arguments.append(JSC::jsString(plugin->vm(), pathStr));
@@ -535,7 +535,7 @@ extern "C" void JSBundlerPlugin__matchOnLoad(Bun::JSBundlerPlugin* plugin, const
 
     if (scope.exception()) [[unlikely]] {
         auto exception = scope.exception();
-        scope.clearException();
+        (void)scope.tryClearException();
         if (!plugin->plugin.tombstoned) {
             plugin->plugin.addError(
                 context,
@@ -566,7 +566,7 @@ extern "C" void JSBundlerPlugin__matchOnResolve(Bun::JSBundlerPlugin* plugin, co
     if (callData.type == JSC::CallData::Type::None) [[unlikely]]
         return;
 
-    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSC::MarkedArgumentBuffer arguments;
     arguments.append(JSC::jsString(vm, pathStr));
     arguments.append(JSC::jsString(vm, namespaceStringStr));
@@ -578,7 +578,7 @@ extern "C" void JSBundlerPlugin__matchOnResolve(Bun::JSBundlerPlugin* plugin, co
 
     if (scope.exception()) [[unlikely]] {
         auto exception = JSValue(scope.exception());
-        scope.clearException();
+        (void)scope.tryClearException();
         if (!plugin->plugin.tombstoned) {
             JSBundlerPlugin__addError(
                 context,
@@ -670,13 +670,14 @@ extern "C" void JSBundlerPlugin__drainDeferred(Bun::JSBundlerPlugin* pluginObjec
     pluginObject->plugin.deferredPromises.moveTo(pluginObject, arguments);
     ASSERT(!arguments.hasOverflowed());
 
-    auto scope = DECLARE_THROW_SCOPE(pluginObject->vm());
+    auto& vm = pluginObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     for (auto promiseValue : arguments) {
         JSPromise* promise = jsCast<JSPromise*>(JSValue::decode(promiseValue));
         if (rejected) {
-            promise->reject(globalObject, JSC::jsUndefined());
+            promise->reject(vm, globalObject, JSC::jsUndefined());
         } else {
-            promise->resolve(globalObject, JSC::jsUndefined());
+            promise->resolve(globalObject, vm, JSC::jsUndefined());
         }
         RETURN_IF_EXCEPTION(scope, );
     }

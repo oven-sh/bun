@@ -67,6 +67,15 @@ route_bundles: ArrayListUnmanaged(RouteBundle),
 graph_safety_lock: bun.safety.ThreadLock,
 client_graph: IncrementalGraph(.client),
 server_graph: IncrementalGraph(.server),
+/// Barrel files with deferred (is_unused) import records. These files must
+/// be re-parsed on every incremental build because the set of needed exports
+/// may have changed. Populated by applyBarrelOptimization.
+barrel_files_with_deferrals: bun.StringArrayHashMapUnmanaged(void) = .{},
+/// Accumulated barrel export requests across all builds. Maps barrel file
+/// path → set of export names that have been requested. This ensures that
+/// when a barrel is re-parsed in an incremental build, exports requested
+/// by non-stale files (from previous builds) are still kept.
+barrel_needed_exports: bun.StringArrayHashMapUnmanaged(bun.StringHashMapUnmanaged(void)) = .{},
 /// State populated during bundling and hot updates. Often cleared
 incremental_result: IncrementalResult,
 /// Quickly retrieve a framework route's index from its entry point file. These
@@ -616,6 +625,23 @@ pub fn deinit(dev: *DevServer) void {
         },
         .server_graph = dev.server_graph.deinit(),
         .client_graph = dev.client_graph.deinit(),
+        .barrel_files_with_deferrals = {
+            for (dev.barrel_files_with_deferrals.keys()) |key| {
+                alloc.free(key);
+            }
+            dev.barrel_files_with_deferrals.deinit(alloc);
+        },
+        .barrel_needed_exports = {
+            var it = dev.barrel_needed_exports.iterator();
+            while (it.next()) |entry| {
+                var inner = entry.value_ptr.*;
+                var inner_it = inner.keyIterator();
+                while (inner_it.next()) |k| alloc.free(k.*);
+                inner.deinit(alloc);
+                alloc.free(entry.key_ptr.*);
+            }
+            dev.barrel_needed_exports.deinit(alloc);
+        },
         .assets = dev.assets.deinit(alloc),
         .incremental_result = useAllFields(IncrementalResult, .{
             .had_adjusted_edges = {},
@@ -1355,7 +1381,7 @@ fn computeArgumentsForFrameworkRequest(
                 const relative_path_buf = bun.path_buffer_pool.get();
                 defer bun.path_buffer_pool.put(relative_path_buf);
                 var route_name = bun.String.cloneUTF8(dev.relativePath(relative_path_buf, keys[fromOpaqueFileId(.server, route.file_page.unwrap().?).get()]));
-                try arr.putIndex(global, 0, route_name.transferToJS(global));
+                try arr.putIndex(global, 0, try route_name.transferToJS(global));
             }
             n = 1;
             while (true) {
@@ -1366,7 +1392,7 @@ fn computeArgumentsForFrameworkRequest(
                         relative_path_buf,
                         keys[fromOpaqueFileId(.server, layout).get()],
                     ));
-                    try arr.putIndex(global, @intCast(n), layout_name.transferToJS(global));
+                    try arr.putIndex(global, @intCast(n), try layout_name.transferToJS(global));
                     n += 1;
                 }
                 route = dev.router.routePtr(route.parent.unwrap() orelse break);
@@ -1383,7 +1409,7 @@ fn computeArgumentsForFrameworkRequest(
                 std.mem.asBytes(&generation),
             }) catch |err| bun.handleOom(err);
             defer str.deref();
-            const js = str.toJS(dev.vm.global);
+            const js = try str.toJS(dev.vm.global);
             framework_bundle.cached_client_bundle_url = .create(js, dev.vm.global);
             break :str js;
         },
@@ -2091,7 +2117,7 @@ fn generateCssJSArray(dev: *DevServer, route_bundle: *RouteBundle) bun.JSError!j
         }) catch unreachable;
         const str = bun.String.cloneUTF8(path);
         defer str.deref();
-        try arr.putIndex(dev.vm.global, @intCast(i), str.toJS(dev.vm.global));
+        try arr.putIndex(dev.vm.global, @intCast(i), try str.toJS(dev.vm.global));
     }
     return arr;
 }
@@ -2136,7 +2162,7 @@ fn makeArrayForServerComponentsPatch(dev: *DevServer, global: *jsc.JSGlobalObjec
         defer bun.path_buffer_pool.put(relative_path_buf);
         const str = bun.String.cloneUTF8(dev.relativePath(relative_path_buf, names[item.get()]));
         defer str.deref();
-        try arr.putIndex(global, @intCast(i), str.toJS(global));
+        try arr.putIndex(global, @intCast(i), try str.toJS(global));
     }
     return arr;
 }
@@ -2192,6 +2218,7 @@ pub fn finalizeBundle(
 ) bun.JSError!void {
     assert(dev.magic == .valid);
     var had_sent_hmr_event = false;
+
     defer {
         var heap = bv2.graph.heap;
         bv2.deinitWithoutFreeingArena();
@@ -2845,7 +2872,7 @@ pub fn finalizeBundle(
 
     if (dev.bundling_failures.count() == 0) {
         if (current_bundle.had_reload_event) {
-            const clear_terminal = !debug.isVisible();
+            const clear_terminal = !debug.isVisible() and !dev.vm.transpiler.env.hasSetNoClearTerminalOnReload(false);
             if (clear_terminal) {
                 Output.disableBuffering();
                 Output.resetTerminalAll();
@@ -3070,6 +3097,11 @@ const CacheEntry = struct {
 };
 
 pub fn isFileCached(dev: *DevServer, path: []const u8, side: bake.Graph) ?CacheEntry {
+    // Barrel files with deferred records must always be re-parsed so the
+    // barrel optimization can evaluate updated requested_exports.
+    if (dev.barrel_files_with_deferrals.contains(path))
+        return null;
+
     dev.graph_safety_lock.lock();
     defer dev.graph_safety_lock.unlock();
 

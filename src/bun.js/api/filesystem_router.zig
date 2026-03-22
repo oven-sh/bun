@@ -361,7 +361,7 @@ pub const FileSystemRouter = struct {
         );
     }
 
-    pub fn getStyle(_: *FileSystemRouter, globalThis: *jsc.JSGlobalObject) JSValue {
+    pub fn getStyle(_: *FileSystemRouter, globalThis: *jsc.JSGlobalObject) bun.JSError!JSValue {
         return bun.String.static("nextjs").toJS(globalThis);
     }
 

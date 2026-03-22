@@ -37,6 +37,11 @@ enum class WebSocketErrorCode : int32_t {
     tls_handshake_failed = 30,
     message_too_big = 31,
     protocol_error = 32,
+    // Proxy error codes
+    proxy_connect_failed = 33,
+    proxy_authentication_required = 34,
+    proxy_connection_refused = 35,
+    proxy_tunnel_failed = 36,
 };
 
 }

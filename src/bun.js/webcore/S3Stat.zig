@@ -39,11 +39,11 @@ pub const S3Stat = struct {
         return jsc.JSValue.jsNumber(this.size);
     }
 
-    pub fn getEtag(this: *@This(), globalObject: *jsc.JSGlobalObject) jsc.JSValue {
+    pub fn getEtag(this: *@This(), globalObject: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
         return this.etag.toJS(globalObject);
     }
 
-    pub fn getContentType(this: *@This(), globalObject: *jsc.JSGlobalObject) jsc.JSValue {
+    pub fn getContentType(this: *@This(), globalObject: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
         return this.contentType.toJS(globalObject);
     }
 

@@ -377,6 +377,9 @@ function isSpecial(obj) {
 
 const typesToCallDeepStrictEqualWith = [isKeyObject, isWeakSet, isWeakMap, Buffer.isBuffer];
 const SafeSetPrototypeIterator = SafeSet.prototype[SymbolIterator];
+const SafeMapPrototypeIterator = SafeMap.prototype[SymbolIterator];
+const SafeMapPrototypeHas = SafeMap.prototype.has;
+const SafeMapPrototypeGet = SafeMap.prototype.get;
 
 /**
  * Compares two objects or values recursively to check if they are equal.
@@ -388,9 +391,33 @@ const SafeSetPrototypeIterator = SafeSet.prototype[SymbolIterator];
  * compareBranch({a: 1, b: 2, c: 3}, {a: 1, b: 2}); // true
  */
 function compareBranch(actual, expected, comparedObjects?) {
-  // Check for Map object equality
+  // Check for Map object equality (subset check for partialDeepStrictEqual)
   if (isMap(actual) && isMap(expected)) {
-    return Bun.deepEquals(actual, expected, true);
+    if (expected.size > actual.size) {
+      return false; // `expected` can't be a subset if it has more elements
+    }
+
+    comparedObjects ??= new SafeWeakSet();
+
+    // Handle circular references
+    if (comparedObjects.has(actual)) {
+      return true;
+    }
+    comparedObjects.add(actual);
+
+    const expectedIterator = SafeMapPrototypeIterator.$call(expected);
+
+    for (const { 0: key, 1: expectedValue } of expectedIterator) {
+      if (!SafeMapPrototypeHas.$call(actual, key)) {
+        return false;
+      }
+      const actualValue = SafeMapPrototypeGet.$call(actual, key);
+      if (!compareBranch(actualValue, expectedValue, comparedObjects)) {
+        return false;
+      }
+    }
+
+    return true;
   }
 
   // Check for ArrayBuffer object equality
@@ -828,9 +855,10 @@ function rejects(
   error: nodeAssert.AssertPredicate,
   message?: string | Error,
 ): Promise<void>;
-assert.rejects = async function rejects(promiseFn: () => Promise<unknown>, ...args: any[]): Promise<void> {
-  expectsError(rejects, await waitForActual(promiseFn), ...args);
-};
+async function rejects(block: (() => Promise<unknown>) | Promise<unknown>, ...args: any[]): Promise<void> {
+  expectsError(rejects, await waitForActual(block), ...args);
+}
+assert.rejects = rejects;
 
 /**
  * Asserts that the function `fn` does not throw an error.

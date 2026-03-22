@@ -122,16 +122,18 @@ STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSEventPrototype, JSEventPrototype::Base);
 
 using JSEventDOMConstructor = JSDOMConstructor<JSEvent>;
 
-/* Hash table */
+/* Source for JSEvent.lut.h
+@begin JSEventTable
+isTrusted  jsEvent_isTrusted  DontDelete|ReadOnly|CustomAccessor|DOMAttribute
+@end
+*/
 
-static const struct CompactHashIndex JSEventTableIndex[2] = {
-    { 0, -1 },
-    { -1, -1 },
-};
-
-static const HashTableValue JSEventTableValues[] = {
-    { "isTrusted"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, jsEvent_isTrusted, 0 } },
-};
+// The generated .lut.h defines JSEventTable with nullptr for classForThis,
+// but DOMAttribute properties require it for type checking. Rename the
+// generated table and redefine it with the correct classForThis.
+#define JSEventTable JSEventTable_GENERATED
+#include "JSEvent.lut.h"
+#undef JSEventTable
 
 static const HashTable JSEventTable = { 1, 1, true, JSEvent::info(), JSEventTableValues, JSEventTableIndex };
 /* Hash table for constructor */
@@ -166,11 +168,11 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSEventDOMConstructor::c
     RETURN_IF_EXCEPTION(throwScope, {});
     auto eventInitDict = convert<IDLDictionary<EventInit>>(*lexicalGlobalObject, argument1.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    auto object = Event::create(WTFMove(type), WTFMove(eventInitDict));
+    auto object = Event::create(WTF::move(type), WTF::move(eventInitDict));
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
     static_assert(TypeOrExceptionOrUnderlyingType<decltype(object)>::isRef);
-    auto jsValue = toJSNewlyCreated<IDLInterface<Event>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, WTFMove(object));
+    auto jsValue = toJSNewlyCreated<IDLInterface<Event>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, WTF::move(object));
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
     setSubclassStructureIfNeeded<Event>(lexicalGlobalObject, callFrame, asObject(jsValue));
@@ -247,7 +249,7 @@ const ClassInfo JSEvent::s_info = { "Event"_s, &Base::s_info, &JSEventTable
     CREATE_METHOD_TABLE(JSEvent) };
 
 JSEvent::JSEvent(Structure* structure, JSDOMGlobalObject& globalObject, Ref<Event>&& impl)
-    : JSDOMWrapper<Event>(structure, globalObject, WTFMove(impl))
+    : JSDOMWrapper<Event>(structure, globalObject, WTF::move(impl))
 {
 }
 
@@ -365,7 +367,7 @@ static inline bool setJSEvent_cancelBubbleSetter(JSGlobalObject& lexicalGlobalOb
     auto nativeValue = convert<IDLBoolean>(lexicalGlobalObject, value);
     RETURN_IF_EXCEPTION(throwScope, false);
     invokeFunctorPropagatingExceptionIfNecessary(lexicalGlobalObject, throwScope, [&] {
-        return impl.setCancelBubble(WTFMove(nativeValue));
+        return impl.setCancelBubble(WTF::move(nativeValue));
     });
     return true;
 }
@@ -490,7 +492,7 @@ static inline bool setJSEvent_returnValueSetter(JSGlobalObject& lexicalGlobalObj
     auto nativeValue = convert<IDLBoolean>(lexicalGlobalObject, value);
     RETURN_IF_EXCEPTION(throwScope, false);
     invokeFunctorPropagatingExceptionIfNecessary(lexicalGlobalObject, throwScope, [&] {
-        return impl.setLegacyReturnValue(WTFMove(nativeValue));
+        return impl.setLegacyReturnValue(WTF::move(nativeValue));
     });
     return true;
 }
@@ -578,7 +580,7 @@ static inline JSC::EncodedJSValue jsEventPrototypeFunction_initEventBody(JSC::JS
     EnsureStillAliveScope argument2 = callFrame->argument(2);
     auto cancelable = convert<IDLBoolean>(*lexicalGlobalObject, argument2.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.initEvent(WTFMove(type), WTFMove(bubbles), WTFMove(cancelable)); })));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.initEvent(WTF::move(type), WTF::move(bubbles), WTF::move(cancelable)); })));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsEventPrototypeFunction_initEvent, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))

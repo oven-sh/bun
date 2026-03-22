@@ -298,13 +298,12 @@ fn loadBunfig(allocator: std.mem.Allocator, auto_loaded: bool, config_path: [:0]
     ctx.debug.loaded_bunfig = true;
     try Bunfig.parse(allocator, &source, ctx, cmd);
 
-    // Check version pinning after bunfig is loaded (skip for upgrade command)
+    // Check version pinning after each bunfig is loaded (skip for upgrade command).
+    // No once-only guard: a project-local bunfig may tighten the constraint set
+    // by a global ~/.bunfig.toml, so we re-check with the latest pinned_version.
     if (comptime cmd != .UpgradeCommand) {
         if (ctx.pinned_version) |pinned| {
-            if (!ctx.version_checked) {
-                ctx.version_checked = true;
-                VersionManager.checkPinnedVersion(pinned, allocator);
-            }
+            VersionManager.checkPinnedVersion(pinned, allocator);
         }
     }
 }

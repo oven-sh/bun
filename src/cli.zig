@@ -439,7 +439,6 @@ pub const Command = struct {
         preloads: []const string = &.{},
         has_loaded_global_config: bool = false,
         pinned_version: ?[]const u8 = null,
-        version_checked: bool = false,
 
         pub const BundlerOptions = struct {
             outdir: []const u8 = "",

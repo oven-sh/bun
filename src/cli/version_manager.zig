@@ -12,7 +12,6 @@
 pub fn checkPinnedVersion(pinned_version_str: []const u8, allocator: std.mem.Allocator) void {
     @branchHint(.cold);
 
-    // Parse the semver range from bunfig
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
     const arena_alloc = arena.allocator();
@@ -29,18 +28,15 @@ pub fn checkPinnedVersion(pinned_version_str: []const u8, allocator: std.mem.All
         return;
     };
 
-    // Build current version as Semver.Version
     const current = Semver.Version{
         .major = Environment.version.major,
         .minor = Environment.version.minor,
         .patch = Environment.version.patch,
     };
-
     const current_str = Global.package_json_version;
 
-    // Check if current version satisfies the constraint
     if (group.satisfies(current, pinned_version_str, current_str)) {
-        return; // All good
+        return;
     }
 
     // Version mismatch — determine if we can auto-install
@@ -54,12 +50,8 @@ pub fn checkPinnedVersion(pinned_version_str: []const u8, allocator: std.mem.All
         return;
     };
 
-    // Check if self exe path is inside the bun install dir
     const self_exe = bun.selfExePath() catch {
-        Output.prettyErrorln(
-            "<r><yellow>warn<r>: This project requires Bun <cyan>{s}<r> but you have <b>v{s}<r>",
-            .{ pinned_version_str, current_str },
-        );
+        printMismatchWarning(pinned_version_str, current_str);
         return;
     };
 
@@ -72,7 +64,12 @@ pub fn checkPinnedVersion(pinned_version_str: []const u8, allocator: std.mem.All
         return;
     }
 
-    // Resolve what version to download
+    // Non-TTY environments: always warn-only, never mutate the installation
+    if (!Output.isStderrTTY()) {
+        printMismatchWarning(pinned_version_str, current_str);
+        return;
+    }
+
     const target_version_str = resolveTargetVersion(
         &group,
         pinned_version_str,
@@ -86,46 +83,31 @@ pub fn checkPinnedVersion(pinned_version_str: []const u8, allocator: std.mem.All
         return;
     };
 
-    // Check if the target version is already cached
     var versions_dir_buf: bun.PathBuffer = undefined;
     const versions_dir = std.fmt.bufPrint(&versions_dir_buf, "{s}/versions/{s}", .{ install_dir, target_version_str }) catch return;
 
     var bin_path_buf: bun.PathBuffer = undefined;
     const bin_path = std.fmt.bufPrint(&bin_path_buf, "{s}/bun{s}", .{ versions_dir, exe_suffix }) catch return;
 
-    const already_cached = bun.sys.exists(bin_path);
+    if (!bun.sys.exists(bin_path)) {
+        // Prompt before download
+        Output.prettyError(
+            "<r>This project requires Bun <cyan>v{s}<r> (constraint: <b>{s}<r>), but you have <b>v{s}<r>\n" ++
+                "Download Bun v{s}? <d>[Y/n]<r> ",
+            .{ target_version_str, pinned_version_str, current_str, target_version_str },
+        );
+        Output.flush();
 
-    if (!already_cached) {
-        // Need to download — prompt if TTY
-        if (Output.isStderrTTY()) {
-            Output.prettyError(
-                "<r>This project requires Bun <cyan>v{s}<r> (constraint: <b>{s}<r>), but you have <b>v{s}<r>\n" ++
-                    "Download Bun v{s}? <d>[Y/n]<r> ",
-                .{ target_version_str, pinned_version_str, current_str, target_version_str },
-            );
-            Output.flush();
-
-            // Read user response
-            if (!getUserConfirmation()) {
-                Output.prettyErrorln("<r><yellow>warn<r>: Version mismatch — continuing with v{s}", .{current_str});
-                return;
-            }
-        } else {
-            // Non-TTY: just warn and continue
-            Output.prettyErrorln(
-                "<r><yellow>warn<r>: This project requires Bun <cyan>{s}<r> but you have <b>v{s}<r>",
-                .{ pinned_version_str, current_str },
-            );
+        if (!getUserConfirmation()) {
+            Output.prettyErrorln("<r><yellow>warn<r>: Version mismatch — continuing with v{s}", .{current_str});
             return;
         }
 
-        // Download the version
         if (!downloadVersion(target_version_str, versions_dir, allocator)) {
             Output.prettyErrorln("<r><red>error<r>: Failed to download Bun v{s}", .{target_version_str});
             return;
         }
 
-        // Verify it exists after download
         if (!bun.sys.exists(bin_path)) {
             Output.prettyErrorln("<r><red>error<r>: Downloaded binary not found at {s}", .{bin_path});
             return;
@@ -135,20 +117,50 @@ pub fn checkPinnedVersion(pinned_version_str: []const u8, allocator: std.mem.All
     // Save current bun to versions dir if not already there
     saveCurrentVersion(install_dir, current_str, self_exe);
 
-    // Update symlink: ~/.bun/bin/bun -> versions/<version>/bun
+    // Update symlink
     var bun_bin_buf: bun.PathBuffer = undefined;
     const bun_bin = std.fmt.bufPrint(&bun_bin_buf, "{s}/bin/bun{s}", .{ install_dir, exe_suffix }) catch return;
 
-    updateSymlink(bun_bin, bin_path) catch {
-        Output.prettyErrorln("<r><red>error<r>: Failed to update symlink at {s}", .{bun_bin});
-        return;
-    };
+    if (comptime Environment.isWindows) {
+        // On Windows, rename the running exe out of the way then copy the new one in
+        var outdated_buf: bun.PathBuffer = undefined;
+        const outdated_path = std.fmt.bufPrint(&outdated_buf, "{s}.outdated", .{bun_bin}) catch return;
+        const outdated_z = bun.default_allocator.dupeZ(u8, outdated_path) catch return;
+        defer bun.default_allocator.free(outdated_z);
+        const bun_bin_z = bun.default_allocator.dupeZ(u8, bun_bin) catch return;
+        defer bun.default_allocator.free(bun_bin_z);
+        const bin_path_z = bun.default_allocator.dupeZ(u8, bin_path) catch return;
+        defer bun.default_allocator.free(bin_path_z);
+
+        std.posix.rename(bun_bin_z, outdated_z) catch {
+            Output.prettyErrorln("<r><red>error<r>: Failed to rename current executable", .{});
+            return;
+        };
+
+        bun.sys.moveFileZ(.cwd(), bin_path_z, .cwd(), bun_bin_z) catch {
+            // Restore original
+            std.posix.rename(outdated_z, bun_bin_z) catch {};
+            Output.prettyErrorln("<r><red>error<r>: Failed to install new version", .{});
+            return;
+        };
+    } else {
+        updateSymlink(bun_bin, bin_path) catch {
+            Output.prettyErrorln("<r><red>error<r>: Failed to update symlink at {s}", .{bun_bin});
+            return;
+        };
+    }
 
     Output.prettyErrorln("<r><green>Switched to Bun v{s}<r>", .{target_version_str});
     Output.flush();
 
-    // Re-exec via the symlink so the correct version runs
     reExec(bun_bin);
+}
+
+fn printMismatchWarning(pinned_version_str: []const u8, current_str: []const u8) void {
+    Output.prettyErrorln(
+        "<r><yellow>warn<r>: This project requires Bun <cyan>{s}<r> but you have <b>v{s}<r>",
+        .{ pinned_version_str, current_str },
+    );
 }
 
 fn getUserConfirmation() bool {
@@ -162,7 +174,6 @@ fn getUserConfirmation() bool {
 }
 
 fn getBunInstallDir() ?[]const u8 {
-    // Check BUN_INSTALL env var first, then default to ~/.bun
     if (bun.env_var.BUN_INSTALL.get()) |dir| {
         if (dir.len > 0 and bun.sys.exists(dir)) return dir;
     }
@@ -189,20 +200,17 @@ fn getBunInstallDir() ?[]const u8 {
     return null;
 }
 
-/// For exact versions, return directly. For ranges, query GitHub releases.
 fn resolveTargetVersion(
     group: *const Semver.Query.Group,
     pinned_version_str: []const u8,
     allocator: std.mem.Allocator,
 ) ?[]const u8 {
-    // Fast path: exact version specified
     if (group.getExactVersion()) |exact| {
         return std.fmt.allocPrint(allocator, "{d}.{d}.{d}", .{
             exact.major, exact.minor, exact.patch,
         }) catch null;
     }
 
-    // For ranges, query GitHub API to find the latest matching release
     return queryLatestMatchingRelease(group, pinned_version_str, allocator);
 }
 
@@ -261,7 +269,6 @@ fn queryLatestMatchingRelease(
     const response = async_http.sendSync() catch return null;
     if (response.status_code != 200) return null;
 
-    // Parse the JSON array of releases
     var log = logger.Log.init(allocator);
     defer log.deinit();
     const source = &logger.Source.initPathString("releases.json", body.list.items);
@@ -275,7 +282,6 @@ fn queryLatestMatchingRelease(
         const tag_prop = release.asProperty("tag_name") orelse continue;
         const tag = tag_prop.expr.asString(allocator) orelse continue;
 
-        // Tags are like "bun-v1.2.3"
         if (!strings.hasPrefixComptime(tag, "bun-v")) continue;
         const ver_str = tag["bun-v".len..];
 
@@ -296,7 +302,6 @@ fn queryLatestMatchingRelease(
 fn downloadVersion(version_str: []const u8, dest_dir: []const u8, allocator: std.mem.Allocator) bool {
     HTTP.HTTPThread.init(&.{});
 
-    // Construct download URL
     var url_buf: [512]u8 = undefined;
     const download_url_str = std.fmt.bufPrint(
         &url_buf,
@@ -378,9 +383,9 @@ fn downloadVersion(version_str: []const u8, dest_dir: []const u8, allocator: std
     };
     zip_file.close();
 
-    // Unzip
     defer dest_dir_handle.deleteFile(tmpname) catch {};
 
+    // Unzip using bun.spawnSync on all platforms
     if (comptime Environment.isPosix) {
         var unzip_buf: bun.PathBuffer = undefined;
         const unzip_exe = bun.which(&unzip_buf, bun.env_var.PATH.get() orelse "", "", "unzip") orelse {
@@ -395,28 +400,36 @@ fn downloadVersion(version_str: []const u8, dest_dir: []const u8, allocator: std
             tmpname,
         };
 
-        var unzip_process = std.process.Child.init(&unzip_argv, allocator);
-        unzip_process.cwd = dest_dir;
-        unzip_process.stdin_behavior = .Inherit;
-        unzip_process.stdout_behavior = .Inherit;
-        unzip_process.stderr_behavior = .Inherit;
-
-        const result = unzip_process.spawnAndWait() catch {
+        const result = (bun.spawnSync(&.{
+            .argv = &unzip_argv,
+            .envp = null,
+            .cwd = dest_dir,
+            .stderr = .inherit,
+            .stdout = .inherit,
+            .stdin = .inherit,
+        }) catch {
+            Output.prettyErrorln("<r><red>error<r>: Failed to run unzip", .{});
+            return false;
+        }).unwrap() catch {
             Output.prettyErrorln("<r><red>error<r>: Failed to run unzip", .{});
             return false;
         };
 
-        if (result.Exited != 0) {
-            Output.prettyErrorln("<r><red>error<r>: unzip failed (exit code: {d})", .{result.Exited});
+        if (!result.status.isOK()) {
+            switch (result.status) {
+                .exited => |e| Output.prettyErrorln("<r><red>error<r>: unzip failed (exit code: {d})", .{e.code}),
+                .signaled => |sig| Output.prettyErrorln("<r><red>error<r>: unzip killed by signal {d}", .{@intFromEnum(sig)}),
+                else => Output.prettyErrorln("<r><red>error<r>: unzip terminated abnormally", .{}),
+            }
             return false;
         }
     } else if (comptime Environment.isWindows) {
         var ps_buf: bun.PathBuffer = undefined;
         const powershell_path =
             bun.which(&ps_buf, bun.env_var.PATH.get() orelse "", "", "powershell") orelse {
-                Output.prettyErrorln("<r><red>error<r>: PowerShell not found", .{});
-                return false;
-            };
+            Output.prettyErrorln("<r><red>error<r>: PowerShell not found", .{});
+            return false;
+        };
 
         const unzip_script = std.fmt.allocPrint(
             allocator,
@@ -449,8 +462,7 @@ fn downloadVersion(version_str: []const u8, dest_dir: []const u8, allocator: std
         }) catch return false).unwrap() catch return false;
     }
 
-    // The zip extracts to a subfolder like bun-linux-x64/bun
-    // Move the binary to the dest dir root
+    // Move extracted binary from subfolder to dest dir root
     const extracted_exe = upgrade_command.Version.folder_name ++ std.fs.path.sep_str ++ "bun" ++ exe_suffix;
 
     bun.sys.moveFileZ(
@@ -459,7 +471,6 @@ fn downloadVersion(version_str: []const u8, dest_dir: []const u8, allocator: std
         .fromStdDir(dest_dir_handle),
         "bun" ++ exe_suffix,
     ) catch {
-        // Check if a binary already ended up in the right place
         var check_buf: bun.PathBuffer = undefined;
         const check_path = std.fmt.bufPrint(&check_buf, "{s}/bun{s}", .{ dest_dir, exe_suffix }) catch return false;
         if (!bun.sys.exists(check_path)) {
@@ -468,43 +479,49 @@ fn downloadVersion(version_str: []const u8, dest_dir: []const u8, allocator: std
         }
     };
 
-    // Clean up extracted subfolder
     dest_dir_handle.deleteTree(upgrade_command.Version.folder_name) catch {};
 
     return true;
 }
 
 fn saveCurrentVersion(install_dir: []const u8, current_str: []const u8, self_exe: []const u8) void {
-    // Check if current version is already saved
     var path_buf: bun.PathBuffer = undefined;
     const current_ver_dir = std.fmt.bufPrint(&path_buf, "{s}/versions/{s}", .{ install_dir, current_str }) catch return;
 
     var bin_buf: bun.PathBuffer = undefined;
     const current_ver_bin = std.fmt.bufPrint(&bin_buf, "{s}/bun{s}", .{ current_ver_dir, exe_suffix }) catch return;
 
-    if (bun.sys.exists(current_ver_bin)) return; // Already saved
+    if (bun.sys.exists(current_ver_bin)) return;
 
-    // Create directory and copy current binary
     bun.makePath(std.fs.cwd(), current_ver_dir) catch return;
 
-    // Copy using file operations
-    const src_file = std.fs.openFileAbsolute(self_exe, .{}) catch return;
-    defer src_file.close();
+    const self_exe_z = bun.default_allocator.dupeZ(u8, self_exe) catch return;
+    defer bun.default_allocator.free(self_exe_z);
 
-    const dst_file = std.fs.cwd().createFile(current_ver_bin, .{}) catch return;
-    defer dst_file.close();
+    const src_fd = switch (bun.sys.open(self_exe_z, bun.O.RDONLY, 0)) {
+        .result => |fd| fd,
+        .err => return,
+    };
+    defer src_fd.close();
+
+    const current_ver_bin_z = bun.default_allocator.dupeZ(u8, current_ver_bin) catch return;
+    defer bun.default_allocator.free(current_ver_bin_z);
+
+    const dst_fd = switch (bun.sys.open(
+        current_ver_bin_z,
+        bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC,
+        0o755,
+    )) {
+        .result => |fd| fd,
+        .err => return,
+    };
+    defer dst_fd.close();
 
     var copy_buf: [64 * 1024]u8 = undefined;
-
     while (true) {
-        const n = src_file.read(&copy_buf) catch return;
+        const n = bun.sys.read(src_fd, &copy_buf).unwrap() catch return;
         if (n == 0) break;
-        dst_file.writeAll(copy_buf[0..n]) catch return;
-    }
-
-    // Make executable
-    if (comptime Environment.isPosix) {
-        dst_file.chmod(0o755) catch {};
+        _ = bun.sys.write(dst_fd, copy_buf[0..n]).unwrap() catch return;
     }
 }
 
@@ -515,20 +532,11 @@ fn updateSymlink(link_path: []const u8, target_path: []const u8) !void {
     const target_path_z = bun.default_allocator.dupeZ(u8, target_path) catch return error.OutOfMemory;
     defer bun.default_allocator.free(target_path_z);
 
-    if (comptime Environment.isPosix) {
-        // Remove existing file/symlink
-        _ = bun.sys.unlink(link_path_z);
+    _ = bun.sys.unlink(link_path_z);
 
-        // Create symlink
-        switch (bun.sys.symlink(target_path_z, link_path_z)) {
-            .result => {},
-            .err => return error.SymlinkFailed,
-        }
-    } else if (comptime Environment.isWindows) {
-        // On Windows, copy the file instead of symlink (symlinks require privileges)
-        std.fs.copyFileAbsolute(target_path, link_path, .{}) catch {
-            return error.CopyFailed;
-        };
+    switch (bun.sys.symlink(target_path_z, link_path_z)) {
+        .result => {},
+        .err => return error.SymlinkFailed,
     }
 }
 
@@ -583,9 +591,24 @@ fn reExec(exe_path: []const u8) noreturn {
             std.posix.execveZ(exe_path_z, newargv, envp_ptr) catch {};
             Global.exit(1);
         }
-    } else {
-        // Windows: just exit and let the user re-run
+    } else if (comptime Environment.isWindows) {
+        // On Windows, spawn the correct version as a child and exit
+        const exe_path_z_win = bun.default_allocator.dupeZ(u8, exe_path) catch Global.exit(1);
+        _ = (bun.spawnSync(&.{
+            .argv = @as([]const []const u8, bun.argv),
+            .argv0 = exe_path_z_win,
+            .envp = null,
+            .cwd = "",
+            .stderr = .inherit,
+            .stdout = .inherit,
+            .stdin = .inherit,
+            .windows = .{
+                .loop = bun.jsc.EventLoopHandle.init(bun.jsc.MiniEventLoop.initGlobal(null, null)),
+            },
+        }) catch Global.exit(1)).unwrap() catch Global.exit(1);
         Global.exit(0);
+    } else {
+        Global.exit(1);
     }
 }
 

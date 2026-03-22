@@ -711,6 +711,7 @@ pub const Expect = struct {
         var pretty_value = std.Io.Writer.Allocating.init(default_allocator);
         defer pretty_value.deinit();
         try this.matchAndFmtSnapshot(globalThis, value, property_matchers, &pretty_value.writer, fn_name);
+        stripAnsiEscapeCodesInPlace(&pretty_value);
 
         var start_indent: ?[]const u8 = null;
         var end_indent: ?[]const u8 = null;
@@ -826,6 +827,7 @@ pub const Expect = struct {
         var pretty_value = std.Io.Writer.Allocating.init(default_allocator);
         defer pretty_value.deinit();
         try this.matchAndFmtSnapshot(globalThis, value, property_matchers, &pretty_value.writer, fn_name);
+        stripAnsiEscapeCodesInPlace(&pretty_value);
 
         const existing_value = Jest.runner.?.snapshots.getOrPut(this, pretty_value.written(), hint) catch |err| {
             var buntest_strong = this.bunTest() orelse return globalThis.throw("Snapshot matchers cannot be used outside of a test", .{});
@@ -2245,6 +2247,55 @@ test "Expect.trimLeadingWhitespaceForInlineSnapshot" {
 
 test "fuzz Expect.trimLeadingWhitespaceForInlineSnapshot" {
     try std.testing.fuzz(testOne, .{});
+}
+
+/// Strip ANSI escape sequences (CSI and OSC) from formatted snapshot content
+/// in-place. Snapshot files should never contain terminal escape codes — they
+/// make the content non-deterministic across environments with different
+/// terminal capabilities.
+fn stripAnsiEscapeCodesInPlace(allocating: *std.Io.Writer.Allocating) void {
+    const buf = allocating.written();
+    if (buf.len == 0) return;
+
+    // Fast path: no ESC byte means nothing to strip.
+    if (strings.indexOfChar(buf, '\x1b') == null) return;
+
+    var read: usize = 0;
+    var write: usize = 0;
+
+    while (read < buf.len) {
+        if (buf[read] == '\x1b' and read + 1 < buf.len) {
+            if (buf[read + 1] == '[') {
+                // CSI sequence: ESC [ <params> <final byte 0x40-0x7E>
+                read += 2;
+                while (read < buf.len) {
+                    const c = buf[read];
+                    read += 1;
+                    if (c >= 0x40 and c <= 0x7E) break;
+                }
+                continue;
+            } else if (buf[read + 1] == ']') {
+                // OSC sequence: ESC ] ... terminated by BEL or ST (ESC \)
+                read += 2;
+                while (read < buf.len) {
+                    if (buf[read] == 0x07) {
+                        read += 1;
+                        break;
+                    } else if (buf[read] == '\x1b' and read + 1 < buf.len and buf[read + 1] == '\\') {
+                        read += 2;
+                        break;
+                    }
+                    read += 1;
+                }
+                continue;
+            }
+        }
+        buf[write] = buf[read];
+        write += 1;
+        read += 1;
+    }
+
+    allocating.shrinkRetainingCapacity(write);
 }
 
 const string = []const u8;

@@ -474,6 +474,21 @@ pub fn loadExtraEnvAndSourceCodePrinter(this: *VirtualMachine) void {
         this.hide_bun_stackframes = false;
     }
 
+    // Re-evaluate color flags from env-file values.
+    // Output.Source.setInit() runs before --env-file is loaded, so
+    // NO_COLOR / FORCE_COLOR from .env files are missed at startup.
+    // FORCE_COLOR takes precedence over NO_COLOR (Node.js convention).
+    if (map.get("FORCE_COLOR")) |force_color| {
+        // "0" disables color; "1"/""/"true" and higher enable it.
+        const enable = !strings.eqlComptime(force_color, "0");
+        Output.enable_ansi_colors_stdout = enable;
+        Output.enable_ansi_colors_stderr = enable;
+    } else if (map.get("NO_COLOR") != null) {
+        // NO_COLOR: any value (including empty) disables color.
+        Output.enable_ansi_colors_stdout = false;
+        Output.enable_ansi_colors_stderr = false;
+    }
+
     if (bun.feature_flag.BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER.get()) {
         this.transpiler_store.enabled = false;
     }

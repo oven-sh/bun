@@ -2270,7 +2270,7 @@ test "fuzz Expect.trimLeadingWhitespaceForInlineSnapshot" {
 /// contain ANSI codes from throwPrettyMatcherError() that should not leak
 /// into snapshot files.
 fn stripAnsiFromSlice(input: []const u8) []const u8 {
-    const buf = default_allocator.alloc(u8, input.len) catch return default_allocator.dupe(u8, input) catch input;
+    const buf = default_allocator.alloc(u8, input.len) catch bun.outOfMemory();
     var read: usize = 0;
     var write: usize = 0;
 

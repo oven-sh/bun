@@ -11,6 +11,7 @@ describe("toMatchObject should not mutate actual object", () => {
     const obj = { foo: "foo", bar: "bar" };
     expect(obj).toMatchObject({ bar: expect.any(String) });
     expect(obj).toMatchObject({ bar: expect.any(String) });
+    expect(obj.bar).toBe("bar");
   });
 
   test("works with spread operator and expect.any()", () => {

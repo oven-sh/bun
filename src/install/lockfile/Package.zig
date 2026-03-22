@@ -943,7 +943,7 @@ pub fn Package(comptime SemverIntType: type) type {
                 if (is_root) {
                     if (from.name_hash != to.name_hash or
                         (from.name_hash == 0 and to.name_hash == 0 and
-                        !from.name.eql(to.name, from_lockfile.buffers.string_bytes.items, to_lockfile.buffers.string_bytes.items)))
+                            !from.name.eql(to.name, from_lockfile.buffers.string_bytes.items, to_lockfile.buffers.string_bytes.items)))
                     {
                         summary.root_name_changed = true;
                     }

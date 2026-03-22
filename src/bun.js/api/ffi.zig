@@ -842,7 +842,6 @@ pub const FFI = struct {
         }
         const function: *Function = @ptrFromInt(addr);
         function.deinit(globalThis);
-        bun.default_allocator.destroy(function);
         return .js_undefined;
     }
 

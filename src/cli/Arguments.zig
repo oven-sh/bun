@@ -1145,6 +1145,9 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         if (args.flag("--compile")) {
             ctx.bundler_options.compile = true;
             ctx.bundler_options.inline_entrypoint_import_meta_main = true;
+            // --compile implies --production to avoid adding "development" export condition
+            // which would cause module resolution failures (see issue #22589)
+            ctx.bundler_options.production = true;
         }
 
         if (args.option("--compile-exec-argv")) |compile_exec_argv| {

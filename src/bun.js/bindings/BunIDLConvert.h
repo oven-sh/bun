@@ -191,12 +191,16 @@ template<> struct WebCore::Converter<Bun::IDLArrayBufferRef>
         if (auto* jsView = dynamicDowncast<JSC::JSArrayBufferView>(value)) {
             if (jsView->isShared())
                 return std::nullopt;
-            return jsView->unsharedBuffer();
+            if (auto* buf = jsView->unsharedBuffer())
+                return buf;
+            return std::nullopt;
         }
         if (auto* jsDataView = dynamicDowncast<JSC::JSDataView>(value)) {
             if (jsDataView->isShared())
                 return std::nullopt;
-            return jsDataView->unsharedBuffer();
+            if (auto* buf = jsDataView->unsharedBuffer())
+                return buf;
+            return std::nullopt;
         }
         return std::nullopt;
     }

@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 
 // Regression test: S3 presign with missing credentials should throw
 // ERR_S3_MISSING_CREDENTIALS instead of crashing.

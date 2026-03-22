@@ -787,9 +787,7 @@ it("should throw on empty hostname from truthy non-string value", () => {
   const socket = { data() {}, open() {}, close() {} };
   // A truthy value whose toString() returns "" should throw, not crash
   for (const hostname of [[], new String("")]) {
-    expect(() => Bun.listen({ hostname: hostname as any, port: 0, socket })).toThrow(
-      'Expected a non-empty "hostname"',
-    );
+    expect(() => Bun.listen({ hostname: hostname as any, port: 0, socket })).toThrow('Expected a non-empty "hostname"');
     expect(() => Bun.connect({ hostname: hostname as any, port: 0, socket })).toThrow(
       'Expected a non-empty "hostname"',
     );

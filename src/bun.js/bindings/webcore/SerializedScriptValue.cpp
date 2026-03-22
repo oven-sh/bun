@@ -5022,15 +5022,20 @@ private:
 
             RefPtr<Wasm::Memory> memory;
             auto handler = [&vm, result](Wasm::Memory::GrowSuccess, PageCount oldPageCount, PageCount newPageCount) { result->growSuccessCallback(vm, oldPageCount, newPageCount); };
+            // Memory64 is not yet serialized in WasmMemoryTag, so we only
+            // support I32 address type for structured clone. Upstream WebKit
+            // has the same limitation (it calls result->memory().addressType()
+            // on an uninitialized stub here, which happens to return I32).
+            constexpr auto addressType = Wasm::AddressType::I32;
             if (RefPtr<SharedArrayBufferContents> contents = m_wasmMemoryHandles->at(index)) {
                 if (!contents->memoryHandle()) {
                     fail();
                     return JSValue();
                 }
-                memory = Wasm::Memory::create(contents.releaseNonNull(), result->memory().addressType(), WTF::move(handler));
+                memory = Wasm::Memory::create(contents.releaseNonNull(), addressType, WTF::move(handler));
             } else {
                 // zero size & max-size.
-                memory = Wasm::Memory::createZeroSized(JSC::MemorySharingMode::Shared, result->memory().addressType(), WTF::move(handler));
+                memory = Wasm::Memory::createZeroSized(JSC::MemorySharingMode::Shared, addressType, WTF::move(handler));
             }
 
             result->adopt(memory.releaseNonNull());

@@ -135,6 +135,7 @@
 #include "JSURLPattern.h"
 #include "JSURLSearchParams.h"
 #include "JSWasmStreamingCompiler.h"
+#include <JavaScriptCore/WebAssemblyCompileOptions.h>
 #include "JSWebSocket.h"
 #include "JSWorker.h"
 #include "JSWritableStream.h"
@@ -3420,7 +3421,7 @@ extern "C" void JSC__Wasm__StreamingCompiler__addBytes(JSC::Wasm::StreamingCompi
     compiler->addBytes(std::span(spanPtr, spanSize));
 }
 
-static JSC::JSPromise* handleResponseOnStreamingAction(JSGlobalObject* lexicalGlobalObject, JSC::JSValue source, JSC::Wasm::CompilerMode mode, JSC::JSObject* importObject)
+static JSC::JSPromise* handleResponseOnStreamingAction(JSGlobalObject* lexicalGlobalObject, JSC::JSValue source, JSC::Wasm::CompilerMode mode, JSC::JSObject* importObject, std::optional<JSC::WebAssemblyCompileOptions>&& compileOptions)
 {
     auto globalObject = defaultGlobalObject(lexicalGlobalObject);
     auto& vm = JSC::getVM(globalObject);
@@ -3429,7 +3430,7 @@ static JSC::JSPromise* handleResponseOnStreamingAction(JSGlobalObject* lexicalGl
 
     auto promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
     auto sourceCode = makeSource("[wasm code]"_s, SourceOrigin(), SourceTaintedOrigin::Untainted);
-    auto compiler = JSC::Wasm::StreamingCompiler::create(vm, mode, globalObject, promise, importObject, std::nullopt, sourceCode);
+    auto compiler = JSC::Wasm::StreamingCompiler::create(vm, mode, globalObject, promise, importObject, WTF::move(compileOptions), sourceCode);
 
     // getBodyStreamOrBytesForWasmStreaming throws the proper exception. Since this is being
     // executed in a .then(...) callback, throwing is perfectly fine.
@@ -3459,14 +3460,14 @@ static JSC::JSPromise* handleResponseOnStreamingAction(JSGlobalObject* lexicalGl
     return promise;
 }
 
-JSC::JSPromise* GlobalObject::compileStreaming(JSGlobalObject* globalObject, JSC::JSValue source, std::optional<JSC::WebAssemblyCompileOptions>&&)
+JSC::JSPromise* GlobalObject::compileStreaming(JSGlobalObject* globalObject, JSC::JSValue source, std::optional<JSC::WebAssemblyCompileOptions>&& compileOptions)
 {
-    return handleResponseOnStreamingAction(globalObject, source, JSC::Wasm::CompilerMode::Validation, nullptr);
+    return handleResponseOnStreamingAction(globalObject, source, JSC::Wasm::CompilerMode::Validation, nullptr, WTF::move(compileOptions));
 }
 
-JSC::JSPromise* GlobalObject::instantiateStreaming(JSGlobalObject* globalObject, JSC::JSValue source, JSC::JSObject* importObject, std::optional<JSC::WebAssemblyCompileOptions>&&)
+JSC::JSPromise* GlobalObject::instantiateStreaming(JSGlobalObject* globalObject, JSC::JSValue source, JSC::JSObject* importObject, std::optional<JSC::WebAssemblyCompileOptions>&& compileOptions)
 {
-    return handleResponseOnStreamingAction(globalObject, source, JSC::Wasm::CompilerMode::FullCompile, importObject);
+    return handleResponseOnStreamingAction(globalObject, source, JSC::Wasm::CompilerMode::FullCompile, importObject, WTF::move(compileOptions));
 }
 
 GlobalObject::PromiseFunctions GlobalObject::promiseHandlerID(Zig::FFIFunction handler)

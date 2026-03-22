@@ -205,6 +205,7 @@ void JSBundlerPlugin::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->visitAdditionalChildrenInGCThread(visitor);
 }
 DEFINE_VISIT_CHILDREN(JSBundlerPlugin);
+DEFINE_VISIT_ADDITIONAL_CHILDREN_IN_GC_THREAD(JSBundlerPlugin);
 
 template<typename Visitor>
 void JSBundlerPlugin::visitOutputConstraintsImpl(JSCell* cell, Visitor& visitor)

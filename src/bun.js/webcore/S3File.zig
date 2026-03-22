@@ -67,7 +67,7 @@ pub fn presign(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.J
 
     // accept a path or a blob
     var path_or_blob = try PathOrBlob.fromJSNoCopy(globalThis, &args);
-    errdefer {
+    defer {
         if (path_or_blob == .path) {
             path_or_blob.path.deinit();
         }
@@ -92,7 +92,10 @@ pub fn presign(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.J
             var aws_options = try S3.S3Credentials.getCredentialsWithOptions(existing_credentials, .{}, options, null, null, false, globalThis);
             defer aws_options.deinit();
 
-            return try presignFromCredentials(globalThis, path.path.slice(), options, &aws_options);
+            // Normalize the path (strip s3:// prefix, leading slashes)
+            // the same way Store.S3.path() does via URL.parse().s3Path().
+            const s3_path = bun.URL.parse(path.path.slice()).s3Path();
+            return try presignFromCredentials(globalThis, s3_path, options, &aws_options);
         },
         .blob => return try getPresignUrlFrom(&path_or_blob.blob, globalThis, args.nextEat()),
     }

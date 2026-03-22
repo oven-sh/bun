@@ -162,7 +162,10 @@ pub const S3Client = struct {
         var aws_options = try S3Credentials.getCredentialsWithOptions(ptr.credentials.*, ptr.options, options, ptr.acl, ptr.storage_class, ptr.request_payer, globalThis);
         defer aws_options.deinit();
 
-        return S3File.presignFromCredentials(globalThis, path.slice(), options, &aws_options);
+        // Normalize the path (strip s3:// prefix, leading slashes)
+        // the same way Store.S3.path() does via URL.parse().s3Path().
+        const s3_path = bun.URL.parse(path.slice()).s3Path();
+        return S3File.presignFromCredentials(globalThis, s3_path, options, &aws_options);
     }
 
     pub fn exists(ptr: *@This(), globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {

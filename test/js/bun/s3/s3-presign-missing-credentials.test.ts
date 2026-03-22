@@ -40,11 +40,7 @@ test("S3 presign with missing credentials throws instead of crashing", async () 
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stdout.trim()).toBe("ERR_S3_MISSING_CREDENTIALS\nERR_S3_MISSING_CREDENTIALS\nERR_S3_MISSING_CREDENTIALS\nok");
   expect(stderr).toBe("");

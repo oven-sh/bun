@@ -320,11 +320,20 @@ JSWebView* JSWebView::createAndSend(JSGlobalObject* g, Structure* structure,
 JSWebView* JSWebView::createChrome(JSGlobalObject* g, Structure* structure,
     uint32_t width, uint32_t height, const WTF::String& userDataDir,
     const WTF::String& path, const WTF::Vector<WTF::String>& extraArgv,
-    bool stdoutInherit, bool stderrInherit)
+    bool stdoutInherit, bool stderrInherit, const WTF::String& wsUrl)
 {
     auto* zig = defaultGlobalObject(g);
     auto& t = CDP::transport();
-    if (!t.ensureSpawned(zig, userDataDir, path, extraArgv, stdoutInherit, stderrInherit)) return nullptr;
+    // wsUrl non-empty → connect to an existing Chrome over WebSocket.
+    // Empty → spawn our own with --remote-debugging-pipe. Both end up in
+    // the same Transport singleton; first call wins (singleton semantics).
+    // A second WebView with a conflicting mode (wsUrl after a spawn, or
+    // vice versa) silently uses the existing transport — same as how
+    // mismatched path/argv are ignored after the first spawn.
+    bool ok = wsUrl.isEmpty()
+        ? t.ensureSpawned(zig, userDataDir, path, extraArgv, stdoutInherit, stderrInherit)
+        : t.ensureConnected(zig, wsUrl);
+    if (!ok) return nullptr;
 
     auto impl = WebViewEventTarget::create(*zig->scriptExecutionContext());
     JSWebView* view = create(structure, zig, WTF::move(impl));

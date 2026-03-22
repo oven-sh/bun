@@ -106,6 +106,10 @@ function findChrome(): string | undefined {
 const chromePath = findChrome();
 const it = chromePath ? test : test.todo;
 
+// WebSocket-transport tests live in webview-chrome-ws.test.ts — the
+// Transport singleton means you can't mix pipe-mode (this file) and
+// connect-mode in one process.
+
 const html = (h: string) => "data:text/html," + encodeURIComponent(h);
 
 it("backend: chrome constructor returns a WebView", () => {

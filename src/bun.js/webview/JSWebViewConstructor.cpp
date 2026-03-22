@@ -114,6 +114,7 @@ JSC_DEFINE_HOST_FUNCTION(constructWebView, (JSGlobalObject * globalObject, CallF
     WebViewBackend backend = WebViewBackend::Chrome;
 #endif
     WTF::String chromePath;
+    WTF::String chromeWsUrl;
     WTF::Vector<WTF::String> chromeArgv;
     bool stdoutInherit = false;
     bool stderrInherit = false;
@@ -182,6 +183,28 @@ JSC_DEFINE_HOST_FUNCTION(constructWebView, (JSGlobalObject * globalObject, CallF
             } else if (!path.isUndefined()) {
                 return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE,
                     "backend.path must be a string"_s);
+            }
+
+            // url: connect to an already-running Chrome instead of
+            // spawning. Accepts three forms:
+            //   - "127.0.0.1:9222" (bare host:port, what Chrome's Remote
+            //     Debugging panel shows) — we GET /json/version to
+            //     discover webSocketDebuggerUrl
+            //   - "http://127.0.0.1:9222" — same discovery
+            //   - "ws://127.0.0.1:9222/devtools/browser/<id>" — full URL,
+            //     connect directly
+            // Conflicts with path/argv/stdout/stderr (no subprocess).
+            JSValue urlOpt = beObj->get(globalObject, Identifier::fromString(vm, "url"_s));
+            RETURN_IF_EXCEPTION(scope, {});
+            if (urlOpt.isString()) {
+                if (backend != WebViewBackend::Chrome)
+                    return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_VALUE,
+                        "backend.url requires type: \"chrome\""_s);
+                chromeWsUrl = urlOpt.toWTFString(globalObject);
+                RETURN_IF_EXCEPTION(scope, {});
+            } else if (!urlOpt.isUndefined()) {
+                return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE,
+                    "backend.url must be a string"_s);
             }
 
             JSValue argvVal = beObj->get(globalObject, Identifier::fromString(vm, "argv"_s));
@@ -309,10 +332,12 @@ JSC_DEFINE_HOST_FUNCTION(constructWebView, (JSGlobalObject * globalObject, CallF
     if (backend == WebViewBackend::Chrome) {
         Bun__Feature__webview_chrome += 1;
         JSWebView* view = JSWebView::createChrome(globalObject, structure, width, height,
-            persistDir, chromePath, chromeArgv, stdoutInherit, stderrInherit);
+            persistDir, chromePath, chromeArgv, stdoutInherit, stderrInherit, chromeWsUrl);
         if (!view) {
             return Bun::throwError(globalObject, scope, ErrorCode::ERR_DLOPEN_FAILED,
-                "Failed to spawn Chrome (set BUN_CHROME_PATH, backend.path, or install Chrome/Chromium)"_s);
+                chromeWsUrl.isEmpty()
+                    ? "Failed to spawn Chrome (set BUN_CHROME_PATH, backend.path, or install Chrome/Chromium)"_s
+                    : "Failed to connect to Chrome (check backend.url is a valid ws:// debugger endpoint)"_s);
         }
         view->m_consoleIsGlobal = consoleIsGlobal;
         if (consoleCallback) view->m_onConsole.set(vm, view, consoleCallback);

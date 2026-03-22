@@ -34,6 +34,10 @@ namespace Zig {
 class GlobalObject;
 }
 
+namespace WebCore {
+class WebSocket;
+}
+
 namespace Bun {
 
 class JSWebView;
@@ -170,6 +174,18 @@ public:
     // The trailing NUL frame delimiter: we write sink(body, len) then
     // sink("\0", 1). Two syscalls in the best case; a writev would be
     // one, but the pipe buffer coalesces anyway.
+    // WebSocket mode: return the JSON body as a WTF::String for
+    // WebSocket::sendTextNative. No NUL terminator — WS text-frame
+    // framing IS the delimiter. toString() moves the builder's buffer
+    // into the String if nothing else holds a ref — zero-copy for the
+    // 8-bit-ASCII case (our templates are ASCII, user strings go
+    // through appendQuotedJSONString which produces ASCII escapes).
+    WTF::String finishToString()
+    {
+        m_sb.append(m_paramsRaw ? "}"_s : "}}"_s);
+        return m_sb.toString();
+    }
+
     template<typename Sink> // void(const char*, size_t)
     void finishAndWrite(Sink&& sink)
     {
@@ -332,6 +348,23 @@ struct Pending {
     JSC::Weak<JSWebView> view;
 };
 
+// Transport mode. Pipe = we spawned Chrome with --remote-debugging-pipe,
+// socketpair bidi fd, NUL-delimited JSON frames. WebSocket = connect to an
+// already-running Chrome's /devtools/browser endpoint over ws://, one JSON
+// message per text frame (WS framing IS the delimiter).
+//
+// WebSocket mode reuses WebCore::WebSocket in native-callback mode — no
+// MessageEvent, no dispatchEvent, no postTask deferral. The onMessage
+// callback calls handleMessage directly with the text frame's UTF-8 bytes.
+// handleMessage/handleResponse/handleEvent are mode-agnostic — they take
+// std::span<const char> and don't care whether it came from a NUL-scan or
+// a WS frame.
+enum class TransportMode : uint8_t {
+    None, // not yet initialized
+    Pipe, // spawned Chrome, socketpair
+    WebSocket, // existing Chrome, ws://
+};
+
 class Transport {
 public:
     // Lazy-spawn Chrome. Returns false on spawn failure; caller throws.
@@ -344,6 +377,15 @@ public:
     bool ensureSpawned(Zig::GlobalObject*, const WTF::String& userDataDir = {},
         const WTF::String& path = {}, const WTF::Vector<WTF::String>& extraArgv = {},
         bool stdoutInherit = false, bool stderrInherit = false);
+
+    // Connect to an already-running Chrome's DevTools endpoint. url is
+    // the full WebSocket URL (ws://127.0.0.1:9222/devtools/browser/<id>
+    // — from GET /json/version's webSocketDebuggerUrl field). Same
+    // singleton semantics as ensureSpawned: first call wins, subsequent
+    // calls with a different URL no-op. Returns false if the connect
+    // throws synchronously (malformed URL); actual connection failure
+    // arrives via onClose → rejectAllAndMarkDead.
+    bool ensureConnected(Zig::GlobalObject*, const WTF::String& wsUrl);
 
     // Next CDP id — caller uses it with Command(id, ...) then calls send().
     uint32_t nextId() { return m_nextId++; }
@@ -359,7 +401,19 @@ public:
     void onClose();
 
     Zig::GlobalObject* m_global = nullptr;
+    TransportMode m_mode = TransportMode::None;
+    // Pipe mode: usockets-adopted socketpair fd.
     us_socket_t* m_readSock = nullptr;
+    // WebSocket mode: RefPtr keeps the WebCore::WebSocket alive across
+    // the singleton's lifetime. The WebSocket's native callbacks point
+    // back at this Transport (via static trampolines, not a captured
+    // lambda — the callbacks are plain C function pointers).
+    RefPtr<WebCore::WebSocket> m_ws;
+    // Commands queued while the WS handshake is in flight. The first
+    // navigate() on a view runs before onOpen fires; we can't
+    // sendTextNative until m_state == OPEN. Drained in wsOnOpen.
+    WTF::Vector<WTF::String> m_wsPending;
+    bool m_wsOpen = false;
     bool m_dead = false;
 
     uint32_t m_nextId = 1;

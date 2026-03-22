@@ -34,6 +34,7 @@
 #include "WebSocketDeflate.h"
 #include "headers.h"
 #include "blob.h"
+#include "BunString.h"
 #include "ZigGeneratedClasses.h"
 #include "CloseEvent.h"
 #include <wtf/text/Base64.h>
@@ -1239,6 +1240,16 @@ void WebSocket::didConnect()
     }
     m_state = OPEN;
 
+    // Native callback: fire synchronously, skip Event construction +
+    // dispatchEvent + the postTask deferral. The m_state = OPEN above is
+    // the only bookkeeping the native path needs — sendTextNative checks
+    // it. incPendingActivityCount is a JS-GC-root concern; the native
+    // consumer holds a RefPtr so it doesn't need it.
+    if (m_native.onOpen) {
+        m_native.onOpen(m_native.ctx);
+        return;
+    }
+
     if (auto* context = scriptExecutionContext()) {
 
         if (this->hasEventListeners("open"_s)) {
@@ -1263,6 +1274,18 @@ void WebSocket::didReceiveMessage(String&& message)
     // queueTaskKeepingObjectAlive(*this, TaskSource::WebSocket, [this, message = WTF::move(message)]() mutable {
     if (m_state != OPEN)
         return;
+
+    // Native callback: hand off the UTF-8 bytes directly. UTF8View checks
+    // is8Bit() && containsOnlyASCII() first — if true (the common case for
+    // CDP JSON), span() is a zero-copy view over the existing buffer.
+    // Only non-ASCII Latin1 or UTF-16 strings pay for a transcode into
+    // a CString. The callback reads the span, we drop it — no
+    // MessageEvent, no dispatchEvent, no postTask.
+    if (m_native.onMessage) {
+        Bun::UTF8View view(message);
+        m_native.onMessage(m_native.ctx, view.span());
+        return;
+    }
 
     // if (InspectorInstrumentation::hasFrontends()) [[unlikely]] {
     //     if (auto* inspector = m_channel->channelInspector()) {
@@ -1406,6 +1429,16 @@ void WebSocket::didReceiveClose(CleanStatus wasClean, unsigned short code, WTF::
         return;
     const bool wasConnecting = m_state == CONNECTING;
     m_state = CLOSED;
+
+    // Native callback: state transitioned, hand off the close code.
+    // Covers both connect-failure (didFailWithErrorCode →
+    // didReceiveClose) and server-initiated close. The consumer's
+    // onClose distinguishes by whether onOpen ever fired.
+    if (m_native.onClose) {
+        m_native.onClose(m_native.ctx, code);
+        return;
+    }
+
     if (auto* context = scriptExecutionContext()) {
         this->incPendingActivityCount();
         if (wasConnecting && isConnectionError) {
@@ -1461,6 +1494,14 @@ void WebSocket::didClose(unsigned unhandledBufferedAmount, unsigned short code, 
     ASSERT(scriptExecutionContext());
     this->m_connectedWebSocketKind = ConnectedWebSocketKind::None;
     this->m_upgradeClient = nullptr;
+
+    // Native callback: state transition above is done, hand off the code.
+    // disablePendingActivity() is a JS-GC-root concern the native path
+    // doesn't need — the consumer holds a RefPtr and drops it on close.
+    if (m_native.onClose) {
+        m_native.onClose(m_native.ctx, code);
+        return;
+    }
 
     // since we are open and closing now we know that we have at least one pending activity
     // so we just call decPendingActivityCount() after dispatching the event

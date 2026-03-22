@@ -7983,6 +7983,31 @@ declare module "bun" {
           /** Path to the Chrome/Chromium executable. Overrides auto-detection. */
           path?: string;
           /**
+           * Connect to an **already-running** Chrome instead of spawning
+           * one. Accepts:
+           *
+           * - `"127.0.0.1:9222"` — bare host:port (what Chrome's Remote
+           *   Debugging panel shows). Bun GETs `/json/version` to discover
+           *   the WebSocket debugger URL.
+           * - `"http://127.0.0.1:9222"` — same discovery.
+           * - `"ws://127.0.0.1:9222/devtools/browser/<id>"` — full URL,
+           *   connect directly.
+           *
+           * Enable remote debugging in Chrome at
+           * `chrome://inspect/#remote-debugging`, or launch with
+           * `--remote-debugging-port=9222`.
+           *
+           * **Note**: The `chrome://inspect` toggle shows an "Allow
+           * remote debugging?" dialog on **every** new connection. The
+           * WebSocket handshake blocks until the user clicks Allow. For
+           * unattended automation, launch Chrome with
+           * `--remote-debugging-port` instead (no dialog).
+           *
+           * Mutually exclusive with `path`, `argv`, `stdout`, `stderr`
+           * (there's no subprocess to configure).
+           */
+          url?: string;
+          /**
            * Extra command-line arguments appended after the default flags.
            * Chrome's CommandLine does last-wins for duplicate switches, so
            * `["--headless=new"]` would override the default `--headless`.

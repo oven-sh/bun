@@ -4,6 +4,8 @@
 #include "ipc_protocol.h"
 #include "ZigGlobalObject.h"
 #include "BunClientData.h"
+#include "ScriptExecutionContext.h"
+#include "../bindings/webcore/WebSocket.h"
 #include <JavaScriptCore/ConsoleClient.h>
 #include <JavaScriptCore/ScriptArguments.h>
 #include <JavaScriptCore/Strong.h>
@@ -230,13 +232,14 @@ bool Transport::ensureSpawned(Zig::GlobalObject* zig, const WTF::String& userDat
     const WTF::String& path, const WTF::Vector<WTF::String>& extraArgv,
     bool stdoutInherit, bool stderrInherit)
 {
-    if (m_readSock && !m_dead) return true;
+    if (m_mode != TransportMode::None && !m_dead) return true;
     if (m_dead) {
         m_dead = false;
         m_readSock = nullptr;
         m_rx.clear();
         m_txQueue.clear();
     }
+    m_mode = TransportMode::Pipe;
 
     // Empty string ≠ null. WTF::String() utf8's to an empty CString (not
     // isNull), which on the Zig side passes "" into --user-data-dir= and
@@ -294,7 +297,147 @@ bool Transport::ensureSpawned(Zig::GlobalObject* zig, const WTF::String& userDat
 
 void Transport::send(Command&& cmd)
 {
+    if (m_mode == TransportMode::WebSocket) {
+        // WS text frame per CDP message — the framing IS the delimiter.
+        // If the handshake hasn't completed, queue; wsOnOpen drains.
+        // sendTextNative is a no-op when m_state != OPEN, so we MUST
+        // queue here or commands silently drop.
+        auto body = cmd.finishToString();
+        if (m_wsOpen) {
+            m_ws->sendTextNative(body);
+        } else {
+            m_wsPending.append(WTF::move(body));
+        }
+        return;
+    }
     cmd.finishAndWrite([this](const char* d, size_t n) { writeRaw(d, n); });
+}
+
+// --- WebSocket transport ----------------------------------------------------
+// Native-callback trampolines. Plain C function pointers (not capturing
+// lambdas) — the ctx arg is the Transport* singleton. Zig's CppWebSocket
+// wrapper already does eventLoop.enter()/exit() around the extern "C"
+// call, so any JS these end up running (settle → resolve → .then()) is
+// already in the right execution context.
+
+static void wsOnOpen(void* ctx)
+{
+    auto& t = *static_cast<Transport*>(ctx);
+    t.m_wsOpen = true;
+    // Drain commands queued during the handshake. The first navigate()
+    // kicks off Target.createTarget before onOpen fires; those frames
+    // sat in m_wsPending until now.
+    for (auto& body : t.m_wsPending)
+        t.m_ws->sendTextNative(body);
+    t.m_wsPending.clear();
+}
+
+static void wsOnMessage(void* ctx, std::span<const char> utf8)
+{
+    auto& t = *static_cast<Transport*>(ctx);
+    // One text frame = one CDP message. handleMessage is mode-agnostic
+    // — same JSON parsing as the pipe's NUL-delimited frames. The span
+    // is valid until this callback returns (UTF8View's storage on the
+    // caller's stack); handleMessage doesn't stash it.
+    auto& vm = t.m_global->vm();
+    auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    t.handleMessage(utf8);
+    if (auto* ex = catchScope.exception()) [[unlikely]] {
+        catchScope.clearExceptionExceptTermination();
+        t.m_global->reportUncaughtExceptionAtEventLoop(t.m_global, ex);
+    }
+}
+
+static void wsOnClose(void* ctx, unsigned short code)
+{
+    auto& t = *static_cast<Transport*>(ctx);
+    t.m_wsOpen = false;
+    // rejectAllAndMarkDead settles every pending promise with an error
+    // and flips m_dead. If onOpen never fired (connect failure), the
+    // pending map holds the first navigate's Target.createTarget — it
+    // rejects with this message, surfacing the failure to the user.
+    t.rejectAllAndMarkDead(makeString("WebSocket closed (code "_s, code, ')'));
+    t.m_ws = nullptr;
+}
+
+// Actually create the WebSocket and wire native callbacks. Called
+// directly by ensureConnected when the user passed a full ws:// URL, or
+// by onDiscovered after /json/version resolves the ws:// URL for a bare
+// host:port.
+static void connectWebSocket(Transport& t, Zig::GlobalObject* zig, const WTF::String& wsUrl)
+{
+    auto* ctx = zig->scriptExecutionContext();
+    auto result = WebCore::WebSocket::create(*ctx, wsUrl);
+    if (result.hasException()) {
+        t.rejectAllAndMarkDead("invalid WebSocket URL"_s);
+        return;
+    }
+    t.m_ws = result.releaseReturnValue();
+    // setNativeCallbacks swaps the MessageEvent/dispatchEvent path for
+    // direct C++ calls BEFORE the upgrade kicks off — if we raced the
+    // handshake completing and a message arriving, the normal path
+    // would dispatch via EventTarget (empty listener map, silently
+    // dropped). Setting first is safe: create() queues the connect on
+    // the event loop, it can't fire before this function returns.
+    t.m_ws->setNativeCallbacks({
+        .ctx = &t,
+        .onOpen = wsOnOpen,
+        .onMessage = wsOnMessage,
+        .onClose = wsOnClose,
+    });
+}
+
+// Zig calls these on the JS thread after DiscoverTask (AsyncHTTP GET
+// /json/version) completes. onDiscovered gets the extracted ws:// URL;
+// onDiscoverFailed fires for connect-refused, timeout, non-200, or
+// missing field. Both paths already have the JS thread's usockets
+// context so WebSocket::create is safe here.
+extern "C" void Bun__CDPTransport__onDiscovered(Zig::GlobalObject* g, const char* url, size_t len)
+{
+    auto& t = transport();
+    if (t.m_dead) return; // user called closeAll during discovery
+    connectWebSocket(t, g, WTF::String::fromUTF8(std::span<const char>(url, len)));
+}
+
+extern "C" void Bun__CDPTransport__onDiscoverFailed(Zig::GlobalObject*)
+{
+    transport().rejectAllAndMarkDead(
+        "Chrome discovery failed: GET /json/version unreachable or malformed. "
+        "Check the port and that Remote Debugging is enabled (chrome://inspect/#remote-debugging)."_s);
+}
+
+// From ChromeProcess.zig — async GET /json/version on the HTTP thread,
+// calls back via Bun__CDPTransport__onDiscovered on the JS thread.
+extern "C" void Bun__Chrome__discover(Zig::GlobalObject*, const char* input, size_t len);
+
+bool Transport::ensureConnected(Zig::GlobalObject* zig, const WTF::String& url)
+{
+    // Already connected (or connecting/discovering) — singleton
+    // semantics, first call wins.
+    if (m_mode != TransportMode::None && !m_dead) return true;
+    if (m_dead) {
+        m_dead = false;
+        m_ws = nullptr;
+        m_wsOpen = false;
+        m_wsPending.clear();
+        m_rx.clear();
+        m_txQueue.clear();
+    }
+    m_global = zig;
+    m_mode = TransportMode::WebSocket;
+
+    // Full ws:// URL → connect directly. Bare host:port or http:// →
+    // async GET /json/version to discover the ws:// URL, then
+    // onDiscovered does the connect. Commands queue in m_wsPending
+    // either way (they drain in wsOnOpen regardless of which path got
+    // us there).
+    if (url.startsWith("ws://"_s) || url.startsWith("wss://"_s)) {
+        connectWebSocket(*this, zig, url);
+    } else {
+        auto utf8 = url.utf8();
+        Bun__Chrome__discover(zig, utf8.data(), utf8.length());
+    }
+    return true;
 }
 
 // us_socket_write through usockets' own write path — it sets
@@ -1056,6 +1199,19 @@ void Transport::rejectAllAndMarkDead(const WTF::String& reason)
     // synchronously; the m_dead guard above short-circuits that reentrant
     // call so the caller's `reason` survives.
     if (auto* s = std::exchange(m_readSock, nullptr)) us_socket_close(0, s, 0, nullptr);
+    // WebSocket mode: drop our ref. The WS's native onClose calls us
+    // (wsOnClose → rejectAllAndMarkDead); that path nulls m_ws after
+    // this returns. If WE'RE initiating (closeAll), close() kicks off the
+    // closing handshake; we don't wait for it, just drop. The m_dead
+    // guard prevents wsOnClose from re-entering.
+    if (m_ws) {
+        auto ws = std::exchange(m_ws, nullptr);
+        ws->setNativeCallbacks({}); // prevent wsOnClose re-entry
+        ws->close(std::nullopt, WTF::String());
+    }
+    m_mode = TransportMode::None;
+    m_wsOpen = false;
+    m_wsPending.clear();
     if (!m_global) return;
     auto* g = m_global;
     JSValue err = createError(g, reason);
@@ -1101,8 +1257,12 @@ static JSPromise* sendChromeOp(JSGlobalObject* g, JSWebView* v,
     auto& vm = g->vm();
     auto& t = transport();
     auto* promise = JSPromise::create(vm, g->promiseStructure());
-    if (t.m_dead || !t.m_readSock) {
-        promise->reject(vm, g, createError(g, "Chrome process is not running"_s));
+    // m_mode == None means neither ensureSpawned nor ensureConnected ran
+    // (constructor already called one, so this is unreachable unless
+    // rejectAllAndMarkDead reset it). WebSocket mode doesn't need
+    // m_wsOpen here — send() queues until onOpen fires.
+    if (t.m_dead || t.m_mode == TransportMode::None) {
+        promise->reject(vm, g, createError(g, "Chrome connection is not available"_s));
         return promise;
     }
     v->m_pendingActivityCount.fetch_add(1, std::memory_order_release);

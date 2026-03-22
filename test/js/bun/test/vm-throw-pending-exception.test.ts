@@ -49,10 +49,12 @@ test("VM.throwError does not crash when a termination exception is already pendi
     ],
     env: bunEnv,
     stdout: "pipe",
+    stderr: "pipe",
   });
 
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stdout.trim()).toBe("OK");
+  expect(stderr).toBe("");
   expect(exitCode).toBe(0);
 });

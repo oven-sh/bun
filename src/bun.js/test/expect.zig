@@ -2267,25 +2267,38 @@ fn stripAnsiEscapeCodesInPlace(allocating: *std.Io.Writer.Allocating) void {
         if (buf[read] == '\x1b' and read + 1 < buf.len) {
             if (buf[read + 1] == '[') {
                 // CSI sequence: ESC [ <params> <final byte 0x40-0x7E>
+                const seq_start = read;
                 read += 2;
                 while (read < buf.len) {
                     const c = buf[read];
                     read += 1;
                     if (c >= 0x40 and c <= 0x7E) break;
+                } else {
+                    // Unterminated sequence — preserve the ESC byte and
+                    // rescan from the byte after it.
+                    buf[write] = '\x1b';
+                    write += 1;
+                    read = seq_start + 1;
                 }
                 continue;
             } else if (buf[read + 1] == ']') {
                 // OSC sequence: ESC ] ... terminated by BEL or ST (ESC \)
+                const seq_start = read;
                 read += 2;
-                while (read < buf.len) {
+                const found_terminator = while (read < buf.len) {
                     if (buf[read] == 0x07) {
                         read += 1;
-                        break;
+                        break true;
                     } else if (buf[read] == '\x1b' and read + 1 < buf.len and buf[read + 1] == '\\') {
                         read += 2;
-                        break;
+                        break true;
                     }
                     read += 1;
+                } else false;
+                if (!found_terminator) {
+                    buf[write] = '\x1b';
+                    write += 1;
+                    read = seq_start + 1;
                 }
                 continue;
             }

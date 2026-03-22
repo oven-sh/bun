@@ -53,7 +53,7 @@ describe("NO_COLOR does not affect snapshot output", () => {
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), "--env-file=.env.test", "test", "--update-snapshots", "test.test.ts"],
-      env: { ...bunEnv, FORCE_COLOR: undefined },
+      env: { ...bunEnv, NO_COLOR: undefined, FORCE_COLOR: "1" },
       cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",
@@ -85,7 +85,7 @@ describe("NO_COLOR does not affect snapshot output", () => {
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), "--env-file=.env.test", "test", "--update-snapshots", "test.test.ts"],
-      env: { ...bunEnv, FORCE_COLOR: undefined },
+      env: { ...bunEnv, NO_COLOR: undefined, FORCE_COLOR: "1" },
       cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",

@@ -479,8 +479,8 @@ pub fn loadExtraEnvAndSourceCodePrinter(this: *VirtualMachine) void {
     // NO_COLOR / FORCE_COLOR from .env files are missed at startup.
     // FORCE_COLOR takes precedence over NO_COLOR (Node.js convention).
     if (map.get("FORCE_COLOR")) |force_color| {
-        // "0" disables color; "1"/""/"true" and higher enable it.
-        const enable = !strings.eqlComptime(force_color, "0");
+        // Match env_var.zig truthy_cast: "0", "false", "no", "off" disable color.
+        const enable = bun.env_var.isValueTruthy(force_color);
         Output.enable_ansi_colors_stdout = enable;
         Output.enable_ansi_colors_stderr = enable;
     } else if (map.get("NO_COLOR") != null) {

@@ -6,11 +6,10 @@ test("constructing a mock function with no implementation does not crash", () =>
   expect(obj).toBeObject();
 });
 
-test("constructing a mock function with mockReturnValue does not crash", () => {
+test("constructing a mock function with mockReturnValue non-object returns an object", () => {
   const fn = jest.fn();
   fn.mockReturnValue(42);
   const obj = new fn();
-  // When called as constructor and impl returns non-object, `this` is returned
   expect(obj).toBeObject();
 });
 
@@ -18,4 +17,12 @@ test("constructing a mock function with mockImplementation returning object work
   const fn = jest.fn(() => ({ key: "value" }));
   const obj = new fn();
   expect(obj).toEqual({ key: "value" });
+});
+
+test("calling a mock with non-undefined this still returns the mock value", () => {
+  const fn = jest.fn();
+  fn.mockReturnValue(42);
+  const obj = { method: fn };
+  // Normal call with non-undefined this must return the mock's value, not `this`
+  expect(obj.method()).toBe(42);
 });

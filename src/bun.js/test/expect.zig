@@ -2317,7 +2317,9 @@ fn stripAnsiFromSlice(input: []const u8) []const u8 {
         read += 1;
     }
 
-    return buf[0..write];
+    const result = default_allocator.dupe(u8, buf[0..write]) catch bun.outOfMemory();
+    default_allocator.free(buf);
+    return result;
 }
 
 const string = []const u8;

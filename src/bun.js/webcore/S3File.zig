@@ -83,6 +83,8 @@ pub fn presign(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.J
                 return globalThis.throwInvalidArguments("Expected a S3 or path to presign", .{});
             }
             const options = args.nextEat();
+            // constructS3FileInternalStore takes ownership of path.
+            path_or_blob = .{ .blob = .initEmpty(globalThis) };
             var blob = try constructS3FileInternalStore(globalThis, path.path, options);
             defer blob.deinit();
             return try getPresignUrlFrom(&blob, globalThis, options);
@@ -113,6 +115,8 @@ pub fn unlink(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
                 return globalThis.throwInvalidArguments("Expected a S3 or path to delete", .{});
             }
             const options = args.nextEat();
+            // constructS3FileInternalStore takes ownership of path.
+            path_or_blob = .{ .blob = .initEmpty(globalThis) };
             var blob = try constructS3FileInternalStore(globalThis, path.path, options);
             defer blob.deinit();
             return try blob.store.?.data.s3.unlink(blob.store.?, globalThis, options);
@@ -150,6 +154,8 @@ pub fn write(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSE
             if (path == .fd) {
                 return globalThis.throwInvalidArguments("Expected a S3 or path to upload", .{});
             }
+            // constructS3FileInternalStore takes ownership of path.
+            path_or_blob = .{ .blob = .initEmpty(globalThis) };
             var blob = try constructS3FileInternalStore(globalThis, path.path, options);
             defer blob.deinit();
 
@@ -189,6 +195,8 @@ pub fn size(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSEr
             if (path == .fd) {
                 return globalThis.throwInvalidArguments("Expected a S3 or path to get size", .{});
             }
+            // constructS3FileInternalStore takes ownership of path.
+            path_or_blob = .{ .blob = .initEmpty(globalThis) };
             var blob = try constructS3FileInternalStore(globalThis, path.path, options);
             defer blob.deinit();
 
@@ -222,6 +230,8 @@ pub fn exists(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
             if (path == .fd) {
                 return globalThis.throwInvalidArguments("Expected a S3 or path to check if it exists", .{});
             }
+            // constructS3FileInternalStore takes ownership of path.
+            path_or_blob = .{ .blob = .initEmpty(globalThis) };
             var blob = try constructS3FileInternalStore(globalThis, path.path, options);
             defer blob.deinit();
 
@@ -253,6 +263,12 @@ pub fn constructS3FileWithS3CredentialsAndOptions(
     default_storage_class: ?bun.S3.StorageClass,
     default_request_payer: bool,
 ) bun.JSError!Blob {
+    // This function takes ownership of `path`. If we fail before passing
+    // it to initS3/initS3WithReferencedCredentials (which consume it via
+    // toThreadSafe), we must clean it up ourselves.
+    var path_to_clean = path;
+    errdefer path_to_clean.deinit();
+
     var aws_options = try S3.S3Credentials.getCredentialsWithOptions(default_credentials.*, default_options, options, default_acl, default_storage_class, default_request_payer, globalObject);
     defer aws_options.deinit();
 
@@ -263,6 +279,9 @@ pub fn constructS3FileWithS3CredentialsAndOptions(
             break :brk bun.handleOom(Blob.Store.initS3WithReferencedCredentials(path, null, default_credentials, bun.default_allocator));
         }
     };
+    // Path has been consumed by initS3/initS3WithReferencedCredentials
+    // via toThreadSafe — neutralize errdefer to prevent double-free.
+    path_to_clean = .{ .string = bun.PathString.empty };
     errdefer store.deinit();
     store.data.s3.options = aws_options.options;
     store.data.s3.acl = aws_options.acl;
@@ -304,9 +323,15 @@ pub fn constructS3FileWithS3Credentials(
     options: ?jsc.JSValue,
     existing_credentials: S3.S3Credentials,
 ) bun.JSError!Blob {
+    // This function takes ownership of `path`.
+    var path_to_clean = path;
+    errdefer path_to_clean.deinit();
+
     var aws_options = try S3.S3Credentials.getCredentialsWithOptions(existing_credentials, .{}, options, null, null, false, globalObject);
     defer aws_options.deinit();
     const store = bun.handleOom(Blob.Store.initS3(path, null, aws_options.credentials, bun.default_allocator));
+    // Path consumed by initS3 via toThreadSafe.
+    path_to_clean = .{ .string = bun.PathString.empty };
     errdefer store.deinit();
     store.data.s3.options = aws_options.options;
     store.data.s3.acl = aws_options.acl;
@@ -573,6 +598,8 @@ pub fn stat(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSEr
             if (path == .fd) {
                 return globalThis.throwInvalidArguments("Expected a S3 or path to get size", .{});
             }
+            // constructS3FileInternalStore takes ownership of path.
+            path_or_blob = .{ .blob = .initEmpty(globalThis) };
             var blob = try constructS3FileInternalStore(globalThis, path.path, options);
             defer blob.deinit();
 

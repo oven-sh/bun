@@ -149,6 +149,7 @@ pub const FilePoll = struct {
     const Subprocess = jsc.Subprocess;
     const StaticPipeWriter = Subprocess.StaticPipeWriter.Poll;
     const ShellStaticPipeWriter = bun.shell.ShellSubprocess.StaticPipeWriter.Poll;
+    const SecurityScanStaticPipeWriter = bun.install.SecurityScanSubprocess.StaticPipeWriter.Poll;
     const FileSink = jsc.WebCore.FileSink.Poll;
     const TerminalPoll = bun.api.Terminal.Poll;
     const DNSResolver = bun.api.dns.Resolver;
@@ -171,6 +172,7 @@ pub const FilePoll = struct {
 
         StaticPipeWriter,
         ShellStaticPipeWriter,
+        SecurityScanStaticPipeWriter,
 
         // ShellBufferedWriter,
 
@@ -373,6 +375,10 @@ pub const FilePoll = struct {
                 var handler: *StaticPipeWriter = ptr.as(StaticPipeWriter);
                 handler.onPoll(size_or_offset, poll.flags.contains(.hup));
             },
+            @field(Owner.Tag, @typeName(SecurityScanStaticPipeWriter)) => {
+                var handler: *SecurityScanStaticPipeWriter = ptr.as(SecurityScanStaticPipeWriter);
+                handler.onPoll(size_or_offset, poll.flags.contains(.hup));
+            },
             @field(Owner.Tag, @typeName(FileSink)) => {
                 var handler: *FileSink = ptr.as(FileSink);
                 handler.onPoll(size_or_offset, poll.flags.contains(.hup));
@@ -421,7 +427,6 @@ pub const FilePoll = struct {
                 var handler: *TerminalPoll = ptr.as(TerminalPoll);
                 handler.onPoll(size_or_offset, poll.flags.contains(.hup));
             },
-
             else => {
                 const possible_name = Owner.typeNameFromTag(@intFromEnum(ptr.tag()));
                 log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {f}) disconnected? (maybe: {s})", .{ poll.fd, possible_name orelse "<unknown>" });

@@ -124,6 +124,7 @@
 #include "JSSink.h"
 #include "JSSocketAddressDTO.h"
 #include "JSReactElement.h"
+#include "BunMarkdownMeta.h"
 #include "JSSQLStatement.h"
 #include "JSStringDecoder.h"
 #include "JSTextEncoder.h"
@@ -134,6 +135,7 @@
 #include "JSURLPattern.h"
 #include "JSURLSearchParams.h"
 #include "JSWasmStreamingCompiler.h"
+#include <JavaScriptCore/WebAssemblyCompileOptions.h>
 #include "JSWebSocket.h"
 #include "JSWorker.h"
 #include "JSWritableStream.h"
@@ -206,6 +208,7 @@
 #include "NodeFSStatBinding.h"
 #include "NodeFSStatFSBinding.h"
 #include "NodeDirent.h"
+#include "../webview/JSWebView.h"
 
 #if !OS(WINDOWS)
 #include <dlfcn.h>
@@ -728,18 +731,12 @@ JSC::ScriptExecutionStatus Zig::GlobalObject::scriptExecutionStatus(JSC::JSGloba
 
 void unsafeEvalNoop(JSGlobalObject*, const WTF::String&) {}
 
-static void queueMicrotaskToEventLoop(JSGlobalObject& globalObject, QueuedTask&& task)
-{
-    globalObject.vm().queueMicrotask(WTF::move(task));
-}
-
 const JSC::GlobalObjectMethodTable& GlobalObject::globalObjectMethodTable()
 {
     static const JSC::GlobalObjectMethodTable table = {
         &supportsRichSourceInfo,
         &shouldInterruptScript,
         &javaScriptRuntimeFlags,
-        &queueMicrotaskToEventLoop,
         nullptr, // &shouldInterruptScriptBeforeTimeout,
         &moduleLoaderImportModule, // moduleLoaderImportModule
         &moduleLoaderResolve, // moduleLoaderResolve
@@ -768,7 +765,6 @@ const JSC::GlobalObjectMethodTable& EvalGlobalObject::globalObjectMethodTable()
         &supportsRichSourceInfo,
         &shouldInterruptScript,
         &javaScriptRuntimeFlags,
-        &queueMicrotaskToEventLoop,
         nullptr, // &shouldInterruptScriptBeforeTimeout,
         &moduleLoaderImportModule, // moduleLoaderImportModule
         &moduleLoaderResolve, // moduleLoaderResolve
@@ -1654,6 +1650,10 @@ void GlobalObject::finishCreation(VM& vm)
         setupX509CertificateClassStructure(init);
     });
 
+    m_JSWebViewClassStructure.initLater([](LazyClassStructure::Initializer& init) {
+        Bun::setupJSWebViewClassStructure(init);
+    });
+
     m_JSSignClassStructure.initLater(
         [](LazyClassStructure::Initializer& init) {
             setupJSSignClassStructure(init);
@@ -1800,6 +1800,23 @@ void GlobalObject::finishCreation(VM& vm)
     m_JSReactElementStructure.initLater(
         [](const Initializer<Structure>& init) {
             init.set(Bun::JSReactElement::createStructure(init.vm, init.owner));
+        });
+
+    m_JSMarkdownListItemMetaStructure.initLater(
+        [](const Initializer<Structure>& init) {
+            init.set(Bun::MarkdownMeta::createListItemMetaStructure(init.vm, init.owner));
+        });
+    m_JSMarkdownListMetaStructure.initLater(
+        [](const Initializer<Structure>& init) {
+            init.set(Bun::MarkdownMeta::createListMetaStructure(init.vm, init.owner));
+        });
+    m_JSMarkdownCellMetaStructure.initLater(
+        [](const Initializer<Structure>& init) {
+            init.set(Bun::MarkdownMeta::createCellMetaStructure(init.vm, init.owner));
+        });
+    m_JSMarkdownLinkMetaStructure.initLater(
+        [](const Initializer<Structure>& init) {
+            init.set(Bun::MarkdownMeta::createLinkMetaStructure(init.vm, init.owner));
         });
 
     m_JSSQLStatementStructure.initLater(
@@ -2450,6 +2467,7 @@ JSC_DEFINE_CUSTOM_GETTER(getConsoleConstructor, (JSGlobalObject * globalObject, 
     if (returnedException) {
         auto scope = DECLARE_THROW_SCOPE(vm);
         throwException(globalObject, scope, returnedException.get());
+        return {};
     }
     console->putDirect(vm, property, result, 0);
     return JSValue::encode(result);
@@ -2689,7 +2707,7 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
         GlobalPropertyInfo(builtinNames.makeAbortErrorPrivateName(), JSFunction::create(vm, this, 1, String(), jsFunctionMakeAbortError, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
         GlobalPropertyInfo(builtinNames.checkBufferReadPrivateName(), JSFunction::create(vm, this, 1, String(), jsFunctionCheckBufferRead, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
     };
-    addStaticGlobals(staticGlobals, std::size(staticGlobals));
+    addStaticGlobals(staticGlobals);
 
     // TODO: most/all of these private properties can be made as static globals.
     // i've noticed doing it as is will work somewhat but getDirect() wont be able to find them
@@ -2905,7 +2923,7 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     WebCore::clientData(thisObject->vm())->httpHeaderIdentifiers().visit<Visitor>(visitor);
 
     thisObject->visitGeneratedLazyClasses<Visitor>(thisObject, visitor);
-    thisObject->visitAdditionalChildren<Visitor>(visitor);
+    thisObject->visitAdditionalChildrenInGCThread<Visitor>(visitor);
 }
 
 extern "C" bool JSGlobalObject__setTimeZone(JSC::JSGlobalObject* globalObject, const ZigString* timeZone)
@@ -2989,7 +3007,7 @@ void GlobalObject::handleRejectedPromises()
 DEFINE_VISIT_CHILDREN(GlobalObject);
 
 template<typename Visitor>
-void GlobalObject::visitAdditionalChildren(Visitor& visitor)
+void GlobalObject::visitAdditionalChildrenInGCThread(Visitor& visitor)
 {
     GlobalObject* thisObject = this;
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
@@ -3002,7 +3020,7 @@ void GlobalObject::visitAdditionalChildren(Visitor& visitor)
     visitor.addOpaqueRoot(context);
 }
 
-DEFINE_VISIT_ADDITIONAL_CHILDREN(GlobalObject);
+DEFINE_VISIT_ADDITIONAL_CHILDREN_IN_GC_THREAD(GlobalObject);
 
 template<typename Visitor>
 void GlobalObject::visitOutputConstraints(JSCell* cell, Visitor& visitor)
@@ -3010,7 +3028,7 @@ void GlobalObject::visitOutputConstraints(JSCell* cell, Visitor& visitor)
     auto* thisObject = jsCast<GlobalObject*>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitOutputConstraints(thisObject, visitor);
-    thisObject->visitAdditionalChildren(visitor);
+    thisObject->visitAdditionalChildrenInGCThread(visitor);
 }
 
 template void GlobalObject::visitOutputConstraints(JSCell*, AbstractSlotVisitor&);
@@ -3403,7 +3421,7 @@ extern "C" void JSC__Wasm__StreamingCompiler__addBytes(JSC::Wasm::StreamingCompi
     compiler->addBytes(std::span(spanPtr, spanSize));
 }
 
-static JSC::JSPromise* handleResponseOnStreamingAction(JSGlobalObject* lexicalGlobalObject, JSC::JSValue source, JSC::Wasm::CompilerMode mode, JSC::JSObject* importObject)
+static JSC::JSPromise* handleResponseOnStreamingAction(JSGlobalObject* lexicalGlobalObject, JSC::JSValue source, JSC::Wasm::CompilerMode mode, JSC::JSObject* importObject, std::optional<JSC::WebAssemblyCompileOptions>&& compileOptions)
 {
     auto globalObject = defaultGlobalObject(lexicalGlobalObject);
     auto& vm = JSC::getVM(globalObject);
@@ -3412,7 +3430,7 @@ static JSC::JSPromise* handleResponseOnStreamingAction(JSGlobalObject* lexicalGl
 
     auto promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
     auto sourceCode = makeSource("[wasm code]"_s, SourceOrigin(), SourceTaintedOrigin::Untainted);
-    auto compiler = JSC::Wasm::StreamingCompiler::create(vm, mode, globalObject, promise, importObject, sourceCode);
+    auto compiler = JSC::Wasm::StreamingCompiler::create(vm, mode, globalObject, promise, importObject, WTF::move(compileOptions), sourceCode);
 
     // getBodyStreamOrBytesForWasmStreaming throws the proper exception. Since this is being
     // executed in a .then(...) callback, throwing is perfectly fine.
@@ -3442,14 +3460,14 @@ static JSC::JSPromise* handleResponseOnStreamingAction(JSGlobalObject* lexicalGl
     return promise;
 }
 
-JSC::JSPromise* GlobalObject::compileStreaming(JSGlobalObject* globalObject, JSC::JSValue source)
+JSC::JSPromise* GlobalObject::compileStreaming(JSGlobalObject* globalObject, JSC::JSValue source, std::optional<JSC::WebAssemblyCompileOptions>&& compileOptions)
 {
-    return handleResponseOnStreamingAction(globalObject, source, JSC::Wasm::CompilerMode::Validation, nullptr);
+    return handleResponseOnStreamingAction(globalObject, source, JSC::Wasm::CompilerMode::Validation, nullptr, WTF::move(compileOptions));
 }
 
-JSC::JSPromise* GlobalObject::instantiateStreaming(JSGlobalObject* globalObject, JSC::JSValue source, JSC::JSObject* importObject)
+JSC::JSPromise* GlobalObject::instantiateStreaming(JSGlobalObject* globalObject, JSC::JSValue source, JSC::JSObject* importObject, std::optional<JSC::WebAssemblyCompileOptions>&& compileOptions)
 {
-    return handleResponseOnStreamingAction(globalObject, source, JSC::Wasm::CompilerMode::FullCompile, importObject);
+    return handleResponseOnStreamingAction(globalObject, source, JSC::Wasm::CompilerMode::FullCompile, importObject, WTF::move(compileOptions));
 }
 
 GlobalObject::PromiseFunctions GlobalObject::promiseHandlerID(Zig::FFIFunction handler)

@@ -39,6 +39,7 @@ const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");
 const kInfoHeaders = Symbol("sent-info-headers");
 const kProxySocket = Symbol("proxySocket");
 const kSessions = Symbol("sessions");
+const kOptions = Symbol("options");
 const kQuotedString = /^[\x09\x20-\x5b\x5d-\x7e\x80-\xff]*$/;
 const MAX_ADDITIONAL_SETTINGS = 10;
 const Stream = require("node:stream");
@@ -70,10 +71,243 @@ const DatePrototypeToUTCString = Date.prototype.toUTCString;
 const DatePrototypeGetMilliseconds = Date.prototype.getMilliseconds;
 
 const H2FrameParser = $zig("h2_frame_parser.zig", "H2FrameParserConstructor");
-const assertSettings = $newZigFunction("h2_frame_parser.zig", "jsAssertSettings", 1);
-const getPackedSettings = $newZigFunction("h2_frame_parser.zig", "jsGetPackedSettings", 1);
-const getUnpackedSettings = $newZigFunction("h2_frame_parser.zig", "jsGetUnpackedSettings", 1);
+const _nativeAssertSettings = $newZigFunction("h2_frame_parser.zig", "jsAssertSettings", 1);
 const { upgradeRawSocketToH2 } = require("node:_http2_upgrade");
+
+const kSettingNames = {
+  headerTableSize: 0x1,
+  enablePush: 0x2,
+  maxConcurrentStreams: 0x3,
+  initialWindowSize: 0x4,
+  maxFrameSize: 0x5,
+  maxHeaderListSize: 0x6,
+  enableConnectProtocol: 0x8,
+};
+
+const kSettingIds: Record<number, string> = {
+  0x1: "headerTableSize",
+  0x2: "enablePush",
+  0x3: "maxConcurrentStreams",
+  0x4: "initialWindowSize",
+  0x5: "maxFrameSize",
+  0x6: "maxHeaderListSize",
+  0x8: "enableConnectProtocol",
+};
+
+const kDefaultSettings = {
+  headerTableSize: 4096,
+  enablePush: true,
+  maxConcurrentStreams: 2 ** 32 - 1,
+  initialWindowSize: 65535,
+  maxFrameSize: 16384,
+  maxHeaderListSize: 65535,
+  maxHeaderSize: 65535,
+  enableConnectProtocol: false,
+};
+
+function throwSettingRangeError(name: string, value: any) {
+  const err = new RangeError(`Invalid value for setting "${name}": ${value}`);
+  (err as any).code = "ERR_HTTP2_INVALID_SETTING_VALUE";
+  throw err;
+}
+
+function throwSettingTypeError(name: string, value: any) {
+  const err = new TypeError(`Invalid value for setting "${name}": ${value}`);
+  (err as any).code = "ERR_HTTP2_INVALID_SETTING_VALUE";
+  throw err;
+}
+
+function validateSettings(settings: any) {
+  if (typeof settings !== "object" || settings === null || $isArray(settings)) {
+    throw $ERR_INVALID_ARG_TYPE("settings", "object", settings);
+  }
+
+  if (settings.headerTableSize !== undefined) {
+    const v = settings.headerTableSize;
+    if (typeof v !== "number" || v < 0 || v > kMaxInt || Number.isNaN(v)) {
+      throwSettingRangeError("headerTableSize", v);
+    }
+  }
+
+  if (settings.enablePush !== undefined) {
+    const v = settings.enablePush;
+    if (typeof v !== "boolean") {
+      throwSettingTypeError("enablePush", v);
+    }
+  }
+
+  if (settings.initialWindowSize !== undefined) {
+    const v = settings.initialWindowSize;
+    if (typeof v !== "number" || v < 0 || v > kMaxInt || Number.isNaN(v)) {
+      throwSettingRangeError("initialWindowSize", v);
+    }
+  }
+
+  if (settings.maxFrameSize !== undefined) {
+    const v = settings.maxFrameSize;
+    if (typeof v !== "number" || v < 16384 || v > 16777215 || Number.isNaN(v)) {
+      throwSettingRangeError("maxFrameSize", v);
+    }
+  }
+
+  if (settings.maxConcurrentStreams !== undefined) {
+    const v = settings.maxConcurrentStreams;
+    if (typeof v !== "number" || v < 0 || v > kMaxInt || Number.isNaN(v)) {
+      throwSettingRangeError("maxConcurrentStreams", v);
+    }
+  }
+
+  if (settings.maxHeaderListSize !== undefined) {
+    const v = settings.maxHeaderListSize;
+    if (typeof v !== "number" || v < 0 || v > kMaxInt || Number.isNaN(v)) {
+      throwSettingRangeError("maxHeaderListSize", v);
+    }
+  }
+
+  if (settings.maxHeaderSize !== undefined) {
+    const v = settings.maxHeaderSize;
+    if (typeof v !== "number" || v < 0 || v > kMaxInt || Number.isNaN(v)) {
+      throwSettingRangeError("maxHeaderSize", v);
+    }
+  }
+
+  if (settings.enableConnectProtocol !== undefined) {
+    const v = settings.enableConnectProtocol;
+    if (typeof v !== "boolean") {
+      throwSettingTypeError("enableConnectProtocol", v);
+    }
+  }
+
+  if (settings.customSettings !== undefined) {
+    const cs = settings.customSettings;
+    if (typeof cs !== "object" || cs === null) {
+      throwSettingRangeError("customSettings", cs);
+    }
+    const keys = ObjectKeys(cs);
+    if (keys.length > MAX_ADDITIONAL_SETTINGS) {
+      const err = new Error("Number of custom settings exceeds MAX_ADDITIONAL_SETTINGS");
+      (err as any).code = "ERR_HTTP2_TOO_MANY_CUSTOM_SETTINGS";
+      throw err;
+    }
+    for (const key of keys) {
+      const id = Number(key);
+      if (!Number.isInteger(id) || id < 0 || id > 0xffff) {
+        throwSettingRangeError(key, cs[key]);
+      }
+      const val = cs[key];
+      if (typeof val !== "number" || val < 0 || val > kMaxInt || !Number.isFinite(val)) {
+        throwSettingRangeError(key, val);
+      }
+    }
+  }
+}
+
+function assertSettings(settings: any) {
+  validateSettings(settings);
+}
+
+function getPackedSettings(settings?: any): Buffer {
+  if (settings === undefined) return Buffer.alloc(0);
+  validateSettings(settings);
+
+  const entries: Array<[number, number]> = [];
+
+  if (settings.headerTableSize !== undefined) {
+    entries.push([0x1, settings.headerTableSize]);
+  }
+  if (settings.enablePush !== undefined) {
+    entries.push([0x2, settings.enablePush ? 1 : 0]);
+  }
+  if (settings.maxConcurrentStreams !== undefined) {
+    entries.push([0x3, settings.maxConcurrentStreams]);
+  }
+  if (settings.initialWindowSize !== undefined) {
+    entries.push([0x4, settings.initialWindowSize]);
+  }
+  if (settings.maxFrameSize !== undefined) {
+    entries.push([0x5, settings.maxFrameSize]);
+  }
+  if (settings.maxHeaderListSize !== undefined) {
+    entries.push([0x6, settings.maxHeaderListSize]);
+  } else if (settings.maxHeaderSize !== undefined) {
+    entries.push([0x6, settings.maxHeaderSize]);
+  }
+  if (settings.enableConnectProtocol !== undefined) {
+    entries.push([0x8, settings.enableConnectProtocol ? 1 : 0]);
+  }
+  if (settings.customSettings) {
+    const cs = settings.customSettings;
+    const keys = ObjectKeys(cs);
+    // Sort custom settings by ID for consistent output
+    keys.sort((a, b) => Number(a) - Number(b));
+    for (const key of keys) {
+      entries.push([Number(key), cs[key]]);
+    }
+  }
+
+  const buf = Buffer.alloc(entries.length * 6);
+  for (let i = 0; i < entries.length; i++) {
+    const offset = i * 6;
+    buf.writeUInt16BE(entries[i][0], offset);
+    buf.writeUInt32BE(entries[i][1], offset + 2);
+  }
+  return buf;
+}
+
+function getUnpackedSettings(buf?: any, options?: any): any {
+  if (buf === undefined) {
+    return { ...kDefaultSettings };
+  }
+
+  if (!Buffer.isBuffer(buf) && !isTypedArray(buf)) {
+    throw $ERR_INVALID_ARG_TYPE("buf", ["Buffer", "TypedArray"], buf);
+  }
+
+  if (buf.length % 6 !== 0) {
+    const err = new RangeError("Packed settings length must be a multiple of six");
+    (err as any).code = "ERR_HTTP2_INVALID_PACKED_SETTINGS_LENGTH";
+    throw err;
+  }
+
+  const settings: any = {};
+  const customSettings: Record<string, number> = {};
+  let hasCustom = false;
+
+  // Use element-by-element access so it works for both Buffer and TypedArrays.
+  // For Buffer, buf[i] returns a byte. For Uint16Array etc., buf[i] returns
+  // the i-th element. Node.js reads settings this way too.
+  for (let i = 0; i < buf.length; i += 6) {
+    const type = buf[i] * 256 + buf[i + 1];
+    const value = ((buf[i + 2] << 24) | (buf[i + 3] << 16) | (buf[i + 4] << 8) | buf[i + 5]) >>> 0;
+
+    const name = kSettingIds[type];
+    if (name) {
+      if (name === "enablePush") {
+        settings[name] = value !== 0;
+      } else if (name === "enableConnectProtocol") {
+        settings[name] = value !== 0;
+      } else {
+        settings[name] = value;
+      }
+      if (name === "maxHeaderListSize") {
+        settings.maxHeaderSize = value;
+      }
+    } else {
+      customSettings[String(type)] = value;
+      hasCustom = true;
+    }
+  }
+
+  if (hasCustom) {
+    settings.customSettings = customSettings;
+  }
+
+  if (options && options.validate) {
+    validateSettings(settings);
+  }
+
+  return settings;
+}
 
 const sensitiveHeaders = Symbol.for("nodejs.http2.sensitiveHeaders");
 const bunHTTP2Native = Symbol.for("::bunhttp2native::");
@@ -2972,6 +3206,7 @@ class ServerHttp2Session extends Http2Session {
     if (callback !== undefined && typeof callback !== "function") {
       throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
     }
+    validateSettings(settings);
     this.#pendingSettingsAck = true;
     this.#parser?.settings(settings);
     if (typeof callback === "function") {
@@ -3414,6 +3649,7 @@ class ClientHttp2Session extends Http2Session {
     if (callback !== undefined && typeof callback !== "function") {
       throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
     }
+    validateSettings(settings);
     this.#pendingSettingsAck = true;
     this.#parser?.settings(settings);
     if (typeof callback === "function") {
@@ -3808,6 +4044,7 @@ class Http2Server extends net.Server {
     options = initializeOptions(options);
     super(options);
     this[kSessions] = new SafeSet();
+    this[kOptions] = { settings: options.settings || {} };
 
     this.setMaxListeners(0);
 
@@ -3819,8 +4056,6 @@ class Http2Server extends net.Server {
 
   emit(event: string, ...args: any[]) {
     if (event === "connection") {
-      // TODO: implement this at net/tls level to allow to inject socket in the server
-      // this works for now for Http2Server
       super.prependOnceListener("connection", connectionListener);
     }
     return super.emit(event, ...args);
@@ -3838,6 +4073,7 @@ class Http2Server extends net.Server {
     if (options) {
       options.settings = { ...options.settings, ...settings };
     }
+    this[kOptions].settings = { ...this[kOptions].settings, ...settings };
   }
 
   close(callback?: Function) {
@@ -3913,6 +4149,7 @@ class Http2SecureServer extends tls.Server {
     }
     super(options, connectionListener);
     this[kSessions] = new SafeSet();
+    this[kOptions] = { settings: settings || {} };
     this.setMaxListeners(0);
     this.on("newListener", setupCompat);
     if (typeof onRequestHandler === "function") {
@@ -3942,6 +4179,7 @@ class Http2SecureServer extends tls.Server {
     if (options) {
       options.settings = { ...options.settings, ...settings };
     }
+    this[kOptions].settings = { ...this[kOptions].settings, ...settings };
   }
   close(callback?: Function) {
     super.close(callback);

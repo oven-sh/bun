@@ -117,6 +117,7 @@
 #include "JSPrivateKeyObject.h"
 #include "CryptoKeyType.h"
 #include "JSNodePerformanceHooksHistogram.h"
+#include "../napi.h"
 #include <limits>
 #include <algorithm>
 
@@ -2665,7 +2666,9 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
             // objects have been handled. If we reach this point and
             // the input is not an Object object then we should throw
             // a DataCloneError.
-            if (inObject->classInfo() != JSFinalObject::info())
+            // NapiPrototype is allowed because napi_create_object should behave
+            // like a plain object from JS's perspective (matches Node.js).
+            if (inObject->classInfo() != JSFinalObject::info() && inObject->classInfo() != Zig::NapiPrototype::info())
                 return SerializationReturnCode::DataCloneError;
             inputObjectStack.append(inObject);
             indexStack.append(0);
@@ -5019,15 +5022,20 @@ private:
 
             RefPtr<Wasm::Memory> memory;
             auto handler = [&vm, result](Wasm::Memory::GrowSuccess, PageCount oldPageCount, PageCount newPageCount) { result->growSuccessCallback(vm, oldPageCount, newPageCount); };
+            // Memory64 is not yet serialized in WasmMemoryTag, so we only
+            // support I32 address type for structured clone. Upstream WebKit
+            // has the same limitation (it calls result->memory().addressType()
+            // on an uninitialized stub here, which happens to return I32).
+            constexpr auto addressType = Wasm::AddressType::I32;
             if (RefPtr<SharedArrayBufferContents> contents = m_wasmMemoryHandles->at(index)) {
                 if (!contents->memoryHandle()) {
                     fail();
                     return JSValue();
                 }
-                memory = Wasm::Memory::create(contents.releaseNonNull(), WTF::move(handler));
+                memory = Wasm::Memory::create(contents.releaseNonNull(), addressType, WTF::move(handler));
             } else {
                 // zero size & max-size.
-                memory = Wasm::Memory::createZeroSized(JSC::MemorySharingMode::Shared, WTF::move(handler));
+                memory = Wasm::Memory::createZeroSized(JSC::MemorySharingMode::Shared, addressType, WTF::move(handler));
             }
 
             result->adopt(memory.releaseNonNull());

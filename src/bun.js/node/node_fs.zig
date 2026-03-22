@@ -5502,7 +5502,12 @@ pub const NodeFS = struct {
                     .path = args.path.slice(),
                 } };
 
-            var buf = bun.span(req.ptrAs([*:0]u8));
+            const result_ptr: ?[*:0]u8 = req.ptrAs(?[*:0]u8);
+            var buf = bun.span(result_ptr orelse return .{ .err = Syscall.Error{
+                .errno = @intFromEnum(bun.sys.E.NOENT),
+                .syscall = .realpath,
+                .path = args.path.slice(),
+            } });
 
             if (variant == .emulated) {
                 // remove the trailing slash
@@ -5622,7 +5627,7 @@ pub const NodeFS = struct {
                     // One of the path components was not a directory.
                     // This error is unreachable if `sub_path` does not contain a path separator.
                     error.NotDir => .NOTDIR,
-                    // On Windows, file paths must be valid Unicode.
+                    // On Windows, file paths must be valid WTF-8.
                     error.InvalidUtf8 => .INVAL,
                     error.InvalidWtf8 => .INVAL,
 

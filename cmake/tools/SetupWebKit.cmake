@@ -6,7 +6,7 @@ option(WEBKIT_LOCAL "If a local version of WebKit should be used instead of down
 option(WEBKIT_BUILD_TYPE "The build type for local WebKit (defaults to CMAKE_BUILD_TYPE)")
 
 if(NOT WEBKIT_VERSION)
-  set(WEBKIT_VERSION 4a6a32c32c11ffb9f5a94c310b10f50130bfe6de)
+  set(WEBKIT_VERSION fc9f2fa7272fec64905df6a9c78e15d7912f14ca)
 endif()
 
 
@@ -208,6 +208,14 @@ endif()
 
 if(LINUX AND ABI STREQUAL "musl")
   set(WEBKIT_SUFFIX "-musl")
+endif()
+
+# Baseline WebKit artifacts (-march=nehalem, /arch:SSE2 ICU) exist for
+# Linux amd64 (glibc + musl) and Windows amd64. No baseline variant for
+# arm64 or macOS. Suffix order matches the release asset names:
+# bun-webkit-linux-amd64-musl-baseline-lto.tar.gz
+if(ENABLE_BASELINE AND WEBKIT_ARCH STREQUAL "amd64")
+  set(WEBKIT_SUFFIX "${WEBKIT_SUFFIX}-baseline")
 endif()
 
 if(DEBUG)

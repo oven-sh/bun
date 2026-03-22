@@ -102,7 +102,7 @@ pub const Options = struct {
     disable_keepalive: ?bool = null,
     disable_decompression: ?bool = null,
     reject_unauthorized: ?bool = null,
-    tls_props: ?*SSLConfig = null,
+    tls_props: ?SSLConfig.SharedPtr = null,
 };
 
 const Preconnect = struct {

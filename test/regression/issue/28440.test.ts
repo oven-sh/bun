@@ -49,4 +49,10 @@ describe("toMatchObject should not mutate actual object", () => {
     expect(obj).toMatchObject({ outer: { inner: expect.any(String) } });
     expect(obj.outer.inner).toBe("value");
   });
+
+  test("not.toMatchObject does not mutate partially matched properties", () => {
+    const obj = { bar: "hello", baz: 456 };
+    expect(obj).not.toMatchObject({ bar: expect.any(String), baz: 123 });
+    expect(obj.bar).toBe("hello");
+  });
 });

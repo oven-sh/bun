@@ -213,16 +213,20 @@ pub const S3Client = struct {
         const arguments = callframe.arguments_old(3).slice();
         var args = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments);
         defer args.deinit();
-        const path: jsc.Node.PathLike = try jsc.Node.PathLike.fromJS(globalThis, &args) orelse {
+        var path: jsc.Node.PathLike = try jsc.Node.PathLike.fromJS(globalThis, &args) orelse {
             return globalThis.ERR(.MISSING_ARGS, "Expected a path to write to", .{}).throw();
         };
-        // constructS3FileWithS3CredentialsAndOptions takes ownership of path.
+        // Guard against early return before constructS3FileWithS3CredentialsAndOptions
+        // takes ownership of path.
+        errdefer path.deinit();
         const data = args.nextEat() orelse {
             return globalThis.ERR(.MISSING_ARGS, "Expected a Blob-y thing to write", .{}).throw();
         };
 
         const options = args.nextEat();
         var blob = try S3File.constructS3FileWithS3CredentialsAndOptions(globalThis, path, options, ptr.credentials, ptr.options, ptr.acl, ptr.storage_class, ptr.request_payer);
+        // Path ownership transferred — neutralize errdefer.
+        path = .{ .string = bun.PathString.empty };
         defer blob.detach();
         var blob_internal: PathOrBlob = .{ .blob = blob };
         return Blob.writeFileInternal(globalThis, &blob_internal, data, .{

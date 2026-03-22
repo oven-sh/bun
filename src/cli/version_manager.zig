@@ -9,7 +9,6 @@
 /// symlink ~/.bun/bin/bun to it, and re-exec.
 ///
 /// Subsequent runs use the symlink directly — no double-init.
-
 pub fn checkPinnedVersion(pinned_version_str: []const u8, allocator: std.mem.Allocator) void {
     @branchHint(.cold);
 
@@ -415,9 +414,9 @@ fn downloadVersion(version_str: []const u8, dest_dir: []const u8, allocator: std
         var ps_buf: bun.PathBuffer = undefined;
         const powershell_path =
             bun.which(&ps_buf, bun.env_var.PATH.get() orelse "", "", "powershell") orelse {
-            Output.prettyErrorln("<r><red>error<r>: PowerShell not found", .{});
-            return false;
-        };
+                Output.prettyErrorln("<r><red>error<r>: PowerShell not found", .{});
+                return false;
+            };
 
         const unzip_script = std.fmt.allocPrint(
             allocator,
@@ -590,23 +589,23 @@ fn reExec(exe_path: []const u8) noreturn {
     }
 }
 
-const exe_suffix = bun.exe_suffix;
-
 const default_github_headers: []const u8 = "Acceptapplication/vnd.github.v3+json";
 
-const upgrade_command = @import("upgrade_command.zig");
-
-const std = @import("std");
-const bun = @import("bun");
 const DotEnv = @import("../env_loader.zig");
+const std = @import("std");
+const upgrade_command = @import("./upgrade_command.zig");
+const URL = @import("../url.zig").URL;
+
+const bun = @import("bun");
 const Environment = bun.Environment;
 const Global = bun.Global;
-const HTTP = bun.http;
-const Headers = HTTP.Headers;
 const JSON = bun.json;
-const logger = bun.logger;
 const MutableString = bun.MutableString;
 const Output = bun.Output;
 const Semver = bun.Semver;
+const exe_suffix = bun.exe_suffix;
+const logger = bun.logger;
 const strings = bun.strings;
-const URL = @import("../url.zig").URL;
+
+const HTTP = bun.http;
+const Headers = HTTP.Headers;

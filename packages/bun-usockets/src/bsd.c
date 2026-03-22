@@ -901,8 +901,7 @@ static int bsd_set_reuseaddr(LIBUS_SOCKET_DESCRIPTOR listenFd) {
 }
 
 static int bsd_set_reuseport(LIBUS_SOCKET_DESCRIPTOR listenFd) {
-#if defined(__linux__)
-    // Among Bun's supported platforms, only Linux does load balancing with SO_REUSEPORT.
+#if defined(SO_REUSEPORT) && !defined(_WIN32)
     const int one = 1;
     return setsockopt(listenFd, SOL_SOCKET, SO_REUSEPORT, &one, sizeof(one));
 #else
@@ -1232,6 +1231,14 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port, int op
     }
 
     if (bsd_set_reuse(listenFd, options) != 0) {
+        if (err != NULL) {
+#ifdef _WIN32
+            *err = WSAGetLastError();
+#else
+            *err = errno;
+#endif
+        }
+        bsd_close_socket(listenFd);
         freeaddrinfo(result);
         return LIBUS_SOCKET_ERROR;
     }
@@ -1254,23 +1261,15 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port, int op
 
     int enabled = 1;
     if (setsockopt(listenFd, IPPROTO_IPV6, IPV6_RECVPKTINFO, &enabled, sizeof(enabled)) == -1) {
-        if (errno == 92) {
-            if (setsockopt(listenFd, IPPROTO_IP, IP_PKTINFO, &enabled, sizeof(enabled)) != 0) {
-                //printf("Error setting IPv4 pktinfo!\n");
-            }
-        } else {
-            //printf("Error setting IPv6 pktinfo!\n");
+        if (errno == ENOPROTOOPT || errno == EINVAL) {
+            setsockopt(listenFd, IPPROTO_IP, IP_PKTINFO, &enabled, sizeof(enabled));
         }
     }
 
     /* These are used for getting the ECN */
     if (setsockopt(listenFd, IPPROTO_IPV6, IPV6_RECVTCLASS, &enabled, sizeof(enabled)) == -1) {
-        if (errno == 92) {
-            if (setsockopt(listenFd, IPPROTO_IP, IP_RECVTOS, &enabled, sizeof(enabled)) != 0) {
-                //printf("Error setting IPv4 ECN!\n");
-            }
-        } else {
-            //printf("Error setting IPv6 ECN!\n");
+        if (errno == ENOPROTOOPT || errno == EINVAL) {
+            setsockopt(listenFd, IPPROTO_IP, IP_RECVTOS, &enabled, sizeof(enabled));
         }
     }
 

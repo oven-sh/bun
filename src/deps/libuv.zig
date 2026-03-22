@@ -190,19 +190,64 @@ pub const O = struct {
     pub const SYMLINK = UV_FS_O_SYMLINK;
     pub const SYNC = UV_FS_O_SYNC;
 
+    /// Convert from internal bun.O flags to libuv/Windows flags.
+    ///
+    /// Note: NONBLOCK, NOFOLLOW, DIRECTORY, NOATIME, NOCTTY, SYMLINK map to
+    /// 0 in libuv on Windows (see UV_FS_O_* constants below), so they are
+    /// included here for correctness but are effectively no-ops.
+    /// When adding new flag mappings, keep in sync with toBunO.
     pub fn fromBunO(c_flags: i32) i32 {
         var flags: i32 = 0;
 
-        if (c_flags & bun.O.NONBLOCK != 0) flags |= NONBLOCK;
-        if (c_flags & bun.O.CREAT != 0) flags |= CREAT;
-        if (c_flags & bun.O.NOFOLLOW != 0) flags |= NOFOLLOW;
         if (c_flags & bun.O.WRONLY != 0) flags |= WRONLY;
-        if (c_flags & bun.O.RDONLY != 0) flags |= RDONLY;
         if (c_flags & bun.O.RDWR != 0) flags |= RDWR;
+        if (c_flags & bun.O.CREAT != 0) flags |= CREAT;
+        if (c_flags & bun.O.EXCL != 0) flags |= EXCL;
         if (c_flags & bun.O.TRUNC != 0) flags |= TRUNC;
         if (c_flags & bun.O.APPEND != 0) flags |= APPEND;
-        if (c_flags & bun.O.EXCL != 0) flags |= EXCL;
+        if (c_flags & bun.O.NONBLOCK != 0) flags |= NONBLOCK;
+        // SYNC and DSYNC must be mutually exclusive for libuv on Windows.
+        // On Linux, bun.O.SYNC (0o4010000) is a superset of bun.O.DSYNC
+        // (0o10000), so checking SYNC first ensures we emit only UV_FS_O_SYNC
+        // when both bits are present. libuv's fs__open rejects having both set.
+        if (c_flags & bun.O.SYNC != 0) {
+            flags |= SYNC;
+        } else if (c_flags & bun.O.DSYNC != 0) {
+            flags |= DSYNC;
+        }
+        if (c_flags & bun.O.NOFOLLOW != 0) flags |= NOFOLLOW;
+        if (c_flags & bun.O.DIRECT != 0) flags |= DIRECT;
         if (c_flags & FILEMAP != 0) flags |= FILEMAP;
+
+        return flags;
+    }
+
+    /// Convert from libuv/Windows MSVC O_ flags to internal bun.O flags.
+    /// This is the inverse of fromBunO and is needed because fs.constants
+    /// exposes the platform's native C values to JavaScript, but internally
+    /// Bun normalizes all flags to the bun.O (POSIX-like) representation.
+    ///
+    /// Only maps flags that have non-zero libuv values on Windows.
+    /// NOFOLLOW, NONBLOCK, DIRECTORY, NOATIME, NOCTTY, SYMLINK are all 0
+    /// in libuv on Windows (no-ops) and cannot be recovered from a bitmask.
+    /// When adding new flag mappings, keep in sync with fromBunO.
+    pub fn toBunO(uv_flags: i32) i32 {
+        var flags: i32 = 0;
+
+        if (uv_flags & WRONLY != 0) flags |= bun.O.WRONLY;
+        if (uv_flags & RDWR != 0) flags |= bun.O.RDWR;
+        if (uv_flags & CREAT != 0) flags |= bun.O.CREAT;
+        if (uv_flags & EXCL != 0) flags |= bun.O.EXCL;
+        if (uv_flags & TRUNC != 0) flags |= bun.O.TRUNC;
+        if (uv_flags & APPEND != 0) flags |= bun.O.APPEND;
+        // SYNC takes priority over DSYNC (see fromBunO comment).
+        if (uv_flags & SYNC != 0) {
+            flags |= bun.O.SYNC;
+        } else if (uv_flags & DSYNC != 0) {
+            flags |= bun.O.DSYNC;
+        }
+        if (uv_flags & DIRECT != 0) flags |= bun.O.DIRECT;
+        if (uv_flags & FILEMAP != 0) flags |= FILEMAP;
 
         return flags;
     }

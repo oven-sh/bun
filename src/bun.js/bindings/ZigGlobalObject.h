@@ -550,6 +550,7 @@ public:
     V(public, LazyClassStructure, m_NodeVMSourceTextModuleClassStructure)                                    \
     V(public, LazyClassStructure, m_NodeVMSyntheticModuleClassStructure)                                     \
     V(public, LazyClassStructure, m_JSX509CertificateClassStructure)                                         \
+    V(public, LazyClassStructure, m_JSWebViewClassStructure)                                                 \
     V(public, LazyClassStructure, m_JSSignClassStructure)                                                    \
     V(public, LazyClassStructure, m_JSVerifyClassStructure)                                                  \
     V(public, LazyClassStructure, m_JSDiffieHellmanClassStructure)                                           \

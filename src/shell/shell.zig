@@ -834,7 +834,7 @@ pub const AST = struct {
     /// - `2>>` = Redirect.Append | Redirect.Stderr
     /// - `&>>` = Redirect.Append | Redirect.Stdout | Redirect.Stderr
     ///
-    /// Multiple redirects and redirecting stdin is not supported yet.
+    /// Multiple redirects are not supported yet.
     pub const RedirectFlags = packed struct(u8) {
         stdin: bool = false,
         stdout: bool = false,
@@ -2988,7 +2988,7 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
         }
 
         /// Returns true if the operator is "double one": >> or <<
-        /// Returns null if it is invalid: <> ><
+        /// Returns false if not doubled or invalid (e.g. <> ><)
         fn eat_simple_redirect_operator(self: *@This(), dir: RedirectDirection) bool {
             if (self.peek()) |peeked| {
                 if (peeked.escaped) return false;
@@ -4266,7 +4266,7 @@ pub fn needsEscapeUtf8AsciiLatin1(str: []const u8) bool {
     return false;
 }
 
-/// A list that can store its items inlined, and promote itself to a heap allocated bun.ByteList
+/// A list that can store its items inlined, and promote itself to a heap allocated bun.BabyList(T)
 pub fn SmolList(comptime T: type, comptime INLINED_MAX: comptime_int) type {
     return union(enum) {
         inlined: Inlined,

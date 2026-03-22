@@ -654,7 +654,11 @@ DEFINE_NATIVE_MODULE(NodeConstants)
 #ifdef O_EXCL
     put(Identifier::fromString(vm, "O_EXCL"_s), jsNumber(O_EXCL));
 #endif
+#if OS(WINDOWS)
+    put(Identifier::fromString(vm, "UV_FS_O_FILEMAP"_s), jsNumber(536870912));
+#else
     put(Identifier::fromString(vm, "UV_FS_O_FILEMAP"_s), jsNumber(0));
+#endif
 
 #ifdef O_NOCTTY
     put(Identifier::fromString(vm, "O_NOCTTY"_s), jsNumber(O_NOCTTY));

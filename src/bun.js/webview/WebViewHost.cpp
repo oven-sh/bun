@@ -784,8 +784,8 @@ void WebViewHost::onScreenshotComplete(id nsimage, id error)
         auto factor = objc::NSNumber::withDouble(static_cast<double>(m_screenshotQuality) / 100.0);
         props = objc::NSDictionary::with1(
             factor.m_id,
-            objc::NSString::fromWTF("NSImageCompressionFactor"_s).m_id
-        ).m_id;
+            objc::NSString::fromWTF("NSImageCompressionFactor"_s).m_id)
+                    .m_id;
     }
     auto data = objc::NSBitmapImageRep::encodeFromCGImage(cg, fileType, props);
     if (!data) {

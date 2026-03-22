@@ -6,9 +6,10 @@ import { bunEnv, bunExe } from "harness";
 // ChromeProcess.zig's findChrome() — $PATH names, then hardcoded absolute
 // paths, then Playwright cache — so the test detects Chrome whenever the
 // runtime would.
+import { dlopen, FFIType, ptr } from "bun:ffi";
 import { accessSync, constants as fsConstants, readdirSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
-import { dlopen, FFIType, ptr } from "bun:ffi";
+import { join } from "node:path";
 
 // shm_unlink for encoding:"shmem" test cleanup. macOS has no /dev/shm
 // filesystem mount, so we go through libc. Linux exposes POSIX shm at
@@ -26,7 +27,6 @@ function shmUnlinkChrome(name: string): void {
     rmSync("/dev/shm" + name, { force: true });
   }
 }
-import { join } from "node:path";
 
 function findChrome(): string | undefined {
   const isExecutable = (p: string) => {

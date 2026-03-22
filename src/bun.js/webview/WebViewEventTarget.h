@@ -33,8 +33,8 @@ public:
         return adoptRef(*new WebViewEventTarget(ctx));
     }
 
-    using RefCounted::ref;
     using RefCounted::deref;
+    using RefCounted::ref;
 
 private:
     explicit WebViewEventTarget(WebCore::ScriptExecutionContext& ctx)

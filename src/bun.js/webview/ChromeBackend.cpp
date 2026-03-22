@@ -835,8 +835,7 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
             // safe to hold past the next onData), so one copy into the JS
             // heap via fromUTF8 → jsString.
             settle(g, view, entry.slot, true,
-                jsString(vm, WTF::String::fromUTF8(
-                    std::span<const char>(b64.data(), b64.size()))));
+                jsString(vm, WTF::String::fromUTF8(std::span<const char>(b64.data(), b64.size()))));
             return;
         }
 
@@ -895,8 +894,7 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
             // unlinks after shm_open'ing.
             auto* obj = constructEmptyObject(g);
             obj->putDirect(vm, Identifier::fromString(vm, "name"_s),
-                jsString(vm, WTF::String::fromUTF8(
-                    std::span<const char>(name, strlen(name)))));
+                jsString(vm, WTF::String::fromUTF8(std::span<const char>(name, strlen(name)))));
             obj->putDirect(vm, Identifier::fromString(vm, "size"_s),
                 jsNumber(static_cast<double>(sz)));
             settle(g, view, entry.slot, true, obj);
@@ -1365,8 +1363,8 @@ JSPromise* screenshot(JSGlobalObject* g, JSWebView* view, ScreenshotFormat forma
     // JSWebView::screenshot before dispatch) to stamp the right MIME type
     // on the Blob.
     ASCIILiteral fmtLit = format == ScreenshotFormat::Jpeg ? "\"jpeg\""_s
-        : format == ScreenshotFormat::Webp ? "\"webp\""_s
-        : "\"png\""_s;
+        : format == ScreenshotFormat::Webp                 ? "\"webp\""_s
+                                                           : "\"png\""_s;
     return sendChromeOp(g, view, view->m_pendingScreenshot, PendingSlot::Screenshot,
         Method::PageCaptureScreenshot, id,
         Command(id, "Page.captureScreenshot"_s, sidSpan(view->m_sessionId))

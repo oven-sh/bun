@@ -48,9 +48,12 @@ enum class ScreenshotEncoding : uint8_t {
 inline const char* screenshotMimeType(ScreenshotFormat f)
 {
     switch (f) {
-    case ScreenshotFormat::Png: return "image/png";
-    case ScreenshotFormat::Jpeg: return "image/jpeg";
-    case ScreenshotFormat::Webp: return "image/webp";
+    case ScreenshotFormat::Png:
+        return "image/png";
+    case ScreenshotFormat::Jpeg:
+        return "image/jpeg";
+    case ScreenshotFormat::Webp:
+        return "image/webp";
     }
     return "image/png";
 }

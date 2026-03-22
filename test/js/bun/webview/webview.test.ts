@@ -1,6 +1,6 @@
+import { dlopen, FFIType, ptr, toArrayBuffer } from "bun:ffi";
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isCI, isMacOS, tempDir } from "harness";
-import { dlopen, FFIType, ptr, toArrayBuffer } from "bun:ffi";
 
 // FFI shm access for encoding:"shmem" tests. In real use Kitty (or
 // whoever opens the segment) does this — shm_open + mmap + read + unlink.

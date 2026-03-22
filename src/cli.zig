@@ -438,6 +438,7 @@ pub const Command = struct {
 
         preloads: []const string = &.{},
         has_loaded_global_config: bool = false,
+        pinned_version: ?[]const u8 = null,
 
         pub const BundlerOptions = struct {
             outdir: []const u8 = "",
@@ -499,6 +500,13 @@ pub const Command = struct {
 
             if (comptime Command.Tag.uses_global_options.get(command)) {
                 global_cli_ctx.args = try Arguments.parse(allocator, global_cli_ctx, command);
+            }
+
+            // Check version pinning from bunfig.toml (skip for upgrade command)
+            if (comptime command != .UpgradeCommand) {
+                if (global_cli_ctx.pinned_version) |pinned| {
+                    VersionManager.checkPinnedVersion(pinned, allocator);
+                }
             }
 
             if (comptime Environment.isWindows) {
@@ -1823,4 +1831,5 @@ const logger = bun.logger;
 const strings = bun.strings;
 const File = bun.sys.File;
 const RegularExpression = bun.jsc.RegularExpression;
+const VersionManager = @import("./cli/version_manager.zig");
 const api = bun.schema.api;

@@ -427,9 +427,9 @@ fn downloadVersion(version_str: []const u8, dest_dir: []const u8, allocator: std
         var ps_buf: bun.PathBuffer = undefined;
         const powershell_path =
             bun.which(&ps_buf, bun.env_var.PATH.get() orelse "", "", "powershell") orelse {
-            Output.prettyErrorln("<r><red>error<r>: PowerShell not found", .{});
-            return false;
-        };
+                Output.prettyErrorln("<r><red>error<r>: PowerShell not found", .{});
+                return false;
+            };
 
         const unzip_script = std.fmt.allocPrint(
             allocator,

@@ -26,3 +26,10 @@ test("calling a mock with non-undefined this still returns the mock value", () =
   // Normal call with non-undefined this must return the mock's value, not `this`
   expect(obj.method()).toBe(42);
 });
+
+test("Reflect.construct with custom newTarget honors prototype chain", () => {
+  const fn = jest.fn();
+  class MyClass {}
+  const obj = Reflect.construct(fn, [], MyClass);
+  expect(obj).toBeInstanceOf(MyClass);
+});

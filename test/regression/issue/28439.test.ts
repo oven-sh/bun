@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
-describe("NO_COLOR does not affect snapshot output", () => {
+describe.concurrent("NO_COLOR does not affect snapshot output", () => {
   test("toThrowErrorMatchingSnapshot does not contain ANSI escape codes", async () => {
     using dir = tempDir("issue-28439", {
       "test.test.ts": `

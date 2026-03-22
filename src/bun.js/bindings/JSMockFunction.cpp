@@ -839,6 +839,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionCall, (JSGlobalObject * lexicalGlobalObje
 
     JSC::ArgList args = JSC::ArgList(callframe);
     JSValue thisValue = callframe->thisValue();
+    bool isConstruct = callframe->newTarget() != jsUndefined();
     JSC::JSArray* argumentsArray = nullptr;
     {
         JSC::ObjectInitializationScope object(vm);
@@ -954,11 +955,15 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionCall, (JSGlobalObject * lexicalGlobalObje
                 fn->returnValues.set(vm, fn, returnValuesArray);
             }
 
+            if (isConstruct && !returnValue.isObject())
+                return JSValue::encode(thisValue);
             return JSValue::encode(returnValue);
         }
         case JSMockImplementation::Kind::ReturnValue: {
             JSValue returnValue = impl->underlyingValue.get();
             setReturnValue(createMockResult(vm, globalObject, "return"_s, returnValue));
+            if (isConstruct && !returnValue.isObject())
+                return JSValue::encode(thisValue);
             return JSValue::encode(returnValue);
         }
         case JSMockImplementation::Kind::ReturnThis: {
@@ -978,6 +983,8 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionCall, (JSGlobalObject * lexicalGlobalObje
     }
 
     setReturnValue(createMockResult(vm, globalObject, "return"_s, jsUndefined()));
+    if (isConstruct)
+        return JSValue::encode(thisValue);
     return JSValue::encode(jsUndefined());
 }
 

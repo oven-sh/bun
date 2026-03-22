@@ -92,6 +92,7 @@ pub const AuditCommand = @import("./cli/audit_command.zig").AuditCommand;
 pub const InitCommand = @import("./cli/init_command.zig").InitCommand;
 pub const WhyCommand = @import("./cli/why_command.zig").WhyCommand;
 pub const FuzzilliCommand = @import("./cli/fuzzilli_command.zig").FuzzilliCommand;
+pub const ReplCommand = @import("./cli/repl_command.zig").ReplCommand;
 
 pub const Arguments = @import("./cli/Arguments.zig");
 
@@ -351,6 +352,8 @@ pub const Command = struct {
         concurrent_test_glob: ?[]const []const u8 = null,
         bail: u32 = 0,
         coverage: TestCommand.CodeCoverageOptions = .{},
+        path_ignore_patterns: []const []const u8 = &.{},
+        path_ignore_patterns_from_cli: bool = false,
         test_filter_pattern: ?[]const u8 = null,
         test_filter_regex: ?*RegularExpression = null,
         max_concurrency: u32 = 20,
@@ -389,6 +392,8 @@ pub const Command = struct {
         expose_gc: bool = false,
         preserve_symlinks_main: bool = false,
         console_depth: ?u16 = null,
+        cron_title: []const u8 = "",
+        cron_period: []const u8 = "",
         cpu_prof: struct {
             enabled: bool = false,
             name: []const u8 = "",
@@ -460,7 +465,6 @@ pub const Command = struct {
             banner: []const u8 = "",
             footer: []const u8 = "",
             css_chunking: bool = false,
-
             bake: bool = false,
             bake_debug_dump_server: bool = false,
             bake_debug_disable_minify: bool = false,
@@ -480,6 +484,7 @@ pub const Command = struct {
             compile_autoload_package_json: bool = false,
             compile_executable_path: ?[]const u8 = null,
             windows: options.WindowsOptions = .{},
+            allow_unresolved: ?[]const []const u8 = null,
         };
 
         pub fn create(allocator: std.mem.Allocator, log: *logger.Log, comptime command: Command.Tag) anyerror!Context {
@@ -694,6 +699,22 @@ pub const Command = struct {
             }
         }
 
+        // WebView host subprocess entry. Must be before StandaloneModuleGraph,
+        // before JSC init, before anything that touches a JS engine. The child
+        // runs CFRunLoopRun() as its real main loop — no Bun runtime past this.
+        if (comptime Environment.isMac) {
+            if (bun.env_var.BUN_INTERNAL_WEBVIEW_HOST.get()) |fd_str| {
+                const fd = std.fmt.parseInt(u31, fd_str, 10) catch {
+                    Output.panic("Invalid BUN_INTERNAL_WEBVIEW_HOST fd: {s}", .{fd_str});
+                };
+                const hostMain = @extern(
+                    *const fn (i32) callconv(.c) noreturn,
+                    .{ .name = "Bun__WebView__hostMain" },
+                );
+                hostMain(fd);
+            }
+        }
+
         // bun build --compile entry point
         if (!bun.feature_flag.BUN_BE_BUN.get()) {
             if (try bun.StandaloneModuleGraph.fromExecutable(bun.default_allocator)) |graph| {
@@ -843,12 +864,8 @@ pub const Command = struct {
                 return;
             },
             .ReplCommand => {
-                // TODO: Put this in native code.
-                var ctx = try Command.init(allocator, log, .BunxCommand);
-                ctx.debug.run_in_bun = true; // force the same version of bun used. fixes bun-debug for example
-                var args = bun.argv[0..];
-                args[1] = "bun-repl";
-                try BunxCommand.exec(ctx, args);
+                const ctx = try Command.init(allocator, log, .RunCommand);
+                try ReplCommand.exec(ctx);
                 return;
             },
             .RemoveCommand => {

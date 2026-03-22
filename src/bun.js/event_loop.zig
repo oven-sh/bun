@@ -125,6 +125,10 @@ const DrainMicrotasksResult = enum(u8) {
 };
 extern fn JSC__JSGlobalObject__drainMicrotasks(*jsc.JSGlobalObject) DrainMicrotasksResult;
 pub fn drainMicrotasksWithGlobal(this: *EventLoop, globalObject: *jsc.JSGlobalObject, jsc_vm: *jsc.VM) bun.JSTerminated!void {
+    // During spawnSync, the isolated event loop shares the same VM/GlobalObject.
+    // Draining microtasks would execute user JavaScript, which must not happen.
+    if (this.virtual_machine.suppress_microtask_drain) return;
+
     jsc.markBinding(@src());
     jsc_vm.releaseWeakRefs();
 
@@ -187,10 +191,20 @@ fn externRunCallback3(global: *jsc.JSGlobalObject, callback: jsc.JSValue, thisVa
     loop.runCallback(callback, global, thisValue, &.{ arg0, arg1, arg2 });
 }
 
+fn externEnter(global: *jsc.JSGlobalObject) callconv(.c) void {
+    global.bunVM().eventLoop().enter();
+}
+
+fn externExit(global: *jsc.JSGlobalObject) callconv(.c) void {
+    global.bunVM().eventLoop().exit();
+}
+
 comptime {
     @export(&externRunCallback1, .{ .name = "Bun__EventLoop__runCallback1" });
     @export(&externRunCallback2, .{ .name = "Bun__EventLoop__runCallback2" });
     @export(&externRunCallback3, .{ .name = "Bun__EventLoop__runCallback3" });
+    @export(&externEnter, .{ .name = "Bun__EventLoop__enter" });
+    @export(&externExit, .{ .name = "Bun__EventLoop__exit" });
 }
 
 /// Prefer `runCallbackWithResult` unless you really need to make sure that microtasks are drained.
@@ -516,11 +530,22 @@ pub fn tick(this: *EventLoop) void {
     this.global.handleRejectedPromises();
 }
 
-pub fn tickWithoutJS(this: *EventLoop) void {
-    const ctx = this.virtual_machine;
+/// Tick the task queue without draining microtasks afterward.
+/// Used by SpawnSyncEventLoop to process I/O completion tasks (pipe read/write,
+/// process exit) without running user JavaScript via the global microtask queue.
+///
+/// `tickQueueWithCount` unconditionally calls `drainMicrotasksWithGlobal` after
+/// every task (Task.zig), which drains the shared JSC microtask queue and can
+/// execute arbitrary user JS. This method sets a flag to suppress that drain.
+pub fn tickTasksOnly(this: *EventLoop) void {
     this.tickConcurrent();
 
-    while (this.tickWithCount(ctx) > 0) {
+    const vm = this.virtual_machine;
+    const prev = vm.suppress_microtask_drain;
+    vm.suppress_microtask_drain = true;
+    defer vm.suppress_microtask_drain = prev;
+
+    while (this.tickWithCount(vm) > 0) {
         this.tickConcurrent();
     }
 }

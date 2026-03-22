@@ -379,6 +379,7 @@ pub const Value = union(Tag) {
     pub fn fastSize(this: *const Value) Blob.SizeType {
         return switch (this.*) {
             .InternalBlob => @as(Blob.SizeType, @truncate(this.InternalBlob.sliceConst().len)),
+            .Blob => this.Blob.size,
             .WTFStringImpl => @as(Blob.SizeType, @truncate(this.WTFStringImpl.byteSlice().len)),
             .Locked => this.Locked.sizeHint(),
             // .InlineBlob => @truncate(Blob.SizeType, this.InlineBlob.sliceConst().len),

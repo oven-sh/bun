@@ -197,6 +197,20 @@ test("Response from TypedArray body stream works", async () => {
   const input = new Uint8Array([1, 2, 3, 4, 5]);
   const response = new Response(input);
   const reader = response.body!.getReader();
-  const { value } = await reader.read();
-  expect(new Uint8Array(value!)).toEqual(input);
+  const chunks: number[] = [];
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(...value);
+  }
+  expect(new Uint8Array(chunks)).toEqual(input);
+});
+
+test("Response snapshots a TypedArray view", async () => {
+  const backing = new Uint8Array([9, 1, 2, 3, 9]);
+  const view = backing.subarray(1, 4);
+  const response = new Response(view);
+  backing[2] = 7;
+
+  expect(new Uint8Array(await response.arrayBuffer())).toEqual(new Uint8Array([1, 2, 3]));
 });

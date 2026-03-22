@@ -36,6 +36,41 @@
 #include <fcntl.h>
 #endif
 
+#if OS(LINUX)
+#include <dlfcn.h>
+// shm_open/shm_unlink live in librt on older glibc and musl; glibc 2.34+
+// moved them into libc. We don't link -lrt, so resolve at runtime.
+// RTLD_DEFAULT finds them in libc on 2.34+; librt fallback covers older
+// distros. macOS doesn't need this — libSystem (always linked) has both.
+namespace {
+struct Shm {
+    int (*open)(const char*, int, mode_t) = nullptr;
+    int (*unlink)(const char*) = nullptr;
+    bool load()
+    {
+        if (open) return true;
+        open = reinterpret_cast<decltype(open)>(dlsym(RTLD_DEFAULT, "shm_open"));
+        unlink = reinterpret_cast<decltype(unlink)>(dlsym(RTLD_DEFAULT, "shm_unlink"));
+        if (open && unlink) return true;
+        void* h = dlopen("librt.so.1", RTLD_NOLOAD | RTLD_LAZY);
+        if (!h) h = dlopen("librt.so.1", RTLD_NOW);
+        if (!h) return false;
+        open = reinterpret_cast<decltype(open)>(dlsym(h, "shm_open"));
+        unlink = reinterpret_cast<decltype(unlink)>(dlsym(h, "shm_unlink"));
+        return open && unlink;
+    }
+};
+Shm s_shm;
+} // namespace
+#define BUN_SHM_OPEN(n, f, m) s_shm.open((n), (f), (m))
+#define BUN_SHM_UNLINK(n) s_shm.unlink((n))
+#define BUN_SHM_LOAD() s_shm.load()
+#elif OS(DARWIN)
+#define BUN_SHM_OPEN(n, f, m) ::shm_open((n), (f), (m))
+#define BUN_SHM_UNLINK(n) ::shm_unlink((n))
+#define BUN_SHM_LOAD() true
+#endif
+
 #include "libusockets.h"
 #include "_libusockets.h"
 
@@ -861,10 +896,15 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
             // Name uses our pid + a monotonic counter — same scheme as the
             // WebKit child, different namespace (chrome- prefix) so they
             // never collide even if someone mixes backends in one process.
+            if (!BUN_SHM_LOAD()) {
+                settle(g, view, entry.slot, false,
+                    createError(g, "shm_open unavailable (librt not found)"_s));
+                return;
+            }
             static uint32_t shmSeq = 0;
             char name[48];
             snprintf(name, sizeof(name), "/bun-chrome-%d-%u", getpid(), ++shmSeq);
-            int fd = shm_open(name, O_CREAT | O_RDWR | O_EXCL, 0600);
+            int fd = BUN_SHM_OPEN(name, O_CREAT | O_RDWR | O_EXCL, 0600);
             if (fd < 0) {
                 settle(g, view, entry.slot, false,
                     createError(g, makeString("shm_open: "_s, WTF::String::fromUTF8(strerror(errno)))));
@@ -874,7 +914,7 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
             if (ftruncate(fd, static_cast<off_t>(sz)) != 0) {
                 int err = errno; // close/unlink can clobber errno
                 ::close(fd);
-                shm_unlink(name);
+                BUN_SHM_UNLINK(name);
                 settle(g, view, entry.slot, false,
                     createError(g, makeString("ftruncate: "_s, WTF::String::fromUTF8(strerror(err)))));
                 return;
@@ -883,7 +923,7 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
             int mmap_err = (map == MAP_FAILED) ? errno : 0;
             ::close(fd);
             if (map == MAP_FAILED) {
-                shm_unlink(name);
+                BUN_SHM_UNLINK(name);
                 settle(g, view, entry.slot, false,
                     createError(g, makeString("mmap: "_s, WTF::String::fromUTF8(strerror(mmap_err)))));
                 return;

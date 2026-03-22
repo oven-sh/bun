@@ -22,10 +22,10 @@ test("s3 presign with missing credentials throws instead of crashing", async () 
     cmd: [bunExe(), "-e", code],
     env,
     stdout: "pipe",
-    stderr: "pipe",
+    stderr: "inherit",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
 
   expect(stdout.trim()).toBe("ERR_S3_MISSING_CREDENTIALS\nERR_S3_INVALID_PATH");
   expect(exitCode).toBe(0);

@@ -20,9 +20,13 @@ import { bunEnv, bunExe } from "harness";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 
-// Read DevToolsActivePort → ws:// URL. Mirrors the Zig readDevToolsActivePort
-// path list so tests probe the same locations the runtime does.
-function probeRemoteChrome(): { wsUrl: string; port: string } | undefined {
+// Read DevToolsActivePort → ws:// URL, then verify the WS actually
+// accepts (the file can be stale, or the new chrome://inspect toggle
+// pops an Allow dialog that the user isn't clicking). Without the
+// verify step, tests time out on the dialog, leaving the Transport
+// singleton stuck and poisoning the other test files in this directory
+// (bun test <dir> runs all files in one process).
+function findDevToolsActivePort(): { wsUrl: string; port: string } | undefined {
   const home = homedir();
   const local = process.env.LOCALAPPDATA;
   const paths =
@@ -59,7 +63,32 @@ function probeRemoteChrome(): { wsUrl: string; port: string } | undefined {
   return undefined;
 }
 
-const remote = probeRemoteChrome();
+// Actually connect and send Browser.getVersion. If the user clicks
+// Allow within 2s, we get a response → tests enabled. If not (nobody
+// at the keyboard, stale file, dialog dismissed), test.todo — the
+// singleton stays clean and webview-chrome.test.ts runs unaffected.
+async function probeRemoteChrome(): Promise<{ wsUrl: string; port: string } | undefined> {
+  const port = findDevToolsActivePort();
+  if (!port) return undefined;
+  return new Promise(resolve => {
+    const ws = new WebSocket(port.wsUrl);
+    const bail = () => {
+      ws.close();
+      resolve(undefined);
+    };
+    const timer = setTimeout(bail, 2000);
+    ws.onopen = () => ws.send('{"id":1,"method":"Browser.getVersion"}');
+    ws.onmessage = () => {
+      clearTimeout(timer);
+      ws.close();
+      resolve(port);
+    };
+    ws.onerror = bail;
+    ws.onclose = () => clearTimeout(timer);
+  });
+}
+
+const remote = await probeRemoteChrome();
 const it = remote ? test : test.todo;
 
 const html = (h: string) => "data:text/html," + encodeURIComponent(h);

@@ -378,14 +378,17 @@ public:
         const WTF::String& path = {}, const WTF::Vector<WTF::String>& extraArgv = {},
         bool stdoutInherit = false, bool stderrInherit = false);
 
-    // Connect to an already-running Chrome's DevTools endpoint. url is
-    // the full WebSocket URL (ws://127.0.0.1:9222/devtools/browser/<id>
-    // — from GET /json/version's webSocketDebuggerUrl field). Same
-    // singleton semantics as ensureSpawned: first call wins, subsequent
-    // calls with a different URL no-op. Returns false if the connect
-    // throws synchronously (malformed URL); actual connection failure
-    // arrives via onClose → rejectAllAndMarkDead.
-    bool ensureConnected(Zig::GlobalObject*, const WTF::String& wsUrl);
+    // Connect to an already-running Chrome's DevTools endpoint. wsUrl is
+    // a full ws:// URL (from DevToolsActivePort or user-supplied). Same
+    // singleton semantics as ensureSpawned: first call wins.
+    //
+    // autoDetected=true means we read DevToolsActivePort ourselves and
+    // the user didn't explicitly ask for WS mode — if the connect fails
+    // (stale file: Chrome crashed/restarted), wsOnClose falls back to
+    // ensureSpawned instead of rejecting the user's promise with a
+    // confusing WebSocket error. autoDetected=false means explicit
+    // backend.url; connect failure surfaces directly.
+    bool ensureConnected(Zig::GlobalObject*, const WTF::String& wsUrl, bool autoDetected);
 
     // Next CDP id — caller uses it with Command(id, ...) then calls send().
     uint32_t nextId() { return m_nextId++; }
@@ -414,6 +417,10 @@ public:
     // sendTextNative until m_state == OPEN. Drained in wsOnOpen.
     WTF::Vector<WTF::String> m_wsPending;
     bool m_wsOpen = false;
+    // True when ensureConnected was called from auto-detect (the
+    // constructor read DevToolsActivePort) — gates the stale-file
+    // fallback in wsOnClose. False for explicit backend.url.
+    bool m_wasAutoDetected = false;
     bool m_dead = false;
 
     uint32_t m_nextId = 1;

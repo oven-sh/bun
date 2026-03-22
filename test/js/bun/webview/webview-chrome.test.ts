@@ -106,16 +106,15 @@ function findChrome(): string | undefined {
 const chromePath = findChrome();
 const it = chromePath ? test : test.todo;
 
-// Force spawn-mode by passing the explicit path. Without this, the
-// constructor auto-detects a running Chrome via DevToolsActivePort and
-// connects to it over WebSocket — which (a) pops Chrome's "Allow remote
-// debugging?" dialog on every test and (b) creates visible tabs in the
-// user's Chrome. The explicit path skips auto-detect.
+// url:false forces spawn-mode — skips DevToolsActivePort auto-detect
+// which would connect to the dev's running Chrome, pop the "Allow remote
+// debugging?" dialog on every test, and create visible tabs. The
+// executable path is still auto-found.
 //
 // WebSocket-transport tests live in webview-chrome-ws.test.ts — the
 // Transport singleton means you can't mix pipe-mode (this file) and
 // connect-mode in one process.
-const chrome = { type: "chrome" as const, path: chromePath };
+const chrome = { type: "chrome" as const, url: false as const };
 
 const html = (h: string) => "data:text/html," + encodeURIComponent(h);
 
@@ -528,9 +527,7 @@ it("chrome: closeAll() kills the subprocess and pending promises reject", async 
       bunExe(),
       "-e",
       `
-        // Explicit path forces spawn-mode — skips DevToolsActivePort
-        // auto-detect that would connect to the dev's running Chrome.
-        const view = new Bun.WebView({ backend: {type:"chrome", path:process.env.CHROME_PATH}, width: 200, height: 200 });
+        const view = new Bun.WebView({ backend: {type:"chrome", url:false}, width: 200, height: 200 });
         await view.navigate("data:text/html,<body>test</body>");
         const p = view.evaluate("new Promise(() => {})"); // never resolves
         Bun.WebView.closeAll();
@@ -544,7 +541,7 @@ it("chrome: closeAll() kills the subprocess and pending promises reject", async 
         console.log("rejected");
       `,
     ],
-    env: { ...bunEnv, CHROME_PATH: chromePath },
+    env: bunEnv,
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
@@ -561,12 +558,12 @@ it("chrome: backend.stderr defaults to ignore (Chrome noise hidden)", async () =
       bunExe(),
       "-e",
       `
-        const view = new Bun.WebView({ backend: {type:"chrome", path:process.env.CHROME_PATH}, width: 200, height: 200 });
+        const view = new Bun.WebView({ backend: {type:"chrome", url:false}, width: 200, height: 200 });
         await view.navigate("data:text/html,<body>test</body>");
         view.close();
       `,
     ],
-    env: { ...bunEnv, CHROME_PATH: chromePath },
+    env: bunEnv,
     stderr: "pipe",
   });
   const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
@@ -1001,7 +998,7 @@ it("chrome: console: globalThis.console forwards to parent's stdout", async () =
       "-e",
       `
       const view = new Bun.WebView({
-        backend: {type:"chrome", path:process.env.CHROME_PATH}, width: 200, height: 200,
+        backend: {type:"chrome", url:false}, width: 200, height: 200,
         console: globalThis.console,
       });
       await view.navigate("data:text/html,<body></body>");
@@ -1010,7 +1007,7 @@ it("chrome: console: globalThis.console forwards to parent's stdout", async () =
       view.close();
       `,
     ],
-    env: { ...bunEnv, CHROME_PATH: chromePath },
+    env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",
   });

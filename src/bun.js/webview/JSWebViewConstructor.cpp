@@ -115,6 +115,7 @@ JSC_DEFINE_HOST_FUNCTION(constructWebView, (JSGlobalObject * globalObject, CallF
 #endif
     WTF::String chromePath;
     WTF::String chromeWsUrl;
+    bool chromeSkipAutoDetect = false;
     WTF::Vector<WTF::String> chromeArgv;
     bool stdoutInherit = false;
     bool stderrInherit = false;
@@ -185,15 +186,15 @@ JSC_DEFINE_HOST_FUNCTION(constructWebView, (JSGlobalObject * globalObject, CallF
                     "backend.path must be a string"_s);
             }
 
-            // url: connect to an already-running Chrome instead of
-            // spawning. Accepts three forms:
-            //   - "127.0.0.1:9222" (bare host:port, what Chrome's Remote
-            //     Debugging panel shows) — we GET /json/version to
-            //     discover webSocketDebuggerUrl
-            //   - "http://127.0.0.1:9222" — same discovery
-            //   - "ws://127.0.0.1:9222/devtools/browser/<id>" — full URL,
-            //     connect directly
-            // Conflicts with path/argv/stdout/stderr (no subprocess).
+            // url: controls the connect-vs-spawn choice.
+            //   - "ws://..." — connect to that DevTools WebSocket directly
+            //   - false — skip DevToolsActivePort auto-detect, always spawn
+            //     (executable path still auto-found if `path` unset)
+            //   - undefined (default) — auto-detect: if DevToolsActivePort
+            //     exists, connect to the existing Chrome; else spawn
+            // Bare host:port isn't accepted — Chrome's new chrome://inspect
+            // toggle 404s /json/version so there's no HTTP discovery path;
+            // the file IS the discovery source.
             JSValue urlOpt = beObj->get(globalObject, Identifier::fromString(vm, "url"_s));
             RETURN_IF_EXCEPTION(scope, {});
             if (urlOpt.isString()) {
@@ -202,9 +203,15 @@ JSC_DEFINE_HOST_FUNCTION(constructWebView, (JSGlobalObject * globalObject, CallF
                         "backend.url requires type: \"chrome\""_s);
                 chromeWsUrl = urlOpt.toWTFString(globalObject);
                 RETURN_IF_EXCEPTION(scope, {});
+                if (!chromeWsUrl.startsWith("ws://"_s) && !chromeWsUrl.startsWith("wss://"_s))
+                    return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_VALUE,
+                        "backend.url must be a ws:// URL (read DevToolsActivePort from Chrome's profile dir, "
+                        "or omit url to auto-detect)"_s);
+            } else if (urlOpt.isFalse()) {
+                chromeSkipAutoDetect = true;
             } else if (!urlOpt.isUndefined()) {
                 return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE,
-                    "backend.url must be a string"_s);
+                    "backend.url must be a ws:// string or false"_s);
             }
 
             JSValue argvVal = beObj->get(globalObject, Identifier::fromString(vm, "argv"_s));
@@ -332,7 +339,8 @@ JSC_DEFINE_HOST_FUNCTION(constructWebView, (JSGlobalObject * globalObject, CallF
     if (backend == WebViewBackend::Chrome) {
         Bun__Feature__webview_chrome += 1;
         JSWebView* view = JSWebView::createChrome(globalObject, structure, width, height,
-            persistDir, chromePath, chromeArgv, stdoutInherit, stderrInherit, chromeWsUrl);
+            persistDir, chromePath, chromeArgv, stdoutInherit, stderrInherit, chromeWsUrl,
+            chromeSkipAutoDetect);
         if (!view) {
             return Bun::throwError(globalObject, scope, ErrorCode::ERR_DLOPEN_FAILED,
                 chromeWsUrl.isEmpty()

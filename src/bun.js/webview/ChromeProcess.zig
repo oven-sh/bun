@@ -108,6 +108,7 @@ fn findChrome(alloc: std.mem.Allocator, explicitPath: ?[*:0]const u8) !?[:0]cons
         "google-chrome",
         "chromium-browser",
         "chromium",
+        "brave-browser",
         "microsoft-edge",
         "chrome", // brew cask symlink, some CI setups
     };
@@ -128,6 +129,7 @@ fn findChrome(alloc: std.mem.Allocator, explicitPath: ?[*:0]const u8) !?[:0]cons
             "Google Chrome.app/Contents/MacOS/Google Chrome",
             "Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary",
             "Chromium.app/Contents/MacOS/Chromium",
+            "Brave Browser.app/Contents/MacOS/Brave Browser",
             "Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
         };
         // /Applications then ~/Applications — per-user installs (non-admin
@@ -150,6 +152,8 @@ fn findChrome(alloc: std.mem.Allocator, explicitPath: ?[*:0]const u8) !?[:0]cons
             "/usr/bin/chromium-browser",
             "/usr/bin/chromium",
             "/snap/bin/chromium",
+            "/usr/bin/brave-browser",
+            "/snap/bin/brave",
             "/usr/bin/microsoft-edge",
         };
         for (absolute) |c| {
@@ -366,75 +370,13 @@ fn spawn(vm: *jsc.VirtualMachine, userDataDir: ?[*:0]const u8, explicitPath: ?[*
 // Implemented in ChromeBackend.cpp. Rejects all pending CDP promises.
 extern fn Bun__Chrome__died(signo: i32) void;
 
-// --- /json/version discovery ------------------------------------------------
-// When the user passes backend.url as a bare host:port (or http://) instead
-// of the full ws://.../devtools/browser/<id>, we GET /json/version to read
-// webSocketDebuggerUrl. Chrome's Remote Debugging panel shows "127.0.0.1:9222"
-// — that's the HTTP endpoint, not the WS URL, so this discovery step makes
-// `url: "127.0.0.1:9222"` Just Work.
-//
-// Async via AsyncHTTP on the HTTP thread — the endpoint might not be
-// listening (wrong port, Chrome not running, firewalled). onHttpResult fires
-// on the HTTP thread; we bounce to the JS thread via ConcurrentTask before
-// calling back into C++ (which will WebSocket::create, which needs the JS
-// thread's usockets context).
-
-const DiscoverTask = struct {
-    http: bun.http.AsyncHTTP,
-    response: bun.MutableString,
-    url_buf: []u8, // owned — http://<host:port>/json/version
-    vm: *jsc.VirtualMachine,
-    result_ok: bool = false,
-
-    pub const new = bun.TrivialNew(@This());
-
-    // HTTP thread — stash result, enqueue JS-thread continuation.
-    // ConcurrentTask.fromCallback heap-allocates the task wrapper (auto-
-    // deleted after the callback runs); we only stash what runOnJSThread
-    // needs. The response body is in this.response — the MutableString
-    // is heap-backed, safe to read from the JS thread.
-    fn onHttpResult(this: *DiscoverTask, _: *bun.http.AsyncHTTP, result: bun.http.HTTPClientResult) void {
-        this.result_ok = result.isSuccess() and
-            if (result.metadata) |m| m.response.status_code == 200 else false;
-        this.vm.eventLoop().enqueueTaskConcurrent(
-            jsc.ConcurrentTask.fromCallback(this, DiscoverTask.runOnJSThread),
-        );
-    }
-
-    // JS thread — parse webSocketDebuggerUrl, call C++, clean up.
-    fn runOnJSThread(this: *DiscoverTask) void {
-        defer this.deinit();
-        if (!this.result_ok) {
-            Bun__CDPTransport__onDiscoverFailed(this.vm.global);
-            return;
-        }
-        // Response body: {"Browser":"...","Protocol-Version":"...",
-        // "webSocketDebuggerUrl":"ws://127.0.0.1:9222/devtools/browser/<id>",
-        // ...}. The URL has no escapes (it's ASCII host:port/path), so a
-        // substring scan beats pulling in a JSON parser for one field.
-        const body = this.response.list.items;
-        const key = "\"webSocketDebuggerUrl\":\"";
-        const start = bun.strings.indexOf(body, key) orelse {
-            Bun__CDPTransport__onDiscoverFailed(this.vm.global);
-            return;
-        };
-        const url_start = start + key.len;
-        const url_end = bun.strings.indexOfChar(body[url_start..], '"') orelse {
-            Bun__CDPTransport__onDiscoverFailed(this.vm.global);
-            return;
-        };
-        const ws_url = body[url_start..][0..url_end];
-        Bun__CDPTransport__onDiscovered(this.vm.global, ws_url.ptr, ws_url.len);
-    }
-
-    fn deinit(this: *DiscoverTask) void {
-        this.response.deinit();
-        this.http.clearData();
-        this.http.client.deinit();
-        bun.default_allocator.free(this.url_buf);
-        bun.destroy(this);
-    }
-};
+// --- DevToolsActivePort discovery -------------------------------------------
+// Chrome writes <port>\n/devtools/browser/<id> to DevToolsActivePort in its
+// profile dir when remote debugging is on (via --remote-debugging-port OR
+// the chrome://inspect toggle). Sync file read — instant answer, no network.
+// The new chrome://inspect toggle does NOT expose /json/version (404), so
+// this file is the ONLY discovery mechanism for that mode. chrome-devtools-
+// mcp does the same.
 
 /// Read DevToolsActivePort from Chrome's default profile directory.
 /// Chrome writes this when --remote-debugging-port is set OR when the
@@ -443,10 +385,6 @@ const DiscoverTask = struct {
 /// full ws:// URL in out_buf, or null if the file doesn't exist /
 /// is malformed / the profile dir is non-standard.
 ///
-/// This is the fast path — no network, instant answer. chrome-devtools-mcp
-/// does the same. Falls back to HTTP GET /json/version (below) when the
-/// file isn't there or the user passed an explicit host:port that might
-/// be a different profile or a remote Chrome.
 fn readDevToolsActivePort(out_buf: *std.ArrayListUnmanaged(u8)) ?void {
     // Default profile locations. Multiple Chrome channels (stable/beta/
     // canary) have distinct dirs; try each. Chromium and Edge also
@@ -463,12 +401,14 @@ fn readDevToolsActivePort(out_buf: *std.ArrayListUnmanaged(u8)) ?void {
         "Library/Application Support/Google/Chrome Canary/DevToolsActivePort",
         "Library/Application Support/Google/Chrome Beta/DevToolsActivePort",
         "Library/Application Support/Chromium/DevToolsActivePort",
+        "Library/Application Support/BraveSoftware/Brave-Browser/DevToolsActivePort",
         "Library/Application Support/Microsoft Edge/DevToolsActivePort",
     } else if (comptime bun.Environment.isLinux) &.{
         ".config/google-chrome/DevToolsActivePort",
         ".config/google-chrome-beta/DevToolsActivePort",
         ".config/google-chrome-unstable/DevToolsActivePort",
         ".config/chromium/DevToolsActivePort",
+        ".config/BraveSoftware/Brave-Browser/DevToolsActivePort",
         ".config/microsoft-edge/DevToolsActivePort",
     } else if (comptime bun.Environment.isWindows) &.{
         // Windows installer layout: <vendor>\<channel>\User Data\
@@ -476,6 +416,7 @@ fn readDevToolsActivePort(out_buf: *std.ArrayListUnmanaged(u8)) ?void {
         "Google\\Chrome SxS\\User Data\\DevToolsActivePort", // Canary
         "Google\\Chrome Beta\\User Data\\DevToolsActivePort",
         "Chromium\\User Data\\DevToolsActivePort",
+        "BraveSoftware\\Brave-Browser\\User Data\\DevToolsActivePort",
         "Microsoft\\Edge\\User Data\\DevToolsActivePort",
     } else &.{};
 
@@ -512,12 +453,11 @@ fn readDevToolsActivePort(out_buf: *std.ArrayListUnmanaged(u8)) ?void {
 /// Chrome; else spawn our own. Sync file read means the constructor
 /// stays synchronous and the decision is made before any I/O kicks off.
 ///
-/// The file can be stale (Chrome crashed without cleaning up, or was
-/// restarted with a different browser-id). The subsequent WS connect
-/// will fail with the dialog-dismissed/connection-refused close code;
-/// onClose → rejectAllAndMarkDead surfaces that to the user's first
-/// `await navigate()`. We don't pre-validate (that'd need a network
-/// round-trip which defeats the point of the file).
+/// The file can be stale — Chrome crashed without cleaning up, or was
+/// restarted with a different browser-id. The subsequent WS connect
+/// fails with a close code; C++ falls back to spawn in that case
+/// (m_wasAutoDetected gate in wsOnClose). We don't pre-validate here
+/// because that'd need a network round-trip which defeats the file.
 pub export fn Bun__Chrome__autoDetect(out_buf: [*]u8, out_cap: usize) usize {
     var buf: std.ArrayListUnmanaged(u8) = .empty;
     defer buf.deinit(bun.default_allocator);
@@ -528,114 +468,6 @@ pub export fn Bun__Chrome__autoDetect(out_buf: [*]u8, out_cap: usize) usize {
     }
     return 0;
 }
-
-/// Discover the ws:// debugger URL for a bare host:port. Two paths:
-///
-/// 1. DevToolsActivePort file (sync, instant): Chrome's new
-///    chrome://inspect/#remote-debugging toggle writes this file but does
-///    NOT expose /json/version (404). If the file's port matches the
-///    user's input and the host is localhost-ish, use the file's path
-///    directly. This is the primary path for the new toggle.
-///
-/// 2. GET /json/version (async, HTTP thread): classic --remote-debugging-
-///    port Chrome exposes this. Fallback for when the file doesn't match
-///    (different profile, remote host, or classic launch).
-///
-/// `input` is bare host:port or http://host:port. Calls
-/// Bun__CDPTransport__onDiscovered (JS thread) with the ws:// URL on
-/// success, or __onDiscoverFailed on any error. C++ owns the input
-/// string; we copy into url_buf.
-pub export fn Bun__Chrome__discover(global: *jsc.JSGlobalObject, input: [*]const u8, input_len: usize) void {
-    const alloc = bun.default_allocator;
-    const in = input[0..input_len];
-
-    // Normalize: strip http:// prefix if present.
-    const host = if (bun.strings.hasPrefixComptime(in, "http://"))
-        in["http://".len..]
-    else
-        in;
-
-    // Fast path: DevToolsActivePort file. Only valid when the host is
-    // localhost (the file is per-machine) and the port matches what
-    // Chrome wrote. A user passing a remote host or non-default port
-    // skips this and goes to HTTP GET.
-    if (isLocalhost(host)) {
-        var buf: std.ArrayListUnmanaged(u8) = .empty;
-        defer buf.deinit(alloc);
-        if (readDevToolsActivePort(&buf)) |_| {
-            // buf is "ws://127.0.0.1:<port>/devtools/browser/<id>".
-            // Check the port in buf matches what the user asked for.
-            // Extract user's port (after the last ':').
-            const colon = std.mem.lastIndexOfScalar(u8, host, ':') orelse 0;
-            const user_port = host[colon + 1 ..];
-            // Find ":<port>/" in the ws:// URL we built.
-            var needle_buf: [8]u8 = undefined;
-            const needle = std.fmt.bufPrint(&needle_buf, ":{s}/", .{user_port}) catch {
-                // port string too long to be a valid port — skip to HTTP
-                return discoverViaHttp(global, alloc, host);
-            };
-            if (bun.strings.contains(buf.items, needle)) {
-                Bun__CDPTransport__onDiscovered(global, buf.items.ptr, buf.items.len);
-                return;
-            }
-            // Port mismatch — the file is for a different Chrome. Fall
-            // through to HTTP GET (the user's port might be a second
-            // Chrome with classic --remote-debugging-port).
-        }
-    }
-
-    discoverViaHttp(global, alloc, host);
-}
-
-fn isLocalhost(host: []const u8) bool {
-    // host:port — strip the port for the check.
-    const h = if (std.mem.lastIndexOfScalar(u8, host, ':')) |c| host[0..c] else host;
-    return bun.strings.eqlComptime(h, "localhost") or
-        bun.strings.eqlComptime(h, "127.0.0.1") or
-        bun.strings.eqlComptime(h, "[::1]") or
-        bun.strings.eqlComptime(h, "::1");
-}
-
-fn discoverViaHttp(global: *jsc.JSGlobalObject, alloc: std.mem.Allocator, host: []const u8) void {
-    const url_buf = std.fmt.allocPrint(alloc, "http://{s}/json/version", .{host}) catch bun.outOfMemory();
-
-    const vm = global.bunVM();
-    var task = DiscoverTask.new(.{
-        .http = undefined,
-        .response = bun.MutableString.initEmpty(alloc),
-        .url_buf = url_buf,
-        .vm = vm,
-    });
-
-    const url = bun.URL.parse(url_buf);
-    task.http = bun.http.AsyncHTTP.init(
-        alloc,
-        .GET,
-        url,
-        .{},
-        "",
-        &task.response,
-        "",
-        bun.http.HTTPClientResult.Callback.New(*DiscoverTask, DiscoverTask.onHttpResult).init(task),
-        .manual,
-        .{},
-    );
-    // Localhost GET is instant; a dead port fails fast with
-    // ECONNREFUSED. The HTTP client's default 5-minute timeout only
-    // matters if something accepts but never responds — unlikely for
-    // /json/version but the user's `await navigate()` would hang
-    // either way, so they'd notice.
-    bun.http.HTTPThread.init(&.{});
-    var batch = bun.ThreadPool.Batch{};
-    task.http.schedule(alloc, &batch);
-    bun.http.http_thread.schedule(batch);
-}
-
-// C++ side (ChromeBackend.cpp): onDiscovered does WebSocket::create with
-// the ws:// URL; onDiscoverFailed calls rejectAllAndMarkDead. Both must
-// run on the JS thread (DiscoverTask.runOnJSThread ensures that).
-extern fn Bun__CDPTransport__onDiscovered(global: *jsc.JSGlobalObject, url: [*]const u8, len: usize) void;
-extern fn Bun__CDPTransport__onDiscoverFailed(global: *jsc.JSGlobalObject) void;
 
 const log = bun.Output.scoped(.Chrome, .hidden);
 

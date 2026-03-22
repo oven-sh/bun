@@ -5,6 +5,7 @@
 #include "ZigGlobalObject.h"
 #include "BunClientData.h"
 #include "ScriptExecutionContext.h"
+#include "BunString.h"
 #include "../bindings/webcore/WebSocket.h"
 #include <JavaScriptCore/ConsoleClient.h>
 #include <JavaScriptCore/ScriptArguments.h>
@@ -351,69 +352,53 @@ static void wsOnMessage(void* ctx, std::span<const char> utf8)
 static void wsOnClose(void* ctx, unsigned short code)
 {
     auto& t = *static_cast<Transport*>(ctx);
+    bool neverOpened = !t.m_wsOpen;
     t.m_wsOpen = false;
-    // rejectAllAndMarkDead settles every pending promise with an error
-    // and flips m_dead. If onOpen never fired (connect failure), the
-    // pending map holds the first navigate's Target.createTarget — it
-    // rejects with this message, surfacing the failure to the user.
-    t.rejectAllAndMarkDead(makeString("WebSocket closed (code "_s, code, ')'));
     t.m_ws = nullptr;
-}
 
-// Actually create the WebSocket and wire native callbacks. Called
-// directly by ensureConnected when the user passed a full ws:// URL, or
-// by onDiscovered after /json/version resolves the ws:// URL for a bare
-// host:port.
-static void connectWebSocket(Transport& t, Zig::GlobalObject* zig, const WTF::String& wsUrl)
-{
-    auto* ctx = zig->scriptExecutionContext();
-    auto result = WebCore::WebSocket::create(*ctx, wsUrl);
-    if (result.hasException()) {
-        t.rejectAllAndMarkDead("invalid WebSocket URL"_s);
-        return;
+    // Stale-file fallback: if we auto-detected (read DevToolsActivePort
+    // ourselves, user didn't ask for WS) AND the connect never opened
+    // (stale port/path from a dead Chrome), fall back to spawn. The
+    // pending commands re-send over the pipe. If onOpen DID fire, the
+    // user's Chrome was reachable and now isn't — that's a real error
+    // (user killed Chrome, dialog dismissed, etc.), surface it.
+    //
+    // m_wsPending holds the Command bodies as WTF::Strings. Those are
+    // pipe-safe (the pipe also carries UTF-8 JSON, just NUL-delimited).
+    // ensureSpawned sets m_mode = Pipe; send() routes to writeRaw; the
+    // first spawn's onOpen path (socket adoption) drains the same way.
+    // But m_wsPending stores the NON-NUL-terminated body. The pipe needs
+    // the NUL. We write each body + NUL manually after spawn.
+    if (t.m_wasAutoDetected && neverOpened) {
+        t.m_mode = TransportMode::None;
+        t.m_wasAutoDetected = false;
+        // m_wsPending survives — we replay it below after spawn. Don't
+        // let ensureSpawned's m_dead-reset clear it.
+        auto pending = std::exchange(t.m_wsPending, {});
+        if (t.ensureSpawned(t.m_global)) {
+            // Replay queued commands over the pipe. Each body is a
+            // complete CDP JSON; append the NUL terminator the pipe
+            // protocol needs.
+            for (auto& body : pending) {
+                Bun::UTF8View view(body);
+                auto s = view.span();
+                t.writeRaw(s.data(), s.size());
+                t.writeRaw("\0", 1);
+            }
+            return;
+        }
+        // Spawn also failed — fall through to reject.
     }
-    t.m_ws = result.releaseReturnValue();
-    // setNativeCallbacks swaps the MessageEvent/dispatchEvent path for
-    // direct C++ calls BEFORE the upgrade kicks off — if we raced the
-    // handshake completing and a message arriving, the normal path
-    // would dispatch via EventTarget (empty listener map, silently
-    // dropped). Setting first is safe: create() queues the connect on
-    // the event loop, it can't fire before this function returns.
-    t.m_ws->setNativeCallbacks({
-        .ctx = &t,
-        .onOpen = wsOnOpen,
-        .onMessage = wsOnMessage,
-        .onClose = wsOnClose,
-    });
+
+    // rejectAllAndMarkDead settles every pending promise with an error.
+    // If onOpen never fired (connect failure), m_pending holds the first
+    // navigate's Target.createTarget — it rejects with this message.
+    t.rejectAllAndMarkDead(makeString("Chrome WebSocket closed (code "_s, code, ')'));
 }
 
-// Zig calls these on the JS thread after DiscoverTask (AsyncHTTP GET
-// /json/version) completes. onDiscovered gets the extracted ws:// URL;
-// onDiscoverFailed fires for connect-refused, timeout, non-200, or
-// missing field. Both paths already have the JS thread's usockets
-// context so WebSocket::create is safe here.
-extern "C" void Bun__CDPTransport__onDiscovered(Zig::GlobalObject* g, const char* url, size_t len)
+bool Transport::ensureConnected(Zig::GlobalObject* zig, const WTF::String& wsUrl, bool autoDetected)
 {
-    auto& t = transport();
-    if (t.m_dead) return; // user called closeAll during discovery
-    connectWebSocket(t, g, WTF::String::fromUTF8(std::span<const char>(url, len)));
-}
-
-extern "C" void Bun__CDPTransport__onDiscoverFailed(Zig::GlobalObject*)
-{
-    transport().rejectAllAndMarkDead(
-        "Chrome discovery failed: GET /json/version unreachable or malformed. "
-        "Check the port and that Remote Debugging is enabled (chrome://inspect/#remote-debugging)."_s);
-}
-
-// From ChromeProcess.zig — async GET /json/version on the HTTP thread,
-// calls back via Bun__CDPTransport__onDiscovered on the JS thread.
-extern "C" void Bun__Chrome__discover(Zig::GlobalObject*, const char* input, size_t len);
-
-bool Transport::ensureConnected(Zig::GlobalObject* zig, const WTF::String& url)
-{
-    // Already connected (or connecting/discovering) — singleton
-    // semantics, first call wins.
+    // Already connected — singleton semantics, first call wins.
     if (m_mode != TransportMode::None && !m_dead) return true;
     if (m_dead) {
         m_dead = false;
@@ -425,18 +410,27 @@ bool Transport::ensureConnected(Zig::GlobalObject* zig, const WTF::String& url)
     }
     m_global = zig;
     m_mode = TransportMode::WebSocket;
+    m_wasAutoDetected = autoDetected;
 
-    // Full ws:// URL → connect directly. Bare host:port or http:// →
-    // async GET /json/version to discover the ws:// URL, then
-    // onDiscovered does the connect. Commands queue in m_wsPending
-    // either way (they drain in wsOnOpen regardless of which path got
-    // us there).
-    if (url.startsWith("ws://"_s) || url.startsWith("wss://"_s)) {
-        connectWebSocket(*this, zig, url);
-    } else {
-        auto utf8 = url.utf8();
-        Bun__Chrome__discover(zig, utf8.data(), utf8.length());
+    auto* ctx = zig->scriptExecutionContext();
+    auto result = WebCore::WebSocket::create(*ctx, wsUrl);
+    if (result.hasException()) {
+        m_dead = true;
+        m_mode = TransportMode::None;
+        return false;
     }
+    m_ws = result.releaseReturnValue();
+    // setNativeCallbacks swaps the MessageEvent/dispatchEvent path for
+    // direct C++ calls BEFORE the upgrade completes — handshake is async
+    // (queued on the event loop, can't fire before this returns). If we
+    // raced, the normal path would dispatch via EventTarget into an
+    // empty listener map and the message would silently drop.
+    m_ws->setNativeCallbacks({
+        .ctx = this,
+        .onOpen = wsOnOpen,
+        .onMessage = wsOnMessage,
+        .onClose = wsOnClose,
+    });
     return true;
 }
 
@@ -1233,6 +1227,26 @@ void Transport::updateKeepAlive()
     m_sockRefd = want;
     Bun__eventLoop__incrementRefConcurrently(
         WebCore::clientData(m_global->vm())->bunVM, want ? 1 : -1);
+
+    // WebSocket mode: close the connection when the last view is gone.
+    // We're connected to the USER'S Chrome — keeping the WS open after
+    // they're done holds a DevTools session (shows "<Bun> is debugging
+    // this browser" in Chrome's UI). Pipe mode keeps the subprocess
+    // alive (it's OURS), but the user's Chrome should be released.
+    //
+    // m_mode reset to None means the next `new Bun.WebView()` re-runs
+    // auto-detect → reconnect (pops the Allow dialog again, which is
+    // correct — it's a new session). The close handshake is async but
+    // we don't wait; setNativeCallbacks({}) prevents wsOnClose from
+    // re-entering rejectAllAndMarkDead on the ack.
+    if (!want && m_mode == TransportMode::WebSocket && m_ws) {
+        auto ws = std::exchange(m_ws, nullptr);
+        ws->setNativeCallbacks({});
+        ws->close(std::nullopt, WTF::String());
+        m_wsOpen = false;
+        m_wasAutoDetected = false;
+        m_mode = TransportMode::None;
+    }
 }
 
 // --- CDP::Ops --------------------------------------------------------------

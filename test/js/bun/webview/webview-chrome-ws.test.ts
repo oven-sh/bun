@@ -16,6 +16,7 @@
 // to click Allow. CI never hits this (no DevToolsActivePort → test.todo).
 
 import { expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 
@@ -79,22 +80,49 @@ it("connect via full ws:// URL", async () => {
   }
 });
 
-it("connect via bare host:port (DevToolsActivePort discovery)", async () => {
-  // "127.0.0.1:<port>" → Zig reads DevToolsActivePort (sync file read),
-  // builds ws:// URL, calls onDiscovered synchronously. No HTTP GET —
-  // the new toggle 404s /json/version anyway. Commands still queue
-  // until the WS handshake completes (async).
+it("auto-detect: backend:'chrome' without url/path reads DevToolsActivePort", async () => {
+  // No url, no path, no argv → Zig reads DevToolsActivePort (sync file
+  // read), builds ws:// URL, ensureConnected with autoDetected=true.
+  // Commands queue until the WS handshake completes. If the file were
+  // stale (dead Chrome), wsOnClose would fall back to spawn — but
+  // since probeRemoteChrome found the same file, we know Chrome IS up.
   const view = new Bun.WebView({
-    backend: { type: "chrome", url: `127.0.0.1:${remote!.port}` },
+    backend: "chrome",
     width: 400,
     height: 300,
   });
   try {
-    await view.navigate(html("<body>file-discovery</body>"));
-    expect(await view.evaluate("document.body.textContent")).toBe("file-discovery");
+    await view.navigate(html("<body>auto-detect</body>"));
+    expect(await view.evaluate("document.body.textContent")).toBe("auto-detect");
   } finally {
     view.close();
   }
+});
+
+it("url:false skips auto-detect even when DevToolsActivePort exists", async () => {
+  // Subprocess-isolated — spawning would lock this process's singleton
+  // into Pipe mode (pipe doesn't idle-close; the subprocess is ours),
+  // breaking subsequent WS tests. Explicit opt-out — spawn headless
+  // Chrome despite the file. This is the automation-friendly path (no
+  // dialog, no visible tabs).
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const view = new Bun.WebView({ backend: {type:"chrome", url:false}, width: 200, height: 200 });
+        await view.navigate("data:text/html,<body>spawned</body>");
+        const t = await view.evaluate("document.body.textContent");
+        if (t !== "spawned") throw new Error("got: " + t);
+        view.close();
+        console.log("ok");
+      `,
+    ],
+    env: bunEnv,
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout.trim()).toBe("ok");
+  expect(exitCode).toBe(0);
 });
 
 it("screenshot over WebSocket transport", async () => {

@@ -7993,30 +7993,30 @@ declare module "bun" {
            */
           path?: string;
           /**
-           * Connect to an **already-running** Chrome instead of spawning
-           * one. Accepts:
+           * Controls the connect-vs-spawn choice:
            *
-           * - `"127.0.0.1:9222"` — bare host:port (what Chrome's Remote
-           *   Debugging panel shows). Bun GETs `/json/version` to discover
-           *   the WebSocket debugger URL.
-           * - `"http://127.0.0.1:9222"` — same discovery.
-           * - `"ws://127.0.0.1:9222/devtools/browser/<id>"` — full URL,
-           *   connect directly.
+           * - `"ws://..."` — connect to that DevTools WebSocket directly.
+           *   Get the URL from Chrome's `DevToolsActivePort` file
+           *   (`<port>\n<path>`, in the profile directory).
+           * - `false` — skip auto-detect, always spawn a fresh Chrome.
+           *   Executable path still auto-found unless `path` is set.
+           * - `undefined` (default) — **auto-detect**: if a
+           *   `DevToolsActivePort` file exists (Chrome with remote
+           *   debugging is running), connect to it; else spawn.
            *
            * Enable remote debugging in Chrome at
            * `chrome://inspect/#remote-debugging`, or launch with
-           * `--remote-debugging-port=9222`.
+           * `--remote-debugging-port=9222`. Both write
+           * `DevToolsActivePort`.
            *
            * **Note**: The `chrome://inspect` toggle shows an "Allow
-           * remote debugging?" dialog on **every** new connection. The
-           * WebSocket handshake blocks until the user clicks Allow. For
-           * unattended automation, launch Chrome with
-           * `--remote-debugging-port` instead (no dialog).
-           *
-           * Mutually exclusive with `path`, `argv`, `stdout`, `stderr`
-           * (there's no subprocess to configure).
+           * remote debugging?" dialog on **every** new connection.
+           * Auto-detect falls back to spawn if the connect fails (stale
+           * file from a dead Chrome). The WebSocket auto-closes when
+           * the last `WebView` is closed. For unattended automation,
+           * pass `url: false`.
            */
-          url?: string;
+          url?: string | false;
           /**
            * Extra command-line arguments appended after the default flags.
            * Chrome's CommandLine does last-wins for duplicate switches, so

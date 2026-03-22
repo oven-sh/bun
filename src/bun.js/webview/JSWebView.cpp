@@ -325,34 +325,34 @@ extern "C" size_t Bun__Chrome__autoDetect(char* out, size_t cap);
 JSWebView* JSWebView::createChrome(JSGlobalObject* g, Structure* structure,
     uint32_t width, uint32_t height, const WTF::String& userDataDir,
     const WTF::String& path, const WTF::Vector<WTF::String>& extraArgv,
-    bool stdoutInherit, bool stderrInherit, const WTF::String& wsUrl)
+    bool stdoutInherit, bool stderrInherit, const WTF::String& wsUrl, bool skipAutoDetect)
 {
     auto* zig = defaultGlobalObject(g);
     auto& t = CDP::transport();
 
-    // Transport selection. Explicit url → connect. Explicit path/argv →
-    // spawn (the user picked an executable; don't redirect them to a
-    // different running Chrome). Neither → auto-detect: if
-    // DevToolsActivePort exists, connect to the existing Chrome; else
-    // spawn. The file read is sync/instant so the constructor stays
-    // synchronous; a stale file surfaces as a connect failure on the
-    // user's first `await navigate()` (onClose → rejectAllAndMarkDead).
+    // Transport selection, in priority order:
+    //   1. url: "ws://..." → connect (autoDetected=false → no fallback)
+    //   2. path/argv set OR url:false → spawn, skip auto-detect
+    //   3. neither → auto-detect DevToolsActivePort → connect OR spawn
     //
-    // All paths end up in the same singleton; first call wins. Second
-    // WebView with a conflicting mode silently uses the existing
-    // transport — same as mismatched path/argv after first spawn.
+    // All paths end up in the same singleton; first call wins. A stale
+    // DevToolsActivePort (Chrome crashed/restarted) triggers the
+    // wsOnClose fallback to spawn (autoDetected=true). The file read is
+    // sync/instant so the constructor stays synchronous.
     bool ok;
     if (!wsUrl.isEmpty()) {
-        ok = t.ensureConnected(zig, wsUrl);
-    } else if (!path.isEmpty() || !extraArgv.isEmpty()) {
+        ok = t.ensureConnected(zig, wsUrl, /* autoDetected */ false);
+    } else if (skipAutoDetect || !path.isEmpty() || !extraArgv.isEmpty()) {
         ok = t.ensureSpawned(zig, userDataDir, path, extraArgv, stdoutInherit, stderrInherit);
     } else {
-        // Auto-detect. DevToolsActivePort URL is at most
+        // Auto-detect. DevToolsActivePort URL caps at
         // ws://127.0.0.1:65535/devtools/browser/<36-char-uuid> ≈ 70B.
         char buf[128];
         size_t len = Bun__Chrome__autoDetect(buf, sizeof(buf));
         if (len > 0) {
-            ok = t.ensureConnected(zig, WTF::String::fromUTF8(std::span<const char>(buf, len)));
+            ok = t.ensureConnected(zig,
+                WTF::String::fromUTF8(std::span<const char>(buf, len)),
+                /* autoDetected */ true);
         } else {
             ok = t.ensureSpawned(zig, userDataDir, path, extraArgv, stdoutInherit, stderrInherit);
         }

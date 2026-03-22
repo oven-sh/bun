@@ -26,8 +26,6 @@ describe("NO_COLOR does not affect snapshot output", () => {
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(exitCode).toBe(0);
-
     const snapFile = join(String(dir), "__snapshots__", "test.test.ts.snap");
     const snapContent = await Bun.file(snapFile).text();
 
@@ -37,6 +35,7 @@ describe("NO_COLOR does not affect snapshot output", () => {
 
     // Snapshot should contain the clean error text
     expect(snapContent).toContain("expect(received).toMatchObject(expected)");
+    expect(exitCode).toBe(0);
   });
 
   test("NO_COLOR from --env-file disables colors for test output", async () => {
@@ -62,14 +61,13 @@ describe("NO_COLOR does not affect snapshot output", () => {
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(exitCode).toBe(0);
-
     const snapFile = join(String(dir), "__snapshots__", "test.test.ts.snap");
     const snapContent = await Bun.file(snapFile).text();
 
     // Snapshot must not contain ANSI escape codes
     expect(snapContent).not.toContain("\\x1B");
     expect(snapContent).not.toMatch(/\x1b/);
+    expect(exitCode).toBe(0);
   });
 
   test("FORCE_COLOR=0 from --env-file disables colors", async () => {
@@ -95,12 +93,11 @@ describe("NO_COLOR does not affect snapshot output", () => {
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(exitCode).toBe(0);
-
     const snapFile = join(String(dir), "__snapshots__", "test.test.ts.snap");
     const snapContent = await Bun.file(snapFile).text();
 
     expect(snapContent).not.toContain("\\x1B");
     expect(snapContent).not.toMatch(/\x1b/);
+    expect(exitCode).toBe(0);
   });
 });

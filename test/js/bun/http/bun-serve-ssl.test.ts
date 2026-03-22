@@ -153,13 +153,13 @@ describe("Bun.serve SSL validations", () => {
     const shared = new SharedArrayBuffer(16);
     const view = new Int16Array(shared);
     expect(() => {
-      Bun.serve({
+      using server = Bun.serve({
         port: 0,
         fetch() {
           return new Response("ok");
         },
         ALPNProtocols: view,
       });
-    }).toThrow();
+    }).toThrow(TypeError);
   });
 });

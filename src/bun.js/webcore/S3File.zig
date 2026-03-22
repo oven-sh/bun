@@ -487,7 +487,7 @@ pub fn presignFromCredentials(globalThis: *jsc.JSGlobalObject, request_path: []c
                 };
             }
             if (try options.getOptional(globalThis, "expiresIn", i32)) |expires_| {
-                if (expires_ <= 0) return globalThis.throwInvalidArguments("expiresIn must be greather than 0", .{});
+                if (expires_ <= 0) return globalThis.throwInvalidArguments("expiresIn must be greater than 0", .{});
                 expires = @intCast(expires_);
             }
         }
@@ -533,7 +533,7 @@ pub fn getPresignUrlFrom(this: *Blob, globalThis: *jsc.JSGlobalObject, extra_opt
                 };
             }
             if (try options.getOptional(globalThis, "expiresIn", i32)) |expires_| {
-                if (expires_ <= 0) return globalThis.throwInvalidArguments("expiresIn must be greather than 0", .{});
+                if (expires_ <= 0) return globalThis.throwInvalidArguments("expiresIn must be greater than 0", .{});
                 expires = @intCast(expires_);
             }
         }

@@ -298,12 +298,7 @@ const kind = struct {
         };
 
         fn stringIsTruthy(s: []const u8) bool {
-            // Most values are considered truthy, except for "", "0", "false", "no", and "off".
-            const false_values = .{ "", "0", "false", "no", "off" };
-            inline for (false_values) |tv| {
-                if (std.ascii.eqlIgnoreCase(s, tv)) return false;
-            }
-            return true;
+            return isValueTruthy(s);
         }
 
         // This is a template which ignores its parameter, but is necessary so that a separate

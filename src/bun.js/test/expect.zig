@@ -623,7 +623,7 @@ pub const Expect = struct {
             if (strings.indexOfChar(raw, '\x1b') != null) {
                 const stripped = stripAnsiFromSlice(raw);
                 defer default_allocator.free(stripped);
-                err_value_res = bun.String.createUTF8ForJS(globalThis, stripped);
+                err_value_res = try bun.String.createUTF8ForJS(globalThis, stripped);
             }
         }
         return err_value_res;

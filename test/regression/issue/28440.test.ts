@@ -30,11 +30,14 @@ describe("toMatchObject should not mutate actual object", () => {
   test("works with Object.freeze and expect.any()", () => {
     const obj = Object.freeze({ foo: "foo", bar: "bar" });
     expect(obj).toMatchObject({ bar: expect.any(String) });
+    expect(obj.bar).toBe("bar");
   });
 
   test("works with spread copy of actual and expect.any()", () => {
     const obj = { foo: "foo", bar: "bar" };
-    expect({ ...obj }).toMatchObject({ bar: expect.any(String) });
+    const copy = { ...obj };
+    expect(copy).toMatchObject({ bar: expect.any(String) });
+    expect(copy.bar).toBe("bar");
   });
 
   test("does not mutate properties matched by expect.anything()", () => {

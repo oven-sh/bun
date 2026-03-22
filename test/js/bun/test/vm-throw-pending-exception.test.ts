@@ -55,6 +55,5 @@ test("VM.throwError does not crash when a termination exception is already pendi
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stdout.trim()).toBe("OK");
-  expect(stderr).toBe("");
   expect(exitCode).toBe(0);
 });

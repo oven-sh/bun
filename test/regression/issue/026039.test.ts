@@ -23,6 +23,7 @@ example = { url = "https://npm.pkg.github.com" }
         lockfileVersion: 1,
         workspaces: {
           "": {
+            name: "test-scoped-registry",
             dependencies: {
               "@example/test-package": "^1.0.0",
             },
@@ -75,6 +76,7 @@ example = { url = "https://npm.pkg.github.com" }
         lockfileVersion: 1,
         workspaces: {
           "": {
+            name: "test-non-scoped-registry",
             dependencies: {
               "fake-nonexistent-package": "^1.0.0",
             },

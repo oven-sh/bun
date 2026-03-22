@@ -297,6 +297,16 @@ fn loadBunfig(allocator: std.mem.Allocator, auto_loaded: bool, config_path: [:0]
     ctx.log.level = logger.Log.Level.warn;
     ctx.debug.loaded_bunfig = true;
     try Bunfig.parse(allocator, &source, ctx, cmd);
+
+    // Check version pinning after bunfig is loaded (skip for upgrade command)
+    if (comptime cmd != .UpgradeCommand) {
+        if (ctx.pinned_version) |pinned| {
+            if (!ctx.version_checked) {
+                ctx.version_checked = true;
+                VersionManager.checkPinnedVersion(pinned, allocator);
+            }
+        }
+    }
 }
 
 fn getHomeConfigPath(buf: *bun.PathBuffer) ?[:0]const u8 {
@@ -1661,6 +1671,8 @@ const resolve_path = bun.path;
 const strings = bun.strings;
 const Api = bun.schema.api;
 const RegularExpression = bun.jsc.RegularExpression;
+
+const VersionManager = @import("version_manager.zig");
 
 const CLI = bun.cli;
 const Command = CLI.Command;

@@ -153,7 +153,7 @@ pub fn checkPinnedVersion(pinned_version_str: []const u8, allocator: std.mem.All
 
 fn getUserConfirmation() bool {
     var buf: [16]u8 = undefined;
-    const n = std.posix.read(std.posix.STDIN_FILENO, &buf) catch return false;
+    const n = bun.sys.read(bun.FD.stdin(), &buf).unwrap() catch return false;
     if (n == 0) return true; // EOF = default yes
     const response = strings.trim(buf[0..n], " \t\r\n");
     if (response.len == 0) return true; // empty = default yes
@@ -561,7 +561,7 @@ fn reExec(exe_path: []const u8) noreturn {
 
         if (comptime Environment.isMac) {
             const spawn = bun.spawn;
-            const c = bun.C;
+            const c = bun.c;
             var actions = spawn.Actions.init() catch Global.exit(1);
             actions.inherit(.stdin()) catch Global.exit(1);
             actions.inherit(.stdout()) catch Global.exit(1);

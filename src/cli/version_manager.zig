@@ -360,7 +360,7 @@ fn downloadVersion(version_str: []const u8, dest_dir: []const u8, allocator: std
     Output.prettyErrorln(" <green>done<r> ({d} bytes)", .{bytes.len});
 
     // Create dest dir
-    bun.makePath(std.fs.cwd(), dest_dir) catch {
+    bun.makePath(bun.FD.cwd().stdDir(), dest_dir) catch {
         Output.prettyErrorln("<r><red>error<r>: Failed to create directory {s}", .{dest_dir});
         return false;
     };
@@ -395,7 +395,7 @@ fn downloadVersion(version_str: []const u8, dest_dir: []const u8, allocator: std
     defer _ = bun.sys.unlink(zip_path_z);
 
     // Open dest dir handle for moveFileZ later
-    var dest_dir_handle = std.fs.cwd().openDir(dest_dir, .{}) catch {
+    var dest_dir_handle = bun.FD.cwd().stdDir().openDir(dest_dir, .{}) catch {
         Output.prettyErrorln("<r><red>error<r>: Failed to open directory {s}", .{dest_dir});
         return false;
     };
@@ -509,7 +509,7 @@ fn saveCurrentVersion(install_dir: []const u8, current_str: []const u8, self_exe
 
     if (bun.sys.exists(current_ver_bin)) return;
 
-    bun.makePath(std.fs.cwd(), current_ver_dir) catch return;
+    bun.makePath(bun.FD.cwd().stdDir(), current_ver_dir) catch return;
 
     const self_exe_z = bun.default_allocator.dupeZ(u8, self_exe) catch return;
     defer bun.default_allocator.free(self_exe_z);
@@ -611,7 +611,7 @@ fn reExec(exe_path: []const u8) noreturn {
     } else if (comptime Environment.isWindows) {
         // On Windows, spawn the correct version as a child and exit
         const exe_path_z_win = bun.default_allocator.dupeZ(u8, exe_path) catch Global.exit(1);
-        _ = (bun.spawnSync(&.{
+        const result = (bun.spawnSync(&.{
             .argv = @as([]const []const u8, bun.argv),
             .argv0 = exe_path_z_win,
             .envp = null,
@@ -623,7 +623,10 @@ fn reExec(exe_path: []const u8) noreturn {
                 .loop = bun.jsc.EventLoopHandle.init(bun.jsc.MiniEventLoop.initGlobal(null, null)),
             },
         }) catch Global.exit(1)).unwrap() catch Global.exit(1);
-        Global.exit(0);
+        switch (result.status) {
+            .exited => |e| Global.exit(e.code),
+            else => Global.exit(1),
+        }
     } else {
         Global.exit(1);
     }

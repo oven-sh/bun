@@ -6,7 +6,7 @@ test("s3 presign with missing credentials throws instead of crashing", async () 
   // missing-credentials path regardless of ambient host configuration.
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(bunEnv)) {
-    if (!key.startsWith("AWS_") && !key.startsWith("S3_")) {
+    if (!key.startsWith("AWS_") && !key.startsWith("S3_") && !key.startsWith("BUN_S3_")) {
       env[key] = value as string;
     }
   }

@@ -162,9 +162,11 @@ pub const S3Client = struct {
         var aws_options = try S3Credentials.getCredentialsWithOptions(ptr.credentials.*, ptr.options, options, ptr.acl, ptr.storage_class, ptr.request_payer, globalThis);
         defer aws_options.deinit();
 
-        // Normalize the path (strip s3:// prefix, leading slashes)
-        // the same way Store.S3.path() does via URL.parse().s3Path().
-        const s3_path = bun.URL.parse(path.slice()).s3Path();
+        // Normalize the path the same way Store.S3.path() does:
+        // URL.parse().s3Path() then strip one leading slash.
+        var s3_path = bun.URL.parse(path.slice()).s3Path();
+        if (s3_path.len > 0 and (s3_path[0] == '/' or s3_path[0] == '\\'))
+            s3_path = s3_path[1..];
         return S3File.presignFromCredentials(globalThis, s3_path, options, &aws_options);
     }
 

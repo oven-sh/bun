@@ -796,6 +796,8 @@ it("should throw on empty hostname from truthy non-string value", () => {
 
 it("should throw on empty unix path from truthy non-string value", () => {
   const socket = { data() {}, open() {}, close() {} };
-  expect(() => Bun.listen({ unix: [] as any, socket })).toThrow();
-  expect(() => Bun.connect({ unix: [] as any, socket })).toThrow();
+  // unix uses a strict string type in bindgen, so non-string values are rejected before
+  // reaching the empty-string check — the error message differs from hostname
+  expect(() => Bun.listen({ unix: [] as any, socket })).toThrow("SocketOptions.unix must be a string");
+  expect(() => Bun.connect({ unix: [] as any, socket })).toThrow("SocketOptions.unix must be a string");
 });

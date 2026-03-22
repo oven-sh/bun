@@ -157,13 +157,13 @@ public:
                 /* After uncorking, check if we should close this connection.
                  * This handles the case where writeHead corked the socket outside
                  * the uWS request handler (async response), so the close check
-                 * in HttpContext's onData handler never runs for this response. */
+                 * in HttpContext's onData handler never runs for this response.
+                 * Only shutdown (send FIN), don't close() — the client needs time
+                 * to read the response before the connection is torn down. */
                 if (httpResponseData->state & HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE) {
                     if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) == 0) {
                         if (((AsyncSocket<SSL> *) this)->getBufferedAmount() == 0) {
                             ((AsyncSocket<SSL> *) this)->shutdown();
-                            ((AsyncSocket<SSL> *) this)->close();
-                            return true;
                         }
                     }
                 }
@@ -233,13 +233,13 @@ public:
                 }  else {
                     this->uncork();
                     /* After uncorking, check if we should close this connection.
-                     * Same fix as the chunked path above. */
+                     * Same fix as the chunked path above.
+                     * Only shutdown (send FIN), don't close() — the client needs time
+                     * to read the response before the connection is torn down. */
                     if (httpResponseData->state & HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE) {
                         if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) == 0) {
                             if (((AsyncSocket<SSL> *) this)->getBufferedAmount() == 0) {
                                 ((AsyncSocket<SSL> *) this)->shutdown();
-                                ((AsyncSocket<SSL> *) this)->close();
-                                return true;
                             }
                         }
                     }

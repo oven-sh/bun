@@ -626,6 +626,7 @@ pub fn markAsUpgraded(this: *NodeHTTPResponse, _: *jsc.JSGlobalObject, _: *jsc.C
         // This enables bidirectional streaming after an HTTP upgrade.
         resp.markAsConnectRequest();
     }
+    this.flags.upgraded = true;
     return .js_undefined;
 }
 

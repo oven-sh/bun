@@ -391,6 +391,8 @@ function ClientRequest(input, options, cb) {
         parserFreed = true;
         freeParser(parser, this, socket);
       }
+      socket.removeListener("data", onData);
+      socket.removeListener("end", onEnd);
       maybeEmitClose();
     };
 
@@ -438,6 +440,8 @@ function ClientRequest(input, options, cb) {
           statusCode,
           statusMessage,
           httpVersion: `${vMaj}.${vMin}`,
+          httpVersionMajor: vMaj,
+          httpVersionMinor: vMin,
           headers: buildHeaders(headers),
           rawHeaders: headers,
         });

@@ -172,7 +172,7 @@ extern "C" EncodedJSValue Bun__analyzeTranspiledModule(JSGlobalObject* globalObj
 #if BUN_DEBUG
     RELEASE_AND_RETURN(scope, fallbackParse(globalObject, moduleKey, sourceCode, promise, moduleRecord));
 #else
-    promise->resolve(globalObject, moduleRecord);
+    promise->resolve(globalObject, vm, moduleRecord);
     RELEASE_AND_RETURN(scope, JSValue::encode(promise));
 #endif
 }
@@ -219,7 +219,7 @@ static EncodedJSValue fallbackParse(JSGlobalObject* globalObject, const Identifi
     }
 
     scope.release();
-    promise->resolve(globalObject, resultValue == nullptr ? moduleRecord : resultValue);
+    promise->resolve(globalObject, vm, resultValue == nullptr ? moduleRecord : resultValue);
     return JSValue::encode(promise);
 }
 

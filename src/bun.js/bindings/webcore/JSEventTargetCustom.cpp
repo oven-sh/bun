@@ -92,6 +92,19 @@ void JSEventTarget::visitAdditionalChildren(Visitor& visitor)
     wrapped().visitJSEventListeners(visitor);
 }
 
-DEFINE_VISIT_ADDITIONAL_CHILDREN(JSEventTarget);
+template void JSEventTarget::visitAdditionalChildren(AbstractSlotVisitor&);
+template void JSEventTarget::visitAdditionalChildren(SlotVisitor&);
+
+template<typename Visitor>
+void JSEventTarget::visitOutputConstraints(JSCell* cell, Visitor& visitor)
+{
+    auto* thisObject = jsCast<JSEventTarget*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitOutputConstraints(thisObject, visitor);
+    thisObject->visitAdditionalChildren(visitor);
+}
+
+template void JSEventTarget::visitOutputConstraints(JSCell*, AbstractSlotVisitor&);
+template void JSEventTarget::visitOutputConstraints(JSCell*, SlotVisitor&);
 
 } // namespace WebCore

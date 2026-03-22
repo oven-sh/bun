@@ -79,6 +79,7 @@ void JSAbortSignal::visitAdditionalChildren(Visitor& visitor)
     wrapped().reason().visit(visitor);
 }
 
-DEFINE_VISIT_ADDITIONAL_CHILDREN(JSAbortSignal);
+template void JSAbortSignal::visitAdditionalChildren(AbstractSlotVisitor&);
+template void JSAbortSignal::visitAdditionalChildren(SlotVisitor&);
 
 } // namespace WebCore

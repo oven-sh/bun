@@ -235,7 +235,7 @@ void JSMessageChannel::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 DEFINE_VISIT_CHILDREN(JSMessageChannel);
 
 template<typename Visitor>
-void JSMessageChannel::visitOutputConstraints(JSCell* cell, Visitor& visitor)
+void JSMessageChannel::visitOutputConstraintsImpl(JSCell* cell, Visitor& visitor)
 {
     auto* thisObject = jsCast<JSMessageChannel*>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
@@ -243,8 +243,8 @@ void JSMessageChannel::visitOutputConstraints(JSCell* cell, Visitor& visitor)
     thisObject->visitAdditionalChildren(visitor);
 }
 
-template void JSMessageChannel::visitOutputConstraints(JSCell*, AbstractSlotVisitor&);
-template void JSMessageChannel::visitOutputConstraints(JSCell*, SlotVisitor&);
+DEFINE_VISIT_OUTPUT_CONSTRAINTS(JSMessageChannel);
+
 void JSMessageChannel::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 {
     auto* thisObject = jsCast<JSMessageChannel*>(cell);

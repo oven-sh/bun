@@ -78,6 +78,7 @@ void JSMessageEvent::visitAdditionalChildren(Visitor& visitor)
     wrapped().cachedPorts().visit(visitor);
 }
 
-DEFINE_VISIT_ADDITIONAL_CHILDREN(JSMessageEvent);
+template void JSMessageEvent::visitAdditionalChildren(AbstractSlotVisitor&);
+template void JSMessageEvent::visitAdditionalChildren(SlotVisitor&);
 
 } // namespace WebCore

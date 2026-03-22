@@ -41,6 +41,16 @@ void JSMessagePort::visitAdditionalChildren(Visitor& visitor)
     }
 }
 
-DEFINE_VISIT_ADDITIONAL_CHILDREN(JSMessagePort);
+template<typename Visitor>
+void JSMessagePort::visitOutputConstraints(JSCell* cell, Visitor& visitor)
+{
+    auto* thisObject = jsCast<JSMessagePort*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitOutputConstraints(thisObject, visitor);
+    thisObject->visitAdditionalChildren(visitor);
+}
+
+template void JSMessagePort::visitOutputConstraints(JSCell*, AbstractSlotVisitor&);
+template void JSMessagePort::visitOutputConstraints(JSCell*, SlotVisitor&);
 
 } // namespace WebCore

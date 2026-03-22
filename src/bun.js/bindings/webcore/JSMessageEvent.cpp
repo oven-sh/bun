@@ -461,7 +461,7 @@ void JSMessageEvent::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 DEFINE_VISIT_CHILDREN(JSMessageEvent);
 
 template<typename Visitor>
-void JSMessageEvent::visitOutputConstraints(JSCell* cell, Visitor& visitor)
+void JSMessageEvent::visitOutputConstraintsImpl(JSCell* cell, Visitor& visitor)
 {
     auto* thisObject = jsCast<JSMessageEvent*>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
@@ -469,8 +469,8 @@ void JSMessageEvent::visitOutputConstraints(JSCell* cell, Visitor& visitor)
     thisObject->visitAdditionalChildren(visitor);
 }
 
-template void JSMessageEvent::visitOutputConstraints(JSCell*, AbstractSlotVisitor&);
-template void JSMessageEvent::visitOutputConstraints(JSCell*, SlotVisitor&);
+DEFINE_VISIT_OUTPUT_CONSTRAINTS(JSMessageEvent);
+
 size_t JSMessageEvent::estimatedSize(JSCell* cell, VM& vm)
 {
     auto* thisObject = jsCast<JSMessageEvent*>(cell);

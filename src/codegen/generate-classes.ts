@@ -1642,8 +1642,6 @@ void ${name}::visitAdditionalChildren(Visitor& visitor)
     ${hasPendingActivity ? "visitor.addOpaqueRoot(this->wrapped());" : ""}
 }
 
-DEFINE_VISIT_ADDITIONAL_CHILDREN(${name});
-
 template<typename Visitor>
 void ${name}::visitOutputConstraintsImpl(JSCell *cell, Visitor& visitor)
 {

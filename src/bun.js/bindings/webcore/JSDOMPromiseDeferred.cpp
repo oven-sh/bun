@@ -77,7 +77,7 @@ void DeferredPromise::callFunction(JSGlobalObject& lexicalGlobalObject, ResolveM
     auto& vm = lexicalGlobalObject.vm();
     switch (mode) {
     case ResolveMode::Resolve:
-        deferred()->resolve(&lexicalGlobalObject, resolution);
+        deferred()->resolve(&lexicalGlobalObject, vm, resolution);
         break;
     case ResolveMode::Reject:
         deferred()->reject(vm, &lexicalGlobalObject, resolution);

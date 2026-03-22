@@ -273,10 +273,10 @@ void Bun__SecretsJobOptions__runFromJS(SecretsJobOptions* opts, JSGlobalObject* 
         if (opts->error.type == Secrets::ErrorType::NotFound) {
             if (opts->op == SecretsJobOptions::GET) {
                 // For GET operations, NotFound resolves with null
-                RELEASE_AND_RETURN(scope, promise->resolve(global, jsNull()));
+                RELEASE_AND_RETURN(scope, promise->resolve(global, vm, jsNull()));
             } else if (opts->op == SecretsJobOptions::DELETE_OP) {
                 // For DELETE_OP operations, NotFound means we return false
-                RELEASE_AND_RETURN(scope, promise->resolve(global, jsBoolean(false)));
+                RELEASE_AND_RETURN(scope, promise->resolve(global, vm, jsBoolean(false)));
             }
         }
         JSValue error = opts->error.toJS(vm, global);
@@ -306,7 +306,7 @@ void Bun__SecretsJobOptions__runFromJS(SecretsJobOptions* opts, JSGlobalObject* 
             break;
         }
         RETURN_IF_EXCEPTION(scope, );
-        RELEASE_AND_RETURN(scope, promise->resolve(global, result));
+        RELEASE_AND_RETURN(scope, promise->resolve(global, vm, result));
     }
 }
 

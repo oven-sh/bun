@@ -37,7 +37,20 @@ void JSPerformanceObserver::visitAdditionalChildren(Visitor& visitor)
     wrapped().callback().visitJSFunction(visitor);
 }
 
-DEFINE_VISIT_ADDITIONAL_CHILDREN(JSPerformanceObserver);
+template void JSPerformanceObserver::visitAdditionalChildren(AbstractSlotVisitor&);
+template void JSPerformanceObserver::visitAdditionalChildren(SlotVisitor&);
+
+template<typename Visitor>
+void JSPerformanceObserver::visitOutputConstraints(JSCell* cell, Visitor& visitor)
+{
+    auto* thisObject = jsCast<JSPerformanceObserver*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitOutputConstraints(thisObject, visitor);
+    thisObject->visitAdditionalChildren(visitor);
+}
+
+template void JSPerformanceObserver::visitOutputConstraints(JSCell*, AbstractSlotVisitor&);
+template void JSPerformanceObserver::visitOutputConstraints(JSCell*, SlotVisitor&);
 
 bool JSPerformanceObserverOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, JSC::AbstractSlotVisitor&, ASCIILiteral* reason)
 {

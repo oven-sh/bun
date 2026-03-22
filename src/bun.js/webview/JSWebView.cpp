@@ -59,7 +59,7 @@ void settleSlot(JSGlobalObject* g, JSWebView* v,
     slot.clear();
     v->m_pendingActivityCount.fetch_sub(1, std::memory_order_release);
     if (ok)
-        p->resolve(g, value);
+        p->resolve(g, g->vm(), value);
     else
         p->reject(g->vm(), g, value);
 }

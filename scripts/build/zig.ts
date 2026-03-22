@@ -197,18 +197,12 @@ export function registerZigRules(n: Ninja, cfg: Config): void {
   // own build system handles per-file tracking; restat prunes downstream
   // when zig's cache says nothing changed.
   //
-  // Default to plain prefix mode for Zig. In practice `--console` triggers
-  // zig's `--listen=-` path, which has proven flaky in this containerized
-  // local build flow (EndOfStream / silent termination). Prefix mode keeps
-  // the invocation simple and lets zig print normal diagnostics.
-  //
-  // We still avoid `--zig-progress` here because that also relies on zig's
-  // auxiliary progress channel; plain mode is the most robust option.
-  const consoleMode = false;
+  // Default to plain prefix mode for Zig. `--console` and `--zig-progress`
+  // both depend on Zig's auxiliary progress channel, while plain mode keeps
+  // the invocation simple and has proven more reliable in local builds.
   n.rule("zig_build", {
     command: `${stream} --env=ZIG_LOCAL_CACHE_DIR=$zig_local_cache --env=ZIG_GLOBAL_CACHE_DIR=$zig_global_cache $zig build $step $args`,
     description: "zig $step → $out",
-    ...(consoleMode ? { pool: "console" as const } : {}),
     restat: true,
   });
 }

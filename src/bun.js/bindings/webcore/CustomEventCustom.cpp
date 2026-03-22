@@ -49,6 +49,16 @@ void JSCustomEvent::visitAdditionalChildren(Visitor& visitor)
     wrapped().cachedDetail().visit(visitor);
 }
 
-DEFINE_VISIT_ADDITIONAL_CHILDREN(JSCustomEvent);
+template<typename Visitor>
+void JSCustomEvent::visitOutputConstraints(JSCell* cell, Visitor& visitor)
+{
+    auto* thisObject = jsCast<JSCustomEvent*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitOutputConstraints(thisObject, visitor);
+    thisObject->visitAdditionalChildren(visitor);
+}
+
+template void JSCustomEvent::visitOutputConstraints(JSCell*, AbstractSlotVisitor&);
+template void JSCustomEvent::visitOutputConstraints(JSCell*, SlotVisitor&);
 
 } // namespace WebCore

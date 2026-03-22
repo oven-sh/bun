@@ -676,7 +676,7 @@ extern "C" void JSBundlerPlugin__drainDeferred(Bun::JSBundlerPlugin* pluginObjec
         if (rejected) {
             promise->reject(vm, globalObject, JSC::jsUndefined());
         } else {
-            promise->resolve(globalObject, JSC::jsUndefined());
+            promise->resolve(globalObject, vm, JSC::jsUndefined());
         }
         RETURN_IF_EXCEPTION(scope, );
     }

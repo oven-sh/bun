@@ -43,6 +43,7 @@ void JSMessageChannel::visitAdditionalChildren(Visitor& visitor)
     // addWebCoreOpaqueRoot(visitor, wrapped().port2());
 }
 
-DEFINE_VISIT_ADDITIONAL_CHILDREN(JSMessageChannel);
+template void JSMessageChannel::visitAdditionalChildren(AbstractSlotVisitor&);
+template void JSMessageChannel::visitAdditionalChildren(SlotVisitor&);
 
 } // namespace WebCore

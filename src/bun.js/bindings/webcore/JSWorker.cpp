@@ -699,7 +699,7 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_getHeapSnapshotBody(
 
         ScriptExecutionContext::postTaskTo(parentId,
             [strong, snapshot = snapshot.isolatedCopy()](ScriptExecutionContext& parentCtx) {
-                strong.get()->resolve(parentCtx.globalObject(), jsString(parentCtx.vm(), snapshot));
+                strong.get()->resolve(parentCtx.globalObject(), parentCtx.vm(), jsString(parentCtx.vm(), snapshot));
             });
     });
     return JSValue::encode(promise);

@@ -35,6 +35,19 @@ void JSErrorEvent::visitAdditionalChildren(Visitor& visitor)
     wrapped().originalError().visit(visitor);
 }
 
-DEFINE_VISIT_ADDITIONAL_CHILDREN(JSErrorEvent);
+template void JSErrorEvent::visitAdditionalChildren(AbstractSlotVisitor&);
+template void JSErrorEvent::visitAdditionalChildren(SlotVisitor&);
+
+template<typename Visitor>
+void JSErrorEvent::visitOutputConstraints(JSCell* cell, Visitor& visitor)
+{
+    auto* thisObject = jsCast<JSErrorEvent*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitOutputConstraints(thisObject, visitor);
+    thisObject->visitAdditionalChildren(visitor);
+}
+
+template void JSErrorEvent::visitOutputConstraints(JSCell*, AbstractSlotVisitor&);
+template void JSErrorEvent::visitOutputConstraints(JSCell*, SlotVisitor&);
 
 } // namespace WebCore

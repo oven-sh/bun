@@ -106,20 +106,27 @@ function findChrome(): string | undefined {
 const chromePath = findChrome();
 const it = chromePath ? test : test.todo;
 
+// Force spawn-mode by passing the explicit path. Without this, the
+// constructor auto-detects a running Chrome via DevToolsActivePort and
+// connects to it over WebSocket — which (a) pops Chrome's "Allow remote
+// debugging?" dialog on every test and (b) creates visible tabs in the
+// user's Chrome. The explicit path skips auto-detect.
+//
 // WebSocket-transport tests live in webview-chrome-ws.test.ts — the
 // Transport singleton means you can't mix pipe-mode (this file) and
 // connect-mode in one process.
+const chrome = { type: "chrome" as const, path: chromePath };
 
 const html = (h: string) => "data:text/html," + encodeURIComponent(h);
 
 it("backend: chrome constructor returns a WebView", () => {
-  const view = new Bun.WebView({ backend: "chrome", width: 400, height: 300 });
+  const view = new Bun.WebView({ backend: chrome, width: 400, height: 300 });
   expect(view).toBeInstanceOf(Bun.WebView);
   view.close();
 });
 
 it("chrome: navigate + evaluate round-trip", async () => {
-  const view = new Bun.WebView({ backend: "chrome", width: 400, height: 300 });
+  const view = new Bun.WebView({ backend: chrome, width: 400, height: 300 });
   try {
     // First navigate kicks off the Target.createTarget → attachToTarget →
     // Page.enable → Page.navigate chain; awaiting it means the sessionId
@@ -133,7 +140,7 @@ it("chrome: navigate + evaluate round-trip", async () => {
 });
 
 it("chrome: evaluate returns native JS values", async () => {
-  const view = new Bun.WebView({ backend: "chrome", width: 200, height: 200 });
+  const view = new Bun.WebView({ backend: chrome, width: 200, height: 200 });
   try {
     await view.navigate(html("<body></body>"));
     // Runtime.evaluate with returnByValue serializes the result page-side;
@@ -151,7 +158,7 @@ it("chrome: evaluate returns native JS values", async () => {
 });
 
 it("chrome: evaluate awaits Promises", async () => {
-  const view = new Bun.WebView({ backend: "chrome", width: 200, height: 200 });
+  const view = new Bun.WebView({ backend: chrome, width: 200, height: 200 });
   try {
     await view.navigate(html("<body></body>"));
     // awaitPromise:true + the (async()=>{return await (...)})() wrap.
@@ -164,7 +171,7 @@ it("chrome: evaluate awaits Promises", async () => {
 });
 
 it("chrome: screenshot returns a PNG Blob", async () => {
-  const view = new Bun.WebView({ backend: "chrome", width: 200, height: 200 });
+  const view = new Bun.WebView({ backend: chrome, width: 200, height: 200 });
   try {
     await view.navigate(html("<body style='background:red'></body>"));
     const blob = await view.screenshot();
@@ -184,7 +191,7 @@ it("chrome: screenshot returns a PNG Blob", async () => {
 });
 
 it("chrome: screenshot format options produce the right magic bytes", async () => {
-  const view = new Bun.WebView({ backend: "chrome", width: 200, height: 200 });
+  const view = new Bun.WebView({ backend: chrome, width: 200, height: 200 });
   try {
     await view.navigate(html("<body style='background:linear-gradient(red,blue)'></body>"));
 
@@ -210,7 +217,7 @@ it("chrome: screenshot format options produce the right magic bytes", async () =
 });
 
 it("chrome: screenshot encoding options", async () => {
-  const view = new Bun.WebView({ backend: "chrome", width: 200, height: 200 });
+  const view = new Bun.WebView({ backend: chrome, width: 200, height: 200 });
   try {
     await view.navigate(html("<body style='background:red'></body>"));
 
@@ -245,7 +252,7 @@ it("chrome: screenshot encoding options", async () => {
 });
 
 it("chrome: cdp() raw passthrough", async () => {
-  const view = new Bun.WebView({ backend: "chrome", width: 200, height: 200 });
+  const view = new Bun.WebView({ backend: chrome, width: 200, height: 200 });
   try {
     await view.navigate(html("<body><input id=q value='hello'></body>"));
 
@@ -282,7 +289,7 @@ it("chrome: cdp() raw passthrough", async () => {
 
 it("chrome: cdp() guards — WebKit backend and before navigate", async () => {
   // Chrome before first navigate → no sessionId → INVALID_STATE.
-  const crView = new Bun.WebView({ backend: "chrome", width: 100, height: 100 });
+  const crView = new Bun.WebView({ backend: chrome, width: 100, height: 100 });
   try {
     expect(() => crView.cdp("Page.enable")).toThrow(/session.*navigate/i);
     // params validation: non-object rejected before any I/O.
@@ -294,7 +301,7 @@ it("chrome: cdp() guards — WebKit backend and before navigate", async () => {
 });
 
 it("chrome: screenshot quality option affects JPEG size", async () => {
-  const view = new Bun.WebView({ backend: "chrome", width: 200, height: 200 });
+  const view = new Bun.WebView({ backend: chrome, width: 200, height: 200 });
   try {
     // Gradient + text → lossy compression has work to do.
     await view.navigate(
@@ -309,7 +316,7 @@ it("chrome: screenshot quality option affects JPEG size", async () => {
 });
 
 it("chrome: click dispatches mousedown/mouseup/click", async () => {
-  const view = new Bun.WebView({ backend: "chrome", width: 300, height: 300 });
+  const view = new Bun.WebView({ backend: chrome, width: 300, height: 300 });
   try {
     await view.navigate(
       html(`
@@ -333,7 +340,7 @@ it("chrome: click dispatches mousedown/mouseup/click", async () => {
 });
 
 it("chrome: click(selector) waits for actionability, clicks center", async () => {
-  const view = new Bun.WebView({ backend: "chrome", width: 300, height: 300 });
+  const view = new Bun.WebView({ backend: chrome, width: 300, height: 300 });
   try {
     await view.navigate(
       html(`
@@ -358,7 +365,7 @@ it("chrome: click(selector) waits for actionability, clicks center", async () =>
 });
 
 it("chrome: click(selector) waits for element to appear", async () => {
-  const view = new Bun.WebView({ backend: "chrome", width: 300, height: 300 });
+  const view = new Bun.WebView({ backend: chrome, width: 300, height: 300 });
   try {
     await view.navigate(
       html(`
@@ -384,7 +391,7 @@ it("chrome: click(selector) waits for element to appear", async () => {
 });
 
 it("chrome: click(selector) rejects on timeout when obscured", async () => {
-  const view = new Bun.WebView({ backend: "chrome", width: 300, height: 300 });
+  const view = new Bun.WebView({ backend: chrome, width: 300, height: 300 });
   try {
     await view.navigate(
       html(`
@@ -401,7 +408,7 @@ it("chrome: click(selector) rejects on timeout when obscured", async () => {
 });
 
 it("chrome: scrollTo(selector) scrolls element into view", async () => {
-  const view = new Bun.WebView({ backend: "chrome", width: 300, height: 300 });
+  const view = new Bun.WebView({ backend: chrome, width: 300, height: 300 });
   try {
     await view.navigate(
       html(`
@@ -420,7 +427,7 @@ it("chrome: scrollTo(selector) scrolls element into view", async () => {
 });
 
 it("chrome: type inserts text at focused element", async () => {
-  const view = new Bun.WebView({ backend: "chrome", width: 300, height: 300 });
+  const view = new Bun.WebView({ backend: chrome, width: 300, height: 300 });
   try {
     await view.navigate(html("<input id=i>"));
     // Input.insertText inserts at the caret — need focus first. autofocus
@@ -436,7 +443,7 @@ it("chrome: type inserts text at focused element", async () => {
 });
 
 it("chrome: scroll dispatches wheel event", async () => {
-  const view = new Bun.WebView({ backend: "chrome", width: 300, height: 300 });
+  const view = new Bun.WebView({ backend: chrome, width: 300, height: 300 });
   try {
     await view.navigate(html("<body style='height:2000px'></body>"));
     await view.scroll(0, 100);
@@ -467,7 +474,7 @@ it("chrome: scroll dispatches wheel event", async () => {
 });
 
 it("chrome: url getter reflects committed URL", async () => {
-  const view = new Bun.WebView({ backend: "chrome", width: 200, height: 200 });
+  const view = new Bun.WebView({ backend: chrome, width: 200, height: 200 });
   try {
     const url = html("<body>test</body>");
     await view.navigate(url);
@@ -479,7 +486,7 @@ it("chrome: url getter reflects committed URL", async () => {
 });
 
 it("chrome: close() rejects pending promises", async () => {
-  const view = new Bun.WebView({ backend: "chrome", width: 200, height: 200 });
+  const view = new Bun.WebView({ backend: chrome, width: 200, height: 200 });
   await view.navigate(html("<body></body>"));
   // Kick off an eval that awaits forever.
   const p = view.evaluate("new Promise(() => {})");
@@ -488,8 +495,8 @@ it("chrome: close() rejects pending promises", async () => {
 });
 
 it("chrome: two views have independent sessions", async () => {
-  const a = new Bun.WebView({ backend: "chrome", width: 200, height: 200 });
-  const b = new Bun.WebView({ backend: "chrome", width: 200, height: 200 });
+  const a = new Bun.WebView({ backend: chrome, width: 200, height: 200 });
+  const b = new Bun.WebView({ backend: chrome, width: 200, height: 200 });
   try {
     // Each view has its own Target → its own sessionId → its own page.
     await Promise.all([a.navigate(html("<body>A</body>")), b.navigate(html("<body>B</body>"))]);
@@ -521,7 +528,9 @@ it("chrome: closeAll() kills the subprocess and pending promises reject", async 
       bunExe(),
       "-e",
       `
-        const view = new Bun.WebView({ backend: "chrome", width: 200, height: 200 });
+        // Explicit path forces spawn-mode — skips DevToolsActivePort
+        // auto-detect that would connect to the dev's running Chrome.
+        const view = new Bun.WebView({ backend: {type:"chrome", path:process.env.CHROME_PATH}, width: 200, height: 200 });
         await view.navigate("data:text/html,<body>test</body>");
         const p = view.evaluate("new Promise(() => {})"); // never resolves
         Bun.WebView.closeAll();
@@ -535,7 +544,7 @@ it("chrome: closeAll() kills the subprocess and pending promises reject", async 
         console.log("rejected");
       `,
     ],
-    env: bunEnv,
+    env: { ...bunEnv, CHROME_PATH: chromePath },
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
@@ -552,12 +561,12 @@ it("chrome: backend.stderr defaults to ignore (Chrome noise hidden)", async () =
       bunExe(),
       "-e",
       `
-        const view = new Bun.WebView({ backend: "chrome", width: 200, height: 200 });
+        const view = new Bun.WebView({ backend: {type:"chrome", path:process.env.CHROME_PATH}, width: 200, height: 200 });
         await view.navigate("data:text/html,<body>test</body>");
         view.close();
       `,
     ],
-    env: bunEnv,
+    env: { ...bunEnv, CHROME_PATH: chromePath },
     stderr: "pipe",
   });
   const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
@@ -589,7 +598,10 @@ test("backend option validates", () => {
 });
 
 it("backend: { type: 'chrome' } object form works", async () => {
-  const view = new Bun.WebView({ backend: { type: "chrome" }, width: 200, height: 200 });
+  // path forces spawn-mode — without it, the bare object form would
+  // auto-detect DevToolsActivePort and connect to the dev's Chrome,
+  // locking the singleton into WS mode for subsequent tests.
+  const view = new Bun.WebView({ backend: { type: "chrome", path: chromePath }, width: 200, height: 200 });
   try {
     await view.navigate(html("<body>obj</body>"));
     expect(await view.evaluate("document.body.textContent")).toBe("obj");
@@ -628,7 +640,7 @@ it("backend.argv appends after core flags", async () => {
 // --- Error handling --------------------------------------------------------
 
 it("chrome: evaluate() throwing Error carries page-side stack", async () => {
-  const view = new Bun.WebView({ backend: "chrome", width: 200, height: 200 });
+  const view = new Bun.WebView({ backend: chrome, width: 200, height: 200 });
   try {
     await view.navigate(html("<body></body>"));
     // CDP exceptionDetails.exception.description is V8's formatted stack.
@@ -657,7 +669,7 @@ it("chrome: evaluate() throwing Error carries page-side stack", async () => {
 });
 
 it("chrome: evaluate() rejected Promise carries rejection reason", async () => {
-  const view = new Bun.WebView({ backend: "chrome", width: 200, height: 200 });
+  const view = new Bun.WebView({ backend: chrome, width: 200, height: 200 });
   try {
     await view.navigate(html("<body></body>"));
     await expect(view.evaluate("Promise.reject(new TypeError('bad'))")).rejects.toThrow(/bad/);
@@ -667,7 +679,7 @@ it("chrome: evaluate() rejected Promise carries rejection reason", async () => {
 });
 
 it("chrome: evaluate() with circular reference throws", async () => {
-  const view = new Bun.WebView({ backend: "chrome", width: 200, height: 200 });
+  const view = new Bun.WebView({ backend: chrome, width: 200, height: 200 });
   try {
     await view.navigate(html("<body></body>"));
     // returnByValue can't serialize circular — Chrome throws page-side.
@@ -678,7 +690,7 @@ it("chrome: evaluate() with circular reference throws", async () => {
 });
 
 it("chrome: click(selector) rejects on invalid selector syntax", async () => {
-  const view = new Bun.WebView({ backend: "chrome", width: 200, height: 200 });
+  const view = new Bun.WebView({ backend: chrome, width: 200, height: 200 });
   try {
     await view.navigate(html("<body></body>"));
     // querySelector throws SyntaxError page-side; the IIFE rejects.
@@ -691,7 +703,7 @@ it("chrome: click(selector) rejects on invalid selector syntax", async () => {
 // --- Input variants --------------------------------------------------------
 
 it("chrome: click with right button fires contextmenu", async () => {
-  const view = new Bun.WebView({ backend: "chrome", width: 300, height: 300 });
+  const view = new Bun.WebView({ backend: chrome, width: 300, height: 300 });
   try {
     await view.navigate(
       html(`
@@ -712,7 +724,7 @@ it("chrome: click with right button fires contextmenu", async () => {
 });
 
 it("chrome: click with modifiers sets MouseEvent flags", async () => {
-  const view = new Bun.WebView({ backend: "chrome", width: 300, height: 300 });
+  const view = new Bun.WebView({ backend: chrome, width: 300, height: 300 });
   try {
     await view.navigate(
       html(`
@@ -732,7 +744,7 @@ it("chrome: click with modifiers sets MouseEvent flags", async () => {
 });
 
 it("chrome: click(selector) is injection-safe", async () => {
-  const view = new Bun.WebView({ backend: "chrome", width: 300, height: 300 });
+  const view = new Bun.WebView({ backend: chrome, width: 300, height: 300 });
   try {
     // Selector string contains double-quote + close-paren + close-brace —
     // characters that would break naive `")(sel,${timeout})` interpolation
@@ -751,7 +763,7 @@ it("chrome: click(selector) is injection-safe", async () => {
 });
 
 it("chrome: click(selector) waits for animation to stop", async () => {
-  const view = new Bun.WebView({ backend: "chrome", width: 300, height: 300 });
+  const view = new Bun.WebView({ backend: chrome, width: 300, height: 300 });
   try {
     await view.navigate(
       html(`
@@ -775,7 +787,7 @@ it("chrome: click(selector) waits for animation to stop", async () => {
 // --- scrollTo variants -----------------------------------------------------
 
 it("chrome: scrollTo with block: start aligns top", async () => {
-  const view = new Bun.WebView({ backend: "chrome", width: 300, height: 300 });
+  const view = new Bun.WebView({ backend: chrome, width: 300, height: 300 });
   try {
     await view.navigate(
       html(`
@@ -796,7 +808,7 @@ it("chrome: scrollTo with block: start aligns top", async () => {
 // --- Lifecycle -------------------------------------------------------------
 
 it("chrome: resize changes viewport dimensions", async () => {
-  const view = new Bun.WebView({ backend: "chrome", width: 300, height: 300 });
+  const view = new Bun.WebView({ backend: chrome, width: 300, height: 300 });
   try {
     await view.navigate(html("<body></body>"));
     await view.resize(500, 400);
@@ -810,7 +822,7 @@ it("chrome: resize changes viewport dimensions", async () => {
 });
 
 it("chrome: reload resolves after Page.loadEventFired", async () => {
-  const view = new Bun.WebView({ backend: "chrome", width: 200, height: 200 });
+  const view = new Bun.WebView({ backend: chrome, width: 200, height: 200 });
   try {
     await view.navigate(html("<script>window.__n = Date.now()</script>"));
     const before = await view.evaluate("__n");
@@ -825,7 +837,7 @@ it("chrome: reload resolves after Page.loadEventFired", async () => {
 });
 
 it("chrome: sequential navigates work", async () => {
-  const view = new Bun.WebView({ backend: "chrome", width: 200, height: 200 });
+  const view = new Bun.WebView({ backend: chrome, width: 200, height: 200 });
   try {
     // First navigate does the attach chain; subsequent go direct.
     await view.navigate(html("<body>A</body>"));
@@ -848,7 +860,7 @@ it("chrome: close() during attach chain doesn't leak the tab", async () => {
   // tab would navigate and fire Page.frameNavigated → onNavigated on a
   // disposed view.
   const navigated: string[] = [];
-  const view = new Bun.WebView({ backend: "chrome", width: 100, height: 100 });
+  const view = new Bun.WebView({ backend: chrome, width: 100, height: 100 });
   view.onNavigated = (u: string) => navigated.push(u);
   // navigate() kicks off the chain; don't await.
   const navP = view.navigate("data:text/html,<body>leaked</body>");
@@ -862,7 +874,7 @@ it("chrome: close() during attach chain doesn't leak the tab", async () => {
 });
 
 it("chrome: url/title getters populated after navigate", async () => {
-  await using view = new Bun.WebView({ backend: "chrome", width: 200, height: 200 });
+  await using view = new Bun.WebView({ backend: chrome, width: 200, height: 200 });
   await view.navigate(html("<title>Page Title</title><body>hi</body>"));
   // Page.loadEventFired chains Runtime.evaluate("document.title") before
   // settling — navigate() resolves with m_title populated. Same guarantee
@@ -875,7 +887,7 @@ it("chrome: url/title getters populated after navigate", async () => {
 });
 
 it("chrome: onNavigated fires with committed URL", async () => {
-  const view = new Bun.WebView({ backend: "chrome", width: 200, height: 200 });
+  const view = new Bun.WebView({ backend: chrome, width: 200, height: 200 });
   try {
     const urls: string[] = [];
     view.onNavigated = (url: string) => urls.push(url);
@@ -891,7 +903,7 @@ it("chrome: onNavigated fires with committed URL", async () => {
 });
 
 it("chrome: press() dispatches keydown/keyup pair", async () => {
-  await using view = new Bun.WebView({ backend: "chrome", width: 200, height: 200 });
+  await using view = new Bun.WebView({ backend: chrome, width: 200, height: 200 });
   // Listeners in the HTML so they're live before any press. evaluate() wraps
   // as `await (${script})` — statement sequences need IIFE, but putting the
   // setup in the navigate body sidesteps that entirely.
@@ -913,7 +925,7 @@ it("chrome: press() dispatches keydown/keyup pair", async () => {
 });
 
 it("chrome: press() with modifiers", async () => {
-  await using view = new Bun.WebView({ backend: "chrome", width: 200, height: 200 });
+  await using view = new Bun.WebView({ backend: chrome, width: 200, height: 200 });
   await view.navigate(
     html(`
     <body><script>
@@ -927,7 +939,7 @@ it("chrome: press() with modifiers", async () => {
 });
 
 it("chrome: goBack/goForward navigates history", async () => {
-  await using view = new Bun.WebView({ backend: "chrome", width: 200, height: 200 });
+  await using view = new Bun.WebView({ backend: chrome, width: 200, height: 200 });
   await view.navigate(html("<body>A</body>"));
   await view.navigate(html("<body>B</body>"));
   await view.navigate(html("<body>C</body>"));
@@ -942,7 +954,7 @@ it("chrome: goBack/goForward navigates history", async () => {
 });
 
 it("chrome: goBack at history start resolves undefined (no-op)", async () => {
-  await using view = new Bun.WebView({ backend: "chrome", width: 200, height: 200 });
+  await using view = new Bun.WebView({ backend: chrome, width: 200, height: 200 });
   await view.navigate(html("<body>only</body>"));
   // Target.createTarget({url:"about:blank"}) means history[0]=about:blank,
   // history[1]=our page after navigate. goBack once → about:blank.
@@ -960,7 +972,7 @@ it("chrome: goBack at history start resolves undefined (no-op)", async () => {
 it("chrome: console callback receives (type, ...args)", async () => {
   const calls: [string, ...unknown[]][] = [];
   await using view = new Bun.WebView({
-    backend: "chrome",
+    backend: chrome,
     width: 200,
     height: 200,
     console: (type: string, ...args: unknown[]) => calls.push([type, ...args]),
@@ -989,7 +1001,7 @@ it("chrome: console: globalThis.console forwards to parent's stdout", async () =
       "-e",
       `
       const view = new Bun.WebView({
-        backend: "chrome", width: 200, height: 200,
+        backend: {type:"chrome", path:process.env.CHROME_PATH}, width: 200, height: 200,
         console: globalThis.console,
       });
       await view.navigate("data:text/html,<body></body>");
@@ -998,7 +1010,7 @@ it("chrome: console: globalThis.console forwards to parent's stdout", async () =
       view.close();
       `,
     ],
-    env: bunEnv,
+    env: { ...bunEnv, CHROME_PATH: chromePath },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -1013,16 +1025,16 @@ it("chrome: console: globalThis.console forwards to parent's stdout", async () =
 });
 
 it("chrome: console option validates", () => {
-  expect(() => new Bun.WebView({ backend: "chrome", console: 42 } as any)).toThrow(
+  expect(() => new Bun.WebView({ backend: chrome, console: 42 } as any)).toThrow(
     /console must be globalThis.console or a function/,
   );
-  expect(() => new Bun.WebView({ backend: "chrome", console: {} } as any)).toThrow(
+  expect(() => new Bun.WebView({ backend: chrome, console: {} } as any)).toThrow(
     /console must be globalThis.console or a function/,
   );
 });
 
 it("chrome: large evaluate payload crosses the pipe", async () => {
-  const view = new Bun.WebView({ backend: "chrome", width: 200, height: 200 });
+  const view = new Bun.WebView({ backend: chrome, width: 200, height: 200 });
   try {
     await view.navigate(html("<body></body>"));
     // 100KB string. The socketpair buffer is ~256KB default; a single

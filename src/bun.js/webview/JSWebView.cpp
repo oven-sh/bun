@@ -317,6 +317,11 @@ JSWebView* JSWebView::createAndSend(JSGlobalObject* g, Structure* structure,
 }
 #endif
 
+// Reads DevToolsActivePort from default profile locations. Returns 0
+// if no file found, else writes ws://127.0.0.1:<port>/devtools/... into
+// out and returns the length. Sync file read — instant.
+extern "C" size_t Bun__Chrome__autoDetect(char* out, size_t cap);
+
 JSWebView* JSWebView::createChrome(JSGlobalObject* g, Structure* structure,
     uint32_t width, uint32_t height, const WTF::String& userDataDir,
     const WTF::String& path, const WTF::Vector<WTF::String>& extraArgv,
@@ -324,15 +329,34 @@ JSWebView* JSWebView::createChrome(JSGlobalObject* g, Structure* structure,
 {
     auto* zig = defaultGlobalObject(g);
     auto& t = CDP::transport();
-    // wsUrl non-empty → connect to an existing Chrome over WebSocket.
-    // Empty → spawn our own with --remote-debugging-pipe. Both end up in
-    // the same Transport singleton; first call wins (singleton semantics).
-    // A second WebView with a conflicting mode (wsUrl after a spawn, or
-    // vice versa) silently uses the existing transport — same as how
-    // mismatched path/argv are ignored after the first spawn.
-    bool ok = wsUrl.isEmpty()
-        ? t.ensureSpawned(zig, userDataDir, path, extraArgv, stdoutInherit, stderrInherit)
-        : t.ensureConnected(zig, wsUrl);
+
+    // Transport selection. Explicit url → connect. Explicit path/argv →
+    // spawn (the user picked an executable; don't redirect them to a
+    // different running Chrome). Neither → auto-detect: if
+    // DevToolsActivePort exists, connect to the existing Chrome; else
+    // spawn. The file read is sync/instant so the constructor stays
+    // synchronous; a stale file surfaces as a connect failure on the
+    // user's first `await navigate()` (onClose → rejectAllAndMarkDead).
+    //
+    // All paths end up in the same singleton; first call wins. Second
+    // WebView with a conflicting mode silently uses the existing
+    // transport — same as mismatched path/argv after first spawn.
+    bool ok;
+    if (!wsUrl.isEmpty()) {
+        ok = t.ensureConnected(zig, wsUrl);
+    } else if (!path.isEmpty() || !extraArgv.isEmpty()) {
+        ok = t.ensureSpawned(zig, userDataDir, path, extraArgv, stdoutInherit, stderrInherit);
+    } else {
+        // Auto-detect. DevToolsActivePort URL is at most
+        // ws://127.0.0.1:65535/devtools/browser/<36-char-uuid> ≈ 70B.
+        char buf[128];
+        size_t len = Bun__Chrome__autoDetect(buf, sizeof(buf));
+        if (len > 0) {
+            ok = t.ensureConnected(zig, WTF::String::fromUTF8(std::span<const char>(buf, len)));
+        } else {
+            ok = t.ensureSpawned(zig, userDataDir, path, extraArgv, stdoutInherit, stderrInherit);
+        }
+    }
     if (!ok) return nullptr;
 
     auto impl = WebViewEventTarget::create(*zig->scriptExecutionContext());

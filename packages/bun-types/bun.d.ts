@@ -7980,7 +7980,17 @@ declare module "bun" {
       | "chrome"
       | {
           type: "chrome";
-          /** Path to the Chrome/Chromium executable. Overrides auto-detection. */
+          /**
+           * Path to the Chrome/Chromium executable. Overrides
+           * auto-detection and forces Bun to spawn a fresh Chrome
+           * subprocess (skipping the existing-Chrome auto-connect).
+           *
+           * **Auto-connect**: when neither `path` nor `url` is set, Bun
+           * checks Chrome's `DevToolsActivePort` file — if a Chrome with
+           * remote debugging is already running, Bun connects to it over
+           * WebSocket instead of spawning. Pass `path` (or `argv`) to
+           * force spawn-mode.
+           */
           path?: string;
           /**
            * Connect to an **already-running** Chrome instead of spawning

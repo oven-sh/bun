@@ -503,22 +503,30 @@ fn readDevToolsActivePort(out_buf: *std.ArrayListUnmanaged(u8)) ?void {
     return null;
 }
 
-/// Auto-discover a running Chrome's WebSocket debugger URL. Tries the
-/// DevToolsActivePort file first (instant, no network); falls through to
-/// failed if not found. The HTTP GET path (Bun__Chrome__discover) is for
-/// explicit host:port where we can't assume the default profile.
+/// Auto-discover a running Chrome's WebSocket debugger URL by reading
+/// DevToolsActivePort (instant, no network). Writes the ws:// URL into
+/// out_buf and returns its length, or 0 if no file found.
 ///
-/// Returns true if found (C++ gets the URL via onDiscovered synchronously
-/// before this returns — it's a file read, not async). Returns false if no
-/// file found; caller decides whether to spawn or error.
-pub export fn Bun__Chrome__autoDetect(global: *jsc.JSGlobalObject) bool {
+/// C++ calls this from the constructor when backend:"chrome" has no
+/// explicit path or url — if we get a URL back, connect to the existing
+/// Chrome; else spawn our own. Sync file read means the constructor
+/// stays synchronous and the decision is made before any I/O kicks off.
+///
+/// The file can be stale (Chrome crashed without cleaning up, or was
+/// restarted with a different browser-id). The subsequent WS connect
+/// will fail with the dialog-dismissed/connection-refused close code;
+/// onClose → rejectAllAndMarkDead surfaces that to the user's first
+/// `await navigate()`. We don't pre-validate (that'd need a network
+/// round-trip which defeats the point of the file).
+pub export fn Bun__Chrome__autoDetect(out_buf: [*]u8, out_cap: usize) usize {
     var buf: std.ArrayListUnmanaged(u8) = .empty;
     defer buf.deinit(bun.default_allocator);
     if (readDevToolsActivePort(&buf)) |_| {
-        Bun__CDPTransport__onDiscovered(global, buf.items.ptr, buf.items.len);
-        return true;
+        if (buf.items.len > out_cap) return 0;
+        @memcpy(out_buf[0..buf.items.len], buf.items);
+        return buf.items.len;
     }
-    return false;
+    return 0;
 }
 
 /// Discover the ws:// debugger URL for a bare host:port. Two paths:

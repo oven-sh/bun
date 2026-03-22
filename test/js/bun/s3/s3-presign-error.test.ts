@@ -11,8 +11,15 @@ test("s3 presign with missing credentials throws instead of crashing", async () 
     }
   }
 
+  // Test both initS3WithReferencedCredentials (no credential overrides)
+  // and initS3 (with per-request credentials that still lack endpoint/bucket).
+  const code = [
+    `try { Bun.s3.presign("mykey"); } catch(e) { console.log(e.code); }`,
+    `try { Bun.s3.presign("mykey", { accessKeyId: "x", secretAccessKey: "y" }); } catch(e) { console.log(e.code); }`,
+  ].join("\n");
+
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", `try { Bun.s3.presign("mykey"); } catch(e) { console.log(e.code); }`],
+    cmd: [bunExe(), "-e", code],
     env,
     stdout: "pipe",
     stderr: "pipe",
@@ -20,6 +27,6 @@ test("s3 presign with missing credentials throws instead of crashing", async () 
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stdout.trim()).toBe("ERR_S3_MISSING_CREDENTIALS");
+  expect(stdout.trim()).toBe("ERR_S3_MISSING_CREDENTIALS\nERR_S3_INVALID_PATH");
   expect(exitCode).toBe(0);
 });

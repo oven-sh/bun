@@ -19,11 +19,12 @@ test("bun install updates bun.lock when root package name changes", async () => 
     stdout: "pipe",
     stderr: "pipe",
   });
-  expect(await proc1.exited).toBe(0);
+  const exitCode1 = await proc1.exited;
 
   // Verify initial lockfile has original-name
   const lockfile1 = await Bun.file(`${dir}/bun.lock`).text();
   expect(lockfile1).toContain('"name": "original-name"');
+  expect(exitCode1).toBe(0);
 
   // Rename the package
   const pkg = JSON.parse(await Bun.file(`${dir}/package.json`).text());
@@ -38,12 +39,13 @@ test("bun install updates bun.lock when root package name changes", async () => 
     stdout: "pipe",
     stderr: "pipe",
   });
-  expect(await proc2.exited).toBe(0);
+  const exitCode2 = await proc2.exited;
 
   // Verify lockfile now has another-name and not original-name
   const lockfile2 = await Bun.file(`${dir}/bun.lock`).text();
   expect(lockfile2).toContain('"name": "another-name"');
   expect(lockfile2).not.toContain("original-name");
+  expect(exitCode2).toBe(0);
 });
 
 test("bun install updates bun.lock when root package name is added", async () => {
@@ -63,10 +65,11 @@ test("bun install updates bun.lock when root package name is added", async () =>
     stdout: "pipe",
     stderr: "pipe",
   });
-  expect(await proc1.exited).toBe(0);
+  const exitCode1 = await proc1.exited;
 
   const lockfile1 = await Bun.file(`${dir}/bun.lock`).text();
   expect(lockfile1).not.toContain('"name"');
+  expect(exitCode1).toBe(0);
 
   // Add a name
   const pkg = JSON.parse(await Bun.file(`${dir}/package.json`).text());
@@ -81,10 +84,11 @@ test("bun install updates bun.lock when root package name is added", async () =>
     stdout: "pipe",
     stderr: "pipe",
   });
-  expect(await proc2.exited).toBe(0);
+  const exitCode2 = await proc2.exited;
 
   const lockfile2 = await Bun.file(`${dir}/bun.lock`).text();
   expect(lockfile2).toContain('"name": "new-name"');
+  expect(exitCode2).toBe(0);
 });
 
 test("bun add updates bun.lock when root package name was changed", async () => {
@@ -105,10 +109,11 @@ test("bun add updates bun.lock when root package name was changed", async () => 
     stdout: "pipe",
     stderr: "pipe",
   });
-  expect(await proc1.exited).toBe(0);
+  const exitCode1 = await proc1.exited;
 
   const lockfile1 = await Bun.file(`${dir}/bun.lock`).text();
   expect(lockfile1).toContain('"name": "original-name"');
+  expect(exitCode1).toBe(0);
 
   // Rename the package and add a new dependency via bun add
   const pkg = JSON.parse(await Bun.file(`${dir}/package.json`).text());
@@ -122,11 +127,12 @@ test("bun add updates bun.lock when root package name was changed", async () => 
     stdout: "pipe",
     stderr: "pipe",
   });
-  expect(await proc2.exited).toBe(0);
+  const exitCode2 = await proc2.exited;
 
   const lockfile2 = await Bun.file(`${dir}/bun.lock`).text();
   expect(lockfile2).toContain('"name": "renamed-pkg"');
   expect(lockfile2).not.toContain("original-name");
+  expect(exitCode2).toBe(0);
 });
 
 test("bun install updates bun.lock when workspace sub-package name changes", async () => {
@@ -152,10 +158,11 @@ test("bun install updates bun.lock when workspace sub-package name changes", asy
     stdout: "pipe",
     stderr: "pipe",
   });
-  expect(await proc1.exited).toBe(0);
+  const exitCode1 = await proc1.exited;
 
   const lockfile1 = await Bun.file(`${dir}/bun.lock`).text();
   expect(lockfile1).toContain('"name": "original-name"');
+  expect(exitCode1).toBe(0);
 
   // Rename workspace sub-package
   await Bun.write(
@@ -177,11 +184,12 @@ test("bun install updates bun.lock when workspace sub-package name changes", asy
     stdout: "pipe",
     stderr: "pipe",
   });
-  expect(await proc2.exited).toBe(0);
+  const exitCode2 = await proc2.exited;
 
   const lockfile2 = await Bun.file(`${dir}/bun.lock`).text();
   expect(lockfile2).toContain('"name": "another-name"');
   expect(lockfile2).not.toContain('"name": "original-name"');
+  expect(exitCode2).toBe(0);
 });
 
 test("bun install --frozen-lockfile errors when root package name changed", async () => {
@@ -202,7 +210,11 @@ test("bun install --frozen-lockfile errors when root package name changed", asyn
     stdout: "pipe",
     stderr: "pipe",
   });
-  expect(await proc1.exited).toBe(0);
+  const exitCode1 = await proc1.exited;
+
+  const lockfileBefore = await Bun.file(`${dir}/bun.lock`).text();
+  expect(lockfileBefore).toContain('"name": "original-name"');
+  expect(exitCode1).toBe(0);
 
   // Rename the package
   const pkg = JSON.parse(await Bun.file(`${dir}/package.json`).text());
@@ -219,5 +231,9 @@ test("bun install --frozen-lockfile errors when root package name changed", asyn
   });
   const stderr = await proc2.stderr.text();
   expect(stderr).toContain("lockfile had changes");
+
+  // Verify the lockfile was NOT modified on disk
+  const lockfileAfter = await Bun.file(`${dir}/bun.lock`).text();
+  expect(lockfileAfter).toBe(lockfileBefore);
   expect(await proc2.exited).not.toBe(0);
 });

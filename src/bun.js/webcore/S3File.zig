@@ -84,20 +84,15 @@ pub fn presign(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.J
             }
             const options = args.nextEat();
 
-            // Validate credentials before constructing the blob to produce
-            // the error without interaction with deferred blob cleanup.
+            // Compute credentials and sign directly without constructing
+            // a temporary blob. Creating and cleaning up a blob store
+            // while an error is being thrown from signRequest corrupts
+            // the exception scope chain and crashes during GC.
             const existing_credentials = globalThis.bunVM().transpiler.env.getS3Credentials();
-            if (existing_credentials.accessKeyId.len == 0 or existing_credentials.secretAccessKey.len == 0) {
-                var aws_options = try S3.S3Credentials.getCredentialsWithOptions(existing_credentials, .{}, options, null, null, false, globalThis);
-                defer aws_options.deinit();
-                if (aws_options.credentials.accessKeyId.len == 0 or aws_options.credentials.secretAccessKey.len == 0) {
-                    return globalThis.ERR(.S3_MISSING_CREDENTIALS, "Missing S3 credentials. 'accessKeyId', 'secretAccessKey', 'bucket', and 'endpoint' are required", .{}).throw();
-                }
-            }
+            var aws_options = try S3.S3Credentials.getCredentialsWithOptions(existing_credentials, .{}, options, null, null, false, globalThis);
+            defer aws_options.deinit();
 
-            var blob = try constructS3FileInternalStore(globalThis, path.path, options);
-            defer blob.deinit();
-            return try getPresignUrlFrom(&blob, globalThis, options);
+            return try presignFromCredentials(globalThis, path.path.slice(), options, &aws_options);
         },
         .blob => return try getPresignUrlFrom(&path_or_blob.blob, globalThis, args.nextEat()),
     }
@@ -475,6 +470,43 @@ pub const S3BlobStatTask = struct {
         bun.destroy(this);
     }
 };
+
+/// Compute a presigned URL from already-resolved credentials, without
+/// constructing a blob. Used by S3Client.presign and S3File.presign to
+/// avoid the interaction between deferred blob cleanup and error throwing
+/// from signRequest that corrupts the exception scope chain.
+pub fn presignFromCredentials(globalThis: *jsc.JSGlobalObject, request_path: []const u8, extra_options: ?JSValue, credentialsWithOptions: *S3.S3CredentialsWithOptions) bun.JSError!JSValue {
+    var method: bun.http.Method = .GET;
+    var expires: usize = 86400;
+
+    if (extra_options) |options| {
+        if (options.isObject()) {
+            if (try options.getTruthyComptime(globalThis, "method")) |method_| {
+                method = try Method.fromJS(globalThis, method_) orelse {
+                    return globalThis.throwInvalidArguments("method must be GET, PUT, DELETE or HEAD when using s3 protocol", .{});
+                };
+            }
+            if (try options.getOptional(globalThis, "expiresIn", i32)) |expires_| {
+                if (expires_ <= 0) return globalThis.throwInvalidArguments("expiresIn must be greather than 0", .{});
+                expires = @intCast(expires_);
+            }
+        }
+    }
+
+    const result = credentialsWithOptions.credentials.signRequest(.{
+        .path = request_path,
+        .method = method,
+        .acl = credentialsWithOptions.acl,
+        .storage_class = credentialsWithOptions.storage_class,
+        .request_payer = credentialsWithOptions.request_payer,
+        .content_disposition = credentialsWithOptions.content_disposition,
+        .content_type = credentialsWithOptions.content_type,
+    }, false, .{ .expires = expires }) catch |sign_err| {
+        return S3.throwSignError(sign_err, globalThis);
+    };
+    defer result.deinit();
+    return bun.String.createUTF8ForJS(globalThis, result.url);
+}
 
 pub fn getPresignUrlFrom(this: *Blob, globalThis: *jsc.JSGlobalObject, extra_options: ?JSValue) bun.JSError!JSValue {
     if (!this.isS3()) {

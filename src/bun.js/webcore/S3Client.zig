@@ -151,22 +151,18 @@ pub const S3Client = struct {
             }
             return globalThis.throwInvalidArguments("Expected a path to presign", .{});
         };
-        errdefer path.deinit();
+        defer path.deinit();
 
         const options = args.nextEat();
 
-        // Validate credentials before constructing the blob to avoid
-        // errors during signRequest that interact badly with deferred cleanup.
+        // Compute credentials and sign the request directly without
+        // constructing a temporary blob. Creating and then cleaning up
+        // a blob store while an error is being thrown from signRequest
+        // corrupts the exception scope chain and crashes during GC.
         var aws_options = try S3Credentials.getCredentialsWithOptions(ptr.credentials.*, ptr.options, options, ptr.acl, ptr.storage_class, ptr.request_payer, globalThis);
         defer aws_options.deinit();
 
-        if (aws_options.credentials.accessKeyId.len == 0 or aws_options.credentials.secretAccessKey.len == 0) {
-            return globalThis.ERR(.S3_MISSING_CREDENTIALS, "Missing S3 credentials. 'accessKeyId', 'secretAccessKey', 'bucket', and 'endpoint' are required", .{}).throw();
-        }
-
-        var blob = try S3File.constructS3FileWithS3CredentialsAndOptions(globalThis, path, options, ptr.credentials, ptr.options, ptr.acl, ptr.storage_class, ptr.request_payer);
-        defer blob.detach();
-        return S3File.getPresignUrlFrom(&blob, globalThis, options);
+        return S3File.presignFromCredentials(globalThis, path.slice(), options, &aws_options);
     }
 
     pub fn exists(ptr: *@This(), globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {

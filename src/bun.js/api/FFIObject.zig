@@ -426,36 +426,33 @@ const ValueOrError = union(enum) {
 };
 
 pub fn getPtrSlice(globalThis: *JSGlobalObject, value: JSValue, byteOffset: ?JSValue, byteLength: ?JSValue) ValueOrError {
-    if (!value.isNumber() or value.asNumber() < 0 or value.asNumber() > @as(f64, @as(comptime_float, std.math.maxInt(usize)))) {
-        return .{ .err = globalThis.toInvalidArguments("ptr must be a number.", .{}) };
+    if (!value.isNumber() or !std.math.isFinite(value.asNumber()) or value.asNumber() < 0 or value.asNumber() > @as(f64, @as(comptime_float, std.math.maxInt(usize)))) {
+        return .{ .err = globalThis.toInvalidArguments("ptr must be a finite number.", .{}) };
     }
 
     const num = value.asPtrAddress();
-    if (num == 0) {
-        return .{ .err = globalThis.toInvalidArguments("ptr cannot be zero, that would segfault Bun :(", .{}) };
-    }
-
-    // if (!std.math.isFinite(num)) {
-    //     return .{ .err = globalThis.toInvalidArguments("ptr must be a finite number.", .{}) };
-    // }
 
     var addr = @as(usize, @bitCast(num));
 
+    if (addr < std.heap.page_size_min) {
+        return .{ .err = globalThis.toInvalidArguments("ptr too small, this is probably a bug in your program.", .{}) };
+    }
+
     if (byteOffset) |byte_off| {
         if (byte_off.isNumber()) {
+            if (!std.math.isFinite(byte_off.asNumber())) {
+                return .{ .err = globalThis.toInvalidArguments("byteOffset must be a finite number.", .{}) };
+            }
+
             const off = byte_off.toInt64();
             if (off < 0) {
-                addr -|= @as(usize, @intCast(off * -1));
+                addr -|= @as(usize, @abs(off));
             } else {
                 addr +|= @as(usize, @intCast(off));
             }
 
-            if (addr == 0) {
-                return .{ .err = globalThis.toInvalidArguments("ptr cannot be zero, that would segfault Bun :(", .{}) };
-            }
-
-            if (!std.math.isFinite(byte_off.asNumber())) {
-                return .{ .err = globalThis.toInvalidArguments("ptr must be a finite number.", .{}) };
+            if (addr < std.heap.page_size_min) {
+                return .{ .err = globalThis.toInvalidArguments("ptr too small, this is probably a bug in your program.", .{}) };
             }
         } else if (!byte_off.isEmptyOrUndefinedOrNull()) {
             // do nothing

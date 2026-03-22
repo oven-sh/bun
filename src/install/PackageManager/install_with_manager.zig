@@ -770,8 +770,9 @@ pub fn installWithManager(
     const packages_len_before_install = manager.lockfile.packages.len;
 
     if (manager.options.enable.frozen_lockfile and load_result != .not_found) frozen_lockfile: {
-        if (had_any_diffs) {
-            // hasDiffs() includes dependency, override, catalog, patched dependency, and root name changes
+        if (manager.summary.root_name_changed) {
+            // root name changes are invisible to eql() and hasMetaHashChanged()
+            // because both skip the root package (index 0)
         } else if (load_result.loadedFromTextLockfile()) {
             if (bun.handleOom(manager.lockfile.eql(lockfile_before_clean, packages_len_before_install, manager.allocator))) {
                 break :frozen_lockfile;

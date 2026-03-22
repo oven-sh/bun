@@ -183,3 +183,41 @@ test("bun install updates bun.lock when workspace sub-package name changes", asy
   expect(lockfile2).toContain('"name": "another-name"');
   expect(lockfile2).not.toContain('"name": "original-name"');
 });
+
+test("bun install --frozen-lockfile errors when root package name changed", async () => {
+  using dir = tempDir("issue-28411-frozen", {
+    "package.json": JSON.stringify({
+      name: "original-name",
+      dependencies: {
+        "is-even": "1.0.0",
+      },
+    }),
+  });
+
+  // Initial install
+  await using proc1 = Bun.spawn({
+    cmd: [bunExe(), "install"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  expect(await proc1.exited).toBe(0);
+
+  // Rename the package
+  const pkg = JSON.parse(await Bun.file(`${dir}/package.json`).text());
+  pkg.name = "another-name";
+  await Bun.write(`${dir}/package.json`, JSON.stringify(pkg));
+
+  // Frozen lockfile should reject the name change
+  await using proc2 = Bun.spawn({
+    cmd: [bunExe(), "install", "--frozen-lockfile"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const stderr = await proc2.stderr.text();
+  expect(stderr).toContain("lockfile had changes");
+  expect(await proc2.exited).not.toBe(0);
+});

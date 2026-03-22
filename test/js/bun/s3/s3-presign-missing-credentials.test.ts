@@ -46,9 +46,7 @@ test("S3 presign with missing credentials throws instead of crashing", async () 
     proc.exited,
   ]);
 
-  expect(stdout.trim()).toBe(
-    "ERR_S3_MISSING_CREDENTIALS\nERR_S3_MISSING_CREDENTIALS\nERR_S3_MISSING_CREDENTIALS\nok",
-  );
+  expect(stdout.trim()).toBe("ERR_S3_MISSING_CREDENTIALS\nERR_S3_MISSING_CREDENTIALS\nERR_S3_MISSING_CREDENTIALS\nok");
   expect(stderr).toBe("");
   expect(exitCode).toBe(0);
 });

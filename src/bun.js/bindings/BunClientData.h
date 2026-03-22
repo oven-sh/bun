@@ -8,6 +8,10 @@ class ExtendedDOMIsoSubspaces;
 class DOMWrapperWorld;
 }
 
+namespace Bun {
+class JSCTaskScheduler;
+}
+
 #include "root.h"
 
 #include "ExtendedDOMClientIsoSubspaces.h"
@@ -22,7 +26,6 @@ class DOMWrapperWorld;
 #include <JavaScriptCore/WeakInlines.h>
 #include <wtf/StdLibExtras.h>
 #include "WebCoreJSBuiltins.h"
-#include "JSCTaskScheduler.h"
 #include "HTTPHeaderIdentifiers.h"
 namespace Zig {
 }
@@ -115,7 +118,7 @@ public:
     }
 
     void* bunVM;
-    Bun::JSCTaskScheduler deferredWorkTimer;
+    std::unique_ptr<Bun::JSCTaskScheduler> deferredWorkTimer;
 
 private:
     bool isWebCoreJSClientData() const final { return true; }

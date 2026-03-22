@@ -21,7 +21,9 @@
 #include <JavaScriptCore/Error.h>
 #include <JavaScriptCore/ErrorInstance.h>
 #include <JavaScriptCore/HeapSnapshotBuilder.h>
+#if ENABLE(JIT)
 #include <JavaScriptCore/JIT.h>
+#endif
 #include <JavaScriptCore/JSBasePrivate.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSONObject.h>
@@ -552,7 +554,10 @@ JSC_DECLARE_HOST_FUNCTION(functionTotalCompileTime);
 JSC_DEFINE_HOST_FUNCTION(functionTotalCompileTime,
     (JSGlobalObject*, CallFrame*))
 {
+#if ENABLE(JIT)
     return JSValue::encode(jsNumber(JIT::totalCompileTime().milliseconds()));
+#endif
+    return JSValue::encode(jsNumber(0));
 }
 
 JSC_DECLARE_HOST_FUNCTION(functionGetProtectedObjects);

@@ -4,6 +4,7 @@
 
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
+#include "JSCTaskScheduler.h"
 #include <JavaScriptCore/FastMallocAlignedMemoryAllocator.h>
 #include <JavaScriptCore/HeapInlines.h>
 #include <JavaScriptCore/IsoHeapCellType.h>
@@ -54,6 +55,7 @@ JSVMClientData::JSVMClientData(VM& vm, RefPtr<SourceProvider> sourceProvider)
     , CLIENT_ISO_SUBSPACE_INIT(m_domConstructorSpace)
     , CLIENT_ISO_SUBSPACE_INIT(m_domNamespaceObjectSpace)
     , m_clientSubspaces(makeUnique<ExtendedDOMClientIsoSubspaces>())
+    , deferredWorkTimer(std::make_unique<Bun::JSCTaskScheduler>())
 {
 }
 

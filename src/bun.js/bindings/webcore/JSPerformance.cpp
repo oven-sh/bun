@@ -267,11 +267,19 @@ size_t JSPerformance::estimatedSize(JSCell* cell, VM& vm)
 void JSPerformance::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
+#if ENABLE(DFG_JIT)
     static const JSC::DOMJIT::Signature DOMJITSignatureForPerformanceNow(
         functionPerformanceNowWithoutTypeCheck,
         JSPerformance::info(),
         JSC::DOMJIT::Effect::forWriteKinds(DFG::AbstractHeapKind::SideState),
         SpecDoubleReal);
+#else
+    static const JSC::DOMJIT::Signature DOMJITSignatureForPerformanceNow(
+        functionPerformanceNowWithoutTypeCheck,
+        JSPerformance::info(),
+        JSC::DOMJIT::Effect::forPure(),
+        SpecDoubleReal);
+#endif
 
     JSFunction* now = JSFunction::create(
         vm,

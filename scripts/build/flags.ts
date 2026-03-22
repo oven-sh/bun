@@ -430,6 +430,7 @@ export const bunOnlyFlags: Flag[] = [
       "-Werror=nonnull",
       "-Werror=move",
       "-Werror=sometimes-uninitialized",
+      "-Wno-undefined-var-template",
       "-Wno-c++23-lambda-attributes",
       "-Wno-nullability-completeness",
       "-Wno-character-conversion",

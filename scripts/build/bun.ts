@@ -226,7 +226,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // clang-cl's /Yc//Yu flags exist but the wrapper+stub mechanism here
   // is built around clang's -emit-pch model. If Windows PCH is wanted
   // later, see compile.ts TODO(windows) for what needs wiring.
-  const usePch = !cfg.windows && (!cfg.ci || cfg.mode === "cpp-only");
+  const usePch = !cfg.windows && !cfg.linux && (!cfg.ci || cfg.mode === "cpp-only");
   let pchOut: { pch: string; wrapperHeader: string } | undefined;
 
   if (usePch) {

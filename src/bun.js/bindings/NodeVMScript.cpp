@@ -3,11 +3,14 @@
 #include "ErrorCode.h"
 
 #include "JavaScriptCore/Completion.h"
+#if ENABLE(JIT)
 #include "JavaScriptCore/JIT.h"
+#endif
 #include "JavaScriptCore/JSWeakMap.h"
 #include "JavaScriptCore/JSWeakMapInlines.h"
 #include "JavaScriptCore/ProgramCodeBlock.h"
 #include "JavaScriptCore/SourceCodeKey.h"
+#include "JavaScriptCore/Watchdog.h"
 
 #include "NodeVMScriptFetcher.h"
 #include "../vm/SigintWatcher.h"
@@ -163,6 +166,7 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
                 codeBlock = JSC::ProgramCodeBlock::create(vm, executable, unlinkedBlock, jsScope);
                 RETURN_IF_EXCEPTION(scope, {});
             }
+#if ENABLE(JIT)
             JSC::CompilationResult compilationResult = JIT::compileSync(vm, codeBlock, JITCompilationEffort::JITCompilationCanFail);
             if (compilationResult != JSC::CompilationResult::CompilationFailed) {
                 executable->installCode(codeBlock);
@@ -170,6 +174,10 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
             } else {
                 script->cachedDataRejected(TriState::True);
             }
+#else
+            executable->installCode(codeBlock);
+            script->cachedDataRejected(TriState::False);
+#endif
         }
     } else if (produceCachedData) {
         script->cacheBytecode();

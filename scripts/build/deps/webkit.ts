@@ -206,6 +206,7 @@ export const webkit: Dependency = {
       ENABLE_MEDIA_SOURCE: "OFF",
       ENABLE_MEDIA_STREAM: "OFF",
       ENABLE_WEB_RTC: "OFF",
+      ...(cfg.linux && cfg.arm64 ? { USE_64KB_PAGE_BLOCK: "ON" } : {}),
       ...(cfg.asan ? { ENABLE_SANITIZERS: "address" } : {}),
     };
 

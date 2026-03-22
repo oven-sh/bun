@@ -67,7 +67,11 @@ pub fn external(ptr: ?*anyopaque, _: ?*anyopaque, _: usize) callconv(.c) void {
 }
 pub fn initS3WithReferencedCredentials(pathlike: node.PathLike, mime_type: ?MimeType, credentials: *bun.S3.S3Credentials, allocator: std.mem.Allocator) !*Store {
     var path = pathlike;
-    // this actually protects/refs the pathlike
+    // Ref before toThreadSafe because the value copy of pathlike shares the
+    // underlying WTFStringImpl with the caller.  toThreadSafe may deref the
+    // original impl after replacing it with a thread-safe copy, which would
+    // leave the caller's copy dangling.
+    if (path == .slice_with_underlying_string) path.slice_with_underlying_string.underlying.ref();
     path.toThreadSafe();
 
     const store = Blob.Store.new(.{
@@ -96,7 +100,11 @@ pub fn initS3WithReferencedCredentials(pathlike: node.PathLike, mime_type: ?Mime
 
 pub fn initS3(pathlike: node.PathLike, mime_type: ?MimeType, credentials: bun.S3.S3Credentials, allocator: std.mem.Allocator) !*Store {
     var path = pathlike;
-    // this actually protects/refs the pathlike
+    // Ref before toThreadSafe because the value copy of pathlike shares the
+    // underlying WTFStringImpl with the caller.  toThreadSafe may deref the
+    // original impl after replacing it with a thread-safe copy, which would
+    // leave the caller's copy dangling.
+    if (path == .slice_with_underlying_string) path.slice_with_underlying_string.underlying.ref();
     path.toThreadSafe();
 
     const store = Blob.Store.new(.{

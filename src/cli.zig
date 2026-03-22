@@ -1802,7 +1802,6 @@ const AddCompletions = @import("./cli/add_completions.zig");
 const FilterRun = @import("./cli/filter_run.zig");
 const MultiRun = @import("./cli/multi_run.zig");
 const PmViewCommand = @import("./cli/pm_view_command.zig");
-const VersionManager = @import("./cli/version_manager.zig");
 const fs = @import("./fs.zig");
 const options = @import("./options.zig");
 const std = @import("std");

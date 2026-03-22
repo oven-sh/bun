@@ -1653,6 +1653,7 @@ pub export var Bun__Node__UseSystemCA = false;
 
 const string = []const u8;
 
+const VersionManager = @import("./version_manager.zig");
 const builtin = @import("builtin");
 const std = @import("std");
 
@@ -1671,8 +1672,6 @@ const resolve_path = bun.path;
 const strings = bun.strings;
 const Api = bun.schema.api;
 const RegularExpression = bun.jsc.RegularExpression;
-
-const VersionManager = @import("version_manager.zig");
 
 const CLI = bun.cli;
 const Command = CLI.Command;

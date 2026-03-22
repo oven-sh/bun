@@ -1436,6 +1436,7 @@ void WebSocket::didReceiveClose(CleanStatus wasClean, unsigned short code, WTF::
     // onClose distinguishes by whether onOpen ever fired.
     if (m_native.onClose) {
         m_native.onClose(m_native.ctx, code);
+        disablePendingActivity();
         return;
     }
 
@@ -1496,10 +1497,13 @@ void WebSocket::didClose(unsigned unhandledBufferedAmount, unsigned short code, 
     this->m_upgradeClient = nullptr;
 
     // Native callback: state transition above is done, hand off the code.
-    // disablePendingActivity() is a JS-GC-root concern the native path
-    // doesn't need — the consumer holds a RefPtr and drops it on close.
+    // disablePendingActivity releases the GC-root ref connect() took —
+    // the native consumer holds a RefPtr so GC-rooting doesn't matter,
+    // but the count should balance for the ASSERT below and any future
+    // consumer of hasPendingActivity().
     if (m_native.onClose) {
         m_native.onClose(m_native.ctx, code);
+        disablePendingActivity();
         return;
     }
 

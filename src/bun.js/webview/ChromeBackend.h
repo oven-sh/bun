@@ -342,10 +342,14 @@ enum class PendingSlot : uint8_t {
     Cdp,
 };
 
+// Per-CDP-id pending entry. viewId indirects through Transport::m_views
+// (one Weak per view) instead of holding its own Weak — a burst of
+// operations creates N ids but only one weak slot allocation. Response
+// handlers do m_views.find(entry.viewId)->value.get() to reach the view.
 struct Pending {
     Method method;
     PendingSlot slot;
-    JSC::Weak<JSWebView> view;
+    uint32_t viewId;
 };
 
 // Transport mode. Pipe = we spawned Chrome with --remote-debugging-pipe,
@@ -393,9 +397,11 @@ public:
     // Next CDP id — caller uses it with Command(id, ...) then calls send().
     uint32_t nextId() { return m_nextId++; }
 
-    // Finish the command and write to the pipe. Zero-copy when the command
-    // body is all-ASCII (the common case). See Command::finishAndWrite.
-    void send(Command&& cmd);
+    // Finish the command and write. Zero-copy when the body is all-ASCII.
+    // Pipe mode: NUL-delimited via writeRaw. WebSocket mode: one text
+    // frame via sendTextNative, or queue with its CDP id pre-open so
+    // close() can cancel (m_pending.removeIf erases the id, drain skips).
+    void send(uint32_t cdpId, Command&& cmd);
 
     // Called from usockets onData. Parses complete NUL-delimited messages
     // out of rx, dispatches each to handleMessage.
@@ -415,7 +421,16 @@ public:
     // Commands queued while the WS handshake is in flight. The first
     // navigate() on a view runs before onOpen fires; we can't
     // sendTextNative until m_state == OPEN. Drained in wsOnOpen.
-    WTF::Vector<WTF::String> m_wsPending;
+    //
+    // Keyed by CDP id so Ops::close() can cancel: m_pending.removeIf
+    // erases the id, and drain skips bodies whose id is gone. Without
+    // this, closing a view pre-open would still send its
+    // Target.createTarget — orphaned tab in the user's Chrome.
+    struct WsPendingCmd {
+        uint32_t id;
+        WTF::String body;
+    };
+    WTF::Vector<WsPendingCmd> m_wsPending;
     bool m_wsOpen = false;
     // True when ensureConnected was called from auto-detect (the
     // constructor read DevToolsActivePort) — gates the stale-file
@@ -424,10 +439,18 @@ public:
     bool m_dead = false;
 
     uint32_t m_nextId = 1;
+    uint32_t m_nextViewId = 1;
     WTF::HashMap<uint32_t, Pending> m_pending;
-    // sessionId → JSWebView. The string is the raw slice from
-    // Target.attachedToTarget — base64-ish, no escapes, stored as-is.
-    WTF::HashMap<WTF::String, JSC::Weak<JSWebView>> m_sessions;
+    // viewId → JSWebView. ONE Weak per view (not per CDP request).
+    // Mirrors WebKitBackend's HostClient::viewsById. All routing
+    // dereferences through here. Populated in createChrome, erased in
+    // Ops::close. The Weak's owner predicate reads
+    // m_pendingActivityCount — same GC-root pattern as HostClient.
+    WTF::HashMap<uint32_t, JSC::Weak<JSWebView>> m_views;
+    // sessionId → viewId. The string is the raw slice from
+    // Target.attachedToTarget — base64-ish, no escapes. Indirects through
+    // m_views so there's still only one Weak per view total.
+    WTF::HashMap<WTF::String, uint32_t> m_sessions;
 
     WTF::Vector<uint8_t> m_rx;
     WTF::Vector<uint8_t> m_txQueue;
@@ -439,6 +462,22 @@ public:
     void rejectAllAndMarkDead(const WTF::String& reason);
     void updateKeepAlive();
     void writeRaw(const char* data, size_t len);
+
+    // Resolve viewId → JSWebView* through m_views. Null if the view was
+    // collected (user dropped both the view and its awaited promise —
+    // m_pendingActivityCount == 0 so the Weak predicate stopped rooting
+    // it). Responses on a null view silently drop, same as WebKit's
+    // handleReply early-return.
+    JSWebView* viewFor(uint32_t viewId)
+    {
+        auto it = m_views.find(viewId);
+        if (it == m_views.end()) return nullptr;
+        return it->value.get();
+    }
+
+    // Register a fresh view. Returns its viewId and stores one Weak.
+    // Called from JSWebView::createChrome after the transport is up.
+    uint32_t registerView(JSWebView*);
 };
 
 Transport& transport();

@@ -391,18 +391,22 @@ it("screenshot encoding options", async () => {
   // does after shm_open'ing. Verify end-to-end by reading the segment
   // ourselves — same thing Kitty does.
   const shm = await view.screenshot({ encoding: "shmem" });
-  expect(typeof shm.name).toBe("string");
-  expect(shm.name.startsWith("/bun-webview-")).toBe(true);
-  expect(shm.size).toBeGreaterThan(100);
-  // shm_open + mmap + read — proves the bytes landed in the segment
-  // and are PNG. This is what Kitty's t=s handler does.
-  const bytes = shmRead(shm.name, 8);
-  expect(bytes[0]).toBe(0x89);
-  expect(bytes[1]).toBe(0x50);
-  expect(bytes[2]).toBe(0x4e);
-  expect(bytes[3]).toBe(0x47);
-  // Clean up — Kitty does this after reading.
-  shmUnlink(shm.name);
+  try {
+    expect(typeof shm.name).toBe("string");
+    expect(shm.name.startsWith("/bun-webview-")).toBe(true);
+    expect(shm.size).toBeGreaterThan(100);
+    // shm_open + mmap + read — proves the bytes landed in the segment
+    // and are PNG. This is what Kitty's t=s handler does.
+    const bytes = shmRead(shm.name, 8);
+    expect(bytes[0]).toBe(0x89);
+    expect(bytes[1]).toBe(0x50);
+    expect(bytes[2]).toBe(0x4e);
+    expect(bytes[3]).toBe(0x47);
+  } finally {
+    // Clean up even if assertions fail — leaked shm names persist
+    // until logout on macOS.
+    shmUnlink(shm.name);
+  }
 });
 
 it("screenshot Blob survives GC (mmap-backed store)", async () => {

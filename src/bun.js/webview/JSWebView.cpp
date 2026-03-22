@@ -118,6 +118,7 @@ JSWebView::~JSWebView()
     if (m_backend == WebViewBackend::Chrome) {
         auto& t = CDP::transport();
         if (!m_sessionId.isEmpty()) t.m_sessions.remove(m_sessionId);
+        if (m_viewId) t.m_views.remove(m_viewId);
         t.updateKeepAlive();
         return;
     }
@@ -364,6 +365,10 @@ JSWebView* JSWebView::createChrome(JSGlobalObject* g, Structure* structure,
     view->m_backend = WebViewBackend::Chrome;
     view->m_width = width;
     view->m_height = height;
+    // One Weak per view, stored in Transport::m_views. All CDP routing
+    // dereferences through this — m_pending and m_sessions hold just the
+    // viewId, not their own Weaks. Mirrors WebKit's HostClient::viewsById.
+    view->m_viewId = t.registerView(view);
     // Target.createTarget deferred to first navigate() — keeps the constructor
     // synchronous and the attach chain owned by the navigate promise (which
     // resolves on Page.loadEventFired, so one await covers the whole sequence).

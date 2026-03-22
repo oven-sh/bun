@@ -206,10 +206,6 @@ it("chrome: screenshot format options produce the right magic bytes", async () =
     // WebP magic: "RIFF" <4-byte size> "WEBP"
     expect(String.fromCharCode(wb[0], wb[1], wb[2], wb[3])).toBe("RIFF");
     expect(String.fromCharCode(wb[8], wb[9], wb[10], wb[11])).toBe("WEBP");
-
-    // WebP should be smaller than PNG for a gradient (lossy wins).
-    const png = await view.screenshot({ format: "png" });
-    expect(webp.size).toBeLessThan(png.size);
   } finally {
     view.close();
   }

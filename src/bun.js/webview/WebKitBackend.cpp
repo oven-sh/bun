@@ -210,12 +210,16 @@ void HostClient::onWritable()
 // objects on macOS — MAP_PRIVATE returns EINVAL (the kernel's posix_shm
 // vfs doesn't implement VM_BEHAVIOR_COPY). Returns nullptr on failure
 // with errno set; caller reports it.
-static void* mapShm(const char* zname, size_t byteLen)
+static void* mapShm(const char* zname, size_t byteLen, int& outErr)
 {
     int fd = shm_open(zname, O_RDWR, 0);
-    if (fd < 0) return nullptr;
+    if (fd < 0) {
+        outErr = errno;
+        return nullptr;
+    }
     void* map = mmap(nullptr, byteLen, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-    ::close(fd);
+    outErr = (map == MAP_FAILED) ? errno : 0;
+    ::close(fd); // after capturing errno
     if (map == MAP_FAILED) return nullptr;
     return map;
 }
@@ -252,14 +256,15 @@ static JSValue openShmScreenshot(JSGlobalObject* g, const char* name, uint32_t n
         return obj;
     }
 
-    void* map = mapShm(zname.span().data(), byteLen);
+    int shmErr = 0;
+    void* map = mapShm(zname.span().data(), byteLen, shmErr);
     // Unlink after we have a mapping — the name can go away, the physical
     // pages live until the last mapping drops. For the error path
     // (map==null), we still unlink to avoid leaking the name; the user
     // gets an Error and there's nothing to read anyway.
     shm_unlink(zname.span().data());
     if (!map)
-        return createError(g, makeString("shm: "_s, WTF::String::fromUTF8(strerror(errno))));
+        return createError(g, makeString("shm: "_s, WTF::String::fromUTF8(strerror(shmErr))));
 
     switch (enc) {
     case ScreenshotEncoding::Blob: {

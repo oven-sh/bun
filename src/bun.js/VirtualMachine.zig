@@ -479,17 +479,14 @@ pub fn loadExtraEnvAndSourceCodePrinter(this: *VirtualMachine) void {
     // NO_COLOR / FORCE_COLOR from .env files are missed at startup.
     // Only act if the process env didn't already have these vars
     // (startup already handled those via bun.env_var.*.get()).
-    if (bun.getenvZ("FORCE_COLOR") == null) {
+    if (bun.getenvZ("FORCE_COLOR") == null and bun.getenvZ("NO_COLOR") == null) {
+        // Neither color var was in process env — check if env-file introduced one.
+        // FORCE_COLOR takes precedence over NO_COLOR (matches startup if/else-if).
         if (map.get("FORCE_COLOR")) |force_color| {
-            // Env-file introduced FORCE_COLOR. "" enables 16-color per Node.js.
             const enable = force_color.len == 0 or bun.env_var.isValueTruthy(force_color);
             Output.enable_ansi_colors_stdout = enable;
             Output.enable_ansi_colors_stderr = enable;
-        }
-    }
-    if (bun.getenvZ("NO_COLOR") == null) {
-        if (map.get("NO_COLOR") != null) {
-            // Env-file introduced NO_COLOR. Any value disables color.
+        } else if (map.get("NO_COLOR") != null) {
             Output.enable_ansi_colors_stdout = false;
             Output.enable_ansi_colors_stderr = false;
         }

@@ -67,6 +67,7 @@ describe.concurrent("NO_COLOR does not affect snapshot output", () => {
     // Snapshot must not contain ANSI escape codes
     expect(snapContent).not.toContain("\\x1B");
     expect(snapContent).not.toMatch(/\x1b/);
+    expect(snapContent).toContain("expect(received).toMatchObject(expected)");
     expect(exitCode).toBe(0);
   });
 
@@ -98,6 +99,7 @@ describe.concurrent("NO_COLOR does not affect snapshot output", () => {
 
     expect(snapContent).not.toContain("\\x1B");
     expect(snapContent).not.toMatch(/\x1b/);
+    expect(snapContent).toContain("expect(received).toMatchObject(expected)");
     expect(exitCode).toBe(0);
   });
 });

@@ -21,7 +21,6 @@
     "noUncheckedIndexedAccess": true,
     "noImplicitOverride": true,
 
-    // Require explicit @types — TypeScript 6.0+ no longer auto-discovers them
     "types": ["node", "bun"],
 
     // Some stricter flags (disabled by default)

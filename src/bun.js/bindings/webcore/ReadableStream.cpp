@@ -487,20 +487,20 @@ static inline JSC::EncodedJSValue ZigGlobalObject__readableStreamToArrayBufferBo
     auto callData = JSC::getCallData(function);
     JSValue result = call(globalObject, function, callData, JSC::jsUndefined(), arguments);
 
+    RETURN_IF_EXCEPTION(throwScope, {});
+
     JSC::JSObject* object = result.getObject();
 
     if (!result || result.isUndefinedOrNull()) [[unlikely]]
         return JSValue::encode(result);
 
     if (!object) [[unlikely]] {
-        auto throwScope = DECLARE_THROW_SCOPE(vm);
         throwTypeError(globalObject, throwScope, "Expected object"_s);
         return {};
     }
 
     JSC::JSPromise* promise = JSC::jsDynamicCast<JSC::JSPromise*>(object);
     if (!promise) [[unlikely]] {
-        auto throwScope = DECLARE_THROW_SCOPE(vm);
         throwTypeError(globalObject, throwScope, "Expected promise"_s);
         return {};
     }
@@ -530,6 +530,8 @@ extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToBytes(Zig::Globa
 
     auto callData = JSC::getCallData(function);
     JSValue result = call(globalObject, function, callData, JSC::jsUndefined(), arguments);
+
+    RETURN_IF_EXCEPTION(throwScope, {});
 
     JSC::JSObject* object = result.getObject();
 

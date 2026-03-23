@@ -125,7 +125,6 @@ function doUpgradeRequest(
   headers: any,
   method: string,
   body: any,
-  protocol: string,
   maybeEmitSocket: () => void,
   maybeEmitClose: () => void,
 ) {
@@ -135,6 +134,12 @@ function doUpgradeRequest(
   const tls = require("node:tls");
 
   return new Promise<void>((resolve, reject) => {
+    // Bail out immediately if already aborted
+    if (self[kAbortController]?.signal?.aborted) {
+      reject(new DOMException("This operation was aborted.", "AbortError"));
+      return;
+    }
+
     const parsedUrl = new URL(url);
     const isSecure = parsedUrl.protocol === "https:";
     const connectHost = parsedUrl.hostname;
@@ -624,7 +629,6 @@ function ClientRequest(input, options, cb) {
           reqHeaders,
           method,
           customBody,
-          protocol,
           maybeEmitSocket,
           maybeEmitClose,
         );

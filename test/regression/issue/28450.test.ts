@@ -5,7 +5,7 @@ import { bunEnv, bunExe } from "harness";
 // This breaks playwright-core and any library using the real `ws` package for WebSocket
 // connections via http.request() upgrade handshake.
 
-test("http.request emits upgrade event on 101 Switching Protocols", async () => {
+test.concurrent("http.request emits upgrade event on 101 Switching Protocols", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -85,7 +85,7 @@ server.listen(0, () => {
   expect(exitCode).toBe(0);
 });
 
-test("http.request upgrade event provides valid IncomingMessage headers", async () => {
+test.concurrent("http.request upgrade event provides valid IncomingMessage headers", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -171,7 +171,7 @@ server.listen(0, () => {
   expect(exitCode).toBe(0);
 });
 
-test("http.request emits response (not upgrade) for non-101 on upgrade request", async () => {
+test.concurrent("http.request emits response (not upgrade) for non-101 on upgrade request", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),

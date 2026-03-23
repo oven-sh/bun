@@ -8177,7 +8177,7 @@ declare module "bun" {
     /**
      * Capture a PNG screenshot of the current viewport.
      */
-    screenshot(): Promise<Uint8Array>;
+    screenshot(): Promise<Uint8Array<ArrayBuffer>>;
 
     /**
      * Click at the given viewport coordinates.
@@ -8275,8 +8275,6 @@ declare module "bun" {
 
     /** Alias for {@link close}. Enables `using view = new Bun.WebView(...)`. */
     [Symbol.dispose](): void;
-    /** Alias for {@link close}. Enables `await using view = new Bun.WebView(...)`. */
-    [Symbol.asyncDispose](): void;
   }
 
   /**

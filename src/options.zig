@@ -1072,6 +1072,31 @@ pub fn getLoaderAndVirtualSource(
         }
     }
 
+    if (strings.hasPrefixComptime(specifier, "data:")) {
+        const DataURL = @import("./resolver/data_url.zig").DataURL;
+        if (DataURL.parse(specifier) catch null) |data_url| {
+            const mime = data_url.decodeMimeType();
+            loader = switch (mime.category) {
+                .javascript => .js,
+                .css => .css,
+                .json => .json,
+                .text => .text,
+                else => loader,
+            };
+            if (loader != null and loader.? != .file) {
+                const decoded = data_url.decodeData(jsc_vm.allocator) catch null;
+                if (decoded) |body| {
+                    path = Fs.Path.initWithNamespace(specifier, "dataurl");
+                    virtual_source_to_use.* = logger.Source{
+                        .path = path,
+                        .contents = body,
+                    };
+                    virtual_source = &virtual_source_to_use.*.?;
+                }
+            }
+        }
+    }
+
     if (jsc.WebCore.ObjectURLRegistry.isBlobURL(specifier)) {
         if (jsc.WebCore.ObjectURLRegistry.singleton().resolveAndDupe(specifier["blob:".len..])) |blob| {
             blob_to_deinit.* = blob;

@@ -63,8 +63,8 @@ const builtinModules = [
   "node:test",
 ];
 
-const REPL_MODE_SLOPPY = Symbol.for("repl-sloppy");
-const REPL_MODE_STRICT = Symbol.for("repl-strict");
+const REPL_MODE_SLOPPY = Symbol("repl-sloppy");
+const REPL_MODE_STRICT = Symbol("repl-strict");
 
 class Recoverable extends SyntaxError {
   err: Error;
@@ -154,7 +154,7 @@ const defaultCommands: Record<
       this.clearBufferedCommand();
       if (!this.useGlobal) {
         this.outputStream.write("Clearing context...\n");
-        this.context = vm.createContext();
+        this.context = vm.createContext(globalThis);
         this.emit("reset", this.context);
       }
       this.displayPrompt();
@@ -281,7 +281,7 @@ function REPLServer(this: any, options?: string | Record<string, any>, ...rest: 
   if (useGlobal) {
     this.context = globalThis;
   } else {
-    this.context = vm.createContext();
+    this.context = vm.createContext(globalThis);
   }
 
   const savedPrompt = prompt;
@@ -323,6 +323,12 @@ function REPLServer(this: any, options?: string | Record<string, any>, ...rest: 
     // Editor mode: collect lines until Ctrl+D
     if (this.editorMode) {
       this._bufferedCommand += line + "\n";
+      return;
+    }
+
+    // Empty line: silently re-prompt without printing "undefined"
+    if (!trimmedLine && !this._bufferedCommand) {
+      this.prompt();
       return;
     }
 

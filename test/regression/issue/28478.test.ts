@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
-describe("node:repl", () => {
+describe.concurrent("node:repl", () => {
   test("repl.start is a function", async () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", "const repl = require('node:repl'); console.log(typeof repl.start);"],

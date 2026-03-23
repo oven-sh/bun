@@ -160,7 +160,8 @@ function doUpgradeRequest(
       // Synthesize Host header if not already present (HTTP/1.1 requires it)
       if (!headers["host"] && !headers["Host"]) {
         const defaultPort = isSecure ? 443 : 80;
-        const hostHeader = connectPort === defaultPort ? connectHost : `${connectHost}:${connectPort}`;
+        const bracketedHost = connectHost.includes(":") ? `[${connectHost}]` : connectHost;
+        const hostHeader = connectPort === defaultPort ? bracketedHost : `${bracketedHost}:${connectPort}`;
         request += `Host: ${hostHeader}\r\n`;
       }
 
@@ -181,7 +182,7 @@ function doUpgradeRequest(
         if (typeof body === "string") {
           socket.write(body);
         } else if (body instanceof Blob) {
-          body.arrayBuffer().then(ab => socket.write(Buffer.from(ab)));
+          body.arrayBuffer().then(ab => socket.write(Buffer.from(ab))).catch(err => socket.destroy(err));
         } else {
           socket.write(Buffer.from(body));
         }

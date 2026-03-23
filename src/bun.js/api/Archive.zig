@@ -257,8 +257,11 @@ fn buildTarballFromObject(globalThis: *jsc.JSGlobalObject, obj: jsc.JSValue) bun
 
 /// Returns data as a ZigString.Slice (handles ownership automatically via deinit)
 fn getEntryData(globalThis: *jsc.JSGlobalObject, value: jsc.JSValue, allocator: std.mem.Allocator) bun.JSError!jsc.ZigString.Slice {
-    // For Blob, use sharedView (no copy needed)
+    // For Blob, use sharedView for in-memory blobs, read file for file-backed blobs
     if (value.as(jsc.WebCore.Blob)) |blob_ptr| {
+        if (blob_ptr.needsToReadFile()) {
+            return readFileBackedBlob(globalThis, blob_ptr, allocator);
+        }
         return jsc.ZigString.Slice.fromUTF8NeverFree(blob_ptr.sharedView());
     }
 
@@ -269,6 +272,34 @@ fn getEntryData(globalThis: *jsc.JSGlobalObject, value: jsc.JSValue, allocator: 
 
     // For strings, convert (allocates)
     return value.toSlice(globalThis, allocator);
+}
+
+/// Reads data from a file-backed Blob synchronously.
+fn readFileBackedBlob(globalThis: *jsc.JSGlobalObject, blob_ptr: *const jsc.WebCore.Blob, allocator: std.mem.Allocator) bun.JSError!jsc.ZigString.Slice {
+    const store = blob_ptr.store orelse return jsc.ZigString.Slice.fromUTF8NeverFree("");
+    const file = store.data.file;
+    switch (file.pathlike) {
+        .path => |path| {
+            const file_data = switch (bun.sys.File.readFrom(bun.FD.cwd(), path.slice(), allocator)) {
+                .result => |b| b,
+                .err => |e| return globalThis.throwValue(e.toSystemError().toErrorInstance(globalThis)),
+            };
+            return jsc.ZigString.Slice.init(allocator, file_data);
+        },
+        .fd => |fd| {
+            const handle = bun.sys.File.from(fd);
+            const result = handle.readToEnd(allocator);
+            if (result.err) |e| {
+                result.bytes.deinit();
+                return globalThis.throwValue(e.toSystemError().toErrorInstance(globalThis));
+            }
+            if (result.bytes.items.len == 0) {
+                result.bytes.deinit();
+                return jsc.ZigString.Slice.fromUTF8NeverFree("");
+            }
+            return jsc.ZigString.Slice.init(allocator, result.bytes.items);
+        },
+    }
 }
 
 /// Static method: Archive.write(path, data, options?)

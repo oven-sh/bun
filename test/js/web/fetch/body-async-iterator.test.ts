@@ -21,7 +21,7 @@ test("Response.bytes() with async iterable body does not crash with null deref",
     stderr: "pipe",
   });
 
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stdout).not.toContain("null is not an object");
   expect(exitCode).toBe(0);
@@ -47,7 +47,7 @@ test("Response.arrayBuffer() with async iterable body does not crash with null d
     stderr: "pipe",
   });
 
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stdout).not.toContain("null is not an object");
   expect(exitCode).toBe(0);

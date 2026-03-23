@@ -54,3 +54,18 @@ test("Bun.Archive roundtrips Bun.file() through Bun.write", async () => {
   const files = await loaded.files();
   expect(await files.get("dest.txt")!.text()).toBe(content);
 });
+
+test("Bun.Archive handles sliced Bun.file() blobs", async () => {
+  const content = "0123456789abcdef";
+
+  using dir = tempDir("archive-sliced-file", {
+    "data.txt": content,
+  });
+
+  const archive = new Bun.Archive({
+    "sliced.txt": Bun.file(`${dir}/data.txt`).slice(5, 10),
+  });
+
+  const files = await archive.files();
+  expect(await files.get("sliced.txt")!.text()).toBe("56789");
+});

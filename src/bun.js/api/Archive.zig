@@ -274,32 +274,57 @@ fn getEntryData(globalThis: *jsc.JSGlobalObject, value: jsc.JSValue, allocator: 
     return value.toSlice(globalThis, allocator);
 }
 
-/// Reads data from a file-backed Blob synchronously.
+/// Reads data from a file-backed Blob synchronously, respecting blob offset and size.
 fn readFileBackedBlob(globalThis: *jsc.JSGlobalObject, blob_ptr: *const jsc.WebCore.Blob, allocator: std.mem.Allocator) bun.JSError!jsc.ZigString.Slice {
     const store = blob_ptr.store orelse return jsc.ZigString.Slice.fromUTF8NeverFree("");
     const file = store.data.file;
-    switch (file.pathlike) {
-        .path => |path| {
-            const file_data = switch (bun.sys.File.readFrom(bun.FD.cwd(), path.slice(), allocator)) {
-                .result => |b| b,
-                .err => |e| return globalThis.throwValue(e.toSystemError().toErrorInstance(globalThis)),
-            };
-            return jsc.ZigString.Slice.init(allocator, file_data);
+    const file_data: []const u8 = switch (file.pathlike) {
+        .path => |path| switch (bun.sys.File.readFrom(bun.FD.cwd(), path.slice(), allocator)) {
+            .result => |b| b,
+            .err => |e| return globalThis.throwValue(e.toSystemError().toErrorInstance(globalThis)),
         },
-        .fd => |fd| {
+        .fd => |fd| blk: {
             const handle = bun.sys.File.from(fd);
-            const result = handle.readToEnd(allocator);
+            var result = handle.readToEnd(allocator);
             if (result.err) |e| {
                 result.bytes.deinit();
                 return globalThis.throwValue(e.toSystemError().toErrorInstance(globalThis));
             }
             if (result.bytes.items.len == 0) {
                 result.bytes.deinit();
-                return jsc.ZigString.Slice.fromUTF8NeverFree("");
+                break :blk "";
             }
-            return jsc.ZigString.Slice.init(allocator, result.bytes.items);
+            break :blk result.bytes.toOwnedSlice() catch {
+                result.bytes.deinit();
+                return globalThis.throwOutOfMemory();
+            };
         },
+    };
+
+    if (file_data.len == 0) return jsc.ZigString.Slice.fromUTF8NeverFree("");
+
+    // Apply blob offset and size to support sliced file-backed blobs.
+    const offset: usize = @intCast(blob_ptr.offset);
+    if (offset >= file_data.len) {
+        allocator.free(file_data);
+        return jsc.ZigString.Slice.fromUTF8NeverFree("");
     }
+    const remaining = file_data.len - offset;
+    const size: usize = if (blob_ptr.size == jsc.WebCore.Blob.max_size)
+        remaining
+    else
+        @min(@as(usize, @intCast(blob_ptr.size)), remaining);
+
+    if (offset == 0 and size == file_data.len) {
+        return jsc.ZigString.Slice.init(allocator, file_data);
+    }
+
+    const sliced = allocator.dupe(u8, file_data[offset..][0..size]) catch {
+        allocator.free(file_data);
+        return globalThis.throwOutOfMemory();
+    };
+    allocator.free(file_data);
+    return jsc.ZigString.Slice.init(allocator, sliced);
 }
 
 /// Static method: Archive.write(path, data, options?)

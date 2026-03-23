@@ -1,5 +1,4 @@
 // Hardcoded module "node:repl"
-const EventEmitter = require("node:events");
 const readline = require("node:readline");
 const { inspect } = require("node:util");
 const vm = require("node:vm");

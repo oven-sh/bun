@@ -1,5 +1,5 @@
-import { test, expect } from "bun:test";
-import { bunExe, bunEnv } from "harness";
+import { expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 
 test("calling .bytes() twice on a Response with async iterable body does not crash", async () => {
   await using proc = Bun.spawn({

@@ -110,7 +110,7 @@ pub fn unlink(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
 
     // accept a path or a blob
     var path_or_blob = try PathOrBlob.fromJSNoCopy(globalThis, &args);
-    errdefer {
+    defer {
         if (path_or_blob == .path) {
             path_or_blob.path.deinit();
         }
@@ -142,7 +142,7 @@ pub fn write(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSE
 
     // accept a path or a blob
     var path_or_blob = try PathOrBlob.fromJSNoCopy(globalThis, &args);
-    errdefer {
+    defer {
         if (path_or_blob == .path) {
             path_or_blob.path.deinit();
         }
@@ -185,7 +185,7 @@ pub fn size(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSEr
 
     // accept a path or a blob
     var path_or_blob = try PathOrBlob.fromJSNoCopy(globalThis, &args);
-    errdefer {
+    defer {
         if (path_or_blob == .path) {
             path_or_blob.path.deinit();
         }
@@ -218,7 +218,7 @@ pub fn exists(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
 
     // accept a path or a blob
     var path_or_blob = try PathOrBlob.fromJSNoCopy(globalThis, &args);
-    errdefer {
+    defer {
         if (path_or_blob == .path) {
             path_or_blob.path.deinit();
         }
@@ -608,7 +608,7 @@ pub fn stat(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSEr
 
     // accept a path or a blob
     var path_or_blob = try PathOrBlob.fromJSNoCopy(globalThis, &args);
-    errdefer {
+    defer {
         if (path_or_blob == .path) {
             path_or_blob.path.deinit();
         }

@@ -10,6 +10,7 @@ comptime {
     @export(&getExecPath, .{ .name = "Bun__Process__getExecPath" });
     @export(&bun.jsc.host_fn.wrap1(createExecArgv), .{ .name = "Bun__Process__createExecArgv" });
     @export(&getEval, .{ .name = "Bun__Process__getEval" });
+    @export(&jsc.host_fn.toJSHostFn(loadEnvFile), .{ .name = "Bun__Process__loadEnvFile" });
 }
 
 var title_mutex = bun.Mutex{};
@@ -350,6 +351,81 @@ comptime {
     }
 }
 
+/// Reads and parses a .env file, updating the Zig env map and JS process.env object.
+fn loadEnvFile(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+    const vm = globalObject.bunVM();
+    const allocator = bun.default_allocator;
+
+    // Get path argument, default to ".env"
+    const arg = callframe.argument(0);
+    const path_slice: []const u8 = if (arg == .js_undefined)
+        ".env"
+    else brk: {
+        if (!arg.isString()) {
+            return globalObject.throwInvalidArguments("The \"path\" argument must be of type string", .{});
+        }
+        const str = try arg.toBunString(globalObject);
+        defer str.deref();
+        break :brk str.toOwnedSlice(allocator) catch return globalObject.throwOutOfMemory();
+    };
+    const path_is_allocated = arg != .js_undefined;
+    defer if (path_is_allocated) allocator.free(path_slice);
+
+    // Resolve the path relative to cwd
+    var path_buf: bun.PathBuffer = undefined;
+    const resolved = bun.path.joinAbsStringBufZ(
+        vm.transpiler.fs.top_level_dir,
+        &path_buf,
+        &.{path_slice},
+        .auto,
+    );
+
+    // Open and read the file
+    const contents = switch (bun.sys.File.readFrom(bun.FD.cwd(), resolved, allocator)) {
+        .result => |bytes| bytes,
+        .err => |err| {
+            const sys_err = err.toSystemError();
+            const utf8 = sys_err.message.toUTF8(allocator);
+            defer utf8.deinit();
+            return globalObject.throwValue(
+                globalObject.createTypeErrorInstance(
+                    "Cannot read the .env file at: \"{s}\". Error: {s}",
+                    .{ resolved, utf8.slice() },
+                ),
+            );
+        },
+    };
+    defer allocator.free(contents);
+
+    // Parse the env file into a temporary map
+    var map = DotEnv.Map.init(allocator);
+    DotEnv.parseEnvBuf(contents, path_slice, allocator, &map) catch |err| switch (err) {
+        error.OutOfMemory => return globalObject.throwOutOfMemory(),
+    };
+
+    // Get the JS process.env object via extern C++ call
+    const env_object = Bun__getProcessEnvObject(globalObject);
+
+    // Update both the Zig env map and the JS process.env object
+    var it = map.map.iterator();
+    while (it.next()) |entry| {
+        const key = entry.key_ptr.*;
+        const value = entry.value_ptr.value;
+
+        // Update Zig env map (override existing values)
+        vm.transpiler.env.map.put(key, value) catch |err| switch (err) {
+            error.OutOfMemory => return globalObject.throwOutOfMemory(),
+        };
+
+        // Update JS process.env object
+        env_object.put(globalObject, &ZigString.initUTF8(key), ZigString.initUTF8(value).toJS(globalObject));
+    }
+
+    return .js_undefined;
+}
+
+extern fn Bun__getProcessEnvObject(globalObject: *jsc.JSGlobalObject) jsc.JSValue;
+
 pub export fn Bun__NODE_NO_WARNINGS() bool {
     return bun.feature_flag.NODE_NO_WARNINGS.get();
 }
@@ -374,6 +450,8 @@ const bun = @import("bun");
 const Environment = bun.Environment;
 const Syscall = bun.sys;
 const strings = bun.strings;
+
+const DotEnv = bun.DotEnv;
 
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;

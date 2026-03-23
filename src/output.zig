@@ -351,6 +351,11 @@ pub const Source = struct {
                 }
             }
 
+            if (strings.includes(term, "-256")) {
+                lazy_color_depth = .@"256";
+                return;
+            }
+
             if (strings.includes(term, "con") or
                 strings.includes(term, "ansi") or
                 strings.includes(term, "rxvt") or

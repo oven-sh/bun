@@ -677,6 +677,7 @@ ${
       : `
     Structure* structure = globalObject->${className(typeName)}Structure();
     ${className(typeName)}* instance = ${className(typeName)}::create(vm, globalObject, structure, nullptr);
+    JSC::EnsureStillAliveScope ensureInstanceAlive(instance);
 
     void* ptr = ${classSymbolName(typeName, "construct")}(globalObject, callFrame, JSValue::encode(instance));
     if (scope.exception()) [[unlikely]] {
@@ -742,6 +743,7 @@ JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${name}::construct(JSC::JSGlobalObj
 `
       : `
     ${className(typeName)}* instance = ${className(typeName)}::create(vm, globalObject, structure, nullptr);
+    JSC::EnsureStillAliveScope ensureInstanceAlive(instance);
 
     void* ptr = ${classSymbolName(typeName, "construct")}(globalObject, callFrame, JSValue::encode(instance));
     if (scope.exception()) [[unlikely]] {

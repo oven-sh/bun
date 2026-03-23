@@ -147,6 +147,12 @@ async function doUpgradeRequest(
   }
 
   return new Promise<void>((resolve, reject) => {
+    // If abort was called during the async Blob resolution, bail out immediately
+    if (self[kAbortController]?.signal.aborted) {
+      reject(new DOMException("This operation was aborted.", "AbortError"));
+      return;
+    }
+
     const parsedUrl = new URL(url);
     const isSecure = parsedUrl.protocol === "https:";
     const connectHost = parsedUrl.hostname;
@@ -238,6 +244,9 @@ async function doUpgradeRequest(
 
         maybeEmitSocket();
 
+        // Remove abort listener — socket is now owned by user code
+        abortSignal?.removeEventListener("abort", onAbortSocket);
+
         const eventName = method === "CONNECT" ? "connect" : "upgrade";
         process.nextTick(() => {
           if (!self.emit(eventName, res, socket, parsed.head)) {
@@ -277,8 +286,9 @@ async function doUpgradeRequest(
         let bytesReceived = 0;
 
         if (parsed.head.length > 0) {
-          res.push(parsed.head);
-          bytesReceived += parsed.head.length;
+          const headToRead = !isNaN(contentLength) ? parsed.head.slice(0, contentLength) : parsed.head;
+          res.push(headToRead);
+          bytesReceived += headToRead.length;
         }
 
         // Complete immediately if Content-Length body is fully consumed
@@ -288,6 +298,13 @@ async function doUpgradeRequest(
           socket.destroy();
         } else {
           socket.on("data", dataChunk => {
+            if (!isNaN(contentLength)) {
+              const remaining = contentLength - bytesReceived;
+              if (remaining <= 0) return;
+              if (dataChunk.length > remaining) {
+                dataChunk = dataChunk.slice(0, remaining);
+              }
+            }
             if (!res._dumped) {
               res.push(dataChunk);
             }
@@ -338,10 +355,10 @@ async function doUpgradeRequest(
 
     // Wire up abort controller
     const abortSignal = self[kAbortController]?.signal;
+    const onAbortSocket = () => {
+      socket.destroy();
+    };
     if (abortSignal) {
-      const onAbortSocket = () => {
-        socket.destroy();
-      };
       abortSignal.addEventListener("abort", onAbortSocket, { once: true });
       socket.on("close", () => {
         abortSignal.removeEventListener("abort", onAbortSocket);
@@ -479,6 +496,10 @@ function ClientRequest(input, options, cb) {
     if (this.destroyed) return this;
     this.destroyed = true;
 
+    // After a successful upgrade/connect, the socket has been handed off
+    // to user code — don't destroy it from the HTTP request layer.
+    if (this[kUpgradeOrConnect]) return this;
+
     const res = this.res;
 
     // If we're aborting, we don't care about any more response data.
@@ -606,7 +627,7 @@ function ClientRequest(input, options, cb) {
         if (!softFail) {
           this[kFetchRequest]
             .catch(err => {
-              if (isAbortError(err)) return;
+              if (isAbortError(err) || this.destroyed || this.aborted) return;
               if (!!$debug) globalReportError(err);
               try {
                 this.emit("error", err);

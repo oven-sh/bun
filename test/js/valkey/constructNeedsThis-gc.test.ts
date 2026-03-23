@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
 // Regression test: constructNeedsThis pattern must root the JSCell
@@ -24,11 +24,7 @@ test("new RedisClient with invalid URL does not crash during GC", async () => {
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stdout.trim()).toBe("ok");
   expect(stderr).not.toContain("runtime error");

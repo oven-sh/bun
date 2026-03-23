@@ -9,7 +9,11 @@ test("pathToFileURL doesn't leak memory", () => {
 test("pathToFileURL handles relative paths longer than 4096 bytes", async () => {
   const longPath = Buffer.alloc(5000, "a").toString();
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", `const url = Bun.pathToFileURL(Buffer.alloc(5000, "a").toString()); console.log(url.href.endsWith("${longPath}"))`],
+    cmd: [
+      bunExe(),
+      "-e",
+      `const url = Bun.pathToFileURL(Buffer.alloc(5000, "a").toString()); console.log(url.href.endsWith("${longPath}"))`,
+    ],
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",

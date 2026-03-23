@@ -119,7 +119,7 @@ function parseRawHTTPResponse(buffer: Buffer) {
   return { httpVersion, statusCode, statusMessage, headers, rawHeaders, head };
 }
 
-function doUpgradeRequest(
+async function doUpgradeRequest(
   this: any,
   url: string,
   headers: any,
@@ -130,6 +130,20 @@ function doUpgradeRequest(
   maybeEmitClose: () => void,
 ) {
   const self = this;
+
+  // Resolve Blob body to ArrayBuffer before connecting, since Buffer.from()
+  // does not accept Blob objects and the socket write is synchronous.
+  let bodyBuffer: Buffer | string | null = null;
+  if (body != null) {
+    if (typeof body === "string") {
+      bodyBuffer = body;
+    } else if (body instanceof Blob) {
+      bodyBuffer = Buffer.from(await body.arrayBuffer());
+    } else {
+      bodyBuffer = Buffer.from(body);
+    }
+  }
+
   return new Promise<void>((resolve, reject) => {
     const parsedUrl = new URL(url);
     const isSecure = parsedUrl.protocol === "https:";
@@ -137,10 +151,10 @@ function doUpgradeRequest(
     const connectPort = parseInt(parsedUrl.port) || (isSecure ? 443 : 80);
     const requestPath = (parsedUrl.pathname || "/") + (parsedUrl.search || "");
 
-    const connectOpts: any = {
-      host: connectHost,
-      port: connectPort,
-    };
+    const socketPath = self[kSocketPath];
+    const connectOpts: any = socketPath
+      ? { path: socketPath }
+      : { host: connectHost, port: connectPort };
 
     if (isSecure) {
       const tlsConfig = self[kTls] || {};
@@ -154,6 +168,14 @@ function doUpgradeRequest(
     const socket = connectModule.connect(connectOpts, () => {
       // Build and send the raw HTTP request
       let request = `${method} ${requestPath} HTTP/1.1\r\n`;
+
+      // Synthesize Host header if not already present (HTTP/1.1 requires it)
+      if (!headers["host"] && !headers["Host"]) {
+        const defaultPort = isSecure ? 443 : 80;
+        const hostHeader = connectPort === defaultPort ? connectHost : `${connectHost}:${connectPort}`;
+        request += `Host: ${hostHeader}\r\n`;
+      }
+
       for (const key of Object.keys(headers)) {
         const value = headers[key];
         if ($isJSArray(value)) {
@@ -167,18 +189,29 @@ function doUpgradeRequest(
       request += "\r\n";
       socket.write(request);
 
-      if (body != null) {
-        socket.write(typeof body === "string" ? body : Buffer.from(body));
+      if (bodyBuffer != null) {
+        socket.write(bodyBuffer);
       }
     });
 
+    // Bind socket to request so req.socket and the "socket" event reference
+    // the actual net.Socket/tls.TLSSocket used for the connection.
+    self.socket = socket;
+
     let responseBuffer = Buffer.alloc(0);
     let headersParsed = false;
+    const maxHeaderSize = self[kMaxHeaderSize] ?? 16384;
 
     const onData = (chunk: Buffer) => {
       if (headersParsed) return;
 
       responseBuffer = Buffer.concat([responseBuffer, chunk]);
+
+      if (responseBuffer.length > maxHeaderSize) {
+        socket.destroy();
+        reject(ObjectAssign(new Error("Parse Error: Header overflow"), { code: "HPE_HEADER_OVERFLOW" }));
+        return;
+      }
 
       const parsed = parseRawHTTPResponse(responseBuffer);
       if (!parsed) return; // Need more data
@@ -198,14 +231,16 @@ function doUpgradeRequest(
         res.httpVersion = parsed.httpVersion;
         res.headers = parsed.headers;
         res.rawHeaders = parsed.rawHeaders;
+        res.socket = socket;
         res.complete = true;
         res.req = self;
         self.res = res;
 
         maybeEmitSocket();
 
+        const eventName = method === "CONNECT" ? "connect" : "upgrade";
         process.nextTick(() => {
-          self.emit("upgrade", res, socket, parsed.head);
+          self.emit(eventName, res, socket, parsed.head);
         });
 
         resolve();
@@ -217,6 +252,7 @@ function doUpgradeRequest(
         res.httpVersion = parsed.httpVersion;
         res.headers = parsed.headers;
         res.rawHeaders = parsed.rawHeaders;
+        res.socket = socket;
         res.req = self;
         self.res = res;
 
@@ -228,21 +264,48 @@ function doUpgradeRequest(
           }
         };
 
+        // Ensure socket is cleaned up when response is consumed or destroyed
+        res.on("close", () => {
+          socket.destroy();
+        });
+
+        // Track remaining body bytes for Content-Length framing
+        const contentLength = parsed.headers["content-length"]
+          ? parseInt(parsed.headers["content-length"], 10)
+          : NaN;
+        let bytesReceived = 0;
+
         if (parsed.head.length > 0) {
           res.push(parsed.head);
+          bytesReceived += parsed.head.length;
         }
 
-        socket.on("data", dataChunk => {
-          if (!res._dumped) {
-            res.push(dataChunk);
-          }
-        });
-        socket.on("end", () => {
-          if (!res.complete) {
-            res.push(null);
-            res.complete = true;
-          }
-        });
+        // Complete immediately if Content-Length body is fully consumed
+        if (!isNaN(contentLength) && bytesReceived >= contentLength) {
+          res.push(null);
+          res.complete = true;
+          socket.destroy();
+        } else {
+          socket.on("data", dataChunk => {
+            if (!res._dumped) {
+              res.push(dataChunk);
+            }
+            bytesReceived += dataChunk.length;
+            // Complete when Content-Length body is fully received
+            if (!isNaN(contentLength) && bytesReceived >= contentLength && !res.complete) {
+              res.push(null);
+              res.complete = true;
+              socket.destroy();
+            }
+          });
+          socket.on("end", () => {
+            if (!res.complete) {
+              res.push(null);
+              res.complete = true;
+            }
+            socket.destroy();
+          });
+        }
 
         process.nextTick(() => {
           if (self.aborted || !self.emit("response", res)) {
@@ -536,15 +599,21 @@ function ClientRequest(input, options, cb) {
           maybeEmitClose,
         );
         if (!softFail) {
-          this[kFetchRequest].catch(err => {
-            if (isAbortError(err)) return;
-            if (!!$debug) globalReportError(err);
-            try {
-              this.emit("error", err);
-            } catch (_err) {
-              void _err;
-            }
-          });
+          this[kFetchRequest]
+            .catch(err => {
+              if (isAbortError(err)) return;
+              if (!!$debug) globalReportError(err);
+              try {
+                this.emit("error", err);
+              } catch (_err) {
+                void _err;
+              }
+            })
+            .finally(() => {
+              fetching = false;
+              this[kFetchRequest] = null;
+              this[kClearTimeout]();
+            });
         }
         return this[kFetchRequest];
       }

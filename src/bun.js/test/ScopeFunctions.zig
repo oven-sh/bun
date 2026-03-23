@@ -481,7 +481,7 @@ fn jsValueTypeName(value: JSValue) []const u8 {
     if (value.isString()) return "string";
     if (value.isSymbol()) return "symbol";
     if (value.isCallable()) return "function";
-    if (value.isCell()) return std.enums.tagName(JSValue.JSType, value.jsType()) orelse "object";
+    if (value.isCell()) return bun.tagName(JSValue.JSType, value.jsType()) orelse "object";
     return "unknown";
 }
 

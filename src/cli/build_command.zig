@@ -529,6 +529,8 @@ pub const BuildCommand = struct {
                     builtin_bytecodes.deinit();
                 }
                 if (ctx.bundler_options.bytecode and !is_cross_compile) {
+                    bun.jsc.initialize(false);
+                    bun.jsc.VirtualMachine.is_bundler_thread_for_bytecode_cache = true;
                     const count = Bun__getInternalModuleSourceCount();
                     try builtin_bytecodes.ensureTotalCapacity(count);
                     var id: u32 = 0;

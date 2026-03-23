@@ -15,6 +15,7 @@
 #include <JavaScriptCore/SourceCodeKey.h>
 #include <mimalloc.h>
 #include <JavaScriptCore/CodeCache.h>
+#include "BunClientData.h"
 
 namespace Zig {
 
@@ -260,12 +261,29 @@ extern "C" bool generateCachedCommonJSProgramByteCodeFromSourceCode(BunString* s
     return true;
 }
 
+// Builtin bytecode generation needs Bun's private identifiers (@isCallable etc)
+// registered in the VM. The plain getVMForBytecodeCache() VM doesn't have
+// JSVMClientData, so parsing builtin sources would fail.
+static JSC::VM& getVMForBuiltinBytecodeCache()
+{
+    static thread_local JSC::VM* vmForBuiltinBytecodeCache = nullptr;
+    if (!vmForBuiltinBytecodeCache) {
+        const auto heapSize = JSC::HeapType::Small;
+        auto vmPtr = JSC::VM::tryCreate(heapSize);
+        vmPtr->refSuppressingSaferCPPChecking();
+        vmForBuiltinBytecodeCache = vmPtr.get();
+        vmPtr->heap.acquireAccess();
+        WebCore::JSVMClientData::create(vmForBuiltinBytecodeCache, nullptr);
+    }
+    return *vmForBuiltinBytecodeCache;
+}
+
 extern "C" bool generateCachedBuiltinByteCodeFromSourceCode(BunString* moduleName, const Latin1Character* inputSourceCode, size_t inputSourceCodeSize, const uint8_t** outputByteCode, size_t* outputByteCodeSize, JSC::CachedBytecode** cachedBytecodePtr)
 {
     std::span<const Latin1Character> sourceCodeSpan(inputSourceCode, inputSourceCodeSize);
     JSC::SourceCode sourceCode = JSC::makeSource(WTF::String(sourceCodeSpan), JSC::SourceOrigin(), JSC::SourceTaintedOrigin::Untainted);
 
-    JSC::VM& vm = getVMForBytecodeCache();
+    JSC::VM& vm = getVMForBuiltinBytecodeCache();
     JSC::JSLockHolder locker(vm);
 
     auto name = JSC::Identifier::fromString(vm, moduleName->toWTFString());

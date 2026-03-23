@@ -182,7 +182,10 @@ function doUpgradeRequest(
         if (typeof body === "string") {
           socket.write(body);
         } else if (body instanceof Blob) {
-          body.arrayBuffer().then(ab => socket.write(Buffer.from(ab))).catch(err => socket.destroy(err));
+          body
+            .arrayBuffer()
+            .then(ab => socket.write(Buffer.from(ab)))
+            .catch(err => socket.destroy(err));
         } else {
           socket.write(Buffer.from(body));
         }

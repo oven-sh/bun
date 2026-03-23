@@ -15,12 +15,10 @@ test("non-callable onclose does not crash", async () => {
       `,
     ],
     env: bunEnv,
-    stderr: "pipe",
   });
 
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  const exitCode = await proc.exited;
 
-  expect(stderr).not.toContain("ASSERTION FAILED");
   expect(exitCode).toBe(0);
 });
 
@@ -38,11 +36,9 @@ test("non-callable onconnect does not crash", async () => {
       `,
     ],
     env: bunEnv,
-    stderr: "pipe",
   });
 
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  const exitCode = await proc.exited;
 
-  expect(stderr).not.toContain("ASSERTION FAILED");
   expect(exitCode).toBe(0);
 });

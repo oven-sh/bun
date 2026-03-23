@@ -293,7 +293,7 @@ function REPLServer(this: any, options?: string | Record<string, any>, ...rest: 
     prompt,
     terminal,
     completer,
-    historySize: options.historySize || 1000,
+    historySize: options.historySize ?? 1000,
   });
 
   // Register default commands
@@ -489,7 +489,7 @@ REPLServer.prototype.createContext = function createContext() {
   if (this.useGlobal) {
     this.context = globalThis;
   } else {
-    this.context = vm.createContext();
+    this.context = vm.createContext(globalThis);
   }
   return this.context;
 };

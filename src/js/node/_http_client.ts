@@ -87,7 +87,7 @@ function parseRawHTTPResponse(buffer: Buffer) {
   const lines = headerStr.split("\r\n");
   const statusLine = lines[0];
   const statusMatch = statusLine.match(/^HTTP\/(\d)\.(\d) (\d{3})(?: (.*))?$/);
-  if (!statusMatch) return null;
+  if (!statusMatch) return false; // Separator found but status line malformed
 
   const httpVersion = `${statusMatch[1]}.${statusMatch[2]}`;
   const statusCode = parseInt(statusMatch[3], 10);
@@ -119,7 +119,7 @@ function parseRawHTTPResponse(buffer: Buffer) {
   return { httpVersion, statusCode, statusMessage, headers, rawHeaders, head };
 }
 
-async function doUpgradeRequest(
+function doUpgradeRequest(
   this: any,
   url: string,
   headers: any,
@@ -134,25 +134,7 @@ async function doUpgradeRequest(
   const net = require("node:net");
   const tls = require("node:tls");
 
-  // Resolve Blob body to ArrayBuffer before connecting, since Buffer.from()
-  // does not accept Blob objects and the socket write is synchronous.
-  let bodyBuffer: Buffer | string | null = null;
-  if (body != null) {
-    if (typeof body === "string") {
-      bodyBuffer = body;
-    } else if (body instanceof Blob) {
-      bodyBuffer = Buffer.from(await body.arrayBuffer());
-    } else {
-      bodyBuffer = Buffer.from(body);
-    }
-  }
-
   return new Promise<void>((resolve, reject) => {
-    // If abort was called during the async Blob resolution, bail out immediately
-    if (self[kAbortController]?.signal.aborted) {
-      reject(new DOMException("This operation was aborted.", "AbortError"));
-      return;
-    }
 
     const parsedUrl = new URL(url);
     const isSecure = parsedUrl.protocol === "https:";
@@ -196,8 +178,14 @@ async function doUpgradeRequest(
       request += "\r\n";
       socket.write(request);
 
-      if (bodyBuffer != null) {
-        socket.write(bodyBuffer);
+      if (body != null) {
+        if (typeof body === "string") {
+          socket.write(body);
+        } else if (body instanceof Blob) {
+          body.arrayBuffer().then(ab => socket.write(Buffer.from(ab)));
+        } else {
+          socket.write(Buffer.from(body));
+        }
       }
     });
 
@@ -221,7 +209,13 @@ async function doUpgradeRequest(
       }
 
       const parsed = parseRawHTTPResponse(responseBuffer);
-      if (!parsed) return; // Need more data
+      if (parsed === null) return; // Need more data
+      if (parsed === false) {
+        // Separator found but status line is malformed
+        socket.destroy();
+        reject(ObjectAssign(new Error("Parse Error"), { code: "HPE_INVALID_STATUS" }));
+        return;
+      }
 
       headersParsed = true;
       socket.removeListener("data", onData);
@@ -245,8 +239,10 @@ async function doUpgradeRequest(
 
         maybeEmitSocket();
 
-        // Remove abort listener — socket is now owned by user code
+        // Remove all HTTP-level listeners — socket is now owned by user code
         abortSignal?.removeEventListener("abort", onAbortSocket);
+        socket.removeListener("error", onSocketError);
+        socket.removeListener("close", onSocketClose);
 
         const eventName = method === "CONNECT" ? "connect" : "upgrade";
         process.nextTick(() => {
@@ -339,20 +335,23 @@ async function doUpgradeRequest(
 
     socket.on("data", onData);
 
-    socket.on("error", err => {
+    const onSocketError = err => {
       self[kClearTimeout]();
       if (!headersParsed) {
         reject(err);
       } else if (self.res && !self.res.complete) {
         self.res.destroy(err);
       }
-    });
+    };
 
-    socket.on("close", () => {
+    const onSocketClose = () => {
       if (!headersParsed) {
         reject(new Error("socket hang up"));
       }
-    });
+    };
+
+    socket.on("error", onSocketError);
+    socket.on("close", onSocketClose);
 
     // Wire up abort controller
     const abortSignal = self[kAbortController]?.signal;

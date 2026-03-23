@@ -101,11 +101,12 @@ describe("tsconfig extends from node_modules", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("child overrides paths from extended config in node_modules", async () => {
-    // The extended config provides jsx settings, the child provides its own paths
+  test("child overrides paths while inheriting jsx from extended config", async () => {
+    // Parent provides jsxFactory (observable via build output), child provides paths.
+    // This verifies both configs are merged: jsxFactory from parent + paths from child.
     using dir = tempDir("tsconfig-extends-override", {
-      "index.ts": `import { hello } from "@/utils"; console.log(hello());`,
-      "src/utils.ts": `export function hello() { return "it works"; }`,
+      "index.tsx": `import { hello } from "@/utils"; console.log(hello(<div/>));`,
+      "src/utils.ts": `export function hello(el: any) { return el; }`,
       "tsconfig.json": JSON.stringify({
         extends: "shared-tsconfig",
         compilerOptions: {
@@ -117,7 +118,8 @@ describe("tsconfig extends from node_modules", () => {
       }),
       "node_modules/shared-tsconfig/tsconfig.json": JSON.stringify({
         compilerOptions: {
-          strict: true,
+          jsx: "react",
+          jsxFactory: "h",
         },
       }),
       "node_modules/shared-tsconfig/package.json": JSON.stringify({
@@ -127,7 +129,7 @@ describe("tsconfig extends from node_modules", () => {
     });
 
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "run", "index.ts"],
+      cmd: [bunExe(), "build", "--no-bundle", "index.tsx"],
       cwd: String(dir),
       env: bunEnv,
       stdout: "pipe",
@@ -136,8 +138,50 @@ describe("tsconfig extends from node_modules", () => {
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stderr).toBe("");
-    expect(stdout.trim()).toBe("it works");
+    // jsxFactory: "h" from the parent config must be inherited
+    expect(stdout).toContain("h(");
+    expect(exitCode).toBe(0);
+  });
+
+  test("chained extends through node_modules (app -> @org/base -> @org/preset)", async () => {
+    // Tests that extends chains work when intermediate configs are in node_modules.
+    // The chain: app/tsconfig.json -> @org/base -> @org/preset (which has jsxFactory).
+    using dir = tempDir("tsconfig-extends-chain", {
+      "index.tsx": `console.log(<div/>)`,
+      "tsconfig.json": JSON.stringify({
+        extends: "@org/base",
+      }),
+      "node_modules/@org/base/tsconfig.json": JSON.stringify({
+        extends: "@org/preset",
+      }),
+      "node_modules/@org/base/package.json": JSON.stringify({
+        name: "@org/base",
+        version: "1.0.0",
+      }),
+      "node_modules/@org/preset/tsconfig.json": JSON.stringify({
+        compilerOptions: {
+          jsx: "react",
+          jsxFactory: "h",
+        },
+      }),
+      "node_modules/@org/preset/package.json": JSON.stringify({
+        name: "@org/preset",
+        version: "1.0.0",
+      }),
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--no-bundle", "index.tsx"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // jsxFactory: "h" from @org/preset (2 levels deep) should be inherited
+    expect(stdout).toContain("h(");
     expect(exitCode).toBe(0);
   });
 

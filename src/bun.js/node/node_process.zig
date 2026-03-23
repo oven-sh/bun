@@ -447,11 +447,10 @@ pub export const Bun__version_sha: [*:0]const u8 = bun.Environment.git_sha;
 const std = @import("std");
 
 const bun = @import("bun");
+const DotEnv = bun.DotEnv;
 const Environment = bun.Environment;
 const Syscall = bun.sys;
 const strings = bun.strings;
-
-const DotEnv = bun.DotEnv;
 
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;

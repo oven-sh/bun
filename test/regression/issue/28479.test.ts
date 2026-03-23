@@ -1,4 +1,4 @@
-import { test, expect, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 describe("process.loadEnvFile", () => {
@@ -19,11 +19,7 @@ describe("process.loadEnvFile", () => {
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stdout).toBe("hello\nworld\n");
     expect(exitCode).toBe(0);
@@ -45,11 +41,7 @@ describe("process.loadEnvFile", () => {
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stdout).toBe("yes\n");
     expect(exitCode).toBe(0);
@@ -57,7 +49,10 @@ describe("process.loadEnvFile", () => {
 
   test("throws TypeError when file does not exist", async () => {
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", `
+      cmd: [
+        bunExe(),
+        "-e",
+        `
         try {
           process.loadEnvFile('./nonexistent.env');
           console.log("FAIL: no error thrown");
@@ -65,16 +60,13 @@ describe("process.loadEnvFile", () => {
           console.log(err instanceof TypeError);
           console.log(err.message.includes("Cannot read the .env file"));
         }
-      `],
+      `,
+      ],
       env: bunEnv,
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stdout).toBe("true\ntrue\n");
     expect(exitCode).toBe(0);
@@ -102,11 +94,7 @@ COMMENT_28479=value # inline comment
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stdout).toBe("hello world\nno expansion\nvalue\n");
     expect(exitCode).toBe(0);
@@ -129,11 +117,7 @@ COMMENT_28479=value # inline comment
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stdout).toBe("imported\n");
     expect(exitCode).toBe(0);
@@ -156,11 +140,7 @@ COMMENT_28479=value # inline comment
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stdout).toBe("new_value\n");
     expect(exitCode).toBe(0);

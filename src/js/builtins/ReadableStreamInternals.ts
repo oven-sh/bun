@@ -2309,8 +2309,8 @@ export function readableStreamToArrayBufferDirect(
     $readableStreamError(stream, e);
     return Promise.$reject(e);
   } finally {
-    if (!$isPromise(firstPull)) {
-      if (!didError && stream) {
+    if (!$isPromise(firstPull) && !didError) {
+      if (stream) {
         $putByIdDirectPrivate(stream, "reader", undefined);
         $readableStreamCloseIfPossible(stream);
       }

@@ -477,18 +477,22 @@ pub fn loadExtraEnvAndSourceCodePrinter(this: *VirtualMachine) void {
     // Re-evaluate color flags from env-file values.
     // Output.Source.setInit() runs before --env-file is loaded, so
     // NO_COLOR / FORCE_COLOR from .env files are missed at startup.
-    // FORCE_COLOR takes precedence over NO_COLOR (Node.js convention).
-    if (map.get("FORCE_COLOR")) |force_color| {
-        // FORCE_COLOR="" enables 16-color support per Node.js convention
-        // (matches empty_string_as = .{ .value = 1 } at startup).
-        // "0"/"false"/"no"/"off" disable color.
-        const enable = force_color.len == 0 or bun.env_var.isValueTruthy(force_color);
-        Output.enable_ansi_colors_stdout = enable;
-        Output.enable_ansi_colors_stderr = enable;
-    } else if (map.get("NO_COLOR") != null) {
-        // NO_COLOR: any value (including empty) disables color.
-        Output.enable_ansi_colors_stdout = false;
-        Output.enable_ansi_colors_stderr = false;
+    // Only act if the process env didn't already have these vars
+    // (startup already handled those via bun.env_var.*.get()).
+    if (bun.getenvZ("FORCE_COLOR") == null) {
+        if (map.get("FORCE_COLOR")) |force_color| {
+            // Env-file introduced FORCE_COLOR. "" enables 16-color per Node.js.
+            const enable = force_color.len == 0 or bun.env_var.isValueTruthy(force_color);
+            Output.enable_ansi_colors_stdout = enable;
+            Output.enable_ansi_colors_stderr = enable;
+        }
+    }
+    if (bun.getenvZ("NO_COLOR") == null) {
+        if (map.get("NO_COLOR") != null) {
+            // Env-file introduced NO_COLOR. Any value disables color.
+            Output.enable_ansi_colors_stdout = false;
+            Output.enable_ansi_colors_stderr = false;
+        }
     }
 
     if (bun.feature_flag.BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER.get()) {

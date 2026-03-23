@@ -2125,6 +2125,17 @@ pub const BundleV2 = struct {
             // Use the target-specific base path for compile mode, not the user-configured public_path
             const module_prefix = bun.StandaloneModuleGraph.targetBasePublicPath(compile_options.compile_target.os, "root/");
 
+            var builtin_bytecodes = if (this.config.bytecode and compile_options.compile_target.isDefault())
+                bun.StandaloneModuleGraph.generateBuiltinBytecodes(bun.default_allocator) catch |err| {
+                    return bun.StandaloneModuleGraph.CompileResult.failFmt("Failed to generate builtin bytecode: {s}", .{@errorName(err)});
+                }
+            else
+                std.array_list.Managed(bun.StandaloneModuleGraph.BuiltinBytecodeInput).init(bun.default_allocator);
+            defer {
+                for (builtin_bytecodes.items) |bb| bb.owner.deref();
+                builtin_bytecodes.deinit();
+            }
+
             const result = bun.StandaloneModuleGraph.toExecutable(
                 &compile_options.compile_target,
                 bun.default_allocator,
@@ -2172,8 +2183,7 @@ pub const BundleV2 = struct {
                     .disable_autoload_tsconfig = !compile_options.autoload_tsconfig,
                     .disable_autoload_package_json = !compile_options.autoload_package_json,
                 },
-                // TODO: builtin bytecode for Bun.build() API
-                &.{},
+                builtin_bytecodes.items,
             ) catch |err| {
                 return bun.StandaloneModuleGraph.CompileResult.failFmt("{s}", .{@errorName(err)});
             };

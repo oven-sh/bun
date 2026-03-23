@@ -344,6 +344,38 @@ pub const StandaloneModuleGraph = struct {
         return null;
     }
 
+    extern fn Bun__getInternalModuleSource(id: u32, len: *usize, name: *?[*:0]const u8) ?[*]const u8;
+    extern fn Bun__getInternalModuleSourceCount() u32;
+
+    /// Generate bytecode for all internal JS modules. Caller must deref each
+    /// entry's owner. Requires jsc.initialize to have been called.
+    pub fn generateBuiltinBytecodes(allocator: std.mem.Allocator) !std.array_list.Managed(BuiltinBytecodeInput) {
+        var list = std.array_list.Managed(BuiltinBytecodeInput).init(allocator);
+        errdefer {
+            for (list.items) |bb| bb.owner.deref();
+            list.deinit();
+        }
+        jsc.initialize(false);
+        jsc.VirtualMachine.is_bundler_thread_for_bytecode_cache = true;
+        const count = Bun__getInternalModuleSourceCount();
+        try list.ensureTotalCapacity(count);
+        var id: u32 = 0;
+        while (id < count) : (id += 1) {
+            var len: usize = 0;
+            var name_ptr: ?[*:0]const u8 = null;
+            const src_ptr = Bun__getInternalModuleSource(id, &len, &name_ptr) orelse continue;
+            // Debug builds use BUN_DYNAMIC_JS_LOAD_PATH and embed only "\n".
+            // BuiltinExecutables::createExecutable requires "(function (){})" minimum.
+            if (len < "(function (){})".len) continue;
+            var name = bun.String.borrowUTF8(bun.sliceTo(name_ptr.?, 0));
+            if (jsc.CachedBytecode.generateForBuiltin(&name, src_ptr[0..len])) |res| {
+                const bytecode, const owner = res;
+                list.appendAssumeCapacity(.{ .field_id = id, .bytecode = bytecode, .owner = owner });
+            }
+        }
+        return list;
+    }
+
     pub const Flags = packed struct(u32) {
         disable_default_env_files: bool = false,
         disable_autoload_bunfig: bool = false,

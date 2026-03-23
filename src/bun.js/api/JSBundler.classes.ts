@@ -52,4 +52,40 @@ export default [
       kind: { getter: "getOutputKind", cache: true },
     },
   }),
+  define({
+    name: "WatchBuildResult",
+    noConstructor: true,
+    finalize: true,
+    hasPendingActivity: true,
+    configurable: false,
+    klass: {},
+    JSType: "0b11101110",
+    proto: {
+      stop: {
+        fn: "stop",
+        length: 0,
+      },
+      on: {
+        fn: "on",
+        length: 2,
+      },
+      outputs: {
+        getter: "getOutputs",
+      },
+      success: {
+        getter: "getSuccess",
+      },
+      logs: {
+        getter: "getLogs",
+      },
+      url: {
+        getter: "getUrl",
+        cache: true,
+      },
+      import: {
+        fn: "doImport",
+        length: 1,
+      },
+    },
+  }),
 ];

@@ -85,6 +85,10 @@ transpiled_count: usize = 0,
 resolved_count: usize = 0,
 had_errors: bool = false,
 
+/// Bundle config from import attributes (e.g., `with { type: "bundle", splitting: "true" }`).
+/// Keyed by resolved absolute path. Written after linking, read when creating JSBundle.
+bundle_import_configs: std.StringHashMapUnmanaged(bun.ImportRecord.BundleImportConfig) = .empty,
+
 macros: MacroMap,
 macro_entry_points: std.AutoArrayHashMap(i32, *MacroEntryPoint),
 macro_mode: bool = false,
@@ -161,6 +165,22 @@ gc_controller: jsc.GarbageCollectionController = .{},
 worker: ?*webcore.WebWorker = null,
 ipc: ?IPCInstanceUnion = null,
 hot_reload_counter: u32 = 0,
+/// Per-module HMR state for `import.meta.hot` (keyed by module URL).
+/// Persists across hot reloads so that `import.meta.hot.data` survives.
+hot_module_states: bun.StringHashMapUnmanaged(HotModuleState) = .{},
+
+/// Reverse dependency graph: module_key → set of modules that import it.
+/// Mirrors HMRModule.importers from hmr-module.ts.
+/// Populated by recordModuleDependency() during module loading.
+module_importers: bun.StringHashMapUnmanaged(bun.StringArrayHashMapUnmanaged(void)) = .{},
+
+/// Maps absolute file path → module registry key (module specifier/URL).
+/// The watcher gives us file paths, but the module registry uses specifiers.
+file_to_module_key: bun.StringHashMapUnmanaged([]const u8) = .{},
+
+/// Active DevServers from JSBundle routes.
+/// Used to filter frontend-only file changes from backend reload.
+active_dev_servers: std.ArrayListUnmanaged(*bake.DevServer) = .{},
 
 debugger: ?jsc.Debugger = null,
 has_started_debugger: bool = false,
@@ -727,7 +747,7 @@ pub inline fn autoGarbageCollect(this: *const VirtualMachine) void {
     }
 }
 
-pub fn reload(this: *VirtualMachine, _: *HotReloader.Task) void {
+pub fn reload(this: *VirtualMachine, task: *HotReloader.Task) void {
     Output.debug("Reloading...", .{});
     const should_clear_terminal = !this.transpiler.env.hasSetNoClearTerminalOnReload(!Output.enable_ansi_colors_stdout);
     if (this.hot_reload == .watch) {
@@ -746,9 +766,188 @@ pub fn reload(this: *VirtualMachine, _: *HotReloader.Task) void {
         Output.enableBuffering();
     }
 
+    // 1. Convert file paths from task to module keys.
+    //    Also filter out frontend-only changes (handled by DevServer).
+    var changed_modules = bun.BoundedArray([]const u8, 8){};
+    for (task.paths[0..task.count]) |path| {
+        if (path.len == 0) continue;
+
+        // Check if this is a frontend-only change handled by DevServer
+        if (this.isFrontendOnlyChange(path)) continue;
+
+        if (this.file_to_module_key.get(path)) |key| {
+            changed_modules.append(key) catch break;
+        }
+    }
+
+    // If no backend modules were affected (file not in graph), fall back to full reload
+    // as the safe default. This handles cases like config files or newly created files.
+    if (changed_modules.len == 0) {
+        this.fullReload();
+        return;
+    }
+
+    // 2. Check for any invalidated modules that force a full reload
+    for (changed_modules.slice()) |module_key| {
+        if (this.hot_module_states.get(module_key)) |state| {
+            if (state.invalidated) {
+                this.fullReload();
+                return;
+            }
+        }
+    }
+
+    // 3. BFS walk up importers to find accept boundaries.
+    //    Same algorithm as replaceModules() in hmr-module.ts.
+    var to_reload = bun.StringArrayHashMapUnmanaged(void){};
+    defer to_reload.deinit(bun.default_allocator);
+    var to_dispose = std.ArrayListUnmanaged([]const u8){};
+    defer to_dispose.deinit(bun.default_allocator);
+    var needs_full_reload = false;
+
+    for (changed_modules.slice()) |module_key| {
+        var visited = bun.StringHashMapUnmanaged(void){};
+        defer visited.deinit(bun.default_allocator);
+        var queue = std.ArrayListUnmanaged([]const u8){};
+        defer queue.deinit(bun.default_allocator);
+
+        queue.append(bun.default_allocator, module_key) catch bun.outOfMemory();
+        visited.put(bun.default_allocator, module_key, {}) catch bun.outOfMemory();
+        to_reload.put(bun.default_allocator, module_key, {}) catch bun.outOfMemory();
+
+        while (true) {
+            const mod = queue.pop() orelse break;
+            const state = this.hot_module_states.getPtr(mod);
+
+            // Check declined — forces full reload
+            if (state != null and state.?.declined) {
+                needs_full_reload = true;
+                break;
+            }
+
+            // Accept boundary: module called import.meta.hot.accept()
+            if (state != null and state.?.accepted) {
+                to_reload.put(bun.default_allocator, mod, {}) catch bun.outOfMemory();
+                if (state.?.dispose_callbacks.items.len > 0) {
+                    to_dispose.append(bun.default_allocator, mod) catch bun.outOfMemory();
+                }
+                continue; // Stop propagation (boundary found)
+            }
+
+            // Implicit boundary: module has populated data (same as hmr-module.ts)
+            if (state != null and state.?.data.get() != null) {
+                to_reload.put(bun.default_allocator, mod, {}) catch bun.outOfMemory();
+                if (state.?.dispose_callbacks.items.len > 0) {
+                    to_dispose.append(bun.default_allocator, mod) catch bun.outOfMemory();
+                }
+                continue;
+            }
+
+            // Walk to importers (reverse dependency edge)
+            const importers = this.module_importers.get(mod) orelse {
+                // No importers and no accept → need full reload
+                needs_full_reload = true;
+                break;
+            };
+            for (importers.keys()) |importer| {
+                if (!visited.contains(importer)) {
+                    visited.put(bun.default_allocator, importer, {}) catch bun.outOfMemory();
+                    queue.append(bun.default_allocator, importer) catch bun.outOfMemory();
+                    to_reload.put(bun.default_allocator, importer, {}) catch bun.outOfMemory();
+                }
+            }
+        }
+
+        if (needs_full_reload) break;
+    }
+
+    if (needs_full_reload) {
+        this.fullReload();
+        return;
+    }
+
+    // 4. Dispose → delete → re-evaluate (same order as hmr-module.ts)
+    for (to_dispose.items) |mod| {
+        this.runDisposeForModule(mod);
+    }
+    for (to_reload.keys()) |mod| {
+        var str = ZigString.init(mod);
+        this.global.deleteModuleRegistryEntry(&str) catch {};
+    }
+    // Clear reverse dependency edges for reloaded modules (rebuilt on re-import)
+    for (to_reload.keys()) |mod| {
+        if (this.module_importers.getPtr(mod)) |importers_set| {
+            importers_set.clearRetainingCapacity();
+        }
+    }
+
+    // 5. Re-evaluate entry point — cached modules stay, deleted ones re-execute
+    this.hot_reload_counter += 1;
+    this.pending_internal_promise = this.reloadEntryPoint(this.main) catch @panic("Failed to reload");
+}
+
+/// Performs a full reload — clears all modules and re-evaluates from scratch.
+fn fullReload(this: *VirtualMachine) void {
+    this.runHotDisposeCallbacks();
+    this.module_importers.clearRetainingCapacity();
+    this.file_to_module_key.clearRetainingCapacity();
     this.global.reload() catch @panic("Failed to reload");
     this.hot_reload_counter += 1;
     this.pending_internal_promise = this.reloadEntryPoint(this.main) catch @panic("Failed to reload");
+}
+
+/// Checks if a file change is frontend-only (handled by a DevServer).
+/// Returns true if the file is in a DevServer's graph but NOT in the backend module graph.
+fn isFrontendOnlyChange(this: *VirtualMachine, file_path: []const u8) bool {
+    const is_backend = this.file_to_module_key.contains(file_path);
+    if (is_backend) return false;
+
+    for (this.active_dev_servers.items) |dev| {
+        if (dev.hasFileInGraph(file_path)) return true;
+    }
+    return false;
+}
+
+/// Runs dispose callbacks for a single module.
+fn runDisposeForModule(this: *VirtualMachine, module_key: []const u8) void {
+    const state = this.hot_module_states.getPtr(module_key) orelse return;
+
+    for (state.dispose_callbacks.items) |*cb_strong| {
+        const cb = cb_strong.get();
+        const data_arg = if (state.data.get()) |d| d else JSValue.createEmptyObject(this.global, 0);
+        _ = cb.call(this.global, .js_undefined, &.{data_arg}) catch |err| {
+            if (err != error.JSTerminated) {
+                _ = this.uncaughtException(this.global, this.global.takeException(err), false);
+            }
+        };
+    }
+
+    state.prepareForReload();
+}
+
+/// Invokes all registered `import.meta.hot.dispose()` callbacks, then
+/// clears per-lifecycle state (callbacks, accepted/declined flags) while
+/// preserving persistent `data` objects.
+fn runHotDisposeCallbacks(this: *VirtualMachine) void {
+    var it = this.hot_module_states.iterator();
+    while (it.next()) |entry| {
+        const state = entry.value_ptr;
+
+        // Call each dispose callback with the module's data object
+        for (state.dispose_callbacks.items) |*cb_strong| {
+            const cb = cb_strong.get();
+            const data_arg = if (state.data.get()) |d| d else JSValue.createEmptyObject(this.global, 0);
+            _ = cb.call(this.global, .js_undefined, &.{data_arg}) catch |err| {
+                // Report but don't abort — one bad callback shouldn't prevent reload
+                if (err != error.JSTerminated) {
+                    _ = this.uncaughtException(this.global, this.global.takeException(err), false);
+                }
+            };
+        }
+
+        // Clear per-lifecycle state, preserve data
+        state.prepareForReload();
+    }
 }
 
 pub inline fn nodeFS(this: *VirtualMachine) *Node.fs.NodeFS {
@@ -904,6 +1103,82 @@ pub fn hotMap(this: *VirtualMachine) ?*jsc.RareData.HotMap {
     }
 
     return this.rareData().hotMap(this.allocator);
+}
+
+/// Per-module HMR state for `bun --hot`. Persists across reloads.
+pub const HotModuleState = struct {
+    /// Persistent data object — survives across hot reloads.
+    data: jsc.Strong.Optional = .empty,
+    /// Callbacks to run when this module is about to be replaced.
+    dispose_callbacks: std.ArrayListUnmanaged(jsc.Strong) = .{},
+    /// Callbacks registered via accept().
+    accept_callbacks: std.ArrayListUnmanaged(jsc.Strong) = .{},
+    /// Module has called accept() — it can handle its own updates.
+    accepted: bool = false,
+    /// Module has called decline() — changes require full reload.
+    declined: bool = false,
+    /// Module has called invalidate() — force full reload on next change.
+    invalidated: bool = false,
+
+    pub fn deinit(this: *HotModuleState) void {
+        this.data.deinit();
+        for (this.dispose_callbacks.items) |*cb| {
+            cb.deinit();
+        }
+        this.dispose_callbacks.deinit(bun.default_allocator);
+        for (this.accept_callbacks.items) |*cb| {
+            cb.deinit();
+        }
+        this.accept_callbacks.deinit(bun.default_allocator);
+    }
+
+    /// Clear per-lifecycle state but preserve persistent data.
+    pub fn prepareForReload(this: *HotModuleState) void {
+        for (this.dispose_callbacks.items) |*cb| {
+            cb.deinit();
+        }
+        this.dispose_callbacks.clearRetainingCapacity();
+        for (this.accept_callbacks.items) |*cb| {
+            cb.deinit();
+        }
+        this.accept_callbacks.clearRetainingCapacity();
+        this.accepted = false;
+        this.declined = false;
+        this.invalidated = false;
+    }
+};
+
+/// Returns (or creates) the HotModuleState for the given module URL.
+pub fn getOrCreateHotModuleState(this: *VirtualMachine, module_url: []const u8) *HotModuleState {
+    const result = this.hot_module_states.getOrPut(bun.default_allocator, module_url) catch bun.outOfMemory();
+    if (!result.found_existing) {
+        result.key_ptr.* = bun.handleOom(bun.default_allocator.dupe(u8, module_url));
+        result.value_ptr.* = .{};
+    }
+    return result.value_ptr;
+}
+
+/// Records a dependency edge: `importer` imports `imported`.
+/// Adds `importer` to `imported`'s importers set (reverse edge) for HMR propagation.
+pub fn recordModuleDependency(this: *VirtualMachine, importer: []const u8, imported: []const u8) void {
+    if (this.hot_reload != .hot) return;
+    const result = this.module_importers.getOrPut(bun.default_allocator, imported) catch bun.outOfMemory();
+    if (!result.found_existing) {
+        result.key_ptr.* = bun.handleOom(bun.default_allocator.dupe(u8, imported));
+        result.value_ptr.* = .{};
+    }
+    _ = result.value_ptr.put(bun.default_allocator, importer, {}) catch bun.outOfMemory();
+}
+
+/// Records a mapping from absolute file path to module registry key.
+/// Used to translate watcher file paths to module specifiers.
+pub fn recordFileToModuleKey(this: *VirtualMachine, file_path: []const u8, module_key: []const u8) void {
+    if (this.hot_reload != .hot) return;
+    const result = this.file_to_module_key.getOrPut(bun.default_allocator, file_path) catch bun.outOfMemory();
+    if (!result.found_existing) {
+        result.key_ptr.* = bun.handleOom(bun.default_allocator.dupe(u8, file_path));
+    }
+    result.value_ptr.* = module_key;
 }
 
 pub inline fn enqueueTask(this: *VirtualMachine, task: jsc.Task) void {
@@ -3774,6 +4049,7 @@ const options = bun.options;
 const strings = bun.strings;
 const uws = bun.uws;
 const Arena = bun.allocators.MimallocArena;
+const bake = bun.bake;
 const PluginRunner = bun.transpiler.PluginRunner;
 const api = bun.schema.api;
 const DNSResolver = bun.api.dns.Resolver;

@@ -753,7 +753,7 @@ pub const Transpiler = struct {
                 output_file.value = .{ .buffer = .{ .allocator = alloc, .bytes = result.code } };
             },
 
-            .html, .bunsh, .sqlite_embedded, .sqlite, .wasm, .file, .napi => {
+            .bundle, .html, .bunsh, .sqlite_embedded, .sqlite, .wasm, .file, .napi => {
                 const hashed_name = try transpiler.linker.getHashedFilename(file_path, null);
                 var pathname = try transpiler.allocator.alloc(u8, hashed_name.len + file_path.name.ext.len);
                 bun.copy(u8, pathname, hashed_name);
@@ -1136,6 +1136,7 @@ pub const Transpiler = struct {
                 opts.features.remove_cjs_module_wrapper = this_parse.remove_cjs_module_wrapper;
                 opts.features.bundler_feature_flags = transpiler.options.bundler_feature_flags;
                 opts.features.repl_mode = transpiler.options.repl_mode;
+                opts.features.preserve_import_meta_hot = transpiler.options.preserve_import_meta_hot;
                 opts.repl_mode = transpiler.options.repl_mode;
 
                 if (transpiler.macro_context == null) {

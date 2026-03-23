@@ -103,6 +103,26 @@ bundling_failures: std.ArrayHashMapUnmanaged(
 /// When set, nothing is ever bundled for the server-side,
 /// and DevSever acts purely as a frontend bundler.
 frontend_only: bool,
+/// Whether this is a standalone DevServer created from Bun.build({ hmr: true })
+/// rather than from the full Bake framework. Standalone mode has no framework,
+/// no routing, and fires a Zig callback on build completion.
+standalone_mode: bool = false,
+/// Opaque context pointers for standalone build callbacks. Each entry is
+/// notified when a build completes (supports multiple JSBundle routes
+/// sharing a single DevServer).
+standalone_callback_ctxs: std.ArrayListUnmanaged(*anyopaque) = .{},
+/// Zig callback invoked for each context in standalone_callback_ctxs
+/// after a build completes in standalone mode.
+standalone_callback_fn: ?*const fn (ctx: *anyopaque, dev: *DevServer, success: bool) void = null,
+/// Entry points for standalone mode builds.
+standalone_entry_points: []const []const u8 = &.{},
+/// Standalone uws app for the HMR WebSocket server (non-SSL, port 0).
+/// Used when dev.server is null (standalone mode without Bun.serve).
+standalone_app: ?*uws.NewApp(false) = null,
+/// Listen socket handle for the standalone HMR server, used to get the port and close.
+standalone_listen_socket: ?*uws.NewApp(false).ListenSocket = null,
+/// Cached client JS bundle for standalone mode. Invalidated on rebuild.
+standalone_client_bundle: ?*StaticRoute = null,
 /// The Plugin API is missing a way to attach filesystem watchers (addWatchFile)
 /// This special case makes `bun-plugin-tailwind` work, which is a requirement
 /// to ship initial incremental bundling support for HTML files.
@@ -567,6 +587,332 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
     return dev;
 }
 
+/// Options for creating a standalone DevServer from Bun.build({ hmr: true }).
+pub const StandaloneOptions = struct {
+    root: [:0]const u8,
+    vm: *VirtualMachine,
+    entry_points: []const []const u8,
+    react_fast_refresh: bool = false,
+    /// When false, skip creating a standalone uws app. The caller is expected
+    /// to call `setRoutes(server)` to register HMR routes on an existing server.
+    create_standalone_app: bool = true,
+};
+
+/// Create a standalone DevServer for incremental builds + HMR, without
+/// requiring a framework, router, or user-facing HTTP server. Used by
+/// `Bun.build({ watch: true, hmr: true })`.
+pub fn initStandalone(opts: StandaloneOptions) bun.JSOOM!*DevServer {
+    bun.analytics.Features.dev_server +|= 1;
+
+    // React fast refresh resolution happens after the transpiler is set up.
+    // Pass null for now — it will be resolved below.
+    const framework = bake.Framework.initStandalone(null);
+
+    // Strip trailing slash from root (top_level_dir typically ends with '/')
+    const root: [:0]const u8 = if (opts.root.len > 0 and opts.root[opts.root.len - 1] == '/')
+        bun.handleOom(bun.default_allocator.dupeZ(u8, opts.root[0 .. opts.root.len - 1]))
+    else
+        opts.root;
+
+    const dev = bun.new(DevServer, .{
+        .allocation_scope = .initDefault(),
+        .root = root,
+        .vm = opts.vm,
+        .server = null,
+        .directory_watchers = .empty,
+        .server_fetch_function_callback = .empty,
+        .server_register_update_callback = .empty,
+        .generation = 0,
+        .graph_safety_lock = .initUnlocked(),
+        .dump_dir = if (bun.FeatureFlags.bake_debugging_features) null,
+        .framework = framework,
+        .bundler_options = bake.SplitBundlerOptions.empty,
+        .emit_incremental_visualizer_events = 0,
+        .emit_memory_visualizer_events = 0,
+        .memory_visualizer_timer = .initPaused(.DevServerMemoryVisualizerTick),
+        .has_pre_crash_handler = false,
+        .frontend_only = true, // No routing → pure frontend bundler
+        .standalone_mode = true,
+        .standalone_entry_points = opts.entry_points,
+        .client_graph = .empty,
+        .server_graph = .empty,
+        .incremental_result = .empty,
+        .route_lookup = .empty,
+        .route_bundles = .empty,
+        .html_router = .empty,
+        .active_websocket_connections = .empty,
+        .current_bundle = null,
+        .next_bundle = .{
+            .route_queue = .empty,
+            .reload_event = null,
+            .requests = .{},
+            .promise = .{},
+        },
+        .inspector_server_id = .init(0),
+        .assets = .{
+            .path_map = .empty,
+            .files = .empty,
+            .refs = .empty,
+        },
+        .source_maps = .empty,
+        .plugin_state = .loaded, // No plugins to load in standalone
+        .bundling_failures = .{},
+        .assume_perfect_incremental_bundling = bun.feature_flag.BUN_ASSUME_PERFECT_INCREMENTAL.get() orelse bun.Environment.isDebug,
+        .testing_batch_events = .disabled,
+        .broadcast_console_log_from_browser_to_server = false,
+        .server_transpiler = undefined,
+        .client_transpiler = undefined,
+        .ssr_transpiler = undefined,
+        .bun_watcher = undefined,
+        .configuration_hash_key = undefined,
+        .router = undefined,
+        .watcher_atomics = undefined,
+        .log = undefined,
+        .deferred_request_pool = undefined,
+    });
+    errdefer bun.destroy(dev);
+    const alloc = dev.allocator();
+    dev.log = .init(alloc);
+    dev.deferred_request_pool = .init(alloc);
+
+    const global = dev.vm.global;
+
+    dev.graph_safety_lock.lock();
+    defer dev.graph_safety_lock.unlock();
+
+    const fs = bun.fs.FileSystem.init(opts.root) catch |err|
+        return global.throwError(err, "while initializing standalone incremental bundler");
+
+    dev.bun_watcher = Watcher.init(DevServer, dev, fs, bun.default_allocator) catch |err|
+        return global.throwError(err, "while initializing file watcher for incremental bundler");
+
+    errdefer dev.bun_watcher.deinit(false);
+    dev.bun_watcher.start() catch |err|
+        return global.throwError(err, "while starting file watcher thread for incremental bundler");
+
+    dev.watcher_atomics = WatcherAtomics.init(dev);
+
+    const transpiler_allocator = bun.default_allocator;
+
+    // Initialize server transpiler (minimal — needed because IncrementalGraph has server_graph)
+    dev.framework.initTranspiler(transpiler_allocator, &dev.log, .development, .server, &dev.server_transpiler, &dev.bundler_options.server) catch |err|
+        return global.throwError(err, "while initializing standalone incremental bundler");
+    dev.server_transpiler.options.dev_server = dev;
+
+    // Initialize client transpiler (this is the main one for standalone mode)
+    dev.framework.initTranspiler(transpiler_allocator, &dev.log, .development, .client, &dev.client_transpiler, &dev.bundler_options.client) catch |err|
+        return global.throwError(err, "while initializing standalone incremental bundler");
+    dev.client_transpiler.options.dev_server = dev;
+
+    dev.server_transpiler.resolver.watcher = dev.bun_watcher.getResolveWatcher();
+    dev.client_transpiler.resolver.watcher = dev.bun_watcher.getResolveWatcher();
+
+    // Resolve react-fast-refresh now that the client transpiler's resolver is ready
+    if (opts.react_fast_refresh) {
+        if (dev.client_transpiler.resolver.resolve(
+            dev.client_transpiler.resolver.fs.top_level_dir,
+            "react-refresh/runtime",
+            .stmt,
+        )) |result| {
+            // react-refresh is installed — use the resolved path
+            dev.framework.react_fast_refresh = .{ .import_source = result.pathConst().?.text };
+            dev.client_transpiler.options.react_fast_refresh = true;
+        } else |_| {
+            // react-refresh not installed — use the built-in copy bundled with Bun
+            dev.client_transpiler.resolver.log.reset();
+            dev.framework.react_fast_refresh = .{ .import_source = "react-refresh/runtime/index.js" };
+            dev.client_transpiler.options.react_fast_refresh = true;
+            dev.framework.built_in_modules.put(
+                bun.default_allocator,
+                "react-refresh/runtime/index.js",
+                if (bun.Environment.codegen_embed)
+                    .{ .code = @embedFile("node-fallbacks/react-refresh.js") }
+                else
+                    .{ .code = bun.runtimeEmbedFile(.codegen, "node-fallbacks/react-refresh.js") },
+            ) catch {};
+        }
+    }
+
+    // No SSR transpiler needed for standalone mode — zero-init it
+    dev.ssr_transpiler = dev.server_transpiler;
+
+    // Simple configuration hash for standalone mode
+    dev.configuration_hash_key = hash_key: {
+        var hash = std.hash.Wyhash.init(256);
+        if (bun.Environment.isDebug) {
+            hash.update(bake.getHmrRuntime(.client).code);
+        } else {
+            hash.update(bun.Environment.git_sha_short);
+        }
+        for (opts.entry_points) |ep| {
+            hash.update(ep);
+            hash.update(&.{0});
+        }
+        break :hash_key std.fmt.bytesToHex(std.mem.asBytes(&hash.final()), .lower);
+    };
+
+    // Insert react fast refresh entry if it was resolved
+    if (dev.framework.react_fast_refresh) |rfr| {
+        _ = dev.client_graph.insertStale(rfr.import_source, false) catch {};
+    }
+
+    // No router in standalone mode — initialize an empty one with no types
+    dev.router = FrameworkRouter.initEmpty(opts.root, &.{}, alloc) catch |err|
+        return global.throwError(err, "while initializing standalone incremental bundler");
+
+    if (opts.create_standalone_app) {
+        // Create a lightweight uws HTTP server for HMR WebSocket + serving bundled files.
+        const TcpApp = uws.NewApp(false);
+        const app = TcpApp.create(.{}) orelse
+            return global.throwError(error.OutOfMemory, "while creating HMR WebSocket server");
+
+        // Register routes for serving bundled JS and assets
+        app.get(client_prefix ++ "/:route", *DevServer, dev, wrapGenericRequestHandler(onStandaloneJsRequest, false));
+        app.get(asset_prefix ++ "/:asset", *DevServer, dev, wrapGenericRequestHandler(onAssetRequest, false));
+
+        app.ws(
+            internal_prefix ++ "/hmr",
+            @as(*anyopaque, @ptrCast(dev)),
+            0,
+            uws.WebSocketBehavior.Wrap(DevServer, HmrSocket, false).apply(.{}),
+        );
+        app.listenWithConfig(*DevServer, dev, struct {
+            pub fn handler(dev_inner: *DevServer, listen_socket: ?*TcpApp.ListenSocket) void {
+                dev_inner.standalone_listen_socket = listen_socket;
+            }
+        }.handler, .{ .port = 0 });
+        dev.standalone_app = app;
+
+        if (dev.standalone_listen_socket == null) {
+            app.destroy();
+            dev.standalone_app = null;
+            return global.throwError(error.AddressInUse, "while starting HMR WebSocket server on random port");
+        }
+    }
+
+    return dev;
+}
+
+/// Trigger the initial build for standalone mode. Adds all user-specified
+/// entry points as client-side entries and starts an async bundle.
+pub fn startStandaloneBuild(dev: *DevServer) bun.OOM!void {
+    var entry_points: EntryPointList = .{ .set = .{} };
+
+    var sfb = std.heap.stackFallback(4096, dev.allocator());
+    const temp_alloc = sfb.get();
+
+    for (dev.standalone_entry_points) |ep| {
+        try entry_points.appendJs(temp_alloc, ep, .client);
+    }
+
+    try dev.startAsyncBundle(entry_points, false, std.time.Timer.start() catch @panic("timers unsupported"));
+}
+
+/// Get the port of the standalone HMR WebSocket server, or null if not running.
+pub fn getStandaloneHmrPort(dev: *DevServer) ?u16 {
+    const ls = dev.standalone_listen_socket orelse return null;
+    const port = ls.getLocalPort();
+    return if (port > 0) @intCast(port) else null;
+}
+
+/// Invoke the standalone callback after a build completes.
+/// Called from finalizeBundle when standalone_mode is true.
+fn invokeStandaloneCallback(dev: *DevServer, bv2: *bun.bundle_v2.BundleV2) void {
+    _ = bv2;
+    // Invalidate cached standalone bundle so it's regenerated on next request
+    if (dev.standalone_client_bundle) |bundle| {
+        bundle.deref();
+        dev.standalone_client_bundle = null;
+    }
+    const callback_fn = dev.standalone_callback_fn orelse return;
+    const has_errors = dev.bundling_failures.count() > 0;
+    for (dev.standalone_callback_ctxs.items) |ctx| {
+        callback_fn(ctx, dev, !has_errors);
+    }
+}
+
+/// Generate a client bundle for standalone mode by tracing all entry point
+/// imports and concatenating them with the HMR runtime.
+pub fn generateStandaloneClientBundle(dev: *DevServer) bun.OOM![]u8 {
+    dev.graph_safety_lock.lock();
+    defer dev.graph_safety_lock.unlock();
+
+    var sfa_state = std.heap.stackFallback(65536, dev.allocator());
+    const sfa = sfa_state.get();
+    var gts = try dev.initGraphTraceState(sfa, 0);
+    defer gts.deinit(sfa);
+
+    // Trace imports from all entry points
+    dev.client_graph.reset();
+    var first_entry_index: ?IncrementalGraph(.client).FileIndex = null;
+    for (dev.standalone_entry_points) |ep| {
+        if (dev.client_graph.getFileIndex(ep)) |file_index| {
+            if (first_entry_index == null) first_entry_index = file_index;
+            if (file_index.get() < dev.client_graph.stale_files.bit_length and
+                !dev.client_graph.stale_files.isSet(file_index.get()))
+            {
+                try dev.client_graph.traceImports(file_index, &gts, .find_client_modules);
+            }
+        }
+    }
+
+    var react_fast_refresh_id: []const u8 = "";
+    if (dev.framework.react_fast_refresh) |rfr| brk: {
+        const rfr_index = dev.client_graph.getFileIndex(rfr.import_source) orelse
+            break :brk;
+        if (rfr_index.get() < dev.client_graph.stale_files.bit_length and
+            !dev.client_graph.stale_files.isSet(rfr_index.get()))
+        {
+            try dev.client_graph.traceImports(rfr_index, &gts, .find_client_modules);
+            react_fast_refresh_id = rfr.import_source;
+        }
+    }
+
+    // If nothing was traced (build not yet complete), return empty
+    if (dev.client_graph.current_chunk_len == 0) return &.{};
+
+    const entry_point_name: []const u8 = if (first_entry_index) |idx|
+        dev.client_graph.bundled_files.keys()[idx.get()]
+    else
+        "";
+
+    // Origin is auto-detected by the HMR runtime from document.currentScript.src
+    return dev.client_graph.takeJSBundle(&.{
+        .kind = .initial_response,
+        .initial_response_entry_point = entry_point_name,
+        .react_refresh_entry_point = react_fast_refresh_id,
+        .script_id = .init(0),
+        .console_log = false,
+    });
+}
+
+/// Handle GET /_bun/client/:route in standalone mode.
+/// Serves the concatenated client bundle with HMR runtime.
+fn onStandaloneJsRequest(dev: *DevServer, req: *Request, resp: AnyResponse) void {
+    _ = req;
+    const client_bundle = dev.standalone_client_bundle orelse generate: {
+        const payload = dev.generateStandaloneClientBundle() catch |err| bun.handleOom(err);
+        if (payload.len == 0) {
+            // Build hasn't completed yet — return 503
+            resp.writeStatus("503 Service Unavailable");
+            resp.end("Build in progress", resp.shouldCloseConnection());
+            return;
+        }
+        const route = StaticRoute.initFromAnyBlob(
+            &.fromOwnedSlice(dev.allocator(), payload),
+            .{
+                .mime_type = &.javascript,
+                .server = null,
+            },
+        );
+        // Allow cross-origin requests since the HTML page may be on a different port
+        bun.handleOom(route.headers.append("Access-Control-Allow-Origin", "*"));
+        dev.standalone_client_bundle = route;
+        break :generate route;
+    };
+    client_bundle.on(resp);
+}
+
 pub fn deinit(dev: *DevServer) void {
     debug.log("deinit", .{});
     dev_server_deinit_count_for_testing +|= 1;
@@ -585,6 +931,23 @@ pub fn deinit(dev: *DevServer) void {
         .emit_memory_visualizer_events = {},
         .framework = {},
         .frontend_only = {},
+        .standalone_mode = {},
+        .standalone_callback_ctxs = {
+            dev.standalone_callback_ctxs.deinit(bun.default_allocator);
+        },
+        .standalone_callback_fn = {},
+        .standalone_entry_points = {},
+        .standalone_app = {
+            if (dev.standalone_app) |app| {
+                if (dev.standalone_listen_socket) |ls| ls.close();
+                app.close();
+                app.destroy();
+            }
+        },
+        .standalone_listen_socket = {},
+        .standalone_client_bundle = {
+            if (dev.standalone_client_bundle) |bundle| bundle.deref();
+        },
         .generation = {},
         .plugin_state = {},
         .root = {},
@@ -796,7 +1159,10 @@ pub fn setRoutes(dev: *DevServer, server: anytype) !bool {
     const app = server.app.?;
     const is_ssl = @typeInfo(@TypeOf(app)).pointer.child.is_ssl;
 
-    app.get(client_prefix ++ "/:route", *DevServer, dev, wrapGenericRequestHandler(onJsRequest, is_ssl));
+    if (dev.standalone_mode)
+        app.get(client_prefix ++ "/:route", *DevServer, dev, wrapGenericRequestHandler(onStandaloneJsRequest, is_ssl))
+    else
+        app.get(client_prefix ++ "/:route", *DevServer, dev, wrapGenericRequestHandler(onJsRequest, is_ssl));
     app.get(asset_prefix ++ "/:asset", *DevServer, dev, wrapGenericRequestHandler(onAssetRequest, is_ssl));
     app.get(internal_prefix ++ "/src/*", *DevServer, dev, wrapGenericRequestHandler(onSrcRequest, is_ssl));
     app.post(internal_prefix ++ "/report_error", *DevServer, dev, wrapGenericRequestHandler(ErrorReportRequest.run, is_ssl));
@@ -1656,7 +2022,7 @@ pub fn onJsRequestWithBundle(dev: *DevServer, bundle_index: RouteBundle.Index, r
             &.fromOwnedSlice(dev.allocator(), payload),
             .{
                 .mime_type = &.javascript,
-                .server = dev.server orelse unreachable,
+                .server = dev.server, // null in standalone mode — StaticRoute handles this
             },
         );
         break :generate route_bundle.client_bundle.?;
@@ -2988,6 +3354,11 @@ pub fn finalizeBundle(
             .bundled_html_page => |ram| dev.onHtmlRequestWithBundle(req.route_bundle_index, ram.response, ram.method),
         }
     }
+
+    // In standalone mode, invoke the JS callback with the build result
+    if (dev.standalone_mode) {
+        dev.invokeStandaloneCallback(bv2);
+    }
 }
 
 fn startNextBundleIfPresent(dev: *DevServer) void {
@@ -3114,6 +3485,10 @@ pub fn isFileCached(dev: *DevServer, path: []const u8, side: bake.Graph) ?CacheE
             };
             const index = g.bundled_files.getIndex(path) orelse
                 return null; // non-existent files are considered stale
+            // If the bitset hasn't been resized to include this index yet,
+            // the file was just added during this bundle and is stale.
+            if (index >= g.stale_files.bit_length)
+                return null;
             if (!g.stale_files.isSet(index)) {
                 return .{ .kind = g.getFileByIndex(.init(@intCast(index))).fileKind() };
             }
@@ -4125,11 +4500,17 @@ pub fn onWatchError(_: *DevServer, err: bun.sys.Error) void {
 }
 
 pub fn publish(dev: *DevServer, topic: HmrTopic, message: []const u8, opcode: uws.Opcode) void {
-    if (dev.server) |s| _ = s.publish(&.{@intFromEnum(topic)}, message, opcode, false);
+    if (dev.server) |s| {
+        _ = s.publish(&.{@intFromEnum(topic)}, message, opcode, false);
+    } else if (dev.standalone_app) |app| {
+        _ = app.publishWithOptions(&.{@intFromEnum(topic)}, message, opcode, false);
+    }
 }
 
 pub fn numSubscribers(dev: *DevServer, topic: HmrTopic) u32 {
-    return if (dev.server) |s| s.numSubscribers(&.{@intFromEnum(topic)}) else 0;
+    if (dev.server) |s| return s.numSubscribers(&.{@intFromEnum(topic)});
+    if (dev.standalone_app) |app| return app.numSubscribers(&.{@intFromEnum(topic)});
+    return 0;
 }
 
 const SafeFileId = packed struct(u32) {
@@ -4212,6 +4593,14 @@ pub fn relativePath(dev: *DevServer, relative_path_buf: *bun.PathBuffer, path: [
     // @constCast: `rel` is owned by a buffer on `dev`, which is mutable
     bun.path.platformToPosixInPlace(u8, @constCast(rel));
     return rel;
+}
+
+/// Returns true if the given absolute file path is part of this DevServer's
+/// client or server bundle graph. Used by VirtualMachine to determine if a
+/// file change is frontend-only (and should not trigger a backend reload).
+pub fn hasFileInGraph(dev: *DevServer, file_path: []const u8) bool {
+    return dev.client_graph.bundled_files.contains(file_path) or
+        dev.server_graph.bundled_files.contains(file_path);
 }
 
 /// Either of two conditions make this true:

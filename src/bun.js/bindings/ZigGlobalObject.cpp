@@ -3541,6 +3541,14 @@ GlobalObject::PromiseFunctions GlobalObject::promiseHandlerID(Zig::FFIFunction h
         return GlobalObject::PromiseFunctions::Bun__FileSink__onResolveStream;
     } else if (handler == Bun__FileSink__onRejectStream) {
         return GlobalObject::PromiseFunctions::Bun__FileSink__onRejectStream;
+    } else if (handler == Bun__WatchBuildResult__onInitialBuildResolved) {
+        return GlobalObject::PromiseFunctions::Bun__WatchBuildResult__onInitialBuildResolved;
+    } else if (handler == Bun__WatchBuildResult__onInitialBuildRejected) {
+        return GlobalObject::PromiseFunctions::Bun__WatchBuildResult__onInitialBuildRejected;
+    } else if (handler == Bun__WatchBuildResult__onRebuildResolved) {
+        return GlobalObject::PromiseFunctions::Bun__WatchBuildResult__onRebuildResolved;
+    } else if (handler == Bun__WatchBuildResult__onRebuildRejected) {
+        return GlobalObject::PromiseFunctions::Bun__WatchBuildResult__onRebuildRejected;
     } else {
         RELEASE_ASSERT_NOT_REACHED();
     }

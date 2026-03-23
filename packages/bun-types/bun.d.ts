@@ -2941,6 +2941,38 @@ declare module "bun" {
      * ```
      */
     compile?: boolean | Bun.Build.CompileTarget | CompileBuildOptions;
+
+    /**
+     * Enable watch mode for incremental rebuilds.
+     *
+     * When `true`, `Bun.build()` returns a `WatchBuildResult` that watches
+     * all source files for changes and automatically triggers rebuilds.
+     * Use the `.on("rebuild", callback)` method to receive rebuild notifications.
+     *
+     * @default false
+     *
+     * @example
+     * ```ts
+     * const watcher = await Bun.build({
+     *   entrypoints: ['./src/index.ts'],
+     *   outdir: './dist',
+     *   watch: true,
+     * });
+     *
+     * watcher.on("rebuild", (result) => {
+     *   console.log("Rebuilt!", result.success);
+     * });
+     *
+     * // Later, stop watching:
+     * watcher.stop();
+     * ```
+     */
+    watch?: boolean;
+
+    /**
+     * @deprecated HMR is automatic with `watch: true`. This option is accepted but ignored.
+     */
+    hmr?: boolean;
   }
 
   interface CompileBuildOptions {
@@ -3586,6 +3618,68 @@ declare module "bun" {
   }
 
   /**
+   * Result of `Bun.build()` when `watch: true` is set.
+   *
+   * Extends `BuildOutput` with methods for watching file changes and
+   * receiving rebuild notifications.
+   */
+  interface WatchBuildResult extends BuildOutput {
+    /**
+     * Register a callback for rebuild events.
+     *
+     * When any source file changes, the bundler automatically rebuilds
+     * and calls registered callbacks with the new build result.
+     *
+     * @param event The event name (currently only `"rebuild"` is supported)
+     * @param callback Function called with the rebuild result
+     * @returns This `WatchBuildResult` for chaining
+     *
+     * @example
+     * ```ts
+     * watcher.on("rebuild", (result) => {
+     *   if (result.success) {
+     *     console.log("Rebuilt successfully:", result.outputs.length, "files");
+     *   } else {
+     *     console.error("Build failed:", result.logs);
+     *   }
+     * });
+     * ```
+     */
+    on(event: "rebuild", callback: (result: BuildOutput) => void): WatchBuildResult;
+
+    /**
+     * Stop watching for file changes and clean up resources.
+     *
+     * After calling `stop()`, no more rebuild callbacks will fire
+     * and the watcher will no longer keep the process alive.
+     */
+    stop(): void;
+
+    /**
+     * URL where the bundle is served. Put in a `<script>` tag. HMR auto-connects.
+     *
+     * Returns `null` if the server failed to start.
+     *
+     * @example
+     * ```ts
+     * const watcher = await Bun.build({
+     *   entrypoints: ["./src/index.ts"],
+     *   watch: true,
+     * });
+     * console.log(watcher.url); // "http://localhost:54321/_bun/client/index.js"
+     * ```
+     */
+    readonly url: string | null;
+
+    /**
+     * Import the bundle server-side.
+     *
+     * @remarks Not yet implemented.
+     */
+    import(specifier?: string): Promise<any>;
+  }
+
+  /**
    * Metafile structure containing build metadata for analysis.
    *
    * @category Bundler
@@ -3888,6 +3982,7 @@ declare module "bun" {
    * });
    *```
    */
+  function build(config: BuildConfig & { watch: true }): Promise<WatchBuildResult>;
   function build(config: BuildConfig): Promise<BuildOutput>;
 
   interface ErrorLike extends Error {
@@ -5649,6 +5744,34 @@ declare module "bun" {
         [key: string]: string;
       };
     }>;
+  }
+
+  /**
+   * Represents a single output file from a bundle build.
+   * Provides metadata (name, kind, type, size) and lazy content access via `file()`.
+   */
+  interface BundleFile {
+    /** Output filename (e.g., "App-a1b2c3.js") */
+    readonly name: string;
+    /** The kind of output file */
+    readonly kind: "entry-point" | "chunk" | "asset" | "sourcemap";
+    /** MIME type (e.g., "application/javascript") */
+    readonly type: string;
+    /** File size in bytes */
+    readonly size: number;
+    /** Returns a Blob containing the file's content */
+    file(): Blob;
+  }
+
+  /**
+   * Represents a JS/TS bundle created via `import bundle from "./app.tsx" with { type: "bundle" }`.
+   * Can be passed to `Bun.serve()` routes to serve bundled JavaScript with automatic HMR in dev mode.
+   */
+  interface JSBundle {
+    /** The entrypoint BundleFile, or `undefined` before the build completes */
+    readonly entrypoint: BundleFile | undefined;
+    /** All output files from the build */
+    readonly files: BundleFile[];
   }
 
   /**

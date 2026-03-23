@@ -666,6 +666,7 @@ pub const Loader = enum(u8) {
     yaml = 18,
     json5 = 19,
     md = 20,
+    bundle = 21,
 
     pub const Optional = enum(u8) {
         none = 254,
@@ -842,6 +843,7 @@ pub const Loader = enum(u8) {
         .{ "html", .html },
         .{ "md", .md },
         .{ "markdown", .md },
+        .{ "bundle", .bundle },
     });
 
     pub const api_names = bun.ComptimeStringMap(api.Loader, .{
@@ -910,6 +912,7 @@ pub const Loader = enum(u8) {
             .text => .text,
             .sqlite_embedded, .sqlite => .sqlite,
             .md => .md,
+            .bundle => .file, // bundle is a build-mode marker, not a real loader
         };
     }
 
@@ -1778,6 +1781,9 @@ pub const BundleOptions = struct {
     mark_builtins_as_external: bool = false,
     server_components: bool = false,
     hot_module_reloading: bool = false,
+    /// When true, `import.meta.hot` passes through as a normal property access
+    /// instead of being transformed to `undefined`. Set by `bun --hot`.
+    preserve_import_meta_hot: bool = false,
     react_fast_refresh: bool = false,
     inject: ?[]string = null,
     origin: URL = URL{},

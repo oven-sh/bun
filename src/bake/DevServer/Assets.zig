@@ -68,7 +68,7 @@ pub fn replacePath(
             slice.items(.key)[entry_index.get()] = content_hash;
             slice.items(.value)[entry_index.get()] = StaticRoute.initFromAnyBlob(contents, .{
                 .mime_type = mime_type,
-                .server = assets.owner().server orelse unreachable,
+                .server = assets.owner().server,
             });
             comptime assert(@TypeOf(slice.items(.hash)[0]) == void);
             assets.needs_reindex = true;
@@ -85,7 +85,7 @@ pub fn replacePath(
         try assets.refs.append(alloc, 1);
         file_index_gop.value_ptr.* = StaticRoute.initFromAnyBlob(contents, .{
             .mime_type = mime_type,
-            .server = assets.owner().server orelse unreachable,
+            .server = assets.owner().server,
         });
     } else {
         assets.refs.items[file_index_gop.index] += 1;

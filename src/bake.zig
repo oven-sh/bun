@@ -340,6 +340,19 @@ pub const Framework = struct {
         .built_in_modules = .empty,
     };
 
+    /// Create a minimal Framework suitable for standalone bundling (no routing,
+    /// no server components). Optionally enables react-fast-refresh when the
+    /// import source is provided.
+    pub fn initStandalone(rfr_source: ?[]const u8) Framework {
+        return .{
+            .is_built_in_react = false,
+            .file_system_router_types = &.{},
+            .server_components = null,
+            .react_fast_refresh = if (rfr_source) |src| .{ .import_source = src } else null,
+            .built_in_modules = .empty,
+        };
+    }
+
     pub const FileSystemRouterType = struct {
         root: []const u8,
         prefix: []const u8,

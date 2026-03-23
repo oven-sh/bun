@@ -920,12 +920,13 @@ function isReactRefreshBoundary(esmExports): boolean {
   let areAllExportsComponents = true;
   for (const key in esmExports) {
     hasExports = true;
-    const desc = Object.getOwnPropertyDescriptor(esmExports, key);
-    if (desc && desc.get) {
-      // Don't invoke getters as they may have side effects.
+    let exportValue;
+    try {
+      exportValue = esmExports[key];
+    } catch {
+      // Getter threw — not safe to treat as refresh boundary
       return false;
     }
-    const exportValue = esmExports[key];
     if (!isLikelyComponentType(exportValue)) {
       areAllExportsComponents = false;
     }

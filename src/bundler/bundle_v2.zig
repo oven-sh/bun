@@ -1594,6 +1594,15 @@ pub const BundleV2 = struct {
 
         try this.cloneAST();
 
+        // Collect and run sub-builds (with { type: "bundle" } imports) before linking.
+        const sub_builds = try this.collectSubBuilds();
+        const sub_build_results = try this.runSubBuilds(sub_builds);
+
+        // Patch the lazy export ASTs for .bundle sources with sub-build result metadata.
+        // This must happen after cloneAST() but before link() so the linker generates
+        // the correct export declarations from the patched expression data.
+        try this.patchSubBuildExports(sub_builds, sub_build_results);
+
         const chunks = try this.linker.link(
             this,
             this.graph.entry_points.items,
@@ -1611,7 +1620,22 @@ pub const BundleV2 = struct {
             };
         }
 
-        const output_files = try this.linker.generateChunksInParallel(chunks, false);
+        var output_files = try this.linker.generateChunksInParallel(chunks, false);
+
+        // Append sub-build output files to the main build's output.
+        // Prefix dest_path with "./" to match the parent build's convention
+        // (parent chunks use "[dir]/[name].[ext]" which produces "./file.js").
+        // Without this prefix, build_command.zig's writeToDisk resolves the
+        // bare filename against cwd, producing an incorrect nested path.
+        for (sub_build_results) |result| {
+            for (result.output_files.items) |of| {
+                var patched = of;
+                if (!bun.strings.startsWith(patched.dest_path, "./")) {
+                    patched.dest_path = bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "./{s}", .{patched.dest_path}));
+                }
+                try output_files.append(patched);
+            }
+        }
 
         // Generate metafile if requested (CLI writes files in build_command.zig)
         const metafile: ?[]const u8 = if (this.linker.options.metafile)
@@ -1893,12 +1917,14 @@ pub const BundleV2 = struct {
         cancelled: bool = false,
 
         html_build_task: ?*jsc.API.HTMLBundle.HTMLBundleRoute = null,
+        js_bundle_build_task: ?*jsc.API.JSBundle.Route = null,
 
         result: Result = .{ .pending = {} },
 
         next: ?*JSBundleCompletionTask = null,
         transpiler: *BundleV2 = undefined,
         plugins: ?*bun.jsc.API.JSBundler.Plugin = null,
+        bun_watcher: ?*bun.Watcher = null,
         started_at_ns: u64 = 0,
 
         pub fn configureBundler(
@@ -2305,6 +2331,12 @@ pub const BundleV2 = struct {
             if (this.html_build_task) |html_build_task| {
                 this.plugins = null;
                 html_build_task.onComplete(this);
+                return;
+            }
+
+            if (this.js_bundle_build_task) |js_bundle_build_task| {
+                this.plugins = null;
+                js_bundle_build_task.onComplete(this);
                 return;
             }
 
@@ -2828,6 +2860,13 @@ pub const BundleV2 = struct {
 
         try this.addServerComponentBoundariesAsExtraEntryPoints();
 
+        // Collect sub-builds (with { type: "bundle" } imports) before linking.
+        const sub_builds = try this.collectSubBuilds();
+        const sub_build_results = try this.runSubBuilds(sub_builds);
+
+        // Patch the lazy export ASTs for .bundle sources with sub-build result metadata.
+        try this.patchSubBuildExports(sub_builds, sub_build_results);
+
         const chunks = try this.linker.link(
             this,
             this.graph.entry_points.items,
@@ -2840,6 +2879,49 @@ pub const BundleV2 = struct {
         }
 
         var output_files = try this.linker.generateChunksInParallel(chunks, false);
+
+        // Append sub-build output files to the main build's output.
+        // Prefix dest_path with "./" to match the parent build's convention.
+        // Also write buffer-type files to disk when outdir is set, since the
+        // linker's writeOutputFilesToDisk only handles the parent's own chunks.
+        {
+            const sub_outdir = this.linker.resolver.opts.output_dir;
+            var out_dir: ?std.fs.Dir = if (sub_outdir.len > 0)
+                bun.FD.cwd().stdDir().makeOpenPath(sub_outdir, .{}) catch null
+            else
+                null;
+            defer if (out_dir) |*d| d.close();
+
+            for (sub_build_results) |result| {
+                for (result.output_files.items) |of| {
+                    var patched = of;
+                    if (!bun.strings.startsWith(patched.dest_path, "./")) {
+                        patched.dest_path = bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "./{s}", .{patched.dest_path}));
+                    }
+                    // Write in-memory buffer files to disk when outdir is set
+                    if (out_dir) |dir| {
+                        if (patched.value == .buffer) {
+                            const rel = bun.strings.trimPrefixComptime(u8, patched.dest_path, "./");
+                            var path_buf: bun.PathBuffer = undefined;
+                            _ = jsc.Node.fs.NodeFS.writeFileWithPathBuffer(&path_buf, .{
+                                .data = .{ .buffer = .{
+                                    .buffer = .{
+                                        .ptr = @constCast(patched.value.buffer.bytes.ptr),
+                                        .len = patched.value.buffer.bytes.len,
+                                        .byte_len = patched.value.buffer.bytes.len,
+                                    },
+                                } },
+                                .encoding = .buffer,
+                                .dirfd = .fromStdDir(dir),
+                                .file = .{ .path = .{ .string = bun.PathString.init(rel) } },
+                            }).unwrap() catch {};
+                            patched.value = .{ .saved = .{} };
+                        }
+                    }
+                    try output_files.append(patched);
+                }
+            }
+        }
 
         // Generate metafile if requested
         const metafile: ?[]const u8 = if (this.linker.options.metafile)
@@ -2938,6 +3020,337 @@ pub const BundleV2 = struct {
             .side = null,
             .entry_point_index = null,
         }));
+    }
+
+    /// A sub-build discovered from `import x from "y" with { type: "bundle" }`.
+    pub const SubBuild = struct {
+        /// Source file that contains the import.
+        source_index: Index.Int,
+        /// Index into that source's import record list.
+        import_record_index: u32,
+        /// Absolute path of the sub-build entry point.
+        entry_point: []const u8,
+        /// Config extracted from import attributes.
+        config: ImportRecord.BundleImportConfig,
+    };
+
+    /// Result of running a sub-build.
+    pub const SubBuildResult = struct {
+        output_files: std.array_list.Managed(options.OutputFile),
+        /// Index of the entry point file in output_files.
+        entry_point_index: ?u32,
+    };
+
+    const sub_build_log = bun.Output.scoped(.sub_build, .hidden);
+
+    /// Scans the link-phase graph for `.bundle` imports and returns descriptors.
+    fn collectSubBuilds(this: *BundleV2) ![]SubBuild {
+        var list = std.array_list.Managed(SubBuild).init(bun.default_allocator);
+
+        const import_records_lists = this.graph.ast.items(.import_records);
+        const loaders = this.graph.input_files.items(.loader);
+        const sources = this.graph.input_files.items(.source);
+
+        sub_build_log("collectSubBuilds: scanning {d} source files", .{import_records_lists.len});
+
+        for (import_records_lists, 0..) |import_records_list, source_idx| {
+            for (import_records_list.slice(), 0..) |record, rec_idx| {
+                sub_build_log("  source[{d}] record[{d}]: loader={?s} source_index_valid={} path={s}", .{
+                    source_idx,
+                    rec_idx,
+                    if (record.loader) |l| @tagName(l) else null,
+                    record.source_index.isValid(),
+                    record.path.text,
+                });
+                if (record.loader == .bundle and record.source_index.isValid()) {
+                    const resolved_idx = record.source_index.get();
+                    sub_build_log("    -> .bundle import found! resolved_loader={s}", .{@tagName(loaders[resolved_idx])});
+                    const resolved_source = &sources[resolved_idx];
+                    // Only process if the resolved file has `.bundle` loader
+                    if (loaders[resolved_idx] == .bundle) {
+                        sub_build_log("    -> adding sub-build for entry_point={s}", .{resolved_source.path.text});
+                        try list.append(.{
+                            .source_index = @intCast(source_idx),
+                            .import_record_index = @intCast(rec_idx),
+                            .entry_point = resolved_source.path.text,
+                            .config = record.bundle_config orelse .{},
+                        });
+                    }
+                }
+            }
+        }
+
+        sub_build_log("collectSubBuilds: found {d} sub-builds", .{list.items.len});
+        return list.toOwnedSlice();
+    }
+
+    /// Runs sub-builds sequentially on the current thread and returns results.
+    /// Each sub-build creates a fresh Transpiler + BundleV2 with browser target.
+    fn runSubBuilds(
+        this: *BundleV2,
+        sub_builds: []const SubBuild,
+    ) ![]SubBuildResult {
+        if (sub_builds.len == 0) return &.{};
+
+        var results = try bun.default_allocator.alloc(SubBuildResult, sub_builds.len);
+        for (sub_builds, 0..) |sb, i| {
+            results[i] = try this.runSingleSubBuild(sb);
+        }
+        return results;
+    }
+
+    /// Runs a single sub-build for a `with { type: "bundle" }` import.
+    fn runSingleSubBuild(this: *BundleV2, sb: SubBuild) anyerror!SubBuildResult {
+        // NOTE: heap is intentionally NOT deinitialized — output file paths and data
+        // reference memory from this arena and must survive until the build completes.
+        var heap = allocators.MimallocArena.init();
+
+        const alloc = heap.allocator();
+
+        var ast_memory_allocator = try alloc.create(bun.ast.ASTMemoryAllocator);
+        ast_memory_allocator.* = .{ .allocator = alloc };
+        ast_memory_allocator.reset();
+        // Save the parent's memory_allocator so pop() restores it correctly.
+        // Without this, pop() restores null and subsequent Expr.init calls fail.
+        ast_memory_allocator.previous = Expr.Data.Store.memory_allocator;
+        ast_memory_allocator.push();
+        defer ast_memory_allocator.pop();
+
+        var sub_log = Logger.Log.init(bun.default_allocator);
+
+        // Construct the entry points array (just one)
+        const entry_point_dupe = try alloc.dupe(u8, sb.entry_point);
+        const entry_points: [1][]const u8 = .{entry_point_dupe};
+
+        // Create a fresh Transpiler configured for browser target
+        const sub_transpiler = try alloc.create(Transpiler);
+        sub_transpiler.* = try bun.Transpiler.init(
+            alloc,
+            &sub_log,
+            api.TransformOptions{
+                .entry_points = &entry_points,
+                .target = .browser,
+                .absolute_working_dir = this.transpiler.fs.top_level_dir,
+                .inject = &.{},
+                .external = &.{},
+                .main_fields = &.{},
+                .extension_order = &.{},
+                .env_files = &.{},
+                .conditions = &.{},
+                .ignore_dce_annotations = false,
+                .drop = &.{},
+                .bunfig_path = "",
+            },
+            this.transpiler.env,
+        );
+
+        // Apply config from import attributes
+        sub_transpiler.options.output_format = .esm;
+        sub_transpiler.options.code_splitting = sb.config.splitting orelse false;
+        if (sb.config.minify) |minify| {
+            sub_transpiler.options.minify_syntax = minify;
+            sub_transpiler.options.minify_whitespace = minify;
+            sub_transpiler.options.minify_identifiers = minify;
+            sub_transpiler.options.inlining = minify;
+        }
+        if (sb.config.sourcemap) |sm| {
+            sub_transpiler.options.source_map = sm;
+        }
+        // Sub-builds produce in-memory output — the parent build handles writing to disk.
+        // Empty output_dir forces the in-memory code path in generateChunksInParallel.
+        sub_transpiler.options.output_dir = "";
+        // Set naming templates so output files get proper filenames with content hashes.
+        sub_transpiler.options.entry_naming = "[name]-[hash].[ext]";
+        sub_transpiler.options.chunk_naming = "[name]-[hash].[ext]";
+
+        sub_transpiler.configureLinker();
+        try sub_transpiler.configureDefines();
+        sub_transpiler.resolver.env_loader = sub_transpiler.env;
+        sub_transpiler.resolver.opts = sub_transpiler.options;
+
+        // Create a fresh BundleV2
+        const sub_bundler = try BundleV2.init(
+            sub_transpiler,
+            null,
+            alloc,
+            jsc.AnyEventLoop.init(alloc),
+            false,
+            jsc.WorkPool.get(),
+            heap,
+        );
+        defer sub_bundler.deinitWithoutFreeingArena();
+
+        // Run the sub-build
+        const build_result = sub_bundler.runFromJSInNewThread(&entry_points) catch |err| {
+            // Log sub-build errors to the parent's log
+            bun.handleOom(sub_log.appendToWithRecycled(this.transpiler.log, true));
+            return err;
+        };
+
+        // Propagate any warnings/errors from sub-build
+        bun.handleOom(sub_log.appendToWithRecycled(this.transpiler.log, true));
+
+        // Find the entry point index in output files
+        var ep_index: ?u32 = null;
+        for (build_result.output_files.items, 0..) |of, idx| {
+            if (of.output_kind == .@"entry-point") {
+                ep_index = @intCast(idx);
+                break;
+            }
+        }
+
+        return .{
+            .output_files = build_result.output_files,
+            .entry_point_index = ep_index,
+        };
+    }
+
+    /// Patches the lazy export AST for each .bundle source with an object literal
+    /// containing the sub-build result metadata (file names, kinds, sizes, MIME types).
+    ///
+    /// The .bundle ParseTask produces an empty `E.Object{}` as the lazy export value.
+    /// This function replaces it with the real sub-build result data so that the linker's
+    /// `generateCodeForLazyExport` naturally generates correct export declarations.
+    ///
+    /// Must be called after `cloneAST()` and `runSubBuilds()`, but before `linker.link()`.
+    fn patchSubBuildExports(
+        this: *BundleV2,
+        sub_builds: []const SubBuild,
+        sub_build_results: []const SubBuildResult,
+    ) !void {
+        if (sub_builds.len == 0) return;
+
+        const alloc = this.allocator();
+        const import_records_lists = this.linker.graph.ast.items(.import_records);
+        const parts_lists = this.linker.graph.ast.items(.parts);
+        const loc = Logger.Loc.Empty;
+
+        for (sub_builds, sub_build_results) |sb, result| {
+            // Find the resolved source index (the .bundle source in the graph)
+            const record = import_records_lists[sb.source_index].slice()[sb.import_record_index];
+            if (!record.source_index.isValid()) continue;
+            const resolved_source_index = record.source_index.get();
+
+            // Access the s_lazy_export in the resolved source's AST (part index 1)
+            const parts = &parts_lists[resolved_source_index];
+            if (parts.len < 2) continue;
+            const part = &parts.ptr[1];
+            if (part.stmts.len == 0) continue;
+            if (part.stmts[0].data != .s_lazy_export) continue;
+
+            sub_build_log("patchSubBuildExports: patching source[{d}] with {d} output files", .{
+                resolved_source_index,
+                result.output_files.items.len,
+            });
+
+            // Create an unbound "Bun" symbol so we can reference it in generated code.
+            // Add directly to the linker graph AST's symbol list (the linker graph's
+            // Symbol.Map isn't populated until link(), but the AST symbols are available).
+            const source_symbols = &this.linker.graph.ast.items(.symbols)[resolved_source_index];
+            const bun_ref = brk: {
+                var ref = Ref.init(
+                    @truncate(source_symbols.len),
+                    @truncate(resolved_source_index),
+                    false,
+                );
+                ref.tag = .symbol;
+                source_symbols.append(alloc, .{
+                    .kind = .unbound,
+                    .original_name = "Bun",
+                }) catch bun.outOfMemory();
+                // Also add to module scope's generated list so link() picks it up
+                this.linker.graph.ast.items(.module_scope)[resolved_source_index].generated.append(alloc, ref) catch bun.outOfMemory();
+                break :brk ref;
+            };
+
+            // Build the result object: { entrypoint: {...}, files: [...] }
+            var result_obj = E.Object{};
+
+            // Build file objects and find the entrypoint
+            var files_array = E.Array{};
+            var entrypoint_expr: ?Expr = null;
+
+            for (result.output_files.items, 0..) |of, idx| {
+                // Skip sourcemaps, bytecode, and metafiles from the files array
+                switch (of.output_kind) {
+                    .sourcemap, .bytecode, .module_info, .@"metafile-json", .@"metafile-markdown" => continue,
+                    else => {},
+                }
+
+                const kind_str: []const u8 = switch (of.output_kind) {
+                    .@"entry-point" => "entry-point",
+                    .chunk => "chunk",
+                    .asset => "asset",
+                    .sourcemap => "sourcemap",
+                    else => "chunk",
+                };
+                const mime_str = of.loader.toMimeType(&.{of.dest_path}).value;
+                const file_name = bun.strings.trimPrefixComptime(u8, of.dest_path, "./");
+
+                var file_obj = E.Object{};
+                try file_obj.putString(alloc, "name", file_name);
+                try file_obj.putString(alloc, "kind", kind_str);
+                try file_obj.putString(alloc, "type", mime_str);
+                try file_obj.put(alloc, "size", Expr.init(E.Number, E.Number{ .value = @floatFromInt(of.size) }, loc));
+
+                // Generate: file: () => Bun.file(import.meta.dir + "/" + name)
+                const file_method = try makeFileAccessor(alloc, bun_ref, file_name, loc);
+                try file_obj.put(alloc, "file", file_method);
+
+                const file_expr = Expr.init(E.Object, file_obj, loc);
+                try files_array.push(alloc, file_expr);
+
+                if (result.entry_point_index) |ep_idx| {
+                    if (idx == ep_idx) {
+                        entrypoint_expr = file_expr;
+                    }
+                }
+            }
+
+            // Set entrypoint property
+            if (entrypoint_expr) |ep| {
+                try result_obj.put(alloc, "entrypoint", ep);
+            }
+
+            // Set files property
+            try result_obj.put(alloc, "files", Expr.init(E.Array, files_array, loc));
+
+            // Write the new expression data into the s_lazy_export pointer.
+            // This replaces the empty E.Object{} that ParseTask created.
+            part.stmts[0].data.s_lazy_export.* = Expr.init(E.Object, result_obj, loc).data;
+        }
+    }
+
+    /// Generate: () => Bun.file(import.meta.dir + "/" + name)
+    fn makeFileAccessor(alloc: std.mem.Allocator, bun_ref: Ref, file_name: []const u8, loc: Logger.Loc) !Expr {
+        // import.meta.dir + "/" + name
+        const path_expr = Expr.init(E.Binary, E.Binary{
+            .op = js_ast.Op.Code.bin_add,
+            .left = Expr.init(E.Dot, E.Dot{
+                .target = Expr.init(E.ImportMeta, E.ImportMeta{}, loc),
+                .name = "dir",
+                .name_loc = loc,
+            }, loc),
+            .right = Expr.init(E.String, E.String.init(bun.handleOom(std.fmt.allocPrint(alloc, "/{s}", .{file_name}))), loc),
+        }, loc);
+
+        // Bun.file(path_expr)
+        const call_args = try alloc.dupe(Expr, &.{path_expr});
+        const call_expr = Expr.init(E.Call, E.Call{
+            .target = Expr.init(E.Dot, E.Dot{
+                .target = Expr.init(E.Identifier, E.Identifier{ .ref = bun_ref }, loc),
+                .name = "file",
+                .name_loc = loc,
+            }, loc),
+            .args = js_ast.ExprNodeList.fromOwnedSlice(call_args),
+        }, loc);
+
+        // () => call_expr
+        return Expr.init(E.Arrow, E.Arrow{
+            .args = &.{},
+            .body = try G.FnBody.initReturnExpr(alloc, call_expr),
+            .prefer_expr = true,
+        }, loc);
     }
 
     fn shouldAddWatcherPlugin(bv2: *BundleV2, namespace: []const u8, path: []const u8) bool {
@@ -4140,7 +4553,9 @@ pub const BundleV2 = struct {
                         graph.input_files.items(.loader)[source.index.get()],
                         parse_result.watcher_data.dir_fd,
                         null,
-                        bun.Environment.isWindows,
+                        // Always clone because source.path.text is allocated on
+                        // BundleV2's heap which is freed after each bundle.
+                        true,
                     );
                 }
             }

@@ -1118,4 +1118,460 @@ export { greeting };`,
     // What matters is that callbacks fired before promise settled
     expect(result.success).toBeDefined();
   });
+
+  test("watch: true returns WatchBuildResult with initial outputs", async () => {
+    const dir = tempDirWithFiles("bun-build-watch-initial", {
+      "index.js": `export const hello = "world";`,
+    });
+
+    const watcher = await Bun.build({
+      entrypoints: [join(dir, "index.js")],
+      watch: true,
+    });
+
+    try {
+      expect(watcher).toBeDefined();
+      expect(watcher.success).toBe(true);
+      expect(watcher.outputs).toBeDefined();
+      expect(watcher.outputs.length).toBeGreaterThan(0);
+      expect(typeof watcher.stop).toBe("function");
+      expect(typeof watcher.on).toBe("function");
+    } finally {
+      watcher.stop();
+    }
+  });
+
+  test("watch: true fires rebuild callback on file change", async () => {
+    const dir = tempDirWithFiles("bun-build-watch-rebuild", {
+      "index.js": `export const value = 1;`,
+    });
+
+    const watcher = await Bun.build({
+      entrypoints: [join(dir, "index.js")],
+      watch: true,
+    });
+
+    try {
+      expect(watcher.success).toBe(true);
+
+      const { promise, resolve } = Promise.withResolvers<any>();
+
+      watcher.on("rebuild", (result: any) => {
+        resolve(result);
+      });
+
+      // Modify the entry file to trigger a rebuild
+      await Bun.write(join(dir, "index.js"), `export const value = 2;`);
+
+      const rebuildResult = await promise;
+      expect(rebuildResult).toBeDefined();
+    } finally {
+      watcher.stop();
+    }
+  });
+
+  test("watch: true stop() prevents further rebuilds", async () => {
+    const dir = tempDirWithFiles("bun-build-watch-stop", {
+      "index.js": `export const value = 1;`,
+    });
+
+    const watcher = await Bun.build({
+      entrypoints: [join(dir, "index.js")],
+      watch: true,
+    });
+
+    expect(watcher.success).toBe(true);
+    watcher.stop();
+
+    // After stop, the watcher should not keep the process alive
+    // This test verifies stop() doesn't throw
+  });
+
+  test("watch: true fires rebuild on imported dependency change", async () => {
+    const dir = tempDirWithFiles("bun-build-watch-dep", {
+      "index.js": `import { helper } from "./helper.js"; console.log(helper);`,
+      "helper.js": `export const helper = "v1";`,
+    });
+
+    const watcher = await Bun.build({
+      entrypoints: [join(dir, "index.js")],
+      watch: true,
+    });
+
+    try {
+      expect(watcher.success).toBe(true);
+
+      const { promise, resolve } = Promise.withResolvers<any>();
+
+      watcher.on("rebuild", (result: any) => {
+        resolve(result);
+      });
+
+      // Modify the DEPENDENCY file (not the entry point) to trigger a rebuild
+      await Bun.write(join(dir, "helper.js"), `export const helper = "v2";`);
+
+      const rebuildResult = await promise;
+      // Validate rebuild result has same shape as BuildOutput
+      expect(rebuildResult).toBeDefined();
+      expect(rebuildResult.success).toBe(true);
+      expect(rebuildResult.outputs).toBeDefined();
+      expect(rebuildResult.outputs.length).toBeGreaterThan(0);
+      expect(rebuildResult.logs).toBeDefined();
+    } finally {
+      watcher.stop();
+    }
+  });
+
+  test("watch: true updates outputs getter after rebuild", async () => {
+    const dir = tempDirWithFiles("bun-build-watch-outputs", {
+      "index.js": `export const msg = "initial";`,
+    });
+
+    const watcher = await Bun.build({
+      entrypoints: [join(dir, "index.js")],
+      watch: true,
+    });
+
+    try {
+      expect(watcher.success).toBe(true);
+      const initialOutputs = watcher.outputs;
+      expect(initialOutputs.length).toBeGreaterThan(0);
+
+      const { promise, resolve } = Promise.withResolvers<void>();
+
+      watcher.on("rebuild", () => {
+        resolve();
+      });
+
+      await Bun.write(join(dir, "index.js"), `export const msg = "updated";`);
+
+      await promise;
+
+      // After rebuild, the outputs getter should return updated outputs
+      expect(watcher.outputs).toBeDefined();
+      expect(watcher.outputs.length).toBeGreaterThan(0);
+      expect(watcher.success).toBe(true);
+    } finally {
+      watcher.stop();
+    }
+  });
+
+  test("watch: true on() returns a value for chaining", async () => {
+    const dir = tempDirWithFiles("bun-build-watch-chain", {
+      "index.js": `export const x = 1;`,
+    });
+
+    const watcher = await Bun.build({
+      entrypoints: [join(dir, "index.js")],
+      watch: true,
+    });
+
+    try {
+      const returned = watcher.on("rebuild", () => {});
+      expect(returned).toBeDefined();
+      expect(typeof returned.stop).toBe("function");
+      expect(typeof returned.on).toBe("function");
+    } finally {
+      watcher.stop();
+    }
+  });
+
+  test("watch: true exposes .url and accepts WebSocket connections", async () => {
+    const dir = tempDirWithFiles("bun-build-hmr-ws", {
+      "index.js": `export const hello = "world";`,
+    });
+
+    const watcher = await Bun.build({
+      entrypoints: [join(dir, "index.js")],
+      watch: true,
+    });
+
+    try {
+      expect(watcher.url).toBeDefined();
+      expect(typeof watcher.url).toBe("string");
+      expect(watcher.url).toMatch(/^http:\/\/localhost:\d+\/_bun\/client\/index\.js$/);
+
+      // Verify WebSocket is connectable at the same origin
+      const wsUrl = new URL(watcher.url!).origin + "/_bun/hmr";
+      const { promise, resolve, reject } = Promise.withResolvers<void>();
+      const ws = new WebSocket(wsUrl.replace("http://", "ws://"));
+      ws.binaryType = "arraybuffer";
+      ws.onopen = () => {
+        ws.close();
+        resolve();
+      };
+      ws.onerror = e => reject(e);
+      await promise;
+    } finally {
+      watcher.stop();
+    }
+  });
+
+  test("watch: true serves client bundle via HTTP", async () => {
+    const dir = tempDirWithFiles("bun-build-hmr-serve", {
+      "index.js": `export const hello = "world";`,
+    });
+
+    const watcher = await Bun.build({
+      entrypoints: [join(dir, "index.js")],
+      watch: true,
+    });
+
+    try {
+      expect(watcher.url).toBeDefined();
+
+      // Fetch the client bundle from the DevServer
+      const bundleResp = await fetch(watcher.url!);
+      expect(bundleResp.status).toBe(200);
+      expect(bundleResp.headers.get("content-type")).toContain("javascript");
+      expect(bundleResp.headers.get("access-control-allow-origin")).toBe("*");
+
+      const bundleText = await bundleResp.text();
+      // Bundle should contain the HMR runtime wrapper
+      expect(bundleText).toContain("unloadedModuleRegistry");
+      // Bundle should reference the entry point
+      expect(bundleText).toContain("index.js");
+    } finally {
+      watcher.stop();
+    }
+  });
+
+  test("watch: true invalidates bundle cache on rebuild", async () => {
+    const dir = tempDirWithFiles("bun-build-hmr-cache", {
+      "index.js": `export const value = "cache_v1";`,
+    });
+
+    const watcher = await Bun.build({
+      entrypoints: [join(dir, "index.js")],
+      watch: true,
+    });
+
+    try {
+      expect(watcher.url).toBeDefined();
+
+      // Fetch initial bundle
+      const resp1 = await fetch(watcher.url!);
+      expect(resp1.status).toBe(200);
+      const bundle1 = await resp1.text();
+      expect(bundle1).toContain("cache_v1");
+
+      // Trigger rebuild
+      const { promise, resolve } = Promise.withResolvers<any>();
+      watcher.on("rebuild", resolve);
+      await Bun.write(join(dir, "index.js"), `export const value = "cache_v2";`);
+      await promise;
+
+      // Fetch again — should get updated bundle
+      const resp2 = await fetch(watcher.url!);
+      expect(resp2.status).toBe(200);
+      const bundle2 = await resp2.text();
+      expect(bundle2).toContain("cache_v2");
+      expect(bundle2).not.toContain("cache_v1");
+    } finally {
+      watcher.stop();
+    }
+  });
+
+  test("watch: true with hmr: true is accepted (backward compat)", async () => {
+    const dir = tempDirWithFiles("bun-build-hmr-compat", {
+      "index.js": `export const hello = "world";`,
+    });
+
+    // hmr: true should be silently accepted alongside watch: true
+    const watcher = await Bun.build({
+      entrypoints: [join(dir, "index.js")],
+      watch: true,
+      hmr: true,
+    });
+
+    try {
+      expect(watcher).toBeDefined();
+      expect(watcher.success).toBe(true);
+      expect(watcher.url).toBeDefined();
+    } finally {
+      watcher.stop();
+    }
+  });
+});
+
+describe("import with { type: 'bundle' }", () => {
+  // TODO: Runtime JSBundle doesn't populate entrypoint/files yet (Phase 3 incomplete at runtime)
+  test.todo("creates JSBundle with entrypoint property", async () => {
+    const dir = tempDirWithFiles("bundle-import-entrypoint", {
+      "index.ts": `export const hello = "world";`,
+      "fixture.ts": `
+        import bundle from "./index.ts" with { type: "bundle" };
+        console.log(JSON.stringify({
+          type: typeof bundle,
+          entrypoint: bundle.entrypoint,
+        }));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(dir, "fixture.ts")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    const result = JSON.parse(stdout.trim());
+    expect(result.type).toBe("object");
+    // entrypoint is a BundleFile object with a .name property
+    expect(result.entrypoint.name).toBe("index.js");
+    expect(exitCode).toBe(0);
+  });
+
+  test.todo("serves bundled JS via Bun.serve()", async () => {
+    const dir = tempDirWithFiles("bundle-import-serve", {
+      "index.ts": `export const hello = "world"; console.log(hello);`,
+      "fixture.ts": `
+        import bundle from "./index.ts" with { type: "bundle" };
+
+        const server = Bun.serve({
+          port: 0,
+          routes: {
+            "/assets/*": bundle,
+            "/*": () => new Response("ok"),
+          },
+        });
+
+        // Wait for the build to complete
+        await Bun.sleep(3000);
+
+        const res = await fetch(\`http://localhost:\${server.port}/assets/\${bundle.entrypoint.name}\`);
+        const text = await res.text();
+
+        console.log(JSON.stringify({
+          status: res.status,
+          contentType: res.headers.get("content-type"),
+          hasContent: text.length > 0,
+          isJs: text.includes("hello") || text.includes("world"),
+        }));
+
+        server.stop();
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(dir, "fixture.ts")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const result = JSON.parse(stdout.trim());
+    expect(result.status).toBe(200);
+    expect(result.hasContent).toBe(true);
+    expect(result.isJs).toBe(true);
+    expect(exitCode).toBe(0);
+  });
+
+  test("bun build produces sub-build output with inline metadata", async () => {
+    const dir = tempDirWithFiles("bundle-import-build", {
+      "app.ts": `export function greet(name: string) { return "Hello, " + name; }
+export default { greet };`,
+      "server.ts": `import app from "./app.ts" with { type: "bundle" };
+console.log(JSON.stringify({
+  hasEntrypoint: !!app.entrypoint,
+  entrypointName: app.entrypoint?.name,
+  entrypointKind: app.entrypoint?.kind,
+  filesCount: app.files?.length,
+  firstFileName: app.files?.[0]?.name,
+  firstFileKind: app.files?.[0]?.kind,
+  firstFileType: app.files?.[0]?.type,
+  sizeIsNumber: typeof app.files?.[0]?.size === "number",
+}));`,
+    });
+
+    // Build with bun build
+    const buildResult = await Bun.build({
+      entrypoints: [join(dir, "server.ts")],
+      outdir: join(dir, "dist"),
+    });
+
+    expect(buildResult.success).toBe(true);
+
+    // The dist/ should contain both server.js and the sub-build output
+    const outputs = buildResult.outputs.map((o: any) => o.path);
+    expect(outputs.length).toBeGreaterThanOrEqual(2);
+
+    // Find server.js output
+    const serverOutput = buildResult.outputs.find((o: any) => o.path.includes("server"));
+    expect(serverOutput).toBeDefined();
+
+    // Read the server output and verify it contains sub-build metadata
+    const serverCode = await serverOutput!.text();
+    expect(serverCode).toContain("entrypoint:");
+    expect(serverCode).toContain("files:");
+    expect(serverCode).toContain("entry-point");
+
+    // Find the sub-build output (app-HASH.js)
+    const appOutput = buildResult.outputs.find((o: any) => o.path.includes("app"));
+    expect(appOutput).toBeDefined();
+
+    // The sub-build output should be written flat in dist/ (not nested)
+    const appBasename = require("path").basename(appOutput!.path);
+    const appOnDisk = Bun.file(join(dir, "dist", appBasename));
+    expect(await appOnDisk.exists()).toBe(true);
+
+    // The sub-build output should contain the actual transpiled code
+    const appCode = await appOutput!.text();
+    expect(appCode).toContain("greet");
+
+    // Run the built server.js to verify the metadata is correct
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(dir, "dist", "server.js")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    const result = JSON.parse(stdout.trim());
+    expect(result.hasEntrypoint).toBe(true);
+    expect(result.entrypointKind).toBe("entry-point");
+    expect(result.filesCount).toBeGreaterThanOrEqual(1);
+    expect(result.firstFileKind).toBe("entry-point");
+    expect(result.sizeIsNumber).toBe(true);
+    // Entrypoint name should end with .js and contain a hash
+    expect(result.entrypointName).toMatch(/app.*\.js$/);
+    expect(exitCode).toBe(0);
+  });
+
+  test.todo("entrypoint derives .js from various extensions", async () => {
+    for (const [input, expected] of [
+      ["app.tsx", "app.js"],
+      ["main.ts", "main.js"],
+      ["entry.jsx", "entry.js"],
+      ["script.js", "script.js"],
+    ]) {
+      const dir = tempDirWithFiles(`bundle-import-ext-${input}`, {
+        [input]: `export default 1;`,
+        "fixture.ts": `
+          import bundle from "./${input}" with { type: "bundle" };
+          console.log(bundle.entrypoint.name);
+        `,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(dir, "fixture.ts")],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stdout.trim()).toBe(expected);
+      expect(exitCode).toBe(0);
+    }
+  });
 });

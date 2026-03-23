@@ -227,7 +227,22 @@ const handlers = {
   },
   [MessageId.errors]: onServerErrorPayload,
 };
+// Auto-detect origin from the <script> tag that loaded this bundle.
+// When the bundle is served from a different port (e.g. Bun.build DevServer),
+// the HMR WebSocket needs to connect to that origin, not location.origin.
+const scriptOrigin = (() => {
+  try {
+    const src = document.currentScript?.getAttribute("src");
+    if (src) {
+      const url = new URL(src, location.href);
+      if (url.origin !== location.origin) return url.origin;
+    }
+  } catch {}
+  return null;
+})();
+
 const ws = initWebSocket(handlers, {
+  url: (scriptOrigin ?? config.origin ?? null) ? (scriptOrigin ?? config.origin) + "/_bun/hmr" : undefined,
   onStatusChange(connected) {
     emitEvent(connected ? "bun:ws:connect" : "bun:ws:disconnect", null);
   },

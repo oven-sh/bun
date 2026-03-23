@@ -229,6 +229,19 @@ pub fn Bun__setSyntheticAllocationLimitForTesting(globalObject: *JSGlobalObject,
     return JSValue.jsNumber(prev);
 }
 
+/// Creates an ImportMetaHot JS object for the given module URL.
+/// Called from ImportMetaObject.cpp when `import.meta.hot` is accessed in --hot mode.
+pub export fn Bun__ImportMetaHot__create(global: *JSGlobalObject, url_ptr: [*]const u8, url_len: usize) JSValue {
+    const url = url_ptr[0..url_len];
+    const hot = bun.api.ImportMetaHot.init(url);
+    return bun.api.ImportMetaHot.toJS(hot, global);
+}
+
+/// Returns true if the VM is running in --hot mode (as opposed to --watch or no reload).
+pub export fn Bun__VM__isHotReloadActive(global: *JSGlobalObject) bool {
+    return global.bunVM().hot_reload == .hot;
+}
+
 const IPC = @import("./ipc.zig");
 const std = @import("std");
 

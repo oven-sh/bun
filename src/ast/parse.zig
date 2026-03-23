@@ -1070,6 +1070,9 @@ pub fn Parse(
                     type,
                     embed,
                     bunBakeGraph,
+                    splitting,
+                    minify,
+                    sourcemap,
                 };
 
                 var has_seen_embed_true = false;
@@ -1130,6 +1133,27 @@ pub fn Parse(
                                 } else {
                                     try p.lexer.addRangeError(p.lexer.range(), "'bunBakeGraph' can only be set to 'ssr'", .{}, true);
                                 }
+                            },
+                            .splitting => {
+                                if (path.bundle_config == null) path.bundle_config = .{};
+                                path.bundle_config.?.splitting = strings.eqlComptime(string_literal_text, "true");
+                            },
+                            .minify => {
+                                if (path.bundle_config == null) path.bundle_config = .{};
+                                path.bundle_config.?.minify = strings.eqlComptime(string_literal_text, "true");
+                            },
+                            .sourcemap => {
+                                if (path.bundle_config == null) path.bundle_config = .{};
+                                path.bundle_config.?.sourcemap = if (strings.eqlComptime(string_literal_text, "none"))
+                                    .none
+                                else if (strings.eqlComptime(string_literal_text, "linked"))
+                                    .linked
+                                else if (strings.eqlComptime(string_literal_text, "inline"))
+                                    .@"inline"
+                                else if (strings.eqlComptime(string_literal_text, "external"))
+                                    .external
+                                else
+                                    null;
                             },
                         }
                     }

@@ -151,6 +151,10 @@ pub const Runtime = struct {
         /// Standalone usage of this flag / usage of this flag
         /// without '--format' set is an unsupported use case.
         hot_module_reloading: bool = false,
+        /// When true, `import.meta.hot` is preserved as a normal property access
+        /// instead of being transformed to `undefined`. Used in `bun --hot` mode
+        /// where the runtime provides the `hot` property on `import.meta`.
+        preserve_import_meta_hot: bool = false,
         /// Control how the parser handles server components and server functions.
         server_components: ServerComponentsMode = .none,
 

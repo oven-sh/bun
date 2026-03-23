@@ -132,6 +132,13 @@ pub fn BundleThread(CompletionStruct: type) type {
                 BundleV2.JSBundleCompletionTask => completion,
                 else => @compileError("Unknown completion struct: " ++ CompletionStruct),
             };
+            // Pass watcher to BundleV2 so it watches all resolved files during bundling
+            if (@hasField(CompletionStruct, "bun_watcher")) {
+                if (completion.bun_watcher) |watcher| {
+                    this.bun_watcher = watcher;
+                    transpiler.resolver.watcher = watcher.getResolveWatcher();
+                }
+            }
             // Set the file_map pointer for in-memory file support
             this.file_map = if (completion.config.files.map.count() > 0)
                 &completion.config.files

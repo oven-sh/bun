@@ -496,6 +496,7 @@ pub const ParsedPath = struct {
     is_macro: bool,
     import_tag: ImportRecord.Tag = .none,
     loader: ?bun.options.Loader = null,
+    bundle_config: ?ImportRecord.BundleImportConfig = null,
 };
 
 pub const StrictModeFeature = enum {

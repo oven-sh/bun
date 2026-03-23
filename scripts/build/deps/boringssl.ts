@@ -5,7 +5,7 @@
 
 import type { Dependency } from "../source.ts";
 
-const BORINGSSL_COMMIT = "4f4f5ef8ebc6e23cbf393428f0ab1b526773f7ac";
+const BORINGSSL_COMMIT = "06a22e13b82b05668b4f1aa879247da375415de2";
 
 export const boringssl: Dependency = {
   name: "boringssl",

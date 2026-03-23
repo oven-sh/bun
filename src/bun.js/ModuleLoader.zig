@@ -1099,6 +1099,9 @@ pub export fn Bun__transpileFile(
             switch (err) {
                 error.AsyncModule => {
                     bun.assert(promise != null);
+                    // AsyncModule owns parse_result whose source.contents
+                    // may alias this buffer; prevent the defer from freeing it.
+                    data_url_body_to_free = null;
                     return promise;
                 },
                 error.PluginError => return null,

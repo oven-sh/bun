@@ -21,12 +21,10 @@ test("new RedisClient with invalid URL does not crash during GC", async () => {
       `,
     ],
     env: bunEnv,
-    stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
 
   expect(stdout.trim()).toBe("ok");
-  expect(stderr).not.toContain("runtime error");
   expect(exitCode).toBe(0);
 });

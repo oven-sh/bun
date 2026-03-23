@@ -111,7 +111,7 @@ export function readableStreamToArray(stream: ReadableStream): Promise<unknown[]
   if (!$isReadableStream(stream)) throw $ERR_INVALID_ARG_TYPE("stream", "ReadableStream", typeof stream);
   // this is a direct stream
   var underlyingSource = $getByIdDirectPrivate(stream, "underlyingSource");
-  if (underlyingSource !== undefined) {
+  if (underlyingSource != null) {
     return $readableStreamToArrayDirect(stream, underlyingSource);
   }
   if ($isReadableStreamLocked(stream)) return Promise.$reject($ERR_INVALID_STATE_TypeError("ReadableStream is locked"));
@@ -123,7 +123,7 @@ export function readableStreamToText(stream: ReadableStream): Promise<string> {
   if (!$isReadableStream(stream)) throw $ERR_INVALID_ARG_TYPE("stream", "ReadableStream", typeof stream);
   // this is a direct stream
   var underlyingSource = $getByIdDirectPrivate(stream, "underlyingSource");
-  if (underlyingSource !== undefined) {
+  if (underlyingSource != null) {
     return $readableStreamToTextDirect(stream, underlyingSource);
   }
   if ($isReadableStreamLocked(stream)) return Promise.$reject($ERR_INVALID_STATE_TypeError("ReadableStream is locked"));

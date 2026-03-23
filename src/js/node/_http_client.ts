@@ -15,8 +15,6 @@ const { throwOnInvalidTLSArray } = require("internal/tls");
 const { validateHeaderName } = require("node:_http_common");
 const { getTimerDuration } = require("internal/timers");
 const { ConnResetException } = require("internal/shared");
-const net = require("node:net");
-const tls = require("node:tls");
 const {
   kBodyChunks,
   abortedSymbol,
@@ -132,6 +130,9 @@ async function doUpgradeRequest(
   maybeEmitClose: () => void,
 ) {
   const self = this;
+  // Lazy require to avoid circular dependency at module load time
+  const net = require("node:net");
+  const tls = require("node:tls");
 
   // Resolve Blob body to ArrayBuffer before connecting, since Buffer.from()
   // does not accept Blob objects and the socket write is synchronous.

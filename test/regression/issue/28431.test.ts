@@ -1,5 +1,7 @@
-import { expect, test } from "bun:test";
+// Ensure this test runs in both Node.js & Bun to verify compatibility.
+import assert from "node:assert";
 import { Readable, Transform } from "node:stream";
+import { test } from "node:test";
 
 test("piping object-mode source into byte-mode destination emits catchable error", async () => {
   const objectReadable = Readable.from([{ hello: "world" }]);
@@ -29,9 +31,9 @@ test("piping object-mode source into byte-mode destination emits catchable error
     caughtError = e;
   }
 
-  expect(caughtError).toBeDefined();
-  expect((caughtError as any).code).toBe("ERR_INVALID_ARG_TYPE");
+  assert.ok(caughtError);
+  assert.strictEqual((caughtError as any).code, "ERR_INVALID_ARG_TYPE");
 
-  expect(errors.length).toBe(1);
-  expect((errors[0] as any).code).toBe("ERR_INVALID_ARG_TYPE");
+  assert.strictEqual(errors.length, 1);
+  assert.strictEqual((errors[0] as any).code, "ERR_INVALID_ARG_TYPE");
 });

@@ -2513,7 +2513,7 @@ pub const BundleV2 = struct {
 
                     // TODO: support explicit watchFiles array. this is not done
                     // right now because DevServer requires a table to map
-                    // watched files and dirs to their respective dependants.
+                    // watched files and dirs to their respective dependents.
                     const fd = if (bun.Watcher.requires_file_descriptors)
                         switch (bun.sys.open(
                             &(std.posix.toPosixPath(load.path) catch break :add_watchers),

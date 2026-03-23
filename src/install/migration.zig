@@ -488,7 +488,7 @@ pub fn migrateNPMLockfile(
             .name_hash = name_hash,
 
             // For non workspace packages these are set to .uninitialized, then in the third phase
-            // they are resolved. This is because the resolution uses the dependant's version
+            // they are resolved. This is because the resolution uses the dependent's version
             // specifier as a "hint" to resolve the dependency.
             .resolution = if (is_workspace) Resolution.init(.{
                 .workspace = try string_buf.append(pkg_path),

@@ -838,7 +838,7 @@ pub const PathWatcher = struct {
             .change, .rename => {
                 const event_type = switch (event) {
                     inline .change, .rename => |_, t| @field(EventType, @tagName(t)),
-                    else => unreachable, // above switch guarentees this subset
+                    else => unreachable, // above switch guarantees this subset
                 };
 
                 const time_diff = time_stamp - this.last_change_event.time_stamp;

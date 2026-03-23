@@ -112,4 +112,12 @@ describe("dns", () => {
       });
     });
   });
+
+  test("lookup ignores non-object options argument", async () => {
+    // Passing a non-object (e.g. string) as the options argument should not crash.
+    // @ts-expect-error
+    const result = await dns.lookup("localhost", "not-an-object");
+    expect(result).toBeArray();
+    expect(result.length).toBeGreaterThan(0);
+  });
 });

@@ -582,12 +582,9 @@ describe("async context passes through", () => {
   test("Proxy-wrapped function as callback", async () => {
     const s = new AsyncLocalStorage<string>();
     const { promise, resolve } = Promise.withResolvers<string | undefined>();
-    const fn = new Proxy(
-      () => {
-        resolve(s.getStore());
-      },
-      {},
-    );
+    const fn = new Proxy(() => {
+      resolve(s.getStore());
+    }, {});
     s.run("proxy-value", () => {
       setTimeout(fn, 0);
     });

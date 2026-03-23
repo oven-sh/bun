@@ -882,9 +882,11 @@ pub const JSValkeyClient = struct {
             js.helloSetCached(this_value, globalObject, hello_value);
             // Call onConnect callback if defined by the user
             if (js.onconnectGetCached(this_value)) |on_connect| {
-                const js_value = this_value;
-                js_value.ensureStillAlive();
-                globalObject.queueMicrotask(on_connect, &[_]JSValue{ js_value, hello_value });
+                if (on_connect.isCallable()) {
+                    const js_value = this_value;
+                    js_value.ensureStillAlive();
+                    globalObject.queueMicrotask(on_connect, &[_]JSValue{ js_value, hello_value });
+                }
             }
 
             if (js.connectionPromiseGetCached(this_value)) |promise| {
@@ -1016,11 +1018,13 @@ pub const JSValkeyClient = struct {
 
         // Call onClose callback if it exists
         if (js.oncloseGetCached(this_jsvalue)) |on_close| {
-            _ = on_close.call(
-                globalObject,
-                this_jsvalue,
-                &[_]JSValue{error_value},
-            ) catch |e| globalObject.reportActiveExceptionAsUnhandled(e);
+            if (on_close.isCallable()) {
+                _ = on_close.call(
+                    globalObject,
+                    this_jsvalue,
+                    &[_]JSValue{error_value},
+                ) catch |e| globalObject.reportActiveExceptionAsUnhandled(e);
+            }
         }
     }
 
@@ -1037,14 +1041,16 @@ pub const JSValkeyClient = struct {
         const this_value = this.this_value.tryGet() orelse return;
         const globalObject = this.globalObject;
         if (js.oncloseGetCached(this_value)) |on_close| {
-            const loop = this.client.vm.eventLoop();
-            loop.enter();
-            defer loop.exit();
-            _ = on_close.call(
-                globalObject,
-                this_value,
-                &[_]JSValue{value},
-            ) catch |e| globalObject.reportActiveExceptionAsUnhandled(e);
+            if (on_close.isCallable()) {
+                const loop = this.client.vm.eventLoop();
+                loop.enter();
+                defer loop.exit();
+                _ = on_close.call(
+                    globalObject,
+                    this_value,
+                    &[_]JSValue{value},
+                ) catch |e| globalObject.reportActiveExceptionAsUnhandled(e);
+            }
         }
     }
 

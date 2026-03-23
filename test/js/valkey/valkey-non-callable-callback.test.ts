@@ -1,0 +1,48 @@
+import { expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
+
+test("non-callable onclose does not crash", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const redis = new Bun.RedisClient("redis://localhost:6379");
+      redis.onclose = 42;
+      try { await redis.connect(); } catch(e) {}
+      try { redis.close(); } catch(e) {}
+      await Bun.sleep(500);
+      `,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+  expect(stderr).not.toContain("ASSERTION FAILED");
+  expect(exitCode).not.toBe(6); // SIGABRT
+});
+
+test("non-callable onconnect does not crash", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const redis = new Bun.RedisClient("redis://localhost:6379");
+      redis.onconnect = "not a function";
+      try { await redis.connect(); } catch(e) {}
+      try { redis.close(); } catch(e) {}
+      await Bun.sleep(500);
+      `,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+  expect(stderr).not.toContain("ASSERTION FAILED");
+  expect(exitCode).not.toBe(6); // SIGABRT
+});

@@ -256,8 +256,8 @@ pub const JSValue = enum(i64) {
                 loop.debug.last_fn_name = try function.getName(global);
             }
             // Do not assert that the function is callable here.
-            // The Bun__JSValue__call function will already assert that, and
-            // this can be an async context so it's fine if it's not callable.
+            // The Bun__JSValue__call function will throw a TypeError for
+            // non-callable values, and this can be an async context frame.
         }
 
         return fromJSHostCall(global, @src(), Bun__JSValue__call, .{

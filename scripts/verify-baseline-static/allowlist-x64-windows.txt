@@ -583,7 +583,7 @@ _RNvNvNtNtNt<rust-hash>6memchr4arch6x86_646memchr11memchr3_raw6detect  [AVX, AVX
 
 # ----------------------------------------------------------------------------
 # MSVC STL vectorized algorithms. Gate: __isa_available.
-# (11 symbols)
+# (13 symbols)
 # ----------------------------------------------------------------------------
 __std_reverse_copy_trivially_copyable_1                                                                   [AVX, AVX2]
 __std_reverse_trivially_swappable_1                                                                       [AVX, AVX2]
@@ -596,6 +596,8 @@ __std_reverse_trivially_swappable_8                                             
 `anonymous namespace'::__std_find_trivial_impl<`anonymous namespace'::_Find_traits_4,unsigned int>        [AVX, AVX2]
 `anonymous namespace'::__std_find_trivial_impl<`anonymous namespace'::_Find_traits_8,unsigned __int64>    [AVX, AVX2]
 `anonymous namespace'::__std_minmax_impl<3,`anonymous namespace'::_Minmax_traits_8_avx,1>                 [AVX, AVX2]
+`anonymous namespace'::__std_minmax_disp<1,`anonymous namespace'::_Minmax_traits_8,0>                     [AVX512F, AVX512VL]
+`anonymous namespace'::__std_minmax_impl<1,`anonymous namespace'::_Minmax_traits_8_avx,0>                 [AVX, AVX2, AVX512F, AVX512VL]
 
 
 # ----------------------------------------------------------------------------

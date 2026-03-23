@@ -3424,12 +3424,12 @@ void JSC__AnyPromise__wrap(JSC::JSGlobalObject* globalObject, EncodedJSValue enc
     }
 
     if (auto* promise = jsDynamicCast<JSC::JSPromise*>(promiseValue)) {
-        promise->resolve(globalObject, result);
+        promise->resolve(globalObject, vm, result);
         RETURN_IF_EXCEPTION(scope, );
         return;
     }
     if (auto* promise = jsDynamicCast<JSC::JSInternalPromise*>(promiseValue)) {
-        promise->resolve(globalObject, result);
+        promise->resolve(globalObject, vm, result);
         RETURN_IF_EXCEPTION(scope, );
         return;
     }
@@ -3509,7 +3509,7 @@ JSC::JSPromise* JSC__JSPromise__rejectedPromise(JSC::JSGlobalObject* arg0, JSC::
     ASSERT_WITH_MESSAGE(arg0 != target, "Promise cannot be resolved to itself");
 
     // Note: the Promise can be another promise. Since we go through the generic promise resolve codepath.
-    arg0->resolve(arg1, JSC::JSValue::decode(JSValue2));
+    arg0->resolve(arg1, arg1->vm(), JSC::JSValue::decode(JSValue2));
 }
 
 // This implementation closely mimics the one in JSC::JSPromise::resolve
@@ -3671,7 +3671,7 @@ JSC::JSInternalPromise* JSC__JSInternalPromise__rejectedPromise(JSC::JSGlobalObj
 [[ZIG_EXPORT(check_slow)]]
 void JSC__JSInternalPromise__resolve(JSC::JSInternalPromise* arg0, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2)
 {
-    arg0->resolve(arg1, JSC::JSValue::decode(JSValue2));
+    arg0->resolve(arg1, arg1->vm(), JSC::JSValue::decode(JSValue2));
 }
 
 JSC::JSInternalPromise* JSC__JSInternalPromise__resolvedPromise(JSC::JSGlobalObject* arg0,

@@ -20,6 +20,7 @@ test.skipIf(!isEnabled)("non-callable onclose does not crash", async () => {
           process.exitCode = 0;
         }
         resolve();
+        process.exit(process.exitCode);
       });
       const client = new Bun.RedisClient(process.env.BUN_VALKEY_URL);
       client.onclose = 42;

@@ -202,6 +202,7 @@ const defaultCommands: Record<
     help: "Sometimes you get stuck, this gets you out",
     action(this: InstanceType<typeof REPLServer>) {
       this.clearBufferedCommand();
+      this.setPrompt(this._initialPrompt);
       this.displayPrompt();
     },
   },
@@ -285,6 +286,7 @@ function REPLServer(this: any, options?: string | Record<string, any>, ...rest: 
   }
 
   const savedPrompt = prompt;
+  this._initialPrompt = prompt;
 
   // Initialize readline.Interface
   readline.Interface.$call(this, {

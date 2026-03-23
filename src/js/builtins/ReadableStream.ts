@@ -142,7 +142,7 @@ export function readableStreamToArrayBuffer(stream: ReadableStream<ArrayBuffer>)
   if (!$isReadableStream(stream)) throw $ERR_INVALID_ARG_TYPE("stream", "ReadableStream", typeof stream);
   // this is a direct stream
   var underlyingSource = $getByIdDirectPrivate(stream, "underlyingSource");
-  if (underlyingSource !== undefined) {
+  if (underlyingSource != null) {
     return $readableStreamToArrayBufferDirect(stream, underlyingSource, false);
   }
   if ($isReadableStreamLocked(stream)) return Promise.$reject($ERR_INVALID_STATE_TypeError("ReadableStream is locked"));
@@ -223,7 +223,7 @@ export function readableStreamToBytes(stream: ReadableStream<ArrayBuffer>): Prom
   // this is a direct stream
   var underlyingSource = $getByIdDirectPrivate(stream, "underlyingSource");
 
-  if (underlyingSource !== undefined) {
+  if (underlyingSource != null) {
     return $readableStreamToArrayBufferDirect(stream, underlyingSource, true);
   }
   if ($isReadableStreamLocked(stream)) return Promise.$reject($ERR_INVALID_STATE_TypeError("ReadableStream is locked"));

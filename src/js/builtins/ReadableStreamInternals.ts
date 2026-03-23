@@ -1156,8 +1156,10 @@ export function onCloseDirectStream(reason) {
   }
 
   var flushed;
+  var sink = this.$sink;
+  if (!sink) return;
   try {
-    flushed = this.$sink.end();
+    flushed = sink.end();
     $putByIdDirectPrivate(this, "sink", undefined);
   } catch (e) {
     if (this._pendingRead) {
@@ -1220,6 +1222,8 @@ export function onCloseDirectStream(reason) {
 export function onFlushDirectStream() {
   var stream = this.$controlledReadableStream;
   if (!stream) return;
+  var sink = this.$sink;
+  if (!sink) return;
   var reader = $getByIdDirectPrivate(stream, "reader");
   if (!reader || !$isReadableStreamDefaultReader(reader)) {
     return;
@@ -1228,7 +1232,7 @@ export function onFlushDirectStream() {
   var _pendingRead = this._pendingRead;
   this._pendingRead = undefined;
   if (_pendingRead && $isPromise(_pendingRead)) {
-    var flushed = this.$sink.flush();
+    var flushed = sink.flush();
     if (flushed?.byteLength) {
       this._pendingRead = $getByIdDirectPrivate(stream, "readRequests")?.shift();
       $fulfillPromise(_pendingRead, { value: flushed, done: false });
@@ -1236,7 +1240,7 @@ export function onFlushDirectStream() {
       this._pendingRead = _pendingRead;
     }
   } else if ($getByIdDirectPrivate(stream, "readRequests")?.isNotEmpty()) {
-    var flushed = this.$sink.flush();
+    var flushed = sink.flush();
     if (flushed?.byteLength) {
       $readableStreamFulfillReadRequest(stream, flushed, false);
     }

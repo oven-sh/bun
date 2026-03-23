@@ -126,7 +126,10 @@ function defaultWriter(obj: unknown): string {
 }
 defaultWriter.options = { showHidden: false, depth: 2, colors: false };
 
-const defaultCommands: Record<string, { help: string; action: (this: InstanceType<typeof REPLServer>, text: string) => void }> = {
+const defaultCommands: Record<
+  string,
+  { help: string; action: (this: InstanceType<typeof REPLServer>, text: string) => void }
+> = {
   help: {
     help: "Print this help message",
     action(this: InstanceType<typeof REPLServer>) {
@@ -219,7 +222,7 @@ function REPLServer(this: any, options?: string | Record<string, any>, ...rest: 
   const input = options.input || options.stream || process.stdin;
   const output = options.output || options.stream || process.stdout;
   const prompt = options.prompt !== undefined ? options.prompt : "> ";
-  const terminal = options.terminal !== undefined ? options.terminal : !!(output.isTTY);
+  const terminal = options.terminal !== undefined ? options.terminal : !!output.isTTY;
   const useColors =
     options.useColors !== undefined
       ? options.useColors

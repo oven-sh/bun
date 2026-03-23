@@ -470,8 +470,8 @@ pub fn createBound(globalThis: *JSGlobalObject, mode: Mode, each: jsc.JSValue, c
     return bind(value, globalThis, name);
 }
 
-/// Returns a lightweight type name for a JSValue using only bitwise checks,
-/// avoiding any JSC calls that could trigger stack overflow near the limit.
+/// Returns a lightweight type name for a JSValue using only lightweight type
+/// checks that cannot throw or trigger significant stack growth.
 fn jsValueTypeName(value: JSValue) []const u8 {
     if (value.isNull()) return "null";
     if (value.isUndefined()) return "undefined";

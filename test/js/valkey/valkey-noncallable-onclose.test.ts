@@ -1,7 +1,8 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
+import { isEnabled } from "./test-utils";
 
-test("non-callable onclose does not crash", async () => {
+test.skipIf(!isEnabled)("non-callable onclose does not crash", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),

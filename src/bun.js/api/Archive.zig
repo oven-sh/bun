@@ -304,6 +304,7 @@ fn readFileBackedBlob(globalThis: *jsc.JSGlobalObject, blob_ptr: *const jsc.WebC
     if (file_data.len == 0) return jsc.ZigString.Slice.fromUTF8NeverFree("");
 
     // Apply blob offset and size to support sliced file-backed blobs.
+    // Reads the full file first since bun.sys.File doesn't support offset/length reads.
     const offset: usize = @intCast(blob_ptr.offset);
     if (offset >= file_data.len) {
         allocator.free(file_data);

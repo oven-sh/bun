@@ -12,15 +12,18 @@ test.skipIf(!isEnabled)("non-callable onclose does not crash", async () => {
       bunExe(),
       "-e",
       `
-      process.on("uncaughtException", (e) => {
+      const { promise, resolve } = Promise.withResolvers();
+      process.exitCode = 1;
+      process.once("uncaughtException", (e) => {
         console.log(e.constructor.name + ": " + e.message);
-        process.exit(0);
+        process.exitCode = 0;
+        resolve();
       });
       const client = new Bun.RedisClient(process.env.BUN_VALKEY_URL);
       client.onclose = 42;
       await client.ping();
       client.close();
-      await Bun.sleep(500);
+      await Promise.race([promise, Bun.sleep(5_000)]);
       `,
     ],
     env: { ...bunEnv, BUN_VALKEY_URL: DEFAULT_REDIS_URL },

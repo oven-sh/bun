@@ -310,7 +310,7 @@ function REPLServer(this: any, options?: string | Record<string, any>, ...rest: 
     // Check for REPL commands (lines starting with .)
     const trimmedLine = line.trim();
     if (trimmedLine.charAt(0) === "." && !this.editorMode) {
-      const matches = trimmedLine.match(/^\.(\S+)\s*(.*)?$/);
+      const matches = trimmedLine.match(/^\.([a-zA-Z_$][a-zA-Z0-9_$]*)\s*(.*)?$/);
       if (matches) {
         const keyword = matches[1];
         const rest = matches[2] || "";

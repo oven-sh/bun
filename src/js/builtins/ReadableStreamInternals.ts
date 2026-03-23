@@ -1148,6 +1148,9 @@ export function onCloseDirectStream(reason) {
     return;
   }
 
+  var sink = this.$sink;
+  if (!sink) return;
+
   $putByIdDirectPrivate(stream, "state", $streamClosing);
   if (typeof this.$underlyingSource.close === "function") {
     try {
@@ -1156,8 +1159,6 @@ export function onCloseDirectStream(reason) {
   }
 
   var flushed;
-  var sink = this.$sink;
-  if (!sink) return;
   try {
     flushed = sink.end();
     $putByIdDirectPrivate(this, "sink", undefined);

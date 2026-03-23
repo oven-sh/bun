@@ -11,12 +11,13 @@ describe("compile --bytecode builtin modules", () => {
     using dir = tempDir("compile-builtin-bytecode", {
       "app.js": `
         const fs = require("node:fs");
+        const os = require("node:os");
         const path = require("node:path");
         const stream = require("node:stream");
         const util = require("node:util");
 
         // Use functions from each module to ensure bytecode decodes correctly
-        const tmpFile = path.join(process.env.TMPDIR || "/tmp", "builtin-bc-test-" + Date.now() + ".txt");
+        const tmpFile = path.join(os.tmpdir(), "builtin-bc-test-" + Date.now() + ".txt");
         fs.writeFileSync(tmpFile, "hello");
         const content = fs.readFileSync(tmpFile, "utf8");
         fs.unlinkSync(tmpFile);

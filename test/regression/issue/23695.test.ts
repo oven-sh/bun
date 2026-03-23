@@ -140,4 +140,46 @@ describe("tsconfig extends from node_modules", () => {
     expect(stdout.trim()).toBe("it works");
     expect(exitCode).toBe(0);
   });
+
+  test("extends resolves from ancestor node_modules when not in project root", async () => {
+    // node_modules is in the root, but the tsconfig is in a nested subdirectory.
+    // The resolver must walk up from packages/app/ to find root/node_modules/.
+    using dir = tempDir("tsconfig-extends-ancestor", {
+      "packages/app/index.tsx": `console.log(<div/>)`,
+      "packages/app/tsconfig.json": JSON.stringify({
+        extends: "@my-configs/base",
+      }),
+      "node_modules/@my-configs/base/tsconfig.json": JSON.stringify({
+        compilerOptions: {
+          jsx: "react",
+          jsxFactory: "h",
+        },
+      }),
+      "node_modules/@my-configs/base/package.json": JSON.stringify({
+        name: "@my-configs/base",
+        version: "1.0.0",
+      }),
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "build",
+        "--no-bundle",
+        "--tsconfig-override",
+        "packages/app/tsconfig.json",
+        "packages/app/index.tsx",
+      ],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // jsxFactory: "h" from the ancestor node_modules config should be used
+    expect(stdout).toContain("h(");
+    expect(exitCode).toBe(0);
+  });
 });

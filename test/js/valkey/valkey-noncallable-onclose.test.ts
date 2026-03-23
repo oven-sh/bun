@@ -16,7 +16,9 @@ test.skipIf(!isEnabled)("non-callable onclose does not crash", async () => {
       process.exitCode = 1;
       process.once("uncaughtException", (e) => {
         console.log(e.constructor.name + ": " + e.message);
-        process.exitCode = 0;
+        if (e instanceof TypeError && e.message.includes("must be callable")) {
+          process.exitCode = 0;
+        }
         resolve();
       });
       const client = new Bun.RedisClient(process.env.BUN_VALKEY_URL);
@@ -33,6 +35,6 @@ test.skipIf(!isEnabled)("non-callable onclose does not crash", async () => {
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stdout).toContain("TypeError");
+  expect(stdout).toContain("TypeError: Function passed to .call must be callable.");
   expect(exitCode).toBe(0);
 });

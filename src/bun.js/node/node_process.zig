@@ -395,15 +395,9 @@ fn loadEnvFile(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun
             );
         },
     };
-    // Do NOT defer-free contents. The parser returns key slices that point into
-    // this buffer, and the env map stores them directly. This matches how
-    // loadEnvFileDynamic (env_loader.zig:897-898) uses errdefer, not defer.
-    errdefer allocator.free(contents);
+    defer allocator.free(contents);
 
     // Parse into a temporary map to track which keys this file sets.
-    // Parser.parseKey returns key slices into contents (not duped).
-    // Parser._parse dupes values via allocator.dupe. Both survive deinit
-    // of the temp map's hash table structure.
     var file_map = DotEnv.Map.init(allocator);
     defer file_map.map.deinit();
 
@@ -414,20 +408,28 @@ fn loadEnvFile(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun
     // Get the JS process.env object via extern C++ call
     const env_object = Bun__getProcessEnvObject(globalObject);
 
-    // For each parsed entry, store into the Zig env map and update the JS object.
-    // Map.put stores key/value slices directly (no duplication):
-    //   - keys point into contents (kept alive, not freed on success)
-    //   - values were duped by the parser (kept alive, not freed by deinit)
+    // For each parsed entry, copy into the persistent env map and update JS.
+    // putAllocKeyAndValue dupes both key and value into owned storage so
+    // they remain valid after contents is freed.
     var it = file_map.map.iterator();
     while (it.next()) |entry| {
         const key = entry.key_ptr.*;
         const value = entry.value_ptr.value;
 
-        vm.transpiler.env.map.put(key, value) catch |err| switch (err) {
+        vm.transpiler.env.map.putAllocKeyAndValue(allocator, key, value) catch |err| switch (err) {
             error.OutOfMemory => return globalObject.throwOutOfMemory(),
         };
 
         env_object.put(globalObject, &ZigString.initUTF8(key), ZigString.initUTF8(value).toJS(globalObject));
+
+        // On Windows, also update the OS environment block so child
+        // processes inherit the loaded variables.
+        if (comptime Environment.isWindows) {
+            Bun__Process__editWindowsEnvVar(
+                bun.String.cloneUTF8(key),
+                bun.String.cloneUTF8(value),
+            );
+        }
     }
 
     return .js_undefined;

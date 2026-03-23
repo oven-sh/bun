@@ -161,7 +161,7 @@ BUN_DECLARE_HOST_FUNCTION(Bun__Process__loadEnvFile);
 
 extern "C" EncodedJSValue Bun__getProcessEnvObject(JSGlobalObject* globalObject)
 {
-    return JSValue::encode(jsCast<Zig::GlobalObject*>(globalObject)->processEnvObject());
+    return JSValue::encode(defaultGlobalObject(globalObject)->processEnvObject());
 }
 
 extern "C" void Process__emitDisconnectEvent(Zig::GlobalObject* global);

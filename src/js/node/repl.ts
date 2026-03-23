@@ -80,8 +80,7 @@ function isRecoverableError(e: unknown): boolean {
   return (
     /Unexpected end of/.test(message) ||
     /Unterminated /.test(message) ||
-    /Expected /.test(message) ||
-    /Unexpected token/.test(message)
+    /Expected .+ but encountered end of/.test(message)
   );
 }
 
@@ -245,7 +244,15 @@ function REPLServer(this: any, options?: string | Record<string, any>, ...rest: 
   this.replMode = replMode;
   this.breakEvalOnSigint = breakEvalOnSigint;
   this.preview = preview;
-  this.writer = writer;
+  // Per-instance writer to avoid mutating shared defaultWriter.options
+  if (useColors && writer === defaultWriter) {
+    const instanceOptions = { ...defaultWriter.options, colors: true };
+    this.writer = function (obj: unknown) {
+      return inspect(obj, instanceOptions);
+    };
+  } else {
+    this.writer = writer;
+  }
   this._eval = evalFn;
 
   // Underscore tracking
@@ -269,11 +276,6 @@ function REPLServer(this: any, options?: string | Record<string, any>, ...rest: 
   // Builtin modules list
   this._builtinLibs = builtinModules;
   this.builtinModules = builtinModules;
-
-  // Writer color config
-  if (useColors && writer === defaultWriter) {
-    writer.options = { ...defaultWriter.options, colors: true };
-  }
 
   // Initialize context
   if (useGlobal) {
@@ -312,6 +314,9 @@ function REPLServer(this: any, options?: string | Record<string, any>, ...rest: 
           this.commands[keyword].action.$call(this, rest);
           return;
         }
+        this.outputStream.write("Invalid REPL keyword\n");
+        this.displayPrompt();
+        return;
       }
     }
 
@@ -344,8 +349,22 @@ function REPLServer(this: any, options?: string | Record<string, any>, ...rest: 
           this.outputStream.write(this.writer(err) + "\n");
         }
         this.lastError = err;
+        if (!this.underscoreErrAssigned) {
+          if (this.useGlobal) {
+            globalThis._error = err;
+          } else {
+            this.context._error = err;
+          }
+        }
       } else {
         this.last = result;
+        if (!this.underscoreAssigned) {
+          if (this.useGlobal) {
+            globalThis._ = result;
+          } else {
+            this.context._ = result;
+          }
+        }
         if (result !== undefined || !this.ignoreUndefined) {
           this.outputStream.write(this.writer(result) + "\n");
         }
@@ -357,20 +376,59 @@ function REPLServer(this: any, options?: string | Record<string, any>, ...rest: 
   });
 
   this.on("close", () => {
+    // If in editor mode, evaluate the buffered content before exiting
+    if (this.editorMode && this._bufferedCommand.length > 0) {
+      this.editorMode = false;
+      const code = this._bufferedCommand;
+      this._bufferedCommand = "";
+      this._eval.$call(this, code, this.context, "repl", (err: any, result: unknown) => {
+        if (err) {
+          if (err instanceof Error) {
+            this.outputStream.write((err.stack || String(err)) + "\n");
+          } else {
+            this.outputStream.write("Thrown: " + this.writer(err) + "\n");
+          }
+        } else {
+          this.last = result;
+          if (result !== undefined || !this.ignoreUndefined) {
+            this.outputStream.write(this.writer(result) + "\n");
+          }
+        }
+        this.emit("exit");
+      });
+      return;
+    }
     this.emit("exit");
   });
 
-  // Handle Ctrl+C
+  // Handle Ctrl+C with double-press tracking
+  this._sawSigint = false;
   this.on("SIGINT", () => {
-    if (this._bufferedCommand.length > 0) {
+    if (this.editorMode) {
+      this.editorMode = false;
+      this._sawSigint = false;
       this.clearBufferedCommand();
       this.outputStream.write("\n");
       this.setPrompt(savedPrompt);
       this.prompt();
+    } else if (this._bufferedCommand.length > 0) {
+      this._sawSigint = false;
+      this.clearBufferedCommand();
+      this.outputStream.write("\n");
+      this.setPrompt(savedPrompt);
+      this.prompt();
+    } else if (this._sawSigint) {
+      this.close();
     } else {
+      this._sawSigint = true;
       this.outputStream.write("\n(To exit, press Ctrl+C again or Ctrl+D or type .exit)\n");
       this.prompt();
     }
+  });
+
+  // Reset double-Ctrl+C tracking on any line input
+  this.on("line", () => {
+    this._sawSigint = false;
   });
 
   // Display initial prompt

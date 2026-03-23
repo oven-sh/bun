@@ -27,6 +27,7 @@ try {
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+  expect(stderr).not.toContain("error:");
   expect(stdout).toBe("before\ncaught\n");
   expect(exitCode).toBe(0);
 });
@@ -45,6 +46,7 @@ console.log(m.x);`,
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+  expect(stderr).not.toContain("error:");
   expect(stdout).toBe("1\n2\n");
   expect(exitCode).toBe(0);
 });
@@ -63,6 +65,7 @@ console.log(m.default);`,
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+  expect(stderr).not.toContain("error:");
   expect(stdout).toBe("1\n");
   expect(exitCode).toBe(0);
 });
@@ -81,6 +84,7 @@ console.log(m.x);`,
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+  expect(stderr).not.toContain("error:");
   expect(stdout).toBe("42\n");
   expect(exitCode).toBe(0);
 });

@@ -1050,6 +1050,7 @@ pub fn getLoaderAndVirtualSource(
     jsc_vm: *jsc.VirtualMachine,
     virtual_source_to_use: *?logger.Source,
     blob_to_deinit: *?jsc.WebCore.Blob,
+    data_url_body_to_free: *?[]const u8,
     type_attribute_str: ?string,
 ) GetLoaderAndVirtualSourceErr!LoaderResult {
     const normalized_file_path_from_specifier, const specifier, const query = normalizeSpecifier(
@@ -1073,7 +1074,6 @@ pub fn getLoaderAndVirtualSource(
     }
 
     if (strings.hasPrefixComptime(specifier, "data:")) {
-        const DataURL = @import("./resolver/data_url.zig").DataURL;
         if (DataURL.parse(specifier) catch null) |data_url| {
             const mime = data_url.decodeMimeType();
             loader = switch (mime.category) {
@@ -1086,6 +1086,7 @@ pub fn getLoaderAndVirtualSource(
             if (loader != null and loader.? != .file) {
                 const decoded = data_url.decodeData(jsc_vm.allocator) catch null;
                 if (decoded) |body| {
+                    data_url_body_to_free.* = body;
                     path = Fs.Path.initWithNamespace(specifier, "dataurl");
                     virtual_source_to_use.* = logger.Source{
                         .path = path,
@@ -2754,6 +2755,7 @@ const resolver = @import("./resolver/resolver.zig");
 const Runtime = @import("./runtime.zig").Runtime;
 const URL = @import("./url.zig").URL;
 
+const DataURL = @import("./resolver/data_url.zig").DataURL;
 const MacroRemap = @import("./resolver/package_json.zig").MacroMap;
 const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
 const ConditionsMap = @import("./resolver/package_json.zig").ESModule.ConditionsMap;

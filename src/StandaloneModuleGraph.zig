@@ -1696,12 +1696,12 @@ const std = @import("std");
 const w = std.os.windows;
 
 const bun = @import("bun");
-const jsc = bun.jsc;
 const Environment = bun.Environment;
 const Output = bun.Output;
 const SourceMap = bun.SourceMap;
 const StringPointer = bun.StringPointer;
 const Syscall = bun.sys;
+const jsc = bun.jsc;
 const macho = bun.macho;
 const pe = bun.pe;
 const strings = bun.strings;

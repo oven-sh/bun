@@ -270,6 +270,15 @@ pub fn loadConfigPath(allocator: std.mem.Allocator, auto_loaded: bool, config_pa
     }
 
     try loadBunfig(allocator, auto_loaded, config_path, ctx, cmd);
+
+    // Check version pinning after all bunfig files for this path are loaded.
+    // Placed here (not in loadConfig) so direct callers like run_command.zig
+    // and repl_command.zig also get the check.
+    if (comptime cmd != .UpgradeCommand) {
+        if (ctx.pinned_version) |pinned| {
+            VersionManager.checkPinnedVersion(pinned, allocator);
+        }
+    }
 }
 
 fn loadBunfig(allocator: std.mem.Allocator, auto_loaded: bool, config_path: [:0]const u8, ctx: Command.Context, comptime cmd: Command.Tag) !void {

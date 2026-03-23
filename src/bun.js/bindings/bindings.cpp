@@ -2795,7 +2795,7 @@ extern "C" JSC::EncodedJSValue Bun__JSValue__call(JSC::JSGlobalObject* globalObj
 
     ASSERT_WITH_MESSAGE(jsObject.isCallable(), "Function passed to .call must be callable.");
     ASSERT(callData.type != JSC::CallData::Type::None);
-    if (UNLIKELY(callData.type == JSC::CallData::Type::None)) {
+    if (callData.type == JSC::CallData::Type::None) {
         throwTypeError(globalObject, scope, "Function passed to .call must be callable."_s);
         return {};
     }

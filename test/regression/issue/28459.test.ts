@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { tempDir } from "harness";
 
 test("Bun.Archive includes file content when using Bun.file() as input", async () => {

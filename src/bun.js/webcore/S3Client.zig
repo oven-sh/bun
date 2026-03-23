@@ -163,8 +163,10 @@ pub const S3Client = struct {
         defer aws_options.deinit();
 
         // Normalize the path the same way Store.S3.path() does:
-        // URL.parse().s3Path() then strip one leading slash.
+        // URL.parse().s3Path(), strip trailing backslash, strip leading slash.
         var s3_path = bun.URL.parse(path.slice()).s3Path();
+        if (s3_path.len > 0 and s3_path[s3_path.len - 1] == '\\')
+            s3_path = s3_path[0 .. s3_path.len - 1];
         if (s3_path.len > 0 and (s3_path[0] == '/' or s3_path[0] == '\\'))
             s3_path = s3_path[1..];
         return S3File.presignFromCredentials(globalThis, s3_path, options, &aws_options);

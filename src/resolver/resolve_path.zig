@@ -2052,7 +2052,7 @@ export fn ResolvePath__joinAbsStringBufCurrentPlatformBunString(
     const input = str.slice();
     const total = cwd.len + input.len + 2;
 
-    if (total < join_buf.len) {
+    if (total <= join_buf.len) {
         const out_slice = joinAbsStringBuf(cwd, &join_buf, &.{input}, .auto);
         return bun.String.cloneUTF8(out_slice);
     }

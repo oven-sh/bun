@@ -12,11 +12,11 @@ test("pathToFileURL handles relative paths longer than 4096 bytes", async () => 
     cmd: [
       bunExe(),
       "-e",
-      `const url = Bun.pathToFileURL(Buffer.alloc(5000, "a").toString()); console.log(url.href.endsWith("${longPath}"))`,
+      `const url = Bun.pathToFileURL(Buffer.alloc(5000, "a").toString()); console.log(url.href.endsWith("/${longPath}"))`,
     ],
     env: bunEnv,
     stdout: "pipe",
-    stderr: "pipe",
+    stderr: "ignore",
   });
 
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);

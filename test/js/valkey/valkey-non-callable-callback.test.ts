@@ -21,7 +21,7 @@ test("non-callable onclose does not crash", async () => {
   const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
   expect(stderr).not.toContain("ASSERTION FAILED");
-  expect(exitCode).not.toBe(6); // SIGABRT
+  expect(exitCode).toBe(0);
 });
 
 test("non-callable onconnect does not crash", async () => {
@@ -44,5 +44,5 @@ test("non-callable onconnect does not crash", async () => {
   const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
   expect(stderr).not.toContain("ASSERTION FAILED");
-  expect(exitCode).not.toBe(6); // SIGABRT
+  expect(exitCode).toBe(0);
 });

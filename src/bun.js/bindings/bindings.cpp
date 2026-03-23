@@ -2788,7 +2788,8 @@ extern "C" JSC::EncodedJSValue Bun__JSValue__call(JSC::JSGlobalObject* globalObj
     }
 
 #if ASSERT_ENABLED
-    JSC::Integrity::auditCellFully(vm, jsObject.asCell());
+    if (jsObject.isCell())
+        JSC::Integrity::auditCellFully(vm, jsObject.asCell());
 #endif
 
     auto callData = getCallData(jsObject);

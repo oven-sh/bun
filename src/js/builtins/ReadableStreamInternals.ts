@@ -2305,11 +2305,15 @@ export function readableStreamToArrayBufferDirect(
     var firstPull = pull(controller);
   } catch (e) {
     didError = true;
+    $putByIdDirectPrivate(stream, "reader", undefined);
     $readableStreamError(stream, e);
     return Promise.$reject(e);
   } finally {
     if (!$isPromise(firstPull)) {
-      if (!didError && stream) $readableStreamCloseIfPossible(stream);
+      if (!didError && stream) {
+        $putByIdDirectPrivate(stream, "reader", undefined);
+        $readableStreamCloseIfPossible(stream);
+      }
       controller = close = sink = pull = stream = undefined;
       return capability.promise;
     }
@@ -2318,12 +2322,16 @@ export function readableStreamToArrayBufferDirect(
   $assert($isPromise(firstPull));
   return firstPull.then(
     () => {
-      if (!didError && stream) $readableStreamCloseIfPossible(stream);
+      if (!didError && stream) {
+        $putByIdDirectPrivate(stream, "reader", undefined);
+        $readableStreamCloseIfPossible(stream);
+      }
       controller = close = sink = pull = stream = undefined;
       return capability.promise;
     },
     e => {
       didError = true;
+      $putByIdDirectPrivate(stream, "reader", undefined);
       if ($getByIdDirectPrivate(stream, "state") === $streamReadable) $readableStreamError(stream, e);
       return Promise.$reject(e);
     },

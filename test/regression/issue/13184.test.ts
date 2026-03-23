@@ -12,15 +12,16 @@ import { Transform } from "node:stream";
 // net.Server.close() hangs because _connections never decrements.
 
 async function testServerCloseCompletes(
-  handler: (socket: net.Socket) => void,
+  handler: (socket: net.Socket, ready: () => void) => void,
   teardown: "destroy" | "end" = "destroy",
 ): Promise<void> {
   const { promise: serverSocketClosed, resolve: onServerSocketClose } = Promise.withResolvers<void>();
+  const { promise: serverReady, resolve: onServerReady } = Promise.withResolvers<void>();
 
   const server = net.createServer(socket => {
     socket.on("error", () => {}); // suppress errors
     socket.on("close", onServerSocketClose);
-    handler(socket);
+    handler(socket, onServerReady);
   });
 
   await new Promise<void>(resolve => {
@@ -37,6 +38,10 @@ async function testServerCloseCompletes(
   await clientConnected;
   client.write(Buffer.alloc(1200, "hello world ").toString());
 
+  // Wait for the server-side handler to set up its state before tearing down,
+  // otherwise teardown can race ahead and close the socket before the handler runs.
+  await serverReady;
+
   // Teardown the client and wait for the server-side socket to close
   client[teardown]();
   await serverSocketClosed;
@@ -52,24 +57,26 @@ async function testServerCloseCompletes(
 
 describe("net.Server.close() must not hang when native socket closes", () => {
   test("paused socket gets destroyed on native close", async () => {
-    await testServerCloseCompletes(socket => {
+    await testServerCloseCompletes((socket, ready) => {
       socket.on("data", () => {
         socket.pause();
+        ready();
       });
     });
   });
 
   test("socket with end() called and paused readable gets destroyed", async () => {
-    await testServerCloseCompletes(socket => {
+    await testServerCloseCompletes((socket, ready) => {
       socket.on("data", () => {
         socket.pause();
         socket.end("goodbye");
+        ready();
       });
     });
   });
 
   test("unpiped socket gets destroyed on native close", async () => {
-    await testServerCloseCompletes(socket => {
+    await testServerCloseCompletes((socket, ready) => {
       const transform = new Transform({
         transform(chunk, _encoding, callback) {
           callback(null, chunk);
@@ -82,12 +89,13 @@ describe("net.Server.close() must not hang when native socket closes", () => {
         transform.destroy();
         socket.unpipe(transform);
         transform.unpipe(socket);
+        ready();
       });
     });
   });
 
   test("pipe + pause + end sequence gets destroyed", async () => {
-    await testServerCloseCompletes(socket => {
+    await testServerCloseCompletes((socket, ready) => {
       const transform = new Transform({
         transform(chunk, _encoding, callback) {
           callback(null, chunk);
@@ -99,39 +107,47 @@ describe("net.Server.close() must not hang when native socket closes", () => {
         socket.unpipe(transform);
         socket.pause();
         socket.end();
+        ready();
       });
     });
   });
 
   test("socket that was never read gets destroyed on native close", async () => {
-    await testServerCloseCompletes(_socket => {
-      // Do nothing with the socket - socket stays paused with no data handler
+    await testServerCloseCompletes((_socket, ready) => {
+      // Do nothing with the socket - socket stays paused with no data handler.
+      // Signal ready immediately since there's no state to set up.
+      ready();
     });
   });
 
   test("paused socket with graceful client.end() gets destroyed", async () => {
-    await testServerCloseCompletes(socket => {
+    await testServerCloseCompletes((socket, ready) => {
       socket.on("data", () => {
         socket.pause();
+        ready();
       });
     }, "end");
   });
 
   test("socket that was never read with graceful client.end() gets destroyed", async () => {
-    await testServerCloseCompletes(_socket => {
-      // Do nothing with the socket - socket stays paused with no data handler
+    await testServerCloseCompletes((_socket, ready) => {
+      // Do nothing with the socket - socket stays paused with no data handler.
+      // Signal ready immediately since there's no state to set up.
+      ready();
     }, "end");
   });
 
   test("destroyed flag is true after native close", async () => {
     const { promise: socketPromise, resolve: resolveSocket } = Promise.withResolvers<net.Socket>();
     const { promise: socketClosed, resolve: onSocketClose } = Promise.withResolvers<void>();
+    const { promise: dataReceived, resolve: onDataReceived } = Promise.withResolvers<void>();
 
     const server = net.createServer(socket => {
       socket.on("error", () => {});
       socket.on("close", onSocketClose);
       socket.on("data", () => {
         socket.pause();
+        onDataReceived();
       });
       resolveSocket(socket);
     });
@@ -146,6 +162,7 @@ describe("net.Server.close() must not hang when native socket closes", () => {
 
     await clientConnected;
     client.write("hello");
+    await dataReceived;
     client.destroy();
 
     const serverSocket = await socketPromise;

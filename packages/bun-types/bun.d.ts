@@ -7923,6 +7923,387 @@ declare module "bun" {
     match(str: string): boolean;
   }
 
+  namespace WebView {
+    type Modifier = "Shift" | "Control" | "Alt" | "Meta";
+
+    type VirtualKey =
+      | "Enter"
+      | "Tab"
+      | "Space"
+      | "Backspace"
+      | "Delete"
+      | "Escape"
+      | "ArrowLeft"
+      | "ArrowRight"
+      | "ArrowUp"
+      | "ArrowDown"
+      | "Home"
+      | "End"
+      | "PageUp"
+      | "PageDown";
+
+    interface ClickOptions {
+      /** @default "left" */
+      button?: "left" | "right" | "middle";
+      /** Modifier keys to hold during the click. */
+      modifiers?: Modifier[];
+      /** Number of clicks (1 = single, 2 = double, 3 = triple). @default 1 */
+      clickCount?: 1 | 2 | 3;
+    }
+
+    interface ClickSelectorOptions extends ClickOptions {
+      /**
+       * Maximum time in milliseconds to wait for the element to become
+       * actionable (attached, visible, stable for 2 frames, not obscured).
+       * @default 30000
+       */
+      timeout?: number;
+    }
+
+    interface ScrollToOptions {
+      /**
+       * Maximum time in milliseconds to wait for the element to exist.
+       * @default 30000
+       */
+      timeout?: number;
+      /**
+       * Vertical alignment. `"nearest"` scrolls minimally (no-op if already
+       * in view); `"center"` snaps the element's center to the viewport
+       * center.
+       * @default "center"
+       */
+      block?: "start" | "center" | "end" | "nearest";
+    }
+
+    interface PressOptions {
+      /** Modifier keys to hold during the keypress. */
+      modifiers?: Modifier[];
+    }
+
+    /**
+     * Browser backend selection.
+     *
+     * - `"webkit"` (default): WKWebView. macOS only. Zero external
+     *   dependencies — uses the system WebKit.framework.
+     * - `"chrome"`: Chrome/Chromium via DevTools Protocol over
+     *   `--remote-debugging-pipe`. Works anywhere Chrome is installed.
+     *   Auto-detects the binary in standard locations; override with
+     *   `backend.path` or the `BUN_CHROME_PATH` environment variable.
+     *
+     * The object form lets you pass extra launch flags. Chrome switches are
+     * last-wins for duplicates, so `argv` can override the defaults.
+     *
+     * **Chrome is spawned once per process** — the first `new Bun.WebView()`
+     * call's `path`/`argv`/`dataStore.directory` win; subsequent views reuse
+     * the same Chrome instance via `Target.createTarget`.
+     *
+     * Default flags: `--remote-debugging-pipe --headless --no-first-run
+     * --no-default-browser-check --disable-gpu --user-data-dir=<temp>`.
+     */
+    type Backend =
+      | "webkit"
+      | "chrome"
+      | {
+          type: "chrome";
+          /** Path to the Chrome/Chromium executable. Overrides auto-detection. */
+          path?: string;
+          /**
+           * Extra command-line arguments appended after the default flags.
+           * Chrome's CommandLine does last-wins for duplicate switches, so
+           * `["--headless=new"]` would override the default `--headless`.
+           */
+          argv?: string[];
+          /**
+           * Route the subprocess's stdout to Bun's. Chrome is mostly quiet
+           * here. @default "ignore"
+           */
+          stdout?: "inherit" | "ignore";
+          /**
+           * Route the subprocess's stderr to Bun's. Chrome is chatty (GCM
+           * registration, updater noise, font-config warnings) even with a
+           * minimal flag set. Set to `"inherit"` when Chrome crashes silently
+           * — the crash report lands here. @default "ignore"
+           */
+          stderr?: "inherit" | "ignore";
+        }
+      | {
+          type: "webkit";
+          /**
+           * Route the host process's stdout to Bun's. The host runs no JS
+           * — only panic/NSLog output. @default "ignore"
+           */
+          stdout?: "inherit" | "ignore";
+          /**
+           * Route the host process's stderr to Bun's. @default "ignore"
+           */
+          stderr?: "inherit" | "ignore";
+        };
+
+    /**
+     * Console capture. Called for each `console.*` invocation in the page.
+     *
+     * - `globalThis.console`: forward directly to the parent's console.
+     *   `console.log("hi")` in the page prints `hi` to stdout with Bun's
+     *   formatter; `console.error` goes to stderr. Zero JS overhead per call
+     *   — dispatches through `ConsoleClient` directly.
+     * - `(type, ...args) => void`: custom callback. `type` is the method
+     *   name (`"log"` | `"warn"` | `"error"` | `"info"` | `"debug"` | ...).
+     *   Primitive args unwrap to their raw values; object args arrive as a
+     *   structured descriptor — for Chrome, the CDP `RemoteObject` with
+     *   `.type`/`.className`/`.description`/`.preview.properties`; for
+     *   WebKit, the JSON round-trip of the object (lossy for functions/
+     *   circular refs, which stringify to their `String(...)` coercion).
+     */
+    type ConsoleCapture = typeof console | ((type: string, ...args: unknown[]) => void);
+
+    interface ConstructorOptions {
+      /** Viewport width in pixels. Range: [1, 16384]. @default 800 */
+      width?: number;
+      /** Viewport height in pixels. Range: [1, 16384]. @default 600 */
+      height?: number;
+      /** Only `true` (headless) is implemented. @default true */
+      headless?: boolean;
+      /**
+       * Browser backend. Defaults to `"webkit"` on macOS, throws on other
+       * platforms unless `"chrome"` is specified.
+       * @default "webkit"
+       */
+      backend?: Backend;
+      /**
+       * Initial URL to navigate to. The navigation starts before the
+       * constructor returns; `await view.navigate(otherUrl)` or any other
+       * operation will wait for it to complete first.
+       *
+       * Equivalent to calling `view.navigate(url)` immediately after
+       * construction.
+       */
+      url?: string;
+      /** Capture page-side `console.*` calls. See {@link ConsoleCapture}. */
+      console?: ConsoleCapture;
+      /**
+       * Storage backing for cookies, localStorage, IndexedDB, etc.
+       *
+       * - `"ephemeral"` (default): in-memory only, nothing written to disk.
+       * - `{ directory }`: persistent storage rooted at the given path.
+       *   Multiple views with the same directory share state.
+       *
+       * **Chrome backend**: `directory` is per-Chrome-process
+       * (`--user-data-dir`), not per-view. The first view's directory
+       * applies to all views spawned in the same Bun process.
+       */
+      dataStore?: "ephemeral" | { directory: string };
+    }
+  }
+
+  /**
+   * A headless browser view for automation. WKWebView on macOS (zero
+   * dependencies), Chrome DevTools Protocol elsewhere (or with
+   * `backend: "chrome"`).
+   *
+   * Each view runs its page in a separate renderer process. All input
+   * methods dispatch **native** events — the resulting DOM events have
+   * `isTrusted: true`.
+   *
+   * @example
+   * ```ts
+   * await using view = new Bun.WebView({ width: 800, height: 600 });
+   * await view.navigate("https://example.com");
+   * await view.click("button[type=submit]");  // waits for actionability
+   * const title = await view.evaluate("document.title");
+   * const png = await view.screenshot();
+   * ```
+   *
+   * @example
+   * ```ts
+   * // Forward page console.log to parent stdout
+   * const view = new Bun.WebView({
+   *   backend: "chrome",
+   *   console: globalThis.console,
+   * });
+   * ```
+   *
+   * @experimental
+   */
+  class WebView {
+    /**
+     * @throws on non-macOS platforms when `backend` is `"webkit"` (the
+     * default). Pass `backend: "chrome"` for cross-platform support.
+     */
+    constructor(options?: WebView.ConstructorOptions);
+
+    /**
+     * Force-kill all browser subprocesses (Chrome and the WKWebView host).
+     * Pending promises on all views reject on the next event loop tick.
+     *
+     * Called automatically at process exit. Call manually to reclaim browser
+     * resources early — subsequent `new Bun.WebView()` calls will respawn.
+     * Idempotent: calling when no subprocesses are alive is a no-op.
+     */
+    static closeAll(): void;
+
+    /** The last-navigated URL. Updated when a navigation completes. */
+    readonly url: string;
+    /** The page's `<title>`. Updated when a navigation completes. */
+    readonly title: string;
+    /** True while a navigation is in flight. */
+    readonly loading: boolean;
+
+    /**
+     * Fired when a navigation completes successfully. The callback runs
+     * before the corresponding `navigate()` promise resolves.
+     */
+    onNavigated: ((url: string, title: string) => void) | null;
+    /**
+     * Fired when a navigation fails. The callback runs before the
+     * corresponding `navigate()` promise rejects.
+     */
+    onNavigationFailed: ((error: Error) => void) | null;
+
+    /**
+     * Navigate to a URL. Resolves when the main frame's load completes
+     * (WKNavigationDelegate `didFinishNavigation`).
+     *
+     * @example
+     * ```ts
+     * await view.navigate("https://example.com");
+     * await view.navigate("data:text/html,<h1>hello</h1>");
+     * ```
+     */
+    navigate(url: string): Promise<void>;
+
+    /**
+     * Run a JavaScript expression in the page's main frame and return the
+     * result as a native JS value.
+     *
+     * The expression is wrapped as `await (${script})` — if it evaluates
+     * to a Promise, the promise is awaited. The resolved value is
+     * serialized page-side via `JSON.stringify` and deserialized here, so
+     * arrays and objects come back as real structures:
+     *
+     * ```ts
+     * await view.evaluate("document.title");        // string
+     * await view.evaluate("[1, 2, 3]");              // number[]
+     * await view.evaluate("({ a: 1, b: true })");    // { a: number, b: boolean }
+     * await view.evaluate("fetch('/api').then(r => r.json())");  // awaited
+     * ```
+     *
+     * **`script` must be an expression.** For statement sequences, wrap in
+     * an IIFE: `evaluate("(() => { let x = f(); return x + 1 })()")`.
+     *
+     * Values that `JSON.stringify` collapses to `undefined` (functions,
+     * symbols, `undefined` itself) resolve to `undefined`. Circular
+     * references reject.
+     *
+     * Only one `evaluate()` may be in flight at a time per view; a second
+     * concurrent call throws `ERR_INVALID_STATE`.
+     */
+    evaluate<T = unknown>(script: string): Promise<T>;
+
+    /**
+     * Capture a PNG screenshot of the current viewport.
+     */
+    screenshot(): Promise<Uint8Array>;
+
+    /**
+     * Click at the given viewport coordinates.
+     *
+     * Fires native `pointerdown`/`mousedown`/`pointerup`/`mouseup`/`click`
+     * events with `isTrusted: true`. The promise resolves after WebContent
+     * has processed the full event sequence (including all JS handlers) —
+     * no polling, WebKit's own mouse-queue-drain barrier.
+     */
+    click(x: number, y: number, options?: WebView.ClickOptions): Promise<void>;
+    /**
+     * Wait for an element to become actionable, then click its center.
+     *
+     * Actionability is checked page-side at rAF rate: the element must be
+     * attached, have non-zero size, be in the viewport, be stable (bounding
+     * box unchanged for 2 consecutive frames), and be the topmost element
+     * at its center point (not obscured). Once actionable, a native click
+     * fires at the center coordinates.
+     *
+     * @example
+     * ```ts
+     * // Waits for the button to appear and stop animating, then clicks.
+     * await view.click("#submit");
+     * ```
+     */
+    click(selector: string, options?: WebView.ClickSelectorOptions): Promise<void>;
+
+    /**
+     * Insert text into the focused element.
+     *
+     * Uses WebKit's `InsertText` editing command (not keystroke simulation),
+     * so no `keydown` events fire — this is the same path as paste. No IME,
+     * no smart-quote substitution; the text lands exactly as given. Fires
+     * `beforeinput`/`input` with `isTrusted: true`.
+     */
+    type(text: string): Promise<void>;
+
+    /**
+     * Press a key.
+     *
+     * Named keys (`"Enter"`, `"Backspace"`, `"ArrowLeft"`, etc.) map to
+     * editing commands where available and resolve when WebContent has
+     * processed them. `"Escape"` and keys with modifiers fall back to raw
+     * keyDown/keyUp (no WebKit barrier exists for keyboard events — a
+     * following `evaluate()` serializes).
+     *
+     * A single character (e.g. `"a"`) combined with `modifiers` sends a
+     * chord like Cmd+A.
+     */
+    press(key: WebView.VirtualKey | (string & {}), options?: WebView.PressOptions): Promise<void>;
+
+    /**
+     * Scroll the viewport by the given pixel delta.
+     *
+     * Fires a native `wheel` event with `isTrusted: true` at the viewport
+     * center. Positive `dy` scrolls down (content up), matching
+     * `window.scrollBy` semantics.
+     */
+    scroll(dx: number, dy: number): Promise<void>;
+
+    /**
+     * Wait for an element to exist, then scroll it into view.
+     *
+     * Uses `Element.scrollIntoView({ block, behavior: 'instant' })` —
+     * scrolls every scrollable ancestor in the chain, not just the
+     * document. `scrollY` is updated synchronously before the promise
+     * resolves. No `wheel` event fires (this is a programmatic scroll).
+     *
+     * @example
+     * ```ts
+     * await view.scrollTo("#footer");               // center (default)
+     * await view.scrollTo("#hero", { block: "start" });
+     * await view.scrollTo(".item", { block: "nearest" }); // minimal scroll
+     * ```
+     */
+    scrollTo(selector: string, options?: WebView.ScrollToOptions): Promise<void>;
+
+    /**
+     * Resize the viewport.
+     */
+    resize(width: number, height: number): Promise<void>;
+
+    /** Navigate back in session history. */
+    back(): Promise<void>;
+    /** Navigate forward in session history. */
+    forward(): Promise<void>;
+    /** Reload the current page. */
+    reload(): Promise<void>;
+
+    /**
+     * Close the view and release its WebContent process. After close,
+     * all methods throw. Idempotent.
+     */
+    close(): void;
+
+    /** Alias for {@link close}. Enables `using view = new Bun.WebView(...)`. */
+    [Symbol.dispose](): void;
+    /** Alias for {@link close}. Enables `await using view = new Bun.WebView(...)`. */
+    [Symbol.asyncDispose](): void;
+  }
+
   /**
    * Input data for creating an archive. Can be:
    * - An object mapping paths to file contents (string, Blob, TypedArray, or ArrayBuffer)

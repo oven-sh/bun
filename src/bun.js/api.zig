@@ -25,6 +25,8 @@ pub const SocketHandlers = @import("./api/bun/socket.zig").Handlers;
 
 pub const Subprocess = @import("./api/bun/subprocess.zig");
 pub const Terminal = @import("./api/bun/Terminal.zig");
+pub const WebViewHostProcess = @import("./webview/HostProcess.zig");
+pub const ChromeProcess = @import("./webview/ChromeProcess.zig");
 pub const HashObject = @import("./api/HashObject.zig");
 pub const JSONCObject = @import("./api/JSONCObject.zig");
 pub const MarkdownObject = @import("./api/MarkdownObject.zig");

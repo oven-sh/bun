@@ -699,6 +699,22 @@ pub const Command = struct {
             }
         }
 
+        // WebView host subprocess entry. Must be before StandaloneModuleGraph,
+        // before JSC init, before anything that touches a JS engine. The child
+        // runs CFRunLoopRun() as its real main loop — no Bun runtime past this.
+        if (comptime Environment.isMac) {
+            if (bun.env_var.BUN_INTERNAL_WEBVIEW_HOST.get()) |fd_str| {
+                const fd = std.fmt.parseInt(u31, fd_str, 10) catch {
+                    Output.panic("Invalid BUN_INTERNAL_WEBVIEW_HOST fd: {s}", .{fd_str});
+                };
+                const hostMain = @extern(
+                    *const fn (i32) callconv(.c) noreturn,
+                    .{ .name = "Bun__WebView__hostMain" },
+                );
+                hostMain(fd);
+            }
+        }
+
         // bun build --compile entry point
         if (!bun.feature_flag.BUN_BE_BUN.get()) {
             if (try bun.StandaloneModuleGraph.fromExecutable(bun.default_allocator)) |graph| {

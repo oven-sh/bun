@@ -86,6 +86,8 @@ pub const ProcessExitHandler = struct {
             ProcessHandle,
             MultiRunProcessHandle,
             SecurityScanSubprocess,
+            WebViewHostProcess,
+            ChromeProcess,
             SyncProcess,
             CronRegisterJob,
             CronRemoveJob,
@@ -124,6 +126,14 @@ pub const ProcessExitHandler = struct {
             },
             @field(TaggedPointer.Tag, @typeName(SecurityScanSubprocess)) => {
                 const subprocess = this.ptr.as(SecurityScanSubprocess);
+                subprocess.onProcessExit(process, status, rusage);
+            },
+            @field(TaggedPointer.Tag, @typeName(WebViewHostProcess)) => {
+                const subprocess = this.ptr.as(WebViewHostProcess);
+                subprocess.onProcessExit(process, status, rusage);
+            },
+            @field(TaggedPointer.Tag, @typeName(ChromeProcess)) => {
+                const subprocess = this.ptr.as(ChromeProcess);
                 subprocess.onProcessExit(process, status, rusage);
             },
             @field(TaggedPointer.Tag, @typeName(CronRegisterJob)) => {
@@ -2268,6 +2278,9 @@ const PosixSpawn = bun.spawn;
 const Maybe = bun.sys.Maybe;
 const ShellSubprocess = bun.shell.ShellSubprocess;
 const uv = bun.windows.libuv;
+
+const ChromeProcess = bun.api.ChromeProcess;
+const WebViewHostProcess = bun.api.WebViewHostProcess;
 
 const LifecycleScriptSubprocess = bun.install.LifecycleScriptSubprocess;
 const SecurityScanSubprocess = bun.install.SecurityScanSubprocess;

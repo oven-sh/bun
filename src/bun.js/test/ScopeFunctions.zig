@@ -66,7 +66,7 @@ pub fn fnEach(this: *ScopeFunctions, globalThis: *JSGlobalObject, callFrame: *Ca
 
     const array = callFrame.argumentsAsArray(1)[0];
     if (array.isUndefinedOrNull() or !array.isArray()) {
-        return globalThis.throw("Expected array, got {s}", .{if (array.isCell()) @tagName(array.jsType()) else "non-object"});
+        return globalThis.throw("Expected array, got {s}", .{jsValueTypeName(array)});
     }
 
     if (this.each != .zero) return globalThis.throw("Cannot {s} on {f}", .{ "each", this });
@@ -96,7 +96,7 @@ pub fn callAsFunction(globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JS
 
     if (this.each != .zero) {
         if (this.each.isUndefinedOrNull() or !this.each.isArray()) {
-            return globalThis.throw("Expected array, got {s}", .{if (this.each.isCell()) @tagName(this.each.jsType()) else "non-object"});
+            return globalThis.throw("Expected array, got {s}", .{jsValueTypeName(this.each)});
         }
         var iter = try this.each.arrayIterator(globalThis);
         var test_idx: usize = 0;
@@ -472,6 +472,17 @@ pub fn createBound(globalThis: *JSGlobalObject, mode: Mode, each: jsc.JSValue, c
 
 const bun = @import("bun");
 const std = @import("std");
+
+/// Returns a lightweight type name for a JSValue using only bitwise checks,
+/// avoiding any JSC calls that could trigger stack overflow near the limit.
+fn jsValueTypeName(value: JSValue) []const u8 {
+    if (value.isNull()) return "null";
+    if (value.isUndefined()) return "undefined";
+    if (value.isBoolean()) return "boolean";
+    if (value.isNumber()) return "number";
+    if (value.isCell()) return @tagName(value.jsType());
+    return "unknown";
+}
 
 const jsc = bun.jsc;
 const CallFrame = jsc.CallFrame;

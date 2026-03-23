@@ -66,9 +66,7 @@ pub fn fnEach(this: *ScopeFunctions, globalThis: *JSGlobalObject, callFrame: *Ca
 
     const array = callFrame.argumentsAsArray(1)[0];
     if (array.isUndefinedOrNull() or !array.isArray()) {
-        var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis };
-        defer formatter.deinit();
-        return globalThis.throw("Expected array, got {f}", .{array.toFmt(&formatter)});
+        return globalThis.throw("Expected array, got {s}", .{if (array.isCell()) @tagName(array.jsType()) else "non-object"});
     }
 
     if (this.each != .zero) return globalThis.throw("Cannot {s} on {f}", .{ "each", this });
@@ -98,9 +96,7 @@ pub fn callAsFunction(globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JS
 
     if (this.each != .zero) {
         if (this.each.isUndefinedOrNull() or !this.each.isArray()) {
-            var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis };
-            defer formatter.deinit();
-            return globalThis.throw("Expected array, got {f}", .{this.each.toFmt(&formatter)});
+            return globalThis.throw("Expected array, got {s}", .{if (this.each.isCell()) @tagName(this.each.jsType()) else "non-object"});
         }
         var iter = try this.each.arrayIterator(globalThis);
         var test_idx: usize = 0;

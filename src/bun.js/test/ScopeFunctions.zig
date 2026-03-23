@@ -470,9 +470,6 @@ pub fn createBound(globalThis: *JSGlobalObject, mode: Mode, each: jsc.JSValue, c
     return bind(value, globalThis, name);
 }
 
-const bun = @import("bun");
-const std = @import("std");
-
 /// Returns a lightweight type name for a JSValue using only bitwise checks,
 /// avoiding any JSC calls that could trigger stack overflow near the limit.
 fn jsValueTypeName(value: JSValue) []const u8 {
@@ -483,6 +480,9 @@ fn jsValueTypeName(value: JSValue) []const u8 {
     if (value.isCell()) return @tagName(value.jsType());
     return "unknown";
 }
+
+const bun = @import("bun");
+const std = @import("std");
 
 const jsc = bun.jsc;
 const CallFrame = jsc.CallFrame;

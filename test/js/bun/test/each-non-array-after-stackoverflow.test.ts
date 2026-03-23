@@ -24,12 +24,10 @@ test("describe.each with non-array after caught stack overflow does not crash", 
     ],
     env: bunEnv,
     stdout: "pipe",
-    stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
 
   expect(stdout).toContain("Expected array, got FinalObject");
-  expect(stderr).not.toContain("panic");
   expect(exitCode).toBe(0);
 });

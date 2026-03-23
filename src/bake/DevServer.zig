@@ -116,6 +116,9 @@ standalone_callback_ctxs: std.ArrayListUnmanaged(*anyopaque) = .{},
 standalone_callback_fn: ?*const fn (ctx: *anyopaque, dev: *DevServer, success: bool) void = null,
 /// Entry points for standalone mode builds.
 standalone_entry_points: []const []const u8 = &.{},
+/// Dynamically added entry points (from import-time registration).
+/// When non-empty, `standalone_entry_points` points to this list's items.
+standalone_entry_points_dynamic: std.ArrayListUnmanaged([]const u8) = .{},
 /// Standalone uws app for the HMR WebSocket server (non-SSL, port 0).
 /// Used when dev.server is null (standalone mode without Bun.serve).
 standalone_app: ?*uws.NewApp(false) = null,
@@ -815,6 +818,37 @@ pub fn getStandaloneHmrPort(dev: *DevServer) ?u16 {
     return if (port > 0) @intCast(port) else null;
 }
 
+/// Register a new entry point for standalone mode builds. Deduplicates by path.
+/// Returns true if the entry point was newly added, false if already registered.
+pub fn addStandaloneEntryPoint(dev: *DevServer, path: []const u8) bun.OOM!bool {
+    for (dev.standalone_entry_points_dynamic.items) |ep| {
+        if (bun.strings.eql(ep, path)) return false; // already registered
+    }
+    const duped = try bun.default_allocator.dupe(u8, path);
+    try dev.standalone_entry_points_dynamic.append(bun.default_allocator, duped);
+    dev.standalone_entry_points = dev.standalone_entry_points_dynamic.items;
+    return true;
+}
+
+/// Remove a callback context from the standalone callback list.
+/// Used when a Route is deinitialized to prevent stale callbacks.
+pub fn removeStandaloneCallbackCtx(dev: *DevServer, ctx: *anyopaque) void {
+    var i: usize = 0;
+    while (i < dev.standalone_callback_ctxs.items.len) {
+        if (dev.standalone_callback_ctxs.items[i] == ctx) {
+            _ = dev.standalone_callback_ctxs.swapRemove(i);
+        } else {
+            i += 1;
+        }
+    }
+}
+
+/// Get the origin URL of the standalone HMR server (e.g. "http://localhost:12345").
+pub fn getStandaloneOrigin(dev: *DevServer, buf: []u8) ?[]const u8 {
+    const port = dev.getStandaloneHmrPort() orelse return null;
+    return std.fmt.bufPrint(buf, "http://localhost:{d}", .{port}) catch null;
+}
+
 /// Invoke the standalone callback after a build completes.
 /// Called from finalizeBundle when standalone_mode is true.
 fn invokeStandaloneCallback(dev: *DevServer, bv2: *bun.bundle_v2.BundleV2) void {
@@ -876,11 +910,16 @@ pub fn generateStandaloneClientBundle(dev: *DevServer) bun.OOM![]u8 {
     else
         "";
 
-    // Origin is auto-detected by the HMR runtime from document.currentScript.src
+    // When the HMR WebSocket lives on a separate port, inject the origin
+    // so the browser runtime knows where to connect.
+    var origin_buf: [64]u8 = undefined;
+    const hmr_origin = dev.getStandaloneOrigin(&origin_buf) orelse "";
+
     return dev.client_graph.takeJSBundle(&.{
         .kind = .initial_response,
         .initial_response_entry_point = entry_point_name,
         .react_refresh_entry_point = react_fast_refresh_id,
+        .hmr_origin = hmr_origin,
         .script_id = .init(0),
         .console_log = false,
     });
@@ -937,6 +976,12 @@ pub fn deinit(dev: *DevServer) void {
         },
         .standalone_callback_fn = {},
         .standalone_entry_points = {},
+        .standalone_entry_points_dynamic = {
+            for (dev.standalone_entry_points_dynamic.items) |ep| {
+                bun.default_allocator.free(ep);
+            }
+            dev.standalone_entry_points_dynamic.deinit(bun.default_allocator);
+        },
         .standalone_app = {
             if (dev.standalone_app) |app| {
                 if (dev.standalone_listen_socket) |ls| ls.close();

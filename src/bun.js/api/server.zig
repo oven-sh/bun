@@ -2642,10 +2642,9 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             // --- 5. Register static routes & Track "/*" Coverage ---
             var needs_plugins = dev_server != null;
             var has_static_route_for_star_path = false;
-            // Collect JSBundle routes that need a DevServer (dev mode only).
-            // A single shared DevServer is created after the loop to avoid
-            // overwriting /_bun/* routes when multiple bundles are present.
-            var js_bundle_routes_for_dev: std.ArrayListUnmanaged(*JSBundle.Route) = .{};
+            // Collect JSBundle routes that have a shared DevServer (from --hot).
+            // Callback wiring is done after the loop.
+            var js_bundle_routes_with_dev: std.ArrayListUnmanaged(*JSBundle.Route) = .{};
 
             if (this.config.static_routes.items.len > 0) {
                 for (this.config.static_routes.items) |*entry| {
@@ -2683,10 +2682,9 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                         },
                         .bundle => |js_bundle_route| {
                             ServerConfig.applyStaticRoute(any_server, ssl_enabled, app, *JSBundle.Route, js_bundle_route.data, entry.path, entry.method);
-                            // In dev mode, collect JSBundle routes for shared DevServer
-                            // (created after the loop to avoid route conflicts).
-                            if (debug_mode and js_bundle_route.data.dev_server == null) {
-                                js_bundle_routes_for_dev.append(bun.default_allocator, js_bundle_route.data) catch bun.outOfMemory();
+                            // Collect routes whose JSBundle has a shared DevServer (from --hot)
+                            if (js_bundle_route.data.bundle.data.dev_server != null) {
+                                js_bundle_routes_with_dev.append(bun.default_allocator, js_bundle_route.data) catch bun.outOfMemory();
                             }
                             needs_plugins = true;
                         },
@@ -2695,37 +2693,13 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 }
             }
 
-            // --- 5b. Create shared DevServer for all JSBundle routes ---
-            if (js_bundle_routes_for_dev.items.len > 0) {
-                // Build combined entry points list from all JSBundle routes
-                const entry_points = bun.handleOom(bun.default_allocator.alloc([]const u8, js_bundle_routes_for_dev.items.len));
-                for (js_bundle_routes_for_dev.items, 0..) |route, i| {
-                    entry_points[i] = route.bundle.data.path;
-                }
-                if (bun.bake.DevServer.initStandalone(.{
-                    .root = bun.fs.FileSystem.instance.top_level_dir,
-                    .vm = this.vm,
-                    .entry_points = entry_points,
-                    .react_fast_refresh = true,
-                    .create_standalone_app = false,
-                })) |dev| {
-                    // Register DevServer on VM so frontend-only changes are filtered
-                    this.vm.active_dev_servers.append(bun.default_allocator, dev) catch bun.outOfMemory();
-                    // Register HMR/client routes once on the main server
-                    _ = bun.handleOom(dev.setRoutes(this));
-                    // Set up callback to notify all JSBundle routes on build completion
+            // --- 5b. Wire up callbacks for JSBundle routes with shared DevServer ---
+            for (js_bundle_routes_with_dev.items) |route| {
+                if (route.bundle.data.dev_server) |dev| {
+                    route.dev_server = dev;
                     dev.standalone_callback_fn = JSBundle.Route.onDevServerBuildComplete;
-                    for (js_bundle_routes_for_dev.items) |route| {
-                        route.dev_server = dev;
-                        dev.standalone_callback_ctxs.append(bun.default_allocator, @ptrCast(route)) catch bun.outOfMemory();
-                        // Set entrypoint eagerly so bundle.entrypoint.name
-                        // is available before the first build completes.
-                        route.updateDevEntrypoint();
-                    }
-                    // Start the initial build
-                    bun.handleOom(dev.startStandaloneBuild());
-                } else |_| {
-                    // DevServer init failed — continue without HMR
+                    dev.standalone_callback_ctxs.append(bun.default_allocator, @ptrCast(route)) catch bun.outOfMemory();
+                    route.updateDevEntrypoint();
                 }
             }
 

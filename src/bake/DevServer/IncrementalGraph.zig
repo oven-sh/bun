@@ -1687,6 +1687,7 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
                 script_id: SourceMapStore.Key,
                 initial_response_entry_point: []const u8 = "",
                 react_refresh_entry_point: []const u8 = "",
+                hmr_origin: []const u8 = "",
                 console_log: bool,
             },
             .server => struct {
@@ -1761,6 +1762,16 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
                             try w.writeAll("\",\n  console: true");
                         } else {
                             try w.writeAll("\",\n  console: false");
+                        }
+
+                        if (options.hmr_origin.len > 0) {
+                            try w.writeAll(",\n  origin: ");
+                            try bun.js_printer.writeJSONString(
+                                options.hmr_origin,
+                                @TypeOf(w),
+                                w,
+                                .utf8,
+                            );
                         }
 
                         if (options.react_refresh_entry_point.len > 0) {

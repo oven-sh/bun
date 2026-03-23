@@ -1022,6 +1022,19 @@ pub fn serve(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.J
 
     const vm = globalObject.bunVM();
 
+    // When --hot, implicitly self-accept the calling module so that
+    // editing the server file triggers selective reload (not full reload).
+    // The server instance is already preserved via hotMap()/onReloadFromZig().
+    if (vm.hot_reload == .hot) {
+        const srcloc = callframe.getCallerSrcLoc(globalObject);
+        defer srcloc.str.deref();
+        const caller_utf8 = srcloc.str.toUTF8(bun.default_allocator);
+        defer caller_utf8.deinit();
+        if (caller_utf8.len > 0) {
+            vm.getOrCreateHotModuleState(caller_utf8.slice()).accepted = true;
+        }
+    }
+
     if (config.allow_hot) {
         if (vm.hotMap()) |hot| {
             if (config.id.len == 0) {

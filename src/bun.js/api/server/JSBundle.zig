@@ -25,6 +25,8 @@ files_value: jsc.Strong.Optional = .empty,
 entrypoint_value: jsc.Strong.Optional = .empty,
 /// Per-bundle config from import attributes (splitting, minify, sourcemap).
 config: BundleImportConfig = .{},
+/// Shared DevServer when running with --hot. Set at import time.
+dev_server: ?*bun.bake.DevServer = null,
 
 /// Initialize a JSBundle given a path and optional config from import attributes.
 pub fn init(global: *JSGlobalObject, path: []const u8, bundle_config: ?BundleImportConfig) !*JSBundle {
@@ -108,7 +110,9 @@ pub const Route = struct {
         this.bundle.deref();
         this.state.deinit();
         if (this.dev_server) |dev| {
-            dev.deinit();
+            // Shared DevServer is owned by the VirtualMachine, not the Route.
+            // Just remove our callback context to prevent stale callbacks.
+            dev.removeStandaloneCallbackCtx(@ptrCast(this));
             this.dev_server = null;
         }
         bun.destroy(this);
@@ -161,14 +165,6 @@ pub const Route = struct {
         if (this.server == null) {
             resp.endWithoutBody(true);
             return;
-        }
-
-        // In dev mode, check if DevServer has rebuilt and invalidate cache
-        if (this.dev_server) |dev| {
-            if (dev.standalone_client_bundle == null and this.state == .built) {
-                this.state.built.deref();
-                this.state = .pending;
-            }
         }
 
         state: switch (this.state) {
@@ -595,13 +591,17 @@ pub const Route = struct {
 
         if (this.state == .built) {
             const built = this.state.built;
-            // Use pointer so toBlob() transfers ownership from the StaticRoute's
-            // blob field, preventing double-free when BundleFile and StaticRoute
-            // are freed independently.
-            const blob_ptr: *jsc.WebCore.Blob.Any = &built.blob;
-            blob = blob_ptr.toBlob(globalThis);
-            content_type = blob.contentTypeOrMimeType() orelse "application/javascript";
-            file_size = blob.size;
+            // In dev mode, create a Blob by copying the data rather than
+            // transferring ownership.  toBlob() would empty the StaticRoute's
+            // blob, causing subsequent HTTP requests to return 0 bytes.
+            const data = built.blob.slice();
+            file_size = @intCast(data.len);
+            if (data.len > 0) {
+                blob = jsc.WebCore.Blob.create(data, bun.default_allocator, globalThis, false);
+            } else {
+                blob = jsc.WebCore.Blob.initEmpty(globalThis);
+            }
+            content_type = "application/javascript";
         } else {
             blob = jsc.WebCore.Blob.initEmpty(globalThis);
         }

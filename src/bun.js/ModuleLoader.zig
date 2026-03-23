@@ -756,6 +756,20 @@ pub fn transpileSourceCode(
 
             const bundle_config = jsc_vm.bundle_import_configs.get(path.text);
             const js_bundle = try jsc.API.JSBundle.init(globalObject.?, path.text, bundle_config);
+
+            // When --hot, register entry point with the shared DevServer
+            if (jsc_vm.hot_reload == .hot) {
+                const dev = try jsc_vm.getOrCreateSharedDevServer();
+                const is_new = try dev.addStandaloneEntryPoint(path.text);
+                js_bundle.dev_server = dev;
+                // Only trigger a build for genuinely new entry points.
+                // On backend --hot reload the module re-evaluates, but
+                // re-building would send spurious HMR updates to the browser.
+                if (is_new) {
+                    bun.handleOom(dev.startStandaloneBuild());
+                }
+            }
+
             return ResolvedSource{
                 .allocator = &jsc_vm.allocator,
                 .jsvalue_for_export = js_bundle.toJS(globalObject.?),

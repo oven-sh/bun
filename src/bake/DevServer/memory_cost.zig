@@ -40,6 +40,7 @@ pub fn memoryCostDetailed(dev: *DevServer) MemoryCost {
         .standalone_callback_ctxs = {},
         .standalone_callback_fn = {},
         .standalone_entry_points = {},
+        .standalone_entry_points_dynamic = {},
         .standalone_app = {},
         .standalone_listen_socket = {},
         .standalone_client_bundle = {},

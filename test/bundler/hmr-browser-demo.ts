@@ -11,7 +11,6 @@
  */
 import { join } from "path";
 
-// @ts-expect-error — import attribute type: "bundle" not yet in TS types
 import bundle from "./hmr-demo/index.tsx" with { type: "bundle" };
 
 const demoDir = join(import.meta.dir, "hmr-demo");

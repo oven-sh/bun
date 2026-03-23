@@ -182,6 +182,10 @@ file_to_module_key: bun.StringHashMapUnmanaged([]const u8) = .{},
 /// Used to filter frontend-only file changes from backend reload.
 active_dev_servers: std.ArrayListUnmanaged(*bake.DevServer) = .{},
 
+/// Shared DevServer for --hot mode. Created lazily on first bundle import.
+/// Owns the HMR WebSocket on an ephemeral port.
+shared_dev_server: ?*bake.DevServer = null,
+
 debugger: ?jsc.Debugger = null,
 has_started_debugger: bool = false,
 has_terminated: bool = false,
@@ -894,6 +898,22 @@ fn fullReload(this: *VirtualMachine) void {
     this.global.reload() catch @panic("Failed to reload");
     this.hot_reload_counter += 1;
     this.pending_internal_promise = this.reloadEntryPoint(this.main) catch @panic("Failed to reload");
+}
+
+/// Get or create the shared DevServer for --hot mode.
+/// The DevServer listens on an ephemeral port for HMR WebSocket connections.
+pub fn getOrCreateSharedDevServer(this: *VirtualMachine) bun.JSOOM!*bake.DevServer {
+    if (this.shared_dev_server) |dev| return dev;
+    const dev = try bake.DevServer.initStandalone(.{
+        .root = bun.fs.FileSystem.instance.top_level_dir,
+        .vm = this,
+        .entry_points = &.{},
+        .react_fast_refresh = true,
+        .create_standalone_app = true,
+    });
+    this.shared_dev_server = dev;
+    this.active_dev_servers.append(bun.default_allocator, dev) catch bun.outOfMemory();
+    return dev;
 }
 
 /// Checks if a file change is frontend-only (handled by a DevServer).
@@ -2257,6 +2277,11 @@ pub fn processFetchLog(globalThis: *JSGlobalObject, specifier: bun.String, refer
 
 pub fn deinit(this: *VirtualMachine) void {
     this.auto_killer.deinit();
+
+    if (this.shared_dev_server) |dev| {
+        dev.deinit();
+        this.shared_dev_server = null;
+    }
 
     if (source_code_printer) |print| {
         print.getMutableBuffer().deinit();

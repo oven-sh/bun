@@ -25,6 +25,10 @@ test("http.Server closes connection after async chunked response with Connection
 
       const chunks: Buffer[] = [];
       socket.on("data", c => chunks.push(c));
+      socket.on("error", err => {
+        resolve({ pass: false, body: `Connection error: ${err.message}` });
+        socket.destroy();
+      });
       socket.on("end", () => {
         resolve({ pass: true, body: Buffer.concat(chunks).toString() });
       });

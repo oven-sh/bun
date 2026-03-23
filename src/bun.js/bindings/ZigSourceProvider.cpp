@@ -278,7 +278,7 @@ static JSC::VM& getVMForBuiltinBytecodeCache()
     return *vmForBuiltinBytecodeCache;
 }
 
-extern "C" bool generateCachedBuiltinByteCodeFromSourceCode(BunString* moduleName, const Latin1Character* inputSourceCode, size_t inputSourceCodeSize, const uint8_t** outputByteCode, size_t* outputByteCodeSize, JSC::CachedBytecode** cachedBytecodePtr)
+extern "C" bool generateCachedBuiltinByteCodeFromSourceCode(BunString* moduleName, const Latin1Character* inputSourceCode, size_t inputSourceCodeSize, uint8_t implementationVisibility, uint8_t constructorKind, uint8_t constructAbility, uint8_t inlineAttribute, const uint8_t** outputByteCode, size_t* outputByteCodeSize, JSC::CachedBytecode** cachedBytecodePtr)
 {
     std::span<const Latin1Character> sourceCodeSpan(inputSourceCode, inputSourceCodeSize);
     JSC::SourceCode sourceCode = JSC::makeSource(WTF::String(sourceCodeSpan), JSC::SourceOrigin(), JSC::SourceTaintedOrigin::Untainted);
@@ -288,7 +288,12 @@ extern "C" bool generateCachedBuiltinByteCodeFromSourceCode(BunString* moduleNam
 
     auto name = JSC::Identifier::fromString(vm, moduleName->toWTFString());
     ParserError parserError;
-    UnlinkedFunctionExecutable* executable = JSC::recursivelyGenerateUnlinkedCodeBlockForBuiltinFunction(vm, sourceCode, name, parserError);
+    UnlinkedFunctionExecutable* executable = JSC::recursivelyGenerateUnlinkedCodeBlockForBuiltinFunction(
+        vm, sourceCode, name, parserError,
+        static_cast<JSC::ImplementationVisibility>(implementationVisibility),
+        static_cast<JSC::ConstructorKind>(constructorKind),
+        static_cast<JSC::ConstructAbility>(constructAbility),
+        static_cast<JSC::InlineAttribute>(inlineAttribute));
     if (parserError.isValid() || !executable)
         return false;
 
@@ -303,6 +308,33 @@ extern "C" bool generateCachedBuiltinByteCodeFromSourceCode(BunString* moduleNam
 
     return true;
 }
+
+extern "C" const uint8_t* Bun__findBuiltinFunctionBytecode(void* bunVM, uint32_t globalId, size_t* outLen);
+
+} // namespace Zig
+
+namespace Bun {
+
+JSC::UnlinkedFunctionExecutable* tryDecodeBuiltinFunctionBytecode(JSC::VM& vm, uint32_t globalId)
+{
+    auto* clientData = static_cast<WebCore::JSVMClientData*>(vm.clientData);
+    if (!clientData || !clientData->bunVM)
+        return nullptr;
+
+    size_t len = 0;
+    const uint8_t* bytecode = Bun__findBuiltinFunctionBytecode(clientData->bunVM, globalId, &len);
+    if (!bytecode)
+        return nullptr;
+
+    auto cached = JSC::CachedBytecode::create(
+        std::span<uint8_t>(const_cast<uint8_t*>(bytecode), len),
+        [](const void*) {}, {});
+    return JSC::decodeBuiltinFunctionExecutable(vm, WTF::move(cached));
+}
+
+} // namespace Bun
+
+namespace Zig {
 
 unsigned SourceProvider::hash() const
 {

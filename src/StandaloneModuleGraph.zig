@@ -321,23 +321,32 @@ pub const StandaloneModuleGraph = struct {
         builtin_bytecode_ptr: bun.StringPointer = .{},
     };
 
-    /// Bytecode for a single internal module (node:fs etc), embedded when
-    /// building with --compile --bytecode so parsing can be skipped at runtime.
+    pub const BuiltinBytecodeKind = enum(u32) {
+        internal_module = 0,
+        builtin_function = 1,
+    };
+
+    /// Bytecode for a single builtin (internal module like node:fs, or builtin
+    /// function like ReadableStream constructor), embedded when building with
+    /// --compile --bytecode so parsing can be skipped at runtime.
     pub const BuiltinBytecodeEntry = extern struct {
-        field_id: u32,
+        kind: u32,
+        id: u32,
         bytecode: bun.StringPointer,
     };
 
     /// Build-time input for toBytes.
     pub const BuiltinBytecodeInput = struct {
-        field_id: u32,
+        kind: BuiltinBytecodeKind,
+        id: u32,
         bytecode: []const u8,
         owner: *jsc.CachedBytecode,
     };
 
-    pub fn findBuiltinBytecode(this: *const StandaloneModuleGraph, field_id: u32) ?[]const u8 {
+    pub fn findBuiltinBytecode(this: *const StandaloneModuleGraph, kind: BuiltinBytecodeKind, id: u32) ?[]const u8 {
+        const k = @intFromEnum(kind);
         for (this.builtin_bytecode) |entry| {
-            if (entry.field_id == field_id) {
+            if (entry.kind == k and entry.id == id) {
                 return sliceTo(this.bytes, entry.bytecode);
             }
         }
@@ -346,9 +355,11 @@ pub const StandaloneModuleGraph = struct {
 
     extern fn Bun__getInternalModuleSource(id: u32, len: *usize, name: *?[*:0]const u8) ?[*]const u8;
     extern fn Bun__getInternalModuleSourceCount() u32;
+    extern fn Bun__getBuiltinFunctionSource(id: u32, len: *usize, name: *?[*:0]const u8, vis: *u8, ctor_kind: *u8, ctor_ability: *u8, inline_attr: *u8) ?[*]const u8;
+    extern fn Bun__getBuiltinFunctionSourceCount() u32;
 
-    /// Generate bytecode for all internal JS modules. Caller must deref each
-    /// entry's owner. Requires jsc.initialize to have been called.
+    /// Generate bytecode for all internal JS modules and builtin functions.
+    /// Caller must deref each entry's owner.
     pub fn generateBuiltinBytecodes(allocator: std.mem.Allocator) !std.array_list.Managed(BuiltinBytecodeInput) {
         var list = std.array_list.Managed(BuiltinBytecodeInput).init(allocator);
         errdefer {
@@ -357,22 +368,49 @@ pub const StandaloneModuleGraph = struct {
         }
         jsc.initialize(false);
         jsc.VirtualMachine.is_bundler_thread_for_bytecode_cache = true;
-        const count = Bun__getInternalModuleSourceCount();
-        try list.ensureTotalCapacity(count);
-        var id: u32 = 0;
-        while (id < count) : (id += 1) {
-            var len: usize = 0;
-            var name_ptr: ?[*:0]const u8 = null;
-            const src_ptr = Bun__getInternalModuleSource(id, &len, &name_ptr) orelse continue;
-            // Debug builds use BUN_DYNAMIC_JS_LOAD_PATH and embed only "\n".
-            // BuiltinExecutables::createExecutable requires "(function (){})" minimum.
-            if (len < "(function (){})".len) continue;
-            var name = bun.String.borrowUTF8(bun.sliceTo(name_ptr.?, 0));
-            if (jsc.CachedBytecode.generateForBuiltin(&name, src_ptr[0..len])) |res| {
-                const bytecode, const owner = res;
-                list.appendAssumeCapacity(.{ .field_id = id, .bytecode = bytecode, .owner = owner });
+
+        const module_count = Bun__getInternalModuleSourceCount();
+        const function_count = Bun__getBuiltinFunctionSourceCount();
+        try list.ensureTotalCapacity(module_count + function_count);
+
+        // Internal modules (node:fs etc)
+        {
+            var id: u32 = 0;
+            while (id < module_count) : (id += 1) {
+                var len: usize = 0;
+                var name_ptr: ?[*:0]const u8 = null;
+                const src_ptr = Bun__getInternalModuleSource(id, &len, &name_ptr) orelse continue;
+                // Debug builds use BUN_DYNAMIC_JS_LOAD_PATH and embed only "\n".
+                // BuiltinExecutables::createExecutable requires "(function (){})" minimum.
+                if (len < "(function (){})".len) continue;
+                var name = bun.String.borrowUTF8(bun.sliceTo(name_ptr.?, 0));
+                if (jsc.CachedBytecode.generateForBuiltin(&name, src_ptr[0..len], 0, 0, 0, 0)) |res| {
+                    const bytecode, const owner = res;
+                    list.appendAssumeCapacity(.{ .kind = .internal_module, .id = id, .bytecode = bytecode, .owner = owner });
+                }
             }
         }
+
+        // Builtin functions (ReadableStream etc)
+        {
+            var id: u32 = 0;
+            while (id < function_count) : (id += 1) {
+                var len: usize = 0;
+                var name_ptr: ?[*:0]const u8 = null;
+                var vis: u8 = 0;
+                var ctor_kind: u8 = 0;
+                var ctor_ability: u8 = 0;
+                var inline_attr: u8 = 0;
+                const src_ptr = Bun__getBuiltinFunctionSource(id, &len, &name_ptr, &vis, &ctor_kind, &ctor_ability, &inline_attr) orelse continue;
+                if (len < "(function (){})".len) continue;
+                var name = bun.String.borrowUTF8(bun.sliceTo(name_ptr.?, 0));
+                if (jsc.CachedBytecode.generateForBuiltin(&name, src_ptr[0..len], vis, ctor_kind, ctor_ability, inline_attr)) |res| {
+                    const bytecode, const owner = res;
+                    list.appendAssumeCapacity(.{ .kind = .builtin_function, .id = id, .bytecode = bytecode, .owner = owner });
+                }
+            }
+        }
+
         return list;
     }
 
@@ -677,7 +715,8 @@ pub const StandaloneModuleGraph = struct {
             @memcpy(writable_after_padding[0..input.bytecode.len], input.bytecode);
             string_builder.len += input.bytecode.len;
             entry.* = .{
-                .field_id = input.field_id,
+                .kind = @intFromEnum(input.kind),
+                .id = input.id,
                 .bytecode = .{ .offset = @truncate(aligned_offset), .length = @truncate(input.bytecode.len) },
             };
         }
@@ -1622,9 +1661,16 @@ pub const StandaloneModuleGraph = struct {
 /// Called from InternalModuleRegistry.cpp to look up pre-generated bytecode
 /// for an internal module. Returns null when not a standalone executable or
 /// when no bytecode was embedded for this module.
-export fn Bun__findBuiltinBytecode(bun_vm: *jsc.VirtualMachine, field_id: u32, out_len: *usize) ?[*]const u8 {
+export fn Bun__findInternalModuleBytecode(bun_vm: *jsc.VirtualMachine, field_id: u32, out_len: *usize) ?[*]const u8 {
     const graph = bun_vm.standalone_module_graph orelse return null;
-    const bytes = graph.findBuiltinBytecode(field_id) orelse return null;
+    const bytes = graph.findBuiltinBytecode(.internal_module, field_id) orelse return null;
+    out_len.* = bytes.len;
+    return bytes.ptr;
+}
+
+export fn Bun__findBuiltinFunctionBytecode(bun_vm: *jsc.VirtualMachine, global_id: u32, out_len: *usize) ?[*]const u8 {
+    const graph = bun_vm.standalone_module_graph orelse return null;
+    const bytes = graph.findBuiltinBytecode(.builtin_function, global_id) orelse return null;
     out_len.* = bytes.len;
     return bytes.ptr;
 }

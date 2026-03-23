@@ -21,7 +21,7 @@ extern "C" void ByteRangeMapping__generate(BunString sourceURL, BunString code, 
 
 // Implemented in StandaloneModuleGraph.zig. Returns nullptr when not a
 // standalone executable or no bytecode for this field.
-extern "C" const uint8_t* Bun__findBuiltinBytecode(void* bunVM, uint32_t fieldId, size_t* outLen);
+extern "C" const uint8_t* Bun__findInternalModuleBytecode(void* bunVM, uint32_t fieldId, size_t* outLen);
 
 static void maybeAddCodeCoverage(JSC::VM& vm, const JSC::SourceCode& code)
 {
@@ -51,7 +51,7 @@ JSC::JSValue generateModule(JSC::JSGlobalObject* globalObject, JSC::VM& vm, cons
     // for internal modules. Try decoding that first to skip parsing.
     if (void* bunVM = defaultGlobalObject(globalObject)->bunVM()) {
         size_t bytecodeLen = 0;
-        if (const uint8_t* bytecode = Bun__findBuiltinBytecode(bunVM, fieldId, &bytecodeLen)) {
+        if (const uint8_t* bytecode = Bun__findInternalModuleBytecode(bunVM, fieldId, &bytecodeLen)) {
             auto cached = JSC::CachedBytecode::create(
                 std::span<uint8_t>(const_cast<uint8_t*>(bytecode), bytecodeLen),
                 [](const void*) {}, {});

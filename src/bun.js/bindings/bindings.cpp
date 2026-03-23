@@ -2765,7 +2765,7 @@ extern "C" JSC::EncodedJSValue Bun__JSValue__call(JSC::JSGlobalObject* globalObj
     JSValue restoreAsyncContext;
     InternalFieldTuple* asyncContextData = nullptr;
     if (auto* wrapper = jsDynamicCast<AsyncContextFrame*>(jsObject)) {
-        jsObject = jsCast<JSC::JSObject*>(wrapper->callback.get());
+        jsObject = wrapper->callback.get();
         asyncContextData = globalObject->m_asyncContextData.get();
         restoreAsyncContext = asyncContextData->getInternalField(0);
         asyncContextData->putInternalField(vm, 0, wrapper->context.get());

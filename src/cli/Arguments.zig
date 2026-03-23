@@ -400,15 +400,6 @@ pub fn loadConfig(allocator: std.mem.Allocator, user_config_path_: ?string, ctx:
         Output.err(err, "failed to load bunfig", .{});
         Global.crash();
     };
-
-    // Check version pinning once after all bunfig files are loaded (global + project).
-    // This ensures the final effective ctx.pinned_version is validated, avoiding
-    // duplicate warnings or spurious checks from intermediate config states.
-    if (comptime cmd != .UpgradeCommand) {
-        if (ctx.pinned_version) |pinned| {
-            VersionManager.checkPinnedVersion(pinned, allocator);
-        }
-    }
 }
 
 pub fn loadConfigWithCmdArgs(

@@ -350,6 +350,16 @@ function ClientRequest(input, options, cb) {
     parser.initialize(HTTPParser.RESPONSE, {});
 
     let res: any = null;
+    let parserFreed = false;
+    let upgraded = false;
+    let pendingUpgrade: { res: any; event: string } | null = null;
+
+    const safelyFreeParser = () => {
+      if (!parserFreed) {
+        parserFreed = true;
+        freeParser(parser, this, socket);
+      }
+    };
 
     const responseComplete = () => {
       if (res && !res.complete) {
@@ -359,23 +369,39 @@ function ClientRequest(input, options, cb) {
       this[kClearTimeout]();
       fetching = false;
       this[kFetchRequest] = null;
-      freeParser(parser, this, socket);
+      safelyFreeParser();
       maybeEmitClose();
     };
 
-    // Build headers object from the flat [key, val, key, val, ...] array llhttp produces
+    // Build headers object from the flat [key, val, key, val, ...] array llhttp produces.
+    // Duplicates are joined with ", " (matching Node.js), except set-cookie which is an array.
     const buildHeaders = (rawHeaders: string[]) => {
       const headers: any = Object.create(null);
       for (let i = 0; i < rawHeaders.length; i += 2) {
         const lk = rawHeaders[i].toLowerCase();
         const v = rawHeaders[i + 1];
-        if (lk === "set-cookie") headers[lk] = headers[lk] ? [...headers[lk], v] : [v];
-        else headers[lk] = v;
+        if (lk === "set-cookie") {
+          headers[lk] = headers[lk] ? [...headers[lk], v] : [v];
+        } else if (headers[lk] !== undefined) {
+          headers[lk] += ", " + v;
+        } else {
+          headers[lk] = v;
+        }
       }
       return headers;
     };
 
-    parser[HTTPParser.kOnHeadersComplete] = (vMaj, vMin, headers, _method, _url, statusCode, statusMessage, upgrade, shouldKeepAlive) => {
+    parser[HTTPParser.kOnHeadersComplete] = (
+      vMaj,
+      vMin,
+      headers,
+      _method,
+      _url,
+      statusCode,
+      statusMessage,
+      upgrade,
+      shouldKeepAlive,
+    ) => {
       if (headers === undefined) {
         headers = parser._headers;
         parser._headers = [];
@@ -398,12 +424,30 @@ function ClientRequest(input, options, cb) {
 
       // Upgrade (101 Switching Protocols) or CONNECT tunnel (200) —
       // surface the live socket and stop HTTP parsing.
+      // The emit is deferred: we store the upgrade info and return 2 (skip body).
+      // The "data" handler captures leftover bytes via chunk.slice(ret) after
+      // parser.execute() returns, so we don't lose pipelined data.
       if (upgrade || (method === "CONNECT" && statusCode === 200)) {
+        upgraded = true;
         const builtHeaders = buildHeaders(headers);
-        const head = Buffer.alloc(0);
-        const infoRes = { statusCode, statusMessage, headers: builtHeaders, rawHeaders: headers };
-        this.emit(upgrade ? "upgrade" : "connect", infoRes, socket, head);
-        freeParser(parser, this, socket);
+
+        const prevIsHTTPS = getIsNextIncomingMessageHTTPS();
+        setIsNextIncomingMessageHTTPS(protocol === "https:");
+        const upgradeRes = new IncomingMessage(null, {});
+        setIsNextIncomingMessageHTTPS(prevIsHTTPS);
+
+        upgradeRes[statusCodeSymbol] = statusCode;
+        upgradeRes[statusMessageSymbol] = statusMessage;
+        upgradeRes.httpVersion = `${vMaj}.${vMin}`;
+        upgradeRes.headers = builtHeaders;
+        upgradeRes.rawHeaders = headers;
+        upgradeRes.socket = socket;
+
+        // Store for deferred emit in the "data" handler
+        pendingUpgrade = { res: upgradeRes, event: upgrade ? "upgrade" : "connect" };
+        safelyFreeParser();
+        socket.removeListener("data", onData);
+        socket.removeListener("end", onEnd);
         return 1; // skip body
       }
 
@@ -423,7 +467,10 @@ function ClientRequest(input, options, cb) {
       res.req = this;
       this[kClearTimeout]();
 
-      if (this.aborted) { maybeEmitClose(); return 1; }
+      if (this.aborted) {
+        maybeEmitClose();
+        return 1;
+      }
       if (!this.emit("response", res)) res._dump();
       maybeEmitClose();
 
@@ -431,7 +478,7 @@ function ClientRequest(input, options, cb) {
       return method === "HEAD" ? 1 : 0;
     };
 
-    parser[HTTPParser.kOnBody] = (chunk) => {
+    parser[HTTPParser.kOnBody] = chunk => {
       if (res && !res._dumped) res.push(chunk);
     };
 
@@ -444,49 +491,85 @@ function ClientRequest(input, options, cb) {
       if (parser._headers.length) {
         const trailers = buildHeaders(parser._headers);
         const rawTrailers = parser._headers.slice();
-        Object.defineProperty(res, "trailers", { value: trailers, writable: true, enumerable: true, configurable: true });
-        Object.defineProperty(res, "rawTrailers", { value: rawTrailers, writable: true, enumerable: true, configurable: true });
+        Object.defineProperty(res, "trailers", {
+          value: trailers,
+          writable: true,
+          enumerable: true,
+          configurable: true,
+        });
+        Object.defineProperty(res, "rawTrailers", {
+          value: rawTrailers,
+          writable: true,
+          enumerable: true,
+          configurable: true,
+        });
         parser._headers = [];
       }
       responseComplete();
     };
 
-    parser[HTTPParser.kOnHeaders] = (headers) => {
+    parser[HTTPParser.kOnHeaders] = headers => {
       // Accumulate trailing headers (called when headers arrive in fragments or as trailers)
       parser._headers.push(...headers);
     };
 
-    socket.on("data", (chunk) => {
+    // Named handlers so they can be removed after upgrade to prevent use-after-free.
+    const onData = chunk => {
+      if (parserFreed) {
+        // After upgrade, if there's a pending upgrade emit, capture leftover bytes
+        // from the same TCP segment and emit the upgrade event now.
+        if (pendingUpgrade) {
+          const { res: upgradeRes, event } = pendingUpgrade;
+          pendingUpgrade = null;
+          this.emit(event, upgradeRes, socket, chunk);
+        }
+        return;
+      }
       const ret = parser.execute(chunk);
       if (ret instanceof Error) {
         socket.destroy();
         this.emit("error", ret);
+        return;
       }
-    });
-    socket.on("error", (err) => {
-      if (isAbortError(err)) return;
-      try { this.emit("error", err); } catch (e) {
-        if (!!$debug) globalReportError(e);
+      // After parser.execute(), check if an upgrade was detected. If so,
+      // emit the upgrade event with any leftover bytes from this chunk.
+      if (pendingUpgrade) {
+        const { res: upgradeRes, event } = pendingUpgrade;
+        pendingUpgrade = null;
+        const head = typeof ret === "number" && ret < chunk.length ? chunk.slice(ret) : Buffer.alloc(0);
+        this.emit(event, upgradeRes, socket, head);
       }
-    });
-    socket.on("end", () => {
+    };
+    const onEnd = () => {
+      if (parserFreed) return;
       parser.finish();
       // If the response is still incomplete after parser.finish(), the connection
       // was closed prematurely — surface an error instead of silently completing.
       if (res && !res.complete) {
         res.destroy(new ConnResetException("aborted"));
       }
+    };
+    socket.on("data", onData);
+    socket.on("error", err => {
+      if (isAbortError(err)) return;
+      try {
+        this.emit("error", err);
+      } catch (e) {
+        if (!!$debug) globalReportError(e);
+      }
     });
+    socket.on("end", onEnd);
     socket.on("close", () => {
-      // Handle premature close
+      // Handle premature close — but not after a successful upgrade,
+      // where res is null and the socket close is expected.
       if (res && !res.complete) {
         res.destroy(new ConnResetException("aborted"));
-      } else if (!res) {
+      } else if (!res && !upgraded) {
         // EOF before headers — emit error on the request
         this.emit("error", new ConnResetException("aborted"));
       }
       // Free parser resources on any close to avoid leaks
-      freeParser(parser, this, socket);
+      safelyFreeParser();
       // Mark the request as closed/destroyed without calling socketCloseListener(),
       // which would re-emit "close" on this.socket (the real socket) causing duplicates.
       this.destroyed = true;
@@ -518,7 +601,7 @@ function ClientRequest(input, options, cb) {
       // Override resolveNextChunk so that when end() signals completion,
       // we write the request to the socket.
       const origResolve = resolveNextChunk;
-      resolveNextChunk = (end) => {
+      resolveNextChunk = end => {
         origResolve?.(end);
         if (end && connected) writeRequest();
       };

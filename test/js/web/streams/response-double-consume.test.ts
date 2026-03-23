@@ -20,8 +20,8 @@ test("calling .bytes() twice on a Response with async iterable body does not cra
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).not.toContain("ASSERTION FAILED");
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toBe("");
   expect(exitCode).toBe(0);
 });
 
@@ -44,8 +44,8 @@ test("calling .text() twice on a Response with async iterable body does not cras
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).not.toContain("ASSERTION FAILED");
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toBe("");
   expect(exitCode).toBe(0);
 });
 
@@ -68,7 +68,7 @@ test("calling .arrayBuffer() twice on a Response with async iterable body does n
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).not.toContain("ASSERTION FAILED");
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toBe("");
   expect(exitCode).toBe(0);
 });

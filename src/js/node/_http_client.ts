@@ -111,6 +111,8 @@ function parseRawHTTPResponse(buffer: Buffer) {
       } else {
         headers[lowerKey] = [value];
       }
+    } else if (headers[lowerKey] !== undefined) {
+      headers[lowerKey] += `, ${value}`;
     } else {
       headers[lowerKey] = value;
     }
@@ -220,7 +222,7 @@ async function doUpgradeRequest(
       self[kFetchRequest] = null;
       self[kClearTimeout]();
 
-      if (parsed.statusCode === 101 || method === "CONNECT") {
+      if (parsed.statusCode === 101 || (method === "CONNECT" && parsed.statusCode === 200)) {
         self[kUpgradeOrConnect] = true;
 
         const res = new IncomingMessage(null);
@@ -238,7 +240,10 @@ async function doUpgradeRequest(
 
         const eventName = method === "CONNECT" ? "connect" : "upgrade";
         process.nextTick(() => {
-          self.emit(eventName, res, socket, parsed.head);
+          if (!self.emit(eventName, res, socket, parsed.head)) {
+            socket.destroy();
+          }
+          maybeEmitClose();
         });
 
         resolve();
@@ -318,7 +323,11 @@ async function doUpgradeRequest(
 
     socket.on("error", err => {
       self[kClearTimeout]();
-      reject(err);
+      if (!headersParsed) {
+        reject(err);
+      } else if (self.res && !self.res.complete) {
+        self.res.destroy(err);
+      }
     });
 
     socket.on("close", () => {

@@ -251,6 +251,7 @@ function REPLServer(this: any, options?: string | Record<string, any>, ...rest: 
     this.writer = function (obj: unknown) {
       return inspect(obj, instanceOptions);
     };
+    this.writer.options = instanceOptions;
   } else {
     this.writer = writer;
   }
@@ -388,6 +389,9 @@ function REPLServer(this: any, options?: string | Record<string, any>, ...rest: 
     if (this.editorMode && this._bufferedCommand.length > 0) {
       this.editorMode = false;
       const code = this._bufferedCommand;
+      // Record editor lines for .save
+      const editorLines = code.split("\n").filter(Boolean);
+      for (const l of editorLines) this.lines.push(l);
       this._bufferedCommand = "";
       this._eval.$call(this, code, this.context, "repl", (err: any, result: unknown) => {
         if (err) {
@@ -396,8 +400,23 @@ function REPLServer(this: any, options?: string | Record<string, any>, ...rest: 
           } else {
             this.outputStream.write("Thrown: " + this.writer(err) + "\n");
           }
+          this.lastError = err;
+          if (!this.underscoreErrAssigned) {
+            if (this.useGlobal) {
+              globalThis._error = err;
+            } else {
+              this.context._error = err;
+            }
+          }
         } else {
           this.last = result;
+          if (!this.underscoreAssigned) {
+            if (this.useGlobal) {
+              globalThis._ = result;
+            } else {
+              this.context._ = result;
+            }
+          }
           if (result !== undefined || !this.ignoreUndefined) {
             this.outputStream.write(this.writer(result) + "\n");
           }

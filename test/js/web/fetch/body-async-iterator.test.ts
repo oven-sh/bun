@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunExe, bunEnv } from "harness";
+import { bunEnv, bunExe } from "harness";
 
 test("Response.bytes() with async iterable body does not crash with null deref", async () => {
   await using proc = Bun.spawn({

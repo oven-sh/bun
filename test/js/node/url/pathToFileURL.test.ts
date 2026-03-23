@@ -1,8 +1,23 @@
 import { expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import path from "path";
 
 test("pathToFileURL doesn't leak memory", () => {
   expect([path.join(import.meta.dir, "pathToFileURL-leak-fixture.js")]).toRun();
+});
+
+test("pathToFileURL handles relative paths longer than 4096 bytes", async () => {
+  const longPath = Buffer.alloc(5000, "a").toString();
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", `const url = Bun.pathToFileURL(Buffer.alloc(5000, "a").toString()); console.log(url.href.endsWith("${longPath}"))`],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout.trim()).toBe("true");
+  expect(exitCode).toBe(0);
 });
 
 test("pathToFileURL escapes special characters", () => {

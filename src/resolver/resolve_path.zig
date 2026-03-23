@@ -2048,13 +2048,18 @@ export fn ResolvePath__joinAbsStringBufCurrentPlatformBunString(
     const str = in.toUTF8WithoutRef(bun.default_allocator);
     defer str.deinit();
 
-    const out_slice = joinAbsStringBuf(
-        globalObject.bunVM().transpiler.fs.top_level_dir,
-        &join_buf,
-        &.{str.slice()},
-        .auto,
-    );
+    const cwd = globalObject.bunVM().transpiler.fs.top_level_dir;
+    const input = str.slice();
+    const total = cwd.len + input.len + 2;
 
+    if (total < join_buf.len) {
+        const out_slice = joinAbsStringBuf(cwd, &join_buf, &.{input}, .auto);
+        return bun.String.cloneUTF8(out_slice);
+    }
+
+    const buf = bun.handleOom(bun.default_allocator.alloc(u8, total));
+    defer bun.default_allocator.free(buf);
+    const out_slice = joinAbsStringBuf(cwd, buf, &.{input}, .auto);
     return bun.String.cloneUTF8(out_slice);
 }
 

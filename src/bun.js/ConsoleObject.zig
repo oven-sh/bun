@@ -227,6 +227,14 @@ fn messageWithTypeAndLevel_(
         }
     }
 
+    if (message_type == .Assert and print_length > 0) {
+        const prefix = if (enable_colors)
+            Output.prettyFmt("<r><red>Assertion failed<r>: ", true)
+        else
+            "Assertion failed: ";
+        writer.writeAll(prefix) catch {};
+    }
+
     if (print_length > 0)
         try format2(
             level,

@@ -260,6 +260,32 @@ extern "C" bool generateCachedCommonJSProgramByteCodeFromSourceCode(BunString* s
     return true;
 }
 
+extern "C" bool generateCachedBuiltinByteCodeFromSourceCode(BunString* moduleName, const Latin1Character* inputSourceCode, size_t inputSourceCodeSize, const uint8_t** outputByteCode, size_t* outputByteCodeSize, JSC::CachedBytecode** cachedBytecodePtr)
+{
+    std::span<const Latin1Character> sourceCodeSpan(inputSourceCode, inputSourceCodeSize);
+    JSC::SourceCode sourceCode = JSC::makeSource(WTF::String(sourceCodeSpan), JSC::SourceOrigin(), JSC::SourceTaintedOrigin::Untainted);
+
+    JSC::VM& vm = getVMForBytecodeCache();
+    JSC::JSLockHolder locker(vm);
+
+    auto name = JSC::Identifier::fromString(vm, moduleName->toWTFString());
+    ParserError parserError;
+    UnlinkedFunctionExecutable* executable = JSC::recursivelyGenerateUnlinkedCodeBlockForBuiltinFunction(vm, sourceCode, name, parserError);
+    if (parserError.isValid() || !executable)
+        return false;
+
+    RefPtr<JSC::CachedBytecode> cachedBytecode = JSC::encodeBuiltinFunctionExecutable(vm, executable);
+    if (!cachedBytecode)
+        return false;
+
+    cachedBytecode->ref();
+    *cachedBytecodePtr = cachedBytecode.get();
+    *outputByteCode = cachedBytecode->span().data();
+    *outputByteCodeSize = cachedBytecode->span().size();
+
+    return true;
+}
+
 unsigned SourceProvider::hash() const
 {
     if (m_hash) {

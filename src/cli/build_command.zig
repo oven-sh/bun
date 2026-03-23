@@ -519,6 +519,38 @@ pub const BuildCommand = struct {
                     }
                 }
 
+                // Pre-generate bytecode for internal modules (node:fs etc) so
+                // the standalone executable skips parsing them on first require.
+                var builtin_bytecodes = std.array_list.Managed(
+                    bun.StandaloneModuleGraph.BuiltinBytecodeInput,
+                ).init(allocator);
+                defer {
+                    for (builtin_bytecodes.items) |bb| bb.owner.deref();
+                    builtin_bytecodes.deinit();
+                }
+                if (ctx.bundler_options.bytecode and !is_cross_compile) {
+                    const count = Bun__getInternalModuleSourceCount();
+                    try builtin_bytecodes.ensureTotalCapacity(count);
+                    var id: u32 = 0;
+                    while (id < count) : (id += 1) {
+                        var len: usize = 0;
+                        var name_ptr: ?[*:0]const u8 = null;
+                        const src_ptr = Bun__getInternalModuleSource(id, &len, &name_ptr) orelse continue;
+                        // Debug builds use BUN_DYNAMIC_JS_LOAD_PATH and embed only "\n".
+                        // BuiltinExecutables::createExecutable requires "(function (){})" minimum.
+                        if (len < "(function (){})".len) continue;
+                        var name = bun.String.borrowUTF8(bun.sliceTo(name_ptr.?, 0));
+                        if (bun.jsc.CachedBytecode.generateForBuiltin(&name, src_ptr[0..len])) |res| {
+                            const bytecode, const owner = res;
+                            builtin_bytecodes.appendAssumeCapacity(.{
+                                .field_id = id,
+                                .bytecode = bytecode,
+                                .owner = owner,
+                            });
+                        }
+                    }
+                }
+
                 const result = bun.StandaloneModuleGraph.toExecutable(
                     compile_target,
                     allocator,
@@ -537,6 +569,7 @@ pub const BuildCommand = struct {
                         .disable_autoload_tsconfig = !ctx.bundler_options.compile_autoload_tsconfig,
                         .disable_autoload_package_json = !ctx.bundler_options.compile_autoload_package_json,
                     },
+                    builtin_bytecodes.items,
                 ) catch |err| {
                     Output.printErrorln("failed to create executable: {s}", .{@errorName(err)});
                     Global.exit(1);
@@ -811,3 +844,6 @@ const Output = bun.Output;
 const default_allocator = bun.default_allocator;
 const strings = bun.strings;
 const transpiler = bun.transpiler;
+
+extern fn Bun__getInternalModuleSource(id: u32, len: *usize, name: *?[*:0]const u8) ?[*]const u8;
+extern fn Bun__getInternalModuleSourceCount() u32;

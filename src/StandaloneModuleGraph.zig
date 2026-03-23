@@ -8,6 +8,7 @@ pub const StandaloneModuleGraph = struct {
     entry_point_id: u32 = 0,
     compile_exec_argv: []const u8 = "",
     flags: Flags = .{},
+    builtin_bytecode: []align(1) const BuiltinBytecodeEntry = &.{},
 
     // We never want to hit the filesystem for these files
     // We use the `/$bunfs/` prefix to indicate that it's a virtual path
@@ -317,7 +318,31 @@ pub const StandaloneModuleGraph = struct {
         entry_point_id: u32 = 0,
         compile_exec_argv_ptr: bun.StringPointer = .{},
         flags: Flags = .{},
+        builtin_bytecode_ptr: bun.StringPointer = .{},
     };
+
+    /// Bytecode for a single internal module (node:fs etc), embedded when
+    /// building with --compile --bytecode so parsing can be skipped at runtime.
+    pub const BuiltinBytecodeEntry = extern struct {
+        field_id: u32,
+        bytecode: bun.StringPointer,
+    };
+
+    /// Build-time input for toBytes.
+    pub const BuiltinBytecodeInput = struct {
+        field_id: u32,
+        bytecode: []const u8,
+        owner: *jsc.CachedBytecode,
+    };
+
+    pub fn findBuiltinBytecode(this: *const StandaloneModuleGraph, field_id: u32) ?[]const u8 {
+        for (this.builtin_bytecode) |entry| {
+            if (entry.field_id == field_id) {
+                return sliceTo(this.bytes, entry.bytecode);
+            }
+        }
+        return null;
+    }
 
     pub const Flags = packed struct(u32) {
         disable_default_env_files: bool = false,
@@ -367,12 +392,17 @@ pub const StandaloneModuleGraph = struct {
 
         modules.lockPointers(); // make the pointers stable forever
 
+        const builtin_bytecode_bytes = sliceTo(raw_bytes, offsets.builtin_bytecode_ptr);
+        const builtin_bytecode: []align(1) const BuiltinBytecodeEntry =
+            std.mem.bytesAsSlice(BuiltinBytecodeEntry, builtin_bytecode_bytes);
+
         return StandaloneModuleGraph{
             .bytes = raw_bytes[0..offsets.byte_count],
             .files = modules,
             .entry_point_id = offsets.entry_point_id,
             .compile_exec_argv = sliceToZ(raw_bytes, offsets.compile_exec_argv_ptr),
             .flags = offsets.flags,
+            .builtin_bytecode = builtin_bytecode,
         };
     }
 
@@ -388,7 +418,7 @@ pub const StandaloneModuleGraph = struct {
         return bytes[ptr.offset..][0..ptr.length :0];
     }
 
-    pub fn toBytes(allocator: std.mem.Allocator, prefix: []const u8, output_files: []const bun.options.OutputFile, output_format: bun.options.Format, compile_exec_argv: []const u8, flags: Flags) ![]u8 {
+    pub fn toBytes(allocator: std.mem.Allocator, prefix: []const u8, output_files: []const bun.options.OutputFile, output_format: bun.options.Format, compile_exec_argv: []const u8, flags: Flags, builtin_bytecodes: []const BuiltinBytecodeInput) ![]u8 {
         var serialize_trace = bun.perf.trace("StandaloneModuleGraph.serialize");
         defer serialize_trace.end();
 
@@ -432,6 +462,11 @@ pub const StandaloneModuleGraph = struct {
         string_builder.cap += 16;
         string_builder.cap += @sizeOf(Offsets);
         string_builder.countZ(compile_exec_argv);
+
+        for (builtin_bytecodes) |bb| {
+            string_builder.cap += (bb.bytecode.len + 255) / 256 * 256 + 256;
+        }
+        string_builder.cap += @sizeOf(BuiltinBytecodeEntry) * builtin_bytecodes.len;
 
         try string_builder.allocate(allocator);
 
@@ -589,12 +624,40 @@ pub const StandaloneModuleGraph = struct {
             modules.appendAssumeCapacity(module);
         }
 
+        // Serialize builtin bytecode (--compile --bytecode only). Same alignment
+        // constraints as user-code bytecode above: target_mod=120 accounts for
+        // the 8-byte section header on PE/Mach-O.
+        const builtin_entries = try allocator.alloc(BuiltinBytecodeEntry, builtin_bytecodes.len);
+        defer allocator.free(builtin_entries);
+        for (builtin_bytecodes, builtin_entries) |input, *entry| {
+            const current_offset = string_builder.len;
+            const target_mod: usize = 128 - @sizeOf(u64);
+            const current_mod = current_offset % 128;
+            const padding = if (current_mod <= target_mod)
+                target_mod - current_mod
+            else
+                128 - current_mod + target_mod;
+            const writable = string_builder.writable();
+            @memset(writable[0..padding], 0);
+            string_builder.len += padding;
+            const aligned_offset = string_builder.len;
+            const writable_after_padding = string_builder.writable();
+            @memcpy(writable_after_padding[0..input.bytecode.len], input.bytecode);
+            string_builder.len += input.bytecode.len;
+            entry.* = .{
+                .field_id = input.field_id,
+                .bytecode = .{ .offset = @truncate(aligned_offset), .length = @truncate(input.bytecode.len) },
+            };
+        }
+        const builtin_bytecode_ptr = string_builder.appendCount(std.mem.sliceAsBytes(builtin_entries));
+
         const offsets = Offsets{
             .entry_point_id = @as(u32, @truncate(entry_point_id.?)),
             .modules_ptr = string_builder.appendCount(std.mem.sliceAsBytes(modules.items)),
             .compile_exec_argv_ptr = string_builder.appendCountZ(compile_exec_argv),
             .byte_count = string_builder.len,
             .flags = flags,
+            .builtin_bytecode_ptr = builtin_bytecode_ptr,
         };
 
         _ = string_builder.append(std.mem.asBytes(&offsets));
@@ -1127,8 +1190,9 @@ pub const StandaloneModuleGraph = struct {
         compile_exec_argv: []const u8,
         self_exe_path: ?[]const u8,
         flags: Flags,
+        builtin_bytecodes: []const BuiltinBytecodeInput,
     ) !CompileResult {
-        const bytes = toBytes(allocator, module_prefix, output_files, output_format, compile_exec_argv, flags) catch |err| {
+        const bytes = toBytes(allocator, module_prefix, output_files, output_format, compile_exec_argv, flags, builtin_bytecodes) catch |err| {
             return CompileResult.failFmt("failed to generate module graph bytes: {s}", .{@errorName(err)});
         };
         if (bytes.len == 0) return CompileResult.fail(.no_output_files);
@@ -1523,10 +1587,21 @@ pub const StandaloneModuleGraph = struct {
     }
 };
 
+/// Called from InternalModuleRegistry.cpp to look up pre-generated bytecode
+/// for an internal module. Returns null when not a standalone executable or
+/// when no bytecode was embedded for this module.
+export fn Bun__findBuiltinBytecode(bun_vm: *jsc.VirtualMachine, field_id: u32, out_len: *usize) ?[*]const u8 {
+    const graph = bun_vm.standalone_module_graph orelse return null;
+    const bytes = graph.findBuiltinBytecode(field_id) orelse return null;
+    out_len.* = bytes.len;
+    return bytes.ptr;
+}
+
 const std = @import("std");
 const w = std.os.windows;
 
 const bun = @import("bun");
+const jsc = bun.jsc;
 const Environment = bun.Environment;
 const Output = bun.Output;
 const SourceMap = bun.SourceMap;

@@ -2172,6 +2172,8 @@ pub const BundleV2 = struct {
                     .disable_autoload_tsconfig = !compile_options.autoload_tsconfig,
                     .disable_autoload_package_json = !compile_options.autoload_package_json,
                 },
+                // TODO: builtin bytecode for Bun.build() API
+                &.{},
             ) catch |err| {
                 return bun.StandaloneModuleGraph.CompileResult.failFmt("{s}", .{@errorName(err)});
             };

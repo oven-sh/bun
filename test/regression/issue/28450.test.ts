@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
 // Issue #28450: http.ClientRequest does not emit "upgrade" event for 101 responses.

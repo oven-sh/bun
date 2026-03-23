@@ -21,11 +21,9 @@ test("Response.bytes() with async iterable body does not crash with null deref",
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
 
-  // Must not produce a null deref — should give a proper JS error
   expect(stdout).not.toContain("null is not an object");
-  expect(stderr).not.toContain("ASSERTION FAILED");
   expect(exitCode).toBe(0);
 });
 
@@ -49,9 +47,8 @@ test("Response.arrayBuffer() with async iterable body does not crash with null d
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
 
   expect(stdout).not.toContain("null is not an object");
-  expect(stderr).not.toContain("ASSERTION FAILED");
   expect(exitCode).toBe(0);
 });

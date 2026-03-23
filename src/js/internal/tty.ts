@@ -105,6 +105,12 @@ function getColorDepth(env: NodeJS.ProcessEnv) {
     return COLORS_16;
   }
 
+  const COLORTERM = env.COLORTERM;
+
+  if (COLORTERM === "truecolor" || COLORTERM === "24bit") {
+    return COLORS_16m;
+  }
+
   if (env.TMUX) {
     return COLORS_256;
   }
@@ -141,12 +147,6 @@ function getColorDepth(env: NodeJS.ProcessEnv) {
       return COLORS_256;
   }
 
-  const COLORTERM = env.COLORTERM;
-
-  if (COLORTERM === "truecolor" || COLORTERM === "24bit") {
-    return COLORS_16m;
-  }
-
   const TERM = env.TERM;
 
   if (TERM) {
@@ -165,7 +165,7 @@ function getColorDepth(env: NodeJS.ProcessEnv) {
   }
 
   // Move 16 color COLORTERM below 16m and 256
-  if (env.COLORTERM) {
+  if (COLORTERM) {
     return COLORS_16;
   }
   return COLORS_2;

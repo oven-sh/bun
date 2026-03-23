@@ -384,7 +384,9 @@ pub const StandaloneModuleGraph = struct {
                 // BuiltinExecutables::createExecutable requires "(function (){})" minimum.
                 if (len < "(function (){})".len) continue;
                 var name = bun.String.borrowUTF8(bun.sliceTo(name_ptr.?, 0));
-                if (jsc.CachedBytecode.generateForBuiltin(&name, src_ptr[0..len], 0, 0, 0, 0)) |res| {
+                // ImplementationVisibility::Public=0, ConstructorKind::None=0,
+                // ConstructAbility::CannotConstruct=1, InlineAttribute::None=0
+                if (jsc.CachedBytecode.generateForBuiltin(&name, src_ptr[0..len], 0, 0, 1, 0)) |res| {
                     const bytecode, const owner = res;
                     list.appendAssumeCapacity(.{ .kind = .internal_module, .id = id, .bytecode = bytecode, .owner = owner });
                 }

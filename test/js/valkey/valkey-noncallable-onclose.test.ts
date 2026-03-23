@@ -36,5 +36,6 @@ test.skipIf(!isEnabled)("non-callable onclose does not crash", async () => {
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stdout).toContain("TypeError: Function passed to .call must be callable.");
+  expect(stderr).toBe("");
   expect(exitCode).toBe(0);
 });

@@ -152,9 +152,7 @@ async function doUpgradeRequest(
     const requestPath = (parsedUrl.pathname || "/") + (parsedUrl.search || "");
 
     const socketPath = self[kSocketPath];
-    const connectOpts: any = socketPath
-      ? { path: socketPath }
-      : { host: connectHost, port: connectPort };
+    const connectOpts: any = socketPath ? { path: socketPath } : { host: connectHost, port: connectPort };
 
     if (isSecure) {
       const tlsConfig = self[kTls] || {};
@@ -270,9 +268,7 @@ async function doUpgradeRequest(
         });
 
         // Track remaining body bytes for Content-Length framing
-        const contentLength = parsed.headers["content-length"]
-          ? parseInt(parsed.headers["content-length"], 10)
-          : NaN;
+        const contentLength = parsed.headers["content-length"] ? parseInt(parsed.headers["content-length"], 10) : NaN;
         let bytesReceived = 0;
 
         if (parsed.head.length > 0) {

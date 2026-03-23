@@ -135,7 +135,6 @@ function doUpgradeRequest(
   const tls = require("node:tls");
 
   return new Promise<void>((resolve, reject) => {
-
     const parsedUrl = new URL(url);
     const isSecure = parsedUrl.protocol === "https:";
     const connectHost = parsedUrl.hostname;

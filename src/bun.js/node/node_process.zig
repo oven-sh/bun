@@ -395,29 +395,38 @@ fn loadEnvFile(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun
             );
         },
     };
-    defer allocator.free(contents);
+    // Do NOT defer-free contents. The parser returns key slices that point into
+    // this buffer, and the env map stores them directly. This matches how
+    // loadEnvFileDynamic (env_loader.zig:897-898) uses errdefer, not defer.
+    errdefer allocator.free(contents);
 
-    // Parse the env file into a temporary map
-    var map = DotEnv.Map.init(allocator);
-    DotEnv.parseEnvBuf(contents, path_slice, allocator, &map) catch |err| switch (err) {
+    // Parse into a temporary map to track which keys this file sets.
+    // Parser.parseKey returns key slices into contents (not duped).
+    // Parser._parse dupes values via allocator.dupe. Both survive deinit
+    // of the temp map's hash table structure.
+    var file_map = DotEnv.Map.init(allocator);
+    defer file_map.map.deinit();
+
+    DotEnv.parseEnvBuf(contents, path_slice, allocator, &file_map) catch |err| switch (err) {
         error.OutOfMemory => return globalObject.throwOutOfMemory(),
     };
 
     // Get the JS process.env object via extern C++ call
     const env_object = Bun__getProcessEnvObject(globalObject);
 
-    // Update both the Zig env map and the JS process.env object
-    var it = map.map.iterator();
+    // For each parsed entry, store into the Zig env map and update the JS object.
+    // Map.put stores key/value slices directly (no duplication):
+    //   - keys point into contents (kept alive, not freed on success)
+    //   - values were duped by the parser (kept alive, not freed by deinit)
+    var it = file_map.map.iterator();
     while (it.next()) |entry| {
         const key = entry.key_ptr.*;
         const value = entry.value_ptr.value;
 
-        // Update Zig env map (override existing values)
         vm.transpiler.env.map.put(key, value) catch |err| switch (err) {
             error.OutOfMemory => return globalObject.throwOutOfMemory(),
         };
 
-        // Update JS process.env object
         env_object.put(globalObject, &ZigString.initUTF8(key), ZigString.initUTF8(value).toJS(globalObject));
     }
 

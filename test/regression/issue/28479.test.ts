@@ -123,6 +123,37 @@ COMMENT_28479=value # inline comment
     expect(exitCode).toBe(0);
   });
 
+  test("loaded vars are visible in child processes", async () => {
+    using dir = tempDir("loadEnvFile-subprocess", {
+      "test.env": "CHILD_28479=from_env_file\n",
+      "index.js": `
+        const { loadEnvFile } = require('node:process');
+        loadEnvFile('./test.env');
+        const child = Bun.spawn([process.execPath, '-e', 'console.log(process.env.CHILD_28479)'], {
+          env: { ...process.env },
+        });
+        const text = await new Response(child.stdout).text();
+        console.log(text.trim());
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([
+      proc.stdout.text(),
+      proc.stderr.text(),
+      proc.exited,
+    ]);
+
+    expect(stdout).toBe("from_env_file\n");
+    expect(exitCode).toBe(0);
+  });
+
   test("overrides existing env vars", async () => {
     using dir = tempDir("loadEnvFile-override", {
       "test.env": "OVERRIDE_28479=new_value\n",

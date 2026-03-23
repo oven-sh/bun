@@ -15,6 +15,8 @@ const { throwOnInvalidTLSArray } = require("internal/tls");
 const { validateHeaderName } = require("node:_http_common");
 const { getTimerDuration } = require("internal/timers");
 const { ConnResetException } = require("internal/shared");
+const net = require("node:net");
+const tls = require("node:tls");
 const {
   kBodyChunks,
   abortedSymbol,
@@ -73,6 +75,211 @@ function emitErrorEventNT(self, err) {
   if (self.listenerCount("error") > 0) {
     self.emit("error", err);
   }
+}
+
+const kHeaderSeparator = Buffer.from("\r\n\r\n");
+
+function parseRawHTTPResponse(buffer: Buffer) {
+  const headerEndIdx = buffer.indexOf(kHeaderSeparator);
+  if (headerEndIdx === -1) return null;
+
+  const headerStr = buffer.slice(0, headerEndIdx).toString("latin1");
+  const head = buffer.slice(headerEndIdx + 4);
+
+  const lines = headerStr.split("\r\n");
+  const statusLine = lines[0];
+  const statusMatch = statusLine.match(/^HTTP\/(\d)\.(\d) (\d{3})(?: (.*))?$/);
+  if (!statusMatch) return null;
+
+  const httpVersion = `${statusMatch[1]}.${statusMatch[2]}`;
+  const statusCode = parseInt(statusMatch[3], 10);
+  const statusMessage = statusMatch[4] || "";
+
+  const headers = Object.create(null);
+  const rawHeaders: string[] = [];
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i];
+    const colonIdx = line.indexOf(":");
+    if (colonIdx <= 0) continue;
+    const key = line.slice(0, colonIdx);
+    const value = line.slice(colonIdx + 1).trim();
+    const lowerKey = key.toLowerCase();
+    rawHeaders.push(key, value);
+    if (lowerKey === "set-cookie") {
+      if (headers[lowerKey]) {
+        headers[lowerKey].push(value);
+      } else {
+        headers[lowerKey] = [value];
+      }
+    } else {
+      headers[lowerKey] = value;
+    }
+  }
+
+  return { httpVersion, statusCode, statusMessage, headers, rawHeaders, head };
+}
+
+function doUpgradeRequest(
+  this: any,
+  url: string,
+  headers: any,
+  method: string,
+  body: any,
+  protocol: string,
+  maybeEmitSocket: () => void,
+  maybeEmitClose: () => void,
+) {
+  const self = this;
+  return new Promise<void>((resolve, reject) => {
+    const parsedUrl = new URL(url);
+    const isSecure = parsedUrl.protocol === "https:";
+    const connectHost = parsedUrl.hostname;
+    const connectPort = parseInt(parsedUrl.port) || (isSecure ? 443 : 80);
+    const requestPath = (parsedUrl.pathname || "/") + (parsedUrl.search || "");
+
+    const connectOpts: any = {
+      host: connectHost,
+      port: connectPort,
+    };
+
+    if (isSecure) {
+      const tlsConfig = self[kTls] || {};
+      ObjectAssign(connectOpts, tlsConfig);
+      if (!connectOpts.servername) {
+        connectOpts.servername = connectHost;
+      }
+    }
+
+    const connectModule = isSecure ? tls : net;
+    const socket = connectModule.connect(connectOpts, () => {
+      // Build and send the raw HTTP request
+      let request = `${method} ${requestPath} HTTP/1.1\r\n`;
+      for (const key of Object.keys(headers)) {
+        const value = headers[key];
+        if ($isJSArray(value)) {
+          for (const v of value) {
+            request += `${key}: ${v}\r\n`;
+          }
+        } else {
+          request += `${key}: ${value}\r\n`;
+        }
+      }
+      request += "\r\n";
+      socket.write(request);
+
+      if (body != null) {
+        socket.write(typeof body === "string" ? body : Buffer.from(body));
+      }
+    });
+
+    let responseBuffer = Buffer.alloc(0);
+    let headersParsed = false;
+
+    const onData = (chunk: Buffer) => {
+      if (headersParsed) return;
+
+      responseBuffer = Buffer.concat([responseBuffer, chunk]);
+
+      const parsed = parseRawHTTPResponse(responseBuffer);
+      if (!parsed) return; // Need more data
+
+      headersParsed = true;
+      socket.removeListener("data", onData);
+
+      self[kFetchRequest] = null;
+      self[kClearTimeout]();
+
+      if (parsed.statusCode === 101 || method === "CONNECT") {
+        self[kUpgradeOrConnect] = true;
+
+        const res = new IncomingMessage(null);
+        res.statusCode = parsed.statusCode;
+        res.statusMessage = parsed.statusMessage;
+        res.httpVersion = parsed.httpVersion;
+        res.headers = parsed.headers;
+        res.rawHeaders = parsed.rawHeaders;
+        res.complete = true;
+        res.req = self;
+        self.res = res;
+
+        maybeEmitSocket();
+
+        process.nextTick(() => {
+          self.emit("upgrade", res, socket, parsed.head);
+        });
+
+        resolve();
+      } else {
+        // Non-101 response on an upgrade request — emit as normal response
+        const res = new IncomingMessage(null);
+        res.statusCode = parsed.statusCode;
+        res.statusMessage = parsed.statusMessage;
+        res.httpVersion = parsed.httpVersion;
+        res.headers = parsed.headers;
+        res.rawHeaders = parsed.rawHeaders;
+        res.req = self;
+        self.res = res;
+
+        // Override _read to prevent default body-reading logic on null webRequestOrResponse
+        res._read = function () {
+          if (!this._consuming) {
+            this._readableState.readingMore = false;
+            this._consuming = true;
+          }
+        };
+
+        if (parsed.head.length > 0) {
+          res.push(parsed.head);
+        }
+
+        socket.on("data", dataChunk => {
+          if (!res._dumped) {
+            res.push(dataChunk);
+          }
+        });
+        socket.on("end", () => {
+          if (!res.complete) {
+            res.push(null);
+            res.complete = true;
+          }
+        });
+
+        process.nextTick(() => {
+          if (self.aborted || !self.emit("response", res)) {
+            res._dump();
+          }
+          maybeEmitClose();
+        });
+
+        resolve();
+      }
+    };
+
+    socket.on("data", onData);
+
+    socket.on("error", err => {
+      self[kClearTimeout]();
+      reject(err);
+    });
+
+    socket.on("close", () => {
+      if (!headersParsed) {
+        reject(new Error("socket hang up"));
+      }
+    });
+
+    // Wire up abort controller
+    const abortSignal = self[kAbortController]?.signal;
+    if (abortSignal) {
+      const onAbortSocket = () => {
+        socket.destroy();
+      };
+      abortSignal.addEventListener("abort", onAbortSocket, { once: true });
+      socket.on("close", () => {
+        abortSignal.removeEventListener("abort", onAbortSocket);
+      });
+    }
+  });
 }
 
 function ClientRequest(input, options, cb) {
@@ -307,12 +514,47 @@ function ClientRequest(input, options, cb) {
     };
 
     const go = (url, proxy, softFail = false) => {
-      const tls =
+      // Check if this is an upgrade request - use raw socket path for proper upgrade event support
+      const reqHeaders = this.getHeaders();
+      const connectionHeader = reqHeaders["connection"] || reqHeaders["Connection"];
+      const upgradeHeader = reqHeaders["upgrade"] || reqHeaders["Upgrade"];
+      const isUpgradeReq =
+        !proxy &&
+        upgradeHeader &&
+        typeof connectionHeader === "string" &&
+        connectionHeader.toLowerCase().includes("upgrade");
+
+      if (isUpgradeReq) {
+        this[kFetchRequest] = doUpgradeRequest.$call(
+          this,
+          url,
+          reqHeaders,
+          method,
+          customBody,
+          protocol,
+          maybeEmitSocket,
+          maybeEmitClose,
+        );
+        if (!softFail) {
+          this[kFetchRequest].catch(err => {
+            if (isAbortError(err)) return;
+            if (!!$debug) globalReportError(err);
+            try {
+              this.emit("error", err);
+            } catch (_err) {
+              void _err;
+            }
+          });
+        }
+        return this[kFetchRequest];
+      }
+
+      const tlsOpts =
         protocol === "https:" && this[kTls] ? { ...this[kTls], serverName: this[kTls].servername } : undefined;
 
       const fetchOptions: any = {
         method,
-        headers: this.getHeaders(),
+        headers: reqHeaders,
         redirect: "manual",
         signal: this[kAbortController]?.signal,
         // Timeouts are handled via this.setTimeout.
@@ -372,8 +614,8 @@ function ClientRequest(input, options, cb) {
         };
       }
 
-      if (tls) {
-        fetchOptions.tls = tls;
+      if (tlsOpts) {
+        fetchOptions.tls = tlsOpts;
       }
 
       if (!!$debug) {

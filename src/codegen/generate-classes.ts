@@ -685,6 +685,7 @@ ${
       return JSValue::encode(JSC::jsUndefined());
     }
 
+    ASSERT_WITH_MESSAGE(ptr, "Incorrect exception handling: new ${typeName} returned a null pointer, indicating an exception - but did not throw an exception.");
     instance->m_ctx = ptr;
 `
     : `
@@ -751,6 +752,7 @@ JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${name}::construct(JSC::JSGlobalObj
       return JSValue::encode(JSC::jsUndefined());
     }
 
+    ASSERT_WITH_MESSAGE(ptr, "Incorrect exception handling: new ${typeName} returned a null pointer, indicating an exception - but did not throw an exception.");
     instance->m_ctx = ptr;
     `) +
     `

@@ -205,14 +205,15 @@ function doUpgradeRequest(
 
       responseBuffer = Buffer.concat([responseBuffer, chunk]);
 
-      if (responseBuffer.length > maxHeaderSize) {
-        socket.destroy();
-        reject(ObjectAssign(new Error("Parse Error: Header overflow"), { code: "HPE_HEADER_OVERFLOW" }));
-        return;
-      }
-
       const parsed = parseRawHTTPResponse(responseBuffer);
-      if (parsed === null) return; // Need more data
+      if (parsed === null) {
+        // Headers not yet complete — check overflow only on header bytes
+        if (responseBuffer.length > maxHeaderSize) {
+          socket.destroy();
+          reject(ObjectAssign(new Error("Parse Error: Header overflow"), { code: "HPE_HEADER_OVERFLOW" }));
+        }
+        return; // Need more data
+      }
       if (parsed === false) {
         // Separator found but status line is malformed
         socket.destroy();

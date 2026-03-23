@@ -1,6 +1,10 @@
-import { expect, test } from "bun:test";
+import { beforeAll, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
-import { isEnabled } from "./test-utils";
+import { DEFAULT_REDIS_URL, isEnabled, setupDockerContainer } from "./test-utils";
+
+beforeAll(async () => {
+  if (isEnabled) await setupDockerContainer();
+});
 
 test.skipIf(!isEnabled)("non-callable onclose does not crash", async () => {
   await using proc = Bun.spawn({
@@ -12,14 +16,14 @@ test.skipIf(!isEnabled)("non-callable onclose does not crash", async () => {
         console.log(e.constructor.name + ": " + e.message);
         process.exit(0);
       });
-      const client = new Bun.RedisClient("redis://127.0.0.1:6379");
+      const client = new Bun.RedisClient(process.env.BUN_VALKEY_URL);
       client.onclose = 42;
       await client.ping();
       client.close();
       await Bun.sleep(500);
       `,
     ],
-    env: bunEnv,
+    env: { ...bunEnv, BUN_VALKEY_URL: DEFAULT_REDIS_URL },
     stderr: "pipe",
     stdout: "pipe",
   });

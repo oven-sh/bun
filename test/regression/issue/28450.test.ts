@@ -78,6 +78,7 @@ server.listen(0, () => {
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+  expect(stderr.replace(/WARNING:.*\n/g, "")).toBe("");
   expect(stdout).toContain("STATUS:101");
   expect(stdout).toContain("UPGRADE:websocket");
   expect(stdout).toContain("ECHO:hello");
@@ -156,6 +157,7 @@ server.listen(0, () => {
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+  expect(stderr.replace(/WARNING:.*\n/g, "")).toBe("");
   const results = JSON.parse(stdout.trim());
   expect(results).toEqual({
     statusCode: 101,
@@ -229,6 +231,7 @@ server.listen(0, () => {
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+  expect(stderr.replace(/WARNING:.*\n/g, "")).toBe("");
   expect(stdout).toContain("RESPONSE:400");
   expect(stdout).toContain("BODY:Bad Request");
   expect(stdout).not.toContain("UNEXPECTED_UPGRADE");

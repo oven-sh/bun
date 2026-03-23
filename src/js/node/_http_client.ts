@@ -252,6 +252,7 @@ function doUpgradeRequest(
         abortSignal?.removeEventListener("abort", onAbortSocket);
         socket.removeListener("error", onSocketError);
         socket.removeListener("close", onSocketClose);
+        socket.removeListener("close", onAbortCleanup);
 
         const eventName = method === "CONNECT" ? "connect" : "upgrade";
         process.nextTick(() => {
@@ -367,11 +368,12 @@ function doUpgradeRequest(
     const onAbortSocket = () => {
       socket.destroy();
     };
+    const onAbortCleanup = () => {
+      abortSignal?.removeEventListener("abort", onAbortSocket);
+    };
     if (abortSignal) {
       abortSignal.addEventListener("abort", onAbortSocket, { once: true });
-      socket.on("close", () => {
-        abortSignal.removeEventListener("abort", onAbortSocket);
-      });
+      socket.on("close", onAbortCleanup);
     }
   });
 }
@@ -535,6 +537,7 @@ function ClientRequest(input, options, cb) {
   };
 
   const socketCloseListener = () => {
+    if (this[kUpgradeOrConnect]) return;
     this.destroyed = true;
 
     const res = this.res;

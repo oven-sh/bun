@@ -60,7 +60,7 @@ const builtinModules = [
   "wasi",
   "worker_threads",
   "zlib",
-  "node:test",
+  "test",
 ];
 
 const REPL_MODE_SLOPPY = Symbol("repl-sloppy");
@@ -157,6 +157,7 @@ const defaultCommands: Record<
         this.context = vm.createContext(globalThis);
         this.emit("reset", this.context);
       }
+      this.setPrompt(this._initialPrompt);
       this.displayPrompt();
     },
   },

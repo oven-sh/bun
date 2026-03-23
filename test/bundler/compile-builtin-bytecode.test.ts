@@ -36,14 +36,13 @@ describe("compile --bytecode builtin modules", () => {
 
     const outfile = join(String(dir), isWindows ? "app.exe" : "app");
 
-    // Build
     await using buildProc = Bun.spawn({
       cmd: [bunExe(), "build", "--compile", "--bytecode", join(String(dir), "app.js"), "--outfile", outfile],
       env: bunEnv,
       stderr: "pipe",
       stdout: "pipe",
     });
-    const [buildStdout, buildStderr, buildExit] = await Promise.all([
+    const [, buildStderr, buildExit] = await Promise.all([
       buildProc.stdout.text(),
       buildProc.stderr.text(),
       buildProc.exited,
@@ -51,7 +50,6 @@ describe("compile --bytecode builtin modules", () => {
     expect(buildStderr).not.toContain("error");
     expect(buildExit).toBe(0);
 
-    // Run the compiled executable
     await using runProc = Bun.spawn({
       cmd: [outfile],
       env: bunEnv,

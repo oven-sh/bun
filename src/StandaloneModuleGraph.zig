@@ -330,9 +330,17 @@ pub const StandaloneModuleGraph = struct {
     /// function like ReadableStream constructor), embedded when building with
     /// --compile --bytecode so parsing can be skipped at runtime.
     pub const BuiltinBytecodeEntry = extern struct {
-        kind: u32,
+        kind: BuiltinBytecodeKind,
         id: u32,
         bytecode: bun.StringPointer,
+    };
+
+    /// Mirrors JSC enum values. Keep in sync with ConstructAbility.h etc.
+    pub const BuiltinMetadata = struct {
+        pub const visibility_public: u8 = 0; // ImplementationVisibility::Public
+        pub const ctor_kind_none: u8 = 0; // ConstructorKind::None
+        pub const ctor_ability_cannot: u8 = 1; // ConstructAbility::CannotConstruct
+        pub const inline_attr_none: u8 = 0; // InlineAttribute::None
     };
 
     /// Build-time input for toBytes.
@@ -344,9 +352,8 @@ pub const StandaloneModuleGraph = struct {
     };
 
     pub fn findBuiltinBytecode(this: *const StandaloneModuleGraph, kind: BuiltinBytecodeKind, id: u32) ?[]const u8 {
-        const k = @intFromEnum(kind);
         for (this.builtin_bytecode) |entry| {
-            if (entry.kind == k and entry.id == id) {
+            if (entry.kind == kind and entry.id == id) {
                 return sliceTo(this.bytes, entry.bytecode);
             }
         }
@@ -384,9 +391,14 @@ pub const StandaloneModuleGraph = struct {
                 // BuiltinExecutables::createExecutable requires "(function (){})" minimum.
                 if (len < "(function (){})".len) continue;
                 var name = bun.String.borrowUTF8(bun.sliceTo(name_ptr.?, 0));
-                // ImplementationVisibility::Public=0, ConstructorKind::None=0,
-                // ConstructAbility::CannotConstruct=1, InlineAttribute::None=0
-                if (jsc.CachedBytecode.generateForBuiltin(&name, src_ptr[0..len], 0, 0, 1, 0)) |res| {
+                if (jsc.CachedBytecode.generateForBuiltin(
+                    &name,
+                    src_ptr[0..len],
+                    BuiltinMetadata.visibility_public,
+                    BuiltinMetadata.ctor_kind_none,
+                    BuiltinMetadata.ctor_ability_cannot,
+                    BuiltinMetadata.inline_attr_none,
+                )) |res| {
                     const bytecode, const owner = res;
                     list.appendAssumeCapacity(.{ .kind = .internal_module, .id = id, .bytecode = bytecode, .owner = owner });
                 }
@@ -488,6 +500,25 @@ pub const StandaloneModuleGraph = struct {
         if (ptr.length == 0) return "";
 
         return bytes[ptr.offset..][0..ptr.length :0];
+    }
+
+    /// Write bytes at a 128-byte-aligned offset within the string_builder,
+    /// accounting for the 8-byte section header on PE/Mach-O. Returns the
+    /// offset where the bytes were written. See the PLATFORM-SPECIFIC
+    /// ALIGNMENT comment in toBytes for rationale.
+    fn appendBytecodeAligned(string_builder: *bun.StringBuilder, bytes: []const u8) usize {
+        const target_mod: usize = 128 - @sizeOf(u64);
+        const current_mod = string_builder.len % 128;
+        const padding = if (current_mod <= target_mod)
+            target_mod - current_mod
+        else
+            128 - current_mod + target_mod;
+        @memset(string_builder.writable()[0..padding], 0);
+        string_builder.len += padding;
+        const aligned_offset = string_builder.len;
+        @memcpy(string_builder.writable()[0..bytes.len], bytes);
+        string_builder.len += bytes.len;
+        return aligned_offset;
     }
 
     pub fn toBytes(allocator: std.mem.Allocator, prefix: []const u8, output_files: []const bun.options.OutputFile, output_format: bun.options.Format, compile_exec_argv: []const u8, flags: Flags, builtin_bytecodes: []const BuiltinBytecodeInput) ![]u8 {
@@ -696,28 +727,12 @@ pub const StandaloneModuleGraph = struct {
             modules.appendAssumeCapacity(module);
         }
 
-        // Serialize builtin bytecode (--compile --bytecode only). Same alignment
-        // constraints as user-code bytecode above: target_mod=120 accounts for
-        // the 8-byte section header on PE/Mach-O.
         const builtin_entries = try allocator.alloc(BuiltinBytecodeEntry, builtin_bytecodes.len);
         defer allocator.free(builtin_entries);
         for (builtin_bytecodes, builtin_entries) |input, *entry| {
-            const current_offset = string_builder.len;
-            const target_mod: usize = 128 - @sizeOf(u64);
-            const current_mod = current_offset % 128;
-            const padding = if (current_mod <= target_mod)
-                target_mod - current_mod
-            else
-                128 - current_mod + target_mod;
-            const writable = string_builder.writable();
-            @memset(writable[0..padding], 0);
-            string_builder.len += padding;
-            const aligned_offset = string_builder.len;
-            const writable_after_padding = string_builder.writable();
-            @memcpy(writable_after_padding[0..input.bytecode.len], input.bytecode);
-            string_builder.len += input.bytecode.len;
+            const aligned_offset = appendBytecodeAligned(&string_builder, input.bytecode);
             entry.* = .{
-                .kind = @intFromEnum(input.kind),
+                .kind = input.kind,
                 .id = input.id,
                 .bytecode = .{ .offset = @truncate(aligned_offset), .length = @truncate(input.bytecode.len) },
             };

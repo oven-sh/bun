@@ -625,12 +625,6 @@ describe("@types/bun integration test", () => {
             "Argument of type '{ headers: { \"x-bun\": string; }; }' is not assignable to parameter of type 'number'.",
         },
         {
-          code: 2403,
-          line: "node_modules/bun-types/wasm.d.ts:142:7",
-          message:
-            "Subsequent variable declarations must have the same type.  Variable 'Instance' must be of type '{ new (module: Module, importObject?: Imports | undefined): Instance; prototype: Instance; }', but here has type '{ new (module: Module, importObject?: Imports | undefined): Instance; prototype: Instance; }'.",
-        },
-        {
           code: 2339,
           line: "spawn.ts:62:38",
           message: "Property 'text' does not exist on type 'ReadableStream<Uint8Array<ArrayBuffer>>'.",

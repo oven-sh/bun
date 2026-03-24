@@ -266,7 +266,9 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
                             };
                         }
 
-                        if (rc == .NO_MORE_FILES) {
+                        // NO_SUCH_FILE is returned on the first call when a FileName filter
+                        // matches nothing; NO_MORE_FILES on subsequent calls. Both mean "done".
+                        if (rc == .NO_MORE_FILES or rc == .NO_SUCH_FILE) {
                             bun.sys.syslog("NtQueryDirectoryFile({f}) = {s}", .{ self.dir, @tagName(rc) });
                             self.end_index = self.index;
                             return .{ .result = null };

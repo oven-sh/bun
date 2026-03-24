@@ -714,11 +714,13 @@ pub const OutdatedCommand = struct {
                     has_any_url = true;
                 }
 
-                // Construct a display URL
+                // Construct a display URL from the normalized repository URL.
+                // Three forms: full URL (has scheme), domain/path (dot before first /), or shorthand (user/repo).
                 if (strings.hasPrefixComptime(repo_url, "https://") or strings.hasPrefixComptime(repo_url, "http://")) {
                     Output.prettyln("  <cyan>{s}<r> <d>{s}<r>", .{ package_name, repo_url });
+                } else if (hasDomainPrefix(repo_url)) {
+                    Output.prettyln("  <cyan>{s}<r> <d>https://{s}<r>", .{ package_name, repo_url });
                 } else if (strings.contains(repo_url, "/")) {
-                    // GitHub shorthand (user/repo)
                     Output.prettyln("  <cyan>{s}<r> <d>https://github.com/{s}<r>", .{ package_name, repo_url });
                 } else {
                     Output.prettyln("  <cyan>{s}<r> <d>{s}<r>", .{ package_name, repo_url });
@@ -727,6 +729,16 @@ pub const OutdatedCommand = struct {
         }
     }
 };
+
+/// Returns true if the string starts with a domain name (contains a dot before the first slash).
+/// Used to distinguish "github.com/user/repo" from "user/repo" shorthand.
+fn hasDomainPrefix(s: []const u8) bool {
+    for (s) |c| {
+        if (c == '/') return false; // slash before any dot — shorthand
+        if (c == '.') return true; // dot before slash — domain
+    }
+    return false;
+}
 
 const string = []const u8;
 

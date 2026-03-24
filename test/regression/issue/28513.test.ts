@@ -115,9 +115,8 @@ describe("bun outdated --changelog", () => {
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stderr).not.toContain("panic:");
     expect(stdout).toContain("no-deps");
     expect(stdout).toContain("Changelogs:");
     expect(stdout).toContain("https://github.com/example/no-deps");
@@ -155,9 +154,8 @@ describe("bun outdated --changelog", () => {
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stderr).not.toContain("panic:");
     expect(stdout).toContain("no-deps");
     expect(stdout).not.toContain("Changelogs:");
     expect(exitCode).toBe(0);

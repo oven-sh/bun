@@ -379,6 +379,18 @@ it("works on classes", () => {
   expect(123)._toBeBar();
 });
 
+it("throws for non-function matchers", () => {
+  expect(() => expect.extend({ not: {} })).toThrow(
+    'expect.extend: `not` is not a valid matcher. Must be a function, is "object"',
+  );
+  expect(() => expect.extend({ toBeBad: null })).toThrow(
+    'expect.extend: `toBeBad` is not a valid matcher. Must be a function, is "null"',
+  );
+  expect(() => expect.extend({ toBeBad: 42 })).toThrow(
+    'expect.extend: `toBeBad` is not a valid matcher. Must be a function, is "number"',
+  );
+});
+
 describe("MatcherContext", () => {
   describe("utils", () => {
     test("RECEIVED_COLOR is a function", () => {

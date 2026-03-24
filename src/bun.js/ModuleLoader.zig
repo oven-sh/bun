@@ -936,6 +936,7 @@ pub export fn Bun__transpileFile(
     }
 
     const module_type: options.ModuleType = brk: {
+        if (lr.path.isDataURL()) break :brk .unknown;
         const ext = lr.path.name.ext;
         // regular expression /.[cm][jt]s$/
         if (ext.len == ".cjs".len) {

@@ -1127,7 +1127,7 @@ pub fn getLoaderAndVirtualSource(
         }
     }
 
-    if (strings.eqlComptime(query, "?raw")) {
+    if (virtual_source == null and strings.eqlComptime(query, "?raw")) {
         loader = .text;
     }
     if (type_attribute_str) |attr_str| if (bun.options.Loader.fromString(attr_str)) |attr_loader| {

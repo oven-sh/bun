@@ -1571,7 +1571,14 @@ pub fn fetchWithoutOnLoadPlugins(
     var blob_to_deinit: ?jsc.WebCore.Blob = null;
     var data_url_body_to_free: ?[]const u8 = null;
     defer if (blob_to_deinit) |*blob| blob.deinit();
-    defer if (data_url_body_to_free) |body| jsc_vm.allocator.free(body);
+    // For .print_source, the returned source_code borrows from body;
+    // only free on error so the caller can use it.
+    defer if (comptime flags != .print_source) {
+        if (data_url_body_to_free) |body| jsc_vm.allocator.free(body);
+    };
+    errdefer if (comptime flags == .print_source) {
+        if (data_url_body_to_free) |body| jsc_vm.allocator.free(body);
+    };
     const lr = options.getLoaderAndVirtualSource(specifier_clone.slice(), jsc_vm, &virtual_source_to_use, &blob_to_deinit, &data_url_body_to_free, null) catch {
         return error.ModuleNotFound;
     };

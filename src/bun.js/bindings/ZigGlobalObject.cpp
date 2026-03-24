@@ -3267,6 +3267,31 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* j
         if (withObject) {
             if (withObject.isObject()) {
                 auto* with = jsCast<JSObject*>(withObject);
+
+                // Validate that no unsupported import attributes are present.
+                // Only enumerable own string-keyed properties are treated as
+                // import attributes per the TC39 import attributes proposal.
+                // Only "type" is supported for dynamic imports.
+                PropertyNameArrayBuilder keys(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+                with->getOwnPropertyNames(with, globalObject, keys, DontEnumPropertiesMode::Exclude);
+                RETURN_IF_EXCEPTION(scope, {});
+
+                for (size_t i = 0; i < keys.size(); i++) {
+                    auto key = keys[i];
+                    if (key != vm.propertyNames->type) {
+                        auto value = with->get(globalObject, key);
+                        RETURN_IF_EXCEPTION(scope, {});
+                        auto keyString = key.string();
+                        auto valueString = value.toWTFString(globalObject);
+                        RETURN_IF_EXCEPTION(scope, {});
+                        auto* promise = JSC::JSInternalPromise::create(vm, globalObject->internalPromiseStructure());
+                        promise->rejectAsHandled(vm, globalObject,
+                            Bun::createError(globalObject, Bun::ErrorCode::ERR_IMPORT_ATTRIBUTE_UNSUPPORTED,
+                                makeString("Import attribute \""_s, keyString, "\" with value \""_s, valueString, "\" is not supported"_s)));
+                        return promise;
+                    }
+                }
+
                 auto type = with->getIfPropertyExists(globalObject, vm.propertyNames->type);
                 RETURN_IF_EXCEPTION(scope, {});
                 if (type) {

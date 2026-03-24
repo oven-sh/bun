@@ -1,4 +1,4 @@
-import { expect, mock, test } from "bun:test";
+import { mock, test } from "bun:test";
 
 // Regression test: mock.module() with a non-existent specifier must not crash
 // when module resolution triggers auto-install and the package manager uses

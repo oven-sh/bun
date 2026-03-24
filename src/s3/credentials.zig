@@ -318,6 +318,9 @@ pub const S3Credentials = struct {
                                     .field_name = "previousParts[].partNumber",
                                 });
                             }
+                            if (pn >= new_credentials.part_number) {
+                                return globalObject.throwInvalidArguments("each previousParts entry must have a partNumber less than partNumber", .{});
+                            }
                             const etag_js = (try item.getTruthyComptime(globalObject, "etag")) orelse {
                                 return globalObject.throwInvalidArguments("each element in previousParts must have an etag", .{});
                             };
@@ -341,9 +344,9 @@ pub const S3Credentials = struct {
                 if (new_credentials.part_number > 1 and new_credentials.upload_id == null) {
                     return globalObject.throwInvalidArguments("partNumber > 1 requires uploadId to resume an existing multipart upload", .{});
                 }
-                // Validation: previousParts requires uploadId
-                if (new_credentials.previous_parts.items.len > 0 and new_credentials.upload_id == null) {
-                    return globalObject.throwInvalidArguments("previousParts requires uploadId to resume an existing multipart upload", .{});
+                // Validation: partNumber > 1 requires previousParts so CompleteMultipartUpload includes earlier parts
+                if (new_credentials.part_number > 1 and new_credentials.previous_parts.items.len == 0) {
+                    return globalObject.throwInvalidArguments("partNumber > 1 requires previousParts so CompleteMultipartUpload includes the already uploaded parts", .{});
                 }
             }
         }

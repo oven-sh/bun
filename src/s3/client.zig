@@ -334,6 +334,7 @@ pub fn writableStream(
         task.uploadid_buffer = .{ .allocator = bun.default_allocator, .list = .{ .items = duped, .capacity = duped.len } };
         task.upload_id = duped;
         task.state = .multipart_completed;
+        task.is_resumed = true;
         task.currentPartNumber = resume_part_number;
 
         for (resume_previous_parts) |part| {
@@ -535,6 +536,7 @@ pub fn uploadStream(
         @memcpy(duped, id);
         task.uploadid_buffer = .{ .allocator = bun.default_allocator, .list = .{ .items = duped, .capacity = duped.len } };
         task.upload_id = duped;
+        task.is_resumed = true;
         task.currentPartNumber = resume_part_number;
 
         for (resume_previous_parts) |part| {

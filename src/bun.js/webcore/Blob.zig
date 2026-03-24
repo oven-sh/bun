@@ -1106,7 +1106,7 @@ pub fn writeFileWithSourceDestination(ctx: *jsc.JSGlobalObject, source_blob: *Bl
         const proxy_url = if (proxy) |p| p.href else null;
         switch (source_store.data) {
             .bytes => |bytes| {
-                if (bytes.len > S3.MultiPartUploadOptions.MAX_SINGLE_UPLOAD_SIZE) {
+                if (aws_options.upload_id != null or bytes.len > S3.MultiPartUploadOptions.MAX_SINGLE_UPLOAD_SIZE) {
                     if (try jsc.WebCore.ReadableStream.fromJS(try jsc.WebCore.ReadableStream.fromBlobCopyRef(
                         ctx,
                         source_blob,
@@ -1127,9 +1127,9 @@ pub fn writeFileWithSourceDestination(ctx: *jsc.JSGlobalObject, source_blob: *Bl
                             aws_options.request_payer,
                             null,
                             undefined,
-                            null,
-                            1,
-                            &.{},
+                            aws_options.upload_id,
+                            aws_options.part_number,
+                            aws_options.previous_parts.items,
                         );
                     } else {
                         return jsc.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(ctx, ctx.createErrorInstance("Failed to stream bytes to s3 bucket", .{}));
@@ -1203,9 +1203,9 @@ pub fn writeFileWithSourceDestination(ctx: *jsc.JSGlobalObject, source_blob: *Bl
                         aws_options.request_payer,
                         null,
                         undefined,
-                        null,
-                        1,
-                        &.{},
+                        aws_options.upload_id,
+                        aws_options.part_number,
+                        aws_options.previous_parts.items,
                     );
                 } else {
                     return jsc.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(ctx, ctx.createErrorInstance("Failed to stream bytes to s3 bucket", .{}));
@@ -1414,9 +1414,9 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
                                 aws_options.request_payer,
                                 null,
                                 undefined,
-                                null,
-                                1,
-                                &.{},
+                                aws_options.upload_id,
+                                aws_options.part_number,
+                                aws_options.previous_parts.items,
                             );
                         }
                         destination_blob.detach();
@@ -1480,9 +1480,9 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
                                 aws_options.request_payer,
                                 null,
                                 undefined,
-                                null,
-                                1,
-                                &.{},
+                                aws_options.upload_id,
+                                aws_options.part_number,
+                                aws_options.previous_parts.items,
                             );
                         }
                         destination_blob.detach();
@@ -2462,9 +2462,9 @@ pub fn pipeReadableStreamToBlob(this: *Blob, globalThis: *jsc.JSGlobalObject, re
             aws_options.request_payer,
             null,
             undefined,
-            null,
-            1,
-            &.{},
+            aws_options.upload_id,
+            aws_options.part_number,
+            aws_options.previous_parts.items,
         );
     }
 

@@ -101,6 +101,8 @@ pub const MultiPartUpload = struct {
     currentPartNumber: u16 = 1,
     ref_count: RefCount,
     ended: bool = false,
+    /// true when upload_id was provided by the user (resume mode) — skip rollback on failure
+    is_resumed: bool = false,
 
     options: MultiPartUploadOptions = .{},
     acl: ?ACL = null,
@@ -437,7 +439,7 @@ pub const MultiPartUpload = struct {
             this.state = .finished;
             try this.callback(.{ .failure = _err }, this.callback_context);
 
-            if (old_state == .multipart_completed) {
+            if (old_state == .multipart_completed and !this.is_resumed) {
                 // we are a multipart upload so we need to rollback
                 // will deref after rollback
                 try this.rollbackMultiPartRequest();

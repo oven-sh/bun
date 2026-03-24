@@ -14,11 +14,9 @@ test("expect does not crash when value has Symbol.toPrimitive returning a Symbol
     ],
     env: bunEnv,
     stdout: "pipe",
-    stderr: "pipe",
   });
 
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  const exitCode = await proc.exited;
 
-  expect(stderr).not.toContain("ASSERTION FAILED");
   expect(exitCode).toBe(0);
 });

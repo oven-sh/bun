@@ -343,22 +343,22 @@ describe("@types/bun integration test", () => {
       emptyInterfaces: expectedEmptyInterfacesWhenNoDOM,
       diagnostics: [
         {
-          "code": 2582,
+          "code": 2593,
           "line": "my-test.test.ts:2:48",
           "message":
-            "Cannot find name 'test'. Do you need to install type definitions for a test runner? Try \`npm i --save-dev @types/jest\` or \`npm i --save-dev @types/mocha\`.",
+            "Cannot find name 'test'. Do you need to install type definitions for a test runner? Try \`npm i --save-dev @types/jest\` or \`npm i --save-dev @types/mocha\` and then add 'jest' or 'mocha' to the types field in your tsconfig.",
         },
         {
-          "code": 2582,
+          "code": 2593,
           "line": "my-test.test.ts:3:46",
           "message":
-            "Cannot find name 'it'. Do you need to install type definitions for a test runner? Try \`npm i --save-dev @types/jest\` or \`npm i --save-dev @types/mocha\`.",
+            "Cannot find name 'it'. Do you need to install type definitions for a test runner? Try \`npm i --save-dev @types/jest\` or \`npm i --save-dev @types/mocha\` and then add 'jest' or 'mocha' to the types field in your tsconfig.",
         },
         {
-          "code": 2582,
+          "code": 2593,
           "line": "my-test.test.ts:4:52",
           "message":
-            "Cannot find name 'describe'. Do you need to install type definitions for a test runner? Try \`npm i --save-dev @types/jest\` or \`npm i --save-dev @types/mocha\`.",
+            "Cannot find name 'describe'. Do you need to install type definitions for a test runner? Try \`npm i --save-dev @types/jest\` or \`npm i --save-dev @types/mocha\` and then add 'jest' or 'mocha' to the types field in your tsconfig.",
         },
         {
           "code": 2304,
@@ -371,9 +371,10 @@ describe("@types/bun integration test", () => {
           "message": "Cannot find name 'beforeAll'.",
         },
         {
-          "code": 2304,
+          "code": 2593,
           "line": "my-test.test.ts:7:54",
-          "message": "Cannot find name 'beforeEach'.",
+          "message":
+            "Cannot find name 'beforeEach'. Do you need to install type definitions for a test runner? Try \`npm i --save-dev @types/jest\` or \`npm i --save-dev @types/mocha\` and then add 'jest' or 'mocha' to the types field in your tsconfig.",
         },
         {
           "code": 2304,
@@ -537,9 +538,11 @@ describe("@types/bun integration test", () => {
       },
       emptyInterfaces: new Set([
         "ThisType",
+        "GPUExternalTextureBindingLayout",
         "RTCAnswerOptions",
         "RTCOfferAnswerOptions",
         "RTCSetParameterOptions",
+        "ReportBody",
         "EXT_color_buffer_float",
         "EXT_float_blend",
         "EXT_frag_depth",
@@ -620,6 +623,24 @@ describe("@types/bun integration test", () => {
           line: "index.ts:322:29",
           message:
             "Argument of type '{ headers: { \"x-bun\": string; }; }' is not assignable to parameter of type 'number'.",
+        },
+        {
+          code: 2403,
+          line: "node_modules/bun-types/wasm.d.ts:142:7",
+          message:
+            "Subsequent variable declarations must have the same type.  Variable 'Instance' must be of type '{ new (module: Module, importObject?: Imports | undefined): Instance; prototype: Instance; }', but here has type '{ new (module: Module, importObject?: Imports | undefined): Instance; prototype: Instance; }'.",
+        },
+        {
+          code: 2430,
+          line: "node_modules/typescript/lib/lib.dom.d.ts:42714:15",
+          message:
+            "Interface 'WebAssembly.ModuleExportDescriptor' incorrectly extends interface 'Bun.WebAssembly.ModuleExportDescriptor'.\nTypes of property 'kind' are incompatible.\nType 'WebAssembly.ImportExportKind' is not assignable to type 'Bun.WebAssembly.ImportExportKind'.\nType '\"tag\"' is not assignable to type 'ImportExportKind'.",
+        },
+        {
+          code: 2430,
+          line: "node_modules/typescript/lib/lib.dom.d.ts:42719:15",
+          message:
+            "Interface 'WebAssembly.ModuleImportDescriptor' incorrectly extends interface 'Bun.WebAssembly.ModuleImportDescriptor'.\nTypes of property 'kind' are incompatible.\nType 'WebAssembly.ImportExportKind' is not assignable to type 'Bun.WebAssembly.ImportExportKind'.\nType '\"tag\"' is not assignable to type 'ImportExportKind'.",
         },
         {
           code: 2339,
@@ -710,11 +731,6 @@ describe("@types/bun integration test", () => {
           line: "websocket.ts:51:5",
           message:
             "Object literal may only specify known properties, and 'protocols' does not exist in type 'string[]'.",
-        },
-        {
-          code: 2554,
-          line: "websocket.ts:185:29",
-          message: "Expected 2 arguments, but got 0.",
         },
         {
           code: 2551,

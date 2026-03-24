@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 
 test("calling bytes() on body stream after Response.bytes() detaches the store should not crash", async () => {
   const response = new Response("hello");

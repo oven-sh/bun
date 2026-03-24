@@ -267,5 +267,5 @@ This means:
 JSON5 files can be dynamically imported:
 
 ```ts
-const config = await import("./config.json5");
+const { default: config } = await import("./config.json5");
 ```

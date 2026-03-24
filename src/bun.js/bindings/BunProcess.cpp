@@ -1152,7 +1152,8 @@ void signalHandler(uv_signal_t* signal, int signalNumber)
     auto* context = ScriptExecutionContext::getMainThreadScriptExecutionContext();
     if (!context) [[unlikely]]
         return;
-    // signal handlers can be run on any thread
+    // uv_signal_t callbacks fire on the uv_run thread (JS thread), but defer to avoid
+    // re-entering JS from inside the libuv poll loop
     context->postTaskConcurrently([signalNumber](ScriptExecutionContext& context) {
         Bun__onSignalForJS(signalNumber, jsCast<Zig::GlobalObject*>(context.jsGlobalObject()));
     });
@@ -1507,7 +1508,7 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
                         signalToContextIdsMap->set(signalNumber, signal_handle);
                     }
                 } else {
-                    if (signalToContextIdsMap->find(signalNumber) != signalToContextIdsMap->end()) {
+                    if (signalToContextIdsMap->find(signalNumber) != signalToContextIdsMap->end() && eventEmitter.listenerCount(eventName) == 0) {
 
 #if !OS(WINDOWS)
                         if (void (*oldHandler)(int) = signal(signalNumber, SIG_DFL); oldHandler != forwardSignal) {

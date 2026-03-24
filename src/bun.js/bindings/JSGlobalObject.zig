@@ -27,6 +27,28 @@ pub const JSGlobalObject = opaque {
         return bun.cpp.Bun__gregorianDateTimeToMS(this, year, month, day, hour, minute, second, millisecond);
     }
 
+    pub fn gregorianDateTimeToMSUTC(this: *jsc.JSGlobalObject, year: i32, month: i32, day: i32, hour: i32, minute: i32, second: i32, millisecond: i32) bun.JSError!f64 {
+        jsc.markBinding(@src());
+        return bun.cpp.Bun__gregorianDateTimeToMSUTC(this, year, month, day, hour, minute, second, millisecond);
+    }
+
+    pub const GregorianDateTime = struct {
+        year: i32,
+        month: i32,
+        day: i32,
+        hour: i32,
+        minute: i32,
+        second: i32,
+        weekday: i32,
+    };
+
+    pub fn msToGregorianDateTimeUTC(this: *jsc.JSGlobalObject, ms: f64) GregorianDateTime {
+        jsc.markBinding(@src());
+        var dt: GregorianDateTime = undefined;
+        bun.cpp.Bun__msToGregorianDateTimeUTC(this, ms, &dt.year, &dt.month, &dt.day, &dt.hour, &dt.minute, &dt.second, &dt.weekday);
+        return dt;
+    }
+
     pub fn throwTODO(this: *JSGlobalObject, msg: []const u8) bun.JSError {
         const err = this.createErrorInstance("{s}", .{msg});
         err.put(this, ZigString.static("name"), (bun.String.static("TODOError").toJS(this)) catch return error.JSError);
@@ -264,9 +286,12 @@ pub const JSGlobalObject = opaque {
             var buf = std.Io.Writer.Allocating.initCapacity(stack_fallback.get(), 2048) catch unreachable;
             defer buf.deinit();
             var writer = &buf.writer;
-            writer.print(fmt, args) catch
-                // if an exception occurs in the middle of formatting the error message, it's better to just return the formatting string than an error about an error
+            writer.print(fmt, args) catch {
+                // if an exception occurs in the middle of formatting the error message, it's better to just return the formatting string than an error about an error.
+                // Clear any pending JS exception (e.g. from Symbol.toPrimitive) so that throwValue doesn't hit assertNoException.
+                _ = this.clearExceptionExceptTermination();
                 return ZigString.static(fmt).toErrorInstance(this);
+            };
 
             // Ensure we clone it.
             var str = ZigString.initUTF8(buf.written());
@@ -287,7 +312,10 @@ pub const JSGlobalObject = opaque {
             var buf = bun.MutableString.init2048(stack_fallback.get()) catch unreachable;
             defer buf.deinit();
             var writer = buf.writer();
-            writer.print(fmt, args) catch return ZigString.static(fmt).toErrorInstance(this);
+            writer.print(fmt, args) catch {
+                _ = this.clearExceptionExceptTermination();
+                return ZigString.static(fmt).toTypeErrorInstance(this);
+            };
             var str = ZigString.fromUTF8(buf.slice());
             return str.toTypeErrorInstance(this);
         } else {
@@ -315,7 +343,10 @@ pub const JSGlobalObject = opaque {
             var buf = bun.MutableString.init2048(stack_fallback.get()) catch unreachable;
             defer buf.deinit();
             var writer = buf.writer();
-            writer.print(fmt, args) catch return ZigString.static(fmt).toErrorInstance(this);
+            writer.print(fmt, args) catch {
+                _ = this.clearExceptionExceptTermination();
+                return ZigString.static(fmt).toSyntaxErrorInstance(this);
+            };
             var str = ZigString.fromUTF8(buf.slice());
             return str.toSyntaxErrorInstance(this);
         } else {
@@ -329,7 +360,10 @@ pub const JSGlobalObject = opaque {
             var buf = bun.MutableString.init2048(stack_fallback.get()) catch unreachable;
             defer buf.deinit();
             var writer = buf.writer();
-            writer.print(fmt, args) catch return ZigString.static(fmt).toErrorInstance(this);
+            writer.print(fmt, args) catch {
+                _ = this.clearExceptionExceptTermination();
+                return ZigString.static(fmt).toRangeErrorInstance(this);
+            };
             var str = ZigString.fromUTF8(buf.slice());
             return str.toRangeErrorInstance(this);
         } else {

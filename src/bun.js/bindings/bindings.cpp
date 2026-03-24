@@ -1542,7 +1542,7 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
         break;
     }
     // globalThis is only equal to globalThis
-    // NOTE: Zig::GlobalObject is tagged as GlobalProxyType
+    // NOTE: globalThis from JS is a JSGlobalProxy (GlobalProxyType) wrapping Zig::GlobalObject (GlobalObjectType)
     case GlobalObjectType: {
         if (c1Type != c2Type) return false;
         auto* g1 = jsDynamicCast<JSC::JSGlobalObject*, JSCell>(c1);
@@ -3424,12 +3424,12 @@ void JSC__AnyPromise__wrap(JSC::JSGlobalObject* globalObject, EncodedJSValue enc
     }
 
     if (auto* promise = jsDynamicCast<JSC::JSPromise*>(promiseValue)) {
-        promise->resolve(globalObject, result);
+        promise->resolve(globalObject, vm, result);
         RETURN_IF_EXCEPTION(scope, );
         return;
     }
     if (auto* promise = jsDynamicCast<JSC::JSInternalPromise*>(promiseValue)) {
-        promise->resolve(globalObject, result);
+        promise->resolve(globalObject, vm, result);
         RETURN_IF_EXCEPTION(scope, );
         return;
     }
@@ -3509,7 +3509,7 @@ JSC::JSPromise* JSC__JSPromise__rejectedPromise(JSC::JSGlobalObject* arg0, JSC::
     ASSERT_WITH_MESSAGE(arg0 != target, "Promise cannot be resolved to itself");
 
     // Note: the Promise can be another promise. Since we go through the generic promise resolve codepath.
-    arg0->resolve(arg1, JSC::JSValue::decode(JSValue2));
+    arg0->resolve(arg1, arg1->vm(), JSC::JSValue::decode(JSValue2));
 }
 
 // This implementation closely mimics the one in JSC::JSPromise::resolve
@@ -3671,7 +3671,7 @@ JSC::JSInternalPromise* JSC__JSInternalPromise__rejectedPromise(JSC::JSGlobalObj
 [[ZIG_EXPORT(check_slow)]]
 void JSC__JSInternalPromise__resolve(JSC::JSInternalPromise* arg0, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2)
 {
-    arg0->resolve(arg1, JSC::JSValue::decode(JSValue2));
+    arg0->resolve(arg1, arg1->vm(), JSC::JSValue::decode(JSValue2));
 }
 
 JSC::JSInternalPromise* JSC__JSInternalPromise__resolvedPromise(JSC::JSGlobalObject* arg0,
@@ -5644,6 +5644,34 @@ extern "C" [[ZIG_EXPORT(check_slow)]] double Bun__gregorianDateTimeToMS(JSC::JSG
     dateTime.setMinute(minute);
     dateTime.setSecond(second);
     return vm.dateCache.gregorianDateTimeToMS(dateTime, millisecond, WTF::TimeType::LocalTime);
+}
+
+extern "C" [[ZIG_EXPORT(check_slow)]] double Bun__gregorianDateTimeToMSUTC(JSC::JSGlobalObject* globalObject, int year, int month, int day, int hour, int minute, int second, int millisecond)
+{
+    auto& vm = JSC::getVM(globalObject);
+    WTF::GregorianDateTime dateTime;
+    dateTime.setYear(year);
+    dateTime.setMonth(month - 1);
+    dateTime.setMonthDay(day);
+    dateTime.setHour(hour);
+    dateTime.setMinute(minute);
+    dateTime.setSecond(second);
+    return vm.dateCache.gregorianDateTimeToMS(dateTime, millisecond, WTF::TimeType::UTCTime);
+}
+
+extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__msToGregorianDateTimeUTC(JSC::JSGlobalObject* globalObject, double ms,
+    int* year, int* month, int* day, int* hour, int* minute, int* second, int* weekday)
+{
+    auto& vm = JSC::getVM(globalObject);
+    WTF::GregorianDateTime dt;
+    vm.dateCache.msToGregorianDateTime(ms, WTF::TimeType::UTCTime, dt);
+    *year = dt.year();
+    *month = dt.month() + 1;
+    *day = dt.monthDay();
+    *hour = dt.hour();
+    *minute = dt.minute();
+    *second = dt.second();
+    *weekday = dt.weekDay();
 }
 
 extern "C" EncodedJSValue JSC__JSValue__dateInstanceFromNumber(JSC::JSGlobalObject* globalObject, double unixTimestamp)

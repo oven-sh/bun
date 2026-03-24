@@ -817,6 +817,7 @@ export class Client extends EventEmitter {
     this.#proc = proc;
     this.hmr = options.hmr;
     this.output = new OutputLineStream("web", proc.stdout, proc.stderr);
+    proc.exited.then(exitCode => (this.output.exitCode = exitCode));
   }
 
   hardReload(options: { errors?: ErrorSpec[] } = {}) {

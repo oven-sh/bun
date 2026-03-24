@@ -6,6 +6,8 @@ const HTTPThread = @This();
 const SslContextCacheEntry = struct {
     ctx: *NewHTTPContext(true),
     last_used_ns: u64,
+    /// Strong ref held by the cache entry (released on eviction).
+    config_ref: SSLConfig.SharedPtr,
 };
 const ssl_context_cache_max_size = 60;
 const ssl_context_cache_ttl_ns = 30 * std.time.ns_per_min;
@@ -49,10 +51,10 @@ pub const HeapRequestBodyBuffer = struct {
 
     pub fn put(this: *@This()) void {
         if (bun.http.http_thread.lazy_request_body_buffer == null) {
-            // This case hypothetically should never happen
             this.fixed_buffer_allocator.reset();
             bun.http.http_thread.lazy_request_body_buffer = this;
         } else {
+            // This case hypothetically should never happen
             this.deinit();
         }
     }
@@ -232,10 +234,10 @@ pub fn connect(this: *@This(), client: *HTTPClient, comptime is_ssl: bool) !NewH
         return try this.context(is_ssl).connectSocket(client, client.unix_socket_path.slice());
     }
 
-    if (comptime is_ssl) {
-        const needs_own_context = client.tls_props != null and client.tls_props.?.requires_custom_request_ctx;
-        if (needs_own_context) {
-            const requested_config = client.tls_props.?;
+    if (comptime is_ssl) custom_ctx: {
+        if (client.tls_props) |tls| {
+            if (!tls.get().requires_custom_request_ctx) break :custom_ctx;
+            const requested_config = tls.get();
 
             // Evict stale entries from the cache
             evictStaleSslContexts(this);
@@ -270,12 +272,12 @@ pub fn connect(this: *@This(), client: *HTTPClient, comptime is_ssl: bool) !NewH
                 };
             };
 
-            // Hold a ref on the config for the cache entry
-            requested_config.ref();
             const now = this.timer.read();
             bun.handleOom(custom_ssl_context_map.put(requested_config, .{
                 .ctx = custom_context,
                 .last_used_ns = now,
+                // Clone a strong ref for the cache entry; client.tls_props keeps its own.
+                .config_ref = tls.clone(),
             }));
 
             // Enforce max cache size - evict oldest entry
@@ -315,12 +317,11 @@ fn evictStaleSslContexts(this: *@This()) void {
     const now = this.timer.read();
     var i: usize = 0;
     while (i < custom_ssl_context_map.count()) {
-        const entry = custom_ssl_context_map.values()[i];
+        var entry = custom_ssl_context_map.values()[i];
         if (now -| entry.last_used_ns > ssl_context_cache_ttl_ns) {
-            const config = custom_ssl_context_map.keys()[i];
             custom_ssl_context_map.swapRemoveAt(i);
             entry.ctx.deinit();
-            config.deref();
+            entry.config_ref.deinit();
         } else {
             i += 1;
         }
@@ -338,11 +339,10 @@ fn evictOldestSslContext() void {
             oldest_idx = i;
         }
     }
-    const entry = custom_ssl_context_map.values()[oldest_idx];
-    const config = custom_ssl_context_map.keys()[oldest_idx];
+    var entry = custom_ssl_context_map.values()[oldest_idx];
     custom_ssl_context_map.swapRemoveAt(oldest_idx);
     entry.ctx.deinit();
-    config.deref();
+    entry.config_ref.deinit();
 }
 
 fn drainQueuedShutdowns(this: *@This()) void {

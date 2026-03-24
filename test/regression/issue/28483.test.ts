@@ -1,5 +1,7 @@
-import { expect, test } from "bun:test";
+import { expect, describe, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+
+describe.concurrent("data URL module imports", () => {
 
 test("data URL with nested imports propagates errors", async () => {
   using dir = tempDir("28483", {
@@ -88,3 +90,5 @@ console.log(m.x);`,
   expect(stdout).toBe("42\n");
   expect(exitCode).toBe(0);
 });
+
+}); // describe.concurrent

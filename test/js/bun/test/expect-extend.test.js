@@ -385,7 +385,7 @@ test("expect.extend with numeric index keys does not crash", () => {
   // stores the property in the Structure table rather than indexed storage,
   // making the matcher inaccessible via normal property lookup.
   expect.extend({
-    1073741820: (received) => ({ pass: received === 42, message: () => "not 42" }),
+    1073741820: received => ({ pass: received === 42, message: () => "not 42" }),
   });
   expect(typeof expect[1073741820]).toBe("function");
 });

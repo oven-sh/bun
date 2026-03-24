@@ -1,5 +1,5 @@
-import { test, expect, describe } from "bun:test";
-import { bunExe, bunEnv, tempDir } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 describe("bun outdated --changelog", () => {
   function createMinimalTarball(name: string, version: string): Buffer {
@@ -115,11 +115,7 @@ describe("bun outdated --changelog", () => {
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stderr).not.toContain("panic:");
     expect(stdout).toContain("no-deps");
@@ -159,11 +155,7 @@ describe("bun outdated --changelog", () => {
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stderr).not.toContain("panic:");
     expect(stdout).toContain("no-deps");

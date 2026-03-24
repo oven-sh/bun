@@ -1571,18 +1571,19 @@ pub fn fetchWithoutOnLoadPlugins(
     var blob_to_deinit: ?jsc.WebCore.Blob = null;
     var data_url_body_to_free: ?[]const u8 = null;
     defer if (blob_to_deinit) |*blob| blob.deinit();
-    // For .print_source, the returned source_code borrows from body;
-    // only free on error so the caller can use it.
-    defer if (comptime flags != .print_source) {
-        if (data_url_body_to_free) |body| jsc_vm.allocator.free(body);
-    };
-    errdefer if (comptime flags == .print_source) {
-        if (data_url_body_to_free) |body| jsc_vm.allocator.free(body);
-    };
+    defer if (data_url_body_to_free) |body| jsc_vm.allocator.free(body);
     const lr = options.getLoaderAndVirtualSource(specifier_clone.slice(), jsc_vm, &virtual_source_to_use, &blob_to_deinit, &data_url_body_to_free, null) catch {
         return error.ModuleNotFound;
     };
     const module_type: options.ModuleType = if (lr.package_json) |pkg| pkg.module_type else .unknown;
+
+    // .print_source returns a non-owning borrow of source.contents.
+    // For data URLs, the body is freed by defer above, so we need to
+    // null out the body pointer and let the arena own the contents
+    // (the arena is kept alive for .print_source at line below).
+    if (comptime flags == .print_source) {
+        data_url_body_to_free = null;
+    }
 
     // .print_source, which is used by exceptions avoids duplicating the entire source code
     // but that means we have to be careful of the lifetime of the source code

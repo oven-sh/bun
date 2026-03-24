@@ -705,7 +705,8 @@ pub const MultiPartUpload = struct {
 
     pub fn continueStream(this: *@This()) void {
         if (this.state == .wait_stream_check) {
-            this.state = .not_started;
+            // If upload_id is already set (resume), skip directly to multipart_completed
+            this.state = if (this.upload_id.len > 0) .multipart_completed else .not_started;
             if (this.ended) {
                 this.processBuffered(this.partSizeInBytes());
             }

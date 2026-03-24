@@ -1309,6 +1309,9 @@ fn fetchImpl(
                 credentialsWithOptions.request_payer,
                 @ptrCast(&Wrapper.resolve),
                 s3_stream,
+                null,
+                1,
+                &.{},
             );
             url = .{};
             url_proxy_buffer = "";

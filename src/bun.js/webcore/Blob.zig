@@ -1127,6 +1127,9 @@ pub fn writeFileWithSourceDestination(ctx: *jsc.JSGlobalObject, source_blob: *Bl
                             aws_options.request_payer,
                             null,
                             undefined,
+                            null,
+                            1,
+                            &.{},
                         );
                     } else {
                         return jsc.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(ctx, ctx.createErrorInstance("Failed to stream bytes to s3 bucket", .{}));
@@ -1200,6 +1203,9 @@ pub fn writeFileWithSourceDestination(ctx: *jsc.JSGlobalObject, source_blob: *Bl
                         aws_options.request_payer,
                         null,
                         undefined,
+                        null,
+                        1,
+                        &.{},
                     );
                 } else {
                     return jsc.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(ctx, ctx.createErrorInstance("Failed to stream bytes to s3 bucket", .{}));
@@ -1408,6 +1414,9 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
                                 aws_options.request_payer,
                                 null,
                                 undefined,
+                                null,
+                                1,
+                                &.{},
                             );
                         }
                         destination_blob.detach();
@@ -1471,6 +1480,9 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
                                 aws_options.request_payer,
                                 null,
                                 undefined,
+                                null,
+                                1,
+                                &.{},
                             );
                         }
                         destination_blob.detach();
@@ -2450,6 +2462,9 @@ pub fn pipeReadableStreamToBlob(this: *Blob, globalThis: *jsc.JSGlobalObject, re
             aws_options.request_payer,
             null,
             undefined,
+            null,
+            1,
+            &.{},
         );
     }
 
@@ -2703,6 +2718,9 @@ pub fn getWriter(
                     proxy_url,
                     credentialsWithOptions.storage_class,
                     credentialsWithOptions.request_payer,
+                    credentialsWithOptions.upload_id,
+                    credentialsWithOptions.part_number,
+                    credentialsWithOptions.previous_parts.items,
                 );
             }
         }
@@ -2717,6 +2735,9 @@ pub fn getWriter(
             proxy_url,
             null,
             s3.request_payer,
+            null,
+            1,
+            &.{},
         );
     }
 

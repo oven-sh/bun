@@ -84,6 +84,9 @@ pub fn presign(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.J
             }
             const options = args.nextEat();
             var blob = try constructS3FileInternalStore(globalThis, path.path, options);
+            // Path ownership transferred to blob's store via toThreadSafe().
+            // Prevent errdefer from double-freeing the underlying string.
+            path_or_blob = .{ .path = .{ .fd = bun.invalid_fd } };
             defer blob.deinit();
             return try getPresignUrlFrom(&blob, globalThis, options);
         },
@@ -114,6 +117,7 @@ pub fn unlink(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
             }
             const options = args.nextEat();
             var blob = try constructS3FileInternalStore(globalThis, path.path, options);
+            path_or_blob = .{ .path = .{ .fd = bun.invalid_fd } };
             defer blob.deinit();
             return try blob.store.?.data.s3.unlink(blob.store.?, globalThis, options);
         },
@@ -151,6 +155,7 @@ pub fn write(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSE
                 return globalThis.throwInvalidArguments("Expected a S3 or path to upload", .{});
             }
             var blob = try constructS3FileInternalStore(globalThis, path.path, options);
+            path_or_blob = .{ .path = .{ .fd = bun.invalid_fd } };
             defer blob.deinit();
 
             var blob_internal: PathOrBlob = .{ .blob = blob };
@@ -190,6 +195,7 @@ pub fn size(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSEr
                 return globalThis.throwInvalidArguments("Expected a S3 or path to get size", .{});
             }
             var blob = try constructS3FileInternalStore(globalThis, path.path, options);
+            path_or_blob = .{ .path = .{ .fd = bun.invalid_fd } };
             defer blob.deinit();
 
             return S3BlobStatTask.size(globalThis, &blob);
@@ -223,6 +229,7 @@ pub fn exists(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
                 return globalThis.throwInvalidArguments("Expected a S3 or path to check if it exists", .{});
             }
             var blob = try constructS3FileInternalStore(globalThis, path.path, options);
+            path_or_blob = .{ .path = .{ .fd = bun.invalid_fd } };
             defer blob.deinit();
 
             return S3BlobStatTask.exists(globalThis, &blob);
@@ -574,6 +581,7 @@ pub fn stat(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSEr
                 return globalThis.throwInvalidArguments("Expected a S3 or path to get size", .{});
             }
             var blob = try constructS3FileInternalStore(globalThis, path.path, options);
+            path_or_blob = .{ .path = .{ .fd = bun.invalid_fd } };
             defer blob.deinit();
 
             return S3BlobStatTask.stat(globalThis, &blob);

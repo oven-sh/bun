@@ -13,7 +13,6 @@ test("expect does not crash when value has Symbol.toPrimitive returning a Symbol
     `,
     ],
     env: bunEnv,
-    stdout: "pipe",
   });
 
   const exitCode = await proc.exited;

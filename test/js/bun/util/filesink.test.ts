@@ -217,3 +217,26 @@ if (isWindows) {
     );
   });
 }
+
+it.skipIf(isWindows)("throws on invalid writer options instead of crashing", () => {
+  const stderr = Bun.stderr;
+  expect(() => stderr.writer({ path: 123 } as any)).toThrow(
+    expect.objectContaining({
+      code: "EINVAL",
+      syscall: "write",
+    }),
+  );
+  expect(() => stderr.writer({ fd: "not a number" } as any)).toThrow(
+    expect.objectContaining({
+      code: "EBADF",
+      syscall: "write",
+    }),
+  );
+  expect(() =>
+    stderr.writer({
+      get path() {
+        throw new Error("boom");
+      },
+    } as any),
+  ).toThrow("boom");
+});

@@ -1074,6 +1074,10 @@ pub fn getLoaderAndVirtualSource(
     }
 
     if (strings.hasPrefixComptime(specifier, "data:")) {
+        // Always set the dataurl namespace so filename-based inference
+        // never runs on the raw data URL string.
+        path = Fs.Path.initWithNamespace(specifier, "dataurl");
+        loader = null;
         if (DataURL.parse(specifier) catch null) |data_url| {
             const mime = data_url.decodeMimeType();
             const mime_loader: ?Loader = switch (mime.category) {
@@ -1088,7 +1092,6 @@ pub fn getLoaderAndVirtualSource(
                 if (decoded) |body| {
                     loader = ml;
                     data_url_body_to_free.* = body;
-                    path = Fs.Path.initWithNamespace(specifier, "dataurl");
                     virtual_source_to_use.* = logger.Source{
                         .path = path,
                         .contents = body,

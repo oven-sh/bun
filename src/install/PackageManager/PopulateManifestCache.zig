@@ -88,18 +88,22 @@ pub fn populateManifestCache(manager: *PackageManager, packages: Packages) !void
 
                     const needs_extended_manifest = manager.options.minimum_release_age_ms != null or manager.options.changelog;
                     const package_name = pkg_names[pkg_id].slice(string_buf);
-                    _ = manager.manifests.byName(
+                    const cached = manager.manifests.byName(
                         manager,
                         manager.scopeForPackageName(package_name),
                         package_name,
                         .load_from_memory_fallback_to_disk,
                         needs_extended_manifest,
-                    ) orelse {
+                    );
+                    // repository_url is not serialized to disk cache, so a cached
+                    // extended manifest may have it empty. Re-fetch when --changelog
+                    // needs it.
+                    if (cached == null or (manager.options.changelog and cached.?.repository_url.len == 0)) {
                         try startManifestTask(manager, package_name, dep, needs_extended_manifest);
 
                         manager.flushNetworkQueue();
                         _ = manager.scheduleTasks();
-                    };
+                    }
                 }
             }
         },

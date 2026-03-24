@@ -2783,62 +2783,48 @@ pub const PackageManifest = struct {
     }
 
     /// Normalize npm repository URLs to browseable HTTPS URLs.
-    /// Handles formats like:
-    ///   git+https://github.com/user/repo.git
-    ///   git://github.com/user/repo.git
-    ///   git+ssh://git@github.com/user/repo.git
-    ///   ssh://git@github.com/user/repo.git
-    ///   https://github.com/user/repo.git
-    ///   github:user/repo
-    ///   user/repo (GitHub shorthand)
+    /// Returns a slice of the input with prefixes/suffixes stripped.
+    /// The result falls into three categories the display code must handle:
+    ///   - Full URL:     "https://github.com/user/repo"   (has scheme)
+    ///   - Domain+path:  "github.com/user/repo"           (dot before first slash)
+    ///   - Shorthand:    "user/repo"                       (GitHub shorthand)
+    /// Returns empty string for formats that cannot be normalized without allocation
+    /// (e.g. non-GitHub SCP URLs like git@gitlab.com:user/repo.git).
     fn normalizeRepositoryUrl(raw: []const u8) []const u8 {
         var url = raw;
 
-        // Strip known prefixes to get to the core URL
+        // 1. Strip git+ wrapper
         if (strings.hasPrefixComptime(url, "git+")) url = url[4..];
-        if (strings.hasPrefixComptime(url, "git://")) {
-            url = url[6..];
-            // git://github.com/user/repo -> https://github.com/user/repo
-            // Prepend https:// handled below by falling through to the non-scheme path
+
+        // 2. Strip URL scheme
+        if (strings.hasPrefixComptime(url, "https://") or strings.hasPrefixComptime(url, "http://")) {
+            // keep scheme, handled below
+        } else if (strings.hasPrefixComptime(url, "git://")) {
+            url = url["git://".len..];
         } else if (strings.hasPrefixComptime(url, "ssh://")) {
-            url = url[6..];
-        } else if (strings.hasPrefixComptime(url, "git@")) {
-            // git@github.com:user/repo.git -> github.com/user/repo.git
-            url = url[4..];
-            // Replace the first ':' with '/' for SCP-style URLs
-            if (strings.indexOfChar(url, ':')) |colon_idx| {
-                // We can't modify the string in place, so just work with what we have
-                // Return the original with guidance - this case is handled by the .git strip below
-                // Actually for git@github.com:user/repo.git, after stripping git@,
-                // we have github.com:user/repo.git - we need a different approach
-                // Let's just return the https version if it's GitHub
-                if (strings.hasPrefixComptime(url, "github.com:")) {
-                    url = url["github.com:".len..];
-                    // url is now "user/repo.git" — handled below as github shorthand
-                } else {
-                    // Non-GitHub SCP URL, return as-is
-                    return raw;
-                }
-                _ = colon_idx;
-            }
+            url = url["ssh://".len..];
         } else if (strings.hasPrefixComptime(url, "github:")) {
             url = url["github:".len..];
-            // Falls through to shorthand handling below
         }
 
-        // Strip .git suffix
+        // 3. Strip git@ user prefix (can appear after ssh:// stripping)
+        if (strings.hasPrefixComptime(url, "git@")) {
+            url = url["git@".len..];
+            // SCP-style URLs use colon separator (git@github.com:user/repo)
+            // which we cannot convert to '/' without allocation.
+            // For github.com, extract just the path portion.
+            if (strings.hasPrefixComptime(url, "github.com:")) {
+                url = url["github.com:".len..];
+            } else if (strings.indexOfChar(url, ':') != null) {
+                return &.{}; // non-GitHub SCP URL, cannot normalize
+            }
+        }
+
+        // 4. Strip .git suffix
         if (strings.hasSuffixComptime(url, ".git")) {
             url = url[0 .. url.len - 4];
         }
 
-        // If it already starts with https://, return as-is
-        if (strings.hasPrefixComptime(url, "https://") or strings.hasPrefixComptime(url, "http://")) {
-            return url;
-        }
-
-        // If it looks like "github.com/user/repo", the caller should prepend https://
-        // but since we can't allocate here, check if it's a bare "user/repo" shorthand
-        // and return what we have. The display code will prepend https://github.com/ for shorthands.
         return url;
     }
 };

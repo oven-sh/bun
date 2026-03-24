@@ -142,13 +142,13 @@ const references = {
     authTag: null,
   },
 
-  // BoringSSL does not support these modes
-  // "aes-128-cfb8": {
-  //   iv: "3021d44812302ae0312c9ef523f01bf5",
-  //   key: "20787258b5d2a166262ecc6e3e917a58",
-  //   ciphertext: "db4596b2f0d7a74bea91a1d715e1327ca149591f5bc64d19fde7138eacfa5dd0da503596dcc66bc771edcf14b6eb8f69",
-  //   authTag: null,
-  // },
+  "aes-128-cfb8": {
+    iv: "3021d44812302ae0312c9ef523f01bf5",
+    key: "20787258b5d2a166262ecc6e3e917a58",
+    ciphertext: "db4596b2f0d7a74bea91a1d715e1327ca149591f5bc64d19fde7138eacfa5dd0da503596dcc66bc771edcf14b6eb8f69",
+    authTag: null,
+  },
+  // BoringSSL does not support CFB1 mode
   // "aes-128-cfb1": {
   //   iv: "c91453a0182f1efeeb4525ed96b0aad3",
   //   key: "26bfaea72f720475528cc5b2bfd5cf2e",

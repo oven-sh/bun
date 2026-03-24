@@ -1,5 +1,5 @@
-import { test, expect } from "bun:test";
-import { bunExe, bunEnv } from "harness";
+import { expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 
 // Regression test: mock.module() with a non-existent specifier must not crash
 // when module resolution triggers auto-install and the package manager uses

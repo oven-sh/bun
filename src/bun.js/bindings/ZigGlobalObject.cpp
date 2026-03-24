@@ -1768,13 +1768,21 @@ void GlobalObject::finishCreation(VM& vm)
             JSC::JSGlobalObject* globalObject = init.owner;
 
             JSValue result = JSValue::decode(Bun__Jest__createTestModuleObject(globalObject));
-            init.set(result.toObject(globalObject));
+            if (!result.isObject()) [[unlikely]] {
+                init.set(JSC::constructEmptyObject(globalObject));
+                return;
+            }
+            init.set(result.getObject());
         });
 
     m_testMatcherUtilsObject.initLater(
         [](const Initializer<JSObject>& init) {
             JSValue result = JSValue::decode(ExpectMatcherUtils_createSigleton(init.owner));
-            init.set(result.toObject(init.owner));
+            if (!result.isObject()) [[unlikely]] {
+                init.set(JSC::constructEmptyObject(init.owner));
+                return;
+            }
+            init.set(result.getObject());
         });
 
     m_JSS3FileStructure.initLater(

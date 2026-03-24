@@ -159,7 +159,9 @@ pub const S3Client = struct {
         // constructing a temporary blob. Creating and then cleaning up
         // a blob store while an error is being thrown from signRequest
         // corrupts the exception scope chain and crashes during GC.
-        var aws_options = try S3Credentials.getCredentialsWithOptions(ptr.credentials.*, ptr.options, options, ptr.acl, ptr.storage_class, ptr.request_payer, globalThis);
+        // Pass null for acl/storage_class to match the old getPresignUrlFrom
+        // behavior, which only included them when explicitly set in options.
+        var aws_options = try S3Credentials.getCredentialsWithOptions(ptr.credentials.*, ptr.options, options, null, null, ptr.request_payer, globalThis);
         defer aws_options.deinit();
 
         // Normalize the path the same way Store.S3.path() does:

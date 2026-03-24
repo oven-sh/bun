@@ -1,11 +1,14 @@
-import { test, expect } from "bun:test";
-import { bunExe, bunEnv } from "harness";
+import { expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 
 // BlockList.estimatedSize previously divided by ref_count, which
 // can be zero during GC finalization, causing SIGFPE on x86-64.
 test("BlockList does not crash during GC", async () => {
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", `
+    cmd: [
+      bunExe(),
+      "-e",
+      `
       const { BlockList } = require("net");
       for (let i = 0; i < 1000; i++) {
         const bl = new BlockList();
@@ -14,7 +17,8 @@ test("BlockList does not crash during GC", async () => {
       Bun.gc(true);
       Bun.gc(true);
       console.log("OK");
-    `],
+    `,
+    ],
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",

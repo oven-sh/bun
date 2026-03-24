@@ -286,9 +286,12 @@ pub const JSGlobalObject = opaque {
             var buf = std.Io.Writer.Allocating.initCapacity(stack_fallback.get(), 2048) catch unreachable;
             defer buf.deinit();
             var writer = &buf.writer;
-            writer.print(fmt, args) catch
+            writer.print(fmt, args) catch {
                 // if an exception occurs in the middle of formatting the error message, it's better to just return the formatting string than an error about an error
+                // Clear any pending exception (e.g. stack overflow during formatting) before creating the fallback error.
+                this.clearException();
                 return ZigString.static(fmt).toErrorInstance(this);
+            };
 
             // Ensure we clone it.
             var str = ZigString.initUTF8(buf.written());
@@ -309,7 +312,10 @@ pub const JSGlobalObject = opaque {
             var buf = bun.MutableString.init2048(stack_fallback.get()) catch unreachable;
             defer buf.deinit();
             var writer = buf.writer();
-            writer.print(fmt, args) catch return ZigString.static(fmt).toErrorInstance(this);
+            writer.print(fmt, args) catch {
+                this.clearException();
+                return ZigString.static(fmt).toErrorInstance(this);
+            };
             var str = ZigString.fromUTF8(buf.slice());
             return str.toTypeErrorInstance(this);
         } else {
@@ -337,7 +343,10 @@ pub const JSGlobalObject = opaque {
             var buf = bun.MutableString.init2048(stack_fallback.get()) catch unreachable;
             defer buf.deinit();
             var writer = buf.writer();
-            writer.print(fmt, args) catch return ZigString.static(fmt).toErrorInstance(this);
+            writer.print(fmt, args) catch {
+                this.clearException();
+                return ZigString.static(fmt).toErrorInstance(this);
+            };
             var str = ZigString.fromUTF8(buf.slice());
             return str.toSyntaxErrorInstance(this);
         } else {
@@ -351,7 +360,10 @@ pub const JSGlobalObject = opaque {
             var buf = bun.MutableString.init2048(stack_fallback.get()) catch unreachable;
             defer buf.deinit();
             var writer = buf.writer();
-            writer.print(fmt, args) catch return ZigString.static(fmt).toErrorInstance(this);
+            writer.print(fmt, args) catch {
+                this.clearException();
+                return ZigString.static(fmt).toErrorInstance(this);
+            };
             var str = ZigString.fromUTF8(buf.slice());
             return str.toRangeErrorInstance(this);
         } else {

@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 
 test("Bun.TOML.parse with non-string input does not crash", () => {
   // Passing a constructor function instead of a string should throw, not crash.

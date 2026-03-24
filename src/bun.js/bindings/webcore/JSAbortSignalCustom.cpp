@@ -77,6 +77,7 @@ template<typename Visitor>
 void JSAbortSignal::visitAdditionalChildrenInGCThread(Visitor& visitor)
 {
     wrapped().reason().visit(visitor);
+    wrapped().visitAbortAlgorithms(visitor);
 }
 
 DEFINE_VISIT_ADDITIONAL_CHILDREN_IN_GC_THREAD(JSAbortSignal);

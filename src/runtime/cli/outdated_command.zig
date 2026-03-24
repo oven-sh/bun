@@ -421,13 +421,14 @@ pub const OutdatedCommand = struct {
 
                 const package_name = pkg_names[package_id].slice(string_buf);
                 var expired = false;
+                const needs_extended = manager.options.minimum_release_age_ms != null or manager.options.changelog;
                 const manifest = manager.manifests.byNameAllowExpired(
                     manager,
                     manager.scopeForPackageName(package_name),
                     package_name,
                     &expired,
                     .load_from_memory_fallback_to_disk,
-                    manager.options.minimum_release_age_ms != null,
+                    needs_extended,
                 ) orelse continue;
 
                 const actual_latest = manifest.findByDistTag("latest") orelse continue;
@@ -576,13 +577,14 @@ pub const OutdatedCommand = struct {
                 const resolution = pkg_resolutions[package_id];
 
                 var expired = false;
+                const needs_extended = manager.options.minimum_release_age_ms != null or manager.options.changelog;
                 const manifest = manager.manifests.byNameAllowExpired(
                     manager,
                     manager.scopeForPackageName(package_name),
                     package_name,
                     &expired,
                     .load_from_memory_fallback_to_disk,
-                    manager.options.minimum_release_age_ms != null,
+                    needs_extended,
                 ) orelse continue;
 
                 const latest = manifest.findByDistTagWithFilter("latest", manager.options.minimum_release_age_ms, manager.options.minimum_release_age_excludes);
@@ -684,6 +686,44 @@ pub const OutdatedCommand = struct {
 
         if (has_filtered_versions) {
             Output.prettyln("<d><b>Note:<r> <d>The <r><blue>*<r><d> indicates that version isn't true latest due to minimum release age<r>", .{});
+        }
+
+        if (manager.options.changelog) {
+            var has_any_url = false;
+            // Print changelog URLs below the table
+            for (grouped_ids.items) |item| {
+                const package_id = item.package_id;
+                const package_name = pkg_names[package_id].slice(string_buf);
+
+                var exp = false;
+                const needs_extended = manager.options.minimum_release_age_ms != null or manager.options.changelog;
+                const manifest = manager.manifests.byNameAllowExpired(
+                    manager,
+                    manager.scopeForPackageName(package_name),
+                    package_name,
+                    &exp,
+                    .load_from_memory_fallback_to_disk,
+                    needs_extended,
+                ) orelse continue;
+
+                const repo_url = manifest.repository_url;
+                if (repo_url.len == 0) continue;
+
+                if (!has_any_url) {
+                    Output.prettyln("\n<b>Changelogs:<r>", .{});
+                    has_any_url = true;
+                }
+
+                // Construct a display URL
+                if (strings.hasPrefixComptime(repo_url, "https://") or strings.hasPrefixComptime(repo_url, "http://")) {
+                    Output.prettyln("  <cyan>{s}<r> <d>{s}<r>", .{ package_name, repo_url });
+                } else if (strings.contains(repo_url, "/")) {
+                    // GitHub shorthand (user/repo)
+                    Output.prettyln("  <cyan>{s}<r> <d>https://github.com/{s}<r>", .{ package_name, repo_url });
+                } else {
+                    Output.prettyln("  <cyan>{s}<r> <d>{s}<r>", .{ package_name, repo_url });
+                }
+            }
         }
     }
 };

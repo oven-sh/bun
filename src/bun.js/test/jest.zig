@@ -283,7 +283,12 @@ pub const Jest = struct {
             }
         }
 
-        return try bun.jsc.fromJSHostCall(globalObject, @src(), Bun__Jest__testModuleObject, .{globalObject});
+        var scope: bun.jsc.TopExceptionScope = undefined;
+        scope.init(globalObject, @src());
+        defer scope.deinit();
+        const result = Bun__Jest__testModuleObject(globalObject);
+        try scope.returnIfException();
+        return result;
     }
 
     fn jsSetDefaultTimeout(globalObject: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {

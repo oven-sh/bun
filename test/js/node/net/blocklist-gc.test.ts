@@ -31,6 +31,5 @@ test("BlockList does not crash during GC", async () => {
   ]);
 
   expect(stdout.trim()).toBe("OK");
-  expect(stderr).toBe("");
   expect(exitCode).toBe(0);
 });

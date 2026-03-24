@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { createCipheriv, createDecipheriv, getCiphers } from "crypto";
 
 test("aes-128-cfb8 cipher creates successfully", () => {

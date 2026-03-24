@@ -2,18 +2,17 @@ import assert from "node:assert";
 import { test } from "node:test";
 
 // https://github.com/oven-sh/bun/issues/26392
-// ReadableStream.prototype.pipeTo does not respond to AbortSignal
+// ReadableStream.prototype.pipeTo does not respond to AbortSignal when
+// abort() is called asynchronously (e.g. via setTimeout). The pipe hangs
+// indefinitely because the pending read promise is never resolved.
+
 test("pipeTo responds to AbortSignal", async () => {
   const abortController = new AbortController();
   let cancelCalled = false;
   let abortCalled = false;
 
-  // Promise that resolves when the pipe has started (first write received)
-  const { promise: pipeStartedPromise, resolve: pipeStarted } = Promise.withResolvers<void>();
-
   const pipePromise = new ReadableStream({
     start(controller) {
-      // Keep the stream open - don't close it
       controller.enqueue("data");
     },
     cancel(reason) {
@@ -23,10 +22,6 @@ test("pipeTo responds to AbortSignal", async () => {
     },
   }).pipeTo(
     new WritableStream({
-      write() {
-        // Signal that the pipe has started processing data
-        pipeStarted();
-      },
       abort(reason) {
         abortCalled = true;
         assert(reason instanceof DOMException);
@@ -36,20 +31,18 @@ test("pipeTo responds to AbortSignal", async () => {
     { signal: abortController.signal },
   );
 
-  // Wait for the pipe to actually start processing
-  await pipeStartedPromise;
+  // Abort asynchronously via setTimeout — this is the actual trigger for the
+  // bug. By the time the callback fires, the pipe has processed the enqueued
+  // chunk and started a new pending read that blocks forever. Without the fix,
+  // the pending read promise is never resolved, causing the pipe to hang.
+  setTimeout(() => abortController.abort());
 
-  // Abort the signal
-  abortController.abort();
-
-  // The promise should reject with an AbortError
-  await assert.rejects(pipePromise, (err: Error) => {
+  await assert.rejects(pipePromise, (err) => {
     assert(err instanceof DOMException);
     assert.strictEqual(err.name, "AbortError");
     return true;
   });
 
-  // Both cancel and abort should have been called
   assert.strictEqual(cancelCalled, true);
   assert.strictEqual(abortCalled, true);
 });
@@ -77,7 +70,7 @@ test("pipeTo with already aborted signal", async () => {
     { signal: abortController.signal },
   );
 
-  await assert.rejects(pipePromise, (err: Error) => {
+  await assert.rejects(pipePromise, (err) => {
     assert(err instanceof DOMException);
     assert.strictEqual(err.name, "AbortError");
     return true;
@@ -92,9 +85,6 @@ test("pipeTo with preventCancel respects AbortSignal", async () => {
   let cancelCalled = false;
   let abortCalled = false;
 
-  // Promise that resolves when the pipe has started (first write received)
-  const { promise: pipeStartedPromise, resolve: pipeStarted } = Promise.withResolvers<void>();
-
   const pipePromise = new ReadableStream({
     start(controller) {
       controller.enqueue("data");
@@ -104,9 +94,6 @@ test("pipeTo with preventCancel respects AbortSignal", async () => {
     },
   }).pipeTo(
     new WritableStream({
-      write() {
-        pipeStarted();
-      },
       abort() {
         abortCalled = true;
       },
@@ -114,16 +101,14 @@ test("pipeTo with preventCancel respects AbortSignal", async () => {
     { signal: abortController.signal, preventCancel: true },
   );
 
-  await pipeStartedPromise;
-  abortController.abort();
+  setTimeout(() => abortController.abort());
 
-  await assert.rejects(pipePromise, (err: Error) => {
+  await assert.rejects(pipePromise, (err) => {
     assert(err instanceof DOMException);
     assert.strictEqual(err.name, "AbortError");
     return true;
   });
 
-  // cancel should NOT be called because preventCancel is true
   assert.strictEqual(cancelCalled, false);
   assert.strictEqual(abortCalled, true);
 });
@@ -133,9 +118,6 @@ test("pipeTo with preventAbort respects AbortSignal", async () => {
   let cancelCalled = false;
   let abortCalled = false;
 
-  // Promise that resolves when the pipe has started (first write received)
-  const { promise: pipeStartedPromise, resolve: pipeStarted } = Promise.withResolvers<void>();
-
   const pipePromise = new ReadableStream({
     start(controller) {
       controller.enqueue("data");
@@ -145,9 +127,6 @@ test("pipeTo with preventAbort respects AbortSignal", async () => {
     },
   }).pipeTo(
     new WritableStream({
-      write() {
-        pipeStarted();
-      },
       abort() {
         abortCalled = true;
       },
@@ -155,16 +134,14 @@ test("pipeTo with preventAbort respects AbortSignal", async () => {
     { signal: abortController.signal, preventAbort: true },
   );
 
-  await pipeStartedPromise;
-  abortController.abort();
+  setTimeout(() => abortController.abort());
 
-  await assert.rejects(pipePromise, (err: Error) => {
+  await assert.rejects(pipePromise, (err) => {
     assert(err instanceof DOMException);
     assert.strictEqual(err.name, "AbortError");
     return true;
   });
 
   assert.strictEqual(cancelCalled, true);
-  // abort should NOT be called because preventAbort is true
   assert.strictEqual(abortCalled, false);
 });

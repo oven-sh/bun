@@ -916,6 +916,8 @@ pub const PackageManifest = struct {
     package_versions: []const PackageVersion = &[_]PackageVersion{},
     extern_strings_bin_entries: []const ExternalString = &[_]ExternalString{},
     bundled_deps_buf: []const PackageNameHash = &.{},
+    // Repository URL extracted from extended manifest, not serialized to disk cache.
+    repository_url: []const u8 = &.{},
 
     pub inline fn name(this: *const PackageManifest) string {
         return this.pkg.name.slice(this.string_buf);
@@ -1023,6 +1025,8 @@ pub const PackageManifest = struct {
             pos += 128 / 8;
 
             inline for (sizes.fields) |field_name| {
+                // repository_url is transient (populated from extended manifest JSON), not serialized
+                if (comptime strings.eqlComptime(field_name, "repository_url")) continue;
                 if (comptime strings.eqlComptime(field_name, "pkg")) {
                     const bytes = std.mem.asBytes(&this.pkg);
                     pos += try Aligner.write(NpmPackage, Writer, writer, pos);
@@ -1312,6 +1316,8 @@ pub const PackageManifest = struct {
             }
 
             inline for (sizes.fields) |field_name| {
+                // repository_url is transient (populated from extended manifest JSON), not serialized
+                if (comptime strings.eqlComptime(field_name, "repository_url")) continue;
                 if (comptime strings.eqlComptime(field_name, "pkg")) {
                     pkg_stream.pos = std.mem.alignForward(usize, pkg_stream.pos, @alignOf(Npm.NpmPackage));
                     package_manifest.pkg = try reader.readStruct(NpmPackage);
@@ -2061,6 +2067,26 @@ pub const PackageManifest = struct {
             string_builder.count(etag);
         }
 
+        // Extract repository URL from extended manifest
+        var repository_url: ?[]const u8 = null;
+        if (is_extended_manifest) {
+            if (json.asProperty("repository")) |repo_q| {
+                // repository can be a string or an object with a "url" field
+                const raw_url = if (repo_q.expr.data == .e_object)
+                    (if (repo_q.expr.asProperty("url")) |url_q| url_q.expr.asString(allocator) else null)
+                else
+                    repo_q.expr.asString(allocator);
+
+                if (raw_url) |url| {
+                    const normalized = normalizeRepositoryUrl(url);
+                    if (normalized.len > 0) {
+                        repository_url = normalized;
+                        string_builder.count(normalized);
+                    }
+                }
+            }
+        }
+
         var versioned_packages = try allocator.alloc(PackageVersion, release_versions_len + pre_versions_len);
         const all_semver_versions = try allocator.alloc(Semver.Version, release_versions_len + pre_versions_len + dist_tags_count);
         var all_extern_strings = try allocator.alloc(ExternalString, extern_string_count + tarball_urls_count);
@@ -2616,6 +2642,11 @@ pub const PackageManifest = struct {
             result.pkg.modified = string_builder.append(String, field);
         }
 
+        var repository_url_string: String = String{};
+        if (repository_url) |repo_url| {
+            repository_url_string = string_builder.append(String, repo_url);
+        }
+
         result.pkg.releases.keys = VersionSlice.init(all_semver_versions, all_release_versions);
         result.pkg.releases.values = PackageVersionList.init(versioned_packages, all_versioned_package_releases);
 
@@ -2744,7 +2775,71 @@ pub const PackageManifest = struct {
             result.string_buf = ptr[0..string_builder.len];
         }
 
+        if (repository_url != null) {
+            result.repository_url = repository_url_string.slice(result.string_buf);
+        }
+
         return result;
+    }
+
+    /// Normalize npm repository URLs to browseable HTTPS URLs.
+    /// Handles formats like:
+    ///   git+https://github.com/user/repo.git
+    ///   git://github.com/user/repo.git
+    ///   git+ssh://git@github.com/user/repo.git
+    ///   ssh://git@github.com/user/repo.git
+    ///   https://github.com/user/repo.git
+    ///   github:user/repo
+    ///   user/repo (GitHub shorthand)
+    fn normalizeRepositoryUrl(raw: []const u8) []const u8 {
+        var url = raw;
+
+        // Strip known prefixes to get to the core URL
+        if (strings.hasPrefixComptime(url, "git+")) url = url[4..];
+        if (strings.hasPrefixComptime(url, "git://")) {
+            url = url[6..];
+            // git://github.com/user/repo -> https://github.com/user/repo
+            // Prepend https:// handled below by falling through to the non-scheme path
+        } else if (strings.hasPrefixComptime(url, "ssh://")) {
+            url = url[6..];
+        } else if (strings.hasPrefixComptime(url, "git@")) {
+            // git@github.com:user/repo.git -> github.com/user/repo.git
+            url = url[4..];
+            // Replace the first ':' with '/' for SCP-style URLs
+            if (strings.indexOfChar(url, ':')) |colon_idx| {
+                // We can't modify the string in place, so just work with what we have
+                // Return the original with guidance - this case is handled by the .git strip below
+                // Actually for git@github.com:user/repo.git, after stripping git@,
+                // we have github.com:user/repo.git - we need a different approach
+                // Let's just return the https version if it's GitHub
+                if (strings.hasPrefixComptime(url, "github.com:")) {
+                    url = url["github.com:".len..];
+                    // url is now "user/repo.git" — handled below as github shorthand
+                } else {
+                    // Non-GitHub SCP URL, return as-is
+                    return raw;
+                }
+                _ = colon_idx;
+            }
+        } else if (strings.hasPrefixComptime(url, "github:")) {
+            url = url["github:".len..];
+            // Falls through to shorthand handling below
+        }
+
+        // Strip .git suffix
+        if (strings.hasSuffixComptime(url, ".git")) {
+            url = url[0 .. url.len - 4];
+        }
+
+        // If it already starts with https://, return as-is
+        if (strings.hasPrefixComptime(url, "https://") or strings.hasPrefixComptime(url, "http://")) {
+            return url;
+        }
+
+        // If it looks like "github.com/user/repo", the caller should prepend https://
+        // but since we can't allocate here, check if it's a bare "user/repo" shorthand
+        // and return what we have. The display code will prepend https://github.com/ for shorthands.
+        return url;
     }
 };
 

@@ -37,7 +37,7 @@ test("pipeTo responds to AbortSignal", async () => {
   // the pending read promise is never resolved, causing the pipe to hang.
   setTimeout(() => abortController.abort());
 
-  await assert.rejects(pipePromise, (err) => {
+  await assert.rejects(pipePromise, err => {
     assert(err instanceof DOMException);
     assert.strictEqual(err.name, "AbortError");
     return true;
@@ -70,7 +70,7 @@ test("pipeTo with already aborted signal", async () => {
     { signal: abortController.signal },
   );
 
-  await assert.rejects(pipePromise, (err) => {
+  await assert.rejects(pipePromise, err => {
     assert(err instanceof DOMException);
     assert.strictEqual(err.name, "AbortError");
     return true;
@@ -103,7 +103,7 @@ test("pipeTo with preventCancel respects AbortSignal", async () => {
 
   setTimeout(() => abortController.abort());
 
-  await assert.rejects(pipePromise, (err) => {
+  await assert.rejects(pipePromise, err => {
     assert(err instanceof DOMException);
     assert.strictEqual(err.name, "AbortError");
     return true;
@@ -136,7 +136,7 @@ test("pipeTo with preventAbort respects AbortSignal", async () => {
 
   setTimeout(() => abortController.abort());
 
-  await assert.rejects(pipePromise, (err) => {
+  await assert.rejects(pipePromise, err => {
     assert(err instanceof DOMException);
     assert.strictEqual(err.name, "AbortError");
     return true;

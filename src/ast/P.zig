@@ -6047,7 +6047,7 @@ pub fn NewParser_(
                         };
                         break :decls G.Decl.List.fromOwnedSlice(decls);
                     },
-                    .kind = .k_let,
+                    .kind = .k_var,
                 }, loc));
                 result.appendAssumeCapacity(p.s(S.Try{
                     .body = non_exported_statements,

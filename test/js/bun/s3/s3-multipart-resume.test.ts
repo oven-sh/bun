@@ -155,11 +155,20 @@ describe("s3 - Resumable multipart upload", () => {
     const uploadId = randomUUID();
     let completionBody = "";
     let completionCalled = false;
+    let uploadedPartCount = 0;
 
     using server = Bun.serve({
       port: 0,
       async fetch(req) {
         const url = new URL(req.url);
+
+        if (req.method === "PUT" && url.search.includes("partNumber=")) {
+          uploadedPartCount++;
+          return new Response(undefined, {
+            status: 200,
+            headers: { ETag: '"unexpected-etag"' },
+          });
+        }
 
         if (req.method === "POST" && url.search.includes("uploadId=")) {
           completionCalled = true;
@@ -199,6 +208,8 @@ describe("s3 - Resumable multipart upload", () => {
     await writer.end();
 
     expect(completionCalled).toBe(true);
+    expect(uploadedPartCount).toBe(0);
+    expect(completionBody).not.toInclude("<PartNumber>4</PartNumber>");
     expect(completionBody).toInclude("<PartNumber>1</PartNumber>");
     expect(completionBody).toInclude("<PartNumber>2</PartNumber>");
     expect(completionBody).toInclude("<PartNumber>3</PartNumber>");
@@ -218,6 +229,20 @@ describe("s3 - Resumable multipart upload", () => {
     }).toThrow("partNumber > 1 requires uploadId");
   });
 
+  it("should throw when previousParts is provided without uploadId", () => {
+    const client = new S3Client({
+      ...s3Options,
+      endpoint: "http://localhost:1",
+    });
+
+    expect(() => {
+      client.file("test").writer({
+        partNumber: 2,
+        previousParts: [{ partNumber: 1, etag: '"etag"' }],
+      });
+    }).toThrow("previousParts requires uploadId");
+  });
+
   it("should throw when previousParts entry has partNumber >= starting partNumber", () => {
     const client = new S3Client({
       ...s3Options,
@@ -230,7 +255,7 @@ describe("s3 - Resumable multipart upload", () => {
         partNumber: 3,
         previousParts: [
           { partNumber: 1, etag: '"e1"' },
-          { partNumber: 3, etag: '"e3"' }, // overlaps with starting partNumber
+          { partNumber: 3, etag: '"e3"' },
         ],
       });
     }).toThrow("previousParts entry must have a partNumber less than partNumber");
@@ -442,7 +467,8 @@ describe("s3 - Resumable multipart upload", () => {
       await writer.end();
       expect.unreachable();
     } catch (e: any) {
-      expect(e).toBeDefined();
+      expect(e).toBeInstanceOf(Error);
+      expect(e.message || e.code || String(e)).not.toBe("");
     }
   });
 });

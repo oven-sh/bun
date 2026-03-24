@@ -282,7 +282,14 @@ pub const S3Credentials = struct {
                             defer str.deref();
                             if (str.tag != .Empty and str.tag != .Dead) {
                                 new_credentials._uploadIdSlice = str.toUTF8(bun.default_allocator);
-                                new_credentials.upload_id = new_credentials._uploadIdSlice.?.slice();
+                                const slice = new_credentials._uploadIdSlice.?.slice();
+                                if (containsNewlineOrCR(slice)) {
+                                    return globalObject.throwInvalidArguments("uploadId must not contain newline characters (CR/LF)", .{});
+                                }
+                                if (slice.len > 1024) {
+                                    return globalObject.throwInvalidArguments("uploadId must not exceed 1024 characters", .{});
+                                }
+                                new_credentials.upload_id = slice;
                             }
                         } else {
                             return globalObject.throwInvalidArgumentTypeValue("uploadId", "string", js_value);
@@ -291,10 +298,11 @@ pub const S3Credentials = struct {
                 }
 
                 if (try opts.getOptional(globalObject, "partNumber", i32)) |partNumber| {
-                    if (partNumber < 1 or partNumber > 10000) {
+                    // Allow up to 10001 for completion-only (all 10000 parts already uploaded)
+                    if (partNumber < 1 or partNumber > 10001) {
                         return globalObject.throwRangeError(partNumber, .{
                             .min = 1,
-                            .max = 10000,
+                            .max = 10001,
                             .field_name = "partNumber",
                         });
                     }
@@ -303,6 +311,10 @@ pub const S3Credentials = struct {
 
                 if (try opts.getTruthyComptime(globalObject, "previousParts")) |js_array| {
                     if (!js_array.isEmptyOrUndefinedOrNull()) {
+                        // Validate previousParts requires uploadId before parsing entries
+                        if (new_credentials.upload_id == null) {
+                            return globalObject.throwInvalidArguments("previousParts requires uploadId to resume an existing multipart upload", .{});
+                        }
                         var iter = try jsc.JSArrayIterator.init(js_array, globalObject);
                         while (try iter.next()) |item| {
                             if (!item.isObject()) {
@@ -320,6 +332,12 @@ pub const S3Credentials = struct {
                             }
                             if (pn >= new_credentials.part_number) {
                                 return globalObject.throwInvalidArguments("each previousParts entry must have a partNumber less than partNumber", .{});
+                            }
+                            // Check for duplicate partNumber
+                            for (new_credentials.previous_parts.items) |existing| {
+                                if (existing.number == @as(u16, @intCast(pn))) {
+                                    return globalObject.throwInvalidArguments("previousParts contains duplicate partNumber", .{});
+                                }
                             }
                             const etag_js = (try item.getTruthyComptime(globalObject, "etag")) orelse {
                                 return globalObject.throwInvalidArguments("each element in previousParts must have an etag", .{});

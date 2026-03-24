@@ -1,9 +1,13 @@
 import { expect, mock, test } from "bun:test";
 
 test("mock.module throws TypeError for non-string first argument", () => {
+  // @ts-expect-error
   expect(() => mock.module(SharedArrayBuffer, () => ({}))).toThrow("mock(module, fn) requires a module name string");
+  // @ts-expect-error
   expect(() => mock.module({}, () => ({}))).toThrow("mock(module, fn) requires a module name string");
+  // @ts-expect-error
   expect(() => mock.module(123, () => ({}))).toThrow("mock(module, fn) requires a module name string");
+  // @ts-expect-error
   expect(() => mock.module(Symbol("test"), () => ({}))).toThrow("mock(module, fn) requires a module name string");
 });
 

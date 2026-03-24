@@ -2805,6 +2805,11 @@ pub const PackageManifest = struct {
             url = url["ssh://".len..];
         } else if (strings.hasPrefixComptime(url, "github:")) {
             url = url["github:".len..];
+        } else if (strings.hasPrefixComptime(url, "bitbucket:") or
+            strings.hasPrefixComptime(url, "gitlab:") or
+            strings.hasPrefixComptime(url, "gist:"))
+        {
+            return &.{}; // non-GitHub hosted shorthand, cannot normalize without allocation
         }
 
         // 3. Strip git@ user prefix (can appear after ssh:// stripping)

@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { join } from "path";
 
-describe("bun outdated --changelog", () => {
+describe.concurrent("bun outdated --changelog", () => {
   function createMinimalTarball(name: string, version: string): Buffer {
     const packageJson = JSON.stringify({ name, version });
     const content = Buffer.from(packageJson);
@@ -82,6 +83,19 @@ describe("bun outdated --changelog", () => {
     return server;
   }
 
+  async function runOutdatedChangelog(cwd: string): Promise<string> {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "outdated", "--changelog"],
+      cwd,
+      env: { ...bunEnv, NO_COLOR: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(exitCode).toBe(0);
+    return stdout;
+  }
+
   test("shows repository URLs for outdated packages", async () => {
     await using server = await setupMockRegistry({
       name: "no-deps",
@@ -107,20 +121,10 @@ describe("bun outdated --changelog", () => {
     expect(installStderr).not.toContain("error:");
     expect(await installProc.exited).toBe(0);
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "outdated", "--changelog"],
-      cwd: String(dir),
-      env: { ...bunEnv, NO_COLOR: "1" },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
+    const stdout = await runOutdatedChangelog(String(dir));
     expect(stdout).toContain("no-deps");
     expect(stdout).toContain("Changelogs:");
     expect(stdout).toContain("https://github.com/example/no-deps");
-    expect(exitCode).toBe(0);
   });
 
   test("omits changelog section when no repository field exists", async () => {
@@ -146,18 +150,46 @@ describe("bun outdated --changelog", () => {
     });
     expect(await installProc.exited).toBe(0);
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "outdated", "--changelog"],
+    const stdout = await runOutdatedChangelog(String(dir));
+    expect(stdout).toContain("no-deps");
+    expect(stdout).not.toContain("Changelogs:");
+  });
+
+  test("warm cache still shows changelog URLs", async () => {
+    await using server = await setupMockRegistry({
+      name: "no-deps",
+      repository: { type: "git", url: "git+https://github.com/example/no-deps.git" },
+    });
+
+    // Use caching enabled (no cache=false)
+    const cacheDir = tempDir("outdated-cache-dir", {});
+    using dir = tempDir("outdated-warm-cache", {
+      "bunfig.toml": `[install]\nregistry = "http://localhost:${server.port}/"`,
+      "package.json": JSON.stringify({
+        name: "test-project",
+        dependencies: { "no-deps": "1.0.0" },
+      }),
+    });
+
+    const testEnv = { ...bunEnv, NO_COLOR: "1", BUN_INSTALL_CACHE_DIR: join(String(cacheDir), ".bun-cache") };
+
+    await using installProc = Bun.spawn({
+      cmd: [bunExe(), "install"],
       cwd: String(dir),
-      env: { ...bunEnv, NO_COLOR: "1" },
+      env: testEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
+    expect(await installProc.exited).toBe(0);
 
-    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // First run (cold cache) — populates disk cache
+    const stdout1 = await runOutdatedChangelog(String(dir));
+    expect(stdout1).toContain("Changelogs:");
+    expect(stdout1).toContain("https://github.com/example/no-deps");
 
-    expect(stdout).toContain("no-deps");
-    expect(stdout).not.toContain("Changelogs:");
-    expect(exitCode).toBe(0);
+    // Second run (warm cache) — should still show URLs
+    const stdout2 = await runOutdatedChangelog(String(dir));
+    expect(stdout2).toContain("Changelogs:");
+    expect(stdout2).toContain("https://github.com/example/no-deps");
   });
 });

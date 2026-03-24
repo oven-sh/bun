@@ -1,6 +1,6 @@
 declare module "bun" {
   namespace WebAssembly {
-    type ImportExportKind = "function" | "global" | "memory" | "table";
+    type ImportExportKind = "function" | "global" | "memory" | "table" | "tag";
     type TableKind = "anyfunc" | "externref";
     type ExportValue = Function | Global | WebAssembly.Memory | WebAssembly.Table;
     type Exports = Record<string, ExportValue>;

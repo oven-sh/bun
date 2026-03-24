@@ -2,8 +2,7 @@
   "extends": "../tsconfig.base.json",
   "compilerOptions": {
     "lib": ["ESNext"],
-    // Path remapping — baseUrl needed by Bun's runtime module resolver
-    "ignoreDeprecations": "6.0",
+    // Path remapping
     "baseUrl": ".",
     "paths": {
       "harness": ["harness.ts"],

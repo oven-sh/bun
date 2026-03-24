@@ -202,7 +202,7 @@ async function diagnose(
     if (diagnostic.start === undefined) return null;
 
     const lineAndCharacter = diagnostic.file.getLineAndCharacterOfPosition(diagnostic.start);
-    return `${relative(fixtureDir, diagnostic.file.fileName)}:${lineAndCharacter.line + 1}:${lineAndCharacter.character + 1}`;
+    return `${relative(fixtureDir, diagnostic.file.fileName).replace(/\\/g, "/")}:${lineAndCharacter.line + 1}:${lineAndCharacter.character + 1}`;
   }
 
   function getMessageChain(chain: string | ts.DiagnosticMessageChain): string[] {
@@ -629,18 +629,6 @@ describe("@types/bun integration test", () => {
           line: "node_modules/bun-types/wasm.d.ts:142:7",
           message:
             "Subsequent variable declarations must have the same type.  Variable 'Instance' must be of type '{ new (module: Module, importObject?: Imports | undefined): Instance; prototype: Instance; }', but here has type '{ new (module: Module, importObject?: Imports | undefined): Instance; prototype: Instance; }'.",
-        },
-        {
-          code: 2430,
-          line: "node_modules/typescript/lib/lib.dom.d.ts:42714:15",
-          message:
-            "Interface 'WebAssembly.ModuleExportDescriptor' incorrectly extends interface 'Bun.WebAssembly.ModuleExportDescriptor'.\nTypes of property 'kind' are incompatible.\nType 'WebAssembly.ImportExportKind' is not assignable to type 'Bun.WebAssembly.ImportExportKind'.\nType '\"tag\"' is not assignable to type 'ImportExportKind'.",
-        },
-        {
-          code: 2430,
-          line: "node_modules/typescript/lib/lib.dom.d.ts:42719:15",
-          message:
-            "Interface 'WebAssembly.ModuleImportDescriptor' incorrectly extends interface 'Bun.WebAssembly.ModuleImportDescriptor'.\nTypes of property 'kind' are incompatible.\nType 'WebAssembly.ImportExportKind' is not assignable to type 'Bun.WebAssembly.ImportExportKind'.\nType '\"tag\"' is not assignable to type 'ImportExportKind'.",
         },
         {
           code: 2339,

@@ -348,7 +348,12 @@ pub const S3Credentials = struct {
                             const etag_str = try bun.String.fromJS(etag_js, globalObject);
                             defer etag_str.deref();
                             const etag_utf8 = etag_str.toUTF8(bun.default_allocator);
-                            const etag_duped = bun.handleOom(bun.default_allocator.dupe(u8, etag_utf8.slice()));
+                            const etag_slice = etag_utf8.slice();
+                            if (strings.indexOfAny(etag_slice, "<>&") != null) {
+                                etag_utf8.deinit();
+                                return globalObject.throwInvalidArguments("previousParts[].etag must not contain XML special characters (<, >, &)", .{});
+                            }
+                            const etag_duped = bun.handleOom(bun.default_allocator.dupe(u8, etag_slice));
                             etag_utf8.deinit();
                             new_credentials.previous_parts.append(bun.default_allocator, .{
                                 .number = @intCast(pn),

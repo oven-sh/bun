@@ -597,6 +597,13 @@ pub const MultiPartUpload = struct {
         }, .{ .upload = @ptrCast(&onRollbackMultiPartRequest) }, this);
     }
     fn enqueuePart(this: *@This(), chunk: []const u8, allocated_size: usize, needs_clone: bool) bun.JSTerminated!bool {
+        if (this.currentPartNumber > 10000) {
+            try this.fail(.{
+                .code = "InvalidArgument",
+                .message = "Cannot write data: partNumber exceeds S3 maximum of 10000; use end() without write() for completion-only resume",
+            });
+            return false;
+        }
         const part = this.getCreatePart(chunk, allocated_size, needs_clone) orelse return false;
 
         if (this.state == .not_started) {

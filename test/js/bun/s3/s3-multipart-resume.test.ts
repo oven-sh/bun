@@ -272,7 +272,7 @@ describe("s3 - Resumable multipart upload", () => {
     }).toThrow("partNumber");
 
     expect(() => {
-      client.file("test").writer({ uploadId: "abc", partNumber: 10001 });
+      client.file("test").writer({ uploadId: "abc", partNumber: 10002 });
     }).toThrow("partNumber");
   });
 

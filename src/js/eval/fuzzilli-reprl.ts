@@ -38,6 +38,60 @@ if (responseBytes !== 4) {
   throw new Error(`REPRL handshake failed: expected 4 bytes, got ${responseBytes}`);
 }
 
+// Pin the transpiler and String.prototype.replace before the loop so fuzz
+// inputs cannot monkey-patch them between iterations.
+const transpiler = new Bun.Transpiler({ target: "bun" });
+const transpile = transpiler.transformSync.bind(transpiler);
+const _replace = Function.prototype.call.bind(String.prototype.replace);
+
+// Register runtime helpers on globalThis so transpiled `using` code works in eval.
+// The transpiler lowers `using` to calls to these helpers and emits an
+// `import from "bun:wrap"` that is invalid in eval context. Providing them as
+// globals and stripping the import makes the transpiled output eval-safe.
+// Pin with configurable:false so fuzz inputs cannot corrupt them.
+Object.defineProperty(globalThis, "__using", {
+  value: (stack, value, async) => {
+    if (value != null) {
+      if (typeof value !== "object" && typeof value !== "function")
+        throw TypeError('Object expected to be assigned to "using" declaration');
+      let dispose;
+      if (async) dispose = value[Symbol.asyncDispose];
+      if (dispose === void 0) dispose = value[Symbol.dispose];
+      if (typeof dispose !== "function") throw TypeError("Object not disposable");
+      stack.push([async, dispose, value]);
+    } else if (async) {
+      stack.push([async]);
+    }
+    return value;
+  },
+  writable: false,
+  configurable: false,
+  enumerable: false,
+});
+Object.defineProperty(globalThis, "__callDispose", {
+  value: (stack, error, hasError) => {
+    let fail = e =>
+        (error = hasError
+          ? new SuppressedError(e, error, "An error was suppressed during disposal")
+          : ((hasError = true), e)),
+      next = it => {
+        while ((it = stack.pop())) {
+          try {
+            var result = it[1] && it[1].call(it[2]);
+            if (it[0]) return Promise.resolve(result).then(next, e => (fail(e), next()));
+          } catch (e) {
+            fail(e);
+          }
+        }
+        if (hasError) throw error;
+      };
+    return next();
+  },
+  writable: false,
+  configurable: false,
+  enumerable: false,
+});
+
 // Main REPRL loop
 while (true) {
   // Read command
@@ -72,8 +126,20 @@ while (true) {
   // Execute script
   let exit_code = 0;
   try {
+    // Transpile to lower `using` declarations before eval.
+    // JSC's bytecode generator has a bug where a function with `using` and
+    // a return as its last statement can produce a DFG graph where a catch
+    // root block has predecessors, causing a validation crash.
+    let code = script;
+    try {
+      code = transpile(script);
+      // Strip `import ... from "bun:wrap"` — invalid in eval, helpers are on globalThis.
+      // Normalize mangled helper names (e.g. __using_a1b2c3d4 → __using) to match globalThis.
+      code = _replace(code, /import\s*\{[^}]*\}\s*from\s*"bun:wrap"\s*;\s*\n?/g, "");
+      code = _replace(code, /(__callDispose|__using)_[a-z0-9]+/g, "$1");
+    } catch {}
     // Use indirect eval to execute in global scope
-    (0, eval)(script);
+    (0, eval)(code);
   } catch (_e) {
     // Print uncaught exception like workerd does
     console.log(`uncaught:${_e}`);

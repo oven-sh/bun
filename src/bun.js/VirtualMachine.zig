@@ -1840,6 +1840,12 @@ pub fn resolveMaybeNeedsTrailingSlash(
         jsc_vm.log = old_log;
         jsc_vm.transpiler.linker.log = old_log;
         jsc_vm.transpiler.resolver.log = old_log;
+        // The package manager may have been initialized during this resolve
+        // with a pointer to the stack-local `log`. Restore it so it doesn't
+        // dangle after this frame returns.
+        if (jsc_vm.transpiler.resolver.package_manager) |pm| {
+            pm.log = old_log;
+        }
     }
     jsc_vm._resolve(&result, specifier_utf8.slice(), normalizeSource(source_utf8.slice()), is_esm, is_a_file_path) catch |err_| {
         var err = err_;

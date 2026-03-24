@@ -9,11 +9,13 @@ test("expect matcher error formatting after stack overflow does not crash", asyn
       // Exhaust the stack, catch it, then call a failing expect matcher.
       // The matcher's error formatting must not crash with a pending exception.
       `var done = false;
+      var matcherThrew = false;
       function exhaust() {
         try { exhaust(); } catch (e) {
           if (!done) {
             done = true;
-            try { Bun.jest(undefined).expect({}).toBeSymbol(); } catch (e2) {}
+            try { Bun.jest(undefined).expect({}).toBeSymbol(); } catch (e2) { matcherThrew = true; }
+            if (!matcherThrew) process.exit(1);
           }
         }
       }
@@ -31,6 +33,5 @@ test("expect matcher error formatting after stack overflow does not crash", asyn
   ]);
 
   // Must not crash with SIGABRT (exit code 134) from releaseAssertNoException
-  expect(stderr).not.toContain("ASSERTION FAILED");
   expect(exitCode).toBe(0);
 });

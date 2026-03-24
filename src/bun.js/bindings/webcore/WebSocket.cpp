@@ -292,6 +292,19 @@ void WebSocket::setExtensionsFromDeflateParams(const PerMessageDeflateParams* de
     m_extensions = extensions.toString();
 }
 
+void WebSocket::setUpgradeResponse(uint16_t statusCode, const String& statusMessage)
+{
+    m_upgradeResponseData = std::make_unique<UpgradeResponseData>();
+    m_upgradeResponseData->statusCode = statusCode;
+    m_upgradeResponseData->statusMessage = statusMessage;
+}
+
+void WebSocket::appendUpgradeHeader(const String& name, const String& value)
+{
+    if (m_upgradeResponseData)
+        m_upgradeResponseData->headers.append({ name, value });
+}
+
 ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, const String& url)
 {
     return create(context, url, Vector<String> {}, std::nullopt);
@@ -427,7 +440,6 @@ size_t WebSocket::memoryCost() const
     cost += m_url.string().sizeInBytes();
     cost += m_subprotocol.sizeInBytes();
     cost += m_extensions.sizeInBytes();
-
     if (m_connectedWebSocketKind == ConnectedWebSocketKind::Client) {
         cost += Bun__WebSocketClient__memoryCost(m_connectedWebSocket.client);
     } else if (m_connectedWebSocketKind == ConnectedWebSocketKind::ClientSSL) {
@@ -1246,12 +1258,14 @@ void WebSocket::didConnect()
             // the main reason for dispatching on a separate tick is to handle when you haven't yet attached an event listener
             dispatchEvent(Event::create(eventNames().openEvent, Event::CanBubble::No, Event::IsCancelable::No));
             this->decPendingActivityCount();
+            clearUpgradeResponseData();
         } else {
             this->incPendingActivityCount();
             context->postTask([this, protectedThis = Ref { *this }](ScriptExecutionContext& context) {
                 ASSERT(scriptExecutionContext());
                 protectedThis->dispatchEvent(Event::create(eventNames().openEvent, Event::CanBubble::No, Event::IsCancelable::No));
                 protectedThis->decPendingActivityCount();
+                protectedThis->clearUpgradeResponseData();
             });
         }
     }
@@ -1676,6 +1690,8 @@ void WebSocket::didFailWithErrorCode(Bun::WebSocketErrorCode code)
     }
     }
 
+    clearUpgradeResponseData();
+
     m_state = CLOSED;
     if (auto* context = scriptExecutionContext()) {
         context->postTask([protectedThis = Ref { *this }](ScriptExecutionContext& context) {
@@ -1734,6 +1750,16 @@ void WebSocket::didConnectWithTunnel(void* tunnel, char* bufferedData, size_t bu
 extern "C" void WebSocket__didConnect(WebCore::WebSocket* webSocket, us_socket_t* socket, char* bufferedData, size_t len, const PerMessageDeflateParams* deflate_params, void* customSSLCtx)
 {
     webSocket->didConnect(socket, bufferedData, len, deflate_params, customSSLCtx);
+}
+
+extern "C" void WebSocket__setUpgradeResponse(WebCore::WebSocket* webSocket, uint16_t upgradeStatusCode, BunString* upgradeStatusMessage)
+{
+    webSocket->setUpgradeResponse(upgradeStatusCode, upgradeStatusMessage->transferToWTFString());
+}
+
+extern "C" void WebSocket__appendUpgradeHeader(WebCore::WebSocket* webSocket, BunString* name, BunString* value)
+{
+    webSocket->appendUpgradeHeader(name->transferToWTFString(), value->transferToWTFString());
 }
 
 extern "C" void WebSocket__didConnectWithTunnel(WebCore::WebSocket* webSocket, void* tunnel, char* bufferedData, size_t len, const PerMessageDeflateParams* deflate_params)

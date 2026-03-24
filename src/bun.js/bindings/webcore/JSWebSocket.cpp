@@ -66,6 +66,7 @@
 #include "JSFetchHeaders.h"
 #include "headers.h"
 #include "ObjectBindings.h"
+#include <JavaScriptCore/JSFunction.h>
 
 namespace WebCore {
 using namespace JSC;
@@ -77,6 +78,7 @@ static JSC_DECLARE_HOST_FUNCTION(jsWebSocketPrototypeFunction_close);
 static JSC_DECLARE_HOST_FUNCTION(jsWebSocketPrototypeFunction_ping);
 static JSC_DECLARE_HOST_FUNCTION(jsWebSocketPrototypeFunction_pong);
 static JSC_DECLARE_HOST_FUNCTION(jsWebSocketPrototypeFunction_terminate);
+static JSC_DECLARE_HOST_FUNCTION(jsWebSocketGetUpgradeResponse);
 
 // Attributes
 
@@ -1026,6 +1028,78 @@ WebSocket* JSWebSocket::toWrapped(JSC::VM&, JSC::JSValue value)
 JSC::JSValue getWebSocketConstructor(Zig::GlobalObject* globalObject)
 {
     return WebCore::JSWebSocket::getConstructor(globalObject->vm(), globalObject);
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsWebSocketGetUpgradeResponse, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* impl = JSWebSocket::toWrapped(vm, callFrame->argument(0));
+    if (!impl) [[unlikely]]
+        return throwVMTypeError(globalObject, scope);
+
+    auto* result = JSC::constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
+
+    auto* upgradeData = impl->upgradeResponseData();
+    result->putDirect(vm, Identifier::fromString(vm, "statusCode"_s), jsNumber(upgradeData ? upgradeData->statusCode : 0), 0);
+    result->putDirect(vm, Identifier::fromString(vm, "statusMessage"_s), jsString(vm, upgradeData ? upgradeData->statusMessage : emptyString()), 0);
+
+    auto* headers = JSC::constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
+    if (!upgradeData) {
+        result->putDirect(vm, Identifier::fromString(vm, "headers"_s), headers, 0);
+        RELEASE_AND_RETURN(scope, JSValue::encode(result));
+    }
+    for (const auto& [name, value] : upgradeData->headers) {
+        auto lowercasedName = name.convertToASCIILowercase();
+        auto identifier = Identifier::fromString(vm, lowercasedName);
+        auto jsValue = jsString(vm, value);
+
+        auto existing = headers->get(globalObject, identifier);
+        RETURN_IF_EXCEPTION(scope, {});
+
+        if (WTF::equalIgnoringASCIICase(lowercasedName, "set-cookie"_s)) {
+            JSC::JSArray* setCookieValues = jsDynamicCast<JSC::JSArray*>(existing);
+            if (!setCookieValues) {
+                setCookieValues = JSC::constructEmptyArray(globalObject, nullptr);
+                if (!existing.isUndefined()) {
+                    setCookieValues->push(globalObject, existing);
+                    RETURN_IF_EXCEPTION(scope, {});
+                }
+                headers->putDirect(vm, identifier, setCookieValues, 0);
+                RETURN_IF_EXCEPTION(scope, {});
+            }
+            setCookieValues->push(globalObject, jsValue);
+            RETURN_IF_EXCEPTION(scope, {});
+            continue;
+        }
+
+        if (!existing.isUndefined()) {
+            auto existingValue = existing.toWTFString(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            jsValue = jsString(vm, makeString(existingValue, ", "_s, value));
+        }
+
+        headers->putDirect(vm, identifier, jsValue, 0);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+
+    result->putDirect(vm, Identifier::fromString(vm, "headers"_s), headers, 0);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    RELEASE_AND_RETURN(scope, JSValue::encode(result));
+}
+
+JSC::JSValue createWebSocketInternalBinding(Zig::GlobalObject* globalObject)
+{
+    auto* obj = constructEmptyObject(globalObject);
+    auto& vm = globalObject->vm();
+    obj->putDirect(
+        vm,
+        JSC::PropertyName(JSC::Identifier::fromString(vm, "getUpgradeResponse"_s)),
+        JSC::JSFunction::create(vm, globalObject, 1, "getUpgradeResponse"_s, jsWebSocketGetUpgradeResponse, ImplementationVisibility::Public),
+        0);
+    return obj;
 }
 
 }

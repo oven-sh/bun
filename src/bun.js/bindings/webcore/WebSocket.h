@@ -142,6 +142,17 @@ public:
     String binaryType() const;
     ExceptionOr<void> setBinaryType(const String&);
 
+    struct UpgradeResponseData {
+        uint16_t statusCode { 0 };
+        String statusMessage;
+        Vector<std::pair<String, String>> headers;
+    };
+
+    void setUpgradeResponse(uint16_t statusCode, const String& statusMessage);
+    void appendUpgradeHeader(const String& name, const String& value);
+    UpgradeResponseData* upgradeResponseData() { return m_upgradeResponseData.get(); }
+    void clearUpgradeResponseData() { m_upgradeResponseData.reset(); }
+
     ScriptExecutionContext* scriptExecutionContext() const final;
 
     using RefCounted::deref;
@@ -249,6 +260,7 @@ private:
     String m_extensions;
     void* m_upgradeClient { nullptr };
     ConnectionType m_connectionType { ConnectionType::Plain };
+    std::unique_ptr<UpgradeResponseData> m_upgradeResponseData;
     bool m_rejectUnauthorized { false };
     AnyWebSocket m_connectedWebSocket { nullptr };
     ConnectedWebSocketKind m_connectedWebSocketKind { ConnectedWebSocketKind::None };

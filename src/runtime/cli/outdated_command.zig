@@ -690,9 +690,12 @@ pub const OutdatedCommand = struct {
 
         if (manager.options.changelog) {
             var has_any_url = false;
+            var seen_pkgs = std.AutoHashMapUnmanaged(PackageID, void){};
+            defer seen_pkgs.deinit(bun.default_allocator);
             // Print changelog URLs below the table
             for (grouped_ids.items) |item| {
                 const package_id = item.package_id;
+                if ((seen_pkgs.getOrPut(bun.default_allocator, package_id) catch bun.handleOom(error.OutOfMemory)).found_existing) continue;
                 const package_name = pkg_names[package_id].slice(string_buf);
 
                 var exp = false;

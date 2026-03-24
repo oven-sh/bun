@@ -201,6 +201,10 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
             end_index: usize,
             first: bool,
             name_data: if (use_windows_ospath) [257]u16 else [513]u8,
+            /// Optional kernel-side wildcard filter passed to NtQueryDirectoryFile.
+            /// Evaluated by FsRtlIsNameInExpression (case-insensitive, supports `*` and `?`).
+            /// Only honored on the first call (RestartScan=TRUE); sticky for the handle lifetime.
+            name_filter: ?[]const u16 = null,
 
             const Self = @This();
 
@@ -220,6 +224,16 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
                             @memset(&self.buf, 0);
                         }
 
+                        var filter_us: w.UNICODE_STRING = undefined;
+                        const filter_ptr: ?*w.UNICODE_STRING = if (self.name_filter) |f| blk: {
+                            filter_us = .{
+                                .Length = @intCast(f.len * 2),
+                                .MaximumLength = @intCast(f.len * 2),
+                                .Buffer = @constCast(f.ptr),
+                            };
+                            break :blk &filter_us;
+                        } else null;
+
                         const rc = w.ntdll.NtQueryDirectoryFile(
                             self.dir.cast(),
                             null,
@@ -230,7 +244,7 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
                             self.buf.len,
                             .FileDirectoryInformation,
                             w.FALSE,
-                            null,
+                            filter_ptr,
                             if (self.first) @as(w.BOOLEAN, w.TRUE) else @as(w.BOOLEAN, w.FALSE),
                         );
 
@@ -448,6 +462,11 @@ pub fn NewWrappedIterator(comptime path_type: PathType) type {
                     },
                 },
             };
+        }
+
+        pub fn setNameFilter(self: *Self, filter: ?[]const u16) void {
+            if (comptime !bun.Environment.isWindows) return;
+            self.iter.name_filter = filter;
         }
     };
 }

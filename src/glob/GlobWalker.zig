@@ -137,6 +137,10 @@ pub const SyscallAccessor = struct {
         pub inline fn iterate(dir: Handle) DirIter {
             return .{ .value = DirIterator.WrappedIterator.init(dir.value) };
         }
+
+        pub inline fn setNameFilter(self: *DirIter, filter: ?[]const u16) void {
+            self.value.setNameFilter(filter);
+        }
     };
 
     pub fn open(path: [:0]const u8) !Maybe(Handle) {
@@ -435,6 +439,8 @@ pub fn GlobWalker_(
             /// directory being iterated on.
             fds_open: if (count_fds) usize else u0 = 0,
 
+            nt_filter_buf: if (isWindows) [256]u16 else void = if (isWindows) undefined else {},
+
             pub fn init(this: *Iterator) !Maybe(void) {
                 log("Iterator init pattern={s}", .{this.walker.pattern});
                 var was_absolute = false;
@@ -702,11 +708,47 @@ pub fn GlobWalker_(
                 log("Transition(dirpath={s}, component_idx={d})", .{ dir_path, component_idx });
 
                 this.iter_state.directory.fd = fd;
-                const iterator = Accessor.DirIter.iterate(fd);
+                var iterator = Accessor.DirIter.iterate(fd);
+                if (comptime isWindows) {
+                    if (@hasDecl(Accessor.DirIter, "setNameFilter")) {
+                        iterator.setNameFilter(this.computeNtFilter(component_idx));
+                    }
+                }
                 this.iter_state.directory.iter = iterator;
                 this.iter_state.directory.iter_closed = false;
 
                 return .success;
+            }
+
+            /// Compute an optional NtQueryDirectoryFile FileName filter for the current
+            /// pattern component. The kernel filter is used purely as a pre-filter;
+            /// matchPatternImpl still runs on every returned entry for correctness
+            /// (case sensitivity, 8.3 aliases, etc). We only emit a filter when the
+            /// NT match is guaranteed to be a superset of the glob match.
+            fn computeNtFilter(this: *Iterator, component_idx: u32) ?[]const u16 {
+                if (comptime !isWindows) return null;
+
+                const comp = &this.walker.patternComponents.items[component_idx];
+                switch (comp.syntax_hint) {
+                    // `*` and `**` match everything; a filter gains nothing and for `**`
+                    // would incorrectly hide subdirectories we need to recurse into.
+                    .Single, .Double, .Dot, .DotBack => return null,
+                    else => {},
+                }
+
+                const slice = comp.patternSlice(this.walker.pattern);
+                if (slice.len == 0 or slice.len > this.nt_filter_buf.len) return null;
+
+                // Only `*` and literals are safe to lower. Reject anything NT cannot
+                // express (`[` `{` `\` `!`) or where NT semantics under-match glob
+                // (`?` matches one UTF-16 code unit, glob matches one codepoint).
+                // `<` `>` `"` are NT wildcards; treating them as literals would over-match,
+                // but they are invalid in Windows filenames so such a pattern never matches
+                // anyway.
+                if (bun.strings.indexOfAny(slice, "?[{\\!<>\"") != null) return null;
+
+                const wide = bun.strings.convertUTF8toUTF16InBuffer(&this.nt_filter_buf, slice);
+                return wide;
             }
 
             pub fn next(this: *Iterator) !Maybe(?MatchedPath) {

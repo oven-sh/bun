@@ -1340,10 +1340,10 @@ pub fn GlobWalker_(
 
         /// Create an empty ComponentSet sized for this pattern.
         fn makeSet(this: *GlobWalker) ComponentSet {
-            return ComponentSet.initEmpty(
+            return bun.handleOom(ComponentSet.initEmpty(
                 this.arena.allocator(),
                 this.patternComponents.items.len,
-            ) catch bun.outOfMemory();
+            ));
         }
 
         fn singleSet(this: *GlobWalker, idx: u32) ComponentSet {

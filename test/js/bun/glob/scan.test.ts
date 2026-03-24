@@ -817,7 +817,8 @@ describe("glob.scan wildcard fast path", async () => {
 
 // ComponentSet (AutoBitSet) stores up to 127 indices inline, then spills to
 // heap. Verify patterns past that threshold still match correctly.
-test("patterns with many components", () => {
+// Skipped on Windows: 130 levels × 2 chars + tmpdir prefix exceeds MAX_PATH (260).
+test.skipIf(process.platform === "win32")("patterns with many components", () => {
   const depth = 130;
   const files: Record<string, string> = {};
   const parts: string[] = [];

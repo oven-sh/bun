@@ -1,35 +1,33 @@
-import { expect, test } from "bun:test";
+import { test, expect } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
 test("console.log with throwing getter behind Proxy prototype does not crash", async () => {
   await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `
+    cmd: [bunExe(), "-e", `
       const proto = { get x() { throw new Error('boom'); } };
       const obj = {};
       Object.setPrototypeOf(obj, new Proxy(proto, {}));
       console.log(obj);
-    `,
-    ],
+    `],
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([
+    proc.stdout.text(),
+    proc.stderr.text(),
+    proc.exited,
+  ]);
 
+  expect(stderr).toBe("");
   expect(stdout).toBe("{}\n");
   expect(exitCode).toBe(0);
 });
 
 test("formatting object with Proxy prototype and multiple getters where later ones throw", async () => {
   await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `
+    cmd: [bunExe(), "-e", `
       let state = 0;
       const proto = {
         get a() { state = 1; return 'A'; },
@@ -38,14 +36,19 @@ test("formatting object with Proxy prototype and multiple getters where later on
       const obj = {};
       Object.setPrototypeOf(obj, new Proxy(proto, {}));
       console.log(obj);
-    `,
-    ],
+    `],
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([
+    proc.stdout.text(),
+    proc.stderr.text(),
+    proc.exited,
+  ]);
 
+  expect(stderr).toBe("");
+  expect(stdout).toContain("a:");
   expect(exitCode).toBe(0);
 });

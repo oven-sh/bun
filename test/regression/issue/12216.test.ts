@@ -3,7 +3,7 @@ import { existsSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
-test("--coverage CLI flag overrides bunfig.toml coverage = false", async () => {
+test.concurrent("--coverage CLI flag overrides bunfig.toml coverage = false", async () => {
   using dir = tempDir("issue-12216", {
     "bunfig.toml": `[test]\ncoverage = false`,
     "helper.ts": `export function add(a: number, b: number) { return a + b; }\nexport function sub(a: number, b: number) { return a - b; }`,
@@ -26,7 +26,7 @@ test("--coverage CLI flag overrides bunfig.toml coverage = false", async () => {
   expect(exitCode).toBe(0);
 });
 
-test("--coverage-reporter CLI flag overrides bunfig.toml coverageReporter", async () => {
+test.concurrent("--coverage-reporter CLI flag overrides bunfig.toml coverageReporter", async () => {
   using dir = tempDir("issue-12216-reporter", {
     "bunfig.toml": `[test]\ncoverage = true\ncoverageReporter = "lcov"`,
     "helper.ts": `export function add(a: number, b: number) { return a + b; }`,
@@ -45,10 +45,12 @@ test("--coverage-reporter CLI flag overrides bunfig.toml coverageReporter", asyn
 
   // text reporter prints the coverage table to stderr
   expect(stderr).toContain("% Funcs");
+  // lcov reporter should NOT have run
+  expect(existsSync(join(String(dir), "coverage", "lcov.info"))).toBe(false);
   expect(exitCode).toBe(0);
 });
 
-test("--coverage-dir CLI flag overrides bunfig.toml coverageDir", async () => {
+test.concurrent("--coverage-dir CLI flag overrides bunfig.toml coverageDir", async () => {
   using dir = tempDir("issue-12216-dir", {
     "bunfig.toml": `[test]\ncoverage = true\ncoverageReporter = "lcov"\ncoverageDir = "config-coverage"`,
     "helper.ts": `export function add(a: number, b: number) { return a + b; }`,

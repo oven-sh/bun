@@ -610,7 +610,7 @@ var require_wasi = __commonJS({
       };
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.SOCKET_DEFAULT_RIGHTS = void 0;
-    var log: any = (...args: any[]) => {};
+    var log: any = (..._args: any[]) => {};
     log.enabled = false;
     var logOpen = () => {};
     var SC_OPEN_MAX = 32768;
@@ -1878,6 +1878,9 @@ var require_wasi = __commonJS({
           }
         }
         this.setMemory(memory);
+        if (exports2._initialize) {
+          throw new Error("instance.exports._initialize exists. Use initialize() for WASI reactors.");
+        }
         if (exports2._start) {
           exports2._start();
         }
@@ -1892,6 +1895,9 @@ var require_wasi = __commonJS({
           throw new Error(`instance.exports.memory must be a WebAssembly.Memory. Received ${memory}.`);
         }
         this.setMemory(memory);
+        if (exports2._start) {
+          throw new Error("instance.exports._start exists. Use start() for WASI commands.");
+        }
         if (exports2._initialize) {
           exports2._initialize();
         }

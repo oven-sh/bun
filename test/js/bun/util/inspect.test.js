@@ -39,7 +39,9 @@ it("throwing custom inspect in error formatting does not crash", () => {
 
   // TypedArray with throwing inspect should use type-aware fallback, not plain object
   const arr = new Uint8Array([1, 2, 3]);
-  arr[Symbol.for("nodejs.util.inspect.custom")] = () => { throw new Error("nope"); };
+  arr[Symbol.for("nodejs.util.inspect.custom")] = () => {
+    throw new Error("nope");
+  };
   expect(() => expect({}).toHaveLength(arr)).toThrow(/Uint8Array/);
 });
 

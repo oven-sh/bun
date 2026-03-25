@@ -6,7 +6,10 @@ import { bunEnv, bunExe } from "harness";
 // call would reach the blob source with a null store, causing a crash.
 test("ReadableStream.bytes() after Response body consumed via fast path throws", async () => {
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", `
+    cmd: [
+      bunExe(),
+      "-e",
+      `
       const response = new Response("test data");
       const body = response.body;
       await response.bytes();
@@ -17,7 +20,8 @@ test("ReadableStream.bytes() after Response body consumed via fast path throws",
         console.log(e.message);
         process.exit(0);
       }
-    `],
+    `,
+    ],
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",

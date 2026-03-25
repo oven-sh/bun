@@ -34,9 +34,14 @@ namespace Zig {
 class GlobalObject;
 }
 
+namespace WebCore {
+class WebSocket;
+}
+
 namespace Bun {
 
 class JSWebView;
+enum class ScreenshotFormat : uint8_t;
 
 namespace CDP {
 
@@ -81,6 +86,36 @@ public:
             m_sb.append('"');
         }
         m_sb.append(",\"params\":{"_s);
+    }
+
+    // Raw passthrough — user-provided method string and pre-serialized
+    // params JSON (JSON.stringify on the JS side; arrives here as UTF-8).
+    // method goes through appendQuotedJSONString (a user can pass
+    // `Page.navigate"` with a stray quote — the method string IS user input
+    // for this entry point). paramsJson is trusted JSON — it came from
+    // JSON.stringify which guarantees well-formed output. The builder's
+    // finishAndWrite appends the closing }} so paramsJson must be the inner
+    // object without the outer braces; we write it verbatim and skip the
+    // normal str()/num() comma machinery.
+    struct RawTag {};
+    Command(RawTag, uint32_t id, const WTF::String& method, std::span<const char> sessionId, const WTF::String& paramsJson)
+    {
+        m_sb.append("{\"id\":"_s, id, ",\"method\":"_s);
+        m_sb.appendQuotedJSONString(method);
+        if (!sessionId.empty()) {
+            m_sb.append(",\"sessionId\":\""_s);
+            m_sb.append(std::span<const Latin1Character>(
+                reinterpret_cast<const Latin1Character*>(sessionId.data()), sessionId.size()));
+            m_sb.append('"');
+        }
+        // paramsJson is an object or {} — the user passed `params` or
+        // nothing. JSON.stringify already handled escapes/encoding. We
+        // write `,"params":` then the verbatim JSON, then cheat: set
+        // m_paramsRaw so finishAndWrite appends a single } (the frame
+        // close) instead of }} (frame close + our implicit params brace).
+        m_sb.append(",\"params\":"_s);
+        m_sb.append(paramsJson);
+        m_paramsRaw = true;
     }
 
     // Named string param. appendQuotedJSONString adds the quotes + escapes.
@@ -139,10 +174,25 @@ public:
     // The trailing NUL frame delimiter: we write sink(body, len) then
     // sink("\0", 1). Two syscalls in the best case; a writev would be
     // one, but the pipe buffer coalesces anyway.
+    // WebSocket mode: return the JSON body as a WTF::String for
+    // WebSocket::sendTextNative. No NUL terminator — WS text-frame
+    // framing IS the delimiter. toString() moves the builder's buffer
+    // into the String if nothing else holds a ref — zero-copy for the
+    // 8-bit-ASCII case (our templates are ASCII, user strings go
+    // through appendQuotedJSONString which produces ASCII escapes).
+    WTF::String finishToString()
+    {
+        m_sb.append(m_paramsRaw ? "}"_s : "}}"_s);
+        return m_sb.toString();
+    }
+
     template<typename Sink> // void(const char*, size_t)
     void finishAndWrite(Sink&& sink)
     {
-        m_sb.append("}}"_s);
+        // RawTag constructor already wrote the complete params object;
+        // only the outer frame brace remains. Normal path needs both the
+        // params brace and the frame brace.
+        m_sb.append(m_paramsRaw ? "}"_s : "}}"_s);
         if (m_sb.is8Bit()) [[likely]] {
             auto s = m_sb.span8();
             // OR-accumulate: all bytes < 0x80 → no high bit → valid ASCII.
@@ -171,6 +221,7 @@ private:
 
     WTF::StringBuilder m_sb;
     bool m_hasParam = false;
+    bool m_paramsRaw = false;
 };
 
 // --- Method tags -----------------------------------------------------------
@@ -214,6 +265,11 @@ enum class Method : uint8_t {
     // block.
     ClickSelectorEval, // actionability → "cx,cy" → dispatchMouseEvent
     ScrollToSelectorEval, // scrollIntoView ran page-side → settle
+    // User-supplied raw command via view.cdp(method, params). Response
+    // handler runs the result/error JSON through JSC's JSONParse and
+    // settles the promise with the decoded JSValue — caller gets the
+    // same object shape CDP documents.
+    UserRaw,
 };
 
 // Shared actionability/scrollTo JS — same predicate as WKWebView's
@@ -280,12 +336,37 @@ enum class PendingSlot : uint8_t {
     Evaluate,
     Screenshot,
     Misc,
+    // Raw view.cdp() escape hatch. Separate slot so it doesn't block
+    // resize/goBack/etc. Still one-at-a-time (slot model, not id-keyed
+    // promise map) — lift in v2 when/if someone needs burst CDP.
+    Cdp,
 };
 
+// Per-CDP-id pending entry. viewId indirects through Transport::m_views
+// (one Weak per view) instead of holding its own Weak — a burst of
+// operations creates N ids but only one weak slot allocation. Response
+// handlers do m_views.find(entry.viewId)->value.get() to reach the view.
 struct Pending {
     Method method;
     PendingSlot slot;
-    JSC::Weak<JSWebView> view;
+    uint32_t viewId;
+};
+
+// Transport mode. Pipe = we spawned Chrome with --remote-debugging-pipe,
+// socketpair bidi fd, NUL-delimited JSON frames. WebSocket = connect to an
+// already-running Chrome's /devtools/browser endpoint over ws://, one JSON
+// message per text frame (WS framing IS the delimiter).
+//
+// WebSocket mode reuses WebCore::WebSocket in native-callback mode — no
+// MessageEvent, no dispatchEvent, no postTask deferral. The onMessage
+// callback calls handleMessage directly with the text frame's UTF-8 bytes.
+// handleMessage/handleResponse/handleEvent are mode-agnostic — they take
+// std::span<const char> and don't care whether it came from a NUL-scan or
+// a WS frame.
+enum class TransportMode : uint8_t {
+    None, // not yet initialized
+    Pipe, // spawned Chrome, socketpair
+    WebSocket, // existing Chrome, ws://
 };
 
 class Transport {
@@ -301,12 +382,33 @@ public:
         const WTF::String& path = {}, const WTF::Vector<WTF::String>& extraArgv = {},
         bool stdoutInherit = false, bool stderrInherit = false);
 
+    // Connect to an already-running Chrome's DevTools endpoint. wsUrl is
+    // a full ws:// URL (from DevToolsActivePort or user-supplied). Same
+    // singleton semantics as ensureSpawned: first call wins.
+    //
+    // When autoDetected=true, the trailing spawn args are stashed for
+    // the wsOnClose fallback (stale-file → spawn). createChrome only
+    // takes the auto-detect branch when path/argv are empty, so those
+    // aren't carried. When autoDetected=false (explicit backend.url),
+    // there's no fallback and the args are ignored.
+    //
+    // autoDetected=true means we read DevToolsActivePort ourselves and
+    // the user didn't explicitly ask for WS mode — if the connect fails
+    // (stale file: Chrome crashed/restarted), wsOnClose falls back to
+    // ensureSpawned instead of rejecting the user's promise with a
+    // confusing WebSocket error. autoDetected=false means explicit
+    // backend.url; connect failure surfaces directly.
+    bool ensureConnected(Zig::GlobalObject*, const WTF::String& wsUrl, bool autoDetected,
+        const WTF::String& userDataDir = {}, bool stdoutInherit = false, bool stderrInherit = false);
+
     // Next CDP id — caller uses it with Command(id, ...) then calls send().
     uint32_t nextId() { return m_nextId++; }
 
-    // Finish the command and write to the pipe. Zero-copy when the command
-    // body is all-ASCII (the common case). See Command::finishAndWrite.
-    void send(Command&& cmd);
+    // Finish the command and write. Zero-copy when the body is all-ASCII.
+    // Pipe mode: NUL-delimited via writeRaw. WebSocket mode: one text
+    // frame via sendTextNative, or queue with its CDP id pre-open so
+    // close() can cancel (m_pending.removeIf erases the id, drain skips).
+    void send(uint32_t cdpId, Command&& cmd);
 
     // Called from usockets onData. Parses complete NUL-delimited messages
     // out of rx, dispatches each to handleMessage.
@@ -315,14 +417,54 @@ public:
     void onClose();
 
     Zig::GlobalObject* m_global = nullptr;
+    TransportMode m_mode = TransportMode::None;
+    // Pipe mode: usockets-adopted socketpair fd.
     us_socket_t* m_readSock = nullptr;
+    // WebSocket mode: RefPtr keeps the WebCore::WebSocket alive across
+    // the singleton's lifetime. The WebSocket's native callbacks point
+    // back at this Transport (via static trampolines, not a captured
+    // lambda — the callbacks are plain C function pointers).
+    RefPtr<WebCore::WebSocket> m_ws;
+    // Commands queued while the WS handshake is in flight. The first
+    // navigate() on a view runs before onOpen fires; we can't
+    // sendTextNative until m_state == OPEN. Drained in wsOnOpen.
+    //
+    // Keyed by CDP id so Ops::close() can cancel: m_pending.removeIf
+    // erases the id, and drain skips bodies whose id is gone. Without
+    // this, closing a view pre-open would still send its
+    // Target.createTarget — orphaned tab in the user's Chrome.
+    struct WsPendingCmd {
+        uint32_t id;
+        WTF::String body;
+    };
+    WTF::Vector<WsPendingCmd> m_wsPending;
+    bool m_wsOpen = false;
+    // True when ensureConnected was called from auto-detect (the
+    // constructor read DevToolsActivePort) — gates the stale-file
+    // fallback in wsOnClose. False for explicit backend.url.
+    bool m_wasAutoDetected = false;
+    // Stashed for the wsOnClose fallback spawn. Auto-detect only runs
+    // when path/argv are empty (createChrome branches to spawn-mode
+    // otherwise), so userDataDir + stdio are the only carry-over. Set in
+    // ensureConnected when autoDetected=true.
+    WTF::String m_fallbackUserDataDir;
+    bool m_fallbackStdoutInherit = false;
+    bool m_fallbackStderrInherit = false;
     bool m_dead = false;
 
     uint32_t m_nextId = 1;
+    uint32_t m_nextViewId = 1;
     WTF::HashMap<uint32_t, Pending> m_pending;
-    // sessionId → JSWebView. The string is the raw slice from
-    // Target.attachedToTarget — base64-ish, no escapes, stored as-is.
-    WTF::HashMap<WTF::String, JSC::Weak<JSWebView>> m_sessions;
+    // viewId → JSWebView. ONE Weak per view (not per CDP request).
+    // Mirrors WebKitBackend's HostClient::viewsById. All routing
+    // dereferences through here. Populated in createChrome, erased in
+    // Ops::close. The Weak's owner predicate reads
+    // m_pendingActivityCount — same GC-root pattern as HostClient.
+    WTF::HashMap<uint32_t, JSC::Weak<JSWebView>> m_views;
+    // sessionId → viewId. The string is the raw slice from
+    // Target.attachedToTarget — base64-ish, no escapes. Indirects through
+    // m_views so there's still only one Weak per view total.
+    WTF::HashMap<WTF::String, uint32_t> m_sessions;
 
     WTF::Vector<uint8_t> m_rx;
     WTF::Vector<uint8_t> m_txQueue;
@@ -334,6 +476,22 @@ public:
     void rejectAllAndMarkDead(const WTF::String& reason);
     void updateKeepAlive();
     void writeRaw(const char* data, size_t len);
+
+    // Resolve viewId → JSWebView* through m_views. Null if the view was
+    // collected (user dropped both the view and its awaited promise —
+    // m_pendingActivityCount == 0 so the Weak predicate stopped rooting
+    // it). Responses on a null view silently drop, same as WebKit's
+    // handleReply early-return.
+    JSWebView* viewFor(uint32_t viewId)
+    {
+        auto it = m_views.find(viewId);
+        if (it == m_views.end()) return nullptr;
+        return it->value.get();
+    }
+
+    // Register a fresh view. Returns its viewId and stores one Weak.
+    // Called from JSWebView::createChrome after the transport is up.
+    uint32_t registerView(JSWebView*);
 };
 
 Transport& transport();
@@ -348,7 +506,7 @@ namespace Ops {
 
 JSC::JSPromise* navigate(JSC::JSGlobalObject*, JSWebView*, const WTF::String& url);
 JSC::JSPromise* evaluate(JSC::JSGlobalObject*, JSWebView*, const WTF::String& script);
-JSC::JSPromise* screenshot(JSC::JSGlobalObject*, JSWebView*);
+JSC::JSPromise* screenshot(JSC::JSGlobalObject*, JSWebView*, ScreenshotFormat, uint8_t quality);
 JSC::JSPromise* click(JSC::JSGlobalObject*, JSWebView*, float x, float y, uint8_t button, uint8_t modifiers, uint8_t clickCount);
 JSC::JSPromise* clickSelector(JSC::JSGlobalObject*, JSWebView*, const WTF::String& selector, uint32_t timeout, uint8_t button, uint8_t modifiers, uint8_t clickCount);
 JSC::JSPromise* type(JSC::JSGlobalObject*, JSWebView*, const WTF::String& text);
@@ -359,6 +517,10 @@ JSC::JSPromise* resize(JSC::JSGlobalObject*, JSWebView*, uint32_t width, uint32_
 JSC::JSPromise* goBack(JSC::JSGlobalObject*, JSWebView*);
 JSC::JSPromise* goForward(JSC::JSGlobalObject*, JSWebView*);
 JSC::JSPromise* reload(JSC::JSGlobalObject*, JSWebView*);
+// paramsJson is the output of JSON.stringify(params) — a well-formed JSON
+// object string, or "{}" if the user passed nothing. method is the CDP
+// domain-qualified name ("Page.captureScreenshot" etc.).
+JSC::JSPromise* cdp(JSC::JSGlobalObject*, JSWebView*, const WTF::String& method, const WTF::String& paramsJson);
 void close(JSWebView*);
 
 } // namespace Ops

@@ -1652,6 +1652,7 @@ const string = []const u8;
 
 const builtin = @import("builtin");
 const std = @import("std");
+const version_manager = @import("./version_manager.zig");
 
 const bun = @import("bun");
 const Bunfig = bun.Bunfig;
@@ -1676,4 +1677,3 @@ const LoaderColonList = CLI.LoaderColonList;
 const debug_flags = CLI.debug_flags;
 const printRevisionAndExit = CLI.printRevisionAndExit;
 const printVersionAndExit = CLI.printVersionAndExit;
-const version_manager = @import("version_manager.zig");

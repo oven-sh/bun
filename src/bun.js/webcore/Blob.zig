@@ -3121,6 +3121,85 @@ export fn Blob__fromBytes(globalThis: *jsc.JSGlobalObject, ptr: ?[*]const u8, le
     return new(initWithStore(store, globalThis));
 }
 
+/// Same as Blob__fromBytes but stamps content_type. `mime` must be a
+/// string literal with process lifetime (not freed by deinit — the caller
+/// passes one of the image/* constants). The Zig side copies the bytes;
+/// caller can free `ptr` immediately after this returns.
+export fn Blob__fromBytesWithType(globalThis: *jsc.JSGlobalObject, ptr: ?[*]const u8, len: usize, mime: [*:0]const u8) callconv(.c) *Blob {
+    const blob = Blob__fromBytes(globalThis, ptr, len);
+    const mime_slice = std.mem.span(mime);
+    if (mime_slice.len > 0) {
+        blob.content_type = mime_slice;
+        blob.content_type_was_set = true;
+        // content_type_allocated stays false — caller guarantees the string
+        // outlives the Blob (it's a C string literal in the caller's .rodata).
+    }
+    return blob;
+}
+
+// POSIX-only — bun.sys.munmap is a @compileError on Windows, and the only
+// caller (WebKit screenshot path) is macOS. The Chrome backend decodes
+// base64 into a mimalloc buffer and uses Blob__fromBytesWithType above.
+pub const MmapFreeInterface = if (bun.Environment.isPosix) struct {
+    // Stateless allocator vtable whose free() munmap's. Same pattern as
+    // LinuxMemFdAllocator but without the stateful fd — we're adopting an
+    // already-mmap'd, already-unlinked shm region where the ONLY live
+    // reference is the mapping itself. alloc returns null: Blob stores
+    // never grow. The vtable const is named so `allocator.vtable == vtable`
+    // comparisons work if anyone needs to detect this (same pattern as
+    // LinuxMemFdAllocator.isInstance).
+    fn alloc(_: *anyopaque, _: usize, _: std.mem.Alignment, _: usize) ?[*]u8 {
+        return null;
+    }
+    fn free(_: *anyopaque, buf: []u8, _: std.mem.Alignment, _: usize) void {
+        bun.sys.munmap(@ptrCast(@alignCast(buf))).unwrap() catch |err| {
+            bun.Output.debugWarn("Blob mmap-store munmap failed: {}", .{err});
+        };
+    }
+    const vtable_: std.mem.Allocator.VTable = .{
+        .alloc = &alloc,
+        .resize = &std.mem.Allocator.noResize,
+        .remap = &std.mem.Allocator.noRemap,
+        .free = &free,
+    };
+    pub const vtable: *const std.mem.Allocator.VTable = &vtable_;
+} else struct {};
+
+/// Adopts an mmap'd region — no copy. The Blob's store holds the mapping;
+/// when the store's refcount drops to zero, deinit calls allocator.free
+/// which munmap's. `ptr` must be page-aligned (mmap guarantees this) and
+/// `len` must be the exact mmap length (munmap needs the same len the
+/// caller passed to mmap — the kernel rounds len up to page size at mmap
+/// time and munmap(ptr, len) with the same len unmaps exactly those
+/// pages). `mime` is a static-lifetime literal as above.
+///
+/// WebKit screenshot path: child writes encoded image bytes to a POSIX
+/// shm segment, parent shm_open's + mmap's MAP_SHARED, then calls this.
+/// The shm segment lives until BOTH the name is unlinked AND all mappings
+/// drop — so unlinking before this call is fine, the Blob's mapping keeps
+/// the physical pages alive until the user drops the Blob. The image
+/// bytes are never copied into the JS heap; `await blob.bytes()` reads
+/// directly from the mapped pages.
+export fn Blob__fromMmapWithType(globalThis: *jsc.JSGlobalObject, ptr: [*]u8, len: usize, mime: [*:0]const u8) callconv(.c) *Blob {
+    if (comptime !bun.Environment.isPosix) {
+        // Windows Chrome backend never calls this; if it ever does, fall
+        // back to copying. The caller owns ptr afterward (no munmap
+        // happens here) — caller must free it.
+        return Blob__fromBytesWithType(globalThis, ptr, len, mime);
+    }
+    const store = Store.init(ptr[0..len], .{
+        .ptr = undefined,
+        .vtable = MmapFreeInterface.vtable,
+    });
+    const blob = new(initWithStore(store, globalThis));
+    const mime_slice = std.mem.span(mime);
+    if (mime_slice.len > 0) {
+        blob.content_type = mime_slice;
+        blob.content_type_was_set = true;
+    }
+    return blob;
+}
+
 pub fn getStat(this: *Blob, globalThis: *jsc.JSGlobalObject, callback: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     const store = this.store orelse return .js_undefined;
     // TODO: make this async for files

@@ -9,6 +9,7 @@
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
+#include <JavaScriptCore/JSONObject.h>
 #include <wtf/text/MakeString.h>
 
 #include "ipc_protocol.h" // VirtualKey, Mod*
@@ -20,6 +21,7 @@ using namespace JSC;
 static JSC_DECLARE_HOST_FUNCTION(jsWebViewProtoFuncNavigate);
 static JSC_DECLARE_HOST_FUNCTION(jsWebViewProtoFuncEvaluate);
 static JSC_DECLARE_HOST_FUNCTION(jsWebViewProtoFuncScreenshot);
+static JSC_DECLARE_HOST_FUNCTION(jsWebViewProtoFuncCdp);
 static JSC_DECLARE_HOST_FUNCTION(jsWebViewProtoFuncClick);
 static JSC_DECLARE_HOST_FUNCTION(jsWebViewProtoFuncType);
 static JSC_DECLARE_HOST_FUNCTION(jsWebViewProtoFuncPress);
@@ -43,6 +45,7 @@ static const HashTableValue JSWebViewPrototypeTableValues[] = {
     { "navigate"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWebViewProtoFuncNavigate, 1 } },
     { "evaluate"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWebViewProtoFuncEvaluate, 1 } },
     { "screenshot"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWebViewProtoFuncScreenshot, 0 } },
+    { "cdp"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWebViewProtoFuncCdp, 1 } },
     { "click"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWebViewProtoFuncClick, 2 } },
     { "type"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWebViewProtoFuncType, 1 } },
     { "press"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWebViewProtoFuncPress, 1 } },
@@ -112,7 +115,13 @@ const ClassInfo JSWebViewPrototype::s_info = { "WebView"_s, &Base::s_info, nullp
 
 JSObject* createJSWebViewPrototype(VM& vm, JSGlobalObject* globalObject)
 {
-    auto* structure = JSWebViewPrototype::createStructure(vm, globalObject, globalObject->objectPrototype());
+    // Chain to EventTarget.prototype — addEventListener/removeEventListener/
+    // dispatchEvent live there and unwrap `this` via jsDynamicCast<JSEventTarget*>,
+    // which succeeds for JSWebView : JSEventTarget. WebView.prototype.__proto__
+    // === EventTarget.prototype; `view instanceof EventTarget` is true.
+    auto* domGlobal = jsCast<WebCore::JSDOMGlobalObject*>(globalObject);
+    auto* etProto = WebCore::JSEventTarget::prototype(vm, *domGlobal);
+    auto* structure = JSWebViewPrototype::createStructure(vm, globalObject, etProto);
     return JSWebViewPrototype::create(vm, globalObject, structure);
 }
 
@@ -240,8 +249,156 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncScreenshot, (JSGlobalObject * globalO
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = unwrapThis(globalObject, scope, callFrame, "screenshot"_s);
     RETURN_IF_EXCEPTION(scope, {});
+
+    ScreenshotFormat format = ScreenshotFormat::Png;
+    ScreenshotEncoding encoding = ScreenshotEncoding::Blob;
+    uint8_t quality = 80; // CDP default for jpeg/webp. Ignored for png.
+
+    JSValue optsVal = callFrame->argument(0);
+    if (optsVal.isObject()) {
+        JSObject* opts = optsVal.getObject();
+        JSValue fmtVal = opts->get(globalObject, Identifier::fromString(vm, "format"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+        if (fmtVal.isString()) {
+            auto s = fmtVal.toWTFString(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (s == "png"_s)
+                format = ScreenshotFormat::Png;
+            else if (s == "jpeg"_s)
+                format = ScreenshotFormat::Jpeg;
+            else if (s == "webp"_s) {
+                // NSBitmapImageRep's representationUsingType: has no WebP
+                // enum value — would need ImageIO's CGImageDestination with
+                // public.webp UTI (macOS 11+), which is a separate dlsym
+                // surface not yet wired. Chrome-only until then.
+                if (thisObject->m_backend != WebViewBackend::Chrome)
+                    return Bun::throwError(globalObject, scope, ErrorCode::ERR_METHOD_NOT_IMPLEMENTED,
+                        "format: \"webp\" requires backend: \"chrome\""_s);
+                format = ScreenshotFormat::Webp;
+            } else
+                return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_VALUE,
+                    "format must be \"png\", \"jpeg\", or \"webp\""_s);
+        } else if (!fmtVal.isUndefined())
+            return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE,
+                "format must be a string"_s);
+
+        JSValue qVal = opts->get(globalObject, Identifier::fromString(vm, "quality"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+        if (qVal.isNumber()) {
+            double q = qVal.asNumber();
+            if (!std::isfinite(q) || q < 0 || q > 100)
+                return Bun::ERR::OUT_OF_RANGE(scope, globalObject, "quality"_s, 0, 100, qVal);
+            quality = static_cast<uint8_t>(q);
+        } else if (!qVal.isUndefined())
+            return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE,
+                "quality must be a number"_s);
+
+        // encoding: how the bytes are handed back. "shmem" is for Kitty
+        // graphics protocol t=s — returns {name, size}, we skip our
+        // shm_unlink, the terminal handles cleanup.
+        JSValue encVal = opts->get(globalObject, Identifier::fromString(vm, "encoding"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+        if (encVal.isString()) {
+            auto s = encVal.toWTFString(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (s == "blob"_s)
+                encoding = ScreenshotEncoding::Blob;
+            else if (s == "buffer"_s)
+                encoding = ScreenshotEncoding::Buffer;
+            else if (s == "base64"_s)
+                encoding = ScreenshotEncoding::Base64;
+            else if (s == "shmem"_s) {
+#if OS(WINDOWS)
+                // No POSIX shm. Kitty on Windows uses temp files (t=t)
+                // or direct (t=d) transmission anyway.
+                return Bun::throwError(globalObject, scope, ErrorCode::ERR_METHOD_NOT_IMPLEMENTED,
+                    "encoding: \"shmem\" is not supported on Windows"_s);
+#else
+                encoding = ScreenshotEncoding::Shmem;
+#endif
+            } else
+                return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_VALUE,
+                    "encoding must be \"blob\", \"buffer\", \"base64\", or \"shmem\""_s);
+        } else if (!encVal.isUndefined())
+            return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE,
+                "encoding must be a string"_s);
+    }
+
+    // checkSlot after option parsing: opts->get() can invoke Proxy getters
+    // that call view.close() between the guard and the screenshot() send.
     if (!checkSlot(globalObject, scope, thisObject->m_pendingScreenshot, "a screenshot()"_s)) return {};
-    return JSValue::encode(thisObject->screenshot(globalObject));
+    if (thisObject->m_closed)
+        return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_STATE, "WebView is closed"_s);
+
+    thisObject->m_screenshotEncoding = encoding;
+    return JSValue::encode(thisObject->screenshot(globalObject, format, quality));
+}
+
+// Raw Chrome DevTools Protocol escape hatch. view.cdp("Domain.method",
+// {params}) → JSON.parse(response.result). Chrome-only: WebKit's host
+// subprocess speaks a binary frame protocol, not CDP. WKWebView DOES have
+// _WKInspector SPI but wiring it through the host process + shm is a
+// different project.
+//
+// params is JSON.stringify'd here and inserted verbatim into the CDP
+// envelope. JSONStringify rejects cycles and non-serializable values with
+// a TypeError — same as `JSON.stringify(params)` in user code.
+//
+// The command carries this view's sessionId, so it targets THIS tab.
+// Domain-qualified: "Page.captureScreenshot", "Runtime.evaluate",
+// "DOM.querySelector", etc. Not validated here — Chrome returns a
+// {"code":-32601,"message":"'Foo.bar' wasn't found"} error which rejects
+// the promise.
+JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncCdp, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* thisObject = unwrapThis(globalObject, scope, callFrame, "cdp"_s);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    if (thisObject->m_backend != WebViewBackend::Chrome)
+        return Bun::throwError(globalObject, scope, ErrorCode::ERR_METHOD_NOT_IMPLEMENTED,
+            "WebView.cdp() requires backend: \"chrome\""_s);
+
+    // Must have attached (first navigate() completes the target→session
+    // chain). Before attach there's no sessionId; a browser-level CDP
+    // command here would reach the wrong target. The user can `await
+    // navigate(...)` first to get a session, or use Bun.WebView.chrome()
+    // for browser-level commands (v2).
+    if (thisObject->m_sessionId.isEmpty())
+        return Bun::ERR::INVALID_STATE(scope, globalObject,
+            "WebView.cdp(): no session - await navigate() first"_s);
+
+    JSValue methodArg = callFrame->argument(0);
+    if (!methodArg.isString())
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "method"_s, "string"_s, methodArg);
+    WTF::String method = methodArg.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    // params: JSON.stringify or default to "{}". JSONStringify handles
+    // escape/encoding; its output is well-formed JSON we can insert
+    // verbatim into the CDP envelope. undefined/null → "{}" (most CDP
+    // methods accept empty params).
+    JSValue paramsArg = callFrame->argument(1);
+    WTF::String paramsJson;
+    if (paramsArg.isUndefinedOrNull()) {
+        paramsJson = "{}"_s;
+    } else {
+        paramsJson = JSONStringify(globalObject, paramsArg, 0);
+        RETURN_IF_EXCEPTION(scope, {});
+        // JSONStringify returns empty for non-serializable (function,
+        // symbol as root). CDP params must be an object.
+        if (paramsJson.isEmpty() || paramsJson[0] != '{')
+            return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE,
+                "params must be a JSON-serializable object"_s);
+    }
+
+    // Same TOCTOU as screenshot: JSONStringify can call a user-supplied
+    // .toJSON() that closes the view between the earlier guards and send.
+    if (thisObject->m_closed)
+        return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_STATE, "WebView is closed"_s);
+    if (!checkSlot(globalObject, scope, thisObject->m_pendingCdp, "a cdp()"_s)) return {};
+    return JSValue::encode(thisObject->cdp(globalObject, method, paramsJson));
 }
 
 // --- Native input -----------------------------------------------------------
@@ -454,13 +611,22 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncResize, (JSGlobalObject * globalObjec
     return JSValue::encode(thisObject->resize(globalObject, w, h));
 }
 
+// Chrome back/forward chains Page.getNavigationHistory →
+// Page.navigateToHistoryEntry and settles via Page.loadEventFired, which
+// only resolves PendingSlot::Navigate. WebKit's Op::History Ack is sync
+// (Misc). Same backend-dependent slot as reload.
+static auto& navSlot(JSWebView* view)
+{
+    return view->m_backend == WebViewBackend::Chrome ? view->m_pendingNavigate : view->m_pendingMisc;
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncBack, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = unwrapThis(globalObject, scope, callFrame, "goBack"_s);
     RETURN_IF_EXCEPTION(scope, {});
-    if (!checkSlot(globalObject, scope, thisObject->m_pendingMisc, "a simple operation"_s)) return {};
+    if (!checkSlot(globalObject, scope, navSlot(thisObject), "a navigation"_s)) return {};
     return JSValue::encode(thisObject->goBack(globalObject));
 }
 
@@ -470,7 +636,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncForward, (JSGlobalObject * globalObje
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = unwrapThis(globalObject, scope, callFrame, "goForward"_s);
     RETURN_IF_EXCEPTION(scope, {});
-    if (!checkSlot(globalObject, scope, thisObject->m_pendingMisc, "a simple operation"_s)) return {};
+    if (!checkSlot(globalObject, scope, navSlot(thisObject), "a navigation"_s)) return {};
     return JSValue::encode(thisObject->goForward(globalObject));
 }
 
@@ -480,12 +646,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncReload, (JSGlobalObject * globalObjec
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = unwrapThis(globalObject, scope, callFrame, "reload"_s);
     RETURN_IF_EXCEPTION(scope, {});
-    // Chrome reload uses the Navigate slot (Page.loadEventFired settles it);
-    // WebKit reload uses Misc (Op::Reload Ack is sync). Check the backend's.
-    auto& slot = thisObject->m_backend == WebViewBackend::Chrome
-        ? thisObject->m_pendingNavigate
-        : thisObject->m_pendingMisc;
-    if (!checkSlot(globalObject, scope, slot, "a navigation"_s)) return {};
+    if (!checkSlot(globalObject, scope, navSlot(thisObject), "a navigation"_s)) return {};
     return JSValue::encode(thisObject->reload(globalObject));
 }
 

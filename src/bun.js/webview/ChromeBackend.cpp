@@ -4,6 +4,10 @@
 #include "ipc_protocol.h"
 #include "ZigGlobalObject.h"
 #include "BunClientData.h"
+#include "ScriptExecutionContext.h"
+#include "BunString.h"
+#include "../bindings/webcore/WebSocket.h"
+#include "../bindings/webcore/MessageEvent.h"
 #include <JavaScriptCore/ConsoleClient.h>
 #include <JavaScriptCore/ScriptArguments.h>
 #include <JavaScriptCore/Strong.h>
@@ -13,9 +17,9 @@
 #include <JavaScriptCore/TopExceptionScope.h>
 #include <JavaScriptCore/WeakInlines.h>
 #include <JavaScriptCore/JSONObject.h>
+#include <JavaScriptCore/ObjectConstructor.h>
+#include "JSBuffer.h"
 #include <wtf/JSONValues.h>
-#include <JavaScriptCore/TypedArrayInlines.h>
-#include <JavaScriptCore/JSTypedArrays.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/Base64.h>
@@ -29,6 +33,43 @@
 #include <winsock2.h>
 #else
 #include <unistd.h>
+#include <sys/mman.h>
+#include <fcntl.h>
+#endif
+
+#if OS(LINUX)
+#include <dlfcn.h>
+// shm_open/shm_unlink live in librt on older glibc and musl; glibc 2.34+
+// moved them into libc. We don't link -lrt, so resolve at runtime.
+// RTLD_DEFAULT finds them in libc on 2.34+; librt fallback covers older
+// distros. macOS doesn't need this — libSystem (always linked) has both.
+namespace {
+struct Shm {
+    int (*open)(const char*, int, mode_t) = nullptr;
+    int (*unlink)(const char*) = nullptr;
+    bool load()
+    {
+        if (open) return true;
+        open = reinterpret_cast<decltype(open)>(dlsym(RTLD_DEFAULT, "shm_open"));
+        unlink = reinterpret_cast<decltype(unlink)>(dlsym(RTLD_DEFAULT, "shm_unlink"));
+        if (open && unlink) return true;
+        void* h = dlopen("librt.so.1", RTLD_NOLOAD | RTLD_LAZY);
+        if (!h) h = dlopen("librt.so.1", RTLD_NOW);
+        if (!h) return false;
+        open = reinterpret_cast<decltype(open)>(dlsym(h, "shm_open"));
+        unlink = reinterpret_cast<decltype(unlink)>(dlsym(h, "shm_unlink"));
+        return open && unlink;
+    }
+};
+Shm s_shm;
+} // namespace
+#define BUN_SHM_OPEN(n, f, m) s_shm.open((n), (f), (m))
+#define BUN_SHM_UNLINK(n) s_shm.unlink((n))
+#define BUN_SHM_LOAD() s_shm.load()
+#elif OS(DARWIN)
+#define BUN_SHM_OPEN(n, f, m) ::shm_open((n), (f), (m))
+#define BUN_SHM_UNLINK(n) ::shm_unlink((n))
+#define BUN_SHM_LOAD() true
 #endif
 
 #include "libusockets.h"
@@ -55,6 +96,8 @@ using namespace JSC;
 extern "C" int32_t Bun__Chrome__ensure(Zig::GlobalObject*, const char* userDataDir,
     const char* path, const char* const* extraArgv, uint32_t extraArgvLen,
     bool stdoutInherit, bool stderrInherit);
+extern "C" void* Blob__fromBytesWithType(JSC::JSGlobalObject*, const uint8_t* ptr, size_t len, const char* mime);
+extern "C" JSC::EncodedJSValue SYSV_ABI Blob__create(Zig::GlobalObject*, void* impl);
 extern "C" void Bun__eventLoop__incrementRefConcurrently(void* bunVM, int delta);
 extern "C" void Bun__EventLoop__enter(Zig::GlobalObject*);
 extern "C" void Bun__EventLoop__exit(Zig::GlobalObject*);
@@ -226,13 +269,14 @@ bool Transport::ensureSpawned(Zig::GlobalObject* zig, const WTF::String& userDat
     const WTF::String& path, const WTF::Vector<WTF::String>& extraArgv,
     bool stdoutInherit, bool stderrInherit)
 {
-    if (m_readSock && !m_dead) return true;
+    if (m_mode != TransportMode::None && !m_dead) return true;
     if (m_dead) {
         m_dead = false;
         m_readSock = nullptr;
         m_rx.clear();
         m_txQueue.clear();
     }
+    m_mode = TransportMode::Pipe;
 
     // Empty string ≠ null. WTF::String() utf8's to an empty CString (not
     // isNull), which on the Zig side passes "" into --user-data-dir= and
@@ -288,9 +332,160 @@ bool Transport::ensureSpawned(Zig::GlobalObject* zig, const WTF::String& userDat
     return true;
 }
 
-void Transport::send(Command&& cmd)
+void Transport::send(uint32_t cdpId, Command&& cmd)
 {
+    if (m_mode == TransportMode::WebSocket) {
+        // WS text frame per CDP message — the framing IS the delimiter.
+        // If the handshake hasn't completed, queue with the id; wsOnOpen
+        // drains, skipping ids that Ops::close already erased from
+        // m_pending (view closed before open = don't create its target).
+        // sendTextNative is a no-op when m_state != OPEN, so queuing is
+        // mandatory here or commands silently drop.
+        auto body = cmd.finishToString();
+        if (m_wsOpen) {
+            m_ws->sendTextNative(body);
+        } else {
+            m_wsPending.append({ cdpId, WTF::move(body) });
+        }
+        return;
+    }
     cmd.finishAndWrite([this](const char* d, size_t n) { writeRaw(d, n); });
+}
+
+// --- WebSocket transport ----------------------------------------------------
+// Native-callback trampolines. Plain C function pointers (not capturing
+// lambdas) — the ctx arg is the Transport* singleton. Zig's CppWebSocket
+// wrapper already does eventLoop.enter()/exit() around the extern "C"
+// call, so any JS these end up running (settle → resolve → .then()) is
+// already in the right execution context.
+
+static void wsOnOpen(void* ctx)
+{
+    auto& t = *static_cast<Transport*>(ctx);
+    t.m_wsOpen = true;
+    // Drain commands queued during the handshake, skipping ids whose
+    // Pending entry was erased (Ops::close → m_pending.removeIf). A
+    // view closed before the handshake completed shouldn't create its
+    // target — orphaned tab in the user's Chrome, visible until the WS
+    // closes. id==0 means untracked fire-and-forget (Runtime.enable);
+    // always send those — they don't create targets.
+    for (auto& cmd : t.m_wsPending) {
+        if (cmd.id && !t.m_pending.contains(cmd.id)) continue;
+        t.m_ws->sendTextNative(cmd.body);
+    }
+    t.m_wsPending.clear();
+}
+
+static void wsOnMessage(void* ctx, std::span<const char> utf8)
+{
+    auto& t = *static_cast<Transport*>(ctx);
+    // One text frame = one CDP message. handleMessage is mode-agnostic
+    // — same JSON parsing as the pipe's NUL-delimited frames. The span
+    // is valid until this callback returns (UTF8View's storage on the
+    // caller's stack); handleMessage doesn't stash it.
+    auto& vm = t.m_global->vm();
+    auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    t.handleMessage(utf8);
+    if (auto* ex = catchScope.exception()) [[unlikely]] {
+        catchScope.clearExceptionExceptTermination();
+        t.m_global->reportUncaughtExceptionAtEventLoop(t.m_global, ex);
+    }
+}
+
+static void wsOnClose(void* ctx, unsigned short code)
+{
+    auto& t = *static_cast<Transport*>(ctx);
+    bool neverOpened = !t.m_wsOpen;
+    bool wasAutoDetected = std::exchange(t.m_wasAutoDetected, false);
+    t.m_wsOpen = false;
+    t.m_ws = nullptr;
+
+    // Stale-file fallback: if we auto-detected (read DevToolsActivePort
+    // ourselves, user didn't ask for WS) AND the connect never opened
+    // (stale port/path from a dead Chrome), fall back to spawn. The
+    // pending commands re-send over the pipe. If onOpen DID fire, the
+    // user's Chrome was reachable and now isn't — that's a real error
+    // (user killed Chrome, dialog dismissed, etc.), surface it.
+    //
+    // m_wsPending holds the Command bodies as WTF::Strings. Those are
+    // pipe-safe (the pipe also carries UTF-8 JSON, just NUL-delimited).
+    // ensureSpawned sets m_mode = Pipe; send() routes to writeRaw; the
+    // first spawn's onOpen path (socket adoption) drains the same way.
+    // But m_wsPending stores the NON-NUL-terminated body. The pipe needs
+    // the NUL. We write each body + NUL manually after spawn.
+    if (wasAutoDetected && neverOpened) {
+        t.m_mode = TransportMode::None;
+        // m_wsPending survives — we replay it below after spawn. Don't
+        // let ensureSpawned's m_dead-reset clear it.
+        auto pending = std::exchange(t.m_wsPending, {});
+        if (t.ensureSpawned(t.m_global, t.m_fallbackUserDataDir, {}, {},
+                t.m_fallbackStdoutInherit, t.m_fallbackStderrInherit)) {
+            // Replay over the pipe. Same cancellation check as wsOnOpen
+            // — skip ids close() already removed. Append the NUL
+            // terminator the pipe protocol needs.
+            for (auto& cmd : pending) {
+                if (cmd.id && !t.m_pending.contains(cmd.id)) continue;
+                Bun::UTF8View view(cmd.body);
+                auto s = view.span();
+                t.writeRaw(s.data(), s.size());
+                t.writeRaw("\0", 1);
+            }
+            return;
+        }
+        // Spawn also failed. ensureSpawned set m_dead before returning
+        // false; rejectAllAndMarkDead's guard would short-circuit and
+        // the pending promises would hang. Clear it so reject runs.
+        t.m_dead = false;
+    }
+
+    // rejectAllAndMarkDead settles every pending promise with an error.
+    // If onOpen never fired (connect failure), m_pending holds the first
+    // navigate's Target.createTarget — it rejects with this message.
+    t.rejectAllAndMarkDead(makeString("Chrome WebSocket closed (code "_s, code, ')'));
+}
+
+bool Transport::ensureConnected(Zig::GlobalObject* zig, const WTF::String& wsUrl, bool autoDetected,
+    const WTF::String& userDataDir, bool stdoutInherit, bool stderrInherit)
+{
+    // Already connected — singleton semantics, first call wins.
+    if (m_mode != TransportMode::None && !m_dead) return true;
+    if (m_dead) {
+        m_dead = false;
+        m_ws = nullptr;
+        m_wsOpen = false;
+        m_wsPending.clear();
+        m_rx.clear();
+        m_txQueue.clear();
+    }
+    m_global = zig;
+    m_mode = TransportMode::WebSocket;
+    m_wasAutoDetected = autoDetected;
+    if (autoDetected) {
+        m_fallbackUserDataDir = userDataDir;
+        m_fallbackStdoutInherit = stdoutInherit;
+        m_fallbackStderrInherit = stderrInherit;
+    }
+
+    auto* ctx = zig->scriptExecutionContext();
+    auto result = WebCore::WebSocket::create(*ctx, wsUrl);
+    if (result.hasException()) {
+        m_dead = true;
+        m_mode = TransportMode::None;
+        return false;
+    }
+    m_ws = result.releaseReturnValue();
+    // setNativeCallbacks swaps the MessageEvent/dispatchEvent path for
+    // direct C++ calls BEFORE the upgrade completes — handshake is async
+    // (queued on the event loop, can't fire before this returns). If we
+    // raced, the normal path would dispatch via EventTarget into an
+    // empty listener map and the message would silently drop.
+    m_ws->setNativeCallbacks({
+        .ctx = this,
+        .onOpen = wsOnOpen,
+        .onMessage = wsOnMessage,
+        .onClose = wsOnClose,
+    });
+    return true;
 }
 
 // us_socket_write through usockets' own write path — it sets
@@ -432,6 +627,8 @@ static WriteBarrier<JSPromise>& slotFor(JSWebView* view, PendingSlot s)
         return view->m_pendingScreenshot;
     case PendingSlot::Misc:
         return view->m_pendingMisc;
+    case PendingSlot::Cdp:
+        return view->m_pendingCdp;
     }
     ASSERT_NOT_REACHED();
     return view->m_pendingMisc;
@@ -503,7 +700,8 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
     m_pending.remove(it);
 
     auto* g = m_global;
-    JSWebView* view = entry.view.get();
+    auto& vm = g->vm();
+    JSWebView* view = viewFor(entry.viewId);
     if (!view) return; // user dropped both view and the awaited promise
 
     if (!error.empty()) {
@@ -527,20 +725,18 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         auto tid = jsonString(jsonField(result, { "targetId", 8 }));
         view->m_targetId = WTF::String::fromUTF8(tid);
         uint32_t cid = nextId();
-        m_pending.add(cid, Pending { Method::TargetAttachToTarget, entry.slot, WTF::move(entry.view) });
-        send(Command(cid, "Target.attachToTarget"_s)
-                .str("targetId"_s, view->m_targetId)
-                .boolean("flatten"_s, true));
+        m_pending.add(cid, Pending { Method::TargetAttachToTarget, entry.slot, entry.viewId });
+        send(cid, Command(cid, "Target.attachToTarget"_s).str("targetId"_s, view->m_targetId).boolean("flatten"_s, true));
         return;
     }
     case Method::TargetAttachToTarget: {
         // {"sessionId":"<base64ish>"}
         auto sid = jsonString(jsonField(result, { "sessionId", 9 }));
         view->m_sessionId = WTF::String::fromUTF8(sid);
-        // Route events to this view. The Weak's owner is the same
-        // pending-activity predicate; a view with a slot set is rooted.
-        m_sessions.add(view->m_sessionId,
-            Weak<JSWebView>(view, &webViewWeakOwner()));
+        // Route events to this view via its viewId — m_views holds the one
+        // Weak per view. A view with a slot set is rooted via the owner
+        // predicate reading m_pendingActivityCount.
+        m_sessions.add(view->m_sessionId, entry.viewId);
         updateKeepAlive();
 
         // Page.enable lets us receive frameNavigated / loadEventFired.
@@ -548,8 +744,8 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         auto ss = view->m_sessionId.utf8();
         std::span<const char> sidSpan(ss.data(), ss.length());
         uint32_t cid = nextId();
-        m_pending.add(cid, Pending { Method::PageEnable, entry.slot, WTF::move(entry.view) });
-        send(Command(cid, "Page.enable"_s, sidSpan));
+        m_pending.add(cid, Pending { Method::PageEnable, entry.slot, entry.viewId });
+        send(cid, Command(cid, "Page.enable"_s, sidSpan));
         return;
     }
     case Method::PageEnable: {
@@ -561,16 +757,15 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         // Runtime.enable — fire-and-forget, untracked. We don't need to
         // wait for its reply before navigating.
         uint32_t rid = nextId();
-        send(Command(rid, "Runtime.enable"_s, sidSpan));
+        send(0, Command(rid, "Runtime.enable"_s, sidSpan));
 
         // Page.navigate with the url stashed by the first navigate() call.
         // The response confirms the navigation STARTED; Page.loadEventFired
         // confirms completion. We keep the pending entry alive for the
         // response so errorText rejects the right slot.
         uint32_t cid = nextId();
-        m_pending.add(cid, Pending { Method::PageNavigate, entry.slot, WTF::move(entry.view) });
-        send(Command(cid, "Page.navigate"_s, sidSpan)
-                .str("url"_s, view->m_pendingChromeNavigateUrl));
+        m_pending.add(cid, Pending { Method::PageNavigate, entry.slot, entry.viewId });
+        send(cid, Command(cid, "Page.navigate"_s, sidSpan).str("url"_s, view->m_pendingChromeNavigateUrl));
         view->m_pendingChromeNavigateUrl = WTF::String();
         return;
     }
@@ -636,9 +831,8 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         int32_t entryId = elem ? elem->getInteger("id"_s).value_or(0) : 0;
         // Chain into navigateToHistoryEntry. Page.loadEventFired settles.
         uint32_t cid = nextId();
-        m_pending.add(cid, Pending { Method::PageNavigateToHistoryEntry, entry.slot, WTF::move(entry.view) });
-        send(Command(cid, "Page.navigateToHistoryEntry"_s, sidSpan(view->m_sessionId))
-                .num("entryId"_s, entryId));
+        m_pending.add(cid, Pending { Method::PageNavigateToHistoryEntry, entry.slot, entry.viewId });
+        send(cid, Command(cid, "Page.navigateToHistoryEntry"_s, sidSpan(view->m_sessionId)).num("entryId"_s, entryId));
         return;
     }
     case Method::PageNavigateToHistoryEntry:
@@ -671,36 +865,102 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
     }
 
     case Method::PageCaptureScreenshot: {
-        // {"data":"<base64 PNG>"} — decode into a Uint8Array. WTF::
-        // base64Decode allocates its own Vector then we memcpy into the JS
-        // heap. Two copies at peak (b64 source + decoded Vector), Vector
-        // drops after memcpy. Zero-copy decode-into-JSUint8Array-backing
-        // would need a WTF API we don't have; bun.base64's SIMD path is
-        // available but wiring it here costs more than the memcpy saves.
+        // {"data":"<base64 encoded image>"} — the base64 string is the ONLY
+        // representation CDP gives us. All encodings except Base64 need to
+        // decode first. m_screenshotEncoding stashed by screenshot() before
+        // dispatch picks the JS shape.
         auto b64 = jsonString(jsonField(result, { "data", 4 }));
+        auto enc = view->m_screenshotEncoding;
+
+        if (enc == ScreenshotEncoding::Base64) {
+            // Zero decode — hand back the CDP "data" string as-is. The user
+            // wanted base64; CDP gave us base64. The string is allocated
+            // fresh (jsonString returns a span into the rx buffer, not
+            // safe to hold past the next onData), so one copy into the JS
+            // heap via fromUTF8 → jsString.
+            settle(g, view, entry.slot, true,
+                jsString(vm, WTF::String::fromUTF8(std::span<const char>(b64.data(), b64.size()))));
+            return;
+        }
+
         auto decoded = WTF::base64Decode(
             std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(b64.data()), b64.size()));
         if (!decoded) {
             settle(g, view, entry.slot, false, createError(g, "screenshot: invalid base64"_s));
             return;
         }
-        auto& vm = g->vm();
-        auto scope = DECLARE_THROW_SCOPE(vm);
-        auto* u8 = JSUint8Array::createUninitialized(g, g->m_typedArrayUint8.get(g),
-            static_cast<uint32_t>(decoded->size()));
-        if (auto* ex = scope.exception()) [[unlikely]] {
-            // createUninitialized threw (OOM for a large PNG). Reject with
-            // the exception itself — createError would allocate again and
-            // either OOM or succeed-then-be-shadowed-by the pending exception.
-            JSValue err = ex->value();
-            (void)scope.tryClearException();
-            scope.release();
-            settle(g, view, entry.slot, false, err);
+
+        if (enc == ScreenshotEncoding::Buffer) {
+            // createBuffer(span) copies into a JSC-allocated ArrayBuffer.
+            // decoded Vector drops after; one copy. We can't
+            // adopt-the-Vector because WTF::Vector uses WTF's bmalloc, not
+            // the JSC ArrayBuffer allocator — destructors wouldn't match.
+            settle(g, view, entry.slot, true,
+                createBuffer(g, decoded->span()));
             return;
         }
-        memcpy(u8->typedVector(), decoded->span().data(), decoded->size());
-        scope.release();
-        settle(g, view, entry.slot, true, u8);
+
+#if !OS(WINDOWS)
+        if (enc == ScreenshotEncoding::Shmem) {
+            // Create a fresh POSIX shm segment, write decoded bytes, return
+            // {name, size}. Caller (or Kitty via t=s) owns shm_unlink.
+            // Name uses our pid + a monotonic counter — same scheme as the
+            // WebKit child, different namespace (chrome- prefix) so they
+            // never collide even if someone mixes backends in one process.
+            if (!BUN_SHM_LOAD()) {
+                settle(g, view, entry.slot, false,
+                    createError(g, "shm_open unavailable (librt not found)"_s));
+                return;
+            }
+            static uint32_t shmSeq = 0;
+            char name[48];
+            snprintf(name, sizeof(name), "/bun-chrome-%d-%u", getpid(), ++shmSeq);
+            int fd = BUN_SHM_OPEN(name, O_CREAT | O_RDWR | O_EXCL, 0600);
+            if (fd < 0) {
+                settle(g, view, entry.slot, false,
+                    createError(g, makeString("shm_open: "_s, WTF::String::fromUTF8(strerror(errno)))));
+                return;
+            }
+            size_t sz = decoded->size();
+            if (ftruncate(fd, static_cast<off_t>(sz)) != 0) {
+                int err = errno; // close/unlink can clobber errno
+                ::close(fd);
+                BUN_SHM_UNLINK(name);
+                settle(g, view, entry.slot, false,
+                    createError(g, makeString("ftruncate: "_s, WTF::String::fromUTF8(strerror(err)))));
+                return;
+            }
+            void* map = mmap(nullptr, sz, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+            int mmap_err = (map == MAP_FAILED) ? errno : 0;
+            ::close(fd);
+            if (map == MAP_FAILED) {
+                BUN_SHM_UNLINK(name);
+                settle(g, view, entry.slot, false,
+                    createError(g, makeString("mmap: "_s, WTF::String::fromUTF8(strerror(mmap_err)))));
+                return;
+            }
+            memcpy(map, decoded->span().data(), sz);
+            munmap(map, sz);
+            // Don't unlink — the name IS the return value. User (Kitty)
+            // unlinks after shm_open'ing.
+            auto* obj = constructEmptyObject(g);
+            obj->putDirect(vm, Identifier::fromString(vm, "name"_s),
+                jsString(vm, WTF::String::fromUTF8(std::span<const char>(name, strlen(name)))));
+            obj->putDirect(vm, Identifier::fromString(vm, "size"_s),
+                jsNumber(static_cast<double>(sz)));
+            settle(g, view, entry.slot, true, obj);
+            return;
+        }
+#endif
+
+        // Blob — the default. Blob__fromBytes copies via mimalloc
+        // (handleOom crashes on failure, no JS exception). m_screenshotFormat
+        // picks the MIME so `Bun.write(path, blob)` / `new Response(blob)`
+        // don't need the user to remember what format they asked for.
+        void* impl = Blob__fromBytesWithType(g, decoded->span().data(), decoded->size(),
+            screenshotMimeType(view->m_screenshotFormat));
+        settle(g, view, entry.slot, true,
+            JSValue::decode(Blob__create(defaultGlobalObject(g), impl)));
         return;
     }
 
@@ -759,23 +1019,23 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
 
         // Pressed — untracked fire-and-forget.
         uint32_t idDown = nextId();
-        send(Command(idDown, "Input.dispatchMouseEvent"_s, sid)
-                .raw("type"_s, "\"mousePressed\""_s)
-                .num("x"_s, cx)
-                .num("y"_s, cy)
-                .raw("button"_s, btn)
-                .num("clickCount"_s, static_cast<int32_t>(view->m_selClickCount))
-                .num("modifiers"_s, mods));
+        send(0, Command(idDown, "Input.dispatchMouseEvent"_s, sid).raw("type"_s, "\"mousePressed\""_s).num("x"_s, cx).num("y"_s, cy).raw("button"_s, btn).num("clickCount"_s, static_cast<int32_t>(view->m_selClickCount)).num("modifiers"_s, mods));
         // Released — tracked, resolves the slot.
         uint32_t idUp = nextId();
-        m_pending.add(idUp, Pending { Method::InputDispatchMouseEvent, entry.slot, WTF::move(entry.view) });
-        send(Command(idUp, "Input.dispatchMouseEvent"_s, sid)
-                .raw("type"_s, "\"mouseReleased\""_s)
-                .num("x"_s, cx)
-                .num("y"_s, cy)
-                .raw("button"_s, btn)
-                .num("clickCount"_s, static_cast<int32_t>(view->m_selClickCount))
-                .num("modifiers"_s, mods));
+        m_pending.add(idUp, Pending { Method::InputDispatchMouseEvent, entry.slot, entry.viewId });
+        send(idUp, Command(idUp, "Input.dispatchMouseEvent"_s, sid).raw("type"_s, "\"mouseReleased\""_s).num("x"_s, cx).num("y"_s, cy).raw("button"_s, btn).num("clickCount"_s, static_cast<int32_t>(view->m_selClickCount)).num("modifiers"_s, mods));
+        return;
+    }
+
+    case Method::UserRaw: {
+        // User-supplied raw command via view.cdp(). result is the verbatim
+        // CDP result object JSON; JSONParse it into a JSValue so the user
+        // gets the same object shape CDP documents. The error path is
+        // handled earlier in this function (error span non-empty → reject
+        // with createError). Some CDP methods legitimately return `{}`
+        // (Input.*, Page.reload) — JSONParse gives an empty JSObject.
+        JSValue v = JSONParse(g, WTF::String::fromUTF8(result));
+        settle(g, view, entry.slot, true, v ? v : jsUndefined());
         return;
     }
     }
@@ -798,15 +1058,17 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
         auto sidStr = WTF::String::fromUTF8(sid);
         auto it = m_sessions.find(sidStr);
         if (it == m_sessions.end()) return;
-        JSWebView* view = it->value.get();
+        uint32_t vid = it->value;
         m_sessions.remove(it);
+        JSWebView* view = viewFor(vid);
+        m_views.remove(vid);
         if (!view) return;
         // Reject all pending slots. settle() is idempotent on empty slots.
         auto* err = createError(g, "page detached (crashed or closed)"_s);
-        for (auto s : { PendingSlot::Navigate, PendingSlot::Evaluate, PendingSlot::Screenshot, PendingSlot::Misc })
+        for (auto s : { PendingSlot::Navigate, PendingSlot::Evaluate, PendingSlot::Screenshot, PendingSlot::Misc, PendingSlot::Cdp })
             settle(g, view, s, false, err);
         // Erase stale m_pending entries — replies won't come.
-        m_pending.removeIf([&](auto& kv) { return kv.value.view.get() == view; });
+        m_pending.removeIf([vid](auto& kv) { return kv.value.viewId == vid; });
         view->m_closed = true;
         updateKeepAlive();
         return;
@@ -814,10 +1076,11 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
     auto sidStr = WTF::String::fromUTF8(sessionId);
     auto it = m_sessions.find(sidStr);
     if (it == m_sessions.end()) return;
-    JSWebView* view = it->value.get();
+    JSWebView* view = viewFor(it->value);
     if (!view) {
         // Weak died (user dropped view during a load). Chrome will keep
         // sending events; erasing here stops the lookup thrash.
+        m_views.remove(it->value);
         m_sessions.remove(it);
         return;
     }
@@ -850,10 +1113,8 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
     if (method.size() == 19 && memcmp(method.data(), "Page.loadEventFired", 19) == 0) {
         view->m_loading = false;
         uint32_t tid = nextId();
-        m_pending.add(tid, Pending { Method::PageTitle, PendingSlot::Navigate, JSC::Weak<JSWebView>(view, &webViewWeakOwner(), view) });
-        send(Command(tid, "Runtime.evaluate"_s, sidSpan(view->m_sessionId))
-                .str("expression"_s, "document.title"_s)
-                .boolean("returnByValue"_s, true));
+        m_pending.add(tid, Pending { Method::PageTitle, PendingSlot::Navigate, view->m_viewId });
+        send(tid, Command(tid, "Runtime.evaluate"_s, sidSpan(view->m_sessionId)).str("expression"_s, "document.title"_s).boolean("returnByValue"_s, true));
         return;
     }
 
@@ -958,6 +1219,31 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
         call(g, cb, callData, jsUndefined(), cbArgs);
         return;
     }
+
+    // Unhandled CDP event — dispatch to the view's EventTarget if it has
+    // a listener for this method name. Check hasEventListeners first:
+    // Chrome is chatty (frameScheduledNavigation, lifecycleEvent, etc.)
+    // and most events won't have listeners; skipping the JSONParse saves
+    // an alloc per unwanted event. The listener was added via
+    // view.addEventListener("Network.responseReceived", e => e.data.response).
+    auto methodAtom = AtomString::fromUTF8(method);
+    if (!view->wrapped().hasEventListeners(methodAtom)) return;
+
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue data = JSONParse(g, WTF::String::fromUTF8(params));
+    RETURN_IF_EXCEPTION(scope, void());
+    if (!data) data = jsUndefined();
+    // MessageEvent::m_jsData is a JSValueInWrappedObject (Weak<>). The
+    // wrapper's visitAdditionalChildren roots it AFTER wrapper creation;
+    // dispatchEvent allocates that wrapper which can GC in between. Keep
+    // the parsed object alive across the gap.
+    JSC::EnsureStillAliveScope dataRoot { data };
+
+    WebCore::MessageEvent::Init init;
+    init.data = data;
+    auto event = WebCore::MessageEvent::create(methodAtom, WTF::move(init), WebCore::Event::IsTrusted::Yes);
+    scope.release();
+    view->wrapped().dispatchEvent(event);
 }
 
 void Transport::onClose()
@@ -976,6 +1262,19 @@ void Transport::rejectAllAndMarkDead(const WTF::String& reason)
     // synchronously; the m_dead guard above short-circuits that reentrant
     // call so the caller's `reason` survives.
     if (auto* s = std::exchange(m_readSock, nullptr)) us_socket_close(0, s, 0, nullptr);
+    // WebSocket mode: drop our ref. The WS's native onClose calls us
+    // (wsOnClose → rejectAllAndMarkDead); that path nulls m_ws after
+    // this returns. If WE'RE initiating (closeAll), close() kicks off the
+    // closing handshake; we don't wait for it, just drop. The m_dead
+    // guard prevents wsOnClose from re-entering.
+    if (m_ws) {
+        auto ws = std::exchange(m_ws, nullptr);
+        ws->setNativeCallbacks({}); // prevent wsOnClose re-entry
+        ws->close(std::nullopt, WTF::String());
+    }
+    m_mode = TransportMode::None;
+    m_wsOpen = false;
+    m_wsPending.clear();
     if (!m_global) return;
     auto* g = m_global;
     JSValue err = createError(g, reason);
@@ -984,21 +1283,52 @@ void Transport::rejectAllAndMarkDead(const WTF::String& reason)
     // already-cleared slot — the first settle for a slot rejects, the rest
     // find barrier.get() == null and no-op.
     for (auto& [id, entry] : m_pending) {
-        if (JSWebView* v = entry.view.get())
+        if (JSWebView* v = viewFor(entry.viewId))
             settle(g, v, entry.slot, false, err);
     }
     m_pending.clear();
     m_sessions.clear();
+    m_views.clear();
     updateKeepAlive();
 }
 
 void Transport::updateKeepAlive()
 {
-    bool want = !m_sessions.isEmpty() || !m_pending.isEmpty();
+    // m_views is source-of-truth for live views (populated in
+    // createChrome, erased in close/destroy). m_pending covers in-flight
+    // ops on a view that was just closed but the response hasn't arrived.
+    bool want = !m_views.isEmpty() || !m_pending.isEmpty();
     if (want == m_sockRefd || !m_global) return;
     m_sockRefd = want;
     Bun__eventLoop__incrementRefConcurrently(
         WebCore::clientData(m_global->vm())->bunVM, want ? 1 : -1);
+
+    // WebSocket mode: close the connection when the last view is gone.
+    // We're connected to the USER'S Chrome — keeping the WS open after
+    // they're done holds a DevTools session (shows "<Bun> is debugging
+    // this browser" in Chrome's UI). Pipe mode keeps the subprocess
+    // alive (it's OURS), but the user's Chrome should be released.
+    //
+    // m_mode reset to None means the next `new Bun.WebView()` re-runs
+    // auto-detect → reconnect (pops the Allow dialog again, which is
+    // correct — it's a new session). The close handshake is async but
+    // we don't wait; setNativeCallbacks({}) prevents wsOnClose from
+    // re-entering rejectAllAndMarkDead on the ack.
+    if (!want && m_mode == TransportMode::WebSocket && m_ws) {
+        auto ws = std::exchange(m_ws, nullptr);
+        ws->setNativeCallbacks({});
+        ws->close(std::nullopt, WTF::String());
+        m_wsOpen = false;
+        m_wasAutoDetected = false;
+        m_mode = TransportMode::None;
+    }
+}
+
+uint32_t Transport::registerView(JSWebView* v)
+{
+    uint32_t id = m_nextViewId++;
+    m_views.add(id, JSC::Weak<JSWebView>(v, &webViewWeakOwner()));
+    return id;
 }
 
 // --- CDP::Ops --------------------------------------------------------------
@@ -1021,14 +1351,18 @@ static JSPromise* sendChromeOp(JSGlobalObject* g, JSWebView* v,
     auto& vm = g->vm();
     auto& t = transport();
     auto* promise = JSPromise::create(vm, g->promiseStructure());
-    if (t.m_dead || !t.m_readSock) {
-        promise->reject(vm, g, createError(g, "Chrome process is not running"_s));
+    // m_mode == None means neither ensureSpawned nor ensureConnected ran
+    // (constructor already called one, so this is unreachable unless
+    // rejectAllAndMarkDead reset it). WebSocket mode doesn't need
+    // m_wsOpen here — send() queues until onOpen fires.
+    if (t.m_dead || t.m_mode == TransportMode::None) {
+        promise->reject(vm, g, createError(g, "Chrome connection is not available"_s));
         return promise;
     }
     v->m_pendingActivityCount.fetch_add(1, std::memory_order_release);
     slot.set(vm, v, promise);
-    t.m_pending.add(id, Pending { m, ps, Weak<JSWebView>(v, &webViewWeakOwner()) });
-    t.send(WTF::move(cmd));
+    t.m_pending.add(id, Pending { m, ps, v->m_viewId });
+    t.send(id, WTF::move(cmd));
     t.updateKeepAlive();
     return promise;
 }
@@ -1090,14 +1424,48 @@ JSPromise* evaluate(JSGlobalObject* g, JSWebView* view, const WTF::String& scrip
             .boolean("awaitPromise"_s, true));
 }
 
-JSPromise* screenshot(JSGlobalObject* g, JSWebView* view)
+// Raw CDP escape hatch. method is the domain-qualified name
+// ("Page.captureScreenshot", "DOM.querySelector", etc.); paramsJson is the
+// output of JSON.stringify(params) — a well-formed JSON object or "{}".
+// The Command::RawTag constructor passes both through: method gets
+// appendQuotedJSONString (it's user input, could have a stray quote),
+// paramsJson is inserted verbatim (JSON.stringify guarantees well-formed).
+// Response handler JSONParse's the result object and settles with the
+// decoded JSValue — caller gets the same object shape CDP documents.
+//
+// Scoped to the view's sessionId, so commands target THIS tab. Browser-
+// level commands (Target.*, Browser.*) need the sessionId omitted —
+// if m_sessionId is empty (first-navigate chain not yet complete) we send
+// browser-level. For explicit browser-level after attach, the user can
+// construct a second WebView or await Bun-side Target APIs (v2).
+JSPromise* cdp(JSGlobalObject* g, JSWebView* view, const WTF::String& method, const WTF::String& paramsJson)
 {
     auto& t = transport();
     uint32_t id = t.nextId();
+    return sendChromeOp(g, view, view->m_pendingCdp, PendingSlot::Cdp,
+        Method::UserRaw, id,
+        Command(Command::RawTag {}, id, method, sidSpan(view->m_sessionId), paramsJson));
+}
+
+JSPromise* screenshot(JSGlobalObject* g, JSWebView* view, ScreenshotFormat format, uint8_t quality)
+{
+    auto& t = transport();
+    uint32_t id = t.nextId();
+    // CDP takes format as a JSON string. quality is ignored for PNG by
+    // Chrome; for JPEG/WebP it's 0-100. Pass it unconditionally — Chrome
+    // silently ignores quality for PNG, and the builder's && ref-qualifier
+    // means conditionals break the chain (lvalue after materialization).
+    // The response handler reads view->m_screenshotFormat (stashed by
+    // JSWebView::screenshot before dispatch) to stamp the right MIME type
+    // on the Blob.
+    ASCIILiteral fmtLit = format == ScreenshotFormat::Jpeg ? "\"jpeg\""_s
+        : format == ScreenshotFormat::Webp                 ? "\"webp\""_s
+                                                           : "\"png\""_s;
     return sendChromeOp(g, view, view->m_pendingScreenshot, PendingSlot::Screenshot,
         Method::PageCaptureScreenshot, id,
         Command(id, "Page.captureScreenshot"_s, sidSpan(view->m_sessionId))
-            .raw("format"_s, "\"png\""_s));
+            .raw("format"_s, fmtLit)
+            .num("quality"_s, static_cast<int32_t>(quality)));
 }
 
 // One mousePressed + one mouseReleased. CDP's Input.dispatchMouseEvent is
@@ -1117,13 +1485,7 @@ JSPromise* click(JSGlobalObject* g, JSWebView* view, float x, float y, uint8_t b
     // Pressed — untracked. Chrome replies but we don't need the ack; the
     // Released event's reply confirms both were processed.
     uint32_t idDown = t.nextId();
-    t.send(Command(idDown, "Input.dispatchMouseEvent"_s, sid)
-            .raw("type"_s, "\"mousePressed\""_s)
-            .num("x"_s, x)
-            .num("y"_s, y)
-            .raw("button"_s, btn)
-            .num("clickCount"_s, static_cast<int32_t>(clickCount))
-            .num("modifiers"_s, mods));
+    t.send(0, Command(idDown, "Input.dispatchMouseEvent"_s, sid).raw("type"_s, "\"mousePressed\""_s).num("x"_s, x).num("y"_s, y).raw("button"_s, btn).num("clickCount"_s, static_cast<int32_t>(clickCount)).num("modifiers"_s, mods));
     // Released — tracked, resolves the promise.
     uint32_t idUp = t.nextId();
     return sendChromeOp(g, view, view->m_pendingMisc, PendingSlot::Misc,
@@ -1255,12 +1617,7 @@ JSPromise* press(JSGlobalObject* g, JSWebView* view, uint8_t key, uint8_t modifi
     // fired if text present) by the time we get the reply. No _doAfter*
     // dance like WKWebView's press().
     uint32_t idDown = t.nextId();
-    t.send(Command(idDown, "Input.dispatchKeyEvent"_s, sid)
-            .raw("type"_s, hasText ? "\"keyDown\""_s : "\"rawKeyDown\""_s)
-            .str("key"_s, keyStr)
-            .str("text"_s, textStr)
-            .num("windowsVirtualKeyCode"_s, info.vk)
-            .num("modifiers"_s, mods));
+    t.send(0, Command(idDown, "Input.dispatchKeyEvent"_s, sid).raw("type"_s, hasText ? "\"keyDown\""_s : "\"rawKeyDown\""_s).str("key"_s, keyStr).str("text"_s, textStr).num("windowsVirtualKeyCode"_s, info.vk).num("modifiers"_s, mods));
     // keyUp — tracked, resolves the promise.
     uint32_t idUp = t.nextId();
     return sendChromeOp(g, view, view->m_pendingMisc, PendingSlot::Misc,
@@ -1345,6 +1702,7 @@ void close(JSWebView* view)
         settleSlot(g, view, view->m_pendingEval, false, err);
         settleSlot(g, view, view->m_pendingScreenshot, false, err);
         settleSlot(g, view, view->m_pendingMisc, false, err);
+        settleSlot(g, view, view->m_pendingCdp, false, err);
     }
     // Prune m_pending entries for this view — the attach chain
     // (TargetCreateTarget → TargetAttachToTarget → PageEnable →
@@ -1354,18 +1712,18 @@ void close(JSWebView* view)
     // PageEnable sends Page.navigate, the tab navigates after dispose.
     // removeIf breaks the chain at the next reply — handleResponse's
     // find(id)==end() early-return drops it.
-    t.m_pending.removeIf([view](auto& pair) {
-        return pair.value.view.get() == view;
+    t.m_pending.removeIf([vid = view->m_viewId](auto& pair) {
+        return pair.value.viewId == vid;
     });
     // Target.closeTarget — fire-and-forget. targetId is stashed at
     // TargetCreateTarget's reply (before sessionId) so it's populated
     // earlier in the chain. Chrome tears down the tab; we ignore the
     // Target.targetDestroyed event. Erase sessionId so late events drop.
     if (!view->m_targetId.isEmpty()) {
-        t.send(Command(t.nextId(), "Target.closeTarget"_s)
-                .str("targetId"_s, view->m_targetId));
+        t.send(0, Command(t.nextId(), "Target.closeTarget"_s).str("targetId"_s, view->m_targetId));
     }
     if (!view->m_sessionId.isEmpty()) t.m_sessions.remove(view->m_sessionId);
+    t.m_views.remove(view->m_viewId);
     t.updateKeepAlive();
 }
 

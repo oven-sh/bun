@@ -1725,10 +1725,16 @@ void WebSocket::didFailWithErrorCode(Bun::WebSocketErrorCode code)
     // didReceiveClose already set m_state = CLOSED. The connect() ref
     // kept us alive across the switch (including across the native
     // onClose callback dropping its RefPtr); release it from a task so
-    // the caller's stack frame unwinds first.
-    scriptExecutionContext()->postTask([protectedThis = Ref { *this }](ScriptExecutionContext&) {
-        protectedThis->disablePendingActivity();
-    });
+    // the caller's stack frame unwinds first. ContextDestructionObserver
+    // holds a WeakPtr — a Worker terminated mid-connect returns null
+    // here; deref directly since there's no loop to post to.
+    if (auto* context = scriptExecutionContext()) {
+        context->postTask([protectedThis = Ref { *this }](ScriptExecutionContext&) {
+            protectedThis->disablePendingActivity();
+        });
+    } else {
+        this->deref();
+    }
 }
 
 void WebSocket::disablePendingActivity()

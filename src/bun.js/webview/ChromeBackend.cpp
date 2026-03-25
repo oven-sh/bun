@@ -395,6 +395,7 @@ static void wsOnClose(void* ctx, unsigned short code)
 {
     auto& t = *static_cast<Transport*>(ctx);
     bool neverOpened = !t.m_wsOpen;
+    bool wasAutoDetected = std::exchange(t.m_wasAutoDetected, false);
     t.m_wsOpen = false;
     t.m_ws = nullptr;
 
@@ -411,9 +412,8 @@ static void wsOnClose(void* ctx, unsigned short code)
     // first spawn's onOpen path (socket adoption) drains the same way.
     // But m_wsPending stores the NON-NUL-terminated body. The pipe needs
     // the NUL. We write each body + NUL manually after spawn.
-    if (t.m_wasAutoDetected && neverOpened) {
+    if (wasAutoDetected && neverOpened) {
         t.m_mode = TransportMode::None;
-        t.m_wasAutoDetected = false;
         // m_wsPending survives — we replay it below after spawn. Don't
         // let ensureSpawned's m_dead-reset clear it.
         auto pending = std::exchange(t.m_wsPending, {});

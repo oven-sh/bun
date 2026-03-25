@@ -1,5 +1,4 @@
-import { test, expect } from "bun:test";
-import { spyOn } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 
 test("spyOn with numeric index property does not crash", () => {
   const obj = { 0: "value" };

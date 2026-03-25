@@ -5163,8 +5163,11 @@ restart:
                 }
 
                 JSC::PropertySlot slot(object, PropertySlot::InternalMethodType::Get);
-                if (!object->getPropertySlot(globalObject, property, slot))
+                if (!object->getPropertySlot(globalObject, property, slot)) {
+                    // Ignore exceptions from "Get" proxy traps.
+                    CLEAR_IF_EXCEPTION(scope);
                     continue;
+                }
                 // Ignore exceptions from "Get" proxy traps.
                 CLEAR_IF_EXCEPTION(scope);
 

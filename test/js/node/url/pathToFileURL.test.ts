@@ -6,7 +6,10 @@ test("pathToFileURL doesn't leak memory", () => {
 });
 
 test("pathToFileURL handles relative paths longer than 4096 bytes", () => {
-  expect(["-e", 'const p = Buffer.alloc(200000, "a").toString(); const u = Bun.pathToFileURL(p); if (!u.href.endsWith("/" + p)) throw new Error(u.href)']).toRun();
+  expect([
+    "-e",
+    'const p = Buffer.alloc(200000, "a").toString(); const u = Bun.pathToFileURL(p); if (!u.href.endsWith("/" + p)) throw new Error(u.href)',
+  ]).toRun();
 });
 
 test("pathToFileURL escapes special characters", () => {

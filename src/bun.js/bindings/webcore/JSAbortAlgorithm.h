@@ -37,7 +37,7 @@ public:
     ScriptExecutionContext* scriptExecutionContext() const { return ContextDestructionObserver::scriptExecutionContext(); }
 
     ~JSAbortAlgorithm() final;
-    JSCallbackDataWeak* callbackData() { return m_data; }
+    JSCallbackData* callbackData() { return m_data; }
 
     // Functions
     CallbackResult<typename IDLUndefined::ImplementationType> handleEvent(JSValue) override;
@@ -48,7 +48,7 @@ private:
     void visitJSFunction(JSC::AbstractSlotVisitor&) override;
     void visitJSFunction(JSC::SlotVisitor&) override;
 
-    JSCallbackDataWeak* m_data;
+    JSCallbackData* m_data;
 };
 
 JSC::JSValue toJS(AbortAlgorithm&);

@@ -360,7 +360,7 @@ fn downloadVersion(version_str: []const u8, dest_dir: []const u8, allocator: std
     Output.prettyErrorln(" <green>done<r> ({d} bytes)", .{bytes.len});
 
     // Create dest dir
-    bun.makePath(std.fs.cwd(), dest_dir) catch {
+    bun.FD.cwd().makePath(u8, dest_dir) catch {
         Output.prettyErrorln("<r><red>error<r>: Failed to create directory {s}", .{dest_dir});
         return false;
     };
@@ -395,11 +395,14 @@ fn downloadVersion(version_str: []const u8, dest_dir: []const u8, allocator: std
     defer _ = bun.sys.unlink(zip_path_z);
 
     // Open dest dir handle for moveFileZ later
-    var dest_dir_handle = std.fs.cwd().openDir(dest_dir, .{}) catch {
-        Output.prettyErrorln("<r><red>error<r>: Failed to open directory {s}", .{dest_dir});
-        return false;
+    const dest_dir_fd = switch (bun.sys.openA(dest_dir, bun.O.RDONLY | bun.O.DIRECTORY, 0)) {
+        .result => |fd| fd,
+        .err => {
+            Output.prettyErrorln("<r><red>error<r>: Failed to open directory {s}", .{dest_dir});
+            return false;
+        },
     };
-    defer dest_dir_handle.close();
+    defer dest_dir_fd.close();
 
     // Unzip using bun.spawnSync on all platforms
     if (comptime Environment.isPosix) {
@@ -482,9 +485,9 @@ fn downloadVersion(version_str: []const u8, dest_dir: []const u8, allocator: std
     const extracted_exe = upgrade_command.Version.folder_name ++ std.fs.path.sep_str ++ "bun" ++ exe_suffix;
 
     bun.sys.moveFileZ(
-        .fromStdDir(dest_dir_handle),
+        dest_dir_fd,
         extracted_exe,
-        .fromStdDir(dest_dir_handle),
+        dest_dir_fd,
         "bun" ++ exe_suffix,
     ) catch {
         var check_buf: bun.PathBuffer = undefined;
@@ -495,7 +498,7 @@ fn downloadVersion(version_str: []const u8, dest_dir: []const u8, allocator: std
         }
     };
 
-    dest_dir_handle.deleteTree(upgrade_command.Version.folder_name) catch {};
+    dest_dir_fd.deleteTree(upgrade_command.Version.folder_name) catch {};
 
     return true;
 }
@@ -509,7 +512,7 @@ fn saveCurrentVersion(install_dir: []const u8, current_str: []const u8, self_exe
 
     if (bun.sys.exists(current_ver_bin)) return;
 
-    bun.makePath(std.fs.cwd(), current_ver_dir) catch return;
+    bun.FD.cwd().makePath(u8, current_ver_dir) catch return;
 
     const self_exe_z = bun.default_allocator.dupeZ(u8, self_exe) catch return;
     defer bun.default_allocator.free(self_exe_z);

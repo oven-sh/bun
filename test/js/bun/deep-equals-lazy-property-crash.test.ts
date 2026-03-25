@@ -1,5 +1,5 @@
-import { test, expect } from "bun:test";
-import { bunExe, bunEnv } from "harness";
+import { expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 
 test("deepEquals does not crash when lazy property callback fails after stack overflow", async () => {
   await using proc = Bun.spawn({

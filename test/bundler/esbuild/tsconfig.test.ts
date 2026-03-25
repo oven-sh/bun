@@ -400,9 +400,8 @@ describe("bundler", () => {
   itBundled("tsconfig/PathsInGrandchildNoBaseURL", {
     // 3-level extends chain: root -> child -> grandchild, both child and
     // grandchild define paths without baseUrl. TypeScript replaces paths across
-    // extends (only grandchild's paths survive), so base_url_for_paths should
-    // be grandchild's directory. Bun non-standardly merges paths across extends,
-    // but the leaf config's directory still wins for base_url_for_paths.
+    // extends, so only grandchild's paths survive and base_url_for_paths
+    // resolves relative to grandchild's directory.
     files: {
       "/Users/user/project/app/src/entry.ts": /* ts */ `
         import test from '#/lib/test'

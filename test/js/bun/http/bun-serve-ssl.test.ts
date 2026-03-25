@@ -148,5 +148,4 @@ describe("Bun.serve SSL validations", () => {
       });
     }
   }
-
 });

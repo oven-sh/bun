@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 
 test("SharedArrayBuffer-backed TypedArray as ALPNProtocols does not crash", () => {
   const shared = new SharedArrayBuffer(16);

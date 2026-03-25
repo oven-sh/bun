@@ -386,13 +386,20 @@ public:
     // a full ws:// URL (from DevToolsActivePort or user-supplied). Same
     // singleton semantics as ensureSpawned: first call wins.
     //
+    // When autoDetected=true, the trailing spawn args are stashed for
+    // the wsOnClose fallback (stale-file → spawn). createChrome only
+    // takes the auto-detect branch when path/argv are empty, so those
+    // aren't carried. When autoDetected=false (explicit backend.url),
+    // there's no fallback and the args are ignored.
+    //
     // autoDetected=true means we read DevToolsActivePort ourselves and
     // the user didn't explicitly ask for WS mode — if the connect fails
     // (stale file: Chrome crashed/restarted), wsOnClose falls back to
     // ensureSpawned instead of rejecting the user's promise with a
     // confusing WebSocket error. autoDetected=false means explicit
     // backend.url; connect failure surfaces directly.
-    bool ensureConnected(Zig::GlobalObject*, const WTF::String& wsUrl, bool autoDetected);
+    bool ensureConnected(Zig::GlobalObject*, const WTF::String& wsUrl, bool autoDetected,
+        const WTF::String& userDataDir = {}, bool stdoutInherit = false, bool stderrInherit = false);
 
     // Next CDP id — caller uses it with Command(id, ...) then calls send().
     uint32_t nextId() { return m_nextId++; }
@@ -436,6 +443,13 @@ public:
     // constructor read DevToolsActivePort) — gates the stale-file
     // fallback in wsOnClose. False for explicit backend.url.
     bool m_wasAutoDetected = false;
+    // Stashed for the wsOnClose fallback spawn. Auto-detect only runs
+    // when path/argv are empty (createChrome branches to spawn-mode
+    // otherwise), so userDataDir + stdio are the only carry-over. Set in
+    // ensureConnected when autoDetected=true.
+    WTF::String m_fallbackUserDataDir;
+    bool m_fallbackStdoutInherit = false;
+    bool m_fallbackStderrInherit = false;
     bool m_dead = false;
 
     uint32_t m_nextId = 1;

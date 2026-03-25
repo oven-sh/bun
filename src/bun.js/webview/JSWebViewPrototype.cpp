@@ -249,7 +249,6 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncScreenshot, (JSGlobalObject * globalO
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = unwrapThis(globalObject, scope, callFrame, "screenshot"_s);
     RETURN_IF_EXCEPTION(scope, {});
-    if (!checkSlot(globalObject, scope, thisObject->m_pendingScreenshot, "a screenshot()"_s)) return {};
 
     ScreenshotFormat format = ScreenshotFormat::Png;
     ScreenshotEncoding encoding = ScreenshotEncoding::Blob;
@@ -324,6 +323,12 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncScreenshot, (JSGlobalObject * globalO
             return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE,
                 "encoding must be a string"_s);
     }
+
+    // checkSlot after option parsing: opts->get() can invoke Proxy getters
+    // that call view.close() between the guard and the screenshot() send.
+    if (!checkSlot(globalObject, scope, thisObject->m_pendingScreenshot, "a screenshot()"_s)) return {};
+    if (thisObject->m_closed)
+        return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_STATE, "WebView is closed"_s);
 
     thisObject->m_screenshotEncoding = encoding;
     return JSValue::encode(thisObject->screenshot(globalObject, format, quality));
@@ -602,13 +607,22 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncResize, (JSGlobalObject * globalObjec
     return JSValue::encode(thisObject->resize(globalObject, w, h));
 }
 
+// Chrome back/forward chains Page.getNavigationHistory →
+// Page.navigateToHistoryEntry and settles via Page.loadEventFired, which
+// only resolves PendingSlot::Navigate. WebKit's Op::History Ack is sync
+// (Misc). Same backend-dependent slot as reload.
+static auto& navSlot(JSWebView* view)
+{
+    return view->m_backend == WebViewBackend::Chrome ? view->m_pendingNavigate : view->m_pendingMisc;
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncBack, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = unwrapThis(globalObject, scope, callFrame, "goBack"_s);
     RETURN_IF_EXCEPTION(scope, {});
-    if (!checkSlot(globalObject, scope, thisObject->m_pendingMisc, "a simple operation"_s)) return {};
+    if (!checkSlot(globalObject, scope, navSlot(thisObject), "a navigation"_s)) return {};
     return JSValue::encode(thisObject->goBack(globalObject));
 }
 
@@ -618,7 +632,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncForward, (JSGlobalObject * globalObje
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = unwrapThis(globalObject, scope, callFrame, "goForward"_s);
     RETURN_IF_EXCEPTION(scope, {});
-    if (!checkSlot(globalObject, scope, thisObject->m_pendingMisc, "a simple operation"_s)) return {};
+    if (!checkSlot(globalObject, scope, navSlot(thisObject), "a navigation"_s)) return {};
     return JSValue::encode(thisObject->goForward(globalObject));
 }
 
@@ -628,12 +642,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncReload, (JSGlobalObject * globalObjec
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = unwrapThis(globalObject, scope, callFrame, "reload"_s);
     RETURN_IF_EXCEPTION(scope, {});
-    // Chrome reload uses the Navigate slot (Page.loadEventFired settles it);
-    // WebKit reload uses Misc (Op::Reload Ack is sync). Check the backend's.
-    auto& slot = thisObject->m_backend == WebViewBackend::Chrome
-        ? thisObject->m_pendingNavigate
-        : thisObject->m_pendingMisc;
-    if (!checkSlot(globalObject, scope, slot, "a navigation"_s)) return {};
+    if (!checkSlot(globalObject, scope, navSlot(thisObject), "a navigation"_s)) return {};
     return JSValue::encode(thisObject->reload(globalObject));
 }
 

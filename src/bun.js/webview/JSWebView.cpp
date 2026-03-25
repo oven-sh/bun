@@ -353,7 +353,7 @@ JSWebView* JSWebView::createChrome(JSGlobalObject* g, Structure* structure,
         if (len > 0) {
             ok = t.ensureConnected(zig,
                 WTF::String::fromUTF8(std::span<const char>(buf, len)),
-                /* autoDetected */ true);
+                /* autoDetected */ true, userDataDir, stdoutInherit, stderrInherit);
         } else {
             ok = t.ensureSpawned(zig, userDataDir, path, extraArgv, stdoutInherit, stderrInherit);
         }

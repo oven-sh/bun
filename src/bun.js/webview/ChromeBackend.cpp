@@ -417,7 +417,8 @@ static void wsOnClose(void* ctx, unsigned short code)
         // m_wsPending survives — we replay it below after spawn. Don't
         // let ensureSpawned's m_dead-reset clear it.
         auto pending = std::exchange(t.m_wsPending, {});
-        if (t.ensureSpawned(t.m_global)) {
+        if (t.ensureSpawned(t.m_global, t.m_fallbackUserDataDir, {}, {},
+                t.m_fallbackStdoutInherit, t.m_fallbackStderrInherit)) {
             // Replay over the pipe. Same cancellation check as wsOnOpen
             // — skip ids close() already removed. Append the NUL
             // terminator the pipe protocol needs.
@@ -430,7 +431,10 @@ static void wsOnClose(void* ctx, unsigned short code)
             }
             return;
         }
-        // Spawn also failed — fall through to reject.
+        // Spawn also failed. ensureSpawned set m_dead before returning
+        // false; rejectAllAndMarkDead's guard would short-circuit and
+        // the pending promises would hang. Clear it so reject runs.
+        t.m_dead = false;
     }
 
     // rejectAllAndMarkDead settles every pending promise with an error.
@@ -439,7 +443,8 @@ static void wsOnClose(void* ctx, unsigned short code)
     t.rejectAllAndMarkDead(makeString("Chrome WebSocket closed (code "_s, code, ')'));
 }
 
-bool Transport::ensureConnected(Zig::GlobalObject* zig, const WTF::String& wsUrl, bool autoDetected)
+bool Transport::ensureConnected(Zig::GlobalObject* zig, const WTF::String& wsUrl, bool autoDetected,
+    const WTF::String& userDataDir, bool stdoutInherit, bool stderrInherit)
 {
     // Already connected — singleton semantics, first call wins.
     if (m_mode != TransportMode::None && !m_dead) return true;
@@ -454,6 +459,11 @@ bool Transport::ensureConnected(Zig::GlobalObject* zig, const WTF::String& wsUrl
     m_global = zig;
     m_mode = TransportMode::WebSocket;
     m_wasAutoDetected = autoDetected;
+    if (autoDetected) {
+        m_fallbackUserDataDir = userDataDir;
+        m_fallbackStdoutInherit = stdoutInherit;
+        m_fallbackStderrInherit = stderrInherit;
+    }
 
     auto* ctx = zig->scriptExecutionContext();
     auto result = WebCore::WebSocket::create(*ctx, wsUrl);

@@ -156,6 +156,13 @@ test("mocking a package", async () => {
   expect(require("ha-ha-ha").wow()).toBe(43);
 });
 
+test("mock.module throws TypeError for non-string first argument", () => {
+  expect(() => mock.module(123 as any, () => ({}))).toThrow(TypeError);
+  expect(() => mock.module({} as any, () => ({}))).toThrow(TypeError);
+  expect(() => mock.module(null as any, () => ({}))).toThrow(TypeError);
+  expect(() => mock.module(undefined as any, () => ({}))).toThrow(TypeError);
+});
+
 test("mocking a builtin", async () => {
   mock.module("fs/promises", () => {
     return {

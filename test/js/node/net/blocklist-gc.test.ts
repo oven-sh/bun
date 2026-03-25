@@ -8,5 +8,8 @@ test("BlockList.estimatedSize does not crash during GC", () => {
   }
   Bun.gc(true);
   Bun.gc(true);
-  expect(true).toBe(true);
+
+  const bl = new net.BlockList();
+  bl.addAddress("127.0.0.1");
+  expect(bl.check("127.0.0.1")).toBe(true);
 });

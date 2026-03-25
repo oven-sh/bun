@@ -1,5 +1,4 @@
 import { expect, test } from "bun:test";
-import { bunExe } from "harness";
 import path from "path";
 
 test("pathToFileURL doesn't leak memory", () => {
@@ -7,7 +6,7 @@ test("pathToFileURL doesn't leak memory", () => {
 });
 
 test("pathToFileURL handles relative paths longer than 4096 bytes", () => {
-  expect([bunExe(), "-e", 'Bun.pathToFileURL("a".repeat(200000))']).toRun();
+  expect(["-e", 'Bun.pathToFileURL(Buffer.alloc(200000, "a").toString())']).toRun();
 });
 
 test("pathToFileURL escapes special characters", () => {

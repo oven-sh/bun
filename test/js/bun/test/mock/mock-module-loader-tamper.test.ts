@@ -3,13 +3,17 @@ import { bunEnv, bunExe } from "harness";
 
 test("mock.module does not crash when globalThis.Loader is overwritten with non-object", async () => {
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", `
+    cmd: [
+      bunExe(),
+      "-e",
+      `
       globalThis.Loader = 42;
       const v2 = Bun.jest(import.meta.path).mock;
       try { v2.module("test", () => ({ default: 1 })); } catch(e) {}
       Bun.gc(true);
       console.log("ok");
-    `],
+    `,
+    ],
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",
@@ -23,13 +27,17 @@ test("mock.module does not crash when globalThis.Loader is overwritten with non-
 
 test("mock.module does not crash when globalThis.Loader is deleted", async () => {
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", `
+    cmd: [
+      bunExe(),
+      "-e",
+      `
       delete globalThis.Loader;
       const v2 = Bun.jest(import.meta.path).mock;
       try { v2.module("test", () => ({ default: 1 })); } catch(e) {}
       Bun.gc(true);
       console.log("ok");
-    `],
+    `,
+    ],
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",

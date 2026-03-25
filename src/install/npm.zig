@@ -2808,6 +2808,8 @@ pub const PackageManifest = struct {
             strings.hasPrefixComptime(url, "gist:"))
         {
             return &.{}; // non-GitHub hosted shorthand, cannot normalize without allocation
+        } else if (strings.contains(url, "://")) {
+            return &.{}; // unsupported scheme (file://, svn://, etc.)
         }
 
         // 3. Strip git@ user prefix (can appear after ssh:// stripping)

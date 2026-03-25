@@ -638,7 +638,7 @@ fn cmdSave(repl: *Repl, args: []const u8) ReplResult {
         content.append('\n') catch return .skip_eval;
     }
 
-    const file = switch (bun.sys.openA(filename, bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC, 0o644)) {
+    const file = switch (bun.sys.openA(filename, bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC, 0o600)) {
         .result => |fd| bun.sys.File{ .handle = fd },
         .err => |err| {
             repl.printError("{f}\n", .{err});

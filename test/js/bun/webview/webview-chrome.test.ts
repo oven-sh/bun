@@ -312,6 +312,45 @@ test("chrome: constructor rejects url combined with spawn options", () => {
   ).toThrow(/connect mode.*cannot be combined.*spawn/i);
 });
 
+it("chrome: cdp() enable + addEventListener receives CDP events", async () => {
+  const view = new Bun.WebView({ backend: chrome, width: 200, height: 200 });
+  try {
+    // First navigate to get a sessionId (cdp() guards before that).
+    await view.navigate(html("<body>init</body>"));
+
+    // Network.enable starts streaming. The listener type IS the CDP
+    // method name — handleEvent's fallthrough dispatches any
+    // non-internal event as a MessageEvent with the params as .data.
+    await view.cdp("Network.enable");
+    const events: any[] = [];
+    const onReq = (e: MessageEvent) => events.push(e.data);
+    view.addEventListener("Network.requestWillBeSent", onReq);
+
+    // Second navigate triggers a Network.requestWillBeSent for the
+    // data: URL itself. Await resolves on Page.loadEventFired — by
+    // then Chrome has sent the Network event (it precedes load).
+    await view.navigate(html("<body>second</body>"));
+
+    expect(events.length).toBeGreaterThan(0);
+    expect(events[0].request.url).toStartWith("data:text/html");
+    expect(typeof events[0].requestId).toBe("string");
+
+    // removeEventListener stops delivery. Third navigate generates
+    // more Network events but the count shouldn't grow.
+    view.removeEventListener("Network.requestWillBeSent", onReq);
+    const before = events.length;
+    await view.navigate(html("<body>third</body>"));
+    expect(events.length).toBe(before);
+
+    // Unhandled events without a listener are dropped (hasEventListeners
+    // check) — no parse, no dispatch. This navigate also fired
+    // Network.responseReceived but we never listened for it; no crash,
+    // no accumulation.
+  } finally {
+    view.close();
+  }
+});
+
 it("chrome: screenshot quality option affects JPEG size", async () => {
   const view = new Bun.WebView({ backend: chrome, width: 200, height: 200 });
   try {

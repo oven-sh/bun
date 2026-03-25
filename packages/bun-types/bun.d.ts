@@ -8293,6 +8293,40 @@ declare module "bun" {
     cdp<T = unknown>(method: string, params?: Record<string, unknown>): Promise<T>;
 
     /**
+     * Subscribe to CDP events. **Chrome backend only.**
+     *
+     * Event types are CDP method names directly —
+     * `"Network.responseReceived"`, `"Page.frameStartedLoading"`,
+     * `"DOM.documentUpdated"`, etc. The listener receives a
+     * `MessageEvent` with the CDP params as `event.data`.
+     *
+     * Enable the domain first with `cdp("Domain.enable")`, or Chrome
+     * won't send those events. Events without a registered listener
+     * are dropped before JSON parsing (no overhead for domains you
+     * enabled but don't fully listen to).
+     *
+     * @example
+     * ```ts
+     * await view.navigate("about:blank");
+     * await view.cdp("Network.enable");
+     * view.addEventListener("Network.responseReceived", e => {
+     *   console.log(e.data.response.status, e.data.response.url);
+     * });
+     * await view.navigate("https://example.com");
+     * ```
+     */
+    addEventListener<T = unknown>(
+      type: `${string}.${string}`,
+      listener: (event: MessageEvent<T>) => void,
+      options?: boolean | AddEventListenerOptions,
+    ): void;
+    addEventListener(
+      type: string,
+      listener: EventListenerOrEventListenerObject,
+      options?: boolean | AddEventListenerOptions,
+    ): void;
+
+    /**
      * Click at the given viewport coordinates.
      *
      * Fires native `pointerdown`/`mousedown`/`pointerup`/`mouseup`/`click`

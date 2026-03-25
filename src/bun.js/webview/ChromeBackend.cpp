@@ -7,6 +7,7 @@
 #include "ScriptExecutionContext.h"
 #include "BunString.h"
 #include "../bindings/webcore/WebSocket.h"
+#include "../bindings/webcore/MessageEvent.h"
 #include <JavaScriptCore/ConsoleClient.h>
 #include <JavaScriptCore/ScriptArguments.h>
 #include <JavaScriptCore/Strong.h>
@@ -1218,6 +1219,31 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
         call(g, cb, callData, jsUndefined(), cbArgs);
         return;
     }
+
+    // Unhandled CDP event — dispatch to the view's EventTarget if it has
+    // a listener for this method name. Check hasEventListeners first:
+    // Chrome is chatty (frameScheduledNavigation, lifecycleEvent, etc.)
+    // and most events won't have listeners; skipping the JSONParse saves
+    // an alloc per unwanted event. The listener was added via
+    // view.addEventListener("Network.responseReceived", e => e.data.response).
+    auto methodAtom = AtomString::fromUTF8(method);
+    if (!view->wrapped().hasEventListeners(methodAtom)) return;
+
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue data = JSONParse(g, WTF::String::fromUTF8(params));
+    RETURN_IF_EXCEPTION(scope, void());
+    if (!data) data = jsUndefined();
+    // MessageEvent::m_jsData is a JSValueInWrappedObject (Weak<>). The
+    // wrapper's visitAdditionalChildren roots it AFTER wrapper creation;
+    // dispatchEvent allocates that wrapper which can GC in between. Keep
+    // the parsed object alive across the gap.
+    JSC::EnsureStillAliveScope dataRoot { data };
+
+    WebCore::MessageEvent::Init init;
+    init.data = data;
+    auto event = WebCore::MessageEvent::create(methodAtom, WTF::move(init), WebCore::Event::IsTrusted::Yes);
+    scope.release();
+    view->wrapped().dispatchEvent(event);
 }
 
 void Transport::onClose()

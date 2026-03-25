@@ -2,7 +2,7 @@
 // Bun incorrectly merged tsconfig paths across extends instead of replacing.
 // TypeScript semantics: child's paths completely override parent's paths.
 
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 test("child tsconfig paths replace parent paths (not merge)", async () => {

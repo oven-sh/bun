@@ -251,6 +251,11 @@ pub const Bunfig = struct {
                     try this.expect(expr, .e_boolean);
                     bun.analytics.enabled = if (expr.data.e_boolean.value) .yes else .no;
                 }
+
+                if (json.get("version")) |expr| {
+                    try this.expectString(expr);
+                    this.ctx.pinned_version = try expr.data.e_string.string(allocator);
+                }
             }
 
             if (comptime cmd == .RunCommand or cmd == .AutoCommand) {

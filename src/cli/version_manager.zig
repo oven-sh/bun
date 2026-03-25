@@ -121,7 +121,10 @@ pub fn checkPinnedVersion(pinned_version_str: []const u8, allocator: std.mem.All
     }
 
     // Save current bun to versions dir if not already there
-    saveCurrentVersion(install_dir, current_str, self_exe);
+    if (!saveCurrentVersion(install_dir, current_str, self_exe)) {
+        Output.prettyErrorln("<r><red>error<r>: Failed to save current version backup", .{});
+        return;
+    }
 
     // Update symlink
     var bun_bin_buf: bun.PathBuffer = undefined;
@@ -511,27 +514,27 @@ fn downloadVersion(version_str: []const u8, dest_dir: []const u8, allocator: std
     return true;
 }
 
-fn saveCurrentVersion(install_dir: []const u8, current_str: []const u8, self_exe: []const u8) void {
+fn saveCurrentVersion(install_dir: []const u8, current_str: []const u8, self_exe: []const u8) bool {
     var path_buf: bun.PathBuffer = undefined;
-    const current_ver_dir = std.fmt.bufPrint(&path_buf, "{s}/versions/{s}", .{ install_dir, current_str }) catch return;
+    const current_ver_dir = std.fmt.bufPrint(&path_buf, "{s}/versions/{s}", .{ install_dir, current_str }) catch return false;
 
     var bin_buf: bun.PathBuffer = undefined;
-    const current_ver_bin = std.fmt.bufPrint(&bin_buf, "{s}/bun{s}", .{ current_ver_dir, exe_suffix }) catch return;
+    const current_ver_bin = std.fmt.bufPrint(&bin_buf, "{s}/bun{s}", .{ current_ver_dir, exe_suffix }) catch return false;
 
-    if (bun.sys.exists(current_ver_bin)) return;
+    if (bun.sys.exists(current_ver_bin)) return true;
 
-    bun.FD.cwd().makePath(u8, current_ver_dir) catch return;
+    bun.FD.cwd().makePath(u8, current_ver_dir) catch return false;
 
-    const self_exe_z = bun.default_allocator.dupeZ(u8, self_exe) catch return;
+    const self_exe_z = bun.default_allocator.dupeZ(u8, self_exe) catch return false;
     defer bun.default_allocator.free(self_exe_z);
 
     const src_fd = switch (bun.sys.open(self_exe_z, bun.O.RDONLY, 0)) {
         .result => |fd| fd,
-        .err => return,
+        .err => return false,
     };
     defer src_fd.close();
 
-    const current_ver_bin_z = bun.default_allocator.dupeZ(u8, current_ver_bin) catch return;
+    const current_ver_bin_z = bun.default_allocator.dupeZ(u8, current_ver_bin) catch return false;
     defer bun.default_allocator.free(current_ver_bin_z);
 
     const dst_fd = switch (bun.sys.open(
@@ -540,20 +543,21 @@ fn saveCurrentVersion(install_dir: []const u8, current_str: []const u8, self_exe
         0o755,
     )) {
         .result => |fd| fd,
-        .err => return,
+        .err => return false,
     };
     defer dst_fd.close();
 
     var copy_buf: [64 * 1024]u8 = undefined;
     while (true) {
-        const n = bun.sys.read(src_fd, &copy_buf).unwrap() catch return;
+        const n = bun.sys.read(src_fd, &copy_buf).unwrap() catch return false;
         if (n == 0) break;
         var written: usize = 0;
         while (written < n) {
-            const w = bun.sys.write(dst_fd, copy_buf[written..n]).unwrap() catch return;
+            const w = bun.sys.write(dst_fd, copy_buf[written..n]).unwrap() catch return false;
             written += w;
         }
     }
+    return true;
 }
 
 fn updateSymlink(link_path: []const u8, target_path: []const u8) !void {

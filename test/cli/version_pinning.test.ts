@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
-describe.concurrent("version pinning via bunfig.toml", () => {
+// Sequential: each test spawns a bun subprocess; under ASAN these are too
+// heavy (~1s each) to run concurrently without exhausting resources.
+describe("version pinning via bunfig.toml", () => {
   // Note: version pinning works for commands that auto-load bunfig.toml.
   // `bun <file>` (AutoCommand) auto-loads bunfig.toml when the file has
   // a recognized extension. We use `bun index.ts` in all tests.

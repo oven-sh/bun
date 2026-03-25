@@ -517,7 +517,7 @@ pub const Bunfig = struct {
                 }
             }
 
-            if (comptime cmd.isNPMRelated() or cmd == .RunCommand or cmd == .AutoCommand or cmd == .TestCommand) {
+            if (comptime cmd.isNPMRelated() or cmd == .RunCommand or cmd == .AutoCommand or cmd == .TestCommand or cmd == .BuildCommand) {
                 if (json.getObject("install")) |install_obj| {
                     var install: *api.BunInstall = this.ctx.install orelse brk: {
                         const install = try this.allocator.create(api.BunInstall);

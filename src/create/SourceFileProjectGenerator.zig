@@ -60,6 +60,9 @@ pub fn generate(_: Command.Context, _: Example.Tag, entry_point: string, result:
     _ = result.dependencies.swapRemove("react-dom");
     try result.dependencies.insert("react-dom@19");
     try result.dependencies.insert("react@19");
+    try result.dependencies.insert("@types/bun");
+    try result.dependencies.insert("@types/react@19");
+    try result.dependencies.insert("@types/react-dom@19");
 
     // Choose template based on dependencies and example type
     const template: Template = brk: {

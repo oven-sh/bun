@@ -450,8 +450,6 @@ describe("bundler", () => {
         import test from 'util/helper'
         console.log(test)
       `,
-      // With old merge: util/* resolved against grandchild's dir -> app/src/utils/helper.ts (found)
-      // With new replace: util/* not in merged paths -> not resolved
       "/Users/user/project/app/src/utils/helper.ts": `export default 789`,
       "/Users/user/project/app/src/tsconfig.json": /* json */ `
         {

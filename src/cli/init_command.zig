@@ -905,14 +905,13 @@ const DependencyGroup = struct {
             .{ .name = "class-variance-authority", .version = "latest" },
             .{ .name = "clsx", .version = "latest" },
             .{ .name = "tailwind-merge", .version = "latest" },
+            .{ .name = "tw-animate-css", .version = "latest" },
             .{ .name = "lucide-react", .version = "^1" },
             .{ .name = "@radix-ui/react-label", .version = "latest" },
             .{ .name = "@radix-ui/react-select", .version = "latest" },
             .{ .name = "@radix-ui/react-slot", .version = "latest" },
         } ++ tailwind.dependencies[0..tailwind.dependencies.len].*,
-        .devDependencies = &[_]DependencyNeeded{
-            .{ .name = "tw-animate-css", .version = "latest" },
-        } ++ tailwind.devDependencies[0..tailwind.devDependencies.len].*,
+        .devDependencies = &[_]DependencyNeeded{} ++ tailwind.devDependencies[0..tailwind.devDependencies.len].*,
     };
 };
 

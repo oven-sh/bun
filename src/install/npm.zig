@@ -2081,7 +2081,6 @@ pub const PackageManifest = struct {
                     const normalized = normalizeRepositoryUrl(url);
                     if (normalized.len > 0) {
                         repository_url = normalized;
-                        string_builder.count(normalized);
                     }
                 }
             }
@@ -2642,9 +2641,11 @@ pub const PackageManifest = struct {
             result.pkg.modified = string_builder.append(String, field);
         }
 
-        var repository_url_string: String = String{};
+        // repository_url is stored separately (not in string_buf) so it
+        // doesn't bloat the serialized disk cache.
+        var repository_url_duped: []const u8 = &.{};
         if (repository_url) |repo_url| {
-            repository_url_string = string_builder.append(String, repo_url);
+            repository_url_duped = default_allocator.dupe(u8, repo_url) catch &.{};
         }
 
         result.pkg.releases.keys = VersionSlice.init(all_semver_versions, all_release_versions);
@@ -2775,9 +2776,7 @@ pub const PackageManifest = struct {
             result.string_buf = ptr[0..string_builder.len];
         }
 
-        if (repository_url != null) {
-            result.repository_url = repository_url_string.slice(result.string_buf);
-        }
+        result.repository_url = repository_url_duped;
 
         return result;
     }
@@ -2820,6 +2819,12 @@ pub const PackageManifest = struct {
             // For github.com, extract just the path portion.
             if (strings.hasPrefixComptime(url, "github.com:")) {
                 url = url["github.com:".len..];
+                // Skip port number if present (e.g. ssh://git@github.com:22/user/repo)
+                var port_end: usize = 0;
+                while (port_end < url.len and url[port_end] >= '0' and url[port_end] <= '9') port_end += 1;
+                if (port_end > 0 and port_end < url.len and url[port_end] == '/') {
+                    url = url[port_end + 1 ..];
+                }
             } else if (strings.indexOfChar(url, ':') != null) {
                 return &.{}; // non-GitHub SCP URL, cannot normalize
             }

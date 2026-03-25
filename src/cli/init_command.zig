@@ -469,7 +469,7 @@ pub const InitCommand = struct {
                 }
 
                 fields.object = package_json_expr.data.e_object;
-            try fields.object.putString(alloc, "$schema", "https://json.schemastore.org/package.json");
+                try fields.object.putString(alloc, "$schema", "https://json.schemastore.org/package.json");
 
                 if (package_json_expr.get("name")) |name| {
                     if (name.asString(alloc)) |str| {

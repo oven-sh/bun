@@ -7,13 +7,12 @@ test("deepEquals does not crash when lazy property callback fails after stack ov
       bunExe(),
       "-e",
       `
-      var depth = 0;
       function F4() {
-        if (depth++ > 100) throw new Error("too deep");
         try { new F4(); } catch (e) {}
         Bun.deepEquals(Uint8Array, Bun);
       }
       new F4();
+      console.log("ok");
       `,
     ],
     env: bunEnv,
@@ -21,8 +20,8 @@ test("deepEquals does not crash when lazy property callback fails after stack ov
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
 
-  expect(stderr).not.toContain("null pointer");
+  expect(stdout.trim()).toBe("ok");
   expect(exitCode).toBe(0);
 });

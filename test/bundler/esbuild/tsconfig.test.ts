@@ -486,6 +486,37 @@ describe("bundler", () => {
       "/Users/user/project/app/src/entry.ts": [`Could not resolve: "util/helper". Maybe you need to "bun install"?`],
     },
   });
+  itBundled("tsconfig/EmptyPathsClearsParent", {
+    // An explicit `paths: {}` in the child should CLEAR inherited paths, not
+    // inherit them. TypeScript treats empty paths as a complete override.
+    files: {
+      "/Users/user/project/src/entry.ts": /* ts */ `
+        import test from '@helpers/x'
+        console.log(test)
+      `,
+      "/Users/user/project/src/helpers/x.ts": `export default 123`,
+      "/Users/user/project/src/tsconfig.json": /* json */ `
+        {
+          "extends": "../tsconfig.base.json",
+          "compilerOptions": {
+            "paths": {}
+          }
+        }
+      `,
+      "/Users/user/project/tsconfig.base.json": /* json */ `
+        {
+          "compilerOptions": {
+            "paths": {
+              "@helpers/*": ["./src/helpers/*"]
+            }
+          }
+        }
+      `,
+    },
+    bundleErrors: {
+      "/Users/user/project/src/entry.ts": [`Could not resolve: "@helpers/x". Maybe you need to "bun install"?`],
+    },
+  });
   itBundled("tsconfig/JSX", {
     files: {
       "/Users/user/project/entry.tsx": `console.log(<><div/><div/></>)`,

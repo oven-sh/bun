@@ -4241,8 +4241,11 @@ pub const Resolver = struct {
 
                         // TypeScript replaces paths across extends (child overrides parent
                         // entirely), so when a more-specific config defines paths, replace
-                        // rather than merge. base_url_for_paths follows whoever defined paths.
-                        if (parent_config.paths.count() > 0) {
+                        // rather than merge. base_url_for_paths is set whenever the paths
+                        // key is present in the JSON (even if empty), so it discriminates
+                        // "not defined" from "defined as {}" — the latter clears inherited
+                        // paths per TypeScript semantics.
+                        if (parent_config.base_url_for_paths.len > 0) {
                             merged_config.paths = parent_config.paths;
                             merged_config.base_url_for_paths = parent_config.base_url_for_paths;
                         }

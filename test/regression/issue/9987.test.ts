@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
-test("runtime plugin with object loader supports default import", async () => {
+test.concurrent("runtime plugin with object loader supports default import", async () => {
   using dir = tempDir("issue-9987", {
     "preload.ts": `
 import { plugin } from "bun";
@@ -50,7 +50,7 @@ console.log(value);
   expect(exitCode).toBe(0);
 });
 
-test("runtime plugin with object loader preserves explicit default export", async () => {
+test.concurrent("runtime plugin with object loader preserves explicit default export", async () => {
   using dir = tempDir("issue-9987-default", {
     "preload.ts": `
 import { plugin } from "bun";

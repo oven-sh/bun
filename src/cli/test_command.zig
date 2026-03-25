@@ -960,7 +960,7 @@ pub const CommandLineReporter = struct {
         const summary_ = this.summary();
 
         if (summary_.dangling_processes > 0) {
-            Output.prettyError("<r><yellow>{d:5>} dangling process{s} killed<r>\n", .{ summary_.dangling_processes, if (summary_.dangling_processes > 1) "es" else "" });
+            Output.prettyError("<r><yellow> {d:5>} dangling process{s} killed<r>\n", .{ summary_.dangling_processes, if (summary_.dangling_processes > 1) "es" else "" });
         }
 
         const tests = summary_.fail + summary_.pass + summary_.skip + summary_.todo;

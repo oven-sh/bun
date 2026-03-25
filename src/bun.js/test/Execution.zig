@@ -83,6 +83,9 @@ pub const ExecutionSequence = struct {
     result: Result = .pending,
     executing: bool = false,
     started_at: bun.timespec = .epoch,
+    /// Snapshot of VM timer count at sequence start, used by printTimeoutHint
+    /// to report only timers created during this test (not leaked from prior tests).
+    timer_count_at_start: i32 = 0,
     /// Number of expect() calls observed in this sequence.
     expect_call_count: u32 = 0,
     /// Expectation set by expect.hasAssertions() or expect.assertions(n).
@@ -219,7 +222,7 @@ pub fn handleTimeout(this: *Execution, globalThis: *jsc.JSGlobalObject) bun.JSEr
                         }
                         kill_result.printError();
                     }
-                    printTimeoutHint(vm, kill_result.processes);
+                    printTimeoutHint(vm, kill_result.processes, sequence.timer_count_at_start);
                     bun.Output.flush();
                 }
             }
@@ -231,10 +234,12 @@ pub fn handleTimeout(this: *Execution, globalThis: *jsc.JSGlobalObject) bun.JSEr
 
 /// Print a diagnostic hint explaining why a test may be hanging.
 /// Only called for non-concurrent groups (sequences.len == 1).
-/// Note: active_timer_count is VM-wide and may include timers from
-/// earlier tests or internal subsystems — the hint is best-effort.
-fn printTimeoutHint(vm: *jsc.VirtualMachine, killed_processes: u32) void {
-    const timer_count: u32 = if (vm.timer.active_timer_count > 0) @intCast(vm.timer.active_timer_count) else 0;
+/// Uses a snapshot of active_timer_count from sequence start to report
+/// only timers created during this test, not leaked from prior tests.
+fn printTimeoutHint(vm: *jsc.VirtualMachine, killed_processes: u32, timer_count_at_start: i32) void {
+    // Report only timers added since this test started.
+    const delta = vm.timer.active_timer_count - timer_count_at_start;
+    const timer_count: u32 = if (delta > 0) @intCast(delta) else 0;
 
     if (killed_processes == 0 and timer_count == 0) return;
 
@@ -567,6 +572,7 @@ fn onSequenceStarted(_: *Execution, sequence: *ExecutionSequence) void {
     if (sequence.test_entry) |entry| if (entry.callback == null) return;
 
     sequence.started_at = bun.timespec.now(.force_real_time);
+    sequence.timer_count_at_start = jsc.VirtualMachine.get().timer.active_timer_count;
 
     if (sequence.test_entry) |entry| {
         log("Running test: \"{f}\"", .{std.zig.fmtString(entry.base.name orelse "(unnamed)")});

@@ -25,7 +25,7 @@ test("spawns a process that outlives the test", async () => {
         stderr: "pipe",
       });
 
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
       expect(stderr).toContain("killed 1 dangling process");
       expect(stderr).toMatch(/pid \d+: sleep/);
@@ -62,7 +62,7 @@ test("spawns multiple processes that outlive the test", async () => {
         stderr: "pipe",
       });
 
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
       expect(stderr).toContain("killed 3 dangling processes:");
       const pidMatches = stderr.match(/pid \d+: sleep/g);
@@ -73,7 +73,7 @@ test("spawns multiple processes that outlive the test", async () => {
     60_000,
   );
 
-  test.skipIf(isWindows)(
+  test(
     "shows timeout hint for active timers",
     async () => {
       using dir = tempDir("dangling-timer", {
@@ -95,7 +95,7 @@ test("has an active timer that prevents exit", async () => {
         stderr: "pipe",
       });
 
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
       expect(stderr).toContain("hint: this test timed out because");
       expect(stderr).toContain("active timer");
@@ -130,7 +130,7 @@ test("leaky test", async () => {
         stderr: "pipe",
       });
 
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
       expect(stderr).toContain("1 pass");
       expect(stderr).toContain("1 fail");

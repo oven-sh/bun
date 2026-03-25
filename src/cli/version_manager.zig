@@ -168,7 +168,7 @@ fn printMismatchWarning(pinned_version_str: []const u8, current_str: []const u8)
 }
 
 fn getUserConfirmation() bool {
-    var buf: [16]u8 = undefined;
+    var buf: [256]u8 = undefined;
     const n = bun.sys.read(bun.FD.stdin(), &buf).unwrap() catch return false;
     if (n == 0) return false; // EOF (stdin closed/redirected) = decline
     const response = strings.trim(buf[0..n], " \t\r\n");
@@ -445,7 +445,11 @@ fn downloadVersion(version_str: []const u8, dest_dir: []const u8, allocator: std
     } else if (comptime Environment.isWindows) {
         var ps_buf: bun.PathBuffer = undefined;
         const powershell_path =
-            bun.which(&ps_buf, bun.env_var.PATH.get() orelse "", "", "powershell") orelse {
+            bun.which(&ps_buf, bun.env_var.PATH.get() orelse "", "", "powershell") orelse
+            hardcoded_system_powershell: {
+                const system_root = bun.env_var.SYSTEMROOT.get() orelse "C:\\Windows";
+                const hardcoded_path = bun.path.joinAbsStringBuf(system_root, &ps_buf, &.{ system_root, "System32\\WindowsPowerShell\\v1.0\\powershell.exe" }, .windows);
+                if (bun.sys.exists(hardcoded_path)) break :hardcoded_system_powershell hardcoded_path;
                 Output.prettyErrorln("<r><red>error<r>: PowerShell not found", .{});
                 return false;
             };

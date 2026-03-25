@@ -544,24 +544,25 @@ const IS_UV_FS_COPYFILE_DISABLED =
   }
 
   it("Bun.write with proxy-prototyped constructor does not crash", async () => {
-    using dir = tempDir("bun-write-proxy", {});
-    const origProto = Object.getPrototypeOf(Buffer);
-    try {
-      Object.setPrototypeOf(
-        Buffer,
-        new Proxy(origProto, {
-          get(target, key, receiver) {
-            try {
-              void Reflect.has(target, key);
-            } catch (_) {}
-            return Reflect.get(target, key, receiver);
-          },
-        }),
-      );
-      const result = await Bun.write(join(String(dir), "out.txt"), Buffer);
-      expect(result).toBeGreaterThan(0);
-    } finally {
-      Object.setPrototypeOf(Buffer, origProto);
-    }
+    // Runs in a subprocess because it mutates global Buffer.prototype.
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `
+        const origProto = Object.getPrototypeOf(Buffer);
+        Object.setPrototypeOf(Buffer, new Proxy(origProto, {
+          get(t, k, r) { try { Reflect.has(t, k); } catch(_) {} return Reflect.get(t, k, r); }
+        }));
+        const fs = require("fs");
+        const os = require("os");
+        const path = require("path");
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), "bun-write-proxy-"));
+        Bun.write(path.join(dir, "out.txt"), Buffer).then(r => {
+          if (r <= 0) process.exit(1);
+          fs.rmSync(dir, { recursive: true });
+        });
+      `],
+      env: bunEnv,
+    });
+
+    expect(await proc.exited).toBe(0);
   });
 });

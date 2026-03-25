@@ -83,7 +83,10 @@ describe.concurrent("bun outdated --changelog", () => {
     return server;
   }
 
-  async function runOutdatedChangelog(cwd: string, env: Record<string, string | undefined> = { ...bunEnv, NO_COLOR: "1" }): Promise<string> {
+  async function runOutdatedChangelog(
+    cwd: string,
+    env: Record<string, string | undefined> = { ...bunEnv, NO_COLOR: "1" },
+  ): Promise<string> {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "outdated", "--changelog"],
       cwd,

@@ -539,7 +539,9 @@ pub const Resolver = struct {
                 .{},
                 this.env_loader.?,
             );
-            pm.onWake = this.onWakePackageManager;
+            if (pm.onWake.context == null) {
+                pm.onWake = this.onWakePackageManager;
+            }
             this.package_manager = pm;
             break :brk pm;
         };

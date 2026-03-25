@@ -1808,6 +1808,7 @@ pub const BundleV2 = struct {
             .log = Logger.Log.init(bun.default_allocator),
             .task = undefined,
             .global_cache = globalThis.bunVM().transpiler.options.global_cache,
+            .install = globalThis.bunVM().transpiler.options.install,
             .prefer_offline_install = globalThis.bunVM().transpiler.options.prefer_offline_install,
             .prefer_latest_install = globalThis.bunVM().transpiler.options.prefer_latest_install,
         });
@@ -1904,6 +1905,7 @@ pub const BundleV2 = struct {
         plugins: ?*bun.jsc.API.JSBundler.Plugin = null,
         started_at_ns: u64 = 0,
         global_cache: options.GlobalCache = .disable,
+        install: ?*api.BunInstall = null,
         prefer_offline_install: bool = false,
         prefer_latest_install: bool = false,
 
@@ -2039,6 +2041,7 @@ pub const BundleV2 = struct {
             }
 
             transpiler.options.global_cache = completion.global_cache;
+            transpiler.options.install = completion.install;
             transpiler.options.prefer_offline_install = completion.prefer_offline_install;
             transpiler.options.prefer_latest_install = completion.prefer_latest_install;
 

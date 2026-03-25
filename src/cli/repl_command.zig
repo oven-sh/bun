@@ -25,7 +25,6 @@ pub const ReplCommand = struct {
         // Load bunfig if not already loaded
         if (!ctx.debug.loaded_bunfig) {
             try bun.cli.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand);
-            bun.cli.Arguments.checkVersionPinning(ctx.allocator, ctx, .RunCommand);
         }
 
         // Initialize JSC

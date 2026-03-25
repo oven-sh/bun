@@ -272,17 +272,6 @@ pub fn loadConfigPath(allocator: std.mem.Allocator, auto_loaded: bool, config_pa
     try loadBunfig(allocator, auto_loaded, config_path, ctx, cmd);
 }
 
-/// Check version pinning after all bunfig files have been loaded.
-/// Called from loadConfig (after global + project merge) and from
-/// direct loadConfigPath callers (run_command, repl_command, bun.js).
-pub fn checkVersionPinning(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: Command.Tag) void {
-    if (comptime cmd != .UpgradeCommand) {
-        if (ctx.pinned_version) |pinned| {
-            VersionManager.checkPinnedVersion(pinned, allocator);
-        }
-    }
-}
-
 fn loadBunfig(allocator: std.mem.Allocator, auto_loaded: bool, config_path: [:0]const u8, ctx: Command.Context, comptime cmd: Command.Tag) !void {
     const source = switch (bun.sys.File.toSource(config_path, allocator, .{ .convert_bom = true })) {
         .result => |s| s,
@@ -402,9 +391,6 @@ pub fn loadConfig(allocator: std.mem.Allocator, user_config_path_: ?string, ctx:
         Output.err(err, "failed to load bunfig", .{});
         Global.crash();
     };
-
-    // Check version pinning once after all bunfig files (global + project) are merged.
-    checkVersionPinning(allocator, ctx, cmd);
 }
 
 pub fn loadConfigWithCmdArgs(
@@ -1657,7 +1643,6 @@ pub export var Bun__Node__UseSystemCA = false;
 
 const string = []const u8;
 
-const VersionManager = @import("./version_manager.zig");
 const builtin = @import("builtin");
 const std = @import("std");
 

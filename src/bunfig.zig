@@ -195,13 +195,6 @@ pub const Bunfig = struct {
                 try this.addError(json.loc, "bunfig expects an object { } at the root");
             }
 
-            if (json.get("version")) |expr| {
-                try this.expectString(expr);
-                if (expr.data.e_string.len() > 0) {
-                    this.ctx.pinned_version = try expr.data.e_string.string(allocator);
-                }
-            }
-
             if (json.get("logLevel")) |expr| {
                 try this.loadLogLevel(expr);
             }

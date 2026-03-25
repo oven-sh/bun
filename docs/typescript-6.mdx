@@ -16,8 +16,8 @@ In your `tsconfig.json`, add `"types": ["bun"]` to `compilerOptions`:
 ```jsonc tsconfig.json icon="file-json"
 {
   "compilerOptions": {
-    "types": ["bun"] // [!code ++]
-  }
+    "types": ["bun"], // [!code ++]
+  },
 }
 ```
 
@@ -26,8 +26,8 @@ This tells TypeScript to load type definitions from `@types/bun`. If you use oth
 ```jsonc tsconfig.json icon="file-json"
 {
   "compilerOptions": {
-    "types": ["bun", "react"]
-  }
+    "types": ["bun", "react"],
+  },
 }
 ```
 
@@ -69,8 +69,8 @@ Here's the full recommended `tsconfig.json` for a Bun project using TypeScript 6
     // Some stricter flags (disabled by default)
     "noUnusedLocals": false,
     "noUnusedParameters": false,
-    "noPropertyAccessFromIndexSignature": false
-  }
+    "noPropertyAccessFromIndexSignature": false,
+  },
 }
 ```
 

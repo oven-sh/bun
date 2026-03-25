@@ -243,9 +243,14 @@ function create_release() {
     wait
   }
 
+  local max_jobs=6
   for artifact in "${artifacts[@]}"; do
-    upload_artifact "$artifact"
+    while (( $(jobs -rp | wc -l) >= max_jobs )); do
+      wait -n
+    done
+    upload_artifact "$artifact" &
   done
+  wait
 
   update_github_release "$tag"
   create_sentry_release "$tag"

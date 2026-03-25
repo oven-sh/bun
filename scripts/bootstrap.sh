@@ -1437,7 +1437,7 @@ create_buildkite_user() {
 		execute_sudo usermod -aG docker "$user"
 	fi
 
-	buildkite_paths="$home /var/cache/buildkite-agent /var/log/buildkite-agent /var/run/buildkite-agent /var/run/buildkite-agent/buildkite-agent.sock"
+	buildkite_paths="$home $home/cache/build /var/cache/buildkite-agent /var/log/buildkite-agent /var/run/buildkite-agent /var/run/buildkite-agent/buildkite-agent.sock"
 	for path in $buildkite_paths; do
 		create_directory "$path"
 	done
@@ -1462,6 +1462,7 @@ create_buildkite_user() {
 set -efu
 
 export BUILDKITE_BUILD_CHECKOUT_PATH=${home}/build
+export BUN_BUILD_CACHE_PATH=${home}/cache/build
 EOF
 	execute_sudo chmod +x "${hook_dir}/environment"
 	execute_sudo chown -R "$user:$group" "$hook_dir"

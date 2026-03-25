@@ -9,7 +9,7 @@
 
 import { spawn as nodeSpawn, spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
-import { basename, relative, resolve } from "node:path";
+import { basename, relative, resolve, sep } from "node:path";
 // @ts-ignore — utils.mjs has JSDoc types but no .d.ts
 import * as utils from "../utils.mjs";
 import { bunExeName, shouldStrip, type BunOutput } from "./bun.ts";
@@ -261,7 +261,12 @@ export function uploadArtifacts(cfg: Config, output: BunOutput): void {
     console.log("Cleaning intermediate files to free disk...");
     rmSync(cfg.codegenDir, { recursive: true, force: true });
     rmSync(resolve(cfg.buildDir, "obj"), { recursive: true, force: true });
-    rmSync(cfg.cacheDir, { recursive: true, force: true });
+    // Only wipe cacheDir when it's inside buildDir (the local default).
+    // When BUN_BUILD_CACHE_PATH points it elsewhere, it's meant to persist
+    // across builds — deleting it here would defeat the whole point.
+    if (cfg.cacheDir.startsWith(cfg.buildDir + sep)) {
+      rmSync(cfg.cacheDir, { recursive: true, force: true });
+    }
 
     // gzip: posix only (matches cmake — only libbun-*.a are gzipped,
     // Windows .lib archives uploaded uncompressed). gzip isn't a

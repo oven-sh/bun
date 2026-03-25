@@ -124,7 +124,7 @@ RUN ARCH=$(if [ "$TARGETARCH" = "arm64" ]; then echo "arm64"; else echo "amd64";
     tar -xzf /tmp/buildkite-agent.tar.gz -C /tmp/buildkite-agent && \
     mv /tmp/buildkite-agent/buildkite-agent /usr/bin/buildkite-agent
 
-RUN mkdir -p /var/cache/buildkite-agent /var/log/buildkite-agent /var/run/buildkite-agent /etc/buildkite-agent /var/lib/buildkite-agent/cache/bun
+RUN mkdir -p /var/cache/buildkite-agent /var/log/buildkite-agent /var/run/buildkite-agent /etc/buildkite-agent /var/lib/buildkite-agent/cache/bun /var/lib/buildkite-agent/cache/build
 
 # The following is necessary to configure buildkite to use a stable
 # checkout directory for ccache to be effective.
@@ -134,6 +134,7 @@ RUN mkdir -p -m 755 /var/lib/buildkite-agent/hooks && \
 set -efu
 
 export BUILDKITE_BUILD_CHECKOUT_PATH=/var/lib/buildkite-agent/build
+export BUN_BUILD_CACHE_PATH=/var/lib/buildkite-agent/cache/build
 EOF
 
 RUN chmod 744 /var/lib/buildkite-agent/hooks/environment

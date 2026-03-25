@@ -404,12 +404,18 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
         : resolve(cwd, partial.buildDir)
       : resolve(cwd, "build", defaultBuildDirName);
   const codegenDir = resolve(buildDir, "codegen");
+  // CI agents set BUN_BUILD_CACHE_PATH to a directory outside the git
+  // checkout so ccache/zig-cache/tarballs survive `git clean -ffxdq`
+  // between builds. Locally it's under buildDir so `rm -rf build/` is
+  // a full reset.
   const cacheDir =
     partial.cacheDir !== undefined
       ? isAbsolute(partial.cacheDir)
         ? partial.cacheDir
         : resolve(cwd, partial.cacheDir)
-      : resolve(buildDir, "cache");
+      : process.env.BUN_BUILD_CACHE_PATH !== undefined
+        ? resolve(process.env.BUN_BUILD_CACHE_PATH)
+        : resolve(buildDir, "cache");
   const vendorDir = resolve(cwd, "vendor");
 
   // ─── Validation ───

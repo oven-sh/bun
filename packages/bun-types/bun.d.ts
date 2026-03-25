@@ -8005,7 +8005,53 @@ declare module "bun" {
       | "chrome"
       | {
           type: "chrome";
-          /** Path to the Chrome/Chromium executable. Overrides auto-detection. */
+          /**
+           * Connect to an existing Chrome's DevTools WebSocket directly.
+           * Get the URL from Chrome's `DevToolsActivePort` file
+           * (`<port>\n<path>`, in the profile directory) — the full URL
+           * is `ws://127.0.0.1:<port><path>`.
+           *
+           * Enable remote debugging in Chrome at
+           * `chrome://inspect/#remote-debugging`, or launch with
+           * `--remote-debugging-port=9222`. Both write
+           * `DevToolsActivePort`.
+           *
+           * **Note**: The `chrome://inspect` toggle shows an "Allow
+           * remote debugging?" dialog on **every** new connection.
+           *
+           * Mutually exclusive with `path`/`argv` — you're connecting
+           * to a Chrome that's already running, not spawning one.
+           */
+          url: string;
+        }
+      | {
+          type: "chrome";
+          /**
+           * Controls the connect-vs-spawn choice:
+           *
+           * - `false` — skip auto-detect, always spawn a fresh Chrome.
+           *   Executable path still auto-found unless `path` is set.
+           * - `undefined` (default) — **auto-detect**: if a
+           *   `DevToolsActivePort` file exists (Chrome with remote
+           *   debugging is running), connect to it; else spawn.
+           *
+           * Auto-detect falls back to spawn if the connect fails (stale
+           * file from a dead Chrome). The WebSocket auto-closes when
+           * the last `WebView` is closed. For unattended automation,
+           * pass `url: false`.
+           */
+          url?: false;
+          /**
+           * Path to the Chrome/Chromium executable. Overrides
+           * auto-detection and forces Bun to spawn a fresh Chrome
+           * subprocess (skipping the existing-Chrome auto-connect).
+           *
+           * **Auto-connect**: when neither `path` nor `url` is set, Bun
+           * checks Chrome's `DevToolsActivePort` file — if a Chrome with
+           * remote debugging is already running, Bun connects to it over
+           * WebSocket instead of spawning. Pass `path` (or `argv`) to
+           * force spawn-mode.
+           */
           path?: string;
           /**
            * Extra command-line arguments appended after the default flags.
@@ -8124,7 +8170,7 @@ declare module "bun" {
    *
    * @experimental
    */
-  class WebView {
+  class WebView extends EventTarget {
     /**
      * @throws on non-macOS platforms when `backend` is `"webkit"` (the
      * default). Pass `backend: "chrome"` for cross-platform support.
@@ -8200,9 +8246,110 @@ declare module "bun" {
     evaluate<T = unknown>(script: string): Promise<T>;
 
     /**
-     * Capture a PNG screenshot of the current viewport.
+     * Capture a screenshot of the current viewport.
+     *
+     * **`encoding` controls the return type:**
+     * - `"blob"` (default) — `Blob` with the right MIME type. WebKit:
+     *   zero-copy mmap-backed store. Composes with `Bun.write()`,
+     *   `new Response()`, `blob.bytes()`.
+     * - `"buffer"` — Node `Buffer`. WebKit: zero-copy (the same mmap'd
+     *   pages wrapped as an `ArrayBuffer` that munmap's on GC).
+     * - `"base64"` — base64-encoded `string`. Chrome: zero decode (CDP
+     *   returns base64 natively). Direct Kitty `t=d` transmission.
+     * - `"shmem"` — `{ name, size }`. The POSIX shm name is left linked;
+     *   caller owns `shm_unlink`. Kitty `t=s` transmission: pass `name`
+     *   as the payload, Kitty unlinks after reading. Not on Windows.
+     *
+     * @param options.format Image format. `"webp"` requires Chrome.
+     *   @default `"png"`
+     * @param options.quality Compression quality for JPEG/WebP, 0-100.
+     *   Ignored for PNG. @default `80`
+     * @param options.encoding Return-type encoding. @default `"blob"`
+     *
+     * @example Kitty graphics protocol, shared-memory transmission
+     * ```ts
+     * const { name, size } = await view.screenshot({ encoding: "shmem" });
+     * process.stdout.write(
+     *   `\x1b_Gf=100,t=s,a=T,S=${size};${btoa(name)}\x1b\\`
+     * );
+     * // Kitty shm_open's the name, reads ${size} PNG bytes, unlinks.
+     * ```
      */
-    screenshot(): Promise<Uint8Array>;
+    screenshot(options?: { encoding?: "blob"; format?: "png" | "jpeg" | "webp"; quality?: number }): Promise<Blob>;
+    screenshot(options: { encoding: "buffer"; format?: "png" | "jpeg" | "webp"; quality?: number }): Promise<Buffer>;
+    screenshot(options: { encoding: "base64"; format?: "png" | "jpeg" | "webp"; quality?: number }): Promise<string>;
+    screenshot(options: { encoding: "shmem"; format?: "png" | "jpeg" | "webp"; quality?: number }): Promise<{
+      /** POSIX shm name (pass to `shm_open(2)` or Kitty `t=s`). */
+      name: string;
+      /** Encoded image size in bytes. */
+      size: number;
+    }>;
+
+    /**
+     * Send a raw Chrome DevTools Protocol command. **Chrome backend only.**
+     *
+     * The command is scoped to this view's session (targets the current
+     * tab). Returns the decoded `result` object from the CDP response, or
+     * rejects with the `error.message` if Chrome reports a protocol error.
+     *
+     * Call `await view.navigate(...)` at least once before using `cdp()` —
+     * the first navigate sets up the CDP session.
+     *
+     * @param method Domain-qualified method name, e.g.
+     *   `"Runtime.evaluate"`, `"DOM.querySelector"`,
+     *   `"Emulation.setUserAgentOverride"`.
+     * @param params Command parameters. Must be JSON-serializable.
+     *
+     * @example
+     * ```ts
+     * const view = new Bun.WebView({ backend: "chrome" });
+     * await view.navigate("https://example.com");
+     *
+     * const { root } = await view.cdp("DOM.getDocument");
+     * const { nodeId } = await view.cdp("DOM.querySelector", {
+     *   nodeId: root.nodeId,
+     *   selector: "input#search",
+     * });
+     * await view.cdp("DOM.focus", { nodeId });
+     * ```
+     *
+     * @see https://chromedevtools.github.io/devtools-protocol/
+     */
+    cdp<T = unknown>(method: string, params?: Record<string, unknown>): Promise<T>;
+
+    /**
+     * Subscribe to CDP events. **Chrome backend only.**
+     *
+     * Event types are CDP method names directly —
+     * `"Network.responseReceived"`, `"Page.frameStartedLoading"`,
+     * `"DOM.documentUpdated"`, etc. The listener receives a
+     * `MessageEvent` with the CDP params as `event.data`.
+     *
+     * Enable the domain first with `cdp("Domain.enable")`, or Chrome
+     * won't send those events. Events without a registered listener
+     * are dropped before JSON parsing (no overhead for domains you
+     * enabled but don't fully listen to).
+     *
+     * @example
+     * ```ts
+     * await view.navigate("about:blank");
+     * await view.cdp("Network.enable");
+     * view.addEventListener("Network.responseReceived", e => {
+     *   console.log(e.data.response.status, e.data.response.url);
+     * });
+     * await view.navigate("https://example.com");
+     * ```
+     */
+    addEventListener<T = unknown>(
+      type: `${string}.${string}`,
+      listener: (event: MessageEvent<T>) => void,
+      options?: boolean | AddEventListenerOptions,
+    ): void;
+    addEventListener(
+      type: string,
+      listener: EventListenerOrEventListenerObject,
+      options?: boolean | AddEventListenerOptions,
+    ): void;
 
     /**
      * Click at the given viewport coordinates.

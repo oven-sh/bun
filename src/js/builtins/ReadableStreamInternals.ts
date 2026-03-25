@@ -2266,6 +2266,7 @@ export function readableStreamToArrayBufferDirect(
   $putByIdDirectPrivate(stream, "underlyingSource", null);
   $putByIdDirectPrivate(stream, "start", undefined);
   $putByIdDirectPrivate(stream, "reader", {});
+  stream.$disturbed = true;
   var highWaterMark = $getByIdDirectPrivate(stream, "highWaterMark");
   sink.start({ highWaterMark, asUint8Array });
   var capability = $newPromiseCapability(Promise);

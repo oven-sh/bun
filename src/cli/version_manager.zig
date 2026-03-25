@@ -28,6 +28,16 @@ pub fn checkPinnedVersion(pinned_version_str: []const u8, allocator: std.mem.All
         return;
     };
 
+    // Semver.Query.parse silently accepts garbage input as an empty group
+    // (which always satisfies). Detect and warn about it.
+    if (!group.head.head.range.hasLeft() and group.head.head.range.right.op == .unset) {
+        Output.prettyErrorln(
+            "<r><yellow>warn<r>: Invalid version range <b>\"{s}\"<r> in bunfig.toml",
+            .{pinned_version_str},
+        );
+        return;
+    }
+
     const current = Semver.Version{
         .major = Environment.version.major,
         .minor = Environment.version.minor,

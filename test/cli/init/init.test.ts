@@ -18,6 +18,7 @@ import path from "path";
 
     const pkg = JSON.parse(fs.readFileSync(path.join(temp, "package.json"), "utf8"));
     expect(pkg).toEqual({
+      "$schema": "https://json.schemastore.org/package.json",
       "name": path.basename(temp).toLowerCase().replaceAll(" ", "-"),
       "module": "index.ts",
       "type": "module",
@@ -38,6 +39,9 @@ import path from "path";
     expect(fs.existsSync(path.join(temp, ".gitignore"))).toBe(true);
     expect(fs.existsSync(path.join(temp, "node_modules"))).toBe(true);
     expect(fs.existsSync(path.join(temp, "tsconfig.json"))).toBe(true);
+
+    const tsconfig = fs.readFileSync(path.join(temp, "tsconfig.json"), "utf8");
+    expect(tsconfig).toContain('"$schema": "https://json.schemastore.org/tsconfig"');
   }, 30_000);
 
   test("bun init with piped cli", async () => {
@@ -54,6 +58,7 @@ import path from "path";
 
     const pkg = JSON.parse(fs.readFileSync(path.join(temp, "package.json"), "utf8"));
     expect(pkg).toEqual({
+      "$schema": "https://json.schemastore.org/package.json",
       "name": path.basename(temp).toLowerCase().replaceAll(" ", "-"),
       "module": "index.ts",
       "private": true,
@@ -74,6 +79,9 @@ import path from "path";
     expect(fs.existsSync(path.join(temp, ".gitignore"))).toBe(true);
     expect(fs.existsSync(path.join(temp, "node_modules"))).toBe(true);
     expect(fs.existsSync(path.join(temp, "tsconfig.json"))).toBe(true);
+
+    const tsconfig = fs.readFileSync(path.join(temp, "tsconfig.json"), "utf8");
+    expect(tsconfig).toContain('"$schema": "https://json.schemastore.org/tsconfig"');
   }, 30_000);
 
   test("bun init in folder", async () => {
@@ -170,10 +178,10 @@ import path from "path";
     await Bun.write(path.join(temp, "mydir/index.ts"), "my edited index.ts");
     await Bun.write(path.join(temp, "mydir/README.md"), "my edited README.md");
     await Bun.write(path.join(temp, "mydir/.gitignore"), "my edited .gitignore");
+    // Write package.json WITHOUT $schema to verify it's not injected into existing files
     await Bun.write(
       path.join(temp, "mydir/package.json"),
       JSON.stringify({
-        ...(await Bun.file(path.join(temp, "mydir/package.json")).json()),
         name: "my edited package.json",
       }),
     );
@@ -205,7 +213,10 @@ import path from "path";
     expect(await Bun.file(path.join(temp, "mydir/index.ts")).text()).toMatchInlineSnapshot(`"my edited index.ts"`);
     expect(await Bun.file(path.join(temp, "mydir/README.md")).text()).toMatchInlineSnapshot(`"my edited README.md"`);
     expect(await Bun.file(path.join(temp, "mydir/.gitignore")).text()).toMatchInlineSnapshot(`"my edited .gitignore"`);
-    expect(await Bun.file(path.join(temp, "mydir/package.json")).json()).toMatchInlineSnapshot(`
+    const reInitPkg = await Bun.file(path.join(temp, "mydir/package.json")).json();
+    // $schema should NOT be injected into an existing package.json that didn't have it
+    expect(reInitPkg).not.toHaveProperty("$schema");
+    expect(reInitPkg).toMatchInlineSnapshot(`
     {
       "devDependencies": {
         "@types/bun": "latest",
@@ -237,6 +248,7 @@ import path from "path";
     expect(await exited).toBe(0);
 
     const pkg = JSON.parse(fs.readFileSync(path.join(temp, "package.json"), "utf8"));
+    expect(pkg).toHaveProperty("$schema", "https://json.schemastore.org/package.json");
     expect(pkg).toHaveProperty("dependencies.react");
     expect(pkg).toHaveProperty("dependencies.react-dom");
     expect(pkg).toHaveProperty("devDependencies.@types/react");
@@ -245,6 +257,9 @@ import path from "path";
     expect(fs.existsSync(path.join(temp, "src"))).toBe(true);
     expect(fs.existsSync(path.join(temp, "src/index.ts"))).toBe(true);
     expect(fs.existsSync(path.join(temp, "tsconfig.json"))).toBe(true);
+
+    const tsconfig = fs.readFileSync(path.join(temp, "tsconfig.json"), "utf8");
+    expect(tsconfig).toContain('"$schema": "https://json.schemastore.org/tsconfig"');
   }, 30_000);
 
   test("bun init --react=tailwind works", async () => {
@@ -260,6 +275,7 @@ import path from "path";
     expect(await exited).toBe(0);
 
     const pkg = JSON.parse(fs.readFileSync(path.join(temp, "package.json"), "utf8"));
+    expect(pkg).toHaveProperty("$schema", "https://json.schemastore.org/package.json");
     expect(pkg).toHaveProperty("dependencies.react");
     expect(pkg).toHaveProperty("dependencies.react-dom");
     expect(pkg).toHaveProperty("devDependencies.@types/react");
@@ -268,6 +284,9 @@ import path from "path";
 
     expect(fs.existsSync(path.join(temp, "src"))).toBe(true);
     expect(fs.existsSync(path.join(temp, "src/index.ts"))).toBe(true);
+
+    const tsconfig = fs.readFileSync(path.join(temp, "tsconfig.json"), "utf8");
+    expect(tsconfig).toContain('"$schema": "https://json.schemastore.org/tsconfig"');
   }, 30_000);
 
   test("bun init --react=shadcn works", async () => {
@@ -283,6 +302,7 @@ import path from "path";
     expect(await exited).toBe(0);
 
     const pkg = JSON.parse(fs.readFileSync(path.join(temp, "package.json"), "utf8"));
+    expect(pkg).toHaveProperty("$schema", "https://json.schemastore.org/package.json");
     expect(pkg).toHaveProperty("dependencies.react");
     expect(pkg).toHaveProperty("dependencies.react-dom");
     expect(pkg).toHaveProperty("dependencies.@radix-ui/react-slot");
@@ -294,6 +314,9 @@ import path from "path";
     expect(fs.existsSync(path.join(temp, "src/index.ts"))).toBe(true);
     expect(fs.existsSync(path.join(temp, "src/components"))).toBe(true);
     expect(fs.existsSync(path.join(temp, "src/components/ui"))).toBe(true);
+
+    const tsconfig = fs.readFileSync(path.join(temp, "tsconfig.json"), "utf8");
+    expect(tsconfig).toContain('"$schema": "https://json.schemastore.org/tsconfig"');
   }, 30_000);
 
   test("bun init --minimal only creates package.json and tsconfig.json", async () => {
@@ -318,6 +341,12 @@ import path from "path";
     expect(fs.existsSync(path.join(temp, "package.json"))).toBe(true);
     expect(fs.existsSync(path.join(temp, "tsconfig.json"))).toBe(true);
 
+    const pkg = JSON.parse(fs.readFileSync(path.join(temp, "package.json"), "utf8"));
+    expect(pkg).toHaveProperty("$schema", "https://json.schemastore.org/package.json");
+
+    const tsconfig = fs.readFileSync(path.join(temp, "tsconfig.json"), "utf8");
+    expect(tsconfig).toContain('"$schema": "https://json.schemastore.org/tsconfig"');
+
     // Should NOT create these extra files with --minimal
     expect(fs.existsSync(path.join(temp, "index.ts"))).toBe(false);
     expect(fs.existsSync(path.join(temp, ".gitignore"))).toBe(false);
@@ -325,4 +354,29 @@ import path from "path";
     expect(fs.existsSync(path.join(temp, "CLAUDE.md"))).toBe(false);
     expect(fs.existsSync(path.join(temp, ".cursor"))).toBe(false);
   });
+
+  test("bun init with js entry point creates jsconfig.json", async () => {
+    const temp = tempDirWithFiles("bun-init-jsconfig", {
+      "index.js": "console.log('hello');",
+    });
+
+    const { exited } = Bun.spawn({
+      cmd: [bunExe(), "init", "-y"],
+      cwd: temp,
+      stdio: ["ignore", "inherit", "inherit"],
+      env: bunEnv,
+    });
+
+    expect(await exited).toBe(0);
+
+    // Should create jsconfig.json, not tsconfig.json
+    expect(fs.existsSync(path.join(temp, "jsconfig.json"))).toBe(true);
+    expect(fs.existsSync(path.join(temp, "tsconfig.json"))).toBe(false);
+
+    const jsconfig = fs.readFileSync(path.join(temp, "jsconfig.json"), "utf8");
+    expect(jsconfig).toContain('"$schema": "https://json.schemastore.org/jsconfig"');
+
+    const pkg = JSON.parse(fs.readFileSync(path.join(temp, "package.json"), "utf8"));
+    expect(pkg).toHaveProperty("$schema", "https://json.schemastore.org/package.json");
+  }, 30_000);
 });

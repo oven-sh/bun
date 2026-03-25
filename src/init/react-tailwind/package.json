@@ -1,4 +1,5 @@
 {
+  "$schema": "https://json.schemastore.org/package.json",
   "name": "bun-react-template",
   "version": "0.1.0",
   "private": true,

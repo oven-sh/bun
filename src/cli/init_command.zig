@@ -223,6 +223,7 @@ pub const InitCommand = struct {
         // "known" assets
         const @".gitignore" = @embedFile("init/gitignore.default");
         const @"tsconfig.json" = @embedFile("init/tsconfig.default.json");
+        const @"jsconfig.json" = @embedFile("init/jsconfig.default.json");
         const @"README.md" = @embedFile("init/README.default.md");
         const @"README2.md" = @embedFile("init/README2.default.md");
 
@@ -468,6 +469,7 @@ pub const InitCommand = struct {
                 }
 
                 fields.object = package_json_expr.data.e_object;
+            try fields.object.putString(alloc, "$schema", "https://json.schemastore.org/package.json");
 
                 if (package_json_expr.get("name")) |name| {
                     if (name.asString(alloc)) |str| {
@@ -534,6 +536,7 @@ pub const InitCommand = struct {
                 .{},
                 logger.Loc.Empty,
             ).data.e_object;
+            try fields.object.putString(alloc, "$schema", "https://json.schemastore.org/package.json");
         }
 
         if (!auto_yes) {
@@ -814,11 +817,11 @@ pub const InitCommand = struct {
                     brk: {
                         const extname = std.fs.path.extension(fields.entry_point);
                         const loader = options.defaultLoaders.get(extname) orelse options.Loader.ts;
-                        const filename = if (loader.isTypeScript())
-                            "tsconfig.json"
-                        else
-                            "jsconfig.json";
-                        Assets.createFull("tsconfig.json", filename, " (for editor autocomplete)", false, .{}) catch break :brk;
+                        if (loader.isTypeScript()) {
+                            Assets.createFull("tsconfig.json", "tsconfig.json", " (for editor autocomplete)", false, .{}) catch break :brk;
+                        } else {
+                            Assets.createFull("jsconfig.json", "jsconfig.json", " (for editor autocomplete)", false, .{}) catch break :brk;
+                        }
                     }
                 }
 

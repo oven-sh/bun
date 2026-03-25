@@ -540,7 +540,11 @@ fn saveCurrentVersion(install_dir: []const u8, current_str: []const u8, self_exe
     while (true) {
         const n = bun.sys.read(src_fd, &copy_buf).unwrap() catch return;
         if (n == 0) break;
-        _ = bun.sys.write(dst_fd, copy_buf[0..n]).unwrap() catch return;
+        var written: usize = 0;
+        while (written < n) {
+            const w = bun.sys.write(dst_fd, copy_buf[written..n]).unwrap() catch return;
+            written += w;
+        }
     }
 }
 

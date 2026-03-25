@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 test("runtime plugin with object loader supports default import", async () => {
@@ -40,11 +40,7 @@ console.log(value);
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stderr).not.toContain("SyntaxError");
   expect(stdout).toContain(`{"name":"test","value":"42"}`);
@@ -86,11 +82,7 @@ console.log(named);
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stderr).not.toContain("SyntaxError");
   expect(stdout).toContain("my-default");

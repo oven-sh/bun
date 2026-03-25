@@ -464,6 +464,7 @@ fn downloadVersion(version_str: []const u8, dest_dir: []const u8, allocator: std
                 bun.fmt.escapePowershell(dest_dir),
             },
         ) catch return false;
+        defer allocator.free(unzip_script);
 
         var unzip_argv = [_][]const u8{
             powershell_path,

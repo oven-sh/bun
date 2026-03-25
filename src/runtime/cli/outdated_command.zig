@@ -690,13 +690,13 @@ pub const OutdatedCommand = struct {
 
         if (manager.options.changelog) {
             var has_any_url = false;
-            var seen_names = bun.StringHashMapUnmanaged(void){};
-            defer seen_names.deinit(bun.default_allocator);
-            // Print changelog URLs below the table, deduplicated by package name
+            var seen_pkgs = std.AutoHashMapUnmanaged(PackageID, void){};
+            defer seen_pkgs.deinit(bun.default_allocator);
+            // Print changelog URLs below the table
             for (grouped_ids.items) |item| {
                 const package_id = item.package_id;
+                if ((seen_pkgs.getOrPut(bun.default_allocator, package_id) catch bun.handleOom(error.OutOfMemory)).found_existing) continue;
                 const package_name = pkg_names[package_id].slice(string_buf);
-                if (bun.handleOom(seen_names.getOrPut(bun.default_allocator, package_name)).found_existing) continue;
 
                 var exp = false;
                 const needs_extended = manager.options.minimum_release_age_ms != null or manager.options.changelog;
@@ -733,14 +733,16 @@ pub const OutdatedCommand = struct {
     }
 };
 
-/// Returns true if the string starts with a domain name (contains a dot before the first slash).
-/// Used to distinguish "github.com/user/repo" from "user/repo" shorthand.
+/// Returns true if the string starts with a known hosting domain prefix.
+/// Checks for common Git hosting domains to distinguish "github.com/user/repo"
+/// from GitHub shorthands like "user.name/repo" (dotted usernames).
 fn hasDomainPrefix(s: []const u8) bool {
-    for (s) |c| {
-        if (c == '/') return false; // slash before any dot — shorthand
-        if (c == '.') return true; // dot before slash — domain
-    }
-    return false;
+    return strings.hasPrefixComptime(s, "github.com/") or
+        strings.hasPrefixComptime(s, "gitlab.com/") or
+        strings.hasPrefixComptime(s, "bitbucket.org/") or
+        strings.hasPrefixComptime(s, "codeberg.org/") or
+        strings.hasPrefixComptime(s, "sr.ht/") or
+        strings.hasPrefixComptime(s, "gitea.com/");
 }
 
 const string = []const u8;

@@ -370,6 +370,7 @@ pub const Parser = struct {
     }
 
     fn prev(self: *Parser) Token {
+        if (self.current == 0) return .eof;
         return self.tokens[self.current - 1];
     }
 

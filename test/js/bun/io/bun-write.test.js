@@ -546,7 +546,10 @@ const IS_UV_FS_COPYFILE_DISABLED =
   it("Bun.write with proxy-prototyped constructor does not crash", async () => {
     // Runs in a subprocess because it mutates global Buffer.prototype.
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", `
+      cmd: [
+        bunExe(),
+        "-e",
+        `
         const origProto = Object.getPrototypeOf(Buffer);
         Object.setPrototypeOf(Buffer, new Proxy(origProto, {
           get(t, k, r) { try { Reflect.has(t, k); } catch(_) {} return Reflect.get(t, k, r); }
@@ -559,7 +562,8 @@ const IS_UV_FS_COPYFILE_DISABLED =
           if (r <= 0) process.exit(1);
           fs.rmSync(dir, { recursive: true });
         });
-      `],
+      `,
+      ],
       env: bunEnv,
     });
 

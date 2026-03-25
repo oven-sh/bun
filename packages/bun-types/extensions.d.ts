@@ -38,3 +38,5 @@ declare module "*.html" {
 
   export = contents;
 }
+
+declare module "*.css" {}

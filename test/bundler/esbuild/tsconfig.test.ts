@@ -366,6 +366,37 @@ describe("bundler", () => {
       "/Users/user/project/src/entry.ts": [`Could not resolve: "#/test". Maybe you need to "bun install"?`],
     },
   });
+  itBundled("tsconfig/PathsInChildNoBaseURL", {
+    // Child defines paths without baseUrl, extends parent with no paths/baseUrl.
+    // Paths should resolve relative to the child tsconfig's directory.
+    files: {
+      "/Users/user/project/src/entry.ts": /* ts */ `
+        import test from '#/lib/test'
+        console.log(test)
+      `,
+      "/Users/user/project/src/lib/test.ts": `export default 123`,
+      "/Users/user/project/src/tsconfig.json": /* json */ `
+        {
+          "extends": "../tsconfig.base.json",
+          "compilerOptions": {
+            "paths": {
+              "#/*": ["./*"]
+            }
+          }
+        }
+      `,
+      "/Users/user/project/tsconfig.base.json": /* json */ `
+        {
+          "compilerOptions": {
+            "strict": true
+          }
+        }
+      `,
+    },
+    run: {
+      stdout: "123",
+    },
+  });
   itBundled("tsconfig/JSX", {
     files: {
       "/Users/user/project/entry.tsx": `console.log(<><div/><div/></>)`,

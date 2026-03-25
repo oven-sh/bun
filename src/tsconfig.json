@@ -1,7 +1,8 @@
 {
   "extends": "../tsconfig.base.json",
   "compilerOptions": {
-    // Path remapping
+    // baseUrl needed until resolver fix propagates to system Bun used during build
+    "ignoreDeprecations": "6.0",
     "baseUrl": ".",
     "paths": {
       "bindgen": ["./codegen/bindgen-lib.ts"],

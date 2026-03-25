@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 
-describe.skipIf(isWindows)("dangling process diagnostics", () => {
-  test("reports PID, command name, and timeout hint for dangling processes", async () => {
+// These tests use "sleep" which is not available on Windows.
+describe("dangling process diagnostics", () => {
+  test.skipIf(isWindows)("reports PID, command name, and timeout hint for dangling processes", async () => {
     using dir = tempDir("dangling-diag", {
       "dangling.test.ts": `
 import { test } from "bun:test";
@@ -33,7 +34,7 @@ test("spawns a process that outlives the test", async () => {
     expect(exitCode).toBe(1);
   }, 60_000);
 
-  test("reports multiple dangling processes with individual details", async () => {
+  test.skipIf(isWindows)("reports multiple dangling processes with individual details", async () => {
     using dir = tempDir("dangling-multi", {
       "multi-dangling.test.ts": `
 import { test } from "bun:test";
@@ -64,7 +65,7 @@ test("spawns multiple processes that outlive the test", async () => {
     expect(exitCode).toBe(1);
   }, 60_000);
 
-  test("shows timeout hint for active timers", async () => {
+  test.skipIf(isWindows)("shows timeout hint for active timers", async () => {
     using dir = tempDir("dangling-timer", {
       "timer.test.ts": `
 import { test } from "bun:test";
@@ -91,7 +92,7 @@ test("has an active timer that prevents exit", async () => {
     expect(exitCode).toBe(1);
   }, 60_000);
 
-  test("summary shows total dangling processes killed", async () => {
+  test.skipIf(isWindows)("summary shows total dangling processes killed", async () => {
     using dir = tempDir("dangling-summary", {
       "summary.test.ts": `
 import { test, expect } from "bun:test";

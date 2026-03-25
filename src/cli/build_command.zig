@@ -97,6 +97,10 @@ pub const BuildCommand = struct {
         }
 
         this_transpiler.options.bytecode = ctx.bundler_options.bytecode;
+
+        this_transpiler.options.global_cache = ctx.debug.global_cache;
+        this_transpiler.resolver.opts.global_cache = ctx.debug.global_cache;
+
         var was_renamed_from_index = false;
 
         if (ctx.bundler_options.compile) {

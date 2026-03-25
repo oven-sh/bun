@@ -586,7 +586,7 @@ pub const BundleV2 = struct {
         }
 
         var had_busted_dir_cache: bool = false;
-        var resolve_result: _resolver.Result = while (true) break transpiler.resolver.resolve(
+        var resolve_result: _resolver.Result = while (true) break transpiler.resolver.resolveWithGlobalCache(
             source_dir,
             import_record.specifier,
             import_record.kind,
@@ -1807,6 +1807,7 @@ pub const BundleV2 = struct {
             .plugins = plugins,
             .log = Logger.Log.init(bun.default_allocator),
             .task = undefined,
+            .global_cache = globalThis.bunVM().transpiler.options.global_cache,
         });
         completion.task = JSBundleCompletionTask.TaskCompletion.init(completion);
 
@@ -1817,6 +1818,12 @@ pub const BundleV2 = struct {
         // Ensure this exists before we spawn the thread to prevent any race
         // conditions from creating two
         _ = jsc.WorkPool.get();
+
+        // Pre-initialize the package manager on the main thread (which has the VM)
+        // so the bundle thread doesn't try to initialize it without a VM context.
+        if (completion.global_cache.isEnabled()) {
+            _ = globalThis.bunVM().transpiler.resolver.getPackageManager();
+        }
 
         JSBundleThread.singleton.enqueue(completion);
 
@@ -1900,6 +1907,7 @@ pub const BundleV2 = struct {
         transpiler: *BundleV2 = undefined,
         plugins: ?*bun.jsc.API.JSBundler.Plugin = null,
         started_at_ns: u64 = 0,
+        global_cache: options.GlobalCache = .disable,
 
         pub fn configureBundler(
             completion: *JSBundleCompletionTask,
@@ -2031,6 +2039,8 @@ pub const BundleV2 = struct {
                 // Emitting DCE annotations is nonsensical in --compile.
                 transpiler.options.emit_dce_annotations = false;
             }
+
+            transpiler.options.global_cache = completion.global_cache;
 
             transpiler.configureLinker();
             try transpiler.configureDefines();
@@ -3621,7 +3631,7 @@ pub const BundleV2 = struct {
             }
 
             var had_busted_dir_cache = false;
-            var resolve_result: _resolver.Result = inner: while (true) break transpiler.resolver.resolveWithFramework(
+            var resolve_result: _resolver.Result = inner: while (true) break transpiler.resolver.resolveWithFrameworkAndGlobalCache(
                 source_dir,
                 import_record.path.text,
                 import_record.kind,

@@ -929,6 +929,40 @@ pub const Resolver = struct {
         }
     }
 
+    /// Like `resolve`, but uses the configured `global_cache` setting to
+    /// allow auto-installing packages from the global cache or npm.
+    pub fn resolveWithGlobalCache(r: *ThisResolver, source_dir: string, import_path: string, kind: ast.ImportKind) !Result {
+        switch (r.resolveAndAutoInstall(source_dir, import_path, kind, r.opts.global_cache)) {
+            .success => |result| return result,
+            .pending, .not_found => return error.ModuleNotFound,
+
+            .failure => |e| return e,
+        }
+    }
+
+    /// Like `resolveWithFramework`, but uses the configured `global_cache` setting
+    /// to allow auto-installing packages from the global cache or npm.
+    pub fn resolveWithFrameworkAndGlobalCache(r: *ThisResolver, source_dir: string, import_path: string, kind: ast.ImportKind) !Result {
+        if (r.opts.framework) |f| {
+            if (f.built_in_modules.get(import_path)) |mod| {
+                switch (mod) {
+                    .code => {
+                        return .{
+                            .import_kind = kind,
+                            .path_pair = .{ .primary = Fs.Path.initWithNamespace(import_path, "node") },
+                            .module_type = .esm,
+                            .primary_side_effects_data = .no_side_effects__pure_data,
+                            .flags = .{ .is_external = false },
+                        };
+                    },
+                    .import => |path| return r.resolveWithGlobalCache(r.fs.top_level_dir, path, .entry_point_build),
+                }
+                return .{};
+            }
+        }
+        return r.resolveWithGlobalCache(source_dir, import_path, kind);
+    }
+
     /// Runs a resolution but also checking if a Bun Bake framework has an
     /// override. This is used in one place in the bundler.
     pub fn resolveWithFramework(r: *ThisResolver, source_dir: string, import_path: string, kind: ast.ImportKind) !Result {

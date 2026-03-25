@@ -37,6 +37,16 @@ pub const Result = struct {
 
     const max_reported = 8;
 
+    /// Free command strings owned by this result.
+    pub fn deinit(this: *Result) void {
+        for (this.killed.slice()) |*info| {
+            if (info.command) |cmd| {
+                bun.default_allocator.free(cmd);
+                info.command = null;
+            }
+        }
+    }
+
     pub fn printError(this: *const Result) void {
         if (this.processes == 0) return;
         if (this.killed.len == 1) {
@@ -70,20 +80,21 @@ fn killProcesses(this: *ProcessAutoKiller) Result {
     var result = Result{};
     while (this.processes.pop()) |entry| {
         defer entry.key.deref();
+        var info = entry.value;
         if (!entry.key.hasExited()) {
             log("process.kill {d}", .{entry.key.pid});
             if (entry.key.kill(@intFromEnum(bun.SignalCode.default)) == .result) {
                 result.processes += 1;
-                result.killed.append(.{
-                    .pid = entry.key.pid,
-                    .command = entry.value.command,
-                }) catch {};
+                if (result.killed.len < Result.max_reported) {
+                    result.killed.appendAssumeCapacity(.{
+                        .pid = entry.key.pid,
+                        .command = info.command,
+                    });
+                    info.command = null; // ownership moved into result
+                }
             }
-        } else {
-            // Process already exited, free its info
-            var info = entry.value;
-            info.deinit();
         }
+        info.deinit(); // free command if ownership was not transferred
     }
     return result;
 }
@@ -104,7 +115,7 @@ pub fn clear(this: *ProcessAutoKiller) void {
 pub fn onSubprocessSpawn(this: *ProcessAutoKiller, process: *bun.spawn.Process, command: ?[]const u8) void {
     if (this.enabled) {
         const duped_command: ?[]const u8 = if (command) |cmd|
-            bun.default_allocator.dupe(u8, cmd) catch null
+            bun.handleOom(bun.default_allocator.dupe(u8, cmd))
         else
             null;
         this.processes.put(bun.default_allocator, process, .{ .command = duped_command }) catch {
@@ -123,6 +134,11 @@ pub fn onSubprocessExit(this: *ProcessAutoKiller, process: *bun.spawn.Process) v
             process.deref();
         }
     }
+}
+
+/// Returns the number of tracked (not-yet-exited) child processes.
+pub fn trackedCount(this: *const ProcessAutoKiller) u32 {
+    return @intCast(this.processes.count());
 }
 
 pub fn deinit(this: *ProcessAutoKiller) void {

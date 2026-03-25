@@ -2,15 +2,13 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 describe("dangling process diagnostics", () => {
-  test("reports PID and command name for dangling processes on timeout", async () => {
+  test("reports PID, command name, and timeout hint for dangling processes", async () => {
     using dir = tempDir("dangling-diag", {
       "dangling.test.ts": `
 import { test } from "bun:test";
 
 test("spawns a process that outlives the test", async () => {
-  // Spawn a long-running process that won't exit before the test times out
   Bun.spawn({ cmd: ["sleep", "30"] });
-  // Wait forever so the test times out
   await new Promise(() => {});
 }, { timeout: 300 });
 `,
@@ -31,11 +29,13 @@ test("spawns a process that outlives the test", async () => {
     expect(stderr).toMatch(/pid \d+: sleep/);
     // Should show the timeout message
     expect(stderr).toContain("timed out after 300ms");
+    // Should show a hint explaining why the test timed out
+    expect(stderr).toContain("hint: this test timed out because");
+    expect(stderr).toContain("child process");
     // Should show dangling process count in summary
-    expect(stderr).toContain("dangling process");
-    expect(stderr).toContain("killed");
+    expect(stderr).toContain("1 dangling process killed");
     expect(exitCode).toBe(1);
-  });
+  }, 30_000);
 
   test("reports multiple dangling processes with individual details", async () => {
     using dir = tempDir("dangling-multi", {
@@ -68,7 +68,35 @@ test("spawns multiple processes that outlive the test", async () => {
     expect(pidMatches).not.toBeNull();
     expect(pidMatches!.length).toBe(3);
     expect(exitCode).toBe(1);
-  });
+  }, 30_000);
+
+  test("shows timeout hint for active timers", async () => {
+    using dir = tempDir("dangling-timer", {
+      "timer.test.ts": `
+import { test } from "bun:test";
+
+test("has an active timer that prevents exit", async () => {
+  setInterval(() => {}, 1000);
+  await new Promise(() => {});
+}, { timeout: 300 });
+`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "timer.test.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // Should show a hint about active timers
+    expect(stderr).toContain("hint: this test timed out because");
+    expect(stderr).toContain("active timer");
+    expect(exitCode).toBe(1);
+  }, 30_000);
 
   test("summary shows total dangling processes killed", async () => {
     using dir = tempDir("dangling-summary", {
@@ -101,5 +129,5 @@ test("leaky test", async () => {
     expect(stderr).toContain("1 fail");
     expect(stderr).toContain("1 dangling process killed");
     expect(exitCode).toBe(1);
-  });
+  }, 30_000);
 });

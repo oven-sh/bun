@@ -200,6 +200,8 @@ pub fn handleTimeout(this: *Execution, globalThis: *jsc.JSGlobalObject) bun.JSEr
     // if the concurrent group has one sequence and the sequence has an active entry that has timed out,
     //   kill any dangling processes
     // when using test.concurrent(), we can't do this because it could kill multiple tests at once.
+    const vm = globalThis.bunVM();
+    var killed_count: u32 = 0;
     if (this.activeGroup()) |current_group| {
         const sequences = current_group.sequences(this);
         if (sequences.len == 1) {
@@ -207,21 +209,48 @@ pub fn handleTimeout(this: *Execution, globalThis: *jsc.JSGlobalObject) bun.JSEr
             if (sequence.active_entry) |entry| {
                 const now = bun.timespec.now(.force_real_time);
                 if (entry.timespec.order(&now) == .lt) {
-                    const kill_result = globalThis.bunVM().auto_killer.kill();
+                    var kill_result = vm.auto_killer.kill();
+                    defer kill_result.deinit();
+                    killed_count = kill_result.processes;
                     if (kill_result.processes > 0) {
-                        // Track total dangling processes across the run
                         if (jsc.Jest.Jest.runner) |runner| {
                             runner.summary.dangling_processes +|= kill_result.processes;
                         }
                         kill_result.printError();
-                        bun.Output.flush();
                     }
                 }
             }
         }
     }
+    printTimeoutHint(vm, killed_count);
+    bun.Output.flush();
 
     this.bunTest().addResult(.start);
+}
+
+/// Print a diagnostic hint explaining why a test may be hanging.
+fn printTimeoutHint(vm: *jsc.VirtualMachine, killed_processes: u32) void {
+    const timer_count: u32 = if (vm.timer.active_timer_count > 0) @intCast(vm.timer.active_timer_count) else 0;
+    const process_count = vm.auto_killer.trackedCount();
+
+    if (killed_processes == 0 and timer_count == 0 and process_count == 0) return;
+
+    bun.Output.prettyError("<d>hint: this test timed out because", .{});
+    var first = true;
+    if (killed_processes > 0) {
+        bun.Output.prettyError(" {d} child process{s} did not exit", .{ killed_processes, if (killed_processes != 1) "es" else "" });
+        first = false;
+    }
+    if (process_count > 0) {
+        if (!first) bun.Output.prettyError(",", .{});
+        bun.Output.prettyError(" {d} child process{s} still running", .{ process_count, if (process_count != 1) "es are" else " is" });
+        first = false;
+    }
+    if (timer_count > 0) {
+        if (!first) bun.Output.prettyError(",", .{});
+        bun.Output.prettyError(" {d} active timer{s}", .{ timer_count, if (timer_count != 1) "s" else "" });
+    }
+    bun.Output.prettyErrorln("<r>", .{});
 }
 
 pub fn step(buntest_strong: bun_test.BunTestPtr, globalThis: *jsc.JSGlobalObject, data: bun_test.BunTest.RefDataValue) bun.JSError!bun_test.StepResult {

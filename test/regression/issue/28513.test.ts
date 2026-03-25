@@ -83,11 +83,11 @@ describe.concurrent("bun outdated --changelog", () => {
     return server;
   }
 
-  async function runOutdatedChangelog(cwd: string): Promise<string> {
+  async function runOutdatedChangelog(cwd: string, env: Record<string, string | undefined> = { ...bunEnv, NO_COLOR: "1" }): Promise<string> {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "outdated", "--changelog"],
       cwd,
-      env: { ...bunEnv, NO_COLOR: "1" },
+      env,
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -162,7 +162,7 @@ describe.concurrent("bun outdated --changelog", () => {
     });
 
     // Use caching enabled (no cache=false)
-    const cacheDir = tempDir("outdated-cache-dir", {});
+    using cacheDir = tempDir("outdated-cache-dir", {});
     using dir = tempDir("outdated-warm-cache", {
       "bunfig.toml": `[install]\nregistry = "http://localhost:${server.port}/"`,
       "package.json": JSON.stringify({
@@ -183,12 +183,12 @@ describe.concurrent("bun outdated --changelog", () => {
     expect(await installProc.exited).toBe(0);
 
     // First run (cold cache) — populates disk cache
-    const stdout1 = await runOutdatedChangelog(String(dir));
+    const stdout1 = await runOutdatedChangelog(String(dir), testEnv);
     expect(stdout1).toContain("Changelogs:");
     expect(stdout1).toContain("https://github.com/example/no-deps");
 
     // Second run (warm cache) — should still show URLs
-    const stdout2 = await runOutdatedChangelog(String(dir));
+    const stdout2 = await runOutdatedChangelog(String(dir), testEnv);
     expect(stdout2).toContain("Changelogs:");
     expect(stdout2).toContain("https://github.com/example/no-deps");
   });

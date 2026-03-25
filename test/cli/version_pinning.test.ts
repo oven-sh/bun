@@ -208,4 +208,28 @@ describe("version pinning via bunfig.toml", () => {
     expect(stderr).not.toContain("requires Bun");
     expect(exitCode).toBe(0);
   });
+
+  test("invalid semver version field emits warning", async () => {
+    using dir = tempDir("version-pin-invalid", {
+      "bunfig.toml": `version = "latest"`,
+      "index.ts": `console.log("ok")`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+
+    expect(stderr).toContain("Invalid version range");
+    expect(stdout.trim()).toBe("ok");
+    expect(exitCode).toBe(0);
+  });
 });

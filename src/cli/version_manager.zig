@@ -418,6 +418,8 @@ fn downloadVersion(version_str: []const u8, dest_dir: []const u8, allocator: std
         },
     };
     defer dest_dir_fd.close();
+    // Clean up extracted subfolder on all return paths (including unzip failures)
+    defer dest_dir_fd.deleteTree(upgrade_command.Version.folder_name) catch {};
 
     // Unzip using bun.spawnSync on all platforms
     if (comptime Environment.isPosix) {
@@ -503,9 +505,6 @@ fn downloadVersion(version_str: []const u8, dest_dir: []const u8, allocator: std
 
     // Move extracted binary from subfolder to dest dir root
     const extracted_exe = upgrade_command.Version.folder_name ++ std.fs.path.sep_str ++ "bun" ++ exe_suffix;
-
-    // Clean up extracted subfolder on all return paths
-    defer dest_dir_fd.deleteTree(upgrade_command.Version.folder_name) catch {};
 
     bun.sys.moveFileZ(
         dest_dir_fd,

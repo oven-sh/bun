@@ -49,6 +49,6 @@ test("formatting object with Proxy prototype and multiple getters where later on
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stderr).toBe("");
-  expect(stdout).toContain("a:");
+  expect(stdout).toBe('{\n  a: "A",\n}\n');
   expect(exitCode).toBe(0);
 });

@@ -43,9 +43,10 @@ console.log(value);
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stderr).not.toContain("SyntaxError");
-  expect(stdout).toContain(`{"name":"test","value":"42"}`);
-  expect(stdout).toContain("test");
-  expect(stdout).toContain("42");
+  const lines = stdout.trim().split("\n");
+  expect(lines[0]).toBe('{"name":"test","value":"42"}');
+  expect(lines[1]).toBe("test");
+  expect(lines[2]).toBe("42");
   expect(exitCode).toBe(0);
 });
 
@@ -85,7 +86,8 @@ console.log(named);
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stderr).not.toContain("SyntaxError");
-  expect(stdout).toContain("my-default");
-  expect(stdout).toContain("my-named");
+  const lines = stdout.trim().split("\n");
+  expect(lines[0]).toBe("my-default");
+  expect(lines[1]).toBe("my-named");
   expect(exitCode).toBe(0);
 });

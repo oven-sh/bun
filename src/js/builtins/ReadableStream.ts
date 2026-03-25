@@ -115,7 +115,8 @@ export function readableStreamToArray(stream: ReadableStream): Promise<unknown[]
     return $readableStreamToArrayDirect(stream, underlyingSource);
   }
   if ($isReadableStreamLocked(stream)) return Promise.$reject($ERR_INVALID_STATE_TypeError("ReadableStream is locked"));
-  if ($isReadableStreamDisturbed(stream)) return Promise.$reject($ERR_INVALID_STATE_TypeError("ReadableStream is disturbed"));
+  if ($isReadableStreamDisturbed(stream))
+    return Promise.$reject($ERR_INVALID_STATE_TypeError("ReadableStream is disturbed"));
   return $readableStreamIntoArray(stream);
 }
 
@@ -128,7 +129,8 @@ export function readableStreamToText(stream: ReadableStream): Promise<string> {
     return $readableStreamToTextDirect(stream, underlyingSource);
   }
   if ($isReadableStreamLocked(stream)) return Promise.$reject($ERR_INVALID_STATE_TypeError("ReadableStream is locked"));
-  if ($isReadableStreamDisturbed(stream)) return Promise.$reject($ERR_INVALID_STATE_TypeError("ReadableStream is disturbed"));
+  if ($isReadableStreamDisturbed(stream))
+    return Promise.$reject($ERR_INVALID_STATE_TypeError("ReadableStream is disturbed"));
 
   const result = $tryUseReadableStreamBufferedFastPath(stream, "text");
 
@@ -148,7 +150,8 @@ export function readableStreamToArrayBuffer(stream: ReadableStream<ArrayBuffer>)
     return $readableStreamToArrayBufferDirect(stream, underlyingSource, false);
   }
   if ($isReadableStreamLocked(stream)) return Promise.$reject($ERR_INVALID_STATE_TypeError("ReadableStream is locked"));
-  if ($isReadableStreamDisturbed(stream)) return Promise.$reject($ERR_INVALID_STATE_TypeError("ReadableStream is disturbed"));
+  if ($isReadableStreamDisturbed(stream))
+    return Promise.$reject($ERR_INVALID_STATE_TypeError("ReadableStream is disturbed"));
 
   let result = $tryUseReadableStreamBufferedFastPath(stream, "arrayBuffer");
 
@@ -230,7 +233,8 @@ export function readableStreamToBytes(stream: ReadableStream<ArrayBuffer>): Prom
     return $readableStreamToArrayBufferDirect(stream, underlyingSource, true);
   }
   if ($isReadableStreamLocked(stream)) return Promise.$reject($ERR_INVALID_STATE_TypeError("ReadableStream is locked"));
-  if ($isReadableStreamDisturbed(stream)) return Promise.$reject($ERR_INVALID_STATE_TypeError("ReadableStream is disturbed"));
+  if ($isReadableStreamDisturbed(stream))
+    return Promise.$reject($ERR_INVALID_STATE_TypeError("ReadableStream is disturbed"));
 
   let result = $tryUseReadableStreamBufferedFastPath(stream, "bytes");
 

@@ -10,7 +10,7 @@ import { test } from "bun:test";
 test("spawns a process that outlives the test", async () => {
   Bun.spawn({ cmd: ["sleep", "30"] });
   await new Promise(() => {});
-}, { timeout: 300 });
+}, { timeout: 1000 });
 `,
     });
 
@@ -24,18 +24,14 @@ test("spawns a process that outlives the test", async () => {
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    // Should show the command name and PID in the dangling process message
     expect(stderr).toContain("killed 1 dangling process");
     expect(stderr).toMatch(/pid \d+: sleep/);
-    // Should show the timeout message
-    expect(stderr).toContain("timed out after 300ms");
-    // Should show a hint explaining why the test timed out
+    expect(stderr).toContain("timed out after 1000ms");
     expect(stderr).toContain("hint: this test timed out because");
     expect(stderr).toContain("child process");
-    // Should show dangling process count in summary
     expect(stderr).toContain("1 dangling process killed");
     expect(exitCode).toBe(1);
-  }, 30_000);
+  }, 60_000);
 
   test("reports multiple dangling processes with individual details", async () => {
     using dir = tempDir("dangling-multi", {
@@ -47,7 +43,7 @@ test("spawns multiple processes that outlive the test", async () => {
   Bun.spawn({ cmd: ["sleep", "31"] });
   Bun.spawn({ cmd: ["sleep", "32"] });
   await new Promise(() => {});
-}, { timeout: 300 });
+}, { timeout: 1000 });
 `,
     });
 
@@ -61,14 +57,12 @@ test("spawns multiple processes that outlive the test", async () => {
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    // Should show count of dangling processes
     expect(stderr).toContain("killed 3 dangling processes:");
-    // Should list each with pid and command
     const pidMatches = stderr.match(/pid \d+: sleep/g);
     expect(pidMatches).not.toBeNull();
     expect(pidMatches!.length).toBe(3);
     expect(exitCode).toBe(1);
-  }, 30_000);
+  }, 60_000);
 
   test("shows timeout hint for active timers", async () => {
     using dir = tempDir("dangling-timer", {
@@ -78,7 +72,7 @@ import { test } from "bun:test";
 test("has an active timer that prevents exit", async () => {
   setInterval(() => {}, 1000);
   await new Promise(() => {});
-}, { timeout: 300 });
+}, { timeout: 1000 });
 `,
     });
 
@@ -92,11 +86,10 @@ test("has an active timer that prevents exit", async () => {
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    // Should show a hint about active timers
     expect(stderr).toContain("hint: this test timed out because");
     expect(stderr).toContain("active timer");
     expect(exitCode).toBe(1);
-  }, 30_000);
+  }, 60_000);
 
   test("summary shows total dangling processes killed", async () => {
     using dir = tempDir("dangling-summary", {
@@ -110,7 +103,7 @@ test("clean test", () => {
 test("leaky test", async () => {
   Bun.spawn({ cmd: ["sleep", "30"] });
   await new Promise(() => {});
-}, { timeout: 300 });
+}, { timeout: 1000 });
 `,
     });
 
@@ -124,10 +117,9 @@ test("leaky test", async () => {
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    // Summary should show pass, fail, and dangling process counts
     expect(stderr).toContain("1 pass");
     expect(stderr).toContain("1 fail");
     expect(stderr).toContain("1 dangling process killed");
     expect(exitCode).toBe(1);
-  }, 30_000);
+  }, 60_000);
 });

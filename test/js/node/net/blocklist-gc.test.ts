@@ -2,8 +2,6 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
 test("BlockList.estimatedSize does not crash during GC", async () => {
-  // BlockList.estimatedSize previously divided by ref_count which could be 0
-  // during GC, causing SIGFPE (integer division by zero).
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),

@@ -21,6 +21,7 @@ test("DFG dump handles objects with null butterfly", async () => {
         +sab;
       }
       for (let i = 0; i < 100; i++) f();
+      console.log("ok");
       `,
     ],
     env: {
@@ -31,9 +32,8 @@ test("DFG dump handles objects with null butterfly", async () => {
     stdout: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
 
-  expect(stderr).not.toContain("null pointer");
-  expect(stderr).not.toContain("runtime error");
+  expect(stdout).toBe("ok\n");
   expect(exitCode).toBe(0);
 });

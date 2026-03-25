@@ -3,19 +3,17 @@ title: TypeScript 6 and 7
 description: "How to configure Bun's type definitions for TypeScript 6.0 and 7.0, which no longer auto-discover @types packages. Fix 'Cannot find name Bun' and other missing type errors after upgrading TypeScript."
 ---
 
-TypeScript 6.0 changed how type definitions are discovered. If you've upgraded TypeScript and your editor no longer recognizes `Bun`, `Request`, or other globals from `@types/bun`, here's why and how to fix it.
+TypeScript 6.0 changed how type definitions are discovered. If you've upgraded TypeScript and your editor no longer recognizes `Bun`, `Request`, or other globals from `@types/bun`, here's how to fix it.
 
 ## What changed
 
-In TypeScript 5 and earlier, the compiler automatically included type definitions from all `@types/*` packages in `node_modules`. Installing `@types/bun` was enough — TypeScript picked it up on its own.
-
-Starting in TypeScript 6.0, the `types` field in `compilerOptions` defaults to an empty array. TypeScript no longer auto-discovers `@types/*` packages, so you need to explicitly list them.
+Starting in TypeScript 6.0, the `types` field in `compilerOptions` defaults to an empty array instead of including all `@types/*` packages. You now need to explicitly list the type packages you use.
 
 ## Add `"types": ["bun"]` to your tsconfig
 
 In your `tsconfig.json`, add `"types": ["bun"]` to `compilerOptions`:
 
-```json tsconfig.json icon="file-json"
+```jsonc tsconfig.json icon="file-json"
 {
   "compilerOptions": {
     "types": ["bun"] // [!code ++]
@@ -23,12 +21,12 @@ In your `tsconfig.json`, add `"types": ["bun"]` to `compilerOptions`:
 }
 ```
 
-This tells TypeScript to load type definitions from `@types/bun`. If you use other `@types/*` packages (like `@types/node` or `@types/react`), include them too:
+This tells TypeScript to load type definitions from `@types/bun`. If you use other `@types/*` packages, include them too:
 
-```json tsconfig.json icon="file-json"
+```jsonc tsconfig.json icon="file-json"
 {
   "compilerOptions": {
-    "types": ["bun", "node", "react"]
+    "types": ["bun", "react"]
   }
 }
 ```
@@ -43,7 +41,7 @@ bun add -d @types/bun
 
 Here's the full recommended `tsconfig.json` for a Bun project using TypeScript 6.0 or later:
 
-```json tsconfig.json icon="file-json"
+```jsonc tsconfig.json icon="file-json"
 {
   "compilerOptions": {
     // Environment setup & latest features

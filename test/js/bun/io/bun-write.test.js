@@ -542,4 +542,26 @@ const IS_UV_FS_COPYFILE_DISABLED =
       expect(await exited).toBe(0);
     }, 10000);
   }
+
+  it("Bun.write with proxy-prototyped constructor does not crash", async () => {
+    using dir = tempDir("bun-write-proxy", {});
+    const origProto = Object.getPrototypeOf(Buffer);
+    try {
+      Object.setPrototypeOf(
+        Buffer,
+        new Proxy(origProto, {
+          get(target, key, receiver) {
+            try {
+              void Reflect.has(target, key);
+            } catch (_) {}
+            return Reflect.get(target, key, receiver);
+          },
+        }),
+      );
+      const result = await Bun.write(join(String(dir), "out.txt"), Buffer);
+      expect(result).toBeGreaterThan(0);
+    } finally {
+      Object.setPrototypeOf(Buffer, origProto);
+    }
+  });
 });

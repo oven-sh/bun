@@ -542,7 +542,8 @@ pub const String = extern struct {
         // BunString__fromJS returning false without an exception can happen when
         // a Proxy trap's try/catch clears a pending exception during toString().
         // Throw a TypeError so callers always see a proper JS error.
-        if (!has_exception and !globalObject.hasException()) {
+        _ = has_exception;
+        if (!globalObject.hasException()) {
             return globalObject.throwTypeError("Failed to convert value to string", .{});
         }
 

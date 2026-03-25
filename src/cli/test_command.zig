@@ -1727,6 +1727,9 @@ pub const TestCommand = struct {
                 if (reporter.jest.unhandled_errors_between_tests > 0) {
                     Output.prettyError("{f}<r><red>{d:5>} error{s}<r>\n", .{ indenter, reporter.jest.unhandled_errors_between_tests, if (reporter.jest.unhandled_errors_between_tests > 1) "s" else "" });
                 }
+                if (summary.dangling_processes > 0) {
+                    Output.prettyError("{f}<r><yellow>{d:5>} dangling process{s} killed<r>\n", .{ indenter, summary.dangling_processes, if (summary.dangling_processes > 1) "es" else "" });
+                }
 
                 var print_expect_calls = reporter.summary().expectations > 0;
                 if (reporter.jest.snapshots.total > 0) {

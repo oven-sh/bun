@@ -207,9 +207,13 @@ pub fn handleTimeout(this: *Execution, globalThis: *jsc.JSGlobalObject) bun.JSEr
             if (sequence.active_entry) |entry| {
                 const now = bun.timespec.now(.force_real_time);
                 if (entry.timespec.order(&now) == .lt) {
-                    const kill_count = globalThis.bunVM().auto_killer.kill();
-                    if (kill_count.processes > 0) {
-                        bun.Output.prettyErrorln("<d>killed {d} dangling process{s}<r>", .{ kill_count.processes, if (kill_count.processes != 1) "es" else "" });
+                    const kill_result = globalThis.bunVM().auto_killer.kill();
+                    if (kill_result.processes > 0) {
+                        // Track total dangling processes across the run
+                        if (jsc.Jest.Jest.runner) |runner| {
+                            runner.summary.dangling_processes +|= kill_result.processes;
+                        }
+                        kill_result.printError();
                         bun.Output.flush();
                     }
                 }

@@ -1365,6 +1365,7 @@ pub const RunCommand = struct {
 
         if (!ctx.debug.loaded_bunfig) {
             bun.cli.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand) catch {};
+            bun.cli.Arguments.checkVersionPinning(ctx.allocator, ctx, .RunCommand);
         }
 
         // try fast run (check if the file exists and is not a folder, then run it)

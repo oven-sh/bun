@@ -37,6 +37,7 @@ pub const Run = struct {
         // Note: config loading with execArgv is handled earlier in cli.zig via loadConfig
         if (!ctx.debug.loaded_bunfig and !graph_ptr.flags.disable_autoload_bunfig) {
             try bun.cli.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand);
+            bun.cli.Arguments.checkVersionPinning(ctx.allocator, ctx, .RunCommand);
         }
 
         run = .{
@@ -158,6 +159,7 @@ pub const Run = struct {
 
         if (!ctx.debug.loaded_bunfig) {
             try bun.cli.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand);
+            bun.cli.Arguments.checkVersionPinning(ctx.allocator, ctx, .RunCommand);
         }
 
         // The shell does not need to initialize JSC.

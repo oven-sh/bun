@@ -44,7 +44,9 @@ pub fn checkPinnedVersion(pinned_version_str: []const u8, allocator: std.mem.All
         Output.prettyErrorln(
             "<r><yellow>warn<r>: This project requires Bun <cyan>{s}<r> but you have <b>v{s}<r>\n" ++
                 "      Bun was not installed via the official install script, so automatic version switching is unavailable.\n" ++
-                "      Install the required version manually: <b>curl -fsSL https://bun.com/install | bash<r>",
+                "      Install the required version manually: <b>" ++
+                (if (comptime Environment.isWindows) "powershell -c \"irm bun.sh/install.ps1 | iex\"" else "curl -fsSL https://bun.com/install | bash") ++
+                "<r>",
             .{ pinned_version_str, current_str },
         );
         return;

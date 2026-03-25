@@ -9,12 +9,14 @@ test("second .bytes() on async iterable Response rejects", async () => {
   expect(first).toBeInstanceOf(Uint8Array);
   expect(first.length).toBe(3);
   expect(r.bodyUsed).toBe(true);
+  let threw = false;
   try {
     await r.bytes();
-    expect.unreachable();
   } catch (e: any) {
+    threw = true;
     expect(e.code).toBe("ERR_BODY_ALREADY_USED");
   }
+  expect(threw).toBe(true);
 });
 
 test("second .text() on async iterable Response rejects", async () => {
@@ -25,12 +27,14 @@ test("second .text() on async iterable Response rejects", async () => {
   const first = await r.text();
   expect(first).toBe("Hi");
   expect(r.bodyUsed).toBe(true);
+  let threw = false;
   try {
     await r.text();
-    expect.unreachable();
   } catch (e: any) {
+    threw = true;
     expect(e.code).toBe("ERR_BODY_ALREADY_USED");
   }
+  expect(threw).toBe(true);
 });
 
 test("second .arrayBuffer() on async iterable Response rejects", async () => {
@@ -42,10 +46,12 @@ test("second .arrayBuffer() on async iterable Response rejects", async () => {
   expect(first).toBeInstanceOf(ArrayBuffer);
   expect(first.byteLength).toBe(3);
   expect(r.bodyUsed).toBe(true);
+  let threw = false;
   try {
     await r.arrayBuffer();
-    expect.unreachable();
   } catch (e: any) {
+    threw = true;
     expect(e.code).toBe("ERR_BODY_ALREADY_USED");
   }
+  expect(threw).toBe(true);
 });

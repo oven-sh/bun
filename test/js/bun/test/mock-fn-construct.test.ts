@@ -1,4 +1,4 @@
-import { test, expect, jest } from "bun:test";
+import { expect, jest, test } from "bun:test";
 
 test("Reflect.construct on mock with non-object return value does not crash", () => {
   const m = jest.fn(() => 42);

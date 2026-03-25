@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
 import { existsSync } from "fs";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
 test("--coverage CLI flag overrides bunfig.toml coverage = false", async () => {

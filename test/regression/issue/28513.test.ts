@@ -151,7 +151,8 @@ describe.concurrent("bun outdated --changelog", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    expect(await installProc.exited).toBe(0);
+    const [, , installExit2] = await Promise.all([installProc.stdout.text(), installProc.stderr.text(), installProc.exited]);
+    expect(installExit2).toBe(0);
 
     const result = await runOutdatedChangelog(String(dir));
     expect(result.stdout).toContain("no-deps");
@@ -184,7 +185,8 @@ describe.concurrent("bun outdated --changelog", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    expect(await installProc.exited).toBe(0);
+    const [, , installExit3] = await Promise.all([installProc.stdout.text(), installProc.stderr.text(), installProc.exited]);
+    expect(installExit3).toBe(0);
 
     // First run (cold cache) — populates disk cache
     const result1 = await runOutdatedChangelog(String(dir), testEnv);

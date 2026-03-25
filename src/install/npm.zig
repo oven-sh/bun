@@ -2792,6 +2792,7 @@ pub const PackageManifest = struct {
         var url = raw;
 
         // 1. Strip git+ wrapper
+        var has_ssh_scheme = false;
         if (strings.hasPrefixComptime(url, "git+")) url = url[4..];
 
         // 2. Strip URL scheme
@@ -2801,6 +2802,7 @@ pub const PackageManifest = struct {
             url = url["git://".len..];
         } else if (strings.hasPrefixComptime(url, "ssh://")) {
             url = url["ssh://".len..];
+            has_ssh_scheme = true;
         } else if (strings.hasPrefixComptime(url, "github:")) {
             url = url["github:".len..];
         } else if (strings.hasPrefixComptime(url, "bitbucket:") or
@@ -2820,11 +2822,14 @@ pub const PackageManifest = struct {
             // For github.com, extract just the path portion.
             if (strings.hasPrefixComptime(url, "github.com:")) {
                 url = url["github.com:".len..];
-                // Skip port number if present (e.g. ssh://git@github.com:22/user/repo)
-                var port_end: usize = 0;
-                while (port_end < url.len and url[port_end] >= '0' and url[port_end] <= '9') port_end += 1;
-                if (port_end > 0 and port_end < url.len and url[port_end] == '/') {
-                    url = url[port_end + 1 ..];
+                // Skip port number only if ssh:// was present (e.g. ssh://git@github.com:22/user/repo).
+                // Without ssh://, digits after the colon are a GitHub org name, not a port.
+                if (has_ssh_scheme) {
+                    var port_end: usize = 0;
+                    while (port_end < url.len and url[port_end] >= '0' and url[port_end] <= '9') port_end += 1;
+                    if (port_end > 0 and port_end < url.len and url[port_end] == '/') {
+                        url = url[port_end + 1 ..];
+                    }
                 }
             } else if (strings.indexOfChar(url, ':') != null) {
                 return &.{}; // non-GitHub SCP URL, cannot normalize

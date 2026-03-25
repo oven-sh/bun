@@ -1280,6 +1280,38 @@ pub const AutoBitSet = union(enum) {
         }
     }
 
+    pub fn count(this: *const AutoBitSet) usize {
+        return switch (this.*) {
+            inline else => |*bitset| bitset.count(),
+        };
+    }
+
+    pub fn findFirstSet(this: *const AutoBitSet) ?usize {
+        return switch (this.*) {
+            inline else => |*bitset| bitset.findFirstSet(),
+        };
+    }
+
+    pub fn iterator(this: *const AutoBitSet, comptime options: IteratorOptions) Iterator(options) {
+        return switch (this.*) {
+            .static => |*s| .{ .static = s.iterator(options) },
+            .dynamic => |*d| .{ .dynamic = d.iterator(options) },
+        };
+    }
+
+    pub fn Iterator(comptime options: IteratorOptions) type {
+        return union(enum) {
+            static: Static.Iterator(options),
+            dynamic: DynamicBitSetUnmanaged.Iterator(options),
+
+            pub fn next(self: *@This()) ?usize {
+                return switch (self.*) {
+                    inline else => |*it| it.next(),
+                };
+            }
+        };
+    }
+
     pub fn deinit(this: *AutoBitSet, allocator: std.mem.Allocator) void {
         switch (std.meta.activeTag(this.*)) {
             .static => {},

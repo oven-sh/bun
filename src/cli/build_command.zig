@@ -98,8 +98,10 @@ pub const BuildCommand = struct {
 
         this_transpiler.options.bytecode = ctx.bundler_options.bytecode;
 
+        this_transpiler.options.install = ctx.install;
         this_transpiler.options.global_cache = ctx.debug.global_cache;
-        this_transpiler.resolver.opts.global_cache = ctx.debug.global_cache;
+        this_transpiler.options.prefer_offline_install = (ctx.debug.offline_mode_setting orelse .online) == .offline;
+        this_transpiler.options.prefer_latest_install = (ctx.debug.offline_mode_setting orelse .online) == .latest;
 
         var was_renamed_from_index = false;
 

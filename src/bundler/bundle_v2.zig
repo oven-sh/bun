@@ -1808,6 +1808,8 @@ pub const BundleV2 = struct {
             .log = Logger.Log.init(bun.default_allocator),
             .task = undefined,
             .global_cache = globalThis.bunVM().transpiler.options.global_cache,
+            .prefer_offline_install = globalThis.bunVM().transpiler.options.prefer_offline_install,
+            .prefer_latest_install = globalThis.bunVM().transpiler.options.prefer_latest_install,
         });
         completion.task = JSBundleCompletionTask.TaskCompletion.init(completion);
 
@@ -1818,12 +1820,6 @@ pub const BundleV2 = struct {
         // Ensure this exists before we spawn the thread to prevent any race
         // conditions from creating two
         _ = jsc.WorkPool.get();
-
-        // Pre-initialize the package manager on the main thread (which has the VM)
-        // so the bundle thread doesn't try to initialize it without a VM context.
-        if (completion.global_cache.isEnabled()) {
-            _ = globalThis.bunVM().transpiler.resolver.getPackageManager();
-        }
 
         JSBundleThread.singleton.enqueue(completion);
 
@@ -1908,6 +1904,8 @@ pub const BundleV2 = struct {
         plugins: ?*bun.jsc.API.JSBundler.Plugin = null,
         started_at_ns: u64 = 0,
         global_cache: options.GlobalCache = .disable,
+        prefer_offline_install: bool = false,
+        prefer_latest_install: bool = false,
 
         pub fn configureBundler(
             completion: *JSBundleCompletionTask,
@@ -2041,6 +2039,8 @@ pub const BundleV2 = struct {
             }
 
             transpiler.options.global_cache = completion.global_cache;
+            transpiler.options.prefer_offline_install = completion.prefer_offline_install;
+            transpiler.options.prefer_latest_install = completion.prefer_latest_install;
 
             transpiler.configureLinker();
             try transpiler.configureDefines();

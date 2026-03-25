@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { test, expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 test.concurrent("Bun.build auto-installs dependencies without package.json", async () => {
@@ -17,9 +17,11 @@ console.log("BUILD_OK");
 `,
   });
 
+  const env = { ...bunEnv, BUN_INSTALL_CACHE_DIR: `${String(dir)}/cache` };
+
   await using proc = Bun.spawn({
     cmd: [bunExe(), "build.ts"],
-    env: bunEnv,
+    env,
     cwd: String(dir),
     stderr: "pipe",
   });
@@ -35,9 +37,11 @@ test.concurrent("bun build CLI auto-installs dependencies without package.json",
     "entry.ts": `import isOdd from "is-odd"; console.log(isOdd(3));`,
   });
 
+  const env = { ...bunEnv, BUN_INSTALL_CACHE_DIR: `${String(dir)}/cache` };
+
   await using proc = Bun.spawn({
     cmd: [bunExe(), "build", "entry.ts", "--outdir", "./out"],
-    env: bunEnv,
+    env,
     cwd: String(dir),
     stderr: "pipe",
   });

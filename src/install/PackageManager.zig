@@ -1055,6 +1055,7 @@ pub fn initWithRuntimeOnce(
     };
     if (manager.event_loop == .mini) {
         manager.event_loop.mini.loop.internal_loop_data.setParentEventLoop(bun.jsc.EventLoopHandle.init(&manager.event_loop));
+        jsc.MiniEventLoop.global = &manager.event_loop.mini;
     }
     manager.lockfile = bun.handleOom(allocator.create(Lockfile));
 

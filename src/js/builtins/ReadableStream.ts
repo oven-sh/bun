@@ -320,7 +320,8 @@ $linkTimeConstant;
 export function readableStreamToJSON(stream: ReadableStream): unknown {
   if (!$isReadableStream(stream)) throw $ERR_INVALID_ARG_TYPE("stream", "ReadableStream", typeof stream);
   if ($isReadableStreamLocked(stream)) return Promise.$reject($ERR_INVALID_STATE_TypeError("ReadableStream is locked"));
-  if ($isReadableStreamDisturbed(stream)) return Promise.$reject($ERR_INVALID_STATE_TypeError("ReadableStream is disturbed"));
+  if ($isReadableStreamDisturbed(stream))
+    return Promise.$reject($ERR_INVALID_STATE_TypeError("ReadableStream is disturbed"));
   let result = $tryUseReadableStreamBufferedFastPath(stream, "json");
   if (result) {
     return result;
@@ -343,7 +344,8 @@ $linkTimeConstant;
 export function readableStreamToBlob(stream: ReadableStream): Promise<Blob> {
   if (!$isReadableStream(stream)) throw $ERR_INVALID_ARG_TYPE("stream", "ReadableStream", typeof stream);
   if ($isReadableStreamLocked(stream)) return Promise.$reject($ERR_INVALID_STATE_TypeError("ReadableStream is locked"));
-  if ($isReadableStreamDisturbed(stream)) return Promise.$reject($ERR_INVALID_STATE_TypeError("ReadableStream is disturbed"));
+  if ($isReadableStreamDisturbed(stream))
+    return Promise.$reject($ERR_INVALID_STATE_TypeError("ReadableStream is disturbed"));
 
   return (
     $tryUseReadableStreamBufferedFastPath(stream, "blob") ||

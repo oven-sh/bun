@@ -1015,7 +1015,7 @@ pub const Bunfig = struct {
             }
 
             if (json.get("bundle")) |_bun| {
-                if (comptime cmd == .BuildCommand or cmd == .RunCommand or cmd == .AutoCommand or cmd == .BuildCommand) {
+                if (comptime cmd == .BuildCommand or cmd == .RunCommand or cmd == .AutoCommand) {
                     if (_bun.get("outdir")) |dir| {
                         try this.expectString(dir);
                         this.bunfig.output_dir = try dir.data.e_string.string(allocator);

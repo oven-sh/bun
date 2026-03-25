@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
-test.concurrent("Bun.build auto-installs dependencies without package.json", async () => {
+test.concurrent("Bun.build auto-installs dependencies without package.json", { timeout: 30_000 }, async () => {
   using dir = tempDir("issue-28527", {
     "entry.ts": `import isOdd from "is-odd"; console.log(isOdd(3));`,
     "build.ts": `
@@ -32,7 +32,7 @@ console.log("BUILD_OK");
   expect(exitCode).toBe(0);
 });
 
-test.concurrent("bun build CLI auto-installs dependencies without package.json", async () => {
+test.concurrent("bun build CLI auto-installs dependencies without package.json", { timeout: 30_000 }, async () => {
   using dir = tempDir("issue-28527-cli", {
     "entry.ts": `import isOdd from "is-odd"; console.log(isOdd(3));`,
   });

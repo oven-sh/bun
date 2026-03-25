@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 
-describe("dangling process diagnostics", () => {
+describe.skipIf(isWindows)("dangling process diagnostics", () => {
   test("reports PID, command name, and timeout hint for dangling processes", async () => {
     using dir = tempDir("dangling-diag", {
       "dangling.test.ts": `

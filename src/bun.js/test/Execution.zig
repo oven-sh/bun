@@ -230,8 +230,9 @@ pub fn handleTimeout(this: *Execution, globalThis: *jsc.JSGlobalObject) bun.JSEr
 }
 
 /// Print a diagnostic hint explaining why a test may be hanging.
-/// Only called for non-concurrent groups (sequences.len == 1) where
-/// VM-wide counters can be safely attributed to the active test.
+/// Only called for non-concurrent groups (sequences.len == 1).
+/// Note: active_timer_count is VM-wide and may include timers from
+/// earlier tests or internal subsystems — the hint is best-effort.
 fn printTimeoutHint(vm: *jsc.VirtualMachine, killed_processes: u32) void {
     const timer_count: u32 = if (vm.timer.active_timer_count > 0) @intCast(vm.timer.active_timer_count) else 0;
 

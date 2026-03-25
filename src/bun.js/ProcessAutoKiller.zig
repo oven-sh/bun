@@ -136,11 +136,6 @@ pub fn onSubprocessExit(this: *ProcessAutoKiller, process: *bun.spawn.Process) v
     }
 }
 
-/// Returns the number of tracked (not-yet-exited) child processes.
-pub fn trackedCount(this: *const ProcessAutoKiller) u32 {
-    return @intCast(this.processes.count());
-}
-
 pub fn deinit(this: *ProcessAutoKiller) void {
     for (this.processes.keys(), this.processes.values()) |process, *info| {
         process.deref();

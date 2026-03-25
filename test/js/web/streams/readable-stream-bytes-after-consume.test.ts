@@ -27,7 +27,11 @@ test("ReadableStream.bytes() after Response body consumed via fast path throws",
     stderr: "pipe",
   });
 
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([
+    proc.stdout.text(),
+    proc.stderr.text(),
+    proc.exited,
+  ]);
   expect(stdout.trim()).toContain("ReadableStream");
   expect(exitCode).toBe(0);
 });

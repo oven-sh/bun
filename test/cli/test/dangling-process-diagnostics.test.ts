@@ -73,11 +73,9 @@ test("spawns multiple processes that outlive the test", async () => {
     60_000,
   );
 
-  test(
-    "shows timeout hint for active timers",
-    async () => {
-      using dir = tempDir("dangling-timer", {
-        "timer.test.ts": `
+  test("shows timeout hint for active timers", async () => {
+    using dir = tempDir("dangling-timer", {
+      "timer.test.ts": `
 import { test } from "bun:test";
 
 test("has an active timer that prevents exit", async () => {
@@ -85,24 +83,22 @@ test("has an active timer that prevents exit", async () => {
   await new Promise(() => {});
 }, { timeout: 1000 });
 `,
-      });
+    });
 
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "test", "timer.test.ts"],
-        env: bunEnv,
-        cwd: String(dir),
-        stdout: "pipe",
-        stderr: "pipe",
-      });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "timer.test.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-      expect(stderr).toContain("hint: this test timed out because");
-      expect(stderr).toContain("active timer");
-      expect(exitCode).toBe(1);
-    },
-    60_000,
-  );
+    expect(stderr).toContain("hint: this test timed out because");
+    expect(stderr).toContain("active timer");
+    expect(exitCode).toBe(1);
+  }, 60_000);
 
   test.skipIf(isWindows)(
     "summary shows total dangling processes killed",

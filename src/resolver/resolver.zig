@@ -4232,9 +4232,6 @@ pub const Resolver = struct {
                         if (parent_config.base_url.len > 0) {
                             merged_config.base_url = parent_config.base_url;
                         }
-                        if (parent_config.base_url_for_paths.len > 0) {
-                            merged_config.base_url_for_paths = parent_config.base_url_for_paths;
-                        }
                         merged_config.jsx = parent_config.mergeJSX(merged_config.jsx);
                         merged_config.jsx_flags.setUnion(parent_config.jsx_flags);
 
@@ -4242,9 +4239,12 @@ pub const Resolver = struct {
                             merged_config.preserve_imports_not_used_as_values = value;
                         }
 
-                        var iter = parent_config.paths.iterator();
-                        while (iter.next()) |c| {
-                            merged_config.paths.put(c.key_ptr.*, c.value_ptr.*) catch unreachable;
+                        // TypeScript replaces paths across extends (child overrides parent
+                        // entirely), so when a more-specific config defines paths, replace
+                        // rather than merge. base_url_for_paths follows whoever defined paths.
+                        if (parent_config.paths.count() > 0) {
+                            merged_config.paths = parent_config.paths;
+                            merged_config.base_url_for_paths = parent_config.base_url_for_paths;
                         }
                         // todo deinit these parent configs somehow?
                     }

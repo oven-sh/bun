@@ -397,6 +397,95 @@ describe("bundler", () => {
       stdout: "123",
     },
   });
+  itBundled("tsconfig/PathsInGrandchildNoBaseURL", {
+    // 3-level extends chain: root -> child -> grandchild, both child and
+    // grandchild define paths without baseUrl. TypeScript replaces paths across
+    // extends (only grandchild's paths survive), so base_url_for_paths should
+    // be grandchild's directory. Bun non-standardly merges paths across extends,
+    // but the leaf config's directory still wins for base_url_for_paths.
+    files: {
+      "/Users/user/project/app/src/entry.ts": /* ts */ `
+        import test from '#/lib/test'
+        console.log(test)
+      `,
+      "/Users/user/project/app/src/lib/test.ts": `export default 456`,
+      "/Users/user/project/app/src/tsconfig.json": /* json */ `
+        {
+          "extends": "../tsconfig.json",
+          "compilerOptions": {
+            "paths": {
+              "#/*": ["./*"]
+            }
+          }
+        }
+      `,
+      "/Users/user/project/app/tsconfig.json": /* json */ `
+        {
+          "extends": "../tsconfig.base.json",
+          "compilerOptions": {
+            "paths": {
+              "util/*": ["./utils/*"]
+            }
+          }
+        }
+      `,
+      "/Users/user/project/tsconfig.base.json": /* json */ `
+        {
+          "compilerOptions": {
+            "strict": true
+          }
+        }
+      `,
+    },
+    run: {
+      stdout: "456",
+    },
+  });
+  itBundled("tsconfig/PathsReplacedAcrossExtends", {
+    // TypeScript replaces paths across extends: when grandchild defines paths,
+    // child's paths are gone entirely (verified via `tsc --showConfig`). This
+    // test places the target file where the OLD merge behavior would find it
+    // (grandchild's dir), so it discriminates: merge would succeed, replace fails.
+    files: {
+      "/Users/user/project/app/src/entry.ts": /* ts */ `
+        import test from 'util/helper'
+        console.log(test)
+      `,
+      // With old merge: util/* resolved against grandchild's dir -> app/src/utils/helper.ts (found)
+      // With new replace: util/* not in merged paths -> not resolved
+      "/Users/user/project/app/src/utils/helper.ts": `export default 789`,
+      "/Users/user/project/app/src/tsconfig.json": /* json */ `
+        {
+          "extends": "../tsconfig.json",
+          "compilerOptions": {
+            "paths": {
+              "#/*": ["./*"]
+            }
+          }
+        }
+      `,
+      "/Users/user/project/app/tsconfig.json": /* json */ `
+        {
+          "extends": "../tsconfig.base.json",
+          "compilerOptions": {
+            "paths": {
+              "util/*": ["./utils/*"]
+            }
+          }
+        }
+      `,
+      "/Users/user/project/tsconfig.base.json": /* json */ `
+        {
+          "compilerOptions": {
+            "strict": true
+          }
+        }
+      `,
+    },
+    bundleErrors: {
+      "/Users/user/project/app/src/entry.ts": [`Could not resolve: "util/helper". Maybe you need to "bun install"?`],
+    },
+  });
   itBundled("tsconfig/JSX", {
     files: {
       "/Users/user/project/entry.tsx": `console.log(<><div/><div/></>)`,

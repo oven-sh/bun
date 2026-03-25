@@ -86,7 +86,7 @@ describe.concurrent("bun outdated --changelog", () => {
   async function runOutdatedChangelog(
     cwd: string,
     env: Record<string, string | undefined> = { ...bunEnv, NO_COLOR: "1" },
-  ): Promise<string> {
+  ): Promise<{ stdout: string; exitCode: number }> {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "outdated", "--changelog"],
       cwd,
@@ -95,8 +95,7 @@ describe.concurrent("bun outdated --changelog", () => {
       stderr: "pipe",
     });
     const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(exitCode).toBe(0);
-    return stdout;
+    return { stdout, exitCode };
   }
 
   test("shows repository URLs for outdated packages", async () => {
@@ -124,10 +123,11 @@ describe.concurrent("bun outdated --changelog", () => {
     expect(installStderr).not.toContain("error:");
     expect(await installProc.exited).toBe(0);
 
-    const stdout = await runOutdatedChangelog(String(dir));
-    expect(stdout).toContain("no-deps");
-    expect(stdout).toContain("Changelogs:");
-    expect(stdout).toContain("https://github.com/example/no-deps");
+    const result = await runOutdatedChangelog(String(dir));
+    expect(result.stdout).toContain("no-deps");
+    expect(result.stdout).toContain("Changelogs:");
+    expect(result.stdout).toContain("https://github.com/example/no-deps");
+    expect(result.exitCode).toBe(0);
   });
 
   test("omits changelog section when no repository field exists", async () => {
@@ -153,9 +153,10 @@ describe.concurrent("bun outdated --changelog", () => {
     });
     expect(await installProc.exited).toBe(0);
 
-    const stdout = await runOutdatedChangelog(String(dir));
-    expect(stdout).toContain("no-deps");
-    expect(stdout).not.toContain("Changelogs:");
+    const result = await runOutdatedChangelog(String(dir));
+    expect(result.stdout).toContain("no-deps");
+    expect(result.stdout).not.toContain("Changelogs:");
+    expect(result.exitCode).toBe(0);
   });
 
   test("warm cache still shows changelog URLs", async () => {
@@ -186,13 +187,15 @@ describe.concurrent("bun outdated --changelog", () => {
     expect(await installProc.exited).toBe(0);
 
     // First run (cold cache) — populates disk cache
-    const stdout1 = await runOutdatedChangelog(String(dir), testEnv);
-    expect(stdout1).toContain("Changelogs:");
-    expect(stdout1).toContain("https://github.com/example/no-deps");
+    const result1 = await runOutdatedChangelog(String(dir), testEnv);
+    expect(result1.stdout).toContain("Changelogs:");
+    expect(result1.stdout).toContain("https://github.com/example/no-deps");
+    expect(result1.exitCode).toBe(0);
 
     // Second run (warm cache) — should still show URLs
-    const stdout2 = await runOutdatedChangelog(String(dir), testEnv);
-    expect(stdout2).toContain("Changelogs:");
-    expect(stdout2).toContain("https://github.com/example/no-deps");
+    const result2 = await runOutdatedChangelog(String(dir), testEnv);
+    expect(result2.stdout).toContain("Changelogs:");
+    expect(result2.stdout).toContain("https://github.com/example/no-deps");
+    expect(result2.exitCode).toBe(0);
   });
 });

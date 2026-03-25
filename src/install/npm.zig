@@ -944,21 +944,24 @@ pub const PackageManifest = struct {
             if (header_bytes.len != 49)
                 @compileError("header bytes must be exactly 49 bytes long, length is not serialized");
 
-            // skip name
-            const fields = std.meta.fields(Npm.PackageManifest);
-
-            const Data = struct {
-                size: usize,
-                name: []const u8,
-                alignment: usize,
-            };
-            var data: [fields.len]Data = undefined;
-            for (fields, &data) |field_info, *dat| {
-                dat.* = .{
+            const all_fields = std.meta.fields(Npm.PackageManifest);
+            const Data = struct { size: usize, name: []const u8, alignment: usize };
+            // Exclude transient fields before sorting — pdq is unstable and adding
+            // same-alignment fields could reorder the serialized layout.
+            var serialized_count: usize = 0;
+            for (all_fields) |f| {
+                if (!strings.eqlComptime(f.name, "repository_url")) serialized_count += 1;
+            }
+            var data: [serialized_count]Data = undefined;
+            var di: usize = 0;
+            for (all_fields) |field_info| {
+                if (strings.eqlComptime(field_info.name, "repository_url")) continue;
+                data[di] = .{
                     .size = @sizeOf(field_info.type),
                     .name = field_info.name,
                     .alignment = if (@sizeOf(field_info.type) == 0) 1 else field_info.alignment,
                 };
+                di += 1;
             }
             const Sort = struct {
                 fn lessThan(_: void, lhs: Data, rhs: Data) bool {
@@ -966,8 +969,8 @@ pub const PackageManifest = struct {
                 }
             };
             std.sort.pdq(Data, &data, {}, Sort.lessThan);
-            var sizes_bytes: [fields.len]usize = undefined;
-            var names: [fields.len][]const u8 = undefined;
+            var sizes_bytes: [serialized_count]usize = undefined;
+            var names: [serialized_count][]const u8 = undefined;
             for (data, &sizes_bytes, &names) |elem, *size_, *name_| {
                 size_.* = elem.size;
                 name_.* = elem.name;
@@ -1025,8 +1028,6 @@ pub const PackageManifest = struct {
             pos += 128 / 8;
 
             inline for (sizes.fields) |field_name| {
-                // repository_url is transient (populated from extended manifest JSON), not serialized
-                if (comptime strings.eqlComptime(field_name, "repository_url")) continue;
                 if (comptime strings.eqlComptime(field_name, "pkg")) {
                     const bytes = std.mem.asBytes(&this.pkg);
                     pos += try Aligner.write(NpmPackage, Writer, writer, pos);
@@ -1316,8 +1317,6 @@ pub const PackageManifest = struct {
             }
 
             inline for (sizes.fields) |field_name| {
-                // repository_url is transient (populated from extended manifest JSON), not serialized
-                if (comptime strings.eqlComptime(field_name, "repository_url")) continue;
                 if (comptime strings.eqlComptime(field_name, "pkg")) {
                     pkg_stream.pos = std.mem.alignForward(usize, pkg_stream.pos, @alignOf(Npm.NpmPackage));
                     package_manifest.pkg = try reader.readStruct(NpmPackage);
@@ -2645,7 +2644,7 @@ pub const PackageManifest = struct {
         // doesn't bloat the serialized disk cache.
         var repository_url_duped: []const u8 = &.{};
         if (repository_url) |repo_url| {
-            repository_url_duped = default_allocator.dupe(u8, repo_url) catch &.{};
+            repository_url_duped = bun.handleOom(default_allocator.dupe(u8, repo_url));
         }
 
         result.pkg.releases.keys = VersionSlice.init(all_semver_versions, all_release_versions);

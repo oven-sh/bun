@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 test("--coverage CLI flag overrides bunfig.toml coverage = false", async () => {
@@ -16,11 +16,7 @@ test("--coverage CLI flag overrides bunfig.toml coverage = false", async () => {
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   // Coverage table is printed to stderr
   expect(stderr).toContain("% Funcs");

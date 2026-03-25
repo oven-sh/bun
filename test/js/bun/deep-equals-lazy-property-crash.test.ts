@@ -17,7 +17,7 @@ test("deepEquals does not crash when lazy property callback fails after stack ov
     ],
     env: bunEnv,
     stdout: "pipe",
-    stderr: "pipe",
+    stderr: "inherit",
   });
 
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);

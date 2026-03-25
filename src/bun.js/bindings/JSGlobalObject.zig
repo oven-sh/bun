@@ -51,6 +51,10 @@ pub const JSGlobalObject = opaque {
 
     pub fn throwTODO(this: *JSGlobalObject, msg: []const u8) bun.JSError {
         const err = this.createErrorInstance("{s}", .{msg});
+        if (err == .zero) {
+            bun.assert(this.hasException());
+            return error.JSError;
+        }
         err.put(this, ZigString.static("name"), (bun.String.static("TODOError").toJS(this)) catch return error.JSError);
         return this.throwValue(err);
     }
@@ -286,9 +290,12 @@ pub const JSGlobalObject = opaque {
             var buf = std.Io.Writer.Allocating.initCapacity(stack_fallback.get(), 2048) catch unreachable;
             defer buf.deinit();
             var writer = &buf.writer;
-            writer.print(fmt, args) catch
-                // if an exception occurs in the middle of formatting the error message, it's better to just return the formatting string than an error about an error
+            writer.print(fmt, args) catch {
+                // if an exception occurs in the middle of formatting the error message, it's better to just return the formatting string than an error about an error.
+                // Clear any pending JS exception (e.g. from Symbol.toPrimitive) so that throwValue doesn't hit assertNoException.
+                _ = this.clearExceptionExceptTermination();
                 return ZigString.static(fmt).toErrorInstance(this);
+            };
 
             // Ensure we clone it.
             var str = ZigString.initUTF8(buf.written());
@@ -309,7 +316,10 @@ pub const JSGlobalObject = opaque {
             var buf = bun.MutableString.init2048(stack_fallback.get()) catch unreachable;
             defer buf.deinit();
             var writer = buf.writer();
-            writer.print(fmt, args) catch return ZigString.static(fmt).toErrorInstance(this);
+            writer.print(fmt, args) catch {
+                _ = this.clearExceptionExceptTermination();
+                return ZigString.static(fmt).toTypeErrorInstance(this);
+            };
             var str = ZigString.fromUTF8(buf.slice());
             return str.toTypeErrorInstance(this);
         } else {
@@ -337,7 +347,10 @@ pub const JSGlobalObject = opaque {
             var buf = bun.MutableString.init2048(stack_fallback.get()) catch unreachable;
             defer buf.deinit();
             var writer = buf.writer();
-            writer.print(fmt, args) catch return ZigString.static(fmt).toErrorInstance(this);
+            writer.print(fmt, args) catch {
+                _ = this.clearExceptionExceptTermination();
+                return ZigString.static(fmt).toSyntaxErrorInstance(this);
+            };
             var str = ZigString.fromUTF8(buf.slice());
             return str.toSyntaxErrorInstance(this);
         } else {
@@ -351,7 +364,10 @@ pub const JSGlobalObject = opaque {
             var buf = bun.MutableString.init2048(stack_fallback.get()) catch unreachable;
             defer buf.deinit();
             var writer = buf.writer();
-            writer.print(fmt, args) catch return ZigString.static(fmt).toErrorInstance(this);
+            writer.print(fmt, args) catch {
+                _ = this.clearExceptionExceptTermination();
+                return ZigString.static(fmt).toRangeErrorInstance(this);
+            };
             var str = ZigString.fromUTF8(buf.slice());
             return str.toRangeErrorInstance(this);
         } else {
@@ -361,6 +377,10 @@ pub const JSGlobalObject = opaque {
 
     pub fn createRangeError(this: *JSGlobalObject, comptime fmt: [:0]const u8, args: anytype) JSValue {
         const err = createErrorInstance(this, fmt, args);
+        if (err == .zero) {
+            bun.assert(this.hasException());
+            return .zero;
+        }
         err.put(this, ZigString.static("code"), ZigString.static(@tagName(jsc.Node.ErrorCode.ERR_OUT_OF_RANGE)).toJS(this));
         return err;
     }
@@ -381,6 +401,10 @@ pub const JSGlobalObject = opaque {
         args: anytype,
     ) JSError {
         const err = createErrorInstance(this, message, args);
+        if (err == .zero) {
+            bun.assert(this.hasException());
+            return error.JSError;
+        }
         err.put(this, ZigString.static("code"), ZigString.init(@tagName(opts.code)).toJS(this));
         if (opts.name) |name| err.put(this, ZigString.static("name"), ZigString.init(name).toJS(this));
         if (opts.errno) |errno| err.put(this, ZigString.static("errno"), try .fromAny(this, i32, errno));
@@ -393,7 +417,10 @@ pub const JSGlobalObject = opaque {
     /// chances are you should be using `.ERR(...).throw()` instead.
     pub fn throw(this: *JSGlobalObject, comptime fmt: [:0]const u8, args: anytype) JSError {
         const instance = this.createErrorInstance(fmt, args);
-        bun.assert(instance != .zero);
+        if (instance == .zero) {
+            bun.assert(this.hasException());
+            return error.JSError;
+        }
         return this.throwValue(instance);
     }
 
@@ -401,7 +428,10 @@ pub const JSGlobalObject = opaque {
         const instance = switch (Output.enable_ansi_colors_stderr) {
             inline else => |enabled| this.createErrorInstance(Output.prettyFmt(fmt, enabled), args),
         };
-        bun.assert(instance != .zero);
+        if (instance == .zero) {
+            bun.assert(this.hasException());
+            return error.JSError;
+        }
         return this.throwValue(instance);
     }
 
@@ -442,6 +472,10 @@ pub const JSGlobalObject = opaque {
     }
 
     pub fn throwValue(this: *JSGlobalObject, value: jsc.JSValue) JSError {
+        // A termination exception (e.g. stack overflow) may already be
+        // pending. Don't try to override it — that would hit
+        // releaseAssertNoException in VM.throwError.
+        if (this.hasException()) return error.JSError;
         return this.vm().throwError(this, value);
     }
 
@@ -472,7 +506,7 @@ pub const JSGlobalObject = opaque {
         defer allocator_.free(buffer);
         const str = ZigString.initUTF8(buffer);
         const err_value = str.toErrorInstance(this);
-        return this.vm().throwError(this, err_value);
+        return this.throwValue(err_value);
     }
 
     // TODO: delete these two fns

@@ -18,10 +18,10 @@ test("calling bytes() on a consumed blob ReadableStream does not crash", async (
     ],
     env: bunEnv,
     stdout: "pipe",
-    stderr: "pipe",
+    stderr: "inherit",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
 
   expect(stdout.trim()).toBe("OK");
   expect(exitCode).toBe(0);

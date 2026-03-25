@@ -26,7 +26,7 @@ public:
 
     void navigateIPC(const WTF::String& url);
     void evaluateIPC(const WTF::String& js);
-    void screenshotIPC();
+    void screenshotIPC(uint8_t format, uint8_t quality);
 
     // Native input. clickIPC/typeIPC and most of pressIPC are async with
     // proper WebKit-owned completion: _doAfterProcessingAllPendingMouseEvents:
@@ -79,6 +79,11 @@ private:
     bool m_navPending = false;
     bool m_evalPending = false;
     bool m_screenshotPending = false;
+    // Stashed by screenshotIPC; read by onScreenshotComplete to pick the
+    // NSBitmapImageFileType and compression factor. format values match
+    // the parent's ScreenshotFormat enum (0=png 1=jpeg 2=webp).
+    uint8_t m_screenshotFormat = 0;
+    uint8_t m_screenshotQuality = 80;
     bool m_inputPending = false;
     bool m_scrollPending = false;
 

@@ -712,7 +712,16 @@ pub fn GlobWalker_(
                 var iterator = Accessor.DirIter.iterate(fd);
                 if (comptime isWindows) {
                     if (@hasDecl(Accessor.DirIter, "setNameFilter")) {
-                        iterator.setNameFilter(this.computeNtFilter(component_idx));
+                        // computeNtFilter operates on a single pattern component.
+                        // When multiple indices are active (e.g. after `**`), the
+                        // kernel filter could hide entries needed by other indices,
+                        // so skip it. The filter is purely an optimization;
+                        // matchPatternImpl still runs for correctness.
+                        const filter: ?[]const u16 = if (active.count() == 1)
+                            this.computeNtFilter(@intCast(active.findFirstSet().?))
+                        else
+                            null;
+                        iterator.setNameFilter(filter);
                     }
                 }
                 this.iter_state.directory.iter = iterator;

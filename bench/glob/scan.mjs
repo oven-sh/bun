@@ -5,6 +5,7 @@ import { bench, group, run } from "../runner.mjs";
 const normalPattern = "*.ts";
 const recursivePattern = "**/*.ts";
 const nodeModulesPattern = "**/node_modules/**/*.js";
+const multiLevelPattern = "node_modules/*/lib/*.js";
 
 const benchFdir = false;
 const cwd = undefined;
@@ -101,6 +102,38 @@ group({ name: `node_modules pattern="${nodeModulesPattern}"`, summary: true }, (
   if (benchFdir)
     bench("fdir", async () => {
       const entries = await new fdir().withFullPaths().glob(nodeModulesPattern).crawl(process.cwd()).withPromise();
+    });
+});
+
+group({ name: `multi-level pattern="${multiLevelPattern}"`, summary: true }, () => {
+  bench("fast-glob", async () => {
+    const entries = await fg.glob([multiLevelPattern], fgOpts);
+  });
+
+  if (Glob)
+    bench("Bun.Glob", async () => {
+      const entries = await Array.fromAsync(new Glob(multiLevelPattern).scan(bunOpts));
+    });
+
+  if (benchFdir)
+    bench("fdir", async () => {
+      const entries = await new fdir().withFullPaths().glob(multiLevelPattern).crawl(process.cwd()).withPromise();
+    });
+});
+
+group({ name: `sync multi-level pattern="${multiLevelPattern}"`, summary: true }, () => {
+  bench("fast-glob", () => {
+    const entries = fg.globSync([multiLevelPattern], fgOpts);
+  });
+
+  if (Glob)
+    bench("Bun.Glob", () => {
+      const entries = [...new Glob(multiLevelPattern).scanSync(bunOpts)];
+    });
+
+  if (benchFdir)
+    bench("fdir", () => {
+      const entries = new fdir().withFullPaths().glob(multiLevelPattern).crawl(process.cwd()).sync();
     });
 });
 

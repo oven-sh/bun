@@ -50,6 +50,12 @@ describe("$.braces", () => {
     ]);
   });
 
+  test("empty string", () => {
+    expect($.braces("")).toEqual([""]);
+    expect($.braces("", { parse: true })).toBeString();
+    expect($.braces("", { tokenize: true })).toBeString();
+  });
+
   test("unicode", () => {
     const result = $.braces(`lol {😂,🫵,🤣}`);
     expect(result).toEqual(["lol 😂", "lol 🫵", "lol 🤣"]);

@@ -282,7 +282,7 @@ it("chrome: cdp() raw passthrough", async () => {
   }
 });
 
-it("chrome: cdp() guards — WebKit backend and before navigate", async () => {
+it("chrome: cdp() guards — before navigate and params validation", async () => {
   // Chrome before first navigate → no sessionId → INVALID_STATE.
   const crView = new Bun.WebView({ backend: chrome, width: 100, height: 100 });
   try {
@@ -293,6 +293,23 @@ it("chrome: cdp() guards — WebKit backend and before navigate", async () => {
   } finally {
     crView.close();
   }
+});
+
+// Validation throws before any I/O — doesn't need Chrome installed, so
+// `test` directly (not the `it` alias that todo-gates on chromePath).
+test("chrome: constructor rejects url combined with spawn options", () => {
+  expect(
+    () =>
+      new Bun.WebView({
+        backend: { type: "chrome", url: "ws://localhost:9222/devtools/browser/x", path: "/foo" } as any,
+      }),
+  ).toThrow(/connect mode.*cannot be combined.*spawn/i);
+  expect(
+    () =>
+      new Bun.WebView({
+        backend: { type: "chrome", url: "ws://localhost:9222/devtools/browser/x", argv: ["--foo"] } as any,
+      }),
+  ).toThrow(/connect mode.*cannot be combined.*spawn/i);
 });
 
 it("chrome: screenshot quality option affects JPEG size", async () => {

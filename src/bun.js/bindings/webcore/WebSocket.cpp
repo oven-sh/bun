@@ -1433,10 +1433,11 @@ void WebSocket::didReceiveClose(CleanStatus wasClean, unsigned short code, WTF::
     // Native callback: state transitioned, hand off the close code.
     // Covers both connect-failure (didFailWithErrorCode →
     // didReceiveClose) and server-initiated close. The consumer's
-    // onClose distinguishes by whether onOpen ever fired.
+    // onClose distinguishes by whether onOpen ever fired. Cleanup
+    // (disablePendingActivity) is the caller's job — didFailWithErrorCode
+    // posts it after the switch.
     if (m_native.onClose) {
         m_native.onClose(m_native.ctx, code);
-        disablePendingActivity();
         return;
     }
 
@@ -1721,14 +1722,13 @@ void WebSocket::didFailWithErrorCode(Bun::WebSocketErrorCode code)
     }
     }
 
-    m_state = CLOSED;
-    if (auto* context = scriptExecutionContext()) {
-        context->postTask([protectedThis = Ref { *this }](ScriptExecutionContext& context) {
-            protectedThis->disablePendingActivity();
-        });
-    } else {
-        this->deref();
-    }
+    // didReceiveClose already set m_state = CLOSED. The connect() ref
+    // kept us alive across the switch (including across the native
+    // onClose callback dropping its RefPtr); release it from a task so
+    // the caller's stack frame unwinds first.
+    scriptExecutionContext()->postTask([protectedThis = Ref { *this }](ScriptExecutionContext&) {
+        protectedThis->disablePendingActivity();
+    });
 }
 
 void WebSocket::disablePendingActivity()

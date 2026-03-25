@@ -233,6 +233,10 @@ JSC_DEFINE_HOST_FUNCTION(constructWebView, (JSGlobalObject * globalObject, CallF
                     "backend.argv must be an array of strings"_s);
             }
 
+            if (!chromeWsUrl.isEmpty() && (!chromePath.isEmpty() || !chromeArgv.isEmpty()))
+                return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_VALUE,
+                    "backend.url (connect mode) cannot be combined with backend.path or backend.argv (spawn mode)"_s);
+
             // stdout/stderr: "inherit" | "ignore" — whether the subprocess's
             // streams flow to Bun's. Chrome is chatty on stderr (GCM
             // registration errors, updater noise, font-config warnings) even

@@ -7981,6 +7981,42 @@ declare module "bun" {
       | {
           type: "chrome";
           /**
+           * Connect to an existing Chrome's DevTools WebSocket directly.
+           * Get the URL from Chrome's `DevToolsActivePort` file
+           * (`<port>\n<path>`, in the profile directory) — the full URL
+           * is `ws://127.0.0.1:<port><path>`.
+           *
+           * Enable remote debugging in Chrome at
+           * `chrome://inspect/#remote-debugging`, or launch with
+           * `--remote-debugging-port=9222`. Both write
+           * `DevToolsActivePort`.
+           *
+           * **Note**: The `chrome://inspect` toggle shows an "Allow
+           * remote debugging?" dialog on **every** new connection.
+           *
+           * Mutually exclusive with `path`/`argv` — you're connecting
+           * to a Chrome that's already running, not spawning one.
+           */
+          url: string;
+        }
+      | {
+          type: "chrome";
+          /**
+           * Controls the connect-vs-spawn choice:
+           *
+           * - `false` — skip auto-detect, always spawn a fresh Chrome.
+           *   Executable path still auto-found unless `path` is set.
+           * - `undefined` (default) — **auto-detect**: if a
+           *   `DevToolsActivePort` file exists (Chrome with remote
+           *   debugging is running), connect to it; else spawn.
+           *
+           * Auto-detect falls back to spawn if the connect fails (stale
+           * file from a dead Chrome). The WebSocket auto-closes when
+           * the last `WebView` is closed. For unattended automation,
+           * pass `url: false`.
+           */
+          url?: false;
+          /**
            * Path to the Chrome/Chromium executable. Overrides
            * auto-detection and forces Bun to spawn a fresh Chrome
            * subprocess (skipping the existing-Chrome auto-connect).
@@ -7992,31 +8028,6 @@ declare module "bun" {
            * force spawn-mode.
            */
           path?: string;
-          /**
-           * Controls the connect-vs-spawn choice:
-           *
-           * - `"ws://..."` — connect to that DevTools WebSocket directly.
-           *   Get the URL from Chrome's `DevToolsActivePort` file
-           *   (`<port>\n<path>`, in the profile directory).
-           * - `false` — skip auto-detect, always spawn a fresh Chrome.
-           *   Executable path still auto-found unless `path` is set.
-           * - `undefined` (default) — **auto-detect**: if a
-           *   `DevToolsActivePort` file exists (Chrome with remote
-           *   debugging is running), connect to it; else spawn.
-           *
-           * Enable remote debugging in Chrome at
-           * `chrome://inspect/#remote-debugging`, or launch with
-           * `--remote-debugging-port=9222`. Both write
-           * `DevToolsActivePort`.
-           *
-           * **Note**: The `chrome://inspect` toggle shows an "Allow
-           * remote debugging?" dialog on **every** new connection.
-           * Auto-detect falls back to spawn if the connect fails (stale
-           * file from a dead Chrome). The WebSocket auto-closes when
-           * the last `WebView` is closed. For unattended automation,
-           * pass `url: false`.
-           */
-          url?: string | false;
           /**
            * Extra command-line arguments appended after the default flags.
            * Chrome's CommandLine does last-wins for duplicate switches, so

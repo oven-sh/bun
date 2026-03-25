@@ -227,8 +227,8 @@ public:
     {
         ASSERT(m_pendingActivityCount > 0);
         m_pendingActivityCount--;
-        deref();
         updateHasPendingActivity();
+        deref();
     }
 
     size_t memoryCost() const;

@@ -28,7 +28,7 @@ test("DFG dump handles objects with null butterfly", async () => {
       ...bunEnv,
       BUN_JSC_validateGraph: "1",
     },
-    stderr: "pipe",
+    stderr: "ignore",
     stdout: "pipe",
   });
 

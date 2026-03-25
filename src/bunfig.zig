@@ -277,7 +277,9 @@ pub const Bunfig = struct {
 
                     if (test_.get("coverage")) |expr| {
                         try this.expect(expr, .e_boolean);
-                        this.ctx.test_options.coverage.enabled = expr.data.e_boolean.value;
+                        if (!this.ctx.test_options.coverage.enabled) {
+                            this.ctx.test_options.coverage.enabled = expr.data.e_boolean.value;
+                        }
                     }
 
                     if (test_.get("onlyFailures")) |expr| {

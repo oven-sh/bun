@@ -42,8 +42,22 @@ describe("bun outdated --changelog", () => {
             repository: { type: "git", url: "git+https://github.com/example/no-deps.git" },
             "dist-tags": { latest: "2.0.0" },
             versions: {
-              "1.0.0": { name: "no-deps", version: "1.0.0", dist: { tarball: `http://localhost:${server.port}/no-deps/-/no-deps-1.0.0.tgz`, integrity: integrity(t1) } },
-              "2.0.0": { name: "no-deps", version: "2.0.0", dist: { tarball: `http://localhost:${server.port}/no-deps/-/no-deps-2.0.0.tgz`, integrity: integrity(t2) } },
+              "1.0.0": {
+                name: "no-deps",
+                version: "1.0.0",
+                dist: {
+                  tarball: `http://localhost:${server.port}/no-deps/-/no-deps-1.0.0.tgz`,
+                  integrity: integrity(t1),
+                },
+              },
+              "2.0.0": {
+                name: "no-deps",
+                version: "2.0.0",
+                dist: {
+                  tarball: `http://localhost:${server.port}/no-deps/-/no-deps-2.0.0.tgz`,
+                  integrity: integrity(t2),
+                },
+              },
             },
           });
         if (url.pathname.includes("1.0.0") && url.pathname.endsWith(".tgz")) return new Response(t1);
@@ -57,12 +71,28 @@ describe("bun outdated --changelog", () => {
       "package.json": JSON.stringify({ name: "test-project", dependencies: { "no-deps": "1.0.0" } }),
     });
 
-    await using install = Bun.spawn({ cmd: [bunExe(), "install"], cwd: String(dir), env: { ...bunEnv, NO_COLOR: "1" }, stdout: "pipe", stderr: "pipe" });
-    const [, installErr, installExit] = await Promise.all([install.stdout.text(), install.stderr.text(), install.exited]);
+    await using install = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      env: { ...bunEnv, NO_COLOR: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, installErr, installExit] = await Promise.all([
+      install.stdout.text(),
+      install.stderr.text(),
+      install.exited,
+    ]);
     expect(installErr).not.toContain("error:");
     expect(installExit).toBe(0);
 
-    await using proc = Bun.spawn({ cmd: [bunExe(), "outdated", "--changelog"], cwd: String(dir), env: { ...bunEnv, NO_COLOR: "1" }, stdout: "pipe", stderr: "pipe" });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "outdated", "--changelog"],
+      cwd: String(dir),
+      env: { ...bunEnv, NO_COLOR: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
     const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout).toContain("no-deps");
     expect(stdout).toContain("Changelogs:");
@@ -83,8 +113,22 @@ describe("bun outdated --changelog", () => {
             name: "no-deps",
             "dist-tags": { latest: "2.0.0" },
             versions: {
-              "1.0.0": { name: "no-deps", version: "1.0.0", dist: { tarball: `http://localhost:${server.port}/no-deps/-/no-deps-1.0.0.tgz`, integrity: integrity(t1) } },
-              "2.0.0": { name: "no-deps", version: "2.0.0", dist: { tarball: `http://localhost:${server.port}/no-deps/-/no-deps-2.0.0.tgz`, integrity: integrity(t2) } },
+              "1.0.0": {
+                name: "no-deps",
+                version: "1.0.0",
+                dist: {
+                  tarball: `http://localhost:${server.port}/no-deps/-/no-deps-1.0.0.tgz`,
+                  integrity: integrity(t1),
+                },
+              },
+              "2.0.0": {
+                name: "no-deps",
+                version: "2.0.0",
+                dist: {
+                  tarball: `http://localhost:${server.port}/no-deps/-/no-deps-2.0.0.tgz`,
+                  integrity: integrity(t2),
+                },
+              },
             },
           });
         if (url.pathname.includes("1.0.0") && url.pathname.endsWith(".tgz")) return new Response(t1);
@@ -98,11 +142,23 @@ describe("bun outdated --changelog", () => {
       "package.json": JSON.stringify({ name: "test-project", dependencies: { "no-deps": "1.0.0" } }),
     });
 
-    await using install = Bun.spawn({ cmd: [bunExe(), "install"], cwd: String(dir), env: { ...bunEnv, NO_COLOR: "1" }, stdout: "pipe", stderr: "pipe" });
+    await using install = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      env: { ...bunEnv, NO_COLOR: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
     const [, , installExit] = await Promise.all([install.stdout.text(), install.stderr.text(), install.exited]);
     expect(installExit).toBe(0);
 
-    await using proc = Bun.spawn({ cmd: [bunExe(), "outdated", "--changelog"], cwd: String(dir), env: { ...bunEnv, NO_COLOR: "1" }, stdout: "pipe", stderr: "pipe" });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "outdated", "--changelog"],
+      cwd: String(dir),
+      env: { ...bunEnv, NO_COLOR: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
     const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout).toContain("no-deps");
     expect(stdout).not.toContain("Changelogs:");

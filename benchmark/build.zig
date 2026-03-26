@@ -12,14 +12,18 @@ pub fn build(b: *std.Build) void {
 
     const ziggit_module = ziggit_dep.module("ziggit");
 
-    // git_vs_ziggit benchmark (non-default, use "run" step)
+    // git_vs_ziggit benchmark
     const bench = b.addExecutable(.{
         .name = "git_vs_ziggit",
-        .root_source_file = b.path("git_vs_ziggit.zig"),
-        .target = target,
-        .optimize = optimize,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("git_vs_ziggit.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "ziggit", .module = ziggit_module },
+            },
+        }),
     });
-    bench.root_module.addImport("ziggit", ziggit_module);
 
     const install_bench = b.addInstallArtifact(bench, .{});
 
@@ -31,14 +35,18 @@ pub fn build(b: *std.Build) void {
     const run_step = b.step("run", "Run the git_vs_ziggit benchmark");
     run_step.dependOn(&run_cmd.step);
 
-    // findCommit benchmark (default install target)
+    // findCommit benchmark
     const fc_bench = b.addExecutable(.{
         .name = "findcommit_bench",
-        .root_source_file = b.path("findcommit_bench.zig"),
-        .target = target,
-        .optimize = optimize,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("findcommit_bench.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "ziggit", .module = ziggit_module },
+            },
+        }),
     });
-    fc_bench.root_module.addImport("ziggit", ziggit_module);
     b.installArtifact(fc_bench);
 
     const fc_run = b.addRunArtifact(fc_bench);

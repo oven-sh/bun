@@ -1,113 +1,69 @@
-BUN_COLD_1=454
-BUN_WARM_1=200
-BUN_COLD_2=461
-BUN_WARM_2=182
-BUN_COLD_3=434
-BUN_WARM_3=94
-NETWORK_FETCH_debug=173
-NETWORK_FETCH_node-semver=234
-NETWORK_FETCH_is=192
-NETWORK_FETCH_chalk=155
-NETWORK_FETCH_express=1033
-GIT_LOCAL_debug_1_resolve=12
-GIT_LOCAL_debug_1_clone=17
-GIT_LOCAL_debug_1_total=29
-GIT_LOCAL_node-semver_1_resolve=11
-GIT_LOCAL_node-semver_1_clone=26
-GIT_LOCAL_node-semver_1_total=37
-GIT_LOCAL_is_1_resolve=11
-GIT_LOCAL_is_1_clone=19
-GIT_LOCAL_is_1_total=30
-GIT_LOCAL_chalk_1_resolve=12
-GIT_LOCAL_chalk_1_clone=19
-GIT_LOCAL_chalk_1_total=31
-GIT_LOCAL_express_1_resolve=12
-GIT_LOCAL_express_1_clone=27
-GIT_LOCAL_express_1_total=39
-GIT_LOCAL_TOTAL_1=166
-GIT_LOCAL_debug_2_resolve=12
-GIT_LOCAL_debug_2_clone=16
-GIT_LOCAL_debug_2_total=28
-GIT_LOCAL_node-semver_2_resolve=12
-GIT_LOCAL_node-semver_2_clone=21
-GIT_LOCAL_node-semver_2_total=33
-GIT_LOCAL_is_2_resolve=12
-GIT_LOCAL_is_2_clone=19
-GIT_LOCAL_is_2_total=31
-GIT_LOCAL_chalk_2_resolve=11
-GIT_LOCAL_chalk_2_clone=18
-GIT_LOCAL_chalk_2_total=29
-GIT_LOCAL_express_2_resolve=12
-GIT_LOCAL_express_2_clone=26
-GIT_LOCAL_express_2_total=38
-GIT_LOCAL_TOTAL_2=159
-GIT_LOCAL_debug_3_resolve=12
-GIT_LOCAL_debug_3_clone=17
-GIT_LOCAL_debug_3_total=29
-GIT_LOCAL_node-semver_3_resolve=12
-GIT_LOCAL_node-semver_3_clone=21
-GIT_LOCAL_node-semver_3_total=33
-GIT_LOCAL_is_3_resolve=12
-GIT_LOCAL_is_3_clone=19
-GIT_LOCAL_is_3_total=31
-GIT_LOCAL_chalk_3_resolve=11
-GIT_LOCAL_chalk_3_clone=18
-GIT_LOCAL_chalk_3_total=29
-GIT_LOCAL_express_3_resolve=12
-GIT_LOCAL_express_3_clone=26
-GIT_LOCAL_express_3_total=38
-GIT_LOCAL_TOTAL_3=160
-ZIGGIT_LOCAL_debug_1_resolve=14
-ZIGGIT_LOCAL_debug_1_clone=18
-ZIGGIT_LOCAL_debug_1_total=32
-ZIGGIT_LOCAL_node-semver_1_resolve=13
-ZIGGIT_LOCAL_node-semver_1_clone=22
-ZIGGIT_LOCAL_node-semver_1_total=35
-ZIGGIT_LOCAL_is_1_resolve=13
-ZIGGIT_LOCAL_is_1_clone=20
-ZIGGIT_LOCAL_is_1_total=33
-ZIGGIT_LOCAL_chalk_1_resolve=12
-ZIGGIT_LOCAL_chalk_1_clone=19
-ZIGGIT_LOCAL_chalk_1_total=31
-ZIGGIT_LOCAL_express_1_resolve=13
-ZIGGIT_LOCAL_express_1_clone=28
-ZIGGIT_LOCAL_express_1_total=41
-ZIGGIT_LOCAL_TOTAL_1=172
-ZIGGIT_LOCAL_debug_2_resolve=13
-ZIGGIT_LOCAL_debug_2_clone=17
-ZIGGIT_LOCAL_debug_2_total=30
-ZIGGIT_LOCAL_node-semver_2_resolve=13
-ZIGGIT_LOCAL_node-semver_2_clone=22
-ZIGGIT_LOCAL_node-semver_2_total=35
-ZIGGIT_LOCAL_is_2_resolve=13
-ZIGGIT_LOCAL_is_2_clone=19
-ZIGGIT_LOCAL_is_2_total=32
-ZIGGIT_LOCAL_chalk_2_resolve=13
-ZIGGIT_LOCAL_chalk_2_clone=20
-ZIGGIT_LOCAL_chalk_2_total=33
-ZIGGIT_LOCAL_express_2_resolve=13
-ZIGGIT_LOCAL_express_2_clone=29
-ZIGGIT_LOCAL_express_2_total=42
-ZIGGIT_LOCAL_TOTAL_2=172
-ZIGGIT_LOCAL_debug_3_resolve=13
-ZIGGIT_LOCAL_debug_3_clone=18
-ZIGGIT_LOCAL_debug_3_total=31
-ZIGGIT_LOCAL_node-semver_3_resolve=13
-ZIGGIT_LOCAL_node-semver_3_clone=23
-ZIGGIT_LOCAL_node-semver_3_total=36
-ZIGGIT_LOCAL_is_3_resolve=13
-ZIGGIT_LOCAL_is_3_clone=20
-ZIGGIT_LOCAL_is_3_total=33
-ZIGGIT_LOCAL_chalk_3_resolve=13
-ZIGGIT_LOCAL_chalk_3_clone=19
-ZIGGIT_LOCAL_chalk_3_total=32
-ZIGGIT_LOCAL_express_3_resolve=13
-ZIGGIT_LOCAL_express_3_clone=29
-ZIGGIT_LOCAL_express_3_total=42
-ZIGGIT_LOCAL_TOTAL_3=174
-GIT_SPAWN_5x_1=16
-ZIGGIT_SPAWN_5x_1=0
-GIT_SPAWN_5x_2=16
-ZIGGIT_SPAWN_5x_2=0
-GIT_SPAWN_5x_3=15
-ZIGGIT_SPAWN_5x_3=0
+=== Benchmark Run: 2026-03-26 ===
+Machine: x86_64, 1 CPU, 483Mi RAM
+Bun: 1.3.11, Git: git version 2.43.0, Zig: 0.15.2
+
+### Part 1: Stock bun install
+--- 3 deps, cold ---
+  Run 1: 300ms
+  Run 2: 170ms
+  Run 3: 162ms
+--- 3 deps, warm ---
+  Run 1: 139ms
+  Run 2: 55ms
+  Run 3: 132ms
+--- 5 deps, cold ---
+  Run 1: 199ms
+  Run 2: 135ms
+  Run 3: 145ms
+--- 5 deps, warm ---
+  Run 1: 126ms
+  Run 2: 69ms
+  Run 3: 61ms
+
+### Part 2: Local clone (git vs ziggit)
+--- small ---
+  Run 1: clone(git=7ms ziggit=8ms) status(git=3ms ziggit=4ms)
+  Run 2: clone(git=6ms ziggit=6ms) status(git=3ms ziggit=4ms)
+  Run 3: clone(git=6ms ziggit=7ms) status(git=3ms ziggit=4ms)
+--- medium ---
+  Run 1: clone(git=8ms ziggit=8ms) status(git=3ms ziggit=3ms)
+  Run 2: clone(git=6ms ziggit=7ms) status(git=3ms ziggit=3ms)
+  Run 3: clone(git=7ms ziggit=9ms) status(git=3ms ziggit=4ms)
+--- large ---
+  Run 1: clone(git=9ms ziggit=10ms) status(git=4ms ziggit=4ms)
+  Run 2: clone(git=14ms ziggit=9ms) status(git=3ms ziggit=4ms)
+  Run 3: clone(git=8ms ziggit=9ms) status(git=3ms ziggit=4ms)
+
+### Part 3: Remote clone (git --depth=1 vs ziggit full)
+--- debug ---
+  Run 1: git=130ms ziggit=79ms
+  Run 2: git=116ms ziggit=87ms
+  Run 3: git=120ms ziggit=82ms
+--- node-semver ---
+  Run 1: git=153ms ziggit=132ms
+  Run 2: git=135ms ziggit=142ms
+  Run 3: git=128ms ziggit=130ms
+--- ms ---
+  Run 1: git=134ms ziggit=126ms
+  Run 2: git=116ms ziggit=123ms
+  Run 3: git=122ms ziggit=135ms
+--- chalk ---
+  Run 1: git=132ms ziggit=90ms
+  Run 2: git=128ms ziggit=96ms
+  Run 3: git=121ms ziggit=84ms
+--- express ---
+  Run 1: git=163ms ziggit=778ms
+  Run 2: git=197ms ziggit=1008ms
+  Run 3: git=175ms ziggit=723ms
+
+### Part 4: findCommit (1000 iters, in-process vs CLI)
+  chalk: ziggit=7.1µs git=1064µs (150×)
+  debug: ziggit=5.5µs git=1063µs (193×)
+  express: ziggit=5.4µs git=1063µs (197×)
+  ms: ziggit=5.5µs git=1062µs (193×)
+  node-semver: ziggit=5.6µs git=1063µs (190×)
+
+### Part 5: Process spawn overhead (100 iters)
+  git --version: 943µs/call
+  ziggit --help: 692µs/call
+  /bin/true: 505µs/call (baseline)

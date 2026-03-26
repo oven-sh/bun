@@ -1,5 +1,6 @@
 .{
-    .name = "git-vs-ziggit-benchmark",
+    .name = .git_vs_ziggit_benchmark,
+    .fingerprint = 0x516327920718cf7f,
     .version = "0.1.0",
     .paths = .{ "build.zig", "build.zig.zon", "git_vs_ziggit.zig" },
     .dependencies = .{

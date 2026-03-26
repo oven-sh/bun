@@ -75,12 +75,12 @@ All paths have automatic git CLI fallback with categorized error logging.
 
 | Category           | Errors (actual ziggit values)                                                                          | Behavior                    |
 |--------------------|--------------------------------------------------------------------------------------------------------|-----------------------------|
-| SSH Auth           | SshProcessFailed, SshCloneFailed, SshFetchFailed, InvalidSshUrl                                        | Log hint about SSH keys     |
-| Network            | HttpError, HttpCloneFailed, HttpFetchFailed, SideBandError, ConnectionRefused, ConnectionTimedOut, TlsError/TlsFailure, BrokenPipe, ReadFailed | Log + fallback |
-| Protocol           | UnsupportedPackVersion, UnsupportedIndexVersion, UnsupportedPackIndexVersion, UnsupportedPackType, InvalidUrl, InvalidPktLine | Log + fallback |
-| Ref Resolution     | RefNotFound, ObjectNotFound, BranchNotFound, TreeNotFound, InvalidRef, InvalidCommit, CircularRef, TooManySymbolicRefs, PackNotFound | Log + fallback |
-| Data Integrity     | ChecksumMismatch, PackChecksumMismatch, ObjectCountMismatch, InvalidPack*, InvalidFanoutTable, CorruptedPackIndex, InvalidDelta*, DeltaCopyOutOfBounds, DeltaInsertOutOfBounds, DeltaMissingHeaders, DeltaReservedCommand, DeltaTruncated, PackFileTooSmall | Log + cleanup + fallback |
-| OOM                | OutOfMemory                                                                                            | Log + fallback              |
+| SSH Auth           | SshProcessFailed, SshCloneFailed, SshFetchFailed, InvalidSshUrl, SshAuthFailed, SshKeyNotFound, SshAgentFailure | Log hint about SSH keys     |
+| Network            | HttpError, HttpCloneFailed, HttpFetchFailed, SideBandError, RemoteNotFound, EndOfStream, ConnectionRefused, ConnectionTimedOut, ConnectionResetByPeer, ConnectionAborted, HostUnreachable, NetworkUnreachable, UnknownHostName, TemporaryNameResolutionFailure, TlsError, TlsFailure, BrokenPipe, ReadFailed | Log + fallback |
+| Protocol           | UnsupportedPackVersion, UnsupportedIndexVersion, UnsupportedPackIndexVersion, UnsupportedPackType, InvalidUrl, InvalidPktLine, UnsupportedMode, NotSupported, NotImplemented | Log + fallback |
+| Ref Resolution     | RefNotFound, ObjectNotFound, BranchNotFound, TreeNotFound, InvalidRef, InvalidRefName, InvalidCommit, InvalidCommitHash, InvalidHEAD, CircularRef, TooManySymbolicRefs, PackNotFound, PackFileNotFound, CommitNotFound, NotAGitRepository, NotACommit, NotATree, NotATreeObject, UnknownRevision, NoHEAD, EmptyRefName, InvalidRefNameChar, RefNameTooLong, NoCommitsYet, MaxDepthExceeded | Log + fallback |
+| Data Integrity     | ChecksumMismatch, PackChecksumMismatch, ObjectCountMismatch, ObjectSizeMismatch, InvalidPack*, InvalidFanoutTable, CorruptedPackIndex, PackIndexCorrupted, SuspiciousPackIndex, InvalidDelta*, DeltaCopyOutOfBounds, DeltaInsertOutOfBounds, DeltaMissingHeaders, DeltaReservedCommand, DeltaTruncated, InvalidHash*, InvalidObjectType, InvalidOffset, InsufficientDataAtOffset, OffsetBeyond*, OffsetOutOfBounds, ObjectSizeTooLarge, IndexNotSorted, IndexToo*, PackIndexToo*, PackIndexLowEntropy, PackIndexReadError, TooManyObjectsInPack, VarIntTooLarge, RefDeltaRequiresExternalLookup, EmptyBaseData, TreeCycle, PackFileTooSmall, EmptyPackFile | Log + cleanup + fallback |
+| Resource Exhaustion| OutOfMemory, ProcessFdQuotaExceeded, SystemFdQuotaExceeded, SystemResources, SystemResourcesExhausted  | Log + fallback              |
 | Other              | Any unrecognized error                                                                                 | Generic log + fallback      |
 
 ## Edge Case Testing

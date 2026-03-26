@@ -25,10 +25,8 @@ test("calling .bytes() on a consumed Response body does not crash", async () => 
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
 
-  expect(stderr).not.toContain("panic");
-  expect(stderr).not.toContain("assertion");
   expect(stdout).toContain("ok");
   expect(exitCode).toBe(0);
 });

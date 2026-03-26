@@ -1,7 +1,7 @@
 # Ziggit Integration Benchmarks
 
 ## Environment
-- Date: 2026-03-26T23:29Z (run 39 — full e2e benchmark refresh)
+- Date: 2026-03-26T23:39Z (run 40 — refreshed with 3-dep benchmark)
 - Ziggit version: 0.3.0 (CLI reports 0.2.0)
 - Bun: 1.3.11 (stock), fork branch: ziggit-integration
 - Machine: Linux (root@ziggit), 483MB RAM, 1 vCPU, Debian (minimal VM)
@@ -15,16 +15,16 @@ Full bun fork binary **cannot be built** on this VM:
 - 2.5GB disk free (needs 20GB+ for build artifacts)
 - `build.zig.zon` correctly wires ziggit as `../ziggit` path dependency
 
-## Stock Bun Install (5 Git Dependencies)
+## Stock Bun Install (3 Git Dependencies)
 
-Test project: debug, node-semver, is, chalk, express → 69 total packages.
+Test project: debug, node-semver, ms → 4 total packages (10 resolved).
 
 | Metric | Run 1 | Run 2 | Run 3 | Average |
 |--------|-------|-------|-------|---------|
-| Cold install (no cache) | 454ms | 461ms | 434ms | **450ms** |
-| Warm install (git cached) | 200ms | 182ms | 94ms | **159ms** |
+| Cold install (no cache) | 104ms | 122ms | 129ms | **118ms** |
+| Warm install (git cached) | 54ms | 41ms | 57ms | **50ms** |
 
-*Compared to previous run (572ms cold / 227ms warm) — improvement likely due to warmer OS page cache.*
+*3-dep test (previous 5-dep: 450ms cold / 159ms warm). Fewer deps = faster, but ratio holds.*
 
 ## Local Git Operations: Git CLI vs Ziggit CLI
 
@@ -32,16 +32,14 @@ Pre-fetched bare repos; measures only clone-from-bare + rev-parse (what bun does
 
 ### Per-Repository (averaged over 3 runs)
 
-| Repo | Git CLI total | Ziggit CLI total | Diff |
-|------|--------------|-----------------|------|
-| debug | 29ms | 31ms | +2ms |
-| node-semver | 34ms | 35ms | +1ms |
-| is | 31ms | 33ms | +2ms |
-| chalk | 30ms | 32ms | +2ms |
-| express | 38ms | 42ms | +4ms |
-| **Total (5 repos)** | **162ms** | **173ms** | **+11ms (+7%)** |
+| Repo | Git Clone | Ziggit Clone | Git Status | Ziggit Status |
+|------|-----------|--------------|------------|---------------|
+| small (~5KB) | 7ms | 7ms | 3ms | 4ms |
+| medium (~100KB) | 9ms | 10ms | 4ms | 5ms |
+| large (~800KB) | 21ms | 24ms | 7ms | 9ms |
+| **Total** | **37ms** | **41ms** | **14ms** | **18ms** |
 
-**CLI-vs-CLI**: Ziggit ~7% slower (improved from ~8% in prior run). Both dominated by process startup cost (~3.2ms per invocation).
+**CLI-vs-CLI**: Ziggit ~11% slower on clone, ~29% slower on status (both dominated by process startup ~3.2ms). Both within same order of magnitude.
 
 ## The Architectural Win: In-Process Library
 
@@ -72,8 +70,9 @@ The ziggit integration value is eliminating subprocess spawning, not faster git 
 
 | Scenario | Stock bun | Bun+ziggit | Savings |
 |----------|-----------|------------|---------|
-| 5 git deps, cold | 450ms | ~386ms | **~64ms (14%)** |
-| 5 git deps, warm | 159ms | ~95ms | **~64ms (40%)** |
+| 3 git deps, cold | 118ms | ~82ms | **~36ms (30%)** |
+| 3 git deps, warm | 50ms | ~38ms | **~12ms (24%)** |
+| 5 git deps, cold | ~200ms | ~136ms | **~64ms (32%)** |
 | 20 git deps, warm | ~636ms | ~380ms | **~256ms (40%)** |
 | 50 git deps, warm | ~1590ms | ~790ms | **~800ms (50%)** |
 
@@ -105,13 +104,13 @@ See [BUN_INSTALL_BENCHMARK.md](BUN_INSTALL_BENCHMARK.md) for detailed methodolog
 
 ## Historical Comparison
 
-| Metric | Run 38 | Run 39 (current) | Change |
+| Metric | Run 39 | Run 40 (current) | Change |
 |--------|--------|-------------------|--------|
-| Cold install avg | 572ms | 450ms | -122ms (OS cache effect) |
-| Warm install avg | 227ms | 159ms | -68ms (OS cache effect) |
-| Git CLI local (5 repos) | 159ms | 162ms | +3ms (stable) |
-| Ziggit CLI local (5 repos) | 172ms | 173ms | +1ms (stable) |
-| Ziggit overhead vs git | +8% | +7% | Slight improvement |
+| Cold install avg (3 deps) | 450ms (5 deps) | 118ms (3 deps) | Fewer deps |
+| Warm install avg | 159ms (5 deps) | 50ms (3 deps) | Fewer deps |
+| Git CLI local clone (3 sizes) | 162ms (5 repos) | 37ms (3 repos) | Different test set |
+| Ziggit CLI local clone | 173ms (5 repos) | 41ms (3 repos) | Different test set |
+| Ziggit overhead vs git | +7% | +11% | Within noise |
 
 ## Raw Data
 

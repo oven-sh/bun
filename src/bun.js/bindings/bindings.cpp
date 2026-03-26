@@ -3073,9 +3073,12 @@ JSC::EncodedJSValue JSC__JSValue__keys(JSC::JSGlobalObject* globalObject, JSC::E
 JSC::EncodedJSValue JSC__JSValue__values(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue objectValue)
 {
     auto& vm = JSC::getVM(globalObject);
+
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
     JSValue value = JSValue::decode(objectValue);
 
-    return JSValue::encode(JSC::objectValues(vm, globalObject, value));
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSC::objectValues(vm, globalObject, value)));
 }
 
 bool JSC__JSValue__asArrayBuffer(

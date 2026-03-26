@@ -5,6 +5,15 @@ test("pathToFileURL doesn't leak memory", () => {
   expect([path.join(import.meta.dir, "pathToFileURL-leak-fixture.js")]).toRun();
 });
 
+test("pathToFileURL with long relative path does not crash", async () => {
+  await using proc = Bun.spawn({
+    cmd: [process.execPath, "-e", `Bun.pathToFileURL(Buffer.alloc(5000, "a").toString())`],
+    env: { ...process.env, BUN_DEBUG_QUIET_LOGS: "1" },
+  });
+
+  expect(await proc.exited).toBe(0);
+});
+
 test("pathToFileURL escapes special characters", () => {
   const cases = [
     ["\0", "%00"], // '\0' == 0x00

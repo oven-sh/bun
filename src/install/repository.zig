@@ -585,9 +585,7 @@ pub const Repository = extern struct {
         attempt: u8,
     ) !std.fs.Dir {
         bun.analytics.Features.git_dependencies += 1;
-        if (attempt > 0) {
-            debug("download: \"{s}\" attempt {d} (url: {s})", .{ name, attempt, url });
-        }
+        debug("download: \"{s}\" attempt {d} (url: {s})", .{ name, attempt, url });
         const folder_name = try std.fmt.bufPrintZ(&folder_name_buf, "{f}.git", .{
             bun.fmt.hexIntLower(task_id.get()),
         });
@@ -793,12 +791,11 @@ pub const Repository = extern struct {
                     local_bare_path, target,
                 }) catch |err| {
                     log.addErrorFmt(null, logger.Loc.Empty, allocator, "\"git clone\" for \"{s}\" failed", .{name}) catch unreachable;
+                    std.fs.cwd().deleteTree(target) catch {};
                     return err;
                 };
 
-                const folder = Path.joinAbsString(PackageManager.get().cache_directory_path, &.{folder_name}, .auto);
-
-                _ = exec(allocator, env, &[_]string{ "git", "-C", folder, "checkout", "--quiet", resolved }) catch |err| {
+                _ = exec(allocator, env, &[_]string{ "git", "-C", target, "checkout", "--quiet", resolved }) catch |err| {
                     log.addErrorFmt(null, logger.Loc.Empty, allocator, "\"git checkout\" for \"{s}\" failed", .{name}) catch unreachable;
                     // Clean up partial checkout directory on failure
                     std.fs.cwd().deleteTree(target) catch {};

@@ -716,6 +716,14 @@ pub fn addBunObject(b: *Build, opts: *BunBuildOptions) *Compile {
         .root_source_file = b.path("src/bun.zig"),
     });
     bun.addImport("bun", bun); // allow circular "bun" import
+
+    // Add ziggit dependency (native git operations for bun install)
+    const ziggit_dep = b.dependency("ziggit", .{
+        .target = opts.target,
+        .optimize = opts.optimize,
+    });
+    bun.addImport("ziggit", ziggit_dep.module("ziggit"));
+
     addInternalImports(b, bun, opts);
 
     const root = b.createModule(.{

@@ -459,33 +459,42 @@ pub const Repository = extern struct {
         }
 
         if (strings.hasPrefixComptime(url, "ssh://")) {
-            final_path_buf[0.."https".len].* = "https".*;
-            bun.copy(u8, final_path_buf["https".len..], url["ssh".len..]);
-            const out = final_path_buf[0 .. url.len - "ssh".len + "https".len];
-            return out;
+            // ssh://git@github.com/user/repo → https://github.com/user/repo
+            // Strip userinfo (e.g. "git@") when converting to HTTPS
+            const after_scheme = url["ssh://".len..];
+            const host_start = if (strings.indexOfChar(after_scheme, '@')) |at| at + 1 else 0;
+            const path_part = after_scheme[host_start..];
+            final_path_buf[0.."https://".len].* = "https://".*;
+            bun.copy(u8, final_path_buf["https://".len..], path_part);
+            return final_path_buf[0 .. "https://".len + path_part.len];
         }
 
         if (Dependency.isSCPLikePath(url)) {
+            // SCP-like: git@github.com:user/repo → https://github.com/user/repo
+            // Strip userinfo prefix (e.g. "git@") before the host
+            const host_start = if (strings.indexOfChar(url, '@')) |at| at + 1 else 0;
+            const host_and_path = url[host_start..];
+
             final_path_buf[0.."https://".len].* = "https://".*;
             var rest = final_path_buf["https://".len..];
 
-            const colon_index = strings.indexOfChar(url, ':');
+            const colon_index = strings.indexOfChar(host_and_path, ':');
 
             if (colon_index) |colon| {
                 // make sure known hosts have `.com` or `.org`
-                if (Hosts.get(url[0..colon])) |tld| {
-                    bun.copy(u8, rest, url[0..colon]);
+                if (Hosts.get(host_and_path[0..colon])) |tld| {
+                    bun.copy(u8, rest, host_and_path[0..colon]);
                     bun.copy(u8, rest[colon..], tld);
                     rest[colon + tld.len] = '/';
-                    bun.copy(u8, rest[colon + tld.len + 1 ..], url[colon + 1 ..]);
-                    const out = final_path_buf[0 .. url.len + "https://".len + tld.len];
+                    bun.copy(u8, rest[colon + tld.len + 1 ..], host_and_path[colon + 1 ..]);
+                    const out = final_path_buf[0 .. "https://".len + host_and_path.len + tld.len];
                     return out;
                 }
             }
 
-            bun.copy(u8, rest, url);
+            bun.copy(u8, rest, host_and_path);
             if (colon_index) |colon| rest[colon] = '/';
-            return final_path_buf[0 .. url.len + "https://".len];
+            return final_path_buf[0 .. "https://".len + host_and_path.len];
         }
 
         return null;
@@ -585,6 +594,9 @@ pub const Repository = extern struct {
                     if (err == error.RepositoryNotFound) {
                         debug("fetch: ziggit reports repository not found for \"{s}\"", .{name});
                         dir.close();
+                        if (attempt > 1) {
+                            log.addErrorFmt(null, logger.Loc.Empty, allocator, "\"git fetch\" for \"{s}\" failed: repository not found", .{name}) catch unreachable;
+                        }
                         return error.RepositoryNotFound;
                     }
                     logZiggitError("fetch", name, err);

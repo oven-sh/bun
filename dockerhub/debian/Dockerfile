@@ -36,7 +36,6 @@ RUN apt-get update -qq \
       -fsSLO \
       --compressed \
       --retry 5 \
-      --retry-delay 3 \
       --retry-all-errors \
       || { echo "error: failed to download: $tag"; exit 1; } \
     && for key in \
@@ -45,11 +44,11 @@ RUN apt-get update -qq \
       gpg --batch --keyserver hkps://keys.openpgp.org --recv-keys "$key" \
       || gpg --batch --keyserver keyserver.ubuntu.com --recv-keys "$key" ; \
     done \
+      || { echo "error: failed to import GPG keys for: $tag"; exit 1; } \
     && curl "https://github.com/oven-sh/bun/releases/$release/SHASUMS256.txt.asc" \
       -fsSLO \
       --compressed \
       --retry 5 \
-      --retry-delay 3 \
       --retry-all-errors \
       || { echo "error: failed to download SHASUMS256.txt.asc for: $tag"; exit 1; } \
     && gpg --batch --decrypt --output SHASUMS256.txt SHASUMS256.txt.asc \

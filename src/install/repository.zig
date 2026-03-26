@@ -601,6 +601,7 @@ pub const Repository = extern struct {
             err == error.VarIntTooLarge or
             err == error.TooManyObjectsInPack or
             err == error.TooManyIndexEntries or
+            err == error.UnresolvedRefDelta or
             // Defensive: may be added to ziggit
             err == error.InvalidFileMode or
             err == error.InvalidMode or

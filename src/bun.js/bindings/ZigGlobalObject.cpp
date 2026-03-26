@@ -1538,7 +1538,11 @@ JSC_DEFINE_HOST_FUNCTION(isAbortSignal, (JSGlobalObject*, CallFrame* callFrame))
 extern "C" JSC::EncodedJSValue Bun__Jest__createTestModuleObject(JSC::JSGlobalObject*);
 extern "C" JSC::EncodedJSValue Bun__Jest__testModuleObject(Zig::GlobalObject* globalObject)
 {
-    return JSValue::encode(globalObject->lazyTestModuleObject());
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* result = globalObject->lazyTestModuleObject();
+    RETURN_IF_EXCEPTION(scope, JSValue::encode(JSValue()));
+    return JSValue::encode(result);
 }
 
 extern "C" napi_env ZigGlobalObject__makeNapiEnvForFFI(Zig::GlobalObject* globalObject)
@@ -1765,10 +1769,12 @@ void GlobalObject::finishCreation(VM& vm)
 
     m_lazyTestModuleObject.initLater(
         [](const Initializer<JSObject>& init) {
+            auto scope = DECLARE_THROW_SCOPE(init.vm);
             JSC::JSGlobalObject* globalObject = init.owner;
 
             JSValue result = JSValue::decode(Bun__Jest__createTestModuleObject(globalObject));
-            init.set(result.toObject(globalObject));
+            RETURN_IF_EXCEPTION(scope, );
+            init.set(result.getObject());
         });
 
     m_testMatcherUtilsObject.initLater(

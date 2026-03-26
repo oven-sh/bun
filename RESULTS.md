@@ -12,19 +12,19 @@
 
 | Tool    | Run 1  | Run 2  | Run 3  | Run 4  | Run 5  | Avg    |
 |---------|--------|--------|--------|--------|--------|--------|
-| ziggit  | 0.254s | 0.195s | 0.192s | 0.237s | 0.234s | 0.222s |
-| git CLI | 0.206s | 0.209s | 0.223s | 0.224s | 0.208s | 0.214s |
+| ziggit  | 0.225s | 0.196s | 0.190s | 0.193s | 0.197s | 0.200s |
+| git CLI | 0.194s | 0.234s | 0.196s | 0.210s | 0.191s | 0.205s |
 
-**Result**: **Parity** — ziggit avg 0.222s vs git CLI avg 0.214s (1.04x). Network latency dominates.
+**Result**: **Parity** — ziggit avg 0.200s vs git CLI avg 0.205s (~0.98x). Network latency dominates.
 
 ### expressjs/express (medium repo, larger pack)
 
-| Tool    | Time   |
-|---------|--------|
-| ziggit  | 1.018s |
-| git CLI | 0.999s |
+| Tool    | Run 1  | Run 2  | Run 3  | Avg    |
+|---------|--------|--------|--------|--------|
+| ziggit  | 0.986s | 0.982s | 1.016s | 0.995s |
+| git CLI | 0.997s | 0.983s | 0.987s | 0.989s |
 
-**Result**: **Parity** — within noise margin (~2% difference).
+**Result**: **Parity** — within noise margin (~0.6% difference).
 
 ### Correctness
 - `git fsck --no-dangling` passes on all ziggit-cloned repos ✅
@@ -35,7 +35,7 @@
 
 | Date       | Ziggit Commit | idx_writer Version                    | sindresorhus/is (ziggit avg) | Ratio vs git CLI |
 |------------|---------------|---------------------------------------|------------------------------|------------------|
-| 2026-03-26 | 6f37261       | Single-pass with eager LRU caching    | 0.222s                       | 1.04x            |
+| 2026-03-26 | 6f37261       | Single-pass with eager LRU caching    | 0.200s                       | 0.98x ✅         |
 | 2026-03-26 | b49999c       | Two-pass with DeltaCache              | 0.300s                       | 1.01x            |
 | 2026-03-26 | eeba670       | Single-pass architecture              | 0.194s                       | ~1.0x            |
 | Earlier    | (pre-rewrite) | Original multi-pass                   | ~4x slower                   | ~4x              |

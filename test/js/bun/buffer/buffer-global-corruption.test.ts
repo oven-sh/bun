@@ -5,7 +5,7 @@ import { bunEnv, bunExe } from "harness";
 // should not crash the process. This pattern caused SIGSEGV in the Fuzzilli REPRL
 // loop because the protocol code used the corrupted global Buffer reference.
 
-test("Buffer++ followed by SharedArrayBuffer operations should not crash", async () => {
+test.concurrent("Buffer++ followed by SharedArrayBuffer operations should not crash", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -36,7 +36,7 @@ test("Buffer++ followed by SharedArrayBuffer operations should not crash", async
   expect(exitCode).toBeLessThan(128);
 });
 
-test("saved Buffer reference survives global corruption via eval", async () => {
+test.concurrent("saved Buffer reference survives global corruption via eval", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),

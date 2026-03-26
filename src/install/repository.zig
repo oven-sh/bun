@@ -577,7 +577,7 @@ pub const Repository = extern struct {
                     debug("fetch: trying ziggit for \"{s}\" (url: {s}, transformed from: {s})", .{ name, fetch_url, url });
                 }
                 var repo = ziggit.Repository.open(allocator, path) catch |err| {
-                    debug("fetch: ziggit open failed ({s}), falling back to git CLI", .{@errorName(err)});
+                    logZiggitError("fetch/open", name, err);
                     break :ziggit_fetch;
                 };
                 defer repo.close();

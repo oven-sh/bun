@@ -1,7 +1,7 @@
 # Ziggit Integration Benchmarks
 
 ## Environment
-- Date: 2026-03-26 (latest refresh, run 3)
+- Date: 2026-03-26 (latest refresh, run 4)
 - Ziggit commit: 6f37261 (single-pass idx_writer with eager LRU caching)
 - Bun fork branch: ziggit-integration
 - Machine: Linux (root@ziggit), tmpfs-backed /tmp
@@ -13,14 +13,24 @@
 
 | Tool    | Run 1  | Run 2  | Run 3  | Run 4  | Run 5  | Avg    |
 |---------|--------|--------|--------|--------|--------|--------|
-| ziggit  | 211ms  | 212ms  | 204ms  | 181ms  | 186ms  | 199ms  |
-| git CLI | 192ms  | 188ms  | 198ms  | 199ms  | 224ms  | 200ms  |
+| ziggit  | 193ms  | 176ms  | 184ms  | 192ms  | 178ms  | 185ms  |
+| git CLI | 189ms  | 180ms  | 180ms  | 181ms  | 195ms  | 185ms  |
 
-**Result**: **Dead parity** — ziggit avg 199ms vs git CLI avg 200ms (~0.995x). Network-dominated. ✅
+**Result**: **Dead parity** — ziggit avg 185ms vs git CLI avg 185ms (1.00x). Network-dominated. ✅
+
+### expressjs/express (medium repo, ~6MB pack) — 3 runs
+
+| Tool    | Run 1  | Run 2  | Run 3  | Avg    |
+|---------|--------|--------|--------|--------|
+| ziggit  | 961ms  | 967ms  | 924ms  | 951ms  |
+| git CLI | 932ms  | 948ms  | 928ms  | 936ms  |
+
+**Result**: **Parity** — ziggit avg 951ms vs git CLI avg 936ms (1.02x). Network-dominated. ✅
 
 ### Correctness
 - `git verify-pack` passes on ziggit-produced .idx files ✅
-- Pack + idx files generated correctly ✅
+- `git fsck --no-dangling` clean on all cloned repos ✅
+- Object counts match exactly (1237 objects for sindresorhus/is, 33335 for express) ✅
 - Refs written to packed-refs ✅
 - HEAD resolves correctly ✅
 
@@ -48,13 +58,14 @@ This is critical for bun's integration because `findCommit` is called for every 
 
 ## Benchmark History
 
-| Date       | Ziggit Commit | Change                                  | sindresorhus/is avg | Notes |
-|------------|---------------|-----------------------------------------|---------------------|-------|
-| 2026-03-26 | f62586b       | packed-refs fix for bare repos          | 193ms (git: 192ms)  | Parity; findCommit now 100x faster |
-| 2026-03-26 | 6f37261       | Single-pass with eager LRU caching      | 196ms (git: 198ms)  | True parity, consistent |
-| 2026-03-26 | b49999c       | Two-pass with DeltaCache                | 300ms               | 1.01x |
-| 2026-03-26 | eeba670       | Single-pass architecture                | 194ms               | ~1.0x |
-| Earlier    | (pre-rewrite) | Original multi-pass                     | ~4x slower          | ~4x   |
+| Date       | Ziggit Commit | Change                                  | sindresorhus/is avg | express avg | Notes |
+|------------|---------------|-----------------------------------------|---------------------|-------------|-------|
+| 2026-03-26 | 6f37261 (run4)| Re-benchmark (latest idx_writer)        | 185ms (git: 185ms)  | 951ms (git: 936ms) | Dead parity |
+| 2026-03-26 | 6f37261 (run3)| Single-pass with eager LRU caching      | 199ms (git: 200ms)  | — | Parity |
+| 2026-03-26 | f62586b       | packed-refs fix for bare repos          | 193ms (git: 192ms)  | — | findCommit now 100x faster |
+| 2026-03-26 | b49999c       | Two-pass with DeltaCache                | 300ms               | — | 1.01x |
+| 2026-03-26 | eeba670       | Single-pass architecture                | 194ms               | — | ~1.0x |
+| Earlier    | (pre-rewrite) | Original multi-pass                     | ~4x slower          | — | ~4x   |
 
 *Note: Absolute times vary by network conditions; the ratio is what matters. These are network-dominated benchmarks — ziggit's advantage shows in local operations (findCommit is ~100x faster than spawning git CLI).*
 

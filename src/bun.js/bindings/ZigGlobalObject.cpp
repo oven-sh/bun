@@ -616,13 +616,12 @@ JSC_DEFINE_HOST_FUNCTION(functionFulfillModuleSync,
 extern "C" void* Zig__GlobalObject__getModuleRegistryMap(JSC::JSGlobalObject* arg0)
 {
     if (JSC::JSObject* loader = JSC::jsDynamicCast<JSC::JSObject*>(arg0->moduleLoader())) {
-        JSC::JSMap* map = JSC::jsDynamicCast<JSC::JSMap*>(
-            loader->getDirect(arg0->vm(), JSC::Identifier::fromString(arg0->vm(), "registry"_s)));
-
-        JSC::JSMap* cloned = map->clone(arg0, arg0->vm(), arg0->mapStructure());
-        JSC::gcProtect(cloned);
-
-        return cloned;
+        if (JSC::JSMap* map = JSC::jsDynamicCast<JSC::JSMap*>(
+                loader->getDirect(arg0->vm(), JSC::Identifier::fromString(arg0->vm(), "registry"_s)))) {
+            JSC::JSMap* cloned = map->clone(arg0, arg0->vm(), arg0->mapStructure());
+            JSC::gcProtect(cloned);
+            return cloned;
+        }
     }
 
     return nullptr;
@@ -2182,25 +2181,11 @@ void GlobalObject::finishCreation(VM& vm)
         [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSMap>::Initializer& init) {
             auto* global = init.owner;
             auto& vm = init.vm;
-            auto scope = DECLARE_THROW_SCOPE(vm);
-
-            // if we get the termination exception, we'd still like to set a non-null Map so that
-            // we don't segfault
-            auto setEmpty = [&]() {
-                ASSERT(scope.exception());
-                init.set(JSC::JSMap::create(init.vm, init.owner->mapStructure()));
-            };
 
             JSMap* registry = nullptr;
-            auto loaderValue = global->getIfPropertyExists(global, JSC::Identifier::fromString(vm, "Loader"_s));
-            scope.assertNoExceptionExceptTermination();
-            RETURN_IF_EXCEPTION(scope, setEmpty());
-            if (loaderValue) {
-                auto registryValue = loaderValue.getObject()->getIfPropertyExists(global, JSC::Identifier::fromString(vm, "registry"_s));
-                scope.assertNoExceptionExceptTermination();
-                RETURN_IF_EXCEPTION(scope, setEmpty());
-                if (registryValue) {
-                    registry = jsCast<JSC::JSMap*>(registryValue);
+            if (auto* loader = global->moduleLoader()) {
+                if (auto registryValue = loader->getDirect(vm, JSC::Identifier::fromString(vm, "registry"_s))) {
+                    registry = jsDynamicCast<JSC::JSMap*>(registryValue);
                 }
             }
 
@@ -3069,14 +3054,18 @@ void GlobalObject::reload()
 {
     JSModuleLoader* moduleLoader = this->moduleLoader();
     auto& vm = this->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSC::JSMap* registry = jsCast<JSC::JSMap*>(moduleLoader->get(this, Identifier::fromString(vm, "registry"_s)));
-    RETURN_IF_EXCEPTION(scope, );
 
-    registry->clear(this);
-    RETURN_IF_EXCEPTION(scope, );
-    this->requireMap()->clear(this);
-    RETURN_IF_EXCEPTION(scope, );
+    if (JSC::JSMap* registry = jsDynamicCast<JSC::JSMap*>(moduleLoader->getDirect(vm, Identifier::fromString(vm, "registry"_s)))) {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        registry->clear(this);
+        RETURN_IF_EXCEPTION(scope, );
+    }
+
+    {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        this->requireMap()->clear(this);
+        RETURN_IF_EXCEPTION(scope, );
+    }
 
     // If we run the GC every time, we will never get the SourceProvider cache hit.
     // So we run the GC every other time.

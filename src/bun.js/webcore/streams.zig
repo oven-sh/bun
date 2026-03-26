@@ -804,18 +804,6 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
                 this.has_backpressure = false;
             } else {
                 this.has_backpressure = res.write(buf) == .backpressure;
-                // Also detect backpressure when the socket has
-                // accumulated data in its internal send buffer.
-                // uWS may accept data even under TCP backpressure,
-                // so we check the actual buffered amount.
-                if (!this.has_backpressure) {
-                    this.has_backpressure = res.getBufferedAmount() > 1024 * 1024;
-                }
-                // Register onWritable so the drain event resolves
-                // any pending flush promise created by flushFromJS.
-                if (this.has_backpressure) {
-                    res.onWritable(*@This(), onWritable, this);
-                }
             }
             this.handleWrote(buf.len);
             return true;
@@ -841,11 +829,23 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
                 this.finalize();
                 return false;
             }
+
+            // Buffer is empty — data was sent to uWS directly via the
+            // fast path in write(). Resolve any pending flush promise
+            // so the JS consumer can resume reading.
+            if (this.buffer.len == 0) {
+                this.flushPromise() catch {};
+                if (this.done) {
+                    this.signal.close(null);
+                    this.finalize();
+                }
+                return true;
+            }
+
             var total_written: u64 = 0;
 
             // do not write more than available
             // if we do, it will cause this to be delayed until the next call, each time
-            // TODO: should we break it in smaller chunks?
             const to_write = @min(@as(Blob.SizeType, @truncate(write_offset)), @as(Blob.SizeType, this.buffer.len - 1));
             const chunk = this.readableSlice()[to_write..];
             // if we have nothing to write, we are done
@@ -967,8 +967,24 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
                 return .{ .result = prom.toJS() };
             }
 
-            if (this.buffer.len == 0 or this.done) {
+            if (this.done) {
                 return .{ .result = jsc.JSPromise.resolvedPromiseValue(globalThis, JSValue.jsNumberFromInt32(0)) };
+            }
+
+            if (this.buffer.len == 0) {
+                if (!this.has_backpressure) {
+                    return .{ .result = jsc.JSPromise.resolvedPromiseValue(globalThis, JSValue.jsNumberFromInt32(0)) };
+                }
+                // Data was already sent to uWS but the socket has
+                // backpressure. The onWritable callback is registered
+                // by sendWithoutAutoFlusher and will resolve this
+                // promise when the socket drains.
+                this.wrote_at_start_of_flush = this.wrote;
+                this.pending_flush = jsc.JSPromise.create(globalThis);
+                this.globalThis = globalThis;
+                var promise_value = this.pending_flush.?.toJS();
+                promise_value.protect();
+                return .{ .result = promise_value };
             }
 
             if (!this.hasBackpressureAndIsTryEnd()) {
@@ -1220,7 +1236,6 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             log("onAborted()", .{});
             this.done = true;
             this.res = null;
-            this.has_backpressure = false;
             this.unregisterAutoFlusher();
 
             this.aborted = true;

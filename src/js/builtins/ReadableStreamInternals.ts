@@ -912,11 +912,7 @@ export async function readStreamIntoSink(stream: ReadableStream, sink, isNative)
     }
 
     for (var i = 0, values = many.value, length = many.value.length; i < length; i++) {
-      // Check backpressure on initial batch too — a pre-buffered
-      // stream can deliver many chunks synchronously via readMany().
-      if (sink.write(values[i]) === false) {
-        await sink.flush(true);
-      }
+      sink.write(values[i]);
     }
 
     var streamState = $getByIdDirectPrivate(stream, "state");
@@ -932,13 +928,7 @@ export async function readStreamIntoSink(stream: ReadableStream, sink, isNative)
         return sink.end();
       }
 
-      // write() returns false when the underlying socket has
-      // backpressure. Yield to the event loop so the socket can
-      // drain before reading the next chunk. This prevents
-      // unbounded memory growth when the consumer is slow.
-      if (sink.write(value) === false) {
-        await sink.flush(true);
-      }
+      sink.write(value);
     }
   } catch (e) {
     didThrow = true;

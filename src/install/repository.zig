@@ -496,15 +496,18 @@ pub const Repository = extern struct {
     /// from generic errors so operators can diagnose issues from debug logs.
     fn logZiggitError(operation: []const u8, name: string, err: anyerror) void {
         const err_name = @errorName(err);
-        if (err == error.SshAuthFailed) {
-            debug("{s}: ziggit SSH auth failed for \"{s}\" (check SSH keys / GIT_SSH_COMMAND), falling back to git CLI", .{ operation, name });
+        // SSH authentication (key missing, agent down, auth rejected)
+        if (err == error.SshAuthFailed or err == error.SshKeyNotFound or err == error.SshAgentFailure) {
+            debug("{s}: ziggit SSH auth failed ({s}) for \"{s}\" (check SSH keys / GIT_SSH_COMMAND), falling back to git CLI", .{ operation, err_name, name });
         } else if (isNetworkError(err)) {
             debug("{s}: ziggit network error ({s}) for \"{s}\", falling back to git CLI", .{ operation, err_name, name });
-        } else if (err == error.NetworkRemoteNotSupported) {
+        } else if (err == error.NetworkRemoteNotSupported or err == error.UnsupportedUrlScheme) {
             debug("{s}: ziggit does not support this protocol for \"{s}\", falling back to git CLI", .{ operation, name });
         } else if (err == error.OutOfMemory) {
             debug("{s}: ziggit out of memory for \"{s}\", falling back to git CLI", .{ operation, name });
-        } else if (err == error.InvalidPackFile or err == error.CorruptedData or err == error.BadChecksum) {
+        } else if (err == error.InvalidPackFile or err == error.CorruptedData or err == error.BadChecksum or
+            err == error.ChecksumMismatch or err == error.CorruptObject)
+        {
             debug("{s}: ziggit data integrity error ({s}) for \"{s}\", falling back to git CLI", .{ operation, err_name, name });
         } else {
             debug("{s}: ziggit failed ({s}) for \"{s}\", falling back to git CLI", .{ operation, err_name, name });
@@ -520,7 +523,10 @@ pub const Repository = extern struct {
             err == error.HostUnreachable or
             err == error.NetworkUnreachable or
             err == error.UnknownHostName or
-            err == error.TlsError;
+            err == error.TemporaryNameResolutionFailure or
+            err == error.TlsError or
+            err == error.TlsFailure or
+            err == error.BrokenPipe;
     }
 
     pub fn download(
@@ -595,6 +601,8 @@ pub const Repository = extern struct {
                 }
                 var repo = ziggit.Repository.cloneBare(allocator, clone_url, target) catch |err| {
                     if (err == error.RepositoryNotFound) {
+                        // Definitive: repo doesn't exist on remote. No point falling back
+                        // to git CLI — it would get the same 404. Surface immediately.
                         debug("clone: ziggit reports repository not found for \"{s}\"", .{name});
                         if (attempt > 1) {
                             log.addErrorFmt(null, logger.Loc.Empty, allocator, "\"git clone\" for \"{s}\" failed", .{name}) catch unreachable;
@@ -638,6 +646,8 @@ pub const Repository = extern struct {
             bun.fmt.hexIntLower(task_id.get()),
         })}, .auto);
 
+        // repo_dir is kept in the signature for API compatibility; we resolve
+        // the path from task_id + cache_directory_path instead.
         _ = repo_dir;
 
         // Use ziggit for ~50x faster commit resolution (no process spawn overhead)

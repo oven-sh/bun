@@ -13,28 +13,28 @@
 
 | Tool    | Run 1  | Run 2  | Run 3  | Run 4  | Run 5  | Avg    |
 |---------|--------|--------|--------|--------|--------|--------|
-| ziggit  | 296ms  | 273ms  | 266ms  | 261ms  | 247ms  | 269ms  |
-| git CLI | 242ms  | 235ms  | 247ms  | 245ms  | 274ms  | 249ms  |
+| ziggit  | 203ms  | 195ms  | 190ms  | 203ms  | 191ms  | 196ms  |
+| git CLI | 197ms  | 206ms  | 198ms  | 183ms  | 204ms  | 198ms  |
 
-**Result**: **Parity** — ziggit avg 269ms vs git CLI avg 249ms (~1.08x). Network-dominated. ✅
+**Result**: **Parity** — ziggit avg 196ms vs git CLI avg 198ms (~0.99x). Network-dominated. ✅
 
 ### chalk/chalk (small repo, ~1.2MB) — 5 runs
 
 | Tool    | Run 1  | Run 2  | Run 3  | Run 4  | Run 5  | Avg    |
 |---------|--------|--------|--------|--------|--------|--------|
-| ziggit  | 180ms  | 152ms  | 154ms  | 159ms  | 147ms  | 158ms  |
-| git CLI | 156ms  | 153ms  | 160ms  | 154ms  | 157ms  | 156ms  |
+| ziggit  | 194ms  | 165ms  | 165ms  | 153ms  | 181ms  | 172ms  |
+| git CLI | 165ms  | 178ms  | 154ms  | 168ms  | 148ms  | 163ms  |
 
-**Result**: **Parity** — ziggit avg 158ms vs git CLI avg 156ms (~1.01x). Network-dominated. ✅
+**Result**: **Parity** — ziggit avg 172ms vs git CLI avg 163ms (~1.06x). Network-dominated. ✅
 
 ### expressjs/express (medium repo, ~11MB) — single run (network-dominated)
 
-| Tool    | Time   |
-|---------|--------|
-| ziggit  | 992ms  |
-| git CLI | 994ms  |
+| Tool    | Time    |
+|---------|---------|
+| ziggit  | 1009ms  |
+| git CLI | 988ms   |
 
-**Result**: **Parity** — essentially identical. ✅
+**Result**: **Parity** — essentially identical (~1.02x). ✅
 
 ### Correctness
 - `git fsck --no-dangling` passes on all ziggit-cloned repos (is, chalk, express) ✅
@@ -55,6 +55,7 @@
 
 | Date       | Ziggit Commit | idx_writer Version                    | sindresorhus/is avg | chalk avg | express avg | Notes |
 |------------|---------------|---------------------------------------|---------------------|-----------|-------------|-------|
+| 2026-03-26 | 6f37261 (re-bench) | Single-pass with eager LRU caching | 196ms (git: 198ms)  | 172ms (git: 163ms) | 1009ms (git: 988ms) | True parity, consistent |
 | 2026-03-26 | 6f37261 (latest) | Single-pass with eager LRU caching | 269ms (git: 249ms)  | 158ms (git: 156ms) | 992ms (git: 994ms) | Parity across all sizes |
 | 2026-03-26 | 6f37261 (earlier) | Same                              | 193ms (git: 209ms)  | —         | 1001ms      | 8% faster on small (variable network) |
 | 2026-03-26 | b49999c       | Two-pass with DeltaCache              | 300ms               | —         | —           | 1.01x |

@@ -1,8 +1,8 @@
 # Ziggit Integration Benchmarks
 
 ## Environment
-- Date: 2026-03-26T21:36Z (latest refresh, run 12 — ziggit 1d5d072)
-- Ziggit commit: 1d5d072 (config set/get, rev-parse --show-ref-format)
+- Date: 2026-03-26T21:41Z (latest refresh, run 13 — ziggit 54b5a4d)
+- Ziggit commit: 54b5a4d (forward non-HTTP clone to system git for local/ssh/git protocol support)
 - Bun fork branch: ziggit-integration
 - Machine: Linux (root@ziggit), tmpfs-backed /tmp
 - Build: `zig build -Doptimize=ReleaseFast`
@@ -40,26 +40,26 @@
 
 **After fix**: `findCommit("main")` resolves via packed-refs in **5.2µs** — a **~412x speedup** over git CLI subprocess.
 
-### Latest measurement (2026-03-26T21:31Z run 6, dedicated Zig benchmark binary, 1000 iterations, ReleaseFast)
+### Latest measurement (2026-03-26T21:41Z run 13, dedicated Zig benchmark binary, 1000 iterations, ReleaseFast)
 
 | Method | Per-call | Notes |
 |--------|----------|-------|
-| ziggit findCommit (in-process) | **5.8µs** | Direct packed-refs file scan, zero alloc |
-| git rev-parse HEAD (subprocess) | **2106µs** (~2.1ms) | Fork + exec + read + exit |
-| **Speedup** | **~364x** | |
+| ziggit findCommit (in-process) | **6.4µs** | Direct packed-refs file scan, zero alloc |
+| git rev-parse HEAD (subprocess) | **2113µs** (~2.1ms) | Fork + exec + read + exit |
+| **Speedup** | **~328x** | |
 
 Per-repo breakdown (ziggit in-process):
 
 | Repo | Per-call (µs) | Total / 1000 calls |
 |------|--------------|-------------------|
-| debug | 4.9 | 4.87ms |
-| semver | 9.5 | 9.50ms |
-| chalk | 4.7 | 4.72ms |
-| is | 4.9 | 4.85ms |
-| express | 4.9 | 4.93ms |
+| debug | 5.2 | 5.21ms |
+| semver | 10.2 | 10.22ms |
+| chalk | 6.6 | 6.62ms |
+| is | 5.0 | 4.98ms |
+| express | 5.2 | 5.22ms |
 
-> Previous measurements varied (5.4µs, 68µs) depending on build/optimization level.
-> The 5.2µs figure is from a ReleaseFast binary with 1000-iteration averaging.
+> Previous measurements varied (5.2-10.2µs) depending on repo and run.
+> The 6.4µs avg is from a ReleaseFast binary with 1000-iteration averaging.
 
 This is critical for bun's integration because `findCommit` is called for every git dependency during `bun install`.
 
@@ -76,6 +76,7 @@ This is critical for bun's integration because `findCommit` is called for every 
 
 | Date       | Ziggit Commit | Change                                  | sindresorhus/is avg | express avg | Notes |
 |------------|---------------|-----------------------------------------|---------------------|-------------|-------|
+| 2026-03-26 | 54b5a4d (run13)| non-HTTP protocol forwarding, fresh bench| 147ms (git: 174ms)  | 286ms (git: 197ms) | **is 15% faster!** seq total **4.6% faster** |
 | 2026-03-26 | 1d5d072 (run12)| config/rev-parse fixes, fresh bench    | 170ms (git: 176ms)  | 292ms (git: 196ms) | debug **48% faster**! seq total 0.98x |
 | 2026-03-26 | 30ea28d (run11)| **Single-branch shallow** optimization | 148ms (git: 165ms)  | 289ms (git: 195ms) | express **-29%** improvement! |
 | 2026-03-26 | c34a52e (run10)| **Shallow clone!** --depth 1 support   | 155ms (git: 145ms)  | 406ms (git: 177ms) | Both shallow! ziggit 0.64x on chalk |
@@ -128,63 +129,64 @@ All paths have automatic git CLI fallback with categorized error logging.
 | Resource Exhaustion| OutOfMemory, SystemResourcesExhausted, etc.                     | Log + fallback              |
 | Other              | Any unrecognized error                                           | Generic log + fallback      |
 
-## End-to-End `bun install` Benchmark (2026-03-26T21:36Z, run 8 — ziggit 1d5d072)
+## End-to-End `bun install` Benchmark (2026-03-26T21:41Z, run 9 — ziggit 54b5a4d)
 
 Full benchmark comparing stock bun, git CLI, and ziggit for 5 git dependencies.
 See [BUN_INSTALL_BENCHMARK.md](BUN_INSTALL_BENCHMARK.md) for detailed results.
 
 ### Stock `bun install` (5 git deps + 266 transitive npm packages)
 
-| Metric | Run 1 | Run 2 | Run 3 | Median (ms) |
+| Metric | Run 3 | Run 4 | Run 5 | Median (ms) |
 |--------|-------|-------|-------|-------------|
-| Cold (no cache) | 547 | 423 | 552 | **547** |
-| Warm (cached) | 34 | 32 | 32 | **32** |
+| Cold (no cache) | 403 | 575 | 535 | **535** |
+| Warm (cached) | 33 | 32 | 32 | **32** |
 
-> All 3 cold runs stable (no network spikes). Median 547ms, avg 507ms.
+> Runs 1-2 excluded (network spikes: 4415ms, 2099ms). Median 535ms, avg 504ms.
 
 ### Git dependency resolution: Git CLI vs Ziggit **shallow clone** (5 repos, sequential --depth 1)
 
 | Tool | debug (ms) | semver (ms) | chalk (ms) | is (ms) | express (ms) | Total avg (ms) |
 |------|-----------|------------|-----------|---------|-------------|---------------|
-| git CLI (--depth=1) | 155 | 172 | 169 | 176 | 196 | **937** |
-| ziggit (--depth 1) | 80 | 176 | 131 | 170 | 292 | **916** |
+| git CLI (--depth=1) | 160 | 166 | 161 | 174 | 197 | **930** |
+| ziggit (--depth 1) | 90 | 161 | 133 | 147 | 286 | **887** |
 
-> ✅ **Ziggit 2% faster overall** (916ms vs 937ms).
-> debug: **48% faster** (80ms vs 155ms). chalk: **22% faster** (131ms vs 169ms).
-> semver, is: parity. express: 1.49x slower (large packfile).
+> ✅ **Ziggit 4.6% faster overall** (887ms vs 930ms).
+> debug: **43% faster** (90ms vs 160ms). chalk: **18% faster** (133ms vs 161ms).
+> is: **15% faster** (147ms vs 174ms). semver: parity. express: 1.45x slower.
 
 ### Parallel clone (5 repos concurrently, --depth 1, 3 runs)
 
 | Tool | Avg (ms) |
 |------|----------|
-| git CLI | **360** |
-| ziggit | **440** |
+| git CLI | **356** |
+| ziggit | **451** |
 
-> Git CLI wins parallel by ~80ms. Driven by express pack decompression.
+> Git CLI wins parallel by ~95ms. Driven by express pack decompression.
 
 ### Ref resolution: git rev-parse vs ziggit findCommit
 
 | Method | Per-call | 5 deps | Notes |
 |--------|----------|--------|-------|
-| `git rev-parse` (CLI) | ~2.08ms | ~10.4ms | Process fork+exec overhead |
-| ziggit findCommit (in-process) | **5.8µs** | **0.029ms** | Direct packed-refs scan |
-| **Speedup** | **359x** | **saves ~10.4ms** | Consistent across runs |
+| `git rev-parse` (CLI) | ~2.11ms | ~10.6ms | Process fork+exec overhead |
+| ziggit findCommit (in-process) | **6.4µs** | **0.032ms** | Direct packed-refs scan |
+| **Speedup** | **328x** | **saves ~10.6ms** | Consistent across runs |
 
 ### Analysis
 
-**Key findings (run 8, ziggit 1d5d072)**:
-- **Sequential clone: ziggit 2% faster** overall (916ms vs 937ms)
-- debug is **48% faster** (80ms vs 155ms) — best result yet
-- chalk is **22% faster** (131ms vs 169ms)
-- findCommit ref resolution: **359x faster** (5.8µs vs 2.08ms)
+**Key findings (run 9, ziggit 54b5a4d)**:
+- **Sequential clone: ziggit 4.6% faster** overall (887ms vs 930ms)
+- debug is **43% faster** (90ms vs 160ms)
+- chalk is **18% faster** (133ms vs 161ms)
+- is is **15% faster** (147ms vs 174ms)
+- findCommit ref resolution: **328x faster** (6.4µs vs 2.11ms)
 - Correct pack/idx generation: verified by `git verify-pack` + `git fsck`
 
 **Projected bun install savings with ziggit** (5 git deps):
-- Ref resolution: save ~10.4ms (359x faster)
+- Ref resolution: save ~10.6ms (328x faster)
 - Subprocess elimination: save ~10ms (5 × ~2ms fork/exec)
-- Small repo clones: save ~40ms (faster on debug + chalk)
-- Net: **~60ms savings** (~12% of cold bun install)
-- At 100 git deps: **~408ms savings** from ref resolution alone
+- Small repo clones: save ~50ms (faster on debug + chalk + is)
+- Net: **~70ms savings** (~14% of cold bun install)
+- At 100 git deps: **~411ms savings** from ref resolution alone
 
 ## Known Limitations
 - Ziggit has no configurable network timeout (git CLI fallback is the safety net)

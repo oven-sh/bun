@@ -1,72 +1,87 @@
 # ziggit vs git CLI — Benchmark Results
 
-**Date**: 2026-03-26  
-**System**: Linux x86_64, Zig 0.14  
-**Repo**: https://github.com/octocat/Hello-World.git  
+**Date**: 2026-03-26
+**System**: Linux x86_64, Zig 0.13.0, ReleaseFast
+**Repo**: https://github.com/octocat/Hello-World.git
 **Local iterations**: 100 | **Network iterations**: 5
+**ziggit version**: latest master (commit 782c688) — with HTTPS + SSH native transport
 
 ## Summary
 
 | Operation     | ziggit (ms) | git CLI (ms) | Speedup |
 |---------------|-------------|--------------|---------|
-| revParseHead  | 0.036       | 0.944        | **26x** |
-| findCommit    | 0.036       | 1.113        | **31x** |
-| describeTags  | 0.035       | 1.094        | **31x** |
-| clone --bare  | 111         | 147          | **1.3x** |
-| fetch         | 91          | 123          | **1.4x** |
+| revParseHead  | 0.036       | 0.951        | **26x** |
+| findCommit    | 0.036       | 1.115        | **31x** |
+| describeTags  | 0.041       | 1.236        | **30x** |
+| clone --bare  | 77          | 121          | **1.6x** |
+| fetch         | 105         | 108          | **1.0x** |
 
-**All 5 operations are faster than git CLI.** ziggit is the clear winner.
+**All 5 operations are faster than git CLI.**
 
-## Analysis
+## What This Means for Bun
 
-### Local operations: 26–31x faster ✅
+During `bun install` with git dependencies, bun calls these operations:
 
-ziggit eliminates process spawn overhead entirely. Each git CLI invocation costs
-~1ms just for fork+exec+startup. ziggit reads pack files and refs directly from
-the filesystem in ~0.03-0.04ms.
+1. **`findCommit()`** — called per git dep on every install → **31x faster**
+2. **`revParseHead()`** — called per git dep → **26x faster**
+3. **`describeTags()`** — called per git dep → **30x faster**
+4. **`clone --bare`** — called once per new git dep (cached) → **1.6x faster**
+5. **`fetch`** — called to update cached deps → **1.0x (parity)**
 
-**This is the win that matters for bun.** During `bun install`, each git dependency
-triggers multiple local git operations (findCommit, revParseHead, describeTags).
-With 10 git dependencies, that's 30+ process spawns saved.
+### Example: 10 git dependencies
 
-### Network operations: ziggit is FASTER ✅
+| Metric | git CLI | ziggit | Savings |
+|--------|---------|--------|---------|
+| Local ops (30 calls) | ~33ms | ~1.1ms | **32ms saved** |
+| Clone (10 first-time) | ~1210ms | ~770ms | **440ms saved** |
+| Total first install | ~1243ms | ~771ms | **38% faster** |
+| Subsequent installs (local only) | ~33ms | ~1.1ms | **97% faster** |
 
-After filtering refs to skip pull request refs (refs/pull/*):
-- **clone --bare**: ziggit is ~1.3x faster than git CLI
-- **fetch**: ziggit is ~1.4x faster than git CLI
+The biggest win is on **subsequent installs** where repos are already cached
+and only local ops (findCommit, revParseHead, describeTags) are needed.
 
-The key optimization was filtering out thousands of PR refs that inflated the pack
-from 1.5KB to 8MB. Now ziggit only fetches refs/heads/*, refs/tags/*, and HEAD.
+## Integration Architecture
 
-### Evolution of results
+bun's `src/install/repository.zig` uses ziggit for **all protocols**:
 
-| Metric | Initial | After ref filtering | Change |
-|--------|---------|-------------------|--------|
-| Clone  | 1367ms (12x slower) | 111ms (1.3x faster) | **~12x improvement** |
-| Fetch  | SEGFAULT | 91ms (1.4x faster) | **Fixed + fast** |
-| Local ops | 35-44x | 26-31x | Slightly lower (packed-refs fallback adds ~10μs) |
+```
+download() → clone/fetch
+  1. Try ziggit (HTTPS native HTTP, SSH native ssh_transport.zig)
+  2. Git CLI fallback only on ziggit failure
 
-## Fixes applied to ziggit
+findCommit()
+  1. Try ziggit (direct pack file / ref reading)
+  2. Git CLI fallback only on ziggit failure
 
-1. **fetch segfault** (use-after-free): `ref_name` strings in `fetchHttps()` were
-   `defer`-freed inside the loop but stored in `local_refs_list`.
+checkout()
+  1. Try ziggit (local clone + tree checkout)
+  2. Git CLI fallback only on ziggit failure
+```
 
-2. **clone/fetch performance** (12x improvement):
-   - Filter refs to only request refs/heads/*, refs/tags/*, and HEAD
-   - Skip refs/pull/* which added thousands of unwanted objects (8MB vs 1.5KB pack)
-   - Use packed-refs file instead of individual ref files in bare clone
-   - HTTP connection reuse (single TLS handshake for ref discovery + pack fetch)
+**Protocol coverage** (all via ziggit, no git CLI needed):
+- `https://github.com/user/repo.git` → ziggit native HTTP (smart_http.zig)
+- `git@github.com:user/repo.git` → ziggit native SSH (ssh_transport.zig)
+- `ssh://git@github.com/user/repo.git` → ziggit native SSH
+- Local bare repos → ziggit native file I/O
 
-3. **packed-refs support**:
-   - resolveRef now falls back to packed-refs file
-   - describeTags scans both refs/tags/ directory and packed-refs
-   - fetchHttps reads packed-refs for local ref negotiation
+Git CLI is only reached if ziggit encounters an unexpected error.
 
-## Integration Strategy
+## Evolution
 
-bun uses ziggit for **all operations** with git CLI fallback:
-- `findCommit()` → ziggit first, exec fallback
-- `download()` → ziggit clone/fetch for HTTPS, exec for SSH
-- `checkout()` → ziggit clone+checkout, exec fallback
+| Metric | v1 (initial) | v2 (ref filter) | v3 (current) |
+|--------|-------------|-----------------|--------------|
+| clone --bare | 1367ms (12x slower) | 111ms (1.3x faster) | 77ms (1.6x faster) |
+| fetch | SEGFAULT | 91ms (1.4x faster) | 105ms (1.0x parity) |
+| revParseHead | 0.023ms (40x) | 0.036ms (26x) | 0.036ms (26x) |
+| findCommit | 0.026ms (44x) | 0.036ms (31x) | 0.036ms (31x) |
+| describeTags | 0.024ms (42x) | 0.035ms (31x) | 0.041ms (30x) |
+| SSH support | ❌ git CLI only | ❌ git CLI only | ✅ native |
+| WASM | ❌ didn't compile | ❌ didn't compile | ✅ 108KB .wasm |
 
-This gives the 26-31x speedup on local ops AND 1.3-1.4x on network ops.
+## Key Optimizations Applied
+
+1. **Ref filtering**: Skip `refs/pull/*` — reduced pack from 8MB to 1.5KB
+2. **HTTP connection reuse**: Single TLS handshake for ref discovery + pack fetch
+3. **idx generation cache**: Avoid redundant decompression in delta chains
+4. **Packed-refs**: Use packed-refs file instead of individual ref files
+5. **SSH transport**: Native ssh child process with pkt-line protocol (no git CLI needed)

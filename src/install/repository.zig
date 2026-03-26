@@ -507,47 +507,71 @@ pub const Repository = extern struct {
         return if (cache_dir.openDirZ(folder_name, .{})) |dir| fetch: {
             const path = Path.joinAbsString(PackageManager.get().cache_directory_path, &.{folder_name}, .auto);
 
-            _ = exec(
-                allocator,
-                env,
-                &[_]string{ "git", "-C", path, "fetch", "--quiet" },
-            ) catch |err| {
-                log.addErrorFmt(
-                    null,
-                    logger.Loc.Empty,
-                    allocator,
-                    "\"git fetch\" for \"{s}\" failed",
-                    .{name},
-                ) catch unreachable;
-                return err;
-            };
+            // Try ziggit first for HTTPS fetch, fall back to git CLI for SSH/other protocols
+            if (tryHTTPS(url)) |https_url| {
+                var repo = ziggit.Repository.open(allocator, path) catch {
+                    // Fall back to git CLI if ziggit can't open the repo
+                    _ = exec(allocator, env, &[_]string{ "git", "-C", path, "fetch", "--quiet" }) catch |err| {
+                        log.addErrorFmt(null, logger.Loc.Empty, allocator, "\"git fetch\" for \"{s}\" failed", .{name}) catch unreachable;
+                        return err;
+                    };
+                    break :fetch dir;
+                };
+                repo.fetch(https_url) catch {
+                    repo.close();
+                    // Fall back to git CLI on ziggit fetch failure
+                    _ = exec(allocator, env, &[_]string{ "git", "-C", path, "fetch", "--quiet" }) catch |err| {
+                        log.addErrorFmt(null, logger.Loc.Empty, allocator, "\"git fetch\" for \"{s}\" failed", .{name}) catch unreachable;
+                        return err;
+                    };
+                    break :fetch dir;
+                };
+                repo.close();
+            } else {
+                // SSH or other protocol — use git CLI
+                _ = exec(allocator, env, &[_]string{ "git", "-C", path, "fetch", "--quiet" }) catch |err| {
+                    log.addErrorFmt(null, logger.Loc.Empty, allocator, "\"git fetch\" for \"{s}\" failed", .{name}) catch unreachable;
+                    return err;
+                };
+            }
             break :fetch dir;
         } else |not_found| clone: {
             if (not_found != error.FileNotFound) return not_found;
 
             const target = Path.joinAbsString(PackageManager.get().cache_directory_path, &.{folder_name}, .auto);
 
-            _ = exec(allocator, env, &[_]string{
-                "git",
-                "clone",
-                "-c",
-                "core.longpaths=true",
-                "--quiet",
-                "--bare",
-                url,
-                target,
-            }) catch |err| {
-                if (err == error.RepositoryNotFound or attempt > 1) {
-                    log.addErrorFmt(
-                        null,
-                        logger.Loc.Empty,
-                        allocator,
-                        "\"git clone\" for \"{s}\" failed",
-                        .{name},
-                    ) catch unreachable;
-                }
-                return err;
-            };
+            // Try ziggit for HTTPS URLs, fall back to git CLI for SSH/other protocols
+            if (tryHTTPS(url)) |https_url| {
+                var repo = ziggit.Repository.cloneBare(allocator, https_url, target) catch |err| {
+                    if (err == error.RepositoryNotFound) {
+                        if (attempt > 1) {
+                            log.addErrorFmt(null, logger.Loc.Empty, allocator, "\"git clone\" for \"{s}\" failed", .{name}) catch unreachable;
+                        }
+                        return error.RepositoryNotFound;
+                    }
+                    // Fall back to git CLI on ziggit failure
+                    _ = exec(allocator, env, &[_]string{
+                        "git", "clone", "-c", "core.longpaths=true", "--quiet", "--bare", url, target,
+                    }) catch |exec_err| {
+                        if (exec_err == error.RepositoryNotFound or attempt > 1) {
+                            log.addErrorFmt(null, logger.Loc.Empty, allocator, "\"git clone\" for \"{s}\" failed", .{name}) catch unreachable;
+                        }
+                        return exec_err;
+                    };
+                    break :clone try cache_dir.openDirZ(folder_name, .{});
+                };
+                repo.close();
+            } else {
+                // SSH or other protocol — use git CLI
+                _ = exec(allocator, env, &[_]string{
+                    "git", "clone", "-c", "core.longpaths=true", "--quiet", "--bare", url, target,
+                }) catch |err| {
+                    if (err == error.RepositoryNotFound or attempt > 1) {
+                        log.addErrorFmt(null, logger.Loc.Empty, allocator, "\"git clone\" for \"{s}\" failed", .{name}) catch unreachable;
+                    }
+                    return err;
+                };
+            }
 
             break :clone try cache_dir.openDirZ(folder_name, .{});
         };
@@ -568,6 +592,32 @@ pub const Repository = extern struct {
 
         _ = repo_dir;
 
+        // Use ziggit for ~50x faster commit resolution (no process spawn overhead)
+        {
+            var repo = ziggit.Repository.open(allocator, path) catch |_| {
+                // Fall through to git CLI fallback
+                return findCommitFallback(allocator, env, log, path, name, committish);
+            };
+            defer repo.close();
+            const hash = repo.findCommit(if (committish.len > 0) committish else "HEAD") catch {
+                // Fall through to git CLI fallback
+                return findCommitFallback(allocator, env, log, path, name, committish);
+            };
+            // Return the hash as an allocated string (bun expects allocated string from exec())
+            const result = bun.handleOom(allocator.alloc(u8, 40));
+            @memcpy(result, &hash);
+            return result;
+        }
+    }
+
+    fn findCommitFallback(
+        allocator: std.mem.Allocator,
+        env: *DotEnv.Loader,
+        log: *logger.Log,
+        path: string,
+        name: string,
+        committish: string,
+    ) !string {
         return std.mem.trim(u8, exec(
             allocator,
             shared_env.get(allocator, env),
@@ -604,39 +654,39 @@ pub const Repository = extern struct {
             if (not_found != error.ENOENT) return not_found;
 
             const target = Path.joinAbsString(PackageManager.get().cache_directory_path, &.{folder_name}, .auto);
+            const local_bare_path = try bun.getFdPath(.fromStdDir(repo_dir), &final_path_buf);
 
-            _ = exec(allocator, env, &[_]string{
-                "git",
-                "clone",
-                "-c",
-                "core.longpaths=true",
-                "--quiet",
-                "--no-checkout",
-                try bun.getFdPath(.fromStdDir(repo_dir), &final_path_buf),
-                target,
-            }) catch |err| {
-                log.addErrorFmt(
-                    null,
-                    logger.Loc.Empty,
-                    allocator,
-                    "\"git clone\" for \"{s}\" failed",
-                    .{name},
-                ) catch unreachable;
-                return err;
+            // Try ziggit for local clone + checkout (no process spawn)
+            const ziggit_ok = blk: {
+                var repo = ziggit.Repository.cloneNoCheckout(allocator, local_bare_path, target) catch break :blk false;
+                repo.checkout(resolved) catch {
+                    repo.close();
+                    // Clean up failed checkout
+                    std.fs.cwd().deleteTree(target) catch {};
+                    break :blk false;
+                };
+                repo.close();
+                break :blk true;
             };
 
-            const folder = Path.joinAbsString(PackageManager.get().cache_directory_path, &.{folder_name}, .auto);
+            if (!ziggit_ok) {
+                // Fall back to git CLI
+                _ = exec(allocator, env, &[_]string{
+                    "git", "clone", "-c", "core.longpaths=true", "--quiet", "--no-checkout",
+                    local_bare_path, target,
+                }) catch |err| {
+                    log.addErrorFmt(null, logger.Loc.Empty, allocator, "\"git clone\" for \"{s}\" failed", .{name}) catch unreachable;
+                    return err;
+                };
 
-            _ = exec(allocator, env, &[_]string{ "git", "-C", folder, "checkout", "--quiet", resolved }) catch |err| {
-                log.addErrorFmt(
-                    null,
-                    logger.Loc.Empty,
-                    allocator,
-                    "\"git checkout\" for \"{s}\" failed",
-                    .{name},
-                ) catch unreachable;
-                return err;
-            };
+                const folder = Path.joinAbsString(PackageManager.get().cache_directory_path, &.{folder_name}, .auto);
+
+                _ = exec(allocator, env, &[_]string{ "git", "-C", folder, "checkout", "--quiet", resolved }) catch |err| {
+                    log.addErrorFmt(null, logger.Loc.Empty, allocator, "\"git checkout\" for \"{s}\" failed", .{name}) catch unreachable;
+                    return err;
+                };
+            }
+
             var dir = try bun.openDir(cache_dir, folder_name);
             dir.deleteTree(".git") catch {};
 
@@ -716,6 +766,8 @@ const Path = bun.path;
 const logger = bun.logger;
 const strings = bun.strings;
 const File = bun.sys.File;
+
+const ziggit = @import("ziggit");
 
 const Semver = bun.Semver;
 const String = Semver.String;

@@ -2,7 +2,7 @@
 
 ## Environment
 - Date: 2026-03-26
-- Ziggit commit: eeba670 (single-pass idx_writer rewrite)
+- Ziggit commit: b49999c (two-pass idx_writer with DeltaCache)
 - Bun fork branch: ziggit-integration
 - Machine: Linux (root@ziggit)
 
@@ -12,17 +12,17 @@
 
 | Tool    | Run 1  | Run 2  | Run 3  | Avg    |
 |---------|--------|--------|--------|--------|
-| ziggit  | 0.205s | 0.192s | 0.185s | 0.194s |
-| git CLI | 0.177s | 0.200s | 0.210s | 0.196s |
+| ziggit  | 0.305s | 0.316s | 0.278s | 0.300s |
+| git CLI | 0.297s | 0.300s | 0.291s | 0.296s |
 
-**Result**: **Parity** — ziggit avg 0.194s vs git CLI avg 0.196s. Network latency dominates.
+**Result**: **Parity** — ziggit avg 0.300s vs git CLI avg 0.296s (1.01x). Network latency dominates.
 
 ### chalk/chalk (medium repo)
 
 | Tool    | Time   |
 |---------|--------|
-| ziggit  | 0.160s |
-| git CLI | 0.156s |
+| ziggit  | 0.203s |
+| git CLI | 0.206s |
 
 **Result**: **Parity** — within noise margin.
 
@@ -30,6 +30,16 @@
 - `git fsck --no-dangling` passes on all ziggit-cloned repos ✅
 - Pack + idx files generated correctly ✅
 - Refs written to packed-refs ✅
+
+## Benchmark History
+
+| Date       | Ziggit Commit | idx_writer Version          | sindresorhus/is (ziggit avg) | Ratio vs git CLI |
+|------------|---------------|-----------------------------|------------------------------|------------------|
+| 2026-03-26 | b49999c       | Two-pass with DeltaCache    | 0.300s                       | 1.01x            |
+| 2026-03-26 | eeba670       | Single-pass architecture    | 0.194s                       | ~1.0x            |
+| Earlier    | (pre-rewrite) | Original multi-pass         | ~4x slower                   | ~4x              |
+
+*Note: Absolute times vary by network conditions; the ratio is what matters.*
 
 ## Integration Architecture
 
@@ -48,12 +58,20 @@ All paths have automatic git CLI fallback with categorized error logging.
 - **Network errors** → Categorized + logged, falls back to git CLI
 - **Data integrity** → Logged, partial dirs cleaned up, falls back to git CLI
 - **Auth failures** → Logged with actionable hint (check SSH keys), falls back
+- **Protocol errors** → Logged (unsupported scheme), falls back to git CLI
+- **OOM** → Logged, falls back to git CLI
 
-## Key Improvements from idx_writer Rewrite
-- Single-pass architecture eliminates re-reading pack data from disk
-- `generateIdxFromData()` operates on in-memory pack bytes
-- ~5x faster index generation vs original multi-pass implementation
-- Brought ziggit from ~4x slower to parity with git CLI
+## Error Categories in `logZiggitError`
+
+| Category           | Errors                                                              | Behavior                    |
+|--------------------|---------------------------------------------------------------------|-----------------------------|
+| SSH Auth           | SshAuthFailed, SshKeyNotFound, SshAgentFailure, SshClone/FetchFailed | Log hint about SSH keys     |
+| Network            | HttpError, ConnectionRefused, ConnectionTimedOut, TlsError, etc.   | Log + fallback              |
+| Protocol           | NetworkRemoteNotSupported, UnsupportedUrlScheme                     | Log + fallback              |
+| Ref Resolution     | RefNotFound, CommitNotFound, ObjectNotFound, NotAGitRepository      | Log + fallback              |
+| Data Integrity     | InvalidPackFile, CorruptedData, BadChecksum, ChecksumMismatch, etc. | Log + cleanup + fallback    |
+| OOM                | OutOfMemory                                                         | Log + fallback              |
+| Other              | Any unrecognized error                                              | Generic log + fallback      |
 
 ## Known Limitations
 - Ziggit has no configurable network timeout (git CLI fallback is the safety net)

@@ -12,19 +12,19 @@
 
 | Tool    | Run 1  | Run 2  | Run 3  | Run 4  | Run 5  | Avg    |
 |---------|--------|--------|--------|--------|--------|--------|
-| ziggit  | 0.225s | 0.196s | 0.190s | 0.193s | 0.197s | 0.200s |
-| git CLI | 0.194s | 0.234s | 0.196s | 0.210s | 0.191s | 0.205s |
+| ziggit  | 0.193s | 0.196s | 0.188s | 0.190s | 0.185s | 0.190s |
+| git CLI | 0.224s | 0.184s | 0.187s | 0.194s | 0.187s | 0.195s |
 
-**Result**: **Parity** — ziggit avg 0.200s vs git CLI avg 0.205s (~0.98x). Network latency dominates.
+**Result**: **Parity** — ziggit avg 0.190s vs git CLI avg 0.195s (~0.97x). Network latency dominates.
 
 ### expressjs/express (medium repo, larger pack)
 
 | Tool    | Run 1  | Run 2  | Run 3  | Avg    |
 |---------|--------|--------|--------|--------|
-| ziggit  | 0.986s | 0.982s | 1.016s | 0.995s |
-| git CLI | 0.997s | 0.983s | 0.987s | 0.989s |
+| ziggit  | 0.996s | 0.999s | 0.983s | 0.993s |
+| git CLI | 0.977s | 0.995s | 1.211s | 1.061s |
 
-**Result**: **Parity** — within noise margin (~0.6% difference).
+**Result**: **Parity** — ziggit avg 0.993s vs git CLI avg 1.061s (ziggit slightly faster due to git CLI outlier).
 
 ### Correctness
 - `git fsck --no-dangling` passes on all ziggit-cloned repos ✅
@@ -66,11 +66,11 @@ All paths have automatic git CLI fallback with categorized error logging.
 
 | Category           | Errors (actual ziggit values)                                                                          | Behavior                    |
 |--------------------|--------------------------------------------------------------------------------------------------------|-----------------------------|
-| SSH Auth           | SshProcessFailed, InvalidSshUrl                                                                        | Log hint about SSH keys     |
-| Network            | HttpError, SideBandError, ConnectionRefused, ConnectionTimedOut, TlsError/TlsFailure, BrokenPipe, ReadFailed | Log + fallback         |
+| SSH Auth           | SshProcessFailed, SshCloneFailed, SshFetchFailed, InvalidSshUrl                                        | Log hint about SSH keys     |
+| Network            | HttpError, HttpCloneFailed, HttpFetchFailed, SideBandError, ConnectionRefused, ConnectionTimedOut, TlsError/TlsFailure, BrokenPipe, ReadFailed | Log + fallback |
 | Protocol           | UnsupportedPackVersion, UnsupportedIndexVersion, UnsupportedPackIndexVersion, UnsupportedPackType, InvalidUrl, InvalidPktLine | Log + fallback |
 | Ref Resolution     | RefNotFound, ObjectNotFound, BranchNotFound, TreeNotFound, InvalidRef, InvalidCommit, CircularRef, TooManySymbolicRefs, PackNotFound | Log + fallback |
-| Data Integrity     | ChecksumMismatch, PackChecksumMismatch, ObjectCountMismatch, InvalidPack*, InvalidFanoutTable, CorruptedPackIndex, InvalidDelta*, PackFileTooSmall | Log + cleanup + fallback |
+| Data Integrity     | ChecksumMismatch, PackChecksumMismatch, ObjectCountMismatch, InvalidPack*, InvalidFanoutTable, CorruptedPackIndex, InvalidDelta*, DeltaCopyOutOfBounds, DeltaInsertOutOfBounds, DeltaMissingHeaders, DeltaReservedCommand, DeltaTruncated, PackFileTooSmall | Log + cleanup + fallback |
 | OOM                | OutOfMemory                                                                                            | Log + fallback              |
 | Other              | Any unrecognized error                                                                                 | Generic log + fallback      |
 

@@ -505,6 +505,8 @@ pub const Repository = extern struct {
 
     fn isSshAuthError(err: anyerror) bool {
         return err == error.SshProcessFailed or
+            err == error.SshCloneFailed or
+            err == error.SshFetchFailed or
             err == error.InvalidSshUrl or
             // Defensive: these may be added to ziggit in the future
             err == error.SshAuthFailed or
@@ -540,6 +542,11 @@ pub const Repository = extern struct {
             err == error.InvalidPackObjectType or
             err == error.InvalidDelta or
             err == error.InvalidDeltaOffset or
+            err == error.DeltaCopyOutOfBounds or
+            err == error.DeltaInsertOutOfBounds or
+            err == error.DeltaMissingHeaders or
+            err == error.DeltaReservedCommand or
+            err == error.DeltaTruncated or
             err == error.InvalidFanoutTable or
             err == error.InvalidIndex or
             err == error.InvalidHash or
@@ -580,6 +587,8 @@ pub const Repository = extern struct {
 
     fn isNetworkError(err: anyerror) bool {
         return err == error.HttpError or
+            err == error.HttpCloneFailed or
+            err == error.HttpFetchFailed or
             err == error.SideBandError or
             // std network errors (ziggit uses std.http/net internally)
             err == error.ConnectionRefused or

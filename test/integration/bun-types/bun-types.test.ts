@@ -513,6 +513,27 @@ describe("@types/bun integration test", () => {
   });
 
   describe("lib configuration", () => {
+    // Verifies bun-types' Array.fromAsync mapFn receives Awaited<T>, not raw T.
+    // With the old signatures, `n` below would be `Promise<number>` and `n + 1`
+    // would be a type error. With the aligned signatures, `n` is `number`.
+    typeTest("Array.fromAsync mapFn receives Awaited<T> with lib: []", {
+      options: {
+        lib: [],
+      },
+      files: {
+        "fromasync-mapfn.ts": `
+          const result = await Array.fromAsync(
+            [Promise.resolve(1), Promise.resolve(2)],
+            n => n + 1,
+          );
+          const check: number[] = result;
+          export {};
+        `,
+      },
+      emptyInterfaces: expectedEmptyInterfacesWhenNoDOM,
+      diagnostics: [],
+    });
+
     typeTest("checks with no lib at all", {
       options: {
         lib: [],

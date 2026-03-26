@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 
 test("bytes() on consumed Response body does not crash", async () => {
   const resp = new Response("test data");

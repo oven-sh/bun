@@ -21,6 +21,7 @@ test("Buffer++ followed by SharedArrayBuffer operations should not crash", async
       new SharedArrayBuffer();
       new Int8Array(v36);
       Bun.gc(true);
+      console.log("__reached_end__");
     `,
     ],
     env: bunEnv,
@@ -30,8 +31,7 @@ test("Buffer++ followed by SharedArrayBuffer operations should not crash", async
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  // Should exit with an error (Buffer.byteLength on NaN), not a crash/signal
-  expect(exitCode).not.toBe(null);
+  expect(stdout).toContain("__reached_end__");
   // Exit code should not be a signal (signals are typically > 128)
   expect(exitCode).toBeLessThan(128);
 });

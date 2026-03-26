@@ -13,28 +13,28 @@
 
 | Tool    | Run 1  | Run 2  | Run 3  | Run 4  | Run 5  | Avg    |
 |---------|--------|--------|--------|--------|--------|--------|
-| ziggit  | 203ms  | 195ms  | 190ms  | 203ms  | 191ms  | 196ms  |
-| git CLI | 197ms  | 206ms  | 198ms  | 183ms  | 204ms  | 198ms  |
+| ziggit  | 188ms  | 185ms  | 189ms  | 185ms  | 181ms  | 186ms  |
+| git CLI | 187ms  | 179ms  | 181ms  | 178ms  | 170ms  | 179ms  |
 
-**Result**: **Parity** — ziggit avg 196ms vs git CLI avg 198ms (~0.99x). Network-dominated. ✅
+**Result**: **Parity** — ziggit avg 186ms vs git CLI avg 179ms (~1.04x). Network-dominated. ✅
 
-### chalk/chalk (small repo, ~1.2MB) — 5 runs
+### chalk/chalk (medium repo, ~1.2MB) — 5 runs
 
 | Tool    | Run 1  | Run 2  | Run 3  | Run 4  | Run 5  | Avg    |
 |---------|--------|--------|--------|--------|--------|--------|
-| ziggit  | 194ms  | 165ms  | 165ms  | 153ms  | 181ms  | 172ms  |
-| git CLI | 165ms  | 178ms  | 154ms  | 168ms  | 148ms  | 163ms  |
+| ziggit  | 161ms  | 143ms  | 167ms  | 148ms  | 166ms  | 157ms  |
+| git CLI | 143ms  | 151ms  | 140ms  | 145ms  | 146ms  | 145ms  |
 
-**Result**: **Parity** — ziggit avg 172ms vs git CLI avg 163ms (~1.06x). Network-dominated. ✅
+**Result**: **Parity** — ziggit avg 157ms vs git CLI avg 145ms (~1.08x). Network-dominated. ✅
 
-### expressjs/express (medium repo, ~11MB) — single run (network-dominated)
+### expressjs/express (larger repo, ~11MB) — 5 runs
 
-| Tool    | Time    |
-|---------|---------|
-| ziggit  | 1009ms  |
-| git CLI | 988ms   |
+| Tool    | Run 1  | Run 2  | Run 3  | Run 4  | Run 5  | Avg    |
+|---------|--------|--------|--------|--------|--------|--------|
+| ziggit  | 959ms  | 1156ms | 945ms  | 938ms  | 951ms  | 990ms  |
+| git CLI | 983ms  | 964ms  | 948ms  | 948ms  | 955ms  | 960ms  |
 
-**Result**: **Parity** — essentially identical (~1.02x). ✅
+**Result**: **Parity** — ziggit avg 990ms vs git CLI avg 960ms (~1.03x). Network-dominated. ✅
 
 ### Correctness
 - `git fsck --no-dangling` passes on all ziggit-cloned repos (is, chalk, express) ✅
@@ -55,6 +55,7 @@
 
 | Date       | Ziggit Commit | idx_writer Version                    | sindresorhus/is avg | chalk avg | express avg | Notes |
 |------------|---------------|---------------------------------------|---------------------|-----------|-------------|-------|
+| 2026-03-26 | 6f37261 (5-run v3) | Single-pass with eager LRU caching | 186ms (git: 179ms)  | 157ms (git: 145ms) | 990ms (git: 960ms) | 5-run avg, all verified |
 | 2026-03-26 | 6f37261 (re-bench) | Single-pass with eager LRU caching | 196ms (git: 198ms)  | 172ms (git: 163ms) | 1009ms (git: 988ms) | True parity, consistent |
 | 2026-03-26 | 6f37261 (latest) | Single-pass with eager LRU caching | 269ms (git: 249ms)  | 158ms (git: 156ms) | 992ms (git: 994ms) | Parity across all sizes |
 | 2026-03-26 | 6f37261 (earlier) | Same                              | 193ms (git: 209ms)  | —         | 1001ms      | 8% faster on small (variable network) |

@@ -393,7 +393,11 @@ pub const Repository = extern struct {
                 return error.InstallFailed;
             },
             else => {
-                debug("git CLI terminated abnormally (signal/unknown)", .{});
+                if (result.stderr.len > 0) {
+                    debug("git CLI terminated abnormally: {s}", .{std.mem.trimRight(u8, result.stderr, "\r\n")});
+                } else {
+                    debug("git CLI terminated abnormally (signal/unknown, no stderr)", .{});
+                }
                 return error.InstallFailed;
             },
         }
@@ -949,7 +953,7 @@ pub const Repository = extern struct {
                 };
 
                 _ = exec(allocator, env, &[_]string{ "git", "-C", target, "checkout", "--quiet", resolved }) catch |err| {
-                    log.addErrorFmt(null, logger.Loc.Empty, allocator, "\"git checkout\" for \"{s}\" failed", .{name}) catch unreachable;
+                    log.addErrorFmt(null, logger.Loc.Empty, allocator, "\"git checkout\" for \"{s}\" at {s} failed", .{ name, resolved }) catch unreachable;
                     // Clean up partial checkout directory on failure
                     std.fs.cwd().deleteTree(target) catch {};
                     return err;

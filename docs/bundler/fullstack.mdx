@@ -124,30 +124,30 @@ Becomes something like this:
 To use React in your client-side code, import `react-dom/client` and render your app.
 
 <CodeGroup>
+
 ```ts title="src/backend.ts" icon="/icons/typescript.svg"
 import dashboard from "../public/dashboard.html";
 import { serve } from "bun";
 
 serve({
-routes: {
-"/": dashboard,
-},
-async fetch(req) {
-// ...api requests
-return new Response("hello world");
-},
+  routes: {
+    "/": dashboard,
+  },
+  async fetch(req) {
+    // ...api requests
+    return new Response("hello world");
+  },
 });
-
-````
+```
 
 ```tsx title="src/frontend.tsx" icon="/icons/typescript.svg"
-import { createRoot } from 'react-dom/client';
-import App from './app';
+import { createRoot } from "react-dom/client";
+import App from "./app";
 
-const container = document.getElementById('root');
+const container = document.getElementById("root");
 const root = createRoot(container!);
 root.render(<App />);
-````
+```
 
 ```html title="public/dashboard.html" icon="file-code"
 <!DOCTYPE html>

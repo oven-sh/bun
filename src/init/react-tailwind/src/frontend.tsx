@@ -5,16 +5,16 @@
  * It is included in `src/index.html`.
  */
 
+import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
 
-function start() {
-  const root = createRoot(document.getElementById("root")!);
-  root.render(<App />);
-}
+const elem = document.getElementById("root")!;
+const app = (
+  <StrictMode>
+    <App />
+  </StrictMode>
+);
 
-if (document.readyState === "loading") {
-  document.addEventListener("DOMContentLoaded", start);
-} else {
-  start();
-}
+// https://bun.com/docs/bundler/hot-reloading#import-meta-hot-data
+(import.meta.hot.data.root ??= createRoot(elem)).render(app);

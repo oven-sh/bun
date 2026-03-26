@@ -1227,7 +1227,7 @@ pub const internal = struct {
         can_retry_for_addrconfig: bool = default_hints.flags.ADDRCONFIG,
 
         pub fn isExpired(this: *Request, timestamp_to_store: *u32) bool {
-            if (this.refcount > 0 or this.result == null) {
+            if (this.result == null) {
                 return false;
             }
 
@@ -1284,9 +1284,11 @@ pub const internal = struct {
                 if (entry.key.hash == key.hash and entry.valid) {
                     if (entry.isExpired(timestamp_to_store)) {
                         log("get: expired entry", .{});
-                        _ = this.deleteEntryAt(len, i);
-                        entry.deinit();
-                        len = this.len;
+                        if (entry.refcount == 0) {
+                            _ = this.deleteEntryAt(len, i);
+                            entry.deinit();
+                            len = this.len;
+                        }
                         continue;
                     }
 
@@ -1789,7 +1791,9 @@ pub const internal = struct {
         global_cache.lock.lock();
         defer global_cache.lock.unlock();
 
-        req.valid = err == 0;
+        if (err != 0) {
+            req.valid = false;
+        }
         dns_cache_errors += @as(usize, @intFromBool(err != 0));
 
         bun.assert(req.refcount > 0);
@@ -2715,7 +2719,7 @@ pub const Resolver = struct {
         var options = GetAddrInfo.Options{};
         var port: u16 = 0;
 
-        if (arguments.len > 1 and arguments.ptr[1].isCell()) {
+        if (arguments.len > 1 and arguments.ptr[1].isObject()) {
             const optionsObject = arguments.ptr[1];
 
             if (try optionsObject.getTruthy(globalThis, "port")) |port_value| {

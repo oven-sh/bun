@@ -511,6 +511,73 @@ pub fn NewParser_(
             return p.options.bundle and p.source.index.isRuntime();
         }
 
+        /// Extracts a matchable "shape" from a dynamic import argument.
+        /// Template literals: static parts joined by \x00 placeholders.
+        /// Everything else: empty string.
+        fn extractDynamicSpecifierShape(p: *P, arg: Expr, buf: *std.array_list.Managed(u8)) ![]const u8 {
+            if (arg.data.as(.e_template)) |tmpl| {
+                if (tmpl.tag != null) return ""; // tagged template — opaque
+                switch (tmpl.head) {
+                    .cooked => |*head| {
+                        try buf.appendSlice(head.slice(p.allocator));
+                    },
+                    .raw => return "", // shouldn't happen post-visit but be safe
+                }
+                for (tmpl.parts) |*part| {
+                    try buf.append(0); // \x00 placeholder per interpolation
+                    switch (part.tail) {
+                        .cooked => |*tail| {
+                            try buf.appendSlice(tail.slice(p.allocator));
+                        },
+                        .raw => return "", // raw tail — treat as opaque
+                    }
+                }
+                return buf.items;
+            }
+            return "";
+        }
+
+        pub fn checkDynamicSpecifier(p: *P, arg: Expr, loc: logger.Loc, comptime kind: []const u8) !void {
+            if (!p.options.bundle or p.options.allow_unresolved.* == .all) return;
+
+            var shape_buf = std.array_list.Managed(u8).init(p.allocator);
+            defer shape_buf.deinit();
+            const shape = try p.extractDynamicSpecifierShape(arg, &shape_buf);
+            if (!p.options.allow_unresolved.allows(shape)) {
+                const r = js_lexer.rangeOfIdentifier(p.source, loc);
+                if (shape.len > 0) {
+                    // Print a human-readable shape: replace \x00 with *
+                    const display = try p.allocator.dupe(u8, shape);
+                    defer p.allocator.free(display);
+                    for (display) |*c| if (c.* == 0) {
+                        c.* = '*';
+                    };
+                    try p.log.addRangeErrorFmtWithNote(
+                        p.source,
+                        r,
+                        p.allocator,
+                        "This " ++ kind ++ " expression will not be bundled because the argument is not a string literal",
+                        .{},
+                        "The specifier shape \"{s}\" does not match any --allow-unresolved pattern. " ++
+                            "To allow it, add a matching pattern: Bun.build({{ allowUnresolved: [\"{s}\"] }}) or --allow-unresolved '{s}'",
+                        .{ display, display, display },
+                        r,
+                    );
+                } else {
+                    try p.log.addRangeErrorFmtWithNote(
+                        p.source,
+                        r,
+                        p.allocator,
+                        "This " ++ kind ++ " expression will not be bundled because the argument is not a string literal",
+                        .{},
+                        "To allow opaque dynamic specifiers, use Bun.build({{ allowUnresolved: [\"\"] }}) or pass --allow-unresolved with an empty-string pattern",
+                        .{},
+                        r,
+                    );
+                }
+            }
+        }
+
         pub fn transposeImport(noalias p: *P, arg: Expr, state: *const TransposeState) Expr {
             // The argument must be a string
             if (arg.data.as(.e_string)) |str| {
@@ -525,6 +592,10 @@ pub fn NewParser_(
 
                 if (state.import_record_tag) |tag| {
                     p.import_records.items[import_record_index].tag = tag;
+                }
+
+                if (state.import_loader) |loader| {
+                    p.import_records.items[import_record_index].loader = loader;
                 }
 
                 p.import_records.items[import_record_index].flags.handles_import_errors = (state.is_await_target and p.fn_or_arrow_data_visit.try_body_count != 0) or state.is_then_catch_target;
@@ -542,6 +613,8 @@ pub fn NewParser_(
                 const r = js_lexer.rangeOfIdentifier(p.source, state.loc);
                 p.log.addRangeDebug(p.source, r, "This \"import\" expression cannot be bundled because the argument is not a string literal") catch unreachable;
             }
+
+            bun.handleOom(p.checkDynamicSpecifier(arg, state.loc, "import()"));
 
             return p.newExpr(E.Import{
                 .expr = arg,
@@ -561,6 +634,8 @@ pub fn NewParser_(
                 const r = js_lexer.rangeOfIdentifier(p.source, arg.loc);
                 p.log.addRangeDebug(p.source, r, "This \"require.resolve\" expression cannot be bundled because the argument is not a string literal") catch unreachable;
             }
+
+            bun.handleOom(p.checkDynamicSpecifier(arg, arg.loc, "require.resolve()"));
 
             const args = p.allocator.alloc(Expr, 1) catch unreachable;
             args[0] = arg;
@@ -673,6 +748,7 @@ pub fn NewParser_(
                     return p.newExpr(E.RequireString{ .import_record_index = import_record_index }, arg.loc);
                 },
                 else => {
+                    bun.handleOom(p.checkDynamicSpecifier(arg, arg.loc, "require()"));
                     p.recordUsageOfRuntimeRequire();
                     const args = p.allocator.alloc(Expr, 1) catch unreachable;
                     args[0] = arg;
@@ -6028,7 +6104,7 @@ pub fn NewParser_(
         /// specifiers that were imported. We enforce that they line up exactly
         /// with ones that were imported, so that it can share an import record.
         ///
-        /// This function replaces all specifier strings with `e_require_resolve_string`
+        /// This function replaces all specifier strings with `e_special.resolved_specifier_string`
         pub fn handleImportMetaHotAcceptCall(p: *@This(), call: *E.Call) void {
             if (call.args.len == 0) return;
             switch (call.args.at(0).data) {

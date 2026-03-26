@@ -124,6 +124,8 @@ pub const runtime_params_ = [_]ParamType{
     clap.parseParam("--unhandled-rejections <STR>      One of \"strict\", \"throw\", \"warn\", \"none\", or \"warn-with-error-code\"") catch unreachable,
     clap.parseParam("--console-depth <NUMBER>          Set the default depth for console.log object inspection (default: 2)") catch unreachable,
     clap.parseParam("--user-agent <STR>               Set the default User-Agent header for HTTP requests") catch unreachable,
+    clap.parseParam("--cron-title <STR>               Title for cron execution mode") catch unreachable,
+    clap.parseParam("--cron-period <STR>              Cron period for cron execution mode") catch unreachable,
 };
 
 pub const auto_or_run_params = [_]ParamType{
@@ -184,6 +186,8 @@ pub const build_only_params = [_]ParamType{
     clap.parseParam("--splitting                      Enable code splitting") catch unreachable,
     clap.parseParam("--public-path <STR>              A prefix to be appended to any import paths in bundled code") catch unreachable,
     clap.parseParam("-e, --external <STR>...          Exclude module from transpilation (can use * wildcards). ex: -e react") catch unreachable,
+    clap.parseParam("--allow-unresolved <STR>...      Allow unresolved dynamic import()/require() specifiers matching these glob patterns. Use '<empty>' for opaque specifiers. Default is '*' (allow all).") catch unreachable,
+    clap.parseParam("--reject-unresolved              Fail the build on any dynamic import()/require() specifier that cannot be resolved at build time.") catch unreachable,
     clap.parseParam("--packages <STR>                 Add dependencies to bundle or keep them external. \"external\", \"bundle\" is supported. Defaults to \"bundle\".") catch unreachable,
     clap.parseParam("--entry-naming <STR>             Customize entry point filenames. Defaults to \"[dir]/[name].[ext]\"") catch unreachable,
     clap.parseParam("--chunk-naming <STR>             Customize chunk filenames. Defaults to \"[name]-[hash].[ext]\"") catch unreachable,
@@ -237,6 +241,7 @@ pub const test_only_params = [_]ParamType{
     clap.parseParam("--dots                           Enable dots reporter. Shorthand for --reporter=dots.") catch unreachable,
     clap.parseParam("--only-failures                  Only display test failures, hiding passing tests.") catch unreachable,
     clap.parseParam("--max-concurrency <NUMBER>        Maximum number of concurrent tests to execute at once. Default is 20.") catch unreachable,
+    clap.parseParam("--path-ignore-patterns <STR>...   Glob patterns for test file paths to ignore.") catch unreachable,
 };
 pub const test_params = test_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
 
@@ -543,6 +548,11 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             ctx.test_options.coverage.reports_directory = dir;
         }
 
+        if (args.options("--path-ignore-patterns").len > 0) {
+            ctx.test_options.path_ignore_patterns = args.options("--path-ignore-patterns");
+            ctx.test_options.path_ignore_patterns_from_cli = true;
+        }
+
         if (args.option("--bail")) |bail| {
             if (bail.len > 0) {
                 ctx.test_options.bail = std.fmt.parseInt(u32, bail, 10) catch |e| {
@@ -823,6 +833,23 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             ctx.runtime_options.dns_result_order = order;
         }
 
+        const has_cron_title = args.option("--cron-title");
+        const has_cron_period = args.option("--cron-period");
+        if (has_cron_title) |t| {
+            ctx.runtime_options.cron_title = t;
+        }
+        if (has_cron_period) |p| {
+            ctx.runtime_options.cron_period = p;
+        }
+        if ((has_cron_title != null) != (has_cron_period != null)) {
+            Output.errGeneric("--cron-title and --cron-period must be provided together", .{});
+            Global.exit(1);
+        }
+        if (has_cron_title != null and (ctx.runtime_options.cron_title.len == 0 or ctx.runtime_options.cron_period.len == 0)) {
+            Output.errGeneric("--cron-title and --cron-period must not be empty", .{});
+            Global.exit(1);
+        }
+
         if (args.option("--inspect")) |inspect_flag| {
             ctx.runtime_options.debugger = if (inspect_flag.len == 0)
                 Command.Debugger{ .enable = .{} }
@@ -830,8 +857,6 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                 Command.Debugger{ .enable = .{
                     .path_or_port = inspect_flag,
                 } };
-
-            bun.jsc.RuntimeTranspilerCache.is_disabled = true;
         } else if (args.option("--inspect-wait")) |inspect_flag| {
             ctx.runtime_options.debugger = if (inspect_flag.len == 0)
                 Command.Debugger{ .enable = .{
@@ -842,8 +867,6 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                     .path_or_port = inspect_flag,
                     .wait_for_connection = true,
                 } };
-
-            bun.jsc.RuntimeTranspilerCache.is_disabled = true;
         } else if (args.option("--inspect-brk")) |inspect_flag| {
             ctx.runtime_options.debugger = if (inspect_flag.len == 0)
                 Command.Debugger{ .enable = .{
@@ -856,8 +879,6 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                     .wait_for_connection = true,
                     .set_breakpoint_on_first_line = true,
                 } };
-
-            bun.jsc.RuntimeTranspilerCache.is_disabled = true;
         }
 
         const cpu_prof_flag = args.flag("--cpu-prof");
@@ -1028,6 +1049,21 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                 externals[i] = external;
             }
             opts.external = externals;
+        }
+
+        if (args.flag("--reject-unresolved") and args.options("--allow-unresolved").len > 0) {
+            Output.prettyErrorln("<r><red>error<r>: --reject-unresolved and --allow-unresolved cannot be used together", .{});
+            Global.crash();
+        } else if (args.flag("--reject-unresolved")) {
+            ctx.bundler_options.allow_unresolved = &.{};
+        } else if (args.options("--allow-unresolved").len > 0) {
+            const raw = args.options("--allow-unresolved");
+            var allow = try allocator.alloc([]const u8, raw.len);
+            for (raw, 0..) |val, i| {
+                // "<empty>" sentinel represents the empty-string pattern (for matching opaque specifiers)
+                allow[i] = if (strings.eqlComptime(val, "<empty>")) "" else val;
+            }
+            ctx.bundler_options.allow_unresolved = allow;
         }
 
         if (args.option("--packages")) |packages| {

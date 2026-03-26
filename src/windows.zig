@@ -3416,6 +3416,11 @@ pub fn GetFinalPathNameByHandle(
         return error.FileNotFound;
     }
 
+    if (return_length >= out_buffer.len) {
+        bun.sys.syslog("GetFinalPathNameByHandleW({*p}) = NAMETOOLONG (needed {d}, have {d})", .{ hFile, return_length, out_buffer.len });
+        return error.NameTooLong;
+    }
+
     var ret = out_buffer[0..@intCast(return_length)];
 
     bun.sys.syslog("GetFinalPathNameByHandleW({*p}) = {f}", .{ hFile, bun.fmt.utf16(ret) });

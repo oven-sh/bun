@@ -1,5 +1,5 @@
 import { pathToFileURL } from "bun";
-import { isWindows, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isWindows, tempDirWithFiles } from "harness";
 import fs from "node:fs";
 import path from "path";
 
@@ -10,6 +10,14 @@ import { beforeEach, describe, expect, test } from "bun:test";
 function repeat(fn: any) {
   const interval = setInterval(fn, 20).unref();
   return interval;
+}
+// Write to a temp file then rename, so stat never sees a 0-byte intermediate
+// state (writeFileSync uses O_TRUNC which briefly truncates the file to 0
+// bytes, visible to concurrent stat on Windows).
+function updateFile(filepath: string, data: string) {
+  const tmp = filepath + ".tmp";
+  fs.writeFileSync(tmp, data);
+  fs.renameSync(tmp, filepath);
 }
 const encodingFileName = `新建文夹件.txt`;
 let testDir = "";
@@ -54,7 +62,7 @@ describe("fs.watchFile", () => {
     let increment = 0;
     const interval = repeat(() => {
       increment++;
-      fs.writeFileSync(path.join(testDir, "watch.txt"), "hello" + increment);
+      updateFile(path.join(testDir, "watch.txt"), "hello" + increment);
     });
     await promise;
     clearInterval(interval);
@@ -79,7 +87,7 @@ describe("fs.watchFile", () => {
     let increment = 0;
     const interval = repeat(() => {
       increment++;
-      fs.writeFileSync(path.join(testDir, encodingFileName), "hello" + increment);
+      updateFile(path.join(testDir, encodingFileName), "hello" + increment);
     });
     await promise;
     clearInterval(interval);
@@ -105,7 +113,7 @@ describe("fs.watchFile", () => {
     let increment = 0;
     const interval = repeat(() => {
       increment++;
-      fs.writeFileSync(path.join(testDir, encodingFileName), "hello" + "a".repeat(increment));
+      updateFile(path.join(testDir, encodingFileName), "hello" + "a".repeat(increment));
     });
     await promise;
     clearInterval(interval);
@@ -144,7 +152,7 @@ describe("fs.watchFile", () => {
     let increment = 0;
     const interval = repeat(() => {
       increment++;
-      fs.writeFileSync(filepath, "hello" + increment);
+      updateFile(filepath, "hello" + increment);
     });
     await promise;
     clearInterval(interval);
@@ -191,4 +199,74 @@ describe("fs.watchFile", () => {
       EventEmitter.defaultMaxListeners = defaultMaxListeners;
     }
   }, 20000);
+
+  // https://github.com/oven-sh/bun/issues/28027
+  // The old code held a jsc.Strong (last_jsvalue) and relied on an indirect
+  // chain to keep the JS wrapper alive. finalize() did not clear the Strong,
+  // so when the WorkPool scheduler later called deref() -> deinit(),
+  // HandleSet::deallocate() ran on a non-JS thread and corrupted the GC
+  // handle linked list -> segfault in visitStrongHandles.
+  //
+  // The unwatchFile path cannot reproduce this: close() sets closed=true
+  // before GC, so the scheduler derefs first and deinit() runs on the JS
+  // thread. Only the _handle=null path (no close) forces finalize() to be
+  // the one that sets closed=true, guaranteeing the WorkPool deref is last.
+  //
+  // Windows-only: the corruption is real UB on all platforms but was only
+  // observed to manifest as a crash on Windows (20 attempts on macOS with
+  // 200 watchers and 20 GC cycles never crashed).
+  test.skipIf(!isWindows)("no crash when finalize() races WorkPool deinit", async () => {
+    const dir = tempDirWithFiles(
+      "watchfile-gc",
+      Object.fromEntries(Array.from({ length: 50 }, (_, i) => [`f${i}.txt`, `d`])),
+    );
+
+    const fixture = /* js */ `
+      const fs = require("fs");
+      const path = require("path");
+      const dir = ${JSON.stringify(dir)};
+
+      // unref(): release poll_ref so the fixed build can exit naturally
+      // even though JSRef keeps wrappers alive and closed is never set.
+      // _handle = null: disconnect the native wrapper from JS without
+      // calling close(). On the broken build, finalize() is now the only
+      // path that can set closed=true.
+      for (let i = 0; i < 50; i++) {
+        const w = fs.watchFile(path.join(dir, "f" + i + ".txt"), { interval: 5 }, () => {});
+        w.unref();
+        w._handle = null;
+      }
+
+      // Let initial stat tasks complete: initialStatSuccessOnMainThread
+      // runs on the JS thread, allocates the Strong (last_jsvalue.set), and
+      // appends the watcher to the scheduler queue (ref_count now 2:
+      // construction + scheduler). Idle GC may also run during this sleep.
+      await Bun.sleep(100);
+
+      // On the broken build: finalize() sets closed=true, deref (2->1).
+      // Timer fires, workPoolCallback sees closed=true, deref on WorkPool
+      // (1->0), deinit() calls last_jsvalue.deinit() on the WorkPool thread.
+      // On the fixed build: JSRef initStrong keeps wrappers rooted, none of
+      // this runs, the GC calls below are no-ops.
+      Bun.gc(true);
+      await Bun.sleep(200);
+      Bun.gc(true);
+      await Bun.sleep(100);
+      Bun.gc(true);
+
+      console.log("OK");
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("OK");
+    expect(exitCode).toBe(0);
+  });
 });

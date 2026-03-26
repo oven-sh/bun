@@ -168,6 +168,12 @@ CPP_DECL uint32_t JSC__JSInternalPromise__status(const JSC::JSInternalPromise* a
 
 CPP_DECL void JSC__JSFunction__optimizeSoon(JSC::EncodedJSValue JSValue0);
 
+#pragma mark - REPL Functions
+
+CPP_DECL JSC::EncodedJSValue Bun__REPL__evaluate(JSC::JSGlobalObject* globalObject, const unsigned char* sourcePtr, size_t sourceLen, const unsigned char* filenamePtr, size_t filenameLen, JSC::EncodedJSValue* exception);
+CPP_DECL JSC::EncodedJSValue Bun__REPL__getCompletions(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue targetValue, const unsigned char* prefixPtr, size_t prefixLen);
+CPP_DECL JSC::EncodedJSValue Bun__REPL__formatValue(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue valueEncoded, int32_t depth, bool colors);
+
 #pragma mark - JSC::JSGlobalObject
 
 CPP_DECL VirtualMachine* JSC__JSGlobalObject__bunVM(JSC::JSGlobalObject* arg0);

@@ -18,13 +18,10 @@ const _BufferAlloc = Buffer.alloc.bind(Buffer);
 const _BufferFrom = Buffer.from.bind(Buffer);
 const _Number = Number;
 const _console_log = console.log.bind(console);
-const _resetCoverage = resetCoverage;
 const _fsReadSync = fs.readSync.bind(fs);
 const _fsWriteSync = fs.writeSync.bind(fs);
 const _fstatSync = fs.fstatSync.bind(fs);
 const _call = Function.prototype.call;
-const _writeUInt32LE = _call.bind(Buffer.prototype.writeUInt32LE);
-const _readBigUInt64LE = _call.bind(Buffer.prototype.readBigUInt64LE);
 const _bufToString = _call.bind(Buffer.prototype.toString);
 
 // Make common Node modules available
@@ -46,6 +43,16 @@ try {
   console.error("ERROR: REPRL file descriptors not available. Must run under Fuzzilli.");
   process.exit(1);
 }
+
+// Save resetCoverage after the FD check so a missing global (in non-Fuzzilli
+// builds) doesn't mask the diagnostic error message above.
+const _resetCoverage = resetCoverage;
+
+// Pre-allocate buffers for the REPRL protocol status response. Using a raw
+// Uint8Array with manual byte writes avoids all Buffer prototype methods and
+// their internal dependencies (e.g. DataView), making the status write immune
+// to any global/prototype corruption by fuzzed scripts.
+const status_bytes = new Uint8Array(4);
 
 // Send HELO handshake
 _fsWriteSync(REPRL_CWFD, _BufferFrom("HELO"));
@@ -75,7 +82,11 @@ while (true) {
   // Read script size (8 bytes, little-endian)
   const size_bytes = _BufferAlloc(8);
   _fsReadSync(REPRL_CRFD, size_bytes, 0, 8, null);
-  const script_size = _Number(_readBigUInt64LE(size_bytes, 0));
+
+  // Read size as little-endian uint64 using raw byte access (avoids
+  // Buffer.prototype.readBigUInt64LE and its internal dependencies).
+  let script_size = 0;
+  for (let i = 0; i < 8; i++) script_size += size_bytes[i] * (2 ** (i * 8));
 
   // Read script data from REPRL_DRFD
   const script_data = _BufferAlloc(script_size);
@@ -103,9 +114,13 @@ while (true) {
 
   // Send status back (4 bytes: exit code in REPRL format)
   // Format: lower 8 bits = signal number, next 8 bits = exit code
+  // Write as little-endian uint32 using raw byte access to avoid all
+  // Buffer prototype methods and their internal globals (DataView etc).
   const status = exit_code << 8;
-  const status_bytes = _BufferAlloc(4);
-  _writeUInt32LE(status_bytes, status, 0);
+  status_bytes[0] = status & 0xff;
+  status_bytes[1] = (status >> 8) & 0xff;
+  status_bytes[2] = (status >> 16) & 0xff;
+  status_bytes[3] = (status >> 24) & 0xff;
   _fsWriteSync(REPRL_CWFD, status_bytes);
 
   _resetCoverage();

@@ -59,5 +59,6 @@ test("saved Buffer reference survives global corruption via eval", async () => {
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stdout.trim()).toBe("42");
+  expect(stderr).toBe("");
   expect(exitCode).toBe(0);
 });

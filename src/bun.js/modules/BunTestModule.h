@@ -11,6 +11,8 @@ void generateNativeModule_BunTest(
     auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     JSObject* object = globalObject->lazyTestModuleObject();
+    if (!object) [[unlikely]]
+        return;
 
     // Export as default
     exportNames.append(vm.propertyNames->defaultKeyword);

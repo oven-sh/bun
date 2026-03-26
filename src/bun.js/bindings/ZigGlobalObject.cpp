@@ -1779,8 +1779,10 @@ void GlobalObject::finishCreation(VM& vm)
 
     m_testMatcherUtilsObject.initLater(
         [](const Initializer<JSObject>& init) {
+            auto scope = DECLARE_THROW_SCOPE(init.vm);
             JSValue result = JSValue::decode(ExpectMatcherUtils_createSigleton(init.owner));
-            init.set(result.toObject(init.owner));
+            RETURN_IF_EXCEPTION(scope, );
+            init.set(result.getObject());
         });
 
     m_JSS3FileStructure.initLater(

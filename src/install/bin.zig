@@ -887,6 +887,26 @@ pub const Bin = extern struct {
             return remain;
         }
 
+        /// When a bin target starts with `node_modules/`, it refers to a nested
+        /// dependency's file. If the dependency was hoisted, the nested path won't
+        /// exist on disk. In that case, resolve the target relative to the parent
+        /// node_modules directory where hoisted packages live.
+        fn resolveTargetWithHoisting(this: *const Linker, package_dir: []const u8, target: []const u8) [:0]const u8 {
+            const abs_target = path.joinAbsStringZ(package_dir, &.{target}, .auto);
+
+            const node_modules_prefix = "node_modules/";
+            if (target.len > node_modules_prefix.len and
+                strings.hasPrefixComptime(target, node_modules_prefix) and
+                !bun.sys.exists(abs_target))
+            {
+                const hoisted_rel = target[node_modules_prefix.len..];
+                const nm_path = strings.withoutTrailingSlash(this.target_node_modules_path.slice());
+                return path.joinAbsStringZ(nm_path, &.{hoisted_rel}, .auto);
+            }
+
+            return abs_target;
+        }
+
         // target: what the symlink points to
         // destination: where the symlink exists on disk
         pub fn link(this: *Linker, global: bool) void {
@@ -902,7 +922,7 @@ pub const Bin = extern struct {
                     if (target.len == 0) return;
 
                     // for normalizing `target`
-                    const abs_target = path.joinAbsStringZ(package_dir, &.{target}, .auto);
+                    const abs_target = this.resolveTargetWithHoisting(package_dir, target);
 
                     const unscoped_package_name = Dependency.unscopedPackageName(this.package_name.slice());
                     @memcpy(abs_dest_buf_remain[0..unscoped_package_name.len], unscoped_package_name);
@@ -920,7 +940,7 @@ pub const Bin = extern struct {
                     if (normalized_name.len == 0 or target.len == 0) return;
 
                     // for normalizing `target`
-                    const abs_target = path.joinAbsStringZ(package_dir, &.{target}, .auto);
+                    const abs_target = this.resolveTargetWithHoisting(package_dir, target);
 
                     @memcpy(abs_dest_buf_remain[0..normalized_name.len], normalized_name);
                     abs_dest_buf_remain = abs_dest_buf_remain[normalized_name.len..];
@@ -942,7 +962,7 @@ pub const Bin = extern struct {
                         const bin_target = this.extern_string_buf[i + 1].slice(this.string_buf);
                         if (bin_target.len == 0 or normalized_bin_dest.len == 0) continue;
 
-                        const abs_target = path.joinAbsStringZ(package_dir, &.{bin_target}, .auto);
+                        const abs_target = this.resolveTargetWithHoisting(package_dir, bin_target);
 
                         abs_dest_buf_remain = abs_dest_dir_end;
                         @memcpy(abs_dest_buf_remain[0..normalized_bin_dest.len], normalized_bin_dest);

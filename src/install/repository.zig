@@ -610,14 +610,22 @@ pub const Repository = extern struct {
                 defer repo.close();
                 repo.fetch(fetch_url) catch |err| {
                     if (err == error.RepositoryNotFound) {
-                        debug("fetch: ziggit reports repository not found for \"{s}\"", .{name});
-                        dir.close();
-                        if (attempt > 1) {
-                            log.addErrorFmt(null, logger.Loc.Empty, allocator, "\"git fetch\" for \"{s}\" failed: repository not found", .{name}) catch unreachable;
+                        // Over HTTPS, a 404 is definitive. Over SSH, "not found"
+                        // may actually be an auth/permission issue, so fall back
+                        // to git CLI which can handle SSH agent prompts.
+                        const used_https = strings.hasPrefixComptime(fetch_url, "https://");
+                        if (used_https) {
+                            debug("fetch: ziggit reports repository not found (HTTPS 404) for \"{s}\"", .{name});
+                            dir.close();
+                            if (attempt > 1) {
+                                log.addErrorFmt(null, logger.Loc.Empty, allocator, "\"git fetch\" for \"{s}\" failed: repository not found", .{name}) catch unreachable;
+                            }
+                            return error.RepositoryNotFound;
                         }
-                        return error.RepositoryNotFound;
+                        debug("fetch: ziggit reports not found over SSH for \"{s}\", falling back to git CLI", .{name});
+                    } else {
+                        logZiggitError("fetch", name, err);
                     }
-                    logZiggitError("fetch", name, err);
                     break :ziggit_fetch;
                 };
                 debug("fetch: ziggit succeeded for \"{s}\"", .{name});
@@ -647,15 +655,22 @@ pub const Repository = extern struct {
                 }
                 var repo = ziggit.Repository.cloneBare(allocator, clone_url, target) catch |err| {
                     if (err == error.RepositoryNotFound) {
-                        // Definitive: repo doesn't exist on remote. No point falling back
-                        // to git CLI — it would get the same 404. Surface immediately.
-                        debug("clone: ziggit reports repository not found for \"{s}\"", .{name});
-                        if (attempt > 1) {
-                            log.addErrorFmt(null, logger.Loc.Empty, allocator, "\"git clone\" for \"{s}\" failed", .{name}) catch unreachable;
+                        // Over HTTPS, a 404 is definitive — the remote confirmed
+                        // the repo doesn't exist, so no point falling back to git CLI.
+                        // Over SSH, "not found" may mask auth/permission errors,
+                        // so fall back to git CLI which handles SSH agent prompts.
+                        const used_https = strings.hasPrefixComptime(clone_url, "https://");
+                        if (used_https) {
+                            debug("clone: ziggit reports repository not found (HTTPS 404) for \"{s}\"", .{name});
+                            if (attempt > 1) {
+                                log.addErrorFmt(null, logger.Loc.Empty, allocator, "\"git clone\" for \"{s}\" failed", .{name}) catch unreachable;
+                            }
+                            return error.RepositoryNotFound;
                         }
-                        return error.RepositoryNotFound;
+                        debug("clone: ziggit reports not found over SSH for \"{s}\", falling back to git CLI", .{name});
+                    } else {
+                        logZiggitError("clone", name, err);
                     }
-                    logZiggitError("clone", name, err);
                     // Clean up any partial clone directory before falling back to git CLI
                     std.fs.cwd().deleteTree(target) catch {};
                     break :ziggit_clone;

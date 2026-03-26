@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import path from "path";
 
 test("pathToFileURL doesn't leak memory", () => {
@@ -7,8 +8,8 @@ test("pathToFileURL doesn't leak memory", () => {
 
 test("pathToFileURL with long relative path does not crash", async () => {
   await using proc = Bun.spawn({
-    cmd: [process.execPath, "-e", `Bun.pathToFileURL(Buffer.alloc(5000, "a").toString())`],
-    env: { ...process.env, BUN_DEBUG_QUIET_LOGS: "1" },
+    cmd: [bunExe(), "-e", `Bun.pathToFileURL(Buffer.alloc(5000, "a").toString())`],
+    env: bunEnv,
   });
 
   expect(await proc.exited).toBe(0);

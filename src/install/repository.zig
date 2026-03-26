@@ -383,7 +383,10 @@ pub const Repository = extern struct {
                     strings.containsComptime(result.stderr, "found")) or
                     strings.containsComptime(result.stderr, "does not exist") or
                     // fatal: '<url>' does not appear to be a git repository
-                    strings.containsComptime(result.stderr, "does not appear to be a git repository"))
+                    strings.containsComptime(result.stderr, "does not appear to be a git repository") or
+                    // fatal: could not read Username for 'https://...': No such device or address
+                    // This happens when GIT_ASKPASS=echo (bun's default) and repo is private/missing
+                    strings.containsComptime(result.stderr, "could not read Username"))
                 {
                     return error.RepositoryNotFound;
                 }
@@ -817,6 +820,8 @@ pub const Repository = extern struct {
             _ = exec(allocator, env, &[_]string{
                 "git", "clone", "-c", "core.longpaths=true", "--quiet", "--bare", url, target,
             }) catch |exec_err| {
+                // Clean up any partial clone directory left by failed git CLI
+                std.fs.cwd().deleteTree(target) catch {};
                 if (exec_err == error.RepositoryNotFound or attempt > 1) {
                     log.addErrorFmt(null, logger.Loc.Empty, allocator, "\"git clone\" for \"{s}\" failed", .{name}) catch unreachable;
                 }

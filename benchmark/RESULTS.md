@@ -9,58 +9,55 @@
 
 | Operation     | ziggit (ms) | git CLI (ms) | Speedup |
 |---------------|-------------|--------------|---------|
-| revParseHead  | 0.027       | 0.928        | **35x** |
-| findCommit    | 0.026       | 1.102        | **42x** |
-| describeTags  | 0.027       | 0.980        | **36x** |
-| clone --bare  | 552         | 139          | 0.25x   |
-| fetch         | 542         | 108          | 0.20x   |
+| revParseHead  | 0.044       | 0.965        | **22x** |
+| findCommit    | 0.035       | 1.114        | **32x** |
+| describeTags  | 0.035       | 1.095        | **31x** |
+| clone --bare  | 91          | 133          | **1.5x** |
+| fetch         | 86          | 112          | **1.3x** |
 
 ## Analysis
 
-### Local operations: 35–42x faster ✅
+### Local operations: 22–32x faster ✅
 
 ziggit eliminates process spawn overhead entirely. Each git CLI invocation costs
 ~1ms just for fork+exec+startup. ziggit reads pack files and refs directly from
-the filesystem in ~0.025ms.
+the filesystem in ~0.03-0.04ms.
 
 **This is the win that matters for bun.** During `bun install`, each git dependency
 triggers multiple local git operations (findCommit, revParseHead, describeTags).
 With 10 git dependencies, that's 30+ process spawns saved.
 
-### Network operations: git CLI still faster
+### Network operations: ziggit is FASTER ✅
 
-- **clone --bare**: git CLI is ~4x faster (was 12x before optimizations)
-- **fetch**: git CLI is ~5x faster
+After filtering refs to skip pull request refs (refs/pull/*):
+- **clone --bare**: ziggit is ~1.5x faster than git CLI
+- **fetch**: ziggit is ~1.3x faster than git CLI
 
-The gap is mainly:
-1. **TLS implementation**: Zig's stdlib TLS vs system OpenSSL/BoringSSL
-2. **idx generation**: ziggit must decompress every object to compute SHA-1 for the
-   pack index. This takes ~400ms for the 8MB Hello-World pack.
-3. **Fetch with many refs**: Hello-World has ~2800 refs (PRs, tags). Negotiation
-   with many wants is slow.
+The key optimization was filtering out thousands of PR refs that inflated the pack
+from 1.5KB to 8MB. Now ziggit only fetches refs/heads/*, refs/tags/*, and HEAD.
 
-### Previous results (before fixes)
+### Previous results (before latest fixes)
 
 | Metric | Before | After | Change |
 |--------|--------|-------|--------|
-| Fetch  | SEGFAULT | 542ms | **Fixed** |
-| Clone  | 1367ms | 552ms | **2.5x faster** |
-| Local ops | 35-44x | 35-42x | Stable |
+| Clone  | 1367ms (12x slower) | 91ms (1.5x faster) | **~15x improvement** |
+| Fetch  | SEGFAULT → 542ms | 86ms (1.3x faster) | **Fixed + 6x faster** |
+| Local ops | 35-44x | 22-32x | Slightly lower due to packed-refs fallback |
 
 ## Fixes applied to ziggit
 
 1. **fetch segfault** (use-after-free): `ref_name` strings in `fetchHttps()` were
-   `defer`-freed inside the loop but stored in `local_refs_list`. The pointers were
-   dangling by the time `fetchNewPack()` accessed them.
+   `defer`-freed inside the loop but stored in `local_refs_list`.
 
-2. **clone performance**:
+2. **clone/fetch performance** (15x improvement):
+   - Filter refs to only request refs/heads/*, refs/tags/*, and HEAD
+   - Skip refs/pull/* which added thousands of unwanted objects (8MB vs 1.5KB pack)
+   - Use packed-refs file instead of individual ref files in bare clone
    - HTTP connection reuse (single TLS handshake for ref discovery + pack fetch)
-   - Object resolution cache in idx generation (avoids redundant decompression)
-   - O(N) fanout table (was O(256*N))
-   - Reusable decompression buffer across objects
-   - Stack-based format buffers instead of heap allocation
-   - Generate idx from in-memory pack data (skip re-reading from disk)
-   - Deduplicate want hashes in fetch negotiation
+
+3. **packed-refs support**:
+   - resolveRef now falls back to packed-refs file
+   - describeTags scans both refs/tags/ directory and packed-refs
 
 ## Integration Strategy
 
@@ -69,4 +66,4 @@ bun uses ziggit for **all operations** with git CLI fallback:
 - `download()` → ziggit clone/fetch for HTTPS, exec for SSH
 - `checkout()` → ziggit clone+checkout, exec fallback
 
-This gives the 35-42x speedup on local ops while maintaining compatibility.
+This gives the 22-32x speedup on local ops AND 1.3-1.5x on network ops.

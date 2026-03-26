@@ -337,7 +337,7 @@ fn benchDescribeTags(allocator: std.mem.Allocator, repo_path: []const u8) ?Bench
             continue;
         };
         const tag = repo.describeTags(allocator) catch |err| {
-            std.debug.print("  ziggit describeTags error (iter {d}): {s}\n", .{ i, @errorName(err) });
+            if (i == 0) std.debug.print("  ziggit describeTags error: {s}\n", .{@errorName(err)});
             repo.close();
             ziggit_samples[i] = -1;
             continue;
@@ -429,6 +429,15 @@ pub fn main() !void {
         const result = try std.process.Child.run(.{
             .allocator = allocator,
             .argv = &.{ "git", "clone", "--quiet", CLONE_URL, work_path },
+        });
+        allocator.free(result.stdout);
+        allocator.free(result.stderr);
+    }
+    // Create a lightweight tag for describeTags benchmark (Hello-World has no tags)
+    {
+        const result = try std.process.Child.run(.{
+            .allocator = allocator,
+            .argv = &.{ "git", "-C", work_path, "tag", "v1.0.0" },
         });
         allocator.free(result.stdout);
         allocator.free(result.stderr);

@@ -143,6 +143,16 @@ pub const S3Client = struct {
 
     pub fn presign(ptr: *@This(), globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
         const arguments = callframe.arguments_old(2).slice();
+
+        // Validate credentials early, before PathLike.fromJS and blob
+        // construction which involve C++ / JSC operations that can leave
+        // internal exception-scope state preventing subsequent throws from
+        // succeeding in debug builds. Determine whether the merged
+        // credentials (base from client + overrides from options) will
+        // satisfy signRequest's requirement for both accessKeyId and
+        // secretAccessKey.
+        try validatePresignCredentials(ptr.credentials.accessKeyId, ptr.credentials.secretAccessKey, arguments, globalThis);
+
         var args = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments);
         defer args.deinit();
         const path: jsc.Node.PathLike = try jsc.Node.PathLike.fromJS(globalThis, &args) orelse {
@@ -276,6 +286,15 @@ pub const S3Client = struct {
     }
 
     pub fn staticPresign(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
+        const arguments = callframe.arguments_old(3).slice();
+        // Validate env credentials for path-like inputs (string, Buffer, URL,
+        // etc.). Skip only when the first argument is an S3 blob which carries
+        // its own credentials — detected by checking for the Blob native type.
+        const is_blob = arguments.len > 0 and arguments[0].as(Blob) != null;
+        if (!is_blob) {
+            const env_creds = globalThis.bunVM().transpiler.env.getS3Credentials();
+            try validatePresignCredentials(env_creds.accessKeyId, env_creds.secretAccessKey, arguments, globalThis);
+        }
         return S3File.presign(globalThis, callframe);
     }
 
@@ -319,9 +338,41 @@ pub const S3Client = struct {
         defer blob.detach();
         return blob.store.?.data.s3.listObjects(blob.store.?, globalThis, object_keys, options);
     }
+
+    /// Validate that S3 credentials will be available before entering
+    /// PathLike.fromJS / blob construction which involve C++ / JSC
+    /// operations that leave internal exception-scope state preventing
+    /// subsequent throws from succeeding in debug builds.
+    fn validatePresignCredentials(base_key: []const u8, base_secret: []const u8, arguments: []const jsc.JSValue, globalThis: *jsc.JSGlobalObject) bun.JSError!void {
+        var has_access_key = base_key.len > 0;
+        var has_secret_key = base_secret.len > 0;
+
+        if (arguments.len > 1 and arguments[1].isObject()) {
+            const opts = arguments[1];
+            // Type-check all string credential/option fields that
+            // getCredentialsWithOptions would reject with
+            // throwInvalidArgumentTypeValue. This mirrors its checks so
+            // the type error is thrown before PathLike.fromJS runs.
+            const string_fields = .{ "accessKeyId", "secretAccessKey", "region", "endpoint", "bucket", "sessionToken", "contentDisposition", "type", "contentEncoding" };
+            inline for (string_fields) |field| {
+                if (try opts.getTruthyComptime(globalThis, field)) |v| {
+                    if (v.isString()) {
+                        if (comptime std.mem.eql(u8, field, "accessKeyId")) has_access_key = true;
+                        if (comptime std.mem.eql(u8, field, "secretAccessKey")) has_secret_key = true;
+                    } else if (!v.isEmptyOrUndefinedOrNull()) {
+                        return globalThis.throwInvalidArgumentTypeValue(field, "string", v);
+                    }
+                }
+            }
+        }
+        if (!has_access_key or !has_secret_key) {
+            return globalThis.ERR(.S3_MISSING_CREDENTIALS, "Missing S3 credentials. 'accessKeyId' and 'secretAccessKey' are required", .{}).throw();
+        }
+    }
 };
 
 const S3File = @import("./S3File.zig");
+const std = @import("std");
 
 const bun = @import("bun");
 const S3Credentials = bun.S3.S3Credentials;

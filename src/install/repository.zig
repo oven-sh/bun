@@ -611,7 +611,9 @@ pub const Repository = extern struct {
     }
 
     fn isFilesystemError(err: anyerror) bool {
-        return err == error.PackDirectoryAccessDenied or
+        return err == error.AlreadyExists or
+            err == error.PathAlreadyExists or
+            err == error.PackDirectoryAccessDenied or
             err == error.PackDirectoryError or
             err == error.PackDirectoryOnUnmountedDevice or
             err == error.PackDirectorySymlinkLoop or
@@ -717,7 +719,8 @@ pub const Repository = extern struct {
             err == error.InvalidStartPoint or
             err == error.MaxDepthExceeded or
             err == error.RefNameTooLong or
-            err == error.TreeCycle;
+            err == error.TreeCycle or
+            err == error.NoTagsFound;
     }
 
     pub fn download(

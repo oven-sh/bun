@@ -63,15 +63,15 @@ All paths have automatic git CLI fallback with categorized error logging.
 
 ## Error Categories in `logZiggitError`
 
-| Category           | Errors                                                              | Behavior                    |
-|--------------------|---------------------------------------------------------------------|-----------------------------|
-| SSH Auth           | SshAuthFailed, SshKeyNotFound, SshAgentFailure, SshClone/FetchFailed | Log hint about SSH keys     |
-| Network            | HttpError, ConnectionRefused, ConnectionTimedOut, TlsError, etc.   | Log + fallback              |
-| Protocol           | NetworkRemoteNotSupported, UnsupportedUrlScheme                     | Log + fallback              |
-| Ref Resolution     | RefNotFound, CommitNotFound, ObjectNotFound, NotAGitRepository      | Log + fallback              |
-| Data Integrity     | InvalidPackFile, CorruptedData, BadChecksum, ChecksumMismatch, etc. | Log + cleanup + fallback    |
-| OOM                | OutOfMemory                                                         | Log + fallback              |
-| Other              | Any unrecognized error                                              | Generic log + fallback      |
+| Category           | Errors (actual ziggit values)                                                        | Behavior                    |
+|--------------------|--------------------------------------------------------------------------------------|-----------------------------|
+| SSH Auth           | SshProcessFailed, InvalidSshUrl                                                      | Log hint about SSH keys     |
+| Network            | HttpError, ConnectionRefused, ConnectionTimedOut, TlsError/TlsFailure, BrokenPipe   | Log + fallback              |
+| Protocol           | UnsupportedPackVersion, UnsupportedIndexVersion, InvalidUrl, InvalidPktLine           | Log + fallback              |
+| Ref Resolution     | RefNotFound, ObjectNotFound, BranchNotFound, TreeNotFound, InvalidRef, InvalidCommit  | Log + fallback              |
+| Data Integrity     | ChecksumMismatch, PackChecksumMismatch, InvalidPack*, CorruptedPackIndex, InvalidDelta* | Log + cleanup + fallback  |
+| OOM                | OutOfMemory                                                                          | Log + fallback              |
+| Other              | Any unrecognized error                                                               | Generic log + fallback      |
 
 ## Known Limitations
 - Ziggit has no configurable network timeout (git CLI fallback is the safety net)

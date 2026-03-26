@@ -95,7 +95,9 @@ while (true) {
     (0, eval)(script);
   } catch (_e) {
     // Print uncaught exception like workerd does
-    try { _console_log(`uncaught:${_e}`); } catch {}
+    try {
+      _console_log(`uncaught:${_e}`);
+    } catch {}
     exit_code = 1;
   }
 

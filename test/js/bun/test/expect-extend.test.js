@@ -392,4 +392,14 @@ describe("MatcherContext", () => {
       expect(123).toBeCustomColor(456);
     });
   });
+
+  if (isBun) {
+    test("does not crash when matchers object has numeric index properties", () => {
+      // Numeric index properties should be silently skipped, not crash with
+      // an assertion failure in putDirectInternal.
+      expect(() => {
+        expect.extend({ 0: () => ({ pass: true }) });
+      }).not.toThrow();
+    });
+  }
 });

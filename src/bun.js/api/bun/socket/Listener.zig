@@ -171,7 +171,7 @@ pub fn listen(globalObject: *jsc.JSGlobalObject, opts: JSValue) bun.JSError!JSVa
         }
     }
 
-    const ctx_opts: uws.SocketContext.BunSocketContextOptions = if (ssl) |some_ssl|
+    var ctx_opts: uws.SocketContext.BunSocketContextOptions = if (ssl) |some_ssl|
         some_ssl.asUSockets()
     else
         .{};
@@ -304,6 +304,12 @@ pub fn listen(globalObject: *jsc.JSGlobalObject, opts: JSValue) bun.JSError!JSVa
         if (ssl_config.server_name) |server_name| {
             const slice = std.mem.span(server_name);
             if (slice.len > 0) {
+                // Pass ALPN protocols to the SNI context so it can
+                // negotiate ALPN during the TLS handshake
+                if (socket.protos) |protos| {
+                    ctx_opts.protos = protos.ptr;
+                    ctx_opts.protos_len = @intCast(protos.len);
+                }
                 socket.socket_context.?.addServerName(true, server_name, ctx_opts);
             }
         }

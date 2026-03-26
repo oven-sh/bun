@@ -78,6 +78,8 @@ namespace uWS {
         int request_cert = 0;
         unsigned int client_renegotiation_limit = 3;
         unsigned int client_renegotiation_window = 600;
+        const unsigned char *protos = nullptr;
+        unsigned int protos_len = 0;
 
         /* Conversion operator used internally */
         operator struct us_bun_socket_context_options_t() const {

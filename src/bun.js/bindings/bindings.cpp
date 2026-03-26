@@ -5876,7 +5876,11 @@ extern "C" EncodedJSValue JSC__createRangeError(JSC::JSGlobalObject* globalObjec
 extern "C" EncodedJSValue ExpectMatcherUtils__getSingleton(JSC::JSGlobalObject* globalObject_)
 {
     Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(globalObject_);
-    return JSValue::encode(globalObject->m_testMatcherUtilsObject.getInitializedOnMainThread(globalObject));
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* result = globalObject->m_testMatcherUtilsObject.getInitializedOnMainThread(globalObject);
+    RETURN_IF_EXCEPTION(scope, JSValue::encode(JSValue()));
+    return JSValue::encode(result);
 }
 
 extern "C" EncodedJSValue Expect__getPrototype(JSC::JSGlobalObject* globalObject)

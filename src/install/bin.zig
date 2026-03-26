@@ -1077,7 +1077,7 @@ pub const Bin = extern struct {
                     const target = this.bin.value.dir.slice(this.string_buf);
                     if (target.len == 0) return;
 
-                    const abs_target_dir = path.joinAbsStringZ(package_dir, &.{target}, .auto);
+                    const abs_target_dir = this.resolveTargetWithHoisting(package_dir, target);
 
                     var target_dir = bun.openDirAbsolute(abs_target_dir) catch |err| {
                         this.err = err;

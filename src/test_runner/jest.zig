@@ -293,7 +293,9 @@ pub const Jest = struct {
             }
         }
 
-        return Bun__Jest__testModuleObject(globalObject);
+        const result = Bun__Jest__testModuleObject(globalObject);
+        if (result == .zero) return error.JSError;
+        return result;
     }
 
     fn jsSetDefaultTimeout(globalObject: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {

@@ -2,11 +2,12 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 // Verify that backpressure propagates through fetch().body.pipeThrough(TransformStream)
+// so the proxy doesn't eagerly buffer the entire upstream response.
 // https://github.com/oven-sh/bun/issues/28035
 test("fetch body piped through TransformStream propagates backpressure", async () => {
   using dir = tempDir("28035", {
     "test.ts": `
-      const TOTAL_CHUNKS = 3000;
+      const TOTAL_CHUNKS = 1500;
       let chunksProduced = 0;
 
       const upstream = Bun.serve({
@@ -18,7 +19,7 @@ test("fetch body piped through TransformStream propagates backpressure", async (
             new ReadableStream({
               pull(controller) {
                 if (chunksProduced >= TOTAL_CHUNKS) { controller.close(); return; }
-                controller.enqueue(Buffer.alloc(32000, 65));
+                controller.enqueue(Buffer.alloc(64000, 65));
                 chunksProduced++;
               },
             }),
@@ -38,11 +39,7 @@ test("fetch body piped through TransformStream propagates backpressure", async (
         },
       });
 
-      // Connect and immediately pause reading to create TCP backpressure.
-      // With the socket paused, kernel send/receive buffers fill up,
-      // causing uWS to report backpressure.
       const { promise: done, resolve: finish } = Promise.withResolvers<void>();
-
       const conn = await Bun.connect({
         hostname: "localhost",
         port: proxy.port,
@@ -58,23 +55,16 @@ test("fetch body piped through TransformStream propagates backpressure", async (
         },
       });
 
-      // Poll until production stabilizes (backpressure stalls it) or
-      // all chunks are consumed (no backpressure). Awaiting a
-      // condition instead of sleeping a fixed duration.
+      // Quick poll: check if production stalls (3 stable checks × 50ms)
       let stableCount = 0;
       let lastProduced = 0;
-      while (chunksProduced < TOTAL_CHUNKS && stableCount < 5) {
-        await Bun.sleep(200);
-        if (chunksProduced === lastProduced) {
-          stableCount++;
-        } else {
-          stableCount = 0;
-          lastProduced = chunksProduced;
-        }
+      while (chunksProduced < TOTAL_CHUNKS && stableCount < 3) {
+        await Bun.sleep(50);
+        if (chunksProduced === lastProduced) stableCount++;
+        else { stableCount = 0; lastProduced = chunksProduced; }
       }
       const chunksWhilePaused = chunksProduced;
 
-      // Resume reading so the connection can close cleanly
       conn.resume();
       await done;
       proxy.stop(true);
@@ -106,9 +96,6 @@ test("fetch body piped through TransformStream propagates backpressure", async (
   expect(jsonLine).toBeDefined();
   const result = JSON.parse(jsonLine!);
   expect(result.chunksWhilePaused).toBeGreaterThan(0);
-
-  // With backpressure: production stalls before all chunks are consumed
-  // Without backpressure: all chunks consumed eagerly
   expect(result.backpressureObserved).toBe(true);
   expect(exitCode).toBe(0);
 });

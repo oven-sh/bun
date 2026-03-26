@@ -1,5 +1,5 @@
-import { test, expect, describe } from "bun:test";
-import { bunExe, bunEnv, tempDir, isWindows } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 
 // https://github.com/oven-sh/bun/issues/28594

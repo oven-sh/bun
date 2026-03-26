@@ -1,7 +1,7 @@
 # Ziggit Integration Benchmarks
 
 ## Environment
-- Date: 2026-03-26 (latest refresh, run 4)
+- Date: 2026-03-26 (latest refresh, run 5)
 - Ziggit commit: 6f37261 (single-pass idx_writer with eager LRU caching)
 - Bun fork branch: ziggit-integration
 - Machine: Linux (root@ziggit), tmpfs-backed /tmp
@@ -13,19 +13,19 @@
 
 | Tool    | Run 1  | Run 2  | Run 3  | Run 4  | Run 5  | Avg    |
 |---------|--------|--------|--------|--------|--------|--------|
-| ziggit  | 193ms  | 176ms  | 184ms  | 192ms  | 178ms  | 185ms  |
-| git CLI | 189ms  | 180ms  | 180ms  | 181ms  | 195ms  | 185ms  |
+| ziggit  | 299ms  | 274ms  | 270ms  | 265ms  | 267ms  | 275ms  |
+| git CLI | 296ms  | 271ms  | 269ms  | 262ms  | 271ms  | 274ms  |
 
-**Result**: **Dead parity** — ziggit avg 185ms vs git CLI avg 185ms (1.00x). Network-dominated. ✅
+**Result**: **Dead parity** — ziggit avg 275ms vs git CLI avg 274ms (1.00x). Network-dominated. ✅
 
 ### expressjs/express (medium repo, ~6MB pack) — 3 runs
 
 | Tool    | Run 1  | Run 2  | Run 3  | Avg    |
 |---------|--------|--------|--------|--------|
-| ziggit  | 961ms  | 967ms  | 924ms  | 951ms  |
-| git CLI | 932ms  | 948ms  | 928ms  | 936ms  |
+| ziggit  | 1951ms | 1903ms | 1886ms | 1913ms |
+| git CLI | 1947ms | 1901ms | 1886ms | 1911ms |
 
-**Result**: **Parity** — ziggit avg 951ms vs git CLI avg 936ms (1.02x). Network-dominated. ✅
+**Result**: **Dead parity** — ziggit avg 1913ms vs git CLI avg 1911ms (1.00x). Network-dominated. ✅
 
 ### Correctness
 - `git verify-pack` passes on ziggit-produced .idx files ✅
@@ -60,6 +60,7 @@ This is critical for bun's integration because `findCommit` is called for every 
 
 | Date       | Ziggit Commit | Change                                  | sindresorhus/is avg | express avg | Notes |
 |------------|---------------|-----------------------------------------|---------------------|-------------|-------|
+| 2026-03-26 | 6f37261 (run5)| Re-benchmark (higher-latency network)   | 275ms (git: 274ms)  | 1913ms (git: 1911ms) | Dead parity |
 | 2026-03-26 | 6f37261 (run4)| Re-benchmark (latest idx_writer)        | 185ms (git: 185ms)  | 951ms (git: 936ms) | Dead parity |
 | 2026-03-26 | 6f37261 (run3)| Single-pass with eager LRU caching      | 199ms (git: 200ms)  | — | Parity |
 | 2026-03-26 | f62586b       | packed-refs fix for bare repos          | 193ms (git: 192ms)  | — | findCommit now 100x faster |

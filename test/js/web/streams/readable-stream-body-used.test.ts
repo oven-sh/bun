@@ -1,5 +1,5 @@
-import { test, expect } from "bun:test";
-import { bunExe, bunEnv } from "harness";
+import { expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 
 // Regression test: calling .bytes() on a consumed Response body stream
 // used to trigger an assertion failure ("Expected an exception to be thrown")

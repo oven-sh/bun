@@ -501,29 +501,49 @@ pub const Repository = extern struct {
     }
 
     fn isSshAuthError(err: anyerror) bool {
-        return err == error.SshAuthFailed or
+        return err == error.SshProcessFailed or
+            err == error.InvalidSshUrl or
+            // Defensive: these may be added to ziggit in the future
+            err == error.SshAuthFailed or
             err == error.SshKeyNotFound or
-            err == error.SshAgentFailure or
-            err == error.SshCloneFailed or
-            err == error.SshFetchFailed;
+            err == error.SshAgentFailure;
     }
 
     fn isProtocolError(err: anyerror) bool {
-        return err == error.NetworkRemoteNotSupported or
+        return err == error.UnsupportedPackVersion or
+            err == error.UnsupportedIndexVersion or
+            err == error.InvalidUrl or
+            err == error.InvalidPktLine or
+            // Defensive: may be added to ziggit
+            err == error.NetworkRemoteNotSupported or
             err == error.UnsupportedUrlScheme;
     }
 
     fn isDataIntegrityError(err: anyerror) bool {
-        return err == error.InvalidPackFile or
+        return err == error.ChecksumMismatch or
+            err == error.PackChecksumMismatch or
+            err == error.InvalidPackFile or
+            err == error.InvalidPack or
+            err == error.InvalidPackData or
+            err == error.InvalidPackObject or
+            err == error.InvalidPackIndex or
+            err == error.CorruptedPackIndex or
+            err == error.PackIndexCorrupted or
+            err == error.SuspiciousPackIndex or
+            err == error.InvalidPackSignature or
+            err == error.InvalidPackObjectType or
+            err == error.InvalidDelta or
+            err == error.InvalidDeltaOffset or
+            err == error.InvalidIndex or
+            err == error.InvalidHash or
+            err == error.InvalidObject or
+            err == error.InvalidTree or
+            err == error.InvalidTreeFormat or
+            err == error.EmptyPackFile or
+            err == error.NoPackData or
+            // Defensive: may be added to ziggit
             err == error.CorruptedData or
             err == error.BadChecksum or
-            err == error.ChecksumMismatch or
-            err == error.CorruptObject or
-            err == error.InvalidBlobObject or
-            err == error.InvalidCommitObject or
-            err == error.InvalidTreeObject or
-            err == error.InvalidPackObject or
-            err == error.InvalidPackOffset or
             err == error.InvalidIdx;
     }
 
@@ -552,8 +572,7 @@ pub const Repository = extern struct {
 
     fn isNetworkError(err: anyerror) bool {
         return err == error.HttpError or
-            err == error.HttpCloneFailed or
-            err == error.HttpFetchFailed or
+            // std network errors (ziggit uses std.http/net internally)
             err == error.ConnectionRefused or
             err == error.ConnectionTimedOut or
             err == error.ConnectionResetByPeer or
@@ -569,8 +588,16 @@ pub const Repository = extern struct {
 
     fn isRefResolutionError(err: anyerror) bool {
         return err == error.RefNotFound or
-            err == error.CommitNotFound or
             err == error.ObjectNotFound or
+            err == error.BranchNotFound or
+            err == error.TreeNotFound or
+            err == error.InvalidRef or
+            err == error.InvalidRefName or
+            err == error.InvalidCommit or
+            err == error.InvalidCommitHash or
+            err == error.InvalidHEAD or
+            // Defensive: may be added to ziggit
+            err == error.CommitNotFound or
             err == error.NotAGitRepository;
     }
 

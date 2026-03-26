@@ -38,7 +38,7 @@ RUN apt-get update -qq \
       --retry 5 \
       --retry-delay 3 \
       --retry-all-errors \
-      || (echo "error: failed to download: $tag" && exit 1) \
+      || { echo "error: failed to download: $tag"; exit 1; } \
     && for key in \
       "F3DCC08A8572C0749B3E18888EAB4D40A7B22B59" \
     ; do \
@@ -51,11 +51,11 @@ RUN apt-get update -qq \
       --retry 5 \
       --retry-delay 3 \
       --retry-all-errors \
-      || (echo "error: failed to download SHASUMS256.txt.asc for: $tag" && exit 1) \
+      || { echo "error: failed to download SHASUMS256.txt.asc for: $tag"; exit 1; } \
     && gpg --batch --decrypt --output SHASUMS256.txt SHASUMS256.txt.asc \
-      || (echo "error: failed to verify: $tag" && exit 1) \
+      || { echo "error: failed to verify: $tag"; exit 1; } \
     && grep " bun-linux-$build.zip\$" SHASUMS256.txt | sha256sum -c - \
-      || (echo "error: failed to verify: $tag" && exit 1) \
+      || { echo "error: failed to verify: $tag"; exit 1; } \
     && unzip "bun-linux-$build.zip" \
     && mv "bun-linux-$build/bun" /usr/local/bin/bun \
     && rm -f "bun-linux-$build.zip" SHASUMS256.txt.asc SHASUMS256.txt \

@@ -106,6 +106,37 @@ All paths have automatic git CLI fallback with categorized error logging.
 | Resource Exhaustion| OutOfMemory, SystemResourcesExhausted, etc.                     | Log + fallback              |
 | Other              | Any unrecognized error                                           | Generic log + fallback      |
 
+## End-to-End `bun install` Benchmark (2026-03-26)
+
+Full benchmark comparing stock bun, git CLI, and ziggit for 5 git dependencies.
+See [BUN_INSTALL_BENCHMARK.md](BUN_INSTALL_BENCHMARK.md) for detailed results.
+
+### Stock `bun install` (5 git deps + 266 transitive npm packages)
+
+| Metric | Avg (ms) |
+|--------|----------|
+| Cold (no cache) | 709.7 |
+| Warm (cached) | 23.4 |
+
+### Git dependency resolution: Git CLI vs Ziggit (5 repos, sequential)
+
+| Tool | debug (ms) | semver (ms) | chalk (ms) | is (ms) | express (ms) | Total avg (ms) |
+|------|-----------|------------|-----------|---------|-------------|---------------|
+| git CLI (--depth=1) | 141 | 165 | 165* | 166 | 188 | 838† |
+| ziggit (full clone) | 150 | 233 | 160 | 194 | 962 | 1698 |
+
+\* chalk git avg excludes 1 outlier (1155ms network stall)
+† git total uses median run (runs 1+3 avg), excluding outlier run 2
+
+**Key finding**: Ziggit is **slower** for full clones because it downloads complete
+history while `git clone --depth=1` downloads only the tip commit. Express (5000+
+commits) shows the largest gap (5.1x). For small/short-history repos (chalk), ziggit
+achieves near-parity.
+
+**Path to faster**: Implementing shallow clone support in ziggit would bring it to
+parity, and the in-process + parallel execution advantages would then yield a
+projected **~4x speedup** on git dependency resolution.
+
 ## Known Limitations
 - Ziggit has no configurable network timeout (git CLI fallback is the safety net)
 - SSH transport not yet fully supported in ziggit (SSH URLs converted to HTTPS via `tryHTTPS`)

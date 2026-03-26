@@ -811,6 +811,11 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
                 if (!this.has_backpressure) {
                     this.has_backpressure = res.getBufferedAmount() > 1024 * 1024;
                 }
+                // Register onWritable so the drain event resolves
+                // any pending flush promise created by flushFromJS.
+                if (this.has_backpressure) {
+                    res.onWritable(*@This(), onWritable, this);
+                }
             }
             this.handleWrote(buf.len);
             return true;

@@ -103,12 +103,14 @@ test("fetch body piped through TransformStream propagates backpressure", async (
     console.log("stdout:", stdout.slice(0, 500));
     console.log("stderr:", stderr.slice(0, 2000));
   }
-  expect(exitCode).toBe(0);
+  expect(jsonLine).toBeDefined();
   const result = JSON.parse(jsonLine!);
+  expect(result.chunksWhilePaused).toBeGreaterThan(0);
 
   // With backpressure: production stalls before all chunks are consumed
   // Without backpressure: all chunks consumed eagerly
   expect(result.backpressureObserved).toBe(true);
+  expect(exitCode).toBe(0);
 });
 
 // Verify basic streaming through TransformStream delivers all data correctly

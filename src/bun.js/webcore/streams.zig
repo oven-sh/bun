@@ -1215,6 +1215,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             log("onAborted()", .{});
             this.done = true;
             this.res = null;
+            this.has_backpressure = false;
             this.unregisterAutoFlusher();
 
             this.aborted = true;

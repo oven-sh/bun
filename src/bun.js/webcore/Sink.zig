@@ -366,9 +366,11 @@ pub fn JSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
         /// After a successful write, return `false` instead of the byte
         /// count when the underlying socket has backpressure. This lets
         /// JS callers pause reading until the socket drains.
+        /// Errors are never masked — only numeric success values are
+        /// replaced with `false`.
         inline fn backpressureCheck(sink: *SinkType, result: jsc.JSValue) jsc.JSValue {
             if (comptime @hasField(SinkType, "has_backpressure")) {
-                if (sink.has_backpressure) {
+                if (sink.has_backpressure and result.isNumber()) {
                     return .false;
                 }
             }

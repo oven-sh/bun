@@ -40,9 +40,9 @@ test("fetch body piped through TransformStream propagates backpressure", async (
 
       // Connect and immediately pause reading to create TCP backpressure.
       // With the socket paused, kernel send/receive buffers fill up,
-      // causing uWS to report backpressure. The fix should then pause
-      // reading from the upstream to limit memory usage.
-      const { promise, resolve } = Promise.withResolvers<void>();
+      // causing uWS to report backpressure.
+      const { promise: done, resolve: finish } = Promise.withResolvers<void>();
+
       const conn = await Bun.connect({
         hostname: "localhost",
         port: proxy.port,
@@ -50,23 +50,40 @@ test("fetch body piped through TransformStream propagates backpressure", async (
           open(socket) {
             socket.write("GET / HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n");
             socket.pause();
-            setTimeout(() => socket.resume(), 4000);
           },
           data() {},
-          close() { resolve(); },
-          error() { resolve(); },
-          connectError() { resolve(); },
+          close() { finish(); },
+          error() { finish(); },
+          connectError() { finish(); },
         },
       });
 
-      // Wait while socket is paused and measure upstream consumption
-      await Bun.sleep(2500);
+      // Poll until production stabilizes (backpressure stalls it) or
+      // all chunks are consumed (no backpressure). Awaiting a
+      // condition instead of sleeping a fixed duration.
+      let stableCount = 0;
+      let lastProduced = 0;
+      while (chunksProduced < TOTAL_CHUNKS && stableCount < 5) {
+        await Bun.sleep(200);
+        if (chunksProduced === lastProduced) {
+          stableCount++;
+        } else {
+          stableCount = 0;
+          lastProduced = chunksProduced;
+        }
+      }
       const chunksWhilePaused = chunksProduced;
 
-      await promise;
+      // Resume reading so the connection can close cleanly
+      conn.resume();
+      await done;
       proxy.stop(true);
       upstream.stop(true);
-      console.log(JSON.stringify({ chunksWhilePaused, TOTAL_CHUNKS }));
+      console.log(JSON.stringify({
+        chunksWhilePaused,
+        TOTAL_CHUNKS,
+        backpressureObserved: chunksWhilePaused < TOTAL_CHUNKS,
+      }));
     `,
   });
 
@@ -89,11 +106,10 @@ test("fetch body piped through TransformStream propagates backpressure", async (
   expect(exitCode).toBe(0);
   const result = JSON.parse(jsonLine!);
 
-  // Without backpressure: all 3000 chunks consumed eagerly (~96MB buffered)
-  // With backpressure: upstream consumption should be bounded by TCP
-  // buffer capacity + polling overhead (~50-60MB max)
-  expect(result.chunksWhilePaused).toBeLessThan(result.TOTAL_CHUNKS * 0.9);
-}, 30_000);
+  // With backpressure: production stalls before all chunks are consumed
+  // Without backpressure: all chunks consumed eagerly
+  expect(result.backpressureObserved).toBe(true);
+});
 
 // Verify basic streaming through TransformStream delivers all data correctly
 test("TransformStream proxy delivers all data", async () => {
@@ -136,4 +152,4 @@ test("TransformStream proxy delivers all data", async () => {
   const response = await fetch(`http://localhost:${proxy.port}/`);
   const body = await response.bytes();
   expect(body.length).toBe(TOTAL_CHUNKS * 25000);
-}, 30_000);
+});

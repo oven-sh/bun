@@ -15,7 +15,10 @@ test("fetch body piped through TransformStream propagates backpressure", async (
       return new Response(
         new ReadableStream({
           pull(controller) {
-            if (chunksProduced >= TOTAL_CHUNKS) { controller.close(); return; }
+            if (chunksProduced >= TOTAL_CHUNKS) {
+              controller.close();
+              return;
+            }
             controller.enqueue(Buffer.alloc(64000, 65));
             chunksProduced++;
           },
@@ -30,7 +33,9 @@ test("fetch body piped through TransformStream propagates backpressure", async (
     async fetch() {
       const res = await fetch(`http://localhost:${upstream.port}/`);
       const transform = new TransformStream({
-        transform(chunk, ctrl) { ctrl.enqueue(chunk); },
+        transform(chunk, ctrl) {
+          ctrl.enqueue(chunk);
+        },
       });
       return new Response(res.body!.pipeThrough(transform));
     },
@@ -58,7 +63,10 @@ test("fetch body piped through TransformStream propagates backpressure", async (
     while (chunksProduced < TOTAL_CHUNKS && stableCount < 3) {
       await Bun.sleep(50);
       if (chunksProduced === lastProduced) stableCount++;
-      else { stableCount = 0; lastProduced = chunksProduced; }
+      else {
+        stableCount = 0;
+        lastProduced = chunksProduced;
+      }
     }
 
     expect(chunksProduced).toBeGreaterThan(0);
@@ -85,7 +93,10 @@ test("TransformStream proxy delivers all data", async () => {
       return new Response(
         new ReadableStream({
           pull(controller) {
-            if (i >= TOTAL_CHUNKS) { controller.close(); return; }
+            if (i >= TOTAL_CHUNKS) {
+              controller.close();
+              return;
+            }
             controller.enqueue(Buffer.alloc(25000, 65));
             i++;
           },
@@ -100,7 +111,9 @@ test("TransformStream proxy delivers all data", async () => {
     async fetch() {
       const res = await fetch(`http://localhost:${upstream.port}/`);
       const transform = new TransformStream({
-        transform(chunk, ctrl) { ctrl.enqueue(chunk); },
+        transform(chunk, ctrl) {
+          ctrl.enqueue(chunk);
+        },
       });
       return new Response(res.body!.pipeThrough(transform));
     },

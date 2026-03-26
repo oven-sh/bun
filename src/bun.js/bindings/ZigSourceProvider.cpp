@@ -187,6 +187,11 @@ static JSC::VM& getVMForBytecodeCache()
         vmPtr->refSuppressingSaferCPPChecking();
         vmForBytecodeCache = vmPtr.get();
         vmPtr->heap.acquireAccess();
+        // Builtin bytecode generation needs Bun's private identifiers
+        // (@isCallable etc) registered in the VM, which JSVMClientData
+        // sets up. Module/CJS bytecode generation doesn't need it but
+        // works fine with it, so we always attach it.
+        WebCore::JSVMClientData::create(vmForBytecodeCache, nullptr);
     }
     return *vmForBytecodeCache;
 }
@@ -261,29 +266,12 @@ extern "C" bool generateCachedCommonJSProgramByteCodeFromSourceCode(BunString* s
     return true;
 }
 
-// Builtin bytecode generation needs Bun's private identifiers (@isCallable etc)
-// registered in the VM. The plain getVMForBytecodeCache() VM doesn't have
-// JSVMClientData, so parsing builtin sources would fail.
-static JSC::VM& getVMForBuiltinBytecodeCache()
-{
-    static thread_local JSC::VM* vmForBuiltinBytecodeCache = nullptr;
-    if (!vmForBuiltinBytecodeCache) {
-        const auto heapSize = JSC::HeapType::Small;
-        auto vmPtr = JSC::VM::tryCreate(heapSize);
-        vmPtr->refSuppressingSaferCPPChecking();
-        vmForBuiltinBytecodeCache = vmPtr.get();
-        vmPtr->heap.acquireAccess();
-        WebCore::JSVMClientData::create(vmForBuiltinBytecodeCache, nullptr);
-    }
-    return *vmForBuiltinBytecodeCache;
-}
-
 extern "C" bool generateCachedBuiltinByteCodeFromSourceCode(BunString* moduleName, const Latin1Character* inputSourceCode, size_t inputSourceCodeSize, uint8_t implementationVisibility, uint8_t constructorKind, uint8_t constructAbility, uint8_t inlineAttribute, const uint8_t** outputByteCode, size_t* outputByteCodeSize, JSC::CachedBytecode** cachedBytecodePtr)
 {
     std::span<const Latin1Character> sourceCodeSpan(inputSourceCode, inputSourceCodeSize);
     JSC::SourceCode sourceCode = JSC::makeSource(WTF::String(sourceCodeSpan), JSC::SourceOrigin(), JSC::SourceTaintedOrigin::Untainted);
 
-    JSC::VM& vm = getVMForBuiltinBytecodeCache();
+    JSC::VM& vm = getVMForBytecodeCache();
     JSC::JSLockHolder locker(vm);
 
     auto name = JSC::Identifier::fromString(vm, moduleName->toWTFString());
@@ -309,7 +297,8 @@ extern "C" bool generateCachedBuiltinByteCodeFromSourceCode(BunString* moduleNam
     return true;
 }
 
-extern "C" const uint8_t* Bun__findBuiltinFunctionBytecode(void* bunVM, uint32_t globalId, size_t* outLen);
+extern "C" bool Bun__hasEmbeddedBuiltinBytecode;
+extern "C" const uint8_t* Bun__findBuiltinFunctionBytecode(uint32_t globalId, size_t* outLen);
 
 } // namespace Zig
 
@@ -317,12 +306,11 @@ namespace Bun {
 
 JSC::UnlinkedFunctionExecutable* tryDecodeBuiltinFunctionBytecode(JSC::VM& vm, uint32_t globalId)
 {
-    auto* clientData = static_cast<WebCore::JSVMClientData*>(vm.clientData);
-    if (!clientData || !clientData->bunVM)
+    if (!Bun__hasEmbeddedBuiltinBytecode) [[likely]]
         return nullptr;
 
     size_t len = 0;
-    const uint8_t* bytecode = Bun__findBuiltinFunctionBytecode(clientData->bunVM, globalId, &len);
+    const uint8_t* bytecode = Bun__findBuiltinFunctionBytecode(globalId, &len);
     if (!bytecode)
         return nullptr;
 

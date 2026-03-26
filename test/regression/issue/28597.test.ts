@@ -151,7 +151,6 @@ test("global bin shims are created when bin target points into hoisted node_modu
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stderr).not.toContain("error:");
-  expect(exitCode).toBe(0);
 
   // The global bin shims should exist despite the bin targets pointing
   // into node_modules/ (hoisted dependency)
@@ -166,4 +165,6 @@ test("global bin shims are created when bin target points into hoisted node_modu
     const target = readlinkSync(join(globalBinDir, "wrapper-tool"));
     expect(target).toContain(join("@inner-scope", "inner-bin", "bin.js"));
   }
+
+  expect(exitCode).toBe(0);
 });

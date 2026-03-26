@@ -1,7 +1,7 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
+import { existsSync, readlinkSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
-import { existsSync, readlinkSync } from "fs";
 
 // Regression test for https://github.com/oven-sh/bun/issues/28597
 // When a package has bin entries pointing into node_modules/ (e.g. a wrapper
@@ -45,8 +45,16 @@ test("global bin shims are created when bin target points into hoisted node_modu
   fs.writeFileSync(join(wrapperTarDir, "package.json"), wrapperPkgJson);
 
   // Create tarballs
-  await Bun.spawn({ cmd: ["tar", "czf", join(dirStr, "inner-bin-1.0.0.tgz"), "-C", join(dirStr, "inner-tar"), "package"], stdout: "ignore", stderr: "ignore" }).exited;
-  await Bun.spawn({ cmd: ["tar", "czf", join(dirStr, "wrapper-bin-1.0.0.tgz"), "-C", join(dirStr, "wrapper-tar"), "package"], stdout: "ignore", stderr: "ignore" }).exited;
+  await Bun.spawn({
+    cmd: ["tar", "czf", join(dirStr, "inner-bin-1.0.0.tgz"), "-C", join(dirStr, "inner-tar"), "package"],
+    stdout: "ignore",
+    stderr: "ignore",
+  }).exited;
+  await Bun.spawn({
+    cmd: ["tar", "czf", join(dirStr, "wrapper-bin-1.0.0.tgz"), "-C", join(dirStr, "wrapper-tar"), "package"],
+    stdout: "ignore",
+    stderr: "ignore",
+  }).exited;
 
   // Compute real checksums for the tarballs
   const crypto = await import("crypto");

@@ -521,6 +521,9 @@ pub const Repository = extern struct {
             err == error.UnsupportedPackType or
             err == error.InvalidUrl or
             err == error.InvalidPktLine or
+            err == error.UnsupportedMode or
+            err == error.NotSupported or
+            err == error.NotImplemented or
             // Defensive: may be added to ziggit
             err == error.NetworkRemoteNotSupported or
             err == error.UnsupportedUrlScheme;
@@ -562,6 +565,27 @@ pub const Repository = extern struct {
             err == error.EmptyPackFile or
             err == error.PackFileTooSmall or
             err == error.NoPackData or
+            err == error.InvalidHashCharacter or
+            err == error.InvalidHashLength or
+            err == error.InvalidObjectType or
+            err == error.InvalidOffset or
+            err == error.InsufficientDataAtOffset or
+            err == error.OffsetBeyondData or
+            err == error.OffsetBeyondPackContent or
+            err == error.OffsetOutOfBounds or
+            err == error.ObjectSizeTooLarge or
+            err == error.IndexNotSorted or
+            err == error.IndexTooLarge or
+            err == error.IndexTooSmall or
+            err == error.PackIndexTooLarge or
+            err == error.PackIndexTooSmall or
+            err == error.PackIndexLowEntropy or
+            err == error.PackIndexReadError or
+            err == error.TooManyObjectsInPack or
+            err == error.VarIntTooLarge or
+            err == error.RefDeltaRequiresExternalLookup or
+            err == error.EmptyBaseData or
+            err == error.TreeCycle or
             // Defensive: may be added to ziggit
             err == error.CorruptedData or
             err == error.BadChecksum or
@@ -582,8 +606,8 @@ pub const Repository = extern struct {
             debug("{s}: ziggit does not support this protocol ({s}) for \"{s}\", falling back to git CLI", .{ operation, err_name, name });
         } else if (isRefResolutionError(err)) {
             debug("{s}: ziggit ref/object resolution failed ({s}) for \"{s}\", falling back to git CLI", .{ operation, err_name, name });
-        } else if (err == error.OutOfMemory) {
-            debug("{s}: ziggit out of memory for \"{s}\", falling back to git CLI", .{ operation, name });
+        } else if (err == error.OutOfMemory or isResourceExhaustionError(err)) {
+            debug("{s}: ziggit resource exhaustion ({s}) for \"{s}\", falling back to git CLI", .{ operation, err_name, name });
         } else if (isDataIntegrityError(err)) {
             debug("{s}: ziggit data integrity error ({s}) for \"{s}\", falling back to git CLI", .{ operation, err_name, name });
         } else {
@@ -633,7 +657,19 @@ pub const Repository = extern struct {
             err == error.NotATree or
             err == error.NotATreeObject or
             err == error.UnknownRevision or
-            err == error.NoHEAD;
+            err == error.NoHEAD or
+            err == error.EmptyRefName or
+            err == error.InvalidRefNameChar or
+            err == error.RefNameTooLong or
+            err == error.NoCommitsYet or
+            err == error.MaxDepthExceeded;
+    }
+
+    fn isResourceExhaustionError(err: anyerror) bool {
+        return err == error.ProcessFdQuotaExceeded or
+            err == error.SystemFdQuotaExceeded or
+            err == error.SystemResources or
+            err == error.SystemResourcesExhausted;
     }
 
     pub fn download(

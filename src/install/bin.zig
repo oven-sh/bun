@@ -894,16 +894,25 @@ pub const Bin = extern struct {
         fn resolveTargetWithHoisting(this: *const Linker, package_dir: []const u8, target: []const u8) [:0]const u8 {
             const abs_target = path.joinAbsStringZ(package_dir, &.{target}, .auto);
 
-            // Strip leading "./" since joinAbsStringZ normalizes it away in the
-            // absolute path but the prefix check below operates on the raw target.
-            const effective_target = if (strings.hasPrefixComptime(target, "./")) target[2..] else target;
+            // Strip leading "./" or ".\" since joinAbsStringZ normalizes it away
+            // in the absolute path but the prefix check below operates on the raw target.
+            const effective_target = if (strings.hasPrefixComptime(target, "./") or strings.hasPrefixComptime(target, ".\\"))
+                target[2..]
+            else
+                target;
 
-            const node_modules_prefix = "node_modules/";
+            const node_modules_prefix = comptime if (Environment.isWindows) "node_modules\\" else "node_modules/";
+            const node_modules_prefix_alt = "node_modules/";
             if (effective_target.len > node_modules_prefix.len and
-                strings.hasPrefixComptime(effective_target, node_modules_prefix) and
+                (strings.hasPrefixComptime(effective_target, node_modules_prefix) or
+                strings.hasPrefixComptime(effective_target, node_modules_prefix_alt)) and
                 !bun.sys.exists(abs_target))
             {
-                const hoisted_rel = effective_target[node_modules_prefix.len..];
+                const prefix_len = if (strings.hasPrefixComptime(effective_target, node_modules_prefix))
+                    node_modules_prefix.len
+                else
+                    node_modules_prefix_alt.len;
+                const hoisted_rel = effective_target[prefix_len..];
                 const nm_path = strings.withoutTrailingSlash(this.target_node_modules_path.slice());
                 return path.joinAbsStringZ(nm_path, &.{hoisted_rel}, .auto);
             }

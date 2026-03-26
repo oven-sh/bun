@@ -363,6 +363,18 @@ pub fn JSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
             _ = this;
         }
 
+        /// After a successful write, return `false` instead of the byte
+        /// count when the underlying socket has backpressure. This lets
+        /// JS callers pause reading until the socket drains.
+        inline fn backpressureCheck(sink: *SinkType, result: jsc.JSValue) jsc.JSValue {
+            if (comptime @hasField(SinkType, "has_backpressure")) {
+                if (sink.has_backpressure) {
+                    return .false;
+                }
+            }
+            return result;
+        }
+
         pub fn write(globalThis: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
             jsc.markBinding(@src());
             const this = try getThis(globalThis, callframe);
@@ -394,9 +406,10 @@ pub fn JSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
                     return jsc.JSValue.jsNumber(0);
                 }
 
-                return this.sink.writeBytes(
+                const result = this.sink.writeBytes(
                     .{ .temporary = bun.ByteList.fromBorrowedSliceDangerous(slice) },
                 ).toJS(globalThis);
+                return backpressureCheck(&this.sink, result);
             }
 
             if (!arg.isString()) {
@@ -413,14 +426,16 @@ pub fn JSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
 
             defer str.ensureStillAlive();
             if (view.is16Bit()) {
-                return this.sink.writeUTF16(.{ .temporary = bun.ByteList.fromBorrowedSliceDangerous(
+                const result = this.sink.writeUTF16(.{ .temporary = bun.ByteList.fromBorrowedSliceDangerous(
                     std.mem.sliceAsBytes(view.utf16SliceAligned()),
                 ) }).toJS(globalThis);
+                return backpressureCheck(&this.sink, result);
             }
 
-            return this.sink.writeLatin1(
+            const result = this.sink.writeLatin1(
                 .{ .temporary = bun.ByteList.fromBorrowedSliceDangerous(view.slice()) },
             ).toJS(globalThis);
+            return backpressureCheck(&this.sink, result);
         }
 
         pub fn writeUTF8(globalThis: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {

@@ -928,7 +928,13 @@ export async function readStreamIntoSink(stream: ReadableStream, sink, isNative)
         return sink.end();
       }
 
-      sink.write(value);
+      // write() returns false when the underlying socket has
+      // backpressure. Yield to the event loop so the socket can
+      // drain before reading the next chunk. This prevents
+      // unbounded memory growth when the consumer is slow.
+      if (sink.write(value) === false) {
+        await new Promise(function (r) { setTimeout(r, 10); });
+      }
     }
   } catch (e) {
     didThrow = true;

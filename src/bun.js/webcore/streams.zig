@@ -804,6 +804,13 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
                 this.has_backpressure = false;
             } else {
                 this.has_backpressure = res.write(buf) == .backpressure;
+                // Also detect backpressure when the socket has
+                // accumulated data in its internal send buffer.
+                // uWS may accept data even under TCP backpressure,
+                // so we check the actual buffered amount.
+                if (!this.has_backpressure) {
+                    this.has_backpressure = res.getBufferedAmount() > 1024 * 1024;
+                }
             }
             this.handleWrote(buf.len);
             return true;

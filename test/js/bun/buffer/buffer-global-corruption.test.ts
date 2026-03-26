@@ -7,7 +7,10 @@ import { bunEnv, bunExe } from "harness";
 
 test("Buffer++ followed by SharedArrayBuffer operations should not crash", async () => {
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", `
+    cmd: [
+      bunExe(),
+      "-e",
+      `
       function f4() { return f4; }
       const v6 = Buffer(f4);
       try { v6.writeBigInt64LE(f4); } catch (e) {}
@@ -18,17 +21,14 @@ test("Buffer++ followed by SharedArrayBuffer operations should not crash", async
       new SharedArrayBuffer();
       new Int8Array(v36);
       Bun.gc(true);
-    `],
+    `,
+    ],
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   // Should exit with an error (Buffer.byteLength on NaN), not a crash/signal
   expect(exitCode).not.toBe(null);
@@ -38,7 +38,10 @@ test("Buffer++ followed by SharedArrayBuffer operations should not crash", async
 
 test("saved Buffer reference survives global corruption via eval", async () => {
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", `
+    cmd: [
+      bunExe(),
+      "-e",
+      `
       const _Buffer = Buffer;
       // Simulate what fuzzed scripts do
       (0, eval)("Buffer++");
@@ -46,17 +49,14 @@ test("saved Buffer reference survives global corruption via eval", async () => {
       const buf = _Buffer.alloc(4);
       buf.writeUInt32LE(42, 0);
       console.log(buf.readUInt32LE(0));
-    `],
+    `,
+    ],
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stdout.trim()).toBe("42");
   expect(exitCode).toBe(0);

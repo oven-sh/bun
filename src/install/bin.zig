@@ -905,7 +905,7 @@ pub const Bin = extern struct {
             const node_modules_prefix_alt = "node_modules/";
             if (effective_target.len > node_modules_prefix.len and
                 (strings.hasPrefixComptime(effective_target, node_modules_prefix) or
-                strings.hasPrefixComptime(effective_target, node_modules_prefix_alt)) and
+                    strings.hasPrefixComptime(effective_target, node_modules_prefix_alt)) and
                 !bun.sys.exists(abs_target))
             {
                 const prefix_len = if (strings.hasPrefixComptime(effective_target, node_modules_prefix))

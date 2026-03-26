@@ -416,6 +416,13 @@ public:
     double INSPECT_MAX_BYTES = 50;
     bool isInsideErrorPrepareStackTraceCallback = false;
 
+    // CPU profiler state per GlobalObject. Each worker has its own VM and GlobalObject,
+    // so this must not be process-global. The node:inspector API always operates on the
+    // GlobalObject that loaded the module, so this is the correct granularity.
+    double m_profilingStartTime = 0.0;
+    int m_cpuSamplingInterval = 1000;
+    bool m_isCPUProfilerRunning = false;
+
     template<typename T>
     using LazyPropertyOfGlobalObject = LazyProperty<JSGlobalObject, T>;
 

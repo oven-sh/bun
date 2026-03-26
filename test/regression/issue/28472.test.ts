@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { tempDir } from "harness";
-import { Worker } from "worker_threads";
 import inspector from "inspector";
+import { Worker } from "worker_threads";
 
 test("worker_threads inspector Profiler.stop returns profile in worker", async () => {
   using dir = tempDir("issue-28472", {
@@ -34,9 +34,9 @@ session.post('Profiler.enable', () => {
   session.connect();
 
   await new Promise<void>((resolve, reject) => {
-    session.post("Profiler.enable", (err) => {
+    session.post("Profiler.enable", err => {
       if (err) return reject(err);
-      session.post("Profiler.start", (err) => {
+      session.post("Profiler.start", err => {
         if (err) return reject(err);
         resolve();
       });
@@ -46,14 +46,14 @@ session.post('Profiler.enable', () => {
   // Run worker that also profiles
   const workerResult = await new Promise<string>((resolve, reject) => {
     const worker = new Worker(String(dir) + "/worker.cjs");
-    worker.on("message", (msg) => {
+    worker.on("message", msg => {
       worker.terminate().then(() => resolve(msg));
     });
     worker.on("error", reject);
   });
 
   // Stop profiler on main thread
-  const mainResult = await new Promise<string>((resolve) => {
+  const mainResult = await new Promise<string>(resolve => {
     session.post("Profiler.stop", (err, result) => {
       session.disconnect();
       if (err) return resolve("error:" + err.message);

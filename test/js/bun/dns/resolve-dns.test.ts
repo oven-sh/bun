@@ -112,4 +112,18 @@ describe("dns", () => {
       });
     });
   });
+
+  test("lookup does not crash with non-object second argument", async () => {
+    // Non-object cells like strings should be ignored as options, not crash.
+    const results = await Promise.all([
+      dns.lookup("localhost", "string" as any),
+      dns.lookup("localhost", 42 as any),
+      dns.lookup("localhost", true as any),
+      dns.lookup("localhost", null as any),
+    ]);
+    for (const result of results) {
+      expect(result).toBeArray();
+      expect(result.length).toBeGreaterThanOrEqual(1);
+    }
+  });
 });

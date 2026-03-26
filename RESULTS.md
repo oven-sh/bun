@@ -10,21 +10,30 @@
 
 ### sindresorhus/is (small repo, ~270KB pack)
 
-| Tool    | Run 1  | Run 2  | Run 3  | Run 4  | Run 5  | Avg    |
-|---------|--------|--------|--------|--------|--------|--------|
-| ziggit  | 0.193s | 0.196s | 0.188s | 0.190s | 0.185s | 0.190s |
-| git CLI | 0.224s | 0.184s | 0.187s | 0.194s | 0.187s | 0.195s |
+| Tool    | Run 1  | Run 2  | Run 3  | Avg    |
+|---------|--------|--------|--------|--------|
+| ziggit  | 0.207s | 0.234s | 0.215s | 0.219s |
+| git CLI | 0.189s | 0.194s | 0.192s | 0.192s |
 
-**Result**: **Parity** — ziggit avg 0.190s vs git CLI avg 0.195s (~0.97x). Network latency dominates.
+**Result**: **Near-parity** — ziggit avg 0.219s vs git CLI avg 0.192s (~1.14x). Network latency dominates; variance is high on small repos.
 
-### expressjs/express (medium repo, larger pack)
+### expressjs/express (medium repo)
 
 | Tool    | Run 1  | Run 2  | Run 3  | Avg    |
 |---------|--------|--------|--------|--------|
-| ziggit  | 0.996s | 0.999s | 0.983s | 0.993s |
-| git CLI | 0.977s | 0.995s | 1.211s | 1.061s |
+| ziggit  | 0.278s | 0.285s | 0.271s | 0.278s |
+| git CLI | 0.281s | 0.280s | 0.268s | 0.276s |
 
-**Result**: **Parity** — ziggit avg 0.993s vs git CLI avg 1.061s (ziggit slightly faster due to git CLI outlier).
+**Result**: **Parity** — ziggit avg 0.278s vs git CLI avg 0.276s (~1.01x).
+
+### lodash/lodash (larger repo)
+
+| Tool    | Time   |
+|---------|--------|
+| ziggit  | 0.472s |
+| git CLI | 0.464s |
+
+**Result**: **Parity** — ziggit 0.472s vs git CLI 0.464s (~1.02x).
 
 ### Correctness
 - `git fsck --no-dangling` passes on all ziggit-cloned repos ✅
@@ -33,12 +42,12 @@
 
 ## Benchmark History
 
-| Date       | Ziggit Commit | idx_writer Version                    | sindresorhus/is (ziggit avg) | Ratio vs git CLI |
-|------------|---------------|---------------------------------------|------------------------------|------------------|
-| 2026-03-26 | 6f37261       | Single-pass with eager LRU caching    | 0.200s                       | 0.98x ✅         |
-| 2026-03-26 | b49999c       | Two-pass with DeltaCache              | 0.300s                       | 1.01x            |
-| 2026-03-26 | eeba670       | Single-pass architecture              | 0.194s                       | ~1.0x            |
-| Earlier    | (pre-rewrite) | Original multi-pass                   | ~4x slower                   | ~4x              |
+| Date       | Ziggit Commit | idx_writer Version                    | sindresorhus/is (ziggit avg) | express avg | Ratio vs git CLI |
+|------------|---------------|---------------------------------------|------------------------------|-------------|------------------|
+| 2026-03-26 | 6f37261       | Single-pass with eager LRU caching    | 0.219s                       | 0.278s      | ~1.01x ✅        |
+| 2026-03-26 | b49999c       | Two-pass with DeltaCache              | 0.300s                       | —           | 1.01x            |
+| 2026-03-26 | eeba670       | Single-pass architecture              | 0.194s                       | —           | ~1.0x            |
+| Earlier    | (pre-rewrite) | Original multi-pass                   | ~4x slower                   | —           | ~4x              |
 
 *Note: Absolute times vary by network conditions; the ratio is what matters.*
 

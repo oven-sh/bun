@@ -5,6 +5,7 @@ set -euo pipefail
 # Measures: bun install (cold/warm), git CLI clone, ziggit clone, findCommit
 #
 # Usage: bash bun_install_bench.sh
+# Requires: bun, git, zig (built ziggit), python3
 
 ZIGGIT="/root/ziggit/zig-out/bin/ziggit"
 FC_BENCH="/root/bun-fork/benchmark/zig-out/bin/findcommit_bench"
@@ -32,6 +33,7 @@ echo "Zig: $(zig version)"
 echo "Ziggit: $(cd /root/ziggit && git rev-parse --short HEAD)"
 echo "========================================"
 
+# --- 1. BUN INSTALL (COLD) ---
 echo ""
 echo "=== 1. BUN INSTALL (COLD) ==="
 mkdir -p /tmp/bench-bun
@@ -58,6 +60,7 @@ for run in $(seq 1 $RUNS); do
   echo "BUN_COLD_${run}=$((end - start))ms"
 done
 
+# --- 2. BUN INSTALL (WARM) ---
 echo ""
 echo "=== 2. BUN INSTALL (WARM) ==="
 for run in $(seq 1 $RUNS); do
@@ -69,6 +72,7 @@ for run in $(seq 1 $RUNS); do
   echo "BUN_WARM_${run}=$((end - start))ms"
 done
 
+# --- 3. SEQUENTIAL CLONE: GIT CLI (bare --depth=1 + local checkout) ---
 echo ""
 echo "=== 3. GIT CLI CLONE (bare --depth=1 + local checkout) ==="
 for run in $(seq 1 $RUNS); do
@@ -88,8 +92,9 @@ for run in $(seq 1 $RUNS); do
   echo "GIT_TOTAL_run${run}=$((total_end - total_start))ms"
 done
 
+# --- 4. SEQUENTIAL CLONE: ZIGGIT (--depth 1) ---
 echo ""
-echo "=== 4. ZIGGIT CLONE (full depth) ==="
+echo "=== 4. ZIGGIT CLONE (--depth 1) ==="
 for run in $(seq 1 $RUNS); do
   total_start=$(timestamp_ms)
   for i in "${!REPOS[@]}"; do
@@ -97,7 +102,7 @@ for run in $(seq 1 $RUNS); do
     name="${REPO_NAMES[$i]}"
     rm -rf "/tmp/bz-${name}"
     start=$(timestamp_ms)
-    $ZIGGIT clone "$repo" "/tmp/bz-${name}" 2>/dev/null || true
+    $ZIGGIT clone --depth 1 "$repo" "/tmp/bz-${name}" 2>/dev/null || true
     end=$(timestamp_ms)
     echo "ZIGGIT_${name}_run${run}=$((end - start))ms"
     rm -rf "/tmp/bz-${name}"
@@ -106,9 +111,42 @@ for run in $(seq 1 $RUNS); do
   echo "ZIGGIT_TOTAL_run${run}=$((total_end - total_start))ms"
 done
 
+# --- 5. PARALLEL CLONE (simulating bun install's concurrent git dep fetch) ---
 echo ""
-echo "=== 5. GIT REV-PARSE vs ZIGGIT findCommit ==="
-# Set up bare repos
+echo "=== 5. PARALLEL CLONE (5 repos, --depth 1) ==="
+# Warm up network
+$GIT ls-remote https://github.com/debug-js/debug.git HEAD 2>/dev/null >/dev/null
+sleep 1
+
+for run in $(seq 1 $RUNS); do
+  # Git parallel
+  for name in "${REPO_NAMES[@]}"; do rm -rf "/tmp/pg-${name}"; done
+  start=$(timestamp_ms)
+  for i in "${!REPOS[@]}"; do
+    $GIT clone --depth 1 "${REPOS[$i]}" "/tmp/pg-${REPO_NAMES[$i]}" 2>/dev/null &
+  done
+  wait
+  end=$(timestamp_ms)
+  echo "GIT_PARALLEL_run${run}=$((end - start))ms"
+  for name in "${REPO_NAMES[@]}"; do rm -rf "/tmp/pg-${name}"; done
+  sleep 0.5
+
+  # Ziggit parallel
+  for name in "${REPO_NAMES[@]}"; do rm -rf "/tmp/pz-${name}"; done
+  start=$(timestamp_ms)
+  for i in "${!REPOS[@]}"; do
+    $ZIGGIT clone --depth 1 "${REPOS[$i]}" "/tmp/pz-${REPO_NAMES[$i]}" 2>/dev/null &
+  done
+  wait
+  end=$(timestamp_ms)
+  echo "ZIGGIT_PARALLEL_run${run}=$((end - start))ms"
+  for name in "${REPO_NAMES[@]}"; do rm -rf "/tmp/pz-${name}"; done
+  sleep 0.5
+done
+
+# --- 6. GIT REV-PARSE vs ZIGGIT findCommit ---
+echo ""
+echo "=== 6. GIT REV-PARSE vs ZIGGIT findCommit ==="
 for i in "${!REPOS[@]}"; do
   repo="${REPOS[$i]}"
   name="${REPO_NAMES[$i]}"
@@ -136,6 +174,9 @@ if [ -x "$FC_BENCH" ]; then
 else
   echo "findcommit_bench not built. Build with: cd benchmark && zig build -Doptimize=ReleaseFast"
 fi
+
+# Cleanup
+for name in "${REPO_NAMES[@]}"; do rm -rf "/tmp/fc-${name}"; done
 
 echo ""
 echo "=== DONE ==="

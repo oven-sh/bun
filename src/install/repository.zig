@@ -532,13 +532,22 @@ pub const Repository = extern struct {
             // tryHTTPS prefers HTTPS when available (faster), otherwise use original URL
             const fetch_url = tryHTTPS(url) orelse url;
             ziggit_fetch: {
-                debug("fetch: trying ziggit for \"{s}\" (url: {s})", .{ name, fetch_url });
+                if (strings.eql(fetch_url, url)) {
+                    debug("fetch: trying ziggit for \"{s}\" (url: {s})", .{ name, fetch_url });
+                } else {
+                    debug("fetch: trying ziggit for \"{s}\" (url: {s}, transformed from: {s})", .{ name, fetch_url, url });
+                }
                 var repo = ziggit.Repository.open(allocator, path) catch |err| {
                     debug("fetch: ziggit open failed ({s}), falling back to git CLI", .{@errorName(err)});
                     break :ziggit_fetch;
                 };
                 defer repo.close();
                 repo.fetch(fetch_url) catch |err| {
+                    if (err == error.RepositoryNotFound) {
+                        debug("fetch: ziggit reports repository not found for \"{s}\"", .{name});
+                        dir.close();
+                        return error.RepositoryNotFound;
+                    }
                     logZiggitError("fetch", name, err);
                     break :ziggit_fetch;
                 };
@@ -548,6 +557,7 @@ pub const Repository = extern struct {
             // Ziggit failed — fall back to git CLI
             debug("fetch: using git CLI for \"{s}\"", .{name});
             _ = exec(allocator, env, &[_]string{ "git", "-C", path, "fetch", "--quiet" }) catch |err| {
+                dir.close();
                 log.addErrorFmt(null, logger.Loc.Empty, allocator, "\"git fetch\" for \"{s}\" failed", .{name}) catch unreachable;
                 return err;
             };
@@ -561,7 +571,11 @@ pub const Repository = extern struct {
             // ziggit handles: https://, ssh://, git@host:path natively
             const clone_url = tryHTTPS(url) orelse url;
             ziggit_clone: {
-                debug("clone: trying ziggit for \"{s}\" (url: {s})", .{ name, clone_url });
+                if (strings.eql(clone_url, url)) {
+                    debug("clone: trying ziggit for \"{s}\" (url: {s})", .{ name, clone_url });
+                } else {
+                    debug("clone: trying ziggit for \"{s}\" (url: {s}, transformed from: {s})", .{ name, clone_url, url });
+                }
                 var repo = ziggit.Repository.cloneBare(allocator, clone_url, target) catch |err| {
                     if (err == error.RepositoryNotFound) {
                         debug("clone: ziggit reports repository not found for \"{s}\"", .{name});
@@ -677,7 +691,7 @@ pub const Repository = extern struct {
             const local_bare_path = try bun.getFdPath(.fromStdDir(repo_dir), &final_path_buf);
 
             // Try ziggit for local clone + checkout (no process spawn)
-            debug("checkout: trying ziggit for \"{s}\" resolved={s}", .{ name, resolved });
+            debug("checkout: trying ziggit for \"{s}\" resolved={s} bare_path={s}", .{ name, resolved, local_bare_path });
             const ziggit_ok = blk: {
                 var repo = ziggit.Repository.cloneNoCheckout(allocator, local_bare_path, target) catch |err| {
                     logZiggitError("checkout/clone", name, err);

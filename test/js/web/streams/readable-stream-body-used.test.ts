@@ -1,32 +1,14 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
 
-// Regression test: calling .bytes() on a consumed Response body stream
-// used to trigger an assertion failure ("Expected an exception to be thrown")
-// because ByteBlobLoader.toBufferedValue returned .zero without setting an exception.
+// Regression test: ByteBlobLoader.toBufferedValue used to return .zero without
+// setting a JS exception when its store was null (body already consumed), causing
+// an assertion failure in debug builds and a crash in release builds.
 test("calling .bytes() on a consumed Response body does not crash", async () => {
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `
-      const response = new Response("Hello World");
-      const body = response.body;
-      await body.text();
-      // After consuming, tee() to get a new stream backed by a detached ByteBlobLoader
-      try { body.tee(); } catch {}
-      // Call bytes() which previously crashed due to returning .zero without exception
-      try { await body.bytes(); } catch {}
-      console.log("ok");
-      `,
-    ],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-
-  expect(stdout).toContain("ok");
-  expect(exitCode).toBe(0);
+  const response = new Response("Hello World");
+  const body = response.body!;
+  // Consume via Body mixin to detach the ByteBlobLoader store
+  await response.text();
+  // body.bytes() should not crash regardless of whether it resolves or rejects
+  const result = await body.bytes().catch(() => "rejected");
+  expect(result === "rejected" || result instanceof Uint8Array).toBe(true);
 });

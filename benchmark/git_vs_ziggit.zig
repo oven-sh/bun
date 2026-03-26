@@ -460,12 +460,7 @@ pub fn main() !void {
     const findcommit_result = benchFindCommit(allocator, work_path, head_hash);
 
     // 4. Fetch (network) — on the bare repo
-    // NOTE: ziggit fetch has a known segfault in smart_http.zig when local_refs have
-    // freed memory. Skipping for now — the fix is in ziggit, not in bun integration.
-    // const fetch_result = benchFetch(allocator, bare_path);
-    const fetch_result: ?BenchResult = null;
-    std.debug.print("\n{s}\n", .{SEPARATOR});
-    std.debug.print("=== Fetch Benchmark: SKIPPED (known ziggit segfault in smart_http) ===\n", .{});
+    const fetch_result = benchFetch(allocator, bare_path);
 
     // 5. describeTags (local) — on the working copy
     const describe_result = benchDescribeTags(allocator, work_path);

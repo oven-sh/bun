@@ -498,10 +498,12 @@ pub const Repository = extern struct {
         const err_name = @errorName(err);
         if (err == error.SshAuthFailed) {
             debug("{s}: ziggit SSH auth failed for \"{s}\" (check SSH keys / GIT_SSH_COMMAND), falling back to git CLI", .{ operation, name });
-        } else if (err == error.HttpError or err == error.ConnectionRefused) {
+        } else if (err == error.HttpError or err == error.ConnectionRefused or err == error.ConnectionTimedOut or err == error.ConnectionResetByPeer) {
             debug("{s}: ziggit network error ({s}) for \"{s}\", falling back to git CLI", .{ operation, err_name, name });
         } else if (err == error.NetworkRemoteNotSupported) {
             debug("{s}: ziggit does not support this protocol for \"{s}\", falling back to git CLI", .{ operation, name });
+        } else if (err == error.OutOfMemory) {
+            debug("{s}: ziggit out of memory for \"{s}\", falling back to git CLI", .{ operation, name });
         } else {
             debug("{s}: ziggit failed ({s}) for \"{s}\", falling back to git CLI", .{ operation, err_name, name });
         }
@@ -535,12 +537,11 @@ pub const Repository = extern struct {
                     debug("fetch: ziggit open failed ({s}), falling back to git CLI", .{@errorName(err)});
                     break :ziggit_fetch;
                 };
+                defer repo.close();
                 repo.fetch(fetch_url) catch |err| {
                     logZiggitError("fetch", name, err);
-                    repo.close();
                     break :ziggit_fetch;
                 };
-                repo.close();
                 debug("fetch: ziggit succeeded for \"{s}\"", .{name});
                 break :fetch dir;
             }
@@ -574,7 +575,7 @@ pub const Repository = extern struct {
                     std.fs.cwd().deleteTree(target) catch {};
                     break :ziggit_clone;
                 };
-                repo.close();
+                defer repo.close();
                 debug("clone: ziggit succeeded for \"{s}\"", .{name});
                 break :clone try cache_dir.openDirZ(folder_name, .{});
             }
@@ -682,14 +683,13 @@ pub const Repository = extern struct {
                     logZiggitError("checkout/clone", name, err);
                     break :blk false;
                 };
+                defer repo.close();
                 repo.checkout(resolved) catch |err| {
                     logZiggitError("checkout/checkout", name, err);
-                    repo.close();
                     // Clean up failed checkout
                     std.fs.cwd().deleteTree(target) catch {};
                     break :blk false;
                 };
-                repo.close();
                 debug("checkout: ziggit succeeded for \"{s}\"", .{name});
                 break :blk true;
             };

@@ -18,48 +18,47 @@
 #include <algorithm>
 #include <limits>
 
-extern "C" void Bun__startCPUProfiler(JSC::VM* vm);
-extern "C" void Bun__stopCPUProfiler(JSC::VM* vm, BunString* outJSON, BunString* outText);
-extern "C" void Bun__setSamplingInterval(int intervalMicroseconds);
+extern "C" void Bun__startCPUProfiler(JSC::JSGlobalObject* globalObject);
+extern "C" void Bun__stopCPUProfiler(JSC::JSGlobalObject* globalObject, BunString* outJSON, BunString* outText);
+extern "C" void Bun__setSamplingInterval(JSC::JSGlobalObject* globalObject, int intervalMicroseconds);
 
-void Bun__setSamplingInterval(int intervalMicroseconds)
+void Bun__setSamplingInterval(JSC::JSGlobalObject* globalObject, int intervalMicroseconds)
 {
-    Bun::setSamplingInterval(intervalMicroseconds);
+    Bun::setSamplingInterval(globalObject, intervalMicroseconds);
 }
 
 namespace Bun {
 
-// Store the profiling start time in microseconds since Unix epoch
-static double s_profilingStartTime = 0.0;
-// Set sampling interval to 1ms (1000 microseconds) to match Node.js
-static int s_samplingInterval = 1000;
-static bool s_isProfilerRunning = false;
-
-void setSamplingInterval(int intervalMicroseconds)
+void setSamplingInterval(JSC::JSGlobalObject* globalObject, int intervalMicroseconds)
 {
-    s_samplingInterval = intervalMicroseconds;
+    auto* zigGlobal = uncheckedDowncast<Zig::GlobalObject>(globalObject);
+    zigGlobal->m_cpuSamplingInterval = intervalMicroseconds;
 }
 
-bool isCPUProfilerRunning()
+bool isCPUProfilerRunning(JSC::JSGlobalObject* globalObject)
 {
-    return s_isProfilerRunning;
+    auto* zigGlobal = uncheckedDowncast<Zig::GlobalObject>(globalObject);
+    return zigGlobal->m_isCPUProfilerRunning;
 }
 
-void startCPUProfiler(JSC::VM& vm)
+void startCPUProfiler(JSC::JSGlobalObject* globalObject)
 {
+    auto* zigGlobal = uncheckedDowncast<Zig::GlobalObject>(globalObject);
+    auto& vm = globalObject->vm();
+
     // Capture the wall clock time when profiling starts (before creating stopwatch)
     // This will be used as the profile's startTime
-    s_profilingStartTime = MonotonicTime::now().approximate<WTF::WallTime>().secondsSinceEpoch().value() * 1000000.0;
+    zigGlobal->m_profilingStartTime = MonotonicTime::now().approximate<WTF::WallTime>().secondsSinceEpoch().value() * 1000000.0;
 
     // Create a stopwatch and start it
     auto stopwatch = WTF::Stopwatch::create();
     stopwatch->start();
 
     JSC::SamplingProfiler& samplingProfiler = vm.ensureSamplingProfiler(WTF::move(stopwatch));
-    samplingProfiler.setTimingInterval(WTF::Seconds::fromMicroseconds(s_samplingInterval));
+    samplingProfiler.setTimingInterval(WTF::Seconds::fromMicroseconds(zigGlobal->m_cpuSamplingInterval));
     samplingProfiler.noticeCurrentThreadAsJSCExecutionThread();
     samplingProfiler.start();
-    s_isProfilerRunning = true;
+    zigGlobal->m_isCPUProfilerRunning = true;
 }
 
 struct ProfileNode {
@@ -270,13 +269,12 @@ static WTF::String formatCodeSpan(const WTF::String& str)
 }
 
 // Helper to generate a minimal valid cpuprofile JSON with no samples
-static WTF::String generateEmptyProfileJSON()
+static WTF::String generateEmptyProfileJSON(double profilingStartTime)
 {
     // Return a minimal valid Chrome DevTools CPU profile format
-    // Use s_profilingStartTime if available, otherwise fall back to current time
     long long timestamp;
-    if (s_profilingStartTime > 0)
-        timestamp = static_cast<long long>(s_profilingStartTime);
+    if (profilingStartTime > 0)
+        timestamp = static_cast<long long>(profilingStartTime);
     else
         timestamp = static_cast<long long>(WTF::WallTime::now().secondsSinceEpoch().value() * 1000000.0);
 
@@ -290,9 +288,11 @@ static WTF::String generateEmptyProfileJSON()
 }
 
 // Unified function that stops the profiler and generates requested output formats
-void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
+void stopCPUProfiler(JSC::JSGlobalObject* globalObject, WTF::String* outJSON, WTF::String* outText)
 {
-    s_isProfilerRunning = false;
+    auto* zigGlobal = uncheckedDowncast<Zig::GlobalObject>(globalObject);
+    auto& vm = globalObject->vm();
+    zigGlobal->m_isCPUProfilerRunning = false;
 
     JSC::SamplingProfiler* profiler = vm.samplingProfiler();
     if (!profiler) {
@@ -321,7 +321,7 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
         return;
 
     if (stackTraces.isEmpty()) {
-        if (outJSON) *outJSON = generateEmptyProfileJSON();
+        if (outJSON) *outJSON = generateEmptyProfileJSON(zigGlobal->m_profilingStartTime);
         if (outText) *outText = "No samples collected.\n"_s;
         return;
     }
@@ -357,8 +357,8 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
         WTF::Vector<int> samples;
         WTF::Vector<long long> timeDeltas;
 
-        double startTime = s_profilingStartTime;
-        double lastTime = s_profilingStartTime;
+        double startTime = zigGlobal->m_profilingStartTime;
+        double lastTime = zigGlobal->m_profilingStartTime;
 
         for (size_t idx : sortedIndices) {
             auto& stackTrace = stackTraces[idx];
@@ -617,8 +617,8 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
 
     // Generate text format if requested
     if (outText) {
-        double startTime = s_profilingStartTime;
-        double lastTime = s_profilingStartTime;
+        double startTime = zigGlobal->m_profilingStartTime;
+        double lastTime = zigGlobal->m_profilingStartTime;
         double endTime = startTime;
 
         WTF::HashMap<WTF::String, FunctionStats> functionStatsMap;
@@ -746,7 +746,7 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
         output.append(" | "_s);
         output.append(totalSamples);
         output.append(" | "_s);
-        output.append(formatTime(s_samplingInterval));
+        output.append(formatTime(zigGlobal->m_cpuSamplingInterval));
         output.append(" | "_s);
         output.append(numFunctions);
         output.append(" |\n\n"_s);
@@ -930,16 +930,16 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
 
 } // namespace Bun
 
-extern "C" void Bun__startCPUProfiler(JSC::VM* vm)
+extern "C" void Bun__startCPUProfiler(JSC::JSGlobalObject* globalObject)
 {
-    Bun::startCPUProfiler(*vm);
+    Bun::startCPUProfiler(globalObject);
 }
 
-extern "C" void Bun__stopCPUProfiler(JSC::VM* vm, BunString* outJSON, BunString* outText)
+extern "C" void Bun__stopCPUProfiler(JSC::JSGlobalObject* globalObject, BunString* outJSON, BunString* outText)
 {
     WTF::String jsonResult;
     WTF::String textResult;
-    Bun::stopCPUProfiler(*vm, outJSON ? &jsonResult : nullptr, outText ? &textResult : nullptr);
+    Bun::stopCPUProfiler(globalObject, outJSON ? &jsonResult : nullptr, outText ? &textResult : nullptr);
     if (outJSON)
         *outJSON = Bun::toStringRef(jsonResult);
     if (outText)

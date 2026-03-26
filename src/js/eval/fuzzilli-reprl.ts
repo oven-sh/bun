@@ -22,9 +22,10 @@ const _resetCoverage = resetCoverage;
 const _fsReadSync = fs.readSync.bind(fs);
 const _fsWriteSync = fs.writeSync.bind(fs);
 const _fstatSync = fs.fstatSync.bind(fs);
-const _writeUInt32LE = Buffer.prototype.writeUInt32LE;
-const _readBigUInt64LE = Buffer.prototype.readBigUInt64LE;
-const _bufToString = Buffer.prototype.toString;
+const _call = Function.prototype.call;
+const _writeUInt32LE = _call.bind(Buffer.prototype.writeUInt32LE);
+const _readBigUInt64LE = _call.bind(Buffer.prototype.readBigUInt64LE);
+const _bufToString = _call.bind(Buffer.prototype.toString);
 
 // Make common Node modules available
 globalThis.require = require;
@@ -67,14 +68,14 @@ while (true) {
     break;
   }
 
-  if (cmd_n !== 4 || _bufToString.call(cmd) !== "exec") {
-    throw new Error(`Invalid REPRL command: expected 'exec', got ${_bufToString.call(cmd)}`);
+  if (cmd_n !== 4 || _bufToString(cmd) !== "exec") {
+    throw new Error(`Invalid REPRL command: expected 'exec', got ${_bufToString(cmd)}`);
   }
 
   // Read script size (8 bytes, little-endian)
   const size_bytes = _BufferAlloc(8);
   _fsReadSync(REPRL_CRFD, size_bytes, 0, 8, null);
-  const script_size = _Number(_readBigUInt64LE.call(size_bytes, 0));
+  const script_size = _Number(_readBigUInt64LE(size_bytes, 0));
 
   // Read script data from REPRL_DRFD
   const script_data = _BufferAlloc(script_size);
@@ -85,7 +86,7 @@ while (true) {
     total_read += n;
   }
 
-  const script = _bufToString.call(script_data, "utf8");
+  const script = _bufToString(script_data, "utf8");
 
   // Execute script
   let exit_code = 0;
@@ -94,7 +95,7 @@ while (true) {
     (0, eval)(script);
   } catch (_e) {
     // Print uncaught exception like workerd does
-    _console_log(`uncaught:${_e}`);
+    try { _console_log(`uncaught:${_e}`); } catch {}
     exit_code = 1;
   }
 
@@ -102,7 +103,7 @@ while (true) {
   // Format: lower 8 bits = signal number, next 8 bits = exit code
   const status = exit_code << 8;
   const status_bytes = _BufferAlloc(4);
-  _writeUInt32LE.call(status_bytes, status, 0);
+  _writeUInt32LE(status_bytes, status, 0);
   _fsWriteSync(REPRL_CWFD, status_bytes);
 
   _resetCoverage();

@@ -16,7 +16,6 @@ const fs = require("node:fs");
 // protocol loop if they affect methods used outside the try/catch.
 const _BufferAlloc = Buffer.alloc.bind(Buffer);
 const _BufferFrom = Buffer.from.bind(Buffer);
-const _Number = Number;
 const _console_log = console.log.bind(console);
 const _fsReadSync = fs.readSync.bind(fs);
 const _fsWriteSync = fs.writeSync.bind(fs);

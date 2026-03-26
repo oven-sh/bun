@@ -112,4 +112,11 @@ describe("dns", () => {
       });
     });
   });
+
+  test("lookup does not crash when options is a non-object cell", async () => {
+    // Passing a string as the options argument should not crash.
+    // Strings are cells but not objects, so property access must be guarded.
+    const result = await dns.lookup("localhost", "notAnObject" as any);
+    expect(result).toBeDefined();
+  });
 });

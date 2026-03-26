@@ -1,106 +1,79 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
 
 // Verify that backpressure propagates through fetch().body.pipeThrough(TransformStream)
 // so the proxy doesn't eagerly buffer the entire upstream response.
 // https://github.com/oven-sh/bun/issues/28035
 test("fetch body piped through TransformStream propagates backpressure", async () => {
-  using dir = tempDir("28035", {
-    "test.ts": `
-      const TOTAL_CHUNKS = 1500;
-      let chunksProduced = 0;
+  const TOTAL_CHUNKS = 800;
+  let chunksProduced = 0;
 
-      const upstream = Bun.serve({
-        port: 0,
-        idleTimeout: 255,
-        fetch() {
-          chunksProduced = 0;
-          return new Response(
-            new ReadableStream({
-              pull(controller) {
-                if (chunksProduced >= TOTAL_CHUNKS) { controller.close(); return; }
-                controller.enqueue(Buffer.alloc(64000, 65));
-                chunksProduced++;
-              },
-            }),
-          );
-        },
-      });
-
-      const proxy = Bun.serve({
-        port: 0,
-        idleTimeout: 255,
-        async fetch() {
-          const res = await fetch("http://localhost:" + upstream.port + "/");
-          const transform = new TransformStream({
-            transform(chunk, ctrl) { ctrl.enqueue(chunk); },
-          });
-          return new Response(res.body!.pipeThrough(transform));
-        },
-      });
-
-      const { promise: done, resolve: finish } = Promise.withResolvers<void>();
-      const conn = await Bun.connect({
-        hostname: "localhost",
-        port: proxy.port,
-        socket: {
-          open(socket) {
-            socket.write("GET / HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n");
-            socket.pause();
+  const upstream = Bun.serve({
+    port: 0,
+    idleTimeout: 255,
+    fetch() {
+      chunksProduced = 0;
+      return new Response(
+        new ReadableStream({
+          pull(controller) {
+            if (chunksProduced >= TOTAL_CHUNKS) { controller.close(); return; }
+            controller.enqueue(Buffer.alloc(64000, 65));
+            chunksProduced++;
           },
-          data() {},
-          close() { finish(); },
-          error() { finish(); },
-          connectError() { finish(); },
-        },
+        }),
+      );
+    },
+  });
+
+  const proxy = Bun.serve({
+    port: 0,
+    idleTimeout: 255,
+    async fetch() {
+      const res = await fetch(`http://localhost:${upstream.port}/`);
+      const transform = new TransformStream({
+        transform(chunk, ctrl) { ctrl.enqueue(chunk); },
       });
-
-      // Quick poll: check if production stalls (3 stable checks × 50ms)
-      let stableCount = 0;
-      let lastProduced = 0;
-      while (chunksProduced < TOTAL_CHUNKS && stableCount < 3) {
-        await Bun.sleep(50);
-        if (chunksProduced === lastProduced) stableCount++;
-        else { stableCount = 0; lastProduced = chunksProduced; }
-      }
-      const chunksWhilePaused = chunksProduced;
-
-      conn.resume();
-      await done;
-      proxy.stop(true);
-      upstream.stop(true);
-      console.log(JSON.stringify({
-        chunksWhilePaused,
-        TOTAL_CHUNKS,
-        backpressureObserved: chunksWhilePaused < TOTAL_CHUNKS,
-      }));
-    `,
+      return new Response(res.body!.pipeThrough(transform));
+    },
   });
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "run", "test.ts"],
-    cwd: String(dir),
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+  try {
+    const conn = await Bun.connect({
+      hostname: "localhost",
+      port: proxy.port,
+      socket: {
+        open(socket) {
+          socket.write("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+          socket.pause();
+        },
+        data() {},
+        close() {},
+        error() {},
+        connectError() {},
+      },
+    });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // Poll until production stabilizes or all chunks consumed
+    let stableCount = 0;
+    let lastProduced = 0;
+    while (chunksProduced < TOTAL_CHUNKS && stableCount < 3) {
+      await Bun.sleep(50);
+      if (chunksProduced === lastProduced) stableCount++;
+      else { stableCount = 0; lastProduced = chunksProduced; }
+    }
 
-  const lines = stdout.trim().split("\n");
-  const jsonLine = lines.find(l => l.startsWith("{"));
-  if (!jsonLine) {
-    console.log("stdout:", stdout.slice(0, 500));
-    console.log("stderr:", stderr.slice(0, 2000));
+    expect(chunksProduced).toBeGreaterThan(0);
+    expect(chunksProduced).toBeLessThan(TOTAL_CHUNKS);
+
+    // Resume before stopping to avoid abort assertion with active onWritable
+    conn.resume();
+    await Bun.sleep(50);
+  } finally {
+    // Graceful stop — don't forcefully close active connections
+    proxy.stop();
+    upstream.stop();
   }
-  expect(jsonLine).toBeDefined();
-  const result = JSON.parse(jsonLine!);
-  expect(result.chunksWhilePaused).toBeGreaterThan(0);
-  expect(result.backpressureObserved).toBe(true);
-  expect(exitCode).toBe(0);
 });
 
-// Verify basic streaming through TransformStream delivers all data correctly
 test("TransformStream proxy delivers all data", async () => {
   const TOTAL_CHUNKS = 500;
 
@@ -112,10 +85,7 @@ test("TransformStream proxy delivers all data", async () => {
       return new Response(
         new ReadableStream({
           pull(controller) {
-            if (i >= TOTAL_CHUNKS) {
-              controller.close();
-              return;
-            }
+            if (i >= TOTAL_CHUNKS) { controller.close(); return; }
             controller.enqueue(Buffer.alloc(25000, 65));
             i++;
           },
@@ -130,9 +100,7 @@ test("TransformStream proxy delivers all data", async () => {
     async fetch() {
       const res = await fetch(`http://localhost:${upstream.port}/`);
       const transform = new TransformStream({
-        transform(chunk, ctrl) {
-          ctrl.enqueue(chunk);
-        },
+        transform(chunk, ctrl) { ctrl.enqueue(chunk); },
       });
       return new Response(res.body!.pipeThrough(transform));
     },

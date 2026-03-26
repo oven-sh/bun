@@ -1,31 +1,31 @@
 # Ziggit Integration Benchmarks
 
 ## Environment
-- Date: 2026-03-26 (latest refresh, run 5)
-- Ziggit commit: 6f37261 (single-pass idx_writer with eager LRU caching)
+- Date: 2026-03-26 (latest refresh, run 6)
+- Ziggit commit: 0b345ce (two-pass zero-alloc scan + bounded LRU resolve)
 - Bun fork branch: ziggit-integration
 - Machine: Linux (root@ziggit), tmpfs-backed /tmp
 - Build: `zig build -Doptimize=ReleaseFast`
 
 ## Clone Benchmarks (bare clone)
 
-### sindresorhus/is (small repo, ~270KB pack) — 5 runs
+### sindresorhus/is (small repo, ~270KB pack, 1245 objects) — 5 runs
 
 | Tool    | Run 1  | Run 2  | Run 3  | Run 4  | Run 5  | Avg    |
 |---------|--------|--------|--------|--------|--------|--------|
-| ziggit  | 299ms  | 274ms  | 270ms  | 265ms  | 267ms  | 275ms  |
-| git CLI | 296ms  | 271ms  | 269ms  | 262ms  | 271ms  | 274ms  |
+| ziggit  | 237ms  | 191ms  | 180ms  | 179ms  | 172ms  | 192ms  |
+| git CLI | 183ms  | 185ms  | 177ms  | 202ms  | 182ms  | 186ms  |
 
-**Result**: **Dead parity** — ziggit avg 275ms vs git CLI avg 274ms (1.00x). Network-dominated. ✅
+**Result**: **Parity** — ziggit avg 192ms vs git CLI avg 186ms (1.03x). Network-dominated. ✅
 
-### expressjs/express (medium repo, ~6MB pack) — 3 runs
+### expressjs/express (medium repo, ~10.6MB pack, 33335 objects) — 3 runs
 
 | Tool    | Run 1  | Run 2  | Run 3  | Avg    |
 |---------|--------|--------|--------|--------|
-| ziggit  | 1951ms | 1903ms | 1886ms | 1913ms |
-| git CLI | 1947ms | 1901ms | 1886ms | 1911ms |
+| ziggit  | 955ms  | 956ms  | 933ms  | 948ms  |
+| git CLI | 935ms  | 933ms  | 938ms  | 935ms  |
 
-**Result**: **Dead parity** — ziggit avg 1913ms vs git CLI avg 1911ms (1.00x). Network-dominated. ✅
+**Result**: **Parity** — ziggit avg 948ms vs git CLI avg 935ms (1.01x). Network-dominated. ✅
 
 ### Correctness
 - `git verify-pack` passes on ziggit-produced .idx files ✅
@@ -60,6 +60,7 @@ This is critical for bun's integration because `findCommit` is called for every 
 
 | Date       | Ziggit Commit | Change                                  | sindresorhus/is avg | express avg | Notes |
 |------------|---------------|-----------------------------------------|---------------------|-------------|-------|
+| 2026-03-26 | 0b345ce (run6)| Two-pass zero-alloc idx_writer          | 192ms (git: 186ms)  | 948ms (git: 935ms) | Parity (1.01-1.03x) |
 | 2026-03-26 | 6f37261 (run5)| Re-benchmark (higher-latency network)   | 275ms (git: 274ms)  | 1913ms (git: 1911ms) | Dead parity |
 | 2026-03-26 | 6f37261 (run4)| Re-benchmark (latest idx_writer)        | 185ms (git: 185ms)  | 951ms (git: 936ms) | Dead parity |
 | 2026-03-26 | 6f37261 (run3)| Single-pass with eager LRU caching      | 199ms (git: 200ms)  | — | Parity |

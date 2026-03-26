@@ -70,7 +70,7 @@ public:
     URLPatternParser(EncodingCallbackType, String&& segmentWildcardRegexp);
     ExceptionOr<void> performParse(const URLPatternStringOptions&);
 
-    void setTokenList(Vector<Token>&& tokenList) { m_tokenList = WTFMove(tokenList); }
+    void setTokenList(Vector<Token>&& tokenList) { m_tokenList = WTF::move(tokenList); }
     static ExceptionOr<Vector<Part>> parse(StringView, const URLPatternStringOptions&, EncodingCallbackType);
 
 private:
@@ -104,7 +104,7 @@ ASCIILiteral convertModifierToString(Modifier);
 std::pair<String, Vector<String>> generateRegexAndNameList(const Vector<Part>& partList, const URLPatternStringOptions&);
 String generatePatternString(const Vector<Part>& partList, const URLPatternStringOptions&);
 String escapePatternString(StringView input);
-bool isValidNameCodepoint(char16_t codepoint, URLPatternUtilities::IsFirst);
+bool isValidNameCodepoint(char32_t codepoint, URLPatternUtilities::IsFirst);
 
 } // namespace URLPatternUtilities
 } // namespace WebCore

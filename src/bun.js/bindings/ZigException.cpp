@@ -7,7 +7,7 @@
 #include "root.h"
 
 #include "JavaScriptCore/ErrorType.h"
-#include "JavaScriptCore/CatchScope.h"
+#include "JavaScriptCore/TopExceptionScope.h"
 #include "JavaScriptCore/Exception.h"
 #include "ErrorCode+List.h"
 #include "ErrorCode.h"
@@ -479,7 +479,7 @@ static void fromErrorInstance(ZigException& except, JSC::JSGlobalObject* global,
 {
     JSC::JSObject* obj = JSC::jsDynamicCast<JSC::JSObject*>(val);
     auto& vm = JSC::getVM(global);
-    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     bool getFromSourceURL = false;
     if (stackTrace != nullptr && stackTrace->size() > 0) {
@@ -707,7 +707,7 @@ void exceptionFromString(ZigException& except, JSC::JSValue value, JSC::JSGlobal
         return;
     }
 
-    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     // Fallback case for when it's a user-defined ErrorLike-object that doesn't inherit from
     // ErrorInstance

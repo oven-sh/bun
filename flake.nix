@@ -26,10 +26,10 @@
           };
         };
 
-        # LLVM 19 - matching the bootstrap script (targets 19.1.7, actual version from nixpkgs-unstable)
-        llvm = pkgs.llvm_19;
-        clang = pkgs.clang_19;
-        lld = pkgs.lld_19;
+        # LLVM 21 - matching the bootstrap script (targets 21.1.8, actual version from nixpkgs-unstable)
+        llvm = pkgs.llvm_21;
+        clang = pkgs.clang_21;
+        lld = pkgs.lld_21;
 
         # Node.js 24 - matching the bootstrap script (targets 24.3.0, actual version from nixpkgs-unstable)
         nodejs = pkgs.nodejs_24;
@@ -40,9 +40,9 @@
           pkgs.cmake # Expected: 3.30+ on nixos-unstable as of 2025-10
           pkgs.ninja
           pkgs.pkg-config
-          pkgs.sccache
+          pkgs.ccache
 
-          # Compilers and toolchain - version pinned to LLVM 19
+          # Compilers and toolchain - version pinned to LLVM 21
           clang
           llvm
           lld
@@ -131,6 +131,7 @@
           stdenv = pkgs.clangStdenv;
         }) {
           inherit packages;
+          hardeningDisable = [ "fortify" ];
 
           shellHook = ''
             # Set up build environment

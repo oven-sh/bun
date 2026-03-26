@@ -331,10 +331,10 @@ pub const FD = packed struct(backing_int) {
         if (@mod(float, 1) != 0) {
             return global.throwRangeError(float, .{ .field_name = "fd", .msg = "an integer" });
         }
-        const int: i64 = @intFromFloat(float);
-        if (int < 0 or int > std.math.maxInt(i32)) {
-            return global.throwRangeError(int, .{ .field_name = "fd", .min = 0, .max = std.math.maxInt(i32) });
+        if (float < 0 or float > @as(f64, @floatFromInt(std.math.maxInt(i32)))) {
+            return global.throwRangeError(float, .{ .field_name = "fd", .min = 0, .max = std.math.maxInt(i32) });
         }
+        const int: i64 = @intFromFloat(float);
         const fd: c_int = @intCast(int);
         if (os == .windows) {
             if (Stdio.fromInt(fd)) |stdio| {
@@ -351,10 +351,11 @@ pub const FD = packed struct(backing_int) {
         }
         const uv_owned_fd = any_fd.makeLibUVOwned() catch {
             any_fd.close();
-            return global.throwValue((jsc.SystemError{
+            const err_instance = (jsc.SystemError{
                 .message = bun.String.static("EMFILE, too many open files"),
                 .code = bun.String.static("EMFILE"),
-            }).toErrorInstance(global)) catch .zero;
+            }).toErrorInstance(global);
+            return global.vm().throwError(global, err_instance) catch .zero;
         };
         return JSValue.jsNumberFromInt32(uv_owned_fd.uv());
     }

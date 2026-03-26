@@ -17,6 +17,8 @@ if (NOT CI)
   set(BUN_EXECUTABLE ${BUN_EXECUTABLE} CACHE FILEPATH "Bun executable" FORCE)
 endif()
 
+set(BUN_FLAGS "" CACHE STRING "Extra flags for bun executable")
+
 # If this is not set, some advanced features are not checked.
 # https://github.com/oven-sh/bun/blob/cd7f6a1589db7f1e39dc4e3f4a17234afbe7826c/src/bun.js/javascript.zig#L1069-L1072
 setenv(BUN_GARBAGE_COLLECTOR_LEVEL 1)

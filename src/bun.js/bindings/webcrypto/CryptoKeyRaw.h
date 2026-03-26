@@ -35,7 +35,7 @@ class CryptoKeyRaw final : public CryptoKey {
 public:
     static Ref<CryptoKeyRaw> create(CryptoAlgorithmIdentifier identifier, Vector<uint8_t>&& keyData, CryptoKeyUsageBitmap usages)
     {
-        return adoptRef(*new CryptoKeyRaw(identifier, WTFMove(keyData), usages));
+        return adoptRef(*new CryptoKeyRaw(identifier, WTF::move(keyData), usages));
     }
 
     const Vector<uint8_t>& key() const { return m_key; }

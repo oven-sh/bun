@@ -75,17 +75,17 @@ const Stringifier = struct {
         str: String,
 
         pub fn init(global: *JSGlobalObject, space_value: JSValue) JSError!Space {
-            if (space_value.isNumber()) {
-                var num = space_value.toInt32();
-                num = @max(0, @min(num, 10));
-                if (num == 0) {
-                    return .minified;
-                }
-                return .{ .number = @intCast(num) };
+            const space = try space_value.unwrapBoxedPrimitive(global);
+            if (space.isNumber()) {
+                // Clamp on the float to match the spec's min(10, ToIntegerOrInfinity(space)).
+                // toInt32() wraps large values and Infinity to 0, which is wrong.
+                const num_f = space.asNumber();
+                if (!(num_f >= 1)) return .minified; // handles NaN, -Infinity, 0, negatives
+                return .{ .number = if (num_f > 10) 10 else @intFromFloat(num_f) };
             }
 
-            if (space_value.isString()) {
-                const str = try space_value.toBunString(global);
+            if (space.isString()) {
+                const str = try space.toBunString(global);
                 if (str.length() == 0) {
                     str.deref();
                     return .minified;
@@ -489,6 +489,9 @@ const Stringifier = struct {
 
                     try this.stringify(global, iter.value);
                     this.indent -= 1;
+                }
+                if (first) {
+                    this.builder.append(.latin1, "{}");
                 }
             },
         }
@@ -929,6 +932,11 @@ pub fn parse(
 ) bun.JSError!jsc.JSValue {
     var arena: bun.ArenaAllocator = .init(bun.default_allocator);
     defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var ast_memory_allocator = bun.handleOom(allocator.create(ast.ASTMemoryAllocator));
+    var ast_scope = ast_memory_allocator.enter(allocator);
+    defer ast_scope.exit();
 
     const input_value = callFrame.argumentsAsArray(1)[0];
 

@@ -1148,6 +1148,9 @@ export function onCloseDirectStream(reason) {
     return;
   }
 
+  var sink = this.$sink;
+  if (!sink) return;
+
   $putByIdDirectPrivate(stream, "state", $streamClosing);
   if (typeof this.$underlyingSource.close === "function") {
     try {
@@ -1157,7 +1160,7 @@ export function onCloseDirectStream(reason) {
 
   var flushed;
   try {
-    flushed = this.$sink.end();
+    flushed = sink.end();
     $putByIdDirectPrivate(this, "sink", undefined);
   } catch (e) {
     if (this._pendingRead) {
@@ -1220,6 +1223,8 @@ export function onCloseDirectStream(reason) {
 export function onFlushDirectStream() {
   var stream = this.$controlledReadableStream;
   if (!stream) return;
+  var sink = this.$sink;
+  if (!sink) return;
   var reader = $getByIdDirectPrivate(stream, "reader");
   if (!reader || !$isReadableStreamDefaultReader(reader)) {
     return;
@@ -1228,7 +1233,7 @@ export function onFlushDirectStream() {
   var _pendingRead = this._pendingRead;
   this._pendingRead = undefined;
   if (_pendingRead && $isPromise(_pendingRead)) {
-    var flushed = this.$sink.flush();
+    var flushed = sink.flush();
     if (flushed?.byteLength) {
       this._pendingRead = $getByIdDirectPrivate(stream, "readRequests")?.shift();
       $fulfillPromise(_pendingRead, { value: flushed, done: false });
@@ -1236,7 +1241,7 @@ export function onFlushDirectStream() {
       this._pendingRead = _pendingRead;
     }
   } else if ($getByIdDirectPrivate(stream, "readRequests")?.isNotEmpty()) {
-    var flushed = this.$sink.flush();
+    var flushed = sink.flush();
     if (flushed?.byteLength) {
       $readableStreamFulfillReadRequest(stream, flushed, false);
     }
@@ -1574,6 +1579,7 @@ export function isReadableStreamLocked(stream) {
 
 export function readableStreamDefaultControllerGetDesiredSize(controller) {
   const stream = $getByIdDirectPrivate(controller, "controlledReadableStream");
+  if (!stream) return null;
   const state = $getByIdDirectPrivate(stream, "state");
 
   if (state === $streamErrored) return null;
@@ -2258,6 +2264,9 @@ export function readableStreamToArrayBufferDirect(
 ) {
   var sink = new Bun.ArrayBufferSink();
   $putByIdDirectPrivate(stream, "underlyingSource", null);
+  $putByIdDirectPrivate(stream, "start", undefined);
+  $putByIdDirectPrivate(stream, "reader", {});
+  stream.$disturbed = true;
   var highWaterMark = $getByIdDirectPrivate(stream, "highWaterMark");
   sink.start({ highWaterMark, asUint8Array });
   var capability = $newPromiseCapability(Promise);
@@ -2297,11 +2306,15 @@ export function readableStreamToArrayBufferDirect(
     var firstPull = pull(controller);
   } catch (e) {
     didError = true;
+    $putByIdDirectPrivate(stream, "reader", undefined);
     $readableStreamError(stream, e);
     return Promise.$reject(e);
   } finally {
-    if (!$isPromise(firstPull)) {
-      if (!didError && stream) $readableStreamCloseIfPossible(stream);
+    if (!$isPromise(firstPull) && !didError) {
+      if (stream) {
+        $putByIdDirectPrivate(stream, "reader", undefined);
+        $readableStreamCloseIfPossible(stream);
+      }
       controller = close = sink = pull = stream = undefined;
       return capability.promise;
     }
@@ -2310,12 +2323,16 @@ export function readableStreamToArrayBufferDirect(
   $assert($isPromise(firstPull));
   return firstPull.then(
     () => {
-      if (!didError && stream) $readableStreamCloseIfPossible(stream);
+      if (!didError && stream) {
+        $putByIdDirectPrivate(stream, "reader", undefined);
+        $readableStreamCloseIfPossible(stream);
+      }
       controller = close = sink = pull = stream = undefined;
       return capability.promise;
     },
     e => {
       didError = true;
+      $putByIdDirectPrivate(stream, "reader", undefined);
       if ($getByIdDirectPrivate(stream, "state") === $streamReadable) $readableStreamError(stream, e);
       return Promise.$reject(e);
     },

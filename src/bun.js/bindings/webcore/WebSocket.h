@@ -68,6 +68,9 @@ public:
     static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext&, const String& url, const Vector<String>& protocols);
     static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext&, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&&);
     static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext& context, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&& headers, bool rejectUnauthorized);
+    // With proxy support
+    static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext&, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&&, const String& proxyUrl, std::optional<FetchHeaders::Init>&& proxyHeaders, void* sslConfig);
+    static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext& context, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&& headers, bool rejectUnauthorized, const String& proxyUrl, std::optional<FetchHeaders::Init>&& proxyHeaders, void* sslConfig);
     ~WebSocket();
 
     enum State {
@@ -91,10 +94,21 @@ public:
         Clean = 1,
     };
 
+    // Tracks the connection type for both the upgrade client and the connected websocket.
+    // This replaces separate m_isSecure and m_proxyIsHTTPS bools.
+    enum class ConnectionType : uint8_t {
+        Plain, // ws:// direct connection
+        TLS, // wss:// direct connection
+        ProxyPlain, // ws:// or wss:// through HTTP proxy (plain socket to proxy)
+        ProxyTLS // ws:// or wss:// through HTTPS proxy (TLS socket to proxy)
+    };
+
     ExceptionOr<void> connect(const String& url);
     ExceptionOr<void> connect(const String& url, const String& protocol);
     ExceptionOr<void> connect(const String& url, const Vector<String>& protocols);
     ExceptionOr<void> connect(const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&&);
+    // Internal connect with proxy config (used by create() with proxy support)
+    ExceptionOr<void> connect(const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&&, std::optional<struct ProxyConfig>&&);
 
     ExceptionOr<void> send(const String& message);
     ExceptionOr<void> send(JSC::ArrayBuffer&);
@@ -135,7 +149,8 @@ public:
     void didConnect();
     void disablePendingActivity();
     void didClose(unsigned unhandledBufferedAmount, unsigned short code, const String& reason);
-    void didConnect(us_socket_t* socket, char* bufferedData, size_t bufferedDataSize, const PerMessageDeflateParams* deflate_params);
+    void didConnect(us_socket_t* socket, char* bufferedData, size_t bufferedDataSize, const PerMessageDeflateParams* deflate_params, void* customSSLCtx);
+    void didConnectWithTunnel(void* tunnel, char* bufferedData, size_t bufferedDataSize, const PerMessageDeflateParams* deflate_params);
     void didFailWithErrorCode(Bun::WebSocketErrorCode code);
 
     void didReceiveMessage(String&& message);
@@ -153,9 +168,51 @@ public:
         m_rejectUnauthorized = rejectUnauthorized;
     }
 
+    // C++-only callback mode. When set, didConnect/didReceiveMessage/
+    // didClose call these function pointers directly instead of building
+    // Event objects and going through dispatchEvent. Fires synchronously
+    // from the socket's onData — no event-loop tick deferral, no JSValue
+    // allocation. Used when a C++ subsystem owns the socket lifecycle
+    // end-to-end (e.g. CDP::Transport connecting to an existing Chrome
+    // instance over ws://, where every message is handled by C++ JSON
+    // parsing and JS only sees the final settled promise).
+    //
+    // onMessage gets text frames only — binary frames are dropped (the
+    // only current consumer speaks JSON). If a consumer needs binary,
+    // add onBinary alongside. onClose fires for both clean and abrupt
+    // close; the error-code-to-string mapping is the caller's job.
+    struct NativeCallbacks {
+        void* ctx = nullptr;
+        void (*onOpen)(void* ctx) = nullptr;
+        void (*onMessage)(void* ctx, std::span<const char> utf8) = nullptr;
+        void (*onClose)(void* ctx, unsigned short code) = nullptr;
+    };
+    void setNativeCallbacks(NativeCallbacks cb) { m_native = cb; }
+    bool hasNativeCallbacks() const { return m_native.onMessage != nullptr; }
+
+    // Public wrapper for the native-callback consumer to send text frames.
+    // Bypasses the ExceptionOr<> wrapping — the caller has already checked
+    // m_state == OPEN (onOpen fired), and there's no JS caller to surface
+    // an exception to. Same underlying write path as send(String).
+    void sendTextNative(const String& message)
+    {
+        if (m_state != OPEN) return;
+        sendWebSocketString(message, Opcode::Text);
+    }
+
     bool rejectUnauthorized() const
     {
         return m_rejectUnauthorized;
+    }
+
+    void setSSLConfig(void* config)
+    {
+        m_sslConfig = config;
+    }
+
+    void* sslConfig() const
+    {
+        return m_sslConfig;
     }
 
     void incPendingActivityCount()
@@ -170,8 +227,8 @@ public:
     {
         ASSERT(m_pendingActivityCount > 0);
         m_pendingActivityCount--;
-        deref();
         updateHasPendingActivity();
+        deref();
     }
 
     size_t memoryCost() const;
@@ -203,6 +260,7 @@ private:
 
     void sendWebSocketString(const String& message, const Opcode opcode);
     void sendWebSocketData(const char* data, size_t length, const Opcode opcode);
+    void setExtensionsFromDeflateParams(const PerMessageDeflateParams* deflate_params);
 
     enum class BinaryType { Blob,
         ArrayBuffer,
@@ -222,13 +280,18 @@ private:
     String m_subprotocol;
     String m_extensions;
     void* m_upgradeClient { nullptr };
-    bool m_isSecure { false };
+    ConnectionType m_connectionType { ConnectionType::Plain };
     bool m_rejectUnauthorized { false };
     AnyWebSocket m_connectedWebSocket { nullptr };
     ConnectedWebSocketKind m_connectedWebSocketKind { ConnectedWebSocketKind::None };
     size_t m_pendingActivityCount { 0 };
 
+    // TLS options (SSLConfig pointer from Zig - ownership transferred to Zig)
+    void* m_sslConfig { nullptr };
+
     bool m_dispatchedErrorEvent { false };
+
+    NativeCallbacks m_native;
     // RefPtr<PendingActivity<WebSocket>> m_pendingActivity;
 };
 

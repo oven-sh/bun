@@ -94,7 +94,7 @@ pub const BuildMessage = struct {
         _: *jsc.CallFrame,
     ) bun.JSError!jsc.JSValue {
         var object = jsc.JSValue.createEmptyObject(globalThis, 4);
-        object.put(globalThis, ZigString.static("name"), bun.String.static("BuildMessage").toJS(globalThis));
+        object.put(globalThis, ZigString.static("name"), try bun.String.static("BuildMessage").toJS(globalThis));
         object.put(globalThis, ZigString.static("position"), this.getPosition(globalThis));
         object.put(globalThis, ZigString.static("message"), this.getMessage(globalThis));
         object.put(globalThis, ZigString.static("level"), this.getLevel(globalThis));

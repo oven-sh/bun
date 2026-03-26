@@ -308,7 +308,7 @@ pub fn isOK(this: *const Response) bool {
 pub fn getURL(
     this: *Response,
     globalThis: *jsc.JSGlobalObject,
-) jsc.JSValue {
+) bun.JSError!jsc.JSValue {
     // https://developer.mozilla.org/en-US/docs/Web/API/Response/url
     return this.#url.toJS(globalThis);
 }
@@ -316,7 +316,7 @@ pub fn getURL(
 pub fn getResponseType(
     this: *Response,
     globalThis: *jsc.JSGlobalObject,
-) jsc.JSValue {
+) bun.JSError!jsc.JSValue {
     if (this.#init.status_code < 200) {
         return bun.String.static("error").toJS(globalThis);
     }
@@ -327,7 +327,7 @@ pub fn getResponseType(
 pub fn getStatusText(
     this: *Response,
     globalThis: *jsc.JSGlobalObject,
-) jsc.JSValue {
+) bun.JSError!jsc.JSValue {
     // https://developer.mozilla.org/en-US/docs/Web/API/Response/statusText
     return this.#init.status_text.toJS(globalThis);
 }
@@ -529,10 +529,12 @@ pub fn constructJSON(
             const err = globalThis.createTypeErrorInstance("Do not know how to serialize a BigInt", .{});
             return globalThis.throwValue(err);
         }
+
         var str = bun.String.empty;
-        // calling JSON.stringify on an empty string adds extra quotes
-        // so this is correct
-        try json_value.jsonStringify(globalThis, 0, &str);
+        // Use jsonStringifyFast which passes undefined for the space parameter,
+        // triggering JSC's FastStringifier optimization. This is significantly faster
+        // than jsonStringify which passes 0 for space and uses the slower Stringifier.
+        try json_value.jsonStringifyFast(globalThis, &str);
 
         if (globalThis.hasException()) {
             return .zero;
@@ -895,8 +897,6 @@ inline fn emptyWithStatus(_: *jsc.JSGlobalObject, status: u16) Response {
 
 /// https://developer.mozilla.org/en-US/docs/Web/API/Headers
 // TODO: move to http.zig. this has nothing to do with jsc or WebCore
-
-const string = []const u8;
 
 const std = @import("std");
 const Method = @import("../../http/Method.zig").Method;

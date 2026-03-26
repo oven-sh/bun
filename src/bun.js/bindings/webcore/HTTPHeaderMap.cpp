@@ -54,9 +54,9 @@ HTTPHeaderMap HTTPHeaderMap::isolatedCopy() const&
 HTTPHeaderMap HTTPHeaderMap::isolatedCopy() &&
 {
     HTTPHeaderMap map;
-    map.m_commonHeaders = crossThreadCopy(WTFMove(m_commonHeaders));
-    map.m_uncommonHeaders = crossThreadCopy(WTFMove(m_uncommonHeaders));
-    map.m_setCookieHeaders = crossThreadCopy(WTFMove(m_setCookieHeaders));
+    map.m_commonHeaders = crossThreadCopy(WTF::move(m_commonHeaders));
+    map.m_uncommonHeaders = crossThreadCopy(WTF::move(m_uncommonHeaders));
+    map.m_setCookieHeaders = crossThreadCopy(WTF::move(m_setCookieHeaders));
     return map;
 }
 

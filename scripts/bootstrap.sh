@@ -1,5 +1,5 @@
 #!/bin/sh
-# Version: 24
+# Version: 28
 
 # A script that installs the dependencies needed to build and test Bun.
 # This should work on macOS and Linux with a POSIX shell.
@@ -281,9 +281,6 @@ check_operating_system() {
 	Darwin)
 		os="darwin"
 		;;
-	FreeBSD)
-		os="freebsd"
-		;;
 	*)
 		error "Unsupported operating system: $os"
 		;;
@@ -345,11 +342,6 @@ check_operating_system() {
 			fi
 			;;
 		esac
-		;;
-	freebsd)
-		. /etc/os-release
-		distro="$ID"
-		release="$VERSION_ID"
 		;;
 	esac
 
@@ -434,9 +426,6 @@ check_package_manager() {
 			error "No package manager found. (apt, dnf, yum, apk)"
 		fi
 		;;
-	freebsd)
-		pm="pkg"
-		;;
 	esac
 	print "Package manager: $pm"
 
@@ -448,13 +437,6 @@ check_package_manager() {
 		;;
 	apk)
 		package_manager update
-		;;
-	pkg)
-		# may need to switch betwen 'latest' and 'quarterly' depending on which repo www/chromium is in. check https://www.freshports.org/www/chromium/.
-		# mkdir -p /usr/local/etc/pkg/repos
-		# echo 'FreeBSD: { url: "pkg+http://pkg.FreeBSD.org/${ABI}/quarterly" }' > /usr/local/etc/pkg/repos/FreeBSD.conf
-		export ASSUME_ALWAYS_YES=yes
-		package_manager update -f
 		;;
 	esac
 }
@@ -816,9 +798,6 @@ install_nodejs() {
 	linux)
 		nodejs_platform="linux"
 		;;
-	freebsd)
-		nodejs_platform="freebsd"
-		;;
 	*)
 		error "Unsupported OS for Node.js download: $os"
 		;;
@@ -836,12 +815,6 @@ install_nodejs() {
 		error "Unsupported architecture for Node.js download: $arch"
 		;;
 	esac
-
-	if [ "$os" = "freebsd" ]; then
-		# TODO: use nodejs_version_exact
-		install_packages "www/node$(nodejs_version)" "www/npm-node$(nodejs_version)"
-		return
-	fi
 
 	case "$abi" in
 	musl)
@@ -932,10 +905,6 @@ install_nodejs() {
 }
 
 install_nodejs_headers() {
-	if [ "$os" = "freebsd" ]; then
-		return
-	fi
-
 	nodejs_version="$(nodejs_version_exact)"
 	nodejs_headers_tar="$(download_file "https://nodejs.org/download/release/v$nodejs_version/node-v$nodejs_version-headers.tar.gz")"
 	nodejs_headers_dir="$(dirname "$nodejs_headers_tar")"
@@ -950,10 +919,6 @@ install_nodejs_headers() {
 }
 
 setup_node_gyp_cache() {
-	if [ "$os" = "freebsd" ]; then
-		return
-	fi
-
 	nodejs_version="$1"
 	headers_source="$2"
 
@@ -992,11 +957,6 @@ bun_version_exact() {
 }
 
 install_bun() {
-	if [ "$os" = "freebsd" ]; then
-		# TODO: need to complete bun bootstrap for for this work
-		return
-	fi
-
 	install_packages unzip
 
 	case "$pm" in
@@ -1047,9 +1007,6 @@ install_cmake() {
 		execute_sudo "$sh" "$cmake_script" \
 			--skip-license \
 			--prefix=/usr
-		;;
-	freebsd-pkg)
-		install_packages devel/cmake
 		;;
 	esac
 }
@@ -1104,6 +1061,11 @@ install_build_essentials() {
 			go \
 			xz
 		install_packages apache2-utils
+		# QEMU user-mode for baseline CPU verification in CI
+		case "$arch" in
+		x64)     install_packages qemu-x86_64 ;;
+		aarch64) install_packages qemu-aarch64 ;;
+		esac
 		;;
 	esac
 
@@ -1122,17 +1084,6 @@ install_build_essentials() {
 				ruby \
 				perl \
 			;;
-		freebsd)
-			install_packages \
-				devel/ninja \
-				devel/pkgconf \
-				lang/go \
-				devel/gmake \
-				lang/python3 \
-				devel/libtool \
-				lang/ruby33 \
-				perl5 \
-			;;
 	esac
 
 	install_cmake
@@ -1140,12 +1091,12 @@ install_build_essentials() {
 	install_osxcross
 	install_gcc
 	install_rust
-	install_sccache
+	install_ccache
 	install_docker
 }
 
 llvm_version_exact() {
-	print "19.1.7"
+	print "21.1.8"
 }
 
 llvm_version() {
@@ -1155,22 +1106,20 @@ llvm_version() {
 install_llvm() {
 	case "$pm" in
 	apt)
-		# Debian 13 (Trixie) has LLVM 19 natively, and apt.llvm.org doesn't have a trixie repo
-		if [ "$distro" = "debian" ]; then
-			install_packages \
-				"llvm-$(llvm_version)" \
-				"clang-$(llvm_version)" \
-				"lld-$(llvm_version)" \
-				"llvm-$(llvm_version)-dev" \
-				"llvm-$(llvm_version)-tools"
-		else
-			bash="$(require bash)"
-			llvm_script="$(download_file "https://apt.llvm.org/llvm.sh")"
-			execute_sudo "$bash" "$llvm_script" "$(llvm_version)" all
-
-			# Install llvm-symbolizer explicitly to ensure it's available for ASAN
-			install_packages "llvm-$(llvm_version)-tools"
+		# apt.llvm.org's GPG key uses SHA1, which Debian 13+ (sqv) rejects since 2026-02-01.
+		# Override the sequoia crypto policy to extend the SHA1 deadline.
+		# See: https://github.com/llvm/llvm-project/issues/153385
+		if [ -x /usr/bin/sqv ] && [ -f /usr/share/apt/default-sequoia.config ]; then
+			execute_sudo mkdir -p /etc/crypto-policies/back-ends
+			execute_sudo /usr/bin/sh -c "sed 's/sha1.second_preimage_resistance = 2026-02-01/sha1.second_preimage_resistance = 2028-02-01/' /usr/share/apt/default-sequoia.config > /etc/crypto-policies/back-ends/apt-sequoia.config"
 		fi
+
+		bash="$(require bash)"
+		llvm_script="$(download_file "https://apt.llvm.org/llvm.sh")"
+		execute_sudo "$bash" "$llvm_script" "$(llvm_version)" all
+
+		# Install llvm-symbolizer explicitly to ensure it's available for ASAN
+		install_packages "llvm-$(llvm_version)-tools"
 		;;
 	brew)
 		install_packages "llvm@$(llvm_version)"
@@ -1182,13 +1131,6 @@ install_llvm() {
 			"scudo-malloc" \
 			"lld$(llvm_version)" \
 			"llvm$(llvm_version)-dev" # Ensures llvm-symbolizer is installed
-		;;
-	esac
-
-	case "$os" in
-		freebsd)
-			# TODO: use llvm_version_exact
-			install_packages "devel/llvm$(llvm_version)"
 		;;
 	esac
 }
@@ -1232,7 +1174,7 @@ install_gcc() {
 		;;
 	esac
 
-	llvm_v="19"
+	llvm_v="21"
 
 	append_to_profile "export CC=clang-${llvm_v}"
 	append_to_profile "export CXX=clang++-${llvm_v}"
@@ -1266,67 +1208,39 @@ install_gcc() {
 	execute_sudo ln -sf $(which llvm-symbolizer-$llvm_v) /usr/bin/llvm-symbolizer
 }
 
-install_sccache() {
-	case "$os" in
-		linux)
-			;;
-		freebsd)
-			cargo install sccache --locked --version 0.12.0
-			return
-			;;
-		*)
-			error "Unsupported platform: $os"
-			;;
+install_ccache() {
+	case "$pm" in
+	apt)
+		install_packages ccache
+		;;
+	brew)
+		install_packages ccache
+		;;
+	apk)
+		install_packages ccache
+		;;
+	dnf|yum)
+		install_packages ccache
+		;;
+	zypper)
+		install_packages ccache
+		;;
 	esac
-
-	# Alright, look, this function is cobbled together but it's only as cobbled
-	# together as this whole script is.
-	#
-	# For some reason, move_to_bin doesn't work here due to permissions so I'm
-	# avoiding that function. It's also wrong with permissions and so on.
-	#
-	# Unfortunately, we cannot use install_packages since many package managers
-	# don't compile `sccache` with S3 support.
-	local opts=$-
-	set -ef
-
-	local sccache_http
-	sccache_http="https://github.com/mozilla/sccache/releases/download/v0.12.0/sccache-v0.12.0-$(uname -m)-unknown-linux-musl.tar.gz"
-
-	local file
-	file=$(download_file "$sccache_http")
-
-	local tmpdir
-	tmpdir=$(mktemp -d)
-
-	execute tar -xzf "$file" -C "$tmpdir"
-	execute_sudo install -m755 "$tmpdir/sccache-v0.12.0-$(uname -m)-unknown-linux-musl/sccache" "/usr/local/bin"
-
-	set +ef -"$opts"
 }
 
 install_rust() {
-	case "$distro" in
-	freebsd)
-		install_packages lang/rust
-		create_directory "$HOME/.cargo/bin"
-		append_to_path "$HOME/.cargo/bin"
-		;;
-	*)
-		rust_home="/opt/rust"
-		create_directory "$rust_home"
-		append_to_profile "export RUSTUP_HOME=$rust_home"
-		append_to_profile "export CARGO_HOME=$rust_home"
+	rust_home="/opt/rust"
+	create_directory "$rust_home"
+	append_to_profile "export RUSTUP_HOME=$rust_home"
+	append_to_profile "export CARGO_HOME=$rust_home"
 
-		sh="$(require sh)"
-		rustup_script=$(download_file "https://sh.rustup.rs")
-		execute "$sh" -lc "$rustup_script -y --no-modify-path"
-		append_to_path "$rust_home/bin"
+	sh="$(require sh)"
+	rustup_script=$(download_file "https://sh.rustup.rs")
+	execute "$sh" -lc "$rustup_script -y --no-modify-path"
+	append_to_path "$rust_home/bin"
 
-		# Ensure all rustup files are accessible (for CI builds where different users run builds)
-		grant_to_user "$rust_home"
-		;;
-	esac
+	# Ensure all rustup files are accessible (for CI builds where different users run builds)
+	grant_to_user "$rust_home"
 
 	case "$osxcross" in
 	1)
@@ -1443,9 +1357,6 @@ install_tailscale() {
 		execute_as_user go install tailscale.com/cmd/tailscale{,d}@latest
 		append_to_path "$home/go/bin"
 		;;
-	freebsd)
-		install_packages security/tailscale
-		;;
 	esac
 }
 
@@ -1512,14 +1423,6 @@ create_buildkite_user() {
 				--home "$home" \
 				--disabled-password
 			;;
-		freebsd)
-			execute_sudo pw group add -n "$group"
-			execute_sudo pw user add \
-				-n "$user" \
-				-g "$group" \
-				-s "$(require sh)" \
-				-d "$home" \
-			;;
 		*)
 			execute_sudo useradd "$user" \
 				--system \
@@ -1545,9 +1448,7 @@ create_buildkite_user() {
 	done
 
 	# The following is necessary to configure buildkite to use a stable
-	# checkout directory. sccache hashes absolute paths into its cache keys,
-	# so if buildkite uses a different checkout path each time (which it does
-	# by default), sccache will be useless.
+	# checkout directory for ccache to be effective.
 	local opts=$-
 	set -ef
 
@@ -1696,17 +1597,6 @@ install_age() {
 		aarch64)
 			age_arch="arm64"
 			age_hash="57fd79a7ece5fe501f351b9dd51a82fbee1ea8db65a8839db17f5c080245e99f"
-			;;
-		*)
-			error "Unsupported platform: $os-$arch"
-			;;
-		esac
-		;;
-	freebsd)
-		case "$arch" in
-		x64)
-			age_arch="amd64"
-			age_hash="943a7510a9973a1e589b913a70228aa1361a63cde39e3ed581435a4d4802df29"
 			;;
 		*)
 			error "Unsupported platform: $os-$arch"

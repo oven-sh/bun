@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
 import { constants, Database, SQLiteError } from "bun:sqlite";
 import { describe, expect, it } from "bun:test";
-import { existsSync, readdirSync, realpathSync, writeFileSync } from "fs";
+import { readdirSync, realpathSync } from "fs";
 import { bunEnv, bunExe, isMacOS, isMacOSVersionAtLeast, isWindows, tempDirWithFiles } from "harness";
 import { tmpdir } from "os";
 import path from "path";
@@ -846,13 +846,15 @@ it("db.transaction()", () => {
 
 // this bug was fixed by ensuring FinalObject has no more than 64 properties
 it("inlineCapacity #987", async () => {
-  const path = tmpbase + "bun-987.db";
-  if (!existsSync(path)) {
-    const arrayBuffer = await (await fetch("https://github.com/oven-sh/bun/files/9265429/logs.log")).arrayBuffer();
-    writeFileSync(path, arrayBuffer);
-  }
-
-  const db = new Database(path);
+  const db = new Database(":memory:");
+  // Create schema matching the original regression test (media + logs tables)
+  db.exec(`
+    CREATE TABLE media (id INTEGER PRIMARY KEY, mid TEXT, name TEXT, url TEXT, duration INTEGER);
+    CREATE TABLE logs (mid INTEGER, duration INTEGER, start INTEGER, did TEXT, vid TEXT);
+    INSERT INTO media VALUES (1, 'm1', 'Test Media', 'http://test', 120);
+    INSERT INTO logs VALUES (1, 60, 1654100000, 'd1', 'v1');
+    INSERT INTO logs VALUES (1, 45, 1654200000, 'd2', 'v2');
+  `);
 
   const query = `SELECT
   media.mid,

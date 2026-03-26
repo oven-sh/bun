@@ -339,6 +339,10 @@ describe.concurrent("socket", () => {
     expect([fileURLToPath(new URL("./socket-huge-fixture.js", import.meta.url))]).toRun();
   }, 60_000);
 
+  it.skipIf(isWindows)("kqueue should not dispatch spurious drain events on readable", async () => {
+    expect([fileURLToPath(new URL("./kqueue-filter-coalesce-fixture.ts", import.meta.url))]).toRun();
+  });
+
   it("it should not crash when getting a ReferenceError on client socket open", async () => {
     using server = Bun.serve({
       port: 0,
@@ -777,4 +781,23 @@ it("should not leak memory", async () => {
 
 it("should not leak memory when connect() fails again", async () => {
   await expectMaxObjectTypeCount(expect, "TCPSocket", 5, 50);
+});
+
+it("should throw on empty hostname from truthy non-string value", () => {
+  const socket = { data() {}, open() {}, close() {} };
+  // A truthy value whose toString() returns "" should throw, not crash
+  for (const hostname of [[], new String("")]) {
+    expect(() => Bun.listen({ hostname: hostname as any, port: 0, socket })).toThrow('Expected a non-empty "hostname"');
+    expect(() => Bun.connect({ hostname: hostname as any, port: 0, socket })).toThrow(
+      'Expected a non-empty "hostname"',
+    );
+  }
+});
+
+it("should throw on empty unix path from truthy non-string value", () => {
+  const socket = { data() {}, open() {}, close() {} };
+  // unix uses a strict string type in bindgen, so non-string values are rejected before
+  // reaching the empty-string check — the error message differs from hostname
+  expect(() => Bun.listen({ unix: [] as any, socket })).toThrow("SocketOptions.unix must be a string");
+  expect(() => Bun.connect({ unix: [] as any, socket })).toThrow("SocketOptions.unix must be a string");
 });

@@ -34,7 +34,7 @@ public:
     using DOMWrapped = ErrorEvent;
     static JSErrorEvent* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<ErrorEvent>&& impl)
     {
-        JSErrorEvent* ptr = new (NotNull, JSC::allocateCell<JSErrorEvent>(globalObject->vm())) JSErrorEvent(structure, *globalObject, WTFMove(impl));
+        JSErrorEvent* ptr = new (NotNull, JSC::allocateCell<JSErrorEvent>(globalObject->vm())) JSErrorEvent(structure, *globalObject, WTF::move(impl));
         ptr->finishCreation(globalObject->vm());
         return ptr;
     }
@@ -58,7 +58,7 @@ public:
     }
     static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm);
     DECLARE_VISIT_CHILDREN;
-    template<typename Visitor> void visitAdditionalChildren(Visitor&);
+    template<typename Visitor> void visitAdditionalChildrenInGCThread(Visitor&);
 
     template<typename Visitor> static void visitOutputConstraints(JSCell*, Visitor&);
     static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);

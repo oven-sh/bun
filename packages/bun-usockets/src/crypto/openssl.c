@@ -315,6 +315,15 @@ int us_internal_ssl_socket_is_closed(struct us_internal_ssl_socket_t *s) {
   return us_socket_is_closed(0, &s->s);
 }
 
+int us_internal_ssl_socket_is_handshake_finished(struct us_internal_ssl_socket_t *s) {
+  if (!s || !s->ssl) return 0;
+  return SSL_is_init_finished(s->ssl);
+}
+
+int us_internal_ssl_socket_handshake_callback_has_fired(struct us_internal_ssl_socket_t *s) {
+  if (!s) return 0;
+  return s->handshake_state == HANDSHAKE_COMPLETED;
+}
 
 void us_internal_trigger_handshake_callback_econnreset(struct us_internal_ssl_socket_t *s) {
   struct us_internal_ssl_socket_context_t *context =
@@ -885,6 +894,7 @@ int us_ssl_ctx_use_privatekey_content(SSL_CTX *ctx, const char *content,
   int reason_code, ret = 0;
   BIO *in;
   EVP_PKEY *pkey = NULL;
+  if (content == NULL) return 0;
   in = BIO_new_mem_buf(content, strlen(content));
   if (in == NULL) {
     OPENSSL_PUT_ERROR(SSL, ERR_R_BUF_LIB);
@@ -921,6 +931,7 @@ int add_ca_cert_to_ctx_store(SSL_CTX *ctx, const char *content,
   X509 *x = NULL;
   ERR_clear_error(); // clear error stack for SSL_CTX_use_certificate()
   int count = 0;
+  if (content == NULL) return 0;
   BIO *in = BIO_new_mem_buf(content, strlen(content));
   if (in == NULL) {
     OPENSSL_PUT_ERROR(SSL, ERR_R_BUF_LIB);
@@ -954,6 +965,7 @@ int us_ssl_ctx_use_certificate_chain(SSL_CTX *ctx, const char *content) {
 
   ERR_clear_error(); // clear error stack for SSL_CTX_use_certificate()
 
+  if (content == NULL) return 0;
   in = BIO_new_mem_buf(content, strlen(content));
   if (in == NULL) {
     OPENSSL_PUT_ERROR(SSL, ERR_R_BUF_LIB);

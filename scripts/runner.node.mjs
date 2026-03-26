@@ -1128,6 +1128,7 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
     ...process.env,
     PATH: path,
     TMPDIR: tmpdirPath,
+    BUN_TMPDIR: tmpdirPath,
     USER: username,
     HOME: homedir,
     SHELL: shellPath,
@@ -1313,7 +1314,7 @@ async function spawnBunTest(execPath, testPath, opts = { cwd }) {
   const isReallyTest = isTestStrict(testPath) || absPath.includes("vendor");
   const args = opts["args"] ?? [];
 
-  const testArgs = ["test", ...args, `--timeout=${perTestTimeout}`];
+  const testArgs = ["test", ...args, `--timeout=${perTestTimeout}`, "--reporter=dots"];
 
   // This will be set if a JUnit file is generated
   let junitFilePath = null;
@@ -1386,7 +1387,7 @@ async function spawnBunTest(execPath, testPath, opts = { cwd }) {
  * @returns {number}
  */
 function getTestTimeout(testPath) {
-  if (/integration|3rd_party|docker|bun-install-registry|v8/i.test(testPath)) {
+  if (/integration|3rd_party|docker|bun-install-registry|v8|bundler_compile/i.test(testPath)) {
     return integrationTimeout;
   }
   return testTimeout;
@@ -1582,6 +1583,9 @@ function isJavaScriptTest(path) {
 function isNodeTest(path) {
   // Do not run node tests on macOS x64 in CI, those machines are slow and expensive.
   if (isCI && isMacOS && isX64) {
+    return false;
+  }
+  if (!isJavaScript(path)) {
     return false;
   }
   const unixPath = path.replaceAll(sep, "/");

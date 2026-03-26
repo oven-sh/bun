@@ -31,7 +31,7 @@ public:
     using Base = JSDOMWrapper<MessageChannel>;
     static JSMessageChannel* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<MessageChannel>&& impl)
     {
-        JSMessageChannel* ptr = new (NotNull, JSC::allocateCell<JSMessageChannel>(globalObject->vm())) JSMessageChannel(structure, *globalObject, WTFMove(impl));
+        JSMessageChannel* ptr = new (NotNull, JSC::allocateCell<JSMessageChannel>(globalObject->vm())) JSMessageChannel(structure, *globalObject, WTF::move(impl));
         ptr->finishCreation(globalObject->vm());
         return ptr;
     }
@@ -57,7 +57,7 @@ public:
     }
     static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm);
     DECLARE_VISIT_CHILDREN;
-    template<typename Visitor> void visitAdditionalChildren(Visitor&);
+    template<typename Visitor> void visitAdditionalChildrenInGCThread(Visitor&);
 
     template<typename Visitor> static void visitOutputConstraints(JSCell*, Visitor&);
     static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);

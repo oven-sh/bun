@@ -39,6 +39,7 @@ add_compile_definitions(
   CONFIG_TCC_PREDEFS
   ONE_SOURCE=0
   TCC_LIBTCC1="\\0"
+  CONFIG_TCC_BACKTRACE=0
 )
 
 if(APPLE)

@@ -125,6 +125,10 @@ const DrainMicrotasksResult = enum(u8) {
 };
 extern fn JSC__JSGlobalObject__drainMicrotasks(*jsc.JSGlobalObject) DrainMicrotasksResult;
 pub fn drainMicrotasksWithGlobal(this: *EventLoop, globalObject: *jsc.JSGlobalObject, jsc_vm: *jsc.VM) bun.JSTerminated!void {
+    // During spawnSync, the isolated event loop shares the same VM/GlobalObject.
+    // Draining microtasks would execute user JavaScript, which must not happen.
+    if (this.virtual_machine.suppress_microtask_drain) return;
+
     jsc.markBinding(@src());
     jsc_vm.releaseWeakRefs();
 
@@ -187,10 +191,20 @@ fn externRunCallback3(global: *jsc.JSGlobalObject, callback: jsc.JSValue, thisVa
     loop.runCallback(callback, global, thisValue, &.{ arg0, arg1, arg2 });
 }
 
+fn externEnter(global: *jsc.JSGlobalObject) callconv(.c) void {
+    global.bunVM().eventLoop().enter();
+}
+
+fn externExit(global: *jsc.JSGlobalObject) callconv(.c) void {
+    global.bunVM().eventLoop().exit();
+}
+
 comptime {
     @export(&externRunCallback1, .{ .name = "Bun__EventLoop__runCallback1" });
     @export(&externRunCallback2, .{ .name = "Bun__EventLoop__runCallback2" });
     @export(&externRunCallback3, .{ .name = "Bun__EventLoop__runCallback3" });
+    @export(&externEnter, .{ .name = "Bun__EventLoop__enter" });
+    @export(&externExit, .{ .name = "Bun__EventLoop__exit" });
 }
 
 /// Prefer `runCallbackWithResult` unless you really need to make sure that microtasks are drained.
@@ -321,7 +335,7 @@ pub fn tickConcurrentWithCount(this: *EventLoop) usize {
             dest.deinit();
         }
 
-        if (task.auto_delete) {
+        if (task.autoDelete()) {
             to_destroy = task;
         }
 
@@ -351,11 +365,13 @@ pub fn autoTick(this: *EventLoop) void {
     const ctx = this.virtual_machine;
 
     this.tickImmediateTasks(ctx);
-    if (comptime Environment.isPosix) {
+    if (comptime Environment.isWindows) {
         if (this.immediate_tasks.items.len > 0) {
             this.wakeup();
         }
     }
+    // On POSIX, pending immediates are handled via an immediate timeout in
+    // getTimeout() instead of writing to the eventfd, avoiding that overhead.
 
     if (comptime Environment.isPosix) {
         // Some tasks need to keep the event loop alive for one more tick.
@@ -438,11 +454,13 @@ pub fn autoTickActive(this: *EventLoop) void {
     var ctx = this.virtual_machine;
 
     this.tickImmediateTasks(ctx);
-    if (comptime Environment.isPosix) {
+    if (comptime Environment.isWindows) {
         if (this.immediate_tasks.items.len > 0) {
             this.wakeup();
         }
     }
+    // On POSIX, pending immediates are handled via an immediate timeout in
+    // getTimeout() instead of writing to the eventfd, avoiding that overhead.
 
     if (comptime Environment.isPosix) {
         const pending_unref = ctx.pending_unref_counter;
@@ -476,7 +494,7 @@ pub fn processGCTimer(this: *EventLoop) void {
 
 pub fn tick(this: *EventLoop) void {
     jsc.markBinding(@src());
-    var scope: jsc.CatchScope = undefined;
+    var scope: jsc.TopExceptionScope = undefined;
     scope.init(this.global, @src());
     defer scope.deinit();
     this.entered_event_loop_count += 1;
@@ -512,23 +530,39 @@ pub fn tick(this: *EventLoop) void {
     this.global.handleRejectedPromises();
 }
 
-pub fn tickWithoutJS(this: *EventLoop) void {
-    const ctx = this.virtual_machine;
+/// Tick the task queue without draining microtasks afterward.
+/// Used by SpawnSyncEventLoop to process I/O completion tasks (pipe read/write,
+/// process exit) without running user JavaScript via the global microtask queue.
+///
+/// `tickQueueWithCount` unconditionally calls `drainMicrotasksWithGlobal` after
+/// every task (Task.zig), which drains the shared JSC microtask queue and can
+/// execute arbitrary user JS. This method sets a flag to suppress that drain.
+pub fn tickTasksOnly(this: *EventLoop) void {
     this.tickConcurrent();
 
-    while (this.tickWithCount(ctx) > 0) {
+    const vm = this.virtual_machine;
+    const prev = vm.suppress_microtask_drain;
+    vm.suppress_microtask_drain = true;
+    defer vm.suppress_microtask_drain = prev;
+
+    while (this.tickWithCount(vm) > 0) {
         this.tickConcurrent();
     }
 }
 
 pub fn waitForPromise(this: *EventLoop, promise: jsc.AnyPromise) void {
     const jsc_vm = this.virtual_machine.jsc_vm;
-    switch (promise.status(jsc_vm)) {
+    switch (promise.status()) {
         .pending => {
-            while (promise.status(jsc_vm) == .pending) {
+            while (promise.status() == .pending) {
+                // If execution is forbidden (e.g. due to a timeout in vm.SourceTextModule.evaluate),
+                // the Promise callbacks can never run, so we must exit to avoid an infinite loop.
+                if (jsc_vm.executionForbidden()) {
+                    break;
+                }
                 this.tick();
 
-                if (promise.status(jsc_vm) == .pending) {
+                if (promise.status() == .pending) {
                     this.autoTick();
                 }
             }
@@ -539,13 +573,12 @@ pub fn waitForPromise(this: *EventLoop, promise: jsc.AnyPromise) void {
 
 pub fn waitForPromiseWithTermination(this: *EventLoop, promise: jsc.AnyPromise) void {
     const worker = this.virtual_machine.worker orelse @panic("EventLoop.waitForPromiseWithTermination: worker is not initialized");
-    const jsc_vm = this.virtual_machine.jsc_vm;
-    switch (promise.status(jsc_vm)) {
+    switch (promise.status()) {
         .pending => {
-            while (!worker.hasRequestedTerminate() and promise.status(jsc_vm) == .pending) {
+            while (!worker.hasRequestedTerminate() and promise.status() == .pending) {
                 this.tick();
 
-                if (!worker.hasRequestedTerminate() and promise.status(jsc_vm) == .pending) {
+                if (!worker.hasRequestedTerminate() and promise.status() == .pending) {
                     this.autoTick();
                 }
             }

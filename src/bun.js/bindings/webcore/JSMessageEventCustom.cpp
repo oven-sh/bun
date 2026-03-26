@@ -71,13 +71,13 @@ JSC::JSValue JSMessageEvent::data(JSC::JSGlobalObject& lexicalGlobalObject) cons
 }
 
 template<typename Visitor>
-void JSMessageEvent::visitAdditionalChildren(Visitor& visitor)
+void JSMessageEvent::visitAdditionalChildrenInGCThread(Visitor& visitor)
 {
     wrapped().jsData().visit(visitor);
     wrapped().cachedData().visit(visitor);
     wrapped().cachedPorts().visit(visitor);
 }
 
-DEFINE_VISIT_ADDITIONAL_CHILDREN(JSMessageEvent);
+DEFINE_VISIT_ADDITIONAL_CHILDREN_IN_GC_THREAD(JSMessageEvent);
 
 } // namespace WebCore

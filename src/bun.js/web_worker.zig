@@ -325,32 +325,36 @@ pub fn start(
     }
 
     this.arena = bun.MimallocArena.init();
+    const allocator = this.arena.?.allocator();
+
+    const map = try allocator.create(bun.DotEnv.Map);
+    map.* = try this.parent.transpiler.env.map.cloneWithAllocator(allocator);
+
+    const loader = try allocator.create(bun.DotEnv.Loader);
+    loader.* = bun.DotEnv.Loader.init(map, allocator);
+
     var vm = try jsc.VirtualMachine.initWorker(this, .{
-        .allocator = this.arena.?.allocator(),
+        .allocator = allocator,
         .args = transform_options,
+        .env_loader = loader,
         .store_fd = this.store_fd,
         .graph = this.parent.standalone_module_graph,
     });
-    vm.allocator = this.arena.?.allocator();
+    vm.allocator = allocator;
     vm.arena = &this.arena.?;
 
     var b = &vm.transpiler;
+    b.resolver.env_loader = b.env;
+
+    if (this.parent.standalone_module_graph) |graph| {
+        bun.bun_js.applyStandaloneRuntimeFlags(b, graph);
+    }
 
     b.configureDefines() catch {
         this.flushLogs();
         this.exitAndDeinit();
         return;
     };
-
-    // TODO: we may have to clone other parts of vm state. this will be more
-    // important when implementing vm.deinit()
-    const map = try vm.allocator.create(bun.DotEnv.Map);
-    map.* = try vm.transpiler.env.map.cloneWithAllocator(vm.allocator);
-
-    const loader = try vm.allocator.create(bun.DotEnv.Loader);
-    loader.* = bun.DotEnv.Loader.init(map, vm.allocator);
-
-    vm.transpiler.env = loader;
 
     vm.loadExtraEnvAndSourceCodePrinter();
     vm.is_main_thread = false;
@@ -487,8 +491,8 @@ fn spin(this: *WebWorker) void {
         return;
     };
 
-    if (promise.status(vm.global.vm()) == .rejected) {
-        const handled = vm.uncaughtException(vm.global, promise.result(vm.global.vm()), true);
+    if (promise.status() == .rejected) {
+        const handled = vm.uncaughtException(vm.global, promise.result(), true);
 
         if (!handled) {
             vm.exit_handler.exit_code = 1;
@@ -496,7 +500,7 @@ fn spin(this: *WebWorker) void {
             return;
         }
     } else {
-        _ = promise.result(vm.global.vm());
+        _ = promise.result();
     }
 
     this.flushLogs();

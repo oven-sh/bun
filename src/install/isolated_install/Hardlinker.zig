@@ -15,12 +15,16 @@ pub fn init(
         .src_dir = folder_dir,
         .src = src,
         .dest = dest,
-        .walker = try .walk(
-            folder_dir,
-            bun.default_allocator,
-            &.{},
-            skip_dirnames,
-        ),
+        .walker = walker: {
+            var w = try Walker.walk(
+                folder_dir,
+                bun.default_allocator,
+                &.{},
+                skip_dirnames,
+            );
+            w.resolve_unknown_entry_types = true;
+            break :walker w;
+        },
     };
 }
 

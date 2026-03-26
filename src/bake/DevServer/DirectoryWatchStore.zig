@@ -48,6 +48,7 @@ pub fn trackResolutionFailure(store: *DirectoryWatchStore, import_source: []cons
         .jsonc,
         .toml,
         .yaml,
+        .json5,
         .wasm,
         .napi,
         .base64,
@@ -56,6 +57,7 @@ pub fn trackResolutionFailure(store: *DirectoryWatchStore, import_source: []cons
         .bunsh,
         .sqlite,
         .sqlite_embedded,
+        .md,
         => bun.debugAssert(false),
     }
 

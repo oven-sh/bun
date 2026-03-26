@@ -1,0 +1,248 @@
+
+# Permissive Autolinks
+
+Standard autolinks (as per CommonMark specification) have to be decorated with
+`<` and `>` so for example:
+
+```````````````````````````````` example
+<mailto:john.doe@gmail.com>
+<https://example.com>
+.
+<p><a href="mailto:john.doe@gmail.com">mailto:john.doe@gmail.com</a>
+<a href="https://example.com">https://example.com</a></p>
+````````````````````````````````
+
+With flags `MD_FLAG_PERMISSIVEURLAUTOLINKS`, `MD_FLAG_PERMISSIVEWWWAUTOLINKS`
+and `MD_FLAG_PERMISSIVEEMAILAUTOLINKS`, MD4C is able also to recognize autolinks
+without those marks.
+
+Example of permissive autolinks follows:
+
+```````````````````````````````` example
+john.doe@gmail.com
+https://www.example.com
+www.example.com
+.
+<p><a href="mailto:john.doe@gmail.com">john.doe@gmail.com</a>
+<a href="https://www.example.com">https://www.example.com</a>
+<a href="http://www.example.com">www.example.com</a></p>
+.
+--fpermissive-email-autolinks
+--fpermissive-url-autolinks
+--fpermissive-www-autolinks
+````````````````````````````````
+
+However as this syntax also brings some more danger of false positives, more
+strict rules apply to what characters may or may not form such autolinks.
+When a need arises to use a link which does not satisfy these restrictions,
+standard Markdown autolinks have to be used.
+
+First and formost, these autolinks have to be delimited from surrounded text,
+i.e. whitespace, beginning/end of line, or very limited punctuation must
+precede and follow respectively.
+
+Therefore these are not autolinks because `:` precedes or follows:
+
+```````````````````````````````` example
+:john.doe@gmail.com
+:https://www.example.com
+:www.example.com
+.
+<p>:john.doe@gmail.com
+:https://www.example.com
+:www.example.com</p>
+.
+--fpermissive-email-autolinks
+--fpermissive-url-autolinks
+--fpermissive-www-autolinks
+````````````````````````````````
+
+Allowed punctuation right before autolink includes only opening brackets `(`,
+`{` or `[`:
+
+```````````````````````````````` example
+[john.doe@gmail.com
+(https://www.example.com
+{www.example.com
+.
+<p>[<a href="mailto:john.doe@gmail.com">john.doe@gmail.com</a>
+(<a href="https://www.example.com">https://www.example.com</a>
+{<a href="http://www.example.com">www.example.com</a></p>
+.
+--fpermissive-email-autolinks
+--fpermissive-url-autolinks
+--fpermissive-www-autolinks
+````````````````````````````````
+
+Correspondingly, the respective closing brackets may follow the autolinks.
+
+```````````````````````````````` example
+john.doe@gmail.com]
+https://www.example.com)
+www.example.com}
+.
+<p><a href="mailto:john.doe@gmail.com">john.doe@gmail.com</a>]
+<a href="https://www.example.com">https://www.example.com</a>)
+<a href="http://www.example.com">www.example.com</a>}</p>
+.
+--fpermissive-email-autolinks
+--fpermissive-url-autolinks
+--fpermissive-www-autolinks
+````````````````````````````````
+
+Some other punctuation characters are also allowed after the autolink so that
+the autolinks may appear at the end of a sentence or clause (`.`, `!`, `?`,
+`,`, `;`):
+
+```````````````````````````````` example
+Have you ever visited http://zombo.com?
+.
+<p>Have you ever visited <a href="http://zombo.com">http://zombo.com</a>?</p>
+.
+--fpermissive-url-autolinks
+````````````````````````````````
+
+Markdown emphasis mark can also precede (but only opening mark) or follow
+(only closer mark):
+
+```````````````````````````````` example
+You may contact me at **john.doe@example.com**.
+.
+<p>You may contact me at <strong><a href="mailto:john.doe@example.com">john.doe@example.com</a></strong>.</p>
+.
+--fpermissive-email-autolinks
+````````````````````````````````
+
+However the following is not, because in this example `*` is literal `*` and
+such punctuation is not allowed before the autolink:
+
+```````````````````````````````` example
+*john.doe@example.com
+
+john.doe@example.com*
+.
+<p>*john.doe@example.com</p>
+<p>john.doe@example.com*</p>
+.
+--fpermissive-email-autolinks
+````````````````````````````````
+
+## Permissive URL Autolinks
+
+Permissive URL autolinks (`MD_FLAG_PERMISSIVEURLAUTOLINKS`) are formed
+by mandatory URL scheme, mandatory host, optional path, optional query and
+optional fragment.
+
+The permissive URL autolinks recognize only `http://`, `https://` and `ftp://`
+as the scheme:
+
+```````````````````````````````` example
+https://example.com
+http://example.com
+ftp://example.com
+
+ssh://example.com
+.
+<p><a href="https://example.com">https://example.com</a>
+<a href="http://example.com">http://example.com</a>
+<a href="ftp://example.com">ftp://example.com</a></p>
+<p>ssh://example.com</p>
+.
+--fpermissive-url-autolinks
+````````````````````````````````
+
+The host is a sequence made of alphanumerical characters, `.`, `-` and `_`.
+It has to include at least two components delimited with `.`, last component
+has to have at least two characters, and occurrence of `.`, `-` and `_` has to
+be immediately preceded and followed with a letter or digit.
+
+The host specification may optionally be followed with path. Path begins with
+character `/` and uses it also for delimiting path components. Every path
+component is made of alhanumerical characters and `.`, `-`, `_`. Once again,
+any occurrence of `.`, `-`, `_` has to be surrounded with alphanumerical
+character.
+
+```````````````````````````````` example
+https://example.com/images/branding/logo_272x92.png
+.
+<p><a href="https://example.com/images/branding/logo_272x92.png">https://example.com/images/branding/logo_272x92.png</a></p>
+.
+--fpermissive-url-autolinks
+````````````````````````````````
+
+Then optionally query may follow. The query is made of `?` and then with
+alhanumerical characters, `&`, `.`, `-`, `+`, `_`, `=`, `(` and `)`. Once again any
+of those non-alhanumerical characters has to be surrounded with alpha-numerical
+characters, and also brackets `(` have to be balanced `)`.
+
+```````````````````````````````` example
+https://www.google.com/search?q=md4c+markdown
+.
+<p><a href="https://www.google.com/search?q=md4c+markdown">https://www.google.com/search?q=md4c+markdown</a></p>
+.
+--fpermissive-url-autolinks
+````````````````````````````````
+
+And finally there may be an optional fragment.
+
+```````````````````````````````` example
+https://example.com#fragment
+.
+<p><a href="https://example.com#fragment">https://example.com#fragment</a></p>
+.
+--fpermissive-url-autolinks
+````````````````````````````````
+
+And finally one complex example:
+
+```````````````````````````````` example
+http://commonmark.org
+
+(Visit https://encrypted.google.com/search?q=Markup+(business))
+
+Anonymous FTP is available at ftp://foo.bar.baz.
+.
+<p><a href="http://commonmark.org">http://commonmark.org</a></p>
+<p>(Visit <a href="https://encrypted.google.com/search?q=Markup+(business)">https://encrypted.google.com/search?q=Markup+(business)</a>)</p>
+<p>Anonymous FTP is available at <a href="ftp://foo.bar.baz">ftp://foo.bar.baz</a>.</p>
+.
+--fpermissive-url-autolinks
+````````````````````````````````
+
+
+## Permissive WWW Autolinks
+
+Permissive WWW autolinks (`MD_FLAG_PERMISSIVEWWWAUTOLINKS`) are very similar
+to the permissive URL autolinks. Actually the only difference is that instead
+of providing an explicit scheme, they have to begin with `www.`.
+
+```````````````````````````````` example
+www.google.com/search?q=Markdown
+.
+<p><a href="http://www.google.com/search?q=Markdown">www.google.com/search?q=Markdown</a></p>
+.
+--fpermissive-www-autolinks
+````````````````````````````````
+
+
+## Permissive E-mail Autolinks
+
+Permissive E-mail autolinks (`MD_FLAG_PERMISSIVEEMAILAUTOLINKS`) impose the
+following limitations to the e-mail addresses:
+
+1. The username (before the `@`) can only use alphanumerical characters and
+   characters `.`, `-`, `_` and `+`. However every such non-alphanumerical
+   character must be immediately preceded and followed by an alphanumerical
+   character.
+
+   For example this is not an auto-link because of that double underscore `__`.
+
+   ```````````````````````````````` example
+   john__doe@example.com
+   .
+   <p>john__doe@example.com</p>
+   .
+   --fpermissive-email-autolinks
+   ````````````````````````````````
+
+2. Same rules for domain as for URL and WWW autolinks apply.

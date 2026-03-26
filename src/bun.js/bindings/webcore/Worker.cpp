@@ -94,7 +94,7 @@ void Worker::networkStateChanged(bool isOnline)
 Worker::Worker(ScriptExecutionContext& context, WorkerOptions&& options)
     : EventTargetWithInlineData()
     , ContextDestructionObserver(&context)
-    , m_options(WTFMove(options))
+    , m_options(WTF::move(options))
     , m_identifier(makeString("worker:"_s, Inspector::IdentifiersFactory::createIdentifier()))
     , m_clientIdentifier(ScriptExecutionContext::generateIdentifier())
 {
@@ -149,7 +149,7 @@ bool Worker::updatePtr()
 
 ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const String& urlInit, WorkerOptions&& options)
 {
-    auto worker = adoptRef(*new Worker(context, WTFMove(options)));
+    auto worker = adoptRef(*new Worker(context, WTF::move(options)));
 
     WTF::String url = urlInit;
     if (url.startsWith("file://"_s)) {
@@ -237,22 +237,22 @@ ExceptionOr<void> Worker::postMessage(JSC::JSGlobalObject& state, JSC::JSValue m
         return Exception { InvalidStateError, "Worker has been terminated"_s };
 
     Vector<RefPtr<MessagePort>> ports;
-    auto serialized = SerializedScriptValue::create(state, messageValue, WTFMove(options.transfer), ports, SerializationForStorage::No, SerializationContext::WorkerPostMessage);
+    auto serialized = SerializedScriptValue::create(state, messageValue, WTF::move(options.transfer), ports, SerializationForStorage::No, SerializationContext::WorkerPostMessage);
     if (serialized.hasException())
         return serialized.releaseException();
 
-    ExceptionOr<Vector<TransferredMessagePort>> disentangledPorts = MessagePort::disentanglePorts(WTFMove(ports));
+    ExceptionOr<Vector<TransferredMessagePort>> disentangledPorts = MessagePort::disentanglePorts(WTF::move(ports));
     if (disentangledPorts.hasException()) {
         return disentangledPorts.releaseException();
     }
 
     MessageWithMessagePorts messageWithMessagePorts { serialized.releaseReturnValue(), disentangledPorts.releaseReturnValue() };
 
-    this->postTaskToWorkerGlobalScope([message = WTFMove(messageWithMessagePorts)](auto& context) mutable {
+    this->postTaskToWorkerGlobalScope([message = WTF::move(messageWithMessagePorts)](auto& context) mutable {
         Zig::GlobalObject* globalObject = jsCast<Zig::GlobalObject*>(context.jsGlobalObject());
 
-        auto ports = MessagePort::entanglePorts(context, WTFMove(message.transferredPorts));
-        auto event = MessageEvent::create(*globalObject, message.message.releaseNonNull(), nullptr, WTFMove(ports));
+        auto ports = MessagePort::entanglePorts(context, WTF::move(message.transferredPorts));
+        auto event = MessageEvent::create(*globalObject, message.message.releaseNonNull(), nullptr, WTF::move(ports));
 
         globalObject->globalEventScope->dispatchEvent(event.event);
     });
@@ -336,8 +336,8 @@ void Worker::createRTCRtpScriptTransformer(RTCRtpScriptTransform& transform, Mes
     if (!scriptExecutionContext())
         return;
 
-    m_contextProxy.postTaskToWorkerGlobalScope([transform = Ref { transform }, options = WTFMove(options)](auto& context) mutable {
-        if (auto transformer = downcast<DedicatedWorkerGlobalScope>(context).createRTCRtpScriptTransformer(WTFMove(options)))
+    m_contextProxy.postTaskToWorkerGlobalScope([transform = Ref { transform }, options = WTF::move(options)](auto& context) mutable {
+        if (auto transformer = downcast<DedicatedWorkerGlobalScope>(context).createRTCRtpScriptTransformer(WTF::move(options)))
             transform->setTransformer(*transformer);
     });
 }
@@ -347,7 +347,7 @@ void Worker::drainEvents()
 {
     Locker lock(this->m_pendingTasksMutex);
     for (auto& task : m_pendingTasks)
-        postTaskToWorkerGlobalScope(WTFMove(task));
+        postTaskToWorkerGlobalScope(WTF::move(task));
     m_pendingTasks.clear();
 }
 
@@ -386,7 +386,7 @@ void Worker::fireEarlyMessages(Zig::GlobalObject* workerGlobalObject)
             task(*thisContext);
         }
     } else {
-        thisContext->postTask([tasks = WTFMove(tasks)](auto& ctx) mutable {
+        thisContext->postTask([tasks = WTF::move(tasks)](auto& ctx) mutable {
             for (auto& task : tasks) {
                 task(ctx);
             }
@@ -451,11 +451,11 @@ void Worker::postTaskToWorkerGlobalScope(Function<void(ScriptExecutionContext&)>
 {
     if (!(m_onlineClosingFlags & OnlineFlag)) {
         Locker lock(this->m_pendingTasksMutex);
-        this->m_pendingTasks.append(WTFMove(task));
+        this->m_pendingTasks.append(WTF::move(task));
         return;
     }
 
-    ScriptExecutionContext::postTaskTo(m_clientIdentifier, WTFMove(task));
+    ScriptExecutionContext::postTaskTo(m_clientIdentifier, WTF::move(task));
 }
 
 void Worker::forEachWorker(const Function<Function<void(ScriptExecutionContext&)>()>& callback)
@@ -565,9 +565,9 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
 
     if (auto* worker = WebWorker__getParentWorker(globalObject->bunVM())) {
         auto& options = worker->options();
-        auto ports = MessagePort::entanglePorts(*ScriptExecutionContext::getScriptExecutionContext(worker->clientIdentifier()), WTFMove(options.dataMessagePorts));
-        RefPtr<WebCore::SerializedScriptValue> serialized = WTFMove(options.workerDataAndEnvironmentData);
-        JSValue deserialized = serialized->deserialize(*globalObject, globalObject, WTFMove(ports));
+        auto ports = MessagePort::entanglePorts(*ScriptExecutionContext::getScriptExecutionContext(worker->clientIdentifier()), WTF::move(options.dataMessagePorts));
+        RefPtr<WebCore::SerializedScriptValue> serialized = WTF::move(options.workerDataAndEnvironmentData);
+        JSValue deserialized = serialized->deserialize(*globalObject, globalObject, WTF::move(ports));
         RETURN_IF_EXCEPTION(scope, {});
         // Should always be set to an Array of length 2 in the constructor in JSWorker.cpp
         auto* pair = jsCast<JSArray*>(deserialized);
@@ -644,14 +644,14 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPostMessage,
     }
 
     Vector<RefPtr<MessagePort>> ports;
-    ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*globalObject, value, WTFMove(transferList), ports, SerializationForStorage::No, SerializationContext::WorkerPostMessage);
+    ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*globalObject, value, WTF::move(transferList), ports, SerializationForStorage::No, SerializationContext::WorkerPostMessage);
     if (serialized.hasException()) {
         WebCore::propagateException(*globalObject, scope, serialized.releaseException());
         RELEASE_AND_RETURN(scope, {});
     }
     scope.assertNoException();
 
-    ExceptionOr<Vector<TransferredMessagePort>> disentangledPorts = MessagePort::disentanglePorts(WTFMove(ports));
+    ExceptionOr<Vector<TransferredMessagePort>> disentangledPorts = MessagePort::disentanglePorts(WTF::move(ports));
     if (disentangledPorts.hasException()) {
         WebCore::propagateException(*globalObject, scope, serialized.releaseException());
         RELEASE_AND_RETURN(scope, {});
@@ -663,8 +663,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPostMessage,
     ScriptExecutionContext::postTaskTo(context->identifier(), [message = messageWithMessagePorts, protectedThis = Ref { *worker }, ports](ScriptExecutionContext& context) mutable {
         Zig::GlobalObject* globalObject = jsCast<Zig::GlobalObject*>(context.jsGlobalObject());
 
-        auto ports = MessagePort::entanglePorts(context, WTFMove(message.transferredPorts));
-        auto event = MessageEvent::create(*globalObject, message.message.releaseNonNull(), nullptr, WTFMove(ports));
+        auto ports = MessagePort::entanglePorts(context, WTF::move(message.transferredPorts));
+        auto event = MessageEvent::create(*globalObject, message.message.releaseNonNull(), nullptr, WTF::move(ports));
 
         protectedThis->dispatchEvent(event.event);
     });

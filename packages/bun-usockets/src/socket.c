@@ -128,6 +128,26 @@ int us_socket_is_closed(int ssl, struct us_socket_t *s) {
     return s->flags.is_closed;
 }
 
+int us_socket_is_ssl_handshake_finished(int ssl, struct us_socket_t *s) {
+#ifndef LIBUS_NO_SSL
+    if(ssl) {
+        return us_internal_ssl_socket_is_handshake_finished((struct us_internal_ssl_socket_t *) s);
+    }
+#endif
+    // Non-SSL sockets are always "handshake finished"
+    return 1;
+}
+
+int us_socket_ssl_handshake_callback_has_fired(int ssl, struct us_socket_t *s) {
+#ifndef LIBUS_NO_SSL
+    if(ssl) {
+        return us_internal_ssl_socket_handshake_callback_has_fired((struct us_internal_ssl_socket_t *) s);
+    }
+#endif
+    // Non-SSL sockets are always "callback fired"
+    return 1;
+}
+
 int us_connecting_socket_is_closed(int ssl, struct us_connecting_socket_t *c) {
     return c->closed;
 }

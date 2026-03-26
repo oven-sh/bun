@@ -13,10 +13,7 @@
   },
   {
     "output": "JavaScriptSources.txt",
-    "paths": [
-      "src/js/**/*.{js,ts}",
-      "src/install/PackageManager/scanner-entry.ts"
-    ]
+    "paths": ["src/js/**/*.{js,ts}", "src/install/PackageManager/scanner-entry.ts"]
   },
   {
     "output": "JavaScriptCodegenSources.txt",
@@ -58,6 +55,7 @@
       "src/bun.js/bindings/node/http/*.cpp",
       "src/bun.js/bindings/v8/*.cpp",
       "src/bun.js/bindings/v8/shim/*.cpp",
+      "src/bun.js/webview/*.cpp",
       "src/bake/*.cpp",
       "src/deps/*.cpp",
       "src/vm/*.cpp",

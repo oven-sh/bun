@@ -48,7 +48,7 @@ JSValue JSCallbackData::invokeCallback(VM& vm, JSObject* callback, JSValue thisV
     // https://webidl.spec.whatwg.org/#ref-for-prepare-to-run-script makes callback's [[Realm]] a running JavaScript execution context,
     // which is used for creating TypeError objects: https://tc39.es/ecma262/#sec-ecmascript-function-objects-call-thisargument-argumentslist (step 4).
     JSGlobalObject* lexicalGlobalObject = callback->globalObject();
-    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     JSValue function;
     CallData callData;
@@ -67,7 +67,7 @@ JSValue JSCallbackData::invokeCallback(VM& vm, JSObject* callback, JSValue thisV
         function = callback->get(lexicalGlobalObject, functionName);
         if (scope.exception()) [[unlikely]] {
             returnedException = scope.exception();
-            scope.clearException();
+            (void)scope.tryClearException();
             return JSValue();
         }
 
@@ -99,18 +99,18 @@ JSValue JSCallbackData::invokeCallback(VM& vm, JSObject* callback, JSValue thisV
 }
 
 template<typename Visitor>
-void JSCallbackDataWeak::visitJSFunction(Visitor& visitor)
+void JSCallbackData::visitJSFunction(Visitor& visitor)
 {
     visitor.append(m_callback);
 }
 
-template void JSCallbackDataWeak::visitJSFunction(JSC::AbstractSlotVisitor&);
-template void JSCallbackDataWeak::visitJSFunction(JSC::SlotVisitor&);
+template void JSCallbackData::visitJSFunction(JSC::AbstractSlotVisitor&);
+template void JSCallbackData::visitJSFunction(JSC::SlotVisitor&);
 
-bool JSCallbackDataWeak::WeakOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown>, void* context, AbstractSlotVisitor& visitor, ASCIILiteral* reason)
+bool JSCallbackData::WeakOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown>, void* context, AbstractSlotVisitor& visitor, ASCIILiteral* reason)
 {
     if (reason) [[unlikely]]
-        *reason = "Context is opaque root"_s; // FIXME: what is the context.
+        *reason = "Callback owner is an opaque root"_s;
     return visitor.containsOpaqueRoot(context);
 }
 

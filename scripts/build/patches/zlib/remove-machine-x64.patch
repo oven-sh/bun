@@ -1,0 +1,25 @@
+Remove workaround for CMake bug #11240 (2010, fixed in cmake 2.8.4).
+
+The hardcoded /machine:x64 breaks arm64 windows builds. The workaround is
+long obsolete — lib.exe has always set /MACHINE automatically from the object
+file architecture; the original bug was in cmake's static lib link command
+line construction, not in lib.exe itself.
+
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -231,13 +231,6 @@
+     if(UNIX OR MINGW)
+         set_target_properties(zlib PROPERTIES OUTPUT_NAME z)
+     endif()
+-    #============================================================================
+-    # work around to CMake bug which affects 64-bit Windows
+-    # see http://public.kitware.com/Bug/view.php?id=11240
+-    #============================================================================
+-    if(CMAKE_SIZEOF_VOID_P EQUAL 8 AND MSVC)
+-        set_target_properties(zlib PROPERTIES STATIC_LIBRARY_FLAGS "/machine:x64")
+-    endif()
+ endif()
+
+ if(NOT SKIP_INSTALL_LIBRARIES AND NOT SKIP_INSTALL_ALL)
+
+

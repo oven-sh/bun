@@ -7,6 +7,7 @@ const VirtualMachine = @This();
 
 export var has_bun_garbage_collector_flag_enabled = false;
 pub export var isBunTest: bool = false;
+pub export var Bun__defaultRemainingRunsUntilSkipReleaseAccess: c_int = 10;
 
 // TODO: evaluate if this has any measurable performance impact.
 pub var synthetic_allocation_limit: usize = std.math.maxInt(u32);
@@ -49,6 +50,7 @@ standalone_module_graph: ?*bun.StandaloneModuleGraph = null,
 smol: bool = false,
 dns_result_order: DNSResolver.Order = .verbatim,
 cpu_profiler_config: ?CPUProfilerConfig = null,
+heap_profiler_config: ?HeapProfilerConfig = null,
 counters: Counters = .{},
 
 hot_reload: bun.cli.Command.HotReload = .none,
@@ -169,6 +171,10 @@ debug_thread_id: if (Environment.allow_assert) std.Thread.Id else void,
 body_value_hive_allocator: webcore.Body.Value.HiveAllocator = undefined,
 
 is_inside_deferred_task_queue: bool = false,
+/// When true, drainMicrotasksWithGlobal is suppressed. Used by SpawnSyncEventLoop
+/// to prevent the isolated event loop from draining the shared JSC microtask queue
+/// (which would execute user JavaScript during spawnSync).
+suppress_microtask_drain: bool = false,
 
 // defaults off. .on("message") will set it to true unless overridden
 // process.channel.unref() will set it to false and mark it overridden
@@ -542,7 +548,7 @@ fn wrapUnhandledRejectionErrorForUncaughtException(globalObject: *JSGlobalObject
         break :blk false;
     }) return reason;
     const reasonStr = blk: {
-        var scope: jsc.CatchScope = undefined;
+        var scope: jsc.TopExceptionScope = undefined;
         scope.init(globalObject, @src());
         defer scope.deinit();
         defer if (scope.exception()) |_| scope.clearException();
@@ -683,8 +689,8 @@ pub fn reportExceptionInHotReloadedModuleIfNeeded(this: *jsc.VirtualMachine) voi
     defer this.addMainToWatcherIfNeeded();
     var promise = this.pending_internal_promise orelse return;
 
-    if (promise.status(this.global.vm()) == .rejected and !promise.isHandled(this.global.vm())) {
-        this.unhandledRejection(this.global, promise.result(this.global.vm()), promise.asValue());
+    if (promise.status() == .rejected and !promise.isHandled()) {
+        this.unhandledRejection(this.global, promise.result(), promise.asValue());
         promise.setHandled(this.global.vm());
     }
 }
@@ -840,6 +846,15 @@ pub fn onExit(this: *VirtualMachine) void {
         this.cpu_profiler_config = null;
         CPUProfiler.stopAndWriteProfile(this.jsc_vm, config) catch |err| {
             Output.err(err, "Failed to write CPU profile", .{});
+        };
+    }
+
+    // Write heap profile if profiling was enabled - do this after CPU profile but before shutdown
+    // Grab the config and null it out to make this idempotent
+    if (this.heap_profiler_config) |config| {
+        this.heap_profiler_config = null;
+        HeapProfiler.generateAndWriteProfile(this.jsc_vm, config) catch |err| {
+            Output.err(err, "Failed to write heap profile", .{});
         };
     }
 
@@ -1056,7 +1071,9 @@ pub fn initWithModuleGraph(
     vm.transpiler.macro_context = js_ast.Macro.MacroContext.init(&vm.transpiler);
     if (opts.is_main_thread) {
         VMHolder.main_thread_vm = vm;
+        vm.is_main_thread = true;
     }
+    is_smol_mode = opts.smol;
     vm.global = JSGlobalObject.create(
         vm,
         vm.console,
@@ -1254,11 +1271,18 @@ fn configureDebugger(this: *VirtualMachine, cli_flag: bun.cli.Command.Debugger) 
         },
     }
 
-    if (this.isInspectorEnabled() and this.debugger.?.mode != .connect) {
-        this.transpiler.options.minify_identifiers = false;
-        this.transpiler.options.minify_syntax = false;
-        this.transpiler.options.minify_whitespace = false;
-        this.transpiler.options.debugger = true;
+    if (this.isInspectorEnabled()) {
+        // The runtime transpiler cache does not store inline source maps needed
+        // by the debugger frontend. Disable it so the printer always runs and
+        // generates the inline sourceMappingURL for the inspector.
+        jsc.RuntimeTranspilerCache.is_disabled = true;
+
+        if (this.debugger.?.mode != .connect) {
+            this.transpiler.options.minify_identifiers = false;
+            this.transpiler.options.minify_syntax = false;
+            this.transpiler.options.minify_whitespace = false;
+            this.transpiler.options.debugger = true;
+        }
     }
 }
 
@@ -1603,7 +1627,7 @@ fn _resolve(
     if (strings.eqlComptime(std.fs.path.basename(specifier), Runtime.Runtime.Imports.alt_name)) {
         ret.path = Runtime.Runtime.Imports.Name;
         return;
-    } else if (strings.eqlComptime(specifier, main_file_name)) {
+    } else if (strings.eqlComptime(specifier, main_file_name) and jsc_vm.entry_point.generated) {
         ret.result = null;
         ret.path = jsc_vm.entry_point.source.path.text;
         return;
@@ -1671,9 +1695,18 @@ fn _resolve(
                     const buster_name = name: {
                         if (std.fs.path.isAbsolute(normalized_specifier)) {
                             if (std.fs.path.dirname(normalized_specifier)) |dir| {
+                                if (dir.len > specifier_cache_resolver_buf.len) {
+                                    return error.ModuleNotFound;
+                                }
                                 // Normalized without trailing slash
                                 break :name bun.strings.normalizeSlashesOnly(&specifier_cache_resolver_buf, dir, std.fs.path.sep);
                             }
+                        }
+
+                        // If the specifier is too long to join, it can't name a real
+                        // directory — skip the cache bust and fail.
+                        if (source_to_use.len + normalized_specifier.len + 4 >= specifier_cache_resolver_buf.len) {
+                            return error.ModuleNotFound;
                         }
 
                         var parts = [_]string{
@@ -1803,10 +1836,16 @@ pub fn resolveMaybeNeedsTrailingSlash(
     jsc_vm.log = &log;
     jsc_vm.transpiler.resolver.log = &log;
     jsc_vm.transpiler.linker.log = &log;
+    if (jsc_vm.transpiler.resolver.package_manager) |pm| {
+        pm.log = &log;
+    }
     defer {
         jsc_vm.log = old_log;
         jsc_vm.transpiler.linker.log = old_log;
         jsc_vm.transpiler.resolver.log = old_log;
+        if (jsc_vm.transpiler.resolver.package_manager) |pm| {
+            pm.log = old_log;
+        }
     }
     jsc_vm._resolve(&result, specifier_utf8.slice(), normalizeSource(source_utf8.slice()), is_esm, is_a_file_path) catch |err_| {
         var err = err_;
@@ -2081,12 +2120,12 @@ fn loadPreloads(this: *VirtualMachine) !?*JSInternalPromise {
         // pending_internal_promise can change if hot module reloading is enabled
         if (this.isWatcherEnabled()) {
             this.eventLoop().performGC();
-            switch (this.pending_internal_promise.?.status(this.global.vm())) {
+            switch (this.pending_internal_promise.?.status()) {
                 .pending => {
-                    while (this.pending_internal_promise.?.status(this.global.vm()) == .pending) {
+                    while (this.pending_internal_promise.?.status() == .pending) {
                         this.eventLoop().tick();
 
-                        if (this.pending_internal_promise.?.status(this.global.vm()) == .pending) {
+                        if (this.pending_internal_promise.?.status() == .pending) {
                             this.eventLoop().autoTick();
                         }
                     }
@@ -2100,7 +2139,7 @@ fn loadPreloads(this: *VirtualMachine) !?*JSInternalPromise {
             });
         }
 
-        if (promise.status(this.global.vm()) == .rejected)
+        if (promise.status() == .rejected)
             return promise;
     }
 
@@ -2243,12 +2282,12 @@ pub fn loadEntryPointForTestRunner(this: *VirtualMachine, entry_path: string) an
     // pending_internal_promise can change if hot module reloading is enabled
     if (this.isWatcherEnabled()) {
         this.eventLoop().performGC();
-        switch (this.pending_internal_promise.?.status(this.global.vm())) {
+        switch (this.pending_internal_promise.?.status()) {
             .pending => {
-                while (this.pending_internal_promise.?.status(this.global.vm()) == .pending) {
+                while (this.pending_internal_promise.?.status() == .pending) {
                     this.eventLoop().tick();
 
-                    if (this.pending_internal_promise.?.status(this.global.vm()) == .pending) {
+                    if (this.pending_internal_promise.?.status() == .pending) {
                         this.eventLoop().autoTick();
                     }
                 }
@@ -2256,7 +2295,7 @@ pub fn loadEntryPointForTestRunner(this: *VirtualMachine, entry_path: string) an
             else => {},
         }
     } else {
-        if (promise.status(this.global.vm()) == .rejected) {
+        if (promise.status() == .rejected) {
             return promise;
         }
 
@@ -2275,12 +2314,12 @@ pub fn loadEntryPoint(this: *VirtualMachine, entry_path: string) anyerror!*JSInt
     // pending_internal_promise can change if hot module reloading is enabled
     if (this.isWatcherEnabled()) {
         this.eventLoop().performGC();
-        switch (this.pending_internal_promise.?.status(this.global.vm())) {
+        switch (this.pending_internal_promise.?.status()) {
             .pending => {
-                while (this.pending_internal_promise.?.status(this.global.vm()) == .pending) {
+                while (this.pending_internal_promise.?.status() == .pending) {
                     this.eventLoop().tick();
 
-                    if (this.pending_internal_promise.?.status(this.global.vm()) == .pending) {
+                    if (this.pending_internal_promise.?.status() == .pending) {
                         this.eventLoop().autoTick();
                     }
                 }
@@ -2288,7 +2327,7 @@ pub fn loadEntryPoint(this: *VirtualMachine, entry_path: string) anyerror!*JSInt
             else => {},
         }
     } else {
-        if (promise.status(this.global.vm()) == .rejected) {
+        if (promise.status() == .rejected) {
             return promise;
         }
 
@@ -2656,7 +2695,7 @@ pub fn remapZigException(
     allow_source_code_preview: bool,
 ) void {
     error_instance.toZigException(this.global, exception);
-    const enable_source_code_preview = allow_source_code_preview and
+    var enable_source_code_preview = allow_source_code_preview and
         !(bun.feature_flag.BUN_DISABLE_SOURCE_CODE_PREVIEW.get() or
             bun.feature_flag.BUN_DISABLE_TRANSPILED_SOURCE_CODE_PREVIEW.get());
 
@@ -2751,6 +2790,12 @@ pub fn remapZigException(
         }
     }
 
+    // Don't show source code preview for REPL frames - it would show the
+    // transformed IIFE wrapper code, not what the user typed.
+    if (top.source_url.eqlComptime("[repl]")) {
+        enable_source_code_preview = false;
+    }
+
     var top_source_url = top.source_url.toUTF8(bun.default_allocator);
     defer top_source_url.deinit();
 
@@ -2802,7 +2847,6 @@ pub fn remapZigException(
                 // Avoid printing "export default 'native'"
                 break :code ZigString.Slice.empty;
             }
-
             var log = logger.Log.init(bun.default_allocator);
             defer log.deinit();
 
@@ -3679,6 +3723,7 @@ pub const ExitHandler = struct {
     extern fn Process__dispatchOnBeforeExit(*JSGlobalObject, code: u8) void;
     extern fn Process__dispatchOnExit(*JSGlobalObject, code: u8) void;
     extern fn Bun__closeAllSQLiteDatabasesForTermination() void;
+    extern fn Bun__WebView__closeAllForTermination() void;
 
     pub fn dispatchOnExit(this: *ExitHandler) void {
         jsc.markBinding(@src());
@@ -3686,6 +3731,7 @@ pub const ExitHandler = struct {
         Process__dispatchOnExit(vm.global, this.exit_code);
         if (vm.isMainThread()) {
             Bun__closeAllSQLiteDatabasesForTermination();
+            Bun__WebView__closeAllForTermination();
         }
     }
 
@@ -3712,6 +3758,9 @@ const Allocator = std.mem.Allocator;
 
 const CPUProfiler = @import("./bindings/BunCPUProfiler.zig");
 const CPUProfilerConfig = CPUProfiler.CPUProfilerConfig;
+
+const HeapProfiler = @import("./bindings/BunHeapProfiler.zig");
+const HeapProfilerConfig = HeapProfiler.HeapProfilerConfig;
 
 const bun = @import("bun");
 const Async = bun.Async;

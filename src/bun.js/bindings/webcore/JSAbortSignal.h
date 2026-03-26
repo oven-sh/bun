@@ -34,7 +34,7 @@ public:
     static JSAbortSignal* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<AbortSignal>&& impl)
     {
         auto& vm = JSC::getVM(globalObject);
-        JSAbortSignal* ptr = new (NotNull, JSC::allocateCell<JSAbortSignal>(vm)) JSAbortSignal(structure, *globalObject, WTFMove(impl));
+        JSAbortSignal* ptr = new (NotNull, JSC::allocateCell<JSAbortSignal>(vm)) JSAbortSignal(structure, *globalObject, WTF::move(impl));
         ptr->finishCreation(vm);
         return ptr;
     }
@@ -62,7 +62,7 @@ public:
     static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm);
     DECLARE_VISIT_CHILDREN;
     DECLARE_VISIT_OUTPUT_CONSTRAINTS;
-    template<typename Visitor> void visitAdditionalChildren(Visitor&);
+    template<typename Visitor> void visitAdditionalChildrenInGCThread(Visitor&);
     static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
     AbortSignal& wrapped() const
     {

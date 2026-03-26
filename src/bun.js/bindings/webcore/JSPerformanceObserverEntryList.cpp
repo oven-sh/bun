@@ -133,7 +133,7 @@ void JSPerformanceObserverEntryListPrototype::finishCreation(VM& vm)
 const ClassInfo JSPerformanceObserverEntryList::s_info = { "PerformanceObserverEntryList"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSPerformanceObserverEntryList) };
 
 JSPerformanceObserverEntryList::JSPerformanceObserverEntryList(Structure* structure, JSDOMGlobalObject& globalObject, Ref<PerformanceObserverEntryList>&& impl)
-    : JSDOMWrapper<PerformanceObserverEntryList>(structure, globalObject, WTFMove(impl))
+    : JSDOMWrapper<PerformanceObserverEntryList>(structure, globalObject, WTF::move(impl))
 {
 }
 
@@ -199,7 +199,7 @@ static inline JSC::EncodedJSValue jsPerformanceObserverEntryListPrototypeFunctio
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto type = convert<IDLDOMString>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLSequence<IDLInterface<PerformanceEntry>>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, impl.getEntriesByType(WTFMove(type)))));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLSequence<IDLInterface<PerformanceEntry>>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, impl.getEntriesByType(WTF::move(type)))));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsPerformanceObserverEntryListPrototypeFunction_getEntriesByType, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -222,7 +222,7 @@ static inline JSC::EncodedJSValue jsPerformanceObserverEntryListPrototypeFunctio
     EnsureStillAliveScope argument1 = callFrame->argument(1);
     auto type = argument1.value().isUndefined() ? String() : convert<IDLDOMString>(*lexicalGlobalObject, argument1.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLSequence<IDLInterface<PerformanceEntry>>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, impl.getEntriesByName(WTFMove(name), WTFMove(type)))));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLSequence<IDLInterface<PerformanceEntry>>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, impl.getEntriesByName(WTF::move(name), WTF::move(type)))));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsPerformanceObserverEntryListPrototypeFunction_getEntriesByName, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -296,7 +296,7 @@ JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObj
         // RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
 #endif
     }
-    return createWrapper<PerformanceObserverEntryList>(globalObject, WTFMove(impl));
+    return createWrapper<PerformanceObserverEntryList>(globalObject, WTF::move(impl));
 }
 
 JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, PerformanceObserverEntryList& impl)

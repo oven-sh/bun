@@ -69,9 +69,9 @@ pub const String = extern struct {
     }
 
     extern fn BunString__transferToJS(this: *String, globalThis: *jsc.JSGlobalObject) jsc.JSValue;
-    pub fn transferToJS(this: *String, globalThis: *jsc.JSGlobalObject) jsc.JSValue {
+    pub fn transferToJS(this: *String, globalThis: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
         jsc.markBinding(@src());
-        return BunString__transferToJS(this, globalThis);
+        return bun.jsc.fromJSHostCall(globalThis, @src(), BunString__transferToJS, .{ this, globalThis });
     }
 
     pub fn toOwnedSlice(this: String, allocator: std.mem.Allocator) OOM![]u8 {
@@ -543,10 +543,10 @@ pub const String = extern struct {
         return if (ok) out else error.JSError;
     }
 
-    pub fn toJS(this: *const String, globalObject: *bun.jsc.JSGlobalObject) jsc.JSValue {
+    pub fn toJS(this: *const String, globalObject: *bun.jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
         jsc.markBinding(@src());
 
-        return BunString__toJS(globalObject, this);
+        return bun.jsc.fromJSHostCall(globalObject, @src(), BunString__toJS, .{ globalObject, this });
     }
 
     pub fn toJSDOMURL(this: *String, globalObject: *bun.jsc.JSGlobalObject) jsc.JSValue {
@@ -1093,20 +1093,41 @@ pub const String = extern struct {
     extern fn JSC__createRangeError(*jsc.JSGlobalObject, str: *const String) jsc.JSValue;
 
     pub fn jsGetStringWidth(globalObject: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-        const args = callFrame.arguments_old(1).slice();
+        const args = callFrame.argumentsAsArray(2);
+        const argument = args[0];
+        const opts_val = args[1];
 
-        if (args.len == 0 or !args.ptr[0].isString()) {
+        if (argument == .zero or argument.isUndefined()) {
             return .jsNumber(@as(i32, 0));
         }
 
-        const str = try args[0].toBunString(globalObject);
-        defer str.deref();
+        const js_str = try argument.toJSString(globalObject);
+        const view = js_str.view(globalObject);
 
-        if (str.isEmpty()) {
+        if (view.isEmpty()) {
             return .jsNumber(@as(i32, 0));
         }
 
-        const width = str.visibleWidth(false);
+        const str = bun.String.init(view);
+
+        // Parse options: { countAnsiEscapeCodes?: bool, ambiguousIsNarrow?: bool }
+        var count_ansi: bool = false;
+        var ambiguous_is_narrow: bool = true;
+
+        if (opts_val.isObject()) {
+            if (try opts_val.getTruthyComptime(globalObject, "countAnsiEscapeCodes")) |v| {
+                count_ansi = v.toBoolean();
+            }
+            if (try opts_val.getTruthyComptime(globalObject, "ambiguousIsNarrow")) |v| {
+                ambiguous_is_narrow = v.toBoolean();
+            }
+        }
+
+        const width = if (count_ansi)
+            str.visibleWidth(!ambiguous_is_narrow)
+        else
+            str.visibleWidthExcludeANSIColors(!ambiguous_is_narrow);
+
         return .jsNumber(width);
     }
 

@@ -121,7 +121,14 @@ function download_buildkite_artifact() {
   if [ -z "$dir" ]; then
     dir="."
   fi
-  run_command buildkite-agent artifact download "$name" "$dir"
+  # When signing ran, Windows zips exist in two steps with the same name
+  # (build-bun unsigned, windows-sign signed). Pin to the sign step to
+  # guarantee we get the signed one.
+  local step_args=()
+  if [[ -n "$WINDOWS_ARTIFACT_STEP" && "$name" == bun-windows-* ]]; then
+    step_args=(--step "$WINDOWS_ARTIFACT_STEP")
+  fi
+  run_command buildkite-agent artifact download "$name" "$dir" "${step_args[@]}"
   if [ ! -f "$dir/$name" ]; then
     echo "error: Cannot find Buildkite artifact: $name"
     exit 1
@@ -219,6 +226,8 @@ function create_release() {
     bun-windows-x64-profile.zip
     bun-windows-x64-baseline.zip
     bun-windows-x64-baseline-profile.zip
+    bun-windows-aarch64.zip
+    bun-windows-aarch64-profile.zip
   )
 
   function upload_artifact() {

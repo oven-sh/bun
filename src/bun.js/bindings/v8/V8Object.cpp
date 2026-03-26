@@ -45,7 +45,7 @@ Maybe<bool> Object::Set(Local<Context> context, Local<Value> key, Local<Value> v
     JSValue v = value->localToJSValue();
     auto& vm = JSC::getVM(globalObject);
 
-    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     PutPropertySlot slot(object, false);
 
     Identifier identifier = k.toPropertyKey(globalObject);
@@ -65,7 +65,7 @@ Maybe<bool> Object::Set(Local<Context> context, uint32_t index, Local<Value> val
     JSValue v = value->localToJSValue();
     auto& vm = JSC::getVM(globalObject);
 
-    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     // TODO: investigate if we should use the return value (seems like not)
     bool success = object->methodTable()->putByIndex(object, globalObject, index, v, false);
@@ -82,7 +82,7 @@ MaybeLocal<Value> Object::Get(Local<Context> context, Local<Value> key)
     JSValue k = key->localToJSValue();
     auto& vm = JSC::getVM(globalObject);
 
-    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     Identifier identifier = k.toPropertyKey(globalObject);
     RETURN_IF_EXCEPTION(scope, MaybeLocal<Value>());
@@ -102,7 +102,7 @@ MaybeLocal<Value> Object::Get(Local<Context> context, uint32_t index)
     JSObject* object = localToObjectPointer<JSObject>();
     auto& vm = JSC::getVM(globalObject);
 
-    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     JSValue result = object->get(globalObject, index);
     if (scope.exception()) [[unlikely]] {

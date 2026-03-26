@@ -186,9 +186,15 @@ pub fn Visit(
                     if (only_scan_imports_and_do_not_visit) {
                         @compileError("only_scan_imports_and_do_not_visit must not run this.");
                     }
+                    // Propagate name from binding to anonymous decorated class expressions
+                    const prev_decorator_class_name = p.decorator_class_name;
+                    if (was_anonymous_named_expr and val.data == .e_class and val.data.e_class.should_lower_standard_decorators and decl.binding.data == .b_identifier) {
+                        p.decorator_class_name = p.loadNameFromRef(decl.binding.data.b_identifier.ref);
+                    }
                     decl.value = p.visitExprInOut(val, .{
                         .is_immediately_assigned_to_decl = true,
                     });
+                    p.decorator_class_name = prev_decorator_class_name;
 
                     if (p.options.features.react_fast_refresh) {
                         // When hooks are immediately assigned to something, we need to hash the binding.
@@ -407,7 +413,15 @@ pub fn Visit(
                         p.visitBinding(item.binding, duplicate_arg_check);
                         if (item.default_value) |default_value| {
                             const was_anonymous_named_expr = default_value.isAnonymousNamed();
+                            const prev_decorator_class_name2 = p.decorator_class_name;
+                            if (was_anonymous_named_expr and default_value.data == .e_class and
+                                default_value.data.e_class.should_lower_standard_decorators and
+                                item.binding.data == .b_identifier)
+                            {
+                                p.decorator_class_name = p.loadNameFromRef(item.binding.data.b_identifier.ref);
+                            }
                             item.default_value = p.visitExpr(default_value);
+                            p.decorator_class_name = prev_decorator_class_name2;
 
                             switch (item.binding.data) {
                                 .b_identifier => |bind_| {
@@ -431,7 +445,15 @@ pub fn Visit(
                         p.visitBinding(property.value, duplicate_arg_check);
                         if (property.default_value) |default_value| {
                             const was_anonymous_named_expr = default_value.isAnonymousNamed();
+                            const prev_decorator_class_name3 = p.decorator_class_name;
+                            if (was_anonymous_named_expr and default_value.data == .e_class and
+                                default_value.data.e_class.should_lower_standard_decorators and
+                                property.value.data == .b_identifier)
+                            {
+                                p.decorator_class_name = p.loadNameFromRef(property.value.data.b_identifier.ref);
+                            }
                             property.default_value = p.visitExpr(default_value);
+                            p.decorator_class_name = prev_decorator_class_name3;
 
                             switch (property.value.data) {
                                 .b_identifier => |bind_| {
@@ -627,7 +649,12 @@ pub fn Visit(
                     if (property.value) |val| {
                         if (name_to_keep) |name| {
                             const was_anon = val.isAnonymousNamed();
+                            const prev_dcn = p.decorator_class_name;
+                            if (val.data == .e_class and val.data.e_class.class_name == null and val.data.e_class.should_lower_standard_decorators) {
+                                p.decorator_class_name = name;
+                            }
                             property.value = p.maybeKeepExprSymbolName(p.visitExpr(val), name, was_anon);
+                            p.decorator_class_name = prev_dcn;
                         } else {
                             property.value = p.visitExpr(val);
                         }
@@ -643,7 +670,12 @@ pub fn Visit(
                         // if (property.flags.is_static and )
                         if (name_to_keep) |name| {
                             const was_anon = val.isAnonymousNamed();
+                            const prev_dcn2 = p.decorator_class_name;
+                            if (val.data == .e_class and val.data.e_class.class_name == null and val.data.e_class.should_lower_standard_decorators) {
+                                p.decorator_class_name = name;
+                            }
                             property.initializer = p.maybeKeepExprSymbolName(p.visitExpr(val), name, was_anon);
+                            p.decorator_class_name = prev_dcn2;
                         } else {
                             property.initializer = p.visitExpr(val);
                         }

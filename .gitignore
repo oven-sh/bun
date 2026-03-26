@@ -1,4 +1,5 @@
 .claude/settings.local.json
+.direnv
 .DS_Store
 .env
 .envrc
@@ -9,6 +10,7 @@
 .ninja_deps
 .ninja_log
 .npm
+.npmrc
 .npm.gz
 .parcel-cache
 .swcrc
@@ -60,7 +62,7 @@
 /test.ts
 /test.zig
 /testdir
-build
+/build/
 build.ninja
 bun-binary
 bun-mimalloc
@@ -192,3 +194,4 @@ scripts/lldb-inline
 
 # We regenerate these in all the build scripts
 cmake/sources/*.txt
+test/integration/bun-types/fixture/bun.lock

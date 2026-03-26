@@ -37,7 +37,7 @@ public:
     ScriptExecutionContext* scriptExecutionContext() const { return ContextDestructionObserver::scriptExecutionContext(); }
 
     ~JSPerformanceObserverCallback() final;
-    JSCallbackDataWeak* callbackData() { return m_data; }
+    JSCallbackData* callbackData() { return m_data; }
 
     // Functions
     CallbackResult<typename IDLUndefined::ImplementationType> handleEvent(typename IDLInterface<PerformanceObserver>::ParameterType thisObject, typename IDLInterface<PerformanceObserverEntryList>::ParameterType entries, typename IDLInterface<PerformanceObserver>::ParameterType observer) override;
@@ -51,7 +51,7 @@ private:
 
     void visitJSFunction(JSC::SlotVisitor&) override;
 
-    JSCallbackDataWeak* m_data;
+    JSCallbackData* m_data;
 };
 
 JSC::JSValue toJS(PerformanceObserverCallback&);

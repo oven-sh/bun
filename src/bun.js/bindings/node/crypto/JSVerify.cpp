@@ -200,7 +200,7 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncInit, (JSGlobalObject * globalObject, 
     }
 
     // Store the initialized context in the JSVerify object
-    thisObject->m_mdCtx = WTFMove(mdCtx);
+    thisObject->m_mdCtx = WTF::move(mdCtx);
 
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
@@ -339,7 +339,7 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncVerify, (JSGlobalObject * globalObject
 
     KeyObject keyObject;
     if (prepareResult.keyData) {
-        keyObject = KeyObject::create(CryptoKeyType::Public, WTFMove(*prepareResult.keyData));
+        keyObject = KeyObject::create(CryptoKeyType::Public, WTF::move(*prepareResult.keyData));
     } else {
         keyObject = KeyObject::getPublicOrPrivateKey(
             globalObject,
@@ -349,7 +349,7 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncVerify, (JSGlobalObject * globalObject
             prepareResult.formatType,
             prepareResult.encodingType,
             prepareResult.cipher,
-            WTFMove(prepareResult.passphrase));
+            WTF::move(prepareResult.passphrase));
         RETURN_IF_EXCEPTION(scope, {});
     }
 
@@ -367,7 +367,7 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncVerify, (JSGlobalObject * globalObject
     RETURN_IF_EXCEPTION(scope, {});
 
     // Move mdCtx out of JSVerify object to finalize it
-    ncrypto::EVPMDCtxPointer mdCtx = WTFMove(thisObject->m_mdCtx);
+    ncrypto::EVPMDCtxPointer mdCtx = WTF::move(thisObject->m_mdCtx);
 
     // Validate DSA parameters
     if (!keyPtr.validateDsaParameters()) {
@@ -485,7 +485,7 @@ std::optional<ncrypto::EVPKeyPointer> keyFromPublicString(JSGlobalObject* lexica
 
     auto publicRes = ncrypto::EVPKeyPointer::TryParsePublicKey(publicConfig, ncryptoBuf);
     if (publicRes) {
-        ncrypto::EVPKeyPointer keyPtr(WTFMove(publicRes.value));
+        ncrypto::EVPKeyPointer keyPtr(WTF::move(publicRes.value));
         return keyPtr;
     }
 
@@ -494,7 +494,7 @@ std::optional<ncrypto::EVPKeyPointer> keyFromPublicString(JSGlobalObject* lexica
         privateConfig.format = ncrypto::EVPKeyPointer::PKFormatType::PEM;
         auto privateRes = ncrypto::EVPKeyPointer::TryParsePrivateKey(privateConfig, ncryptoBuf);
         if (privateRes) {
-            ncrypto::EVPKeyPointer keyPtr(WTFMove(privateRes.value));
+            ncrypto::EVPKeyPointer keyPtr(WTF::move(privateRes.value));
             return keyPtr;
         }
     }

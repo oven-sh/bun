@@ -35,7 +35,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionWrite, (JSC::JSGlobalObject * globalObject,
   JSValue arg1 = callframe->argument(0);
   JSValue toWriteArg = callframe->argument(1);
   auto &vm = globalObject->vm();
-  auto scope = DECLARE_CATCH_SCOPE(vm);
+  auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
   int32_t fd = STDOUT_FILENO;
   if (callframe->argumentCount() > 1) {

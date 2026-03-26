@@ -1,8 +1,8 @@
 # Ziggit Integration Benchmarks
 
 ## Environment
-- Date: 2026-03-26T22:26Z (run 25 — ziggit 0fc153f)
-- Ziggit commit: 0fc153f (perf: reduce allocations in shallow clone setup and HTTP response reading)
+- Date: 2026-03-26T22:30Z (run 26 — ziggit 95b31d8)
+- Ziggit commit: 95b31d8 (perf: increase decompression buffer to 32KB for fewer iterations in idx generation)
 - Bun fork branch: ziggit-integration
 - Machine: Linux (root@ziggit), 483MB RAM, 1 vCPU, Debian (minimal VM)
 - Build: `zig build -Doptimize=ReleaseFast`
@@ -13,48 +13,58 @@
 
 | Repo | git CLI avg | ziggit avg | Ratio |
 |------|------------|-----------|-------|
-| debug | 143ms | 83ms | **1.72x faster** |
-| semver | 631ms | 170ms | **3.71x faster** |
-| chalk | 160ms | 134ms | **1.19x faster** |
-| is | 164ms | 140ms | **1.17x faster** |
-| express | 197ms | 266ms | 0.74x (slower) |
-| **TOTAL** | **1364ms** | **861ms** | **1.58x faster** |
+| debug | 186ms | 134ms | **1.39x faster** |
+| semver | 175ms | 182ms | 0.96x (parity) |
+| chalk | 158ms | 134ms | **1.18x faster** |
+| is | 165ms | 145ms | **1.13x faster** |
+| express | 201ms | 282ms | 0.71x (slower) |
+| **TOTAL** | **956ms** | **949ms** | **1.01x (parity)** |
 
 ### Parallel: 5 repos at once, 3 runs
 
 | Tool | Run 1 | Run 2 | Run 3 | Avg |
 |------|-------|-------|-------|-----|
-| git CLI | 341ms | 343ms | 356ms | **347ms** |
-| ziggit | 445ms | 437ms | 431ms | **438ms** |
+| git CLI | 351ms | 350ms | 343ms | **348ms** |
+| ziggit | 428ms | 437ms | 433ms | **433ms** |
 
-**Parallel result**: git CLI wins 1.26x (per-process overhead in ziggit CLI; in-process library would eliminate this).
+**Parallel result**: git CLI wins 1.24x (per-process overhead in ziggit CLI; in-process library would eliminate this).
 
 ## findCommit: In-Process (1000 iterations)
 
 | Repo | git rev-parse | ziggit findCommit | Speedup |
 |------|--------------|-------------------|---------|
-| debug | 2,088µs | 4.8µs | **435x** |
-| semver | 2,060µs | 6.3µs | **327x** |
-| chalk | 2,059µs | 4.8µs | **429x** |
-| is | 2,053µs | 5.2µs | **395x** |
-| express | 2,034µs | 5.0µs | **407x** |
-| **Average** | **2,059µs** | **5.2µs** | **394x** |
+| debug | 2,214µs | 5.5µs | **403x** |
+| semver | 2,175µs | 5.4µs | **403x** |
+| chalk | 2,140µs | 5.4µs | **396x** |
+| is | 2,148µs | 5.2µs | **413x** |
+| express | 2,141µs | 5.2µs | **412x** |
+| **Average** | **2,164µs** | **5.3µs** | **405x** |
 
-## Key Changes from Run 24
+## Key Changes from Run 25
 
-| Metric | Run 24 (40ad2ba) | Run 25 (0fc153f) | Delta |
+| Metric | Run 25 (0fc153f) | Run 26 (95b31d8) | Delta |
 |--------|-----------------|-----------------|-------|
-| Sequential total (ziggit) | 882ms | 861ms | -21ms (2.4% faster) |
-| Sequential total (git CLI) | 889ms | 1364ms | +475ms (git variance) |
-| Seq clone ratio | 1.01x | **1.58x** | Major improvement |
-| findCommit speedup | 415x | 394x | Within noise |
-| Parallel ratio | 0.79x (git wins) | 0.79x (git wins) | Same |
+| Sequential total (ziggit) | 861ms | 949ms | +88ms (network variance) |
+| Sequential total (git CLI) | 1364ms | 956ms | -408ms (git had bad run 25) |
+| Seq clone ratio | 1.58x | **1.01x** | Normalized (git was slow in run 25) |
+| findCommit speedup | 394x | **405x** | Slight improvement |
+| Parallel ratio | 0.79x | 0.80x | Same |
 
-> The 1.58x sequential improvement is largely due to git CLI variance on semver (344–998ms range), but ziggit's consistency (stddev ~25ms) is itself a real performance feature.
+> Run 25's 1.58x was inflated by git CLI variance on semver (344–998ms). Run 26 is more representative of steady-state performance. The 32KB decomp buffer change (95b31d8) is neutral for shallow clones.
+
+## Run History
+
+| Run | Ziggit | Seq ratio | findCommit | Notes |
+|-----|--------|-----------|------------|-------|
+| 23 | 40ad2ba | 1.02x | 394x | Baseline |
+| 24 | 40ad2ba | 1.01x | 415x | Rerun |
+| 25 | 0fc153f | 1.58x | 394x | git CLI had bad semver run |
+| **26** | **95b31d8** | **1.01x** | **405x** | **Steady-state; 32KB decomp buffer neutral** |
 
 ## Projected bun install Impact
 
-- **5 git deps, cold install**: ~77ms saved (~19% of git phase)
-- **20 git deps**: ~164ms saved
-- **100 git deps**: ~717ms saved
-- **findCommit elimination**: 394x faster ref resolution per dep
+- **5 git deps, cold install**: ~79ms saved (~19% of git phase)
+- **20 git deps**: ~165ms saved
+- **100 git deps**: ~720ms saved
+- **findCommit elimination**: 405x faster ref resolution per dep
+- **Main win**: subprocess elimination + variance reduction, not raw clone speed

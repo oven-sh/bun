@@ -1,28 +1,23 @@
-import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { test, expect } from "bun:test";
 
-test("calling bytes() on a consumed blob ReadableStream does not crash", async () => {
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `
-      const resp = new Response("test data");
-      // Consume the body, which clears the blob store
-      await resp.bytes();
-      // Access the body stream directly and call bytes() on it.
-      // This should not cause an assertion failure / crash.
-      try { await resp.body.bytes(); } catch {}
-      console.log("OK");
-    `,
-    ],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "inherit",
-  });
+test("bytes() on consumed blob ReadableStream returns valid result", async () => {
+  // Create a blob-backed stream and fully consume it via reader
+  const blob = new Blob(["test data"]);
+  const stream = blob.stream();
+  const reader = stream.getReader();
+  const chunks: Uint8Array[] = [];
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+  }
+  reader.releaseLock();
 
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-
-  expect(stdout.trim()).toBe("OK");
-  expect(exitCode).toBe(0);
+  // Stream is closed, source store is consumed.
+  // Calling bytes() should return a valid empty Uint8Array, not crash.
+  // Without the fix, the native toBufferedValue returns .zero without
+  // setting an exception, causing an assertion failure in debug builds.
+  const result = await stream.bytes();
+  expect(result).toBeInstanceOf(Uint8Array);
+  expect(result.length).toBe(0);
 });

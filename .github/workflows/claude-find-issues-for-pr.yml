@@ -26,7 +26,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Run Claude Code slash command
-        uses: anthropics/claude-code-base-action@beta
+        uses: anthropics/claude-code-base-action@e8132bc5e637a42c27763fc757faa37e1ee43b34 # beta
         with:
           prompt: "/find-issues ${{ github.repository }}/pull/${{ github.event.pull_request.number || inputs.pr_number }}"
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}

@@ -491,23 +491,39 @@ pub const Repository = extern struct {
         return null;
     }
 
+    fn isSshAuthError(err: anyerror) bool {
+        return err == error.SshAuthFailed or
+            err == error.SshKeyNotFound or
+            err == error.SshAgentFailure;
+    }
+
+    fn isProtocolError(err: anyerror) bool {
+        return err == error.NetworkRemoteNotSupported or
+            err == error.UnsupportedUrlScheme;
+    }
+
+    fn isDataIntegrityError(err: anyerror) bool {
+        return err == error.InvalidPackFile or
+            err == error.CorruptedData or
+            err == error.BadChecksum or
+            err == error.ChecksumMismatch or
+            err == error.CorruptObject;
+    }
+
     /// Categorize and log ziggit errors with actionable context.
     /// Distinguishes auth failures, network errors, and unsupported protocols
     /// from generic errors so operators can diagnose issues from debug logs.
     fn logZiggitError(operation: []const u8, name: string, err: anyerror) void {
         const err_name = @errorName(err);
-        // SSH authentication (key missing, agent down, auth rejected)
-        if (err == error.SshAuthFailed or err == error.SshKeyNotFound or err == error.SshAgentFailure) {
+        if (isSshAuthError(err)) {
             debug("{s}: ziggit SSH auth failed ({s}) for \"{s}\" (check SSH keys / GIT_SSH_COMMAND), falling back to git CLI", .{ operation, err_name, name });
         } else if (isNetworkError(err)) {
             debug("{s}: ziggit network error ({s}) for \"{s}\", falling back to git CLI", .{ operation, err_name, name });
-        } else if (err == error.NetworkRemoteNotSupported or err == error.UnsupportedUrlScheme) {
-            debug("{s}: ziggit does not support this protocol for \"{s}\", falling back to git CLI", .{ operation, name });
+        } else if (isProtocolError(err)) {
+            debug("{s}: ziggit does not support this protocol ({s}) for \"{s}\", falling back to git CLI", .{ operation, err_name, name });
         } else if (err == error.OutOfMemory) {
             debug("{s}: ziggit out of memory for \"{s}\", falling back to git CLI", .{ operation, name });
-        } else if (err == error.InvalidPackFile or err == error.CorruptedData or err == error.BadChecksum or
-            err == error.ChecksumMismatch or err == error.CorruptObject)
-        {
+        } else if (isDataIntegrityError(err)) {
             debug("{s}: ziggit data integrity error ({s}) for \"{s}\", falling back to git CLI", .{ operation, err_name, name });
         } else {
             debug("{s}: ziggit failed ({s}) for \"{s}\", falling back to git CLI", .{ operation, err_name, name });

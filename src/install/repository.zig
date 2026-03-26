@@ -738,6 +738,8 @@ pub const Repository = extern struct {
             const ziggit_ok = blk: {
                 var repo = ziggit.Repository.cloneNoCheckout(allocator, local_bare_path, target) catch |err| {
                     logZiggitError("checkout/clone", name, err);
+                    // Clean up any partial clone directory before falling back to git CLI
+                    std.fs.cwd().deleteTree(target) catch {};
                     break :blk false;
                 };
                 defer repo.close();

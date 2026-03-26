@@ -10,9 +10,13 @@ test("pathToFileURL with long relative path does not crash", async () => {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", `Bun.pathToFileURL(Buffer.alloc(5000, "a").toString())`],
     env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
   });
 
-  expect(await proc.exited).toBe(0);
+  const [stderr, exitCode] = await Promise.all([new Response(proc.stderr).text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
 });
 
 test("pathToFileURL escapes special characters", () => {

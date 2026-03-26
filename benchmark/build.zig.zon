@@ -1,0 +1,10 @@
+.{
+    .name = "git-vs-ziggit-benchmark",
+    .version = "0.1.0",
+    .paths = .{ "build.zig", "build.zig.zon", "git_vs_ziggit.zig" },
+    .dependencies = .{
+        .ziggit = .{
+            .path = "../../ziggit",
+        },
+    },
+}

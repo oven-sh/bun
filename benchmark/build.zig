@@ -1,0 +1,32 @@
+const std = @import("std");
+
+pub fn build(b: *std.Build) void {
+    const target = b.standardTargetOptions(.{});
+    const optimize = b.standardOptimizeOption(.{});
+
+    // Reference ziggit as a dependency from the local path
+    const ziggit_dep = b.dependency("ziggit", .{
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const ziggit_module = ziggit_dep.module("ziggit");
+
+    const bench = b.addExecutable(.{
+        .name = "git_vs_ziggit",
+        .root_source_file = b.path("git_vs_ziggit.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    bench.root_module.addImport("ziggit", ziggit_module);
+
+    b.installArtifact(bench);
+
+    const run_cmd = b.addRunArtifact(bench);
+    run_cmd.step.dependOn(b.getInstallStep());
+    if (b.args) |args| {
+        run_cmd.addArgs(args);
+    }
+    const run_step = b.step("run", "Run the benchmark");
+    run_step.dependOn(&run_cmd.step);
+}

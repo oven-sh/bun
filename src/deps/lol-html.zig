@@ -295,7 +295,7 @@ pub const HTMLSelector = opaque {
     ///
     /// WARNING: Selector SHOULD NOT be deallocated if there are any active rewriter
     /// builders that accepted it as an argument to `lol_html_rewriter_builder_add_element_content_handlers()`
-    /// method. Deallocate all dependant rewriter builders first and then
+    /// method. Deallocate all dependent rewriter builders first and then
     /// use `lol_html_selector_free` function to free the selector.
     pub fn parse(selector: []const u8) Error!*HTMLSelector {
         auto_disable();

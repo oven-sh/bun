@@ -370,7 +370,7 @@ pub const RunCommand = struct {
     /// This prevents '"node" exited with ...' when it was actually bun.
     /// As of writing this is only used for 'runBinary'
     fn basenameOrBun(str: []const u8) []const u8 {
-        // The full path is not used here, because on windows it is dependant on the
+        // The full path is not used here, because on windows it is dependent on the
         // username. Before windows we checked bun_node_dir, but this is not allowed on Windows.
         if (strings.hasSuffixComptime(str, "/bun-node/node" ++ bun.exe_suffix) or (Environment.isWindows and strings.hasSuffixComptime(str, "\\bun-node\\node" ++ bun.exe_suffix))) {
             return "bun";

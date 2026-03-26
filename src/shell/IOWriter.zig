@@ -842,7 +842,7 @@ pub fn drainBufferedData(parent: *IOWriter, buf: []const u8, max_write_size: usi
 ///       There are two areas which need to change:
 ///
 ///       1. `IOWriter.onWritePollable` calls `this.bump(child).run()` which could
-///          deinitialize the child which will deref and potentially deinitalize the
+///          deinitialize the child which will deref and potentially deinitialize the
 ///          `IOWriter`. Simple solution is to ref and defer ref the `IOWriter`
 ///
 ///       2. `PipeWriter` seems to try to use this struct after IOWriter

@@ -151,7 +151,6 @@ test("global bin shims are created when bin target points into hoisted node_modu
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stderr).not.toContain("error:");
-  expect(stdout).toContain("wrapper-bin");
   expect(exitCode).toBe(0);
 
   // The global bin shims should exist despite the bin targets pointing

@@ -894,12 +894,16 @@ pub const Bin = extern struct {
         fn resolveTargetWithHoisting(this: *const Linker, package_dir: []const u8, target: []const u8) [:0]const u8 {
             const abs_target = path.joinAbsStringZ(package_dir, &.{target}, .auto);
 
+            // Strip leading "./" since joinAbsStringZ normalizes it away in the
+            // absolute path but the prefix check below operates on the raw target.
+            const effective_target = if (strings.hasPrefixComptime(target, "./")) target[2..] else target;
+
             const node_modules_prefix = "node_modules/";
-            if (target.len > node_modules_prefix.len and
-                strings.hasPrefixComptime(target, node_modules_prefix) and
+            if (effective_target.len > node_modules_prefix.len and
+                strings.hasPrefixComptime(effective_target, node_modules_prefix) and
                 !bun.sys.exists(abs_target))
             {
-                const hoisted_rel = target[node_modules_prefix.len..];
+                const hoisted_rel = effective_target[node_modules_prefix.len..];
                 const nm_path = strings.withoutTrailingSlash(this.target_node_modules_path.slice());
                 return path.joinAbsStringZ(nm_path, &.{hoisted_rel}, .auto);
             }
@@ -979,7 +983,7 @@ pub const Bin = extern struct {
                     if (target.len == 0) return;
 
                     // for normalizing `target`
-                    const abs_target_dir = path.joinAbsStringZ(package_dir, &.{target}, .auto);
+                    const abs_target_dir = this.resolveTargetWithHoisting(package_dir, target);
 
                     var target_dir = bun.openDirAbsolute(abs_target_dir) catch |err| {
                         if (err == error.ENOENT) {

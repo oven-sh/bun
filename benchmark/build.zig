@@ -29,4 +29,22 @@ pub fn build(b: *std.Build) void {
     }
     const run_step = b.step("run", "Run the benchmark");
     run_step.dependOn(&run_cmd.step);
+
+    // findCommit benchmark
+    const fc_bench = b.addExecutable(.{
+        .name = "findcommit_bench",
+        .root_source_file = b.path("findcommit_bench.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    fc_bench.root_module.addImport("ziggit", ziggit_module);
+    b.installArtifact(fc_bench);
+
+    const fc_run = b.addRunArtifact(fc_bench);
+    fc_run.step.dependOn(b.getInstallStep());
+    if (b.args) |args| {
+        fc_run.addArgs(args);
+    }
+    const fc_step = b.step("findcommit", "Run findCommit benchmark");
+    fc_step.dependOn(&fc_run.step);
 }

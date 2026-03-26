@@ -270,13 +270,15 @@ void WebViewHost::evaluateIPC(const WTF::String& script)
         makeHostBlock<&WebViewHost::onEvalComplete, id, id>(*this));
 }
 
-void WebViewHost::screenshotIPC()
+void WebViewHost::screenshotIPC(uint8_t format, uint8_t quality)
 {
     if (m_screenshotPending) {
         hostWriter()->sendReplyStr(m_viewId, Reply::ScreenshotFailed, "screenshot already pending"_s);
         return;
     }
     m_screenshotPending = true;
+    m_screenshotFormat = format;
+    m_screenshotQuality = quality;
     m_webview.takeSnapshot(makeHostBlock<&WebViewHost::onScreenshotComplete, id, id>(*this));
 }
 
@@ -770,12 +772,27 @@ void WebViewHost::onScreenshotComplete(id nsimage, id error)
         hostWriter()->sendReplyStr(m_viewId, Reply::ScreenshotFailed, "CGImage extraction failed"_s);
         return;
     }
-    auto png = objc::NSBitmapImageRep::pngFromCGImage(cg);
-    if (!png) {
-        hostWriter()->sendReplyStr(m_viewId, Reply::ScreenshotFailed, "PNG encoding failed"_s);
+    // NSBitmapImageFileType: 3=JPEG, 4=PNG. WebP (format==2) rejected at
+    // the prototype layer — representationUsingType: has no WebP entry in
+    // the enum; CGImageDestination with public.webp UTI would need a
+    // separate dlsym surface (ImageIO.framework) not yet wired.
+    unsigned long fileType = m_screenshotFormat == 1 ? 3 /* JPEG */ : 4 /* PNG */;
+    id props = nullptr;
+    if (m_screenshotFormat == 1) {
+        // NSImageCompressionFactor takes a [0.0, 1.0] NSNumber. Our quality
+        // is 0-100 matching CDP; map linearly.
+        auto factor = objc::NSNumber::withDouble(static_cast<double>(m_screenshotQuality) / 100.0);
+        props = objc::NSDictionary::with1(
+            factor.m_id,
+            objc::NSString::fromWTF("NSImageCompressionFactor"_s).m_id)
+                    .m_id;
+    }
+    auto data = objc::NSBitmapImageRep::encodeFromCGImage(cg, fileType, props);
+    if (!data) {
+        hostWriter()->sendReplyStr(m_viewId, Reply::ScreenshotFailed, "image encoding failed"_s);
         return;
     }
-    unsigned long length = png.length();
+    unsigned long length = data.length();
 
     // PNG goes in POSIX shared memory — reply frame stays tiny. The parent
     // shm_open's the same name, mmaps, wraps in a Uint8Array, then
@@ -806,7 +823,7 @@ void WebViewHost::onScreenshotComplete(id nsimage, id error)
         hostWriter()->sendReplyStr(m_viewId, Reply::ScreenshotFailed, makeString("mmap: "_s, WTF::String::fromUTF8(strerror(errno))));
         return;
     }
-    memcpy(map, png.bytes(), length);
+    memcpy(map, data.bytes(), length);
     munmap(map, length);
 
     // Payload: u32 nameLen + name + u32 pngLen.

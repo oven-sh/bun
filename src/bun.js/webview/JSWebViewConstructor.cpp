@@ -65,7 +65,13 @@ const ClassInfo JSWebViewConstructor::s_info = { "WebView"_s, &Base::s_info, nul
 
 InternalFunction* createJSWebViewConstructor(VM& vm, JSGlobalObject* globalObject, JSObject* prototype)
 {
-    auto* structure = JSWebViewConstructor::createStructure(vm, globalObject, globalObject->functionPrototype());
+    // Bun.WebView.__proto__ === EventTarget (constructor chain, not instance
+    // prototype). Matches DOM convention: BroadcastChannel.__proto__ ===
+    // EventTarget. Lets static-method lookup fall through, and `extends
+    // Bun.WebView` in user code transitively picks up EventTarget's own
+    // static Symbol.hasInstance-less instanceof behavior.
+    auto* etCtor = WebCore::JSEventTarget::getConstructor(vm, globalObject).getObject();
+    auto* structure = JSWebViewConstructor::createStructure(vm, globalObject, etCtor);
     return JSWebViewConstructor::create(vm, structure, prototype);
 }
 
@@ -108,6 +114,8 @@ JSC_DEFINE_HOST_FUNCTION(constructWebView, (JSGlobalObject * globalObject, CallF
     WebViewBackend backend = WebViewBackend::Chrome;
 #endif
     WTF::String chromePath;
+    WTF::String chromeWsUrl;
+    bool chromeSkipAutoDetect = false;
     WTF::Vector<WTF::String> chromeArgv;
     bool stdoutInherit = false;
     bool stderrInherit = false;
@@ -178,6 +186,34 @@ JSC_DEFINE_HOST_FUNCTION(constructWebView, (JSGlobalObject * globalObject, CallF
                     "backend.path must be a string"_s);
             }
 
+            // url: controls the connect-vs-spawn choice.
+            //   - "ws://..." — connect to that DevTools WebSocket directly
+            //   - false — skip DevToolsActivePort auto-detect, always spawn
+            //     (executable path still auto-found if `path` unset)
+            //   - undefined (default) — auto-detect: if DevToolsActivePort
+            //     exists, connect to the existing Chrome; else spawn
+            // Bare host:port isn't accepted — Chrome's new chrome://inspect
+            // toggle 404s /json/version so there's no HTTP discovery path;
+            // the file IS the discovery source.
+            JSValue urlOpt = beObj->get(globalObject, Identifier::fromString(vm, "url"_s));
+            RETURN_IF_EXCEPTION(scope, {});
+            if (urlOpt.isString()) {
+                if (backend != WebViewBackend::Chrome)
+                    return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_VALUE,
+                        "backend.url requires type: \"chrome\""_s);
+                chromeWsUrl = urlOpt.toWTFString(globalObject);
+                RETURN_IF_EXCEPTION(scope, {});
+                if (!chromeWsUrl.startsWith("ws://"_s) && !chromeWsUrl.startsWith("wss://"_s))
+                    return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_VALUE,
+                        "backend.url must be a ws:// URL (read DevToolsActivePort from Chrome's profile dir, "
+                        "or omit url to auto-detect)"_s);
+            } else if (urlOpt.isFalse()) {
+                chromeSkipAutoDetect = true;
+            } else if (!urlOpt.isUndefined()) {
+                return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE,
+                    "backend.url must be a ws:// string or false"_s);
+            }
+
             JSValue argvVal = beObj->get(globalObject, Identifier::fromString(vm, "argv"_s));
             RETURN_IF_EXCEPTION(scope, {});
             if (auto* arr = jsDynamicCast<JSArray*>(argvVal)) {
@@ -196,6 +232,10 @@ JSC_DEFINE_HOST_FUNCTION(constructWebView, (JSGlobalObject * globalObject, CallF
                 return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE,
                     "backend.argv must be an array of strings"_s);
             }
+
+            if (!chromeWsUrl.isEmpty() && (!chromePath.isEmpty() || !chromeArgv.isEmpty()))
+                return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_VALUE,
+                    "backend.url (connect mode) cannot be combined with backend.path or backend.argv (spawn mode)"_s);
 
             // stdout/stderr: "inherit" | "ignore" — whether the subprocess's
             // streams flow to Bun's. Chrome is chatty on stderr (GCM
@@ -303,10 +343,13 @@ JSC_DEFINE_HOST_FUNCTION(constructWebView, (JSGlobalObject * globalObject, CallF
     if (backend == WebViewBackend::Chrome) {
         Bun__Feature__webview_chrome += 1;
         JSWebView* view = JSWebView::createChrome(globalObject, structure, width, height,
-            persistDir, chromePath, chromeArgv, stdoutInherit, stderrInherit);
+            persistDir, chromePath, chromeArgv, stdoutInherit, stderrInherit, chromeWsUrl,
+            chromeSkipAutoDetect);
         if (!view) {
             return Bun::throwError(globalObject, scope, ErrorCode::ERR_DLOPEN_FAILED,
-                "Failed to spawn Chrome (set BUN_CHROME_PATH, backend.path, or install Chrome/Chromium)"_s);
+                chromeWsUrl.isEmpty()
+                    ? "Failed to spawn Chrome (set BUN_CHROME_PATH, backend.path, or install Chrome/Chromium)"_s
+                    : "Failed to connect to Chrome (check backend.url is a valid ws:// debugger endpoint)"_s);
         }
         view->m_consoleIsGlobal = consoleIsGlobal;
         if (consoleCallback) view->m_onConsole.set(vm, view, consoleCallback);

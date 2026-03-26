@@ -602,6 +602,9 @@ pub const Repository = extern struct {
             err == error.TooManyObjectsInPack or
             err == error.TooManyIndexEntries or
             // Defensive: may be added to ziggit
+            err == error.InvalidFileMode or
+            err == error.InvalidMode or
+            // Defensive: may be added to ziggit
             err == error.CorruptedData or
             err == error.BadChecksum or
             err == error.InvalidIdx;
@@ -619,7 +622,12 @@ pub const Repository = extern struct {
             err == error.PathTooLong or
             err == error.InvalidPathCharacters or
             err == error.EmptyPath or
-            err == error.FileNotFound;
+            err == error.FileNotFound or
+            err == error.AccessDenied or
+            err == error.FileBusy or
+            err == error.IsDir or
+            err == error.NoDevice or
+            err == error.SymLinkLoop;
     }
 
     fn isResourceExhaustedError(err: anyerror) bool {

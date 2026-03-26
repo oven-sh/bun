@@ -17,7 +17,7 @@ test("react-tailwind template passes tsc --noEmit", async () => {
 
   // Install typescript and bun types
   await using install = Bun.spawn({
-    cmd: [bunExe(), "add", "-d", "typescript", "@types/bun", "bun-plugin-tailwind"],
+    cmd: [bunExe(), "add", "-d", "typescript", "@types/bun", "@types/react", "bun-plugin-tailwind"],
     cwd: String(dir),
     env: bunEnv,
     stdout: "pipe",

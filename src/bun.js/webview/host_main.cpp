@@ -253,9 +253,14 @@ void Host::dispatch(uint32_t viewId, Op op, Reader r)
     case Op::Evaluate:
         if (auto* v = view(viewId, op)) v->evaluateIPC(r.str());
         return;
-    case Op::Screenshot:
-        if (auto* v = view(viewId, op)) v->screenshotIPC();
+    case Op::Screenshot: {
+        // Two bytes: format (0=png 1=jpeg 2=webp), quality (0-100).
+        // Older parents sent an empty payload — default to png.
+        uint8_t fmt = r.remaining() >= 1 ? r.u8() : 0;
+        uint8_t q = r.remaining() >= 1 ? r.u8() : 80;
+        if (auto* v = view(viewId, op)) v->screenshotIPC(fmt, q);
         return;
+    }
     case Op::Close:
         views.erase(viewId);
         writer.sendReply(viewId, Reply::Ack);

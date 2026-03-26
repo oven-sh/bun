@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 
 test("bytes() on consumed blob ReadableStream returns valid result", async () => {
   // Create a blob-backed stream and fully consume it via reader

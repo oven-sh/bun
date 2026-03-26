@@ -86,7 +86,7 @@ while (true) {
   // Read size as little-endian uint64 using raw byte access (avoids
   // Buffer.prototype.readBigUInt64LE and its internal dependencies).
   let script_size = 0;
-  for (let i = 0; i < 8; i++) script_size += size_bytes[i] * (2 ** (i * 8));
+  for (let i = 0; i < 8; i++) script_size += size_bytes[i] * 2 ** (i * 8);
 
   // Read script data from REPRL_DRFD
   const script_data = _BufferAlloc(script_size);

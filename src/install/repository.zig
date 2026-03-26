@@ -503,7 +503,9 @@ pub const Repository = extern struct {
     fn isSshAuthError(err: anyerror) bool {
         return err == error.SshAuthFailed or
             err == error.SshKeyNotFound or
-            err == error.SshAgentFailure;
+            err == error.SshAgentFailure or
+            err == error.SshCloneFailed or
+            err == error.SshFetchFailed;
     }
 
     fn isProtocolError(err: anyerror) bool {
@@ -516,12 +518,19 @@ pub const Repository = extern struct {
             err == error.CorruptedData or
             err == error.BadChecksum or
             err == error.ChecksumMismatch or
-            err == error.CorruptObject;
+            err == error.CorruptObject or
+            err == error.InvalidBlobObject or
+            err == error.InvalidCommitObject or
+            err == error.InvalidTreeObject or
+            err == error.InvalidPackObject or
+            err == error.InvalidPackOffset or
+            err == error.InvalidIdx;
     }
 
     /// Categorize and log ziggit errors with actionable context.
-    /// Distinguishes auth failures, network errors, and unsupported protocols
-    /// from generic errors so operators can diagnose issues from debug logs.
+    /// Distinguishes auth failures, network errors, ref resolution, and
+    /// unsupported protocols from generic errors so operators can diagnose
+    /// issues from debug logs.
     fn logZiggitError(operation: []const u8, name: string, err: anyerror) void {
         const err_name = @errorName(err);
         if (isSshAuthError(err)) {
@@ -530,6 +539,8 @@ pub const Repository = extern struct {
             debug("{s}: ziggit network error ({s}) for \"{s}\", falling back to git CLI", .{ operation, err_name, name });
         } else if (isProtocolError(err)) {
             debug("{s}: ziggit does not support this protocol ({s}) for \"{s}\", falling back to git CLI", .{ operation, err_name, name });
+        } else if (isRefResolutionError(err)) {
+            debug("{s}: ziggit ref/object resolution failed ({s}) for \"{s}\", falling back to git CLI", .{ operation, err_name, name });
         } else if (err == error.OutOfMemory) {
             debug("{s}: ziggit out of memory for \"{s}\", falling back to git CLI", .{ operation, name });
         } else if (isDataIntegrityError(err)) {
@@ -541,6 +552,8 @@ pub const Repository = extern struct {
 
     fn isNetworkError(err: anyerror) bool {
         return err == error.HttpError or
+            err == error.HttpCloneFailed or
+            err == error.HttpFetchFailed or
             err == error.ConnectionRefused or
             err == error.ConnectionTimedOut or
             err == error.ConnectionResetByPeer or
@@ -552,6 +565,13 @@ pub const Repository = extern struct {
             err == error.TlsError or
             err == error.TlsFailure or
             err == error.BrokenPipe;
+    }
+
+    fn isRefResolutionError(err: anyerror) bool {
+        return err == error.RefNotFound or
+            err == error.CommitNotFound or
+            err == error.ObjectNotFound or
+            err == error.NotAGitRepository;
     }
 
     pub fn download(

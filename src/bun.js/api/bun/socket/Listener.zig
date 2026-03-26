@@ -410,7 +410,13 @@ pub fn addServerName(this: *Listener, global: *jsc.JSGlobalObject, hostname: JSV
     if (try SSLConfig.fromJS(jsc.VirtualMachine.get(), global, tls)) |ssl_config| {
         // to keep nodejs compatibility, we allow to replace the server name
         this.socket_context.?.removeServerName(true, server_name);
-        this.socket_context.?.addServerName(true, server_name, ssl_config.asUSockets());
+        var opts = ssl_config.asUSockets();
+        // Pass ALPN protocols so the SNI context can negotiate ALPN
+        if (this.protos) |protos| {
+            opts.protos = protos.ptr;
+            opts.protos_len = @intCast(protos.len);
+        }
+        this.socket_context.?.addServerName(true, server_name, opts);
         var ssl_config_mut = ssl_config;
         ssl_config_mut.deinit();
     }

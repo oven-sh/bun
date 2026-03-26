@@ -742,6 +742,12 @@ us_internal_create_child_ssl_socket_context(
 
 /* Common function for creating a context from options.
  * We must NOT free a SSL_CTX with only SSL_CTX_free! Also free any password */
+/* ALPN data attached to SNI SSL_CTX instances via ex_data slot 1 */
+struct alpn_data {
+  const unsigned char *protos;
+  unsigned int protos_len;
+};
+
 void free_ssl_context(SSL_CTX *ssl_context) {
   if (!ssl_context) {
     return;
@@ -1143,12 +1149,7 @@ int us_verify_callback(int preverify_ok, X509_STORE_CTX *ctx) {
   return 1;
 }
 
-/* ALPN select callback for SNI contexts — protos stored in SSL_CTX ex_data slot 1 */
-struct alpn_data {
-  const unsigned char *protos;
-  unsigned int protos_len;
-};
-
+/* ALPN select callback for SNI contexts */
 static int sni_alpn_select_cb(SSL *ssl, const unsigned char **out,
                                unsigned char *outlen,
                                const unsigned char *in, unsigned int inlen,

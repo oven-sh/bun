@@ -4,8 +4,9 @@
     .paths = .{"."},
     .dependencies = .{
         .ziggit = .{
-            .url = "https://github.com/hdresearch/ziggit/archive/refs/heads/master.tar.gz",
-            // To update: zig fetch --save https://github.com/hdresearch/ziggit/archive/refs/heads/master.tar.gz
+            .url = "https://github.com/hdresearch/ziggit/archive/3c01d7f2c1f72fdff7e3435e997016002e1192ea.tar.gz",
+            // Pinned to commit 3c01d7f (includes idx_writer rewrite 57037cb).
+            // To update: zig fetch --save https://github.com/hdresearch/ziggit/archive/<commit>.tar.gz
             // For local development, use: .path = "../ziggit",
         },
     },

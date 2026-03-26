@@ -530,11 +530,13 @@ pub const Repository = extern struct {
         return err == error.ChecksumMismatch or
             err == error.PackChecksumMismatch or
             err == error.ObjectCountMismatch or
+            err == error.ObjectSizeMismatch or
             err == error.InvalidPackFile or
             err == error.InvalidPack or
             err == error.InvalidPackData or
             err == error.InvalidPackObject or
             err == error.InvalidPackIndex or
+            err == error.InvalidPackOffset or
             err == error.CorruptedPackIndex or
             err == error.PackIndexCorrupted or
             err == error.SuspiciousPackIndex or
@@ -553,6 +555,10 @@ pub const Repository = extern struct {
             err == error.InvalidObject or
             err == error.InvalidTree or
             err == error.InvalidTreeFormat or
+            err == error.InvalidBlobObject or
+            err == error.InvalidCommitObject or
+            err == error.InvalidTreeObject or
+            err == error.CorruptObject or
             err == error.EmptyPackFile or
             err == error.PackFileTooSmall or
             err == error.NoPackData or
@@ -590,6 +596,8 @@ pub const Repository = extern struct {
             err == error.HttpCloneFailed or
             err == error.HttpFetchFailed or
             err == error.SideBandError or
+            err == error.RemoteNotFound or
+            err == error.EndOfStream or
             // std network errors (ziggit uses std.http/net internally)
             err == error.ConnectionRefused or
             err == error.ConnectionTimedOut or
@@ -619,9 +627,13 @@ pub const Repository = extern struct {
             err == error.TooManySymbolicRefs or
             err == error.PackNotFound or
             err == error.PackFileNotFound or
-            // Defensive: may be added to ziggit
             err == error.CommitNotFound or
-            err == error.NotAGitRepository;
+            err == error.NotAGitRepository or
+            err == error.NotACommit or
+            err == error.NotATree or
+            err == error.NotATreeObject or
+            err == error.UnknownRevision or
+            err == error.NoHEAD;
     }
 
     pub fn download(

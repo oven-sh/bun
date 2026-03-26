@@ -35,6 +35,9 @@ RUN apk --no-cache add ca-certificates curl dirmngr gpg gpg-agent unzip \
       -fsSLO \
       --compressed \
       --retry 5 \
+      --retry-delay 3 \
+      --retry-all-errors \
+      || (echo "error: failed to download SHASUMS256.txt.asc for: $tag" && exit 1) \
     && gpg --batch --decrypt --output SHASUMS256.txt SHASUMS256.txt.asc \
       || (echo "error: failed to verify: $tag" && exit 1) \
     && grep " bun-linux-$build.zip\$" SHASUMS256.txt | sha256sum -c - \

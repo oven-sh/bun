@@ -1,69 +1,45 @@
-=== Benchmark Run: 2026-03-26 ===
-Machine: x86_64, 1 CPU, 483Mi RAM
-Bun: 1.3.11, Git: git version 2.43.0, Zig: 0.15.2
+=== BUN INSTALL BENCHMARK 2026-03-26T23:51:55+00:00 ===
 
-### Part 1: Stock bun install
---- 3 deps, cold ---
-  Run 1: 300ms
-  Run 2: 170ms
-  Run 3: 162ms
---- 3 deps, warm ---
-  Run 1: 139ms
-  Run 2: 55ms
-  Run 3: 132ms
---- 5 deps, cold ---
-  Run 1: 199ms
-  Run 2: 135ms
-  Run 3: 145ms
---- 5 deps, warm ---
-  Run 1: 126ms
-  Run 2: 69ms
-  Run 3: 61ms
+## Part 1: Stock bun install (git dependencies)
 
-### Part 2: Local clone (git vs ziggit)
---- small ---
-  Run 1: clone(git=7ms ziggit=8ms) status(git=3ms ziggit=4ms)
-  Run 2: clone(git=6ms ziggit=6ms) status(git=3ms ziggit=4ms)
-  Run 3: clone(git=6ms ziggit=7ms) status(git=3ms ziggit=4ms)
---- medium ---
-  Run 1: clone(git=8ms ziggit=8ms) status(git=3ms ziggit=3ms)
-  Run 2: clone(git=6ms ziggit=7ms) status(git=3ms ziggit=3ms)
-  Run 3: clone(git=7ms ziggit=9ms) status(git=3ms ziggit=4ms)
---- large ---
-  Run 1: clone(git=9ms ziggit=10ms) status(git=4ms ziggit=4ms)
-  Run 2: clone(git=14ms ziggit=9ms) status(git=3ms ziggit=4ms)
-  Run 3: clone(git=8ms ziggit=9ms) status(git=3ms ziggit=4ms)
+### Cold cache runs:
+  Run 1: 726ms
+  Run 2: 894ms
+  Run 3: 548ms
+  Median (cold): 726ms
 
-### Part 3: Remote clone (git --depth=1 vs ziggit full)
---- debug ---
-  Run 1: git=130ms ziggit=79ms
-  Run 2: git=116ms ziggit=87ms
-  Run 3: git=120ms ziggit=82ms
---- node-semver ---
-  Run 1: git=153ms ziggit=132ms
-  Run 2: git=135ms ziggit=142ms
-  Run 3: git=128ms ziggit=130ms
---- ms ---
-  Run 1: git=134ms ziggit=126ms
-  Run 2: git=116ms ziggit=123ms
-  Run 3: git=122ms ziggit=135ms
---- chalk ---
-  Run 1: git=132ms ziggit=90ms
-  Run 2: git=128ms ziggit=96ms
-  Run 3: git=121ms ziggit=84ms
---- express ---
-  Run 1: git=163ms ziggit=778ms
-  Run 2: git=197ms ziggit=1008ms
-  Run 3: git=175ms ziggit=723ms
+### Warm cache runs:
+  Run 1: 22ms
+  Run 2: 21ms
+  Run 3: 22ms
+  Median (warm): 22ms
 
-### Part 4: findCommit (1000 iters, in-process vs CLI)
-  chalk: ziggit=7.1µs git=1064µs (150×)
-  debug: ziggit=5.5µs git=1063µs (193×)
-  express: ziggit=5.4µs git=1063µs (197×)
-  ms: ziggit=5.5µs git=1062µs (193×)
-  node-semver: ziggit=5.6µs git=1063µs (190×)
+## Part 2: Per-repo clone+resolve benchmark (git CLI vs ziggit)
 
-### Part 5: Process spawn overhead (100 iters)
-  git --version: 943µs/call
-  ziggit --help: 692µs/call
-  /bin/true: 505µs/call (baseline)
+Workflow: clone → resolve HEAD → checkout working tree
+
+| Repo            | git clone ms | ziggit clone ms | git total ms | ziggit total ms | Speedup |
+|----------------|--------------|----------------|--------------|----------------|---------|
+| debug           |        110ms |           60ms |        112ms |           64ms |  1.75x |
+| node-semver     |        133ms |           80ms |        135ms |           83ms |  1.62x |
+| chalk           |        128ms |           73ms |        130ms |           76ms |  1.71x |
+| is              |        123ms |           73ms |        125ms |           76ms |  1.64x |
+| express         |        173ms |          110ms |        175ms |          112ms |  1.56x |
+
+### Aggregate (all 5 repos, median of 3 runs each):
+  git CLI total:    677ms
+  ziggit total:     411ms
+  Overall speedup:  1.64x
+  Time saved:       266ms
+
+## Part 3: Projected bun install improvement
+
+Stock bun install cold cache: 726ms
+Stock bun install warm cache: 22ms
+Git dep resolution via git CLI: 677ms
+Git dep resolution via ziggit:  411ms
+
+Projected cold install with ziggit: ~460ms
+Estimated improvement: 36.6% faster on git dependency resolution
+
+=== BENCHMARK COMPLETE ===

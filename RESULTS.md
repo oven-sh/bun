@@ -64,15 +64,15 @@ All paths have automatic git CLI fallback with categorized error logging.
 
 ## Error Categories in `logZiggitError`
 
-| Category           | Errors (actual ziggit values)                                                        | Behavior                    |
-|--------------------|--------------------------------------------------------------------------------------|-----------------------------|
-| SSH Auth           | SshProcessFailed, InvalidSshUrl                                                      | Log hint about SSH keys     |
-| Network            | HttpError, ConnectionRefused, ConnectionTimedOut, TlsError/TlsFailure, BrokenPipe   | Log + fallback              |
-| Protocol           | UnsupportedPackVersion, UnsupportedIndexVersion, InvalidUrl, InvalidPktLine           | Log + fallback              |
-| Ref Resolution     | RefNotFound, ObjectNotFound, BranchNotFound, TreeNotFound, InvalidRef, InvalidCommit  | Log + fallback              |
-| Data Integrity     | ChecksumMismatch, PackChecksumMismatch, InvalidPack*, CorruptedPackIndex, InvalidDelta* | Log + cleanup + fallback  |
-| OOM                | OutOfMemory                                                                          | Log + fallback              |
-| Other              | Any unrecognized error                                                               | Generic log + fallback      |
+| Category           | Errors (actual ziggit values)                                                                          | Behavior                    |
+|--------------------|--------------------------------------------------------------------------------------------------------|-----------------------------|
+| SSH Auth           | SshProcessFailed, InvalidSshUrl                                                                        | Log hint about SSH keys     |
+| Network            | HttpError, SideBandError, ConnectionRefused, ConnectionTimedOut, TlsError/TlsFailure, BrokenPipe, ReadFailed | Log + fallback         |
+| Protocol           | UnsupportedPackVersion, UnsupportedIndexVersion, UnsupportedPackIndexVersion, UnsupportedPackType, InvalidUrl, InvalidPktLine | Log + fallback |
+| Ref Resolution     | RefNotFound, ObjectNotFound, BranchNotFound, TreeNotFound, InvalidRef, InvalidCommit, CircularRef, TooManySymbolicRefs, PackNotFound | Log + fallback |
+| Data Integrity     | ChecksumMismatch, PackChecksumMismatch, ObjectCountMismatch, InvalidPack*, InvalidFanoutTable, CorruptedPackIndex, InvalidDelta*, PackFileTooSmall | Log + cleanup + fallback |
+| OOM                | OutOfMemory                                                                                            | Log + fallback              |
+| Other              | Any unrecognized error                                                                                 | Generic log + fallback      |
 
 ## Edge Case Testing
 

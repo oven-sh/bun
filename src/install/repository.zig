@@ -360,18 +360,11 @@ pub const Repository = extern struct {
 
         defer std_map.deinit();
 
-        const result = if (comptime Environment.isWindows)
-            try std.process.Child.run(.{
-                .allocator = allocator,
-                .argv = argv,
-                .env_map = std_map.get(),
-            })
-        else
-            try std.process.Child.run(.{
-                .allocator = allocator,
-                .argv = argv,
-                .env_map = std_map.get(),
-            });
+        const result = try std.process.Child.run(.{
+            .allocator = allocator,
+            .argv = argv,
+            .env_map = std_map.get(),
+        });
 
         switch (result.term) {
             .Exited => |sig| if (sig == 0) return result.stdout else if (
@@ -512,6 +505,8 @@ pub const Repository = extern struct {
     fn isProtocolError(err: anyerror) bool {
         return err == error.UnsupportedPackVersion or
             err == error.UnsupportedIndexVersion or
+            err == error.UnsupportedPackIndexVersion or
+            err == error.UnsupportedPackType or
             err == error.InvalidUrl or
             err == error.InvalidPktLine or
             // Defensive: may be added to ziggit
@@ -522,6 +517,7 @@ pub const Repository = extern struct {
     fn isDataIntegrityError(err: anyerror) bool {
         return err == error.ChecksumMismatch or
             err == error.PackChecksumMismatch or
+            err == error.ObjectCountMismatch or
             err == error.InvalidPackFile or
             err == error.InvalidPack or
             err == error.InvalidPackData or
@@ -534,12 +530,14 @@ pub const Repository = extern struct {
             err == error.InvalidPackObjectType or
             err == error.InvalidDelta or
             err == error.InvalidDeltaOffset or
+            err == error.InvalidFanoutTable or
             err == error.InvalidIndex or
             err == error.InvalidHash or
             err == error.InvalidObject or
             err == error.InvalidTree or
             err == error.InvalidTreeFormat or
             err == error.EmptyPackFile or
+            err == error.PackFileTooSmall or
             err == error.NoPackData or
             // Defensive: may be added to ziggit
             err == error.CorruptedData or
@@ -572,6 +570,7 @@ pub const Repository = extern struct {
 
     fn isNetworkError(err: anyerror) bool {
         return err == error.HttpError or
+            err == error.SideBandError or
             // std network errors (ziggit uses std.http/net internally)
             err == error.ConnectionRefused or
             err == error.ConnectionTimedOut or
@@ -583,7 +582,8 @@ pub const Repository = extern struct {
             err == error.TemporaryNameResolutionFailure or
             err == error.TlsError or
             err == error.TlsFailure or
-            err == error.BrokenPipe;
+            err == error.BrokenPipe or
+            err == error.ReadFailed;
     }
 
     fn isRefResolutionError(err: anyerror) bool {
@@ -596,6 +596,10 @@ pub const Repository = extern struct {
             err == error.InvalidCommit or
             err == error.InvalidCommitHash or
             err == error.InvalidHEAD or
+            err == error.CircularRef or
+            err == error.TooManySymbolicRefs or
+            err == error.PackNotFound or
+            err == error.PackFileNotFound or
             // Defensive: may be added to ziggit
             err == error.CommitNotFound or
             err == error.NotAGitRepository;

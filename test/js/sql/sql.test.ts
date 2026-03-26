@@ -778,7 +778,7 @@ if (isDockerEnabled()) {
         onClosePromise.resolve(err);
       });
       const onconnect = mock();
-      const sql = postgres({
+      await using sql = postgres({
         ...options,
         max_lifetime: 1,
         onconnect,
@@ -796,8 +796,6 @@ if (isDockerEnabled()) {
       // The pool should reconnect — verify via a different backend PID
       const [{ pid: pidAfter }] = await sql`select pg_backend_pid() as pid`;
       expect(pidAfter).not.toBe(pidBefore);
-
-      await sql.close();
     });
 
     test("Max lifetime does not kill in-flight queries", async () => {
@@ -806,7 +804,7 @@ if (isDockerEnabled()) {
         onClosePromise.resolve(err);
       });
       const onconnect = mock();
-      const sql = postgres({
+      await using sql = postgres({
         ...options,
         max_lifetime: 1,
         onconnect,
@@ -829,8 +827,6 @@ if (isDockerEnabled()) {
       // Verify the pool reconnected with a different backend PID
       const [{ pid: pidAfter }] = await sql`select pg_backend_pid() as pid`;
       expect(pidAfter).not.toBe(pidBefore);
-
-      await sql.close();
     });
 
     // Last one wins.

@@ -136,8 +136,8 @@ pub fn onMaxLifetimeTimeout(this: *@This()) void {
     this.max_lifetime_timer.state = .FIRED;
     if (this.#connection.status == .failed) return;
 
-    if (this.#connection.isIdle()) {
-        // Connection is idle, close it gracefully without erroring in-flight queries.
+    if (this.#connection.status == .connected and this.#connection.isIdle()) {
+        // Connection is fully established and idle, close it gracefully.
         this.close();
     } else {
         // Connection has in-flight queries. Reschedule to check again in 1 second

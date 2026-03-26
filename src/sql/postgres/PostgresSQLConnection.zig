@@ -223,8 +223,8 @@ pub fn onMaxLifetimeTimeout(this: *PostgresSQLConnection) void {
     this.max_lifetime_timer.state = .FIRED;
     if (this.status == .failed) return;
 
-    if (this.requests.readableLength() == 0) {
-        // Connection is idle, close it gracefully without erroring in-flight queries.
+    if (this.status == .connected and this.requests.readableLength() == 0) {
+        // Connection is fully established and idle, close it gracefully.
         this.disconnect();
     } else {
         // Connection has in-flight queries. Reschedule to check again in 1 second

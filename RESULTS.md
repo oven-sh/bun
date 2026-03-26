@@ -12,19 +12,19 @@
 
 | Tool    | Run 1  | Run 2  | Run 3  | Avg    |
 |---------|--------|--------|--------|--------|
-| ziggit  | 0.269s | 0.253s | 0.239s | 0.254s |
-| git CLI | 0.261s | 0.261s | 0.197s | 0.240s |
+| ziggit  | 0.291s | 0.279s | 0.249s | 0.273s |
+| git CLI | 0.287s | 0.259s | 0.243s | 0.263s |
 
-**Result**: **Parity** — ziggit avg 0.254s vs git CLI avg 0.240s (~1.06x). Network latency dominates; variance is high on small repos.
+**Result**: **Parity** — ziggit avg 0.273s vs git CLI avg 0.263s (~1.04x). Network latency dominates; variance is high on small repos.
 
 ### expressjs/express (medium repo, ~5MB pack)
 
 | Tool    | Time   |
 |---------|--------|
-| ziggit  | 0.987s |
-| git CLI | 1.040s |
+| ziggit  | 1.005s |
+| git CLI | 1.002s |
 
-**Result**: **Parity** — ziggit 0.987s vs git CLI 1.040s (~0.95x, ziggit slightly faster).
+**Result**: **Parity** — ziggit 1.005s vs git CLI 1.002s (~1.003x, effectively identical).
 
 ### Correctness
 - `git fsck --no-dangling` passes on all ziggit-cloned repos ✅
@@ -36,7 +36,7 @@
 
 | Date       | Ziggit Commit | idx_writer Version                    | sindresorhus/is (ziggit avg) | express    | Ratio vs git CLI |
 |------------|---------------|---------------------------------------|------------------------------|------------|------------------|
-| 2026-03-26 | 6f37261       | Single-pass with eager LRU caching    | 0.254s                       | 0.987s     | ~1.0x ✅         |
+| 2026-03-26 | 6f37261       | Single-pass with eager LRU caching    | 0.273s                       | 1.005s     | ~1.0x ✅         |
 | 2026-03-26 | b49999c       | Two-pass with DeltaCache              | 0.300s                       | —          | 1.01x            |
 | 2026-03-26 | eeba670       | Single-pass architecture              | 0.194s                       | —          | ~1.0x            |
 | Earlier    | (pre-rewrite) | Original multi-pass                   | ~4x slower                   | —          | ~4x              |

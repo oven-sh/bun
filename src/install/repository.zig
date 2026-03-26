@@ -381,7 +381,9 @@ pub const Repository = extern struct {
                 (strings.containsComptime(result.stderr, "remote:") and
                     strings.containsComptime(result.stderr, "not") and
                     strings.containsComptime(result.stderr, "found")) or
-                    strings.containsComptime(result.stderr, "does not exist"))
+                    strings.containsComptime(result.stderr, "does not exist") or
+                    // fatal: '<url>' does not appear to be a git repository
+                    strings.containsComptime(result.stderr, "does not appear to be a git repository"))
                 {
                     return error.RepositoryNotFound;
                 }

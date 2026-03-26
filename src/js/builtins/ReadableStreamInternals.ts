@@ -933,7 +933,9 @@ export async function readStreamIntoSink(stream: ReadableStream, sink, isNative)
       // drain before reading the next chunk. This prevents
       // unbounded memory growth when the consumer is slow.
       if (sink.write(value) === false) {
-        await new Promise(function (r) { setTimeout(r, 10); });
+        await new Promise(function (r) {
+          setTimeout(r, 10);
+        });
       }
     }
   } catch (e) {

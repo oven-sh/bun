@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 // Verify that backpressure propagates through fetch().body.pipeThrough(TransformStream)
@@ -78,11 +78,7 @@ test("fetch body piped through TransformStream propagates backpressure", async (
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   const lines = stdout.trim().split("\n");
   const jsonLine = lines.find(l => l.startsWith("{"));
@@ -111,7 +107,10 @@ test("TransformStream proxy delivers all data", async () => {
       return new Response(
         new ReadableStream({
           pull(controller) {
-            if (i >= TOTAL_CHUNKS) { controller.close(); return; }
+            if (i >= TOTAL_CHUNKS) {
+              controller.close();
+              return;
+            }
             controller.enqueue(Buffer.alloc(25000, 65));
             i++;
           },
@@ -126,7 +125,9 @@ test("TransformStream proxy delivers all data", async () => {
     async fetch() {
       const res = await fetch(`http://localhost:${upstream.port}/`);
       const transform = new TransformStream({
-        transform(chunk, ctrl) { ctrl.enqueue(chunk); },
+        transform(chunk, ctrl) {
+          ctrl.enqueue(chunk);
+        },
       });
       return new Response(res.body!.pipeThrough(transform));
     },

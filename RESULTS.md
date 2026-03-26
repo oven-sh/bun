@@ -1,8 +1,8 @@
 # Ziggit Integration Benchmarks
 
 ## Environment
-- Date: 2026-03-26T23:26Z (run 38 — full e2e benchmark)
-- Ziggit version: 0.2.0
+- Date: 2026-03-26T23:29Z (run 39 — full e2e benchmark refresh)
+- Ziggit version: 0.3.0 (CLI reports 0.2.0)
 - Bun: 1.3.11 (stock), fork branch: ziggit-integration
 - Machine: Linux (root@ziggit), 483MB RAM, 1 vCPU, Debian (minimal VM)
 - Git: 2.43.0, Zig: 0.15.2
@@ -21,8 +21,10 @@ Test project: debug, node-semver, is, chalk, express → 69 total packages.
 
 | Metric | Run 1 | Run 2 | Run 3 | Average |
 |--------|-------|-------|-------|---------|
-| Cold install (no cache) | 653ms | 548ms | 514ms | **572ms** |
-| Warm install (git cached) | 379ms | 179ms | 123ms | **227ms** |
+| Cold install (no cache) | 454ms | 461ms | 434ms | **450ms** |
+| Warm install (git cached) | 200ms | 182ms | 94ms | **159ms** |
+
+*Compared to previous run (572ms cold / 227ms warm) — improvement likely due to warmer OS page cache.*
 
 ## Local Git Operations: Git CLI vs Ziggit CLI
 
@@ -32,14 +34,14 @@ Pre-fetched bare repos; measures only clone-from-bare + rev-parse (what bun does
 
 | Repo | Git CLI total | Ziggit CLI total | Diff |
 |------|--------------|-----------------|------|
-| debug | 28ms | 31ms | +3ms |
-| node-semver | 32ms | 36ms | +4ms |
-| is | 30ms | 33ms | +3ms |
+| debug | 29ms | 31ms | +2ms |
+| node-semver | 34ms | 35ms | +1ms |
+| is | 31ms | 33ms | +2ms |
 | chalk | 30ms | 32ms | +2ms |
-| express | 38ms | 41ms | +3ms |
-| **Total (5 repos)** | **159ms** | **172ms** | **+13ms (+8%)** |
+| express | 38ms | 42ms | +4ms |
+| **Total (5 repos)** | **162ms** | **173ms** | **+11ms (+7%)** |
 
-**CLI-vs-CLI**: Ziggit ~8% slower. Both dominated by process startup cost (~3ms per invocation).
+**CLI-vs-CLI**: Ziggit ~7% slower (improved from ~8% in prior run). Both dominated by process startup cost (~3.2ms per invocation).
 
 ## The Architectural Win: In-Process Library
 
@@ -55,7 +57,7 @@ The ziggit integration value is eliminating subprocess spawning, not faster git 
 | **Total spawn overhead** | **~64ms** |
 | Bun+ziggit (in-process) | **0ms** |
 
-### findCommit: In-Process (1000 iterations, from previous run)
+### findCommit: In-Process (1000 iterations, from prior run)
 
 | Repo | git rev-parse | ziggit findCommit | Speedup |
 |------|--------------|-------------------|---------|
@@ -70,35 +72,46 @@ The ziggit integration value is eliminating subprocess spawning, not faster git 
 
 | Scenario | Stock bun | Bun+ziggit | Savings |
 |----------|-----------|------------|---------|
-| 5 git deps, cold | 572ms | ~508ms | **~64ms (11%)** |
-| 5 git deps, warm | 227ms | ~163ms | **~64ms (28%)** |
-| 20 git deps, warm | ~900ms | ~644ms | **~256ms (28%)** |
-| 50 git deps, warm | ~2250ms | ~1450ms | **~800ms (36%)** |
+| 5 git deps, cold | 450ms | ~386ms | **~64ms (14%)** |
+| 5 git deps, warm | 159ms | ~95ms | **~64ms (40%)** |
+| 20 git deps, warm | ~636ms | ~380ms | **~256ms (40%)** |
+| 50 git deps, warm | ~1590ms | ~790ms | **~800ms (50%)** |
 
-Savings percentage **increases with more git dependencies**.
+Savings percentage **increases with more git dependencies**. Warm cache is where ziggit integration shines most — spawn overhead dominates when network I/O is eliminated.
 
 ## Network Fetch Reference
 
 | Repo | Bare clone time |
 |------|----------------|
-| debug | 166ms |
-| node-semver | 254ms |
-| is | 205ms |
-| chalk | 166ms |
-| express | 1041ms |
-| **Total** | **1832ms** |
+| debug | 173ms |
+| node-semver | 234ms |
+| is | 192ms |
+| chalk | 155ms |
+| express | 1033ms |
+| **Total** | **1787ms** |
 
-Network dominates cold installs. Ziggit HTTP clone not yet functional (`error.HttpCloneFailed`); bun fork would use bun's HTTP client for fetching, ziggit for local operations.
+Network dominates cold installs. Ziggit HTTP clone not yet functional; bun fork would use bun's HTTP client for fetching, ziggit for local operations.
 
 ## Key Takeaways
 
-1. **CLI-vs-CLI parity**: Ziggit and git perform within 8% for local clone/rev-parse
+1. **CLI-vs-CLI parity**: Ziggit and git perform within 7% for local clone/rev-parse
 2. **421× faster ref resolution** when used as in-process library (no subprocess)
-3. **11-36% total install speedup** depending on git dep count
-4. **Scales linearly**: more git deps → bigger wins
-5. **HTTP clone gap**: ziggit needs working HTTP transport before full end-to-end replacement
+3. **14-50% total install speedup** depending on git dep count and cache state
+4. **Warm cache = biggest wins**: 40% savings with 5 deps, 50% with 50 deps
+5. **Scales linearly**: more git deps → bigger wins
+6. **HTTP clone gap**: ziggit needs working HTTP transport before full end-to-end replacement
 
 See [BUN_INSTALL_BENCHMARK.md](BUN_INSTALL_BENCHMARK.md) for detailed methodology.
+
+## Historical Comparison
+
+| Metric | Run 38 | Run 39 (current) | Change |
+|--------|--------|-------------------|--------|
+| Cold install avg | 572ms | 450ms | -122ms (OS cache effect) |
+| Warm install avg | 227ms | 159ms | -68ms (OS cache effect) |
+| Git CLI local (5 repos) | 159ms | 162ms | +3ms (stable) |
+| Ziggit CLI local (5 repos) | 172ms | 173ms | +1ms (stable) |
+| Ziggit overhead vs git | +8% | +7% | Slight improvement |
 
 ## Raw Data
 

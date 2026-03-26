@@ -31,7 +31,7 @@ using namespace JSC;
 
 JSAbortAlgorithm::JSAbortAlgorithm(VM& vm, JSObject* callback)
     : AbortAlgorithm(jsCast<JSDOMGlobalObject*>(callback->globalObject())->scriptExecutionContext())
-    , m_data(new JSCallbackDataWeak(vm, callback, this))
+    , m_data(new JSCallbackData(vm, callback, this))
 {
 }
 

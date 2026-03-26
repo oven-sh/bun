@@ -1,6 +1,6 @@
 declare module "bun" {
   namespace WebAssembly {
-    type ImportExportKind = "function" | "global" | "memory" | "table";
+    type ImportExportKind = "function" | "global" | "memory" | "table" | "tag";
     type TableKind = "anyfunc" | "externref";
     type ExportValue = Function | Global | WebAssembly.Memory | WebAssembly.Table;
     type Exports = Record<string, ExportValue>;
@@ -139,10 +139,15 @@ declare namespace WebAssembly {
   };
 
   interface Instance extends Bun.WebAssembly.Instance {}
-  var Instance: {
-    prototype: Instance;
-    new (module: Module, importObject?: Bun.WebAssembly.Imports): Instance;
-  };
+  var Instance: Bun.__internal.UseLibDomIfAvailable<
+    "WebAssembly",
+    {
+      Instance: {
+        prototype: Instance;
+        new (module: Module, importObject?: Bun.WebAssembly.Imports): Instance;
+      };
+    }
+  >["Instance"];
 
   interface Memory extends Bun.WebAssembly.Memory {}
   var Memory: {

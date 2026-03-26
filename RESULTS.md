@@ -1,8 +1,8 @@
 # Ziggit Integration Benchmarks
 
 ## Environment
-- Date: 2026-03-26 (latest refresh)
-- Ziggit commit: f62586b (packed-refs fix for bare repo ref resolution)
+- Date: 2026-03-26 (latest refresh, run 3)
+- Ziggit commit: 6f37261 (single-pass idx_writer with eager LRU caching)
 - Bun fork branch: ziggit-integration
 - Machine: Linux (root@ziggit), tmpfs-backed /tmp
 - Build: `zig build -Doptimize=ReleaseFast`
@@ -13,10 +13,10 @@
 
 | Tool    | Run 1  | Run 2  | Run 3  | Run 4  | Run 5  | Avg    |
 |---------|--------|--------|--------|--------|--------|--------|
-| ziggit  | 185ms  | 203ms  | 204ms  | 193ms  | 178ms  | 193ms  |
-| git CLI | 199ms  | 188ms  | 184ms  | 176ms  | 215ms  | 192ms  |
+| ziggit  | 211ms  | 212ms  | 204ms  | 181ms  | 186ms  | 199ms  |
+| git CLI | 192ms  | 188ms  | 198ms  | 199ms  | 224ms  | 200ms  |
 
-**Result**: **Parity** — ziggit avg 193ms vs git CLI avg 192ms (~1.00x). Network-dominated. ✅
+**Result**: **Dead parity** — ziggit avg 199ms vs git CLI avg 200ms (~0.995x). Network-dominated. ✅
 
 ### Correctness
 - `git verify-pack` passes on ziggit-produced .idx files ✅

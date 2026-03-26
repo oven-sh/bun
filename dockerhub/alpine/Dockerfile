@@ -24,6 +24,8 @@ RUN apk --no-cache add ca-certificates curl dirmngr gpg gpg-agent unzip \
       -fsSLO \
       --compressed \
       --retry 5 \
+      --retry-delay 3 \
+      --retry-all-errors \
       || (echo "error: failed to download: $tag" && exit 1) \
     && for key in \
       "F3DCC08A8572C0749B3E18888EAB4D40A7B22B59" \

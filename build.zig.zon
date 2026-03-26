@@ -5,7 +5,7 @@
     .dependencies = .{
         .ziggit = .{
             .path = "../ziggit",
-            // Local path to ziggit at commit eeba670 (single-pass idx_writer rewrite, ~5x faster).
+            // Local path to ziggit at commit b49999c (two-pass idx_writer with DeltaCache).
             // For release, pin to archive URL:
             //   .url = "https://github.com/hdresearch/ziggit/archive/<commit>.tar.gz",
         },

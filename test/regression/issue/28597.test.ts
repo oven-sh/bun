@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
-import { existsSync, readlinkSync } from "fs";
+import { createHash } from "crypto";
+import { chmodSync, existsSync, mkdirSync, readFileSync, readlinkSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
@@ -35,33 +36,37 @@ test("global bin shims are created when bin target points into hoisted node_modu
   const innerTarDir = join(dirStr, "inner-tar", "package");
   const wrapperTarDir = join(dirStr, "wrapper-tar", "package");
 
-  const fs = await import("fs");
-  fs.mkdirSync(innerTarDir, { recursive: true });
-  fs.writeFileSync(join(innerTarDir, "package.json"), innerPkgJson);
-  fs.writeFileSync(join(innerTarDir, "bin.js"), innerBinJs);
-  fs.chmodSync(join(innerTarDir, "bin.js"), 0o755);
+  mkdirSync(innerTarDir, { recursive: true });
+  writeFileSync(join(innerTarDir, "package.json"), innerPkgJson);
+  writeFileSync(join(innerTarDir, "bin.js"), innerBinJs);
+  chmodSync(join(innerTarDir, "bin.js"), 0o755);
 
-  fs.mkdirSync(wrapperTarDir, { recursive: true });
-  fs.writeFileSync(join(wrapperTarDir, "package.json"), wrapperPkgJson);
+  mkdirSync(wrapperTarDir, { recursive: true });
+  writeFileSync(join(wrapperTarDir, "package.json"), wrapperPkgJson);
 
   // Create tarballs
-  await Bun.spawn({
-    cmd: ["tar", "czf", join(dirStr, "inner-bin-1.0.0.tgz"), "-C", join(dirStr, "inner-tar"), "package"],
-    stdout: "ignore",
-    stderr: "ignore",
-  }).exited;
-  await Bun.spawn({
-    cmd: ["tar", "czf", join(dirStr, "wrapper-bin-1.0.0.tgz"), "-C", join(dirStr, "wrapper-tar"), "package"],
-    stdout: "ignore",
-    stderr: "ignore",
-  }).exited;
+  {
+    await using proc = Bun.spawn({
+      cmd: ["tar", "czf", join(dirStr, "inner-bin-1.0.0.tgz"), "-C", join(dirStr, "inner-tar"), "package"],
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    expect(await proc.exited).toBe(0);
+  }
+  {
+    await using proc = Bun.spawn({
+      cmd: ["tar", "czf", join(dirStr, "wrapper-bin-1.0.0.tgz"), "-C", join(dirStr, "wrapper-tar"), "package"],
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    expect(await proc.exited).toBe(0);
+  }
 
   // Compute real checksums for the tarballs
-  const crypto = await import("crypto");
-  const innerTgz = fs.readFileSync(join(dirStr, "inner-bin-1.0.0.tgz"));
-  const wrapperTgz = fs.readFileSync(join(dirStr, "wrapper-bin-1.0.0.tgz"));
-  const innerShasum = crypto.createHash("sha1").update(innerTgz).digest("hex");
-  const wrapperShasum = crypto.createHash("sha1").update(wrapperTgz).digest("hex");
+  const innerTgz = readFileSync(join(dirStr, "inner-bin-1.0.0.tgz"));
+  const wrapperTgz = readFileSync(join(dirStr, "wrapper-bin-1.0.0.tgz"));
+  const innerShasum = createHash("sha1").update(innerTgz).digest("hex");
+  const wrapperShasum = createHash("sha1").update(wrapperTgz).digest("hex");
 
   // Serve packages via a simple HTTP registry
   await using server = Bun.serve({
@@ -124,10 +129,10 @@ test("global bin shims are created when bin target points into hoisted node_modu
 
   const globalDir = join(dirStr, "global-install");
   const globalBinDir = join(dirStr, "global-bin");
-  fs.mkdirSync(globalBinDir, { recursive: true });
+  mkdirSync(globalBinDir, { recursive: true });
 
   const bunfig = join(dirStr, "bunfig.toml");
-  fs.writeFileSync(
+  writeFileSync(
     bunfig,
     `[install]\ncache = false\nregistry = "http://localhost:${server.port}/"\nglobalBinDir = "${globalBinDir.replace(/\\/g, "\\\\")}"\n`,
   );

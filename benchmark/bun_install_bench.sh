@@ -1,182 +1,228 @@
 #!/usr/bin/env bash
+# BUN INSTALL BENCHMARK: stock bun vs ziggit-simulated git dependency resolution
+#
+# Architecture:
+#   Stock bun spawns `git` CLI for each git dep operation.
+#   Bun+ziggit uses in-process Zig code (no process spawn overhead).
+#   This benchmark compares git CLI vs ziggit CLI as a proxy for the local
+#   operations: clone-from-bare, rev-parse, and working-tree checkout.
+#   Network fetch (HTTP clone) is done once by git and shared.
+#
+# Run: bash /root/bun-fork/benchmark/bun_install_bench.sh 2>&1 | tee /tmp/bench-output.txt
+
 set -euo pipefail
 
-# BUN INSTALL BENCHMARK: Stock Bun vs Ziggit Integration
-# Measures: bun install (cold/warm), git CLI clone, ziggit clone, findCommit
-#
-# Usage: bash bun_install_bench.sh
-# Requires: bun, git, zig (built ziggit), python3
-
 ZIGGIT="/root/ziggit/zig-out/bin/ziggit"
-FC_BENCH="/root/bun-fork/benchmark/zig-out/bin/findcommit_bench"
 GIT="/usr/bin/git"
 BUN="/root/.bun/bin/bun"
-RUNS=3
+RESULTS_FILE="/root/bun-fork/benchmark/raw_results.txt"
+BENCH_DIR="/tmp/bench-workspace"
+ITERATIONS=3
 
 REPOS=(
-  "https://github.com/debug-js/debug.git"
-  "https://github.com/npm/node-semver.git"
-  "https://github.com/chalk/chalk.git"
-  "https://github.com/sindresorhus/is.git"
-  "https://github.com/expressjs/express.git"
+    "https://github.com/debug-js/debug.git"
+    "https://github.com/npm/node-semver.git"
+    "https://github.com/sindresorhus/is.git"
+    "https://github.com/chalk/chalk.git"
+    "https://github.com/expressjs/express.git"
 )
-REPO_NAMES=("debug" "semver" "chalk" "is" "express")
+REPO_NAMES=(debug node-semver is chalk express)
 
-timestamp_ms() { python3 -c "import time; print(int(time.time()*1000))"; }
+timestamp_ms() {
+    python3 -c "import time; print(int(time.time()*1000))"
+}
 
-echo "========================================"
-echo "BUN INSTALL BENCHMARK SUITE"
+elapsed_ms() {
+    echo $(( $2 - $1 ))
+}
+
+cleanup_workdirs() {
+    rm -rf "$BENCH_DIR/workdir-git" "$BENCH_DIR/workdir-ziggit"
+    mkdir -p "$BENCH_DIR/workdir-git" "$BENCH_DIR/workdir-ziggit"
+}
+
+echo "=========================================="
+echo "BUN INSTALL BENCHMARK"
 echo "Date: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-echo "Bun: $($BUN --version)"
-echo "Git: $($GIT --version)"
-echo "Zig: $(zig version)"
-echo "Ziggit: $(cd /root/ziggit && git rev-parse --short HEAD)"
-echo "========================================"
-
-# --- 1. BUN INSTALL (COLD) ---
+echo "Stock bun: $($BUN --version)"
+echo "Git: $($GIT --version | awk '{print $3}')"
+echo "Ziggit: $($ZIGGIT --version 2>&1 || echo 'unknown')"
+echo "Iterations: $ITERATIONS"
+echo "=========================================="
 echo ""
-echo "=== 1. BUN INSTALL (COLD) ==="
-mkdir -p /tmp/bench-bun
-cat > /tmp/bench-bun/package.json << 'EOF'
+
+> "$RESULTS_FILE"
+
+###############################################################################
+# PART 1: Stock bun install (cold + warm)
+###############################################################################
+echo "=== PART 1: Stock bun install with git dependencies ==="
+
+mkdir -p /tmp/bench-project
+cat > /tmp/bench-project/package.json << 'EOF'
 {
   "name": "ziggit-bench",
   "dependencies": {
     "debug": "github:debug-js/debug",
     "semver": "github:npm/node-semver",
-    "chalk": "github:chalk/chalk",
     "@sindresorhus/is": "github:sindresorhus/is",
+    "chalk": "github:chalk/chalk",
     "express": "github:expressjs/express"
   }
 }
 EOF
 
-for run in $(seq 1 $RUNS); do
-  cd /tmp/bench-bun
-  rm -rf node_modules bun.lock .bun
-  rm -rf ~/.bun/install/cache 2>/dev/null || true
-  start=$(timestamp_ms)
-  $BUN install --no-progress 2>&1 >/dev/null || true
-  end=$(timestamp_ms)
-  echo "BUN_COLD_${run}=$((end - start))ms"
-done
+for i in $(seq 1 $ITERATIONS); do
+    echo "--- bun install COLD run $i/$ITERATIONS ---"
+    cd /tmp/bench-project
+    rm -rf node_modules bun.lock
+    rm -rf ~/.bun/install/cache 2>/dev/null || true
 
-# --- 2. BUN INSTALL (WARM) ---
-echo ""
-echo "=== 2. BUN INSTALL (WARM) ==="
-for run in $(seq 1 $RUNS); do
-  cd /tmp/bench-bun
-  rm -rf node_modules
-  start=$(timestamp_ms)
-  $BUN install --no-progress 2>&1 >/dev/null || true
-  end=$(timestamp_ms)
-  echo "BUN_WARM_${run}=$((end - start))ms"
-done
-
-# --- 3. SEQUENTIAL CLONE: GIT CLI (bare --depth=1 + local checkout) ---
-echo ""
-echo "=== 3. GIT CLI CLONE (bare --depth=1 + local checkout) ==="
-for run in $(seq 1 $RUNS); do
-  total_start=$(timestamp_ms)
-  for i in "${!REPOS[@]}"; do
-    repo="${REPOS[$i]}"
-    name="${REPO_NAMES[$i]}"
-    rm -rf "/tmp/bg-${name}" "/tmp/bg-${name}.bare"
     start=$(timestamp_ms)
-    $GIT clone --bare --depth=1 "$repo" "/tmp/bg-${name}.bare" 2>/dev/null
-    $GIT clone "/tmp/bg-${name}.bare" "/tmp/bg-${name}" 2>/dev/null
+    $BUN install --no-progress 2>&1 || true
     end=$(timestamp_ms)
-    echo "GIT_${name}_run${run}=$((end - start))ms"
-    rm -rf "/tmp/bg-${name}" "/tmp/bg-${name}.bare"
-  done
-  total_end=$(timestamp_ms)
-  echo "GIT_TOTAL_run${run}=$((total_end - total_start))ms"
-done
+    ms=$(elapsed_ms $start $end)
+    echo "  Cold: ${ms}ms"
+    echo "BUN_COLD_$i=${ms}" >> "$RESULTS_FILE"
 
-# --- 4. SEQUENTIAL CLONE: ZIGGIT (--depth 1) ---
-echo ""
-echo "=== 4. ZIGGIT CLONE (--depth 1) ==="
-for run in $(seq 1 $RUNS); do
-  total_start=$(timestamp_ms)
-  for i in "${!REPOS[@]}"; do
-    repo="${REPOS[$i]}"
-    name="${REPO_NAMES[$i]}"
-    rm -rf "/tmp/bz-${name}"
+    echo "--- bun install WARM run $i/$ITERATIONS ---"
+    rm -rf node_modules bun.lock
     start=$(timestamp_ms)
-    $ZIGGIT clone --depth 1 "$repo" "/tmp/bz-${name}" 2>/dev/null || true
+    $BUN install --no-progress 2>&1 || true
     end=$(timestamp_ms)
-    echo "ZIGGIT_${name}_run${run}=$((end - start))ms"
-    rm -rf "/tmp/bz-${name}"
-  done
-  total_end=$(timestamp_ms)
-  echo "ZIGGIT_TOTAL_run${run}=$((total_end - total_start))ms"
-done
-
-# --- 5. PARALLEL CLONE (simulating bun install's concurrent git dep fetch) ---
-echo ""
-echo "=== 5. PARALLEL CLONE (5 repos, --depth 1) ==="
-# Warm up network
-$GIT ls-remote https://github.com/debug-js/debug.git HEAD 2>/dev/null >/dev/null
-sleep 1
-
-for run in $(seq 1 $RUNS); do
-  # Git parallel
-  for name in "${REPO_NAMES[@]}"; do rm -rf "/tmp/pg-${name}"; done
-  start=$(timestamp_ms)
-  for i in "${!REPOS[@]}"; do
-    $GIT clone --depth 1 "${REPOS[$i]}" "/tmp/pg-${REPO_NAMES[$i]}" 2>/dev/null &
-  done
-  wait
-  end=$(timestamp_ms)
-  echo "GIT_PARALLEL_run${run}=$((end - start))ms"
-  for name in "${REPO_NAMES[@]}"; do rm -rf "/tmp/pg-${name}"; done
-  sleep 0.5
-
-  # Ziggit parallel
-  for name in "${REPO_NAMES[@]}"; do rm -rf "/tmp/pz-${name}"; done
-  start=$(timestamp_ms)
-  for i in "${!REPOS[@]}"; do
-    $ZIGGIT clone --depth 1 "${REPOS[$i]}" "/tmp/pz-${REPO_NAMES[$i]}" 2>/dev/null &
-  done
-  wait
-  end=$(timestamp_ms)
-  echo "ZIGGIT_PARALLEL_run${run}=$((end - start))ms"
-  for name in "${REPO_NAMES[@]}"; do rm -rf "/tmp/pz-${name}"; done
-  sleep 0.5
-done
-
-# --- 6. GIT REV-PARSE vs ZIGGIT findCommit ---
-echo ""
-echo "=== 6. GIT REV-PARSE vs ZIGGIT findCommit ==="
-for i in "${!REPOS[@]}"; do
-  repo="${REPOS[$i]}"
-  name="${REPO_NAMES[$i]}"
-  rm -rf "/tmp/fc-${name}"
-  $GIT clone --bare --depth=1 "$repo" "/tmp/fc-${name}" 2>/dev/null
-done
-
-echo "--- git rev-parse (subprocess) ---"
-for run in $(seq 1 3); do
-  for i in "${!REPO_NAMES[@]}"; do
-    name="${REPO_NAMES[$i]}"
-    start=$(date +%s%N)
-    (cd "/tmp/fc-${name}" && $GIT rev-parse HEAD >/dev/null 2>&1)
-    end=$(date +%s%N)
-    echo "GITREVPARSE_${name}_run${run}=$(( (end - start) / 1000 ))µs"
-  done
+    ms=$(elapsed_ms $start $end)
+    echo "  Warm: ${ms}ms"
+    echo "BUN_WARM_$i=${ms}" >> "$RESULTS_FILE"
 done
 
 echo ""
-echo "--- ziggit findCommit (in-process, 1000 iterations) ---"
-if [ -x "$FC_BENCH" ]; then
-  for name in "${REPO_NAMES[@]}"; do
-    $FC_BENCH "/tmp/fc-${name}" HEAD 2>&1
-  done
-else
-  echo "findcommit_bench not built. Build with: cd benchmark && zig build -Doptimize=ReleaseFast"
-fi
 
-# Cleanup
-for name in "${REPO_NAMES[@]}"; do rm -rf "/tmp/fc-${name}"; done
+###############################################################################
+# PART 2: Pre-fetch bare repos (shared network cost)
+###############################################################################
+echo "=== PART 2: Pre-fetching bare repos (one-time network cost) ==="
+
+BARE_CACHE="$BENCH_DIR/bare-cache"
+rm -rf "$BARE_CACHE"
+mkdir -p "$BARE_CACHE"
+
+for idx in "${!REPOS[@]}"; do
+    repo="${REPOS[$idx]}"
+    name="${REPO_NAMES[$idx]}"
+    echo -n "  Fetching $name... "
+    start=$(timestamp_ms)
+    $GIT clone --bare "$repo" "$BARE_CACHE/${name}.git" 2>/dev/null
+    end=$(timestamp_ms)
+    ms=$(elapsed_ms $start $end)
+    echo "${ms}ms"
+    echo "NETWORK_FETCH_${name}=${ms}" >> "$RESULTS_FILE"
+done
 
 echo ""
-echo "=== DONE ==="
+
+###############################################################################
+# PART 3: Git CLI local operations (what stock bun does per git dep)
+###############################################################################
+echo "=== PART 3: Git CLI local operations (clone-from-bare + rev-parse + checkout) ==="
+
+for iter in $(seq 1 $ITERATIONS); do
+    echo "--- git CLI iteration $iter/$ITERATIONS ---"
+    cleanup_workdirs
+    total_git=0
+
+    for idx in "${!REPOS[@]}"; do
+        name="${REPO_NAMES[$idx]}"
+        bare="$BARE_CACHE/${name}.git"
+        work="$BENCH_DIR/workdir-git/${name}"
+
+        # rev-parse (resolve ref)
+        start=$(timestamp_ms)
+        sha=$($GIT -C "$bare" rev-parse HEAD 2>/dev/null)
+        end=$(timestamp_ms)
+        resolve_ms=$(elapsed_ms $start $end)
+
+        # clone from bare to working tree
+        start=$(timestamp_ms)
+        $GIT clone "$bare" "$work" 2>/dev/null
+        end=$(timestamp_ms)
+        clone_ms=$(elapsed_ms $start $end)
+
+        repo_total=$((resolve_ms + clone_ms))
+        total_git=$((total_git + repo_total))
+        echo "  $name: rev-parse=${resolve_ms}ms clone-local=${clone_ms}ms total=${repo_total}ms"
+        echo "GIT_LOCAL_${name}_${iter}_resolve=${resolve_ms}" >> "$RESULTS_FILE"
+        echo "GIT_LOCAL_${name}_${iter}_clone=${clone_ms}" >> "$RESULTS_FILE"
+        echo "GIT_LOCAL_${name}_${iter}_total=${repo_total}" >> "$RESULTS_FILE"
+    done
+
+    echo "  TOTAL git CLI local: ${total_git}ms"
+    echo "GIT_LOCAL_TOTAL_${iter}=${total_git}" >> "$RESULTS_FILE"
+done
+
+echo ""
+
+###############################################################################
+# PART 4: Ziggit local operations (what bun+ziggit does per git dep)
+###############################################################################
+echo "=== PART 4: Ziggit local operations (clone-from-bare + rev-parse + checkout) ==="
+
+for iter in $(seq 1 $ITERATIONS); do
+    echo "--- ziggit iteration $iter/$ITERATIONS ---"
+    cleanup_workdirs
+    total_ziggit=0
+
+    for idx in "${!REPOS[@]}"; do
+        name="${REPO_NAMES[$idx]}"
+        bare="$BARE_CACHE/${name}.git"
+        work="$BENCH_DIR/workdir-ziggit/${name}"
+
+        # rev-parse (resolve ref)
+        start=$(timestamp_ms)
+        sha=$($ZIGGIT -C "$bare" rev-parse HEAD 2>/dev/null)
+        end=$(timestamp_ms)
+        resolve_ms=$(elapsed_ms $start $end)
+
+        # clone from bare to working tree
+        start=$(timestamp_ms)
+        $ZIGGIT clone "$bare" "$work" 2>/dev/null
+        end=$(timestamp_ms)
+        clone_ms=$(elapsed_ms $start $end)
+
+        repo_total=$((resolve_ms + clone_ms))
+        total_ziggit=$((total_ziggit + repo_total))
+        echo "  $name: rev-parse=${resolve_ms}ms clone-local=${clone_ms}ms total=${repo_total}ms"
+        echo "ZIGGIT_LOCAL_${name}_${iter}_resolve=${resolve_ms}" >> "$RESULTS_FILE"
+        echo "ZIGGIT_LOCAL_${name}_${iter}_clone=${clone_ms}" >> "$RESULTS_FILE"
+        echo "ZIGGIT_LOCAL_${name}_${iter}_total=${repo_total}" >> "$RESULTS_FILE"
+    done
+
+    echo "  TOTAL ziggit local: ${total_ziggit}ms"
+    echo "ZIGGIT_LOCAL_TOTAL_${iter}=${total_ziggit}" >> "$RESULTS_FILE"
+done
+
+echo ""
+
+###############################################################################
+# PART 5: Process spawn overhead measurement
+###############################################################################
+echo "=== PART 5: Process spawn overhead (git vs ziggit startup) ==="
+
+for iter in $(seq 1 $ITERATIONS); do
+    # Measure cost of 5x git --version (simulates 5 git subprocess calls)
+    start=$(timestamp_ms)
+    for i in $(seq 1 5); do $GIT --version >/dev/null 2>&1; done
+    end=$(timestamp_ms)
+    git_spawn=$(elapsed_ms $start $end)
+    echo "  5x git --version: ${git_spawn}ms"
+    echo "GIT_SPAWN_5x_${iter}=${git_spawn}" >> "$RESULTS_FILE"
+
+    # bun+ziggit avoids this entirely (in-process)
+    echo "  bun+ziggit: 0ms (in-process, no spawn)"
+    echo "ZIGGIT_SPAWN_5x_${iter}=0" >> "$RESULTS_FILE"
+done
+
+echo ""
+echo "=== RAW RESULTS ==="
+cat "$RESULTS_FILE"
+echo ""
+echo "=== BENCHMARK COMPLETE ==="

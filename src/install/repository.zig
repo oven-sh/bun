@@ -507,71 +507,55 @@ pub const Repository = extern struct {
         return if (cache_dir.openDirZ(folder_name, .{})) |dir| fetch: {
             const path = Path.joinAbsString(PackageManager.get().cache_directory_path, &.{folder_name}, .auto);
 
-            // Try ziggit first for HTTPS fetch, fall back to git CLI for SSH/other protocols
-            if (tryHTTPS(url)) |https_url| {
-                var repo = ziggit.Repository.open(allocator, path) catch {
-                    // Fall back to git CLI if ziggit can't open the repo
-                    _ = exec(allocator, env, &[_]string{ "git", "-C", path, "fetch", "--quiet" }) catch |err| {
-                        log.addErrorFmt(null, logger.Loc.Empty, allocator, "\"git fetch\" for \"{s}\" failed", .{name}) catch unreachable;
-                        return err;
-                    };
-                    break :fetch dir;
-                };
-                repo.fetch(https_url) catch {
+            // Try ziggit first for any protocol (HTTPS, SSH, or SCP-style)
+            // ziggit handles: https://, ssh://, git@host:path natively
+            // tryHTTPS prefers HTTPS when available (faster), otherwise use original URL
+            const fetch_url = tryHTTPS(url) orelse url;
+            ziggit_fetch: {
+                var repo = ziggit.Repository.open(allocator, path) catch break :ziggit_fetch;
+                repo.fetch(fetch_url) catch {
                     repo.close();
-                    // Fall back to git CLI on ziggit fetch failure
-                    _ = exec(allocator, env, &[_]string{ "git", "-C", path, "fetch", "--quiet" }) catch |err| {
-                        log.addErrorFmt(null, logger.Loc.Empty, allocator, "\"git fetch\" for \"{s}\" failed", .{name}) catch unreachable;
-                        return err;
-                    };
-                    break :fetch dir;
+                    break :ziggit_fetch;
                 };
                 repo.close();
-            } else {
-                // SSH or other protocol — use git CLI
-                _ = exec(allocator, env, &[_]string{ "git", "-C", path, "fetch", "--quiet" }) catch |err| {
-                    log.addErrorFmt(null, logger.Loc.Empty, allocator, "\"git fetch\" for \"{s}\" failed", .{name}) catch unreachable;
-                    return err;
-                };
+                break :fetch dir;
             }
+            // Ziggit failed — fall back to git CLI
+            _ = exec(allocator, env, &[_]string{ "git", "-C", path, "fetch", "--quiet" }) catch |err| {
+                log.addErrorFmt(null, logger.Loc.Empty, allocator, "\"git fetch\" for \"{s}\" failed", .{name}) catch unreachable;
+                return err;
+            };
             break :fetch dir;
         } else |not_found| clone: {
             if (not_found != error.FileNotFound) return not_found;
 
             const target = Path.joinAbsString(PackageManager.get().cache_directory_path, &.{folder_name}, .auto);
 
-            // Try ziggit for HTTPS URLs, fall back to git CLI for SSH/other protocols
-            if (tryHTTPS(url)) |https_url| {
-                var repo = ziggit.Repository.cloneBare(allocator, https_url, target) catch |err| {
+            // Try ziggit first for any protocol (HTTPS, SSH, or SCP-style)
+            // ziggit handles: https://, ssh://, git@host:path natively
+            const clone_url = tryHTTPS(url) orelse url;
+            ziggit_clone: {
+                var repo = ziggit.Repository.cloneBare(allocator, clone_url, target) catch |err| {
                     if (err == error.RepositoryNotFound) {
                         if (attempt > 1) {
                             log.addErrorFmt(null, logger.Loc.Empty, allocator, "\"git clone\" for \"{s}\" failed", .{name}) catch unreachable;
                         }
                         return error.RepositoryNotFound;
                     }
-                    // Fall back to git CLI on ziggit failure
-                    _ = exec(allocator, env, &[_]string{
-                        "git", "clone", "-c", "core.longpaths=true", "--quiet", "--bare", url, target,
-                    }) catch |exec_err| {
-                        if (exec_err == error.RepositoryNotFound or attempt > 1) {
-                            log.addErrorFmt(null, logger.Loc.Empty, allocator, "\"git clone\" for \"{s}\" failed", .{name}) catch unreachable;
-                        }
-                        return exec_err;
-                    };
-                    break :clone try cache_dir.openDirZ(folder_name, .{});
+                    break :ziggit_clone;
                 };
                 repo.close();
-            } else {
-                // SSH or other protocol — use git CLI
-                _ = exec(allocator, env, &[_]string{
-                    "git", "clone", "-c", "core.longpaths=true", "--quiet", "--bare", url, target,
-                }) catch |err| {
-                    if (err == error.RepositoryNotFound or attempt > 1) {
-                        log.addErrorFmt(null, logger.Loc.Empty, allocator, "\"git clone\" for \"{s}\" failed", .{name}) catch unreachable;
-                    }
-                    return err;
-                };
+                break :clone try cache_dir.openDirZ(folder_name, .{});
             }
+            // Ziggit failed — fall back to git CLI
+            _ = exec(allocator, env, &[_]string{
+                "git", "clone", "-c", "core.longpaths=true", "--quiet", "--bare", url, target,
+            }) catch |exec_err| {
+                if (exec_err == error.RepositoryNotFound or attempt > 1) {
+                    log.addErrorFmt(null, logger.Loc.Empty, allocator, "\"git clone\" for \"{s}\" failed", .{name}) catch unreachable;
+                }
+                return exec_err;
+            };
 
             break :clone try cache_dir.openDirZ(folder_name, .{});
         };

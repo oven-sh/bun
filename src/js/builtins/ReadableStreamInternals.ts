@@ -912,9 +912,7 @@ export async function readStreamIntoSink(stream: ReadableStream, sink, isNative)
     }
 
     for (var i = 0, values = many.value, length = many.value.length; i < length; i++) {
-      if (sink.write(values[i]) === false) {
-        await sink.flush(true);
-      }
+      sink.write(values[i]);
     }
 
     var streamState = $getByIdDirectPrivate(stream, "state");
@@ -930,9 +928,7 @@ export async function readStreamIntoSink(stream: ReadableStream, sink, isNative)
         return sink.end();
       }
 
-      if (sink.write(value) === false) {
-        await sink.flush(true);
-      }
+      sink.write(value);
     }
   } catch (e) {
     didThrow = true;

@@ -804,12 +804,6 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
                 this.has_backpressure = false;
             } else {
                 this.has_backpressure = res.write(buf) == .backpressure;
-                if (!this.has_backpressure) {
-                    this.has_backpressure = res.getBufferedAmount() > 1024 * 1024;
-                }
-                if (this.has_backpressure) {
-                    res.onWritable(*@This(), onWritable, this);
-                }
             }
             this.handleWrote(buf.len);
             return true;
@@ -842,8 +836,12 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             if (this.buffer.len == 0) {
                 this.flushPromise() catch {};
                 if (this.done) {
+                    if (this.res) |res| {
+                        res.clearOnWritable();
+                    }
                     this.signal.close(null);
                     this.finalize();
+                    return false;
                 }
                 return true;
             }
@@ -973,24 +971,8 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
                 return .{ .result = prom.toJS() };
             }
 
-            if (this.done) {
+            if (this.buffer.len == 0 or this.done) {
                 return .{ .result = jsc.JSPromise.resolvedPromiseValue(globalThis, JSValue.jsNumberFromInt32(0)) };
-            }
-
-            if (this.buffer.len == 0) {
-                if (!this.has_backpressure) {
-                    return .{ .result = jsc.JSPromise.resolvedPromiseValue(globalThis, JSValue.jsNumberFromInt32(0)) };
-                }
-                // Data was already sent to uWS but the socket has
-                // backpressure. The onWritable callback is registered
-                // by sendWithoutAutoFlusher and will resolve this
-                // promise when the socket drains.
-                this.wrote_at_start_of_flush = this.wrote;
-                this.pending_flush = jsc.JSPromise.create(globalThis);
-                this.globalThis = globalThis;
-                var promise_value = this.pending_flush.?.toJS();
-                promise_value.protect();
-                return .{ .result = promise_value };
             }
 
             if (!this.hasBackpressureAndIsTryEnd()) {
@@ -1242,7 +1224,6 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             log("onAborted()", .{});
             this.done = true;
             this.res = null;
-            this.has_backpressure = false;
             this.unregisterAutoFlusher();
 
             this.aborted = true;

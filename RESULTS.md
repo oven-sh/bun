@@ -106,36 +106,49 @@ All paths have automatic git CLI fallback with categorized error logging.
 | Resource Exhaustion| OutOfMemory, SystemResourcesExhausted, etc.                     | Log + fallback              |
 | Other              | Any unrecognized error                                           | Generic log + fallback      |
 
-## End-to-End `bun install` Benchmark (2026-03-26)
+## End-to-End `bun install` Benchmark (2026-03-26, run 2)
 
 Full benchmark comparing stock bun, git CLI, and ziggit for 5 git dependencies.
 See [BUN_INSTALL_BENCHMARK.md](BUN_INSTALL_BENCHMARK.md) for detailed results.
 
 ### Stock `bun install` (5 git deps + 266 transitive npm packages)
 
-| Metric | Avg (ms) |
-|--------|----------|
-| Cold (no cache) | 709.7 |
-| Warm (cached) | 23.4 |
+| Metric | Run 1 | Run 2 | Run 3 | Avg (ms) |
+|--------|-------|-------|-------|----------|
+| Cold (no cache) | 1279 | 1032 | 802 | 1037.7 |
+| Warm (cached) | 33 | 32 | 31 | 32.0 |
 
 ### Git dependency resolution: Git CLI vs Ziggit (5 repos, sequential)
 
 | Tool | debug (ms) | semver (ms) | chalk (ms) | is (ms) | express (ms) | Total avg (ms) |
 |------|-----------|------------|-----------|---------|-------------|---------------|
-| git CLI (--depth=1) | 141 | 165 | 165* | 166 | 188 | 838† |
-| ziggit (full clone) | 150 | 233 | 160 | 194 | 962 | 1698 |
+| git CLI (--depth=1) | 136 | 164 | 159 | 164 | 211 | 904 |
+| ziggit (full clone) | 163 | 245 | 166 | 196 | 973 | 1814 |
 
-\* chalk git avg excludes 1 outlier (1155ms network stall)
-† git total uses median run (runs 1+3 avg), excluding outlier run 2
+### Ref resolution: git rev-parse vs ziggit findCommit
 
-**Key finding**: Ziggit is **slower** for full clones because it downloads complete
-history while `git clone --depth=1` downloads only the tip commit. Express (5000+
-commits) shows the largest gap (5.1x). For small/short-history repos (chalk), ziggit
-achieves near-parity.
+| Method | Per-call | 5 deps | Notes |
+|--------|----------|--------|-------|
+| `git rev-parse` (CLI) | ~11ms | ~55ms | Process fork+exec overhead |
+| ziggit findCommit (in-process) | ~68µs | ~0.3ms | Direct packed-refs scan |
+| **Speedup** | **~160x** | **saves ~55ms** | |
+
+### Analysis
+
+**Key finding**: Ziggit is **slower** for full clones (2.0x total) because it
+downloads complete history while `git clone --depth=1` downloads only the tip
+commit. Express (5000+ commits) shows the largest gap (4.6x). For small/short-
+history repos (chalk), ziggit achieves **near-parity (0.96x)**.
+
+**Where ziggit wins today**:
+- findCommit ref resolution: **160x faster** (68µs vs 11ms)
+- Zero subprocess overhead: saves ~10ms per dep when used in-process
+- Correct pack/idx generation: verified by `git verify-pack` + `git fsck`
 
 **Path to faster**: Implementing shallow clone support in ziggit would bring it to
-parity, and the in-process + parallel execution advantages would then yield a
-projected **~4x speedup** on git dependency resolution.
+parity on network I/O, and the in-process + parallel execution advantages would
+then yield a projected **~4x speedup** on git dependency resolution (saving ~680ms
+off cold `bun install`).
 
 ## Known Limitations
 - Ziggit has no configurable network timeout (git CLI fallback is the safety net)

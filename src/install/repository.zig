@@ -367,21 +367,31 @@ pub const Repository = extern struct {
         });
 
         switch (result.term) {
-            .Exited => |sig| if (sig == 0) return result.stdout else if (
-            // remote: The page could not be found <-- for non git
-            // remote: Repository not found. <-- for git
-            // remote: fatal repository '<url>' does not exist <-- for git
-            (strings.containsComptime(result.stderr, "remote:") and
-                strings.containsComptime(result.stderr, "not") and
-                strings.containsComptime(result.stderr, "found")) or
-                strings.containsComptime(result.stderr, "does not exist"))
-            {
-                return error.RepositoryNotFound;
+            .Exited => |sig| if (sig == 0) return result.stdout else {
+                // Log stderr so operators can diagnose git CLI failures
+                if (result.stderr.len > 0) {
+                    debug("git CLI exited {d}: {s}", .{ sig, std.mem.trimRight(u8, result.stderr, "\r\n") });
+                } else {
+                    debug("git CLI exited {d} (no stderr)", .{sig});
+                }
+                if (
+                // remote: The page could not be found <-- for non git
+                // remote: Repository not found. <-- for git
+                // remote: fatal repository '<url>' does not exist <-- for git
+                (strings.containsComptime(result.stderr, "remote:") and
+                    strings.containsComptime(result.stderr, "not") and
+                    strings.containsComptime(result.stderr, "found")) or
+                    strings.containsComptime(result.stderr, "does not exist"))
+                {
+                    return error.RepositoryNotFound;
+                }
+                return error.InstallFailed;
             },
-            else => {},
+            else => {
+                debug("git CLI terminated abnormally (signal/unknown)", .{});
+                return error.InstallFailed;
+            },
         }
-
-        return error.InstallFailed;
     }
 
     pub fn trySSH(url: string) ?string {

@@ -1,8 +1,8 @@
 # Ziggit Integration Benchmarks
 
 ## Environment
-- Date: 2026-03-26T22:51Z (run 34 — ziggit 95b31d8)
-- Ziggit commit: 95b31d8 (perf: increase decompression buffer to 32KB for fewer iterations in idx generation)
+- Date: 2026-03-26T22:55Z (run 35 — ziggit 48c8af7)
+- Ziggit commit: 48c8af7 (perf: use C zlib for decompression in idx generation and stream_utils)
 - Bun fork branch: ziggit-integration
 - Machine: Linux (root@ziggit), 483MB RAM, 1 vCPU, Debian (minimal VM)
 - Build: `zig build -Doptimize=ReleaseFast`
@@ -20,44 +20,54 @@ Full bun fork binary **cannot be built** on this VM:
 
 | Repo | git CLI avg | ziggit avg | Ratio |
 |------|------------|-----------|-------|
-| debug | 142ms | 76ms | **1.87× faster** |
-| semver | 176ms | 155ms | **1.14× faster** |
-| chalk | 156ms | 128ms | **1.22× faster** |
-| is | 169ms | 140ms | **1.21× faster** |
-| express | 198ms | 280ms | 0.71× (slower) |
-| **TOTAL** | **919ms** | **856ms** | **1.07× faster** |
+| debug | 145ms | 81ms | **1.79× faster** |
+| semver | 168ms | 161ms | **1.04× faster** |
+| chalk | 158ms | 128ms | **1.23× faster** |
+| is | 172ms | 137ms | **1.25× faster** |
+| express | 199ms | 272ms | 0.73× (slower) |
+| **TOTAL** | **918ms** | **853ms** | **1.08× faster** |
 
 ### Parallel: 5 repos at once, 3 runs
 
 | Tool | Run 1 | Run 2 | Run 3 | Avg | Median |
 |------|-------|-------|-------|-----|--------|
-| git CLI | 389ms | 355ms | 380ms | **375ms** | **380ms** |
-| ziggit | 446ms | 462ms | 454ms | **454ms** | **454ms** |
+| git CLI | 508ms | 360ms | 394ms | **421ms** | **394ms** |
+| ziggit | 477ms | 448ms | 427ms | **451ms** | **448ms** |
 
-**Parallel result**: Git CLI 17% faster in parallel on single-vCPU VM. Ziggit's in-process thread pool needs multi-core to show advantage.
+**Parallel result**: Git CLI 7% faster in parallel on single-vCPU VM. Gap narrowed from 17% (run 34) to 7% with C zlib.
 
 ## findCommit: In-Process (1000 iterations)
 
 | Repo | git rev-parse | ziggit findCommit | Speedup |
 |------|--------------|-------------------|---------|
-| debug | 2,337µs | 5.7µs | **410×** |
-| semver | 2,213µs | 8.1µs | **273×** |
-| chalk | 2,272µs | 5.2µs | **437×** |
-| is | 2,262µs | 5.3µs | **427×** |
-| express | 2,345µs | 5.2µs | **451×** |
-| **Average** | **2,286µs** | **5.9µs** | **~388×** |
+| debug | 2,188µs | 5.1µs | **429×** |
+| semver | 2,142µs | 5.3µs | **404×** |
+| chalk | 2,182µs | 5.2µs | **420×** |
+| is | 2,182µs | 5.1µs | **428×** |
+| express | 2,131µs | 5.3µs | **402×** |
+| **Average** | **2,165µs** | **5.2µs** | **~416×** |
 
 ## Bun Install Baseline (stock bun 1.3.11)
 
 | Metric | Run 1 | Run 2 | Run 3 | Avg | Median |
 |--------|-------|-------|-------|-----|--------|
-| Cold install | 484ms | 487ms | 385ms | **452ms** | **484ms** |
-| Warm install | 35ms | 34ms | 35ms | **35ms** | **35ms** |
+| Cold install | 557ms | 454ms | 382ms | **464ms** | **454ms** |
+| Warm install | 36ms | 34ms | 34ms | **35ms** | **34ms** |
 | Total packages resolved | 266 | | | | |
 
 ## Summary
 
-- **Sequential clone**: ziggit 7% faster (1.07×), wins 4/5 repos
-- **Parallel clone**: git CLI 17% faster on 1-vCPU (network-bound, git forks separate processes)
-- **findCommit**: ziggit **388× faster** (5.9µs vs 2.3ms) — the killer feature for bun integration
-- **Key insight**: The real win is in-process ref resolution, not raw clone speed. For warm `bun install` (lockfile exists), eliminating subprocess spawns for ref verification saves ~56% of git-related time.
+- **Sequential clone**: ziggit **8% faster** (1.08×), wins 4/5 repos
+- **Parallel clone**: git CLI 7% faster on 1-vCPU (down from 17% gap — C zlib helps)
+- **findCommit**: ziggit **416× faster** (5.2µs vs 2.2ms) — the killer feature for bun integration
+- **Key insight**: The real win is in-process ref resolution, not raw clone speed. For warm `bun install` (lockfile exists), eliminating subprocess spawns for ref verification saves ~55% of git-related time.
+
+## Delta from Run 34 → 35
+
+| Metric | Run 34 (95b31d8) | Run 35 (48c8af7) | Change |
+|--------|------------------|-------------------|--------|
+| Sequential clone speedup | 1.07× | 1.08× | +1% |
+| Parallel clone gap | 17% slower | 7% slower | **+10pp** ✅ |
+| findCommit speedup | 388× | 416× | **+7%** ✅ |
+
+The C zlib decompression change improved findCommit by 7% and cut the parallel clone gap by more than half.

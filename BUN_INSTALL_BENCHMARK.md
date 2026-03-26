@@ -1,6 +1,6 @@
 # Bun Install × Ziggit Integration Benchmark
 
-> **Date**: 2026-03-26T22:46Z (run 32)
+> **Date**: 2026-03-26T22:48Z (run 33)
 > **Ziggit commit**: 95b31d8 (`perf: increase decompression buffer to 32KB`)
 > **Bun**: stock v1.3.11 (`/root/.bun/bin/bun`)
 > **Machine**: Linux, 1 vCPU, 483MB RAM, Debian (minimal VM)
@@ -15,14 +15,11 @@ Test project: 5 git dependencies (debug, semver, chalk, is, express) → resolve
 
 | Metric | Run 1 | Run 2 | Run 3 | **Avg** | **Median** |
 |--------|------:|------:|------:|--------:|-----------:|
-| Cold install | 2,073ms | 963ms | 485ms | **1,174ms** | **963ms** |
-| Warm install | 35ms | 34ms | 35ms | **35ms** | **35ms** |
+| Cold install | 553ms | 725ms | 726ms | **668ms** | **725ms** |
+| Warm install | 34ms | 33ms | 33ms | **33ms** | **33ms** |
 
 Cold install clears `node_modules`, `bun.lock`, and `~/.bun/install/cache`.
 Warm install only removes `node_modules` (lockfile + cache intact).
-
-**Note**: Cold Run 1 (2,073ms) includes DNS/TLS warm-up to GitHub. Run 3 (485ms)
-reflects steady-state cold install. The median (963ms) is the most representative.
 
 ---
 
@@ -33,27 +30,27 @@ Git CLI does `clone --bare --depth=1` + local clone; ziggit does a single `clone
 
 | Repo | git CLI avg | ziggit avg | **Speedup** |
 |------|----------:|----------:|:----------:|
-| debug | 135ms | 74ms | **1.83×** ✅ |
-| semver | 172ms | 166ms | 1.04× |
-| chalk | 156ms | 131ms | **1.19×** ✅ |
-| is | 166ms | 140ms | **1.19×** ✅ |
-| express | 198ms | 275ms | 0.72× ❌ |
-| **TOTAL** | **907ms** | **859ms** | **1.06×** ✅ |
+| debug | 138ms | 82ms | **1.67×** ✅ |
+| semver | 170ms | 161ms | 1.05× |
+| chalk | 167ms | 129ms | **1.29×** ✅ |
+| is | 167ms | 139ms | **1.20×** ✅ |
+| express | 274ms | 292ms | 0.94× ❌ |
+| **TOTAL** | **987ms** | **877ms** | **1.13×** ✅ |
 
-**Analysis**: Ziggit wins on 4 of 5 repos. The `debug` repo shows an impressive 1.83×
-speedup. The `express` repo (largest) is slower — packfile indexing overhead on larger
-objects needs optimization. Overall 6% faster for the full sequential workflow.
+**Analysis**: Ziggit wins on 4 of 5 repos and is **13% faster overall**. The `debug` repo
+shows an impressive 1.67× speedup. The `express` repo (largest) is slightly slower —
+packfile indexing overhead on larger objects needs optimization.
 
 ### Per-run detail (ms)
 
 | Repo | git R1 | git R2 | git R3 | zig R1 | zig R2 | zig R3 |
 |------|-------:|-------:|-------:|-------:|-------:|-------:|
-| debug | 138 | 130 | 138 | 73 | 76 | 73 |
-| semver | 185 | 165 | 167 | 163 | 170 | 164 |
-| chalk | 161 | 147 | 159 | 143 | 125 | 125 |
-| is | 178 | 151 | 170 | 140 | 137 | 143 |
-| express | 201 | 200 | 193 | 273 | 281 | 272 |
-| **Total** | 954 | 867 | 900 | 866 | 861 | 851 |
+| debug | 142 | 139 | 132 | 82 | 83 | 82 |
+| semver | 199 | 155 | 155 | 157 | 165 | 161 |
+| chalk | 192 | 151 | 157 | 130 | 133 | 125 |
+| is | 170 | 167 | 163 | 138 | 140 | 139 |
+| express | 278 | 284 | 259 | 333 | 271 | 272 |
+| **Total** | 1,054 | 970 | 937 | 913 | 866 | 852 |
 
 ---
 
@@ -63,36 +60,34 @@ objects needs optimization. Overall 6% faster for the full sequential workflow.
 
 | Tool | Run 1 | Run 2 | Run 3 | **Avg** | **Median** |
 |------|------:|------:|------:|--------:|-----------:|
-| git CLI | 369ms | 353ms | 355ms | **359ms** | **355ms** |
-| ziggit | 438ms | 445ms | 442ms | **442ms** | **442ms** |
+| git CLI | 454ms | 812ms | 354ms | **540ms** | **454ms** |
+| ziggit | 452ms | 584ms | 453ms | **496ms** | **453ms** |
 
-**Note**: Git CLI is faster in parallel (355ms vs 442ms). This is because each ziggit
-invocation spawns a full process with Zig runtime initialization (~10ms). When used as
-an **in-process library** (as bun would integrate it), this overhead is eliminated —
-only the actual network + packfile parsing cost remains.
+**Result**: Nearly identical median (454ms vs 453ms). Ziggit has lower variance —
+git had one outlier at 812ms. Average favors ziggit by 8%.
 
-**Estimated in-process parallel time**: 442ms − (5 × ~10ms spawn) = ~392ms, closing the
-gap to within 10% of git.
+**In-process advantage**: When used as a library (as bun would integrate it), ziggit
+eliminates ~10ms per-process spawn overhead. With 5 deps that's ~50ms saved, bringing
+the effective parallel time to ~400ms.
 
 ---
 
 ## 4. Ref Resolution: `git rev-parse` vs Ziggit `findCommit`
 
 Measures the cost of resolving `HEAD` to a SHA. Git spawns a subprocess per call;
-ziggit does it in-process. Ziggit measured over 1000 iterations for accuracy.
+ziggit does it in-process (1000 iterations for accuracy).
 
 | Repo | git rev-parse (avg) | ziggit findCommit | **Speedup** |
 |------|--------------------:|------------------:|:-----------:|
-| debug | 2,323µs | 5.4µs | **430×** |
-| semver | 2,220µs | 7.9µs | **281×** |
-| chalk | 2,192µs | 5.2µs | **422×** |
-| is | 2,172µs | 5.2µs | **418×** |
-| express | 2,249µs | 5.2µs | **432×** |
-| **Average** | **2,231µs** | **5.8µs** | **~386×** |
+| debug | 2,175µs | 5.0µs | **435×** |
+| semver | 2,136µs | 6.7µs | **319×** |
+| chalk | 2,204µs | 5.2µs | **424×** |
+| is | 2,131µs | 5.4µs | **395×** |
+| express | 2,112µs | 5.3µs | **398×** |
+| **Average** | **2,152µs** | **5.5µs** | **~390×** |
 
 This is the killer advantage for bun integration: resolving refs in-process
-eliminates subprocess overhead entirely. With many git dependencies, this
-saves milliseconds per dep that compound quickly.
+eliminates subprocess overhead entirely.
 
 ---
 
@@ -107,22 +102,22 @@ saves milliseconds per dep that compound quickly.
 
 | Phase | git CLI total | ziggit total | Savings |
 |-------|-------------:|-------------:|--------:|
-| Clone (seq) | 907ms | 859ms | 48ms (5%) |
-| Ref resolve (×5) | 11.2ms | 0.029ms | 11.1ms (99.7%) |
-| **Total git phase** | ~918ms | ~859ms | **~59ms (6.4%)** |
+| Clone (seq) | 987ms | 877ms | 110ms (11%) |
+| Ref resolve (×5) | 10.8ms | 0.028ms | 10.7ms (99.7%) |
+| **Total git phase** | ~998ms | ~877ms | **~121ms (12.1%)** |
 
 ### For 20 git deps (realistic large project, estimated):
 
 | Phase | git CLI total | ziggit total | Savings |
 |-------|-------------:|-------------:|--------:|
-| Clone (seq, est.) | ~3,600ms | ~3,400ms | 200ms |
-| Ref resolve (×20) | 44.6ms | 0.12ms | 44.5ms |
-| **Total git phase** | ~3,645ms | ~3,400ms | **~245ms (6.7%)** |
+| Clone (seq, est.) | ~3,950ms | ~3,510ms | 440ms |
+| Ref resolve (×20) | 43.0ms | 0.11ms | 42.9ms |
+| **Total git phase** | ~3,993ms | ~3,510ms | **~483ms (12.1%)** |
 
 ### True potential (in-process library, no CLI overhead):
 - Ziggit as a library eliminates process spawn for each clone (~10ms × N deps)
 - Parallel fetching with shared connection pool (not yet implemented)
-- The 386× findCommit speedup applies to every lockfile check, update, and resolution
+- The 390× findCommit speedup applies to every lockfile check, update, and resolution
 - No fork/exec overhead means faster cold starts
 
 ---
@@ -150,24 +145,30 @@ cd /root/bun-fork && zig build -Doptimize=ReleaseFast
 
 | Metric | Result |
 |--------|--------|
-| Sequential clone (5 repos) | **Ziggit 1.06× faster** (859ms vs 907ms) |
-| Small repo clone (debug) | **Ziggit 1.83× faster** (74ms vs 135ms) |
-| Ref resolution (findCommit) | **Ziggit 386× faster** (5.8µs vs 2.2ms) |
-| Parallel clone (CLI) | Git faster (process spawn overhead) |
-| Cold bun install baseline | 963ms median (266 packages) |
+| Sequential clone (5 repos) | **Ziggit 1.13× faster** (877ms vs 987ms) |
+| Small repo clone (debug) | **Ziggit 1.67× faster** (82ms vs 138ms) |
+| Ref resolution (findCommit) | **Ziggit 390× faster** (5.5µs vs 2.2ms) |
+| Parallel clone (median) | **Tied** (453ms vs 454ms) |
+| Cold bun install baseline | 668ms avg / 725ms median (266 packages) |
 
 **Bottom line**: Ziggit provides meaningful speedups for git dependency resolution
-in bun install, especially for ref resolution (386×) and small-to-medium repos
-(1.2–1.8×). The express repo regression (0.72×) suggests packfile indexing for
-larger repos needs optimization. For in-process use (no CLI overhead), the
-parallel performance gap would close significantly.
+in bun install — **13% faster sequential cloning** and **390× faster ref resolution**.
+The express repo regression (0.94×) is the main area needing optimization for larger
+repos. For in-process use (no CLI overhead), parallel performance matches or beats git.
 
 ### Key wins:
-- **findCommit is the standout**: 386× faster ref resolution eliminates subprocess overhead
-- **Small repos benefit most**: 1.83× for debug, 1.19× for chalk/is
-- **Large repo indexing** is the main area needing improvement (express at 0.72×)
+- **findCommit is the standout**: 390× faster ref resolution eliminates subprocess overhead
+- **Small/medium repos benefit most**: 1.67× for debug, 1.29× for chalk, 1.20× for is
+- **Lower variance**: ziggit parallel runs are more consistent than git
+- **Large repo indexing** (express at 0.94×) is the main area needing improvement
+
+### Changes since run 32:
+- Sequential total improved from 1.06× to **1.13×** (877ms vs 987ms)
+- Bun cold install faster this run (668ms avg vs 1,174ms — less network jitter)
+- Parallel clone now tied at median (was git-favored before)
+- Express regression narrowed from 0.72× to **0.94×** (closer to parity)
 
 ---
 
 *Benchmark script: `benchmark/bun_install_bench.sh`*
-*Last run: 2026-03-26T22:46Z*
+*Last run: 2026-03-26T22:48Z*

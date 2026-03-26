@@ -1,23 +1,15 @@
-import { expect, test } from "bun:test";
+import { test, expect } from "bun:test";
 
-test("bytes() on consumed blob ReadableStream returns valid result", async () => {
-  // Create a blob-backed stream and fully consume it via reader
-  const blob = new Blob(["test data"]);
-  const stream = blob.stream();
-  const reader = stream.getReader();
-  const chunks: Uint8Array[] = [];
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    chunks.push(value);
-  }
-  reader.releaseLock();
-
-  // Stream is closed, source store is consumed.
-  // Calling bytes() should return a valid empty Uint8Array, not crash.
-  // Without the fix, the native toBufferedValue returns .zero without
-  // setting an exception, causing an assertion failure in debug builds.
-  const result = await stream.bytes();
+test("bytes() on consumed Response body does not crash", async () => {
+  const resp = new Response("test data");
+  const body = resp.body!;
+  // Response.bytes() uses the fast blob path which detaches the store
+  // without locking the ReadableStream.
+  await resp.bytes();
+  // body.bytes() now hits the native fast path with a null store.
+  // Without the fix, toBufferedValue returned .zero without setting
+  // a JS exception, crashing with a segfault or assertion failure.
+  const result = await body.bytes();
   expect(result).toBeInstanceOf(Uint8Array);
   expect(result.length).toBe(0);
 });

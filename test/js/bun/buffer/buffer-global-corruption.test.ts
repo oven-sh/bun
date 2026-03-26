@@ -32,8 +32,7 @@ test.concurrent("Buffer++ followed by SharedArrayBuffer operations should not cr
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stdout).toContain("__reached_end__");
-  // Exit code should not be a signal (signals are typically > 128)
-  expect(exitCode).toBeLessThan(128);
+  expect(exitCode).toBe(0);
 });
 
 test.concurrent("saved Buffer reference survives global corruption via eval", async () => {

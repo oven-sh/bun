@@ -1,3 +1,5 @@
+const debug = bun.Output.scoped(.GitRepository, .hidden);
+
 threadlocal var final_path_buf: bun.PathBuffer = undefined;
 threadlocal var ssh_path_buf: bun.PathBuffer = undefined;
 threadlocal var folder_name_buf: bun.PathBuffer = undefined;
@@ -512,15 +514,22 @@ pub const Repository = extern struct {
             // tryHTTPS prefers HTTPS when available (faster), otherwise use original URL
             const fetch_url = tryHTTPS(url) orelse url;
             ziggit_fetch: {
-                var repo = ziggit.Repository.open(allocator, path) catch break :ziggit_fetch;
-                repo.fetch(fetch_url) catch {
+                debug("fetch: trying ziggit for \"{s}\" (url: {s})", .{ name, fetch_url });
+                var repo = ziggit.Repository.open(allocator, path) catch |err| {
+                    debug("fetch: ziggit open failed ({s}), falling back to git CLI", .{@errorName(err)});
+                    break :ziggit_fetch;
+                };
+                repo.fetch(fetch_url) catch |err| {
+                    debug("fetch: ziggit fetch failed ({s}), falling back to git CLI", .{@errorName(err)});
                     repo.close();
                     break :ziggit_fetch;
                 };
                 repo.close();
+                debug("fetch: ziggit succeeded for \"{s}\"", .{name});
                 break :fetch dir;
             }
             // Ziggit failed — fall back to git CLI
+            debug("fetch: using git CLI for \"{s}\"", .{name});
             _ = exec(allocator, env, &[_]string{ "git", "-C", path, "fetch", "--quiet" }) catch |err| {
                 log.addErrorFmt(null, logger.Loc.Empty, allocator, "\"git fetch\" for \"{s}\" failed", .{name}) catch unreachable;
                 return err;
@@ -535,19 +544,24 @@ pub const Repository = extern struct {
             // ziggit handles: https://, ssh://, git@host:path natively
             const clone_url = tryHTTPS(url) orelse url;
             ziggit_clone: {
+                debug("clone: trying ziggit for \"{s}\" (url: {s})", .{ name, clone_url });
                 var repo = ziggit.Repository.cloneBare(allocator, clone_url, target) catch |err| {
                     if (err == error.RepositoryNotFound) {
+                        debug("clone: ziggit reports repository not found for \"{s}\"", .{name});
                         if (attempt > 1) {
                             log.addErrorFmt(null, logger.Loc.Empty, allocator, "\"git clone\" for \"{s}\" failed", .{name}) catch unreachable;
                         }
                         return error.RepositoryNotFound;
                     }
+                    debug("clone: ziggit clone failed ({s}), falling back to git CLI", .{@errorName(err)});
                     break :ziggit_clone;
                 };
                 repo.close();
+                debug("clone: ziggit succeeded for \"{s}\"", .{name});
                 break :clone try cache_dir.openDirZ(folder_name, .{});
             }
             // Ziggit failed — fall back to git CLI
+            debug("clone: using git CLI for \"{s}\"", .{name});
             _ = exec(allocator, env, &[_]string{
                 "git", "clone", "-c", "core.longpaths=true", "--quiet", "--bare", url, target,
             }) catch |exec_err| {
@@ -578,16 +592,18 @@ pub const Repository = extern struct {
 
         // Use ziggit for ~50x faster commit resolution (no process spawn overhead)
         {
-            var repo = ziggit.Repository.open(allocator, path) catch |_| {
-                // Fall through to git CLI fallback
+            const ref = if (committish.len > 0) committish else "HEAD";
+            debug("findCommit: trying ziggit for \"{s}\" ref=\"{s}\"", .{ name, ref });
+            var repo = ziggit.Repository.open(allocator, path) catch |err| {
+                debug("findCommit: ziggit open failed ({s}), falling back to git CLI", .{@errorName(err)});
                 return findCommitFallback(allocator, env, log, path, name, committish);
             };
             defer repo.close();
-            const hash = repo.findCommit(if (committish.len > 0) committish else "HEAD") catch {
-                // Fall through to git CLI fallback
+            const hash = repo.findCommit(ref) catch |err| {
+                debug("findCommit: ziggit resolve failed ({s}), falling back to git CLI", .{@errorName(err)});
                 return findCommitFallback(allocator, env, log, path, name, committish);
             };
-            // Return the hash as an allocated string (bun expects allocated string from exec())
+            debug("findCommit: ziggit resolved \"{s}\" -> {s}", .{ ref, &hash });
             const result = bun.handleOom(allocator.alloc(u8, 40));
             @memcpy(result, &hash);
             return result;
@@ -602,6 +618,7 @@ pub const Repository = extern struct {
         name: string,
         committish: string,
     ) !string {
+        debug("findCommit: using git CLI fallback for \"{s}\"", .{name});
         return std.mem.trim(u8, exec(
             allocator,
             shared_env.get(allocator, env),
@@ -641,19 +658,26 @@ pub const Repository = extern struct {
             const local_bare_path = try bun.getFdPath(.fromStdDir(repo_dir), &final_path_buf);
 
             // Try ziggit for local clone + checkout (no process spawn)
+            debug("checkout: trying ziggit for \"{s}\" resolved={s}", .{ name, resolved });
             const ziggit_ok = blk: {
-                var repo = ziggit.Repository.cloneNoCheckout(allocator, local_bare_path, target) catch break :blk false;
-                repo.checkout(resolved) catch {
+                var repo = ziggit.Repository.cloneNoCheckout(allocator, local_bare_path, target) catch |err| {
+                    debug("checkout: ziggit cloneNoCheckout failed ({s})", .{@errorName(err)});
+                    break :blk false;
+                };
+                repo.checkout(resolved) catch |err| {
+                    debug("checkout: ziggit checkout failed ({s}), cleaning up", .{@errorName(err)});
                     repo.close();
                     // Clean up failed checkout
                     std.fs.cwd().deleteTree(target) catch {};
                     break :blk false;
                 };
                 repo.close();
+                debug("checkout: ziggit succeeded for \"{s}\"", .{name});
                 break :blk true;
             };
 
             if (!ziggit_ok) {
+                debug("checkout: using git CLI fallback for \"{s}\"", .{name});
                 // Fall back to git CLI
                 _ = exec(allocator, env, &[_]string{
                     "git", "clone", "-c", "core.longpaths=true", "--quiet", "--no-checkout",

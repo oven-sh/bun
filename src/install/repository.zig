@@ -703,8 +703,10 @@ pub const Repository = extern struct {
                         const used_https = strings.hasPrefixComptime(clone_url, "https://");
                         if (used_https) {
                             debug("clone: ziggit reports repository not found (HTTPS 404) for \"{s}\"", .{name});
+                            // Clean up any partial clone directory
+                            std.fs.cwd().deleteTree(target) catch {};
                             if (attempt > 1) {
-                                log.addErrorFmt(null, logger.Loc.Empty, allocator, "\"git clone\" for \"{s}\" failed", .{name}) catch unreachable;
+                                log.addErrorFmt(null, logger.Loc.Empty, allocator, "\"git clone\" for \"{s}\" failed: repository not found", .{name}) catch unreachable;
                             }
                             return error.RepositoryNotFound;
                         }

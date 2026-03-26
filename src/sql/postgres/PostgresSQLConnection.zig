@@ -222,7 +222,16 @@ pub fn onMaxLifetimeTimeout(this: *PostgresSQLConnection) void {
     debug("onMaxLifetimeTimeout", .{});
     this.max_lifetime_timer.state = .FIRED;
     if (this.status == .failed) return;
-    this.failFmt("ERR_POSTGRES_LIFETIME_TIMEOUT", "Max lifetime timeout reached after {f}", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.max_lifetime_interval_ms) *| std.time.ns_per_ms)});
+
+    if (this.requests.readableLength() == 0) {
+        // Connection is idle, close it gracefully without erroring in-flight queries.
+        this.disconnect();
+    } else {
+        // Connection has in-flight queries. Reschedule to check again in 1 second
+        // so we don't kill active queries.
+        this.max_lifetime_timer.next = bun.timespec.msFromNow(.allow_mocked_time, 1000);
+        this.vm.timer.insert(&this.max_lifetime_timer);
+    }
 }
 
 fn start(this: *PostgresSQLConnection) void {

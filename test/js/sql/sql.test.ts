@@ -772,7 +772,7 @@ if (isDockerEnabled()) {
       expect(err.code).toBe(`ERR_POSTGRES_IDLE_TIMEOUT`);
     });
 
-    test("Max lifetime works", async () => {
+    test("Max lifetime closes idle connection gracefully", async () => {
       const onClosePromise = Promise.withResolvers();
       const onclose = mock(err => {
         onClosePromise.resolve(err);
@@ -784,24 +784,53 @@ if (isDockerEnabled()) {
         onconnect,
         onclose,
       });
-      let error: any;
-      expect(await sql`select 1 as x`).toEqual([{ x: 1 }]);
-      expect(onconnect).toHaveBeenCalledTimes(1);
-      try {
-        while (true) {
-          for (let i = 0; i < 100; i++) {
-            await sql`select pg_sleep(1)`;
-          }
-        }
-      } catch (e) {
-        error = e;
-      }
 
+      // Get the server-side backend PID before maxLifetime fires
+      const [{ pid: pidBefore }] = await sql`select pg_backend_pid() as pid`;
+      expect(onconnect).toHaveBeenCalledTimes(1);
+
+      // Wait for maxLifetime to fire and close the idle connection
+      await onClosePromise.promise;
       expect(onclose).toHaveBeenCalledTimes(1);
 
-      expect(error).toBeInstanceOf(SQL.SQLError);
-      expect(error).toBeInstanceOf(SQL.PostgresError);
-      expect(error.code).toBe(`ERR_POSTGRES_LIFETIME_TIMEOUT`);
+      // The pool should reconnect — verify via a different backend PID
+      const [{ pid: pidAfter }] = await sql`select pg_backend_pid() as pid`;
+      expect(pidAfter).not.toBe(pidBefore);
+
+      await sql.close();
+    });
+
+    test("Max lifetime does not kill in-flight queries", async () => {
+      const onClosePromise = Promise.withResolvers();
+      const onclose = mock(err => {
+        onClosePromise.resolve(err);
+      });
+      const onconnect = mock();
+      const sql = postgres({
+        ...options,
+        max_lifetime: 1,
+        onconnect,
+        onclose,
+        max: 1,
+      });
+
+      // Get backend PID before the long query
+      const [{ pid: pidBefore }] = await sql`select pg_backend_pid() as pid`;
+
+      // Start a query that takes longer than maxLifetime (3s > 1s).
+      // Previously this would throw ERR_POSTGRES_LIFETIME_TIMEOUT.
+      const result = await sql`select pg_sleep(3), 42 as x`;
+      expect(result[0].x).toBe(42);
+
+      // Wait for the connection to be closed after the query finishes
+      await onClosePromise.promise;
+      expect(onclose).toHaveBeenCalledTimes(1);
+
+      // Verify the pool reconnected with a different backend PID
+      const [{ pid: pidAfter }] = await sql`select pg_backend_pid() as pid`;
+      expect(pidAfter).not.toBe(pidBefore);
+
+      await sql.close();
     });
 
     // Last one wins.

@@ -1,10 +1,10 @@
 # Ziggit Integration Benchmarks
 
 ## Environment
-- Date: 2026-03-26
+- Date: 2026-03-26 (refreshed)
 - Ziggit commit: 6f37261 (single-pass architecture with eager LRU caching)
 - Bun fork branch: ziggit-integration
-- Machine: Linux (root@ziggit)
+- Machine: Linux (root@ziggit), tmpfs-backed /tmp
 
 ## Clone Benchmarks (bare clone)
 
@@ -12,42 +12,34 @@
 
 | Tool    | Run 1  | Run 2  | Run 3  | Avg    |
 |---------|--------|--------|--------|--------|
-| ziggit  | 0.207s | 0.234s | 0.215s | 0.219s |
-| git CLI | 0.189s | 0.194s | 0.192s | 0.192s |
+| ziggit  | 0.269s | 0.253s | 0.239s | 0.254s |
+| git CLI | 0.261s | 0.261s | 0.197s | 0.240s |
 
-**Result**: **Near-parity** — ziggit avg 0.219s vs git CLI avg 0.192s (~1.14x). Network latency dominates; variance is high on small repos.
+**Result**: **Parity** — ziggit avg 0.254s vs git CLI avg 0.240s (~1.06x). Network latency dominates; variance is high on small repos.
 
-### expressjs/express (medium repo)
-
-| Tool    | Run 1  | Run 2  | Run 3  | Avg    |
-|---------|--------|--------|--------|--------|
-| ziggit  | 0.278s | 0.285s | 0.271s | 0.278s |
-| git CLI | 0.281s | 0.280s | 0.268s | 0.276s |
-
-**Result**: **Parity** — ziggit avg 0.278s vs git CLI avg 0.276s (~1.01x).
-
-### lodash/lodash (larger repo)
+### expressjs/express (medium repo, ~5MB pack)
 
 | Tool    | Time   |
 |---------|--------|
-| ziggit  | 0.472s |
-| git CLI | 0.464s |
+| ziggit  | 0.987s |
+| git CLI | 1.040s |
 
-**Result**: **Parity** — ziggit 0.472s vs git CLI 0.464s (~1.02x).
+**Result**: **Parity** — ziggit 0.987s vs git CLI 1.040s (~0.95x, ziggit slightly faster).
 
 ### Correctness
 - `git fsck --no-dangling` passes on all ziggit-cloned repos ✅
 - Pack + idx files generated correctly ✅
 - Refs written to packed-refs ✅
+- HEAD resolves correctly ✅
 
 ## Benchmark History
 
-| Date       | Ziggit Commit | idx_writer Version                    | sindresorhus/is (ziggit avg) | express avg | Ratio vs git CLI |
-|------------|---------------|---------------------------------------|------------------------------|-------------|------------------|
-| 2026-03-26 | 6f37261       | Single-pass with eager LRU caching    | 0.219s                       | 0.278s      | ~1.01x ✅        |
-| 2026-03-26 | b49999c       | Two-pass with DeltaCache              | 0.300s                       | —           | 1.01x            |
-| 2026-03-26 | eeba670       | Single-pass architecture              | 0.194s                       | —           | ~1.0x            |
-| Earlier    | (pre-rewrite) | Original multi-pass                   | ~4x slower                   | —           | ~4x              |
+| Date       | Ziggit Commit | idx_writer Version                    | sindresorhus/is (ziggit avg) | express    | Ratio vs git CLI |
+|------------|---------------|---------------------------------------|------------------------------|------------|------------------|
+| 2026-03-26 | 6f37261       | Single-pass with eager LRU caching    | 0.254s                       | 0.987s     | ~1.0x ✅         |
+| 2026-03-26 | b49999c       | Two-pass with DeltaCache              | 0.300s                       | —          | 1.01x            |
+| 2026-03-26 | eeba670       | Single-pass architecture              | 0.194s                       | —          | ~1.0x            |
+| Earlier    | (pre-rewrite) | Original multi-pass                   | ~4x slower                   | —          | ~4x              |
 
 *Note: Absolute times vary by network conditions; the ratio is what matters.*
 
@@ -73,14 +65,15 @@ All paths have automatic git CLI fallback with categorized error logging.
 
 ## Error Categories in `logZiggitError`
 
-| Category           | Errors (actual ziggit values)                                                                          | Behavior                    |
+| Category           | Errors                                                                                                 | Behavior                    |
 |--------------------|--------------------------------------------------------------------------------------------------------|-----------------------------|
 | SSH Auth           | SshProcessFailed, SshCloneFailed, SshFetchFailed, InvalidSshUrl, SshAuthFailed, SshKeyNotFound, SshAgentFailure | Log hint about SSH keys     |
 | Network            | HttpError, HttpCloneFailed, HttpFetchFailed, SideBandError, RemoteNotFound, EndOfStream, ConnectionRefused, ConnectionTimedOut, ConnectionResetByPeer, ConnectionAborted, HostUnreachable, NetworkUnreachable, UnknownHostName, TemporaryNameResolutionFailure, TlsError, TlsFailure, BrokenPipe, ReadFailed | Log + fallback |
-| Protocol           | UnsupportedPackVersion, UnsupportedIndexVersion, UnsupportedPackIndexVersion, UnsupportedPackType, InvalidUrl, InvalidPktLine, UnsupportedMode, NotSupported, NotImplemented | Log + fallback |
-| Ref Resolution     | RefNotFound, ObjectNotFound, BranchNotFound, TreeNotFound, InvalidRef, InvalidRefName, InvalidCommit, InvalidCommitHash, InvalidHEAD, CircularRef, TooManySymbolicRefs, PackNotFound, PackFileNotFound, CommitNotFound, NotAGitRepository, NotACommit, NotATree, NotATreeObject, UnknownRevision, NoHEAD, EmptyRefName, InvalidRefNameChar, RefNameTooLong, NoCommitsYet, MaxDepthExceeded | Log + fallback |
-| Data Integrity     | ChecksumMismatch, PackChecksumMismatch, ObjectCountMismatch, ObjectSizeMismatch, InvalidPack*, InvalidFanoutTable, CorruptedPackIndex, PackIndexCorrupted, SuspiciousPackIndex, InvalidDelta*, DeltaCopyOutOfBounds, DeltaInsertOutOfBounds, DeltaMissingHeaders, DeltaReservedCommand, DeltaTruncated, InvalidHash*, InvalidObjectType, InvalidOffset, InsufficientDataAtOffset, OffsetBeyond*, OffsetOutOfBounds, ObjectSizeTooLarge, IndexNotSorted, IndexToo*, PackIndexToo*, PackIndexLowEntropy, PackIndexReadError, TooManyObjectsInPack, VarIntTooLarge, RefDeltaRequiresExternalLookup, EmptyBaseData, TreeCycle, PackFileTooSmall, EmptyPackFile | Log + cleanup + fallback |
-| Resource Exhaustion| OutOfMemory, ProcessFdQuotaExceeded, SystemFdQuotaExceeded, SystemResources, SystemResourcesExhausted  | Log + fallback              |
+| Protocol           | UnsupportedPackVersion, UnsupportedIndexVersion, UnsupportedPackIndexVersion, UnsupportedPackType, InvalidUrl, InvalidPktLine, NetworkRemoteNotSupported, UnsupportedUrlScheme | Log + fallback |
+| Ref Resolution     | RefNotFound, ObjectNotFound, BranchNotFound, TreeNotFound, InvalidRef, InvalidRefName, InvalidRefNameChar, InvalidBranchName, EmptyRefName, EmptyBranchName, InvalidCommit, InvalidCommitHash, InvalidHEAD, CircularRef, TooManySymbolicRefs, PackNotFound, PackFileNotFound, CommitNotFound, NotAGitRepository, NotACommit, NotATree, NotATreeObject, UnknownRevision, NoHEAD, NoCommitsYet, NoValidBranch, InvalidStartPoint, MaxDepthExceeded, RefNameTooLong, TreeCycle | Log + fallback |
+| Data Integrity     | ChecksumMismatch, PackChecksumMismatch, ObjectCountMismatch, ObjectSizeMismatch, InvalidPack*, InvalidDelta*, DeltaCopyOutOfBounds, DeltaInsertOutOfBounds, DeltaMissingHeaders, DeltaReservedCommand, DeltaTruncated, InvalidFanoutTable, CorruptedPackIndex, PackIndexCorrupted, SuspiciousPackIndex, EmptyPackFile, PackFileTooSmall, NoPackData, EmptyBaseData, IndexNotFound, IndexNotSorted, IndexToo*, IndexVersion*, InsufficientDataAtOffset, InvalidHash*, InvalidObjectType, InvalidOffset, InvalidPackPath, ObjectSizeTooLarge, OffsetBeyond*, OffsetOutOfBounds, Overflow, PackIndexToo*, PackIndexLowEntropy, PackIndexReadError, RefDeltaRequiresExternalLookup, VarIntTooLarge, TooManyObjectsInPack, TooManyIndexEntries | Log + cleanup + fallback |
+| Filesystem         | PackDirectoryAccessDenied, PackDirectoryError, PackDirectoryOnUnmountedDevice, PackDirectorySymlinkLoop, PackIndexAccessDenied, PackIndexBusy, PackIndexIsDirectory, PackedRefsAccessDenied, PathTooLong, InvalidPathCharacters, EmptyPath, FileNotFound | Log hint + fallback |
+| Resource Exhaustion| OutOfMemory, SystemResourcesExhausted, ConfigFileTooLarge, ExtensionDataTooLarge, TooManyConfigLines | Log + fallback |
 | Other              | Any unrecognized error                                                                                 | Generic log + fallback      |
 
 ## Edge Case Testing
@@ -92,6 +85,7 @@ All paths have automatic git CLI fallback with categorized error logging.
 | Clone to existing dir     | Returns error (dir exists)               | N/A (bun checks cache first)     |
 | Network timeout           | Returns connection error                 | Logs + falls back to git CLI      |
 | SSH auth failure           | Returns SSH error                        | Logs hint + falls back to git CLI |
+| Partial clone cleanup     | N/A                                      | deleteTree on all failure paths   |
 
 ## Known Limitations
 - Ziggit has no configurable network timeout (git CLI fallback is the safety net)

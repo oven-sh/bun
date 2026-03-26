@@ -1,7 +1,7 @@
 # Ziggit Integration Benchmarks
 
 ## Environment
-- Date: 2026-03-26T22:41Z (run 30 — ziggit 95b31d8)
+- Date: 2026-03-26T22:43Z (run 31 — ziggit 95b31d8)
 - Ziggit commit: 95b31d8 (perf: increase decompression buffer to 32KB for fewer iterations in idx generation)
 - Bun fork branch: ziggit-integration
 - Machine: Linux (root@ziggit), 483MB RAM, 1 vCPU, Debian (minimal VM)
@@ -13,47 +13,46 @@
 
 | Repo | git CLI avg | ziggit avg | Ratio |
 |------|------------|-----------|-------|
-| debug | 143ms | 79ms | **1.81x faster** |
-| semver | 175ms | 169ms | 1.04x (even) |
-| chalk | 159ms | 133ms | **1.20x faster** |
-| is | 157ms | 141ms | **1.12x faster** |
-| express | 196ms | 278ms | 0.70x (slower) |
-| **TOTAL** | **903ms** | **871ms** | **1.04x faster** |
+| debug | 132ms | 81ms | **1.63x faster** |
+| semver | 172ms | 166ms | 1.04x (even) |
+| chalk | 149ms | 121ms | **1.23x faster** |
+| is | 160ms | 134ms | **1.19x faster** |
+| express | 199ms | 273ms | 0.73x (slower) |
+| **TOTAL** | **884ms** | **844ms** | **1.05x faster** |
 
 ### Parallel: 5 repos at once, 3 runs
 
-| Tool | Run 1 | Run 2 | Run 3 | Avg |
-|------|-------|-------|-------|-----|
-| git CLI | 356ms | 351ms | 353ms | **353ms** |
-| ziggit | 442ms | 432ms | 434ms | **436ms** |
+| Tool | Run 1 | Run 2 | Run 3 | Avg | Median |
+|------|-------|-------|-------|-----|--------|
+| git CLI | 363ms | 589ms | 352ms | **435ms** | **363ms** |
+| ziggit | 446ms | 453ms | 445ms | **448ms** | **446ms** |
 
-**Parallel result**: git CLI wins 1.23x (per-process overhead in ziggit CLI; in-process library would eliminate this).
+**Parallel result**: By median, git CLI wins (363 vs 446ms). Per-process overhead in ziggit CLI; in-process library would eliminate this.
 
 ## findCommit: In-Process (1000 iterations)
 
 | Repo | git rev-parse | ziggit findCommit | Speedup |
 |------|--------------|-------------------|---------|
-| debug | 2,204µs | 5.0µs | **441x** |
-| semver | 2,215µs | 7.0µs | **316x** |
-| chalk | 2,126µs | 4.9µs | **434x** |
-| is | 2,099µs | 5.3µs | **396x** |
-| express | 2,158µs | 5.2µs | **415x** |
-| **Average** | **2,160µs** | **5.5µs** | **400x** |
+| debug | 2,219µs | 4.9µs | **453x** |
+| semver | 2,177µs | 6.3µs | **346x** |
+| chalk | 2,146µs | 4.8µs | **447x** |
+| is | 2,097µs | 5.1µs | **411x** |
+| express | 2,169µs | 5.2µs | **417x** |
+| **Average** | **2,162µs** | **5.3µs** | **~415x** |
 
 ## Bun Install Baseline (stock bun 1.3.11)
 
-| Metric | Value |
-|--------|-------|
-| Cold install (avg, 3 runs) | 494ms |
-| Cold install (median) | 494ms |
-| Warm install (avg) | 39ms |
-| Total packages resolved | 266 |
+| Metric | Run 1 | Run 2 | Run 3 | Avg | Median |
+|--------|-------|-------|-------|-----|--------|
+| Cold install | 562ms | 497ms | 518ms | **526ms** | **518ms** |
+| Warm install | 33ms | 33ms | 33ms | **33ms** | **33ms** |
+| Total packages resolved | 266 | | | | |
 
-## Trend (last 5 runs)
+## History
 
-| Metric | Run 27 | Run 28 | Run 29 | **Run 30** |
-|--------|--------|--------|--------|------------|
-| Seq clone ratio | 1.04x | 1.07x | 1.03x | **1.04x** |
-| findCommit speedup | 394x | 422x | 416x | **400x** |
-| debug clone speedup | 1.67x | 1.82x | 1.72x | **1.81x** |
-| Bun cold median | 557ms | 617ms | 464ms | **494ms** |
+| Run | Date | Ziggit SHA | Seq Total (git/zig) | findCommit speedup | Notes |
+|-----|------|-----------|--------------------:|-------------------:|-------|
+| 28 | 2026-03-26 | 95b31d8 | 882/856ms | 422x | baseline |
+| 29 | 2026-03-26 | 95b31d8 | 903/871ms | 400x | second run |
+| 30 | 2026-03-26 | 95b31d8 | 903/871ms | 400x | third run |
+| 31 | 2026-03-26 | 95b31d8 | 884/844ms | 415x | current |

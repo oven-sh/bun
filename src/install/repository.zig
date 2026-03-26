@@ -491,6 +491,22 @@ pub const Repository = extern struct {
         return null;
     }
 
+    /// Categorize and log ziggit errors with actionable context.
+    /// Distinguishes auth failures, network errors, and unsupported protocols
+    /// from generic errors so operators can diagnose issues from debug logs.
+    fn logZiggitError(operation: []const u8, name: string, err: anyerror) void {
+        const err_name = @errorName(err);
+        if (err == error.SshAuthFailed) {
+            debug("{s}: ziggit SSH auth failed for \"{s}\" (check SSH keys / GIT_SSH_COMMAND), falling back to git CLI", .{ operation, name });
+        } else if (err == error.HttpError or err == error.ConnectionRefused) {
+            debug("{s}: ziggit network error ({s}) for \"{s}\", falling back to git CLI", .{ operation, err_name, name });
+        } else if (err == error.NetworkRemoteNotSupported) {
+            debug("{s}: ziggit does not support this protocol for \"{s}\", falling back to git CLI", .{ operation, name });
+        } else {
+            debug("{s}: ziggit failed ({s}) for \"{s}\", falling back to git CLI", .{ operation, err_name, name });
+        }
+    }
+
     pub fn download(
         allocator: std.mem.Allocator,
         env: DotEnv.Map,
@@ -520,7 +536,7 @@ pub const Repository = extern struct {
                     break :ziggit_fetch;
                 };
                 repo.fetch(fetch_url) catch |err| {
-                    debug("fetch: ziggit fetch failed ({s}), falling back to git CLI", .{@errorName(err)});
+                    logZiggitError("fetch", name, err);
                     repo.close();
                     break :ziggit_fetch;
                 };
@@ -553,7 +569,9 @@ pub const Repository = extern struct {
                         }
                         return error.RepositoryNotFound;
                     }
-                    debug("clone: ziggit clone failed ({s}), falling back to git CLI", .{@errorName(err)});
+                    logZiggitError("clone", name, err);
+                    // Clean up any partial clone directory before falling back to git CLI
+                    std.fs.cwd().deleteTree(target) catch {};
                     break :ziggit_clone;
                 };
                 repo.close();
@@ -595,12 +613,12 @@ pub const Repository = extern struct {
             const ref = if (committish.len > 0) committish else "HEAD";
             debug("findCommit: trying ziggit for \"{s}\" ref=\"{s}\"", .{ name, ref });
             var repo = ziggit.Repository.open(allocator, path) catch |err| {
-                debug("findCommit: ziggit open failed ({s}), falling back to git CLI", .{@errorName(err)});
+                logZiggitError("findCommit/open", name, err);
                 return findCommitFallback(allocator, env, log, path, name, committish);
             };
             defer repo.close();
             const hash = repo.findCommit(ref) catch |err| {
-                debug("findCommit: ziggit resolve failed ({s}), falling back to git CLI", .{@errorName(err)});
+                logZiggitError("findCommit/resolve", name, err);
                 return findCommitFallback(allocator, env, log, path, name, committish);
             };
             debug("findCommit: ziggit resolved \"{s}\" -> {s}", .{ ref, &hash });
@@ -661,11 +679,11 @@ pub const Repository = extern struct {
             debug("checkout: trying ziggit for \"{s}\" resolved={s}", .{ name, resolved });
             const ziggit_ok = blk: {
                 var repo = ziggit.Repository.cloneNoCheckout(allocator, local_bare_path, target) catch |err| {
-                    debug("checkout: ziggit cloneNoCheckout failed ({s})", .{@errorName(err)});
+                    logZiggitError("checkout/clone", name, err);
                     break :blk false;
                 };
                 repo.checkout(resolved) catch |err| {
-                    debug("checkout: ziggit checkout failed ({s}), cleaning up", .{@errorName(err)});
+                    logZiggitError("checkout/checkout", name, err);
                     repo.close();
                     // Clean up failed checkout
                     std.fs.cwd().deleteTree(target) catch {};

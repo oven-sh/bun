@@ -55,6 +55,7 @@
 
 | Date       | Ziggit Commit | idx_writer Version                    | sindresorhus/is avg | chalk avg | express avg | Notes |
 |------------|---------------|---------------------------------------|---------------------|-----------|-------------|-------|
+| 2026-03-26 | 6f37261 (5-run v4) | Single-pass with eager LRU caching | 186ms (git: 186ms)  | — | 951ms (git: 948ms) | Dead parity on both sizes ✅ |
 | 2026-03-26 | 6f37261 (5-run v3) | Single-pass with eager LRU caching | 186ms (git: 179ms)  | 157ms (git: 145ms) | 990ms (git: 960ms) | 5-run avg, all verified |
 | 2026-03-26 | 6f37261 (re-bench) | Single-pass with eager LRU caching | 196ms (git: 198ms)  | 172ms (git: 163ms) | 1009ms (git: 988ms) | True parity, consistent |
 | 2026-03-26 | 6f37261 (latest) | Single-pass with eager LRU caching | 269ms (git: 249ms)  | 158ms (git: 156ms) | 992ms (git: 994ms) | Parity across all sizes |

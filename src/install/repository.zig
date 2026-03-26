@@ -498,15 +498,29 @@ pub const Repository = extern struct {
         const err_name = @errorName(err);
         if (err == error.SshAuthFailed) {
             debug("{s}: ziggit SSH auth failed for \"{s}\" (check SSH keys / GIT_SSH_COMMAND), falling back to git CLI", .{ operation, name });
-        } else if (err == error.HttpError or err == error.ConnectionRefused or err == error.ConnectionTimedOut or err == error.ConnectionResetByPeer) {
+        } else if (isNetworkError(err)) {
             debug("{s}: ziggit network error ({s}) for \"{s}\", falling back to git CLI", .{ operation, err_name, name });
         } else if (err == error.NetworkRemoteNotSupported) {
             debug("{s}: ziggit does not support this protocol for \"{s}\", falling back to git CLI", .{ operation, name });
         } else if (err == error.OutOfMemory) {
             debug("{s}: ziggit out of memory for \"{s}\", falling back to git CLI", .{ operation, name });
+        } else if (err == error.InvalidPackFile or err == error.CorruptedData or err == error.BadChecksum) {
+            debug("{s}: ziggit data integrity error ({s}) for \"{s}\", falling back to git CLI", .{ operation, err_name, name });
         } else {
             debug("{s}: ziggit failed ({s}) for \"{s}\", falling back to git CLI", .{ operation, err_name, name });
         }
+    }
+
+    fn isNetworkError(err: anyerror) bool {
+        return err == error.HttpError or
+            err == error.ConnectionRefused or
+            err == error.ConnectionTimedOut or
+            err == error.ConnectionResetByPeer or
+            err == error.ConnectionAborted or
+            err == error.HostUnreachable or
+            err == error.NetworkUnreachable or
+            err == error.UnknownHostName or
+            err == error.TlsError;
     }
 
     pub fn download(
@@ -520,6 +534,9 @@ pub const Repository = extern struct {
         attempt: u8,
     ) !std.fs.Dir {
         bun.analytics.Features.git_dependencies += 1;
+        if (attempt > 0) {
+            debug("download: \"{s}\" attempt {d} (url: {s})", .{ name, attempt, url });
+        }
         const folder_name = try std.fmt.bufPrintZ(&folder_name_buf, "{f}.git", .{
             bun.fmt.hexIntLower(task_id.get()),
         });
@@ -723,6 +740,8 @@ pub const Repository = extern struct {
 
                 _ = exec(allocator, env, &[_]string{ "git", "-C", folder, "checkout", "--quiet", resolved }) catch |err| {
                     log.addErrorFmt(null, logger.Loc.Empty, allocator, "\"git checkout\" for \"{s}\" failed", .{name}) catch unreachable;
+                    // Clean up partial checkout directory on failure
+                    std.fs.cwd().deleteTree(target) catch {};
                     return err;
                 };
             }

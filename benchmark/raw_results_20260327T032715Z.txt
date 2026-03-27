@@ -1,0 +1,60 @@
+============================================
+BUN INSTALL BENCHMARK — 2026-03-27T03:26:33Z
+VM: 1 CPU, 483Mi RAM
+bun: 1.3.11
+git: git version 2.43.0
+ziggit: /root/ziggit/zig-out/bin/ziggit
+ziggit commit: a1a6028
+============================================
+
+[03:26:33] === PART 1: Stock bun install ===
+[03:26:33]   bun cold run 1: 314ms
+[03:26:34]   bun cold run 2: 293ms
+[03:26:36]   bun cold run 3: 367ms
+[03:26:37]   bun warm run 1: 26ms
+[03:26:37]   bun warm run 2: 24ms
+[03:26:37]   bun warm run 3: 24ms
+[03:26:37] === PART 2: Per-repo git CLI vs ziggit ===
+--- debug (https://github.com/debug-js/debug.git) ---
+  git run 1: clone=139 resolve=2 checkout=6 total=148ms
+  git run 2: clone=133 resolve=2 checkout=6 total=142ms
+  git run 3: clone=130 resolve=2 checkout=6 total=139ms
+  ziggit run 1: clone=71 resolve=2 checkout=7 total=81ms
+  ziggit run 2: clone=77 resolve=2 checkout=7 total=87ms
+  ziggit run 3: clone=81 resolve=2 checkout=7 total=91ms
+
+--- semver (https://github.com/npm/node-semver.git) ---
+  git run 1: clone=226 resolve=2 checkout=11 total=239ms
+  git run 2: clone=228 resolve=2 checkout=11 total=241ms
+  git run 3: clone=216 resolve=2 checkout=11 total=229ms
+  ziggit run 1: clone=130 resolve=2 checkout=7 total=140ms
+  ziggit run 2: clone=131 resolve=2 checkout=7 total=141ms
+  ziggit run 3: clone=131 resolve=2 checkout=7 total=141ms
+
+--- ms (https://github.com/vercel/ms.git) ---
+  git run 1: clone=169 resolve=2 checkout=6 total=178ms
+  git run 2: clone=168 resolve=2 checkout=6 total=177ms
+  git run 3: clone=214 resolve=2 checkout=6 total=223ms
+  ziggit run 1: clone=116 resolve=2 checkout=5 total=124ms
+  ziggit run 2: clone=120 resolve=2 checkout=5 total=128ms
+  ziggit run 3: clone=118 resolve=2 checkout=5 total=126ms
+
+--- chalk (https://github.com/chalk/chalk.git) ---
+  git run 1: clone=146 resolve=2 checkout=8 total=157ms
+  git run 2: clone=144 resolve=2 checkout=8 total=154ms
+  git run 3: clone=143 resolve=2 checkout=8 total=153ms
+  ziggit run 1: clone=78 resolve=2 checkout=6 total=87ms
+  ziggit run 2: clone=86 resolve=2 checkout=6 total=94ms
+  ziggit run 3: clone=76 resolve=2 checkout=6 total=84ms
+
+--- express (https://github.com/expressjs/express.git) ---
+  git run 1: clone=984 resolve=2 checkout=16 total=1003ms
+  git run 2: clone=980 resolve=2 checkout=16 total=999ms
+  git run 3: clone=983 resolve=2 checkout=16 total=1002ms
+  ziggit run 1: clone=644 resolve=3 checkout=17 total=665ms
+  ziggit run 2: clone=586 resolve=2 checkout=17 total=606ms
+  ziggit run 3: clone=590 resolve=2 checkout=17 total=610ms
+
+[03:27:15] === SUMMARY ===
+Bun cold (median): 314ms  (runs: 314 293 367)
+Bun warm (median): 24ms  (runs: 26 24 24)

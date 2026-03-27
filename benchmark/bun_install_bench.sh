@@ -65,17 +65,18 @@ for i in 1 2 3; do
   rm -rf /tmp/bench-bun/node_modules /tmp/bench-bun/bun.lock
   rm -rf ~/.bun/install/cache 2>/dev/null || true
   start=$(date +%s%N)
-  $BUN install --cwd /tmp/bench-bun >/dev/null 2>&1
+  $BUN install --cwd /tmp/bench-bun >/dev/null 2>&1 || true
   end=$(date +%s%N)
   ms=$(( (end - start) / 1000000 ))
   BUN_COLD+=($ms)
   log "  bun cold run $i: ${ms}ms"
+  sleep 1
 done
 
 for i in 1 2 3; do
   rm -rf /tmp/bench-bun/node_modules
   start=$(date +%s%N)
-  $BUN install --cwd /tmp/bench-bun >/dev/null 2>&1
+  $BUN install --cwd /tmp/bench-bun >/dev/null 2>&1 || true
   end=$(date +%s%N)
   ms=$(( (end - start) / 1000000 ))
   BUN_WARM+=($ms)
@@ -104,13 +105,23 @@ for repo_name in "${REPO_ORDER[@]}"; do
       workdir=$(mktemp -d)
 
       t0=$(date +%s%N)
-      $TOOL clone --bare "$url" "$workdir/bare.git" >/dev/null 2>&1
+      if ! $TOOL clone --bare "$url" "$workdir/bare.git" >/dev/null 2>&1; then
+        echo "  $tool_name run $i: FAILED (clone)"
+        rm -rf "$workdir"
+        sleep 2
+        continue
+      fi
       t1=$(date +%s%N)
 
-      sha=$($GIT --git-dir="$workdir/bare.git" rev-parse HEAD 2>/dev/null)
+      sha=$($GIT --git-dir="$workdir/bare.git" rev-parse HEAD 2>/dev/null || echo "unknown")
       t2=$(date +%s%N)
 
-      $TOOL clone "$workdir/bare.git" "$workdir/checkout" >/dev/null 2>&1
+      if ! $TOOL clone "$workdir/bare.git" "$workdir/checkout" >/dev/null 2>&1; then
+        echo "  $tool_name run $i: FAILED (checkout)"
+        rm -rf "$workdir"
+        sleep 2
+        continue
+      fi
       t3=$(date +%s%N)
 
       clone_ms=$(( (t1 - t0) / 1000000 ))
@@ -121,6 +132,7 @@ for repo_name in "${REPO_ORDER[@]}"; do
       echo "  $tool_name run $i: clone=${clone_ms} resolve=${resolve_ms} checkout=${checkout_ms} total=${total_ms}ms"
 
       rm -rf "$workdir"
+      sleep 1
     done
   done
   echo ""

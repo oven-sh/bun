@@ -1,0 +1,102 @@
+=========================================
+BUN INSTALL BENCHMARK — 2026-03-27T04:10:34Z (Session 19)
+=========================================
+System: Linux 6.1.141 x86_64, 483MB RAM, 1 vCPU, 2GB swap
+Stock bun: v1.3.11 (af24e281)
+Zig: v0.15.2
+Git: v2.43.0
+Ziggit: b6ce769
+
+=== STOCK BUN INSTALL — COLD CACHE ===
+Run 1: 528ms (bun reported), 540ms (wall)
+Run 2: 468ms (bun reported), 472ms (wall)
+Run 3: 343ms (bun reported), 346ms (wall)
+Avg:   446ms (bun reported), 453ms (wall)
+
+=== STOCK BUN INSTALL — WARM CACHE ===
+Run 1: 22ms (bun reported), 24ms (wall)
+Run 2: 22ms (bun reported), 24ms (wall)
+Run 3: 21ms (bun reported), 24ms (wall)
+Avg:   22ms (bun reported), 24ms (wall)
+
+=== ZIGGIT LIBRARY vs GIT CLI — PER REPO ===
+
+### debug (596K) — 3 runs × 20 iterations
+
+findCommit:
+  R1: ziggit 182μs, git 1190μs, 6.5×
+  R2: ziggit 168μs, git 1034μs, 6.1×
+  R3: ziggit 166μs, git 1031μs, 6.2×
+  Avg: ziggit 172μs, git 1085μs, 6.3×
+
+cloneBare:
+  R1: ziggit 930μs, git 4665μs, 5.0×
+  R2: ziggit 847μs, git 4392μs, 5.1×
+  R3: ziggit 851μs, git 4429μs, 5.2×
+  Avg: ziggit 876μs, git 4495μs, 5.1×
+
+Full workflow:
+  R1: ziggit 1599μs, git 11060μs, 6.9×
+  R2: ziggit 1632μs, git 11101μs, 6.8×
+  R3: ziggit 1706μs, git 11018μs, 6.4×
+  Avg: ziggit 1646μs, git 11060μs, 6.7×
+
+### chalk (1.2M) — 3 runs × 20 iterations
+
+findCommit:
+  R1: ziggit 153μs, git 1032μs, 6.7×
+  R2: ziggit 124μs, git 1048μs, 8.4×
+  R3: ziggit 131μs, git 1041μs, 7.9×
+  Avg: ziggit 136μs, git 1040μs, 7.6×
+
+cloneBare:
+  R1: ziggit 1343μs, git 3998μs, 2.9×
+  R2: ziggit 1216μs, git 3989μs, 3.2×
+  R3: ziggit 1736μs, git 4062μs, 2.3×
+  Avg: ziggit 1432μs, git 4016μs, 2.8×
+
+Full workflow:
+  R1: ziggit 2567μs, git 12037μs, 4.6×
+  R2: ziggit 2434μs, git 12005μs, 4.9×
+  R3: ziggit 2491μs, git 12043μs, 4.8×
+  Avg: ziggit 2497μs, git 12028μs, 4.8×
+
+### is (1.4M) — 3 runs × 20 iterations
+
+findCommit:
+  R1: ziggit 215μs, git 1069μs, 4.9×
+  R2: ziggit 215μs, git 1056μs, 4.9×
+  R3: ziggit 216μs, git 1055μs, 4.8×
+  Avg: ziggit 215μs, git 1060μs, 4.9×
+
+cloneBare:
+  R1: ziggit 1831μs, git 4226μs, 2.3×
+  R2: ziggit 1669μs, git 4200μs, 2.5×
+  R3: ziggit 1678μs, git 4217μs, 2.5×
+  Avg: ziggit 1726μs, git 4214μs, 2.4×
+
+Full workflow:
+  R1: ziggit 3243μs, git 12446μs, 3.8×
+  R2: ziggit 3249μs, git 12425μs, 3.8×
+  R3: ziggit 3232μs, git 12435μs, 3.8×
+  Avg: ziggit 3241μs, git 12435μs, 3.8×
+
+### node-semver (1.6M) — 3 runs × 20 iterations
+
+findCommit:
+  R1: ziggit 144μs, git 1098μs, 7.6×
+  R2: ziggit 133μs, git 1041μs, 7.8×
+  R3: ziggit 151μs, git 1047μs, 6.9×
+  Avg: ziggit 143μs, git 1062μs, 7.4×
+
+cloneBare:
+  R1: ziggit 1937μs, git 5453μs, 2.8×
+  R2: ziggit 1775μs, git 5446μs, 3.0×
+  R3: ziggit 1757μs, git 5447μs, 3.1×
+  Avg: ziggit 1823μs, git 5449μs, 3.0×
+
+Full workflow:
+  R1: ziggit 3480μs, git 16280μs, 4.6×
+  R2: ziggit 3487μs, git 16180μs, 4.6×
+  R3: ziggit 3476μs, git 16250μs, 4.6×
+  Avg: ziggit 3481μs, git 16237μs, 4.6×

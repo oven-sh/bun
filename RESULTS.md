@@ -1,66 +1,89 @@
 # Ziggit Integration Benchmarks
 
 ## Environment
-- Date: 2026-03-27T02:08Z (latest run)
-- Ziggit: built from `/root/ziggit` HEAD, Zig 0.15.2, ReleaseFast
+- Date: 2026-03-27T02:13Z (latest run)
+- Ziggit: built from `/root/ziggit` HEAD, Zig 0.15.2, ReleaseSafe
 - Bun: 1.3.11 (stock), fork branch: ziggit-integration
 - Machine: Linux x86_64, 483MB RAM, 1 vCPU, 2GB swap
 - Git: 2.43.0
 
 ## Build Status
 
-Full bun fork binary **cannot be built** on this VM (needs ≥16GB RAM, ≥10GB disk).
+Full bun fork binary **cannot be built** on this VM (needs ≥8GB RAM, ≥10GB disk).
 `build.zig.zon` correctly wires ziggit as `../ziggit` path dependency.
 Benchmarks compare stock bun + git CLI vs ziggit CLI to measure replaceable operations.
 
 ---
 
-## Latest Run (2026-03-27T02:08Z)
+## Latest Run (2026-03-27T02:13Z)
 
-### Stock Bun Install (5 Git Dependencies, 14 packages)
+### Stock Bun Install (3 Git Dependencies)
 
 | Metric | Run 1 | Run 2 | Run 3 | Avg |
-|--------|-------|-------|-------|-----|
-| Cold cache | 165ms | 137ms | 96ms | **133ms** |
-| Warm cache | 8ms | 5ms | 6ms | **6ms** |
+|--------|------:|------:|------:|----:|
+| Cold cache | 188ms | 133ms | 170ms | **163ms** |
+| Warm cache | 46ms | 117ms | 46ms | **69ms** |
 
-### Git CLI vs Ziggit — Sequential Clone Workflow (5 repos)
+### Git CLI vs Ziggit — Full bun-install Workflow (3 repos)
 
-| Tool | Run 1 | Run 2 | Run 3 | Avg |
-|------|-------|-------|-------|-----|
-| Git CLI (total) | 733ms | 687ms | 664ms | **694ms** |
-| Ziggit (total) | 431ms | 424ms | 424ms | **426ms** |
-| **Savings** | 302ms | 263ms | 240ms | **268ms (39%)** |
-
-### Git CLI vs Ziggit — Parallel Clone (5 repos concurrent)
+Workflow: `clone --bare` → `rev-parse HEAD` → `clone + checkout` per repo.
 
 | Tool | Run 1 | Run 2 | Run 3 | Avg |
-|------|-------|-------|-------|-----|
-| Git CLI | 313ms | 306ms | 307ms | **309ms** |
-| Ziggit | 120ms | 101ms | 110ms | **110ms** |
-| **Speedup** | 2.61× | 3.03× | 2.79× | **2.80×** |
+|------|------:|------:|------:|----:|
+| Git CLI (total) | 554ms | 556ms | 567ms | **559ms** |
+| Ziggit (total) | 350ms | 334ms | 343ms | **342ms** |
+| **Savings** | 204ms | 222ms | 224ms | **217ms (39%)** |
 
-### Per-Repo Breakdown (sequential averages)
+### Per-Repo Breakdown (averages over 3 runs)
 
-| Repo | Git CLI Avg | Ziggit Avg | Speedup |
-|------|-------------|------------|---------|
-| debug | 125ms | 75ms | 1.67× |
-| node-semver | 154ms | 99ms | 1.56× |
-| ms | 141ms | 87ms | 1.62× |
-| ini | 134ms | 80ms | 1.68× |
-| mime | 141ms | 85ms | 1.66× |
+| Repo | Tool | Clone | FindCommit | Checkout | **Total** | Δ vs git |
+|------|------|------:|-----------:|---------:|----------:|---------:|
+| debug | git | 147ms | 2ms | 9ms | **159ms** | — |
+| debug | ziggit | 78ms | 3ms | 10ms | **91ms** | **-42%** |
+| node-semver | git | 227ms | 2ms | 13ms | **242ms** | — |
+| node-semver | ziggit | 136ms | 3ms | 11ms | **150ms** | **-38%** |
+| chalk | git | 146ms | 3ms | 9ms | **158ms** | — |
+| chalk | ziggit | 89ms | 3ms | 9ms | **101ms** | **-36%** |
 
-### Key Finding
+### Key Findings
 
-**Parallel clone (realistic bun install scenario): ziggit is 2.80× faster than git CLI.**
+1. **Ziggit clone is ~40% faster than git CLI** across all tested repos
+2. **Clone dominates total time** (~93% of per-repo total) — this is where ziggit's
+   native HTTP client + zero-alloc pack parser have the most impact
+3. **FindCommit and Checkout are comparable** — both tools operate on local data
+4. **Consistent across runs** — low variance (±3%) indicates reliable measurements
 
-The clone operation (HTTP smart protocol + pack decode) accounts for ~93% of total time.
-Ziggit's Zig-native HTTP client + zero-alloc pack parser eliminates process spawn overhead
-and dynamic linking costs that compound when running multiple git processes concurrently.
+### Projected In-Process Savings
+
+The CLI benchmarks show **39% savings**. The actual bun fork integration will be faster because:
+- No `fork()`+`exec()` overhead per git call (~3–5ms × 9 calls for 3 repos = ~27–45ms)
+- Shared allocator eliminates per-process heap setup
+- Direct Zig API calls, no stdout pipe parsing
+- Projected in-process savings: **~46% (260ms for 3 repos)**
+
+---
+
+## Historical Runs
+
+### 2026-03-27T02:08Z (5 repos, different methodology)
+
+| Tool | Sequential Avg | Parallel Avg |
+|------|---------------:|-------------:|
+| Git CLI | 694ms | 309ms |
+| Ziggit | 426ms | 110ms |
+| Speedup | 1.63× | **2.80×** |
+
+### 2026-03-27T02:13Z (3 repos, full bun-install workflow simulation)
+
+| Tool | Total Avg |
+|------|----------:|
+| Git CLI | 559ms |
+| Ziggit | 342ms |
+| Speedup | **1.63×** |
 
 ---
 
 ## Detailed Report
 
 See [BUN_INSTALL_BENCHMARK.md](BUN_INSTALL_BENCHMARK.md) for full methodology, per-operation
-breakdown, and projected impact analysis.
+breakdown, raw data, and projected impact analysis.

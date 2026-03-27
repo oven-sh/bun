@@ -1,8 +1,8 @@
 # Ziggit Integration Benchmarks
 
 ## Environment
-- Date: 2026-03-27 (re-run with ziggit v0.3.0)
-- Ziggit: v0.3.0 built from /root/ziggit (commit f428a9d), ReleaseFast
+- Date: 2026-03-27T00:13Z (fresh run)
+- Ziggit: built from /root/ziggit (master), ReleaseFast
 - Bun: 1.3.11 (stock, af24e281), fork branch: ziggit-integration
 - Machine: Linux x86_64, 483MB RAM, 1 vCPU, 2GB swap
 - Git: 2.43.0, Zig: 0.15.2
@@ -17,10 +17,10 @@ Benchmarks compare stock bun + git CLI vs ziggit CLI/library to measure replacea
 
 | Metric | Cold Cache | Warm Cache |
 |--------|-----------|------------|
-| Run 1 | 505ms | 22ms |
-| Run 2 | 492ms | 21ms |
-| Run 3 | 406ms | 21ms |
-| **Median** | **492ms** | **21ms** |
+| Run 1 | 960ms | 21ms |
+| Run 2 | 444ms | 21ms |
+| Run 3 | 478ms | 21ms |
+| **Median** | **478ms** | **21ms** |
 
 Package: 5 git deps (`@sindresorhus/is`, `express`, `chalk`, `debug`, `semver`) → 69 total packages installed.
 
@@ -30,44 +30,45 @@ Package: 5 git deps (`@sindresorhus/is`, `express`, `chalk`, `debug`, `semver`) 
 
 | Repo | git clone (ms) | ziggit clone (ms) | git total (ms) | ziggit total (ms) | Speedup |
 |------|---------------:|------------------:|---------------:|-------------------:|--------:|
-| debug | 123 | 66 | 125 | 68 | **1.83x** |
-| node-semver | 139 | 79 | 141 | 82 | **1.71x** |
-| chalk | 144 | 81 | 145 | 83 | **1.74x** |
-| is | 127 | 82 | 129 | 84 | **1.53x** |
-| express | 160 | 116 | 162 | 119 | **1.36x** |
-| **Total** | **693** | **424** | **702** | **436** | **1.61x** |
+| debug | 116 | 64 | 118 | 67 | **1.76x** |
+| node-semver | 140 | 84 | 142 | 87 | **1.63x** |
+| chalk | 126 | 75 | 128 | 78 | **1.64x** |
+| is | 125 | 80 | 126 | 82 | **1.53x** |
+| express | 168 | 110 | 170 | 113 | **1.50x** |
+| **Total** | **675** | **413** | **684** | **427** | **1.60x** |
 
-**Average per repo: 140ms (git) → 87ms (ziggit), saving ~53ms per dependency.**
+**Average per repo: 137ms (git) → 85ms (ziggit), saving ~51ms per dependency.**
 
 ## Zig-Level Benchmarks (In-Process Library vs Git CLI)
 
 Using `git_vs_ziggit` benchmark binary against `octocat/Hello-World`:
 
-### Network Operations (5 iterations, run 2)
+### Network Operations (5 iterations)
 
 | Operation | ziggit (ms) | git CLI (ms) | Speedup |
 |-----------|------------:|-------------:|--------:|
-| clone (bare) | 58.71 | 99.11 | **1.69x** |
-| fetch | 59.87 | 89.16 | **1.49x** |
+| clone (bare) | 56.16 | 108.23 | **1.93x** |
+| fetch | 55.77 | 87.84 | **1.58x** |
 
-### Local Operations (100 iterations, run 2)
+### Local Operations (100 iterations)
 
 | Operation | ziggit (ms) | git CLI (ms) | Speedup |
 |-----------|------------:|-------------:|--------:|
-| revParseHead | 0.058 | 1.018 | **17.50x** |
-| findCommit | 0.056 | 1.167 | **20.75x** |
-| describeTags | 0.056 | 1.183 | **20.99x** |
+| revParseHead | 0.058 | 0.965 | **16.70x** |
+| findCommit | 0.054 | 1.165 | **21.54x** |
+| describeTags | 0.052 | 1.138 | **21.81x** |
 
 ### findCommit Micro-Benchmark (1000 iterations)
 
-- Per-call: **5.1µs** (ziggit in-process) vs ~1.17ms (git CLI) = **~229x faster**
+- Per-call: **5.4µs** (ziggit in-process) vs ~1.17ms (git CLI) = **~217x faster**
 
 ## Summary
 
 | Metric | Value |
 |--------|-------|
-| Clone speedup (network) | **1.49–1.83x** |
-| Local operation speedup | **17.5–21x** |
-| Raw findCommit speedup | **~229x** |
-| Projected cold install savings | **~266ms (54% of git op time)** |
-| Projected cold install time | **~226ms** (down from 492ms) |
+| Clone speedup (network) | **1.58–1.93x** |
+| Per-repo clone savings (CLI) | **~51ms avg** |
+| Local operation speedup | **16.7–21.8x** |
+| Raw findCommit speedup | **~217x** |
+| Projected cold install savings | **~257ms (53.7% of git op time)** |
+| Projected cold install time | **~221ms** (down from 478ms) |

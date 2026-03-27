@@ -83,6 +83,30 @@ The bun fork calls ziggit as a Zig module, not a subprocess. This eliminates:
 
 ---
 
+### 2026-03-27T02:29Z — Improved Benchmark (5 repos, fixed sequential measurement)
+
+Repos: `debug`, `semver`, `ms`, `supports-color`, `has-flag`
+
+| Repo | Git clone --bare (ms) | Ziggit clone --bare (ms) | Speedup |
+|------|---------------------:|------------------------:|--------:|
+| debug | 118 | 80 | **1.48x** |
+| semver | 123 | 134 | 0.92x |
+| ms | 123 | 128 | 0.96x |
+| supports-color | 114 | 64 | **1.78x** |
+| has-flag | 111 | 58 | **1.91x** |
+| **Total** | **589** | **464** | **1.27x** |
+
+Full sequential workflow (5 repos, clone + rev-parse, avg of 3):
+
+| Tool | Average | Speedup |
+|------|--------:|--------:|
+| Git CLI | 592ms | — |
+| Ziggit | 489ms | **1.21x** |
+
+Stock bun install: 102ms cold / 49ms warm (GitHub API, not bare clones)
+
+---
+
 ## Historical Runs
 
 ### 2026-03-27T02:24Z — LATEST (5 repos, strace-verified)

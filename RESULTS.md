@@ -73,6 +73,7 @@ In library mode (ziggit linked directly into bun, no subprocess per operation):
 
 | Date | Clone Speedup | Full Workflow (CLI) | Bun Cold | Notes |
 |------|--------------|-------------------|----------|-------|
+| 2026-03-27T01:45Z | **1.02×** | 1.01× | 156ms | BUN-INTEGRATOR: e2e benchmark, found HEAD symref bug |
 | 2026-03-27T01:40Z | **1.61×** | 0.99× | 615ms | Latest, 3 iters |
 | 2026-03-27T01:36Z | 1.60× | 1.01× | 545ms | Previous |
 | 2026-03-27T01:33Z | 1.69× | 1.03× | 545ms | Earlier |
@@ -86,6 +87,7 @@ In library mode (ziggit linked directly into bun, no subprocess per operation):
 2. **Per-blob subprocess overhead limits CLI gains**: +0.57ms/spawn × 426 blobs = +243ms
 3. **Library mode is essential**: eliminates spawn overhead → projected 2.84× for all git ops
 4. **Real-world impact**: ~35–50% faster `bun install` for projects with git dependencies
+5. **Bug found**: ziggit hardcodes HEAD→master, fails checkout for repos with `main` default branch (pack data still fetched correctly)
 
 ## Files
 

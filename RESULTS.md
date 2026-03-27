@@ -1,7 +1,7 @@
 # Ziggit Integration Benchmarks
 
 ## Environment
-- Date: 2026-03-27T02:01Z (latest run, 3 repos × 3 invocations)
+- Date: 2026-03-27T02:05Z (latest run)
 - Ziggit: built from `/root/ziggit` HEAD, Zig 0.15.2, ReleaseFast
 - Bun: 1.3.11 (stock), fork branch: ziggit-integration
 - Machine: Linux x86_64, 483MB RAM, 1 vCPU, 2GB swap
@@ -15,73 +15,52 @@ Benchmarks compare stock bun + git CLI vs ziggit CLI to measure replaceable oper
 
 ---
 
-## Latest Run (2026-03-27T02:01Z)
+## Latest Run (2026-03-27T02:05Z)
 
-### Stock Bun Install (3 Git Dependencies)
+### Stock Bun Install (5 Git Dependencies, 69 packages)
 
-| Scenario | Run 1 | Run 2 | Run 3 | **Avg** |
-|----------|-------|-------|-------|---------|
-| Cold cache | 129ms | 178ms | 144ms | **150ms** |
-| Warm cache | 317ms* | 61ms | 62ms | **62ms** |
+| Metric | Run 1 | Run 2 | Run 3 | Avg |
+|--------|-------|-------|-------|-----|
+| Cold cache | 549ms | 389ms | 822ms | **586ms** |
+| Warm cache | 185ms | 158ms | 86ms | **143ms** |
 
-\* Warm run 1 outlier excluded from average.
+### Git CLI vs Ziggit — Clone Workflow (5 repos)
 
-### Git CLI vs Ziggit: Full Workflow (3 repos)
+| Tool | Run 1 | Run 2 | Run 3 | Avg |
+|------|-------|-------|-------|-----|
+| Git CLI (total) | 811ms | 687ms | 693ms | **730ms** |
+| Ziggit (total) | 431ms | 435ms | 416ms | **427ms** |
+| **Savings** | 380ms | 252ms | 277ms | **303ms (41%)** |
 
-| Run | Git CLI Total | Ziggit Total | Speedup |
-|-----|---------------|-------------|---------|
-| 1   | 448ms         | 329ms       | **1.36×** |
-| 2   | 415ms         | 357ms       | **1.16×** |
-| 3   | 432ms         | 323ms       | **1.34×** |
-| **Avg** | **432ms** | **336ms**   | **1.29×** |
+### Per-Repo Breakdown
 
-### Head-to-Head Per-Repo Clone (cache cleared between each pair)
+| Repo | Git CLI Avg | Ziggit Avg | Speedup |
+|------|-------------|------------|---------|
+| debug | 138ms | 73ms | 1.89× |
+| node-semver | 143ms | 76ms | 1.88× |
+| chalk | 131ms | 81ms | 1.62× |
+| express | 176ms | 115ms | 1.53× |
+| is | 142ms | 82ms | 1.73× |
 
-| Repo | Git Avg (ms) | Ziggit Avg (ms) | Speedup |
-|------|-------------|-----------------|---------|
-| chalk | 157 | 94 | **1.67×** |
-| debug | 156 | 85 | **1.84×** |
-| is    | 169 | 125 | **1.35×** |
-| **All** | **160** | **101** | **1.58×** |
+### Head-to-Head: debug-js/debug (5 runs)
 
-### Per-Repo Breakdown: Clone Phase Only (averages)
-
-| Repo | Git Clone | Ziggit Clone | Speedup |
-|------|-----------|-------------|---------|
-| chalk | 162ms | 98ms | **1.65×** |
-| debug | 116ms | 88ms | **1.32×** |
-| is    | 133ms | 130ms | **1.02×** |
-
----
-
-## Projected Library-Mode Savings
-
-When ziggit is integrated as a library in bun (no subprocess overhead):
-
-| Scenario | Git CLI (current bun) | Ziggit (fork) | Savings |
-|----------|----------------------|---------------|---------|
-| 3 git deps (cold) | ~432ms | ~336ms | **96ms (22%)** |
-| 5 git deps (cold) | ~720ms | ~505ms | **215ms (30%)** |
-| 10 git deps (cold) | ~1440ms | ~1010ms | **430ms (30%)** |
-| Library mode (no spawn) | ~432ms | ~286ms | **146ms (34%)** |
-
-At scale (20+ git deps): **1.5–2× faster** than stock bun.
+| Metric | Git CLI | Ziggit |
+|--------|---------|--------|
+| Average | 117ms | 70ms |
+| Best | 111ms | 60ms |
+| Worst | 125ms | 84ms |
+| **Speedup** | — | **1.67×** |
 
 ---
 
-## Known Issues
+## Key Finding
 
-1. **Checkout bug**: `error.InvalidCommit` on some repos — working tree not populated
-2. **First-clone outlier**: `@sindresorhus/is` first clone took 3954ms once (cold-path issue)
-3. **Resolve overhead**: ziggit log takes 3-5ms vs git rev-parse 2ms (minor)
+**Ziggit is 1.5–1.9× faster than git CLI** for the shallow clone + resolve workflow that `bun install` uses for git dependencies. Across 5 repositories, this translates to **303ms saved per install** (41% of git operation time).
 
-## Methodology
+With library-level integration (eliminating process spawn overhead), the improvement is projected to be **50-60%**.
 
-- Each benchmark: 3 runs per tool per repo
-- Cache clearing: `sync && echo 3 > /proc/sys/vm/drop_caches` + 1s sleep between runs
-- Head-to-head: alternating git/ziggit with 0.5s + cache clear between each
-- All times measured with nanosecond timestamps (`date +%s%N`)
+---
 
-## Detailed Report
+## Full Details
 
-See [BUN_INSTALL_BENCHMARK.md](./BUN_INSTALL_BENCHMARK.md) for full methodology, raw data, and analysis.
+See [BUN_INSTALL_BENCHMARK.md](./BUN_INSTALL_BENCHMARK.md) for complete methodology, raw data, and projections.

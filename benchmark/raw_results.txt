@@ -1,33 +1,79 @@
-timestamp=20260327T015114Z
-bun_cold=252 271 115
-bun_warm=21 22 20
-bun_cold_median=252
-bun_warm_median=21
-pkg_count=5
-git_spawn_per=1.07
-zig_spawn_per=1.68
-repo_debug_git_clone=134
-repo_debug_git_resolve=11
-repo_debug_git_archive=13
-repo_debug_zig_clone=96
-repo_debug_zig_resolve=14
-repo_semver_git_clone=144
-repo_semver_git_resolve=11
-repo_semver_git_archive=16
-repo_semver_zig_clone=151
-repo_semver_zig_resolve=13
-repo_ms_git_clone=129
-repo_ms_git_resolve=11
-repo_ms_git_archive=15
-repo_ms_zig_clone=140
-repo_ms_zig_resolve=13
-repo_balanced-match_git_clone=123
-repo_balanced-match_git_resolve=12
-repo_balanced-match_git_archive=14
-repo_balanced-match_zig_clone=225
-repo_balanced-match_zig_resolve=14
-repo_concat-map_git_clone=122
-repo_concat-map_git_resolve=12
-repo_concat-map_git_archive=14
-repo_concat-map_zig_clone=62
-repo_concat-map_zig_resolve=13
+=== BUN INSTALL BENCHMARK ===
+Date: 2026-03-27T02:05Z
+Bun: 1.3.11
+Git: git version 2.43.0
+Ziggit: git version 2.43.0
+System: 1 CPU, 483Mi RAM
+
+=== SECTION 1: Stock Bun Install ===
+--- Run 1 (cold cache) ---
+bun_install_cold_run1=549ms
+bun_install_warm_run1=185ms
+--- Run 2 (cold cache) ---
+bun_install_cold_run2=389ms
+bun_install_warm_run2=158ms
+--- Run 3 (cold cache) ---
+bun_install_cold_run3=822ms
+bun_install_warm_run3=86ms
+
+=== SECTION 2: Git CLI Clone Workflow ===
+(bare clone + rev-parse HEAD + checkout)
+--- Run 1 ---
+git_debug_run1=165ms (sha=6704cea6)
+git_node-semver_run1=159ms (sha=6946fefa)
+git_chalk_run1=134ms (sha=aa06bb5a)
+git_express_run1=189ms (sha=6c4249fe)
+git_is_run1=164ms (sha=eff8e6b3)
+git_total_run1=811ms
+--- Run 2 ---
+git_debug_run2=123ms (sha=6704cea6)
+git_node-semver_run2=133ms (sha=6946fefa)
+git_chalk_run2=125ms (sha=aa06bb5a)
+git_express_run2=172ms (sha=6c4249fe)
+git_is_run2=134ms (sha=eff8e6b3)
+git_total_run2=687ms
+--- Run 3 ---
+git_debug_run3=127ms (sha=6704cea6)
+git_node-semver_run3=137ms (sha=6946fefa)
+git_chalk_run3=134ms (sha=aa06bb5a)
+git_express_run3=168ms (sha=6c4249fe)
+git_is_run3=127ms (sha=eff8e6b3)
+git_total_run3=693ms
+
+=== SECTION 3: Ziggit Clone Workflow ===
+(clone + rev-parse HEAD + archive)
+--- Run 1 ---
+ziggit_debug_run1=69ms (sha=6704cea6)
+ziggit_node-semver_run1=78ms (sha=6946fefa)
+ziggit_chalk_run1=81ms (sha=aa06bb5a)
+ziggit_express_run1=118ms (sha=6c4249fe)
+ziggit_is_run1=85ms (sha=eff8e6b3)
+ziggit_total_run1=431ms
+--- Run 2 ---
+ziggit_debug_run2=86ms (sha=6704cea6)
+ziggit_node-semver_run2=75ms (sha=6946fefa)
+ziggit_chalk_run2=82ms (sha=aa06bb5a)
+ziggit_express_run2=114ms (sha=6c4249fe)
+ziggit_is_run2=78ms (sha=eff8e6b3)
+ziggit_total_run2=435ms
+--- Run 3 ---
+ziggit_debug_run3=65ms (sha=6704cea6)
+ziggit_node-semver_run3=75ms (sha=6946fefa)
+ziggit_chalk_run3=79ms (sha=aa06bb5a)
+ziggit_express_run3=113ms (sha=6c4249fe)
+ziggit_is_run3=84ms (sha=eff8e6b3)
+ziggit_total_run3=416ms
+
+=== SECTION 4: Head-to-Head (debug repo, 5 runs) ===
+h2h_git_run1=111ms
+h2h_ziggit_run1=84ms
+h2h_git_run2=116ms
+h2h_ziggit_run2=60ms
+h2h_git_run3=113ms
+h2h_ziggit_run3=64ms
+h2h_git_run4=125ms
+h2h_ziggit_run4=70ms
+h2h_git_run5=120ms
+h2h_ziggit_run5=76ms
+
+=== BENCHMARK COMPLETE ===

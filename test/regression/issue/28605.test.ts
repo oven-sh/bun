@@ -98,12 +98,17 @@ test("jsxImportSource from deeply nested tsconfig overrides root tsconfig", asyn
         return <span>nested</span>;
       }
     `,
+    "packages/ui/dynamic-component.tsx": `
+      export function DynamicComponent() {
+        return <span>dynamic-nested</span>;
+      }
+    `,
     "entry.ts": `
       import { Component } from "./packages/ui/component.tsx";
       console.log(Component());
-      // Dynamic import exercises RuntimeTranspilerStore (post-startup path)
-      const { Component: C2 } = await import("./packages/ui/component.tsx");
-      console.log(C2());
+      // Dynamic import of a distinct file exercises RuntimeTranspilerStore (post-startup path)
+      const { DynamicComponent } = await import("./packages/ui/dynamic-component.tsx");
+      console.log(DynamicComponent());
     `,
   });
 

@@ -1,8 +1,8 @@
 # Ziggit Integration Benchmarks
 
 ## Environment
-- Date: 2026-03-26 (re-run with fresh measurements)
-- Ziggit: v0.2.0 built from /root/ziggit (commit 1fb34b1), ReleaseFast
+- Date: 2026-03-27 (fresh re-run)
+- Ziggit: v0.2.0 built from /root/ziggit (commit 0b77ad4), ReleaseFast
 - Bun: 1.3.11 (stock, af24e281), fork branch: ziggit-integration
 - Machine: Linux x86_64, 483MB RAM, 1 vCPU
 - Git: 2.43.0, Zig: 0.15.2
@@ -18,10 +18,10 @@ Benchmarks compare stock bun + git CLI vs ziggit CLI/library to measure replacea
 
 | Metric | Cold Cache | Warm Cache |
 |--------|-----------|------------|
-| Run 1 | 305ms | 27ms |
-| Run 2 | 439ms | 29ms |
-| Run 3 | 368ms | 27ms |
-| **Median** | **368ms** | **27ms** |
+| Run 1 | 517ms | 22ms |
+| Run 2 | 610ms | 21ms |
+| Run 3 | 372ms | 22ms |
+| **Median** | **517ms** | **22ms** |
 
 Package: 5 git deps (`@sindresorhus/is`, `express`, `chalk`, `debug`, `semver`) → 69 total packages installed.
 
@@ -31,14 +31,14 @@ Package: 5 git deps (`@sindresorhus/is`, `express`, `chalk`, `debug`, `semver`) 
 
 | Repo | git clone (ms) | ziggit clone (ms) | git total (ms) | ziggit total (ms) | Speedup |
 |------|---------------:|------------------:|---------------:|-------------------:|--------:|
-| debug | 123 | 66 | 125 | 70 | **1.78x** |
-| node-semver | 142 | 85 | 145 | 88 | **1.64x** |
-| chalk | 131 | 71 | 133 | 73 | **1.82x** |
-| is | 134 | 80 | 136 | 83 | **1.63x** |
-| express | 166 | 107 | 168 | 110 | **1.52x** |
-| **Total** | **696** | **409** | **707** | **424** | **1.66x** |
+| debug | 125 | 70 | 127 | 73 | **1.73x** |
+| node-semver | 145 | 86 | 147 | 89 | **1.65x** |
+| chalk | 125 | 75 | 127 | 78 | **1.62x** |
+| is | 135 | 75 | 137 | 78 | **1.75x** |
+| express | 156 | 107 | 158 | 110 | **1.43x** |
+| **Total** | **686** | **413** | **696** | **428** | **1.62x** |
 
-**Average per repo: 141ms (git) → 85ms (ziggit), saving ~57ms per dependency.**
+**Average per repo: 139ms (git) → 86ms (ziggit), saving ~54ms per dependency.**
 
 ## Zig-Level Benchmarks (In-Process Library vs Git CLI)
 
@@ -48,33 +48,33 @@ Using `git_vs_ziggit` benchmark binary against `octocat/Hello-World`:
 
 | Operation | ziggit (ms) | git CLI (ms) | Speedup |
 |-----------|------------:|-------------:|--------:|
-| clone (bare) | 57.4 | 93.0 | **1.62x** |
-| fetch | 53.6 | 85.5 | **1.60x** |
+| clone (bare) | 56.9 | 102.3 | **1.80x** |
+| fetch | 52.3 | 87.5 | **1.67x** |
 
 ### Local Operations (100 iterations)
 
 | Operation | ziggit (µs) | git CLI (µs) | Speedup |
 |-----------|------------:|-------------:|--------:|
-| revParseHead | 53 | 950 | **17.9x** |
-| findCommit | 53 | 1,117 | **21.1x** |
-| describeTags | 53 | 1,121 | **21.2x** |
+| revParseHead | 59 | 1,030 | **17.6x** |
+| findCommit | 57 | 1,199 | **20.9x** |
+| describeTags | 51 | 1,180 | **22.9x** |
 
 ## findCommit Microbenchmark (1000 iterations, debug-js/debug repo)
 
 | Tool | Per-call | Speedup |
 |------|----------|--------:|
-| ziggit (in-process) | 5.2µs | — |
-| git CLI (fork+exec) | 994µs | — |
-| **Speedup** | | **191x** |
+| ziggit (in-process) | 5.4µs | — |
+| git CLI (fork+exec) | 999µs | — |
+| **Speedup** | | **185x** |
 
 ## Projected Impact
 
 | Scenario | Stock Bun | With Ziggit | Improvement |
 |----------|----------:|------------:|------------:|
-| Cold install (5 git deps, parallel) | 368ms | ~310ms | **~16% faster** |
-| Cold install (5 git deps, serial) | ~907ms | ~624ms | **31% faster** |
-| Cold install (20 git deps, serial) | ~3000ms | ~1900ms | **37% faster** |
-| findCommit per dep | 994µs | 5.2µs | **191x faster** |
-| clone bare (network) | 93ms | 57ms | **1.62x faster** |
+| Cold install (5 git deps, parallel) | 517ms | ~469ms | **~9% faster** |
+| Cold install (5 git deps, serial) | ~1055ms | ~787ms | **25% faster** |
+| Cold install (20 git deps, serial) | ~3140ms | ~1860ms | **41% faster** |
+| findCommit per dep | 999µs | 5.4µs | **185x faster** |
+| clone bare (network) | 102ms | 57ms | **1.80x faster** |
 
 See [BUN_INSTALL_BENCHMARK.md](BUN_INSTALL_BENCHMARK.md) for full analysis and methodology.

@@ -2,22 +2,22 @@
 
 ## Executive Summary
 
-**Ziggit replaces git CLI calls in bun's git dependency resolution with a 1.63× speedup (38% faster).**
+**Ziggit replaces git CLI calls in bun's git dependency resolution with a 1.55× speedup (35% faster).**
 
-For a project with 5 `github:` dependencies, the git operations take **704ms** with git CLI
-vs **430ms** with ziggit — saving **274ms** per cold install. When integrated as an in-process
+For a project with 5 `github:` dependencies, the git operations take **727ms** with git CLI
+vs **467ms** with ziggit — saving **260ms** per cold install. When integrated as an in-process
 library (eliminating fork/exec overhead), additional savings of ~25ms are expected.
 
 ## Environment
 
 | Property | Value |
 |----------|-------|
-| Date | 2026-03-27T02:53Z |
+| Date | 2026-03-27T02:56Z |
 | Machine | Linux x86_64, 1 vCPU, 483MB RAM, 2GB swap |
 | Bun | 1.3.11 (stock, `af24e281`) |
 | Ziggit | `acfd007` (perf: skip delta cache allocation when pack has no deltas) |
 | Zig | 0.15.2 |
-| Git | 2.39.5 |
+| Git | 2.43.0 |
 | Bun fork | branch `ziggit-integration` (build.zig.zon wires ziggit as path dep) |
 
 ## Build Status
@@ -37,8 +37,8 @@ Dependencies: `@sindresorhus/is`, `express`, `chalk`, `debug`, `semver` (all `gi
 
 | Scenario | Run 1 | Run 2 | Run 3 | Average |
 |----------|------:|------:|------:|--------:|
-| Cold cache | 459ms | 494ms | 391ms | **448ms** |
-| Warm cache | 178ms | 77ms | 85ms | **113ms** |
+| Cold cache | 513ms | 377ms | 371ms | **420ms** |
+| Warm cache | 257ms | 77ms | 145ms | **159ms** |
 
 *Cold = cleared `~/.bun/install/cache` + `node_modules` + `bun.lock`.
 Warm = kept cache, removed `node_modules` + `bun.lock`.*
@@ -47,11 +47,11 @@ Warm = kept cache, removed `node_modules` + `bun.lock`.*
 
 | Repo | Git CLI | Ziggit | Savings |
 |------|--------:|-------:|--------:|
-| @sindresorhus/is | 130ms | 74ms | **56ms (43%)** |
-| express | 162ms | 107ms | **55ms (33%)** |
-| chalk | 126ms | 68ms | **58ms (46%)** |
-| debug | 114ms | 60ms | **54ms (47%)** |
-| semver | 130ms | 78ms | **52ms (40%)** |
+| @sindresorhus/is | 139ms | 76ms | **63ms (45%)** |
+| express | 166ms | 126ms | **40ms (24%)** |
+| chalk | 125ms | 79ms | **46ms (36%)** |
+| debug | 124ms | 65ms | **59ms (47%)** |
+| semver | 131ms | 78ms | **53ms (40%)** |
 
 ### Per-Repo Checkout: Git CLI vs Ziggit
 
@@ -70,9 +70,9 @@ Ziggit checkout parity confirms pack/index files are git-compatible.*
 
 | Metric | Git CLI | Ziggit |
 |--------|--------:|-------:|
-| Total time | 704ms | 430ms |
-| **Savings** | | **274ms (38%)** |
-| **Speedup** | | **1.63×** |
+| Total time | 727ms | 467ms |
+| **Savings** | | **260ms (35%)** |
+| **Speedup** | | **1.55×** |
 
 ---
 
@@ -80,7 +80,7 @@ Ziggit checkout parity confirms pack/index files are git-compatible.*
 
 ### Where the Speedup Comes From
 
-1. **Clone is 33–47% faster** — ziggit's lean HTTP/1.1 client and zero-allocation
+1. **Clone is 24–47% faster** — ziggit's lean HTTP/1.1 client and zero-allocation
    pack parser avoid the overhead of git's multi-process architecture (git → git-remote-https
    → git-index-pack). Ziggit does it all in a single process with arena allocation.
 
@@ -93,11 +93,11 @@ Ziggit checkout parity confirms pack/index files are git-compatible.*
 
 | Scenario | Current (stock bun) | Projected (with ziggit) | Savings |
 |----------|--------------------:|------------------------:|--------:|
-| Cold install (5 git deps) | 448ms | ~174ms | ~274ms (61%) |
-| Cold install (parallel) | 448ms | ~250ms* | ~198ms (44%) |
-| Warm install | 113ms | ~113ms | 0ms (cached) |
+| Cold install (5 git deps) | 420ms | ~160ms | ~260ms (62%) |
+| Cold install (parallel) | 420ms | ~260ms* | ~160ms (38%) |
+| Warm install | 159ms | ~159ms | 0ms (cached) |
 
-*Parallel estimate: bun resolves git deps concurrently, so wall-clock savings = slowest repo improvement ≈ express savings (55ms) + overhead.*
+*Parallel estimate: bun resolves git deps concurrently, so wall-clock savings = slowest repo improvement ≈ express savings (40ms) + overhead.*
 
 **With in-process integration** (no fork/exec, shared TLS session pool):
 - Eliminate ~5ms × 5 = 25ms process spawn overhead
@@ -116,23 +116,23 @@ To build the bun fork with ziggit compiled in:
 
 ---
 
-## Improvement Over Previous Benchmarks
+## Benchmark History
 
 | Date | Ziggit Commit | Git CLI | Ziggit | Speedup |
 |------|---------------|--------:|-------:|--------:|
 | 2026-03-27T02:50Z | `0b345ce` (v0.3.0) | 772ms | 503ms | 1.53× (34%) |
-| **2026-03-27T02:53Z** | **`acfd007`** | **704ms** | **430ms** | **1.63× (38%)** |
+| 2026-03-27T02:53Z | `acfd007` | 704ms | 430ms | 1.63× (38%) |
+| **2026-03-27T02:56Z** | **`acfd007`** | **727ms** | **467ms** | **1.55× (35%)** |
 
-The latest ziggit commit (`acfd007 — skip delta cache allocation when pack has no deltas`)
-improved clone performance by ~15% for shallow clones (which have no deltas), bringing
-the total speedup from 1.53× to 1.63×.
+Consistent 1.5–1.6× speedup across all runs. Variance is due to network latency —
+the relative advantage of ziggit is stable at 35–38%.
 
 ---
 
 ## Raw Data
 
 All raw timing data in `benchmark/raw_results_*.txt`.
-Latest: `benchmark/raw_results_20260327T025319Z.txt`
+Latest: `benchmark/raw_results_20260327T025603Z.txt`
 
 Benchmark script: `benchmark/bun_install_bench.sh`
 

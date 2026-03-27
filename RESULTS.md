@@ -1,17 +1,17 @@
 # Bun Fork with Ziggit Integration — Results Summary
 
-**Last updated:** 2026-03-27T04:23Z (Session 23)
+**Last updated:** 2026-03-27T04:26Z (Session 24)
 
 ## Key Numbers
 
 | Metric | Value |
 |--------|-------|
-| **Full workflow speedup (4 small repos)** | **4.7×** |
-| **Full workflow speedup (all 5 repos)** | **2.2×** |
-| **findCommit speedup (avg)** | **5.7×** |
+| **Full workflow speedup (4 small repos)** | **4.5×** |
+| **Full workflow speedup (all 5 repos)** | **2.1×** |
+| **findCommit speedup (avg)** | **7.6×** |
 | **cloneBare speedup (small repos)** | **3.5×** |
-| **Projected bun install savings (5 git deps)** | **~41ms (10.2%)** |
-| **Projected bun install savings (20 git deps)** | **~164ms (29%)** |
+| **Projected bun install savings (5 git deps)** | **~40ms (7.8%)** |
+| **Projected bun install savings (20 git deps)** | **~160ms (24%)** |
 
 ## What This Fork Does
 
@@ -26,7 +26,7 @@ See [BUN_INSTALL_BENCHMARK.md](BUN_INSTALL_BENCHMARK.md) for:
 - Per-operation breakdowns (findCommit, cloneBare, full workflow)
 - Per-repo data across 5 GitHub repositories
 - Raw run-by-run measurements (3 runs × 20 iterations each)
-- Cross-session reproducibility analysis (sessions 21–23)
+- Cross-session reproducibility analysis (sessions 21–24)
 
 ## Benchmark Environment
 
@@ -38,16 +38,23 @@ See [BUN_INSTALL_BENCHMARK.md](BUN_INSTALL_BENCHMARK.md) for:
 
 | Repo | ziggit (μs) | git CLI (μs) | Speedup |
 |------|-------------|--------------|---------|
-| debug (596KB) | 1,678 | 11,074 | **6.6×** |
-| chalk (1.2MB) | 2,627 | 12,213 | **4.6×** |
-| is (1.4MB) | 3,370 | 12,660 | **3.8×** |
-| node-semver (1.5MB) | 3,611 | 16,588 | **4.6×** |
-| express (11MB) | 23,222 | 22,832 | 0.98× |
-| **Total** | **34,508** | **75,367** | **2.2×** |
+| debug (596KB) | 1,798 | 11,210 | **6.2×** |
+| chalk (1.2MB) | 2,614 | 12,277 | **4.7×** |
+| is (1.4MB) | 3,624 | 12,991 | **3.6×** |
+| node-semver (1.5MB) | 3,737 | 16,631 | **4.5×** |
+| express (11MB) | 24,662 | 23,243 | 0.94× |
+| **Total** | **36,435** | **76,352** | **2.1×** |
+
+## Stock Bun Install Baselines
+
+| Mode | Avg (bun reported) | Avg (wall clock) |
+|------|-------------------|------------------|
+| Cold cache | 505ms | 515ms |
+| Warm cache | 22ms | 25ms |
 
 ## Limitations
 
 - Full bun fork binary cannot be built on this VM (needs ≥8GB RAM, ≥20GB disk)
 - Benchmarks use standalone lib_bench binary linking ziggit directly
 - Express (11MB) shows no speedup for cloneBare due to git's optimized large-pack copy path
-- Cold bun install times have ~15% variance due to GitHub API/network
+- Cold bun install times have ~25% variance due to GitHub API/network

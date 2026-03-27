@@ -650,6 +650,7 @@ const log = bun.Output.scoped(.HTTPContext, .hidden);
 
 const HTTPCertError = @import("./HTTPCertError.zig");
 const HTTPThread = @import("./HTTPThread.zig");
+const ProxyTunnel = @import("./ProxyTunnel.zig");
 const TaggedPointerUnion = @import("../ptr.zig").TaggedPointerUnion;
 
 const bun = @import("bun");
@@ -663,4 +664,3 @@ const SSLConfig = bun.api.server.ServerConfig.SSLConfig;
 
 const HTTPClient = bun.http;
 const InitError = HTTPClient.InitError;
-const ProxyTunnel = @import("./ProxyTunnel.zig");

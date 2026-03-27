@@ -486,17 +486,21 @@ fn copyDirRecursive(cwd: string, src_rel: string, out_base: string, out_rel: str
 
 const string = []const u8;
 
-const bun = @import("bun");
 const std = @import("std");
-const strings = bun.strings;
-const String = bun.Semver.String;
-const Resolution = bun.install.Resolution;
-const Lockfile = bun.install.Lockfile;
-const PackageID = bun.install.PackageID;
-const DependencySlice = Lockfile.DependencySlice;
-const invalid_package_id = bun.install.invalid_package_id;
+
+const bun = @import("bun");
 const Global = bun.Global;
 const Output = bun.Output;
+const strings = bun.strings;
 const Command = bun.cli.Command;
+const String = bun.Semver.String;
+
+const PackageID = bun.install.PackageID;
+const Resolution = bun.install.Resolution;
+const invalid_package_id = bun.install.invalid_package_id;
+
+const Lockfile = bun.install.Lockfile;
+const DependencySlice = Lockfile.DependencySlice;
+
 const PackageManager = bun.install.PackageManager;
 const CommandLineArguments = PackageManager.CommandLineArguments;

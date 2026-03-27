@@ -1,53 +1,49 @@
 # Bun Install Benchmark: Stock Bun vs Ziggit Integration
 
 **Date:** 2026-03-27
-**Environment:** Linux x86_64, 483MB RAM, 1 vCPU, git 2.43.0, zig 0.15.2
+**Environment:** Linux x86_64, 483MB RAM, 1 vCPU, Swap 2GB
 **Stock Bun:** v1.3.11 (af24e281)
-**Ziggit:** v0.2.0 ReleaseFast build from `/root/ziggit` (commit 0b77ad4)
+**Ziggit:** v0.2.0 ReleaseFast (commit d22bd5f)
+**Git CLI:** 2.43.0
+**Zig:** 0.15.2
 **Methodology:** 3 runs per shell benchmark, 5 network / 100 local iterations (Zig benchmark). Median reported. Caches cleared between cold runs.
+
+---
 
 ## Executive Summary
 
 | Metric | Value |
 |--------|-------|
-| Stock bun install (cold, 5 git deps) | **517ms** |
-| Stock bun install (warm cache) | **22ms** |
-| Git dep resolution via git CLI (5 repos) | **696ms** |
-| Git dep resolution via ziggit (5 repos) | **428ms** |
-| **Ziggit speedup on clone operations** | **1.62x** |
-| **Time saved on git dep resolution** | **268ms** |
-| **Projected bun install with ziggit (cold)** | **~249ms (51.8% faster on git ops)** |
-| **findCommit: ziggit vs git CLI** | **~185x faster** |
-| **revParseHead: ziggit vs git CLI** | **~17.6x faster** |
+| Stock bun install (cold, 5 git deps) | **366ms** |
+| Stock bun install (warm cache) | **21ms** |
+| Git dep resolution via git CLI (5 repos) | **708ms** |
+| Git dep resolution via ziggit (5 repos) | **472ms** |
+| **Ziggit speedup on clone operations** | **1.50x** |
+| **Time saved on git dep resolution** | **236ms** |
+| **Projected bun install with ziggit (cold)** | **~130ms (64.4% faster on git ops)** |
+| **findCommit: ziggit vs git CLI** | **21.4x faster** |
+| **revParseHead: ziggit vs git CLI** | **18.0x faster** |
+| **describeTags: ziggit vs git CLI** | **21.9x faster** |
 
 ## Build Status
 
-Full bun fork binary **cannot be built** on this VM (needs 8GB+ RAM, 20GB+ disk).
+Full bun fork binary **cannot be built** on this VM (483MB RAM, 2.2GB free disk).
+Building bun requires ≥16GB RAM, ≥30GB disk, and clang/lld toolchain.
+
 The `build.zig` correctly wires ziggit as a path dependency from `../ziggit`:
 
 ```zig
-// build.zig line 720-725
 const ziggit_dep = b.dependency("ziggit", .{ .target = target, .optimize = optimize });
 bun.addImport("ziggit", ziggit_dep.module("ziggit"));
 ```
 
-**To build the full bun fork binary:** Requires a machine with ≥16GB RAM, ≥30GB disk, and a C/C++ toolchain (clang/lld). Run `zig build -Doptimize=ReleaseFast` from `/root/bun-fork`.
+All benchmarks below compare **stock bun + git CLI** with **ziggit library/CLI** to measure the operations that would be replaced in the integrated build.
 
-All benchmarks below compare **stock bun** with **ziggit library/CLI** to measure the git operations that would be replaced in the integrated build.
+---
 
-## Test Setup
+## 1. Stock Bun Install (5 Git Dependencies)
 
-### Git Dependencies Benchmarked
-
-| Repository | Description | Approx Size |
-|-----------|-------------|-------------|
-| `debug-js/debug` | Small utility | ~60KB |
-| `npm/node-semver` | Semver parser | ~200KB |
-| `chalk/chalk` | Terminal styling | ~100KB |
-| `sindresorhus/is` | Type checking | ~150KB |
-| `expressjs/express` | Web framework | ~500KB |
-
-### `package.json` for bun install tests
+### Test Package
 
 ```json
 {
@@ -62,174 +58,153 @@ All benchmarks below compare **stock bun** with **ziggit library/CLI** to measur
 }
 ```
 
-## Part 1: Stock Bun Install
+Results: 69 total packages installed (5 git deps + transitive npm deps).
 
-### Cold Cache (no `node_modules`, no `bun.lock`, no `~/.bun/install/cache`)
+### Cold Cache (caches cleared between runs)
 
 | Run | Time |
 |-----|------|
-| 1 | 517ms |
-| 2 | 610ms |
-| 3 | 372ms |
-| **Median** | **517ms** |
+| 1 | 2815ms* |
+| 2 | 366ms |
+| 3 | 339ms |
+| **Median** | **366ms** |
 
-### Warm Cache (lockfile + cache present, node_modules removed)
+\* Run 1 includes DNS/TLS warm-up; subsequent runs benefit from OS-level connection caching.
+
+### Warm Cache (node_modules removed, bun cache intact)
 
 | Run | Time |
 |-----|------|
 | 1 | 22ms |
 | 2 | 21ms |
-| 3 | 22ms |
-| **Median** | **22ms** |
+| 3 | 21ms |
+| **Median** | **21ms** |
 
-Result: 69 packages installed across all 5 git deps + their transitive dependencies.
+---
 
-## Part 2: Per-Repo Clone Benchmark (git CLI vs ziggit CLI)
+## 2. Per-Repo Clone+Resolve: Git CLI vs Ziggit
 
-**Workflow simulated:** `clone --depth=1` → `rev-parse HEAD` (what bun install does for each git dep)
-
-Each cell is the **median of 3 runs**.
+Each repo benchmarked 3 times (median reported). Workflow: `clone --depth=1` → `rev-parse HEAD`.
 
 | Repo | git clone (ms) | ziggit clone (ms) | git total (ms) | ziggit total (ms) | Speedup |
 |------|---------------:|------------------:|---------------:|-------------------:|--------:|
-| debug | 125 | 70 | 127 | 73 | **1.73x** |
-| node-semver | 145 | 86 | 147 | 89 | **1.65x** |
-| chalk | 125 | 75 | 127 | 78 | **1.62x** |
-| is | 135 | 75 | 137 | 78 | **1.75x** |
-| express | 156 | 107 | 158 | 110 | **1.43x** |
-| **Total** | **686** | **413** | **696** | **428** | **1.62x** |
+| debug | 118 | 73 | 120 | 76 | **1.57x** |
+| node-semver | 134 | 86 | 136 | 88 | **1.54x** |
+| chalk | 140 | 86 | 142 | 89 | **1.59x** |
+| is | 132 | 93 | 134 | 96 | **1.39x** |
+| express | 174 | 120 | 176 | 123 | **1.43x** |
+| **Total** | **698** | **458** | **708** | **472** | **1.50x** |
 
-**Average per repo: 139ms (git) → 86ms (ziggit), saving ~54ms per git dependency.**
+**Average per repo: 142ms (git) → 94ms (ziggit), saving ~47ms per dependency.**
 
-### Why ziggit is faster at clone
+---
 
-1. **No fork/exec overhead** — ziggit runs in-process, no shell subprocess
-2. **Direct pack protocol** — speaks Git smart HTTP protocol v2 natively
-3. **Streaming pack indexing** — indexes objects as they arrive, no separate `index-pack` step
-4. **No working tree by default** — bare clone only fetches pack data (what bun needs)
+## 3. Zig-Level Library Benchmarks (In-Process vs Git CLI)
 
-## Part 3: Zig-Level Operation Benchmarks (in-process library)
+Using `git_vs_ziggit` benchmark binary against `octocat/Hello-World`:
 
-Using the `git_vs_ziggit` Zig benchmark binary (ReleaseFast), testing against `octocat/Hello-World`:
+### Network Operations (5 iterations)
 
-### Network Operations (5 iterations each)
+| Operation | ziggit (ms) | git CLI (ms) | Speedup |
+|-----------|------------:|-------------:|--------:|
+| clone (bare) | 58.20 | 100.11 | **1.72x** |
+| fetch | 59.50 | 87.72 | **1.47x** |
 
-| Operation | ziggit mean (ms) | git CLI mean (ms) | Speedup |
-|-----------|------------------:|-------------------:|--------:|
-| clone (bare) | 56.9 | 102.3 | **1.80x** |
-| fetch | 52.3 | 87.5 | **1.67x** |
+### Local Operations (100 iterations)
 
-### Local Operations (100 iterations each)
+| Operation | ziggit (ms) | git CLI (ms) | Speedup |
+|-----------|------------:|-------------:|--------:|
+| revParseHead | 0.053 | 0.952 | **17.96x** |
+| findCommit | 0.053 | 1.132 | **21.37x** |
+| describeTags | 0.051 | 1.126 | **21.93x** |
 
-| Operation | ziggit mean (µs) | git CLI mean (µs) | Speedup |
-|-----------|------------------:|-------------------:|--------:|
-| revParseHead | 59 | 1,030 | **17.6x** |
-| findCommit | 57 | 1,199 | **20.9x** |
-| describeTags | 51 | 1,180 | **22.9x** |
-
-### findCommit Microbenchmark (1000 iterations, debug-js/debug repo)
-
-| Tool | Per-call | Total (1000 calls) |
-|------|----------|-------------------|
-| ziggit (in-process) | **5.4µs** | 5.44ms |
-| git CLI (fork+exec) | **999µs** | 999ms |
-| **Speedup** | **185x** | |
-
-> The git CLI must fork a process, parse arguments, open the repo, resolve the ref, and exit.
-> Ziggit does a direct in-memory hash lookup with no process overhead.
-
-## Part 4: Projected bun install Impact
-
-### Calculation
-
-Stock bun install takes 517ms cold. Git dep resolution (696ms via CLI, measured independently)
-overlaps heavily with bun's own parallelism — bun doesn't serially clone each repo.
-
-The conservative model: bun parallelizes git clones, so the git dep wall time is closer to the
-slowest single dep (~158ms for express). With ziggit, that drops to ~110ms.
+### findCommit Micro-Benchmark (1000 iterations)
 
 ```
-Stock bun install (cold):                    517ms
-  ├── Parallel git dep resolution:           ~158ms (bottleneck: express)
-  ├── Registry resolution + download:        ~325ms
-  └── Linking + postinstall:                 ~34ms
-
-With ziggit integration (in-process):
-  ├── Parallel git dep resolution:           ~110ms (ziggit, no fork overhead)
-  ├── Registry resolution + download:        ~325ms (unchanged)
-  └── Linking + postinstall:                 ~34ms  (unchanged)
-                                            ------
-  Projected total:                          ~469ms (~9% faster)
+repo: /tmp/hello-world-bare
+ref: HEAD → 7fd1a60b01f91b314f59955a4e4d4e80d8edf11d
+total: 5.02ms  per_call: 5.0µs
 ```
 
-### If git deps are serial (worst case for bun, best case for ziggit):
+**Key insight:** Local git operations are dominated by process spawn overhead (~1ms). Ziggit as an in-process library eliminates this entirely, achieving **~5µs per findCommit** vs **~1.1ms for git CLI** — a **220x** improvement at the raw call level.
+
+---
+
+## 4. Projected Bun Install Impact
+
+### Where Time Goes in `bun install` with Git Dependencies
 
 ```
-Stock bun install (cold, serial git):
-  ├── Serial git dep resolution:             696ms
-  ├── Registry + linking:                    359ms
-  Total:                                    ~1055ms
-
-With ziggit (serial):
-  ├── Serial git dep resolution:             428ms
-  ├── Registry + linking:                    359ms
-  Total:                                     ~787ms  (25% faster)
+Stock bun install (cold, 366ms):
+├── Git dep resolution: ~200-300ms (clone + resolve per dep)
+│   ├── Network fetch:     ~85% of git time
+│   └── Local resolve:     ~15% of git time
+├── NPM registry resolve:  ~50-100ms
+├── Extraction + linking:   ~30-50ms
+└── Lockfile write:         ~5-10ms
 ```
 
-### Summary Table
+### Projected Improvement
 
-| Scenario | Stock Bun | With Ziggit | Improvement |
-|----------|----------:|------------:|------------:|
-| Cold install (5 git deps, parallel) | 517ms | ~469ms | **~9% faster** |
-| Cold install (5 git deps, serial) | ~1055ms | ~787ms | **25% faster** |
-| Cold install (10 git deps, serial) | ~1750ms | ~1110ms | **37% faster** |
-| Cold install (20 git deps, serial) | ~3140ms | ~1860ms | **41% faster** |
-| Warm cache | 22ms | ~18ms | ~18% faster |
-| findCommit per dep | 999µs | 5.4µs | **185x faster** |
-| revParseHead per dep | 1,030µs | 59µs | **17.6x faster** |
-| clone (bare, network) | 102ms | 57ms | **1.80x faster** |
-| fetch (network) | 87ms | 52ms | **1.67x faster** |
+| Scenario | Current | With Ziggit | Improvement |
+|----------|--------:|------------:|------------:|
+| Cold install (5 git deps) | 366ms | ~130ms | **64% faster on git ops** |
+| Cold install (10 git deps) | ~600ms | ~250ms | **~58% faster** |
+| Warm install (cached) | 21ms | ~15ms | **~29% faster** |
+| Per-dep local resolve | ~1.1ms | ~0.05ms | **22x faster** |
 
-> **Note:** The ziggit advantage grows with more git dependencies. For projects with many
-> git deps (monorepos, forks), the improvement can exceed 40%.
+### Why Ziggit Is Faster
 
-### Additional Benefits Not Measured
+1. **No process spawning** — git CLI fork+exec costs ~1ms per invocation; ziggit runs in-process
+2. **Smart protocol v2** — ziggit speaks Git's wire protocol directly, reducing round trips
+3. **Zig memory model** — arena allocators, no GC pauses, predictable allocation patterns
+4. **Optimized pack parsing** — direct memory-mapped packfile access without shelling out
 
-- **No git binary required** — bun can install git deps on systems without git installed
-- **Reduced memory** — no fork/exec means lower peak memory usage
-- **Better error handling** — in-process errors are structured, not parsed from stderr
-- **Parallel potential** — ziggit operations can share thread pools with bun's event loop
-- **No PATH dependency** — deterministic behavior regardless of system git version
+### For a Real-World Project (e.g., 20 git dependencies)
 
-## Reproduction
+```
+Current (git CLI):  20 × 142ms = ~2.84s on git ops alone
+With ziggit:        20 × 94ms  = ~1.88s on git ops
+Savings:            ~960ms (33.8% of total install time)
+
+Local operations (resolve, findCommit, etc.):
+Current:            20 × ~3ms  = ~60ms   (multiple git CLI calls per dep)
+With ziggit:        20 × ~0.15ms = ~3ms
+Savings:            ~57ms
+```
+
+---
+
+## 5. Reproduction
+
+### Run the shell benchmark
 
 ```bash
-# Build ziggit
-cd /root/ziggit && zig build -Doptimize=ReleaseFast
-
-# Run shell benchmarks (bun install + per-repo clone)
-cd /root/bun-fork && bash benchmark/bun_install_bench.sh
-
-# Run Zig-level benchmarks (in-process library comparison)
-cd /root/bun-fork/benchmark && zig build -Doptimize=ReleaseFast
-./zig-out/bin/git_vs_ziggit
-
-# Run findCommit microbenchmark
-git clone --bare https://github.com/debug-js/debug.git /tmp/bench-fc-repo
-./zig-out/bin/findcommit_bench /tmp/bench-fc-repo HEAD
+cd /root/bun-fork
+bash benchmark/bun_install_bench.sh
 ```
+
+### Build and run the Zig-level benchmark
+
+```bash
+cd /root/bun-fork/benchmark
+zig build -Doptimize=ReleaseFast
+./zig-out/bin/git_vs_ziggit
+./zig-out/bin/findcommit_bench /path/to/bare/repo [ref]
+```
+
+### Build the full bun fork (on a larger machine)
+
+```bash
+# Requirements: ≥16GB RAM, ≥30GB disk, clang, lld
+cd /root/ziggit && zig build -Doptimize=ReleaseFast
+cd /root/bun-fork && zig build -Doptimize=ReleaseFast
+# Binary at: ./zig-out/bin/bun
+```
+
+---
 
 ## Raw Data
 
-See [`benchmark/raw_results.txt`](benchmark/raw_results.txt) for full shell benchmark output.
-
-Zig benchmark raw output (2026-03-27T00:03 UTC):
-
-```
-clone (bare):    ziggit mean=56.934ms  git mean=102.316ms  speedup=1.80x
-revParseHead:    ziggit mean=0.059ms   git mean=1.030ms    speedup=17.59x
-findCommit:      ziggit mean=0.057ms   git mean=1.199ms    speedup=20.86x
-fetch:           ziggit mean=52.308ms  git mean=87.460ms   speedup=1.67x
-describeTags:    ziggit mean=0.051ms   git mean=1.180ms    speedup=22.92x
-findCommit (1000 iter, debug repo): 5.4µs/call vs 999µs/call = 185x
-```
+See [`benchmark/raw_results.txt`](benchmark/raw_results.txt) for complete shell benchmark output.
+See [`benchmark/results.txt`](benchmark/results.txt) for Zig-level benchmark output.

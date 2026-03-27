@@ -13,6 +13,19 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
             ssl_config: ?SSLConfig.SharedPtr = null,
             /// The context that owns this pooled socket's memory (for returning to correct pool).
             owner: *Context,
+            /// If this socket carries an established CONNECT tunnel (HTTPS through
+            /// an HTTP proxy), the tunnel is preserved here. The pool owns one
+            /// strong ref while the socket is parked. Null for direct connections.
+            proxy_tunnel: ?*ProxyTunnel = null,
+            /// Target (origin) hostname the tunnel connects to. `hostname_buf`
+            /// above holds the PROXY hostname; this is the upstream we CONNECTed to.
+            target_hostname_buf: [MAX_KEEPALIVE_HOSTNAME]u8 = undefined,
+            target_hostname_len: u8 = 0,
+            target_port: u16 = 0,
+            /// Hash of the effective Proxy-Authorization value so that tunnels
+            /// established with different credentials are not cross-shared.
+            /// 0 = no proxy auth.
+            proxy_auth_hash: u64 = 0,
         };
 
         pub fn markTaggedSocketAsDead(socket: HTTPSocket, tagged: ActiveSocket) void {
@@ -92,12 +105,18 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
             // shutdown handshake with the peer, which won't complete during eviction.
             // Without force-close, the socket stays linked and the context refcount never
             // reaches 0, leaking the SSL_CTX.
-            if (comptime ssl) {
+            {
                 var iter = this.pending_sockets.used.iterator(.{ .kind = .set });
                 while (iter.next()) |idx| {
                     const pooled = this.pending_sockets.at(@intCast(idx));
-                    if (pooled.ssl_config) |*s| s.deinit();
-                    pooled.ssl_config = null;
+                    if (comptime ssl) {
+                        if (pooled.ssl_config) |*s| s.deinit();
+                        pooled.ssl_config = null;
+                    }
+                    if (pooled.proxy_tunnel) |tunnel| {
+                        pooled.proxy_tunnel = null;
+                        tunnel.detachAndDeref();
+                    }
                     pooled.http_socket.close(.failure);
                 }
             }
@@ -186,7 +205,23 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
         /// If `did_have_handshaking_error_while_reject_unauthorized_is_false`
         /// is set, then we can only reuse the socket for HTTP Keep Alive if
         /// `reject_unauthorized` is set to `false`.
-        pub fn releaseSocket(this: *@This(), socket: HTTPSocket, did_have_handshaking_error_while_reject_unauthorized_is_false: bool, hostname: []const u8, port: u16, ssl_config: ?SSLConfig.SharedPtr) void {
+        ///
+        /// If `tunnel` is non-null, the socket carries an established CONNECT
+        /// tunnel. The pool takes ownership of one strong ref on the tunnel;
+        /// the caller must NOT deref it afterwards. If pooling fails (pool
+        /// full, hostname too long, socket bad), the tunnel is dereffed here.
+        pub fn releaseSocket(
+            this: *@This(),
+            socket: HTTPSocket,
+            did_have_handshaking_error_while_reject_unauthorized_is_false: bool,
+            hostname: []const u8,
+            port: u16,
+            ssl_config: ?SSLConfig.SharedPtr,
+            tunnel: ?*ProxyTunnel,
+            target_hostname: []const u8,
+            target_port: u16,
+            proxy_auth_hash: u64,
+        ) void {
             // log("releaseSocket(0x{f})", .{bun.fmt.hexIntUpper(@intFromPtr(socket.socket))});
 
             if (comptime Environment.allow_assert) {
@@ -197,7 +232,11 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
             assert(hostname.len > 0);
             assert(port > 0);
 
-            if (hostname.len <= MAX_KEEPALIVE_HOSTNAME and !socket.isClosedOrHasError() and socket.isEstablished()) {
+            if (hostname.len <= MAX_KEEPALIVE_HOSTNAME and
+                target_hostname.len <= MAX_KEEPALIVE_HOSTNAME and
+                !socket.isClosedOrHasError() and
+                socket.isEstablished())
+            {
                 if (this.pending_sockets.get()) |pending| {
                     if (socket.ext(**anyopaque)) |ctx| {
                         ctx.* = bun.cast(**anyopaque, ActiveSocket.init(pending).ptr());
@@ -216,14 +255,28 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                     // its own ref via HTTPClient.tls_props.
                     pending.ssl_config = if (ssl_config) |s| s.clone() else null;
 
-                    log("Keep-Alive release {s}:{d}", .{
+                    // Pool owns the tunnel ref transferred by the caller.
+                    pending.proxy_tunnel = tunnel;
+                    pending.proxy_auth_hash = proxy_auth_hash;
+                    @memcpy(pending.target_hostname_buf[0..target_hostname.len], target_hostname);
+                    pending.target_hostname_len = @as(u8, @truncate(target_hostname.len));
+                    pending.target_port = target_port;
+
+                    log("Keep-Alive release {s}:{d} tunnel={} target={s}:{d}", .{
                         hostname,
                         port,
+                        tunnel != null,
+                        target_hostname,
+                        target_port,
                     });
                     return;
                 }
             }
             log("close socket", .{});
+            if (tunnel) |t| {
+                t.shutdown();
+                t.detachAndDeref();
+            }
             closeSocket(socket);
         }
 
@@ -330,6 +383,10 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
             fn addMemoryBackToPool(pooled: *PooledSocket) void {
                 if (pooled.ssl_config) |*s| s.deinit();
                 pooled.ssl_config = null;
+                if (pooled.proxy_tunnel) |tunnel| {
+                    pooled.proxy_tunnel = null;
+                    tunnel.detachAndDeref();
+                }
                 assert(pooled.owner.pending_sockets.put(pooled));
             }
 
@@ -423,7 +480,24 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
             }
         };
 
-        fn existingSocket(this: *@This(), reject_unauthorized: bool, hostname: []const u8, port: u16, ssl_config: ?*SSLConfig) ?HTTPSocket {
+        const ExistingSocket = struct {
+            socket: HTTPSocket,
+            /// Non-null if the socket carries an established CONNECT tunnel.
+            /// Ownership (one strong ref) is transferred to the caller.
+            tunnel: ?*ProxyTunnel,
+        };
+
+        fn existingSocket(
+            this: *@This(),
+            reject_unauthorized: bool,
+            hostname: []const u8,
+            port: u16,
+            ssl_config: ?*SSLConfig,
+            want_tunnel: bool,
+            target_hostname: []const u8,
+            target_port: u16,
+            proxy_auth_hash: u64,
+        ) ?ExistingSocket {
             if (hostname.len > MAX_KEEPALIVE_HOSTNAME)
                 return null;
 
@@ -444,6 +518,24 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                     continue;
                 }
 
+                // Tunnel presence must match: a direct-connection socket cannot
+                // serve a tunneled request and vice versa.
+                if (want_tunnel != (socket.proxy_tunnel != null)) {
+                    continue;
+                }
+
+                if (want_tunnel) {
+                    if (socket.proxy_auth_hash != proxy_auth_hash) {
+                        continue;
+                    }
+                    if (socket.target_port != target_port) {
+                        continue;
+                    }
+                    if (!strings.eqlLong(socket.target_hostname_buf[0..socket.target_hostname_len], target_hostname, true)) {
+                        continue;
+                    }
+                }
+
                 if (strings.eqlLong(socket.hostname_buf[0..socket.hostname_len], hostname, true)) {
                     const http_socket = socket.http_socket;
 
@@ -460,9 +552,12 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                     // Release the pool's strong ref (caller has its own via tls_props)
                     if (socket.ssl_config) |*s| s.deinit();
                     socket.ssl_config = null;
+                    // Transfer tunnel ownership to the caller.
+                    const tunnel = socket.proxy_tunnel;
+                    socket.proxy_tunnel = null;
                     assert(this.pending_sockets.put(socket));
-                    log("+ Keep-Alive reuse {s}:{d}", .{ hostname, port });
-                    return http_socket;
+                    log("+ Keep-Alive reuse {s}:{d}{s}", .{ hostname, port, if (tunnel != null) " (with tunnel)" else "" });
+                    return .{ .socket = http_socket, .tunnel = tunnel };
                 }
             }
 
@@ -491,14 +586,40 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
             client.connected_url.hostname = hostname;
 
             if (client.isKeepAlivePossible()) {
-                if (this.existingSocket(client.flags.reject_unauthorized, hostname, port, SSLConfig.rawPtr(client.tls_props))) |sock| {
+                const want_tunnel = client.http_proxy != null and client.url.isHTTPS();
+                const target_hostname: []const u8 = if (want_tunnel) client.url.hostname else "";
+                const target_port: u16 = if (want_tunnel) client.url.getPortAuto() else 0;
+                const proxy_auth_hash: u64 = if (want_tunnel) client.proxyAuthHash() else 0;
+
+                if (this.existingSocket(
+                    client.flags.reject_unauthorized,
+                    hostname,
+                    port,
+                    SSLConfig.rawPtr(client.tls_props),
+                    want_tunnel,
+                    target_hostname,
+                    target_port,
+                    proxy_auth_hash,
+                )) |found| {
+                    const sock = found.socket;
                     if (sock.ext(**anyopaque)) |ctx| {
                         ctx.* = bun.cast(**anyopaque, ActiveSocket.init(client).ptr());
                     }
                     client.allow_retry = true;
-                    try client.onOpen(comptime ssl, sock);
-                    if (comptime ssl) {
-                        client.firstCall(comptime ssl, sock);
+                    if (found.tunnel) |tunnel| {
+                        // Reattach the pooled tunnel BEFORE onOpen so the
+                        // request/response stage is already .proxy_headers.
+                        // onOpen only promotes .pending -> .opened, and
+                        // firstCall only acts on .opened/.pending, so both
+                        // become no-ops for the CONNECT/handshake phases.
+                        tunnel.adopt(client, comptime ssl, sock);
+                        try client.onOpen(comptime ssl, sock);
+                        client.onWritable(true, comptime ssl, sock);
+                    } else {
+                        try client.onOpen(comptime ssl, sock);
+                        if (comptime ssl) {
+                            client.firstCall(comptime ssl, sock);
+                        }
                     }
                     return sock;
                 }
@@ -542,3 +663,4 @@ const SSLConfig = bun.api.server.ServerConfig.SSLConfig;
 
 const HTTPClient = bun.http;
 const InitError = HTTPClient.InitError;
+const ProxyTunnel = @import("./ProxyTunnel.zig");

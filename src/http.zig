@@ -556,16 +556,27 @@ pub fn isKeepAlivePossible(this: *HTTPClient) bool {
         // TODO keepalive for unix sockets
         if (this.unix_socket_path.length() > 0) return false;
 
-        // is not possible to reuse Proxy with TLS, so disable keepalive if url is tunneling HTTPS
-        if (this.proxy_tunnel != null or (this.http_proxy != null and this.url.isHTTPS())) {
-            log("Keep-Alive release (proxy tunneling https)", .{});
-            return false;
-        }
-
         // check state
         if (this.state.flags.allow_keepalive and !this.flags.disable_keepalive) return true;
     }
     return false;
+}
+
+/// Hash of the effective Proxy-Authorization header value so that pooled
+/// CONNECT tunnels established with different credentials are never shared.
+/// Returns 0 if no proxy authorization applies.
+pub fn proxyAuthHash(this: *const HTTPClient) u64 {
+    // User-supplied header wins over the auto-generated one (matches the
+    // precedence in writeProxyConnect / writeProxyRequest).
+    if (this.proxy_headers) |hdrs| {
+        if (hdrs.get("proxy-authorization")) |auth| {
+            return bun.hash(auth);
+        }
+    }
+    if (this.proxy_authorization) |auth| {
+        return bun.hash(auth);
+    }
+    return 0;
 }
 
 /// Returns the SSL context for this client - either the custom context
@@ -852,26 +863,32 @@ pub fn doRedirect(
     assert(this.redirect_type == FetchRedirect.follow);
     this.unregisterAbortTracker();
 
-    if (this.proxy_tunnel) |tunnel| {
-        log("close the tunnel in redirect", .{});
+    // we need to clean the client reference before closing the socket because we are going to reuse the same ref in a another request
+    if (this.isKeepAlivePossible() and !socket.isClosedOrHasError()) {
+        log("Keep-Alive release in redirect", .{});
+        assert(this.connected_url.hostname.len > 0);
+        const tunnel = this.proxy_tunnel;
         this.proxy_tunnel = null;
-        tunnel.detachAndDeref();
-        NewHTTPContext(is_ssl).closeSocket(socket);
+        if (tunnel) |t| t.detachOwner();
+        ctx.releaseSocket(
+            socket,
+            this.flags.did_have_handshaking_error and !this.flags.reject_unauthorized,
+            this.connected_url.hostname,
+            this.connected_url.getPortAuto(),
+            this.tls_props,
+            tunnel,
+            if (tunnel != null) this.url.hostname else "",
+            if (tunnel != null) this.url.getPortAuto() else 0,
+            if (tunnel != null) this.proxyAuthHash() else 0,
+        );
     } else {
-        // we need to clean the client reference before closing the socket because we are going to reuse the same ref in a another request
-        if (this.isKeepAlivePossible() and !socket.isClosedOrHasError()) {
-            log("Keep-Alive release in redirect", .{});
-            assert(this.connected_url.hostname.len > 0);
-            ctx.releaseSocket(
-                socket,
-                this.flags.did_have_handshaking_error and !this.flags.reject_unauthorized,
-                this.connected_url.hostname,
-                this.connected_url.getPortAuto(),
-                this.tls_props,
-            );
-        } else {
-            NewHTTPContext(is_ssl).closeSocket(socket);
+        if (this.proxy_tunnel) |tunnel| {
+            log("close the tunnel in redirect", .{});
+            this.proxy_tunnel = null;
+            tunnel.shutdown();
+            tunnel.detachAndDeref();
         }
+        NewHTTPContext(is_ssl).closeSocket(socket);
     }
     this.connected_url = URL{};
 
@@ -1012,6 +1029,10 @@ pub fn onPreconnect(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPCon
         this.url.hostname,
         this.url.getPortAuto(),
         this.tls_props,
+        null,
+        "",
+        0,
+        0,
     );
 
     this.state.reset(this.allocator);
@@ -1858,25 +1879,30 @@ fn sendProgressUpdateWithoutStageCheck(this: *HTTPClient, comptime is_ssl: bool,
 
     if (is_done) {
         this.unregisterAbortTracker();
-        if (this.proxy_tunnel) |tunnel| {
-            log("close the tunnel", .{});
+        if (this.isKeepAlivePossible() and !socket.isClosedOrHasError()) {
+            log("release socket", .{});
+            const tunnel = this.proxy_tunnel;
             this.proxy_tunnel = null;
-            tunnel.shutdown();
-            tunnel.detachAndDeref();
-            NewHTTPContext(is_ssl).closeSocket(socket);
+            if (tunnel) |t| t.detachOwner();
+            ctx.releaseSocket(
+                socket,
+                this.flags.did_have_handshaking_error and !this.flags.reject_unauthorized,
+                this.connected_url.hostname,
+                this.connected_url.getPortAuto(),
+                this.tls_props,
+                tunnel,
+                if (tunnel != null) this.url.hostname else "",
+                if (tunnel != null) this.url.getPortAuto() else 0,
+                if (tunnel != null) this.proxyAuthHash() else 0,
+            );
         } else {
-            if (this.isKeepAlivePossible() and !socket.isClosedOrHasError()) {
-                log("release socket", .{});
-                ctx.releaseSocket(
-                    socket,
-                    this.flags.did_have_handshaking_error and !this.flags.reject_unauthorized,
-                    this.connected_url.hostname,
-                    this.connected_url.getPortAuto(),
-                    this.tls_props,
-                );
-            } else {
-                NewHTTPContext(is_ssl).closeSocket(socket);
+            if (this.proxy_tunnel) |tunnel| {
+                log("close the tunnel", .{});
+                this.proxy_tunnel = null;
+                tunnel.shutdown();
+                tunnel.detachAndDeref();
             }
+            NewHTTPContext(is_ssl).closeSocket(socket);
         }
 
         this.state.reset(this.allocator);

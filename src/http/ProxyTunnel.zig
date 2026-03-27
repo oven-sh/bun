@@ -363,6 +363,38 @@ pub fn detachAndDeref(this: *ProxyTunnel) void {
     this.deref();
 }
 
+/// Detach the tunnel from its current HTTPClient owner so it can be safely
+/// pooled for keepalive. The inner TLS session is preserved. The tunnel's
+/// refcount is NOT changed — the caller must ensure the ref is transferred
+/// to the pool (or dereffed on failure to pool).
+pub fn detachOwner(this: *ProxyTunnel) void {
+    this.socket = .{ .none = {} };
+    // We intentionally leave wrapper.handlers.ctx stale here. The tunnel is
+    // idle in the pool and no callbacks will fire until adopt() reattaches
+    // a new owner and socket.
+}
+
+/// Reattach a pooled tunnel to a new HTTPClient and socket. The TLS session
+/// is reused as-is — no CONNECT and no new TLS handshake. The client's
+/// request/response stage is set to .proxy_headers so the next onWritable
+/// writes the HTTP request directly into the tunnel.
+pub fn adopt(this: *ProxyTunnel, client: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) void {
+    log("ProxyTunnel adopt (reusing pooled tunnel)", .{});
+    if (this.wrapper) |*wrapper| {
+        wrapper.handlers.ctx = client;
+    }
+    if (is_ssl) {
+        this.socket = .{ .ssl = socket };
+    } else {
+        this.socket = .{ .tcp = socket };
+    }
+    client.proxy_tunnel = this;
+    client.flags.proxy_tunneling = false;
+    client.state.request_stage = .proxy_headers;
+    client.state.response_stage = .proxy_headers;
+    client.state.request_sent_len = 0;
+}
+
 fn deinit(this: *ProxyTunnel) void {
     this.socket = .{ .none = {} };
     if (this.wrapper) |*wrapper| {

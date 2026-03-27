@@ -4,7 +4,7 @@
 **Machine:** x86_64, 1 cores, 483Mi RAM
 **Stock Bun:** 1.3.11
 **Git:** git version 2.43.0
-**Ziggit:** ziggit version 0.2.0 (Zig 0.15.2)
+**Ziggit:** git version 2.43.0
 **Runs per benchmark:** 3
 
 ## Building the Bun Fork

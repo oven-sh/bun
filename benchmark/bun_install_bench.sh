@@ -209,7 +209,7 @@ cat > "$RESULTS_FILE" << EOF
 **Machine:** $(uname -m), $(nproc) cores, $(free -h | awk '/^Mem:/{print $2}') RAM
 **Stock Bun:** $($BUN --version)
 **Git:** $($GIT --version)
-**Ziggit:** $($ZIGGIT --version 2>&1 | head -1)
+**Ziggit:** $($ZIGGIT --version-info 2>&1 | head -1)
 **Runs per benchmark:** $RUNS
 
 ## Building the Bun Fork

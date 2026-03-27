@@ -101,6 +101,9 @@ test("jsxImportSource from deeply nested tsconfig overrides root tsconfig", asyn
     "entry.ts": `
       import { Component } from "./packages/ui/component.tsx";
       console.log(Component());
+      // Dynamic import exercises RuntimeTranspilerStore (post-startup path)
+      const { Component: C2 } = await import("./packages/ui/component.tsx");
+      console.log(C2());
     `,
   });
 

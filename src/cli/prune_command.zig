@@ -304,6 +304,8 @@ fn generatePrunedLockfile(allocator: std.mem.Allocator, cwd: string, lockfile: *
         var brace_start = ws_section_start + ws_key.len;
         while (brace_start < content.len and content[brace_start] != '{') : (brace_start += 1) {}
 
+        if (brace_start >= content.len) return error.ReadFailed;
+
         try writer.writeAll(content[0 .. brace_start + 1]);
 
         var pos = brace_start + 1;
@@ -355,7 +357,7 @@ fn generatePrunedLockfile(allocator: std.mem.Allocator, cwd: string, lockfile: *
                 if (in_str) continue;
                 if (c == '{') depth += 1;
                 if (c == '}') {
-                    depth -= 1;
+                    depth -|= 1;
                     if (depth == 0) {
                         pos += 1;
                         break;

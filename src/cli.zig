@@ -1361,6 +1361,9 @@ pub const Command = struct {
                         .AuditCommand => .audit,
                     });
                 },
+                .PruneCommand => {
+                    Install.PackageManager.CommandLineArguments.printHelp(.prune);
+                },
                 .InfoCommand => {
                     const intro_text =
                         \\<b>Usage<r>: <b><green>bun info<r> <cyan>[flags]<r> <blue>\<package\><r><d>\<@version\><r> <blue>[property path]<r>

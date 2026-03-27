@@ -736,7 +736,6 @@ pub fn printHelp(subcommand: Subcommand) void {
                 \\
                 \\<b>Flags:<r>
             ;
-
             const outro_text =
                 \\
                 \\
@@ -751,7 +750,6 @@ pub fn printHelp(subcommand: Subcommand) void {
                 \\  <b><green>bun prune<r> <blue>@myapp/api<r> <cyan>--docker --out-dir=pruned<r>
                 \\
             ;
-
             Output.pretty(intro_text, .{});
             clap.simpleHelp(prune_params);
             Output.pretty(outro_text, .{});

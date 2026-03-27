@@ -52,18 +52,22 @@ function createMonorepo() {
   });
 }
 
+async function installInDir(dir: ReturnType<typeof tempDir>) {
+  await using installProc = Bun.spawn({
+    cmd: [bunExe(), "install"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const exitCode = await installProc.exited;
+  expect(exitCode).toBe(0);
+}
+
 describe("bun prune", () => {
   test("prints usage when no workspace specified", async () => {
     using dir = createMonorepo();
-    // Run install first to create lockfile
-    await using installProc = Bun.spawn({
-      cmd: [bunExe(), "install"],
-      cwd: String(dir),
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    await installProc.exited;
+    await installInDir(dir);
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), "prune"],
@@ -79,14 +83,7 @@ describe("bun prune", () => {
 
   test("errors when workspace not found", async () => {
     using dir = createMonorepo();
-    await using installProc = Bun.spawn({
-      cmd: [bunExe(), "install"],
-      cwd: String(dir),
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    await installProc.exited;
+    await installInDir(dir);
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), "prune", "nonexistent"],
@@ -104,17 +101,8 @@ describe("bun prune", () => {
 
   test("prunes monorepo for target workspace", async () => {
     using dir = createMonorepo();
-    // Install to create lockfile
-    await using installProc = Bun.spawn({
-      cmd: [bunExe(), "install"],
-      cwd: String(dir),
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    await installProc.exited;
+    await installInDir(dir);
 
-    // Run prune
     await using proc = Bun.spawn({
       cmd: [bunExe(), "prune", "@myapp/api", "--out-dir=pruned"],
       cwd: String(dir),
@@ -128,14 +116,12 @@ describe("bun prune", () => {
     const exitCode = await proc.exited;
 
     expect(stdout).toContain("Pruned monorepo");
-    expect(exitCode).toBe(0);
 
     const outDir = path.join(String(dir), "pruned");
 
     // Should have pruned package.json
     expect(existsSync(path.join(outDir, "package.json"))).toBe(true);
     const rootPkg = JSON.parse(readFileSync(path.join(outDir, "package.json"), "utf8"));
-    // Should contain @myapp/api's workspace deps (utils, shared) but NOT unrelated or web
     const workspaces: string[] = rootPkg.workspaces;
     expect(workspaces).toContain("services/api");
     expect(workspaces).toContain("packages/utils");
@@ -146,7 +132,6 @@ describe("bun prune", () => {
     // Should have pruned lockfile
     expect(existsSync(path.join(outDir, "bun.lock"))).toBe(true);
     const lockContent = readFileSync(path.join(outDir, "bun.lock"), "utf8");
-    // bun.lock uses trailing commas so we check with string matching
     expect(lockContent).toContain('"services/api"');
     expect(lockContent).toContain('"packages/utils"');
     expect(lockContent).toContain('"packages/shared"');
@@ -160,18 +145,14 @@ describe("bun prune", () => {
     // Should NOT have unrelated workspace files
     expect(existsSync(path.join(outDir, "packages/unrelated"))).toBe(false);
     expect(existsSync(path.join(outDir, "services/web"))).toBe(false);
+
+    // Assert exit code last for better error messages
+    expect(exitCode).toBe(0);
   });
 
   test("--docker splits output into json/ and full/", async () => {
     using dir = createMonorepo();
-    await using installProc = Bun.spawn({
-      cmd: [bunExe(), "install"],
-      cwd: String(dir),
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    await installProc.exited;
+    await installInDir(dir);
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), "prune", "@myapp/api", "--docker", "--out-dir=out"],
@@ -183,8 +164,8 @@ describe("bun prune", () => {
 
     const stdout = await proc.stdout.text();
     const exitCode = await proc.exited;
+
     expect(stdout).toContain("Pruned monorepo");
-    expect(exitCode).toBe(0);
 
     const outDir = path.join(String(dir), "out");
 
@@ -206,5 +187,8 @@ describe("bun prune", () => {
     // Neither should have unrelated workspaces
     expect(existsSync(path.join(outDir, "json/packages/unrelated"))).toBe(false);
     expect(existsSync(path.join(outDir, "full/packages/unrelated"))).toBe(false);
+
+    // Assert exit code last for better error messages
+    expect(exitCode).toBe(0);
   });
 });

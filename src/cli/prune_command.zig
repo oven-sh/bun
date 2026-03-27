@@ -32,6 +32,13 @@ fn prune(ctx: Command.Context) !void {
         Global.exit(1);
     }
 
+    // bun prune requires a text lockfile (bun.lock) for pruning
+    if (!load_result.loadedFromTextLockfile()) {
+        Output.prettyErrorln("<r><red>error:<r> <b>bun prune<r> requires a text lockfile (<b>bun.lock<r>). Run <b>bun install --save-text-lockfile<r> to generate one.", .{});
+        Output.flush();
+        Global.exit(1);
+    }
+
     const lockfile = load_result.ok.lockfile;
 
     // Parse positional args: bun prune <workspace>
@@ -116,6 +123,13 @@ fn prune(ctx: Command.Context) !void {
         }
     }
 
+    // Sort for deterministic output (important for Docker layer caching)
+    std.mem.sort(string, kept_workspace_paths.items, {}, struct {
+        pub fn lessThan(_: void, a: string, b: string) bool {
+            return strings.order(a, b) == .lt;
+        }
+    }.lessThan);
+
     // Get workspace root directory
     const cwd = strings.withoutTrailingSlash(bun.fs.FileSystem.instance.top_level_dir);
 
@@ -151,7 +165,7 @@ fn prune(ctx: Command.Context) !void {
         for (kept_workspace_paths.items) |ws_path| {
             const ws_pkg_src = std.fmt.allocPrint(ctx.allocator, "{s}/package.json", .{ws_path}) catch continue;
             const ws_pkg_dst_json = std.fmt.allocPrint(ctx.allocator, "json/{s}/package.json", .{ws_path}) catch continue;
-            copyFromRoot(cwd, ws_pkg_src, out_dir, ws_pkg_dst_json);
+            requiredCopyFromRoot(cwd, ws_pkg_src, out_dir, ws_pkg_dst_json);
 
             const ws_full_dst = std.fmt.allocPrint(ctx.allocator, "full/{s}", .{ws_path}) catch continue;
             copyDirRecursive(cwd, ws_path, out_dir, ws_full_dst);
@@ -276,7 +290,7 @@ fn generatePrunedLockfile(allocator: std.mem.Allocator, cwd: string, lockfile: *
     var path_buf: bun.PathBuffer = undefined;
     const lock_path = std.fmt.bufPrint(&path_buf, "{s}/bun.lock", .{cwd}) catch return error.PathTooLong;
 
-    const content = std.fs.cwd().readFileAlloc(allocator, lock_path, 10 * 1024 * 1024) catch return error.ReadFailed;
+    const content = std.fs.cwd().readFileAlloc(allocator, lock_path, std.math.maxInt(usize)) catch return error.ReadFailed;
 
     const buf = lockfile.buffers.string_bytes.items;
     const pkgs = lockfile.packages.slice();
@@ -431,6 +445,22 @@ fn writeToFile(base_dir: string, rel_path: string, content: []const u8) void {
     };
 }
 
+fn requiredCopyFromRoot(cwd: string, src_rel: string, out_base: string, out_rel: string) void {
+    var src_buf: bun.PathBuffer = undefined;
+    const src_path = std.fmt.bufPrint(&src_buf, "{s}/{s}", .{ cwd, src_rel }) catch return;
+    var dst_buf: bun.PathBuffer = undefined;
+    const dst_path = std.fmt.bufPrint(&dst_buf, "{s}/{s}", .{ out_base, out_rel }) catch return;
+
+    if (strings.lastIndexOfChar(dst_path, '/')) |last_slash| {
+        std.fs.cwd().makePath(dst_path[0..last_slash]) catch {};
+    }
+
+    std.fs.cwd().copyFile(src_path, std.fs.cwd(), dst_path, .{}) catch |err| {
+        Output.prettyErrorln("<r><red>error:<r> failed to copy {s}: {s}", .{ src_rel, @errorName(err) });
+        Global.exit(1);
+    };
+}
+
 fn copyFromRoot(cwd: string, src_rel: string, out_base: string, out_rel: string) void {
     var src_buf: bun.PathBuffer = undefined;
     const src_path = std.fmt.bufPrint(&src_buf, "{s}/{s}", .{ cwd, src_rel }) catch return;
@@ -454,13 +484,19 @@ fn copyDirRecursive(cwd: string, src_rel: string, out_base: string, out_rel: str
     var dst_buf: bun.PathBuffer = undefined;
     const dst_path = std.fmt.bufPrint(&dst_buf, "{s}/{s}", .{ out_base, out_rel }) catch return;
 
-    std.fs.cwd().makePath(dst_path) catch {};
+    std.fs.cwd().makePath(dst_path) catch |err| {
+        Output.prettyErrorln("<r><red>error:<r> failed to create directory {s}: {s}", .{ dst_path, @errorName(err) });
+        Global.exit(1);
+    };
 
-    var src_dir = std.fs.cwd().openDir(src_path, .{ .iterate = true }) catch return;
+    var src_dir = std.fs.cwd().openDir(src_path, .{ .iterate = true }) catch |err| {
+        Output.prettyErrorln("<r><red>error:<r> failed to open directory {s}: {s}", .{ src_path, @errorName(err) });
+        Global.exit(1);
+    };
     defer src_dir.close();
 
     var walker = src_dir.iterate();
-    while (walker.next() catch return) |entry| {
+    while (walker.next() catch null) |entry| {
         if (strings.eqlComptime(entry.name, "node_modules")) continue;
         if (strings.eqlComptime(entry.name, ".git")) continue;
 
@@ -470,7 +506,10 @@ fn copyDirRecursive(cwd: string, src_rel: string, out_base: string, out_rel: str
                 const csrc = std.fmt.bufPrint(&child_src, "{s}/{s}", .{ src_path, entry.name }) catch continue;
                 var child_dst: bun.PathBuffer = undefined;
                 const cdst = std.fmt.bufPrint(&child_dst, "{s}/{s}", .{ dst_path, entry.name }) catch continue;
-                std.fs.cwd().copyFile(csrc, std.fs.cwd(), cdst, .{}) catch continue;
+                std.fs.cwd().copyFile(csrc, std.fs.cwd(), cdst, .{}) catch |err| {
+                    Output.prettyErrorln("<r><red>error:<r> failed to copy {s}: {s}", .{ csrc, @errorName(err) });
+                    Global.exit(1);
+                };
             },
             .directory => {
                 var child_src_rel: bun.PathBuffer = undefined;

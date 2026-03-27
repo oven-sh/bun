@@ -1353,6 +1353,9 @@ pub const Command = struct {
                     , .{});
                     Output.flush();
                 },
+                .PruneCommand => {
+                    Install.PackageManager.CommandLineArguments.printHelp(.prune);
+                },
                 .OutdatedCommand, .UpdateInteractiveCommand, .PublishCommand, .AuditCommand => {
                     Install.PackageManager.CommandLineArguments.printHelp(switch (cmd) {
                         .OutdatedCommand => .outdated,
@@ -1360,9 +1363,6 @@ pub const Command = struct {
                         .PublishCommand => .publish,
                         .AuditCommand => .audit,
                     });
-                },
-                .PruneCommand => {
-                    Install.PackageManager.CommandLineArguments.printHelp(.prune);
                 },
                 .InfoCommand => {
                     const intro_text =

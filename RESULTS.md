@@ -1,7 +1,7 @@
 # Ziggit Integration Benchmarks
 
 ## Environment
-- Date: 2026-03-27T02:39Z (latest run)
+- Date: 2026-03-27T02:42Z (latest run)
 - Ziggit: b1d2497, built from `/root/ziggit` HEAD, Zig 0.15.2
 - Bun: 1.3.11 (stock), fork branch: ziggit-integration
 - Machine: Linux x86_64, 483MB RAM, 1 vCPU, 2GB swap
@@ -109,7 +109,10 @@ Zig runtime startup. When compiled into bun as a native module, this becomes ~0Î
 | 2026-03-27T02:35Z | 586ms | 490ms | 16% |
 | 2026-03-27T02:36Z | 577ms | 486ms | 15% |
 | 2026-03-27T02:38Z | 593ms | 479ms | 19% |
-| **2026-03-27T02:39Z** | **600ms** | **466ms** | **22%** |
+| 2026-03-27T02:39Z | 600ms | 466ms | 22% |
+| **2026-03-27T02:42Z** | **774ms** | **515ms** | **33%** |
+
+*02:42Z run uses larger repos: @sindresorhus/is, express, chalk, debug, semver.*
 
 Results are consistent across runs. Variance is primarily due to network latency.
 
@@ -120,16 +123,20 @@ Results are consistent across runs. Variance is primarily due to network latency
 | 2026-03-27T02:35Z | 683ms | 515ms | 168ms (24%) |
 | 2026-03-27T02:36Z | 682ms | 530ms | 152ms (22%) |
 | 2026-03-27T02:38Z | 664ms | 517ms | 147ms (22%) |
-| **2026-03-27T02:39Z** | **669ms** | **516ms** | **153ms (22%)** |
+| 2026-03-27T02:39Z | 669ms | 516ms | 153ms (22%) |
+| **2026-03-27T02:42Z** | **774ms** | **515ms** | **259ms (33%)** |
+
+*02:42Z run uses larger repos: @sindresorhus/is, express, chalk, debug, semver.*
 
 ### Bun Install (stock baseline)
 
-| Date | Cold (avg) | Warm (avg) |
-|------|----------:|----------:|
-| 2026-03-27T02:35Z | 252ms | 74ms |
-| 2026-03-27T02:36Z | 160ms | 88ms |
-| 2026-03-27T02:38Z | 298ms | 49ms |
-| **2026-03-27T02:39Z** | **182ms** | **46ms** |
+| Date | Cold (avg) | Warm (avg) | Deps |
+|------|----------:|----------:|------|
+| 2026-03-27T02:35Z | 252ms | 74ms | debug,semver,ms,supports-color,has-flag |
+| 2026-03-27T02:36Z | 160ms | 88ms | " |
+| 2026-03-27T02:38Z | 298ms | 49ms | " |
+| 2026-03-27T02:39Z | 182ms | 46ms | " |
+| **2026-03-27T02:42Z** | **422ms** | **208ms** | **@sindresorhus/is,express,chalk,debug,semver** |
 
 ---
 

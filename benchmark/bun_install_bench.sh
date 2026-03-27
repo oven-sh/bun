@@ -95,9 +95,9 @@ bench_one_repo() {
   # Step 1: clone --bare
   local t0=$(ms_now)
   if [ "$tool" = "git" ]; then
-    $GIT clone --quiet --bare "$url" "$bare_dir" 2>&1
+    $GIT clone --quiet --bare "$url" "$bare_dir" >/dev/null 2>&1
   else
-    $ZIGGIT clone --bare "$url" "$bare_dir" 2>&1
+    $ZIGGIT clone --bare "$url" "$bare_dir" >/dev/null 2>&1
   fi
   local clone_ms=$(elapsed_ms $t0)
 
@@ -105,22 +105,22 @@ bench_one_repo() {
   t0=$(ms_now)
   local sha
   if [ "$tool" = "git" ]; then
-    sha=$($GIT -C "$bare_dir" rev-parse HEAD 2>&1)
+    sha=$($GIT -C "$bare_dir" rev-parse HEAD 2>/dev/null)
   else
-    sha=$($ZIGGIT -C "$bare_dir" rev-parse HEAD 2>&1 || $GIT -C "$bare_dir" rev-parse HEAD 2>&1)
+    sha=$($ZIGGIT -C "$bare_dir" rev-parse HEAD 2>/dev/null || $GIT -C "$bare_dir" rev-parse HEAD 2>/dev/null)
   fi
   local resolve_ms=$(elapsed_ms $t0)
 
   # Step 3: clone from bare + checkout
   t0=$(ms_now)
   if [ "$tool" = "git" ]; then
-    $GIT clone --quiet --no-checkout "$bare_dir" "$checkout_dir" 2>&1
-    $GIT -C "$checkout_dir" checkout --quiet "$sha" -- 2>&1
+    $GIT clone --quiet --no-checkout "$bare_dir" "$checkout_dir" >/dev/null 2>&1
+    $GIT -C "$checkout_dir" checkout --quiet "$sha" -- >/dev/null 2>&1
   else
-    $ZIGGIT clone --no-checkout "$bare_dir" "$checkout_dir" 2>&1 || \
-      $GIT clone --quiet --no-checkout "$bare_dir" "$checkout_dir" 2>&1
-    ($ZIGGIT -C "$checkout_dir" checkout "$sha" -- 2>&1 || \
-      $GIT -C "$checkout_dir" checkout --quiet "$sha" -- 2>&1)
+    $ZIGGIT clone --no-checkout "$bare_dir" "$checkout_dir" >/dev/null 2>&1 || \
+      $GIT clone --quiet --no-checkout "$bare_dir" "$checkout_dir" >/dev/null 2>&1
+    ($ZIGGIT -C "$checkout_dir" checkout "$sha" -- >/dev/null 2>&1 || \
+      $GIT -C "$checkout_dir" checkout --quiet "$sha" -- >/dev/null 2>&1)
   fi
   local checkout_ms=$(elapsed_ms $t0)
 

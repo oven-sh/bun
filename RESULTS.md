@@ -1,8 +1,8 @@
 # Ziggit Integration Benchmarks
 
 ## Environment
-- Date: 2026-03-27T02:13Z (latest run)
-- Ziggit: built from `/root/ziggit` HEAD, Zig 0.15.2, ReleaseSafe
+- Date: 2026-03-27T02:16Z (latest run)
+- Ziggit: built from `/root/ziggit` HEAD (b1d2497), Zig 0.15.2, ReleaseSafe
 - Bun: 1.3.11 (stock), fork branch: ziggit-integration
 - Machine: Linux x86_64, 483MB RAM, 1 vCPU, 2GB swap
 - Git: 2.43.0
@@ -15,14 +15,14 @@ Benchmarks compare stock bun + git CLI vs ziggit CLI to measure replaceable oper
 
 ---
 
-## Latest Run (2026-03-27T02:13Z)
+## Latest Run (2026-03-27T02:16Z)
 
 ### Stock Bun Install (3 Git Dependencies)
 
 | Metric | Run 1 | Run 2 | Run 3 | Avg |
 |--------|------:|------:|------:|----:|
-| Cold cache | 188ms | 133ms | 170ms | **163ms** |
-| Warm cache | 46ms | 117ms | 46ms | **69ms** |
+| Cold cache | 173ms | 100ms | 96ms | **123ms** |
+| Warm cache | 62ms | 52ms | 45ms | **53ms** |
 
 ### Git CLI vs Ziggit — Full bun-install Workflow (3 repos)
 
@@ -30,50 +30,58 @@ Workflow: `clone --bare` → `rev-parse HEAD` → `clone + checkout` per repo.
 
 | Tool | Run 1 | Run 2 | Run 3 | Avg |
 |------|------:|------:|------:|----:|
-| Git CLI (total) | 554ms | 556ms | 567ms | **559ms** |
-| Ziggit (total) | 350ms | 334ms | 343ms | **342ms** |
-| **Savings** | 204ms | 222ms | 224ms | **217ms (39%)** |
+| Git CLI (total) | 570ms | 548ms | 551ms | **555ms** |
+| Ziggit (total) | 349ms | 335ms | 350ms | **344ms** |
+| **Savings** | 221ms | 213ms | 201ms | **211ms (38%)** |
 
 ### Per-Repo Breakdown (averages over 3 runs)
 
 | Repo | Tool | Clone | FindCommit | Checkout | **Total** | Δ vs git |
 |------|------|------:|-----------:|---------:|----------:|---------:|
-| debug | git | 147ms | 2ms | 9ms | **159ms** | — |
-| debug | ziggit | 78ms | 3ms | 10ms | **91ms** | **-42%** |
-| node-semver | git | 227ms | 2ms | 13ms | **242ms** | — |
-| node-semver | ziggit | 136ms | 3ms | 11ms | **150ms** | **-38%** |
-| chalk | git | 146ms | 3ms | 9ms | **158ms** | — |
-| chalk | ziggit | 89ms | 3ms | 9ms | **101ms** | **-36%** |
+| debug | git | 144ms | 2ms | 8ms | **154ms** | — |
+| debug | ziggit | 75ms | 3ms | 10ms | **89ms** | **-42%** |
+| node-semver | git | 223ms | 3ms | 13ms | **239ms** | — |
+| node-semver | ziggit | 136ms | 3ms | 11ms | **151ms** | **-36%** |
+| chalk | git | 150ms | 2ms | 10ms | **162ms** | — |
+| chalk | ziggit | 91ms | 3ms | 9ms | **104ms** | **-35%** |
 
 ### Key Findings
 
-1. **Ziggit clone is ~40% faster than git CLI** across all tested repos
+1. **Ziggit clone is 36–42% faster than git CLI** across all tested repos
 2. **Clone dominates total time** (~93% of per-repo total) — this is where ziggit's
    native HTTP client + zero-alloc pack parser have the most impact
 3. **FindCommit and Checkout are comparable** — both tools operate on local data
-4. **Consistent across runs** — low variance (±3%) indicates reliable measurements
+4. **Consistent across runs** — low variance (±5%) indicates reliable measurements
 
 ### Projected In-Process Savings
 
-The CLI benchmarks show **39% savings**. The actual bun fork integration will be faster because:
+The CLI benchmarks show **38% savings**. The actual bun fork integration will be faster because:
 - No `fork()`+`exec()` overhead per git call (~3–5ms × 9 calls for 3 repos = ~27–45ms)
 - Shared allocator eliminates per-process heap setup
 - Direct Zig API calls, no stdout pipe parsing
-- Projected in-process savings: **~46% (260ms for 3 repos)**
+- Projected in-process savings: **~45% (~300ms for 3 repos vs 555ms git CLI)**
 
 ---
 
 ## Historical Runs
 
-### 2026-03-27T02:08Z (5 repos, different methodology)
+### 2026-03-27T02:16Z (3 repos, fixed benchmark script)
 
-| Tool | Sequential Avg | Parallel Avg |
-|------|---------------:|-------------:|
-| Git CLI | 694ms | 309ms |
-| Ziggit | 426ms | 110ms |
-| Speedup | 1.63× | **2.80×** |
+| Tool | Total Avg |
+|------|----------:|
+| Git CLI | 555ms |
+| Ziggit | 344ms |
+| Speedup | **1.61×** |
 
-### 2026-03-27T02:13Z (3 repos, full bun-install workflow simulation)
+### 2026-03-27T02:15Z (3 repos, previous run — had parsing bug)
+
+| Tool | Total Avg |
+|------|----------:|
+| Git CLI | 568ms |
+| Ziggit | ~342ms (from raw data) |
+| Speedup | **~1.66×** |
+
+### 2026-03-27T02:13Z (3 repos, original benchmark)
 
 | Tool | Total Avg |
 |------|----------:|

@@ -2,11 +2,6 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import path from "path";
 
-// https://github.com/oven-sh/bun/issues/28609
-// Playwright appends ".esm.preflight" to file URLs for ESM preflight checks
-// via Node.js ESM loader hooks. Bun should strip this suffix and resolve
-// the underlying file.
-
 test("dynamic import with .esm.preflight suffix resolves to base file", async () => {
   using dir = tempDir("esm-preflight", {
     "package.json": JSON.stringify({ type: "module" }),
@@ -15,8 +10,6 @@ test("dynamic import with .esm.preflight suffix resolves to base file", async ()
       import { pathToFileURL } from 'url';
       const configPath = process.argv[2];
       const fileName = pathToFileURL(configPath);
-      // Playwright does this in transform.js requireOrImport():
-      //   await eval(\\\`import(\\\${JSON.stringify(fileName + ".esm.preflight")})\\\`)
       await eval(\`import(\${JSON.stringify(fileName + ".esm.preflight")})\`);
       const mod = await eval(\`import(\${JSON.stringify(fileName)})\`);
       console.log(JSON.stringify(mod.default));

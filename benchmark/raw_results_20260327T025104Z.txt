@@ -1,0 +1,27 @@
+=== BUN INSTALL BENCHMARK ===
+Date: Fri Mar 27 02:50:39 UTC 2026
+Ziggit: 0.3.0 (build.zig.zon)
+
+PART 1: Stock bun install
+  Run 1: Cold=485ms Warm=224ms
+  Run 2: Cold=298ms Warm=153ms
+  Run 3: Cold=364ms Warm=75ms
+  Average: Cold=382ms Warm=150ms
+
+PART 2: Git CLI per-repo
+  @sindresorhus/is: clone=136ms resolve=2ms checkout=24ms total=162ms
+  express: clone=162ms resolve=2ms checkout=24ms total=188ms
+  chalk: clone=125ms resolve=2ms checkout=17ms total=144ms
+  debug: clone=117ms resolve=2ms checkout=10ms total=129ms
+  semver: clone=130ms resolve=2ms checkout=17ms total=149ms
+  TOTAL: 772ms
+
+PART 3: Ziggit per-repo
+  @sindresorhus/is: clone=69ms resolve=2ms checkout=25ms total=96ms
+  express: clone=108ms resolve=2ms checkout=25ms total=135ms
+  chalk: clone=81ms resolve=2ms checkout=18ms total=101ms
+  debug: clone=63ms resolve=2ms checkout=11ms total=76ms
+  semver: clone=75ms resolve=2ms checkout=18ms total=95ms
+  TOTAL: 503ms
+
+Speedup: 1.5x (34%)

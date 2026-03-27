@@ -1,10 +1,10 @@
 # Bun Install Benchmark: Stock Bun vs Ziggit Integration
 
-**Date:** Fri Mar 27 02:47:21 UTC 2026
+**Date:** Fri Mar 27 02:50:39 UTC 2026
 **Machine:** x86_64, 1 cores, 483Mi RAM
 **Stock Bun:** 1.3.11
 **Git:** git version 2.43.0
-**Ziggit:** ziggit version 0.2.0
+**Ziggit:** 0.3.0 (build.zig.zon) / binary reports 0.2.0
 **Runs per benchmark:** 3
 
 ## Building the Bun Fork
@@ -25,14 +25,10 @@ performs, comparing git CLI (stock bun) vs ziggit (bun fork).
 
 | Run | Cold (no cache) | Warm (cached git repos) |
 |-----|-----------------|------------------------|
-| 1 | 481ms | 238ms |
-| 2 | 357ms | 1317ms ⚠️ |
-| 3 | 427ms | 76ms |
-| **Average** | **421ms** | **543ms** |
-| **Median** | **427ms** | **238ms** |
-
-> ⚠️ Run 2 warm cache (1317ms) is an outlier — likely swap pressure on this 483MB RAM VM.
-> Median warm time (238ms) is more representative.
+| 1 | 485ms | 224ms |
+| 2 | 298ms | 153ms |
+| 3 | 364ms | 75ms |
+| **Average** | **382ms** | **150ms** |
 
 ## Part 2: Per-Repo Breakdown — Git CLI vs Ziggit
 
@@ -45,39 +41,39 @@ Each step mirrors what `bun install` does internally for git dependencies:
 
 | Repo | Clone | Resolve | Checkout | Total |
 |------|-------|---------|----------|-------|
-| @sindresorhus/is | 134ms | 2ms | 24ms | 160ms |
-| express | 164ms | 2ms | 24ms | 190ms |
-| chalk | 130ms | 2ms | 17ms | 149ms |
-| debug | 127ms | 2ms | 10ms | 139ms |
-| semver | 135ms | 2ms | 17ms | 154ms |
-| **Total** | | | | **792ms** |
+| @sindresorhus/is | 136ms | 2ms | 24ms | 162ms |
+| express | 162ms | 2ms | 24ms | 188ms |
+| chalk | 125ms | 2ms | 17ms | 144ms |
+| debug | 117ms | 2ms | 10ms | 129ms |
+| semver | 130ms | 2ms | 17ms | 149ms |
+| **Total** | | | | **772ms** |
 
 ### Ziggit (what bun fork uses in-process)
 
 | Repo | Clone | Resolve | Checkout | Total |
 |------|-------|---------|----------|-------|
-| @sindresorhus/is | 73ms | 3ms | 26ms | 102ms |
-| express | 107ms | 2ms | 26ms | 135ms |
-| chalk | 78ms | 2ms | 19ms | 99ms |
-| debug | 59ms | 3ms | 11ms | 73ms |
-| semver | 82ms | 3ms | 20ms | 105ms |
-| **Total** | | | | **514ms** |
+| @sindresorhus/is | 69ms | 2ms | 25ms | 96ms |
+| express | 108ms | 2ms | 25ms | 135ms |
+| chalk | 81ms | 2ms | 18ms | 101ms |
+| debug | 63ms | 2ms | 11ms | 76ms |
+| semver | 75ms | 2ms | 18ms | 95ms |
+| **Total** | | | | **503ms** |
 
 ## Summary
 
 | Metric | Git CLI | Ziggit | Improvement |
 |--------|---------|--------|-------------|
-| Total git dep resolution (5 repos) | 792ms | 514ms | 1.5x faster (35%) |
-| Stock bun install (cold) | 421ms | — | baseline |
-| Stock bun install (warm, median) | 238ms | — | baseline |
+| Total git dep resolution (5 repos) | 772ms | 503ms | 1.5x faster (34%) |
+| Stock bun install (cold) | 382ms | — | baseline |
+| Stock bun install (warm) | 150ms | — | baseline |
 
 ### Projected bun install with ziggit
 
 Stock bun install (cold) spends significant time on git operations. The ziggit
 integration eliminates process spawn overhead and uses in-process git operations.
 
-- **Git dep resolution savings:** 792ms → 514ms (35% faster)
-- **Projected cold install:** ~143ms (down from 421ms)
+- **Git dep resolution savings:** 772ms → 503ms (34% faster)
+- **Projected cold install:** ~113ms (down from 382ms)
 
 ### Key advantages of ziggit in bun install
 

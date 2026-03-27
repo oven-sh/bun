@@ -28,8 +28,12 @@ test("WASI.getImportObject returns correct object for unstable", () => {
   expect(typeof imports.wasi_unstable.fd_write).toBe("function");
 });
 
+test("WASI constructor throws for invalid version", () => {
+  expect(() => new WASI({ version: "invalid" as any })).toThrow();
+});
+
 test("WASI.getImportObject returns default object when version is omitted", () => {
-  const wasi = new WASI({ version: "preview1" });
+  const wasi = new WASI();
   const imports = wasi.getImportObject() as any;
   expect(imports.wasi_snapshot_preview1).toBeDefined();
 });

@@ -7,6 +7,7 @@
 // Eventually we will implement this in native code, but this is just a quick hack to get WASI working.
 
 const nodeFsConstants = $processBindingConstants.fs;
+const { validateOneOf } = require("internal/validators");
 
 var __getOwnPropNames = Object.getOwnPropertyNames;
 
@@ -811,6 +812,7 @@ var require_wasi = __commonJS({
         this.view = void 0;
         this.bindings = wasiConfig.bindings || defaultConfig.bindings;
         let version = wasiConfig.version || "preview1";
+        validateOneOf(version, "version", ["preview1", "unstable"]);
         if (version === "preview1") {
           version = "wasi_snapshot_preview1";
         } else if (version === "unstable") {

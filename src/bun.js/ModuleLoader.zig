@@ -228,10 +228,15 @@ pub fn transpileSourceCode(
             var jsx = jsc_vm.transpiler.options.jsx;
             var emit_decorator_metadata = jsc_vm.transpiler.options.emit_decorator_metadata;
             var experimental_decorators = jsc_vm.transpiler.options.experimental_decorators;
-            if (path.isFile()) {
+            if (path.isFile() and path.name.dir.len > 0) {
                 if (jsc_vm.transpiler.resolver.readDirInfo(path.name.dir) catch null) |dir_info| {
                     if (dir_info.enclosing_tsconfig_json) |tsconfig| {
                         jsx = tsconfig.mergeJSX(jsx);
+                        jsx.development = switch (jsc_vm.transpiler.options.force_node_env) {
+                            .development => true,
+                            .production => false,
+                            .unspecified => jsc_vm.transpiler.options.jsx.development,
+                        };
                         emit_decorator_metadata = emit_decorator_metadata or tsconfig.emit_decorator_metadata;
                         experimental_decorators = experimental_decorators or tsconfig.experimental_decorators;
                     }

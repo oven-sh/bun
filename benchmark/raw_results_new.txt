@@ -1,0 +1,125 @@
+============================================
+  bun install End-to-End Benchmark
+  Stock bun + Git CLI vs Ziggit
+  Fri Mar 27 00:38:58 UTC 2026
+  VM: 483Mi RAM, 1 CPUs
+  bun: 1.3.11
+  git: git version 2.43.0
+  ziggit: git version 2.43.0
+============================================
+
+═══ Section 1: Stock bun install (cold cache) ═══
+  Run 1: 69 packages installed [510.00ms]
+516ms
+  Run 2: 69 packages installed [400.00ms]
+408ms
+  Run 3: 69 packages installed [410.00ms]
+418ms
+
+═══ Section 2: Stock bun install (warm cache) ═══
+  Run 1: 69 packages installed [136.00ms]
+142ms
+  Run 2: 69 packages installed [71.00ms]
+77ms
+  Run 3: 69 packages installed [74.00ms]
+81ms
+
+═══ Section 3: Clone-only benchmark ═══
+
+--- Run 1: git CLI ---
+  is: 137ms
+  express: 167ms
+  chalk: 124ms
+  debug: 116ms
+  semver: 129ms
+  TOTAL: 682ms
+--- Run 1: ziggit ---
+  is: 77ms
+  express: 116ms
+  chalk: 71ms
+  debug: 65ms
+  semver: 81ms
+  TOTAL: 416ms
+
+--- Run 2: git CLI ---
+  is: 125ms
+  express: 162ms
+  chalk: 124ms
+  debug: 116ms
+  semver: 121ms
+  TOTAL: 655ms
+--- Run 2: ziggit ---
+  is: 83ms
+  express: 105ms
+  chalk: 83ms
+  debug: 69ms
+  semver: 79ms
+  TOTAL: 427ms
+
+--- Run 3: git CLI ---
+  is: 137ms
+  express: 165ms
+  chalk: 183ms
+  debug: 114ms
+  semver: 128ms
+  TOTAL: 742ms
+--- Run 3: ziggit ---
+  is: 315ms
+  express: 114ms
+  chalk: 75ms
+  debug: 62ms
+  semver: 87ms
+  TOTAL: 660ms
+
+═══ Section 4: Full workflow simulation (clone + resolve + extract ALL files) ═══
+
+--- Run 1: git CLI ---
+  is (15 files): clone=121ms resolve=2ms ls-tree=3ms cat-file=21ms total=147ms
+  express (213 files): clone=158ms resolve=2ms ls-tree=3ms cat-file=252ms total=415ms
+  chalk (34 files): clone=121ms resolve=2ms ls-tree=3ms cat-file=43ms total=169ms
+  debug (13 files): clone=113ms resolve=2ms ls-tree=3ms cat-file=18ms total=136ms
+  semver (151 files): clone=123ms resolve=2ms ls-tree=3ms cat-file=178ms total=306ms
+  TOTAL: 1185ms
+--- Run 1: ziggit ---
+  is (15 files): clone=80ms resolve=3ms ls-tree=3ms cat-file=30ms total=116ms
+  express (213 files): clone=111ms resolve=3ms ls-tree=3ms cat-file=373ms total=490ms
+  chalk (34 files): clone=94ms resolve=3ms ls-tree=3ms cat-file=63ms total=163ms
+  debug (13 files): clone=72ms resolve=3ms ls-tree=3ms cat-file=26ms total=104ms
+  semver (151 files): clone=91ms resolve=3ms ls-tree=4ms cat-file=263ms total=361ms
+  TOTAL: 1242ms
+
+--- Run 2: git CLI ---
+  is (15 files): clone=144ms resolve=2ms ls-tree=3ms cat-file=22ms total=171ms
+  express (213 files): clone=164ms resolve=3ms ls-tree=3ms cat-file=253ms total=423ms
+  chalk (34 files): clone=117ms resolve=3ms ls-tree=2ms cat-file=44ms total=166ms
+  debug (13 files): clone=113ms resolve=2ms ls-tree=3ms cat-file=19ms total=137ms
+  semver (151 files): clone=134ms resolve=2ms ls-tree=3ms cat-file=180ms total=319ms
+  TOTAL: 1224ms
+--- Run 2: ziggit ---
+  is (15 files): clone=79ms resolve=3ms ls-tree=3ms cat-file=31ms total=116ms
+  express (213 files): clone=113ms resolve=2ms ls-tree=4ms cat-file=376ms total=495ms
+  chalk (34 files): clone=91ms resolve=3ms ls-tree=3ms cat-file=64ms total=161ms
+  debug (13 files): clone=70ms resolve=3ms ls-tree=3ms cat-file=26ms total=102ms
+  semver (151 files): clone=75ms resolve=3ms ls-tree=3ms cat-file=265ms total=346ms
+  TOTAL: 1229ms
+
+--- Run 3: git CLI ---
+  is (15 files): clone=126ms resolve=2ms ls-tree=3ms cat-file=22ms total=153ms
+  express (213 files): clone=158ms resolve=2ms ls-tree=4ms cat-file=254ms total=418ms
+  chalk (34 files): clone=124ms resolve=2ms ls-tree=3ms cat-file=45ms total=174ms
+  debug (13 files): clone=123ms resolve=2ms ls-tree=3ms cat-file=19ms total=147ms
+  semver (151 files): clone=121ms resolve=3ms ls-tree=3ms cat-file=179ms total=306ms
+  TOTAL: 1207ms
+--- Run 3: ziggit ---
+  is (15 files): clone=79ms resolve=3ms ls-tree=4ms cat-file=30ms total=116ms
+  express (213 files): clone=104ms resolve=3ms ls-tree=4ms cat-file=372ms total=483ms
+  chalk (34 files): clone=72ms resolve=3ms ls-tree=3ms cat-file=65ms total=143ms
+  debug (13 files): clone=68ms resolve=3ms ls-tree=3ms cat-file=26ms total=100ms
+  semver (151 files): clone=80ms resolve=3ms ls-tree=3ms cat-file=265ms total=351ms
+  TOTAL: 1202ms
+
+═══ Section 5: Process spawn overhead ═══
+  git --version avg spawn: 1ms (20 iterations)
+  ziggit --version avg spawn: 2ms (20 iterations)
+
+Benchmark complete.

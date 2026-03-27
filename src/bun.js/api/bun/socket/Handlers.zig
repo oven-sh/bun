@@ -238,6 +238,7 @@ pub const SocketConfig = struct {
     allowHalfOpen: bool = false,
     reusePort: bool = false,
     ipv6Only: bool = false,
+    backlog: i32 = 511,
 
     /// Deinitializes everything and `unprotect`s `handlers`.
     pub fn deinit(this: *SocketConfig) void {

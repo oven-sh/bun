@@ -2355,6 +2355,7 @@ Server.prototype[kRealListen] = function (
   contexts,
   _onListen,
   fd,
+  backlog,
 ) {
   if (path) {
     this._handle = Bun.listen({
@@ -2366,6 +2367,7 @@ Server.prototype[kRealListen] = function (
       exclusive: exclusive || this[bunSocketServerOptions]?.exclusive || false,
       socket: ServerHandlers,
       data: this,
+      backlog,
     });
   } else if (fd != null) {
     this._handle = Bun.listen({
@@ -2378,6 +2380,7 @@ Server.prototype[kRealListen] = function (
       exclusive: exclusive || this[bunSocketServerOptions]?.exclusive || false,
       socket: ServerHandlers,
       data: this,
+      backlog,
     });
   } else {
     this._handle = Bun.listen({
@@ -2390,6 +2393,7 @@ Server.prototype[kRealListen] = function (
       exclusive: exclusive || this[bunSocketServerOptions]?.exclusive || false,
       socket: ServerHandlers,
       data: this,
+      backlog,
     });
   }
 
@@ -2498,6 +2502,7 @@ function listenInCluster(
       contexts,
       onListen,
       fd,
+      backlog,
     );
     return;
   }
@@ -2528,6 +2533,7 @@ function listenInCluster(
       contexts,
       onListen,
       fd,
+      backlog,
     );
   });
 }

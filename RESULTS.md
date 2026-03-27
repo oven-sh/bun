@@ -1,7 +1,7 @@
 # Ziggit Integration Benchmarks
 
 ## Environment
-- Date: 2026-03-27T01:48Z (latest run)
+- Date: 2026-03-27T01:51Z (latest run)
 - Ziggit: built from `/root/ziggit` HEAD (`43196dd`), Zig 0.15.2, ReleaseFast
 - Bun: 1.3.11 (stock), fork branch: ziggit-integration
 - Machine: Linux x86_64, 483MB RAM, 1 vCPU, 2GB swap
@@ -15,45 +15,45 @@ Benchmarks compare stock bun + git CLI vs ziggit CLI to measure replaceable oper
 
 ---
 
-## Latest Run (2026-03-27T01:48Z)
+## Latest Run (2026-03-27T01:51Z)
 
 ### Stock Bun Install (5 Git Dependencies → 6 Total Packages)
 
 | Scenario | Run 1 | Run 2 | Run 3 | Median |
 |----------|-------|-------|-------|--------|
-| Cold cache | 273ms | 203ms | 240ms | **240ms** |
-| Warm cache | 20ms | 22ms | 20ms | **20ms** |
+| Cold cache | 252ms | 271ms | 115ms | **252ms** |
+| Warm cache | 21ms | 22ms | 20ms | **21ms** |
 
 ### Clone: Ziggit vs Git CLI (5 repos, bare --depth=1)
 
 | Tool | Total (5 repos) | Per-repo avg | Speedup |
 |------|----------------|-------------|---------|
-| Git CLI | 666ms | 133ms | baseline |
-| Ziggit  | 664ms | 133ms | **1.00×** |
+| Git CLI | 652ms | 130ms | baseline |
+| Ziggit  | 674ms | 135ms | **0.97×** |
 
 Per-repo detail:
 
 | Repo | Git CLI | Ziggit | Speedup |
 |------|---------|--------|---------|
-| debug | 123ms | 84ms | **1.46×** |
-| semver | 144ms | 147ms | 0.98× |
-| ms | 138ms | 138ms | 1.00× |
-| balanced-match | 136ms | 229ms | 0.59× |
-| concat-map | 125ms | 66ms | **1.89×** |
+| debug | 134ms | 96ms | **1.40×** |
+| semver | 144ms | 151ms | 0.95× |
+| ms | 129ms | 140ms | 0.92× |
+| balanced-match | 123ms | 225ms | 0.55× |
+| concat-map | 122ms | 62ms | **1.97×** |
 
-### Full Workflow: clone + resolve (median of 3 runs)
+### Full Workflow: clone + resolve + archive (median of 3 runs)
 
 | Tool | Total (5 repos) | Speedup |
 |------|----------------|---------|
-| Git CLI | 721ms (clone) + 70ms (archive) = 791ms | baseline |
-| Ziggit CLI | 664ms (clone) + 63ms (resolve) = 727ms | **1.09×** |
+| Git CLI | 652ms (clone) + 57ms (resolve) + 72ms (archive) = 781ms | baseline |
+| Ziggit CLI | 674ms (clone) + 67ms (resolve) = 741ms | **1.05×** |
 
 ### Subprocess Spawn Overhead (100 iterations)
 
 | Tool | Per-call |
 |------|----------|
-| git | 1.04ms |
-| ziggit (CLI) | 1.63ms |
+| git | 1.07ms |
+| ziggit (CLI) | 1.68ms |
 | ziggit (library) | 0ms (in-process) |
 
 ### Projected Library-Mode Performance
@@ -62,7 +62,7 @@ In-process ziggit integration eliminates:
 - 15+ subprocess spawns per `bun install` with 5 git deps (~16ms saved)
 - IPC/pipe overhead for data transfer (~10-20ms saved)
 - Sequential clone bottleneck via parallel fetches (~50-100ms saved)
-- `archive | tar` step via direct packfile reads (~70ms saved)
+- `archive | tar` step via direct packfile reads (~72ms saved)
 
 **Projected total: 150-200ms savings → 60-80% faster git dep resolution**
 
@@ -70,26 +70,14 @@ In-process ziggit integration eliminates:
 
 ## Historical Runs
 
-### 2026-03-27T01:40Z
-
-| Scenario | Median |
-|----------|--------|
-| Bun cold install | 615ms |
-| Bun warm install | 83ms |
-| Git CLI clone (5 repos) | 669ms |
-| Ziggit clone (5 repos) | 415ms → **1.61×** |
-
-### 2026-03-27T01:48Z (current)
-
-| Scenario | Median |
-|----------|--------|
-| Bun cold install | 240ms |
-| Bun warm install | 20ms |
-| Git CLI clone (5 repos) | 666ms |
-| Ziggit clone (5 repos) | 664ms → **1.00×** |
+| Run | Bun Cold | Bun Warm | Git Clone (5) | Ziggit Clone (5) | Clone Speedup |
+|-----|----------|----------|---------------|-----------------|---------------|
+| 01:40Z | 615ms | 83ms | 669ms | 415ms | **1.61×** |
+| 01:48Z | 240ms | 20ms | 666ms | 664ms | 1.00× |
+| **01:51Z** | **252ms** | **21ms** | **652ms** | **674ms** | **0.97×** |
 
 > Note: Network variance between runs is significant on this VM.
-> The 01:40Z run showed ziggit 1.61× faster; the 01:48Z run shows parity.
+> The 01:40Z run showed ziggit 1.61× faster; later runs show parity.
 > True comparison requires a higher-resource machine with stable network.
 
 ---

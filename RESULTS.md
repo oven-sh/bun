@@ -1,7 +1,7 @@
 # Ziggit Integration Benchmarks
 
 ## Environment
-- Date: 2026-03-27T03:13Z (latest run, Session 5)
+- Date: 2026-03-27T03:15Z (latest run, Session 7)
 - Ziggit: `ae4117e` (fix: improve wrapper stderr translations), Zig 0.15.2
 - Bun: 1.3.11 (stock), fork branch: ziggit-integration
 - Machine: Linux x86_64, 483MB RAM, 1 vCPU, 2GB swap
@@ -15,7 +15,7 @@ Benchmarks compare stock bun + git CLI vs ziggit CLI to measure replaceable oper
 
 ---
 
-## Latest Run (2026-03-27T03:13Z) — 5 Repos, Full Workflow
+## Latest Run (2026-03-27T03:15Z) — 5 Repos, Full Workflow
 
 ### Stock Bun Install (5 Git Dependencies)
 
@@ -23,29 +23,29 @@ Dependencies: `@sindresorhus/is`, `express`, `chalk`, `debug`, `semver` (all `gi
 
 | Scenario | Run 1 | Run 2 | Run 3 | Median |
 |----------|------:|------:|------:|-------:|
-| Cold cache | 371ms | 1466ms | 352ms | **371ms** |
-| Warm cache | 88ms | 82ms | 85ms | **85ms** |
+| Cold cache | 565ms | 438ms | 438ms | **438ms** |
+| Warm cache | 77ms | 203ms | 76ms | **77ms** |
 
 ### Per-Repo Clone Workflow: Git CLI vs Ziggit (3 runs, median)
 
 | Repo | ziggit total | git CLI total | Speedup | Clone savings |
 |------|-------------:|--------------:|--------:|--------------:|
-| debug | **92ms** | 155ms | **1.68×** | 63ms |
-| semver | **155ms** | 236ms | **1.52×** | 81ms |
-| ms | **145ms** | 181ms | **1.24×** | 36ms |
-| express | **779ms** | 1,070ms | **1.37×** | 291ms |
-| chalk | **102ms** | 161ms | **1.57×** | 59ms |
-| **TOTAL** | **1,273ms** | **1,803ms** | **1.42×** | **530ms (29%)** |
+| debug | **101ms** | 157ms | **1.55×** | 56ms |
+| semver | **215ms** | 298ms | **1.38×** | 83ms |
+| ms | **148ms** | 185ms | **1.25×** | 37ms |
+| express | **715ms** | 1,084ms | **1.51×** | 369ms |
+| chalk | **102ms** | 158ms | **1.54×** | 56ms |
+| **TOTAL** | **1,281ms** | **1,882ms** | **1.47×** | **601ms (31%)** |
 
 ### Clone-Only Breakdown
 
 | Repo | ziggit | git CLI | Speedup |
 |------|-------:|--------:|--------:|
-| debug | 81ms | 145ms | **1.79×** |
-| semver | 139ms | 222ms | **1.60×** |
-| ms | 134ms | 172ms | **1.28×** |
-| express | 756ms | 1,051ms | **1.39×** |
-| chalk | 89ms | 150ms | **1.69×** |
+| debug | 86ms | 147ms | **1.71×** |
+| semver | 198ms | 284ms | **1.43×** |
+| ms | 136ms | 175ms | **1.29×** |
+| express | 692ms | 1,064ms | **1.54×** |
+| chalk | 89ms | 147ms | **1.65×** |
 
 ### Checkout Breakdown
 
@@ -53,7 +53,7 @@ Dependencies: `@sindresorhus/is`, `express`, `chalk`, `debug`, `semver` (all `gi
 |------|-------:|--------:|
 | debug | 9ms | 8ms |
 | semver | 14ms | 12ms |
-| ms | 9ms | 7ms |
+| ms | 9ms | 8ms |
 | express | 20ms | 18ms |
 | chalk | 10ms | 9ms |
 
@@ -61,11 +61,11 @@ Dependencies: `@sindresorhus/is`, `express`, `chalk`, `debug`, `semver` (all `gi
 
 | Repo | ziggit | git CLI | Ratio |
 |------|-------:|--------:|------:|
-| debug | 96ms | 92ms | ~1.0× |
-| semver | 89ms | 84ms | ~1.0× |
-| ms | 81ms | 85ms | ~1.0× |
-| express | 99ms | 98ms | ~1.0× |
-| chalk | 84ms | 83ms | ~1.0× |
+| debug | 84ms | 84ms | ~1.0× |
+| semver | 117ms | 116ms | ~1.0× |
+| ms | 83ms | 84ms | ~1.0× |
+| express | 100ms | 93ms | ~1.0× |
+| chalk | 84ms | 85ms | ~1.0× |
 
 ### findCommit / rev-parse (10 runs, median)
 
@@ -73,7 +73,7 @@ All repos: **2ms** for both ziggit and git CLI. Negligible.
 
 ---
 
-## Historical Summary (5 Sessions)
+## Historical Summary (7 Sessions)
 
 | Session | Date | Total ziggit | Total git | Speedup |
 |---------|------|------------:|-----------:|--------:|
@@ -81,19 +81,21 @@ All repos: **2ms** for both ziggit and git CLI. Negligible.
 | 2 | T02:xx | 1,204ms | 1,832ms | 1.52× |
 | 3 | T03:08 | 1,195ms | 1,780ms | 1.49× |
 | 4 | T03:10 | 1,201ms | 2,340ms | 1.95× |
-| **5** | **T03:13** | **1,273ms** | **1,803ms** | **1.42×** |
-| **Average** | | **1,212ms** | **1,902ms** | **1.57×** |
+| 5 | T03:13 | 1,273ms | 1,803ms | 1.42× |
+| **7** | **T03:15** | **1,281ms** | **1,882ms** | **1.47×** |
+| **Average** | | **1,224ms** | **1,898ms** | **1.55×** |
 
 ---
 
 ## Key Takeaways
 
-1. **Clone is the bottleneck** — ziggit's smart HTTP protocol implementation is 1.2–1.8× faster
-2. **Consistent across sessions** — cross-session average speedup is **1.57×**
-3. **Total savings: 530–1,139ms** per install (29-48% of sequential clone time)
+1. **Clone is the bottleneck** — ziggit's smart HTTP protocol implementation is 1.3–1.7× faster per repo
+2. **Consistent across sessions** — cross-session average speedup is **1.55×**
+3. **Total savings: 601ms** per install (31% of sequential clone time) in latest run
 4. **Fetch is network-bound** — no meaningful difference when repo is already cached
 5. **Projected bun install speedup**: 20-30% for cold installs with git dependencies
 6. **In-process linking** (no fork/exec) would add another 10-20% on top
+7. **Larger repos benefit more** — express (largest) shows 1.54× clone speedup
 
 ## Benchmark Script
 

@@ -1,0 +1,41 @@
+=========================================
+BUN INSTALL BENCHMARK — 2026-03-27T04:20Z (Session 22)
+=========================================
+System: Linux 6.1.141 x86_64, 483Mi RAM, 1 vCPU, 2GB swap
+Stock bun: 1.3.11
+Zig: 0.15.2
+Git: 2.43.0
+Ziggit: b6ce769
+
+=== STOCK BUN INSTALL — COLD CACHE ===
+Run 1: 506ms (bun), 510ms (wall)
+Run 2: 578ms (bun), 582ms (wall)
+Run 3: 316ms (bun), 320ms (wall)
+Avg:   467ms (bun), 471ms (wall)
+
+=== STOCK BUN INSTALL — WARM CACHE ===
+Run 1: 22ms (bun), 24ms (wall)
+Run 2: 21ms (bun), 23ms (wall)
+Run 3: 21ms (bun), 23ms (wall)
+Avg:   21ms (bun), 23ms (wall)
+
+=== ZIGGIT vs GIT CLI — findCommit (μs avg) ===
+debug:       R1=164 R2=174 R3=168 avg=169 | CLI: R1=1041 R2=1041 R3=1034 avg=1039
+chalk:       R1=140 R2=138 R3=136 avg=138 | CLI: R1=1032 R2=1042 R3=1045 avg=1040
+is:          R1=219 R2=217 R3=186 avg=207 | CLI: R1=1061 R2=1050 R3=1042 avg=1051
+node-semver: R1=132 R2=129 R3=136 avg=132 | CLI: R1=1035 R2=1046 R3=1040 avg=1040
+express:     R1=112 R2=113 R3=112 avg=112 | CLI: R1=1042 R2=1061 R3=1052 avg=1052
+
+=== ZIGGIT vs GIT CLI — cloneBare (μs avg) ===
+debug:       R1=844  R2=851  R3=853  avg=849  | CLI: R1=4387 R2=4351 R3=4367 avg=4368
+chalk:       R1=1236 R2=1214 R3=1223 avg=1224 | CLI: R1=3987 R2=3968 R3=3975 avg=3977
+is:          R1=1731 R2=1707 R3=1722 avg=1720 | CLI: R1=4247 R2=4243 R3=4251 avg=4247
+node-semver: R1=1924 R2=1833 R3=1797 avg=1851 | CLI: R1=5482 R2=5518 R3=5470 avg=5490
+express:     R1=11214 R2=9959 R3=9930 avg=10368 | CLI: R1=6858 R2=6809 R3=6874 avg=6847
+
+=== ZIGGIT vs GIT CLI — Full Workflow (μs avg) ===
+debug:       R1=1690 R2=1625 R3=1712 avg=1676 | CLI: R1=11006 R2=10962 R3=10985 avg=10984
+chalk:       R1=2464 R2=2455 R3=2476 avg=2465 | CLI: R1=12011 R2=12006 R3=12022 avg=12013
+is:          R1=3278 R2=3373 R3=3218 avg=3290 | CLI: R1=12453 R2=12527 R3=12501 avg=12494
+node-semver: R1=4265 R2=3551 R3=3518 avg=3778 | CLI: R1=16731 R2=16297 R3=16348 avg=16459
+express:     R1=22061 R2=20948 R3=21194 avg=21401 | CLI: R1=22420 R2=22370 R3=22362 avg=22384

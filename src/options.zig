@@ -1309,6 +1309,7 @@ pub const JSX = struct {
             hasher.update(this.classic_import_source);
             hasher.update(this.package_name);
             hasher.update(std.mem.asBytes(&this.runtime));
+            hasher.update(std.mem.asBytes(&this.development));
         }
 
         pub fn importSource(this: *const Pragma) string {

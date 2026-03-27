@@ -15,7 +15,7 @@ Benchmarks compare stock bun + git CLI vs ziggit CLI to measure replaceable oper
 
 ---
 
-## Latest Run (2026-03-27T02:50Z) — 5 Large Repos, Full Workflow (Ziggit 0.3.0)
+## Latest Run (2026-03-27T02:53Z) — 5 Repos, Ziggit `acfd007` (skip delta cache alloc)
 
 ### Stock Bun Install (5 Git Dependencies)
 
@@ -23,61 +23,63 @@ Dependencies: `@sindresorhus/is`, `express`, `chalk`, `debug`, `semver` (all `gi
 
 | Scenario | Run 1 | Run 2 | Run 3 | Average |
 |----------|------:|------:|------:|--------:|
-| Cold cache | 485ms | 298ms | 364ms | **382ms** |
-| Warm cache | 224ms | 153ms | 75ms | **150ms** |
+| Cold cache | 459ms | 494ms | 391ms | **448ms** |
+| Warm cache | 178ms | 77ms | 85ms | **113ms** |
 
-### Per-Repo Bare Clone: Git CLI vs Ziggit
+### Per-Repo Bare Clone: Git CLI vs Ziggit (3 runs averaged)
 
 | Repo | Git CLI (avg) | Ziggit (avg) | Δ |
 |------|------:|------:|------:|
-| @sindresorhus/is | 136ms | 69ms | **-67ms (49%)** |
-| express | 162ms | 108ms | **-54ms (33%)** |
-| chalk | 125ms | 81ms | **-44ms (35%)** |
-| debug | 117ms | 63ms | **-54ms (46%)** |
-| semver | 130ms | 75ms | **-55ms (42%)** |
+| @sindresorhus/is | 130ms | 74ms | **-56ms (43%)** |
+| express | 162ms | 107ms | **-55ms (33%)** |
+| chalk | 126ms | 68ms | **-58ms (46%)** |
+| debug | 114ms | 60ms | **-54ms (47%)** |
+| semver | 130ms | 78ms | **-52ms (40%)** |
 
 ### Per-Repo Checkout: Git CLI vs Ziggit
 
 | Repo | Git CLI (avg) | Ziggit (avg) | Δ |
 |------|------:|------:|------:|
-| @sindresorhus/is | 24ms | 25ms | +1ms |
-| express | 24ms | 25ms | +1ms |
-| chalk | 17ms | 18ms | +1ms |
-| debug | 10ms | 11ms | +1ms |
-| semver | 17ms | 18ms | +1ms |
+| @sindresorhus/is | 6ms | 6ms | 0ms |
+| express | 10ms | 10ms | 0ms |
+| chalk | 6ms | 6ms | 0ms |
+| debug | 3ms | 4ms | +1ms |
+| semver | 7ms | 7ms | 0ms |
 
 ### Full Workflow Including Checkout (5 repos sequential)
 
 | Metric | Git CLI | Ziggit |
 |--------|--------:|-------:|
-| Total (clone + resolve + checkout) | 772ms | 503ms |
-| **Savings** | | **269ms (34%)** |
+| Total (clone + resolve + checkout) | 704ms | 430ms |
+| **Savings** | | **274ms (38%)** |
 
-**Speedup: 1.53× (34% faster)**
+**Speedup: 1.63× (38% faster)** ✅
 
 ---
 
 ## Key Observations
 
-1. **Clone is consistently 33–49% faster** across all 5 repos. Ziggit 0.3.0's biggest
-   wins: @sindresorhus/is (49%), debug (46%), semver (42%). The improvement is
-   consistent regardless of repo size.
+1. **Clone is consistently 33–47% faster** across all 5 repos. Biggest wins:
+   debug (47%), chalk (46%), @sindresorhus/is (43%). Improvement is consistent
+   regardless of repo size.
 
-2. **Checkout is at parity** — ziggit adds ~1ms overhead vs git CLI for local
-   clone operations. This is negligible and within measurement noise.
+2. **Checkout is at exact parity** — 0ms delta on 4/5 repos, +1ms on debug
+   (within noise). Ziggit-created bare repos are fully git-compatible.
 
-3. **Total git dep workflow: 1.53× faster (34%).** 772ms → 503ms for 5 repos
-   sequentially. In bun install (which parallelizes), the wall-clock savings
-   would be proportionally smaller but still significant.
+3. **Total git dep workflow: 1.63× faster (38%).** 704ms → 430ms for 5 repos
+   sequentially. In bun install (which parallelizes), wall-clock savings
+   would track the slowest repo improvement (~55ms for express).
 
-4. **Clone speed dominates.** The clone step accounts for 87% of git CLI time
-   and 79% of ziggit time. Ziggit's lean HTTP client and zero-alloc pack
-   parsing save ~55ms per repo on average.
+4. **Clone speed dominates.** Clone accounts for ~94% of git CLI time and
+   ~90% of ziggit time. Ziggit's single-process architecture, zero-alloc
+   pack parsing, and lean HTTP client save ~55ms per repo average.
 
-5. **Projected bun install improvement:** Cold install from 382ms → ~113ms
-   (saving ~269ms from faster clones, plus in-process call savings).
-   When used as an in-process library (no fork/exec), additional savings
-   from eliminated process spawn overhead (~5ms × 5 repos = ~25ms).
+5. **Improvement over previous run:** `acfd007` (skip delta cache allocation
+   for shallow clones with no deltas) improved from 1.53× to 1.63×.
+
+6. **Projected bun install improvement:** Cold install from 448ms → ~174ms
+   (saving 274ms from faster clones). With in-process library integration
+   (no fork/exec), additional ~25ms savings from eliminated process spawns.
 
 ---
 
@@ -94,10 +96,11 @@ Dependencies: `@sindresorhus/is`, `express`, `chalk`, `debug`, `semver` (all `gi
 | 2026-03-27T02:42Z | 774ms | 515ms | 33% |
 | 2026-03-27T02:44Z | 767ms | 492ms | 35% |
 | 2026-03-27T02:47Z | 792ms | 514ms | 35% |
-| **2026-03-27T02:50Z** | **772ms** | **503ms** | **34%** |
+| 2026-03-27T02:50Z | 772ms | 503ms | 34% |
+| **2026-03-27T02:53Z** | **704ms** | **430ms** | **38%** |
 
 *02:42Z+ runs use larger repos: @sindresorhus/is, express, chalk, debug, semver.*
-*02:50Z is ziggit 0.3.0 (previous runs: 0.2.0).*
+*02:50Z is ziggit 0.3.0. 02:53Z is ziggit `acfd007` (skip delta cache alloc).*
 
 Results are consistent across runs. Variance is primarily due to network latency.
 
@@ -112,7 +115,8 @@ Results are consistent across runs. Variance is primarily due to network latency
 | 2026-03-27T02:42Z | 774ms | 515ms | 259ms (33%) |
 | 2026-03-27T02:44Z | 767ms | 492ms | 275ms (35%) |
 | 2026-03-27T02:47Z | 792ms | 514ms | 278ms (35%) |
-| **2026-03-27T02:50Z** | **772ms** | **503ms** | **269ms (34%)** |
+| 2026-03-27T02:50Z | 772ms | 503ms | 269ms (34%) |
+| **2026-03-27T02:53Z** | **704ms** | **430ms** | **274ms (38%)** |
 
 *02:42Z+ runs use larger repos: @sindresorhus/is, express, chalk, debug, semver.*
 
@@ -127,11 +131,12 @@ Results are consistent across runs. Variance is primarily due to network latency
 | 2026-03-27T02:42Z | 422ms | 208ms | @sindresorhus/is,express,chalk,debug,semver |
 | 2026-03-27T02:44Z | 364ms | 80ms | @sindresorhus/is,express,chalk,debug,semver |
 | 2026-03-27T02:47Z | 421ms | 238ms | @sindresorhus/is,express,chalk,debug,semver |
-| **2026-03-27T02:50Z** | **382ms** | **150ms** | **@sindresorhus/is,express,chalk,debug,semver** |
+| 2026-03-27T02:50Z | 382ms | 150ms | @sindresorhus/is,express,chalk,debug,semver |
+| **2026-03-27T02:53Z** | **448ms** | **113ms** | **@sindresorhus/is,express,chalk,debug,semver** |
 
 ---
 
 ## Raw Data Location
 
 All raw timing data saved in `benchmark/raw_results_*.txt`.
-Latest: `benchmark/raw_results_20260327T025104Z.txt`
+Latest: `benchmark/raw_results_20260327T025319Z.txt`

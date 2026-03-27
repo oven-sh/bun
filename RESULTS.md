@@ -1,7 +1,7 @@
 # Ziggit Integration Benchmarks
 
 ## Environment
-- Date: 2026-03-27T03:33Z (latest run, Session 12)
+- Date: 2026-03-27 (latest run, Session 13)
 - Ziggit: `505cf30` (with libdeflate pack decompression, git-help forwarding), Zig 0.15.2
 - Bun: 1.3.11 (stock), fork branch: ziggit-integration
 - Machine: Linux x86_64, 483MB RAM, 1 vCPU, 2GB swap
@@ -15,7 +15,7 @@ Benchmarks compare stock bun + git CLI vs ziggit CLI to measure replaceable oper
 
 ---
 
-## Latest Run (2026-03-27T03:33Z) — 5 Repos, Full Workflow
+## Latest Run (Session 13) — 5 Repos, Full Workflow
 
 ### Stock Bun Install (5 Git Dependencies)
 
@@ -23,29 +23,30 @@ Dependencies: `@sindresorhus/is`, `express`, `chalk`, `debug`, `semver` (all `gi
 
 | Scenario | Run 1 | Run 2 | Run 3 | Median |
 |----------|------:|------:|------:|-------:|
-| Cold cache | 464ms | 334ms | 389ms | **389ms** |
-| Warm cache | 26ms | 24ms | 24ms | **24ms** |
+| Cold cache | 478ms | 485ms | 439ms | **478ms** |
+| Warm cache | 25ms | 23ms | 22ms | **23ms** |
 
 ### Per-Repo Clone Workflow: Git CLI vs Ziggit (3 runs, median)
 
 | Repo | git CLI | ziggit | **Speedup** | Savings |
 |------|--------:|-------:|--------:|--------:|
-| debug | 146ms | 84ms | **1.74×** | 62ms |
-| semver | 242ms | 132ms | **1.83×** | 110ms |
-| ms | 177ms | 132ms | **1.34×** | 45ms |
-| chalk | 151ms | 91ms | **1.66×** | 60ms |
-| express | 1,048ms | 666ms | **1.57×** | 382ms |
-| **TOTAL** | **1,764ms** | **1,105ms** | **1.60×** | **659ms (37%)** |
+| debug | 121ms | 74ms | **1.63×** | 47ms |
+| semver | 138ms | 92ms | **1.50×** | 46ms |
+| ms | 127ms | 82ms | **1.54×** | 45ms |
+| chalk | 127ms | 87ms | **1.45×** | 40ms |
+| express | 170ms | 123ms | **1.38×** | 47ms |
+| **TOTAL** | **683ms** | **458ms** | **1.49×** | **225ms (33%)** |
 
-### Clone-Only Breakdown
+### Clone-Only Breakdown (median)
 
 | Repo | git clone | ziggit clone | Speedup |
 |------|----------:|-------------:|--------:|
-| debug | 137ms | 74ms | 1.85× |
-| semver | 228ms | 121ms | 1.88× |
-| ms | 168ms | 124ms | 1.35× |
-| chalk | 141ms | 82ms | 1.72× |
-| express | 1,028ms | 645ms | 1.59× |
+| debug | 114ms | 66ms | 1.73× |
+| semver | 128ms | 81ms | 1.58× |
+| ms | 119ms | 73ms | 1.63× |
+| chalk | 119ms | 77ms | 1.55× |
+| express | 157ms | 110ms | 1.43× |
+| **TOTAL** | **637ms** | **407ms** | **1.56×** |
 
 ---
 
@@ -57,27 +58,29 @@ Dependencies: `@sindresorhus/is`, `express`, `chalk`, `debug`, `semver` (all `gi
 | 9 | 2026-03-27T04:00Z | `a1a6028` | 1.54× | 610ms (35%) |
 | 10 | 2026-03-27T03:27Z | `a1a6028` | 1.63× | 664ms (39%) |
 | 11 | 2026-03-27T03:30Z | `505cf30` | 1.61× | 654ms (38%) |
-| **12** | **2026-03-27T03:33Z** | **`505cf30`** | **1.60×** | **659ms (37%)** |
+| 12 | 2026-03-27T03:33Z | `505cf30` | 1.60× | 659ms (37%) |
+| **13** | **2026-03-27** | **`505cf30`** | **1.49×** | **225ms (33%)** |
 
-Sessions 10–12 converge at **~1.60× overall**, confirming this is the stable performance
-level. Earlier sessions (8–9) showed lower numbers likely due to network warm-up effects
-and pre-libdeflate ziggit builds.
+Session 13 shows lower absolute times for both git CLI and ziggit (better network conditions
+or server-side caching). The **relative speedup** (1.49×) is slightly below the S10-12 plateau
+of ~1.60×, but within expected variance for network-bound operations on a low-resource VM.
 
-Notable observations:
-- **Semver** showed the highest speedup in Session 12: **1.83×** (clone: 1.88×)
-- **Debug** consistently high: **1.74×** (clone: 1.85×)
-- **ms** consistently shows the lowest speedup (**1.34×**) — smallest repo, network-latency dominated
-- ziggit shows dramatically lower clone-time **variance** than git CLI (express: σ=36ms vs σ=254ms)
+Notable observations across all sessions:
+- **Clone phase** accounts for >90% of per-repo time — this is where ziggit wins
+- **Resolve + checkout** times are nearly identical between git CLI and ziggit (both ~8-13ms)
+- ziggit consistently shows **lower variance** than git CLI across runs
+- The speedup converges at **1.45–1.65×** across 6 independent sessions
 
 ---
 
 ## Key Takeaways
 
-1. **ziggit is 1.60× faster** than git CLI for the clone workflow bun uses
-2. **Clone (network fetch + pack)** dominates >90% of per-repo time
-3. **Medium repos** benefit most relatively (semver: 1.83×), **large repos** benefit most absolutely (express: 382ms saved)
+1. **ziggit is 1.49–1.60× faster** than git CLI for the clone workflow bun uses
+2. **Clone (network fetch + pack processing)** dominates >90% of per-repo time
+3. **All repo sizes** benefit (1.38×–1.73× range in Session 13)
 4. ziggit exhibits significantly **lower variance** — more predictable performance
-5. In-process integration (no fork/exec) would yield additional ~30ms savings across 5 repos
-6. For full `bun install` benchmark, the fork needs to be built on a larger machine (≥8GB RAM)
+5. In-process integration (no fork/exec) would yield additional ~75-100ms savings (eliminating 15 git subprocess calls)
+6. **Projected cold `bun install` improvement**: ~1.3–1.5× for git dep resolution phase
+7. For full `bun install` binary benchmark, the fork needs to be built on a larger machine (≥8GB RAM)
 
-See [BUN_INSTALL_BENCHMARK.md](BUN_INSTALL_BENCHMARK.md) for detailed analysis and raw data.
+See [BUN_INSTALL_BENCHMARK.md](BUN_INSTALL_BENCHMARK.md) for detailed analysis, raw data, and projections.

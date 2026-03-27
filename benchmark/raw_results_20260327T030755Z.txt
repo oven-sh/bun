@@ -1,0 +1,129 @@
+============================================================
+BUN INSTALL GIT DEPENDENCY BENCHMARK
+Date: 2026-03-27T03:07:55Z
+Runs per test: 3
+ziggit: /root/ziggit/zig-out/bin/ziggit (ae4117e)
+git:    /usr/bin/git (git version 2.43.0)
+bun:    1.3.11
+Repos:  debug semver ms express chalk
+============================================================
+
+========== PART 1: Stock bun install (5 git deps) ==========
+
+--- Cold cache (full install) ---
+  Run 1: 929ms
+  Run 2: 572ms
+  Run 3: 513ms
+
+--- Warm cache (node_modules removed, cache kept) ---
+  Run 1: 111ms
+  Run 2: 76ms
+  Run 3: 157ms
+
+Cold median: 572ms  |  Warm median: 111ms
+
+========== PART 2: Per-repo clone workflow (ziggit vs git CLI) ==========
+
+--- debug (https://github.com/debug-js/debug.git, branch=master) ---
+  Run 1: ziggit=123ms (c:110 r:3 co:10) | git=156ms (c:146 r:2 co:8)
+  Run 2: ziggit=90ms (c:78 r:3 co:9) | git=147ms (c:137 r:2 co:8)
+  Run 3: ziggit=92ms (c:80 r:3 co:9) | git=143ms (c:133 r:2 co:8)
+  MEDIAN: ziggit=92ms | git=147ms
+
+--- semver (https://github.com/npm/node-semver.git, branch=main) ---
+  Run 1: ziggit=166ms (c:149 r:3 co:14) | git=235ms (c:220 r:2 co:13)
+  Run 2: ziggit=161ms (c:144 r:3 co:14) | git=256ms (c:241 r:2 co:13)
+  Run 3: ziggit=157ms (c:140 r:3 co:14) | git=238ms (c:223 r:2 co:13)
+  MEDIAN: ziggit=161ms | git=238ms
+
+--- ms (https://github.com/vercel/ms.git, branch=main) ---
+  Run 1: ziggit=146ms (c:134 r:3 co:9) | git=180ms (c:170 r:2 co:8)
+  Run 2: ziggit=142ms (c:130 r:3 co:9) | git=175ms (c:165 r:2 co:8)
+  Run 3: ziggit=150ms (c:138 r:3 co:9) | git=189ms (c:179 r:2 co:8)
+  MEDIAN: ziggit=146ms | git=180ms
+
+--- express (https://github.com/expressjs/express.git, branch=master) ---
+  Run 1: ziggit=791ms (c:768 r:3 co:20) | git=1673ms (c:1653 r:2 co:18)
+  Run 2: ziggit=691ms (c:669 r:3 co:19) | git=1031ms (c:1011 r:2 co:18)
+  Run 3: ziggit=685ms (c:663 r:3 co:19) | git=1020ms (c:1000 r:2 co:18)
+  MEDIAN: ziggit=691ms | git=1031ms
+
+--- chalk (https://github.com/chalk/chalk.git, branch=main) ---
+  Run 1: ziggit=99ms (c:86 r:3 co:10) | git=152ms (c:141 r:2 co:9)
+  Run 2: ziggit=98ms (c:84 r:3 co:11) | git=157ms (c:146 r:2 co:9)
+  Run 3: ziggit=96ms (c:83 r:3 co:10) | git=166ms (c:155 r:2 co:9)
+  MEDIAN: ziggit=98ms | git=157ms
+
+========== PART 3: Fetch (warm bare repo) ==========
+
+--- debug ---
+  Run 1: ziggit=84ms | git=86ms
+  Run 2: ziggit=85ms | git=93ms
+  Run 3: ziggit=78ms | git=83ms
+  MEDIAN: ziggit=84ms | git=86ms
+
+--- semver ---
+  Run 1: ziggit=98ms | git=79ms
+  Run 2: ziggit=85ms | git=83ms
+  Run 3: ziggit=95ms | git=88ms
+  MEDIAN: ziggit=95ms | git=83ms
+
+--- ms ---
+  Run 1: ziggit=89ms | git=85ms
+  Run 2: ziggit=87ms | git=96ms
+  Run 3: ziggit=91ms | git=82ms
+  MEDIAN: ziggit=89ms | git=85ms
+
+--- express ---
+  Run 1: ziggit=94ms | git=95ms
+  Run 2: ziggit=90ms | git=90ms
+  Run 3: ziggit=92ms | git=110ms
+  MEDIAN: ziggit=92ms | git=95ms
+
+--- chalk ---
+  Run 1: ziggit=93ms | git=80ms
+  Run 2: ziggit=85ms | git=96ms
+  Run 3: ziggit=90ms | git=82ms
+  MEDIAN: ziggit=90ms | git=82ms
+
+========== PART 4: findCommit (rev-parse) microbenchmark ==========
+
+--- debug (10 runs) ---
+  ziggit median: 2ms | git median: 2ms
+
+--- semver (10 runs) ---
+  ziggit median: 2ms | git median: 2ms
+
+--- ms (10 runs) ---
+  ziggit median: 2ms | git median: 2ms
+
+--- express (10 runs) ---
+  ziggit median: 2ms | git median: 2ms
+
+--- chalk (10 runs) ---
+  ziggit median: 2ms | git median: 2ms
+
+========== FINAL SUMMARY ==========
+
+Stock bun install (5 git deps):
+  Cold: 572ms (runs: 929 572 513)
+  Warm: 111ms (runs: 111 76 157)
+
+Per-repo clone workflow (medians):
+  Repo          ziggit       git   speedup
+  debug           92ms     147ms   1.59x
+  semver         161ms     238ms   1.47x
+  ms             146ms     180ms   1.23x
+  express        691ms    1031ms   1.49x
+  chalk           98ms     157ms   1.60x
+  TOTAL         1188ms    1753ms  savings: 565ms (32%)
+
+Fetch (warm, medians):
+  debug       ziggit: 84ms  git: 86ms
+  semver      ziggit: 95ms  git: 83ms
+  ms          ziggit: 89ms  git: 85ms
+  express     ziggit: 92ms  git: 95ms
+  chalk       ziggit: 90ms  git: 82ms
+
+============================================================
+Raw data saved to: /root/bun-fork/benchmark/raw_results_20260327T030755Z.txt

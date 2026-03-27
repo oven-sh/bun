@@ -1,45 +1,77 @@
-=== BUN INSTALL BENCHMARK 2026-03-27T00:19:03+00:00 ===
+=== Bun Install Benchmark ===
+Date: 2026-03-27T00:26:34Z
+Bun version: 1.3.11
+Ziggit: /root/ziggit/zig-out/bin/ziggit
+Git: git version 2.43.0
 
-## Part 1: Stock bun install (git dependencies)
+=== PART 1: Stock bun install (git dependencies) ===
 
-### Cold cache runs:
-  Run 1: 355ms
-  Run 2: 450ms
-  Run 3: 682ms
-  Median (cold): 450ms
+--- Cold runs (cache cleared) ---
+  Cold run 1: 199.6ms
+  Cold run 2: 99.8ms
+  Cold run 3: 125.9ms
 
-### Warm cache runs:
-  Run 1: 23ms
-  Run 2: 22ms
-  Run 3: 22ms
-  Median (warm): 22ms
+--- Warm runs (lockfile + cache present) ---
+  Warm run 1: 11.1ms
+  Warm run 2: 8.0ms
+  Warm run 3: 9.9ms
 
-## Part 2: Per-repo clone+resolve benchmark (git CLI vs ziggit)
+--- Hot runs (node_modules present) ---
+  Hot run 1: 4.4ms
+  Hot run 2: 4.4ms
+  Hot run 3: 4.3ms
 
-Workflow: clone → resolve HEAD → checkout working tree
+=== PART 2: Clone workflow - ziggit vs git CLI ===
+(Simulates bun install git dep resolution: clone -> resolve ref -> checkout)
 
-| Repo            | git clone ms | ziggit clone ms | git total ms | ziggit total ms | Speedup |
-|----------------|--------------|----------------|--------------|----------------|---------|
-| debug           |        134ms |           73ms |        136ms |           76ms |  1.78x |
-| node-semver     |        135ms |           84ms |        137ms |           86ms |  1.59x |
-| chalk           |        128ms |           77ms |        130ms |           79ms |  1.64x |
-| is              |        127ms |           90ms |        129ms |           93ms |  1.38x |
-| express         |        172ms |          108ms |        174ms |          110ms |  1.58x |
+--- Repo: debug (https://github.com/debug-js/debug.git) ---
+  git run 1: 163.3ms
+  git run 2: 121.5ms
+  git run 3: 123.2ms
+  ziggit run 1: 68.4ms
+  ziggit run 2: 67.7ms
+  ziggit run 3: 67.1ms
 
-### Aggregate (all 5 repos, median of 3 runs each):
-  git CLI total:    706ms
-  ziggit total:     444ms
-  Overall speedup:  1.59x
-  Time saved:       262ms
+--- Repo: node-semver (https://github.com/npm/node-semver.git) ---
+  git run 1: 142.5ms
+  git run 2: 156.4ms
+  git run 3: 139.2ms
+  ziggit run 1: 86.4ms
+  ziggit run 2: 82.0ms
+  ziggit run 3: 84.4ms
 
-## Part 3: Projected bun install improvement
+--- Repo: chalk (https://github.com/chalk/chalk.git) ---
+  git run 1: 140.5ms
+  git run 2: 137.7ms
+  git run 3: 148.1ms
+  ziggit run 1: 83.8ms
+  ziggit run 2: 72.8ms
+  ziggit run 3: 76.6ms
 
-Stock bun install cold cache: 450ms
-Stock bun install warm cache: 22ms
-Git dep resolution via git CLI: 706ms
-Git dep resolution via ziggit:  444ms
+--- Repo: is (https://github.com/sindresorhus/is.git) ---
+  git run 1: 164.4ms
+  git run 2: 147.7ms
+  git run 3: 143.2ms
+  ziggit run 1: 86.4ms
+  ziggit run 2: 76.0ms
+  ziggit run 3: 84.0ms
 
-Projected cold install with ziggit: ~188ms
-Estimated improvement: 58.2% faster on git dependency resolution
+=== PART 3: Full clone comparison ===
 
-=== BENCHMARK COMPLETE ===
+--- Full clone: debug ---
+  git full clone 1: 138.6ms
+  git full clone 2: 135.6ms
+  git full clone 3: 149.1ms
+  ziggit full clone 1: 76.7ms
+  ziggit full clone 2: 82.7ms
+  ziggit full clone 3: 82.3ms
+
+--- Full clone: node-semver ---
+  git full clone 1: 207.7ms
+  git full clone 2: 217.8ms
+  git full clone 3: 212.6ms
+  ziggit full clone 1: 135.0ms
+  ziggit full clone 2: 134.8ms
+  ziggit full clone 3: 144.6ms
+
+=== Benchmark complete ===

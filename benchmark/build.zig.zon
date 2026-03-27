@@ -1,8 +1,8 @@
 .{
-    .name = .git_vs_ziggit_benchmark,
-    .fingerprint = 0x516327920718cf7f,
+    .name = .bun_install_bench,
     .version = "0.1.0",
-    .paths = .{ "build.zig", "build.zig.zon", "git_vs_ziggit.zig" },
+    .fingerprint = 0x18d4acae20dc758a,
+    .paths = .{ "lib_bench.zig", "build.zig", "build.zig.zon" },
     .dependencies = .{
         .ziggit = .{
             .path = "../../ziggit",

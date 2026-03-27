@@ -1,226 +1,212 @@
 #!/usr/bin/env bash
+# bun_install_bench.sh - Benchmark ziggit vs git CLI for bun install git dep workflow
+#
+# Simulates what bun install does for each git dependency:
+#   1. clone --bare (fetch repo to local cache)
+#   2. rev-parse HEAD (resolve ref to SHA - findCommit)
+#   3. clone (extract working tree from bare clone - checkout)
+#
+# Compares:
+#   A) ziggit CLI (pure Zig library, same code path as bun fork integration)
+#   B) git CLI (what stock bun spawns as subprocesses)
+
 set -euo pipefail
 
-# ============================================================================
-# Bun Install Benchmark: Stock Bun vs Ziggit-Simulated Workflow
-# ============================================================================
-# This script benchmarks:
-#   1. Stock bun install with git dependencies (cold + warm cache)
-#   2. The exact 3-step git workflow bun uses per git dep:
-#      clone --bare → findCommit (rev-parse) → checkout (archive/extract)
-#   Comparing: git CLI vs ziggit
-# ============================================================================
-
-BUN="/root/.bun/bin/bun"
-GIT_CLI="/usr/bin/git"
 ZIGGIT="/root/ziggit/zig-out/bin/ziggit"
-BENCH_DIR="/tmp/bun-install-bench-$$"
-RESULTS_FILE="/tmp/bench-results-$$.txt"
+GIT="git"
+BENCH_DIR="/tmp/bun-install-bench"
+RESULTS_FILE="$BENCH_DIR/results.txt"
 RUNS=3
 
-# Test repos (what bun install resolves for github: specifiers)
+# Repos bun install would fetch as git deps
 REPOS=(
-  "debug-js/debug"
-  "npm/node-semver"
-  "vercel/ms"
-  "chalk/chalk"
-  "expressjs/express"
+    "https://github.com/debug-js/debug.git"
+    "https://github.com/npm/node-semver.git"
+    "https://github.com/vercel/ms.git"
 )
-REPO_NAMES=(debug semver ms chalk express)
+REPO_NAMES=(debug semver ms)
 
-mkdir -p "$BENCH_DIR"
-> "$RESULTS_FILE"
-
-log() { echo "[bench] $*" >&2; }
-now_ms() { date +%s%3N; }
-
-# ============================================================================
-# PART 1: Stock Bun Install
-# ============================================================================
-log "=== PART 1: Stock bun install ==="
-
-BUN_PROJECT="$BENCH_DIR/bun-project"
-mkdir -p "$BUN_PROJECT"
-cat > "$BUN_PROJECT/package.json" << 'EOF'
-{
-  "name": "ziggit-bench",
-  "dependencies": {
-    "@sindresorhus/is": "github:sindresorhus/is",
-    "express": "github:expressjs/express",
-    "chalk": "github:chalk/chalk",
-    "debug": "github:debug-js/debug",
-    "semver": "github:npm/node-semver"
-  }
-}
-EOF
-
-declare -a BUN_COLD_TIMES=()
-declare -a BUN_WARM_TIMES=()
-
-for i in $(seq 1 $RUNS); do
-  log "Cold run $i/$RUNS ..."
-  rm -rf "$BUN_PROJECT/node_modules" "$BUN_PROJECT/bun.lock" ~/.bun/install/cache 2>/dev/null || true
-  start=$(now_ms)
-  (cd "$BUN_PROJECT" && "$BUN" install --no-progress 2>&1) > /dev/null
-  end=$(now_ms)
-  elapsed=$((end - start))
-  BUN_COLD_TIMES+=($elapsed)
-  log "  Cold: ${elapsed}ms"
-done
-
-for i in $(seq 1 $RUNS); do
-  log "Warm run $i/$RUNS ..."
-  rm -rf "$BUN_PROJECT/node_modules" 2>/dev/null || true
-  start=$(now_ms)
-  (cd "$BUN_PROJECT" && "$BUN" install --no-progress 2>&1) > /dev/null
-  end=$(now_ms)
-  elapsed=$((end - start))
-  BUN_WARM_TIMES+=($elapsed)
-  log "  Warm: ${elapsed}ms"
-done
-
-echo "BUN_COLD: ${BUN_COLD_TIMES[*]}" >> "$RESULTS_FILE"
-echo "BUN_WARM: ${BUN_WARM_TIMES[*]}" >> "$RESULTS_FILE"
-
-# ============================================================================
-# PART 2: Per-repo git CLI workflow (clone --bare + rev-parse + archive)
-# ============================================================================
-log "=== PART 2: Git CLI per-repo workflow ==="
-
-declare -A GIT_CLONE_TIMES
-declare -A GIT_RESOLVE_TIMES
-declare -A GIT_CHECKOUT_TIMES
-declare -A GIT_TOTAL_TIMES
-
-for idx in "${!REPOS[@]}"; do
-  repo="${REPOS[$idx]}"
-  name="${REPO_NAMES[$idx]}"
-  url="https://github.com/${repo}.git"
-
-  declare -a clone_runs=()
-  declare -a resolve_runs=()
-  declare -a checkout_runs=()
-  declare -a total_runs=()
-
-  for i in $(seq 1 $RUNS); do
-    workdir="$BENCH_DIR/git-${name}-run${i}"
-    rm -rf "$workdir"
-    mkdir -p "$workdir"
-
-    # Step 1: clone --bare
-    t0=$(now_ms)
-    "$GIT_CLI" clone --bare --depth=1 "$url" "$workdir/repo.git" 2>/dev/null
-    t1=$(now_ms)
-
-    # Step 2: resolve HEAD to SHA
-    sha=$("$GIT_CLI" -C "$workdir/repo.git" rev-parse HEAD 2>/dev/null)
-    t2=$(now_ms)
-
-    # Step 3: checkout (archive + extract)
-    mkdir -p "$workdir/checkout"
-    "$GIT_CLI" -C "$workdir/repo.git" archive HEAD | tar -xC "$workdir/checkout" 2>/dev/null
-    t3=$(now_ms)
-
-    clone_ms=$((t1 - t0))
-    resolve_ms=$((t2 - t1))
-    checkout_ms=$((t3 - t2))
-    total_ms=$((t3 - t0))
-
-    clone_runs+=($clone_ms)
-    resolve_runs+=($resolve_ms)
-    checkout_runs+=($checkout_ms)
-    total_runs+=($total_ms)
-
-    log "  git $name run$i: clone=${clone_ms}ms resolve=${resolve_ms}ms checkout=${checkout_ms}ms total=${total_ms}ms"
-
-    rm -rf "$workdir"
-  done
-
-  GIT_CLONE_TIMES[$name]="${clone_runs[*]}"
-  GIT_RESOLVE_TIMES[$name]="${resolve_runs[*]}"
-  GIT_CHECKOUT_TIMES[$name]="${checkout_runs[*]}"
-  GIT_TOTAL_TIMES[$name]="${total_runs[*]}"
-
-  echo "GIT_${name}_CLONE: ${clone_runs[*]}" >> "$RESULTS_FILE"
-  echo "GIT_${name}_RESOLVE: ${resolve_runs[*]}" >> "$RESULTS_FILE"
-  echo "GIT_${name}_CHECKOUT: ${checkout_runs[*]}" >> "$RESULTS_FILE"
-  echo "GIT_${name}_TOTAL: ${total_runs[*]}" >> "$RESULTS_FILE"
-done
-
-# ============================================================================
-# PART 3: Per-repo ziggit workflow (clone --bare + rev-parse + archive)
-# ============================================================================
-log "=== PART 3: Ziggit per-repo workflow ==="
-
-declare -A ZIG_CLONE_TIMES
-declare -A ZIG_RESOLVE_TIMES
-declare -A ZIG_CHECKOUT_TIMES
-declare -A ZIG_TOTAL_TIMES
-
-for idx in "${!REPOS[@]}"; do
-  repo="${REPOS[$idx]}"
-  name="${REPO_NAMES[$idx]}"
-  url="https://github.com/${repo}.git"
-
-  declare -a clone_runs=()
-  declare -a resolve_runs=()
-  declare -a checkout_runs=()
-  declare -a total_runs=()
-
-  for i in $(seq 1 $RUNS); do
-    workdir="$BENCH_DIR/zig-${name}-run${i}"
-    rm -rf "$workdir"
-    mkdir -p "$workdir"
-
-    # Step 1: clone --bare
-    t0=$(now_ms)
-    "$ZIGGIT" clone --bare --depth=1 "$url" "$workdir/repo.git" 2>/dev/null
-    t1=$(now_ms)
-
-    # Step 2: resolve HEAD to SHA
-    sha=$("$ZIGGIT" -C "$workdir/repo.git" rev-parse HEAD 2>/dev/null)
-    t2=$(now_ms)
-
-    # Step 3: checkout (archive + extract)
-    mkdir -p "$workdir/checkout"
-    "$ZIGGIT" -C "$workdir/repo.git" archive HEAD | tar -xC "$workdir/checkout" 2>/dev/null
-    t3=$(now_ms)
-
-    clone_ms=$((t1 - t0))
-    resolve_ms=$((t2 - t1))
-    checkout_ms=$((t3 - t2))
-    total_ms=$((t3 - t0))
-
-    clone_runs+=($clone_ms)
-    resolve_runs+=($resolve_ms)
-    checkout_runs+=($checkout_ms)
-    total_runs+=($total_ms)
-
-    log "  ziggit $name run$i: clone=${clone_ms}ms resolve=${resolve_ms}ms checkout=${checkout_ms}ms total=${total_ms}ms"
-
-    rm -rf "$workdir"
-  done
-
-  ZIG_CLONE_TIMES[$name]="${clone_runs[*]}"
-  ZIG_RESOLVE_TIMES[$name]="${resolve_runs[*]}"
-  ZIG_CHECKOUT_TIMES[$name]="${checkout_runs[*]}"
-  ZIG_TOTAL_TIMES[$name]="${total_runs[*]}"
-
-  echo "ZIG_${name}_CLONE: ${clone_runs[*]}" >> "$RESULTS_FILE"
-  echo "ZIG_${name}_RESOLVE: ${resolve_runs[*]}" >> "$RESULTS_FILE"
-  echo "ZIG_${name}_CHECKOUT: ${checkout_runs[*]}" >> "$RESULTS_FILE"
-  echo "ZIG_${name}_TOTAL: ${total_runs[*]}" >> "$RESULTS_FILE"
-done
-
-# ============================================================================
-# Output raw results
-# ============================================================================
-echo ""
-echo "=========================================="
-echo "RAW RESULTS"
-echo "=========================================="
-cat "$RESULTS_FILE"
-
-# Cleanup
 rm -rf "$BENCH_DIR"
-log "Done. Raw results at $RESULTS_FILE"
+mkdir -p "$BENCH_DIR/sources"
+
+echo "=============================================="
+echo " BUN INSTALL GIT DEP WORKFLOW BENCHMARK"
+echo "=============================================="
+echo ""
+echo "Ziggit: $($ZIGGIT -v 2>&1 | head -1)"
+echo "Git:    $($GIT --version)"
+echo "Date:   $(date -u)"
+echo "System: $(uname -sr), $(free -m | awk '/Mem:/{print $2}')MB RAM"
+echo ""
+
+# Pre-clone repos to local disk (isolate clone perf from network)
+echo "--- Preparing source repos (one-time network fetch) ---"
+for i in "${!REPOS[@]}"; do
+    name="${REPO_NAMES[$i]}"
+    url="${REPOS[$i]}"
+    echo "  Fetching $name..."
+    git clone --bare --quiet "$url" "$BENCH_DIR/sources/$name.git" 2>/dev/null
+done
+echo "  Done."
+echo ""
+
+# Helper: time in nanoseconds
+now_ns() { date +%s%N; }
+
+# ======================================================
+# BENCHMARK: Full bun-install workflow per repo
+# ======================================================
+
+declare -A git_clone_times ziggit_clone_times
+declare -A git_findcommit_times ziggit_findcommit_times
+declare -A git_checkout_times ziggit_checkout_times
+declare -A git_total_times ziggit_total_times
+
+for i in "${!REPO_NAMES[@]}"; do
+    name="${REPO_NAMES[$i]}"
+    src="$BENCH_DIR/sources/$name.git"
+
+    echo "=== Repo: $name ==="
+
+    git_clone_sum=0; ziggit_clone_sum=0
+    git_fc_sum=0; ziggit_fc_sum=0
+    git_co_sum=0; ziggit_co_sum=0
+
+    for run in $(seq 1 $RUNS); do
+        # --- GIT CLI workflow ---
+        rm -rf "$BENCH_DIR/git-bare-$name" "$BENCH_DIR/git-work-$name"
+
+        # 1. clone --bare
+        t0=$(now_ns)
+        $GIT clone --bare --quiet "$src" "$BENCH_DIR/git-bare-$name" 2>/dev/null
+        t1=$(now_ns)
+        git_clone_ms=$(( (t1 - t0) / 1000000 ))
+
+        # 2. rev-parse HEAD (findCommit)
+        t0=$(now_ns)
+        $GIT -C "$BENCH_DIR/git-bare-$name" rev-parse HEAD >/dev/null 2>&1
+        t1=$(now_ns)
+        git_fc_ms=$(( (t1 - t0) / 1000000 ))
+
+        # 3. clone from bare (checkout)
+        t0=$(now_ns)
+        $GIT clone --quiet "$BENCH_DIR/git-bare-$name" "$BENCH_DIR/git-work-$name" 2>/dev/null
+        t1=$(now_ns)
+        git_co_ms=$(( (t1 - t0) / 1000000 ))
+
+        git_total=$((git_clone_ms + git_fc_ms + git_co_ms))
+        git_clone_sum=$((git_clone_sum + git_clone_ms))
+        git_fc_sum=$((git_fc_sum + git_fc_ms))
+        git_co_sum=$((git_co_sum + git_co_ms))
+
+        # --- ZIGGIT workflow ---
+        rm -rf "$BENCH_DIR/ziggit-bare-$name" "$BENCH_DIR/ziggit-work-$name"
+
+        # 1. clone --bare
+        t0=$(now_ns)
+        $ZIGGIT clone --bare "$src" "$BENCH_DIR/ziggit-bare-$name" >/dev/null 2>&1
+        t1=$(now_ns)
+        ziggit_clone_ms=$(( (t1 - t0) / 1000000 ))
+
+        # 2. rev-parse HEAD (findCommit)
+        t0=$(now_ns)
+        (cd "$BENCH_DIR/ziggit-bare-$name" && $ZIGGIT rev-parse HEAD >/dev/null 2>&1)
+        t1=$(now_ns)
+        ziggit_fc_ms=$(( (t1 - t0) / 1000000 ))
+
+        # 3. clone from bare (checkout)
+        t0=$(now_ns)
+        $ZIGGIT clone "$BENCH_DIR/ziggit-bare-$name" "$BENCH_DIR/ziggit-work-$name" >/dev/null 2>&1
+        t1=$(now_ns)
+        ziggit_co_ms=$(( (t1 - t0) / 1000000 ))
+
+        ziggit_total=$((ziggit_clone_ms + ziggit_fc_ms + ziggit_co_ms))
+        ziggit_clone_sum=$((ziggit_clone_sum + ziggit_clone_ms))
+        ziggit_fc_sum=$((ziggit_fc_sum + ziggit_fc_ms))
+        ziggit_co_sum=$((ziggit_co_sum + ziggit_co_ms))
+
+        printf "  Run %d: git=%dms ziggit=%dms (clone: %d/%d, findCommit: %d/%d, checkout: %d/%d)\n" \
+            "$run" "$git_total" "$ziggit_total" \
+            "$git_clone_ms" "$ziggit_clone_ms" \
+            "$git_fc_ms" "$ziggit_fc_ms" \
+            "$git_co_ms" "$ziggit_co_ms"
+
+        # Cleanup work dirs
+        rm -rf "$BENCH_DIR/git-bare-$name" "$BENCH_DIR/git-work-$name"
+        rm -rf "$BENCH_DIR/ziggit-bare-$name" "$BENCH_DIR/ziggit-work-$name"
+    done
+
+    git_clone_times[$name]=$((git_clone_sum / RUNS))
+    ziggit_clone_times[$name]=$((ziggit_clone_sum / RUNS))
+    git_findcommit_times[$name]=$((git_fc_sum / RUNS))
+    ziggit_findcommit_times[$name]=$((ziggit_fc_sum / RUNS))
+    git_checkout_times[$name]=$((git_co_sum / RUNS))
+    ziggit_checkout_times[$name]=$((ziggit_co_sum / RUNS))
+    git_total_times[$name]=$((git_clone_sum / RUNS + git_fc_sum / RUNS + git_co_sum / RUNS))
+    ziggit_total_times[$name]=$((ziggit_clone_sum / RUNS + ziggit_fc_sum / RUNS + ziggit_co_sum / RUNS))
+
+    echo ""
+done
+
+# ======================================================
+# SUMMARY
+# ======================================================
+
+echo "=============================================="
+echo " SUMMARY (averages over $RUNS runs)"
+echo "=============================================="
+echo ""
+printf "%-8s | %8s %8s | %8s %8s | %8s %8s | %8s %8s | %s\n" \
+    "Repo" "git-cln" "zig-cln" "git-fc" "zig-fc" "git-co" "zig-co" "git-tot" "zig-tot" "Speedup"
+printf "%s\n" "---------|-------------------|--------------------|--------------------|--------------------|--------"
+
+total_git=0
+total_ziggit=0
+for name in "${REPO_NAMES[@]}"; do
+    gt=${git_total_times[$name]}
+    zt=${ziggit_total_times[$name]}
+    total_git=$((total_git + gt))
+    total_ziggit=$((total_ziggit + zt))
+    if [ "$zt" -gt 0 ]; then
+        speedup=$(echo "scale=2; $gt / $zt" | bc)
+    else
+        speedup="inf"
+    fi
+    printf "%-8s | %6dms %6dms | %6dms %6dms | %6dms %6dms | %6dms %6dms | %sx\n" \
+        "$name" \
+        "${git_clone_times[$name]}" "${ziggit_clone_times[$name]}" \
+        "${git_findcommit_times[$name]}" "${ziggit_findcommit_times[$name]}" \
+        "${git_checkout_times[$name]}" "${ziggit_checkout_times[$name]}" \
+        "$gt" "$zt" "$speedup"
+done
+
+echo ""
+if [ "$total_ziggit" -gt 0 ]; then
+    overall_speedup=$(echo "scale=2; $total_git / $total_ziggit" | bc)
+else
+    overall_speedup="inf"
+fi
+echo "TOTAL: git=${total_git}ms ziggit=${total_ziggit}ms speedup=${overall_speedup}x"
+echo ""
+
+# Save machine-readable results
+cat > "$RESULTS_FILE" << ENDRESULTS
+RUNS=$RUNS
+TOTAL_GIT=$total_git
+TOTAL_ZIGGIT=$total_ziggit
+OVERALL_SPEEDUP=$overall_speedup
+ENDRESULTS
+for name in "${REPO_NAMES[@]}"; do
+    cat >> "$RESULTS_FILE" << ENDRESULTS
+${name}_git_clone=${git_clone_times[$name]}
+${name}_ziggit_clone=${ziggit_clone_times[$name]}
+${name}_git_fc=${git_findcommit_times[$name]}
+${name}_ziggit_fc=${ziggit_findcommit_times[$name]}
+${name}_git_co=${git_checkout_times[$name]}
+${name}_ziggit_co=${ziggit_checkout_times[$name]}
+${name}_git_total=${git_total_times[$name]}
+${name}_ziggit_total=${ziggit_total_times[$name]}
+ENDRESULTS
+done
+
+echo "Raw results saved to $RESULTS_FILE"

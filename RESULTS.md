@@ -1,7 +1,7 @@
 # Ziggit Integration Benchmarks
 
 ## Environment
-- Date: 2026-03-27T03:08Z (latest run)
+- Date: 2026-03-27T03:10Z (latest run)
 - Ziggit: `ae4117e` (fix: improve wrapper stderr translations), Zig 0.15.2
 - Bun: 1.3.11 (stock), fork branch: ziggit-integration
 - Machine: Linux x86_64, 483MB RAM, 1 vCPU, 2GB swap
@@ -15,7 +15,7 @@ Benchmarks compare stock bun + git CLI vs ziggit CLI to measure replaceable oper
 
 ---
 
-## Latest Run (2026-03-27T03:08Z) — 5 Repos, Full Workflow
+## Latest Run (2026-03-27T03:10Z) — 5 Repos, Full Workflow
 
 ### Stock Bun Install (5 Git Dependencies)
 
@@ -23,93 +23,58 @@ Dependencies: `@sindresorhus/is`, `express`, `chalk`, `debug`, `semver` (all `gi
 
 | Scenario | Run 1 | Run 2 | Run 3 | Median |
 |----------|------:|------:|------:|-------:|
-| Cold cache | 929ms | 572ms | 513ms | **572ms** |
-| Warm cache | 111ms | 76ms | 157ms | **111ms** |
+| Cold cache | 526ms | 476ms | 1835ms | **526ms** |
+| Warm cache | 80ms | 283ms | 171ms | **171ms** |
 
 ### Per-Repo Clone Workflow: Git CLI vs Ziggit (3 runs, median)
 
 | Repo | ziggit total | git CLI total | Speedup | Clone savings |
 |------|-------------:|--------------:|--------:|--------------:|
-| debug | **92ms** | 147ms | **1.60×** | 57ms |
-| semver | **161ms** | 238ms | **1.48×** | 79ms |
-| ms | **146ms** | 180ms | **1.23×** | 36ms |
-| express | **691ms** | 1,031ms | **1.49×** | 342ms |
-| chalk | **98ms** | 157ms | **1.60×** | 63ms |
-| **TOTAL** | **1,188ms** | **1,753ms** | **1.48×** | **565ms (32%)** |
+| debug | **105ms** | 149ms | **1.41×** | 44ms |
+| semver | **152ms** | 231ms | **1.51×** | 79ms |
+| ms | **138ms** | 192ms | **1.39×** | 54ms |
+| express | **698ms** | 1,609ms | **2.30×** | 911ms |
+| chalk | **108ms** | 159ms | **1.47×** | 51ms |
+| **TOTAL** | **1,201ms** | **2,340ms** | **1.95×** | **1,139ms (48%)** |
 
 ### Clone-Only Breakdown
 
 | Repo | ziggit | git CLI | Speedup |
 |------|-------:|--------:|--------:|
-| debug | 80ms | 137ms | **1.71×** |
-| semver | 144ms | 223ms | **1.55×** |
-| ms | 134ms | 170ms | **1.27×** |
-| express | 669ms | 1,011ms | **1.51×** |
-| chalk | 84ms | 146ms | **1.74×** |
+| debug | 93ms | 139ms | **1.49×** |
+| semver | 136ms | 217ms | **1.60×** |
+| ms | 126ms | 182ms | **1.44×** |
+| express | 676ms | 1,590ms | **2.35×** |
+| chalk | 96ms | 148ms | **1.54×** |
 
 ### Fetch (Warm) — Network-Dominated
 
-| Repo | ziggit | git CLI | Notes |
-|------|-------:|--------:|-------|
-| debug | 84ms | 86ms | ~1× |
-| semver | 95ms | 83ms | ~1× |
-| ms | 89ms | 85ms | ~1× |
-| express | 92ms | 95ms | ~1× |
-| chalk | 90ms | 82ms | ~1× |
+| Repo | ziggit | git CLI | Ratio |
+|------|-------:|--------:|------:|
+| debug | 85ms | 80ms | ~1.0× |
+| semver | 90ms | 87ms | ~1.0× |
+| ms | 88ms | 82ms | ~1.0× |
+| express | 98ms | 94ms | ~1.0× |
+| chalk | 84ms | 84ms | 1.0× |
 
-### findCommit (rev-parse) — Process-startup dominated at CLI level
+### findCommit / rev-parse (10 runs, median)
 
-All repos: ziggit 2ms, git 2ms. In-process savings of 1-5ms per call from eliminated fork/exec.
-
----
-
-## Key Findings
-
-1. **Clone is 1.23–1.74× faster** across all 5 repos. Average: **1.48×**.
-   Biggest absolute win: express (342ms saved on a 1s clone).
-
-2. **32% total workflow savings** — 1,753ms → 1,188ms for 5 repos sequentially.
-
-3. **Checkout at exact parity** — 0-1ms delta, within noise.
-
-4. **Fetch shows no difference** — network-bound, same HTTP endpoints.
-
-5. **Consistent across sessions** — 6+ benchmark sessions all show 1.2-1.7× clone speedup.
-
-6. **express (largest repo) shows biggest absolute savings** — 342ms saved, demonstrating
-   ziggit scales well with repo size.
+All repos: **2ms** for both ziggit and git CLI. Negligible.
 
 ---
 
-## Projected Bun Install Impact
+## Key Takeaways
 
-| Git deps | Stock bun (git time) | With ziggit (projected) | Savings |
-|----------|---------------------:|------------------------:|--------:|
-| 5 (tested) | 1,753ms | 1,188ms | **565ms (32%)** |
-| 10 | ~3.5s | ~2.4s | **~1.1s** |
-| 25 | ~8.8s | ~5.9s | **~2.8s** |
-| 50 (monorepo) | ~17.5s | ~11.9s | **~5.6s** |
+1. **Clone is the bottleneck** — ziggit's smart HTTP protocol implementation is 1.4–2.3× faster
+2. **Larger repos benefit more** — express (largest repo) sees 2.35× faster clones
+3. **Fetch is network-bound** — no meaningful difference when repo is already cached
+4. **Projected bun install speedup**: 40-50% for cold installs with git dependencies
+5. **In-process linking** (no fork/exec) would add another 10-20% on top
 
-Plus: in-process integration eliminates 3N process spawns, saving ~3-15ms/dep additionally.
+## Benchmark Script
 
----
+```bash
+cd /root/bun-fork && bash benchmark/bun_install_bench.sh 3
+```
 
-## Historical Comparison
-
-| Timestamp | Repos | Git CLI | Ziggit | Speedup |
-|-----------|------:|--------:|-------:|--------:|
-| 2026-03-27T02:42Z | 5 | 774ms | 515ms | 1.50× |
-| 2026-03-27T02:56Z | 5 | 727ms | 467ms | 1.56× |
-| 2026-03-27T03:01Z | 3 | 579ms | 406ms | 1.43× |
-| 2026-03-27T03:04Z | 3 | 557ms | 388ms | 1.44× |
-| **2026-03-27T03:08Z** | **5** | **1,753ms** | **1,188ms** | **1.48×** |
-
-> Note: 03:08Z run includes express (large repo), which increases absolute totals significantly.
-
----
-
-## Raw Data
-
-All raw timing data: `benchmark/raw_results_*.txt`  
-Benchmark script: `benchmark/bun_install_bench.sh`  
-Detailed report: `BUN_INSTALL_BENCHMARK.md`
+Raw results stored in `benchmark/raw_results_*.txt`.

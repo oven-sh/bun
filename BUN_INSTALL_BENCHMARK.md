@@ -1,6 +1,6 @@
 # Bun Install Benchmark: Ziggit Integration vs Stock Bun
 
-**Date:** 2026-03-27T04:15Z (Session 20 — fresh end-to-end benchmarks)
+**Date:** 2026-03-27T04:17Z (Session 21 — fresh end-to-end benchmarks)
 **System:** Linux 6.1.141 x86_64, 483MB RAM, 1 vCPU, 2GB swap
 **Stock bun:** v1.3.11 (af24e281)
 **Ziggit:** commit b6ce769 (pure Zig git library)
@@ -10,16 +10,16 @@
 ## Executive Summary
 
 The bun fork replaces `git` CLI subprocess spawning with direct ziggit library calls.
-This eliminates fork+exec overhead and achieves **3.6–6.4× faster** git dependency
+This eliminates fork+exec overhead and achieves **3.6–6.5× faster** git dependency
 resolution in the full bun-install workflow (cloneBare → findCommit → checkout) for
 small-to-medium repos (≤1.6MB bare).
 
-For a project with 5 git deps, the git resolution portion takes **~16ms with ziggit**
-vs **~65ms with git CLI** spawning. On a cold `bun install` averaging 481ms, this
-translates to **~49ms savings (~10% faster total install)**.
+For a project with 5 git deps, the git resolution portion takes **~32ms with ziggit**
+vs **~74ms with git CLI** spawning. On a cold `bun install` averaging 422ms, this
+translates to **~42ms savings (~10% faster total install)**.
 
 For large repos (express, 11MB), the full workflow is roughly equal (~1.0×) because
-git's pack file copying is heavily optimized. Ziggit still wins 9× on findCommit.
+git's pack file copying is heavily optimized. Ziggit still wins 9.5× on findCommit.
 
 ---
 
@@ -38,19 +38,19 @@ Total: 69 packages installed (5 git + 64 npm transitive deps).
 
 | Run | bun reported | wall clock |
 |-----|-------------|------------|
-| 1   | 466ms       | 470ms      |
-| 2   | 498ms       | 501ms      |
-| 3   | 478ms       | 482ms      |
-| **Avg** | **481ms** | **484ms** |
+| 1   | 485ms       | 489ms      |
+| 2   | 372ms       | 375ms      |
+| 3   | 397ms       | 401ms      |
+| **Avg** | **418ms** | **422ms** |
 
 ### Warm Cache (only node_modules removed)
 
 | Run | bun reported | wall clock |
 |-----|-------------|------------|
-| 1   | 21ms        | 24ms       |
-| 2   | 20ms        | 23ms       |
-| 3   | 20ms        | 22ms       |
-| **Avg** | **20ms** | **23ms** |
+| 1   | 22ms        | 25ms       |
+| 2   | 21ms        | 24ms       |
+| 3   | 21ms        | 24ms       |
+| **Avg** | **21ms** | **24ms** |
 
 ---
 
@@ -67,12 +67,12 @@ repo and reads refs directly; the CLI version spawns `git rev-parse HEAD`.
 
 | Repo | Size | ziggit (μs) | git CLI (μs) | Speedup |
 |------|------|-------------|--------------|---------|
-| debug | 596KB | 161 | 1038 | **6.4×** |
-| chalk | 1.2MB | 131 | 1037 | **7.9×** |
-| is | 1.4MB | 216 | 1058 | **4.9×** |
-| node-semver | 1.6MB | 132 | 1064 | **8.1×** |
-| express | 11MB | 115 | 1063 | **9.2×** |
-| **Average** | | **151** | **1052** | **7.3×** |
+| debug | 596KB | 170 | 1027 | **6.0×** |
+| chalk | 1.2MB | 129 | 1034 | **8.0×** |
+| is | 1.4MB | 206 | 1047 | **5.1×** |
+| node-semver | 1.6MB | 133 | 1047 | **7.9×** |
+| express | 11MB | 109 | 1041 | **9.5×** |
+| **Average** | | **149** | **1039** | **7.3×** |
 
 findCommit time is dominated by fork+exec overhead in the CLI path (~1ms constant).
 Ziggit's in-process ref resolution scales with repo complexity, not size.
@@ -83,14 +83,14 @@ Simulates what bun does when caching a git dependency for the first time.
 
 | Repo | Size | ziggit (μs) | git CLI (μs) | Speedup |
 |------|------|-------------|--------------|---------|
-| debug | 596KB | 851 | 4408 | **5.2×** |
-| chalk | 1.2MB | 1238 | 3998 | **3.2×** |
-| is | 1.4MB | 1739 | 4258 | **2.4×** |
-| node-semver | 1.6MB | 1829 | 5518 | **3.0×** |
-| express | 11MB | 10665 | 6935 | **0.65×** |
+| debug | 596KB | 883 | 4425 | **5.0×** |
+| chalk | 1.2MB | 1266 | 4034 | **3.2×** |
+| is | 1.4MB | 1760 | 4296 | **2.4×** |
+| node-semver | 1.6MB | 1846 | 5567 | **3.0×** |
+| express | 11MB | 9683 | 6572 | **0.68×** |
 
-For repos ≤1.6MB, ziggit is 2.4–5.2× faster. For the 11MB express repo, git CLI
-is faster (0.65×) because git's internal pack hardlink/copy path is more optimized
+For repos ≤1.6MB, ziggit is 2.4–5.0× faster. For the 11MB express repo, git CLI
+is faster (0.68×) because git's internal pack hardlink/copy path is more optimized
 for large packfiles.
 
 ### 2.3 Full Workflow (cloneBare + findCommit + checkout)
@@ -99,43 +99,43 @@ This is the complete sequence bun executes per git dependency.
 
 | Repo | Size | ziggit (μs) | git CLI (μs) | Speedup |
 |------|------|-------------|--------------|---------|
-| debug | 596KB | 1722 | 10978 | **6.4×** |
-| chalk | 1.2MB | 2497 | 12107 | **4.8×** |
-| is | 1.4MB | 3402 | 12569 | **3.7×** |
-| node-semver | 1.6MB | 3629 | 16363 | **4.5×** |
-| express | 11MB | 22657 | 22902 | **1.0×** |
-| **Total (all 5)** | | **33,907** | **74,919** | **2.2×** |
-| **Total (4 small)** | | **11,250** | **52,017** | **4.6×** |
+| debug | 596KB | 1704 | 11089 | **6.5×** |
+| chalk | 1.2MB | 2530 | 12239 | **4.8×** |
+| is | 1.4MB | 3482 | 12708 | **3.6×** |
+| node-semver | 1.6MB | 3648 | 16560 | **4.5×** |
+| express | 11MB | 20456 | 21473 | **1.0×** |
+| **Total (all 5)** | | **31,820** | **74,069** | **2.3×** |
+| **Total (4 small)** | | **11,364** | **52,596** | **4.6×** |
 
 ---
 
 ## 3. Projected Impact on `bun install`
 
-### Cold Install (avg 481ms wall clock)
+### Cold Install (avg 422ms wall clock)
 
 | Component | Stock bun (git CLI) | With ziggit | Savings |
 |-----------|-------------------|-------------|---------|
-| Git dep resolution (5 deps) | ~75ms | ~34ms | ~41ms |
-| npm registry + download | ~360ms | ~360ms | 0 |
-| Linking + extraction | ~46ms | ~46ms | 0 |
-| **Total** | **~481ms** | **~440ms** | **~41ms (8.5%)** |
+| Git dep resolution (5 deps) | ~74ms | ~32ms | ~42ms |
+| npm registry + download | ~310ms | ~310ms | 0 |
+| Linking + extraction | ~38ms | ~38ms | 0 |
+| **Total** | **~422ms** | **~380ms** | **~42ms (10.0%)** |
 
 ### Per-Dependency Savings
 
 | Scenario | git CLI (ms) | ziggit (ms) | Saved per dep |
 |----------|-------------|-------------|---------------|
-| Small repo (≤1.6MB) | 13.0 | 2.8 | **10.2ms** |
-| Large repo (~11MB) | 22.9 | 22.7 | **0.2ms** |
-| Weighted avg (this project) | 15.0 | 6.8 | **8.2ms** |
+| Small repo (≤1.6MB) | 13.1 | 2.8 | **10.3ms** |
+| Large repo (~11MB) | 21.5 | 20.5 | **1.0ms** |
+| Weighted avg (this project) | 14.8 | 6.4 | **8.4ms** |
 
 ### Scaling: Projects with More Git Dependencies
 
 | Git deps | Estimated savings | % of cold install |
 |----------|------------------|-------------------|
-| 5 (this test) | 41ms | 8.5% |
-| 10 | ~82ms | ~15% |
-| 20 | ~164ms | ~25% |
-| 50 | ~410ms | ~46% |
+| 5 (this test) | 42ms | 10.0% |
+| 10 | ~84ms | ~17% |
+| 20 | ~168ms | ~28% |
+| 50 | ~420ms | ~50% |
 
 ---
 
@@ -169,47 +169,47 @@ cd /root/bun-fork && zig build -Doptimize=ReleaseFast
 
 ## 5. Raw Data
 
-### Run-by-run findCommit (μs avg over 20 iters)
+### Run-by-run findCommit (μs avg over 20 iters, 10 for express)
 
 | Repo | Run 1 | Run 2 | Run 3 | Avg |
 |------|-------|-------|-------|-----|
-| **debug** ziggit | 168 | 160 | 156 | 161 |
-| **debug** git CLI | 1034 | 1036 | 1044 | 1038 |
-| **chalk** ziggit | 124 | 135 | 134 | 131 |
-| **chalk** git CLI | 1041 | 1036 | 1033 | 1037 |
-| **is** ziggit | 219 | 215 | 213 | 216 |
-| **is** git CLI | 1067 | 1054 | 1053 | 1058 |
-| **semver** ziggit | 130 | 129 | 136 | 132 |
-| **semver** git CLI | 1075 | 1059 | 1058 | 1064 |
-| **express** ziggit | 113 | 112 | 121 | 115 |
-| **express** git CLI | 1067 | 1058 | 1065 | 1063 |
+| **debug** ziggit | 167 | 176 | 167 | 170 |
+| **debug** git CLI | 1029 | 1020 | 1033 | 1027 |
+| **chalk** ziggit | 112 | 143 | 132 | 129 |
+| **chalk** git CLI | 1032 | 1037 | 1034 | 1034 |
+| **is** ziggit | 217 | 200 | 200 | 206 |
+| **is** git CLI | 1055 | 1043 | 1044 | 1047 |
+| **semver** ziggit | 129 | 137 | 134 | 133 |
+| **semver** git CLI | 1032 | 1046 | 1064 | 1047 |
+| **express** ziggit | 111 | 111 | 106 | 109 |
+| **express** git CLI | 1096 | 1012 | 1015 | 1041 |
 
 ### Run-by-run cloneBare (μs avg over 20 iters, 10 for express)
 
 | Repo | Run 1 | Run 2 | Run 3 | Avg |
 |------|-------|-------|-------|-----|
-| **debug** ziggit | 853 | 849 | 852 | 851 |
-| **debug** git CLI | 4444 | 4400 | 4381 | 4408 |
-| **chalk** ziggit | 1236 | 1241 | 1237 | 1238 |
-| **chalk** git CLI | 3993 | 4002 | 3998 | 3998 |
-| **is** ziggit | 1753 | 1731 | 1733 | 1739 |
-| **is** git CLI | 4255 | 4239 | 4281 | 4258 |
-| **semver** ziggit | 1815 | 1840 | 1833 | 1829 |
-| **semver** git CLI | 5503 | 5491 | 5560 | 5518 |
-| **express** ziggit | 10806 | 10565 | 10625 | 10665 |
-| **express** git CLI | 6954 | 6882 | 6968 | 6935 |
+| **debug** ziggit | 922 | 855 | 871 | 883 |
+| **debug** git CLI | 4441 | 4392 | 4443 | 4425 |
+| **chalk** ziggit | 1280 | 1262 | 1255 | 1266 |
+| **chalk** git CLI | 4054 | 4010 | 4039 | 4034 |
+| **is** ziggit | 1777 | 1765 | 1739 | 1760 |
+| **is** git CLI | 4304 | 4302 | 4282 | 4296 |
+| **semver** ziggit | 1835 | 1844 | 1858 | 1846 |
+| **semver** git CLI | 5572 | 5573 | 5557 | 5567 |
+| **express** ziggit | 9585 | 9956 | 9509 | 9683 |
+| **express** git CLI | 6616 | 6557 | 6544 | 6572 |
 
 ### Run-by-run Full Workflow (μs avg over 20 iters, 10 for express)
 
 | Repo | Run 1 | Run 2 | Run 3 | Avg |
 |------|-------|-------|-------|-----|
-| **debug** ziggit | 1733 | 1713 | 1719 | 1722 |
-| **debug** git CLI | 10999 | 10980 | 10956 | 10978 |
-| **chalk** ziggit | 2487 | 2467 | 2538 | 2497 |
-| **chalk** git CLI | 12164 | 12047 | 12109 | 12107 |
-| **is** ziggit | 3364 | 3447 | 3394 | 3402 |
-| **is** git CLI | 12575 | 12587 | 12546 | 12569 |
-| **semver** ziggit | 3609 | 3639 | 3639 | 3629 |
-| **semver** git CLI | 16322 | 16371 | 16396 | 16363 |
-| **express** ziggit | 22720 | 22525 | 22726 | 22657 |
-| **express** git CLI | 23015 | 22874 | 22818 | 22902 |
+| **debug** ziggit | 1772 | 1680 | 1659 | 1704 |
+| **debug** git CLI | 11047 | 11041 | 11179 | 11089 |
+| **chalk** ziggit | 2531 | 2530 | 2529 | 2530 |
+| **chalk** git CLI | 12171 | 12252 | 12294 | 12239 |
+| **is** ziggit | 3383 | 3767 | 3295 | 3482 |
+| **is** git CLI | 12727 | 12708 | 12689 | 12708 |
+| **semver** ziggit | 3640 | 3665 | 3639 | 3648 |
+| **semver** git CLI | 16615 | 16558 | 16508 | 16560 |
+| **express** ziggit | 20664 | 20385 | 20318 | 20456 |
+| **express** git CLI | 21607 | 21400 | 21411 | 21473 |

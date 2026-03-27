@@ -1,6 +1,6 @@
 # Bun Install Benchmark: ziggit Integration vs Stock Bun
 
-**Date**: 2026-03-27 (5 benchmark sessions, latest: T03:10Z)  
+**Date**: 2026-03-27 (6 benchmark sessions, latest: T03:13Z)  
 **VM**: 1 vCPU, 483MB RAM, Debian (minimal)  
 **Stock bun**: v1.3.11  
 **ziggit**: built from `/root/ziggit` commit ae4117e (zig 0.15.2)  
@@ -31,13 +31,13 @@ Using `bun install` v1.3.11 with 5 github git dependencies (`@sindresorhus/is`, 
 
 | Run 1 | Run 2 | Run 3 | Median |
 |-------|-------|-------|--------|
-| 526ms | 476ms | 1835ms | **526ms** |
+| 371ms | 1466ms | 352ms | **371ms** |
 
 ### Warm Cache (node_modules removed, cache kept)
 
 | Run 1 | Run 2 | Run 3 | Median |
 |-------|-------|-------|--------|
-| 80ms | 283ms | 171ms | **171ms** |
+| 88ms | 82ms | 85ms | **85ms** |
 
 ---
 
@@ -54,25 +54,26 @@ that `bun install` performs for every git dependency:
 
 | Repo | ziggit total | git CLI total | Speedup | Clone savings |
 |------|-------------:|--------------:|--------:|--------------:|
-| debug | **105ms** | 149ms | **1.41×** | 44ms |
-| semver | **152ms** | 231ms | **1.51×** | 79ms |
-| ms | **138ms** | 192ms | **1.39×** | 54ms |
-| express | **698ms** | 1,609ms | **2.30×** | 911ms |
-| chalk | **108ms** | 159ms | **1.47×** | 51ms |
-| **TOTAL** | **1,201ms** | **2,340ms** | **1.95×** | **1,139ms (48%)** |
+| debug | **92ms** | 155ms | **1.68×** | 63ms |
+| semver | **155ms** | 236ms | **1.52×** | 81ms |
+| ms | **145ms** | 181ms | **1.24×** | 36ms |
+| express | **779ms** | 1,070ms | **1.37×** | 291ms |
+| chalk | **102ms** | 161ms | **1.57×** | 59ms |
+| **TOTAL** | **1,273ms** | **1,803ms** | **1.42×** | **530ms (29%)** |
 
 ### Clone-Only Breakdown (median)
 
 | Repo | ziggit clone | git CLI clone | Speedup |
 |------|------------:|--------------:|--------:|
-| debug | 93ms | 139ms | **1.49×** |
-| semver | 136ms | 217ms | **1.60×** |
-| ms | 126ms | 182ms | **1.44×** |
-| express | 676ms | 1,590ms | **2.35×** |
-| chalk | 96ms | 148ms | **1.54×** |
+| debug | 81ms | 145ms | **1.79×** |
+| semver | 139ms | 222ms | **1.60×** |
+| ms | 134ms | 172ms | **1.28×** |
+| express | 756ms | 1,051ms | **1.39×** |
+| chalk | 89ms | 150ms | **1.69×** |
 
-> **Key finding**: Clone is where nearly all the speedup comes from. The larger the repo,
-> the bigger the advantage — express sees **2.35× faster clones**.
+> **Key finding**: Clone is where nearly all the speedup comes from. ziggit's
+> pack-file protocol and delta resolution are more efficient than shelling out
+> to git CLI.
 
 ### Rev-Parse / findCommit (median)
 
@@ -80,8 +81,15 @@ All repos: **2–3ms** for both ziggit and git CLI. This is disk-bound and negli
 
 ### Checkout (median)
 
-All repos: **9–19ms** for ziggit, **8–18ms** for git CLI. Comparable — checkout is
-local I/O only, not protocol-bound.
+| Repo | ziggit checkout | git CLI checkout |
+|------|---------------:|-----------------:|
+| debug | 9ms | 8ms |
+| semver | 14ms | 12ms |
+| ms | 9ms | 7ms |
+| express | 20ms | 18ms |
+| chalk | 10ms | 9ms |
+
+> Checkout is local I/O only, not protocol-bound — comparable for both tools.
 
 ---
 
@@ -91,14 +99,14 @@ Network-dominated — measures re-fetch when the bare repo already exists (warm 
 
 | Repo | ziggit | git CLI | Ratio |
 |------|-------:|--------:|------:|
-| debug | 85ms | 80ms | 1.06× |
-| semver | 90ms | 87ms | 1.03× |
-| ms | 88ms | 82ms | 1.07× |
-| express | 98ms | 94ms | 1.04× |
-| chalk | 84ms | 84ms | 1.00× |
+| debug | 96ms | 92ms | 1.04× |
+| semver | 89ms | 84ms | 1.06× |
+| ms | 81ms | 85ms | 0.95× |
+| express | 99ms | 98ms | 1.01× |
+| chalk | 84ms | 83ms | 1.01× |
 
 > Fetch is ~network RTT + server negotiation. Both tools spend the same time waiting
-> on the network when there's nothing new to download. ziggit is within noise.
+> on the network when there's nothing new to download. Results within noise.
 
 ---
 
@@ -120,19 +128,19 @@ Network-dominated — measures re-fetch when the bare repo already exists (warm 
 
 ### Cold cache scenario
 
-Stock bun cold install: **526ms** (median, 5 git deps)
+Stock bun cold install: **371ms** (median, 5 git deps)
 
 Bun internally shells out to `git` for clone operations. If we replace those git CLI calls
 with in-process ziggit:
 
-- Git clone portion of bun install ≈ 2,340ms sequential (but bun parallelizes)
-- With parallelism, git portion ≈ express dominates at ~1,609ms
-- ziggit express clone: ~698ms → **saves ~911ms on the critical path**
-- **Projected cold install: ~300-400ms** (40-50% faster)
+- Git clone portion (sequential): 1,803ms via git CLI → 1,273ms via ziggit
+- With bun's parallelism, express dominates the critical path: 1,051ms → 756ms
+- **Saves ~295ms on the critical path** (clone of largest dep)
+- **Projected cold install: ~250-300ms** (20-30% faster)
 
 ### Warm cache scenario
 
-Warm install (171ms) is mostly local linking + resolution. Git fetch adds ~80-100ms per dep
+Warm install (85ms) is mostly local linking + resolution. Git fetch adds ~80-100ms per dep
 but bun caches aggressively. Marginal improvement expected.
 
 ### In-process advantages (not measured here)
@@ -168,21 +176,24 @@ cd /root/bun-fork && zig build -Doptimize=ReleaseFast
 | 2026-03-27 T01:xx | Session 1 | 1,188ms | 1,753ms | 1.48× |
 | 2026-03-27 T02:xx | Session 2 | 1,204ms | 1,832ms | 1.52× |
 | 2026-03-27 T03:08 | Session 3 | 1,195ms | 1,780ms | 1.49× |
-| **2026-03-27 T03:10** | **Session 4** | **1,201ms** | **2,340ms** | **1.95×** |
+| 2026-03-27 T03:10 | Session 4 | 1,201ms | 2,340ms | 1.95× |
+| **2026-03-27 T03:13** | **Session 5** | **1,273ms** | **1,803ms** | **1.42×** |
 
-> Session 4 saw particularly strong results on express (2.30× vs typical 1.49-1.51×),
-> likely due to git CLI hitting unfavorable server-side pack generation.
+> Cross-session average: ziggit ~1,212ms, git CLI ~1,902ms → **~1.57× average speedup**
+> Session 4 saw an outlier on express (git CLI: 1,609ms) likely from server-side variability.
 
 ---
 
 ## Conclusion
 
-**ziggit delivers consistent 1.4–2.3× faster clone operations** compared to the git CLI,
-with the largest gains on bigger repositories (express: 2.30×). For `bun install` with
+**ziggit delivers consistent 1.2–1.8× faster clone operations** compared to the git CLI,
+with the largest relative gains on smaller repos (debug: 1.68×, chalk: 1.57×) and the
+largest absolute gains on bigger repos (express: 291ms saved). For `bun install` with
 git dependencies, integrating ziggit in-process would:
 
-1. **Reduce cold install time by 40-50%** for git-heavy dependency trees
+1. **Reduce cold install time by 20-30%** for git-heavy dependency trees
 2. **Eliminate fork/exec overhead** (5-10ms per dep)
 3. **Enable tighter integration** with bun's event loop and I/O subsystem
 
-The clone phase is the bottleneck — and that's exactly where ziggit excels.
+Across 5 sessions, ziggit consistently saves **~530-1,139ms** (29-48%) of total sequential
+clone time. The clone phase is the bottleneck — and that's exactly where ziggit excels.

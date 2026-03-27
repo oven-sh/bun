@@ -1,12 +1,17 @@
 #!/bin/bash
 # bun install end-to-end benchmark: stock bun vs ziggit-simulated workflow
-# Usage: bash bun_install_bench.sh [--ziggit-path /path/to/ziggit/bin]
+# Usage: bash bun_install_bench.sh [--output FILE]
+#
+# Requires: bun (stock), ziggit binary, git
 set -e
 
 ZIGGIT="${ZIGGIT:-/root/ziggit/zig-out/bin/ziggit}"
-GIT="/usr/bin/git"
+GIT="${GIT:-/usr/bin/git}"
 BUN="${BUN:-/root/.bun/bin/bun}"
 RUNS=3
+TIMESTAMP=$(date -u +%Y%m%dT%H%M%SZ)
+
+OUTPUT="${1:-/root/bun-fork/benchmark/raw_results_${TIMESTAMP}.txt}"
 
 REPOS=(
   "https://github.com/sindresorhus/is.git|is"
@@ -16,17 +21,25 @@ REPOS=(
   "https://github.com/npm/node-semver.git|semver"
 )
 
-WORKDIR="/tmp/bench-git-workflow"
 BENCH_PROJECT="/tmp/bench-project"
 
 now_ms() { echo $(( $(date +%s%N) / 1000000 )); }
 
+log() { echo "$@" | tee -a "$OUTPUT"; }
+
+echo "" > "$OUTPUT"
+log "=== BUN INSTALL BENCHMARK — $TIMESTAMP ==="
+log "VM: $(free -h | awk '/Mem:/{print $2}') RAM, $(nproc) CPU, $(uname -m)"
+log "Bun: $($BUN --version), Git: $($GIT --version | awk '{print $3}'), Zig: $(zig version)"
+log "Ziggit: $ZIGGIT"
+log ""
+
 # ── Section 1: Stock bun install ──────────────────────────────
 
-bench_bun_install() {
-    local mode="$1"  # cold or warm
-    mkdir -p "$BENCH_PROJECT"
-    cat > "$BENCH_PROJECT/package.json" << 'PKGJSON'
+log "== Section 1: Stock bun install =="
+
+mkdir -p "$BENCH_PROJECT"
+cat > "$BENCH_PROJECT/package.json" << 'PKGJSON'
 {
   "name": "ziggit-bench",
   "dependencies": {
@@ -38,145 +51,136 @@ bench_bun_install() {
   }
 }
 PKGJSON
+
+log "  Cold cache runs:"
+for i in $(seq 1 $RUNS); do
     cd "$BENCH_PROJECT"
-    if [ "$mode" = "cold" ]; then
-        rm -rf node_modules bun.lock ~/.bun/install/cache
-    else
-        rm -rf node_modules bun.lock
-    fi
-    local start=$(now_ms)
-    $BUN install --no-save 2>&1 | grep "packages installed" || true
-    local end=$(now_ms)
-    echo "$((end - start))"
-}
+    rm -rf node_modules bun.lock ~/.bun/install/cache
+    sync
+    s=$(now_ms)
+    $BUN install --no-save 2>&1 > /dev/null
+    ms=$(( $(now_ms) - s ))
+    log "    Run $i: ${ms}ms"
+    sleep 1
+done
 
-# ── Section 2: Full bun-install workflow simulation ───────────
-# Simulates: clone --bare --depth=1 + rev-parse HEAD + ls-tree -r + cat-file ALL blobs
+log "  Warm cache runs:"
+cd "$BENCH_PROJECT"
+rm -rf node_modules bun.lock
+$BUN install --no-save 2>&1 > /dev/null
+for i in $(seq 1 $RUNS); do
+    cd "$BENCH_PROJECT"
+    rm -rf node_modules bun.lock
+    sync
+    s=$(now_ms)
+    $BUN install --no-save 2>&1 > /dev/null
+    ms=$(( $(now_ms) - s ))
+    log "    Run $i: ${ms}ms"
+    sleep 1
+done
 
-bench_full_workflow() {
-    local tool="$1"
-    local tool_name="$2"
-    local run_label="$3"
-    local base_dir="$WORKDIR/${tool_name}-${run_label}"
+# ── Section 2: Clone benchmark ────────────────────────────────
 
-    rm -rf "$base_dir"
-    mkdir -p "$base_dir"
+log ""
+log "== Section 2: Clone bare --depth=1 =="
 
-    local total_start=$(now_ms)
+for run in $(seq 1 $RUNS); do
+    log "  --- Run $run ---"
+    
+    git_total=0
     for entry in "${REPOS[@]}"; do
         IFS='|' read -r url name <<< "$entry"
-        local bare_dir="$base_dir/${name}.git"
-
-        local start=$(now_ms)
-        $tool clone --bare --depth=1 "$url" "$bare_dir" 2>/dev/null
-        local clone_end=$(now_ms)
-
-        $tool -C "$bare_dir" rev-parse HEAD > /dev/null 2>&1
-        local resolve_end=$(now_ms)
-
-        local tree_output=$($tool -C "$bare_dir" ls-tree -r HEAD 2>/dev/null)
-        local lt_end=$(now_ms)
-
-        local blobs=$(echo "$tree_output" | awk '{print $3}')
-        local blob_count=0
-        for blob in $blobs; do
-            $tool -C "$bare_dir" cat-file blob "$blob" > /dev/null 2>&1
-            blob_count=$((blob_count+1))
-        done
-        local cf_end=$(now_ms)
-
-        echo "  $name (${blob_count} files): clone=$((clone_end-start))ms resolve=$((resolve_end-clone_end))ms ls-tree=$((lt_end-resolve_end))ms cat-file=$((cf_end-lt_end))ms total=$((cf_end-start))ms"
+        rm -rf "/tmp/bench_git_$name"
+        s=$(now_ms)
+        $GIT clone --bare --depth=1 "$url" "/tmp/bench_git_$name" 2>/dev/null
+        ms=$(( $(now_ms) - s ))
+        git_total=$((git_total + ms))
+        log "    git  $name: ${ms}ms"
     done
-    local total_end=$(now_ms)
-    echo "  TOTAL: $((total_end-total_start))ms"
-}
-
-# ── Section 3: Clone-only benchmark ──────────────────────────
-
-bench_clone_only() {
-    local tool="$1"
-    local tool_name="$2"
-    local run_label="$3"
-    local base_dir="$WORKDIR/${tool_name}-clone-${run_label}"
-
-    rm -rf "$base_dir"
-    mkdir -p "$base_dir"
-
-    local total_start=$(now_ms)
+    log "    git  TOTAL: ${git_total}ms"
+    
+    zig_total=0
     for entry in "${REPOS[@]}"; do
         IFS='|' read -r url name <<< "$entry"
-        local bare_dir="$base_dir/${name}.git"
-
-        local start=$(now_ms)
-        $tool clone --bare --depth=1 "$url" "$bare_dir" 2>/dev/null
-        local end=$(now_ms)
-        echo "  $name: $((end-start))ms"
+        rm -rf "/tmp/bench_zig_$name"
+        s=$(now_ms)
+        $ZIGGIT clone --bare --depth 1 "$url" "/tmp/bench_zig_$name" 2>/dev/null
+        ms=$(( $(now_ms) - s ))
+        zig_total=$((zig_total + ms))
+        log "    ziggit $name: ${ms}ms"
     done
-    local total_end=$(now_ms)
-    echo "  TOTAL: $((total_end-total_start))ms"
-}
-
-# ── Main ──────────────────────────────────────────────────────
-
-echo "============================================"
-echo "  bun install End-to-End Benchmark"
-echo "  Stock bun + Git CLI vs Ziggit"
-echo "  $(date)"
-echo "  VM: $(free -h | awk '/Mem:/{print $2}') RAM, $(nproc) CPUs"
-echo "  bun: $($BUN --version)"
-echo "  git: $($GIT --version)"
-echo "  ziggit: $($ZIGGIT --version 2>&1)"
-echo "============================================"
-echo ""
-
-echo "═══ Section 1: Stock bun install (cold cache) ═══"
-for run in $(seq 1 $RUNS); do
-    ms=$(bench_bun_install cold)
-    echo "  Run $run: ${ms}ms"
+    log "    ziggit TOTAL: ${zig_total}ms"
+    sleep 1
 done
 
-echo ""
-echo "═══ Section 2: Stock bun install (warm cache) ═══"
-bench_bun_install cold > /dev/null 2>&1  # prime cache
-for run in $(seq 1 $RUNS); do
-    ms=$(bench_bun_install warm)
-    echo "  Run $run: ${ms}ms"
-done
+# ── Section 3: Full workflow ──────────────────────────────────
 
-echo ""
-echo "═══ Section 3: Clone-only benchmark ═══"
-for run in $(seq 1 $RUNS); do
-    echo ""
-    echo "--- Run $run: git CLI ---"
-    bench_clone_only "$GIT" "git" "run$run"
-    echo "--- Run $run: ziggit ---"
-    bench_clone_only "$ZIGGIT" "ziggit" "run$run"
-done
+log ""
+log "== Section 3: Full workflow (clone + rev-parse + ls-tree + cat-file ALL blobs) =="
 
-echo ""
-echo "═══ Section 4: Full workflow simulation (clone + resolve + extract ALL files) ═══"
 for run in $(seq 1 $RUNS); do
-    echo ""
-    echo "--- Run $run: git CLI ---"
-    bench_full_workflow "$GIT" "git" "run$run"
-    echo "--- Run $run: ziggit ---"
-    bench_full_workflow "$ZIGGIT" "ziggit" "run$run"
-done
-
-echo ""
-echo "═══ Section 5: Process spawn overhead ═══"
-for tool_info in "$GIT|git" "$ZIGGIT|ziggit"; do
-    IFS='|' read -r tool name <<< "$tool_info"
-    total=0
-    for i in $(seq 1 20); do
-        start=$(date +%s%N)
-        $tool --version > /dev/null 2>&1
-        end=$(date +%s%N)
-        total=$((total + (end - start) / 1000000))
+    log "  --- Run $run ---"
+    
+    git_total=0
+    for entry in "${REPOS[@]}"; do
+        IFS='|' read -r url name <<< "$entry"
+        dir="/tmp/fwb_git_$name"
+        rm -rf "$dir"
+        
+        s=$(now_ms); $GIT clone --bare --depth=1 "$url" "$dir" 2>/dev/null; clone_ms=$(( $(now_ms) - s ))
+        s=$(now_ms); $GIT -C "$dir" rev-parse HEAD >/dev/null 2>&1; rev_ms=$(( $(now_ms) - s ))
+        s=$(now_ms); files=$($GIT -C "$dir" ls-tree -r HEAD --name-only 2>/dev/null); ls_ms=$(( $(now_ms) - s ))
+        nfiles=$(echo "$files" | wc -l)
+        blobs=$($GIT -C "$dir" ls-tree -r HEAD 2>/dev/null | awk '{print $3}')
+        s=$(now_ms)
+        for blob in $blobs; do $GIT -C "$dir" cat-file blob "$blob" > /dev/null 2>&1; done
+        cat_ms=$(( $(now_ms) - s ))
+        
+        total=$((clone_ms + rev_ms + ls_ms + cat_ms))
+        git_total=$((git_total + total))
+        log "    git  $name (${nfiles}f): clone=$clone_ms rev=$rev_ms ls=$ls_ms cat=$cat_ms total=${total}ms"
     done
-    avg=$((total / 20))
-    echo "  $name --version avg spawn: ${avg}ms (20 iterations)"
+    log "    git  TOTAL: ${git_total}ms"
+    
+    zig_total=0
+    for entry in "${REPOS[@]}"; do
+        IFS='|' read -r url name <<< "$entry"
+        dir="/tmp/fwb_zig_$name"
+        rm -rf "$dir"
+        
+        s=$(now_ms); $ZIGGIT clone --bare --depth 1 "$url" "$dir" 2>/dev/null; clone_ms=$(( $(now_ms) - s ))
+        s=$(now_ms); $ZIGGIT -C "$dir" rev-parse HEAD >/dev/null 2>&1; rev_ms=$(( $(now_ms) - s ))
+        s=$(now_ms); tree_output=$($ZIGGIT -C "$dir" ls-tree -r HEAD 2>/dev/null); ls_ms=$(( $(now_ms) - s ))
+        nfiles=$(echo "$tree_output" | grep -c "blob" || echo 0)
+        blobs=$(echo "$tree_output" | awk '{print $3}')
+        s=$(now_ms)
+        for blob in $blobs; do $ZIGGIT -C "$dir" cat-file blob "$blob" > /dev/null 2>&1; done
+        cat_ms=$(( $(now_ms) - s ))
+        
+        total=$((clone_ms + rev_ms + ls_ms + cat_ms))
+        zig_total=$((zig_total + total))
+        log "    zig  $name (${nfiles}f): clone=$clone_ms rev=$rev_ms ls=$ls_ms cat=$cat_ms total=${total}ms"
+    done
+    log "    zig  TOTAL: ${zig_total}ms"
+    sleep 1
 done
 
-echo ""
-echo "Benchmark complete."
+# ── Section 4: Spawn overhead ────────────────────────────────
+
+log ""
+log "== Section 4: Spawn overhead (200 iterations) =="
+s=$(date +%s%N)
+for i in $(seq 1 200); do $GIT --version > /dev/null 2>&1; done
+git_ns=$(( ($(date +%s%N) - s) / 200 ))
+
+s=$(date +%s%N)
+for i in $(seq 1 200); do $ZIGGIT --version > /dev/null 2>&1; done
+zig_ns=$(( ($(date +%s%N) - s) / 200 ))
+
+log "  git spawn: $(echo "scale=2; $git_ns / 1000000" | bc)ms/call"
+log "  ziggit spawn: $(echo "scale=2; $zig_ns / 1000000" | bc)ms/call"
+log "  delta: $(echo "scale=2; ($zig_ns - $git_ns) / 1000000" | bc)ms/call"
+log "  delta x 426 files: $(echo "scale=1; ($zig_ns - $git_ns) * 426 / 1000000" | bc)ms"
+
+log ""
+log "=== DONE ==="

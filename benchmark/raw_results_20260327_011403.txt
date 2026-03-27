@@ -1,0 +1,33 @@
+=== BUN INSTALL BENCHMARK — 20260327T011403Z ===
+VM: 483Mi RAM, 1 CPU, x86_64
+Bun: 1.3.11, Git: 2.43.0, Zig: 0.15.2
+
+== Stock bun install ==
+Cold: 2566ms*, 525ms, 567ms (median 546ms, *run1 DNS cold start excluded from median)
+Warm: 78ms, 87ms, 77ms (median 78ms)
+
+== Clone bare --depth=1 ==
+Run 1: git=710ms ziggit=387ms
+Run 2: git=670ms ziggit=405ms
+Run 3: git=650ms ziggit=400ms
+Median: git=670ms ziggit=400ms (40.3% faster)
+
+Per-repo (Run 2):
+  git  is=124 express=166 chalk=130 debug=119 semver=131
+  zig  is=75  express=113 chalk=73  debug=62  semver=82
+
+== Full workflow (clone + rev-parse + ls-tree + cat-file all blobs) ==
+Run 1: git=1263ms ziggit=1214ms
+Run 2: git=1201ms ziggit=1219ms
+Run 3: git=1244ms ziggit=1193ms
+Median: git=1244ms ziggit=1214ms (2.4% faster)
+
+Per-repo detail (Run 2):
+  git  is(15f):  133/2/3/21=159ms   express(213f): 157/2/3/252=414ms   chalk(34f): 136/2/3/42=183ms   debug(13f): 111/3/3/17=134ms   semver(151f): 127/3/3/178=311ms
+  zig  is(15f):  75/3/4/30=112ms    express(213f): 138/3/4/379=524ms   chalk(34f): 75/3/4/63=145ms    debug(13f): 60/3/4/24=91ms     semver(151f): 72/3/4/268=347ms
+
+== Spawn overhead (200 iterations) ==
+git: 0.89ms/call
+ziggit: 1.41ms/call
+delta: 0.51ms/call
+delta x 426 files: ~219ms

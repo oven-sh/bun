@@ -221,7 +221,7 @@ fn generatePrunedPackageJson(allocator: std.mem.Allocator, cwd: string, kept_wor
     var path_buf: bun.PathBuffer = undefined;
     const pkg_json_path = std.fmt.bufPrint(&path_buf, "{s}/package.json", .{cwd}) catch return error.PathTooLong;
 
-    const content = std.fs.cwd().readFileAlloc(allocator, pkg_json_path, 1024 * 1024) catch return error.ReadFailed;
+    const content = std.fs.cwd().readFileAlloc(allocator, pkg_json_path, std.math.maxInt(usize)) catch return error.ReadFailed;
 
     var result: std.ArrayListUnmanaged(u8) = .{};
     const writer = result.writer(allocator);
@@ -447,9 +447,15 @@ fn writeToFile(base_dir: string, rel_path: string, content: []const u8) void {
 
 fn requiredCopyFromRoot(cwd: string, src_rel: string, out_base: string, out_rel: string) void {
     var src_buf: bun.PathBuffer = undefined;
-    const src_path = std.fmt.bufPrint(&src_buf, "{s}/{s}", .{ cwd, src_rel }) catch return;
+    const src_path = std.fmt.bufPrint(&src_buf, "{s}/{s}", .{ cwd, src_rel }) catch {
+        Output.prettyErrorln("<r><red>error:<r> path too long: {s}/{s}", .{ cwd, src_rel });
+        Global.exit(1);
+    };
     var dst_buf: bun.PathBuffer = undefined;
-    const dst_path = std.fmt.bufPrint(&dst_buf, "{s}/{s}", .{ out_base, out_rel }) catch return;
+    const dst_path = std.fmt.bufPrint(&dst_buf, "{s}/{s}", .{ out_base, out_rel }) catch {
+        Output.prettyErrorln("<r><red>error:<r> path too long: {s}/{s}", .{ out_base, out_rel });
+        Global.exit(1);
+    };
 
     if (strings.lastIndexOfChar(dst_path, '/')) |last_slash| {
         std.fs.cwd().makePath(dst_path[0..last_slash]) catch {};
@@ -496,7 +502,10 @@ fn copyDirRecursive(cwd: string, src_rel: string, out_base: string, out_rel: str
     defer src_dir.close();
 
     var walker = src_dir.iterate();
-    while (walker.next() catch null) |entry| {
+    while (walker.next() catch |err| {
+        Output.prettyErrorln("<r><red>error:<r> failed to iterate directory {s}: {s}", .{ src_path, @errorName(err) });
+        Global.exit(1);
+    }) |entry| {
         if (strings.eqlComptime(entry.name, "node_modules")) continue;
         if (strings.eqlComptime(entry.name, ".git")) continue;
 

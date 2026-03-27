@@ -1,7 +1,7 @@
 # Ziggit Integration Benchmarks
 
 ## Environment
-- Date: 2026-03-27T02:38Z (latest run)
+- Date: 2026-03-27T02:39Z (latest run)
 - Ziggit: b1d2497, built from `/root/ziggit` HEAD, Zig 0.15.2
 - Bun: 1.3.11 (stock), fork branch: ziggit-integration
 - Machine: Linux x86_64, 483MB RAM, 1 vCPU, 2GB swap
@@ -15,7 +15,7 @@ Benchmarks compare stock bun + git CLI vs ziggit CLI to measure replaceable oper
 
 ---
 
-## Latest Run (2026-03-27T02:38Z) — 5 Repos, Full Workflow
+## Latest Run (2026-03-27T02:39Z) — 5 Repos, Full Workflow
 
 ### Stock Bun Install (5 Git Dependencies)
 
@@ -23,18 +23,18 @@ Dependencies: `debug`, `semver`, `ms`, `supports-color`, `has-flag` (all `github
 
 | Scenario | Run 1 | Run 2 | Run 3 | Average |
 |----------|------:|------:|------:|--------:|
-| Cold cache | 278ms | 312ms | 304ms | **298ms** |
-| Warm cache | 53ms | 45ms | 50ms | **49ms** |
+| Cold cache | 162ms | 201ms | 183ms | **182ms** |
+| Warm cache | 44ms | 48ms | 48ms | **46ms** |
 
 ### Per-Repo Bare Clone: Git CLI vs Ziggit
 
 | Repo | Git CLI (avg) | Ziggit (avg) | Δ |
 |------|------:|------:|------:|
-| debug | 113ms | 73ms | **-40ms (35%)** |
-| semver | 128ms | 138ms | +10ms (-7%) |
-| ms | 122ms | 125ms | +3ms (-2%) |
-| supports-color | 115ms | 70ms | **-45ms (39%)** |
-| has-flag | 109ms | 55ms | **-54ms (49%)** |
+| debug | 113ms | 77ms | **-36ms (31%)** |
+| semver | 131ms | 139ms | +8ms (-6%) |
+| ms | 121ms | 127ms | +6ms (-4%) |
+| supports-color | 107ms | 67ms | **-40ms (37%)** |
+| has-flag | 120ms | 50ms | **-70ms (58%)** |
 
 ### Per-Repo Checkout: Git CLI vs Ziggit
 
@@ -50,26 +50,26 @@ Dependencies: `debug`, `semver`, `ms`, `supports-color`, `has-flag` (all `github
 
 | Run | Git CLI | Ziggit |
 |-----|--------:|-------:|
-| 1 | 576ms | 494ms |
-| 2 | 606ms | 497ms |
-| 3 | 597ms | 447ms |
-| **Avg** | **593ms** | **479ms** |
+| 1 | 580ms | 473ms |
+| 2 | 605ms | 468ms |
+| 3 | 617ms | 457ms |
+| **Avg** | **600ms** | **466ms** |
 
-**Speedup: 19% (114ms saved)**
+**Speedup: 22% (134ms saved)**
 
 ### Full Workflow Including Checkout
 
 | Metric | Git CLI | Ziggit |
 |--------|--------:|-------:|
-| Clone + resolve + checkout (sum) | 664ms | 517ms |
-| **Savings** | | **147ms (22%)** |
+| Clone + resolve + checkout (sum) | 669ms | 516ms |
+| **Savings** | | **153ms (22%)** |
 
 ### Process Spawn Overhead (100× rev-parse HEAD)
 
 | Tool | Total | Per-call |
 |------|------:|---------:|
 | Git CLI | 137ms | 1.4ms |
-| Ziggit CLI | 198ms | 2.0ms |
+| Ziggit CLI | 199ms | 2.0ms |
 
 Note: Ziggit CLI has higher per-call overhead than git for simple operations due to
 Zig runtime startup. When compiled into bun as a native module, this becomes ~0μs.
@@ -79,10 +79,10 @@ Zig runtime startup. When compiled into bun as a native module, this becomes ~0�
 ## Key Observations
 
 1. **Clone performance varies by repo size.** Ziggit wins big on small repos
-   (has-flag: 49% faster, supports-color: 39%, debug: 35%) where git's process
+   (has-flag: 58% faster, supports-color: 37%, debug: 31%) where git's process
    startup overhead is proportionally large vs transfer time.
 
-2. **Semver and ms are outliers** where git CLI is slightly faster (~10ms, ~3ms).
+2. **Semver and ms are outliers** where git CLI is slightly faster (~8ms, ~6ms).
    These larger repos suggest ziggit's pack negotiation could be optimized for
    repos with many tags/refs.
 
@@ -95,8 +95,8 @@ Zig runtime startup. When compiled into bun as a native module, this becomes ~0�
 5. **Network dominates for larger repos** — ms shows nearly identical times,
    meaning the network transfer time is the bottleneck, not local processing.
 
-6. **Projected bun install improvement:** Cold install from 298ms → ~184ms
-   (saving ~114ms from faster clones, plus in-process call savings).
+6. **Projected bun install improvement:** Cold install from 182ms → ~48ms
+   (saving ~134ms from faster clones, plus in-process call savings).
 
 ---
 
@@ -108,7 +108,8 @@ Zig runtime startup. When compiled into bun as a native module, this becomes ~0�
 | 2026-03-27T02:33Z | 589ms | 487ms | 17% |
 | 2026-03-27T02:35Z | 586ms | 490ms | 16% |
 | 2026-03-27T02:36Z | 577ms | 486ms | 15% |
-| **2026-03-27T02:38Z** | **593ms** | **479ms** | **19%** |
+| 2026-03-27T02:38Z | 593ms | 479ms | 19% |
+| **2026-03-27T02:39Z** | **600ms** | **466ms** | **22%** |
 
 Results are consistent across runs. Variance is primarily due to network latency.
 
@@ -118,7 +119,8 @@ Results are consistent across runs. Variance is primarily due to network latency
 |------|--------:|-------:|--------:|
 | 2026-03-27T02:35Z | 683ms | 515ms | 168ms (24%) |
 | 2026-03-27T02:36Z | 682ms | 530ms | 152ms (22%) |
-| **2026-03-27T02:38Z** | **664ms** | **517ms** | **147ms (22%)** |
+| 2026-03-27T02:38Z | 664ms | 517ms | 147ms (22%) |
+| **2026-03-27T02:39Z** | **669ms** | **516ms** | **153ms (22%)** |
 
 ### Bun Install (stock baseline)
 
@@ -126,11 +128,12 @@ Results are consistent across runs. Variance is primarily due to network latency
 |------|----------:|----------:|
 | 2026-03-27T02:35Z | 252ms | 74ms |
 | 2026-03-27T02:36Z | 160ms | 88ms |
-| **2026-03-27T02:38Z** | **298ms** | **49ms** |
+| 2026-03-27T02:38Z | 298ms | 49ms |
+| **2026-03-27T02:39Z** | **182ms** | **46ms** |
 
 ---
 
 ## Raw Data Location
 
 All raw timing data saved in `benchmark/raw_results_*.txt`.
-Latest: `benchmark/raw_results_20260327T023808Z.txt`
+Latest: `benchmark/raw_results_20260327T023929Z.txt`

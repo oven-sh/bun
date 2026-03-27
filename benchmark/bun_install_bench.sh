@@ -1,13 +1,18 @@
 #!/usr/bin/env bash
-# BUN INSTALL BENCHMARK: Stock Bun vs Ziggit-simulated workflow
-# Session 11 — 2026-03-27
 set -euo pipefail
 
-BUN="/root/.bun/bin/bun"
+# Bun Install Benchmark: ziggit vs git CLI
+# Session 12 — 2026-03-27
+#
+# Measures:
+#   1. Stock bun install (cold + warm) for 5 git dependencies
+#   2. Per-repo: git CLI clone workflow vs ziggit clone workflow (3 runs each)
+
 ZIGGIT="/root/ziggit/zig-out/bin/ziggit"
 GIT="/usr/bin/git"
-TMPDIR="/tmp/bench-$$"
-RESULTS_FILE="/tmp/bench-results-$$.txt"
+BUN="/root/.bun/bin/bun"
+BENCH_DIR="/tmp/bench-session12"
+RESULTS_FILE="/tmp/bench-session12/results.txt"
 
 REPOS=(
   "debug|https://github.com/debug-js/debug.git"
@@ -17,30 +22,23 @@ REPOS=(
   "express|https://github.com/expressjs/express.git"
 )
 
-RUNS=3
+NUM_RUNS=3
 
-now_ms() {
-  date +%s%N | cut -b1-13
-}
+rm -rf "$BENCH_DIR"
+mkdir -p "$BENCH_DIR"
+echo "=== Bun Install Benchmark Session 12 ===" | tee "$RESULTS_FILE"
+echo "Date: $(date -u +%Y-%m-%dT%H:%MZ)" | tee -a "$RESULTS_FILE"
+echo "Ziggit: $($ZIGGIT version 2>/dev/null || echo 'n/a')" | tee -a "$RESULTS_FILE"
+echo "Git: $($GIT --version)" | tee -a "$RESULTS_FILE"
+echo "Bun: $($BUN --version)" | tee -a "$RESULTS_FILE"
+echo "" | tee -a "$RESULTS_FILE"
 
-cleanup() {
-  rm -rf "$TMPDIR" 2>/dev/null || true
-}
-trap cleanup EXIT
+# --- Part 1: Stock bun install ---
+echo "=== PART 1: Stock Bun Install ===" | tee -a "$RESULTS_FILE"
 
-echo "=== BUN INSTALL BENCHMARK (Session 11) ==="
-echo "Date: $(date -u +%Y-%m-%dT%H:%MZ)"
-echo "Bun: $($BUN --version)"
-echo "Ziggit: $(cd /root/ziggit && git log --oneline -1)"
-echo "Git CLI: $($GIT --version)"
-echo ""
-
-# ---- PART 1: Stock bun install ----
-echo "=== PART 1: Stock Bun Install (5 git deps) ==="
-
-mkdir -p /tmp/bench-bun-project
-cd /tmp/bench-bun-project
-cat > package.json << 'EOF'
+BUN_PROJECT="$BENCH_DIR/bun-project"
+mkdir -p "$BUN_PROJECT"
+cat > "$BUN_PROJECT/package.json" <<'EOF'
 {
   "name": "ziggit-bench",
   "dependencies": {
@@ -53,82 +51,80 @@ cat > package.json << 'EOF'
 }
 EOF
 
-echo ""
-echo "--- Cold cache runs ---"
-for i in $(seq 1 $RUNS); do
-  rm -rf node_modules bun.lock /root/.bun/install/cache 2>/dev/null || true
-  t1=$(now_ms)
-  $BUN install --no-progress 2>&1 >/dev/null
-  t2=$(now_ms)
-  echo "  Run $i: $((t2 - t1))ms"
+# Cold runs
+echo "--- Cold cache runs ---" | tee -a "$RESULTS_FILE"
+for i in $(seq 1 $NUM_RUNS); do
+  rm -rf "$BUN_PROJECT/node_modules" "$BUN_PROJECT/bun.lock" ~/.bun/install/cache 2>/dev/null || true
+  cd "$BUN_PROJECT"
+  start_ms=$(($(date +%s%N)/1000000))
+  $BUN install --no-progress 2>&1 || true
+  end_ms=$(($(date +%s%N)/1000000))
+  elapsed=$((end_ms - start_ms))
+  echo "  Cold run $i: ${elapsed}ms" | tee -a "$RESULTS_FILE"
 done
 
-echo ""
-echo "--- Warm cache runs ---"
-for i in $(seq 1 $RUNS); do
-  rm -rf node_modules 2>/dev/null || true
-  t1=$(now_ms)
-  $BUN install --no-progress 2>&1 >/dev/null
-  t2=$(now_ms)
-  echo "  Run $i: $((t2 - t1))ms"
+# Warm runs (keep cache + lockfile)
+echo "--- Warm cache runs ---" | tee -a "$RESULTS_FILE"
+for i in $(seq 1 $NUM_RUNS); do
+  rm -rf "$BUN_PROJECT/node_modules" 2>/dev/null || true
+  cd "$BUN_PROJECT"
+  start_ms=$(($(date +%s%N)/1000000))
+  $BUN install --no-progress 2>&1 || true
+  end_ms=$(($(date +%s%N)/1000000))
+  elapsed=$((end_ms - start_ms))
+  echo "  Warm run $i: ${elapsed}ms" | tee -a "$RESULTS_FILE"
 done
 
-# ---- PART 2: Per-repo workflow comparison ----
-echo ""
-echo "=== PART 2: Per-Repo Git Workflow (git CLI vs ziggit) ==="
-echo "  Workflow: clone --bare → rev-parse HEAD → clone from bare"
-echo ""
+echo "" | tee -a "$RESULTS_FILE"
+
+# --- Part 2: Per-repo git CLI vs ziggit ---
+echo "=== PART 2: Per-Repo Clone Workflow ===" | tee -a "$RESULTS_FILE"
+
+time_ms() {
+  local start end
+  start=$(($(date +%s%N)/1000000))
+  "$@" >/dev/null 2>&1
+  end=$(($(date +%s%N)/1000000))
+  echo $((end - start))
+}
 
 for entry in "${REPOS[@]}"; do
   IFS='|' read -r name url <<< "$entry"
-  echo "=== $name ($url) ==="
-  
-  for run in $(seq 1 $RUNS); do
-    # --- Git CLI ---
-    rm -rf "$TMPDIR" && mkdir -p "$TMPDIR"
-    
-    t1=$(now_ms)
-    $GIT clone --bare --quiet "$url" "$TMPDIR/bare-git" 2>/dev/null
-    t2=$(now_ms)
-    clone_git=$((t2 - t1))
-    
-    t1=$(now_ms)
-    sha=$($GIT -C "$TMPDIR/bare-git" rev-parse HEAD 2>/dev/null)
-    t2=$(now_ms)
-    resolve_git=$((t2 - t1))
-    
-    t1=$(now_ms)
-    $GIT clone --quiet "$TMPDIR/bare-git" "$TMPDIR/work-git" 2>/dev/null
-    t2=$(now_ms)
-    checkout_git=$((t2 - t1))
-    
-    total_git=$((clone_git + resolve_git + checkout_git))
-    echo "  git    $run: clone=${clone_git} resolve=${resolve_git} checkout=${checkout_git} total=${total_git}ms"
-    
-    # --- Ziggit ---
-    rm -rf "$TMPDIR" && mkdir -p "$TMPDIR"
-    
-    t1=$(now_ms)
-    $ZIGGIT clone --bare --quiet "$url" "$TMPDIR/bare-zig" 2>/dev/null
-    t2=$(now_ms)
-    clone_zig=$((t2 - t1))
-    
-    t1=$(now_ms)
-    sha=$($ZIGGIT -C "$TMPDIR/bare-zig" rev-parse HEAD 2>/dev/null)
-    t2=$(now_ms)
-    resolve_zig=$((t2 - t1))
-    
-    t1=$(now_ms)
-    $ZIGGIT clone --quiet "$TMPDIR/bare-zig" "$TMPDIR/work-zig" 2>/dev/null
-    t2=$(now_ms)
-    checkout_zig=$((t2 - t1))
-    
-    total_zig=$((clone_zig + resolve_zig + checkout_zig))
-    echo "  ziggit $run: clone=${clone_zig} resolve=${resolve_zig} checkout=${checkout_zig} total=${total_zig}ms"
+  echo "" | tee -a "$RESULTS_FILE"
+  echo "=== $name ($url) ===" | tee -a "$RESULTS_FILE"
+
+  for run in $(seq 1 $NUM_RUNS); do
+    # --- git CLI workflow ---
+    bare_dir="$BENCH_DIR/git-bare-${name}-${run}"
+    work_dir="$BENCH_DIR/git-work-${name}-${run}"
+    rm -rf "$bare_dir" "$work_dir"
+
+    clone_t=$(time_ms $GIT clone --bare --quiet "$url" "$bare_dir")
+    resolve_start=$(($(date +%s%N)/1000000))
+    sha=$($GIT -C "$bare_dir" rev-parse HEAD 2>/dev/null || echo "unknown")
+    resolve_end=$(($(date +%s%N)/1000000))
+    resolve_t=$((resolve_end - resolve_start))
+    checkout_t=$(time_ms $GIT clone --quiet "$bare_dir" "$work_dir")
+    total=$((clone_t + resolve_t + checkout_t))
+    echo "  git    $run: clone=${clone_t} resolve=${resolve_t} checkout=${checkout_t} total=${total}ms" | tee -a "$RESULTS_FILE"
+
+    # --- ziggit workflow ---
+    zbare_dir="$BENCH_DIR/zig-bare-${name}-${run}"
+    zwork_dir="$BENCH_DIR/zig-work-${name}-${run}"
+    rm -rf "$zbare_dir" "$zwork_dir"
+
+    zclone_t=$(time_ms $ZIGGIT clone --bare "$url" "$zbare_dir")
+    zresolve_start=$(($(date +%s%N)/1000000))
+    zsha=$($ZIGGIT rev-parse HEAD 2>/dev/null || echo "unknown")
+    zresolve_end=$(($(date +%s%N)/1000000))
+    zresolve_t=$((zresolve_end - zresolve_start))
+    # Use ziggit clone from bare for checkout
+    zcheckout_t=$(time_ms $ZIGGIT clone "$zbare_dir" "$zwork_dir")
+    ztotal=$((zclone_t + zresolve_t + zcheckout_t))
+    echo "  ziggit $run: clone=${zclone_t} resolve=${zresolve_t} checkout=${zcheckout_t} total=${ztotal}ms" | tee -a "$RESULTS_FILE"
   done
-  echo ""
 done
 
-# Cleanup
-rm -rf /tmp/bench-bun-project "$TMPDIR" 2>/dev/null || true
-echo "=== DONE ==="
+echo "" | tee -a "$RESULTS_FILE"
+echo "=== BENCHMARK COMPLETE ===" | tee -a "$RESULTS_FILE"
+echo "Results saved to: $RESULTS_FILE"

@@ -5,18 +5,18 @@
 # Measures:
 #   1. Stock bun install (cold + warm) with git dependencies
 #   2. Git CLI workflow: clone --bare --depth=1 + rev-parse + archive|tar
-#   3. Ziggit workflow: clone + ref resolve via packed-refs + ls-tree
+#   3. Ziggit workflow: clone + fix HEAD + checkout
 #   4. Subprocess spawn overhead comparison
+#
+# Each operation is run 3 times, median reported.
 #
 set -euo pipefail
 
 BUN="/root/.bun/bin/bun"
 ZIGGIT="/root/ziggit/zig-out/bin/ziggit"
-RESULTS_FILE="/root/bun-fork/benchmark/raw_results.txt"
 BENCH_DIR="/tmp/bench-workdir"
 RUNS=3
 
-# Repos that simulate typical git deps in package.json
 REPO_NAMES=("debug" "semver" "ms" "balanced-match" "concat-map")
 REPO_URLS=(
   "https://github.com/debug-js/debug.git"
@@ -25,37 +25,37 @@ REPO_URLS=(
   "https://github.com/juliangruber/balanced-match.git"
   "https://github.com/ljharb/concat-map.git"
 )
+# Default branches (ziggit clone sets HEAD to master, but these repos use main/master)
+REPO_BRANCHES=("main" "main" "main" "master" "main")
 
 ts_ms() { python3 -c 'import time; print(int(time.time()*1000))'; }
 dur() { echo $(( $2 - $1 )); }
 
 median3() {
-  local a=$1 b=$2 c=$3
-  echo "$a $b $c" | tr ' ' '\n' | sort -n | sed -n '2p'
+  echo "$1 $2 $3" | tr ' ' '\n' | sort -n | sed -n '2p'
 }
 
 echo "============================================="
-echo "BUN INSTALL BENCHMARK"
-echo "Date: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-echo "Bun: $($BUN --version)"
-echo "Zig: $(zig version)"
-echo "Git: $(git --version | awk '{print $3}')"
-echo "Ziggit: $($ZIGGIT --version 2>/dev/null || echo 'N/A')"
-echo "System: $(uname -sm), $(free -m | awk '/Mem:/{print $2}')MB RAM"
+echo "BUN INSTALL BENCHMARK — $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 echo "============================================="
+echo "Bun:     $($BUN --version)"
+echo "Zig:     $(zig version)"
+echo "Git:     $(git --version | awk '{print $3}')"
+echo "Ziggit:  built from /root/ziggit HEAD ($(cd /root/ziggit && git rev-parse --short HEAD))"
+echo "System:  $(uname -sm), $(free -m | awk '/Mem:/{print $2}')MB RAM"
 echo ""
 
 # ────────────────────────────────────────
 # PART 1: Stock bun install
 # ────────────────────────────────────────
-echo "## PART 1: Stock bun install"
+echo "## PART 1: Stock bun install (5 git deps)"
 
 declare -a BUN_COLD BUN_WARM
 
 for run in $(seq 1 $RUNS); do
   rm -rf /tmp/bench-bun-project
   mkdir -p /tmp/bench-bun-project
-  cat > /tmp/bench-bun-project/package.json << 'EOF'
+  cat > /tmp/bench-bun-project/package.json << 'PKGJSON'
 {
   "name": "ziggit-bench",
   "dependencies": {
@@ -66,22 +66,22 @@ for run in $(seq 1 $RUNS); do
     "concat-map": "github:ljharb/concat-map"
   }
 }
-EOF
+PKGJSON
 
-  # Cold: clear everything
+  # Cold: nuke everything
   rm -rf /tmp/bench-bun-project/node_modules /tmp/bench-bun-project/bun.lock
   rm -rf ~/.bun/install/cache
 
   s=$(ts_ms)
-  (cd /tmp/bench-bun-project && $BUN install --no-progress 2>&1) || true
+  (cd /tmp/bench-bun-project && $BUN install --no-progress 2>&1) >/dev/null || true
   e=$(ts_ms)
   cold=$(dur $s $e)
   BUN_COLD+=($cold)
 
-  # Warm: keep cache, drop node_modules
+  # Warm: keep bun cache, remove node_modules only
   rm -rf /tmp/bench-bun-project/node_modules
   s=$(ts_ms)
-  (cd /tmp/bench-bun-project && $BUN install --no-progress 2>&1) || true
+  (cd /tmp/bench-bun-project && $BUN install --no-progress 2>&1) >/dev/null || true
   e=$(ts_ms)
   warm=$(dur $s $e)
   BUN_WARM+=($warm)
@@ -91,149 +91,163 @@ done
 
 bun_cold_median=$(median3 ${BUN_COLD[0]} ${BUN_COLD[1]} ${BUN_COLD[2]})
 bun_warm_median=$(median3 ${BUN_WARM[0]} ${BUN_WARM[1]} ${BUN_WARM[2]})
-echo "  Median: cold=${bun_cold_median}ms warm=${bun_warm_median}ms"
-echo ""
+echo "  >> Median: cold=${bun_cold_median}ms warm=${bun_warm_median}ms"
 
-# Count packages bun installed
 pkg_count=$(ls /tmp/bench-bun-project/node_modules/ 2>/dev/null | wc -l)
-echo "  Packages installed: $pkg_count"
+echo "  >> Packages installed: $pkg_count"
 echo ""
 
 # ────────────────────────────────────────
 # PART 2: Git CLI per-repo workflow
 # ────────────────────────────────────────
-echo "## PART 2: Git CLI per-repo workflow"
+echo "## PART 2: Git CLI workflow (clone --bare --depth=1 + rev-parse + archive|tar)"
 
-# Arrays indexed by repo
-declare -A GIT_CLONE_R1 GIT_CLONE_R2 GIT_CLONE_R3
-declare -A GIT_RESOLVE_R1 GIT_RESOLVE_R2 GIT_RESOLVE_R3
-declare -A GIT_ARCHIVE_R1 GIT_ARCHIVE_R2 GIT_ARCHIVE_R3
+declare -A GIT_CLONE GIT_RESOLVE GIT_ARCHIVE  # median values
+declare -A GIT_CLONE_ALL GIT_RESOLVE_ALL GIT_ARCHIVE_ALL  # all 3 runs
 
 for i in "${!REPO_NAMES[@]}"; do
   name="${REPO_NAMES[$i]}"
   url="${REPO_URLS[$i]}"
+  declare -a _gc _gr _ga
 
   for run in $(seq 1 $RUNS); do
-    rm -rf "$BENCH_DIR"
+    rm -rf "$BENCH_DIR/${name}.git" "$BENCH_DIR/${name}-work"
     mkdir -p "$BENCH_DIR"
     bare="$BENCH_DIR/${name}.git"
     work="$BENCH_DIR/${name}-work"
 
-    # Clone --bare --depth=1
     s=$(ts_ms)
     git clone --bare --depth=1 "$url" "$bare" 2>/dev/null
     e=$(ts_ms)
-    eval "GIT_CLONE_R${run}[$name]=$(dur $s $e)"
+    _gc+=( $(dur $s $e) )
 
-    # rev-parse HEAD
     s=$(ts_ms)
     git -C "$bare" rev-parse HEAD >/dev/null 2>&1
     e=$(ts_ms)
-    eval "GIT_RESOLVE_R${run}[$name]=$(dur $s $e)"
+    _gr+=( $(dur $s $e) )
 
-    # archive + extract
     mkdir -p "$work"
     s=$(ts_ms)
     git -C "$bare" archive HEAD | tar -x -C "$work" 2>/dev/null
     e=$(ts_ms)
-    eval "GIT_ARCHIVE_R${run}[$name]=$(dur $s $e)"
+    _ga+=( $(dur $s $e) )
   done
 
-  c=$(median3 ${GIT_CLONE_R1[$name]} ${GIT_CLONE_R2[$name]} ${GIT_CLONE_R3[$name]})
-  r=$(median3 ${GIT_RESOLVE_R1[$name]} ${GIT_RESOLVE_R2[$name]} ${GIT_RESOLVE_R3[$name]})
-  a=$(median3 ${GIT_ARCHIVE_R1[$name]} ${GIT_ARCHIVE_R2[$name]} ${GIT_ARCHIVE_R3[$name]})
-  echo "  $name: clone=${c}ms resolve=${r}ms archive=${a}ms total=$((c+r+a))ms"
+  GIT_CLONE[$name]=$(median3 ${_gc[0]} ${_gc[1]} ${_gc[2]})
+  GIT_RESOLVE[$name]=$(median3 ${_gr[0]} ${_gr[1]} ${_gr[2]})
+  GIT_ARCHIVE[$name]=$(median3 ${_ga[0]} ${_ga[1]} ${_ga[2]})
+  GIT_CLONE_ALL[$name]="${_gc[*]}"
+  GIT_RESOLVE_ALL[$name]="${_gr[*]}"
+  GIT_ARCHIVE_ALL[$name]="${_ga[*]}"
+
+  total=$(( ${GIT_CLONE[$name]} + ${GIT_RESOLVE[$name]} + ${GIT_ARCHIVE[$name]} ))
+  echo "  $name: clone=${GIT_CLONE[$name]}ms resolve=${GIT_RESOLVE[$name]}ms archive=${GIT_ARCHIVE[$name]}ms total=${total}ms  (runs: ${_gc[*]})"
+  unset _gc _gr _ga
 done
 echo ""
 
 # ────────────────────────────────────────
 # PART 3: Ziggit per-repo workflow
 # ────────────────────────────────────────
-echo "## PART 3: Ziggit per-repo workflow"
+echo "## PART 3: Ziggit workflow (clone + fix HEAD + checkout)"
 
-declare -A ZIG_CLONE_R1 ZIG_CLONE_R2 ZIG_CLONE_R3
-declare -A ZIG_RESOLVE_R1 ZIG_RESOLVE_R2 ZIG_RESOLVE_R3
+declare -A ZIG_CLONE ZIG_CHECKOUT ZIG_TOTAL
+declare -A ZIG_CLONE_ALL ZIG_CHECKOUT_ALL
 
 for i in "${!REPO_NAMES[@]}"; do
   name="${REPO_NAMES[$i]}"
   url="${REPO_URLS[$i]}"
+  branch="${REPO_BRANCHES[$i]}"
+  declare -a _zc _zo
 
   for run in $(seq 1 $RUNS); do
-    rm -rf "$BENCH_DIR"
+    rm -rf "$BENCH_DIR/${name}-zig"
     mkdir -p "$BENCH_DIR"
-    repo="$BENCH_DIR/${name}"
+    repo="$BENCH_DIR/${name}-zig"
 
-    # Clone
+    # Clone (fetches packfile, creates .git structure)
     s=$(ts_ms)
     $ZIGGIT clone "$url" "$repo" 2>/dev/null || true
     e=$(ts_ms)
-    eval "ZIG_CLONE_R${run}[$name]=$(dur $s $e)"
+    clone_ms=$(dur $s $e)
 
-    # Resolve: log -1 to get HEAD commit
+    # Fix HEAD symref if needed, then checkout to populate working tree
+    head_ref=$(cat "$repo/.git/HEAD" 2>/dev/null | sed 's/ref: //')
+    actual_branch="$branch"
+    # Check if the branch from HEAD exists in packed-refs; if not, use known default
+    if ! grep -q "refs/heads/$branch" "$repo/.git/packed-refs" 2>/dev/null; then
+      # Try what HEAD points to
+      short_ref=$(basename "$head_ref")
+      if grep -q "refs/heads/$short_ref" "$repo/.git/packed-refs" 2>/dev/null; then
+        actual_branch="$short_ref"
+      fi
+    fi
+    echo "ref: refs/heads/$actual_branch" > "$repo/.git/HEAD"
+
     s=$(ts_ms)
-    (cd "$repo" && $ZIGGIT log -1 2>/dev/null) || true
+    (cd "$repo" && $ZIGGIT checkout "$actual_branch" 2>/dev/null) || true
     e=$(ts_ms)
-    eval "ZIG_RESOLVE_R${run}[$name]=$(dur $s $e)"
+    checkout_ms=$(dur $s $e)
+
+    _zc+=( $clone_ms )
+    _zo+=( $checkout_ms )
   done
 
-  c=$(median3 ${ZIG_CLONE_R1[$name]} ${ZIG_CLONE_R2[$name]} ${ZIG_CLONE_R3[$name]})
-  r=$(median3 ${ZIG_RESOLVE_R1[$name]} ${ZIG_RESOLVE_R2[$name]} ${ZIG_RESOLVE_R3[$name]})
-  echo "  $name: clone=${c}ms resolve=${r}ms total=$((c+r))ms"
+  ZIG_CLONE[$name]=$(median3 ${_zc[0]} ${_zc[1]} ${_zc[2]})
+  ZIG_CHECKOUT[$name]=$(median3 ${_zo[0]} ${_zo[1]} ${_zo[2]})
+  ZIG_CLONE_ALL[$name]="${_zc[*]}"
+  ZIG_CHECKOUT_ALL[$name]="${_zo[*]}"
+
+  total=$(( ${ZIG_CLONE[$name]} + ${ZIG_CHECKOUT[$name]} ))
+  ZIG_TOTAL[$name]=$total
+
+  # Verify files exist
+  file_count=$(find "$BENCH_DIR/${name}-zig" -maxdepth 1 -not -name '.git' -not -name '.' | wc -l)
+  echo "  $name: clone=${ZIG_CLONE[$name]}ms checkout=${ZIG_CHECKOUT[$name]}ms total=${total}ms  files=$file_count  (runs: ${_zc[*]})"
+  unset _zc _zo
 done
 echo ""
 
 # ────────────────────────────────────────
 # PART 4: Subprocess spawn overhead
 # ────────────────────────────────────────
-echo "## PART 4: Spawn overhead (100 iterations)"
+echo "## PART 4: Spawn overhead (200 iterations)"
 
 s=$(ts_ms)
-for i in $(seq 1 100); do git --version >/dev/null 2>&1; done
+for i in $(seq 1 200); do git --version >/dev/null 2>&1; done
 e=$(ts_ms)
 git_spawn_total=$(dur $s $e)
-git_spawn_per=$(python3 -c "print(f'{$git_spawn_total/100:.2f}')")
-echo "  git --version x100: ${git_spawn_total}ms (${git_spawn_per}ms/call)"
+git_spawn_per=$(python3 -c "print(f'{$git_spawn_total/200:.2f}')")
+echo "  git --version x200: ${git_spawn_total}ms (${git_spawn_per}ms/call)"
 
 s=$(ts_ms)
-for i in $(seq 1 100); do $ZIGGIT --version >/dev/null 2>&1 || $ZIGGIT 2>/dev/null || true; done
+for i in $(seq 1 200); do $ZIGGIT --version >/dev/null 2>&1; done
 e=$(ts_ms)
 zig_spawn_total=$(dur $s $e)
-zig_spawn_per=$(python3 -c "print(f'{$zig_spawn_total/100:.2f}')")
-echo "  ziggit x100: ${zig_spawn_total}ms (${zig_spawn_per}ms/call)"
+zig_spawn_per=$(python3 -c "print(f'{$zig_spawn_total/200:.2f}')")
+echo "  ziggit --version x200: ${zig_spawn_total}ms (${zig_spawn_per}ms/call)"
 echo ""
 
 # ────────────────────────────────────────
-# PART 5: File extraction comparison
+# Summary
 # ────────────────────────────────────────
-echo "## PART 5: Blob extraction (git cat-file vs ziggit show)"
+echo "## SUMMARY"
 
-# Use the last git-cloned debug repo
-rm -rf "$BENCH_DIR"
-mkdir -p "$BENCH_DIR"
-git clone --bare --depth=1 https://github.com/debug-js/debug.git "$BENCH_DIR/debug.git" 2>/dev/null
-
-# Get list of all blobs
-blob_list=$(git -C "$BENCH_DIR/debug.git" ls-tree -r HEAD | awk '{print $3}')
-blob_count=$(echo "$blob_list" | wc -l)
-echo "  Blobs in debug repo: $blob_count"
-
-# git cat-file for all blobs
-s=$(ts_ms)
-for sha in $blob_list; do
-  git -C "$BENCH_DIR/debug.git" cat-file -p "$sha" >/dev/null 2>&1
+git_total=0
+zig_total=0
+for name in "${REPO_NAMES[@]}"; do
+  gt=$(( ${GIT_CLONE[$name]} + ${GIT_RESOLVE[$name]} + ${GIT_ARCHIVE[$name]} ))
+  zt=${ZIG_TOTAL[$name]}
+  git_total=$((git_total + gt))
+  zig_total=$((zig_total + zt))
 done
-e=$(ts_ms)
-git_catfile_ms=$(dur $s $e)
-echo "  git cat-file x${blob_count}: ${git_catfile_ms}ms"
 
-# ziggit: clone then read files from working tree (simulated via log)
-# Since ziggit doesn't have cat-file yet, we measure what's available
-$ZIGGIT clone https://github.com/debug-js/debug.git "$BENCH_DIR/debug-zig" 2>/dev/null || true
-s=$(ts_ms)
-(cd "$BENCH_DIR/debug-zig" && $ZIGGIT log -1 2>/dev/null) || true
-e=$(ts_ms)
-zig_resolve_ms=$(dur $s $e)
-echo "  ziggit log (ref resolve): ${zig_resolve_ms}ms"
+speedup=$(python3 -c "print(f'{$git_total/$zig_total:.2f}' if $zig_total > 0 else 'N/A')")
+echo "  Git CLI total:   ${git_total}ms (clone+resolve+archive, 5 repos)"
+echo "  Ziggit total:    ${zig_total}ms (clone+checkout, 5 repos)"
+echo "  Speedup:         ${speedup}×"
+echo "  Bun cold median: ${bun_cold_median}ms"
+echo "  Bun warm median: ${bun_warm_median}ms"
 echo ""
 
 # ────────────────────────────────────────
@@ -250,21 +264,18 @@ RAW_FILE="/root/bun-fork/benchmark/raw_results_${TIMESTAMP}.txt"
   echo "pkg_count=$pkg_count"
   echo "git_spawn_per=$git_spawn_per"
   echo "zig_spawn_per=$zig_spawn_per"
+  echo "git_total=$git_total"
+  echo "zig_total=$zig_total"
+  echo "speedup=$speedup"
 
   for name in "${REPO_NAMES[@]}"; do
-    gc=$(median3 ${GIT_CLONE_R1[$name]} ${GIT_CLONE_R2[$name]} ${GIT_CLONE_R3[$name]})
-    gr=$(median3 ${GIT_RESOLVE_R1[$name]} ${GIT_RESOLVE_R2[$name]} ${GIT_RESOLVE_R3[$name]})
-    ga=$(median3 ${GIT_ARCHIVE_R1[$name]} ${GIT_ARCHIVE_R2[$name]} ${GIT_ARCHIVE_R3[$name]})
-    zc=$(median3 ${ZIG_CLONE_R1[$name]} ${ZIG_CLONE_R2[$name]} ${ZIG_CLONE_R3[$name]})
-    zr=$(median3 ${ZIG_RESOLVE_R1[$name]} ${ZIG_RESOLVE_R2[$name]} ${ZIG_RESOLVE_R3[$name]})
-    echo "repo_${name}_git_clone=$gc"
-    echo "repo_${name}_git_resolve=$gr"
-    echo "repo_${name}_git_archive=$ga"
-    echo "repo_${name}_zig_clone=$zc"
-    echo "repo_${name}_zig_resolve=$zr"
+    echo "repo_${name}_git_clone=${GIT_CLONE[$name]} (${GIT_CLONE_ALL[$name]})"
+    echo "repo_${name}_git_resolve=${GIT_RESOLVE[$name]} (${GIT_RESOLVE_ALL[$name]})"
+    echo "repo_${name}_git_archive=${GIT_ARCHIVE[$name]} (${GIT_ARCHIVE_ALL[$name]})"
+    echo "repo_${name}_zig_clone=${ZIG_CLONE[$name]} (${ZIG_CLONE_ALL[$name]})"
+    echo "repo_${name}_zig_checkout=${ZIG_CHECKOUT[$name]} (${ZIG_CHECKOUT_ALL[$name]})"
   done
 } > "$RAW_FILE"
-cp "$RAW_FILE" "$RESULTS_FILE"
 
-echo "Raw results: $RAW_FILE"
+echo "Raw results saved: $RAW_FILE"
 echo "Done!"

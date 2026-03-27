@@ -1,353 +1,353 @@
 #!/usr/bin/env bash
-# =============================================================================
-# BUN INSTALL BENCHMARK: stock bun vs ziggit-simulated git dependency workflow
-# =============================================================================
+# BUN INSTALL BENCHMARK: Stock bun vs Ziggit-simulated workflow
+# Measures the git operations that bun install performs for git dependencies
 set -euo pipefail
 
-BUN="/root/.bun/bin/bun"
 ZIGGIT="/root/ziggit/zig-out/bin/ziggit"
-GIT="/usr/bin/git"
+GIT="git"
+BUN="/root/.bun/bin/bun"
 RESULTS_FILE="/root/bun-fork/BUN_INSTALL_BENCHMARK.md"
+BENCH_DIR="/tmp/bench-bun-install"
 RUNS=3
 
-# Use only 3 repos to stay within disk limits
-REPOS=(
-  "https://github.com/debug-js/debug.git"
-  "https://github.com/npm/node-semver.git"
-  "https://github.com/chalk/chalk.git"
+# Repos that represent typical bun install git dependencies
+declare -A REPOS=(
+    [debug]="https://github.com/debug-js/debug.git"
+    [semver]="https://github.com/npm/node-semver.git"
+    [chalk]="https://github.com/chalk/chalk.git"
+    [express]="https://github.com/expressjs/express.git"
+    [is]="https://github.com/sindresorhus/is.git"
 )
-REPO_NAMES=(debug node-semver chalk)
 
-TMPDIR="/tmp/bun-bench-$$"
-mkdir -p "$TMPDIR"
-trap 'rm -rf "$TMPDIR"' EXIT
+# High-resolution timer (ms)
+now_ms() {
+    date +%s%3N
+}
 
-ms_now() { date +%s%3N; }
-elapsed_ms() { echo $(( $(ms_now) - $1 )); }
-log() { echo "[bench] $*"; }
+elapsed_ms() {
+    echo $(( $(now_ms) - $1 ))
+}
 
-# =============================================================================
-# PART 1: Stock bun install benchmarks
-# =============================================================================
-part1_bun_install() {
-  log "=== PART 1: Stock bun install (v$($BUN --version)) ==="
+cleanup() {
+    rm -rf "$BENCH_DIR"
+    mkdir -p "$BENCH_DIR"
+}
 
-  local project_dir="$TMPDIR/bun-project"
-  mkdir -p "$project_dir"
-  cat > "$project_dir/package.json" <<'EOF'
+echo "=== BUN INSTALL BENCHMARK ==="
+echo "Date: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+echo "Ziggit: $($ZIGGIT --version-info 2>&1 | head -1)"
+echo "Git: $($GIT --version)"
+echo "Bun: $($BUN --version)"
+echo ""
+
+###############################################################################
+# SECTION 1: Stock bun install with git dependencies (cold + warm)
+###############################################################################
+echo "--- Section 1: Stock bun install ---"
+
+BUN_PROJECT="$BENCH_DIR/bun-project"
+mkdir -p "$BUN_PROJECT"
+cat > "$BUN_PROJECT/package.json" << 'EOF'
 {
   "name": "ziggit-bench",
   "dependencies": {
+    "@sindresorhus/is": "github:sindresorhus/is",
+    "express": "github:expressjs/express",
+    "chalk": "github:chalk/chalk",
     "debug": "github:debug-js/debug",
-    "semver": "github:npm/node-semver",
-    "chalk": "github:chalk/chalk"
+    "semver": "github:npm/node-semver"
   }
 }
 EOF
 
-  log "--- Cold cache ---"
-  BUN_COLD_TIMES=()
-  for run in $(seq 1 $RUNS); do
-    rm -rf "$project_dir/node_modules" "$project_dir/bun.lock"
-    rm -rf ~/.bun/install/cache 2>/dev/null || true
+declare -a BUN_COLD_TIMES=()
+declare -a BUN_WARM_TIMES=()
+
+for run in $(seq 1 $RUNS); do
+    echo "  bun install cold run $run/$RUNS..."
+    rm -rf "$BUN_PROJECT/node_modules" "$BUN_PROJECT/bun.lock"
+    rm -rf ~/.bun/install/cache
     sync
-    local t0=$(ms_now)
-    (cd "$project_dir" && $BUN install --no-save 2>&1) || true
-    local dt=$(elapsed_ms $t0)
-    BUN_COLD_TIMES+=($dt)
-    log "  cold run $run: ${dt}ms"
-    # Clean to save disk
-    rm -rf "$project_dir/node_modules" "$project_dir/bun.lock"
-  done
+    
+    start=$(now_ms)
+    cd "$BUN_PROJECT" && $BUN install --no-progress 2>&1 | tail -3
+    cold_ms=$(elapsed_ms $start)
+    BUN_COLD_TIMES+=($cold_ms)
+    echo "    cold: ${cold_ms}ms"
+    
+    # Warm run (cache exists, node_modules removed)
+    rm -rf "$BUN_PROJECT/node_modules" "$BUN_PROJECT/bun.lock"
+    start=$(now_ms)
+    cd "$BUN_PROJECT" && $BUN install --no-progress 2>&1 | tail -3
+    warm_ms=$(elapsed_ms $start)
+    BUN_WARM_TIMES+=($warm_ms)
+    echo "    warm: ${warm_ms}ms"
+done
 
-  log "--- Warm cache ---"
-  # Prime the cache
-  rm -rf "$project_dir/node_modules" "$project_dir/bun.lock"
-  (cd "$project_dir" && $BUN install --no-save 2>&1 >/dev/null) || true
-  rm -rf "$project_dir/node_modules" "$project_dir/bun.lock"
+###############################################################################
+# SECTION 2: Per-repo git CLI workflow (simulating what bun install does)
+###############################################################################
+echo ""
+echo "--- Section 2: Git CLI workflow (simulating bun install) ---"
 
-  BUN_WARM_TIMES=()
-  for run in $(seq 1 $RUNS); do
-    rm -rf "$project_dir/node_modules" "$project_dir/bun.lock"
-    local t0=$(ms_now)
-    (cd "$project_dir" && $BUN install --no-save 2>&1) || true
-    local dt=$(elapsed_ms $t0)
-    BUN_WARM_TIMES+=($dt)
-    log "  warm run $run: ${dt}ms"
-    rm -rf "$project_dir/node_modules" "$project_dir/bun.lock"
-  done
+# For each repo: clone --bare, rev-parse HEAD, clone local + checkout
+declare -A GIT_CLONE_TIMES=()
+declare -A GIT_RESOLVE_TIMES=()
+declare -A GIT_CHECKOUT_TIMES=()
+declare -A GIT_TOTAL_TIMES=()
 
-  # Cleanup bun caches 
-  rm -rf ~/.bun/install/cache 2>/dev/null || true
-  rm -rf "$project_dir"
-}
-
-# =============================================================================
-# PART 2: Ziggit vs git CLI — simulating bun install git dep workflow
-# =============================================================================
-bench_one_repo() {
-  local tool="$1" url="$2" name="$3" workdir="$4"
-  local bare_dir="$workdir/${name}.git"
-  local checkout_dir="$workdir/${name}"
-  local CMD
-  if [ "$tool" = "git" ]; then CMD="$GIT"; else CMD="$ZIGGIT"; fi
-
-  # Step 1: clone --bare
-  local t0=$(ms_now)
-  if [ "$tool" = "git" ]; then
-    $GIT clone --quiet --bare "$url" "$bare_dir" >/dev/null 2>&1
-  else
-    $ZIGGIT clone --bare "$url" "$bare_dir" >/dev/null 2>&1
-  fi
-  local clone_ms=$(elapsed_ms $t0)
-
-  # Step 2: rev-parse HEAD (findCommit)
-  t0=$(ms_now)
-  local sha
-  if [ "$tool" = "git" ]; then
-    sha=$($GIT -C "$bare_dir" rev-parse HEAD 2>/dev/null)
-  else
-    sha=$($ZIGGIT -C "$bare_dir" rev-parse HEAD 2>/dev/null || $GIT -C "$bare_dir" rev-parse HEAD 2>/dev/null)
-  fi
-  local resolve_ms=$(elapsed_ms $t0)
-
-  # Step 3: clone from bare + checkout
-  t0=$(ms_now)
-  if [ "$tool" = "git" ]; then
-    $GIT clone --quiet --no-checkout "$bare_dir" "$checkout_dir" >/dev/null 2>&1
-    $GIT -C "$checkout_dir" checkout --quiet "$sha" -- >/dev/null 2>&1
-  else
-    $ZIGGIT clone --no-checkout "$bare_dir" "$checkout_dir" >/dev/null 2>&1 || \
-      $GIT clone --quiet --no-checkout "$bare_dir" "$checkout_dir" >/dev/null 2>&1
-    ($ZIGGIT -C "$checkout_dir" checkout "$sha" -- >/dev/null 2>&1 || \
-      $GIT -C "$checkout_dir" checkout --quiet "$sha" -- >/dev/null 2>&1)
-  fi
-  local checkout_ms=$(elapsed_ms $t0)
-
-  local total=$((clone_ms + resolve_ms + checkout_ms))
-  echo "$name|$tool|$clone_ms|$resolve_ms|$checkout_ms|$total"
-
-  # Clean up immediately to save disk
-  rm -rf "$bare_dir" "$checkout_dir"
-}
-
-part2_workflow_bench() {
-  log "=== PART 2: Ziggit vs git CLI ==="
-  ALL_RESULTS=()
-
-  for run in $(seq 1 $RUNS); do
-    log "--- Run $run/$RUNS ---"
-    for i in "${!REPOS[@]}"; do
-      local url="${REPOS[$i]}" name="${REPO_NAMES[$i]}"
-
-      # git CLI
-      local wd="$TMPDIR/work"
-      mkdir -p "$wd"
-      local result=$(bench_one_repo "git" "$url" "$name" "$wd" 2>/dev/null)
-      ALL_RESULTS+=("run${run}|$result")
-      log "  $result"
-      rm -rf "$wd"
-
-      # ziggit
-      mkdir -p "$wd"
-      result=$(bench_one_repo "ziggit" "$url" "$name" "$wd" 2>/dev/null)
-      ALL_RESULTS+=("run${run}|$result")
-      log "  $result"
-      rm -rf "$wd"
+for name in "${!REPOS[@]}"; do
+    url="${REPOS[$name]}"
+    total_clone=0; total_resolve=0; total_checkout=0
+    
+    for run in $(seq 1 $RUNS); do
+        bare_dir="$BENCH_DIR/git-bare-$name"
+        work_dir="$BENCH_DIR/git-work-$name"
+        rm -rf "$bare_dir" "$work_dir"
+        
+        # Step 1: clone --bare
+        start=$(now_ms)
+        $GIT clone --bare --quiet "$url" "$bare_dir" 2>&1
+        clone_ms=$(elapsed_ms $start)
+        total_clone=$((total_clone + clone_ms))
+        
+        # Step 2: resolve HEAD to commit SHA
+        start=$(now_ms)
+        sha=$($GIT -C "$bare_dir" rev-parse HEAD 2>&1)
+        resolve_ms=$(elapsed_ms $start)
+        total_resolve=$((total_resolve + resolve_ms))
+        
+        # Step 3: local clone + checkout (what bun does for working tree)
+        start=$(now_ms)
+        $GIT clone --quiet --no-checkout "$bare_dir" "$work_dir" 2>&1
+        $GIT -C "$work_dir" checkout --quiet "$sha" 2>&1
+        checkout_ms=$(elapsed_ms $start)
+        total_checkout=$((total_checkout + checkout_ms))
+        
+        rm -rf "$bare_dir" "$work_dir"
     done
-  done
-}
+    
+    GIT_CLONE_TIMES[$name]=$((total_clone / RUNS))
+    GIT_RESOLVE_TIMES[$name]=$((total_resolve / RUNS))
+    GIT_CHECKOUT_TIMES[$name]=$((total_checkout / RUNS))
+    GIT_TOTAL_TIMES[$name]=$(( (total_clone + total_resolve + total_checkout) / RUNS ))
+    
+    echo "  git/$name: clone=${GIT_CLONE_TIMES[$name]}ms resolve=${GIT_RESOLVE_TIMES[$name]}ms checkout=${GIT_CHECKOUT_TIMES[$name]}ms total=${GIT_TOTAL_TIMES[$name]}ms"
+done
 
-# =============================================================================
-# PART 3: Write report
-# =============================================================================
-write_report() {
-  log "=== Writing report ==="
+###############################################################################
+# SECTION 3: Ziggit workflow (same operations)
+###############################################################################
+echo ""
+echo "--- Section 3: Ziggit workflow (simulating bun install) ---"
 
-  local cold_arr=(${BUN_COLD_TIMES[@]})
-  local warm_arr=(${BUN_WARM_TIMES[@]})
-  local cold_sum=0 warm_sum=0
-  for v in "${cold_arr[@]}"; do cold_sum=$((cold_sum + v)); done
-  for v in "${warm_arr[@]}"; do warm_sum=$((warm_sum + v)); done
-  local cold_avg=$((cold_sum / ${#cold_arr[@]}))
-  local warm_avg=$((warm_sum / ${#warm_arr[@]}))
+declare -A ZIG_CLONE_TIMES=()
+declare -A ZIG_RESOLVE_TIMES=()
+declare -A ZIG_CHECKOUT_TIMES=()
+declare -A ZIG_TOTAL_TIMES=()
 
-  # Parse results into parallel arrays
-  local -a R_RUN R_NAME R_TOOL R_CLONE R_RESOLVE R_CHECKOUT R_TOTAL
-  local idx=0
-  for entry in "${ALL_RESULTS[@]}"; do
-    IFS='|' read -r run name tool clone resolve checkout total <<< "$entry"
-    R_RUN[$idx]="$run"
-    R_NAME[$idx]="$name"
-    R_TOOL[$idx]="$tool"
-    R_CLONE[$idx]="$clone"
-    R_RESOLVE[$idx]="$resolve"
-    R_CHECKOUT[$idx]="$checkout"
-    R_TOTAL[$idx]="$total"
-    idx=$((idx + 1))
-  done
-
-  # Compute per-repo averages
-  avg_for() {
-    local want_name="$1" want_tool="$2" want_field="$3"
-    local sum=0 count=0
-    for i in $(seq 0 $((idx - 1))); do
-      if [ "${R_NAME[$i]}" = "$want_name" ] && [ "${R_TOOL[$i]}" = "$want_tool" ]; then
-        case "$want_field" in
-          clone) sum=$((sum + ${R_CLONE[$i]})) ;;
-          resolve) sum=$((sum + ${R_RESOLVE[$i]})) ;;
-          checkout) sum=$((sum + ${R_CHECKOUT[$i]})) ;;
-          total) sum=$((sum + ${R_TOTAL[$i]})) ;;
-        esac
-        count=$((count + 1))
-      fi
+for name in "${!REPOS[@]}"; do
+    url="${REPOS[$name]}"
+    total_clone=0; total_resolve=0; total_checkout=0
+    
+    for run in $(seq 1 $RUNS); do
+        bare_dir="$BENCH_DIR/zig-bare-$name"
+        work_dir="$BENCH_DIR/zig-work-$name"
+        rm -rf "$bare_dir" "$work_dir"
+        
+        # Step 1: clone --bare
+        start=$(now_ms)
+        $ZIGGIT clone --bare "$url" "$bare_dir" 2>&1
+        clone_ms=$(elapsed_ms $start)
+        total_clone=$((total_clone + clone_ms))
+        
+        # Step 2: resolve HEAD to commit SHA
+        start=$(now_ms)
+        sha=$($ZIGGIT -C "$bare_dir" rev-parse HEAD 2>&1)
+        resolve_ms=$(elapsed_ms $start)
+        total_resolve=$((total_resolve + resolve_ms))
+        
+        # Step 3: local clone + checkout
+        start=$(now_ms)
+        $ZIGGIT clone --no-checkout "$bare_dir" "$work_dir" 2>&1
+        $ZIGGIT -C "$work_dir" checkout "$sha" 2>&1
+        checkout_ms=$(elapsed_ms $start)
+        total_checkout=$((total_checkout + checkout_ms))
+        
+        rm -rf "$bare_dir" "$work_dir"
     done
-    [ $count -gt 0 ] && echo $((sum / count)) || echo 0
-  }
+    
+    ZIG_CLONE_TIMES[$name]=$((total_clone / RUNS))
+    ZIG_RESOLVE_TIMES[$name]=$((total_resolve / RUNS))
+    ZIG_CHECKOUT_TIMES[$name]=$((total_checkout / RUNS))
+    ZIG_TOTAL_TIMES[$name]=$(( (total_clone + total_resolve + total_checkout) / RUNS ))
+    
+    echo "  ziggit/$name: clone=${ZIG_CLONE_TIMES[$name]}ms resolve=${ZIG_RESOLVE_TIMES[$name]}ms checkout=${ZIG_CHECKOUT_TIMES[$name]}ms total=${ZIG_TOTAL_TIMES[$name]}ms"
+done
 
-  # Build repo table rows
-  local repo_rows="" git_grand=0 ziggit_grand=0
-  for name in "${REPO_NAMES[@]}"; do
-    local gc=$(avg_for "$name" git clone)
-    local gr=$(avg_for "$name" git resolve)
-    local gco=$(avg_for "$name" git checkout)
-    local gt=$(avg_for "$name" git total)
-    local zc=$(avg_for "$name" ziggit clone)
-    local zr=$(avg_for "$name" ziggit resolve)
-    local zco=$(avg_for "$name" ziggit checkout)
-    local zt=$(avg_for "$name" ziggit total)
-    git_grand=$((git_grand + gt))
-    ziggit_grand=$((ziggit_grand + zt))
-    local delta=""
-    [ $gt -gt 0 ] && delta=" (-$(( (gt - zt) * 100 / gt ))%)" || delta=""
-    repo_rows+="| $name | git | $gc | $gr | $gco | **$gt** |
-"
-    repo_rows+="| $name | ziggit | $zc | $zr | $zco | **$zt**$delta |
-"
-  done
+###############################################################################
+# SECTION 4: Generate markdown report
+###############################################################################
+echo ""
+echo "--- Generating report ---"
 
-  local savings=$((git_grand - ziggit_grand))
-  local speedup_pct=0
-  [ $git_grand -gt 0 ] && speedup_pct=$(( savings * 100 / git_grand ))
+# Calculate totals
+git_total_all=0
+zig_total_all=0
+for name in "${!REPOS[@]}"; do
+    git_total_all=$((git_total_all + ${GIT_TOTAL_TIMES[$name]}))
+    zig_total_all=$((zig_total_all + ${ZIG_TOTAL_TIMES[$name]}))
+done
 
-  cat > "$RESULTS_FILE" <<EOF
+# Calculate averages for bun install
+bun_cold_avg=0
+bun_warm_avg=0
+for t in "${BUN_COLD_TIMES[@]}"; do bun_cold_avg=$((bun_cold_avg + t)); done
+bun_cold_avg=$((bun_cold_avg / RUNS))
+for t in "${BUN_WARM_TIMES[@]}"; do bun_warm_avg=$((bun_warm_avg + t)); done
+bun_warm_avg=$((bun_warm_avg / RUNS))
+
+if [ "$zig_total_all" -gt 0 ]; then
+    speedup=$(echo "scale=2; $git_total_all / $zig_total_all" | bc 2>/dev/null || echo "N/A")
+else
+    speedup="inf"
+fi
+
+cat > "$RESULTS_FILE" << MARKDOWN
 # Bun Install Benchmark: Stock Bun vs Ziggit Integration
 
-**Date:** $(date -u '+%Y-%m-%d %H:%M UTC')
-**Machine:** $(uname -m), $(nproc) CPU, $(free -m | awk '/Mem:/{print $2}')MB RAM
-**Stock Bun:** v$($BUN --version)
-**Git:** $($GIT --version)
-**Ziggit:** $($ZIGGIT --version 2>&1 | head -1)
-**Zig:** $(zig version)
-**Runs per benchmark:** $RUNS
-
----
+**Date:** $(date -u +%Y-%m-%dT%H:%M:%SZ)
+**System:** $(uname -srm), $(grep -c ^processor /proc/cpuinfo) CPUs, $(free -h | awk '/Mem:/{print $2}') RAM
+**Bun:** $($BUN --version)
+**Git:** $($GIT --version | awk '{print $3}')
+**Ziggit:** $($ZIGGIT --version-info 2>&1 | head -1)
+**Runs per benchmark:** $RUNS (averaged)
 
 ## Summary
 
-Building the full bun fork binary is **not feasible** on this VM (483MB RAM, 1 CPU, 2.4GB free disk).
-The bun fork requires ≥8GB RAM and multi-core for \`zig build -Doptimize=ReleaseFast\`.
-
-Instead, we benchmark:
-1. **Stock bun install** with git dependencies (baseline)
-2. **Ziggit CLI vs git CLI** performing the *exact same workflow* that \`bun install\` uses
-   for git dependencies: \`clone --bare\` → \`findCommit (rev-parse)\` → \`checkout\`
-
----
-
-## Part 1: Stock Bun Install (git dependencies)
-
-| Scenario | Run 1 | Run 2 | Run 3 | Average |
-|----------|------:|------:|------:|--------:|
-| Cold cache | ${cold_arr[0]}ms | ${cold_arr[1]}ms | ${cold_arr[2]}ms | **${cold_avg}ms** |
-| Warm cache | ${warm_arr[0]}ms | ${warm_arr[1]}ms | ${warm_arr[2]}ms | **${warm_avg}ms** |
-
-Dependencies: \`debug\`, \`node-semver\`, \`chalk\` (all \`github:\` specifiers)
-
----
-
-## Part 2: Ziggit vs Git CLI — Per-Repo Breakdown
-
-Workflow per repo (mirrors \`repository.zig\`):
-1. \`clone --bare <url>\` — fetch pack from remote
-2. \`rev-parse HEAD\` — resolve default branch to SHA (findCommit)
-3. \`clone --no-checkout <bare> <dir> && checkout <sha>\` — extract working tree
-
-### Average Times (ms) over $RUNS runs
-
-| Repo | Tool | Clone (ms) | FindCommit (ms) | Checkout (ms) | **Total (ms)** |
-|------|------|------:|-----------:|---------:|----------:|
-${repo_rows}
-### Totals (sum of all repos, averaged over $RUNS runs)
-
 | Metric | Value |
-|--------|------:|
-| Git CLI total | **${git_grand}ms** |
-| Ziggit total | **${ziggit_grand}ms** |
-| **Δ Savings** | **${savings}ms (${speedup_pct}%)** |
+|--------|-------|
+| Stock bun install (cold, 5 git deps) | **${bun_cold_avg}ms** |
+| Stock bun install (warm cache) | **${bun_warm_avg}ms** |
+| Git CLI workflow total (5 repos) | **${git_total_all}ms** |
+| Ziggit workflow total (5 repos) | **${zig_total_all}ms** |
+| **Ziggit speedup (git operations)** | **${speedup}x** |
 
----
+## 1. Stock Bun Install (baseline)
 
-## Projection: Bun Install with Ziggit Integration
+Cold = no cache, no node_modules, no lockfile.
+Warm = git cache exists, node_modules + lockfile removed.
 
-Stock bun install (cold) takes **${cold_avg}ms** for 3 git dependencies.
-The git-operations portion (clone + resolve + checkout) measured at **${git_grand}ms** via git CLI.
+| Run | Cold (ms) | Warm (ms) |
+|-----|-----------|-----------|
+MARKDOWN
 
-With ziggit replacing git CLI subprocess calls:
-- **Git CLI total (3 repos):** ${git_grand}ms
-- **Ziggit total (3 repos):** ${ziggit_grand}ms  
-- **Projected savings per \`bun install\`:** ~${savings}ms (${speedup_pct}% of git operations)
+for i in $(seq 0 $((RUNS-1))); do
+    echo "| $((i+1)) | ${BUN_COLD_TIMES[$i]} | ${BUN_WARM_TIMES[$i]} |" >> "$RESULTS_FILE"
+done
 
-### Why real savings will be higher
+cat >> "$RESULTS_FILE" << MARKDOWN
+| **Avg** | **${bun_cold_avg}** | **${bun_warm_avg}** |
 
-These benchmarks use the ziggit **CLI binary**, which still pays:
-- Process spawn overhead (\`fork\`+\`exec\`) per invocation
-- Separate memory allocation per process
-- Shell argument serialization
+## 2. Per-Repo Breakdown: Git CLI vs Ziggit
 
-The actual bun fork calls ziggit as an **in-process Zig library** (linked via \`build.zig.zon\`), which eliminates:
-1. **Process spawning** — zero fork/exec overhead (3–5ms per call saved)
-2. **Memory reuse** — shared allocator across clone/resolve/checkout steps
-3. **Parallel execution** — bun can call ziggit concurrently without pipe contention
-4. **Pack parsing** — ziggit's two-pass zero-alloc scanner is faster than git's
+Each row = average of $RUNS runs. Operations mirror what bun install does:
+1. **clone --bare** — fetch packfile from remote
+2. **resolve** — rev-parse HEAD to commit SHA
+3. **checkout** — local clone + checkout working tree
 
----
+### Git CLI
 
-## Build Requirements for Full Bun Fork
+| Repo | Clone (ms) | Resolve (ms) | Checkout (ms) | Total (ms) |
+|------|-----------|-------------|--------------|-----------|
+MARKDOWN
 
-To build \`bun-fork\` with ziggit integration:
+for name in "${!REPOS[@]}"; do
+    echo "| $name | ${GIT_CLONE_TIMES[$name]} | ${GIT_RESOLVE_TIMES[$name]} | ${GIT_CHECKOUT_TIMES[$name]} | ${GIT_TOTAL_TIMES[$name]} |" >> "$RESULTS_FILE"
+done
+echo "| **Total** | | | | **${git_total_all}** |" >> "$RESULTS_FILE"
 
-| Requirement | Value |
-|-------------|-------|
-| RAM | ≥8 GB |
-| Disk | ≥10 GB free |
-| CPU | ≥4 cores recommended |
-| Zig | 0.15.x (matching bun's pinned version) |
-| Command | \`cd /root/bun-fork && zig build -Doptimize=ReleaseFast\` |
-| Ziggit dep | resolved via \`build.zig.zon\` → \`../ziggit\` |
+cat >> "$RESULTS_FILE" << MARKDOWN
 
----
+### Ziggit
 
-## Raw Data
+| Repo | Clone (ms) | Resolve (ms) | Checkout (ms) | Total (ms) |
+|------|-----------|-------------|--------------|-----------|
+MARKDOWN
+
+for name in "${!REPOS[@]}"; do
+    echo "| $name | ${ZIG_CLONE_TIMES[$name]} | ${ZIG_RESOLVE_TIMES[$name]} | ${ZIG_CHECKOUT_TIMES[$name]} | ${ZIG_TOTAL_TIMES[$name]} |" >> "$RESULTS_FILE"
+done
+echo "| **Total** | | | | **${zig_total_all}** |" >> "$RESULTS_FILE"
+
+cat >> "$RESULTS_FILE" << MARKDOWN
+
+### Per-Repo Speedup
+
+| Repo | Git (ms) | Ziggit (ms) | Speedup |
+|------|---------|------------|---------|
+MARKDOWN
+
+for name in "${!REPOS[@]}"; do
+    gt=${GIT_TOTAL_TIMES[$name]}
+    zt=${ZIG_TOTAL_TIMES[$name]}
+    if [ "$zt" -gt 0 ]; then
+        sp=$(echo "scale=2; $gt / $zt" | bc 2>/dev/null || echo "N/A")
+    else
+        sp="inf"
+    fi
+    echo "| $name | $gt | $zt | ${sp}x |" >> "$RESULTS_FILE"
+done
+
+cat >> "$RESULTS_FILE" << MARKDOWN
+
+## 3. What This Means for Bun Install
+
+The bun fork ([build.zig.zon](build.zig.zon)) integrates ziggit as a native Zig dependency.
+In \`src/install/repository.zig\`, every git operation tries ziggit first and falls back to
+git CLI on failure. The three operations benchmarked above (\`cloneBare\`, \`findCommit\`,
+\`checkout\`) are the exact same calls made during \`bun install\` for each git dependency.
+
+### Projected impact on bun install
+
+Stock bun install (cold) spends roughly **${git_total_all}ms** on git operations for 5 deps.
+With ziggit, that drops to **${zig_total_all}ms** — a **${speedup}x** improvement on the git
+operation portion.
+
+The remaining bun install time covers:
+- Dependency resolution & lockfile generation
+- npm registry fetches (for transitive deps)
+- node_modules linking
+
+### Building the bun fork
+
+The full bun binary cannot be built on this VM (483MB RAM, 2.4GB disk). A production
+build requires:
+
+\`\`\`bash
+# Requirements: ≥8GB RAM, ≥20GB disk, zig 0.15.x
+cd /root/bun-fork
+zig build -Doptimize=ReleaseFast  # ~15-30 min on 8-core
+\`\`\`
+
+Once built, the fork binary would show the ziggit speedup directly in \`bun install\` times
+with no benchmark script needed — it's the default code path.
+
+## 4. Raw Data
 
 \`\`\`
-# Bun install cold: ${BUN_COLD_TIMES[*]}
-# Bun install warm: ${BUN_WARM_TIMES[*]}
-# Format: run|name|tool|clone_ms|resolve_ms|checkout_ms|total_ms
-$(printf '%s\n' "${ALL_RESULTS[@]}")
-\`\`\`
-EOF
+bun_cold_times=(${BUN_COLD_TIMES[*]})
+bun_warm_times=(${BUN_WARM_TIMES[*]})
+MARKDOWN
 
-  log "Report written to $RESULTS_FILE"
-}
+for name in "${!REPOS[@]}"; do
+    echo "git_${name}=(clone=${GIT_CLONE_TIMES[$name]} resolve=${GIT_RESOLVE_TIMES[$name]} checkout=${GIT_CHECKOUT_TIMES[$name]} total=${GIT_TOTAL_TIMES[$name]})" >> "$RESULTS_FILE"
+    echo "zig_${name}=(clone=${ZIG_CLONE_TIMES[$name]} resolve=${ZIG_RESOLVE_TIMES[$name]} checkout=${ZIG_CHECKOUT_TIMES[$name]} total=${ZIG_TOTAL_TIMES[$name]})" >> "$RESULTS_FILE"
+done
 
-# =============================================================================
-main() {
-  log "Starting benchmarks (TMPDIR=$TMPDIR)"
-  part1_bun_install
-  part2_workflow_bench
-  write_report
-  log "Done!"
-}
+echo '```' >> "$RESULTS_FILE"
 
-main "$@"
+echo ""
+echo "=== BENCHMARK COMPLETE ==="
+echo "Results: $RESULTS_FILE"
+echo "Ziggit speedup: ${speedup}x"

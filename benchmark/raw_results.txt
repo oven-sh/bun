@@ -1,18 +1,18 @@
-=== BUN INSTALL BENCHMARK 2026-03-26T23:55:19+00:00 ===
+=== BUN INSTALL BENCHMARK 2026-03-26T23:59:30+00:00 ===
 
 ## Part 1: Stock bun install (git dependencies)
 
 ### Cold cache runs:
-  Run 1: 1073ms
-  Run 2: 316ms
-  Run 3: 809ms
-  Median (cold): 809ms
+  Run 1: 305ms
+  Run 2: 439ms
+  Run 3: 368ms
+  Median (cold): 368ms
 
 ### Warm cache runs:
-  Run 1: 24ms
-  Run 2: 22ms
-  Run 3: 22ms
-  Median (warm): 22ms
+  Run 1: 27ms
+  Run 2: 29ms
+  Run 3: 27ms
+  Median (warm): 27ms
 
 ## Part 2: Per-repo clone+resolve benchmark (git CLI vs ziggit)
 
@@ -20,26 +20,26 @@ Workflow: clone → resolve HEAD → checkout working tree
 
 | Repo            | git clone ms | ziggit clone ms | git total ms | ziggit total ms | Speedup |
 |----------------|--------------|----------------|--------------|----------------|---------|
-| debug           |        124ms |           65ms |        126ms |           68ms |  1.85x |
-| node-semver     |        134ms |           84ms |        136ms |           87ms |  1.56x |
-| chalk           |        135ms |           79ms |        136ms |           81ms |  1.67x |
-| is              |        135ms |           77ms |        137ms |           79ms |  1.73x |
-| express         |        165ms |          108ms |        167ms |          110ms |  1.51x |
+| debug           |        123ms |           66ms |        125ms |           70ms |  1.78x |
+| node-semver     |        142ms |           85ms |        145ms |           88ms |  1.64x |
+| chalk           |        131ms |           71ms |        133ms |           73ms |  1.82x |
+| is              |        134ms |           80ms |        136ms |           83ms |  1.63x |
+| express         |        166ms |          107ms |        168ms |          110ms |  1.52x |
 
 ### Aggregate (all 5 repos, median of 3 runs each):
-  git CLI total:    702ms
-  ziggit total:     425ms
-  Overall speedup:  1.65x
-  Time saved:       277ms
+  git CLI total:    707ms
+  ziggit total:     424ms
+  Overall speedup:  1.66x
+  Time saved:       283ms
 
 ## Part 3: Projected bun install improvement
 
-Stock bun install cold cache: 809ms
-Stock bun install warm cache: 22ms
-Git dep resolution via git CLI: 702ms
-Git dep resolution via ziggit:  425ms
+Stock bun install cold cache: 368ms
+Stock bun install warm cache: 27ms
+Git dep resolution via git CLI: 707ms
+Git dep resolution via ziggit:  424ms
 
-Projected cold install with ziggit: ~532ms
-Estimated improvement: 34.2% faster on git dependency resolution
+Projected cold install with ziggit: ~85ms
+Estimated improvement: 76.9% faster on git dependency resolution
 
 === BENCHMARK COMPLETE ===

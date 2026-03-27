@@ -307,7 +307,7 @@ pub const Parser = struct {
         if (!self.is_at_end()) {
             self.current += 1;
         }
-        return self.prev();
+        return if (self.current > 0) self.prev() else self.peek();
     }
 
     fn is_at_end(self: *Parser) bool {
@@ -588,6 +588,7 @@ pub fn NewLexer(comptime encoding: Encoding) type {
         }
 
         fn flattenTokens(self: *@This()) Allocator.Error!void {
+            if (self.tokens.items.len == 0) return;
             var brace_count: u32 = if (self.tokens.items[0] == .open) 1 else 0;
             var i: u32 = 0;
             var j: u32 = 1;

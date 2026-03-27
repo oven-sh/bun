@@ -62,7 +62,7 @@
 /test.ts
 /test.zig
 /testdir
-build
+/build/
 build.ninja
 bun-binary
 bun-mimalloc
@@ -194,3 +194,4 @@ scripts/lldb-inline
 
 # We regenerate these in all the build scripts
 cmake/sources/*.txt
+test/integration/bun-types/fixture/bun.lock

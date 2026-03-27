@@ -81,7 +81,7 @@ pub fn deinit(this: *SpawnSyncEventLoop) void {
             timer.stop();
             timer.unref();
             this.uv_timer = null;
-            libuv.uv_close(@alignCast(@ptrCast(timer)), @ptrCast(&onCloseUVTimer));
+            libuv.uv_close(@ptrCast(@alignCast(timer)), @ptrCast(&onCloseUVTimer));
         }
     }
 
@@ -149,6 +149,17 @@ pub fn tickWithTimeout(this: *SpawnSyncEventLoop, timeout: ?*const bun.timespec)
         }
     }
 
+    // Suppress microtask drain for the entire tick, including the uws loop tick.
+    // On Windows, uv_run() fires callbacks inline (e.g. uv_process exit, pipe I/O)
+    // which call onProcessExit → onExit. If any code path in those callbacks
+    // reaches drainMicrotasksWithGlobal, we must already have the flag set.
+    // On POSIX, the uws tick only polls I/O; callbacks are dispatched later
+    // via the task queue, but we set the flag here uniformly for safety.
+    const vm = this.event_loop.virtual_machine;
+    const prev_suppress = vm.suppress_microtask_drain;
+    vm.suppress_microtask_drain = true;
+    defer vm.suppress_microtask_drain = prev_suppress;
+
     // Tick the isolated uws loop with the specified timeout
     // This will only process I/O related to this subprocess
     // and will NOT interfere with the main event loop
@@ -163,7 +174,7 @@ pub fn tickWithTimeout(this: *SpawnSyncEventLoop, timeout: ?*const bun.timespec)
         }
     }
 
-    this.event_loop.tickWithoutJS();
+    this.event_loop.tickTasksOnly();
 
     const did_timeout = this.did_timeout;
     this.did_timeout = false;

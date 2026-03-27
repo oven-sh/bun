@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2007-2021 Apple Inc. All rights reserved.
+ * Copyright (C) 2007-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -31,8 +31,8 @@
 #include "JSDOMBinding.h"
 #include "ScriptExecutionContext.h"
 #include <JavaScriptCore/JSObject.h>
-#include <JavaScriptCore/Strong.h>
-#include <JavaScriptCore/StrongInlines.h>
+#include <JavaScriptCore/Weak.h>
+#include <JavaScriptCore/WeakInlines.h>
 #include <wtf/Threading.h>
 
 namespace WebCore {
@@ -49,10 +49,10 @@ public:
         Object,
         FunctionOrObject };
 
-    WEBCORE_EXPORT static JSC::JSValue invokeCallback(JSC::VM&, JSC::JSObject* callback, JSC::JSValue thisValue, JSC::MarkedArgumentBuffer&, CallbackType, JSC::PropertyName functionName, NakedPtr<JSC::Exception>& returnedException);
-
-protected:
-    explicit JSCallbackData() = default;
+    JSCallbackData(JSC::VM&, JSC::JSObject* callback, void* owner)
+        : m_callback(callback, &m_weakOwner, owner)
+    {
+    }
 
     ~JSCallbackData()
     {
@@ -61,45 +61,16 @@ protected:
 #endif
     }
 
-private:
-#if ASSERT_ENABLED
-    Ref<Thread> m_thread { Thread::currentSingleton() };
-#endif
-};
-
-class JSCallbackDataStrong : public JSCallbackData {
-public:
-    JSCallbackDataStrong(JSC::VM& vm, JSC::JSObject* callback, void* = nullptr)
-        : m_callback(vm, callback)
-    {
-    }
-
     JSC::JSObject* callback() { return m_callback.get(); }
-
-    JSC::JSValue invokeCallback(JSC::VM& vm, JSC::JSValue thisValue, JSC::MarkedArgumentBuffer& args, CallbackType callbackType, JSC::PropertyName functionName, NakedPtr<JSC::Exception>& returnedException)
-    {
-        return JSCallbackData::invokeCallback(vm, callback(), thisValue, args, callbackType, functionName, returnedException);
-    }
-
-private:
-    JSC::Strong<JSC::JSObject> m_callback;
-};
-
-class JSCallbackDataWeak : public JSCallbackData {
-public:
-    JSCallbackDataWeak(JSC::VM&, JSC::JSObject* callback, void* owner)
-        : m_callback(callback, &m_weakOwner, owner)
-    {
-    }
-
-    JSC::JSObject* callback() { return m_callback.get(); }
-
-    JSC::JSValue invokeCallback(JSC::VM& vm, JSC::JSValue thisValue, JSC::MarkedArgumentBuffer& args, CallbackType callbackType, JSC::PropertyName functionName, NakedPtr<JSC::Exception>& returnedException)
-    {
-        return JSCallbackData::invokeCallback(vm, callback(), thisValue, args, callbackType, functionName, returnedException);
-    }
 
     template<typename Visitor> void visitJSFunction(Visitor&);
+
+    WEBCORE_EXPORT static JSC::JSValue invokeCallback(JSC::VM&, JSC::JSObject* callback, JSC::JSValue thisValue, JSC::MarkedArgumentBuffer&, CallbackType, JSC::PropertyName functionName, NakedPtr<JSC::Exception>& returnedException);
+
+    JSC::JSValue invokeCallback(JSC::VM& vm, JSC::JSValue thisValue, JSC::MarkedArgumentBuffer& args, CallbackType callbackType, JSC::PropertyName functionName, NakedPtr<JSC::Exception>& returnedException)
+    {
+        return JSCallbackData::invokeCallback(vm, callback(), thisValue, args, callbackType, functionName, returnedException);
+    }
 
 private:
     class WeakOwner : public JSC::WeakHandleOwner {
@@ -107,6 +78,10 @@ private:
     };
     WeakOwner m_weakOwner;
     JSC::Weak<JSC::JSObject> m_callback;
+
+#if ASSERT_ENABLED
+    Ref<Thread> m_thread { Thread::currentSingleton() };
+#endif
 };
 
 } // namespace WebCore

@@ -66,6 +66,16 @@ describe.skipIf(isFFIUnavailable)("FFI error messages", () => {
     }).toThrow(/myFunction.*ptr.*(linkSymbols|CFunction)/);
   });
 
+  test("linkSymbols with non-object property values throws TypeError", () => {
+    expect(() => {
+      linkSymbols({ foo: 42 });
+    }).toThrow("Expected an object");
+
+    expect(() => {
+      linkSymbols({ a: "hello", b: 123, c: true });
+    }).toThrow("Expected an object");
+  });
+
   test("linkSymbols with non-number ptr does not crash", () => {
     expect(() => {
       linkSymbols({

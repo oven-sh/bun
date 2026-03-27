@@ -594,6 +594,10 @@ pub fn NewParser_(
                     p.import_records.items[import_record_index].tag = tag;
                 }
 
+                if (state.import_loader) |loader| {
+                    p.import_records.items[import_record_index].loader = loader;
+                }
+
                 p.import_records.items[import_record_index].flags.handles_import_errors = (state.is_await_target and p.fn_or_arrow_data_visit.try_body_count != 0) or state.is_then_catch_target;
                 p.import_records_for_current_part.append(p.allocator, import_record_index) catch unreachable;
 
@@ -6100,7 +6104,7 @@ pub fn NewParser_(
         /// specifiers that were imported. We enforce that they line up exactly
         /// with ones that were imported, so that it can share an import record.
         ///
-        /// This function replaces all specifier strings with `e_require_resolve_string`
+        /// This function replaces all specifier strings with `e_special.resolved_specifier_string`
         pub fn handleImportMetaHotAcceptCall(p: *@This(), call: *E.Call) void {
             if (call.args.len == 0) return;
             switch (call.args.at(0).data) {

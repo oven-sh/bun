@@ -499,7 +499,7 @@ extern "C" void Bun__onFulfillAsyncModule(
             EXCEPTION_ASSERT(created.has_value() == !scope.exception());
             if (created.has_value()) {
                 JSSourceCode* code = JSSourceCode::create(vm, WTF::move(created.value()));
-                promise->resolve(globalObject, code);
+                promise->resolve(globalObject, vm, code);
                 scope.assertNoExceptionExceptTermination();
             } else {
                 auto* exception = scope.exception();
@@ -511,7 +511,7 @@ extern "C" void Bun__onFulfillAsyncModule(
             }
         } else {
             auto&& provider = Zig::SourceProvider::create(jsDynamicCast<Zig::GlobalObject*>(globalObject), res->result.value);
-            promise->resolve(globalObject, JSC::JSSourceCode::create(vm, JSC::SourceCode(provider)));
+            promise->resolve(globalObject, vm, JSC::JSSourceCode::create(vm, JSC::SourceCode(provider)));
             scope.assertNoExceptionExceptTermination();
         }
     } else {
@@ -1163,7 +1163,7 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionOnLoadObjectResultResolve, (JSC::JSGlobalObje
         return retValue;
     }
     scope.release();
-    promise->resolve(globalObject, result);
+    promise->resolve(globalObject, vm, result);
     pendingModule->internalField(2).set(vm, pendingModule, JSC::jsUndefined());
     return JSValue::encode(jsUndefined());
 }

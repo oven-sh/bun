@@ -1524,8 +1524,8 @@ pub fn handleOnDataHeaders(
         // we reset the pending_response each time wich means that on parse error this will be always be empty
         this.state.pending_response = picohttp.Response{};
 
-        // minimal http/1.1 request size is 16 bytes without headers and 26 with Host header
-        // if is less than 16 will always be a ShortRead
+        // minimal http/1.1 response is 16 bytes ("HTTP/1.1 200\r\n\r\n")
+        // if less than 16 it will always be a ShortRead
         if (to_read.len < 16) {
             log("handleShortRead", .{});
             this.handleShortRead(is_ssl, incoming_data, socket, needs_move);
@@ -1926,7 +1926,7 @@ pub const HTTPClientResult = struct {
     metadata: ?HTTPResponseMetadata = null,
 
     /// For Http Client requests
-    /// when Content-Length is provided this represents the whole size of the request
+    /// when Content-Length is provided this represents the whole size of the response body
     /// If chunked encoded this will represent the total received size (ignoring the chunk headers)
     /// If is not chunked encoded and Content-Length is not provided this will be unknown
     body_size: BodySize = .unknown,
@@ -2385,19 +2385,20 @@ pub fn handleResponseMetadata(
         response.status_code = 304;
     }
 
+    // According to RFC 7230 section 3.3.3:
+    //   1. Any response to a HEAD request and any response with a 1xx (Informational),
+    //      204 (No Content), or 304 (Not Modified) status code
+    //      [...] cannot contain a message body or trailer section.
+    // Therefore in these cases set content-length to 0, so the response body is always ignored
+    // and is not waited for (which could cause a timeout).
+    // This applies regardless of whether we're using a proxy tunnel or not,
+    // since these status codes NEVER have a body per the HTTP spec.
+    if ((response.status_code >= 100 and response.status_code < 200) or response.status_code == 204 or response.status_code == 304) {
+        this.state.content_length = 0;
+    }
+
     // Don't do this for proxies because those connections will be open for awhile.
     if (!this.flags.proxy_tunneling) {
-
-        // according to RFC 7230 section 3.3.3:
-        //   1. Any response to a HEAD request and any response with a 1xx (Informational),
-        //      204 (No Content), or 304 (Not Modified) status code
-        //      [...] cannot contain a message body or trailer section.
-        // therefore in these cases set content-length to 0, so the response body is always ignored
-        // and is not waited for (which could cause a timeout)
-        if ((response.status_code >= 100 and response.status_code < 200) or response.status_code == 204 or response.status_code == 304) {
-            this.state.content_length = 0;
-        }
-
         //
         // according to RFC 7230 section 6.3:
         //   In order to remain persistent, all messages on a connection need to
@@ -2407,7 +2408,7 @@ pub fn handleResponseMetadata(
         // the keep-alive behavior (keep-alive being the default behavior for HTTP/1.1 and not for HTTP/1.0)
         //
         // but, we must only do this IF the status code allows it to contain a body.
-        else if (this.state.content_length == null and this.state.transfer_encoding != .chunked) {
+        if (this.state.content_length == null and this.state.transfer_encoding != .chunked) {
             this.state.flags.allow_keepalive = false;
         }
     }

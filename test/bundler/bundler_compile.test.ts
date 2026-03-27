@@ -3,7 +3,14 @@ import { describe, expect, test } from "bun:test";
 import { rmSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles } from "harness";
 import { join } from "path";
-import { itBundled } from "./expectBundled";
+import { BundlerTestInput, itBundled as itBundledBase } from "./expectBundled";
+
+// Default to the CLI backend. We intentionally use plain `describe` here
+// (not `describe.concurrent`): since the ELF-section inject path was added,
+// each `bun build --compile` on Linux reads + rewrites the full executable
+// (~500MB for profile builds). Running 20 of these concurrently exhausts CI
+// memory/IO and causes subprocess timeouts — see build #40193 failures.
+const itBundled = (id: string, opts: BundlerTestInput) => itBundledBase(id, { backend: "cli", ...opts });
 
 describe("bundler", () => {
   itBundled("compile/HelloWorld", {
@@ -867,7 +874,7 @@ const server = serve({
       .cwd(dir)
       .env(bunEnv)
       .throws(true);
-  });
+  }, 30_000);
 
   // Verify ESM bytecode is actually loaded from the cache at runtime, not just generated.
   // Uses regex matching on stderr (not itBundled) since we don't know the exact
@@ -915,7 +922,7 @@ const server = serve({
     expect(exeStdout).toContain("esm bytecode loaded");
     expect(exeStderr).toMatch(/\[Disk Cache\].*Cache hit/i);
     expect(exeExitCode).toBe(0);
-  });
+  }, 30_000);
 
   // When compiling with 8+ entry points, the main entry point should still run correctly.
   test("compile with 8+ entry points runs main entry correctly", async () => {
@@ -935,5 +942,5 @@ const server = serve({
 
     const result = await Bun.$`./app`.cwd(dir).env(bunEnv).nothrow();
     expect(result.stdout.toString().trim()).toBe("IT WORKS");
-  });
+  }, 30_000);
 });

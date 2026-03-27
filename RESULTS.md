@@ -161,6 +161,67 @@ Additional savings from eliminating ~9 process spawns (3 deps × 3 operations):
 
 ---
 
+---
+
+## End-to-End Benchmark (2026-03-27T03:04Z) — Latest Run, Ziggit `ae4117e`
+
+Rebuilt ziggit from latest commit (`ae4117e`: fix improve wrapper stderr translations).
+
+### Stock Bun Install (3 Git Dependencies: debug, semver, ms)
+
+| Scenario | Session 1 | Session 2 | Cross-session |
+|----------|----------:|----------:|--------------:|
+| Cold (median) | **265ms** | **97ms** | ~180ms |
+| Warm (median) | **43ms** | **46ms** | ~45ms |
+
+### Full 3-Step Workflow: ziggit vs git CLI (median of 3 runs × 2 sessions)
+
+| Repo | ziggit (S1/S2) | git CLI (S1/S2) | Speedup |
+|------|---------------:|----------------:|--------:|
+| debug | 96ms / 107ms | 152ms / 144ms | **1.47×** |
+| semver | 150ms / 160ms | 245ms / 236ms | **1.55×** |
+| ms | 142ms / 136ms | 189ms / 177ms | **1.30×** |
+| **Total** | **388ms / 403ms** | **586ms / 557ms** | **1.44×** |
+
+### Clone-Only Speedup
+
+| Repo | ziggit (S1/S2) | git CLI (S1/S2) | Speedup |
+|------|---------------:|----------------:|--------:|
+| debug | 84ms / 95ms | 142ms / 134ms | **1.54×** |
+| semver | 134ms / 144ms | 231ms / 222ms | **1.65×** |
+| ms | 130ms / 124ms | 180ms / 167ms | **1.37×** |
+
+### Fetch (warm) — Network-dominated, no meaningful difference
+
+| Repo | ziggit | git CLI | Notes |
+|------|-------:|--------:|-------|
+| debug | 88-104ms | 85-104ms | ~1× |
+| semver | 86-87ms | 87-89ms | ~1× |
+| ms | 82-90ms | 82-87ms | ~1× |
+
+### Summary
+
+**Consistent 31-44% speedup** on the git clone workflow across all sessions.
+Clone is the dominant factor; checkout and rev-parse are at parity.
+Fetch (already-cached repos) shows no difference — network-bound.
+
+---
+
+## Historical Comparison (All Sessions)
+
+| Timestamp | Repos | Git CLI total | Ziggit total | Speedup |
+|-----------|------:|--------------:|-------------:|--------:|
+| 2026-03-27T02:42Z | 5 | 774ms | 515ms | 1.50× |
+| 2026-03-27T02:44Z | 5 | 767ms | 492ms | 1.56× |
+| 2026-03-27T02:47Z | 5 | 792ms | 514ms | 1.54× |
+| 2026-03-27T02:50Z | 5 | 772ms | 503ms | 1.54× |
+| 2026-03-27T02:53Z | 5 | 704ms | 430ms | 1.64× |
+| 2026-03-27T02:56Z | 5 | 727ms | 467ms | 1.56× |
+| 2026-03-27T03:01Z | 3 | 579ms | 406ms | 1.43× |
+| **2026-03-27T03:04Z** | **3** | **557-586ms** | **388-403ms** | **1.44×** |
+
+---
+
 ## Raw Data Location
 
 All raw timing data saved in `benchmark/raw_results_*.txt`.

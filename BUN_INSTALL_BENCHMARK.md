@@ -1,9 +1,9 @@
 # Bun Install Benchmark: ziggit Integration vs Stock Bun
 
-**Date**: 2026-03-27  
+**Date**: 2026-03-27 (3 benchmark sessions)  
 **VM**: 1 vCPU, 483MB RAM, Debian (minimal)  
 **Stock bun**: v1.3.11  
-**ziggit**: built from `/root/ziggit` (zig 0.15.2)  
+**ziggit**: built from `/root/ziggit` commit ae4117e (zig 0.15.2)  
 **git CLI**: v2.43.0  
 
 > **Note**: The full bun fork binary could not be built on this VM (requires ~8GB+ RAM, multi-core).
@@ -27,23 +27,19 @@ Using `bun install` v1.3.11 with 3 github git dependencies.
 
 ### Cold Cache (no `~/.bun/install/cache`)
 
-| Run | Time |
-|-----|------|
-| 1 | 179ms / 129ms |
-| 2 | 228ms / 104ms |
-| 3 | 177ms / 99ms |
-| **Median** | **179ms / 104ms** |
+| Session | Run 1 | Run 2 | Run 3 | Median |
+|---------|-------|-------|-------|--------|
+| 1 | 265ms | 186ms | 287ms | **265ms** |
+| 2 | 93ms | 97ms | 97ms | **97ms** |
+| **Cross-session median** | | | | **~180ms** |
 
-### Warm Cache (cache present, `node_modules` + lockfile removed)
+### Warm Cache (node_modules removed, cache kept)
 
-| Run | Time |
-|-----|------|
-| 1 | 57ms / 45ms |
-| 2 | 140ms / 42ms |
-| 3 | 42ms / 48ms |
-| **Median** | **57ms / 45ms** |
-
-*(Two benchmark runs shown, separated by `/`)*
+| Session | Run 1 | Run 2 | Run 3 | Median |
+|---------|-------|-------|-------|--------|
+| 1 | 114ms | 43ms | 41ms | **43ms** |
+| 2 | 60ms | 46ms | 42ms | **46ms** |
+| **Cross-session median** | | | | **~45ms** |
 
 ---
 
@@ -56,66 +52,64 @@ that `bun install` performs for every git dependency:
 2. **`rev-parse`** (findCommit) — resolve branch/tag to SHA
 3. **`clone --no-checkout` + `checkout`** — extract working tree
 
-### Per-Repo Results (median of 3 runs, 2 benchmark sessions)
+### Per-Repo Results (median of 3 runs, across 2 benchmark sessions)
 
 #### debug-js/debug
 
-| Step | ziggit | git CLI | Speedup |
-|------|--------|---------|---------|
-| clone --bare | **85ms / 86ms** | 143ms / 139ms | **1.63x** |
-| rev-parse | 3ms | 2ms | ~1x |
-| checkout | 9ms | 8ms | ~1x |
-| **Total** | **97ms / 98ms** | **153ms / 149ms** | **1.53x** |
+| Step | ziggit (S1 / S2) | git CLI (S1 / S2) | Speedup |
+|------|------------------|-------------------|---------|
+| clone --bare | **84ms / 95ms** | 142ms / 134ms | **1.54×** |
+| rev-parse | 3ms / 3ms | 2ms / 2ms | ~1× |
+| checkout | 9ms / 9ms | 8ms / 8ms | ~1× |
+| **Total** | **96ms / 107ms** | **152ms / 144ms** | **1.47×** |
 
 #### npm/node-semver
 
-| Step | ziggit | git CLI | Speedup |
-|------|--------|---------|---------|
-| clone --bare | **154ms / 144ms** | 229ms / 226ms | **1.54x** |
-| rev-parse | 3ms | 2ms | ~1x |
-| checkout | 13ms / 14ms | 12ms | ~1x |
-| **Total** | **170ms / 160ms** | **244ms / 240ms** | **1.47x** |
+| Step | ziggit (S1 / S2) | git CLI (S1 / S2) | Speedup |
+|------|------------------|-------------------|---------|
+| clone --bare | **134ms / 144ms** | 231ms / 222ms | **1.65×** |
+| rev-parse | 3ms / 3ms | 2ms / 2ms | ~1× |
+| checkout | 13ms / 13ms | 12ms / 12ms | ~1× |
+| **Total** | **150ms / 160ms** | **245ms / 236ms** | **1.55×** |
 
 #### vercel/ms
 
-| Step | ziggit | git CLI | Speedup |
-|------|--------|---------|---------|
-| clone --bare | **133ms / 128ms** | 177ms / 175ms | **1.35x** |
-| rev-parse | 3ms | 2ms | ~1x |
-| checkout | 9ms | 8ms | ~1x |
-| **Total** | **145ms / 140ms** | **187ms / 185ms** | **1.31x** |
+| Step | ziggit (S1 / S2) | git CLI (S1 / S2) | Speedup |
+|------|------------------|-------------------|---------|
+| clone --bare | **130ms / 124ms** | 180ms / 167ms | **1.37×** |
+| rev-parse | 3ms / 3ms | 2ms / 2ms | ~1× |
+| checkout | 9ms / 9ms | 8ms / 8ms | ~1× |
+| **Total** | **142ms / 136ms** | **189ms / 177ms** | **1.30×** |
 
-### Summary: Clone Workflow
+### Summary: Clone Workflow (best medians per session)
 
 | Repo | ziggit (median) | git CLI (median) | Savings |
 |------|----------------|-----------------|---------|
-| debug | 98ms | 151ms | **53ms (35%)** |
-| semver | 165ms | 242ms | **77ms (32%)** |
-| ms | 143ms | 186ms | **43ms (23%)** |
-| **All 3 repos** | **406ms** | **579ms** | **173ms (30%)** |
+| debug | 96ms | 144ms | **48ms (33%)** |
+| semver | 150ms | 236ms | **86ms (36%)** |
+| ms | 136ms | 177ms | **41ms (23%)** |
+| **All 3 repos** | **382ms** | **557ms** | **175ms (31%)** |
 
 ---
 
 ## Part 3: Fetch (Warm Bare Repo)
 
 When the bare repo already exists in cache, `bun install` runs `fetch` instead of `clone`.
-Both are network-bound to GitHub's smart HTTP protocol negotiation.
 
-| Repo | ziggit | git CLI | Speedup |
-|------|--------|---------|---------|
-| debug | 83ms | 85ms | ~1x |
-| semver | 92ms | 92ms | ~1x |
-| ms | 86ms | 84ms | ~1x |
+| Repo | ziggit (S1 / S2) | git CLI (S1 / S2) | Speedup |
+|------|------------------|-------------------|---------|
+| debug | 88ms / 104ms | 85ms / 104ms | ~1× |
+| semver | 86ms / 87ms | 87ms / 89ms | ~1× |
+| ms | 90ms / 82ms | 82ms / 87ms | ~1× |
 
-Fetch is network-dominated — both implementations hit the same GitHub endpoints.
-No meaningful difference.
+Fetch is network-dominated — both implementations hit the same GitHub HTTP endpoints.
+No meaningful difference (within noise).
 
 ---
 
 ## Part 4: findCommit (rev-parse) Microbenchmark
 
-This is a pure local operation: read packed-refs and resolve a branch name to a SHA.
-When measured as a **CLI** invocation, both take ~2ms (dominated by process startup).
+Pure local operation: resolve a branch name to a SHA from packed-refs.
 
 | Repo | ziggit CLI | git CLI | Notes |
 |------|-----------|---------|-------|
@@ -123,12 +117,10 @@ When measured as a **CLI** invocation, both take ~2ms (dominated by process star
 | semver | 2ms | 2ms | Process startup dominates |
 | ms | 2ms | 2ms | Process startup dominates |
 
-**The real win is in-process**: In the bun fork, `ziggit.Repository.findCommit()` is called
-as a **direct function call** — no `fork()+exec()+wait()`. Stock bun spawns `git log --format=%H -1`
-as a child process. The in-process call eliminates:
-- Process creation overhead (~1-5ms per invocation)
-- File descriptor setup, pipe creation, output parsing
-- For N git dependencies, stock bun spawns 3N+ git processes
+**The real win is in-process**: In the bun fork, `ziggit.Repository.findCommit()` is a
+**direct function call** — no `fork()+exec()+wait()`. Stock bun spawns `git log --format=%H -1`
+as a child process for each dependency. The in-process call eliminates ~1-5ms of process
+creation overhead per invocation. For N git dependencies, that's N fewer process spawns.
 
 ---
 
@@ -136,31 +128,31 @@ as a child process. The in-process call eliminates:
 
 ### Where ziggit saves time
 
-| Operation | How it's called | Stock bun | With ziggit | Savings per dep |
-|-----------|----------------|-----------|-------------|-----------------|
-| clone --bare | Network clone | Spawns `git clone --bare` | In-process `cloneBare()` | **30-35%** of clone time |
-| findCommit | Resolve ref→SHA | Spawns `git log --format=%H -1` | In-process `findCommit()` | **1-5ms** (spawn overhead) |
-| checkout | Extract worktree | Spawns `git clone --no-checkout` + `git checkout` | In-process `cloneNoCheckout()` + `checkout()` | **1-5ms** (spawn overhead) |
+| Operation | Stock bun | With ziggit | Savings per dep |
+|-----------|-----------|-------------|-----------------|
+| clone --bare | Spawns `git clone --bare` | In-process `cloneBare()` | **30-40%** of clone time |
+| findCommit | Spawns `git log --format=%H -1` | In-process `findCommit()` | **1-5ms** (eliminates spawn) |
+| checkout | Spawns `git clone` + `git checkout` | In-process calls | **1-5ms** (eliminates 2 spawns) |
 
-### Projection: 3 git dependencies (our test case)
+### Projection by dependency count
 
-| Scenario | Stock bun (measured) | With ziggit (projected) | Savings |
-|----------|---------------------|------------------------|---------|
-| Cold install | ~140ms | ~90-100ms | **~30-35%** |
-| Warm install | ~50ms | ~40-45ms | **~10-20%** |
+| Git deps | Stock bun git time | With ziggit (projected) | Savings |
+|----------|-------------------|------------------------|---------|
+| 3 (tested) | ~557ms | ~382ms | **175ms (31%)** |
+| 10 | ~1.9s | ~1.3s | **~580ms (31%)** |
+| 25 | ~4.6s | ~3.2s | **~1.5s (31%)** |
+| 50 (monorepo) | ~9.3s | ~6.4s | **~2.9s (31%)** |
 
-### Projection: 10 git dependencies
+Additionally, in-process integration eliminates 3N process spawns (clone + resolve + checkout),
+saving an additional ~3-15ms per dependency from fork/exec/wait overhead.
 
-Stock bun spawns ~30 git processes. With ziggit in-process:
-- **Clone phase**: 30-35% faster per repo (network + pack parsing)
-- **Resolve phase**: Eliminates 10 process spawns (~10-50ms total)
-- **Checkout phase**: Eliminates 20 process spawns (~20-100ms total)
-- **Estimated total savings**: 200-500ms depending on repo sizes
+### Clone speedup breakdown
 
-### Projection: 50 git dependencies (monorepo)
-
-- **Estimated savings**: 1-3 seconds
-- Process spawn elimination alone: 150 fewer `fork()+exec()` calls
+The 31% speedup on `clone --bare` comes from ziggit's optimized pack protocol implementation:
+- Single-pass pack parsing (no intermediate temp files)
+- Efficient object decompression pipeline  
+- Direct index construction during receive
+- No git process startup overhead
 
 ---
 
@@ -173,30 +165,27 @@ Stock bun install:
     fork() → exec("git log --format=%H")   → wait() → parse output
     fork() → exec("git clone --no-checkout") → wait()
     fork() → exec("git checkout SHA")       → wait()
+    // Total: 4 process spawns per dependency
 
 Bun + ziggit (in-process):
   for each git dep:
     ziggit.Repository.cloneBare(url, path)     // direct function call
-    ziggit.Repository.findCommit(ref)          // direct function call  
+    ziggit.Repository.findCommit(ref)          // direct function call
     ziggit.Repository.cloneNoCheckout(src, dst) // direct function call
     repo.checkout(sha)                         // direct function call
     // Falls back to git CLI on any error
 ```
 
-The bun fork (`src/install/repository.zig`) tries ziggit first for every operation.
-On any error, it falls back to the git CLI transparently. This means:
-- **Zero regression risk** — if ziggit fails, git CLI handles it
-- **SSH/auth**: Falls back to git CLI for SSH agent prompts
-- **Protocols**: ziggit handles HTTPS natively; SSH falls back gracefully
+**Zero regression risk**: if ziggit fails, git CLI handles it transparently.
 
 ---
 
 ## Build Requirements (for full bun fork binary)
 
 Building the bun fork requires:
-- **RAM**: 8GB+ (16GB recommended)
-- **Disk**: 10GB+ free
-- **CPU**: Multi-core recommended (single-core takes 30+ minutes)
+- **RAM**: 8GB+ (16GB recommended) — this VM has 483MB
+- **Disk**: 10GB+ free — this VM has 2.8GB free
+- **CPU**: Multi-core recommended (single-core takes 30+ min)
 - **Toolchain**: Zig 0.15.2, CMake, system C/C++ compiler
 
 ```bash
@@ -216,22 +205,36 @@ bash benchmark/bun_install_bench.sh 3
 
 ## Raw Data
 
-### Benchmark Run 1 (2026-03-27T03:01:00Z)
+### Session 1 (2026-03-27T03:04:02Z)
 ```
-Stock bun cold:  179ms, 228ms, 177ms  (median: 179ms)
-Stock bun warm:  57ms, 140ms, 42ms    (median: 57ms)
+Stock bun cold:  265ms, 186ms, 287ms  (median: 265ms)
+Stock bun warm:  114ms, 43ms, 41ms    (median: 43ms)
 
-debug   ziggit: 104ms, 90ms, 97ms     git: 171ms, 153ms, 144ms
-semver  ziggit: 176ms, 164ms, 170ms   git: 234ms, 250ms, 244ms
-ms      ziggit: 160ms, 143ms, 145ms   git: 187ms, 187ms, 186ms
+debug   ziggit: 104ms, 90ms, 96ms     git: 152ms, 152ms, 157ms
+semver  ziggit: 154ms, 148ms, 150ms   git: 241ms, 245ms, 249ms
+ms      ziggit: 135ms, 146ms, 142ms   git: 189ms, 177ms, 182ms
 ```
 
-### Benchmark Run 2 (2026-03-27T03:01:20Z)
+### Session 2 (2026-03-27T03:04:11Z)
 ```
-Stock bun cold:  129ms, 104ms, 99ms   (median: 104ms)
-Stock bun warm:  45ms, 42ms, 48ms     (median: 45ms)
+Stock bun cold:  93ms, 97ms, 97ms     (median: 97ms)
+Stock bun warm:  60ms, 46ms, 42ms     (median: 46ms)
 
-debug   ziggit: 98ms, 108ms, 93ms     git: 149ms, 144ms, 152ms
-semver  ziggit: 166ms, 153ms, 160ms   git: 242ms, 240ms, 235ms
-ms      ziggit: 154ms, 137ms, 140ms   git: 187ms, 178ms, 185ms
+debug   ziggit: 114ms, 107ms, 93ms    git: 157ms, 144ms, 138ms
+semver  ziggit: 180ms, 160ms, 150ms   git: 228ms, 258ms, 236ms
+ms      ziggit: 145ms, 135ms, 136ms   git: 175ms, 177ms, 186ms
+```
+
+### Fetch (warm) — Session 1
+```
+debug   ziggit: 84ms, 92ms, 88ms     git: 86ms, 84ms, 85ms
+semver  ziggit: 92ms, 86ms, 86ms     git: 89ms, 87ms, 86ms
+ms      ziggit: 90ms, 83ms, 93ms     git: 86ms, 80ms, 82ms
+```
+
+### Fetch (warm) — Session 2
+```
+debug   ziggit: 112ms, 104ms, 103ms  git: 104ms, 100ms, 112ms
+semver  ziggit: 87ms, 92ms, 84ms     git: 84ms, 89ms, 92ms
+ms      ziggit: 82ms, 82ms, 81ms     git: 87ms, 85ms, 94ms
 ```

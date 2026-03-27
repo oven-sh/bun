@@ -1,0 +1,105 @@
+
+=== BUN INSTALL BENCHMARK — 20260327T012819Z ===
+VM: 483Mi RAM, 1 CPU, x86_64
+Bun: 1.3.11, Git: 2.43.0, Zig: 0.15.2
+Ziggit: /root/ziggit/zig-out/bin/ziggit
+
+== Section 1: Stock bun install ==
+  Cold cache runs:
+    Run 1: 485ms
+    Run 2: 465ms
+    Run 3: 328ms
+  Warm cache runs:
+    Run 1: 76ms
+    Run 2: 81ms
+    Run 3: 78ms
+
+== Section 2: Clone bare --depth=1 ==
+  --- Run 1 ---
+    git  is: 132ms
+    git  express: 178ms
+    git  chalk: 126ms
+    git  debug: 124ms
+    git  semver: 140ms
+    git  TOTAL: 700ms
+    ziggit is: 79ms
+    ziggit express: 120ms
+    ziggit chalk: 67ms
+    ziggit debug: 63ms
+    ziggit semver: 72ms
+    ziggit TOTAL: 401ms
+  --- Run 2 ---
+    git  is: 130ms
+    git  express: 156ms
+    git  chalk: 119ms
+    git  debug: 121ms
+    git  semver: 132ms
+    git  TOTAL: 658ms
+    ziggit is: 69ms
+    ziggit express: 108ms
+    ziggit chalk: 69ms
+    ziggit debug: 73ms
+    ziggit semver: 71ms
+    ziggit TOTAL: 390ms
+  --- Run 3 ---
+    git  is: 124ms
+    git  express: 162ms
+    git  chalk: 124ms
+    git  debug: 109ms
+    git  semver: 120ms
+    git  TOTAL: 639ms
+    ziggit is: 74ms
+    ziggit express: 110ms
+    ziggit chalk: 71ms
+    ziggit debug: 74ms
+    ziggit semver: 88ms
+    ziggit TOTAL: 417ms
+
+== Section 3: Full workflow (clone + rev-parse + ls-tree + cat-file ALL blobs) ==
+  --- Run 1 ---
+    git  is (15f): clone=136 rev=2 ls=2 cat=21 total=161ms
+    git  express (213f): clone=166 rev=2 ls=3 cat=253 total=424ms
+    git  chalk (34f): clone=138 rev=3 ls=3 cat=43 total=187ms
+    git  debug (13f): clone=128 rev=3 ls=3 cat=17 total=151ms
+    git  semver (151f): clone=139 rev=3 ls=3 cat=182 total=327ms
+    git  TOTAL: 1250ms
+    zig  is (15f): clone=70 rev=3 ls=4 cat=30 total=107ms
+    zig  express (213f): clone=105 rev=3 ls=3 cat=382 total=493ms
+    zig  chalk (34f): clone=72 rev=3 ls=4 cat=64 total=143ms
+    zig  debug (13f): clone=77 rev=3 ls=4 cat=25 total=109ms
+    zig  semver (151f): clone=83 rev=3 ls=4 cat=270 total=360ms
+    zig  TOTAL: 1212ms
+  --- Run 2 ---
+    git  is (15f): clone=121 rev=2 ls=3 cat=20 total=146ms
+    git  express (213f): clone=161 rev=2 ls=3 cat=257 total=423ms
+    git  chalk (34f): clone=123 rev=2 ls=3 cat=47 total=175ms
+    git  debug (13f): clone=118 rev=3 ls=3 cat=17 total=141ms
+    git  semver (151f): clone=132 rev=2 ls=3 cat=182 total=319ms
+    git  TOTAL: 1204ms
+    zig  is (15f): clone=72 rev=3 ls=4 cat=31 total=110ms
+    zig  express (213f): clone=120 rev=3 ls=4 cat=383 total=510ms
+    zig  chalk (34f): clone=70 rev=3 ls=4 cat=64 total=141ms
+    zig  debug (13f): clone=62 rev=3 ls=4 cat=25 total=94ms
+    zig  semver (151f): clone=72 rev=3 ls=4 cat=272 total=351ms
+    zig  TOTAL: 1206ms
+  --- Run 3 ---
+    git  is (15f): clone=136 rev=2 ls=3 cat=21 total=162ms
+    git  express (213f): clone=155 rev=2 ls=3 cat=256 total=416ms
+    git  chalk (34f): clone=133 rev=3 ls=3 cat=44 total=183ms
+    git  debug (13f): clone=120 rev=3 ls=3 cat=17 total=143ms
+    git  semver (151f): clone=136 rev=2 ls=3 cat=181 total=322ms
+    git  TOTAL: 1226ms
+    zig  is (15f): clone=85 rev=3 ls=4 cat=30 total=122ms
+    zig  express (213f): clone=109 rev=3 ls=4 cat=397 total=513ms
+    zig  chalk (34f): clone=73 rev=3 ls=4 cat=64 total=144ms
+    zig  debug (13f): clone=65 rev=3 ls=3 cat=24 total=95ms
+    zig  semver (151f): clone=74 rev=3 ls=4 cat=272 total=353ms
+    zig  TOTAL: 1227ms
+
+== Section 4: Spawn overhead (200 iterations) ==
+  git spawn: .95ms/call
+  ziggit spawn: 1.53ms/call
+  delta: .57ms/call
+  delta x 426 files: 245.1ms
+
+=== DONE ===

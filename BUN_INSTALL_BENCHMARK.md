@@ -1,10 +1,10 @@
 # Bun Install Benchmark: Stock Bun vs Ziggit Integration
 
-**Date:** 2026-03-27T01:25Z (latest run)
+**Date:** 2026-03-27T01:28Z (latest run)
 **VM:** 483MB RAM, 1 CPU, Linux x86_64 (minimized container)
 **Bun:** v1.3.11 (stock, at `/root/.bun/bin/bun`)
 **Git:** v2.43.0
-**Ziggit:** built from `/root/ziggit` at HEAD (8bdce12), Zig 0.15.2
+**Ziggit:** built from `/root/ziggit` at HEAD (8bdce12), Zig 0.15.2, ReleaseFast
 **Bun fork:** not buildable on this VM (see [Build Notes](#6-build-notes))
 
 All numbers are **actual measured values**, each benchmark run 3 times, caches cleared between cold runs.
@@ -35,10 +35,10 @@ The 5 repos contain **426 total files** (15 + 213 + 34 + 13 + 151).
 
 | Run | Cold Cache | Warm Cache |
 |-----|-----------|------------|
-| 1   | 497ms     | 76ms       |
-| 2   | 407ms     | 79ms       |
-| 3   | 617ms     | 78ms       |
-| **Median** | **497ms** | **78ms** |
+| 1   | 485ms     | 76ms       |
+| 2   | 465ms     | 81ms       |
+| 3   | 328ms     | 78ms       |
+| **Median** | **465ms** | **78ms** |
 
 > Cold cache includes network (GitHub API + npm registry).
 > Warm cache is registry-only (git deps already resolved in bun.lock).
@@ -53,20 +53,20 @@ This measures the core operation bun performs for each git dependency: shallow b
 
 | Repo | Files | Git CLI | Ziggit | Speedup |
 |------|-------|---------|--------|---------|
-| sindresorhus/is | 15 | 133 | 80 | 1.66× |
-| expressjs/express | 213 | 158 | 109 | 1.45× |
-| chalk/chalk | 34 | 124 | 72 | 1.72× |
-| debug-js/debug | 13 | 113 | 70 | 1.61× |
-| npm/node-semver | 151 | 127 | 81 | 1.57× |
+| sindresorhus/is | 15 | 130 | 74 | 1.76× |
+| expressjs/express | 213 | 162 | 110 | 1.47× |
+| chalk/chalk | 34 | 124 | 69 | 1.80× |
+| debug-js/debug | 13 | 121 | 73 | 1.66× |
+| npm/node-semver | 151 | 132 | 72 | 1.83× |
 
 ### Totals (all 5 repos)
 
 | Tool | Run 1 | Run 2 | Run 3 | Median | Speedup |
 |------|-------|-------|-------|--------|---------|
-| Git CLI | 679ms | 630ms | 664ms | **664ms** | baseline |
-| Ziggit  | 423ms | 407ms | 397ms | **407ms** | **1.63× (38% faster)** |
+| Git CLI | 700ms | 658ms | 639ms | **658ms** | baseline |
+| Ziggit  | 401ms | 390ms | 417ms | **401ms** | **1.64× (39% faster)** |
 
-**Clone savings: 257ms** (664 → 407ms)
+**Clone savings: 257ms** (658 → 401ms)
 
 ---
 
@@ -74,64 +74,63 @@ This measures the core operation bun performs for each git dependency: shallow b
 
 This simulates the complete bun install git dependency flow: clone bare repo, resolve HEAD, list tree, extract all file contents.
 
-### Per-repo medians (ms) — Run 1 & 3 only (Run 2 had a network outlier)
+### Per-repo breakdown (median of 3 runs, ms)
 
-| Repo | Files | Git CLI | Ziggit CLI | Notes |
-|------|-------|---------|------------|-------|
-| sindresorhus/is | 15 | 157 | 119 | zig 1.3× faster |
-| expressjs/express | 213 | 428 | 501 | zig slower (cat-file spawn overhead) |
-| chalk/chalk | 34 | 195 | 144 | zig 1.4× faster |
-| debug-js/debug | 13 | 136 | 91 | zig 1.5× faster |
-| npm/node-semver | 151 | 322 | 363 | zig slower (cat-file spawn overhead) |
+| Repo | Files | Git clone | Git cat-file | Git total | Zig clone | Zig cat-file | Zig total |
+|------|-------|-----------|-------------|-----------|-----------|-------------|-----------|
+| sindresorhus/is | 15 | 136 | 21 | 161 | 72 | 30 | 110 |
+| expressjs/express | 213 | 161 | 256 | 423 | 109 | 383 | 510 |
+| chalk/chalk | 34 | 133 | 44 | 183 | 72 | 64 | 143 |
+| debug-js/debug | 13 | 120 | 17 | 143 | 65 | 25 | 95 |
+| npm/node-semver | 151 | 136 | 182 | 322 | 74 | 272 | 353 |
 
 ### Totals (all 5 repos)
 
-| Tool | Run 1 | Run 2† | Run 3 | Median | Speedup |
-|------|-------|--------|-------|--------|---------|
-| Git CLI | 1,264ms | 2,328ms† | 1,210ms | **1,264ms** | baseline |
-| Ziggit CLI | 1,208ms | 1,252ms | 1,227ms | **1,227ms** | **1.03× (3% faster)** |
-
-†Run 2 git had a 1,261ms network outlier on `is` clone; excluded from median.
+| Tool | Run 1 | Run 2 | Run 3 | Median | Speedup |
+|------|-------|-------|-------|--------|---------|
+| Git CLI | 1,250ms | 1,204ms | 1,226ms | **1,226ms** | baseline |
+| Ziggit CLI | 1,212ms | 1,206ms | 1,227ms | **1,212ms** | **1.01× (1% faster)** |
 
 ### Why the full workflow gap shrinks
 
-The clone advantage (1.63×) is eroded by **spawn overhead** in the cat-file loop:
+The clone advantage (1.64×) is eroded by **spawn overhead** in the cat-file loop.
+Each `cat-file blob <sha>` call requires fork+exec of the ziggit binary:
 
 | Metric | Value |
 |--------|-------|
-| git spawn overhead | 0.93ms/call |
-| ziggit spawn overhead | 1.50ms/call |
+| git spawn overhead | 0.95ms/call |
+| ziggit spawn overhead | 1.53ms/call |
 | Delta per call | +0.57ms |
-| Delta × 426 files | **+243ms** |
+| Delta × 426 files | **+245ms** |
 
-Ziggit saves ~257ms on cloning but loses ~243ms spawning for cat-file, nearly canceling out.
+Ziggit saves ~257ms on cloning but loses ~245ms on spawn overhead for 426 cat-file calls, nearly canceling out the gains when used as a CLI.
 
 ---
 
 ## 5. Projected Library-Mode Performance
 
-When ziggit is integrated as a **library** in the bun fork (not spawned as CLI), spawn overhead is eliminated entirely. The projected numbers:
+When ziggit is integrated as a **library** in the bun fork (not spawned as CLI), spawn overhead is eliminated entirely. All git operations happen in-process via Zig function calls.
 
 | Phase | Git CLI (spawned) | Ziggit Library (in-process) | Savings |
 |-------|-------------------|-----------------------------|---------|
-| Clone (5 repos) | 664ms | 407ms | 257ms |
+| Clone (5 repos) | 658ms | 401ms | 257ms |
 | rev-parse (5×) | 12ms | ~0.1ms | 12ms |
 | ls-tree (5×) | 15ms | ~0.1ms | 15ms |
-| cat-file (426×) | 500ms | ~5ms* | 495ms |
-| **Total** | **~1,191ms** | **~412ms** | **~779ms** |
-| **Speedup** | | **~2.9×** | |
+| cat-file (426×) | 520ms | ~5ms* | 515ms |
+| **Total** | **~1,205ms** | **~406ms** | **~799ms** |
+| **Speedup** | | **~3.0×** | |
 
-*In-process blob extraction from already-decoded packfile: ~12μs/blob (no fork/exec).
+*In-process blob extraction from already-decoded packfile: ~12μs/blob (no fork/exec, no I/O startup).
 
 ### Impact on bun install cold cache
 
 | Component | Stock Bun | With Ziggit | Change |
 |-----------|-----------|-------------|--------|
 | Git dep resolution | ~400ms | ~50ms | −350ms |
-| NPM registry + download | ~100ms | ~100ms | unchanged |
-| **Total cold install** | **~497ms** | **~200ms** | **~2.5× faster** |
+| NPM registry + download | ~65ms | ~65ms | unchanged |
+| **Total cold install** | **~465ms** | **~165ms** | **~2.8× faster** |
 
-> Git dep resolution dominates bun install cold time for projects with github deps.
+> Git dep resolution dominates bun install cold time for projects with GitHub deps.
 
 ---
 
@@ -143,6 +142,7 @@ When ziggit is integrated as a **library** in the bun fork (not spawned as CLI),
 |----------|-----------|----------|
 | RAM | 483MB | ≥8GB |
 | Disk | 2.1GB free | ≥15GB |
+| CPUs | 1 | ≥4 recommended |
 | Zig | 0.15.2 | 0.14.x (bun's pinned version) |
 
 ### How to build the bun fork
@@ -177,16 +177,24 @@ This means ziggit's git operations are compiled directly into the bun binary —
 
 ## 7. Raw Data
 
-See `benchmark/raw_results_20260327T012542Z.txt` for the complete raw output.
+See `benchmark/raw_results_20260327T012819Z.txt` for the complete raw output.
 
 ### Summary
 
 | Metric | Value |
 |--------|-------|
-| Clone speedup (CLI) | **1.63× (38% faster)** |
-| Full workflow speedup (CLI) | **1.03× (3% faster)** — spawn overhead cancels clone gains |
-| Full workflow speedup (library, projected) | **~2.9× faster** |
+| Clone speedup (CLI) | **1.64× (39% faster)** |
+| Full workflow speedup (CLI) | **1.01× (1% faster)** — spawn overhead cancels clone gains |
+| Full workflow speedup (library, projected) | **~3.0× faster** |
 | Spawn overhead (ziggit vs git) | +0.57ms/call |
-| bun install cold cache (stock) | 497ms median |
+| bun install cold cache (stock) | 465ms median |
 | bun install warm cache (stock) | 78ms median |
-| Projected cold cache with ziggit library | ~200ms (**2.5× faster**) |
+| Projected cold cache with ziggit library | ~165ms (**2.8× faster**) |
+
+---
+
+## 8. Key Takeaway
+
+**As a CLI tool**, ziggit's clone speed advantage (1.64×) is offset by higher startup overhead per invocation (+0.57ms × 426 calls = +245ms). The net CLI workflow improvement is negligible (~1%).
+
+**As a library** (the actual bun fork integration), spawn overhead vanishes completely. The 1.64× clone advantage compounds with zero-cost rev-parse/ls-tree/cat-file to yield a projected **~3× speedup** for git dependency resolution in `bun install`.

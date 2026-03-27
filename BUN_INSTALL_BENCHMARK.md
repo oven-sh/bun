@@ -3,7 +3,7 @@
 **Date:** 2026-03-27
 **Environment:** Linux x86_64, 483MB RAM, 1 vCPU, Swap 2GB
 **Stock Bun:** v1.3.11 (af24e281)
-**Ziggit:** v0.2.0 ReleaseFast (commit d22bd5f)
+**Ziggit:** v0.3.0 ReleaseFast (commit f428a9d)
 **Git CLI:** 2.43.0
 **Zig:** 0.15.2
 **Methodology:** 3 runs per shell benchmark, 5 network / 100 local iterations (Zig benchmark). Median reported. Caches cleared between cold runs.
@@ -14,16 +14,16 @@
 
 | Metric | Value |
 |--------|-------|
-| Stock bun install (cold, 5 git deps) | **366ms** |
+| Stock bun install (cold, 5 git deps) | **492ms** |
 | Stock bun install (warm cache) | **21ms** |
-| Git dep resolution via git CLI (5 repos) | **708ms** |
-| Git dep resolution via ziggit (5 repos) | **472ms** |
-| **Ziggit speedup on clone operations** | **1.50x** |
-| **Time saved on git dep resolution** | **236ms** |
-| **Projected bun install with ziggit (cold)** | **~130ms (64.4% faster on git ops)** |
-| **findCommit: ziggit vs git CLI** | **21.4x faster** |
+| Git dep resolution via git CLI (5 repos) | **702ms** |
+| Git dep resolution via ziggit (5 repos) | **436ms** |
+| **Ziggit speedup on clone operations** | **1.61x** |
+| **Time saved on git dep resolution** | **266ms** |
+| **Projected bun install with ziggit (cold)** | **~226ms (54% faster on git ops)** |
+| **findCommit: ziggit vs git CLI** | **21.1x faster** |
 | **revParseHead: ziggit vs git CLI** | **18.0x faster** |
-| **describeTags: ziggit vs git CLI** | **21.9x faster** |
+| **describeTags: ziggit vs git CLI** | **20.9x faster** |
 
 ## Build Status
 
@@ -64,12 +64,10 @@ Results: 69 total packages installed (5 git deps + transitive npm deps).
 
 | Run | Time |
 |-----|------|
-| 1 | 2815ms* |
-| 2 | 366ms |
-| 3 | 339ms |
-| **Median** | **366ms** |
-
-\* Run 1 includes DNS/TLS warm-up; subsequent runs benefit from OS-level connection caching.
+| 1 | 505ms |
+| 2 | 492ms |
+| 3 | 406ms |
+| **Median** | **492ms** |
 
 ### Warm Cache (node_modules removed, bun cache intact)
 
@@ -88,14 +86,14 @@ Each repo benchmarked 3 times (median reported). Workflow: `clone --depth=1` →
 
 | Repo | git clone (ms) | ziggit clone (ms) | git total (ms) | ziggit total (ms) | Speedup |
 |------|---------------:|------------------:|---------------:|-------------------:|--------:|
-| debug | 118 | 73 | 120 | 76 | **1.57x** |
-| node-semver | 134 | 86 | 136 | 88 | **1.54x** |
-| chalk | 140 | 86 | 142 | 89 | **1.59x** |
-| is | 132 | 93 | 134 | 96 | **1.39x** |
-| express | 174 | 120 | 176 | 123 | **1.43x** |
-| **Total** | **698** | **458** | **708** | **472** | **1.50x** |
+| debug | 123 | 66 | 125 | 68 | **1.83x** |
+| node-semver | 139 | 79 | 141 | 82 | **1.71x** |
+| chalk | 144 | 81 | 145 | 83 | **1.74x** |
+| is | 127 | 82 | 129 | 84 | **1.53x** |
+| express | 160 | 116 | 162 | 119 | **1.36x** |
+| **Total** | **693** | **424** | **702** | **436** | **1.61x** |
 
-**Average per repo: 142ms (git) → 94ms (ziggit), saving ~47ms per dependency.**
+**Average per repo: 140ms (git) → 87ms (ziggit), saving ~53ms per dependency.**
 
 ---
 
@@ -107,26 +105,26 @@ Using `git_vs_ziggit` benchmark binary against `octocat/Hello-World`:
 
 | Operation | ziggit (ms) | git CLI (ms) | Speedup |
 |-----------|------------:|-------------:|--------:|
-| clone (bare) | 58.20 | 100.11 | **1.72x** |
-| fetch | 59.50 | 87.72 | **1.47x** |
+| clone (bare) | 58.65 | 96.51 | **1.65x** |
+| fetch | 51.90 | 90.79 | **1.75x** |
 
 ### Local Operations (100 iterations)
 
 | Operation | ziggit (ms) | git CLI (ms) | Speedup |
 |-----------|------------:|-------------:|--------:|
-| revParseHead | 0.053 | 0.952 | **17.96x** |
-| findCommit | 0.053 | 1.132 | **21.37x** |
-| describeTags | 0.051 | 1.126 | **21.93x** |
+| revParseHead | 0.054 | 0.977 | **18.04x** |
+| findCommit | 0.056 | 1.170 | **21.07x** |
+| describeTags | 0.058 | 1.204 | **20.88x** |
 
 ### findCommit Micro-Benchmark (1000 iterations)
 
 ```
 repo: /tmp/hello-world-bare
 ref: HEAD → 7fd1a60b01f91b314f59955a4e4d4e80d8edf11d
-total: 5.02ms  per_call: 5.0µs
+total: 5.39ms  per_call: 5.4µs
 ```
 
-**Key insight:** Local git operations are dominated by process spawn overhead (~1ms). Ziggit as an in-process library eliminates this entirely, achieving **~5µs per findCommit** vs **~1.1ms for git CLI** — a **220x** improvement at the raw call level.
+**Key insight:** Local git operations are dominated by process spawn overhead (~1ms). Ziggit as an in-process library eliminates this entirely, achieving **~5.4µs per findCommit** vs **~1.17ms for git CLI** — a **217x** improvement at the raw call level.
 
 ---
 
@@ -135,11 +133,11 @@ total: 5.02ms  per_call: 5.0µs
 ### Where Time Goes in `bun install` with Git Dependencies
 
 ```
-Stock bun install (cold, 366ms):
-├── Git dep resolution: ~200-300ms (clone + resolve per dep)
+Stock bun install (cold, 492ms):
+├── Git dep resolution: ~250-350ms (clone + resolve per dep)
 │   ├── Network fetch:     ~85% of git time
 │   └── Local resolve:     ~15% of git time
-├── NPM registry resolve:  ~50-100ms
+├── NPM registry resolve:  ~80-120ms
 ├── Extraction + linking:   ~30-50ms
 └── Lockfile write:         ~5-10ms
 ```
@@ -148,10 +146,10 @@ Stock bun install (cold, 366ms):
 
 | Scenario | Current | With Ziggit | Improvement |
 |----------|--------:|------------:|------------:|
-| Cold install (5 git deps) | 366ms | ~130ms | **64% faster on git ops** |
-| Cold install (10 git deps) | ~600ms | ~250ms | **~58% faster** |
+| Cold install (5 git deps) | 492ms | ~226ms | **54% faster on git ops** |
+| Cold install (10 git deps) | ~800ms | ~500ms | **~38% faster** |
 | Warm install (cached) | 21ms | ~15ms | **~29% faster** |
-| Per-dep local resolve | ~1.1ms | ~0.05ms | **22x faster** |
+| Per-dep local resolve | ~1.2ms | ~0.055ms | **21x faster** |
 
 ### Why Ziggit Is Faster
 
@@ -163,13 +161,13 @@ Stock bun install (cold, 366ms):
 ### For a Real-World Project (e.g., 20 git dependencies)
 
 ```
-Current (git CLI):  20 × 142ms = ~2.84s on git ops alone
-With ziggit:        20 × 94ms  = ~1.88s on git ops
-Savings:            ~960ms (33.8% of total install time)
+Current (git CLI):  20 × 140ms = ~2.80s on git ops alone
+With ziggit:        20 × 87ms  = ~1.74s on git ops
+Savings:            ~1060ms (37.9% of total install time)
 
 Local operations (resolve, findCommit, etc.):
 Current:            20 × ~3ms  = ~60ms   (multiple git CLI calls per dep)
-With ziggit:        20 × ~0.15ms = ~3ms
+With ziggit:        20 × ~0.17ms = ~3.4ms
 Savings:            ~57ms
 ```
 

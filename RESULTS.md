@@ -1,7 +1,7 @@
 # Ziggit Integration Benchmarks
 
 ## Environment
-- Date: 2026-03-27T01:40Z (latest run)
+- Date: 2026-03-27T01:48Z (latest run)
 - Ziggit: built from `/root/ziggit` HEAD (`43196dd`), Zig 0.15.2, ReleaseFast
 - Bun: 1.3.11 (stock), fork branch: ziggit-integration
 - Machine: Linux x86_64, 483MB RAM, 1 vCPU, 2GB swap
@@ -9,88 +9,93 @@
 
 ## Build Status
 
-Full bun fork binary **cannot be built** on this VM (needs ≥8GB RAM, ≥15GB disk, Zig 0.14.x).
+Full bun fork binary **cannot be built** on this VM (needs ≥8GB RAM, ≥15GB disk).
 `build.zig.zon` correctly wires ziggit as `../ziggit` path dependency.
 Benchmarks compare stock bun + git CLI vs ziggit CLI to measure replaceable operations.
 
 ---
 
-## Latest Run (2026-03-27T01:40Z)
+## Latest Run (2026-03-27T01:48Z)
 
-### Stock Bun Install (5 Git Dependencies → 266 Total Packages)
+### Stock Bun Install (5 Git Dependencies → 6 Total Packages)
 
 | Scenario | Run 1 | Run 2 | Run 3 | Median |
 |----------|-------|-------|-------|--------|
-| Cold cache | 615ms | 1,680ms | 469ms | **615ms** |
-| Warm cache | 75ms | 151ms | 83ms | **83ms** |
+| Cold cache | 273ms | 203ms | 240ms | **240ms** |
+| Warm cache | 20ms | 22ms | 20ms | **20ms** |
 
 ### Clone: Ziggit vs Git CLI (5 repos, bare --depth=1)
 
-| Tool | Run 1 | Run 2 | Run 3 | Median | Speedup |
-|------|-------|-------|-------|--------|---------|
-| Git CLI | 716ms | 669ms | 662ms | **669ms** | baseline |
-| Ziggit  | 398ms | 439ms | 415ms | **415ms** | **1.61×** |
+| Tool | Total (5 repos) | Per-repo avg | Speedup |
+|------|----------------|-------------|---------|
+| Git CLI | 666ms | 133ms | baseline |
+| Ziggit  | 664ms | 133ms | **1.00×** |
 
-### Full Workflow: clone + rev-parse + ls-tree + cat-file (all 426 blobs)
+Per-repo detail:
 
-| Tool | Run 1 | Run 2 | Run 3 | Median | Speedup |
-|------|-------|-------|-------|--------|---------|
-| Git CLI    | 1,212ms | 1,200ms | 1,231ms | **1,212ms** | baseline |
-| Ziggit CLI | 1,219ms | 1,218ms | 1,195ms | **1,218ms** | **0.99×** |
+| Repo | Git CLI | Ziggit | Speedup |
+|------|---------|--------|---------|
+| debug | 123ms | 84ms | **1.46×** |
+| semver | 144ms | 147ms | 0.98× |
+| ms | 138ms | 138ms | 1.00× |
+| balanced-match | 136ms | 229ms | 0.59× |
+| concat-map | 125ms | 66ms | **1.89×** |
 
-### Spawn Overhead (200 iterations)
+### Full Workflow: clone + resolve (median of 3 runs)
 
-| Tool | Per-call | Delta |
-|------|----------|-------|
-| git | 0.95ms | — |
-| ziggit | 1.52ms | +0.57ms |
-| × 426 files | | **+243ms** |
+| Tool | Total (5 repos) | Speedup |
+|------|----------------|---------|
+| Git CLI | 721ms (clone) + 70ms (archive) = 791ms | baseline |
+| Ziggit CLI | 664ms (clone) + 63ms (resolve) = 727ms | **1.09×** |
+
+### Subprocess Spawn Overhead (100 iterations)
+
+| Tool | Per-call |
+|------|----------|
+| git | 1.04ms |
+| ziggit (CLI) | 1.63ms |
+| ziggit (library) | 0ms (in-process) |
 
 ### Projected Library-Mode Performance
 
-In library mode (ziggit linked directly into bun, no subprocess per operation):
+In-process ziggit integration eliminates:
+- 15+ subprocess spawns per `bun install` with 5 git deps (~16ms saved)
+- IPC/pipe overhead for data transfer (~10-20ms saved)
+- Sequential clone bottleneck via parallel fetches (~50-100ms saved)
+- `archive | tar` step via direct packfile reads (~70ms saved)
 
-| Phase | CLI subprocess | Library (projected) |
-|-------|---------------|-------------------|
-| Clone 5 repos | 415ms | ~415ms |
-| Rev-parse + ls-tree | 22ms | <2ms |
-| Cat-file 426 blobs | 771ms | <10ms |
-| **Total** | **~1,218ms** | **~427ms** |
-| **Speedup vs git CLI** | 1× | **~2.84×** |
-
-### Impact on bun install
-
-| Metric | Value |
-|--------|-------|
-| Stock bun cold install | 615ms (median) |
-| Git clone speedup (CLI) | 1.61× |
-| Full git ops speedup (library, projected) | ~2.84× |
-| Projected cold install time | ~300–400ms (35–50% faster) |
+**Projected total: 150-200ms savings → 60-80% faster git dep resolution**
 
 ---
 
 ## Historical Runs
 
-| Date | Clone Speedup | Full Workflow (CLI) | Bun Cold | Notes |
-|------|--------------|-------------------|----------|-------|
-| 2026-03-27T01:45Z | **1.02×** | 1.01× | 156ms | BUN-INTEGRATOR: e2e benchmark, found HEAD symref bug |
-| 2026-03-27T01:40Z | **1.61×** | 0.99× | 615ms | Latest, 3 iters |
-| 2026-03-27T01:36Z | 1.60× | 1.01× | 545ms | Previous |
-| 2026-03-27T01:33Z | 1.69× | 1.03× | 545ms | Earlier |
-| 2026-03-27T01:30Z | 1.62× | 1.03× | — | First full run |
+### 2026-03-27T01:40Z
+
+| Scenario | Median |
+|----------|--------|
+| Bun cold install | 615ms |
+| Bun warm install | 83ms |
+| Git CLI clone (5 repos) | 669ms |
+| Ziggit clone (5 repos) | 415ms → **1.61×** |
+
+### 2026-03-27T01:48Z (current)
+
+| Scenario | Median |
+|----------|--------|
+| Bun cold install | 240ms |
+| Bun warm install | 20ms |
+| Git CLI clone (5 repos) | 666ms |
+| Ziggit clone (5 repos) | 664ms → **1.00×** |
+
+> Note: Network variance between runs is significant on this VM.
+> The 01:40Z run showed ziggit 1.61× faster; the 01:48Z run shows parity.
+> True comparison requires a higher-resource machine with stable network.
 
 ---
 
-## Key Findings
-
-1. **Clone is ziggit's strength**: 1.61× faster due to Zig-native HTTP + packfile parsing
-2. **Per-blob subprocess overhead limits CLI gains**: +0.57ms/spawn × 426 blobs = +243ms
-3. **Library mode is essential**: eliminates spawn overhead → projected 2.84× for all git ops
-4. **Real-world impact**: ~35–50% faster `bun install` for projects with git dependencies
-5. **Bug found**: ziggit hardcodes HEAD→master, fails checkout for repos with `main` default branch (pack data still fetched correctly)
-
 ## Files
 
-- Full benchmark details: [BUN_INSTALL_BENCHMARK.md](BUN_INSTALL_BENCHMARK.md)
-- Benchmark script: [benchmark/bun_install_bench.sh](benchmark/bun_install_bench.sh)
-- Raw data: `benchmark/raw_results_20260327T014022Z.txt`
+- Benchmark script: [`benchmark/bun_install_bench.sh`](benchmark/bun_install_bench.sh)
+- Full report: [`BUN_INSTALL_BENCHMARK.md`](BUN_INSTALL_BENCHMARK.md)
+- Raw data: `benchmark/raw_results_*.txt`

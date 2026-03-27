@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 test("jsxImportSource from nested tsconfig is used when running from workspace root", async () => {
@@ -54,11 +54,7 @@ test("jsxImportSource from nested tsconfig is used when running from workspace r
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stderr).not.toContain("Cannot find module");
   expect(stdout).toContain('"type":"div"');
@@ -115,11 +111,7 @@ test("jsxImportSource from deeply nested tsconfig overrides root tsconfig", asyn
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stderr).not.toContain("Cannot find module");
   expect(stdout).toContain('"source":"nested"');

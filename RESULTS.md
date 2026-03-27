@@ -105,13 +105,26 @@ Zig runtime startup. When compiled into bun as a native module, this becomes ~0Î
 | Date | Git CLI (5-repo seq) | Ziggit (5-repo seq) | Speedup |
 |------|---------------------:|--------------------:|--------:|
 | 2026-03-27T02:32Z | 577ms | 491ms | 14% |
-| **2026-03-27T02:33Z** | **589ms** | **487ms** | **17%** |
+| 2026-03-27T02:33Z | 589ms | 487ms | 17% |
+| **2026-03-27T02:35Z** | **586ms** | **490ms** | **16%** |
 
 Results are consistent across runs. Variance is primarily due to network latency.
+
+### Full Workflow (clone + resolve + checkout)
+
+| Date | Git CLI | Ziggit | Savings |
+|------|--------:|-------:|--------:|
+| **2026-03-27T02:35Z** | **683ms** | **515ms** | **168ms (24%)** |
+
+### Bun Install (stock baseline)
+
+| Date | Cold (avg) | Warm (avg) |
+|------|----------:|----------:|
+| **2026-03-27T02:35Z** | **252ms** | **74ms** |
 
 ---
 
 ## Raw Data Location
 
 All raw timing data saved in `benchmark/raw_results_*.txt`.
-Latest: `benchmark/raw_results_20260327T023346Z.txt`
+Latest: `benchmark/raw_results_20260327T023521Z.txt`

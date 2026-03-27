@@ -1,6 +1,6 @@
 # Bun Install Benchmark: Stock Bun vs Ziggit Integration
 
-**Date:** 2026-03-27T02:33:54Z
+**Date:** 2026-03-27T02:35:30Z
 **Machine:** 1 CPU, 483MB RAM, x86_64
 **Stock Bun:** 1.3.11
 **Ziggit:** b1d2497
@@ -12,7 +12,7 @@ The bun fork with ziggit integration eliminates git CLI subprocess spawning for
 `bun install` git dependencies. When integrated as a native Zig module, ziggit
 operations are direct function calls — zero fork/exec overhead.
 
-**Key finding:** Ziggit clone+resolve workflow is **17% faster** than git CLI
+**Key finding:** Ziggit clone+resolve workflow is **16% faster** than git CLI
 for the sequential 5-repo workflow that simulates `bun install` git dependency resolution.
 
 ## 1. Stock Bun Install (baseline)
@@ -21,10 +21,10 @@ Full `bun install` with 5 GitHub git dependencies:
 
 | Run | Cold (no cache) | Warm (cached) |
 |-----|-----------------|---------------|
-| 1   | 159ms | 46ms |
-| 2   | 204ms | 45ms |
-| 3   | 105ms | 49ms |
-| **Avg** | **156ms** | **46ms** |
+| 1   | 275ms | 122ms |
+| 2   | 293ms | 55ms |
+| 3   | 188ms | 46ms |
+| **Avg** | **252ms** | **74ms** |
 
 Dependencies: `debug`, `semver`, `ms`, `supports-color`, `has-flag` (all `github:` specifiers)
 
@@ -34,11 +34,11 @@ Dependencies: `debug`, `semver`, `ms`, `supports-color`, `has-flag` (all `github
 
 | Repo | Git CLI | Ziggit | Delta |
 |------|---------|--------|-------|
-| debug | 125ms | 79ms | 46ms (36%) |
-| semver | 127ms | 143ms | -16ms (-12%) |
-| ms | 124ms | 124ms | 0ms (0%) |
-| supports-color | 118ms | 76ms | 42ms (35%) |
-| has-flag | 119ms | 55ms | 64ms (53%) |
+| debug | 119ms | 79ms | 40ms (33%) |
+| semver | 133ms | 137ms | -4ms (-3%) |
+| ms | 128ms | 126ms | 2ms (1%) |
+| supports-color | 118ms | 68ms | 50ms (42%) |
+| has-flag | 111ms | 50ms | 61ms (54%) |
 
 ### Rev-parse HEAD (average of 3 runs)
 
@@ -64,9 +64,9 @@ Dependencies: `debug`, `semver`, `ms`, `supports-color`, `has-flag` (all `github
 
 | Tool | Total |
 |------|-------|
-| Git CLI | 687ms |
-| Ziggit | 532ms |
-| **Savings** | **155ms (22%)** |
+| Git CLI | 683ms |
+| Ziggit | 515ms |
+| **Savings** | **168ms (24%)** |
 
 ## 3. Sequential Workflow (5 repos: bare clone + rev-parse)
 
@@ -74,12 +74,12 @@ Simulates what `bun install` does for each git dependency: bare clone → resolv
 
 | Run | Git CLI | Ziggit |
 |-----|---------|--------|
-| 1   | 573ms | 491ms |
-| 2   | 595ms | 508ms |
-| 3   | 599ms | 462ms |
-| **Avg** | **589ms** | **487ms** |
+| 1   | 589ms | 492ms |
+| 2   | 590ms | 502ms |
+| 3   | 579ms | 477ms |
+| **Avg** | **586ms** | **490ms** |
 
-**Speedup: 17%**
+**Speedup: 16%**
 
 ## 4. Process Spawn Overhead (100× rev-parse)
 
@@ -88,7 +88,7 @@ Isolates the per-operation overhead of subprocess spawning:
 | Tool | 100× rev-parse | Per-call |
 |------|----------------|----------|
 | Git CLI | 131ms | 1ms |
-| Ziggit (CLI) | 188ms | 1ms |
+| Ziggit (CLI) | 187ms | 1ms |
 
 > **Note:** When ziggit is compiled into bun as a native Zig module, rev-parse is
 > a direct function call (~0.001ms) with zero process spawn overhead. The CLI
@@ -96,14 +96,14 @@ Isolates the per-operation overhead of subprocess spawning:
 
 ## 5. Projected Impact on `bun install`
 
-Stock bun cold install: **156ms** for 5 git deps.
-Git clone+resolve portion: ~**589ms**.
+Stock bun cold install: **252ms** for 5 git deps.
+Git clone+resolve portion: ~**586ms**.
 
 With ziggit integration:
-- Clone+resolve workflow: **589ms** → **487ms** (17% faster)
-- Full workflow (incl checkout): **687ms** → **532ms**
+- Clone+resolve workflow: **586ms** → **490ms** (16% faster)
+- Full workflow (incl checkout): **683ms** → **515ms**
 - **Additional in-process savings:** zero fork/exec overhead (~3-5ms per git operation)
-- **Projected bun install cold:** ~54ms
+- **Projected bun install cold:** ~156ms
 
 ## 6. Build Requirements for Full Bun Fork Binary
 
@@ -125,4 +125,4 @@ The integration is a `build.zig.zon` path dependency:
 - Timing: `date +%s%N` (nanosecond precision, reported in ms)
 - All network operations hit GitHub (results include network latency)
 - VM: 1 CPU, 483MB RAM — constrained CI representative
-- Raw data saved to: `benchmark/raw_results_20260327T023346Z.txt`
+- Raw data saved to: `benchmark/raw_results_20260327T023521Z.txt`

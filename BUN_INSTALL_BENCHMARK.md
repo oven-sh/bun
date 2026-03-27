@@ -1,6 +1,6 @@
 # Bun Install Benchmark: Stock Bun vs Ziggit Integration
 
-**Date:** 2026-03-27T02:36:55Z
+**Date:** 2026-03-27T02:38:17Z
 **Machine:** 1 CPU, 483MB RAM, x86_64
 **Stock Bun:** 1.3.11
 **Ziggit:** b1d2497
@@ -12,7 +12,7 @@ The bun fork with ziggit integration eliminates git CLI subprocess spawning for
 `bun install` git dependencies. When integrated as a native Zig module, ziggit
 operations are direct function calls — zero fork/exec overhead.
 
-**Key finding:** Ziggit clone+resolve workflow is **15% faster** than git CLI
+**Key finding:** Ziggit clone+resolve workflow is **19% faster** than git CLI
 for the sequential 5-repo workflow that simulates `bun install` git dependency resolution.
 
 ## 1. Stock Bun Install (baseline)
@@ -21,10 +21,10 @@ Full `bun install` with 5 GitHub git dependencies:
 
 | Run | Cold (no cache) | Warm (cached) |
 |-----|-----------------|---------------|
-| 1   | 176ms | 46ms |
-| 2   | 201ms | 152ms |
-| 3   | 103ms | 68ms |
-| **Avg** | **160ms** | **88ms** |
+| 1   | 278ms | 53ms |
+| 2   | 312ms | 45ms |
+| 3   | 304ms | 50ms |
+| **Avg** | **298ms** | **49ms** |
 
 Dependencies: `debug`, `semver`, `ms`, `supports-color`, `has-flag` (all `github:` specifiers)
 
@@ -34,11 +34,11 @@ Dependencies: `debug`, `semver`, `ms`, `supports-color`, `has-flag` (all `github
 
 | Repo | Git CLI | Ziggit | Delta |
 |------|---------|--------|-------|
-| debug | 118ms | 79ms | 39ms (33%) |
-| semver | 129ms | 140ms | -11ms (-8%) |
-| ms | 133ms | 131ms | 2ms (1%) |
-| supports-color | 115ms | 71ms | 44ms (38%) |
-| has-flag | 113ms | 53ms | 60ms (53%) |
+| debug | 113ms | 73ms | 40ms (35%) |
+| semver | 128ms | 138ms | -10ms (-7%) |
+| ms | 122ms | 125ms | -3ms (-2%) |
+| supports-color | 115ms | 70ms | 45ms (39%) |
+| has-flag | 109ms | 55ms | 54ms (49%) |
 
 ### Rev-parse HEAD (average of 3 runs)
 
@@ -54,9 +54,9 @@ Dependencies: `debug`, `semver`, `ms`, `supports-color`, `has-flag` (all `github
 
 | Repo | Git CLI | Ziggit | Delta |
 |------|---------|--------|-------|
-| debug | 11ms | 9ms | 2ms |
-| semver | 18ms | 9ms | 9ms |
-| ms | 13ms | 7ms | 6ms |
+| debug | 12ms | 9ms | 3ms |
+| semver | 19ms | 9ms | 10ms |
+| ms | 14ms | 7ms | 7ms |
 | supports-color | 11ms | 8ms | 3ms |
 | has-flag | 11ms | 8ms | 3ms |
 
@@ -64,9 +64,9 @@ Dependencies: `debug`, `semver`, `ms`, `supports-color`, `has-flag` (all `github
 
 | Tool | Total |
 |------|-------|
-| Git CLI | 682ms |
-| Ziggit | 530ms |
-| **Savings** | **152ms (22%)** |
+| Git CLI | 664ms |
+| Ziggit | 517ms |
+| **Savings** | **147ms (22%)** |
 
 ## 3. Sequential Workflow (5 repos: bare clone + rev-parse)
 
@@ -74,12 +74,12 @@ Simulates what `bun install` does for each git dependency: bare clone → resolv
 
 | Run | Git CLI | Ziggit |
 |-----|---------|--------|
-| 1   | 566ms | 491ms |
-| 2   | 568ms | 486ms |
-| 3   | 599ms | 482ms |
-| **Avg** | **577ms** | **486ms** |
+| 1   | 576ms | 494ms |
+| 2   | 606ms | 497ms |
+| 3   | 597ms | 447ms |
+| **Avg** | **593ms** | **479ms** |
 
-**Speedup: 15%**
+**Speedup: 19%**
 
 ## 4. Process Spawn Overhead (100× rev-parse)
 
@@ -87,8 +87,8 @@ Isolates the per-operation overhead of subprocess spawning:
 
 | Tool | 100× rev-parse | Per-call |
 |------|----------------|----------|
-| Git CLI | 132ms | 1ms |
-| Ziggit (CLI) | 189ms | 1ms |
+| Git CLI | 137ms | 1ms |
+| Ziggit (CLI) | 198ms | 1ms |
 
 > **Note:** When ziggit is compiled into bun as a native Zig module, rev-parse is
 > a direct function call (~0.001ms) with zero process spawn overhead. The CLI
@@ -96,14 +96,14 @@ Isolates the per-operation overhead of subprocess spawning:
 
 ## 5. Projected Impact on `bun install`
 
-Stock bun cold install: **160ms** for 5 git deps.
-Git clone+resolve portion: ~**577ms**.
+Stock bun cold install: **298ms** for 5 git deps.
+Git clone+resolve portion: ~**593ms**.
 
 With ziggit integration:
-- Clone+resolve workflow: **577ms** → **486ms** (15% faster)
-- Full workflow (incl checkout): **682ms** → **530ms**
+- Clone+resolve workflow: **593ms** → **479ms** (19% faster)
+- Full workflow (incl checkout): **664ms** → **517ms**
 - **Additional in-process savings:** zero fork/exec overhead (~3-5ms per git operation)
-- **Projected bun install cold:** ~69ms
+- **Projected bun install cold:** ~184ms
 
 ## 6. Build Requirements for Full Bun Fork Binary
 
@@ -125,4 +125,4 @@ The integration is a `build.zig.zon` path dependency:
 - Timing: `date +%s%N` (nanosecond precision, reported in ms)
 - All network operations hit GitHub (results include network latency)
 - VM: 1 CPU, 483MB RAM — constrained CI representative
-- Raw data saved to: `benchmark/raw_results_20260327T023647Z.txt`
+- Raw data saved to: `benchmark/raw_results_20260327T023808Z.txt`

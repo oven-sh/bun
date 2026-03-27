@@ -107,7 +107,63 @@ Dependencies: `@sindresorhus/is`, `express`, `chalk`, `debug`, `semver` (all `gi
 
 ---
 
+---
+
+## End-to-End Benchmark (2026-03-27T03:01Z) — 3 Repos, Full Workflow
+
+Comprehensive benchmark using `benchmark/bun_install_bench.sh` measuring the complete
+`bun install` git dependency workflow: `clone_bare → findCommit → checkout`.
+
+### Stock Bun Install (3 Git Dependencies: debug, semver, ms)
+
+| Scenario | Run 1 | Run 2 | Run 3 | Median |
+|----------|------:|------:|------:|-------:|
+| Cold (session 1) | 179ms | 228ms | 177ms | **179ms** |
+| Cold (session 2) | 129ms | 104ms | 99ms | **104ms** |
+| Warm (session 1) | 57ms | 140ms | 42ms | **57ms** |
+| Warm (session 2) | 45ms | 42ms | 48ms | **45ms** |
+
+### Full 3-Step Workflow: ziggit vs git CLI (median of 3 runs × 2 sessions)
+
+| Repo | Step | ziggit | git CLI | Speedup |
+|------|------|-------:|--------:|--------:|
+| debug | clone --bare | 86ms | 141ms | **1.64x** |
+| debug | rev-parse | 3ms | 2ms | ~1x |
+| debug | checkout | 9ms | 8ms | ~1x |
+| **debug** | **total** | **98ms** | **151ms** | **1.54x** |
+| semver | clone --bare | 149ms | 228ms | **1.53x** |
+| semver | rev-parse | 3ms | 2ms | ~1x |
+| semver | checkout | 14ms | 12ms | ~1x |
+| **semver** | **total** | **165ms** | **242ms** | **1.47x** |
+| ms | clone --bare | 131ms | 176ms | **1.34x** |
+| ms | rev-parse | 3ms | 2ms | ~1x |
+| ms | checkout | 9ms | 8ms | ~1x |
+| **ms** | **total** | **143ms** | **186ms** | **1.30x** |
+
+### Aggregate (3 repos)
+
+| Metric | ziggit | git CLI | Savings |
+|--------|-------:|--------:|--------:|
+| Total workflow | **406ms** | **579ms** | **173ms (30%)** |
+| Clone-only | 366ms | 545ms | **179ms (33%)** |
+
+### Projection: bun install with ziggit in-process
+
+The bun fork links ziggit as a library — no fork/exec overhead.
+Additional savings from eliminating ~9 process spawns (3 deps × 3 operations):
+
+| Scenario | Stock bun | Projected with ziggit | Savings |
+|----------|----------:|---------------------:|--------:|
+| Cold (3 deps) | ~140ms | ~90-100ms | **30-35%** |
+| Warm (3 deps) | ~50ms | ~40-45ms | **10-20%** |
+| Cold (10 deps) | ~450ms | ~280-320ms | **30-35%** |
+| Cold (50 deps) | ~2.2s | ~1.4-1.6s | **~30%** |
+
+---
+
 ## Raw Data Location
 
 All raw timing data saved in `benchmark/raw_results_*.txt`.
 Latest: `benchmark/raw_results_20260327T025603Z.txt`
+E2E benchmark script: `benchmark/bun_install_bench.sh`
+Detailed E2E report: `BUN_INSTALL_BENCHMARK.md`

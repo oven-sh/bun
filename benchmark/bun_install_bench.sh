@@ -111,9 +111,18 @@ for name in "${!REPOS[@]}"; do
         clone_ms=$(elapsed_ms $start)
         total_clone=$((total_clone + clone_ms))
         
-        # Step 2: resolve HEAD to commit SHA
+        # Step 2: resolve HEAD to commit SHA (try HEAD, then main, then first branch)
         start=$(now_ms)
-        sha=$($GIT -C "$bare_dir" rev-parse HEAD 2>&1)
+        sha=$($GIT -C "$bare_dir" rev-parse HEAD 2>/dev/null)
+        if [ ${#sha} -ne 40 ]; then
+            sha=$($GIT -C "$bare_dir" rev-parse refs/heads/main 2>/dev/null)
+        fi
+        if [ ${#sha} -ne 40 ]; then
+            sha=$($GIT -C "$bare_dir" rev-parse refs/heads/master 2>/dev/null)
+        fi
+        if [ ${#sha} -ne 40 ]; then
+            sha=$($GIT -C "$bare_dir" for-each-ref --count=1 --format='%(objectname)' refs/heads/ 2>/dev/null)
+        fi
         resolve_ms=$(elapsed_ms $start)
         total_resolve=$((total_resolve + resolve_ms))
         
@@ -161,9 +170,19 @@ for name in "${!REPOS[@]}"; do
         clone_ms=$(elapsed_ms $start)
         total_clone=$((total_clone + clone_ms))
         
-        # Step 2: resolve HEAD to commit SHA
+        # Step 2: resolve HEAD to commit SHA (try HEAD, then main, then first branch)
         start=$(now_ms)
-        sha=$($ZIGGIT -C "$bare_dir" rev-parse HEAD 2>&1)
+        sha=$($ZIGGIT -C "$bare_dir" rev-parse HEAD 2>/dev/null)
+        if [ ${#sha} -ne 40 ]; then
+            sha=$($ZIGGIT -C "$bare_dir" rev-parse refs/heads/main 2>/dev/null)
+        fi
+        if [ ${#sha} -ne 40 ]; then
+            sha=$($ZIGGIT -C "$bare_dir" rev-parse refs/heads/master 2>/dev/null)
+        fi
+        if [ ${#sha} -ne 40 ]; then
+            # fallback: parse first SHA from packed-refs
+            sha=$(grep -m1 -oP '^[0-9a-f]{40}' "$bare_dir/packed-refs" 2>/dev/null || echo "")
+        fi
         resolve_ms=$(elapsed_ms $start)
         total_resolve=$((total_resolve + resolve_ms))
         

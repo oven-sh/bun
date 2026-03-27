@@ -3,46 +3,42 @@
 # Compares stock bun (git CLI subprocess) vs ziggit library integration
 #
 # Usage: ./bun_install_bench.sh [output_file]
-# Default output: raw_results_$(date -u +%Y%m%dT%H%M%SZ).txt
+# Requirements: bun v1.3.11+ at /root/.bun/bin/bun, lib_bench built
+#
+# What this does:
+# 1. Runs stock `bun install` with 5 GitHub git deps (cold + warm cache)
+# 2. Runs lib_bench (ziggit library vs git CLI subprocess) for each repo
+# 3. Outputs a combined report
 
 set -euo pipefail
 
-OUTPUT="${1:-raw_results_$(date -u +%Y%m%dT%H%M%SZ).txt}"
-BENCH_DIR="$(cd "$(dirname "$0")" && pwd)"
-BENCH_BIN="$BENCH_DIR/zig-out/bin/lib_bench"
+OUTFILE="${1:-/tmp/bun_install_bench_$(date -u +%Y%m%dT%H%M%SZ).txt}"
+BENCH="$(dirname "$0")/zig-out/bin/lib_bench"
 BUN="/root/.bun/bin/bun"
-ITERS=20
-RUNS=3
-
-# Repos to benchmark (name:github_path)
-REPOS=(
-    "debug:debug-js/debug"
-    "chalk:chalk/chalk"
-    "is:sindresorhus/is"
-    "node-semver:npm/node-semver"
-)
-
-BARE_DIR="/tmp/bench-bare-repos"
+REPOS_DIR="/tmp/bench-repos"
 PROJECT_DIR="/tmp/bench-project"
 
-exec > >(tee "$BENCH_DIR/$OUTPUT") 2>&1
+echo "=== Bun Install Benchmark — $(date -u) ===" | tee "$OUTFILE"
+echo "" | tee -a "$OUTFILE"
 
-echo "========================================="
-echo "BUN INSTALL BENCHMARK — $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-echo "========================================="
-echo "System: $(uname -srm), $(free -h | awk '/Mem:/{print $2}') RAM"
-echo "Stock bun: $($BUN --version)"
-echo "Zig: $(zig version)"
-echo "Git: $(git --version)"
-echo ""
+# --- Step 1: Prepare bare repos ---
+echo "--- Preparing bare repos ---" | tee -a "$OUTFILE"
+mkdir -p "$REPOS_DIR"
+for spec in "debug-js/debug" "chalk/chalk" "sindresorhus/is" "npm/node-semver" "expressjs/express"; do
+    name=$(basename "$spec")
+    dir="${REPOS_DIR}/${name}.git"
+    if [ ! -d "$dir" ]; then
+        echo "  Cloning $spec..."
+        git clone --bare "https://github.com/${spec}.git" "$dir" 2>&1
+    fi
+    echo "  $name: $(du -sh "$dir" | cut -f1)" | tee -a "$OUTFILE"
+done
+echo "" | tee -a "$OUTFILE"
 
-# ---- Phase 1: Stock bun install ----
-echo "============================================"
-echo "PHASE 1: Stock bun install (5 git deps)"
-echo "============================================"
-
+# --- Step 2: Stock bun install benchmarks ---
+echo "--- Stock bun install (cold cache, 3 runs) ---" | tee -a "$OUTFILE"
 mkdir -p "$PROJECT_DIR"
-cat > "$PROJECT_DIR/package.json" <<EOF
+cat > "$PROJECT_DIR/package.json" << 'EOF'
 {
   "name": "ziggit-bench",
   "dependencies": {
@@ -55,74 +51,45 @@ cat > "$PROJECT_DIR/package.json" <<EOF
 }
 EOF
 
-echo ""
-echo "--- Cold cache runs ---"
-for i in $(seq 1 $RUNS); do
+for i in 1 2 3; do
     cd "$PROJECT_DIR"
     rm -rf node_modules bun.lock
     rm -rf ~/.bun/install/cache
-    sync
-    echo "Run $i:"
-    { time $BUN install --no-progress 2>&1; } 2>&1
-    echo ""
+    echo "  Cold Run $i:" | tee -a "$OUTFILE"
+    { time "$BUN" install 2>&1; } 2>&1 | tee -a "$OUTFILE"
 done
 
-echo ""
-echo "--- Warm cache runs ---"
-# Ensure cache is warm
-cd "$PROJECT_DIR"
-rm -rf node_modules
-$BUN install --no-progress >/dev/null 2>&1
-
-for i in $(seq 1 $RUNS); do
+echo "" | tee -a "$OUTFILE"
+echo "--- Stock bun install (warm cache, 3 runs) ---" | tee -a "$OUTFILE"
+for i in 1 2 3; do
     cd "$PROJECT_DIR"
     rm -rf node_modules
-    sync
-    echo "Run $i:"
-    { time $BUN install --no-progress 2>&1; } 2>&1
-    echo ""
+    echo "  Warm Run $i:" | tee -a "$OUTFILE"
+    { time "$BUN" install 2>&1; } 2>&1 | tee -a "$OUTFILE"
 done
 
-# ---- Phase 2: Set up bare repos ----
-echo "============================================"
-echo "PHASE 2: Prepare bare repos"
-echo "============================================"
-mkdir -p "$BARE_DIR"
-for entry in "${REPOS[@]}"; do
-    name="${entry%%:*}"
-    path="${entry#*:}"
-    if [ ! -d "$BARE_DIR/$name.git" ]; then
-        echo "Cloning $path..."
-        git clone --bare --quiet "https://github.com/$path" "$BARE_DIR/$name.git"
-    else
-        echo "$name.git exists ($(du -sh "$BARE_DIR/$name.git" | cut -f1))"
-    fi
-done
-echo ""
+echo "" | tee -a "$OUTFILE"
 
-# ---- Phase 3: lib_bench per repo ----
-echo "============================================"
-echo "PHASE 3: Ziggit library vs git CLI"
-echo "============================================"
+# --- Step 3: Ziggit library vs git CLI per-repo ---
+echo "--- Ziggit library vs git CLI (per-repo, 3 runs each) ---" | tee -a "$OUTFILE"
 
-if [ ! -x "$BENCH_BIN" ]; then
-    echo "Building lib_bench..."
-    cd "$BENCH_DIR"
-    zig build -Doptimize=ReleaseFast 2>&1
+if [ ! -x "$BENCH" ]; then
+    echo "ERROR: lib_bench not found at $BENCH" | tee -a "$OUTFILE"
+    echo "Build it: cd $(dirname "$0") && zig build -Doptimize=ReleaseFast" | tee -a "$OUTFILE"
+    exit 1
 fi
 
-for entry in "${REPOS[@]}"; do
-    name="${entry%%:*}"
-    echo ""
-    echo "############### $name ($(du -sh "$BARE_DIR/$name.git" | cut -f1)) ###############"
-    for run in $(seq 1 $RUNS); do
-        echo "--- Run $run ---"
-        "$BENCH_BIN" "$BARE_DIR/$name.git" "$ITERS" 2>&1
-        echo ""
+for name in debug chalk is node-semver express; do
+    dir="${REPOS_DIR}/${name}.git"
+    iters=20
+    [ "$name" = "express" ] && iters=10
+
+    echo ">>> $name ($iters iters) <<<" | tee -a "$OUTFILE"
+    for run in 1 2 3; do
+        echo "  Run $run:" | tee -a "$OUTFILE"
+        "$BENCH" "$dir" "$iters" 2>&1 | tee -a "$OUTFILE"
     done
+    echo "" | tee -a "$OUTFILE"
 done
 
-echo ""
-echo "========================================="
-echo "BENCHMARK COMPLETE — $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-echo "========================================="
+echo "=== Done. Results in $OUTFILE ===" | tee -a "$OUTFILE"

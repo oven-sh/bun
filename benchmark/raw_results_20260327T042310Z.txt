@@ -1,0 +1,312 @@
+=== Session 23 — 20260327T042310Z ===
+
+>>> debug (20 iters) <<<
+--- Run 1 ---
+=== ZIGGIT LIBRARY vs GIT CLI BENCHMARK ===
+Bare repo: /tmp/bench-repos/debug.git
+Iterations: 20
+
+--- findCommit (rev-parse HEAD) ---
+  ziggit library: 167μs avg (3352μs total over 20 iterations)
+  git CLI spawn:  1094μs avg (21880μs total over 20 iterations)
+  speedup: 6.5x
+
+--- cloneBare (local bare clone) ---
+  ziggit library: 896μs avg (17935μs total over 20 iterations)
+  git CLI spawn:  4512μs avg (90256μs total over 20 iterations)
+  speedup: 5.0x
+
+--- Full bun-install workflow (cloneBare + findCommit + clone) ---
+  ziggit library: 1683μs avg (33677μs total over 20 iterations)
+  git CLI spawn:  11077μs avg (221545μs total over 20 iterations)
+  speedup: 6.5x
+
+--- Run 2 ---
+=== ZIGGIT LIBRARY vs GIT CLI BENCHMARK ===
+Bare repo: /tmp/bench-repos/debug.git
+Iterations: 20
+
+--- findCommit (rev-parse HEAD) ---
+  ziggit library: 173μs avg (3475μs total over 20 iterations)
+  git CLI spawn:  1038μs avg (20767μs total over 20 iterations)
+  speedup: 6.0x
+
+--- cloneBare (local bare clone) ---
+  ziggit library: 856μs avg (17138μs total over 20 iterations)
+  git CLI spawn:  4432μs avg (88644μs total over 20 iterations)
+  speedup: 5.1x
+
+--- Full bun-install workflow (cloneBare + findCommit + clone) ---
+  ziggit library: 1683μs avg (33668μs total over 20 iterations)
+  git CLI spawn:  11074μs avg (221494μs total over 20 iterations)
+  speedup: 6.5x
+
+--- Run 3 ---
+=== ZIGGIT LIBRARY vs GIT CLI BENCHMARK ===
+Bare repo: /tmp/bench-repos/debug.git
+Iterations: 20
+
+--- findCommit (rev-parse HEAD) ---
+  ziggit library: 175μs avg (3505μs total over 20 iterations)
+  git CLI spawn:  1045μs avg (20903μs total over 20 iterations)
+  speedup: 5.9x
+
+--- cloneBare (local bare clone) ---
+  ziggit library: 861μs avg (17231μs total over 20 iterations)
+  git CLI spawn:  4436μs avg (88729μs total over 20 iterations)
+  speedup: 5.1x
+
+--- Full bun-install workflow (cloneBare + findCommit + clone) ---
+  ziggit library: 1667μs avg (33352μs total over 20 iterations)
+  git CLI spawn:  11072μs avg (221458μs total over 20 iterations)
+  speedup: 6.6x
+
+
+>>> chalk (20 iters) <<<
+--- Run 1 ---
+=== ZIGGIT LIBRARY vs GIT CLI BENCHMARK ===
+Bare repo: /tmp/bench-repos/chalk.git
+Iterations: 20
+
+--- findCommit (rev-parse HEAD) ---
+  ziggit library: 145μs avg (2917μs total over 20 iterations)
+  git CLI spawn:  1052μs avg (21055μs total over 20 iterations)
+  speedup: 7.2x
+
+--- cloneBare (local bare clone) ---
+  ziggit library: 1258μs avg (25173μs total over 20 iterations)
+  git CLI spawn:  4035μs avg (80711μs total over 20 iterations)
+  speedup: 3.2x
+
+--- Full bun-install workflow (cloneBare + findCommit + clone) ---
+  ziggit library: 2642μs avg (52843μs total over 20 iterations)
+  git CLI spawn:  12197μs avg (243940μs total over 20 iterations)
+  speedup: 4.6x
+
+--- Run 2 ---
+=== ZIGGIT LIBRARY vs GIT CLI BENCHMARK ===
+Bare repo: /tmp/bench-repos/chalk.git
+Iterations: 20
+
+--- findCommit (rev-parse HEAD) ---
+  ziggit library: 147μs avg (2958μs total over 20 iterations)
+  git CLI spawn:  1060μs avg (21206μs total over 20 iterations)
+  speedup: 7.2x
+
+--- cloneBare (local bare clone) ---
+  ziggit library: 1259μs avg (25193μs total over 20 iterations)
+  git CLI spawn:  4077μs avg (81546μs total over 20 iterations)
+  speedup: 3.2x
+
+--- Full bun-install workflow (cloneBare + findCommit + clone) ---
+  ziggit library: 2620μs avg (52401μs total over 20 iterations)
+  git CLI spawn:  12178μs avg (243571μs total over 20 iterations)
+  speedup: 4.6x
+
+--- Run 3 ---
+=== ZIGGIT LIBRARY vs GIT CLI BENCHMARK ===
+Bare repo: /tmp/bench-repos/chalk.git
+Iterations: 20
+
+--- findCommit (rev-parse HEAD) ---
+  ziggit library: 147μs avg (2954μs total over 20 iterations)
+  git CLI spawn:  1057μs avg (21154μs total over 20 iterations)
+  speedup: 7.1x
+
+--- cloneBare (local bare clone) ---
+  ziggit library: 1313μs avg (26267μs total over 20 iterations)
+  git CLI spawn:  4077μs avg (81553μs total over 20 iterations)
+  speedup: 3.1x
+
+--- Full bun-install workflow (cloneBare + findCommit + clone) ---
+  ziggit library: 2620μs avg (52417μs total over 20 iterations)
+  git CLI spawn:  12265μs avg (245307μs total over 20 iterations)
+  speedup: 4.6x
+
+
+>>> is (20 iters) <<<
+--- Run 1 ---
+=== ZIGGIT LIBRARY vs GIT CLI BENCHMARK ===
+Bare repo: /tmp/bench-repos/is.git
+Iterations: 20
+
+--- findCommit (rev-parse HEAD) ---
+  ziggit library: 172μs avg (3454μs total over 20 iterations)
+  git CLI spawn:  1030μs avg (20600μs total over 20 iterations)
+  speedup: 5.9x
+
+--- cloneBare (local bare clone) ---
+  ziggit library: 1717μs avg (34344μs total over 20 iterations)
+  git CLI spawn:  4303μs avg (86077μs total over 20 iterations)
+  speedup: 2.5x
+
+--- Full bun-install workflow (cloneBare + findCommit + clone) ---
+  ziggit library: 3343μs avg (66865μs total over 20 iterations)
+  git CLI spawn:  12578μs avg (251564μs total over 20 iterations)
+  speedup: 3.7x
+
+--- Run 2 ---
+=== ZIGGIT LIBRARY vs GIT CLI BENCHMARK ===
+Bare repo: /tmp/bench-repos/is.git
+Iterations: 20
+
+--- findCommit (rev-parse HEAD) ---
+  ziggit library: 173μs avg (3463μs total over 20 iterations)
+  git CLI spawn:  1029μs avg (20598μs total over 20 iterations)
+  speedup: 5.9x
+
+--- cloneBare (local bare clone) ---
+  ziggit library: 1705μs avg (34105μs total over 20 iterations)
+  git CLI spawn:  4262μs avg (85243μs total over 20 iterations)
+  speedup: 2.4x
+
+--- Full bun-install workflow (cloneBare + findCommit + clone) ---
+  ziggit library: 3336μs avg (66724μs total over 20 iterations)
+  git CLI spawn:  12607μs avg (252144μs total over 20 iterations)
+  speedup: 3.7x
+
+--- Run 3 ---
+=== ZIGGIT LIBRARY vs GIT CLI BENCHMARK ===
+Bare repo: /tmp/bench-repos/is.git
+Iterations: 20
+
+--- findCommit (rev-parse HEAD) ---
+  ziggit library: 172μs avg (3447μs total over 20 iterations)
+  git CLI spawn:  1041μs avg (20835μs total over 20 iterations)
+  speedup: 6.0x
+
+--- cloneBare (local bare clone) ---
+  ziggit library: 1717μs avg (34358μs total over 20 iterations)
+  git CLI spawn:  4279μs avg (85581μs total over 20 iterations)
+  speedup: 2.4x
+
+--- Full bun-install workflow (cloneBare + findCommit + clone) ---
+  ziggit library: 3430μs avg (68604μs total over 20 iterations)
+  git CLI spawn:  12796μs avg (255930μs total over 20 iterations)
+  speedup: 3.7x
+
+
+>>> node-semver (20 iters) <<<
+--- Run 1 ---
+=== ZIGGIT LIBRARY vs GIT CLI BENCHMARK ===
+Bare repo: /tmp/bench-repos/node-semver.git
+Iterations: 20
+
+--- findCommit (rev-parse HEAD) ---
+  ziggit library: 180μs avg (3602μs total over 20 iterations)
+  git CLI spawn:  1035μs avg (20711μs total over 20 iterations)
+  speedup: 5.7x
+
+--- cloneBare (local bare clone) ---
+  ziggit library: 1767μs avg (35348μs total over 20 iterations)
+  git CLI spawn:  5569μs avg (111387μs total over 20 iterations)
+  speedup: 3.1x
+
+--- Full bun-install workflow (cloneBare + findCommit + clone) ---
+  ziggit library: 3561μs avg (71237μs total over 20 iterations)
+  git CLI spawn:  16522μs avg (330458μs total over 20 iterations)
+  speedup: 4.6x
+
+--- Run 2 ---
+=== ZIGGIT LIBRARY vs GIT CLI BENCHMARK ===
+Bare repo: /tmp/bench-repos/node-semver.git
+Iterations: 20
+
+--- findCommit (rev-parse HEAD) ---
+  ziggit library: 185μs avg (3711μs total over 20 iterations)
+  git CLI spawn:  1036μs avg (20724μs total over 20 iterations)
+  speedup: 5.6x
+
+--- cloneBare (local bare clone) ---
+  ziggit library: 1790μs avg (35818μs total over 20 iterations)
+  git CLI spawn:  5566μs avg (111323μs total over 20 iterations)
+  speedup: 3.1x
+
+--- Full bun-install workflow (cloneBare + findCommit + clone) ---
+  ziggit library: 3693μs avg (73870μs total over 20 iterations)
+  git CLI spawn:  16679μs avg (333587μs total over 20 iterations)
+  speedup: 4.5x
+
+--- Run 3 ---
+=== ZIGGIT LIBRARY vs GIT CLI BENCHMARK ===
+Bare repo: /tmp/bench-repos/node-semver.git
+Iterations: 20
+
+--- findCommit (rev-parse HEAD) ---
+  ziggit library: 376μs avg (7521μs total over 20 iterations)
+  git CLI spawn:  1061μs avg (21220μs total over 20 iterations)
+  speedup: 2.8x
+
+--- cloneBare (local bare clone) ---
+  ziggit library: 1803μs avg (36074μs total over 20 iterations)
+  git CLI spawn:  5608μs avg (112170μs total over 20 iterations)
+  speedup: 3.1x
+
+--- Full bun-install workflow (cloneBare + findCommit + clone) ---
+  ziggit library: 3580μs avg (71619μs total over 20 iterations)
+  git CLI spawn:  16562μs avg (331247μs total over 20 iterations)
+  speedup: 4.6x
+
+
+>>> express (10 iters) <<<
+--- Run 1 ---
+=== ZIGGIT LIBRARY vs GIT CLI BENCHMARK ===
+Bare repo: /tmp/bench-repos/express.git
+Iterations: 10
+
+--- findCommit (rev-parse HEAD) ---
+  ziggit library: 216μs avg (2163μs total over 10 iterations)
+  git CLI spawn:  1047μs avg (10479μs total over 10 iterations)
+  speedup: 4.8x
+
+--- cloneBare (local bare clone) ---
+  ziggit library: 10476μs avg (104765μs total over 10 iterations)
+  git CLI spawn:  6943μs avg (69439μs total over 10 iterations)
+  speedup: 0.6x
+
+--- Full bun-install workflow (cloneBare + findCommit + clone) ---
+  ziggit library: 24154μs avg (241541μs total over 10 iterations)
+  git CLI spawn:  22965μs avg (229652μs total over 10 iterations)
+  speedup: 0.9x
+
+--- Run 2 ---
+=== ZIGGIT LIBRARY vs GIT CLI BENCHMARK ===
+Bare repo: /tmp/bench-repos/express.git
+Iterations: 10
+
+--- findCommit (rev-parse HEAD) ---
+  ziggit library: 169μs avg (1691μs total over 10 iterations)
+  git CLI spawn:  1112μs avg (11127μs total over 10 iterations)
+  speedup: 6.5x
+
+--- cloneBare (local bare clone) ---
+  ziggit library: 11086μs avg (110868μs total over 10 iterations)
+  git CLI spawn:  6931μs avg (69311μs total over 10 iterations)
+  speedup: 0.6x
+
+--- Full bun-install workflow (cloneBare + findCommit + clone) ---
+  ziggit library: 22307μs avg (223078μs total over 10 iterations)
+  git CLI spawn:  22687μs avg (226875μs total over 10 iterations)
+  speedup: 1.0x
+
+--- Run 3 ---
+=== ZIGGIT LIBRARY vs GIT CLI BENCHMARK ===
+Bare repo: /tmp/bench-repos/express.git
+Iterations: 10
+
+--- findCommit (rev-parse HEAD) ---
+  ziggit library: 198μs avg (1980μs total over 10 iterations)
+  git CLI spawn:  1107μs avg (11078μs total over 10 iterations)
+  speedup: 5.5x
+
+--- cloneBare (local bare clone) ---
+  ziggit library: 10625μs avg (106256μs total over 10 iterations)
+  git CLI spawn:  6983μs avg (69838μs total over 10 iterations)
+  speedup: 0.6x
+
+--- Full bun-install workflow (cloneBare + findCommit + clone) ---
+  ziggit library: 23206μs avg (232066μs total over 10 iterations)
+  git CLI spawn:  22844μs avg (228448μs total over 10 iterations)
+  speedup: 0.9x
+
+

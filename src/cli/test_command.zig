@@ -990,17 +990,17 @@ pub const CommandLineReporter = struct {
             return;
         }
 
-        var map = coverage.ByteRangeMapping.map orelse return;
-        var iter = map.valueIterator();
-        var byte_ranges = try std.array_list.Managed(bun.SourceMap.coverage.ByteRangeMapping).initCapacity(bun.default_allocator, map.count());
+        const byte_ranges = brk: {
+            const map = coverage.ByteRangeMapping.map orelse break :brk std.array_list.Managed(bun.SourceMap.coverage.ByteRangeMapping).init(bun.default_allocator);
+            var ranges = try std.array_list.Managed(bun.SourceMap.coverage.ByteRangeMapping).initCapacity(bun.default_allocator, map.count());
+            var iter = map.valueIterator();
 
-        while (iter.next()) |entry| {
-            byte_ranges.appendAssumeCapacity(entry.*);
-        }
+            while (iter.next()) |entry| {
+                ranges.appendAssumeCapacity(entry.*);
+            }
 
-        if (byte_ranges.items.len == 0) {
-            return;
-        }
+            break :brk ranges;
+        };
 
         std.sort.pdq(
             bun.SourceMap.coverage.ByteRangeMapping,

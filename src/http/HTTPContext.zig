@@ -272,7 +272,7 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                                 return;
                             }
 
-                            // if checkServerIdentity returns false, we dont call open this means that the connection was rejected
+                            // if checkServerIdentity returns false, we dont call firstCall — the connection was rejected
                             const ssl_ptr = @as(*BoringSSL.SSL, @ptrCast(socket.getNativeHandle()));
                             if (!client.checkServerIdentity(comptime ssl, socket, handshake_error, ssl_ptr, true)) {
                                 client.flags.did_have_handshaking_error = true;

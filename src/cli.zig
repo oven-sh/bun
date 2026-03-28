@@ -352,6 +352,8 @@ pub const Command = struct {
         concurrent_test_glob: ?[]const []const u8 = null,
         bail: u32 = 0,
         coverage: TestCommand.CodeCoverageOptions = .{},
+        path_ignore_patterns: []const []const u8 = &.{},
+        path_ignore_patterns_from_cli: bool = false,
         test_filter_pattern: ?[]const u8 = null,
         test_filter_regex: ?*RegularExpression = null,
         max_concurrency: u32 = 20,
@@ -390,6 +392,8 @@ pub const Command = struct {
         expose_gc: bool = false,
         preserve_symlinks_main: bool = false,
         console_depth: ?u16 = null,
+        cron_title: []const u8 = "",
+        cron_period: []const u8 = "",
         cpu_prof: struct {
             enabled: bool = false,
             name: []const u8 = "",
@@ -692,6 +696,22 @@ pub const Command = struct {
         if (comptime Environment.allow_assert) {
             if (!bun.env_var.MI_VERBOSE.get()) {
                 bun.mimalloc.mi_option_set_enabled(.verbose, false);
+            }
+        }
+
+        // WebView host subprocess entry. Must be before StandaloneModuleGraph,
+        // before JSC init, before anything that touches a JS engine. The child
+        // runs CFRunLoopRun() as its real main loop — no Bun runtime past this.
+        if (comptime Environment.isMac) {
+            if (bun.env_var.BUN_INTERNAL_WEBVIEW_HOST.get()) |fd_str| {
+                const fd = std.fmt.parseInt(u31, fd_str, 10) catch {
+                    Output.panic("Invalid BUN_INTERNAL_WEBVIEW_HOST fd: {s}", .{fd_str});
+                };
+                const hostMain = @extern(
+                    *const fn (i32) callconv(.c) noreturn,
+                    .{ .name = "Bun__WebView__hostMain" },
+                );
+                hostMain(fd);
             }
         }
 

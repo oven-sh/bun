@@ -21,6 +21,17 @@ pub extern "c" var environ: ?*anyopaque;
 pub fn main() void {
     _bun.crash_handler.init();
 
+    // Force bmalloc to use SystemHeap (mimalloc) instead of libpas on Windows.
+    // bmalloc's libpas allocator causes GC crashes under memory pressure on
+    // Windows. Setting "Malloc" causes bmalloc::Environment to route all
+    // allocations through SystemHeap, which we implement using mimalloc
+    // (see BmallocSystemHeapOverride.cpp). Must be set before any bmalloc
+    // allocation triggers Environment initialization.
+    // See: https://github.com/oven-sh/bun/issues/21569
+    if (Environment.isWindows) {
+        _ = _bun.c._putenv("Malloc=1");
+    }
+
     if (Environment.isPosix) {
         var act: std.posix.Sigaction = .{
             .handler = .{ .handler = std.posix.SIG.IGN },

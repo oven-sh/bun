@@ -1439,6 +1439,27 @@ pub const EnvironmentVariables = struct {
         return false;
     }
 
+    /// Proxy env var names that Bun__setEnvValue handles. Must match the
+    /// proxyVarNames array in JSEnvironmentVariableMap.cpp.
+    const proxy_var_names = [_][]const u8{
+        "HTTP_PROXY",  "http_proxy",
+        "HTTPS_PROXY", "https_proxy",
+        "NO_PROXY",    "no_proxy",
+    };
+
+    /// Heap-allocated values we own for each proxy var. The env map stores
+    /// borrowed slices into these; we free the previous one on each set.
+    /// Separate from Loader.map because that map mixes borrowed (from
+    /// std.os.environ, never free) and owned values with no ownership flag.
+    var proxy_var_storage: [proxy_var_names.len]?[]const u8 = @splat(null);
+
+    fn proxyVarIndex(name: []const u8) ?usize {
+        for (proxy_var_names, 0..) |n, i| {
+            if (bun.strings.eql(name, n)) return i;
+        }
+        return null;
+    }
+
     /// Sync a process.env write back to the Zig-side env map so that Zig
     /// consumers (e.g. fetch's proxy resolution via env.getHttpProxyFor)
     /// observe the updated value. Used by custom setters for proxy-related
@@ -1449,18 +1470,27 @@ pub const EnvironmentVariables = struct {
         var name_slice = name.toSlice(allocator);
         defer name_slice.deinit();
 
+        const idx = proxyVarIndex(name_slice.slice()) orelse return;
+
+        // Free our previous allocation for this slot (never the initial
+        // environ-borrowed value — that was never in this array).
+        if (proxy_var_storage[idx]) |old| {
+            allocator.free(old);
+            proxy_var_storage[idx] = null;
+        }
+
         if (value.len == 0) {
-            vm.transpiler.env.map.remove(name_slice.slice());
+            vm.transpiler.env.map.remove(proxy_var_names[idx]);
             return;
         }
 
         var value_slice = value.toSlice(allocator);
         defer value_slice.deinit();
-        bun.handleOom(vm.transpiler.env.map.putAllocKeyAndValue(
-            allocator,
-            name_slice.slice(),
-            value_slice.slice(),
-        ));
+        const owned = bun.handleOom(allocator.dupe(u8, value_slice.slice()));
+        proxy_var_storage[idx] = owned;
+        // Key is a static string literal; value is a borrowed slice into
+        // our owned storage — map.put stores both without duping.
+        bun.handleOom(vm.transpiler.env.map.put(proxy_var_names[idx], owned));
     }
 
     pub fn getEnvNames(globalObject: *jsc.JSGlobalObject, names: []ZigString) usize {

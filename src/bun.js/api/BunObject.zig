@@ -1440,18 +1440,13 @@ pub const EnvironmentVariables = struct {
     }
 
     /// Proxy env var names that Bun__setEnvValue handles. Must match the
-    /// proxyVarNames array in JSEnvironmentVariableMap.cpp.
-    const proxy_var_names = [_][]const u8{
+    /// proxyVarNames array in JSEnvironmentVariableMap.cpp and the length of
+    /// RareData.proxy_env_storage.
+    pub const proxy_var_names = [_][]const u8{
         "HTTP_PROXY",  "http_proxy",
         "HTTPS_PROXY", "https_proxy",
         "NO_PROXY",    "no_proxy",
     };
-
-    /// Heap-allocated values we own for each proxy var. The env map stores
-    /// borrowed slices into these; we free the previous one on each set.
-    /// Separate from Loader.map because that map mixes borrowed (from
-    /// std.os.environ, never free) and owned values with no ownership flag.
-    var proxy_var_storage: [proxy_var_names.len]?[]const u8 = @splat(null);
 
     fn proxyVarIndex(name: []const u8) ?usize {
         for (proxy_var_names, 0..) |n, i| {
@@ -1464,6 +1459,10 @@ pub const EnvironmentVariables = struct {
     /// consumers (e.g. fetch's proxy resolution via env.getHttpProxyFor)
     /// observe the updated value. Used by custom setters for proxy-related
     /// env vars (HTTP_PROXY, HTTPS_PROXY, NO_PROXY and lowercase variants).
+    ///
+    /// Owned storage lives in RareData.proxy_env_storage (per-VM) so
+    /// worker_threads don't race/UAF each other's values. The env map
+    /// borrows slices from that storage.
     pub export fn Bun__setEnvValue(globalObject: *jsc.JSGlobalObject, name: *ZigString, value: *ZigString) void {
         const vm = globalObject.bunVM();
         const allocator = vm.allocator;
@@ -1471,12 +1470,13 @@ pub const EnvironmentVariables = struct {
         defer name_slice.deinit();
 
         const idx = proxyVarIndex(name_slice.slice()) orelse return;
+        const storage = &vm.rareData().proxy_env_storage;
 
         // Free our previous allocation for this slot (never the initial
         // environ-borrowed value — that was never in this array).
-        if (proxy_var_storage[idx]) |old| {
+        if (storage[idx]) |old| {
             allocator.free(old);
-            proxy_var_storage[idx] = null;
+            storage[idx] = null;
         }
 
         if (value.len == 0) {
@@ -1487,9 +1487,9 @@ pub const EnvironmentVariables = struct {
         var value_slice = value.toSlice(allocator);
         defer value_slice.deinit();
         const owned = bun.handleOom(allocator.dupe(u8, value_slice.slice()));
-        proxy_var_storage[idx] = owned;
+        storage[idx] = owned;
         // Key is a static string literal; value is a borrowed slice into
-        // our owned storage — map.put stores both without duping.
+        // RareData's owned storage — map.put stores both without duping.
         bun.handleOom(vm.transpiler.env.map.put(proxy_var_names[idx], owned));
     }
 

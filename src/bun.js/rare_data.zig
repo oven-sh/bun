@@ -42,6 +42,12 @@ valkey_context: ValkeyContext = .{},
 
 tls_default_ciphers: ?[:0]const u8 = null,
 
+/// Owned storage for proxy env vars set via process.env at runtime (HTTP_PROXY,
+/// HTTPS_PROXY, NO_PROXY and lowercase variants — order matches
+/// EnvironmentVariables.proxy_var_names). The env map borrows these slices.
+/// Per-VM so worker_threads don't race/UAF each other's values.
+proxy_env_storage: [bun.jsc.API.Bun.EnvironmentVariables.proxy_var_names.len]?[]const u8 = @splat(null),
+
 #spawn_sync_event_loop: bun.ptr.Owned(?*SpawnSyncEventLoop) = .initNull(),
 
 path_buf: PathBuf = .{},
@@ -614,6 +620,13 @@ pub fn deinit(this: *RareData) void {
     if (this.tls_default_ciphers) |ciphers| {
         this.tls_default_ciphers = null;
         bun.default_allocator.free(ciphers);
+    }
+
+    for (&this.proxy_env_storage) |*slot| {
+        if (slot.*) |owned| {
+            bun.default_allocator.free(owned);
+            slot.* = null;
+        }
     }
 
     this.valkey_context.deinit();

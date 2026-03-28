@@ -939,4 +939,46 @@ describe.concurrent("NO_PROXY with explicit proxy option", () => {
     // exit(0) means fetch threw (proxy connection failed), proving proxy was used
     expect(exitCode).toBe(0);
   });
+
+  test("NO_PROXY set at runtime via process.env is observed by fetch", async () => {
+    // Subprocess so we control the initial env and can mutate process.env
+    // mid-script without polluting the test runner's process.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          // Dead proxy — if fetch uses it, connection fails.
+          const deadProxy = "http://127.0.0.1:${deadProxyPort}";
+          const target = "http://localhost:${httpServer.port}";
+
+          // No NO_PROXY yet — fetch with explicit proxy should fail.
+          let threw = false;
+          try { await fetch(target, { proxy: deadProxy }); } catch { threw = true; }
+          if (!threw) { console.error("expected first fetch to fail"); process.exit(1); }
+
+          // Set NO_PROXY at runtime — subsequent fetch should bypass proxy.
+          process.env.NO_PROXY = "localhost";
+          const resp = await fetch(target, { proxy: deadProxy });
+          console.log(resp.status);
+
+          // Unset via empty string — should use proxy again (and fail).
+          process.env.NO_PROXY = "";
+          threw = false;
+          try { await fetch(target, { proxy: deadProxy }); } catch { threw = true; }
+          if (!threw) { console.error("expected third fetch to fail"); process.exit(1); }
+
+          process.exit(0);
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (exitCode !== 0) console.error("stderr:", stderr);
+    expect(stdout.trim()).toBe("200");
+    expect(exitCode).toBe(0);
+  });
 });

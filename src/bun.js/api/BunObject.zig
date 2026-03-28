@@ -1439,6 +1439,30 @@ pub const EnvironmentVariables = struct {
         return false;
     }
 
+    /// Sync a process.env write back to the Zig-side env map so that Zig
+    /// consumers (e.g. fetch's proxy resolution via env.getHttpProxyFor)
+    /// observe the updated value. Used by custom setters for proxy-related
+    /// env vars (HTTP_PROXY, HTTPS_PROXY, NO_PROXY and lowercase variants).
+    pub export fn Bun__setEnvValue(globalObject: *jsc.JSGlobalObject, name: *ZigString, value: *ZigString) void {
+        const vm = globalObject.bunVM();
+        const allocator = vm.allocator;
+        var name_slice = name.toSlice(allocator);
+        defer name_slice.deinit();
+
+        if (value.len == 0) {
+            vm.transpiler.env.map.remove(name_slice.slice());
+            return;
+        }
+
+        var value_slice = value.toSlice(allocator);
+        defer value_slice.deinit();
+        bun.handleOom(vm.transpiler.env.map.putAllocKeyAndValue(
+            allocator,
+            name_slice.slice(),
+            value_slice.slice(),
+        ));
+    }
+
     pub fn getEnvNames(globalObject: *jsc.JSGlobalObject, names: []ZigString) usize {
         var vm = globalObject.bunVM();
         const keys = vm.transpiler.env.map.map.keys();
@@ -1467,6 +1491,7 @@ comptime {
     _ = EnvironmentVariables.Bun__getEnvCount;
     _ = EnvironmentVariables.Bun__getEnvKey;
     _ = EnvironmentVariables.Bun__getEnvValue;
+    _ = EnvironmentVariables.Bun__setEnvValue;
 }
 
 pub const JSZlib = struct {

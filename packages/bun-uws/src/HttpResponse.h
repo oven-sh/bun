@@ -325,18 +325,18 @@ public:
         /* Destroy HttpResponseData */
         responseData->~HttpResponseData();
 
-        /* Before we adopt and potentially change socket, check if we are corked */
-        bool wasCorked = Super::isCorked();
-
-        
+        /* Before we adopt and potentially change socket, check which cork slot
+         * we occupy so we can transfer it to the new WebSocket. */
+        LoopData *loopData = Super::getLoopData();
+        int corkedSlot = loopData->findCorkSlot(this);
 
         /* Adopting a socket invalidates it, do not rely on it directly to carry any data */
         us_socket_t *usSocket = us_socket_context_adopt_socket(SSL, (us_socket_context_t *) webSocketContext, (us_socket_t *) this, sizeof(HttpResponseData<SSL>), sizeof(WebSocketData) + sizeof(UserData));
         WebSocket<SSL, true, UserData> *webSocket = (WebSocket<SSL, true, UserData> *) usSocket;
 
         /* For whatever reason we were corked, update cork to the new socket */
-        if (wasCorked) {
-            webSocket->AsyncSocket<SSL>::corkUnchecked();
+        if (corkedSlot != LoopData::INVALID_CORK_SLOT) {
+            loopData->transferCorkSlot(corkedSlot, webSocket, SSL);
         }
 
         /* Initialize websocket with any moved backpressure intact */
@@ -638,12 +638,17 @@ public:
         if (!Super::isCorked() && Super::canCork()) {
             LoopData *loopData = Super::getLoopData();
             Super::cork();
+            /* Remember which slot we took so we can find our (possibly upgraded)
+             * replacement after the handler runs. */
+            int ourSlot = loopData->findCorkSlot(this);
             handler();
 
             /* The only way we could possibly have changed the corked socket during handler call, would be if
              * the HTTP socket was upgraded to WebSocket and caused a realloc. Because of this we cannot use "this"
-             * from here downwards. The corking is done with corkUnchecked() in upgrade. It steals cork. */
-            auto *newCorkedSocket = loopData->getCorkedSocket();
+             * from here downwards. The upgrade path transfers the cork slot to the new WebSocket. */
+            void *newCorkedSocket = ourSlot != LoopData::INVALID_CORK_SLOT
+                ? loopData->getCorkSlot(ourSlot)->socket
+                : nullptr;
 
             /* If nobody is corked, it means most probably that large amounts of data has
              * been written and the cork buffer has already been sent off and uncorked.

@@ -990,7 +990,7 @@ pub const CommandLineReporter = struct {
             return;
         }
 
-        const byte_ranges = brk: {
+        var byte_ranges = brk: {
             const map = coverage.ByteRangeMapping.map orelse break :brk std.array_list.Managed(bun.SourceMap.coverage.ByteRangeMapping).init(bun.default_allocator);
             var ranges = try std.array_list.Managed(bun.SourceMap.coverage.ByteRangeMapping).initCapacity(bun.default_allocator, map.count());
             var iter = map.valueIterator();
@@ -1001,6 +1001,7 @@ pub const CommandLineReporter = struct {
 
             break :brk ranges;
         };
+        defer byte_ranges.deinit();
 
         std.sort.pdq(
             bun.SourceMap.coverage.ByteRangeMapping,
@@ -1009,7 +1010,14 @@ pub const CommandLineReporter = struct {
             bun.SourceMap.coverage.ByteRangeMapping.isLessThan,
         );
 
-        try this.printCodeCoverage(vm, opts, byte_ranges.items, reporters, enable_ansi_colors);
+        if (byte_ranges.items.len == 0) {
+            // No files to report — show empty text table but skip LCOV file creation
+            if (comptime reporters.text) {
+                try this.printCodeCoverage(vm, opts, byte_ranges.items, comptime .{ .text = true, .lcov = false }, enable_ansi_colors);
+            }
+        } else {
+            try this.printCodeCoverage(vm, opts, byte_ranges.items, reporters, enable_ansi_colors);
+        }
     }
 
     pub fn printCodeCoverage(
@@ -1276,6 +1284,15 @@ export fn BunTest__shouldGenerateCodeCoverage(test_name_str: bun.String) callcon
 
     // always ignore node_modules.
     if (bun.strings.contains(slice, "/node_modules/") or bun.strings.contains(slice, "\\node_modules\\")) {
+        return false;
+    }
+
+    // Ignore built-in modules. ZigSourceProvider.cpp already filters these
+    // via !isBuiltin, but InternalModuleRegistry.cpp does not in debug builds.
+    if (bun.strings.hasPrefixComptime(slice, "internal:") or
+        bun.strings.hasPrefixComptime(slice, "node:") or
+        bun.strings.hasPrefixComptime(slice, "bun:"))
+    {
         return false;
     }
 

@@ -16,7 +16,7 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
             /// If this socket carries an established CONNECT tunnel (HTTPS through
             /// an HTTP proxy), the tunnel is preserved here. The pool owns one
             /// strong ref while the socket is parked. Null for direct connections.
-            proxy_tunnel: ?*ProxyTunnel = null,
+            proxy_tunnel: ?ProxyTunnel.RefPtr = null,
             /// Target (origin) hostname the tunnel connects to. `hostname_buf`
             /// above holds the PROXY hostname; this is the upstream we CONNECTed to.
             target_hostname_buf: [MAX_KEEPALIVE_HOSTNAME]u8 = undefined,
@@ -113,10 +113,11 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                         if (pooled.ssl_config) |*s| s.deinit();
                         pooled.ssl_config = null;
                     }
-                    if (pooled.proxy_tunnel) |tunnel| {
-                        pooled.proxy_tunnel = null;
-                        tunnel.detachAndDeref();
+                    if (pooled.proxy_tunnel) |*rp| {
+                        rp.data.shutdown();
+                        rp.deref();
                     }
+                    pooled.proxy_tunnel = null;
                     pooled.http_socket.close(.failure);
                 }
             }
@@ -256,7 +257,7 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                     pending.ssl_config = if (ssl_config) |s| s.clone() else null;
 
                     // Pool owns the tunnel ref transferred by the caller.
-                    pending.proxy_tunnel = tunnel;
+                    pending.proxy_tunnel = if (tunnel) |t| .takeRef(t) else null;
                     pending.proxy_auth_hash = proxy_auth_hash;
                     @memcpy(pending.target_hostname_buf[0..target_hostname.len], target_hostname);
                     pending.target_hostname_len = @as(u8, @truncate(target_hostname.len));
@@ -383,10 +384,10 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
             fn addMemoryBackToPool(pooled: *PooledSocket) void {
                 if (pooled.ssl_config) |*s| s.deinit();
                 pooled.ssl_config = null;
-                if (pooled.proxy_tunnel) |tunnel| {
-                    pooled.proxy_tunnel = null;
-                    tunnel.detachAndDeref();
+                if (pooled.proxy_tunnel) |*rp| {
+                    rp.deref();
                 }
+                pooled.proxy_tunnel = null;
                 assert(pooled.owner.pending_sockets.put(pooled));
             }
 
@@ -553,7 +554,7 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                     if (socket.ssl_config) |*s| s.deinit();
                     socket.ssl_config = null;
                     // Transfer tunnel ownership to the caller.
-                    const tunnel = socket.proxy_tunnel;
+                    const tunnel: ?*ProxyTunnel = if (socket.proxy_tunnel) |*rp| rp.leak() else null;
                     socket.proxy_tunnel = null;
                     assert(this.pending_sockets.put(socket));
                     log("+ Keep-Alive reuse {s}:{d}{s}", .{ hostname, port, if (tunnel != null) " (with tunnel)" else "" });

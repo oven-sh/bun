@@ -3,6 +3,7 @@ const ProxyTunnel = @This();
 const RefCount = bun.ptr.RefCount(@This(), "ref_count", ProxyTunnel.deinit, .{});
 pub const ref = ProxyTunnel.RefCount.ref;
 pub const deref = ProxyTunnel.RefCount.deref;
+pub const RefPtr = bun.ptr.RefPtr(@This());
 
 wrapper: ?ProxyTunnelWrapper = null,
 shutdown_err: anyerror = error.ConnectionClosed,

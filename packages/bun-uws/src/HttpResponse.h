@@ -95,8 +95,11 @@ public:
     }
 
     /* Returns true on success, indicating that it might be feasible to write more data.
-     * Will start timeout if stream reaches totalSize or write failure. */
-    bool internalEnd(std::string_view data, uint64_t totalSize, bool optional, bool allowContentLength = true, bool closeConnection = false) {
+     * Will start timeout if stream reaches totalSize or write failure.
+     * keepCorked: if true, skip the trailing uncork so the caller can batch
+     * more writes (used by upgrade() to batch the handshake with the first
+     * WebSocket frames). */
+    bool internalEnd(std::string_view data, uint64_t totalSize, bool optional, bool allowContentLength = true, bool closeConnection = false, bool keepCorked = false) {
         /* Write status if not already done */
         writeStatus(HTTP_200_OK);
 
@@ -152,7 +155,7 @@ public:
                         }
                     }
                 }
-            } else {
+            } else if (!keepCorked) {
                 this->uncork();
             }
 
@@ -217,7 +220,7 @@ public:
                             }
                         }
                     }
-                }  else {
+                }  else if (!keepCorked) {
                     this->uncork();
                 }
             }
@@ -310,7 +313,9 @@ public:
             }
         }
 
-        internalEnd({nullptr, 0}, 0, false, false);
+        /* keepCorked so the handshake stays buffered and can batch with the
+         * first WebSocket frames written in the open handler. */
+        internalEnd({nullptr, 0}, 0, false, false, false, true);
 
         /* Grab the httpContext from res */
         HttpContext<SSL> *httpContext = (HttpContext<SSL> *) us_socket_context(SSL, (struct us_socket_t *) this);

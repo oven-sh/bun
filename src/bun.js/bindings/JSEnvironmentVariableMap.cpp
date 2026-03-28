@@ -352,9 +352,12 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
     // Proxy-related env vars need write-back to the Zig env map so that
     // fetch()'s getHttpProxyFor() observes runtime changes.
     static constexpr ASCIILiteral proxyVarNames[] = {
-        "HTTP_PROXY"_s, "http_proxy"_s,
-        "HTTPS_PROXY"_s, "https_proxy"_s,
-        "NO_PROXY"_s, "no_proxy"_s,
+        "HTTP_PROXY"_s,
+        "http_proxy"_s,
+        "HTTPS_PROXY"_s,
+        "https_proxy"_s,
+        "NO_PROXY"_s,
+        "no_proxy"_s,
     };
     constexpr size_t proxyVarCount = std::size(proxyVarNames);
     bool hasProxyVar[proxyVarCount] = {};

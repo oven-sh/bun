@@ -1,5 +1,5 @@
-import { test, expect } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot } from "harness";
+import { expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 
 // When an awaited request handler resumes (via another request resolving its
 // promise), the resumed request should still get a cork buffer so its

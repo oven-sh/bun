@@ -18,9 +18,9 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
             /// strong ref while the socket is parked. Null for direct connections.
             proxy_tunnel: ?ProxyTunnel.RefPtr = null,
             /// Target (origin) hostname the tunnel connects to. `hostname_buf`
-            /// above holds the PROXY hostname; this is the upstream we CONNECTed to.
-            target_hostname_buf: [MAX_KEEPALIVE_HOSTNAME]u8 = undefined,
-            target_hostname_len: u8 = 0,
+            /// above holds the PROXY hostname; this is the upstream we CONNECTed
+            /// to. Heap-allocated only when proxy_tunnel is set; empty otherwise.
+            target_hostname: []const u8 = "",
             target_port: u16 = 0,
             /// Hash of the effective Proxy-Authorization value so that tunnels
             /// established with different credentials are not cross-shared.
@@ -118,6 +118,10 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                         rp.deref();
                     }
                     pooled.proxy_tunnel = null;
+                    if (pooled.target_hostname.len > 0) {
+                        bun.default_allocator.free(pooled.target_hostname);
+                        pooled.target_hostname = "";
+                    }
                     pooled.http_socket.close(.failure);
                 }
             }
@@ -234,7 +238,6 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
             assert(port > 0);
 
             if (hostname.len <= MAX_KEEPALIVE_HOSTNAME and
-                target_hostname.len <= MAX_KEEPALIVE_HOSTNAME and
                 !socket.isClosedOrHasError() and
                 socket.isEstablished())
             {
@@ -259,8 +262,10 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                     // Pool owns the tunnel ref transferred by the caller.
                     pending.proxy_tunnel = if (tunnel) |t| .takeRef(t) else null;
                     pending.proxy_auth_hash = proxy_auth_hash;
-                    @memcpy(pending.target_hostname_buf[0..target_hostname.len], target_hostname);
-                    pending.target_hostname_len = @as(u8, @truncate(target_hostname.len));
+                    pending.target_hostname = if (tunnel != null and target_hostname.len > 0)
+                        bun.handleOom(bun.default_allocator.dupe(u8, target_hostname))
+                    else
+                        "";
                     pending.target_port = target_port;
 
                     log("Keep-Alive release {s}:{d} tunnel={} target={s}:{d}", .{
@@ -388,6 +393,10 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                     rp.deref();
                 }
                 pooled.proxy_tunnel = null;
+                if (pooled.target_hostname.len > 0) {
+                    bun.default_allocator.free(pooled.target_hostname);
+                    pooled.target_hostname = "";
+                }
                 assert(pooled.owner.pending_sockets.put(pooled));
             }
 
@@ -532,7 +541,7 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                     if (socket.target_port != target_port) {
                         continue;
                     }
-                    if (!strings.eqlLong(socket.target_hostname_buf[0..socket.target_hostname_len], target_hostname, true)) {
+                    if (!strings.eqlLong(socket.target_hostname, target_hostname, true)) {
                         continue;
                     }
                 }
@@ -556,6 +565,10 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                     // Transfer tunnel ownership to the caller.
                     const tunnel: ?*ProxyTunnel = if (socket.proxy_tunnel) |*rp| rp.leak() else null;
                     socket.proxy_tunnel = null;
+                    if (socket.target_hostname.len > 0) {
+                        bun.default_allocator.free(socket.target_hostname);
+                        socket.target_hostname = "";
+                    }
                     assert(this.pending_sockets.put(socket));
                     log("+ Keep-Alive reuse {s}:{d}{s}", .{ hostname, port, if (tunnel != null) " (with tunnel)" else "" });
                     return .{ .socket = http_socket, .tunnel = tunnel };

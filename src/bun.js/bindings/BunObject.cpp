@@ -790,7 +790,25 @@ JSC_DEFINE_HOST_FUNCTION(functionPathToFileURL, (JSC::JSGlobalObject * lexicalGl
     {
         WTF::String pathString = pathValue.toWTFString(lexicalGlobalObject);
         RETURN_IF_EXCEPTION(throwScope, {});
+
+#if OS(WINDOWS)
         pathString = pathResolveWTFString(lexicalGlobalObject, pathString);
+#else
+        // On POSIX, backslash is a valid filename character, not a path separator.
+        // pathResolveWTFString normalizes backslashes to forward slashes via
+        // joinAbsStringBuf, so we resolve relative paths by prepending the cwd
+        // directly, preserving backslashes for percent-encoding by the URL parser.
+        if (!pathString.startsWith('/')) {
+            auto cwdValue = JSC::JSValue::decode(Bun__Process__getCwd(lexicalGlobalObject));
+            RETURN_IF_EXCEPTION(throwScope, {});
+            WTF::String cwd = cwdValue.toWTFString(lexicalGlobalObject);
+            RETURN_IF_EXCEPTION(throwScope, {});
+            if (cwd.endsWith('/'))
+                pathString = makeString(cwd, pathString);
+            else
+                pathString = makeString(cwd, '/', pathString);
+        }
+#endif
 
         auto fileURL = WTF::URL::fileURLWithFileSystemPath(pathString);
         auto object = WebCore::DOMURL::create(fileURL.string(), String());

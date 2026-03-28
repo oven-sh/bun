@@ -2638,13 +2638,16 @@ pub const BundleV2 = struct {
                 if (!result.external) {
                     const is_file_namespace = result.namespace.len == 0 or strings.eqlComptime(result.namespace, "file");
 
-                    // Strip query string and fragment from file namespace paths so
-                    // the bundler can find the file on disk. Plugins may append
-                    // ?query or #fragment to the resolved path for identification
-                    // purposes, but the filesystem lookup must use the clean path.
+                    // Plugins may append ?query or #fragment to resolved paths.
+                    // Since ? and # are valid filename characters on Unix, only
+                    // strip the suffix when the full path doesn't exist on disk
+                    // (mirroring the fallback approach in resolver.zig for CSS).
                     const path_to_use = if (is_file_namespace)
                         if (bun.strings.indexOfAny(result.path, "?#")) |suffix|
-                            result.path[0..suffix]
+                            if (bun.sys.exists(result.path))
+                                result.path
+                            else
+                                result.path[0..suffix]
                         else
                             result.path
                     else

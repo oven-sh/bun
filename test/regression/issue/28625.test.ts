@@ -1,7 +1,15 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
-test("onResolve plugin can append query string to file namespace path", async () => {
+function filterAsanWarning(stderr: string): string {
+  return stderr
+    .split("\n")
+    .filter((line) => !line.startsWith("WARNING: ASAN"))
+    .join("\n")
+    .trim();
+}
+
+test.concurrent("onResolve plugin can append query string to file namespace path", async () => {
   using dir = tempDir("issue-28625-query", {
     "entry.js": `import txt from './data.txt'; console.log(txt);`,
     "data.txt": `hello world`,
@@ -41,11 +49,12 @@ test("onResolve plugin can append query string to file namespace path", async ()
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+  expect(filterAsanWarning(stderr)).toBe("");
   expect(stdout).toContain("BUILD_OK");
   expect(exitCode).toBe(0);
 });
 
-test("onResolve plugin can append hash fragment to file namespace path", async () => {
+test.concurrent("onResolve plugin can append hash fragment to file namespace path", async () => {
   using dir = tempDir("issue-28625-hash", {
     "entry.js": `import txt from './data.txt'; console.log(txt);`,
     "data.txt": `hello world`,
@@ -85,6 +94,7 @@ test("onResolve plugin can append hash fragment to file namespace path", async (
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+  expect(filterAsanWarning(stderr)).toBe("");
   expect(stdout).toContain("BUILD_OK");
   expect(exitCode).toBe(0);
 });

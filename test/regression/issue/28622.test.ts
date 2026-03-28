@@ -19,13 +19,14 @@ test.skipIf(isWindows)("pathToFileURL percent-encodes single backslash on POSIX"
 });
 
 test.skipIf(isWindows)("pathToFileURL resolves dot segments without trailing slash", () => {
-  // Trailing .. must not produce a trailing slash
-  const parent = pathToFileURL("..");
-  expect(parent.href).not.toEndWith("/");
+  // Trailing .. must not produce a trailing slash (use absolute path to be CWD-independent)
+  expect(pathToFileURL("/parent/child/..").href).toBe("file:///parent");
 
   // Interior dot segments still resolve
-  const interior = pathToFileURL("/foo/./bar/../baz");
-  expect(interior.href).toBe("file:///foo/baz");
+  expect(pathToFileURL("/foo/./bar/../baz").href).toBe("file:///foo/baz");
+
+  // Consecutive slashes are preserved
+  expect(pathToFileURL("/foo//bar").href).toBe("file:///foo//bar");
 });
 
 test.skipIf(isWindows)("pathToFileURL handles absolute paths with backslashes", () => {

@@ -778,9 +778,30 @@ JSC_DEFINE_HOST_FUNCTION(functionBunNanoseconds, (JSGlobalObject * globalObject,
     return JSValue::encode(jsNumber(time));
 }
 
+// Check whether a POSIX absolute path contains any . or .. segments that
+// need resolution.  Only '/' is treated as a separator.
+static bool posixPathHasDotSegments(const WTF::String& path)
+{
+    unsigned len = path.length();
+    unsigned start = 1;
+
+    for (unsigned i = 1; i <= len; i++) {
+        if (i == len || path[i] == '/') {
+            unsigned segLen = i - start;
+            if (segLen == 1 && path[start] == '.')
+                return true;
+            if (segLen == 2 && path[start] == '.' && path[start + 1] == '.')
+                return true;
+            start = i + 1;
+        }
+    }
+    return false;
+}
+
 // Resolve . and .. segments in a POSIX absolute path, treating only '/' as
 // a separator.  Backslashes are preserved as literal filename characters so
 // that fileURLWithFileSystemPath can later percent-encode them as %5C.
+// Consecutive slashes and trailing slashes are preserved.
 static WTF::String resolvePosixDotSegments(const WTF::String& path)
 {
     ASSERT(path.length() > 0 && path[0] == '/');
@@ -795,7 +816,10 @@ static WTF::String resolvePosixDotSegments(const WTF::String& path)
             if (segLen == 2 && path[start] == '.' && path[start + 1] == '.') {
                 if (!segments.isEmpty())
                     segments.removeLast();
-            } else if (!(segLen == 1 && path[start] == '.') && segLen > 0) {
+            } else if (segLen == 1 && path[start] == '.') {
+                // skip single-dot segment
+            } else {
+                // Preserve the segment (including empty segments from //)
                 segments.append({ start, segLen });
             }
             start = i + 1;
@@ -843,12 +867,15 @@ JSC_DEFINE_HOST_FUNCTION(functionPathToFileURL, (JSC::JSGlobalObject * lexicalGl
             RETURN_IF_EXCEPTION(throwScope, {});
             WTF::String cwd = cwdValue.toWTFString(lexicalGlobalObject);
             RETURN_IF_EXCEPTION(throwScope, {});
-            if (cwd.endsWith('/'))
+            if (pathString.isEmpty())
+                pathString = cwd;
+            else if (cwd.endsWith('/'))
                 pathString = makeString(cwd, pathString);
             else
                 pathString = makeString(cwd, '/', pathString);
         }
-        pathString = resolvePosixDotSegments(pathString);
+        if (posixPathHasDotSegments(pathString))
+            pathString = resolvePosixDotSegments(pathString);
 #endif
 
         auto fileURL = WTF::URL::fileURLWithFileSystemPath(pathString);

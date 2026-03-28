@@ -355,6 +355,7 @@ public:
 
                 /* If this is the first message we try and cork */
                 if (flags & TopicTree<TopicTreeMessage, TopicTreeBigMessage>::IteratorFlags::FIRST) {
+                    needsUncork = false;
                     if (!ws->isCorked()) {
                         ((AsyncSocket<SSL> *)ws)->cork();
                         needsUncork = ws->isCorked();
@@ -376,6 +377,7 @@ public:
                     /* We should not uncork in all cases? */
                     if (needsUncork) {
                         ((AsyncSocket<SSL> *)ws)->uncork();
+                        needsUncork = false;
                     }
                 }
 

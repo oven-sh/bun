@@ -638,33 +638,21 @@ public:
         if (!Super::isCorked()) {
             LoopData *loopData = Super::getLoopData();
             Super::cork();
-            /* Remember which slot we took so we can find our (possibly upgraded)
-             * replacement after the handler runs. */
-            int ourSlot = loopData->findCorkSlot(this);
             handler();
 
-            /* The only way we could possibly have changed the corked socket during handler call, would be if
-             * the HTTP socket was upgraded to WebSocket and caused a realloc. Because of this we cannot use "this"
-             * from here downwards. The upgrade path transfers the cork slot to the new WebSocket. */
-            void *newCorkedSocket = ourSlot != LoopData::INVALID_CORK_SLOT
-                ? loopData->getCorkSlot(ourSlot)->socket
-                : nullptr;
-
-            /* If nobody is corked, it means most probably that large amounts of data has
-             * been written and the cork buffer has already been sent off and uncorked.
-             * We are done here, if that is the case. */
-            if (!newCorkedSocket) {
+            /* If we're no longer in a cork slot, either: (a) the handler wrote
+             * large data that triggered an internal uncork, (b) our empty slot
+             * was stolen by another request during an await, or (c) we were
+             * upgraded to a WebSocket (upgrade path transferred the slot). In
+             * all cases our data (if any) was already flushed; nothing to do.
+             * The upgrade case is handled by HttpContext's uncork or the drain
+             * loop. */
+            if (loopData->findCorkSlot(this) == LoopData::INVALID_CORK_SLOT) {
                 return this;
             }
 
             /* Timeout on uncork failure, since most writes will succeed while corked */
-            auto [written, failed] = static_cast<Super *>(newCorkedSocket)->uncork();
-
-            /* If we are no longer an HTTP socket then early return the new "this".
-             * We don't want to even overwrite timeout as it is set in upgrade already. */
-            if (this != newCorkedSocket) {
-                return static_cast<HttpResponse *>(newCorkedSocket);
-            }
+            auto [written, failed] = Super::uncork();
 
             if (written > 0 || failed) {
                 /* For now we only have one single timeout so let's use it */

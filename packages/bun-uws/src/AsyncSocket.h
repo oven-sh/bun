@@ -141,11 +141,6 @@ public:
         return getLoopData()->findCorkSlot(this) != LoopData::INVALID_CORK_SLOT;
     }
 
-    /* Returns whether we could cork (at least one slot is free) */
-    bool canCork() {
-        return getLoopData()->canCork();
-    }
-
     /* Returns a suitable buffer for temporary assemblation of send data */
     std::pair<char *, SendBufferAttribute> getSendBuffer(size_t size) {
         LoopData *loopData = getLoopData();

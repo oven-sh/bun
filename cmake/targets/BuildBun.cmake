@@ -311,6 +311,7 @@ set(BUN_JAVASCRIPT_OUTPUTS
   ${CODEGEN_PATH}/InternalModuleRegistry+createInternalModuleById.h
   ${CODEGEN_PATH}/InternalModuleRegistry+enum.h
   ${CODEGEN_PATH}/InternalModuleRegistry+numberOfModules.h
+  ${CODEGEN_PATH}/InternalModuleRegistry+sourceList.h
   ${CODEGEN_PATH}/NativeModuleImpl.h
   ${CODEGEN_PATH}/ResolvedSourceTag.zig
   ${CODEGEN_PATH}/SyntheticModuleType.h

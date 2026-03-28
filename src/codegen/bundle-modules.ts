@@ -361,6 +361,30 @@ JSValue InternalModuleRegistry::createInternalModuleById(JSGlobalObject* globalO
 `,
 );
 
+// Source pointer/length accessor for bytecode generation at build time.
+// Only JS modules (not native) are listed. In debug builds, sources are
+// empty (loaded from disk), so this returns nullptr.
+writeIfNotChanged(
+  path.join(CODEGEN_DIR, "InternalModuleRegistry+sourceList.h"),
+  `// clang-format off
+extern "C" const char* Bun__getInternalModuleSource(uint32_t id, size_t* len, const char** name)
+{
+  switch (id) {
+    ${moduleList
+      .slice(0, nativeStartIndex)
+      .map((id, n) => {
+        const moduleName = idToPublicSpecifierOrEnumName(id);
+        return `case ${n}: *len = Bun::InternalModuleRegistryConstants::${idToEnumName(id)}Code.length(); *name = "${moduleName}"; return Bun::InternalModuleRegistryConstants::${idToEnumName(id)}Code.characters();`;
+      })
+      .join("\n    ")}
+    default: *len = 0; *name = nullptr; return nullptr;
+  }
+}
+
+extern "C" uint32_t Bun__getInternalModuleSourceCount() { return ${nativeStartIndex}; }
+`,
+);
+
 // This header is used by InternalModuleRegistry.cpp, and should only be included in that file.
 // It inlines all the strings for the module IDs.
 //

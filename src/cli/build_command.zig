@@ -519,6 +519,17 @@ pub const BuildCommand = struct {
                     }
                 }
 
+                // Pre-generate bytecode for internal modules (node:fs etc) so
+                // the standalone executable skips parsing them on first require.
+                var builtin_bytecodes = if (ctx.bundler_options.bytecode and !is_cross_compile)
+                    try bun.StandaloneModuleGraph.generateBuiltinBytecodes(allocator)
+                else
+                    std.array_list.Managed(bun.StandaloneModuleGraph.BuiltinBytecodeInput).init(allocator);
+                defer {
+                    for (builtin_bytecodes.items) |bb| bb.owner.deref();
+                    builtin_bytecodes.deinit();
+                }
+
                 const result = bun.StandaloneModuleGraph.toExecutable(
                     compile_target,
                     allocator,
@@ -537,6 +548,7 @@ pub const BuildCommand = struct {
                         .disable_autoload_tsconfig = !ctx.bundler_options.compile_autoload_tsconfig,
                         .disable_autoload_package_json = !ctx.bundler_options.compile_autoload_package_json,
                     },
+                    builtin_bytecodes.items,
                 ) catch |err| {
                     Output.printErrorln("failed to create executable: {s}", .{@errorName(err)});
                     Global.exit(1);

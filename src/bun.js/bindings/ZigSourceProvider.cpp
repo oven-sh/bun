@@ -15,6 +15,7 @@
 #include <JavaScriptCore/SourceCodeKey.h>
 #include <mimalloc.h>
 #include <JavaScriptCore/CodeCache.h>
+#include "BunClientData.h"
 
 namespace Zig {
 
@@ -186,6 +187,11 @@ static JSC::VM& getVMForBytecodeCache()
         vmPtr->refSuppressingSaferCPPChecking();
         vmForBytecodeCache = vmPtr.get();
         vmPtr->heap.acquireAccess();
+        // Builtin bytecode generation needs Bun's private identifiers
+        // (@isCallable etc) registered in the VM, which JSVMClientData
+        // sets up. Module/CJS bytecode generation doesn't need it but
+        // works fine with it, so we always attach it.
+        WebCore::JSVMClientData::create(vmForBytecodeCache, nullptr);
     }
     return *vmForBytecodeCache;
 }
@@ -259,6 +265,64 @@ extern "C" bool generateCachedCommonJSProgramByteCodeFromSourceCode(BunString* s
 
     return true;
 }
+
+extern "C" bool generateCachedBuiltinByteCodeFromSourceCode(BunString* moduleName, const Latin1Character* inputSourceCode, size_t inputSourceCodeSize, uint8_t implementationVisibility, uint8_t constructorKind, uint8_t constructAbility, uint8_t inlineAttribute, const uint8_t** outputByteCode, size_t* outputByteCodeSize, JSC::CachedBytecode** cachedBytecodePtr)
+{
+    std::span<const Latin1Character> sourceCodeSpan(inputSourceCode, inputSourceCodeSize);
+    JSC::SourceCode sourceCode = JSC::makeSource(WTF::String(sourceCodeSpan), JSC::SourceOrigin(), JSC::SourceTaintedOrigin::Untainted);
+
+    JSC::VM& vm = getVMForBytecodeCache();
+    JSC::JSLockHolder locker(vm);
+
+    auto name = JSC::Identifier::fromString(vm, moduleName->toWTFString());
+    ParserError parserError;
+    UnlinkedFunctionExecutable* executable = JSC::recursivelyGenerateUnlinkedCodeBlockForBuiltinFunction(
+        vm, sourceCode, name, parserError,
+        static_cast<JSC::ImplementationVisibility>(implementationVisibility),
+        static_cast<JSC::ConstructorKind>(constructorKind),
+        static_cast<JSC::ConstructAbility>(constructAbility),
+        static_cast<JSC::InlineAttribute>(inlineAttribute));
+    if (parserError.isValid() || !executable)
+        return false;
+
+    RefPtr<JSC::CachedBytecode> cachedBytecode = JSC::encodeBuiltinFunctionExecutable(vm, executable);
+    if (!cachedBytecode)
+        return false;
+
+    cachedBytecode->ref();
+    *cachedBytecodePtr = cachedBytecode.get();
+    *outputByteCode = cachedBytecode->span().data();
+    *outputByteCodeSize = cachedBytecode->span().size();
+
+    return true;
+}
+
+extern "C" bool Bun__hasEmbeddedBuiltinBytecode;
+extern "C" const uint8_t* Bun__findBuiltinFunctionBytecode(uint32_t globalId, size_t* outLen);
+
+} // namespace Zig
+
+namespace Bun {
+
+JSC::UnlinkedFunctionExecutable* tryDecodeBuiltinFunctionBytecode(JSC::VM& vm, uint32_t globalId)
+{
+    if (!Bun__hasEmbeddedBuiltinBytecode) [[likely]]
+        return nullptr;
+
+    size_t len = 0;
+    const uint8_t* bytecode = Bun__findBuiltinFunctionBytecode(globalId, &len);
+    if (!bytecode)
+        return nullptr;
+
+    auto cached = JSC::CachedBytecode::create(
+        std::span<uint8_t>(const_cast<uint8_t*>(bytecode), len),
+        [](const void*) {}, {});
+    return JSC::decodeBuiltinFunctionExecutable(vm, WTF::move(cached));
+}
+
+} // namespace Bun
+
+namespace Zig {
 
 unsigned SourceProvider::hash() const
 {

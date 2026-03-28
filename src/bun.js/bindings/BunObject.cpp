@@ -822,9 +822,7 @@ static WTF::String resolvePosixDotSegments(const WTF::String& path)
                 if (!segments.isEmpty())
                     segments.removeLast();
             } else if (segLen == 1 && path[start] == '.') {
-                // skip single-dot segment; mark trailing slash if at end
-                if (i == len)
-                    trailingSlash = true;
+                // skip single-dot segment
             } else if (segLen > 0) {
                 segments.append(seg);
             }

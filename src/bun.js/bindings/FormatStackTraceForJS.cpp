@@ -610,12 +610,13 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionDefaultErrorPrepareStackTrace, (JSGlobalObjec
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
 
-    auto errorObject = jsDynamicCast<JSC::ErrorInstance*>(callFrame->argument(0));
-    auto callSites = jsDynamicCast<JSC::JSArray*>(callFrame->argument(1));
-    if (!errorObject) {
-        throwTypeError(lexicalGlobalObject, scope, "First argument must be an Error object"_s);
+    JSC::JSValue errorArg = callFrame->argument(0);
+    if (!errorArg.isObject()) {
+        throwTypeError(lexicalGlobalObject, scope, "First argument must be an object"_s);
         return {};
     }
+    auto* errorObject = errorArg.getObject();
+    auto callSites = jsDynamicCast<JSC::JSArray*>(callFrame->argument(1));
     if (!callSites) {
         callSites = JSArray::create(vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous), 0);
     }

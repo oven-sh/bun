@@ -33,3 +33,7 @@ test.skipIf(isWindows)("pathToFileURL handles absolute paths with backslashes", 
   // Absolute path with backslashes: backslashes should be percent-encoded
   expect(url.href).toBe("file:///foo%5Cbar%5Cbaz");
 });
+
+test.skipIf(isWindows)("pathToFileURL('') resolves to CWD without trailing slash", () => {
+  expect(pathToFileURL("").href).not.toEndWith("/");
+});

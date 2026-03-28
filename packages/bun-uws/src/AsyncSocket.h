@@ -151,7 +151,7 @@ public:
         bool corked = slot != LoopData::INVALID_CORK_SLOT;
         unsigned int currentOffset = corked ? loopData->getCorkSlot(slot)->offset : 0;
 
-        if ((!existingBackpressure) && (corked || loopData->canCork()) && (currentOffset + size < LoopData::CORK_BUFFER_SIZE)) {
+        if ((!existingBackpressure) && (corked || loopData->canCork()) && (currentOffset + size <= LoopData::CORK_BUFFER_SIZE)) {
             if (!corked) {
                 slot = loopData->acquireCorkSlot(this, SSL);
             }

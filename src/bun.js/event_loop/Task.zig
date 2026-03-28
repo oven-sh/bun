@@ -44,6 +44,7 @@ pub const Task = TaggedPointerUnion(.{
     Mkdtemp,
     napi_async_work,
     NapiFinalizerTask,
+    NativePromiseContextDeferredDerefTask,
     NativeBrotli,
     NativeZlib,
     NativeZstd,
@@ -503,6 +504,9 @@ pub fn tickQueueWithCount(this: *EventLoop, virtual_machine: *VirtualMachine, co
                 var any: *NapiFinalizerTask = task.get(NapiFinalizerTask).?;
                 any.runOnJSThread();
             },
+            @field(Task.Tag, @typeName(NativePromiseContextDeferredDerefTask)) => {
+                NativePromiseContextDeferredDerefTask.runFromJSThread(@intCast(task.asUintptr()));
+            },
             @field(Task.Tag, @typeName(StatFS)) => {
                 var any: *StatFS = task.get(StatFS).?;
                 try any.runFromJSThread();
@@ -573,6 +577,7 @@ const S3HttpDownloadStreamingTask = S3.S3HttpDownloadStreamingTask;
 const S3HttpSimpleTask = S3.S3HttpSimpleTask;
 
 const NapiFinalizerTask = bun.api.napi.NapiFinalizerTask;
+const NativePromiseContextDeferredDerefTask = jsc.API.NativePromiseContext.DeferredDerefTask;
 const ThreadSafeFunction = bun.api.napi.ThreadSafeFunction;
 const napi_async_work = bun.api.napi.napi_async_work;
 

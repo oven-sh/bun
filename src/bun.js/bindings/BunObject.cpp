@@ -801,26 +801,32 @@ static bool posixPathHasDotSegments(const WTF::String& path)
 // Resolve . and .. segments in a POSIX absolute path, treating only '/' as
 // a separator.  Backslashes are preserved as literal filename characters so
 // that fileURLWithFileSystemPath can later percent-encode them as %5C.
-// Consecutive slashes and trailing slashes are preserved.
+//
+// Only called when posixPathHasDotSegments() returns true, so paths without
+// dot segments (including those with consecutive slashes) pass through
+// untouched via the caller.
 static WTF::String resolvePosixDotSegments(const WTF::String& path)
 {
     ASSERT(path.length() > 0 && path[0] == '/');
 
-    Vector<std::pair<unsigned, unsigned>> segments;
+    Vector<StringView> segments;
     unsigned start = 1;
     unsigned len = path.length();
+    bool trailingSlash = len > 1 && path[len - 1] == '/';
 
     for (unsigned i = 1; i <= len; i++) {
         if (i == len || path[i] == '/') {
             unsigned segLen = i - start;
+            StringView seg = StringView(path).substring(start, segLen);
             if (segLen == 2 && path[start] == '.' && path[start + 1] == '.') {
                 if (!segments.isEmpty())
                     segments.removeLast();
             } else if (segLen == 1 && path[start] == '.') {
-                // skip single-dot segment
-            } else {
-                // Preserve the segment (including empty segments from //)
-                segments.append({ start, segLen });
+                // skip single-dot segment; mark trailing slash if at end
+                if (i == len)
+                    trailingSlash = true;
+            } else if (segLen > 0) {
+                segments.append(seg);
             }
             start = i + 1;
         }
@@ -830,13 +836,12 @@ static WTF::String resolvePosixDotSegments(const WTF::String& path)
         return "/"_s;
 
     StringBuilder builder;
-    for (auto& [segStart, segLen] : segments) {
+    for (auto& seg : segments) {
         builder.append('/');
-        builder.append(StringView(path).substring(segStart, segLen));
+        builder.append(seg);
     }
 
-    // Preserve trailing slash from input (e.g. pathToFileURL("test/"))
-    if (path[len - 1] == '/')
+    if (trailingSlash)
         builder.append('/');
 
     return builder.toString();

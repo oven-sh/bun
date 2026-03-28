@@ -12,10 +12,9 @@ test.skipIf(isWindows)("pathToFileURL percent-encodes backslashes on POSIX", () 
 });
 
 test.skipIf(isWindows)("pathToFileURL percent-encodes single backslash on POSIX", () => {
-  const url = pathToFileURL("foo\\bar");
-  // The backslash should be encoded, not treated as a path separator
-  expect(url.href).toContain("foo%5Cbar");
-  expect(url.href).not.toContain("foo/bar");
+  // Use absolute path for a deterministic assertion independent of CWD
+  const url = pathToFileURL("/foo\\bar");
+  expect(url.href).toBe("file:///foo%5Cbar");
 });
 
 test.skipIf(isWindows)("pathToFileURL resolves dot segments without trailing slash", () => {

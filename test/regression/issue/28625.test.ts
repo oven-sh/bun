@@ -1,5 +1,5 @@
-import { test, expect } from "bun:test";
-import { tempDir, bunExe, bunEnv } from "harness";
+import { expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 test("onResolve plugin can append query string to file namespace path", async () => {
   using dir = tempDir("issue-28625-query", {
@@ -39,11 +39,7 @@ test("onResolve plugin can append query string to file namespace path", async ()
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stdout).toContain("BUILD_OK");
   expect(exitCode).toBe(0);
@@ -87,11 +83,7 @@ test("onResolve plugin can append hash fragment to file namespace path", async (
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stdout).toContain("BUILD_OK");
   expect(exitCode).toBe(0);

@@ -4,7 +4,7 @@ import { bunEnv, bunExe, tempDir } from "harness";
 function filterAsanWarning(stderr: string): string {
   return stderr
     .split("\n")
-    .filter((line) => !line.startsWith("WARNING: ASAN"))
+    .filter(line => !line.startsWith("WARNING: ASAN"))
     .join("\n")
     .trim();
 }

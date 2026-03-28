@@ -810,6 +810,11 @@ static WTF::String resolvePosixDotSegments(const WTF::String& path)
         builder.append('/');
         builder.append(StringView(path).substring(segStart, segLen));
     }
+
+    // Preserve trailing slash from input (e.g. pathToFileURL("test/"))
+    if (path[len - 1] == '/')
+        builder.append('/');
+
     return builder.toString();
 }
 

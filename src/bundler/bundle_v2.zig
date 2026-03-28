@@ -2642,18 +2642,18 @@ pub const BundleV2 = struct {
                     // Since ? and # are valid filename characters on Unix, only
                     // strip the suffix when the full path doesn't exist on disk
                     // (mirroring the fallback approach in resolver.zig for CSS).
-                    // Use lastIndexOfAny so that ? or # in directory names
-                    // (e.g. /projects/C#/main.js) are preserved.
-                    const path_to_use = if (is_file_namespace)
-                        if (std.mem.lastIndexOfAny(u8, result.path, "?#")) |suffix|
-                            if (bun.sys.exists(result.path))
+                    // Search only the filename portion so that ? or # in
+                    // directory names (e.g. /projects/C#/main.js) are preserved.
+                    const path_to_use = if (is_file_namespace) blk: {
+                        const basename_start = if (bun.path.lastIndexOfSep(result.path)) |sep| sep + 1 else 0;
+                        if (bun.strings.indexOfAny(result.path[basename_start..], "?#")) |offset| {
+                            break :blk if (bun.sys.exists(result.path))
                                 result.path
                             else
-                                result.path[0..suffix]
-                        else
-                            result.path
-                    else
-                        result.path;
+                                result.path[0 .. basename_start + offset];
+                        }
+                        break :blk result.path;
+                    } else result.path;
 
                     var path = Fs.Path.init(path_to_use);
                     if (is_file_namespace) {

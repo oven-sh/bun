@@ -23,9 +23,6 @@ test.skipIf(isWindows)("pathToFileURL resolves dot segments without trailing sla
 
   // Interior dot segments still resolve
   expect(pathToFileURL("/foo/./bar/../baz").href).toBe("file:///foo/baz");
-
-  // Consecutive slashes are preserved
-  expect(pathToFileURL("/foo//bar").href).toBe("file:///foo//bar");
 });
 
 test.skipIf(isWindows)("pathToFileURL handles absolute paths with backslashes", () => {

@@ -18,7 +18,6 @@
 #ifndef UWS_LOOPDATA_H
 #define UWS_LOOPDATA_H
 
-#include <cassert>
 #include <cstdint>
 #include <ctime>
 #include <functional>
@@ -27,11 +26,7 @@
 #include <thread>
 #include <vector>
 
-#ifndef NDEBUG
-#define UWS_CORK_ASSERT(cond) assert(cond)
-#else
-#define UWS_CORK_ASSERT(cond) ((void)0)
-#endif
+#include <wtf/Assertions.h>
 
 #include "MoveOnlyFunction.h"
 #include "PerMessageDeflate.h"
@@ -134,7 +129,7 @@ public:
 
     /* Release a slot. */
     void releaseCorkSlot(int slot) {
-        UWS_CORK_ASSERT(slot == 0 || slot == 1);
+        ASSERT(slot == 0 || slot == 1);
         corkSlots[slot].socket = nullptr;
         corkSlots[slot].offset = 0;
     }
@@ -142,13 +137,13 @@ public:
     /* Transfer ownership of a slot to a new socket (used during WebSocket
      * upgrade to hand the HTTP socket's cork buffer to the new WebSocket). */
     void transferCorkSlot(int slot, void *socket, bool ssl) {
-        UWS_CORK_ASSERT(slot == 0 || slot == 1);
+        ASSERT(slot == 0 || slot == 1);
         corkSlots[slot].socket = socket;
         corkSlots[slot].ssl = ssl;
     }
 
     CorkSlot *getCorkSlot(int slot) {
-        UWS_CORK_ASSERT(slot == 0 || slot == 1);
+        ASSERT(slot == 0 || slot == 1);
         return &corkSlots[slot];
     }
 

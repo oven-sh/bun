@@ -635,7 +635,7 @@ public:
 
      /* Corks the response if possible. Leaves already corked socket be. */
     HttpResponse *cork(MoveOnlyFunction<void()> &&handler) {
-        if (!Super::isCorked() && Super::canCork()) {
+        if (!Super::isCorked()) {
             LoopData *loopData = Super::getLoopData();
             Super::cork();
             /* Remember which slot we took so we can find our (possibly upgraded)

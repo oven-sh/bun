@@ -1379,7 +1379,7 @@ extern "C"
     {
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
       if (*length < 16 * 1024 && *length > 0) {
-        if (uwsRes->canCork()) {
+        if (!uwsRes->uWS::AsyncSocket<true>::isCorked()) {
           uwsRes->uWS::AsyncSocket<true>::cork();
         }
       }
@@ -1387,7 +1387,7 @@ extern "C"
     }
     uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
     if (*length < 16 * 1024 && *length > 0) {
-        if (uwsRes->canCork()) {
+        if (!uwsRes->uWS::AsyncSocket<false>::isCorked()) {
           uwsRes->uWS::AsyncSocket<false>::cork();
         }
       }

@@ -245,7 +245,7 @@ public:
 
     /* Corks the response if possible. Leaves already corked socket be. */
     void cork(MoveOnlyFunction<void()> &&handler) {
-        if (!Super::isCorked() && Super::canCork()) {
+        if (!Super::isCorked()) {
             Super::cork();
             handler();
 

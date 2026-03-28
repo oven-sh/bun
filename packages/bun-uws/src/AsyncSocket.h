@@ -163,7 +163,7 @@ public:
             auto *s = loopData->getCorkSlot(slot);
             char *sendBuffer = s->buffer + s->offset;
             s->offset += (unsigned int) size;
-            UWS_CORK_ASSERT(s->offset <= LoopData::CORK_BUFFER_SIZE);
+            ASSERT(s->offset <= LoopData::CORK_BUFFER_SIZE);
             loopData->touchCorkSlot(slot);
             return {sendBuffer, corked ? SendBufferAttribute::NEEDS_NOTHING : SendBufferAttribute::NEEDS_UNCORK};
         } else {
@@ -331,7 +331,7 @@ public:
                     /* If the entire chunk fits in cork buffer */
                     memcpy(s->buffer + s->offset, src, (unsigned int) length);
                     s->offset += (unsigned int) length;
-                    UWS_CORK_ASSERT(s->offset <= LoopData::CORK_BUFFER_SIZE);
+                    ASSERT(s->offset <= LoopData::CORK_BUFFER_SIZE);
                     loopData->touchCorkSlot(slot);
                     /* Fall through to default return */
                 } else {

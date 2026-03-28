@@ -577,7 +577,6 @@ const S3HttpDownloadStreamingTask = S3.S3HttpDownloadStreamingTask;
 const S3HttpSimpleTask = S3.S3HttpSimpleTask;
 
 const NapiFinalizerTask = bun.api.napi.NapiFinalizerTask;
-const NativePromiseContextDeferredDerefTask = jsc.API.NativePromiseContext.DeferredDerefTask;
 const ThreadSafeFunction = bun.api.napi.ThreadSafeFunction;
 const napi_async_work = bun.api.napi.napi_async_work;
 
@@ -638,6 +637,7 @@ const StreamPending = jsc.WebCore.streams.Result.Pending;
 const NativeBrotli = jsc.API.NativeBrotli;
 const NativeZlib = jsc.API.NativeZlib;
 const NativeZstd = jsc.API.NativeZstd;
+const NativePromiseContextDeferredDerefTask = jsc.API.NativePromiseContext.DeferredDerefTask;
 const AsyncGlobWalkTask = jsc.API.Glob.WalkTask.AsyncGlobWalkTask;
 const AsyncTransformTask = jsc.API.JSTranspiler.TransformTask.AsyncTransformTask;
 

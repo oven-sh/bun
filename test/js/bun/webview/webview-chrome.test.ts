@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isCI, isMacOS } from "harness";
 
 // Chrome backend works on any platform with Chrome/Chromium installed.
 // Mark tests todo if no Chrome found (CI may not have it). Mirrors
@@ -104,7 +104,8 @@ function findChrome(): string | undefined {
 }
 
 const chromePath = findChrome();
-const it = chromePath ? test : test.todo;
+// macOS CI has no windowserver — Chrome backend hangs.
+const it = !chromePath ? test.todo : (isCI && isMacOS) ? test.skip : test;
 
 // url:false forces spawn-mode — skips DevToolsActivePort auto-detect
 // which would connect to the dev's running Chrome, pop the "Allow remote

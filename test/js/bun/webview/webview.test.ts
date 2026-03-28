@@ -48,14 +48,15 @@ function shmRead(name: string, n: number): Buffer {
 }
 
 // Bun.WebView only exists on darwin for now.
-const it = isMacOS ? test : test.skip;
+// macOS CI has no windowserver — the host subprocess hangs.
+const it = isMacOS && !isCI ? test : test.skip;
 
 // NSURL URLWithString: strictly follows RFC 3986 on x64 macOS system
 // libraries — unencoded <> return nil. arm64 builds of the same OS are
 // lenient (different dyld shared cache builds per arch).
 const html = (h: string) => "data:text/html," + encodeURIComponent(h);
 
-test("backend: 'webkit' throws on non-darwin", () => {
+test.skipIf(isCI && isMacOS)("backend: 'webkit' throws on non-darwin", () => {
   // Default backend is platform-dependent (WebKit on Darwin, Chrome
   // elsewhere). Explicitly requesting WebKit off-Darwin should throw.
   if (isMacOS) {

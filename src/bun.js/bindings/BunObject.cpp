@@ -778,6 +778,41 @@ JSC_DEFINE_HOST_FUNCTION(functionBunNanoseconds, (JSGlobalObject * globalObject,
     return JSValue::encode(jsNumber(time));
 }
 
+// Resolve . and .. segments in a POSIX absolute path, treating only '/' as
+// a separator.  Backslashes are preserved as literal filename characters so
+// that fileURLWithFileSystemPath can later percent-encode them as %5C.
+static WTF::String resolvePosixDotSegments(const WTF::String& path)
+{
+    ASSERT(path.length() > 0 && path[0] == '/');
+
+    Vector<std::pair<unsigned, unsigned>> segments;
+    unsigned start = 1;
+    unsigned len = path.length();
+
+    for (unsigned i = 1; i <= len; i++) {
+        if (i == len || path[i] == '/') {
+            unsigned segLen = i - start;
+            if (segLen == 2 && path[start] == '.' && path[start + 1] == '.') {
+                if (!segments.isEmpty())
+                    segments.removeLast();
+            } else if (!(segLen == 1 && path[start] == '.') && segLen > 0) {
+                segments.append({ start, segLen });
+            }
+            start = i + 1;
+        }
+    }
+
+    if (segments.isEmpty())
+        return "/"_s;
+
+    StringBuilder builder;
+    for (auto& [segStart, segLen] : segments) {
+        builder.append('/');
+        builder.append(StringView(path).substring(segStart, segLen));
+    }
+    return builder.toString();
+}
+
 JSC_DEFINE_HOST_FUNCTION(functionPathToFileURL, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
     auto& globalObject = *defaultGlobalObject(lexicalGlobalObject);
@@ -808,6 +843,7 @@ JSC_DEFINE_HOST_FUNCTION(functionPathToFileURL, (JSC::JSGlobalObject * lexicalGl
             else
                 pathString = makeString(cwd, '/', pathString);
         }
+        pathString = resolvePosixDotSegments(pathString);
 #endif
 
         auto fileURL = WTF::URL::fileURLWithFileSystemPath(pathString);

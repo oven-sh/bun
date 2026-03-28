@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { pathToFileURL } from "url";
 
 test("pathToFileURL percent-encodes backslashes on POSIX", () => {

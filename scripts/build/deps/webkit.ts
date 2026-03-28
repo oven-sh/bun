@@ -103,6 +103,27 @@ function bmallocLib(cfg: Config): string {
 }
 
 /**
+ * CI regression guard: assert that bmalloc is not linked on Windows.
+ *
+ * bmalloc/libpas causes crashes under memory pressure during GC on Windows.
+ * Once oven-sh/WebKit prebuilts are rebuilt with -DUSE_SYSTEM_MALLOC=ON,
+ * activate this guard by calling it from provides() below and remove
+ * bmallocLib(cfg) from the Windows lib lists.
+ *
+ * See: https://github.com/oven-sh/bun/issues/28097
+ */
+export function assertNoBmallocOnWindows(cfg: Config, libs: readonly string[]): void {
+  if (!cfg.windows) return;
+  const found = libs.filter(l => /bmalloc/i.test(l));
+  if (found.length > 0) {
+    throw new Error(
+      `bmalloc must not be linked on Windows (USE_SYSTEM_MALLOC=ON). ` +
+        `Found: ${found.join(", ")}. See https://github.com/oven-sh/bun/issues/28097`,
+    );
+  }
+}
+
+/**
  * ICU libs — prebuilt bundles them on linux/windows. macOS uses system ICU.
  * Local mode: system ICU on posix (linked via -licu* in bun.ts); built from
  * source on Windows (see icuDir/icuLibs).
@@ -258,6 +279,10 @@ export const webkit: Dependency = {
       // it. If a future version drops libbmalloc.a, you'll get a clear
       // "file not found" at link time (not silent omission + cryptic
       // undefined symbols).
+      //
+      // Once oven-sh/WebKit prebuilts are rebuilt with -DUSE_SYSTEM_MALLOC=ON,
+      // gate bmallocLib behind !cfg.windows and activate assertNoBmallocOnWindows.
+      // See: https://github.com/oven-sh/bun/issues/28097
       const libs = [...coreLibs(cfg), ...prebuiltIcuLibs(cfg), bmallocLib(cfg)];
 
       const includes = ["include"];

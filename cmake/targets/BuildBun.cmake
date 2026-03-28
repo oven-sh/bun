@@ -1265,6 +1265,10 @@ if(BUN_LINK_ONLY)
 endif()
 
 if(WIN32)
+  # bmalloc/libpas causes crashes on Windows under memory pressure during GC
+  # (see https://github.com/oven-sh/bun/issues/28097). Once oven-sh/WebKit
+  # prebuilts are rebuilt with -DUSE_SYSTEM_MALLOC=ON, remove bmalloc.lib
+  # from both the debug and release link targets below.
   if(DEBUG)
     target_link_libraries(${bun} PRIVATE
       ${WEBKIT_LIB_PATH}/WTF.lib

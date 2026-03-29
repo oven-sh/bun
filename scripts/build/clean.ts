@@ -7,7 +7,7 @@
 
 import { existsSync, readdirSync } from "node:fs";
 import { rm } from "node:fs/promises";
-import { dirname, relative, resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { allDeps } from "./deps/index.ts";
 
@@ -93,19 +93,19 @@ if (!(preset in presets)) {
 
 const targets = presets[preset]!().filter(t => {
   if (existsSync(t)) return true;
-  if (dryRun) log(`skip ${relative(cwd, t)} (not present)`);
+  if (dryRun) log(`skip ${t} (not present)`);
   return false;
 });
 
 if (targets.length === 0) {
   log("already clean");
 } else if (dryRun) {
-  for (const t of targets) log(`would remove ${relative(cwd, t)}`);
+  for (const t of targets) log(`would remove ${t}`);
   log(`${targets.length} path(s) would be removed`);
 } else {
   await Promise.all(
     targets.map(async t => {
-      log(`rm -rf ${relative(cwd, t)}`);
+      log(`rm -rf ${t}`);
       await rm(t, { recursive: true, force: true });
     }),
   );

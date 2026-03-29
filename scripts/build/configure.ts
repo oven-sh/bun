@@ -6,23 +6,16 @@
  * can configure once then run specific targets.
  */
 
-import { mkdirSync } from "node:fs";
+import { globSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { globAllSources } from "../glob-sources.ts";
 import { type BunOutput, bunExeName, emitBun, shouldStrip, validateBunConfig } from "./bun.ts";
-import {
-  type Config,
-  type PartialConfig,
-  type Toolchain,
-  detectHost,
-  findRepoRoot,
-  formatConfig,
-  resolveConfig,
-} from "./config.ts";
+import { type Config, type PartialConfig, type Toolchain, detectHost, findRepoRoot, resolveConfig } from "./config.ts";
 import { BuildError } from "./error.ts";
 import { mkdirAll, writeIfChanged } from "./fs.ts";
 import { Ninja } from "./ninja.ts";
 import { registerAllRules } from "./rules.ts";
+import { checkWorkarounds } from "./workarounds.ts";
 import { quote } from "./shell.ts";
 import { findBun, findCargo, findMsvcLinker, findSystemTool, resolveLlvmToolchain } from "./tools.ts";
 
@@ -63,11 +56,23 @@ export function resolveToolchain(): Toolchain {
   // Same deal: path is deterministic, download happens at build time.
   const zig = resolve(repoRoot, "vendor", "zig", host.os === "windows" ? "zig.exe" : "zig");
 
+  const bun = findBun(host.os);
+
+  // jsRuntime: shell-ready prefix for running .ts subprocesses. Propagate
+  // whatever's running us — if node, the strip-types flag comes along; if
+  // bun, it's just the path. process.versions.bun distinguishes (undefined
+  // in node). Pre-quoted so rule commands can splice it directly.
+  const q = (p: string) => quote(p, host.os === "windows");
+  const jsRuntime = process.versions.bun !== undefined
+    ? q(process.execPath)
+    : `${q(process.execPath)} --experimental-strip-types`;
+
   return {
     ...llvm,
     cmake,
     zig,
-    bun: findBun(host.os),
+    bun,
+    jsRuntime,
     esbuild,
     cargo: rust?.cargo,
     cargoHome: rust?.cargoHome,
@@ -104,12 +109,10 @@ function configureInputs(cwd: string): string[] {
   const buildDir = resolve(cwd, "scripts", "build");
   const excluded = new Set(["fetch-cli.ts", "download.ts", "ci.ts", "stream.ts"]);
 
-  // Bun.Glob — node:fs globSync isn't in older bun versions (CI agents pin).
-  const glob = (pattern: string) => [...new Bun.Glob(pattern).scanSync({ cwd: buildDir })];
-  const scripts = glob("*.ts")
+  const scripts = globSync("*.ts", { cwd: buildDir })
     .filter(f => !excluded.has(f))
     .map(f => resolve(buildDir, f));
-  const deps = glob("deps/*.ts").map(f => resolve(buildDir, f));
+  const deps = globSync("deps/*.ts", { cwd: buildDir }).map(f => resolve(buildDir, f));
 
   return [...scripts, ...deps, resolve(cwd, "scripts", "glob-sources.ts"), resolve(cwd, "package.json")].sort();
 }
@@ -135,7 +138,7 @@ function emitGeneratorRule(n: Ninja, cfg: Config, partial: PartialConfig): void 
 
   const hostWin = cfg.host.os === "windows";
   n.rule("regen", {
-    command: `${quote(cfg.bun, hostWin)} ${quote(buildScript, hostWin)} --config-file=$in`,
+    command: `${cfg.jsRuntime} ${quote(buildScript, hostWin)} --config-file=$in`,
     description: "reconfigure",
     // generator = 1: exempt from `ninja -t clean`, triggers manifest restart
     // when the output (build.ninja) is rebuilt.
@@ -201,6 +204,7 @@ export async function configure(partial: PartialConfig): Promise<ConfigureResult
   const cfg = resolveConfig(partial, toolchain);
 
   validateBunConfig(cfg);
+  checkWorkarounds(cfg);
 
   // Perl check: LUT codegen (create-hash-table.ts) shells out to the
   // perl script from JSC. If perl is missing, codegen fails cryptically.
@@ -255,19 +259,6 @@ export async function configure(partial: PartialConfig): Promise<ConfigureResult
 
   const elapsed = Math.round(performance.now() - start);
   const exe = bunExeName(cfg) + (shouldStrip(cfg) ? " → bun (stripped)" : "");
-
-  // Full config print only when build.ninja actually changed (new
-  // profile, changed flags, new revision, new sources). A no-op
-  // reconfigure — which happens every run — gets a one-liner from
-  // build.ts (not here, because we're also called by ninja's generator
-  // rule and don't want doubled output). CI always prints.
-  if (changed || cfg.ci) {
-    process.stderr.write(formatConfig(cfg, exe) + "\n\n");
-    const codegenCount = output.codegen?.all.length ?? 0;
-    process.stderr.write(
-      `${output.deps.length} deps, ${codegenCount} codegen, ${output.objects.length} objects in ${elapsed}ms\n\n`,
-    );
-  }
 
   return { cfg, output, ninjaFile, env: ccacheEnv(cfg), elapsed, changed, exe };
 }

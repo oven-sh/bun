@@ -23,6 +23,7 @@ import { registerCodegenRules } from "./codegen.ts";
 import { registerCompileRules, registerDirStamps } from "./compile.ts";
 import type { Config } from "./config.ts";
 import type { Ninja } from "./ninja.ts";
+import { registerShimRules } from "./shims.ts";
 import { registerDepRules } from "./source.ts";
 import { registerZigRules } from "./zig.ts";
 
@@ -50,4 +51,7 @@ export function registerAllRules(n: Ninja, cfg: Config): void {
 
   // zig_fetch, zig_build
   registerZigRules(n, cfg);
+
+  // shim_dylib (darwin+asan only)
+  registerShimRules(n, cfg);
 }

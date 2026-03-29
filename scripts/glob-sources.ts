@@ -154,7 +154,7 @@ function normalize(p: string): string {
 // CLI — print one source list to stdout.
 // ───────────────────────────────────────────────────────────────────────────
 
-if (import.meta.main) {
+if (process.argv[1] === import.meta.filename) {
   const arg = process.argv[2];
   const sources = globAllSources();
   const print = (list: string[]) => {

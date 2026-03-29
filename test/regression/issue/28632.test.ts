@@ -1,6 +1,5 @@
 import { SQL } from "bun";
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
 
 // This test verifies that repeated MySQL queries don't leak memory per-query.
 // The root cause was ColumnDefinition41.name_or_index (heap-allocated via

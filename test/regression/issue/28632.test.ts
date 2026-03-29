@@ -10,7 +10,7 @@ if (isDockerEnabled()) {
       image: "mysql_plain",
       concurrent: true,
     },
-    (container) => {
+    container => {
       let sql: SQL;
 
       beforeAll(async () => {

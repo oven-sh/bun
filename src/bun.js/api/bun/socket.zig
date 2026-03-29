@@ -1221,6 +1221,7 @@ pub fn NewSocket(comptime ssl: bool) type {
                     // half-close: send FIN but keep reading so the remote side's
                     // response can be received. Unref so the event loop can exit.
                     this.socket.shutdown();
+                    this.flags.end_after_flush = false;
                     this.poll_ref.unref(handlers.vm);
                 } else {
                     this.markInactive();

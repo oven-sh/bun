@@ -524,11 +524,10 @@ pub const AbortEvent = enum(u8) {
 };
 
 fn handleAbortOrTimeout(this: *NodeHTTPResponse, comptime event: AbortEvent, js_value: jsc.JSValue) void {
+    // raw_response is nulled after all callbacks complete (socket memory
+    // is freed by uWS after this function returns).
     defer {
-        if (event == .abort) {
-            this.flags.socket_closed = true;
-            this.raw_response = null;
-        }
+        if (event == .abort) this.raw_response = null;
     }
     if (this.flags.request_has_completed) {
         return;
@@ -550,12 +549,17 @@ fn handleAbortOrTimeout(this: *NodeHTTPResponse, comptime event: AbortEvent, js_
         const vm = globalThis.bunVM();
         const event_loop = vm.eventLoop();
 
+        // Run the JS abort callback. During this callback, socket_closed
+        // is false so error handlers can still write a response.
         event_loop.runCallback(on_aborted, globalThis, js_this, &.{
             jsc.JSValue.jsNumber(@intFromEnum(event)),
         });
     }
 
     if (event == .abort) {
+        // Set socket_closed AFTER the JS callback (so error handlers could
+        // write) but BEFORE markRequestAsDoneIfNecessary (so cleanup sees it).
+        this.flags.socket_closed = true;
         this.onDataOrAborted("", true, .abort, js_this);
     }
 }

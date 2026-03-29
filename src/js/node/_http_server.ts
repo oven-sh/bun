@@ -1693,7 +1693,7 @@ function emitServerSocketEOFNT(self, req) {
   if (req) {
     req[eofInProgress] = true;
   }
-  process.nextTick(emitServerSocketEOF, self);
+  process.nextTick(emitServerSocketEOF, self, req);
 }
 
 let OriginalWriteHeadFn, OriginalImplicitHeadFn;

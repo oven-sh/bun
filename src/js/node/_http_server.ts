@@ -763,8 +763,6 @@ function onServerRequestEvent(this: NodeHTTPServerSocket, event: NodeHTTPRespons
         if (req.listenerCount("error") > 0) {
           req.emit("error", new ConnResetException("aborted"));
         }
-        // Mark as complete so no further body events are emitted.
-        req.complete = true;
         req.destroy();
       }
 
@@ -1682,8 +1680,10 @@ function updateHasBody(response, statusCode) {
 }
 
 function emitServerSocketEOF(self, req) {
-  self.push(null);
-  if (req) {
+  if (!self.destroyed) {
+    self.push(null);
+  }
+  if (req && !req.destroyed) {
     req.push(null);
     req.complete = true;
   }

@@ -225,16 +225,16 @@ const IncomingMessagePrototype = {
       this._consuming = true;
     }
 
-    const socket = this.socket;
-    if (socket && socket.readable) {
-      //https://github.com/nodejs/node/blob/13e3aef053776be9be262f210dc438ecec4a3c8d/lib/_http_incoming.js#L211-L213
-      socket.resume();
-    }
-
     if (this[eofInProgress] || this.destroyed) {
       // There is a nextTick pending that will emit EOF, or the request was
       // already destroyed (e.g. due to client abort with incomplete body)
       return;
+    }
+
+    const socket = this.socket;
+    if (socket && socket.readable) {
+      //https://github.com/nodejs/node/blob/13e3aef053776be9be262f210dc438ecec4a3c8d/lib/_http_incoming.js#L211-L213
+      socket.resume();
     }
 
     let internalRequest;

@@ -1,7 +1,9 @@
-import { expect, test } from "bun:test";
-import { once } from "node:events";
+import { test, expect } from "bun:test";
 import { createServer } from "node:http";
 import net from "node:net";
+import { once } from "node:events";
+
+const host = "127.0.0.1";
 
 test("error response sent to client when request body read fails due to client abort", async () => {
   const server = createServer(async (req, res) => {
@@ -13,19 +15,19 @@ test("error response sent to client when request body read fails due to client a
       res.writeHead(400);
       res.end();
     });
-  }).listen(0);
+  }).listen(0, host);
   await once(server, "listening");
   try {
-    const socket = net.connect(Number(server.address().port), server.address().address);
+    const socket = net.connect(Number(server.address().port), host);
     await once(socket, "connect");
     const close = once(socket, "close");
     let data = "";
-    socket.on("data", chunk => {
+    socket.on("data", (chunk) => {
       data += chunk.toString();
     });
     socket.write(
       "POST / HTTP/1.1\r\n" +
-        `Host: ${server.address().address}\r\n` +
+        `Host: ${host}\r\n` +
         "Content-Type: text/plain\r\n" +
         "Content-Length: 1000\r\n" +
         "Connection: keep-alive\r\n" +
@@ -51,19 +53,19 @@ test("error response sent when using req.resume() with incomplete body", async (
       res.writeHead(400);
       res.end();
     });
-  }).listen(0);
+  }).listen(0, host);
   await once(server, "listening");
   try {
-    const socket = net.connect(Number(server.address().port), server.address().address);
+    const socket = net.connect(Number(server.address().port), host);
     await once(socket, "connect");
     const close = once(socket, "close");
     let data = "";
-    socket.on("data", chunk => {
+    socket.on("data", (chunk) => {
       data += chunk.toString();
     });
     socket.write(
       "POST / HTTP/1.1\r\n" +
-        `Host: ${server.address().address}\r\n` +
+        `Host: ${host}\r\n` +
         "Content-Type: text/plain\r\n" +
         "Content-Length: 1000\r\n" +
         "Connection: keep-alive\r\n" +

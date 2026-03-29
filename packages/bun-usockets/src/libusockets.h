@@ -102,6 +102,12 @@ enum {
     LIBUS_SOCKET_IPV6_ONLY = 8,
     LIBUS_LISTEN_REUSE_ADDR = 16,
     LIBUS_LISTEN_DISALLOW_REUSE_PORT_FAILURE = 32,
+    /* Ask the kernel to defer accept() until the client has sent data (TCP_DEFER_ACCEPT on
+     * Linux, SO_ACCEPTFILTER "dataready" on FreeBSD). When set, accepted sockets are
+     * dispatched as readable immediately, skipping a round-trip through the event loop.
+     * Safe for HTTP/TLS where the client always sends first; do not use for protocols where
+     * the server sends the first bytes. */
+    LIBUS_LISTEN_DEFER_ACCEPT = 64,
 };
 
 /* Library types publicly available */

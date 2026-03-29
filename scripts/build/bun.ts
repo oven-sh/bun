@@ -35,7 +35,7 @@ import { writeIfChanged } from "./fs.ts";
 import type { Ninja } from "./ninja.ts";
 import { quote, slash } from "./shell.ts";
 import { computeDepLibs, depSourceStamp, resolveDep, type ResolvedDep } from "./source.ts";
-import type { Sources } from "./sources.ts";
+import type { Sources } from "../glob-sources.ts";
 import { streamPath } from "./stream.ts";
 import { emitZig } from "./zig.ts";
 

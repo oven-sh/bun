@@ -23,7 +23,7 @@ import { mkdirAll, writeIfChanged } from "./fs.ts";
 import { Ninja } from "./ninja.ts";
 import { registerAllRules } from "./rules.ts";
 import { quote } from "./shell.ts";
-import { globAllSources } from "./sources.ts";
+import { globAllSources } from "../glob-sources.ts";
 import { findBun, findCargo, findMsvcLinker, findSystemTool, resolveLlvmToolchain } from "./tools.ts";
 
 /**
@@ -111,7 +111,7 @@ function configureInputs(cwd: string): string[] {
     .map(f => resolve(buildDir, f));
   const deps = glob("deps/*.ts").map(f => resolve(buildDir, f));
 
-  return [...scripts, ...deps, resolve(cwd, "cmake", "Sources.json"), resolve(cwd, "package.json")].sort();
+  return [...scripts, ...deps, resolve(cwd, "scripts", "glob-sources.ts"), resolve(cwd, "package.json")].sort();
 }
 
 /**
@@ -217,7 +217,7 @@ export async function configure(partial: PartialConfig): Promise<ConfigureResult
   mark("validate+perl");
 
   // Glob all source lists — one pass, consistent filesystem snapshot.
-  const sources = globAllSources(cfg.cwd);
+  const sources = globAllSources();
   mark("globAllSources");
 
   // Emit ninja.

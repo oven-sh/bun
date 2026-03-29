@@ -7,9 +7,6 @@
  *   bun scripts/build.ts --profile=debug --asan=off     # override a field
  *   bun scripts/build.ts --profile=debug -- bun-zig      # specific ninja target
  *   bun scripts/build.ts --configure-only                # emit ninja, don't run
- *
- * Replaces scripts/build.mjs. The old CMake build is still available via
- * `bun run build:cmake:*` scripts in package.json.
  */
 
 import { spawnSync } from "node:child_process";

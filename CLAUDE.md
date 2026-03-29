@@ -184,7 +184,7 @@ Third-party C/C++ libraries are vendored locally and can be read from disk (thes
 - `vendor/zlib/` - zlib (compression, cloudflare fork)
 - `vendor/zstd/` - Zstandard (compression)
 
-Build configuration for these is in `cmake/targets/Build*.cmake`.
+Build configuration for these is in `scripts/build/deps/*.ts`.
 
 ### JavaScript Class Implementation (C++)
 

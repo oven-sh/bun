@@ -70,4 +70,4 @@ test("bun:sql MySQL prepared statement should not leak on repeated queries", asy
     await sql`DROP TABLE IF EXISTS leak_test_28632`.catch(() => {});
     await sql.close();
   }
-}, 300_000);
+});

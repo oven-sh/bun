@@ -664,14 +664,22 @@ pub fn uncaughtException(this: *jsc.VirtualMachine, globalObject: *JSGlobalObjec
     }
 
     if (this.is_handling_uncaught_exception) {
+        if (this.worker != null) {
+            // Worker: dispatch error to parent and terminate the worker thread.
+            // onUnhandledRejection for workers calls exitAndDeinit (noreturn).
+            this.exit_handler.exit_code = 1;
+            this.onUnhandledRejection(this, globalObject, err);
+            return true;
+        }
         this.runErrorHandler(err, null);
         bun.api.node.process.exit(globalObject, 7);
-        @panic("Uncaught exception while handling uncaught exception");
+        // For the main thread, process.exit() is noreturn (calls globalExit).
+        return true;
     }
     if (this.exit_on_uncaught_exception) {
         this.runErrorHandler(err, null);
         bun.api.node.process.exit(globalObject, 1);
-        @panic("made it past Bun__Process__exit");
+        return true;
     }
     this.is_handling_uncaught_exception = true;
     defer this.is_handling_uncaught_exception = false;

@@ -1567,15 +1567,15 @@ pub const ValueBufferer = struct {
     }
 
     pub fn onResolveStream(_: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-        var args = callframe.arguments_old(2);
-        var sink: *@This() = args.ptr[args.len - 1].asPromisePtr(@This());
+        const args = callframe.arguments_old(2);
+        const sink = bun.api.NativePromiseContext.take(@This(), args.ptr[args.len - 1]) orelse return .js_undefined;
         sink.handleResolveStream(true);
         return .js_undefined;
     }
 
     pub fn onRejectStream(_: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
         const args = callframe.arguments_old(2);
-        var sink = args.ptr[args.len - 1].asPromisePtr(@This());
+        const sink = bun.api.NativePromiseContext.take(@This(), args.ptr[args.len - 1]) orelse return .js_undefined;
         const err = args.ptr[0];
         sink.handleRejectStream(err, true);
         return .js_undefined;
@@ -1647,12 +1647,13 @@ pub const ValueBufferer = struct {
             if (assignment_result.asAnyPromise()) |promise| {
                 switch (promise.status()) {
                     .Pending => {
-                        assignment_result.then(
+                        const cell = bun.api.NativePromiseContext.create(globalThis, sink);
+                        assignment_result.thenWithValue(
                             globalThis,
-                            sink,
+                            cell,
                             onResolveStream,
                             onRejectStream,
-                        );
+                        ) catch {};
                     },
                     .Fulfilled => {
                         defer stream.value.unprotect();

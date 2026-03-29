@@ -1442,6 +1442,18 @@ pub const JSValue = enum(i64) {
         try scope.assertNoExceptionExceptTermination();
     }
 
+    /// Like `then`, but the context is a JSValue instead of a raw pointer.
+    /// Use this when the context should be GC-managed (e.g., a JSCell that
+    /// gets collected with the Promise's reaction if the Promise is GC'd
+    /// without settling).
+    pub fn thenWithValue(this: JSValue, global: *JSGlobalObject, ctx: JSValue, resolve: jsc.JSHostFnZig, reject: jsc.JSHostFnZig) bun.JSTerminated!void {
+        var scope: TopExceptionScope = undefined;
+        scope.init(global, @src());
+        defer scope.deinit();
+        this._then(global, ctx, resolve, reject);
+        try scope.assertNoExceptionExceptTermination();
+    }
+
     pub fn getDescription(this: JSValue, global: *JSGlobalObject) ZigString {
         var zig_str = ZigString.init("");
         getSymbolDescription(this, global, &zig_str);

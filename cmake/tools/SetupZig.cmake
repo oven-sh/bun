@@ -39,12 +39,6 @@ else()
   unsupported(CMAKE_BUILD_TYPE)
 endif()
 
-# Since Bun 1.1, Windows has been built using ReleaseSafe.
-# This is because it caught more crashes, but we can reconsider this in the future
-if(WIN32 AND DEFAULT_ZIG_OPTIMIZE STREQUAL "ReleaseFast")
-  set(DEFAULT_ZIG_OPTIMIZE "ReleaseSafe")
-endif()
-
 optionx(ZIG_OPTIMIZE "ReleaseFast|ReleaseSafe|ReleaseSmall|Debug" "The Zig optimize level to use" DEFAULT ${DEFAULT_ZIG_OPTIMIZE})
 
 # To use LLVM bitcode from Zig, more work needs to be done. Currently, an install of

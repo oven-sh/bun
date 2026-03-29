@@ -37,12 +37,12 @@
 import { spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync } from "node:fs";
 import { basename, relative, resolve } from "node:path";
+import type { Sources } from "../glob-sources.ts";
 import type { Config } from "./config.ts";
 import { BuildError, assert } from "./error.ts";
 import { writeIfChanged } from "./fs.ts";
 import type { Ninja } from "./ninja.ts";
 import { quote, quoteArgs } from "./shell.ts";
-import type { Sources } from "../glob-sources.ts";
 
 /**
  * Codegen outputs that land in `src/` instead of `codegenDir`. The zig

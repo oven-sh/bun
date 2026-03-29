@@ -8,6 +8,7 @@
 
 import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
+import { globAllSources } from "../glob-sources.ts";
 import { type BunOutput, bunExeName, emitBun, shouldStrip, validateBunConfig } from "./bun.ts";
 import {
   type Config,
@@ -23,7 +24,6 @@ import { mkdirAll, writeIfChanged } from "./fs.ts";
 import { Ninja } from "./ninja.ts";
 import { registerAllRules } from "./rules.ts";
 import { quote } from "./shell.ts";
-import { globAllSources } from "../glob-sources.ts";
 import { findBun, findCargo, findMsvcLinker, findSystemTool, resolveLlvmToolchain } from "./tools.ts";
 
 /**

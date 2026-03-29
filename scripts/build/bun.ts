@@ -23,6 +23,7 @@
 
 import { readFileSync } from "node:fs";
 import { relative, resolve } from "node:path";
+import type { Sources } from "../glob-sources.ts";
 import { emitCodegen, zigFilesGeneratedIntoSrc, type CodegenOutputs } from "./codegen.ts";
 import { ar, cc, cxx, link, pch } from "./compile.ts";
 import { bunExeName, shouldStrip, type Config } from "./config.ts";
@@ -35,7 +36,6 @@ import { writeIfChanged } from "./fs.ts";
 import type { Ninja } from "./ninja.ts";
 import { quote, slash } from "./shell.ts";
 import { computeDepLibs, depSourceStamp, resolveDep, type ResolvedDep } from "./source.ts";
-import type { Sources } from "../glob-sources.ts";
 import { streamPath } from "./stream.ts";
 import { emitZig } from "./zig.ts";
 

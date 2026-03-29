@@ -38,11 +38,10 @@ var UpgradeSocket = class UpgradeSocket extends Duplex {
       .read()
       .then(({ done, value }: { done: boolean; value?: Uint8Array }) => {
         this[kReading] = false;
-        if (done) {
-          this.push(null);
+        if (done || this.destroyed) {
+          if (!this.destroyed) this.push(null);
           return;
         }
-        if (this.destroyed) return;
         if (!this.push(value)) {
           // Backpressure: consumer buffer is full, wait for _read()
           return;

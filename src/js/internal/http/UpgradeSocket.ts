@@ -34,8 +34,10 @@ var UpgradeSocket = class UpgradeSocket extends Duplex {
           this.push(null);
           return;
         }
-        if (!this.destroyed) {
-          this.push(value);
+        if (this.destroyed) return;
+        if (!this.push(value)) {
+          // Backpressure: consumer buffer is full, wait for _read()
+          return;
         }
         this.#pump();
       })
@@ -46,7 +48,9 @@ var UpgradeSocket = class UpgradeSocket extends Duplex {
       });
   }
 
-  _read(_size: number) {}
+  _read(_size: number) {
+    this.#pump();
+  }
 
   _write(chunk: any, encoding: string, callback: (err?: Error | null) => void) {
     if (typeof chunk === "string") {

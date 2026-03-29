@@ -388,7 +388,13 @@ pub fn isFilteredDependencyOrWorkspace(
     };
 
     if (!dep.behavior.isEnabled(dep_features)) {
-        return true;
+        // Don't filter out dependencies that the user explicitly requested
+        // on the command line (e.g. `bun add --production jsdom` where
+        // jsdom is in devDependencies should still install jsdom).
+        const is_cli_requested = manager.subcommand == .add and parent_pkg_id == 0 and for (manager.update_requests) |request| {
+            if (request.matches(dep, lockfile.buffers.string_bytes.items)) break true;
+        } else false;
+        if (!is_cli_requested) return true;
     }
 
     // Filtering only applies to the root package dependencies. Also

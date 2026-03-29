@@ -734,12 +734,25 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     if (v1Array != v2Array)
         return false;
 
-    if (v1Array && v2Array && !(o1->isProxy() || o2->isProxy())) {
-        JSC::JSArray* array1 = JSC::jsCast<JSC::JSArray*>(v1);
-        JSC::JSArray* array2 = JSC::jsCast<JSC::JSArray*>(v2);
+    if (v1Array && v2Array) {
+        size_t array1Length;
+        size_t array2Length;
 
-        size_t array1Length = array1->length();
-        size_t array2Length = array2->length();
+        bool eitherIsProxy = o1->isProxy() || o2->isProxy();
+        if (!eitherIsProxy) {
+            array1Length = JSC::jsCast<JSC::JSArray*>(v1)->length();
+            array2Length = JSC::jsCast<JSC::JSArray*>(v2)->length();
+        } else {
+            JSValue len1 = o1->get(globalObject, vm.propertyNames->length);
+            RETURN_IF_EXCEPTION(scope, false);
+            array1Length = len1.toLength(globalObject);
+            RETURN_IF_EXCEPTION(scope, false);
+
+            JSValue len2 = o2->get(globalObject, vm.propertyNames->length);
+            RETURN_IF_EXCEPTION(scope, false);
+            array2Length = len2.toLength(globalObject);
+            RETURN_IF_EXCEPTION(scope, false);
+        }
         if constexpr (isStrict) {
             if (array1Length != array2Length) {
                 return false;
@@ -834,7 +847,15 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     }
 
     if constexpr (isStrict) {
-        if (!equal(JSObject::calculatedClassName(o1), JSObject::calculatedClassName(o2))) {
+        // Look through proxies to compare the target's class name rather than
+        // the proxy wrapper's, so that e.g. new Proxy({}, {}) equals {}.
+        JSObject* cn1 = o1;
+        JSObject* cn2 = o2;
+        if (cn1->type() == JSC::ProxyObjectType)
+            cn1 = jsCast<ProxyObject*>(cn1)->target();
+        if (cn2->type() == JSC::ProxyObjectType)
+            cn2 = jsCast<ProxyObject*>(cn2)->target();
+        if (!equal(JSObject::calculatedClassName(cn1), JSObject::calculatedClassName(cn2))) {
             return false;
         }
     }

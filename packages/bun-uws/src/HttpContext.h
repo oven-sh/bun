@@ -513,8 +513,28 @@ private:
 
         /* Handle FIN, HTTP does not support half-closed sockets, so simply close */
         us_socket_context_on_end(SSL, getSocketContext(), [](us_socket_t *s) {
+            /* Client sent FIN (half-close). The socket is still writable. */
             auto *asyncSocket = reinterpret_cast<AsyncSocket<SSL> *>(s);
             asyncSocket->uncorkWithoutSending();
+
+            auto *httpResponseData = reinterpret_cast<HttpResponseData<SSL> *>(us_socket_ext(SSL, s));
+            HttpContextData<SSL> *httpContextData = getSocketContextDataS(s);
+
+            /* If there's a pending request, fire abort handlers while the socket
+             * is still writable so error responses can be sent. */
+            if (httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) {
+                if (httpResponseData->socketData && httpContextData->onSocketClosed) {
+                    auto onSocketClosed = httpContextData->onSocketClosed;
+                    auto socketData = httpResponseData->socketData;
+                    httpResponseData->socketData = nullptr;
+                    onSocketClosed(socketData, SSL, s);
+                }
+                if (httpResponseData->onAborted != nullptr && httpResponseData->userData != nullptr) {
+                    auto onAborted = httpResponseData->onAborted;
+                    httpResponseData->onAborted = nullptr;
+                    onAborted((HttpResponse<SSL> *)s, httpResponseData->userData);
+                }
+            }
 
             /* We do not care for half closed sockets */
             return asyncSocket->close();

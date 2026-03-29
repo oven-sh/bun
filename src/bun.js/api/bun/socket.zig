@@ -1215,7 +1215,16 @@ pub fn NewSocket(comptime ssl: bool) type {
             this.socket.flush();
 
             if (this.canEndAfterFlush()) {
-                this.markInactive();
+                const handlers = this.getHandlers();
+                if (handlers.onEnd != .zero) {
+                    // Socket has a JS onEnd handler (e.g., net.Socket). Use TCP
+                    // half-close: send FIN but keep reading so the remote side's
+                    // response can be received. Unref so the event loop can exit.
+                    this.socket.shutdown();
+                    this.poll_ref.unref(handlers.vm);
+                } else {
+                    this.markInactive();
+                }
             }
         }
 

@@ -525,14 +525,13 @@ pub const AbortEvent = enum(u8) {
 
 fn handleAbortOrTimeout(this: *NodeHTTPResponse, comptime event: AbortEvent, js_value: jsc.JSValue) void {
     defer {
-        if (event == .abort) this.raw_response = null;
+        if (event == .abort) {
+            this.flags.socket_closed = true;
+            this.raw_response = null;
+        }
     }
     if (this.flags.request_has_completed) {
         return;
-    }
-
-    if (event == .abort) {
-        this.flags.socket_closed = true;
     }
 
     this.ref();
@@ -579,10 +578,6 @@ pub fn doPause(this: *NodeHTTPResponse, _: *jsc.JSGlobalObject, _: *jsc.CallFram
     this.flags.is_data_buffered_during_pause = true;
     this.raw_response.?.onData(*NodeHTTPResponse, onBufferRequestBodyWhilePaused, this);
 
-    // TODO: figure out why windows is not emitting EOF with UV_DISCONNECT
-    if (!Environment.isWindows) {
-        pauseSocket(this);
-    }
     return .true;
 }
 

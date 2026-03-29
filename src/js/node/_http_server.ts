@@ -750,6 +750,24 @@ function onServerRequestEvent(this: NodeHTTPServerSocket, event: NodeHTTPRespons
   const socket: NodeHTTPServerSocket = this;
   switch (event) {
     case NodeHTTPResponseAbortEvent.abort: {
+      // When the client closes the connection with an incomplete request body,
+      // emit the error on the request synchronously BEFORE destroying the socket.
+      // This gives error handlers a chance to send a response (e.g., 400 Bad Request)
+      // while the underlying connection is still writable.
+      const message = socket._httpMessage;
+      const req = message?.req;
+      if (req && !req.complete && !req.destroyed) {
+        // Clear the handle to prevent the abort path in _destroy from
+        // calling handle.abort() which would interfere with response writing.
+        req[kHandle] = undefined;
+        if (req.listenerCount("error") > 0) {
+          req.emit("error", new ConnResetException("aborted"));
+        }
+        // Mark as complete so no further body events are emitted.
+        req.complete = true;
+        req.destroy();
+      }
+
       if (!socket.destroyed) {
         socket.destroy();
       }
@@ -888,7 +906,7 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
     // lets sync check and destroy the request if it's not complete
     const message = this._httpMessage;
     const req = message?.req;
-    if (req && !req.complete) {
+    if (req && !req.complete && !req.destroyed) {
       // at this point the handle is not destroyed yet, lets destroy the request
       req.destroy();
     }
@@ -899,7 +917,7 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
     const message = this._httpMessage;
     const req = message?.req;
 
-    if (req && !req.complete && !req[kHandle]?.upgraded) {
+    if (req && !req.complete && !req.destroyed && !req[kHandle]?.upgraded) {
       // At this point the socket is already destroyed; let's avoid UAF
       req[kHandle] = undefined;
       if (req.listenerCount("error") > 0) {
@@ -997,10 +1015,10 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
         const message = this._httpMessage;
         const req = message?.req;
 
-        if ((bodyReadState & NodeHTTPBodyReadState.done) !== 0) {
+        if ((bodyReadState & NodeHTTPBodyReadState.done) !== 0 && req && !req.destroyed) {
           emitServerSocketEOFNT(this, req);
         }
-        if (req) {
+        if (req && !req.destroyed) {
           req.push(resumed);
         }
         this.push(resumed);

@@ -185,6 +185,7 @@ function emitCloseNTAndComplete(self) {
 }
 
 function emitEOFIncomingMessageOuter(self) {
+  if (self.destroyed) return;
   self.push(null);
   self.complete = true;
 }

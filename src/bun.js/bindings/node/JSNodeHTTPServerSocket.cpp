@@ -129,16 +129,17 @@ void JSNodeHTTPServerSocket::detach()
 void JSNodeHTTPServerSocket::onClose()
 {
     this->socket = nullptr;
+
+    // Call the abort handler synchronously while the uWS HttpResponse is still
+    // valid. This allows error handlers to write a response (e.g. 400 Bad Request)
+    // before the socket memory is freed by uWS after this callback returns.
     if (auto* res = this->currentResponseObject.get(); res != nullptr && res->m_ctx != nullptr) {
-        Bun__NodeHTTPResponse_setClosed(res->m_ctx);
+        Bun__NodeHTTPResponse_onClose(res->m_ctx, JSValue::encode(res));
     }
 
     // This function can be called during GC!
     Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(this->globalObject());
     if (!functionToCallOnClose) {
-        if (auto* res = this->currentResponseObject.get(); res != nullptr && res->m_ctx != nullptr) {
-            Bun__NodeHTTPResponse_onClose(res->m_ctx, JSValue::encode(res));
-        }
         this->detach();
         return;
     }
@@ -152,9 +153,6 @@ void JSNodeHTTPServerSocket::onClose()
             auto* thisObject = self;
             auto* callbackObject = thisObject->functionToCallOnClose.get();
             if (!callbackObject) {
-                if (auto* res = thisObject->currentResponseObject.get(); res != nullptr && res->m_ctx != nullptr) {
-                    Bun__NodeHTTPResponse_onClose(res->m_ctx, JSValue::encode(res));
-                }
                 thisObject->detach();
                 return;
             }
@@ -163,10 +161,6 @@ void JSNodeHTTPServerSocket::onClose()
             EnsureStillAliveScope ensureStillAlive(self);
 
             if (globalObject->scriptExecutionStatus(globalObject, thisObject) == ScriptExecutionStatus::Running) {
-                if (auto* res = thisObject->currentResponseObject.get(); res != nullptr && res->m_ctx != nullptr) {
-                    Bun__NodeHTTPResponse_onClose(res->m_ctx, JSValue::encode(res));
-                }
-
                 profiledCall(globalObject, JSC::ProfilingReason::API, callbackObject, callData, thisObject, args, exception);
 
                 if (auto* ptr = exception.get()) {

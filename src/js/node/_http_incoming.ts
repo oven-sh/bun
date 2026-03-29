@@ -231,8 +231,9 @@ const IncomingMessagePrototype = {
       socket.resume();
     }
 
-    if (this[eofInProgress]) {
-      // There is a nextTick pending that will emit EOF
+    if (this[eofInProgress] || this.destroyed) {
+      // There is a nextTick pending that will emit EOF, or the request was
+      // already destroyed (e.g. due to client abort with incomplete body)
       return;
     }
 

@@ -45,12 +45,11 @@ throw new Error('oopsie');
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  // Process should not crash
-  expect(exitCode).not.toBe(99); // timeout guard didn't fire
-
   const result = await Bun.file(join(String(dir), "result.txt")).text();
   // Parent should receive the error from the uncaughtException handler
   expect(result).toContain("error: uncaughtException");
-  // Parent should receive the exit event
-  expect(result).toContain("exit:");
+  // Parent should receive the exit event with code 1
+  expect(result).toContain("exit: 1");
+  // Process should not crash or hit the timeout guard
+  expect(exitCode).toBe(0);
 });

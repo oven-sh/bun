@@ -87,7 +87,10 @@ export function getStdioWriteStream(
       if (sink && sink !== true) {
         const result = sink.flush();
         if ($isPromise(result)) {
-          result.then(() => cb(null), (err) => cb(err));
+          result.then(
+            () => cb(null),
+            err => cb(err),
+          );
           return;
         }
       }

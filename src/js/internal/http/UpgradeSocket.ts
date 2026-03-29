@@ -2,6 +2,8 @@ const { Duplex } = require("internal/stream");
 
 const kReader = Symbol("reader");
 const kWriter = Symbol("writer");
+const kReading = Symbol("reading");
+const kWriterEnded = Symbol("writerEnded");
 
 interface UpgradeSocketWriter {
   push(chunk: Buffer): void;
@@ -12,11 +14,15 @@ type UpgradeSocket = InstanceType<typeof UpgradeSocket>;
 var UpgradeSocket = class UpgradeSocket extends Duplex {
   [kReader]: ReadableStreamDefaultReader | null;
   [kWriter]: UpgradeSocketWriter;
+  [kReading]: boolean;
+  [kWriterEnded]: boolean;
 
   constructor(responseBody: ReadableStream | null, writer: UpgradeSocketWriter) {
     super();
     this[kReader] = responseBody ? responseBody.getReader() : null;
     this[kWriter] = writer;
+    this[kReading] = false;
+    this[kWriterEnded] = false;
 
     if (this[kReader]) {
       this.#pump();
@@ -25,11 +31,13 @@ var UpgradeSocket = class UpgradeSocket extends Duplex {
 
   #pump() {
     const reader = this[kReader];
-    if (!reader) return;
+    if (!reader || this[kReading]) return;
+    this[kReading] = true;
 
     reader
       .read()
       .then(({ done, value }: { done: boolean; value?: Uint8Array }) => {
+        this[kReading] = false;
         if (done) {
           this.push(null);
           return;
@@ -41,9 +49,10 @@ var UpgradeSocket = class UpgradeSocket extends Duplex {
         }
         this.#pump();
       })
-      .catch(() => {
+      .catch((err: Error) => {
+        this[kReading] = false;
         if (!this.destroyed) {
-          this.push(null);
+          this.destroy(err);
         }
       });
   }
@@ -60,8 +69,14 @@ var UpgradeSocket = class UpgradeSocket extends Duplex {
     callback();
   }
 
-  _final(callback: (err?: Error | null) => void) {
+  #endWriter() {
+    if (this[kWriterEnded]) return;
+    this[kWriterEnded] = true;
     this[kWriter].end();
+  }
+
+  _final(callback: (err?: Error | null) => void) {
+    this.#endWriter();
     callback();
   }
 
@@ -71,7 +86,7 @@ var UpgradeSocket = class UpgradeSocket extends Duplex {
       this[kReader] = null;
       reader.cancel().catch(() => {});
     }
-    this[kWriter].end();
+    this.#endWriter();
     callback(err);
   }
 

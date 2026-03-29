@@ -1,7 +1,7 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
+import { once } from "node:events";
 import { createServer } from "node:http";
 import net from "node:net";
-import { once } from "node:events";
 
 test("error response sent to client when request body read fails due to client abort", async () => {
   const server = createServer(async (req, res) => {
@@ -16,14 +16,11 @@ test("error response sent to client when request body read fails due to client a
   }).listen(0);
   await once(server, "listening");
   try {
-    const socket = net.connect(
-      Number(server.address().port),
-      server.address().address,
-    );
+    const socket = net.connect(Number(server.address().port), server.address().address);
     await once(socket, "connect");
     const close = once(socket, "close");
     let data = "";
-    socket.on("data", (chunk) => {
+    socket.on("data", chunk => {
       data += chunk.toString();
     });
     socket.write(
@@ -57,14 +54,11 @@ test("error response sent when using req.resume() with incomplete body", async (
   }).listen(0);
   await once(server, "listening");
   try {
-    const socket = net.connect(
-      Number(server.address().port),
-      server.address().address,
-    );
+    const socket = net.connect(Number(server.address().port), server.address().address);
     await once(socket, "connect");
     const close = once(socket, "close");
     let data = "";
-    socket.on("data", (chunk) => {
+    socket.on("data", chunk => {
       data += chunk.toString();
     });
     socket.write(

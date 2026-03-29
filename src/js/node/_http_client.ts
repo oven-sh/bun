@@ -415,7 +415,7 @@ function ClientRequest(input, options, cb) {
 
           const { UpgradeSocket } = require("internal/http/UpgradeSocket");
           const upgradeSocket = new UpgradeSocket(response.body, {
-            push: (chunk) => {
+            push: chunk => {
               if (!this[kBodyChunks]) {
                 this[kBodyChunks] = [];
               }

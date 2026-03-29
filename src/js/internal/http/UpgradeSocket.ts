@@ -3,8 +3,6 @@ const { Duplex } = require("internal/stream");
 const kReader = Symbol("reader");
 const kWriter = Symbol("writer");
 
-type WriterCallback = (chunk: Buffer | undefined) => void;
-
 interface UpgradeSocketWriter {
   push(chunk: Buffer): void;
   end(): void;
@@ -73,7 +71,9 @@ var UpgradeSocket = class UpgradeSocket extends Duplex {
     callback(err);
   }
 
-  setKeepAlive(_enable = false, _initialDelay = 0) {}
+  setKeepAlive(_enable = false, _initialDelay = 0) {
+    return this;
+  }
 
   setNoDelay(_noDelay = true) {
     return this;

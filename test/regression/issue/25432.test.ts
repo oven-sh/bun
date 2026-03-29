@@ -23,6 +23,7 @@ describe("process.stdout.end() flushes pending writes before callback", () => {
 
     const byteCount = parseInt(result.stdout.toString().trim(), 10);
     expect(byteCount).toBe(200001);
+    expect(result.exitCode).toBe(0);
   });
 
   test("overridden write with .bind() pattern from issue", async () => {
@@ -56,5 +57,6 @@ describe("process.stdout.end() flushes pending writes before callback", () => {
     const byteCount = parseInt(result.stdout.toString().trim(), 10);
     // The JSON output should be ~216KB, not truncated at 64KB/128KB
     expect(byteCount).toBeGreaterThan(200000);
+    expect(result.exitCode).toBe(0);
   });
 });

@@ -413,54 +413,22 @@ function ClientRequest(input, options, cb) {
           setIsNextIncomingMessageHTTPS(prevIsHTTPS);
           upgradeRes.req = this;
 
-          // Create a duplex socket that bridges the response body (read side)
-          // and the request body generator (write side).
-          const self = this;
-          const { Duplex } = require("internal/stream");
-          const upgradeSocket = new Duplex({
-            read() {},
-            write(chunk, encoding, callback) {
-              if (typeof chunk === "string") {
-                chunk = Buffer.from(chunk, encoding);
+          const { UpgradeSocket } = require("internal/http/UpgradeSocket");
+          const upgradeSocket = new UpgradeSocket(response.body, {
+            push: (chunk) => {
+              if (!this[kBodyChunks]) {
+                this[kBodyChunks] = [];
               }
-              if (!self[kBodyChunks]) {
-                self[kBodyChunks] = [];
-              }
-              self[kBodyChunks].push(chunk);
+              this[kBodyChunks].push(chunk);
               resolveNextChunk?.(false);
-              callback();
             },
-            final(callback) {
-              self.finished = true;
+            end: () => {
+              this.finished = true;
               resolveNextChunk?.(true);
-              callback();
             },
           });
 
-          // Pump response body into the readable side of the duplex socket.
-          if (response.body) {
-            const reader = response.body.getReader();
-            const pump = () => {
-              reader
-                .read()
-                .then(({ done, value }) => {
-                  if (done) {
-                    upgradeSocket.push(null);
-                    return;
-                  }
-                  if (!upgradeSocket.destroyed) {
-                    upgradeSocket.push(value);
-                  }
-                  pump();
-                })
-                .catch(() => {
-                  if (!upgradeSocket.destroyed) {
-                    upgradeSocket.push(null);
-                  }
-                });
-            };
-            pump();
-          }
+          upgradeRes.socket = upgradeSocket;
 
           process.nextTick(
             (self, res, socket) => {

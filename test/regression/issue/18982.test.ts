@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
+import fs from "node:fs";
 import http from "node:http";
 import net from "node:net";
+import os from "node:os";
+import path from "node:path";
 
 describe("http.ClientRequest upgrade event", () => {
   test("emits 'upgrade' event on 101 Switching Protocols", async () => {
@@ -152,10 +155,6 @@ describe("http.ClientRequest upgrade event", () => {
   });
 
   test("upgrade over unix socket", async () => {
-    const fs = await import("node:fs");
-    const os = await import("node:os");
-    const path = await import("node:path");
-
     const socketPath = path.join(os.tmpdir(), `bun-test-upgrade-${Date.now()}.sock`);
 
     const { promise: serverReady, resolve: resolveServerReady } = Promise.withResolvers<void>();
@@ -228,8 +227,8 @@ describe("http.ClientRequest upgrade event", () => {
       let buf = "";
       socket.on("data", data => {
         buf += data.toString();
-        // Wait until we get the full HTTP request with body
-        if (buf.includes("\r\n\r\n")) {
+        // Wait until we get the full HTTP request including body
+        if (buf.includes('{"Tty":true}')) {
           socket.write(
             "HTTP/1.1 101 Switching Protocols\r\n" +
               "Upgrade: tcp\r\n" +

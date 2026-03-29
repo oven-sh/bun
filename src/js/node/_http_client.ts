@@ -429,10 +429,13 @@ function ClientRequest(input, options, cb) {
           });
 
           upgradeRes.socket = upgradeSocket;
+          upgradeSocket.once("close", maybeEmitClose);
 
           process.nextTick(
             (self, res, socket) => {
-              self.emit("upgrade", res, socket, Buffer.alloc(0));
+              if (!self.emit("upgrade", res, socket, Buffer.alloc(0))) {
+                socket.destroy();
+              }
             },
             this,
             upgradeRes,

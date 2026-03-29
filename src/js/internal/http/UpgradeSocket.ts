@@ -43,7 +43,6 @@ var UpgradeSocket = class UpgradeSocket extends Duplex {
           return;
         }
         if (!this.push(value)) {
-          // Backpressure: consumer buffer is full, wait for _read()
           return;
         }
         this.#pump();
@@ -87,6 +86,41 @@ var UpgradeSocket = class UpgradeSocket extends Duplex {
     }
     this.#endWriter();
     callback(err);
+  }
+
+  setTimeout(timeout: number, callback?: () => void) {
+    if (callback) {
+      if (timeout === 0) {
+        this.removeListener("timeout", callback);
+      } else {
+        this.once("timeout", callback);
+      }
+    }
+    return this;
+  }
+
+  address() {
+    return {};
+  }
+
+  get remoteAddress() {
+    return undefined;
+  }
+
+  get remotePort() {
+    return undefined;
+  }
+
+  get remoteFamily() {
+    return undefined;
+  }
+
+  get localAddress() {
+    return undefined;
+  }
+
+  get localPort() {
+    return undefined;
   }
 
   setKeepAlive(_enable = false, _initialDelay = 0) {

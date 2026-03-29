@@ -352,7 +352,13 @@ function ClientRequest(input, options, cb) {
           }
 
           while (!self.finished) {
-            yield await new Promise(resolve => {
+            // Drain any chunks queued while resolveNextChunk was undefined
+            while (self[kBodyChunks]?.length > 0 && !self.finished) {
+              yield self[kBodyChunks].shift();
+            }
+            if (self.finished) break;
+
+            const chunk = await new Promise(resolve => {
               resolveNextChunk = end => {
                 resolveNextChunk = undefined;
                 if (end) {
@@ -362,6 +368,9 @@ function ClientRequest(input, options, cb) {
                 }
               };
             });
+            if (chunk !== undefined) {
+              yield chunk;
+            }
 
             if (self[kBodyChunks]?.length === 0) {
               self.emit("drain");
@@ -429,6 +438,8 @@ function ClientRequest(input, options, cb) {
           });
 
           upgradeRes.socket = upgradeSocket;
+          upgradeRes.complete = true;
+          upgradeRes.push(null);
           upgradeSocket.once("close", maybeEmitClose);
 
           process.nextTick(

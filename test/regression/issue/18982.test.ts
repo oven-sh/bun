@@ -5,7 +5,7 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 
-describe("http.ClientRequest upgrade event", () => {
+describe.concurrent("http.ClientRequest upgrade event", () => {
   test("emits 'upgrade' event on 101 Switching Protocols", async () => {
     const { promise: serverReady, resolve: resolveServerReady } = Promise.withResolvers<number>();
     const { promise: done, resolve: resolveDone, reject: rejectDone } = Promise.withResolvers<void>();

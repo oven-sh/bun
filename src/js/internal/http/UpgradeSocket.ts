@@ -106,7 +106,10 @@ var UpgradeSocket = class UpgradeSocket extends Duplex {
     return this;
   }
 
-  resetAndDestroy() {}
+  resetAndDestroy() {
+    this.destroy();
+    return this;
+  }
 };
 
 Object.defineProperty(UpgradeSocket, "name", { value: "Socket" });

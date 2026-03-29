@@ -130,7 +130,7 @@ pub fn exit(code: u32) noreturn {
             }
             // quick_exit does not run atexit handlers, so mimalloc's
             // mi_process_done (registered via atexit) never executes.
-            // Print stats manually if MIMALLOC_SHOW_STATS=1 is set.
+            // Print stats manually if MIMALLOC_SHOW_STATS=1 or MIMALLOC_VERBOSE=1 is set.
             if (comptime use_mimalloc) {
                 if (Mimalloc.mi_option_is_enabled(.show_stats) or Mimalloc.mi_option_is_enabled(.verbose)) {
                     Mimalloc.mi_stats_print(null);

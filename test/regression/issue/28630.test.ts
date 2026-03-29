@@ -1,7 +1,8 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isWindows } from "harness";
 
-test("MIMALLOC_SHOW_STATS=1 prints memory statistics on exit", async () => {
+// Windows uses ExitProcess which doesn't run atexit handlers
+test.skipIf(isWindows)("MIMALLOC_SHOW_STATS=1 prints memory statistics on exit", async () => {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", "console.log('hello')"],
     env: { ...bunEnv, MIMALLOC_SHOW_STATS: "1" },

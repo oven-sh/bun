@@ -347,7 +347,7 @@ pub const TrustCommand = struct {
             progress.* = .{};
         }
 
-        const package_json_contents = try pm.root_package_json_file.readToEndAlloc(ctx.allocator, try pm.root_package_json_file.getEndPos());
+        const package_json_contents = try pm.root_package_json_file.readToEndAlloc(ctx.allocator, try bun.getEndPosFile(pm.root_package_json_file));
         defer ctx.allocator.free(package_json_contents);
 
         const package_json_source = logger.Source.initPathString(PackageManager.root_package_json_path, package_json_contents);

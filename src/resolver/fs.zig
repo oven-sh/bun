@@ -885,7 +885,7 @@ pub const FileSystem = struct {
             }
 
             pub fn generate(_: *RealFS, _: string, file: std.fs.File) anyerror!ModKey {
-                const stat = try file.stat();
+                const stat = try bun.statFile(file);
 
                 const seconds = @divTrunc(stat.mtime, @as(@TypeOf(stat.mtime), std.time.ns_per_s));
 
@@ -1338,7 +1338,7 @@ pub const FileSystem = struct {
                         cache.fd = file.handle;
                     }
                 }
-                const _stat = try file.stat();
+                const _stat = try bun.statFile(file);
 
                 symlink = try bun.getFdPath(file.handle, &outpath);
 
@@ -1468,7 +1468,7 @@ pub const FileSystem = struct {
                         cache.fd = file;
                     }
                 }
-                const file_stat = try file.stdFile().stat();
+                const file_stat = try bun.statFile(file.stdFile());
                 symlink = try file.getFdPath(&outpath);
                 file_kind = file_stat.kind;
             }

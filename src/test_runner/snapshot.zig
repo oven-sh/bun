@@ -540,7 +540,7 @@ pub const Snapshots = struct {
             if (this.update_snapshots) {
                 try this.file_buf.appendSlice(file_header);
             } else {
-                const length = try file.file.getEndPos();
+                const length = try bun.getEndPosFile(file.file);
                 if (length == 0) {
                     try this.file_buf.appendSlice(file_header);
                 } else {

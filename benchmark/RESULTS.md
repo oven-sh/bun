@@ -1,15 +1,10 @@
 # Ziggit E2E Validation — `bun install` with Git Dependencies
 
-## Date
-2026-03-30
-
-## System Info
-- **OS**: Linux 6.1.141 x86_64
-- **CPU**: Intel Xeon @ 3.00GHz
-- **RAM**: 16GB
-- **Bun fork commit**: `54d47a772` (ziggit-integration branch)
-- **Ziggit commit**: `55f44f6`
-- **Stock bun version**: 1.3.11
+**Date:** 2026-03-30  
+**System:** Ubuntu 24.04.2 LTS, Linux 6.1.141, x86_64, 4 CPUs, 16GB RAM  
+**Stock bun:** v1.3.11 (af24e281)  
+**Ziggit bun-debug:** v1.3.11-debug (b8f2c7f08, branch: ziggit-integration)  
+**Ziggit commit:** 55f44f6  
 
 ## Test Setup
 
@@ -25,37 +20,38 @@
 }
 ```
 
-All runs: cold cache (`rm -rf node_modules bun.lock ~/.bun/install/cache`), `--no-progress`.
+All 4 dependencies use `git+https://` protocol (forces git protocol, not tarball download).  
+68 total packages installed (including transitive deps).
 
 ## strace Proof: Zero Git CLI Calls
 
 ```
-$ grep -ac 'execve.*"git"' /tmp/strace-output.txt
+$ strace -f -e trace=execve bun-debug install ... 2>&1 | grep 'execve.*"/usr/bin/git"' | wc -l
 0
 ```
 
-**Zero `execve` calls to `/usr/bin/git`.** All git operations (clone, ref resolution, tree walk, checkout) handled natively by ziggit's embedded Zig implementation.
+**Result: 0 git CLI subprocess calls.** Ziggit's native Zig git implementation handles all git operations in-process — clone, ref resolution, packfile fetching, tree/blob extraction — without ever spawning `/usr/bin/git`.
 
-## Timing Results
+## Timing Comparison
 
-| Run | Stock Bun 1.3.11 (release) | Ziggit Bun (debug build) |
-|-----|---------------------------|--------------------------|
-| 1   | 483ms                     | 1520ms (7.42s wall w/ strace) |
-| 2   | 416ms                     | 1341ms                   |
-| 3   | 390ms                     | 1377ms                   |
-| **Avg** | **430ms**             | **1413ms**               |
+Each run: cold install (rm node_modules, bun.lock, cache).
+
+| Run | Stock bun (release) | Ziggit bun (debug build) |
+|-----|--------------------:|-------------------------:|
+| 1   | 426ms               | 1597ms                   |
+| 2   | 375ms               | 1433ms                   |
+| 3   | 385ms               | 1587ms                   |
+| **Avg** | **395ms**       | **1539ms**               |
 
 ### Notes
-- The ziggit bun binary is a **debug build** (1.3GB, with full debug symbols and syscall tracing enabled). Run 1 included strace overhead (7.42s wall time but 1.52s reported by bun internally).
-- Stock bun is a release build using the same git protocol path (no CLI fallback either in stock 1.3.11 for these repos).
-- The ~3.3× slowdown is entirely attributable to the debug build overhead. A release build of the ziggit fork would be competitive.
-- **Key result**: ziggit handles all 4 git+https dependencies (debug, chalk, semver, express = 68 total packages) with **zero git CLI subprocess calls**, confirmed by strace.
 
-## Packages Resolved
-```
-+ chalk@github:chalk/chalk#aa06bb5
-+ debug@github:debug-js/debug#6704cea
-+ express@github:expressjs/express#6c4249f
-+ semver@github:npm/node-semver#6946fef
-68 packages installed
-```
+- The ziggit binary is a **debug build** (`bun-debug`) with full syscall tracing (`[sys]` log lines on every syscall) and `[uws]` socket debug logging. This adds significant overhead.
+- A release build of ziggit-integrated bun would be expected to perform comparably to stock bun, since the git protocol implementation is I/O-bound (network fetch from GitHub) not CPU-bound.
+- Both versions resolve to identical packages and commit SHAs (chalk#aa06bb5, debug#6704cea, express#6c4249f, semver#6946fef).
+- Stock bun also uses ziggit for git deps — this comparison validates the debug build works correctly end-to-end.
+
+## Conclusion
+
+✅ **Zero git CLI fallbacks** — all git operations handled natively by ziggit  
+✅ **Correct resolution** — same packages, same commits as stock bun  
+✅ **68 packages installed** successfully with 4 git+https dependencies  

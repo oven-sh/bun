@@ -1,4 +1,4 @@
-import assert from "assert";
+import assert from "node:assert";
 import { expect, test } from "bun:test";
 
 // https://github.com/oven-sh/bun/issues/28647

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { execSync } from "child_process";
+import { spawnSync } from "bun";
 import { mkdirSync, readFileSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
@@ -10,7 +10,8 @@ function createTarball(baseDir: string, pkgName: string, version: string): strin
   writeFileSync(join(tmpPkg, "package", "package.json"), JSON.stringify({ name: pkgName, version }));
   writeFileSync(join(tmpPkg, "package", "index.js"), `module.exports = '${pkgName}';`);
   const tgzPath = join(baseDir, "_tarballs", `${pkgName}-${version}.tgz`);
-  execSync(`tar czf "${tgzPath}" package`, { cwd: tmpPkg });
+  const result = spawnSync(["tar", "czf", tgzPath, "package"], { cwd: tmpPkg });
+  if (result.exitCode !== 0) throw new Error(`tar failed: ${result.stderr.toString()}`);
   return tgzPath;
 }
 

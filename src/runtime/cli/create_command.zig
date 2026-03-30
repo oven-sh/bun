@@ -568,7 +568,7 @@ pub const CreateCommand = struct {
                                 break :brk try pkg.getEndPos();
                             }
 
-                            const stat = pkg.stat() catch |err| {
+                            const stat = bun.statFile(pkg) catch |err| {
                                 node.end();
 
                                 progress.refresh();

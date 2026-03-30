@@ -1923,6 +1923,31 @@ pub fn openDirForPath(file_path: [:0]const u8) !std.fs.Dir {
     };
 }
 
+/// Stat a `std.fs.File` using fstat, avoiding statx which requires kernel >= 4.11.
+/// On older kernels (e.g. Synology NAS with kernel 4.4), statx returns ENOSYS.
+pub fn statFile(file: std.fs.File) std.fs.File.StatError!std.fs.File.Stat {
+    if (comptime Environment.isLinux) {
+        const fd = FD.fromStdFile(file);
+        switch (sys.fstat(fd)) {
+            .result => |stat_| return std.fs.File.Stat.fromPosix(stat_),
+            .err => |err| switch (err.getErrno()) {
+                .NOMEM => return error.SystemResources,
+                .ACCES => return error.AccessDenied,
+                else => return std.posix.unexpectedErrno(err.getErrno()),
+            },
+        }
+    }
+    return file.stat();
+}
+
+/// Get the file size using fstat, avoiding statx which requires kernel >= 4.11.
+pub fn getEndPosFile(file: std.fs.File) std.fs.File.GetEndPosError!u64 {
+    if (comptime Environment.isLinux) {
+        return (try statFile(file)).size;
+    }
+    return file.getEndPos();
+}
+
 pub const Generation = u16;
 
 pub const zstd = @import("./zstd/zstd.zig");

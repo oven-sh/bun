@@ -2760,7 +2760,9 @@ pub fn getFdPath(fd: bun.FileDescriptor, out_buffer: *bun.PathBuffer) Maybe([]u8
                     // emul_path → /compat/linux/dev/fd (fdescfs, readlink works).
                     // On real Linux /dev/fd → /proc/self/fd so this is a no-op.
                     .NOENT, .INVAL, .NOTDIR => {
-                        const dev_path = std.fmt.bufPrintZ(&procfs_buf, "/dev/fd/{d}", .{fd.cast()}) catch unreachable;
+                        // separate buffer: err.path borrows from procfs_buf
+                        var devfd_buf: ["/dev/fd/-2147483648".len + 1:0]u8 = undefined;
+                        const dev_path = std.fmt.bufPrintZ(&devfd_buf, "/dev/fd/{d}", .{fd.cast()}) catch unreachable;
                         return switch (readlink(dev_path, out_buffer)) {
                             .err => |_| .{ .err = err }, // report original error
                             .result => |result| .{ .result = result },

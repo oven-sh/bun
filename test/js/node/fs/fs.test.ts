@@ -1565,20 +1565,16 @@ it.if(isPosix)("realpathSync doesn't block on FIFO", () => {
 // (minimal containers, FreeBSD Linuxulator). This test ensures the primary
 // path still works on a normal POSIX host.
 it.if(isPosix)("realpathSync resolves root, regular files, and symlinks", () => {
-  // Root directory — the original Linuxulator bug manifested here as
-  // ENOENT: no such file or directory, lstat '/'
   expect(realpathSync("/")).toBe("/");
 
-  // Regular file — should resolve to a canonical absolute path
   const self = realpathSync(import.meta.path);
   expect(self).toStartWith("/");
   expect(existsSync(self)).toBe(true);
 
-  // Symlink — should follow through to the target
-  const linkPath = join(tmpdirSync(), "fs-realpath-getfdpath.link");
+  using dir = tempDir("fs-realpath-getfdpath", {});
+  const linkPath = join(String(dir), "link");
   symlinkSync(import.meta.path, linkPath);
   expect(realpathSync(linkPath)).toBe(self);
-  unlinkSync(linkPath);
 });
 
 it("readlink", () => {

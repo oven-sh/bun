@@ -3960,8 +3960,9 @@ function decodeChunkedBody(buf) {
     if (isNaN(chunkSize)) break;
     if (chunkSize === 0) {
       complete = true;
-      // Skip past 0\r\n\r\n (terminator)
-      offset = crlfIdx + 4;
+      // Skip past terminator including any trailers (RFC 7230 §4.1.2)
+      const trailerEnd = buf.indexOf("\r\n\r\n", crlfIdx);
+      offset = trailerEnd !== -1 ? trailerEnd + 4 : crlfIdx + 4;
       break;
     }
     const dataStart = crlfIdx + 2;
@@ -4165,9 +4166,9 @@ function http1Fallback(socket: Socket) {
         // Re-arm for next request (keep-alive)
         headersParsed = false;
         socket.on("data", onData);
-        // Process any pipelined data already buffered
+        // Process any pipelined data already buffered (defer to avoid stack recursion)
         if (totalLength > 0) {
-          tryParseRequest();
+          process.nextTick(tryParseRequest);
         }
       }
     });
@@ -4276,7 +4277,7 @@ class Http1FallbackResponse extends Stream {
   }
 
   setHeader(name, value) {
-    if (this[kHttp1FallbackHeadersSent]) throw $ERR_HTTP2_HEADERS_SENT();
+    if (this[kHttp1FallbackHeadersSent]) throw $ERR_HTTP_HEADERS_SENT("set");
     this[kHttp1FallbackHeaders].set(StringPrototypeToLowerCase.$call(name), { name, value });
     return this;
   }
@@ -4303,7 +4304,7 @@ class Http1FallbackResponse extends Stream {
   }
 
   removeHeader(name) {
-    if (this[kHttp1FallbackHeadersSent]) throw $ERR_HTTP2_HEADERS_SENT();
+    if (this[kHttp1FallbackHeadersSent]) throw $ERR_HTTP_HEADERS_SENT("remove");
     this[kHttp1FallbackHeaders].delete(StringPrototypeToLowerCase.$call(name));
   }
 
@@ -4327,7 +4328,7 @@ class Http1FallbackResponse extends Stream {
   }
 
   writeHead(statusCode, statusMessage?, headers?) {
-    if (this[kHttp1FallbackHeadersSent]) throw $ERR_HTTP2_HEADERS_SENT();
+    if (this[kHttp1FallbackHeadersSent]) throw $ERR_HTTP_HEADERS_SENT("writeHead");
     if (typeof statusMessage === "object") {
       headers = statusMessage;
       statusMessage = undefined;

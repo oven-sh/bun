@@ -23,6 +23,7 @@
 
 import { readFileSync } from "node:fs";
 import { relative, resolve } from "node:path";
+import type { Sources } from "../glob-sources.ts";
 import { emitCodegen, zigFilesGeneratedIntoSrc, type CodegenOutputs } from "./codegen.ts";
 import { ar, cc, cxx, link, pch } from "./compile.ts";
 import { bunExeName, shouldStrip, type Config } from "./config.ts";
@@ -34,8 +35,8 @@ import { bunIncludes, computeFlags, extraFlagsFor, linkDepends } from "./flags.t
 import { writeIfChanged } from "./fs.ts";
 import type { Ninja } from "./ninja.ts";
 import { quote, slash } from "./shell.ts";
+import { emitShims } from "./shims.ts";
 import { computeDepLibs, depSourceStamp, resolveDep, type ResolvedDep } from "./source.ts";
-import type { Sources } from "./sources.ts";
 import { streamPath } from "./stream.ts";
 import { emitZig } from "./zig.ts";
 
@@ -168,12 +169,10 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   const depLibs: string[] = [];
   const depIncludes: string[] = [];
   const depOutputs: string[] = []; // PCH order-only-deps on these
-  const depCSources: string[] = [];
   for (const d of deps) {
     depLibs.push(...d.libs);
     depIncludes.push(...d.includes);
     depOutputs.push(...d.outputs);
-    depCSources.push(...d.sources);
   }
 
   // ─── Step 2: codegen ───
@@ -268,10 +267,8 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     );
   }
 
-  // Sources provided directly by deps (picohttpparser.c). These are
-  // declared as implicit outputs of their fetch rules, so ninja knows
-  // where they come from; we compile them like any other .c file.
-  cSources.push(...depCSources);
+  // Deps with provides.sources compiled in the loop below so each dep's
+  // phony can point at its own .o files.
 
   // Codegen .cpp files — compiled like regular sources.
   cxxSources.push(...codegen.cppSources);
@@ -313,13 +310,21 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
 
   // Compile all .c files. No PCH. Order-only on deps for first-build ordering.
   const cObjects: string[] = [];
-  for (const src of cSources) {
-    cObjects.push(
-      cc(n, cfg, src, {
-        flags: cFlagsFull,
-        orderOnlyInputs: depOrderOnly,
-      }),
-    );
+  const compileC = (src: string): string => {
+    const obj = cc(n, cfg, src, { flags: cFlagsFull, orderOnlyInputs: depOrderOnly });
+    cObjects.push(obj);
+    return obj;
+  };
+  for (const src of cSources) compileC(src);
+
+  // Deps that contribute source files for bun to compile directly (via
+  // provides.sources) instead of building a lib. Compile them here with
+  // bun's full flag set and give each a phony so `--target <name>` builds
+  // its .o files. libs.length === 0 guard: deps with a build step already
+  // got a phony in resolveDep — don't emit a duplicate.
+  for (const d of deps) {
+    if (d.sources.length === 0 || d.libs.length > 0) continue;
+    n.phony(d.name, d.sources.map(compileC));
   }
 
   const allObjects = [...cxxObjects, ...cObjects];
@@ -350,10 +355,11 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   const windowsRes = cfg.windows ? [emitWindowsResources(n, cfg)] : [];
 
   // Full link.
+  const shims = emitShims(n, cfg);
   const exe = link(n, cfg, exeName, [...allObjects, ...zigObjects, ...windowsRes], {
     libs: depLibs,
-    flags: [...flags.ldflags, ...systemLibs(cfg), ...manifestLinkFlags(cfg)],
-    implicitInputs: linkImplicitInputs(cfg),
+    flags: [...flags.ldflags, ...systemLibs(cfg), ...manifestLinkFlags(cfg), ...shims.ldflags],
+    implicitInputs: [...linkImplicitInputs(cfg), ...shims.implicitInputs],
   });
 
   // ─── Step 8: post-link (strip + dsymutil) ───
@@ -489,10 +495,11 @@ function emitLinkOnly(n: Ninja, cfg: Config): BunOutput {
   // knows. Matches cmake's BUN_LINK_ONLY adding WINDOWS_RESOURCES directly.
   const windowsRes = cfg.windows ? [emitWindowsResources(n, cfg)] : [];
 
+  const shims = emitShims(n, cfg);
   const exe = link(n, cfg, exeName, [archive, zigObj, ...windowsRes], {
     libs: depLibs,
-    flags: [...flags.ldflags, ...systemLibs(cfg), ...manifestLinkFlags(cfg)],
-    implicitInputs: linkImplicitInputs(cfg),
+    flags: [...flags.ldflags, ...systemLibs(cfg), ...manifestLinkFlags(cfg), ...shims.ldflags],
+    implicitInputs: [...linkImplicitInputs(cfg), ...shims.implicitInputs],
   });
 
   // Strip + smoke test — same as full mode.
@@ -546,7 +553,7 @@ function emitSmokeTest(n: Ninja, cfg: Config, exe: string, exeName: string): voi
   // without grouping, `a || b && touch` parses as `a || (b && touch)` —
   // stamp wouldn't get written when setarch succeeds.
   const q = (p: string) => quote(p, cfg.windows);
-  const wrap = `${q(cfg.bun)} ${q(streamPath)} check --console`;
+  const wrap = `${cfg.jsRuntime} ${q(streamPath)} check --console`;
   n.rule("smoke_test", {
     command: cfg.windows
       ? `${wrap} cmd /c "${testCmd} && type nul > $out"`
@@ -626,7 +633,7 @@ function emitDsymutil(n: Ninja, cfg: Config, inputExe: string, exeName: string):
   //   a subshell.
   // stream.ts --console for pool:console consistency (no-op on darwin).
   const q = (p: string) => quote(p, false); // darwin-only → posix
-  const wrap = `${q(cfg.bun)} ${q(streamPath)} dsym --console`;
+  const wrap = `${cfg.jsRuntime} ${q(streamPath)} dsym --console`;
   n.rule("dsymutil", {
     command: `${wrap} sh -c '${cfg.dsymutil} $in --flat --keep-function-for-static --object-prefix-map .=${cfg.cwd} -o $out -j $$(sysctl -n hw.ncpu)'`,
     description: "dsymutil $out",

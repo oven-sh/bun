@@ -272,6 +272,10 @@ int us_internal_raw_root_certs(struct us_cert_string_t **out);
 struct us_listen_socket_t {
   alignas(LIBUS_EXT_ALIGNMENT) struct us_socket_t s;
   unsigned int socket_ext_size;
+  /* Set when TCP_DEFER_ACCEPT/SO_ACCEPTFILTER was successfully applied. Accepted sockets
+   * from this listener are guaranteed to have data ready, so the accept loop dispatches
+   * readable immediately instead of returning to epoll/kqueue. */
+  unsigned char deferred_accept;
 };
 
 /* Listen sockets are keps in their own list */

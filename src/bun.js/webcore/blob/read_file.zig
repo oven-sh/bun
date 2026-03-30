@@ -27,7 +27,7 @@ pub fn NewReadFileHandler(comptime Function: anytype) type {
                     try jsc.AnyPromise.wrap(.{ .normal = promise }, globalThis, WrappedFn.wrapped, .{ &blob, globalThis, bytes });
                 },
                 .err => |err| {
-                    try promise.reject(globalThis, err.toErrorInstance(globalThis));
+                    try promise.reject(globalThis, err.toErrorInstanceWithAsyncStack(globalThis, promise));
                 },
             }
         }

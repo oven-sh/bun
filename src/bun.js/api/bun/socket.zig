@@ -327,8 +327,9 @@ pub fn NewSocket(comptime ssl: bool) type {
                     this.has_pending_activity.store(false, .release);
 
                     // reject the promise on connect() error
-                    const err_value = err.toErrorInstance(globalObject);
-                    try promise.asPromise().?.reject(globalObject, err_value);
+                    const js_promise = promise.asPromise().?;
+                    const err_value = err.toErrorInstanceWithAsyncStack(globalObject, js_promise);
+                    try js_promise.reject(globalObject, err_value);
                 }
 
                 return;
@@ -348,7 +349,7 @@ pub fn NewSocket(comptime ssl: bool) type {
                 // They've defined a `connectError` callback
                 // The error is effectively handled, but we should still reject the promise.
                 var promise = val.asPromise().?;
-                const err_ = err.toErrorInstance(globalObject);
+                const err_ = err.toErrorInstanceWithAsyncStack(globalObject, promise);
                 try promise.rejectAsHandled(globalObject, err_);
             }
         }

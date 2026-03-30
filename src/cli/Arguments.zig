@@ -22,7 +22,7 @@ pub fn readFile(
     defer allocator.free(outpath);
     var file = try bun.openFileZ(&try std.posix.toPosixPath(outpath), std.fs.File.OpenFlags{ .mode = .read_only });
     defer file.close();
-    const size = try file.getEndPos();
+    const size = try bun.getEndPosFile(file);
     return try file.readToEndAlloc(allocator, size);
 }
 

@@ -14,9 +14,7 @@ import { basename, relative, resolve } from "node:path";
 import * as utils from "../utils.mjs";
 import { bunExeName, shouldStrip, type BunOutput } from "./bun.ts";
 import type { Config } from "./config.ts";
-import { WEBKIT_VERSION } from "./deps/webkit.ts";
 import { BuildError } from "./error.ts";
-import { ZIG_COMMIT } from "./zig.ts";
 
 /** True if running under any CI (env: CI, BUILDKITE, or GITHUB_ACTIONS). */
 export const isCI: boolean = utils.isCI;
@@ -291,7 +289,7 @@ function upload(paths: string[], cwd: string): void {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// Link-only post-link: features.json + link-metadata.json + packaging + upload
+// Link-only post-link: features.json + packaging + upload
 //
 // The zip contract (matching cmake's BuildBun.cmake packaging — test steps
 // download these by exact name):
@@ -336,7 +334,7 @@ function computeBunTriplet(cfg: Config): string {
  * Post-link packaging and upload for link-only mode. Runs AFTER ninja
  * succeeds — at that point bun-profile (and stripped bun) exist.
  *
- * Generates features.json + link-metadata.json, packages into zips,
+ * Generates features.json, packages into zips,
  * uploads. Contract with test steps: see block comment above.
  */
 export function packageAndUpload(cfg: Config, output: BunOutput): void {
@@ -362,22 +360,6 @@ export function packageAndUpload(cfg: Config, output: BunOutput): void {
     BUN_DEBUG_QUIET_LOGS: "1",
     BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1",
   });
-
-  // ─── link-metadata.json ───
-  // Version/webkit/zig info for debugging. Env vars match cmake
-  // (BuildBun.cmake ~1253). The script reads the ninja link command too.
-  console.log("Generating link-metadata.json...");
-  run(
-    [process.execPath, resolve(cfg.cwd, "scripts", "create-link-metadata.mjs"), buildDir, exeName + cfg.exeSuffix],
-    cfg.cwd,
-    {
-      BUN_VERSION: cfg.version,
-      WEBKIT_VERSION: WEBKIT_VERSION,
-      ZIG_COMMIT: ZIG_COMMIT,
-      // WEBKIT_DOWNLOAD_URL not available directly; we have the version.
-      // The script handles missing env vars (defaults to "").
-    },
-  );
 
   const zipPaths: string[] = [];
 
@@ -407,10 +389,8 @@ export function packageAndUpload(cfg: Config, output: BunOutput): void {
   }
 
   // ─── Upload ───
-  // link-metadata.json uploaded standalone (not in a zip — matches cmake's
-  // ARTIFACTS ${BUILD_PATH}/link-metadata.json).
-  console.log(`Uploading ${zipPaths.length} zips + metadata...`);
-  upload([...zipPaths, "link-metadata.json"], buildDir);
+  console.log(`Uploading ${zipPaths.length} zips...`);
+  upload(zipPaths, buildDir);
 }
 
 /**

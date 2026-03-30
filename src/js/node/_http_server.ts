@@ -756,14 +756,27 @@ function onServerRequestEvent(this: NodeHTTPServerSocket, event: NodeHTTPRespons
       // while the underlying connection is still writable.
       const message = socket._httpMessage;
       const req = message?.req;
-      if (req && !req.complete && !req.destroyed) {
-        // Clear the handle to prevent the abort path in _destroy from
-        // calling handle.abort() which would interfere with response writing.
-        req[kHandle] = undefined;
-        if (req.listenerCount("error") > 0) {
-          req.emit("error", new ConnResetException("aborted"));
+      if (req && !req.destroyed) {
+        // Check if the body was already fully received before treating
+        // this as a truncated upload. req.complete is set asynchronously
+        // via nextTick, so also check synchronous indicators.
+        const handle = req[kHandle];
+        const bodyReadState = handle?.hasBody ?? 0;
+        const bodyAlreadyFinished =
+          req.complete ||
+          req[eofInProgress] ||
+          bodyReadState === NodeHTTPBodyReadState.none ||
+          (bodyReadState & NodeHTTPBodyReadState.done) !== 0;
+
+        if (!bodyAlreadyFinished) {
+          // Clear the handle to prevent the abort path in _destroy from
+          // calling handle.abort() which would interfere with response writing.
+          req[kHandle] = undefined;
+          if (req.listenerCount("error") > 0) {
+            req.emit("error", new ConnResetException("aborted"));
+          }
+          req.destroy();
         }
-        req.destroy();
       }
 
       if (!socket.destroyed) {

@@ -1,5 +1,5 @@
-import { expect, test } from "bun:test";
 import assert from "assert";
+import { expect, test } from "bun:test";
 
 // https://github.com/oven-sh/bun/issues/28647
 // assert.deepStrictEqual incorrectly fails for Proxy-wrapped arrays/objects

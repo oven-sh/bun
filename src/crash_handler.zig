@@ -1115,10 +1115,134 @@ const Platform = enum(u8) {
 ///
 /// '1' - original. uses 7 char hash with VLQ encoded stack-frames
 /// '2' - same as '1' but this build is known to be a canary build
-const version_char = if (bun.Environment.is_canary)
-    "2"
-else
-    "1";
+/// '3' - adds OS version, env flags, CPU flags, RAM after the sha.
+///       canary moves into the env flags byte.
+const version_char = "3";
+
+/// Metadata encoded into the trace string after the git sha.
+///
+/// All detection runs at crash time. Every call here is either a raw syscall,
+/// kernel32/ntdll, CPUID, or pure computation — no locks, no allocation. On
+/// macOS, sysctlbyname is two syscalls with no libc-side state; it is no less
+/// safe than the zlib.compress2 call this handler already makes for panic
+/// messages. uname() is POSIX async-signal-safe. We call these directly rather
+/// than through bun.analytics.forOS() to avoid its std.once mutex.
+const TraceMeta = struct {
+    /// Bit layout is part of the trace string wire format — do not reorder.
+    const EnvFlags = packed struct(u8) {
+        wsl: bool = false,
+        musl: bool = false,
+        /// Rosetta 2 (macOS) or Prism (Windows): x86_64 binary on ARM64 host.
+        emulated_x64: bool = false,
+        canary: bool = false,
+        _reserved: u4 = 0,
+    };
+
+    fn write(writer: anytype) !void {
+        for (osVersion()) |n| try VLQ.encode(@intCast(@min(n, std.math.maxInt(i32)))).writeTo(writer);
+        try VLQ.encode(@as(u8, @bitCast(envFlags()))).writeTo(writer);
+        // Raw result — avoids CPUFeatures.get()'s debugAssert and counter side-effects.
+        // Bit layout is a wire format; see CPUFeatures.zig Flags for the sync contract.
+        try VLQ.encode(bun_cpu_features()).writeTo(writer);
+        try VLQ.encode(@as(i32, @intCast(@min(totalRamMB(), std.math.maxInt(i32))))).writeTo(writer);
+    }
+
+    extern "c" fn bun_cpu_features() u8;
+
+    fn osVersion() [3]u32 {
+        switch (bun.Environment.os) {
+            .linux => {
+                var uts: std.c.utsname = std.mem.zeroes(std.c.utsname);
+                _ = std.c.uname(&uts);
+                return parseVersionString(bun.sliceTo(&uts.release, 0));
+            },
+            .mac => {
+                var buf: [32]u8 = @splat(0);
+                var len: usize = buf.len - 1;
+                if (std.c.sysctlbyname("kern.osproductversion", &buf, &len, null, 0) != 0) return .{ 0, 0, 0 };
+                return parseVersionString(bun.sliceTo(&buf, 0));
+            },
+            .windows => {
+                var info: windows.RTL_OSVERSIONINFOW = undefined;
+                info.dwOSVersionInfoSize = @sizeOf(windows.RTL_OSVERSIONINFOW);
+                if (windows.ntdll.RtlGetVersion(&info) != .SUCCESS) return .{ 0, 0, 0 };
+                return .{ info.dwMajorVersion, info.dwMinorVersion, info.dwBuildNumber };
+            },
+            .wasm => return .{ 0, 0, 0 },
+        }
+    }
+
+    fn envFlags() EnvFlags {
+        return .{
+            .wsl = isWSL(),
+            .musl = bun.Environment.isMusl,
+            .emulated_x64 = isEmulatedX64(),
+            .canary = bun.Environment.is_canary,
+        };
+    }
+
+    fn isWSL() bool {
+        if (comptime !bun.Environment.isLinux) return false;
+        var uts: std.c.utsname = std.mem.zeroes(std.c.utsname);
+        _ = std.c.uname(&uts);
+        return std.mem.indexOf(u8, bun.sliceTo(&uts.release, 0), "microsoft") != null;
+    }
+
+    fn totalRamMB() u32 {
+        switch (bun.Environment.os) {
+            .mac => {
+                var mem: u64 = 0;
+                var size: usize = @sizeOf(u64);
+                if (std.c.sysctlbyname("hw.memsize", &mem, &size, null, 0) != 0) return 0;
+                return @intCast(@min(mem / (1024 * 1024), std.math.maxInt(u32)));
+            },
+            .linux => {
+                var info: std.os.linux.Sysinfo = undefined;
+                if (std.os.linux.sysinfo(&info) != 0) return 0;
+                return @intCast(@min(info.totalram *% info.mem_unit / (1024 * 1024), std.math.maxInt(u32)));
+            },
+            .windows => {
+                var status: bun.windows.MEMORYSTATUSEX = undefined;
+                status.dwLength = @sizeOf(bun.windows.MEMORYSTATUSEX);
+                if (bun.windows.GlobalMemoryStatusEx(&status) == 0) return 0;
+                return @intCast(@min(status.ullTotalPhys / (1024 * 1024), std.math.maxInt(u32)));
+            },
+            .wasm => return 0,
+        }
+    }
+
+    fn parseVersionString(s: []const u8) [3]u32 {
+        var out: [3]u32 = .{ 0, 0, 0 };
+        var it = std.mem.splitAny(u8, s, ".-");
+        for (&out) |*slot| {
+            const part = it.next() orelse break;
+            slot.* = std.fmt.parseInt(u32, part, 10) catch break;
+        }
+        return out;
+    }
+
+    /// True when this x86_64 binary is running under CPU translation
+    /// (Rosetta 2 on macOS, Prism on Windows ARM64).
+    fn isEmulatedX64() bool {
+        if (comptime !bun.Environment.isX64) return false;
+
+        if (comptime bun.Environment.isMac) {
+            var translated: c_int = 0;
+            var size: usize = @sizeOf(c_int);
+            if (std.c.sysctlbyname("sysctl.proc_translated", &translated, &size, null, 0) != 0) return false;
+            return translated == 1;
+        }
+
+        if (comptime bun.Environment.isWindows) {
+            var process_machine: u16 = 0;
+            var native_machine: u16 = 0;
+            if (bun.windows.IsWow64Process2(windows.GetCurrentProcess(), &process_machine, &native_machine) == 0) return false;
+            return native_machine == bun.windows.IMAGE_FILE_MACHINE_ARM64;
+        }
+
+        return false;
+    }
+};
 
 const git_sha = if (bun.Environment.git_sha.len > 0) bun.Environment.git_sha[0..7] else "unknown";
 
@@ -1321,6 +1445,8 @@ fn encodeTraceString(opts: TraceString, writer: anytype) !void {
     try writer.writeByte(if (bun.cli.Cli.cmd) |cmd| cmd.char() else '_');
 
     try writer.writeAll(version_char ++ git_sha);
+
+    try TraceMeta.write(writer);
 
     const packed_features = bun.analytics.packedFeatures();
     try writeU64AsTwoVLQs(writer, @bitCast(packed_features));

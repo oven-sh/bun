@@ -103,6 +103,9 @@ test("Proxy-wrapped Array subclass is not equal to plain Array in strict mode", 
 });
 
 test("expect().toStrictEqual works with Proxy-wrapped values", () => {
-  expect(new Proxy(["foo"], {})).toStrictEqual(["foo"]);
-  expect(new Proxy({ a: 1 }, {})).toStrictEqual({ a: 1 });
+  // Use variables to keep the proxy alive during comparison
+  const proxyArr = new Proxy(["foo"], {});
+  const proxyObj = new Proxy({ a: 1 }, {});
+  expect(proxyArr).toStrictEqual(["foo"]);
+  expect(proxyObj).toStrictEqual({ a: 1 });
 });

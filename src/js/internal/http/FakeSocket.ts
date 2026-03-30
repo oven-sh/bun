@@ -11,6 +11,11 @@ var FakeSocket = class Socket extends Duplex {
   timeout = 0;
   isServer = false;
 
+  // TLS socket properties — set to true for HTTPS connections by IncomingMessage
+  encrypted = false;
+  authorized = false;
+  alpnProtocol = null;
+
   #address;
   _httpMessage: any;
   constructor(httpMessage: any) {
@@ -127,6 +132,77 @@ var FakeSocket = class Socket extends Duplex {
   destroy() {
     this._httpMessage?.destroy?.();
     return super.destroy();
+  }
+
+  // TLS methods — stubs for compatibility when res.socket is accessed as TLSSocket
+  getPeerCertificate(_detailed?: boolean) {
+    return this.encrypted ? {} : null;
+  }
+
+  getCipher() {
+    return this.encrypted ? { name: null, standardName: null, version: null } : null;
+  }
+
+  getProtocol() {
+    return this.encrypted ? null : null;
+  }
+
+  getSession() {
+    return null;
+  }
+
+  getEphemeralKeyInfo() {
+    return {};
+  }
+
+  getSharedSigalgs() {
+    return [];
+  }
+
+  isSessionReused() {
+    return false;
+  }
+
+  getFinished() {
+    return undefined;
+  }
+
+  getPeerFinished() {
+    return undefined;
+  }
+
+  getTLSTicket() {
+    return undefined;
+  }
+
+  exportKeyingMaterial(_length, _label, _context) {
+    return undefined;
+  }
+
+  setMaxSendFragment(_size) {
+    return false;
+  }
+
+  setServername(_name) {}
+
+  setSession(_session) {}
+
+  renegotiate(_options, _callback) {}
+
+  disableRenegotiation() {}
+
+  enableTrace() {}
+
+  getCertificate() {
+    return null;
+  }
+
+  getPeerX509Certificate() {
+    return undefined;
+  }
+
+  getX509Certificate() {
+    return undefined;
   }
 };
 

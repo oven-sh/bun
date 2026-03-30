@@ -2,7 +2,6 @@ import { spawnSync } from "bun";
 import { beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDirWithFiles } from "harness";
 import { join } from "path";
-import * as os from "node:os";
 
 describe("process.dlopen flags argument", () => {
   let addonPath: string;

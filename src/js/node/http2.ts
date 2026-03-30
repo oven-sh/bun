@@ -3959,10 +3959,11 @@ function decodeChunkedBody(buf) {
     const chunkSize = parseInt(sizeStr, 16);
     if (isNaN(chunkSize)) break;
     if (chunkSize === 0) {
-      complete = true;
-      // Skip past terminator including any trailers (RFC 7230 §4.1.2)
+      // Wait for full terminator including any trailers (RFC 7230 §4.1.2)
       const trailerEnd = buf.indexOf("\r\n\r\n", crlfIdx);
-      offset = trailerEnd !== -1 ? trailerEnd + 4 : crlfIdx + 4;
+      if (trailerEnd === -1) break; // terminator not fully buffered yet
+      complete = true;
+      offset = trailerEnd + 4;
       break;
     }
     const dataStart = crlfIdx + 2;

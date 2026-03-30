@@ -928,7 +928,7 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
     const message = this._httpMessage;
     const req = message?.req;
 
-    if (req && !req.complete && !req.destroyed && !req[kHandle]?.upgraded) {
+    if (req && !req.complete && !req.destroyed && !req[eofInProgress] && !req[kHandle]?.upgraded) {
       // At this point the socket is already destroyed; let's avoid UAF
       req[kHandle] = undefined;
       if (req.listenerCount("error") > 0) {

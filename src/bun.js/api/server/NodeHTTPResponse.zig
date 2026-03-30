@@ -1237,6 +1237,7 @@ const string = []const u8;
 const std = @import("std");
 
 const bun = @import("bun");
+const Environment = bun.Environment;
 const HTTP = bun.http;
 const Output = bun.Output;
 const uws = bun.uws;

@@ -523,16 +523,20 @@ private:
             /* If there's a pending request, fire abort handlers while the socket
              * is still writable so error responses can be sent. */
             if (httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) {
+                /* Copy onAborted/userData before onSocketClosed, which may
+                 * synchronously close the socket and destruct httpResponseData. */
+                auto onAborted = httpResponseData->onAborted;
+                auto userData = httpResponseData->userData;
+                httpResponseData->onAborted = nullptr;
+
                 if (httpResponseData->socketData && httpContextData->onSocketClosed) {
                     auto onSocketClosed = httpContextData->onSocketClosed;
                     auto socketData = httpResponseData->socketData;
                     httpResponseData->socketData = nullptr;
                     onSocketClosed(socketData, SSL, s);
                 }
-                if (httpResponseData->onAborted != nullptr && httpResponseData->userData != nullptr) {
-                    auto onAborted = httpResponseData->onAborted;
-                    httpResponseData->onAborted = nullptr;
-                    onAborted((HttpResponse<SSL> *)s, httpResponseData->userData);
+                if (onAborted != nullptr && userData != nullptr) {
+                    onAborted((HttpResponse<SSL> *)s, userData);
                 }
             }
 

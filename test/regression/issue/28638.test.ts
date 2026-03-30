@@ -7,6 +7,7 @@ const host = "127.0.0.1";
 
 test("error response sent to client when request body read fails due to client abort", async () => {
   const server = createServer(async (req, res) => {
+    req.resume();
     req.on("end", function () {
       res.writeHead(204);
       res.end();

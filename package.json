@@ -32,7 +32,7 @@
     "watch": "bun run zig build check --watch -fincremental --prominent-compile-errors --global-cache-dir build/debug/zig-check-cache --zig-lib-dir vendor/zig/lib -freference-trace=30",
     "watch-windows": "bun run zig build check-windows --watch -fincremental --prominent-compile-errors --global-cache-dir build/debug/zig-check-cache --zig-lib-dir vendor/zig/lib",
     "bd:v": "bun scripts/build.ts --profile=debug",
-    "bd": "BUN_DEBUG_QUIET_LOGS=1 bun scripts/build.ts --profile=debug",
+    "bd": "BUN_DEBUG_QUIET_LOGS=1 bun scripts/build.ts --profile=debug --quiet",
     "build:debug": "bun scripts/build.ts --profile=debug",
     "build:debug:fuzzilli": "bun scripts/build.ts --profile=debug --fuzzilli=on --build-dir=build/debug-fuzz",
     "build:debug:noasan": "bun scripts/build.ts --profile=debug-no-asan",

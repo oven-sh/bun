@@ -14,7 +14,7 @@
  * present, build output is suppressed unless the build fails.
  *
  *   -j/-k/-l/-v                     → ninja
- *   --configure-only, --help        → here
+ *   --configure-only, --quiet, --help  → here
  *   --<field>=<v> or --<field> <v>  → here (profile/target/config override)
  *   --<unknown>=<v>                 → error (typo check)
  *   anything else                   → runtime
@@ -120,11 +120,10 @@ async function main(): Promise<void> {
     // would otherwise be invisible. Suppressed for ninja's generator-
     // rule replay (--config-file) since ninja's [N/M] already says
     // "reconfigure" and doubling it is noise.
-    // Quiet mode: when we're building to run something (positionals present),
-    // suppress build output unless the build fails. You want to see your
-    // test output, not a wall of [N/M] lines above it. No positionals =
-    // just building = show everything (you're watching the build itself).
-    const quiet = args.execArgs.length > 0;
+    // Quiet mode: suppress build output unless the build fails. Enabled by
+    // --quiet or automatically when positionals are present (you want to see
+    // your test output, not a wall of [N/M] lines above it).
+    const quiet = args.quiet || args.execArgs.length > 0;
 
     // Configure summary. Full block only when build.ninja changed (new
     // profile/flags/sources) — a no-op reconfigure, which happens every
@@ -240,6 +239,8 @@ interface CliArgs {
   ninjaTargets: string[];
   /** Just configure, don't run ninja. */
   configureOnly: boolean;
+  /** Suppress build output unless it fails. Also auto-enabled when execArgs present. */
+  quiet: boolean;
   /** Extra ninja args (e.g. -j8, -v). */
   ninjaArgs: string[];
   /**
@@ -276,6 +277,7 @@ function parseArgs(argv: string[]): CliArgs {
   const ninjaArgs: string[] = [];
   const execArgs: string[] = [];
   let configureOnly = false;
+  let quiet = false;
   let configFile: string | undefined;
   let inExec = false;
 
@@ -341,6 +343,11 @@ function parseArgs(argv: string[]): CliArgs {
       continue;
     }
 
+    if (arg === "--quiet") {
+      quiet = true;
+      continue;
+    }
+
     if (arg === "--help" || arg === "-h") {
       process.stderr.write(USAGE);
       process.exit(0);
@@ -399,7 +406,7 @@ function parseArgs(argv: string[]): CliArgs {
     }
   }
 
-  return { profile, overrides, ninjaTargets, ninjaArgs, execArgs, configureOnly, configFile };
+  return { profile, overrides, ninjaTargets, ninjaArgs, execArgs, configureOnly, quiet, configFile };
 }
 
 function parseBool(v: string): boolean {

@@ -83,6 +83,7 @@ pub fn checkForDuplicateFields(this: *@This()) void {
             .name => |*name| {
                 const seen = seen_fields.getOrPut(name.slice()) catch unreachable;
                 if (seen.found_existing) {
+                    field.name_or_index.deinit();
                     field.name_or_index = .duplicate;
                     flags.has_duplicate_columns = true;
                 }

@@ -146,6 +146,7 @@
 #include "napi_external.h"
 #include "napi_handle_scope.h"
 #include "napi_type_tag.h"
+#include "NativePromiseContext.h"
 #include "napi.h"
 #include "NodeHTTP.h"
 #include "NodeVM.h"
@@ -2087,6 +2088,10 @@ void GlobalObject::finishCreation(VM& vm)
 
     m_NapiTypeTagStructure.initLater([](const JSC::LazyProperty<JSC::JSGlobalObject, Structure>::Initializer& init) {
         init.set(Bun::NapiTypeTag::createStructure(init.vm, init.owner));
+    });
+
+    m_NativePromiseContextStructure.initLater([](const JSC::LazyProperty<JSC::JSGlobalObject, Structure>::Initializer& init) {
+        init.set(Bun::NativePromiseContext::createStructure(init.vm, init.owner));
     });
 
     m_napiTypeTags.initLater([](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSWeakMap>::Initializer& init) {

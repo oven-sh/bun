@@ -72,6 +72,27 @@ Test D: 0 git execve calls
 Test E: 0 git execve calls
 ```
 
+## Library Micro-Benchmarks (ziggit vs git CLI)
+
+These measure the raw library performance of ziggit's native Zig implementation vs spawning git CLI processes, using local bare repos (no network). 20 iterations each, ReleaseFast build.
+
+| Repo | Operation | Ziggit | Git CLI | Speedup |
+|------|-----------|--------|---------|---------|
+| debug | findCommit | 218μs | 1299μs | **5.9x** |
+| debug | cloneBare | 246μs | 5230μs | **21.2x** |
+| debug | Full workflow | 468μs | 12872μs | **27.5x** |
+| chalk | findCommit | 176μs | 1197μs | **6.8x** |
+| chalk | cloneBare | 239μs | 4831μs | **20.2x** |
+| chalk | Full workflow | 479μs | 13895μs | **29.0x** |
+| semver | findCommit | 210μs | 1226μs | **5.8x** |
+| semver | cloneBare | 412μs | 6250μs | **15.1x** |
+| semver | Full workflow | 805μs | 18259μs | **22.6x** |
+| express | findCommit | 151μs | 1243μs | **8.2x** |
+| express | cloneBare | 242μs | 7631μs | **31.5x** |
+| express | Full workflow | 476μs | 24289μs | **51.0x** |
+
+**Summary:** For the full bun-install workflow (cloneBare + findCommit + checkout), ziggit is **22-51x faster** than spawning git CLI processes, eliminating all process spawn overhead.
+
 ## Notes
 
 - Ziggit bun is a **DEBUG build** (1.3GB binary with ASAN, assertions, and syscall tracing). A release build would be expected to perform comparably to or faster than stock bun for git operations.

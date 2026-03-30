@@ -3948,15 +3948,44 @@ function closeAllSessions(server: Http2Server | Http2SecureServer) {
   }
 }
 
+function decodeChunkedBody(buf) {
+  const decoded: Buffer[] = [];
+  let offset = 0;
+  while (offset < buf.length) {
+    const crlfIdx = buf.indexOf("\r\n", offset);
+    if (crlfIdx === -1) break;
+    const sizeStr = buf.subarray(offset, crlfIdx).toString().trim();
+    const chunkSize = parseInt(sizeStr, 16);
+    if (isNaN(chunkSize)) break;
+    if (chunkSize === 0) break;
+    const dataStart = crlfIdx + 2;
+    const dataEnd = dataStart + chunkSize;
+    if (dataEnd > buf.length) break;
+    ArrayPrototypePush.$call(decoded, buf.subarray(dataStart, dataEnd));
+    // Skip past chunk data + trailing \r\n
+    offset = dataEnd + 2;
+  }
+  return decoded.length > 0 ? Buffer.concat(decoded) : Buffer.alloc(0);
+}
+
+const MAX_HTTP1_HEADER_SIZE = 16384;
+
 function http1Fallback(socket: Socket) {
   const server = this;
-  let buffer = Buffer.alloc(0);
+  let chunks: Buffer[] = [];
+  let totalLength = 0;
 
   socket.on("data", onData);
   socket.on("error", onError);
 
   function onData(chunk) {
-    buffer = Buffer.concat([buffer, chunk]);
+    ArrayPrototypePush.$call(chunks, chunk);
+    totalLength += chunk.length;
+    if (totalLength > MAX_HTTP1_HEADER_SIZE) {
+      socket.end("HTTP/1.1 431 Request Header Fields Too Large\r\nConnection: close\r\n\r\n");
+      socket.removeListener("data", onData);
+      return;
+    }
     tryParseRequest();
   }
 
@@ -3965,6 +3994,7 @@ function http1Fallback(socket: Socket) {
   }
 
   function tryParseRequest() {
+    const buffer = Buffer.concat(chunks, totalLength);
     const headerEnd = buffer.indexOf("\r\n\r\n");
     if (headerEnd === -1) return;
 
@@ -4010,7 +4040,8 @@ function http1Fallback(socket: Socket) {
 
     // Stop listening for data while handling this request
     socket.removeListener("data", onData);
-    buffer = Buffer.alloc(0);
+    chunks = [];
+    totalLength = 0;
 
     const req = new Http1FallbackRequest(socket, method, url, headers, rawHeaders, httpVersion);
     const res = new Http1FallbackResponse(socket, req);
@@ -4018,15 +4049,33 @@ function http1Fallback(socket: Socket) {
     // Handle request body
     const contentLength = parseInt(headers["content-length"], 10);
     if (!isNaN(contentLength) && contentLength > 0) {
-      let bodyReceived = remainder.length;
-      if (remainder.length > 0) req.push(remainder);
+      let bodyReceived = 0;
+      if (remainder.length > 0) {
+        // Slice to contentLength to avoid consuming pipelined data
+        const bodyPart = remainder.length > contentLength ? remainder.subarray(0, contentLength) : remainder;
+        req.push(bodyPart);
+        bodyReceived = bodyPart.length;
+        // Save excess for next pipelined request
+        if (remainder.length > contentLength) {
+          chunks = [remainder.subarray(contentLength)];
+          totalLength = remainder.length - contentLength;
+        }
+      }
       if (bodyReceived >= contentLength) {
         req.push(null);
         req.complete = true;
       } else {
         const onBodyData = chunk => {
-          req.push(chunk);
-          bodyReceived += chunk.length;
+          const remaining = contentLength - bodyReceived;
+          if (chunk.length > remaining) {
+            req.push(chunk.subarray(0, remaining));
+            // Save excess for next pipelined request
+            chunks = [chunk.subarray(remaining)];
+            totalLength = chunk.length - remaining;
+          } else {
+            req.push(chunk);
+          }
+          bodyReceived += Math.min(chunk.length, remaining);
           if (bodyReceived >= contentLength) {
             socket.removeListener("data", onBodyData);
             req.push(null);
@@ -4036,36 +4085,59 @@ function http1Fallback(socket: Socket) {
         socket.on("data", onBodyData);
       }
     } else if (headers["transfer-encoding"] === "chunked") {
-      // For chunked encoding, pipe remaining data to request and let consumer handle it
-      let chunkedBuffer = remainder;
+      // Accumulate chunked data and decode the framing
+      let chunkedChunks: Buffer[] = [];
+      let chunkedLength = 0;
+      if (remainder.length > 0) {
+        ArrayPrototypePush.$call(chunkedChunks, remainder);
+        chunkedLength += remainder.length;
+      }
       const onChunkedData = chunk => {
-        chunkedBuffer = Buffer.concat([chunkedBuffer, chunk]);
+        ArrayPrototypePush.$call(chunkedChunks, chunk);
+        chunkedLength += chunk.length;
+        const accumulated = Buffer.concat(chunkedChunks, chunkedLength);
         // Look for the end of chunked encoding (0\r\n\r\n)
-        if (chunkedBuffer.indexOf("0\r\n\r\n") !== -1) {
+        if (accumulated.indexOf("0\r\n\r\n") !== -1) {
           socket.removeListener("data", onChunkedData);
-          req.push(chunkedBuffer);
+          const decoded = decodeChunkedBody(accumulated);
+          if (decoded.length > 0) req.push(decoded);
+          req.push(null);
+          req.complete = true;
+        }
+      };
+      // Check if we already have the complete chunked body in remainder
+      if (chunkedLength > 0) {
+        const accumulated = Buffer.concat(chunkedChunks, chunkedLength);
+        if (accumulated.indexOf("0\r\n\r\n") !== -1) {
+          const decoded = decodeChunkedBody(accumulated);
+          if (decoded.length > 0) req.push(decoded);
           req.push(null);
           req.complete = true;
         } else {
-          req.push(chunk);
+          socket.on("data", onChunkedData);
         }
-      };
-      if (chunkedBuffer.length > 0) req.push(chunkedBuffer);
-      socket.on("data", onChunkedData);
+      } else {
+        socket.on("data", onChunkedData);
+      }
     } else {
       // No body
       req.push(null);
       req.complete = true;
     }
 
-    // After response is finished, set up for next request (keep-alive)
+    // After response is finished, decide socket lifecycle
     res.on("finish", () => {
-      const connection = (headers["connection"] || "").toLowerCase();
-      if (connection === "close" || httpVersion === "1.0") {
+      const reqConnection = (headers["connection"] || "").toLowerCase();
+      const resConnection = (res.getHeader("connection") || "").toLowerCase();
+      if (resConnection === "close" || reqConnection === "close" || (httpVersion === "1.0" && reqConnection !== "keep-alive")) {
         socket.end();
       } else {
         // Re-arm for next request (keep-alive)
         socket.on("data", onData);
+        // Process any pipelined data already buffered
+        if (totalLength > 0) {
+          tryParseRequest();
+        }
       }
     });
 
@@ -4141,6 +4213,7 @@ class Http1FallbackResponse extends Stream {
   _hasBody;
   writable;
   _ended;
+  _chunked;
 
   constructor(socket, req) {
     super();
@@ -4156,6 +4229,7 @@ class Http1FallbackResponse extends Stream {
     this._hasBody = req.method !== "HEAD";
     this.writable = true;
     this._ended = false;
+    this._chunked = false;
   }
 
   get headersSent() {
@@ -4270,9 +4344,22 @@ class Http1FallbackResponse extends Stream {
       callback = encoding;
       encoding = undefined;
     }
+    // If headers not yet sent and no explicit framing, use chunked encoding
+    if (!this[kHttp1FallbackHeadersSent] && !this.hasHeader("content-length") && !this.hasHeader("transfer-encoding")) {
+      this._chunked = true;
+      this.setHeader("Transfer-Encoding", "chunked");
+    }
     this._flushHeaders();
     if (this._hasBody && chunk) {
-      return this.socket.write(chunk, encoding, callback);
+      if (this._chunked) {
+        const len = typeof chunk === "string" ? Buffer.byteLength(chunk, encoding) : chunk.length;
+        this.socket.write(len.toString(16) + "\r\n");
+        this.socket.write(chunk, encoding);
+        this.socket.write("\r\n", undefined, callback);
+      } else {
+        this.socket.write(chunk, encoding, callback);
+      }
+      return true;
     }
     if (callback) process.nextTick(callback);
     return true;
@@ -4293,8 +4380,8 @@ class Http1FallbackResponse extends Stream {
     }
     this._ended = true;
 
-    // If Content-Length not set and we have a chunk, set it
-    if (!this.hasHeader("content-length") && !this.hasHeader("transfer-encoding")) {
+    // If headers not yet sent, set Content-Length for a simple response
+    if (!this[kHttp1FallbackHeadersSent] && !this.hasHeader("content-length") && !this.hasHeader("transfer-encoding")) {
       if (chunk) {
         const len = typeof chunk === "string" ? Buffer.byteLength(chunk, encoding) : chunk.length;
         this.setHeader("Content-Length", len);
@@ -4306,7 +4393,18 @@ class Http1FallbackResponse extends Stream {
     this._flushHeaders();
 
     if (this._hasBody && chunk) {
-      this.socket.write(chunk, encoding);
+      if (this._chunked) {
+        const len = typeof chunk === "string" ? Buffer.byteLength(chunk, encoding) : chunk.length;
+        this.socket.write(len.toString(16) + "\r\n");
+        this.socket.write(chunk, encoding);
+        this.socket.write("\r\n");
+      } else {
+        this.socket.write(chunk, encoding);
+      }
+    }
+    // Write chunked terminator
+    if (this._chunked) {
+      this.socket.write("0\r\n\r\n");
     }
     this.finished = true;
     this.writable = false;

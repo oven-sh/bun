@@ -203,3 +203,48 @@ test("http2.createSecureServer allowHTTP1 handles request with body", async () =
 
   server.close();
 });
+
+test("http2.createSecureServer allowHTTP1 streaming write() then end()", async () => {
+  const { promise: listening, resolve: onListening } = Promise.withResolvers<number>();
+
+  const server = http2.createSecureServer(
+    {
+      allowHTTP1: true,
+      ...tls,
+    },
+    (_req, res) => {
+      res.writeHead(200, { "Content-Type": "text/plain" });
+      res.write("part1-");
+      res.write("part2-");
+      res.end("part3");
+    },
+  );
+
+  server.listen(0, () => {
+    onListening((server.address() as any).port);
+  });
+
+  const port = await listening;
+
+  const { promise: done, resolve: onDone, reject: onError } = Promise.withResolvers<{
+    status: number;
+    body: string;
+  }>();
+
+  const req = https.get(`https://localhost:${port}`, { rejectUnauthorized: false }, (res) => {
+    let data = "";
+    res.on("data", (chunk: any) => (data += chunk));
+    res.on("end", () => {
+      onDone({ status: res.statusCode!, body: data });
+    });
+  });
+  req.on("error", onError);
+
+  const result = await done;
+  expect(result).toEqual({
+    status: 200,
+    body: "part1-part2-part3",
+  });
+
+  server.close();
+});

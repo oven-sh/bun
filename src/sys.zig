@@ -575,6 +575,10 @@ pub const StatxField = enum(comptime_int) {
 // Linux Kernel v4.11
 pub var supports_statx_on_linux = std.atomic.Value(bool).init(true);
 
+/// Memoize whether /proc/self/fd is usable for getFdPath.
+/// 0 = untested, 1 = use /dev/fd (FreeBSD Linuxulator / no /proc).
+pub var use_devfd_fallback = std.atomic.Value(u8).init(0);
+
 /// Linux kernel makedev encoding for device numbers
 /// From glibc sys/sysmacros.h and Linux kernel <linux/kdev_t.h>
 /// dev_t layout (64 bits):
@@ -2749,28 +2753,30 @@ pub fn getFdPath(fd: bun.FileDescriptor, out_buffer: *bun.PathBuffer) Maybe([]u8
         },
         .linux => {
             var procfs_buf: ["/proc/self/fd/-2147483648".len + 1:0]u8 = undefined;
-            const proc_path = std.fmt.bufPrintZ(&procfs_buf, "/proc/self/fd/{d}", .{fd.cast()}) catch unreachable;
-            switch (readlink(proc_path, out_buffer)) {
-                .result => |result| return .{ .result = result },
-                .err => |err| switch (err.getErrno()) {
-                    // /proc/self/fd/N unreadable: /proc not mounted (minimal
-                    // containers), or FreeBSD linprocfs where /proc/<pid>/fd is
-                    // a symlink to /dev/fd that escapes emul_path and lands on
-                    // host devfs. Retry via /dev/fd directly — that goes through
-                    // emul_path → /compat/linux/dev/fd (fdescfs, readlink works).
-                    // On real Linux /dev/fd → /proc/self/fd so this is a no-op.
-                    .NOENT, .INVAL, .NOTDIR => {
-                        // separate buffer: err.path borrows from procfs_buf
-                        var devfd_buf: ["/dev/fd/-2147483648".len + 1:0]u8 = undefined;
-                        const dev_path = std.fmt.bufPrintZ(&devfd_buf, "/dev/fd/{d}", .{fd.cast()}) catch unreachable;
-                        return switch (readlink(dev_path, out_buffer)) {
-                            .err => |_| .{ .err = err }, // report original error
-                            .result => |result| .{ .result = result },
-                        };
+
+            if (use_devfd_fallback.load(.acquire) == 0) {
+                const proc_path = std.fmt.bufPrintZ(&procfs_buf, "/proc/self/fd/{d}", .{fd.cast()}) catch unreachable;
+                switch (readlink(proc_path, out_buffer)) {
+                    .result => |result| return .{ .result = result },
+                    .err => |err| switch (err.getErrno()) {
+                        // /proc/self/fd/N unreadable: /proc not mounted (minimal
+                        // containers), or FreeBSD linprocfs where /proc/<pid>/fd
+                        // escapes emul_path and lands on host devfs.
+                        .NOENT, .INVAL, .NOTDIR => {
+                            use_devfd_fallback.store(1, .release);
+                        },
+                        else => return .{ .err = err },
                     },
-                    else => return .{ .err = err },
-                },
+                }
             }
+
+            // Either we just discovered /proc doesn't work, or a previous
+            // call already flipped the flag. Use /dev/fd directly.
+            const dev_path = std.fmt.bufPrintZ(&procfs_buf, "/dev/fd/{d}", .{fd.cast()}) catch unreachable;
+            return switch (readlink(dev_path, out_buffer)) {
+                .err => |err| .{ .err = err },
+                .result => |result| .{ .result = result },
+            };
         },
         .wasm => @compileError("querying for canonical path of a handle is unsupported on this host"),
     }

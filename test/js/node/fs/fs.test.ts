@@ -1560,6 +1560,27 @@ it.if(isPosix)("realpathSync doesn't block on FIFO", () => {
   unlinkSync(path);
 });
 
+// Regression guard: getFdPath on Linux uses readlink(/proc/self/fd/N) with
+// a /dev/fd/N fallback for environments where /proc is unavailable or broken
+// (minimal containers, FreeBSD Linuxulator). This test ensures the primary
+// path still works on a normal POSIX host.
+it.if(isPosix)("realpathSync resolves root, regular files, and symlinks", () => {
+  // Root directory — the original Linuxulator bug manifested here as
+  // ENOENT: no such file or directory, lstat '/'
+  expect(realpathSync("/")).toBe("/");
+
+  // Regular file — should resolve to a canonical absolute path
+  const self = realpathSync(import.meta.path);
+  expect(self).toStartWith("/");
+  expect(existsSync(self)).toBe(true);
+
+  // Symlink — should follow through to the target
+  const linkPath = join(tmpdirSync(), "fs-realpath-getfdpath.link");
+  symlinkSync(import.meta.path, linkPath);
+  expect(realpathSync(linkPath)).toBe(self);
+  unlinkSync(linkPath);
+});
+
 it("readlink", () => {
   const actual = join(tmpdirSync(), "fs-readlink.txt");
   try {

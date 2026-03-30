@@ -2748,13 +2748,27 @@ pub fn getFdPath(fd: bun.FileDescriptor, out_buffer: *bun.PathBuffer) Maybe([]u8
             return .{ .result = bun.sliceTo(out_buffer, 0) };
         },
         .linux => {
-            // TODO: alpine linux may not have /proc/self
             var procfs_buf: ["/proc/self/fd/-2147483648".len + 1:0]u8 = undefined;
             const proc_path = std.fmt.bufPrintZ(&procfs_buf, "/proc/self/fd/{d}", .{fd.cast()}) catch unreachable;
-            return switch (readlink(proc_path, out_buffer)) {
-                .err => |err| return .{ .err = err },
-                .result => |result| .{ .result = result },
-            };
+            switch (readlink(proc_path, out_buffer)) {
+                .result => |result| return .{ .result = result },
+                .err => |err| switch (err.getErrno()) {
+                    // /proc/self/fd/N unreadable: /proc not mounted (minimal
+                    // containers), or FreeBSD linprocfs where /proc/<pid>/fd is
+                    // a symlink to /dev/fd that escapes emul_path and lands on
+                    // host devfs. Retry via /dev/fd directly — that goes through
+                    // emul_path → /compat/linux/dev/fd (fdescfs, readlink works).
+                    // On real Linux /dev/fd → /proc/self/fd so this is a no-op.
+                    .NOENT, .INVAL, .NOTDIR => {
+                        const dev_path = std.fmt.bufPrintZ(&procfs_buf, "/dev/fd/{d}", .{fd.cast()}) catch unreachable;
+                        return switch (readlink(dev_path, out_buffer)) {
+                            .err => |_| .{ .err = err }, // report original error
+                            .result => |result| .{ .result = result },
+                        };
+                    },
+                    else => return .{ .err = err },
+                },
+            }
         },
         .wasm => @compileError("querying for canonical path of a handle is unsupported on this host"),
     }

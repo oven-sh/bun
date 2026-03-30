@@ -697,7 +697,7 @@ test("can't use export syntax in vm.Script", () => {
   expect(() => {
     const script = new Script("export default {};");
     script.createCachedData();
-  }).toThrow({ message: "createCachedData failed" });
+  }).toThrow({ name: "SyntaxError", message: "Unexpected keyword 'export'" });
 });
 
 test("rejects invalid bytecode", () => {

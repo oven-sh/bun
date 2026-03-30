@@ -10,6 +10,7 @@
 import { spawn as nodeSpawn, spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
 import { basename, relative, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 // @ts-ignore — utils.mjs has JSDoc types but no .d.ts
 import * as utils from "../utils.mjs";
 import { bunExeName, shouldStrip, type BunOutput } from "./bun.ts";
@@ -170,7 +171,7 @@ export async function spawnWithAnnotations(
     // with the full buffered output so there's still a PR-visible signal.
     if (!annotated) {
       const content = utils.formatAnnotationToHtml({
-        filename: relative(process.cwd(), import.meta.path),
+        filename: relative(process.cwd(), fileURLToPath(import.meta.url)),
         title: "build failed",
         content: buffer,
         source: "build",

@@ -21,7 +21,7 @@
 
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
-import { ar, cc, link } from "./compile.ts";
+import { ar, cc } from "./compile.ts";
 import type { BuildType, Config } from "./config.ts";
 import { assert } from "./error.ts";
 import { computeSourceIdentity, fetchCliPath } from "./fetch-cli.ts";
@@ -525,6 +525,14 @@ export function registerDepRules(n: Ninja, cfg: Config): void {
     description: "prebuild $name",
     restat: true,
     pool: "dep",
+  });
+
+  // DirectBuild host tool: compile+link in one clang invocation with NO
+  // cfg target/arch flags — the tool runs on the build host. cc()/link()
+  // would add --target which breaks cross-compiles.
+  n.rule("dep_host_cc", {
+    command: `${q(cfg.cc)} $flags -o $out $in`,
+    description: "host-cc $out",
   });
 
   // DirectBuild codegen: runs a host tool built by this graph to produce a
@@ -1323,18 +1331,22 @@ function emitDirect(
     const toolSrc = resolve(srcDir, cg.tool);
     const toolOut = resolve(buildDir, "codegen-tool");
 
-    // Host tool flags: NO sanitizers. Strip any -fsanitize from globals and
-    // append -fno-sanitize=all to be explicit. Keep everything else
-    // (opt level, target arch) so the tool links cleanly with the same
-    // toolchain.
-    const toolFlags = [
-      ...depFlags.cflags.filter(f => !f.startsWith("-fsanitize")),
-      "-fno-sanitize=all",
-      ...Object.entries(cg.toolDefines ?? {}).map(([k, v]) => defineFlag(k, v)),
-    ];
-
-    const toolObj = cc(n, cfg, toolSrc, { flags: toolFlags, orderOnlyInputs: orderOnly });
-    const toolExe = link(n, cfg, toolOut, [toolObj], { libs: [], flags: ["-fno-sanitize=all"] });
+    // Host tool: runs at build time to generate headers, so it must target
+    // the BUILD host, not the bun target. cc()/link() add cfg's target/arch
+    // flags which break cross-compiles (musl CI: "file format not
+    // recognized"). Emit a bare clang invocation instead — no opt, no
+    // target triple, just the tool defines and -w. Compile+link in one go
+    // so host-arch objects never land in obj/ (which would dirty ccache
+    // for the target build).
+    const toolDefs = Object.entries(cg.toolDefines ?? {}).map(([k, v]) => defineFlag(k, v));
+    n.build({
+      outputs: [toolOut],
+      rule: "dep_host_cc",
+      inputs: [toolSrc],
+      orderOnlyInputs: orderOnly,
+      vars: { flags: ["-w", ...toolDefs].join(" ") },
+    });
+    const toolExe = toolOut;
 
     // Run tool. "$out" in args expands to the generated header's absolute
     // path; other args resolve against srcDir. Tool runs with srcDir as

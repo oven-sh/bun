@@ -2662,7 +2662,6 @@ fn writeHeaders(
     resp_ptr: ?*uws.NewApp(ssl).Response,
 ) void {
     ctxLog("writeHeaders", .{});
-    headers.fastRemove(.ContentLength);
     headers.fastRemove(.TransferEncoding);
     if (resp_ptr) |resp| {
         headers.toUWSResponse(ssl, resp);

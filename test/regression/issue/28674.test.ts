@@ -150,6 +150,9 @@ test("bun install does not corrupt package names when workspace uses npm alias",
   // The old code's known_npm_aliases incorrectly substituted the name.
   const lockContent = readFileSync(join(cwd, "bun.lock"), "utf8");
 
+  // Prove the second install picked up the new dependency from workspace-b.
+  expect(lockContent).toContain('"extra-dep@1.0.0"');
+
   // The packages section must contain a resolution "my-pkg@1.0.0" (the real
   // package), not just "real-pkg@1.0.0". With the old buggy code, my-pkg was
   // incorrectly resolved as real-pkg so "my-pkg@1.0.0" never appeared.

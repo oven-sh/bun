@@ -2327,6 +2327,16 @@ JSC::EncodedJSValue SystemError__toErrorInstanceWithInfoObject(const SystemError
     info->putDirect(vm, clientData->builtinNames().errnoPublicName(), jsNumber(err.errno_), JSC::PropertyAttribute::DontDelete | 0);
     result->putDirect(vm, clientData->builtinNames().errnoPublicName(), jsNumber(err.errno_), JSC::PropertyAttribute::DontDelete | 0);
 
+    // ErrorInstance::create with {} always produces an empty stack trace, so
+    // .stack is never materialized by JSC. Set it explicitly to match Node.js.
+    if (auto* errorInstance = jsDynamicCast<JSC::ErrorInstance*>(result)) {
+        auto* stackTrace = errorInstance->stackTrace();
+        if (!stackTrace || stackTrace->isEmpty()) {
+            WTF::String stackString = message.isEmpty() ? "SystemError"_s : makeString("SystemError: "_s, message);
+            errorInstance->putDirect(vm, vm.propertyNames->stack, jsString(vm, stackString), static_cast<unsigned>(JSC::PropertyAttribute::DontEnum));
+        }
+    }
+
     return JSC::JSValue::encode(result);
 }
 

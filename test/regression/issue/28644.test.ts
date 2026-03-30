@@ -1,18 +1,24 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
+import { join } from "path";
 
 test("fs.readFile async error has .stack property", async () => {
+  using dir = tempDir("issue-28644", {});
+  const missingPath = join(String(dir), "no-such-file");
+
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
       "-e",
       `
       const fs = require('fs');
-      fs.readFile('nonexistentfile', (err) => {
+      fs.readFile(${JSON.stringify(missingPath)}, (err) => {
         if (!err) { process.exit(1); }
-        console.log(typeof err.stack);
-        console.log(err.stack);
-        console.log(err instanceof Error);
+        console.log(JSON.stringify({
+          type: typeof err.stack,
+          stack: err.stack,
+          isError: err instanceof Error,
+        }));
       });
       `,
     ],
@@ -23,25 +29,30 @@ test("fs.readFile async error has .stack property", async () => {
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  const lines = stdout.trim().split("\n");
-  expect(lines[0]).toBe("string");
-  expect(lines[1]).toContain("ENOENT");
-  expect(lines[1]).toContain("nonexistentfile");
-  expect(lines[2]).toBe("true");
+  const { type, stack, isError } = JSON.parse(stdout.trim());
+  expect(type).toBe("string");
+  expect(stack).toMatch(/^Error: /);
+  expect(stack).toContain("ENOENT");
+  expect(isError).toBe(true);
   expect(exitCode).toBe(0);
 });
 
 test("fs.stat async error has .stack property", async () => {
+  using dir = tempDir("issue-28644", {});
+  const missingPath = join(String(dir), "no-such-file");
+
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
       "-e",
       `
       const fs = require('fs');
-      fs.stat('nonexistentfile', (err) => {
+      fs.stat(${JSON.stringify(missingPath)}, (err) => {
         if (!err) { process.exit(1); }
-        console.log(typeof err.stack);
-        console.log(err.stack);
+        console.log(JSON.stringify({
+          type: typeof err.stack,
+          stack: err.stack,
+        }));
       });
       `,
     ],
@@ -52,22 +63,28 @@ test("fs.stat async error has .stack property", async () => {
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  const lines = stdout.trim().split("\n");
-  expect(lines[0]).toBe("string");
-  expect(lines[1]).toContain("ENOENT");
+  const { type, stack } = JSON.parse(stdout.trim());
+  expect(type).toBe("string");
+  expect(stack).toMatch(/^Error: /);
+  expect(stack).toContain("ENOENT");
   expect(exitCode).toBe(0);
 });
 
 test("fs.promises.readFile rejected error has .stack property", async () => {
+  using dir = tempDir("issue-28644", {});
+  const missingPath = join(String(dir), "no-such-file");
+
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
       "-e",
       `
       const fs = require('fs').promises;
-      fs.readFile('nonexistentfile').catch((err) => {
-        console.log(typeof err.stack);
-        console.log(err.stack);
+      fs.readFile(${JSON.stringify(missingPath)}).catch((err) => {
+        console.log(JSON.stringify({
+          type: typeof err.stack,
+          stack: err.stack,
+        }));
       });
       `,
     ],
@@ -78,23 +95,29 @@ test("fs.promises.readFile rejected error has .stack property", async () => {
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  const lines = stdout.trim().split("\n");
-  expect(lines[0]).toBe("string");
-  expect(lines[1]).toContain("ENOENT");
+  const { type, stack } = JSON.parse(stdout.trim());
+  expect(type).toBe("string");
+  expect(stack).toMatch(/^Error: /);
+  expect(stack).toContain("ENOENT");
   expect(exitCode).toBe(0);
 });
 
 test("fs.access async error has .stack property", async () => {
+  using dir = tempDir("issue-28644", {});
+  const missingPath = join(String(dir), "no-such-file");
+
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
       "-e",
       `
       const fs = require('fs');
-      fs.access('nonexistentfile', (err) => {
+      fs.access(${JSON.stringify(missingPath)}, (err) => {
         if (!err) { process.exit(1); }
-        console.log(typeof err.stack);
-        console.log(err.stack);
+        console.log(JSON.stringify({
+          type: typeof err.stack,
+          stack: err.stack,
+        }));
       });
       `,
     ],
@@ -105,8 +128,9 @@ test("fs.access async error has .stack property", async () => {
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  const lines = stdout.trim().split("\n");
-  expect(lines[0]).toBe("string");
-  expect(lines[1]).toContain("ENOENT");
+  const { type, stack } = JSON.parse(stdout.trim());
+  expect(type).toBe("string");
+  expect(stack).toMatch(/^Error: /);
+  expect(stack).toContain("ENOENT");
   expect(exitCode).toBe(0);
 });

@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 
 test("TOML parser handles \\t and \\f escapes correctly", () => {
   const toml = String.raw`str = "Name\tJos\u00E9\nLoc\tSF."`;

@@ -2758,20 +2758,27 @@ pub fn getFdPath(fd: bun.FileDescriptor, out_buffer: *bun.PathBuffer) Maybe([]u8
                 const proc_path = std.fmt.bufPrintZ(&procfs_buf, "/proc/self/fd/{d}", .{fd.cast()}) catch unreachable;
                 switch (readlink(proc_path, out_buffer)) {
                     .result => |result| return .{ .result = result },
-                    .err => |err| switch (err.getErrno()) {
+                    .err => |proc_err| switch (proc_err.getErrno()) {
                         // /proc/self/fd/N unreadable: /proc not mounted (minimal
                         // containers), or FreeBSD linprocfs where /proc/<pid>/fd
                         // escapes emul_path and lands on host devfs.
                         .NOENT, .INVAL, .NOTDIR => {
-                            use_devfd_fallback.store(1, .release);
+                            var devfd_buf: ["/dev/fd/-2147483648".len + 1:0]u8 = undefined;
+                            const dev_path = std.fmt.bufPrintZ(&devfd_buf, "/dev/fd/{d}", .{fd.cast()}) catch unreachable;
+                            return switch (readlink(dev_path, out_buffer)) {
+                                .result => |result| {
+                                    use_devfd_fallback.store(1, .release);
+                                    return .{ .result = result };
+                                },
+                                .err => |_| .{ .err = proc_err },
+                            };
                         },
-                        else => return .{ .err = err },
+                        else => return .{ .err = proc_err },
                     },
                 }
             }
 
-            // Either we just discovered /proc doesn't work, or a previous
-            // call already flipped the flag. Use /dev/fd directly.
+            // Previous call confirmed /dev/fd works on this host.
             const dev_path = std.fmt.bufPrintZ(&procfs_buf, "/dev/fd/{d}", .{fd.cast()}) catch unreachable;
             return switch (readlink(dev_path, out_buffer)) {
                 .err => |err| .{ .err = err },

@@ -2313,14 +2313,18 @@ extern "C" void Bun__attachAsyncStackFromPromise(JSC::JSGlobalObject* globalObje
     if (!instance || !promise)
         return;
 
+    // Don't overwrite an existing stack trace. User-provided errors (e.g. via
+    // StreamError.JSValue or Body.ValueError.JSValue) may already have a
+    // meaningful synchronous stack from where they were created.
+    if (auto* existing = instance->stackTrace(); existing && !existing->isEmpty())
+        return;
+
     size_t limit = globalObject->stackTraceLimit().value_or(10);
     WTF::Vector<JSC::StackFrame> frames;
     collectAsyncStackFramesFromPromise(vm, instance, promise, frames, limit);
     if (frames.isEmpty())
         return;
 
-    // The error was just created by createError() at event-loop top with no
-    // JS stack, so its stackTrace is empty. Replace it with our async frames.
     instance->setStackFrames(vm, WTF::move(frames));
 }
 

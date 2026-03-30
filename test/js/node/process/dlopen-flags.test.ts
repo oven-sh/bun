@@ -141,11 +141,7 @@ NODE_MODULE_CONTEXT_AWARE(addon, demo::Initialize)
     expect(exitCode).toBe(0);
   });
 
-  test("should accept RTLD_LAZY | RTLD_GLOBAL flags", async () => {
-    if (isWindows) {
-      return;
-    }
-
+  test.skipIf(isWindows)("should accept RTLD_LAZY | RTLD_GLOBAL flags", async () => {
     const testScript = `
       const os = require('os');
       const m = { exports: {} };

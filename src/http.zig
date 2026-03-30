@@ -567,8 +567,12 @@ pub fn isKeepAlivePossible(this: *HTTPClient) bool {
 /// everything writeProxyConnect sends: all proxy_headers entries plus the
 /// auto-generated Proxy-Authorization (if not overridden by a user header).
 /// Returns 0 if no proxy headers apply.
+///
+/// Per-header hashes are XOR-combined so header insertion order doesn't
+/// matter — two requests with identical headers in different order produce
+/// the same hash and correctly share a pooled tunnel.
 pub fn proxyAuthHash(this: *const HTTPClient) u64 {
-    var hasher = std.hash.Wyhash.init(0);
+    var combined: u64 = 0;
     var any = false;
 
     var user_provided_auth = false;
@@ -579,10 +583,11 @@ pub fn proxyAuthHash(this: *const HTTPClient) u64 {
         for (names, 0..) |name_ptr, idx| {
             const name = hdrs.asStr(name_ptr);
             const value = hdrs.asStr(values[idx]);
-            hasher.update(name);
-            hasher.update(":");
-            hasher.update(value);
-            hasher.update("\r\n");
+            var h = std.hash.Wyhash.init(0);
+            h.update(name);
+            h.update(":");
+            h.update(value);
+            combined ^= h.final();
             any = true;
             if (strings.eqlCaseInsensitiveASCII(name, "proxy-authorization", true)) {
                 user_provided_auth = true;
@@ -593,14 +598,15 @@ pub fn proxyAuthHash(this: *const HTTPClient) u64 {
     // already provide one in proxy_headers — match that precedence.
     if (!user_provided_auth) {
         if (this.proxy_authorization) |auth| {
-            hasher.update("Proxy-Authorization:");
-            hasher.update(auth);
-            hasher.update("\r\n");
+            var h = std.hash.Wyhash.init(0);
+            h.update("Proxy-Authorization:");
+            h.update(auth);
+            combined ^= h.final();
             any = true;
         }
     }
 
-    return if (any) hasher.final() else 0;
+    return if (any) combined else 0;
 }
 
 /// Returns the SSL context for this client - either the custom context
@@ -1908,7 +1914,7 @@ fn sendProgressUpdateWithoutStageCheck(this: *HTTPClient, comptime is_ssl: bool,
             log("release socket", .{});
             const tunnel = this.proxy_tunnel;
             this.proxy_tunnel = null;
-            if (tunnel) |t| t.detachOwner();
+            if (tunnel) |t| t.detachOwner(this);
             ctx.releaseSocket(
                 socket,
                 this.flags.did_have_handshaking_error and !this.flags.reject_unauthorized,

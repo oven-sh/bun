@@ -14,6 +14,13 @@ socket: union(enum) {
     none: void,
 } = .{ .none = {} },
 write_buffer: bun.io.StreamBuffer = .{},
+/// Property of the inner TLS session, not the owning client. Captured from
+/// the client in detachOwner() and restored to the next client in adopt()
+/// so the pool's did_have_handshaking_error_while_reject_unauthorized_is_false
+/// flag survives across reuse — otherwise a reject_unauthorized=false reuse
+/// would re-pool with the flag erased, letting a later reject_unauthorized=true
+/// request silently reuse a tunnel whose cert failed validation.
+did_have_handshaking_error: bool = false,
 ref_count: RefCount,
 
 const ProxyTunnelWrapper = SSLWrapper(*HTTPClient);
@@ -368,8 +375,12 @@ pub fn detachAndDeref(this: *ProxyTunnel) void {
 /// pooled for keepalive. The inner TLS session is preserved. The tunnel's
 /// refcount is NOT changed — the caller must ensure the ref is transferred
 /// to the pool (or dereffed on failure to pool).
-pub fn detachOwner(this: *ProxyTunnel) void {
+pub fn detachOwner(this: *ProxyTunnel, client: *const HTTPClient) void {
     this.socket = .{ .none = {} };
+    // Capture the handshaking-error flag from the client — this is a property
+    // of the inner TLS session, not the client. adopt() restores it to the
+    // next client so re-pooling doesn't erase it.
+    this.did_have_handshaking_error = client.flags.did_have_handshaking_error;
     // We intentionally leave wrapper.handlers.ctx stale here. The tunnel is
     // idle in the pool and no callbacks will fire until adopt() reattaches
     // a new owner and socket.
@@ -381,6 +392,11 @@ pub fn detachOwner(this: *ProxyTunnel) void {
 /// writes the HTTP request directly into the tunnel.
 pub fn adopt(this: *ProxyTunnel, client: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) void {
     log("ProxyTunnel adopt (reusing pooled tunnel)", .{});
+    // Discard any stale encrypted bytes from the previous request. A clean
+    // request boundary should leave this empty, but an early server response
+    // (e.g. HTTP 413) with Connection: keep-alive before the full body was
+    // consumed could leave unsent bytes that would corrupt the next request.
+    this.write_buffer.reset();
     if (this.wrapper) |*wrapper| {
         wrapper.handlers.ctx = client;
     }
@@ -391,6 +407,10 @@ pub fn adopt(this: *ProxyTunnel, client: *HTTPClient, comptime is_ssl: bool, soc
     }
     client.proxy_tunnel = this;
     client.flags.proxy_tunneling = false;
+    // Restore the cert-error flag captured in detachOwner() — no handshake
+    // runs here, so the client's own flag would otherwise stay false and
+    // re-pooling would erase the record.
+    client.flags.did_have_handshaking_error = this.did_have_handshaking_error;
     client.state.request_stage = .proxy_headers;
     client.state.response_stage = .proxy_headers;
     client.state.request_sent_len = 0;

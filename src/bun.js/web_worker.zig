@@ -329,6 +329,11 @@ pub fn start(
 
     const map = try allocator.create(bun.DotEnv.Map);
     map.* = try this.parent.transpiler.env.map.cloneWithAllocator(allocator);
+    // The cloned map's proxy-var slices point into parent's RareData storage.
+    // Bump refcounts so parent overwriting its value doesn't free bytes the
+    // worker's map still references. The worker's own RareData gets the refs
+    // so they're released when the worker shuts down.
+    const parent_proxy_storage = if (this.parent.rare_data) |rd| &rd.proxy_env_storage else null;
 
     const loader = try allocator.create(bun.DotEnv.Loader);
     loader.* = bun.DotEnv.Loader.init(map, allocator);
@@ -342,6 +347,10 @@ pub fn start(
     });
     vm.allocator = allocator;
     vm.arena = &this.arena.?;
+
+    if (parent_proxy_storage) |parent_storage| {
+        vm.rareData().proxy_env_storage.cloneFrom(parent_storage);
+    }
 
     var b = &vm.transpiler;
     b.resolver.env_loader = b.env;

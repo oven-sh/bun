@@ -42,11 +42,11 @@ valkey_context: ValkeyContext = .{},
 
 tls_default_ciphers: ?[:0]const u8 = null,
 
-/// Owned storage for proxy env vars set via process.env at runtime (HTTP_PROXY,
-/// HTTPS_PROXY, NO_PROXY and lowercase variants — order matches
-/// EnvironmentVariables.proxy_var_names). The env map borrows these slices.
-/// Per-VM so worker_threads don't race/UAF each other's values.
-proxy_env_storage: [bun.jsc.API.Bun.EnvironmentVariables.proxy_var_names.len]?[]const u8 = @splat(null),
+/// Owned storage for proxy env vars set via process.env at runtime. The env map
+/// borrows `.bytes` slices from these. Ref-counted so worker_threads can share
+/// the parent's values (bump refcount at spawn) without cloning; a worker only
+/// allocates its own value if it writes to that var.
+proxy_env_storage: ProxyEnvStorage = .{},
 
 #spawn_sync_event_loop: bun.ptr.Owned(?*SpawnSyncEventLoop) = .initNull(),
 
@@ -104,6 +104,76 @@ pub const PathBuf = struct {
 
 const PipeReadBuffer = [256 * 1024]u8;
 const DIGESTED_HMAC_256_LEN = 32;
+
+pub const ProxyEnvStorage = struct {
+    HTTP_PROXY: ?*RefCountedEnvValue = null,
+    http_proxy: ?*RefCountedEnvValue = null,
+    HTTPS_PROXY: ?*RefCountedEnvValue = null,
+    https_proxy: ?*RefCountedEnvValue = null,
+    NO_PROXY: ?*RefCountedEnvValue = null,
+    no_proxy: ?*RefCountedEnvValue = null,
+
+    pub const Slot = struct {
+        /// Static-lifetime field name (e.g. "NO_PROXY") — safe to use as
+        /// the env map key without duping.
+        key: []const u8,
+        ptr: *?*RefCountedEnvValue,
+    };
+
+    pub fn slot(self: *ProxyEnvStorage, name: []const u8) ?Slot {
+        inline for (@typeInfo(ProxyEnvStorage).@"struct".fields) |f| {
+            if (bun.strings.eql(name, f.name)) {
+                return .{ .key = f.name, .ptr = &@field(self, f.name) };
+            }
+        }
+        return null;
+    }
+
+    /// Bump refcounts on all non-null values so a worker can share the
+    /// parent's strings. The worker's cloned env.map already points into
+    /// these values' bytes (map clone copies slice headers, not data).
+    pub fn cloneFrom(self: *ProxyEnvStorage, parent: *const ProxyEnvStorage) void {
+        inline for (@typeInfo(ProxyEnvStorage).@"struct".fields) |f| {
+            if (@field(parent, f.name)) |val| {
+                val.ref();
+                @field(self, f.name) = val;
+            }
+        }
+    }
+
+    pub fn deinit(self: *ProxyEnvStorage) void {
+        inline for (@typeInfo(ProxyEnvStorage).@"struct".fields) |f| {
+            if (@field(self, f.name)) |val| {
+                val.deref();
+                @field(self, f.name) = null;
+            }
+        }
+    }
+};
+
+/// A ref-counted heap-allocated byte slice. The env map stores borrowed
+/// `.bytes` slices; as long as any VM holds a ref, the bytes stay valid.
+pub const RefCountedEnvValue = struct {
+    const RefCount = bun.ptr.ThreadSafeRefCount(@This(), "ref_count", RefCountedEnvValue.destroy, .{});
+    pub const ref = RefCount.ref;
+    pub const deref = RefCount.deref;
+
+    ref_count: RefCount,
+    bytes: []const u8,
+
+    pub fn create(value: []const u8) *RefCountedEnvValue {
+        return bun.new(RefCountedEnvValue, .{
+            .ref_count = .init(),
+            .bytes = bun.handleOom(bun.default_allocator.dupe(u8, value)),
+        });
+    }
+
+    fn destroy(this: *RefCountedEnvValue) void {
+        bun.default_allocator.free(this.bytes);
+        bun.destroy(this);
+    }
+};
+
 pub const AWSSignatureCache = struct {
     cache: bun.StringArrayHashMap([DIGESTED_HMAC_256_LEN]u8) = bun.StringArrayHashMap([DIGESTED_HMAC_256_LEN]u8).init(bun.default_allocator),
     date: u64 = 0,
@@ -622,12 +692,7 @@ pub fn deinit(this: *RareData) void {
         bun.default_allocator.free(ciphers);
     }
 
-    for (&this.proxy_env_storage) |*slot| {
-        if (slot.*) |owned| {
-            bun.default_allocator.free(owned);
-            slot.* = null;
-        }
-    }
+    this.proxy_env_storage.deinit();
 
     this.valkey_context.deinit();
 }

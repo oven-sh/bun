@@ -1439,58 +1439,45 @@ pub const EnvironmentVariables = struct {
         return false;
     }
 
-    /// Proxy env var names that Bun__setEnvValue handles. Must match the
-    /// proxyVarNames array in JSEnvironmentVariableMap.cpp and the length of
-    /// RareData.proxy_env_storage.
-    pub const proxy_var_names = [_][]const u8{
-        "HTTP_PROXY",  "http_proxy",
-        "HTTPS_PROXY", "https_proxy",
-        "NO_PROXY",    "no_proxy",
-    };
-
-    fn proxyVarIndex(name: []const u8) ?usize {
-        for (proxy_var_names, 0..) |n, i| {
-            if (bun.strings.eql(name, n)) return i;
-        }
-        return null;
-    }
-
     /// Sync a process.env write back to the Zig-side env map so that Zig
     /// consumers (e.g. fetch's proxy resolution via env.getHttpProxyFor)
     /// observe the updated value. Used by custom setters for proxy-related
     /// env vars (HTTP_PROXY, HTTPS_PROXY, NO_PROXY and lowercase variants).
     ///
-    /// Owned storage lives in RareData.proxy_env_storage (per-VM) so
-    /// worker_threads don't race/UAF each other's values. The env map
-    /// borrows slices from that storage.
+    /// Values are ref-counted in RareData.proxy_env_storage so that
+    /// worker_threads share the parent's strings (refcount bumped at spawn)
+    /// rather than cloning. A worker only allocates its own value if it
+    /// writes to that var. Parent deref'ing on overwrite won't free the
+    /// bytes while a worker still holds a ref.
     pub export fn Bun__setEnvValue(globalObject: *jsc.JSGlobalObject, name: *ZigString, value: *ZigString) void {
         const vm = globalObject.bunVM();
         const allocator = vm.allocator;
         var name_slice = name.toSlice(allocator);
         defer name_slice.deinit();
 
-        const idx = proxyVarIndex(name_slice.slice()) orelse return;
         const storage = &vm.rareData().proxy_env_storage;
+        const slot = storage.slot(name_slice.slice()) orelse return;
 
-        // Free our previous allocation for this slot (never the initial
-        // environ-borrowed value — that was never in this array).
-        if (storage[idx]) |old| {
-            allocator.free(old);
-            storage[idx] = null;
+        // Deref our previous value. If a worker still holds a ref, the
+        // bytes stay alive; if not, they're freed now.
+        if (slot.ptr.*) |old| {
+            old.deref();
+            slot.ptr.* = null;
         }
 
         if (value.len == 0) {
-            vm.transpiler.env.map.remove(proxy_var_names[idx]);
+            vm.transpiler.env.map.remove(slot.key);
             return;
         }
 
         var value_slice = value.toSlice(allocator);
         defer value_slice.deinit();
-        const owned = bun.handleOom(allocator.dupe(u8, value_slice.slice()));
-        storage[idx] = owned;
-        // Key is a static string literal; value is a borrowed slice into
-        // RareData's owned storage — map.put stores both without duping.
-        bun.handleOom(vm.transpiler.env.map.put(proxy_var_names[idx], owned));
+        const new_val = jsc.RareData.RefCountedEnvValue.create(value_slice.slice());
+        slot.ptr.* = new_val;
+        // slot.key is a static-lifetime string literal (the struct field
+        // name); value bytes live in the ref-counted wrapper. map.put
+        // stores both slice headers without duping.
+        bun.handleOom(vm.transpiler.env.map.put(slot.key, new_val.bytes));
     }
 
     pub fn getEnvNames(globalObject: *jsc.JSGlobalObject, names: []ZigString) usize {

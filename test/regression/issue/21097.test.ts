@@ -1,4 +1,4 @@
-import { test, expect, setDefaultTimeout } from "bun:test";
+import { expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 

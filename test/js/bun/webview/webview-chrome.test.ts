@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isCI } from "harness";
 
 // Chrome backend works on any platform with Chrome/Chromium installed.
 // Mark tests todo if no Chrome found (CI may not have it). Mirrors
@@ -42,15 +42,22 @@ function findChrome(): string | undefined {
     return isExecutable(process.env.BUN_CHROME_PATH) ? process.env.BUN_CHROME_PATH : undefined;
   }
 
-  // $PATH — same as `which google-chrome` etc.
-  const names = ["google-chrome-stable", "google-chrome", "chromium-browser", "chromium", "microsoft-edge", "chrome"];
-  for (const n of names) {
-    const found = Bun.which(n);
-    if (found) return found;
+  // Skip PATH/app-bundle discovery on macOS CI — Chrome.app can't spawn
+  // headlessly (no windowserver). Playwright's chrome-headless-shell below
+  // is purpose-built for headless CI and doesn't need a windowserver.
+  const skipNonHeadless = isCI && process.platform === "darwin";
+
+  if (!skipNonHeadless) {
+    // $PATH — same as `which google-chrome` etc.
+    const names = ["google-chrome-stable", "google-chrome", "chromium-browser", "chromium", "microsoft-edge", "chrome"];
+    for (const n of names) {
+      const found = Bun.which(n);
+      if (found) return found;
+    }
   }
 
   // Hardcoded absolute paths — app bundles aren't in $PATH on macOS.
-  if (process.platform === "darwin") {
+  if (!skipNonHeadless && process.platform === "darwin") {
     const bundles = [
       "Google Chrome.app/Contents/MacOS/Google Chrome",
       "Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary",

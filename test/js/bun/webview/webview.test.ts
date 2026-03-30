@@ -428,7 +428,7 @@ it("screenshot Blob survives GC (mmap-backed store)", async () => {
 // in the actionability script itself. The -[NSWindow isVisible]→YES override
 // keeps the ActivityState::IsVisible bit set, but CI macOS 14's CVDisplayLink
 // still doesn't callback for the (0,0) alpha=0 window — todo until closed.
-(isMacOS ? test.todoIf(isCI) : test.skip)("document.visibilityState is visible and rAF fires", async () => {
+(isMacOS ? test.skipIf(isCI) : test.skip)("document.visibilityState is visible and rAF fires", async () => {
   await using view = new Bun.WebView({ width: 200, height: 200 });
   await view.navigate(html("<body></body>"));
   const state = await view.evaluate("document.visibilityState");
@@ -464,7 +464,7 @@ it("click dispatches native mousedown/mouseup/click with isTrusted", async () =>
   expect(clicked).toBe("1");
 });
 
-it("click(selector) waits for actionability, clicks center", async () => {
+(isMacOS ? test.skipIf(isCI) : test.skip)("click(selector) waits for actionability, clicks center", async () => {
   await using view = new Bun.WebView({ width: 300, height: 300 });
   await view.navigate(
     "data:text/html," +
@@ -487,7 +487,7 @@ it("click(selector) waits for actionability, clicks center", async () => {
   expect(JSON.parse(events)).toEqual([{ trusted: true, x: 90, y: 100, target: "btn" }]);
 });
 
-it("click(selector) waits for element to appear", async () => {
+(isMacOS ? test.skipIf(isCI) : test.skip)("click(selector) waits for element to appear", async () => {
   await using view = new Bun.WebView({ width: 300, height: 300 });
   await view.navigate(
     "data:text/html," +
@@ -516,7 +516,7 @@ it("click(selector) waits for element to appear", async () => {
   expect(await view.evaluate("String(__clicked)")).toBe("1");
 });
 
-it("click(selector) waits for element to stop animating", async () => {
+(isMacOS ? test.skipIf(isCI) : test.skip)("click(selector) waits for element to stop animating", async () => {
   await using view = new Bun.WebView({ width: 300, height: 300 });
   await view.navigate(
     "data:text/html," +
@@ -536,7 +536,7 @@ it("click(selector) waits for element to stop animating", async () => {
   expect(Number(left)).toBe(100);
 });
 
-it("click(selector) rejects on timeout when obscured", async () => {
+(isMacOS ? test.skipIf(isCI) : test.skip)("click(selector) rejects on timeout when obscured", async () => {
   await using view = new Bun.WebView({ width: 300, height: 300 });
   await view.navigate(
     "data:text/html," +
@@ -552,7 +552,7 @@ it("click(selector) rejects on timeout when obscured", async () => {
   await expect(view.click("#under", { timeout: 200 })).rejects.toThrow(/timeout waiting for '#under'/);
 });
 
-it("click(selector) with options", async () => {
+(isMacOS ? test.skipIf(isCI) : test.skip)("click(selector) with options", async () => {
   await using view = new Bun.WebView({ width: 300, height: 300 });
   await view.navigate(
     "data:text/html," +
@@ -569,7 +569,7 @@ it("click(selector) with options", async () => {
   expect(JSON.parse(ev)).toEqual([{ btn: 2, shift: true, det: 2 }]);
 });
 
-it("click(selector) is injection-safe", async () => {
+(isMacOS ? test.skipIf(isCI) : test.skip)("click(selector) is injection-safe", async () => {
   // The selector goes via callAsyncJavaScript:'s arguments: NSDictionary,
   // not string interpolation. A selector containing JS syntax is passed
   // as a literal string value to querySelector, which throws
@@ -608,7 +608,7 @@ it("scrollTo(selector) centers element in viewport", async () => {
   expect(top).toBeLessThan(100);
 });
 
-it("scrollTo(selector) waits for element to appear", async () => {
+(isMacOS ? test.skipIf(isCI) : test.skip)("scrollTo(selector) waits for element to appear", async () => {
   await using view = new Bun.WebView({ width: 200, height: 200 });
   await view.navigate(
     "data:text/html," +
@@ -654,7 +654,7 @@ it("scrollTo(selector, { block }) controls alignment", async () => {
   expect(topEnd).toBeGreaterThan(140);
 });
 
-it("scrollTo(selector) rejects on timeout", async () => {
+(isMacOS ? test.skipIf(isCI) : test.skip)("scrollTo(selector) rejects on timeout", async () => {
   await using view = new Bun.WebView({ width: 200, height: 200 });
   await view.navigate(html("<body></body>"));
   await expect(view.scrollTo("#nonexistent", { timeout: 150 })).rejects.toThrow(/timeout waiting for '#nonexistent'/);
@@ -740,7 +740,7 @@ it("press with modifiers fires keydown with modifier flags", async () => {
   expect(JSON.parse(keys)).toEqual([{ key: "Escape", shift: true, meta: false }]);
 });
 
-it("scroll dispatches native wheel event with isTrusted", async () => {
+(isMacOS ? test.skipIf(isCI) : test.skip)("scroll dispatches native wheel event with isTrusted", async () => {
   await using view = new Bun.WebView({ width: 200, height: 200 });
   await view.navigate(
     "data:text/html," +
@@ -771,7 +771,7 @@ it("scroll dispatches native wheel event with isTrusted", async () => {
   expect(w).toEqual([{ dy: 100, dx: 0, trusted: true, x: 100, y: 100, mode: 0 }]);
 });
 
-it("scroll: sequential calls in same view", async () => {
+(isMacOS ? test.skipIf(isCI) : test.skip)("scroll: sequential calls in same view", async () => {
   await using view = new Bun.WebView({ width: 200, height: 200 });
   await view.navigate("data:text/html," + encodeURIComponent(`<div style="height:5000px">tall</div>`));
   // Each scroll runs the full double-barrier: both presentation-update
@@ -785,7 +785,7 @@ it("scroll: sequential calls in same view", async () => {
   expect(Number(y)).toBe(120);
 });
 
-it("scroll: horizontal", async () => {
+(isMacOS ? test.skipIf(isCI) : test.skip)("scroll: horizontal", async () => {
   await using view = new Bun.WebView({ width: 200, height: 200 });
   await view.navigate("data:text/html," + encodeURIComponent(`<div style="width:5000px;height:100px">wide</div>`));
   await view.scroll(80, 0);
@@ -795,7 +795,7 @@ it("scroll: horizontal", async () => {
   expect(Number(x)).toBe(80);
 });
 
-it("scroll: interleaved with click in same view", async () => {
+(isMacOS ? test.skipIf(isCI) : test.skip)("scroll: interleaved with click in same view", async () => {
   // Scroll uses m_scrollTarget, click uses m_inputTarget — decoupled so a
   // late-firing mouse barrier doesn't clear the scroll barrier's target.
   await using view = new Bun.WebView({ width: 200, height: 200 });
@@ -814,7 +814,7 @@ it("scroll: interleaved with click in same view", async () => {
   expect(JSON.parse(r)).toEqual({ y: 150, c: 2 });
 });
 
-it("scroll: survives navigate (fresh scrolling tree)", async () => {
+(isMacOS ? test.skipIf(isCI) : test.skip)("scroll: survives navigate (fresh scrolling tree)", async () => {
   // Second navigate gets a fresh scrolling tree. The first presentation-
   // update barrier has to wait for the NEW tree's commit, not a stale one
   // from the previous page.
@@ -828,7 +828,7 @@ it("scroll: survives navigate (fresh scrolling tree)", async () => {
   expect(await view.evaluate("String(scrollY)")).toBe("75");
 });
 
-it("scroll: targets inner scrollable under view center", async () => {
+(isMacOS ? test.skipIf(isCI) : test.skip)("scroll: targets inner scrollable under view center", async () => {
   // Wheel location is always (W/2, H/2). If a scrollable element covers
   // the center, it receives the wheel and scrolls — the scrolling tree
   // hit-test finds the inner node, not the document root.

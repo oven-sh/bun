@@ -3,6 +3,7 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
+// Worker spawning can be slow under ASAN/CI
 test("worker does not crash when uncaughtException handler throws", async () => {
   using dir = tempDir("issue-28648", {
     "index.cjs": `
@@ -52,4 +53,4 @@ throw new Error('oopsie');
   expect(result).toContain("exit: 1");
   // Process should not crash or hit the timeout guard
   expect(exitCode).toBe(0);
-});
+}, 30_000);

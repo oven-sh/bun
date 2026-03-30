@@ -327,13 +327,25 @@ pub fn start(
     this.arena = bun.MimallocArena.init();
     const allocator = this.arena.?.allocator();
 
+    // Bump refcounts on the parent's proxy-env values BEFORE cloning the
+    // env map. The map clone copies slice headers that point into parent's
+    // RefCountedEnvValue.bytes; without refs held first, a concurrent
+    // parent write could free those bytes between the map clone below and
+    // when the worker VM's rareData is populated. Holding refs here keeps
+    // them alive through that window.
+    var temp_proxy_storage: jsc.RareData.ProxyEnvStorage = .{};
+    errdefer temp_proxy_storage.deinit();
+    if (this.parent.rare_data) |rd| {
+        temp_proxy_storage.cloneFrom(&rd.proxy_env_storage);
+    }
+
     const map = try allocator.create(bun.DotEnv.Map);
     map.* = try this.parent.transpiler.env.map.cloneWithAllocator(allocator);
-    // The cloned map's proxy-var slices point into parent's RareData storage.
-    // Bump refcounts so parent overwriting its value doesn't free bytes the
-    // worker's map still references. The worker's own RareData gets the refs
-    // so they're released when the worker shuts down.
-    const parent_proxy_storage = if (this.parent.rare_data) |rd| &rd.proxy_env_storage else null;
+    // If the parent wrote between cloneFrom and cloneWithAllocator, the
+    // cloned map's proxy-var entries point to different bytes than
+    // temp_proxy_storage holds refs on. Re-put from our reffed storage so
+    // map and refs agree — this fully closes the race.
+    temp_proxy_storage.syncInto(map);
 
     const loader = try allocator.create(bun.DotEnv.Loader);
     loader.* = bun.DotEnv.Loader.init(map, allocator);
@@ -348,9 +360,10 @@ pub fn start(
     vm.allocator = allocator;
     vm.arena = &this.arena.?;
 
-    if (parent_proxy_storage) |parent_storage| {
-        vm.rareData().proxy_env_storage.cloneFrom(parent_storage);
-    }
+    // Move the pre-cloned proxy storage into the worker VM's rareData.
+    // Refs were already bumped before the map clone above.
+    vm.rareData().proxy_env_storage = temp_proxy_storage;
+    temp_proxy_storage = .{};
 
     var b = &vm.transpiler;
     b.resolver.env_loader = b.env;

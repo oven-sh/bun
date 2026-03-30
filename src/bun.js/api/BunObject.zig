@@ -1465,7 +1465,11 @@ pub const EnvironmentVariables = struct {
         }
 
         if (value.len == 0) {
-            vm.transpiler.env.map.remove(slot.key);
+            // Store a static empty string rather than removing, so that
+            // process.env.X reads back as "" (Node.js semantics) instead
+            // of undefined. isNoProxy treats empty strings the same as
+            // absent — no bypass.
+            bun.handleOom(vm.transpiler.env.map.put(slot.key, ""));
             return;
         }
 

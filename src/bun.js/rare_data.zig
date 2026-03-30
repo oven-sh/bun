@@ -141,6 +141,19 @@ pub const ProxyEnvStorage = struct {
         }
     }
 
+    /// Overwrite proxy-var entries in an env map with this storage's reffed
+    /// bytes. Used after map.cloneWithAllocator in the worker: if the parent
+    /// wrote a proxy var between cloneFrom and the map clone, the cloned
+    /// map's slice headers and the reffed storage would disagree. This
+    /// forces them to agree — the map points at bytes we hold refs on.
+    pub fn syncInto(self: *const ProxyEnvStorage, map: *bun.DotEnv.Map) void {
+        inline for (@typeInfo(ProxyEnvStorage).@"struct".fields) |f| {
+            if (@field(self, f.name)) |val| {
+                bun.handleOom(map.put(f.name, val.bytes));
+            }
+        }
+    }
+
     pub fn deinit(self: *ProxyEnvStorage) void {
         inline for (@typeInfo(ProxyEnvStorage).@"struct".fields) |f| {
             if (@field(self, f.name)) |val| {

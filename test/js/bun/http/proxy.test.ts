@@ -964,6 +964,11 @@ describe.concurrent("NO_PROXY with explicit proxy option", () => {
 
           // Unset via empty string — should use proxy again (and fail).
           process.env.NO_PROXY = "";
+          // Node.js semantics: read-back is "", not undefined.
+          if (process.env.NO_PROXY !== "") {
+            console.error("expected NO_PROXY to read back as '', got", JSON.stringify(process.env.NO_PROXY));
+            process.exit(1);
+          }
           threw = false;
           try { await fetch(target, { proxy: deadProxy }); } catch { threw = true; }
           if (!threw) { console.error("expected third fetch to fail"); process.exit(1); }

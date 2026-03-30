@@ -4129,7 +4129,11 @@ function http1Fallback(socket: Socket) {
     res.on("finish", () => {
       const reqConnection = (headers["connection"] || "").toLowerCase();
       const resConnection = (res.getHeader("connection") || "").toLowerCase();
-      if (resConnection === "close" || reqConnection === "close" || (httpVersion === "1.0" && reqConnection !== "keep-alive")) {
+      if (
+        resConnection === "close" ||
+        reqConnection === "close" ||
+        (httpVersion === "1.0" && reqConnection !== "keep-alive")
+      ) {
         socket.end();
       } else {
         // Re-arm for next request (keep-alive)

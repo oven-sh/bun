@@ -226,12 +226,16 @@ test("http2.createSecureServer allowHTTP1 streaming write() then end()", async (
 
   const port = await listening;
 
-  const { promise: done, resolve: onDone, reject: onError } = Promise.withResolvers<{
+  const {
+    promise: done,
+    resolve: onDone,
+    reject: onError,
+  } = Promise.withResolvers<{
     status: number;
     body: string;
   }>();
 
-  const req = https.get(`https://localhost:${port}`, { rejectUnauthorized: false }, (res) => {
+  const req = https.get(`https://localhost:${port}`, { rejectUnauthorized: false }, res => {
     let data = "";
     res.on("data", (chunk: any) => (data += chunk));
     res.on("end", () => {

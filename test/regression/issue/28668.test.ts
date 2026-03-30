@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { chmodSync } from "fs";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 
 describe.concurrent("bunx --cwd", () => {
-  test("changes working directory for package resolution and execution", async () => {
+  test.skipIf(isWindows)("changes working directory for package resolution and execution", async () => {
     using dir = tempDir("bunx-cwd", {
       "subdir/package.json": JSON.stringify({
         name: "test-cwd",
@@ -15,7 +15,6 @@ describe.concurrent("bunx --cwd", () => {
       "subdir/node_modules/.bin/test-cwd-bin": `#!/usr/bin/env node\nconsole.log(process.cwd());`,
     });
 
-    // Make the bin script executable
     chmodSync(join(String(dir), "subdir/node_modules/.bin/test-cwd-bin"), 0o755);
     chmodSync(join(String(dir), "subdir/bin.js"), 0o755);
 
@@ -33,7 +32,7 @@ describe.concurrent("bunx --cwd", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("works with --cwd=<path> syntax", async () => {
+  test.skipIf(isWindows)("works with --cwd=<path> syntax", async () => {
     using dir = tempDir("bunx-cwd-eq", {
       "mydir/package.json": JSON.stringify({
         name: "test-cwd-eq",

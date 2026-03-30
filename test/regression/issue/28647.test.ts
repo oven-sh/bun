@@ -65,6 +65,16 @@ test("Proxy with trapping handler is compared correctly", () => {
   expect(Bun.deepEquals(proxyObj, { key: "value" }, true)).toBe(true);
 });
 
+test("deepEquals uses target array length, not spoofed proxy length", () => {
+  const spoofedLengthProxy = new Proxy([1, 2, 3], {
+    get(target: any, prop: string | symbol, receiver: any) {
+      if (prop === "length") return 1_000_000;
+      return Reflect.get(target, prop, receiver);
+    },
+  });
+  expect(Bun.deepEquals(spoofedLengthProxy, [1, 2, 3], true)).toBe(true);
+});
+
 test("Proxy-wrapped nested structures compare correctly", () => {
   const nested = { arr: [1, 2], obj: { x: "y" } };
   const proxy = new Proxy(nested, {});

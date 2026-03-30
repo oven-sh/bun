@@ -851,6 +851,23 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
             cn1 = jsCast<ProxyObject*>(cn1)->target();
         while (cn2->type() == JSC::ProxyObjectType)
             cn2 = jsCast<ProxyObject*>(cn2)->target();
+
+        // If unwrapping revealed a DOM wrapper or special type (URL, Headers,
+        // etc.), re-dispatch through specialObjectsDequal so semantic equality
+        // is used instead of generic property enumeration.
+        uint8_t cn1Type = cn1->type();
+        uint8_t cn2Type = cn2->type();
+        if (cn1Type == JSDOMWrapperType || cn1Type == JSAsJSONType
+            || cn2Type == JSDOMWrapperType || cn2Type == JSAsJSONType) {
+            std::optional<bool> result = specialObjectsDequal<isStrict, enableAsymmetricMatchers>(globalObject, gcBuffer, stack, scope, cn1, cn2);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (result.has_value()) return *result;
+            result = specialObjectsDequal<isStrict, enableAsymmetricMatchers>(globalObject, gcBuffer, stack, scope, cn2, cn1);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (result.has_value()) return *result;
+            return false;
+        }
+
         if (!equal(JSObject::calculatedClassName(cn1), JSObject::calculatedClassName(cn2))) {
             return false;
         }

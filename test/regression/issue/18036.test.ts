@@ -1,4 +1,4 @@
-import { test, expect, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { existsSync } from "node:fs";
 import path from "node:path";
@@ -34,11 +34,7 @@ describe.skipIf(process.platform !== "linux")("statx ENOSYS fallback for old ker
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stdout).toBe("42\n");
     expect(exitCode).toBe(0);
@@ -57,11 +53,7 @@ describe.skipIf(process.platform !== "linux")("statx ENOSYS fallback for old ker
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stderr).not.toContain("error");
     expect(stderr).not.toContain("Unexpected");
@@ -85,11 +77,7 @@ describe.skipIf(process.platform !== "linux")("statx ENOSYS fallback for old ker
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stdout).toBe("number\ntrue\nnumber\n");
     expect(exitCode).toBe(0);

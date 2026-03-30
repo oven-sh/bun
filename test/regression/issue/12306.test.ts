@@ -1,9 +1,9 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { createServer, Socket } from "node:net";
 
 test("socket.setTimeout resets on incoming data (reads)", async () => {
   // Create a server that pushes data every 200ms
-  await using server = createServer((socket) => {
+  await using server = createServer(socket => {
     const interval = setInterval(() => socket.write("ping\n"), 200);
     socket.on("close", () => clearInterval(interval));
     socket.on("error", () => clearInterval(interval));
@@ -35,7 +35,7 @@ test("socket.setTimeout resets on incoming data (reads)", async () => {
   client.on("data", () => {
     reads++;
   });
-  client.on("error", (err) => reject(err));
+  client.on("error", err => reject(err));
 
   client.connect(port, "127.0.0.1", () => {
     // After 3s of receiving data, close gracefully — timeout should not have fired

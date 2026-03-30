@@ -3951,21 +3951,30 @@ function closeAllSessions(server: Http2Server | Http2SecureServer) {
 function decodeChunkedBody(buf) {
   const decoded: Buffer[] = [];
   let offset = 0;
+  let complete = false;
   while (offset < buf.length) {
     const crlfIdx = buf.indexOf("\r\n", offset);
     if (crlfIdx === -1) break;
     const sizeStr = buf.subarray(offset, crlfIdx).toString().trim();
     const chunkSize = parseInt(sizeStr, 16);
     if (isNaN(chunkSize)) break;
-    if (chunkSize === 0) break;
+    if (chunkSize === 0) {
+      complete = true;
+      // Skip past 0\r\n\r\n (terminator)
+      offset = crlfIdx + 4;
+      break;
+    }
     const dataStart = crlfIdx + 2;
     const dataEnd = dataStart + chunkSize;
-    if (dataEnd > buf.length) break;
+    if (dataEnd + 2 > buf.length) break; // need data + trailing \r\n
     ArrayPrototypePush.$call(decoded, buf.subarray(dataStart, dataEnd));
-    // Skip past chunk data + trailing \r\n
     offset = dataEnd + 2;
   }
-  return decoded.length > 0 ? Buffer.concat(decoded) : Buffer.alloc(0);
+  return {
+    body: decoded.length > 0 ? Buffer.concat(decoded) : Buffer.alloc(0),
+    complete,
+    consumed: offset,
+  };
 }
 
 const MAX_HTTP1_HEADER_SIZE = 16384;
@@ -3978,10 +3987,13 @@ function http1Fallback(socket: Socket) {
   socket.on("data", onData);
   socket.on("error", onError);
 
+  let headersParsed = false;
+
   function onData(chunk) {
     ArrayPrototypePush.$call(chunks, chunk);
     totalLength += chunk.length;
-    if (totalLength > MAX_HTTP1_HEADER_SIZE) {
+    // Only enforce header size limit before headers are found
+    if (!headersParsed && totalLength > MAX_HTTP1_HEADER_SIZE) {
       socket.end("HTTP/1.1 431 Request Header Fields Too Large\r\nConnection: close\r\n\r\n");
       socket.removeListener("data", onData);
       return;
@@ -4006,6 +4018,9 @@ function http1Fallback(socket: Socket) {
     const spaceIdx = requestLine.indexOf(" ");
     const lastSpaceIdx = requestLine.lastIndexOf(" ");
     if (spaceIdx === -1 || lastSpaceIdx === spaceIdx) {
+      socket.removeListener("data", onData);
+      chunks = [];
+      totalLength = 0;
       socket.end("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
       return;
     }
@@ -4040,6 +4055,7 @@ function http1Fallback(socket: Socket) {
 
     // Stop listening for data while handling this request
     socket.removeListener("data", onData);
+    headersParsed = true;
     chunks = [];
     totalLength = 0;
 
@@ -4084,49 +4100,59 @@ function http1Fallback(socket: Socket) {
         };
         socket.on("data", onBodyData);
       }
-    } else if (headers["transfer-encoding"] === "chunked") {
-      // Accumulate chunked data and decode the framing
+    } else if (StringPrototypeToLowerCase.$call(headers["transfer-encoding"] || "") === "chunked") {
+      // Accumulate chunked data and decode the framing structurally
       let chunkedChunks: Buffer[] = [];
       let chunkedLength = 0;
       if (remainder.length > 0) {
         ArrayPrototypePush.$call(chunkedChunks, remainder);
         chunkedLength += remainder.length;
       }
+      function tryDecodeChunked() {
+        const accumulated = Buffer.concat(chunkedChunks, chunkedLength);
+        const result = decodeChunkedBody(accumulated);
+        if (result.complete) {
+          socket.removeListener("data", onChunkedData);
+          if (result.body.length > 0) req.push(result.body);
+          req.push(null);
+          req.complete = true;
+          // Save pipelined data after chunked terminator
+          if (result.consumed < accumulated.length) {
+            chunks = [accumulated.subarray(result.consumed)];
+            totalLength = accumulated.length - result.consumed;
+          }
+          return true;
+        }
+        return false;
+      }
       const onChunkedData = chunk => {
         ArrayPrototypePush.$call(chunkedChunks, chunk);
         chunkedLength += chunk.length;
-        const accumulated = Buffer.concat(chunkedChunks, chunkedLength);
-        // Look for the end of chunked encoding (0\r\n\r\n)
-        if (accumulated.indexOf("0\r\n\r\n") !== -1) {
-          socket.removeListener("data", onChunkedData);
-          const decoded = decodeChunkedBody(accumulated);
-          if (decoded.length > 0) req.push(decoded);
-          req.push(null);
-          req.complete = true;
-        }
+        tryDecodeChunked();
       };
       // Check if we already have the complete chunked body in remainder
-      if (chunkedLength > 0) {
-        const accumulated = Buffer.concat(chunkedChunks, chunkedLength);
-        if (accumulated.indexOf("0\r\n\r\n") !== -1) {
-          const decoded = decodeChunkedBody(accumulated);
-          if (decoded.length > 0) req.push(decoded);
-          req.push(null);
-          req.complete = true;
-        } else {
-          socket.on("data", onChunkedData);
-        }
+      if (chunkedLength > 0 && tryDecodeChunked()) {
+        // Already complete
       } else {
         socket.on("data", onChunkedData);
       }
     } else {
-      // No body
+      // No body - save remainder for pipelined requests
+      if (remainder.length > 0) {
+        chunks = [remainder];
+        totalLength = remainder.length;
+      }
       req.push(null);
       req.complete = true;
     }
 
     // After response is finished, decide socket lifecycle
     res.on("finish", () => {
+      // Drain any unconsumed body data listeners before re-arming
+      if (!req.complete) {
+        req.push(null);
+        req.complete = true;
+      }
       const reqConnection = (headers["connection"] || "").toLowerCase();
       const resConnection = (res.getHeader("connection") || "").toLowerCase();
       if (
@@ -4137,6 +4163,7 @@ function http1Fallback(socket: Socket) {
         socket.end();
       } else {
         // Re-arm for next request (keep-alive)
+        headersParsed = false;
         socket.on("data", onData);
         // Process any pipelined data already buffered
         if (totalLength > 0) {
@@ -4344,12 +4371,20 @@ class Http1FallbackResponse extends Stream {
   }
 
   write(chunk, encoding?, callback?) {
+    if (this._ended) {
+      if (callback) process.nextTick(callback);
+      return false;
+    }
     if (typeof encoding === "function") {
       callback = encoding;
       encoding = undefined;
     }
+    // Sync _chunked with explicitly set Transfer-Encoding header
+    if (!this._chunked && StringPrototypeToLowerCase.$call(this.getHeader("transfer-encoding") || "") === "chunked") {
+      this._chunked = true;
+    }
     // If headers not yet sent and no explicit framing, use chunked encoding
-    if (!this[kHttp1FallbackHeadersSent] && !this.hasHeader("content-length") && !this.hasHeader("transfer-encoding")) {
+    if (this._hasBody && !this[kHttp1FallbackHeadersSent] && !this.hasHeader("content-length") && !this.hasHeader("transfer-encoding")) {
       this._chunked = true;
       this.setHeader("Transfer-Encoding", "chunked");
     }
@@ -4384,6 +4419,10 @@ class Http1FallbackResponse extends Stream {
     }
     this._ended = true;
 
+    // Sync _chunked with explicitly set Transfer-Encoding header
+    if (!this._chunked && StringPrototypeToLowerCase.$call(this.getHeader("transfer-encoding") || "") === "chunked") {
+      this._chunked = true;
+    }
     // If headers not yet sent, set Content-Length for a simple response
     if (!this[kHttp1FallbackHeadersSent] && !this.hasHeader("content-length") && !this.hasHeader("transfer-encoding")) {
       if (chunk) {
@@ -4406,8 +4445,8 @@ class Http1FallbackResponse extends Stream {
         this.socket.write(chunk, encoding);
       }
     }
-    // Write chunked terminator
-    if (this._chunked) {
+    // Write chunked terminator (only if body is expected)
+    if (this._chunked && this._hasBody) {
       this.socket.write("0\r\n\r\n");
     }
     this.finished = true;

@@ -42,7 +42,7 @@ test("#12292 - backpressure-free Readable piped to http.request sends complete b
         path: "/upload",
         method: "PUT",
       },
-      (res) => {
+      res => {
         res.resume();
         res.on("end", resolveReq);
       },
@@ -69,7 +69,7 @@ test("#12292 - backpressure-free Readable piped to http.request sends complete b
       wrapper.push("\r\n");
       wrapper.push(null);
     });
-    source.on("error", (err) => wrapper.destroy(err));
+    source.on("error", err => wrapper.destroy(err));
 
     wrapper.pipe(req);
   });

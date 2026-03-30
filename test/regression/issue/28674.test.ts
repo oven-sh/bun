@@ -149,8 +149,9 @@ test("bun install does not corrupt package names when workspace uses npm alias",
   // The old code's known_npm_aliases incorrectly substituted the name.
   const lockContent = readFileSync(join(cwd, "bun.lock"), "utf8");
 
-  // bun.lock contains both "my-pkg" and "real-pkg" as separate packages.
-  // With the old buggy code, "my-pkg" was incorrectly resolved as "real-pkg".
-  expect(lockContent).toContain('"my-pkg@');
-  expect(lockContent).toContain('"real-pkg@');
+  // The packages section must contain a resolution "my-pkg@1.0.0" (the real
+  // package), not just "real-pkg@1.0.0". With the old buggy code, my-pkg was
+  // incorrectly resolved as real-pkg so "my-pkg@1.0.0" never appeared.
+  expect(lockContent).toContain('"my-pkg@1.0.0"');
+  expect(lockContent).toContain('"real-pkg@1.0.0"');
 });

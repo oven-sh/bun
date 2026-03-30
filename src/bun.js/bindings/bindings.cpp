@@ -2279,6 +2279,12 @@ JSC::EncodedJSValue SystemError__toErrorInstance(const SystemError* arg0, JSC::J
 
     result->putDirect(vm, names.errnoPublicName(), jsNumber(err.errno_), JSC::PropertyAttribute::DontDelete | 0);
 
+    // Eagerly set .stack to match Node.js behavior. When SystemError is created from a
+    // threadpool callback there are no JS frames on the stack, so JSC's lazy stack
+    // computation returns undefined. Node.js returns "Error: <message>" (header only).
+    // https://github.com/oven-sh/bun/issues/28644
+    result->putDirect(vm, vm.propertyNames->stack, jsString(vm, message.isEmpty() ? String("Error"_s) : makeString("Error: "_s, message)), 0);
+
     return JSC::JSValue::encode(result);
 }
 
@@ -2315,6 +2321,9 @@ JSC::EncodedJSValue SystemError__toErrorInstanceWithInfoObject(const SystemError
 
     info->putDirect(vm, clientData->builtinNames().errnoPublicName(), jsNumber(err.errno_), JSC::PropertyAttribute::DontDelete | 0);
     result->putDirect(vm, clientData->builtinNames().errnoPublicName(), jsNumber(err.errno_), JSC::PropertyAttribute::DontDelete | 0);
+
+    // Eagerly set .stack to match Node.js behavior (see SystemError__toErrorInstance above).
+    result->putDirect(vm, vm.propertyNames->stack, jsString(vm, makeString("SystemError: "_s, message)), 0);
 
     return JSC::JSValue::encode(result);
 }

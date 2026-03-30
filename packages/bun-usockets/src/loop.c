@@ -373,7 +373,17 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         if(s && s->flags.adopted && s->prev) {
                             s = s->prev;
                         }
-                        /* Exit accept loop if listen socket was closed in on_open handler */
+
+                        /* When the kernel deferred the accept until data arrived (TCP_DEFER_ACCEPT
+                         * on Linux, SO_ACCEPTFILTER on FreeBSD), the request/ClientHello is already
+                         * in the buffer. Dispatch readable now instead of returning to epoll just to
+                         * learn what we already know. The POLL_TYPE_SOCKET handler tolerates
+                         * EWOULDBLOCK for the rare case where the defer timed out with no data. */
+                        if (listen_socket->deferred_accept && s && !us_socket_is_closed(0, s)) {
+                            us_internal_dispatch_ready_poll((struct us_poll_t *) s, 0, 0, LIBUS_SOCKET_READABLE);
+                        }
+
+                        /* Exit accept loop if listen socket was closed in on_open or the request handler */
                         if (us_socket_is_closed(0, &listen_socket->s)) {
                             break;
                         }

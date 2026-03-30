@@ -15,6 +15,23 @@ BUN_JSC_dumpSimulatedThrows=1 bun bd <command>`
 
 Tip: Bun is already installed and in $PATH. The `bd` subcommand is a package.json script.
 
+**All build scripts support build-then-exec.** Any `bun run build*` command (and `bun bd`, and `bun scripts/build.ts` directly) accepts trailing args which are passed to the built executable after building. This is the recommended way to run your build — you never invoke `./build/debug/bun-debug` directly.
+
+```sh
+bun bd test foo.test.ts                    # debug build + quiet debug logs
+bun run build test foo.test.ts             # debug build
+bun run build:release -p 'Bun.version'     # release build
+bun run build:local run script.ts          # debug build with local WebKit
+```
+
+When exec args are present, build output is suppressed unless the build fails — you see only the binary's output. Build flags (e.g. `--asan=off`) go before the exec args; see `scripts/build.ts` header for the full arg routing rules.
+
+**Comparing builds:** normally use the default `build/<profile>/` dir. If you need to preserve a build as a comparison point (rare — e.g. benchmarking before/after a change), `--build-dir` parks it somewhere the next build won't overwrite:
+
+```sh
+bun run build:release --build-dir=build/baseline
+```
+
 ## Testing
 
 ### Running Tests
@@ -184,7 +201,7 @@ Third-party C/C++ libraries are vendored locally and can be read from disk (thes
 - `vendor/zlib/` - zlib (compression, cloudflare fork)
 - `vendor/zstd/` - Zstandard (compression)
 
-Build configuration for these is in `cmake/targets/Build*.cmake`.
+Build configuration for these is in `scripts/build/deps/*.ts`.
 
 ### JavaScript Class Implementation (C++)
 

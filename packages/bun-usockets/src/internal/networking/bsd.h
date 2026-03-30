@@ -178,6 +178,7 @@ int bsd_udp_packet_buffer_local_ip(struct udp_recvbuf *msgvec, int index, char *
 LIBUS_SOCKET_DESCRIPTOR apple_no_sigpipe(LIBUS_SOCKET_DESCRIPTOR fd);
 LIBUS_SOCKET_DESCRIPTOR bsd_set_nonblocking(LIBUS_SOCKET_DESCRIPTOR fd);
 void bsd_socket_nodelay(LIBUS_SOCKET_DESCRIPTOR fd, int enabled);
+int bsd_set_defer_accept(LIBUS_SOCKET_DESCRIPTOR listenFd);
 int bsd_socket_broadcast(LIBUS_SOCKET_DESCRIPTOR fd, int enabled);
 int bsd_socket_ttl_unicast(LIBUS_SOCKET_DESCRIPTOR fd, int ttl);
 int bsd_socket_ttl_multicast(LIBUS_SOCKET_DESCRIPTOR fd, int ttl);

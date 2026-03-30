@@ -179,8 +179,7 @@ pub const WalkTask = struct {
         defer this.deinit();
 
         if (this.err) |err| {
-            const errJs = err.toJS(this.global);
-            try promise.reject(this.global, errJs);
+            try promise.rejectWithAsyncStack(this.global, err.toJS(this.global));
             return;
         }
 

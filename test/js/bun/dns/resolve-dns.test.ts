@@ -112,4 +112,13 @@ describe("dns", () => {
       });
     });
   });
+
+  test("lookup with non-object second argument should not crash", async () => {
+    // Non-object cell values (like strings) passed as options should be ignored, not crash.
+    // @ts-expect-error
+    const result = await dns.lookup("localhost", "cat");
+    expect(result).toBeArray();
+    expect(result.length).toBeGreaterThan(0);
+    expect(isIP(result[0].address)).toBeGreaterThan(0);
+  });
 });

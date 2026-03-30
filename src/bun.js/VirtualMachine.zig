@@ -1836,10 +1836,16 @@ pub fn resolveMaybeNeedsTrailingSlash(
     jsc_vm.log = &log;
     jsc_vm.transpiler.resolver.log = &log;
     jsc_vm.transpiler.linker.log = &log;
+    if (jsc_vm.transpiler.resolver.package_manager) |pm| {
+        pm.log = &log;
+    }
     defer {
         jsc_vm.log = old_log;
         jsc_vm.transpiler.linker.log = old_log;
         jsc_vm.transpiler.resolver.log = old_log;
+        if (jsc_vm.transpiler.resolver.package_manager) |pm| {
+            pm.log = old_log;
+        }
     }
     jsc_vm._resolve(&result, specifier_utf8.slice(), normalizeSource(source_utf8.slice()), is_esm, is_a_file_path) catch |err_| {
         var err = err_;
@@ -3717,6 +3723,7 @@ pub const ExitHandler = struct {
     extern fn Process__dispatchOnBeforeExit(*JSGlobalObject, code: u8) void;
     extern fn Process__dispatchOnExit(*JSGlobalObject, code: u8) void;
     extern fn Bun__closeAllSQLiteDatabasesForTermination() void;
+    extern fn Bun__WebView__closeAllForTermination() void;
 
     pub fn dispatchOnExit(this: *ExitHandler) void {
         jsc.markBinding(@src());
@@ -3724,6 +3731,7 @@ pub const ExitHandler = struct {
         Process__dispatchOnExit(vm.global, this.exit_code);
         if (vm.isMainThread()) {
             Bun__closeAllSQLiteDatabasesForTermination();
+            Bun__WebView__closeAllForTermination();
         }
     }
 

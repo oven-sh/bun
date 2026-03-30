@@ -109,10 +109,11 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                 var iter = this.pending_sockets.used.iterator(.{ .kind = .set });
                 while (iter.next()) |idx| {
                     const pooled = this.pending_sockets.at(@intCast(idx));
-                    if (comptime ssl) {
-                        if (pooled.ssl_config) |*s| s.deinit();
-                        pooled.ssl_config = null;
-                    }
+                    // Not gated on comptime ssl — an HTTP-proxy-to-HTTPS
+                    // tunnel pools in the non-SSL context but still stores
+                    // the inner-TLS tls_props here for pool-key matching.
+                    if (pooled.ssl_config) |*s| s.deinit();
+                    pooled.ssl_config = null;
                     if (pooled.proxy_tunnel) |*rp| {
                         // Do NOT call rp.data.shutdown() here — it drives
                         // SSLWrapper.shutdown → triggerCloseCallback →
@@ -420,6 +421,18 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                         socket,
                     );
                 } else if (tagged.is(PooledSocket)) {
+                    const pooled = tagged.as(PooledSocket);
+                    // If this pooled socket carries a CONNECT tunnel, any
+                    // idle data is inner-TLS traffic (close_notify, alert,
+                    // pipelined bytes) that we can't process without the
+                    // SSLWrapper. We'd hand back a tunnel whose inner state
+                    // diverged from ours. Evict it.
+                    if (pooled.proxy_tunnel != null) {
+                        log("Data on idle pooled tunnel — evicting", .{});
+                        terminateSocket(socket);
+                        return;
+                    }
+
                     // trailing zero is fine to ignore
                     if (strings.eqlComptime(buf, bun.http.end_of_chunked_http1_1_encoding_response_body)) {
                         return;
@@ -614,7 +627,9 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
 
             if (client.isKeepAlivePossible()) {
                 const want_tunnel = client.http_proxy != null and client.url.isHTTPS();
-                const target_hostname: []const u8 = if (want_tunnel) client.url.hostname else "";
+                // Match what the tunnel's inner TLS is actually verified against
+                // (ProxyTunnel.zig:44 uses hostname orelse url.hostname).
+                const target_hostname: []const u8 = if (want_tunnel) (client.hostname orelse client.url.hostname) else "";
                 const target_port: u16 = if (want_tunnel) client.url.getPortAuto() else 0;
                 const proxy_auth_hash: u64 = if (want_tunnel) client.proxyAuthHash() else 0;
 

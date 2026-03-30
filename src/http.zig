@@ -594,7 +594,11 @@ pub fn proxyAuthHash(this: *const HTTPClient) u64 {
             h.update(name_lower);
             h.update(":");
             h.update(value);
-            combined ^= h.final();
+            // Wrapping add, not XOR — duplicate identical headers (via
+            // Headers.append) would cancel under XOR (H(x)^H(x)=0) and
+            // collide with the no-headers sentinel. Add is commutative
+            // (order-independent) without the cancellation.
+            combined +%= h.final();
             any = true;
             if (strings.eqlCaseInsensitiveASCII(name, "proxy-authorization", true)) {
                 user_provided_auth = true;
@@ -608,7 +612,7 @@ pub fn proxyAuthHash(this: *const HTTPClient) u64 {
             var h = std.hash.Wyhash.init(0);
             h.update("proxy-authorization:");
             h.update(auth);
-            combined ^= h.final();
+            combined +%= h.final();
             any = true;
         }
     }
@@ -1917,11 +1921,28 @@ fn sendProgressUpdateWithoutStageCheck(this: *HTTPClient, comptime is_ssl: bool,
 
     if (is_done) {
         this.unregisterAbortTracker();
-        if (this.isKeepAlivePossible() and !socket.isClosedOrHasError()) {
+        // is_done is response-driven. A server can reply early (HTTP 413)
+        // with keep-alive while request_stage is still .proxy_body or the
+        // tunnel still has buffered encrypted writes. Pooling that tunnel
+        // would leave the connection mid-request on the inner TLS stream;
+        // adopt() resetting write_buffer doesn't restore a clean HTTP/1.1
+        // boundary. Only pool a tunnel whose request side is fully drained.
+        const tunnel_request_drained = if (this.proxy_tunnel) |t|
+            this.state.request_stage == .done and t.write_buffer.isEmpty()
+        else
+            true;
+
+        if (this.isKeepAlivePossible() and !socket.isClosedOrHasError() and tunnel_request_drained) {
             log("release socket", .{});
             const tunnel = this.proxy_tunnel;
             this.proxy_tunnel = null;
             if (tunnel) |t| t.detachOwner(this);
+            // The tunnel's inner TLS was CONNECTed/verified against
+            // hostname orelse url.hostname (ProxyTunnel.zig:44), not
+            // url.hostname alone. Key on the same value so a Host
+            // header override can't reuse a tunnel verified against
+            // a different name.
+            const tunnel_target_host = this.hostname orelse this.url.hostname;
             ctx.releaseSocket(
                 socket,
                 this.flags.did_have_handshaking_error and !this.flags.reject_unauthorized,
@@ -1929,7 +1950,7 @@ fn sendProgressUpdateWithoutStageCheck(this: *HTTPClient, comptime is_ssl: bool,
                 this.connected_url.getPortAuto(),
                 this.tls_props,
                 tunnel,
-                if (tunnel != null) this.url.hostname else "",
+                if (tunnel != null) tunnel_target_host else "",
                 if (tunnel != null) this.url.getPortAuto() else 0,
                 if (tunnel != null) this.proxyAuthHash() else 0,
             );

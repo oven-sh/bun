@@ -790,3 +790,69 @@ test("captureStackTrace with constructor function not in stack returns error str
     expect(e.stack).toBe("TypeError: bad type");
   }
 });
+
+test("Error.captureStackTrace includes async frames from the await chain", async () => {
+  async function innerAsync() {
+    await new Promise(r => setImmediate(r));
+    const err = new Error("async test");
+    Error.captureStackTrace(err);
+    return err;
+  }
+  noInline(innerAsync);
+
+  async function outerAsync() {
+    return await innerAsync();
+  }
+  noInline(outerAsync);
+
+  const err = await outerAsync();
+  expect(err.stack).toContain("at innerAsync");
+  expect(err.stack).toContain("at async outerAsync");
+});
+
+test("Error.captureStackTrace with caller argument preserves async frames", async () => {
+  async function innerAsync() {
+    await new Promise(r => setImmediate(r));
+    const err = new Error("async test");
+    Error.captureStackTrace(err, innerAsync);
+    return err;
+  }
+  noInline(innerAsync);
+
+  async function middleAsync() {
+    return await innerAsync();
+  }
+  noInline(middleAsync);
+
+  async function outerAsync() {
+    return await middleAsync();
+  }
+  noInline(outerAsync);
+
+  const err = await outerAsync();
+  // innerAsync should be filtered out, but async parents should remain
+  expect(err.stack).not.toContain("at innerAsync");
+  expect(err.stack).toContain("at async middleAsync");
+  expect(err.stack).toContain("at async outerAsync");
+});
+
+test("Error.captureStackTrace with caller not in stack clears async frames too", async () => {
+  function notInStack() {}
+
+  async function innerAsync() {
+    await new Promise(r => setImmediate(r));
+    const err = new Error("async test");
+    Error.captureStackTrace(err, notInStack);
+    return err;
+  }
+  noInline(innerAsync);
+
+  async function outerAsync() {
+    return await innerAsync();
+  }
+  noInline(outerAsync);
+
+  const err = await outerAsync();
+  // When caller is not found, V8 clears everything
+  expect(err.stack).toBe("Error: async test");
+});

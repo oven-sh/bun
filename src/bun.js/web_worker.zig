@@ -258,6 +258,15 @@ pub fn create(
 
     worker.parent_poll_ref.ref(parent);
 
+    // Eagerly materialize rare_data on the parent before the worker thread
+    // spawns. start() reads parent.rare_data to acquire proxy_env_storage.lock
+    // for the env-map snapshot; if rare_data were still null there, the lock
+    // would be skipped and Bun__setEnvValue on this thread could concurrently
+    // create it + mutate env.map during the worker's cloneWithAllocator —
+    // reopening the UAF/rehash race the mutex was meant to close. This is
+    // the last point we're single-threaded with respect to the worker.
+    _ = parent.rareData();
+
     return worker;
 }
 
@@ -329,25 +338,25 @@ pub fn start(
 
     // Proxy-env values may be RefCountedEnvValue bytes owned by the parent's
     // RareData. We need a consistent snapshot of (storage slots + env.map
-    // entries) so that every slice we copy into our map is backed by a ref
-    // we hold. The parent's storage.lock serializes against Bun__setEnvValue
-    // on the main thread — it covers both the slot swap and the map.put,
-    // so both cloneFrom and cloneWithAllocator see the same state.
+    // entries) so every slice we copy is backed by a ref we hold. The
+    // parent's storage.lock serializes against Bun__setEnvValue on the main
+    // thread — it covers both the slot swap and the map.put, so cloneFrom
+    // and cloneWithAllocator see the same state.
+    //
+    // rare_data is guaranteed non-null here: create() eagerly materialized
+    // it on the parent thread before spawning us. A null-check fast-path
+    // would be racy — Bun__setEnvValue lazily creates rare_data on the
+    // parent thread and could do so between our check and cloneWithAllocator.
     var temp_proxy_storage: jsc.RareData.ProxyEnvStorage = .{};
     errdefer temp_proxy_storage.deinit();
 
     const map = try allocator.create(bun.DotEnv.Map);
     {
-        // If rare_data is null, the parent has never set a proxy var via
-        // process.env — any proxy-var slices in the map point into the
-        // process environ, which never gets freed. No lock or refs needed.
-        const parent_storage: ?*jsc.RareData.ProxyEnvStorage =
-            if (this.parent.rare_data) |rd| &rd.proxy_env_storage else null;
+        const parent_storage = &this.parent.rare_data.?.proxy_env_storage;
+        parent_storage.lock.lock();
+        defer parent_storage.lock.unlock();
 
-        if (parent_storage) |ps| ps.lock.lock();
-        defer if (parent_storage) |ps| ps.lock.unlock();
-
-        if (parent_storage) |ps| temp_proxy_storage.cloneFrom(ps);
+        temp_proxy_storage.cloneFrom(parent_storage);
         map.* = try this.parent.transpiler.env.map.cloneWithAllocator(allocator);
     }
     // Ensure map entries point at the exact bytes we hold refs on — covers

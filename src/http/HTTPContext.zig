@@ -114,7 +114,13 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                         pooled.ssl_config = null;
                     }
                     if (pooled.proxy_tunnel) |*rp| {
-                        rp.data.shutdown();
+                        // Do NOT call rp.data.shutdown() here — it drives
+                        // SSLWrapper.shutdown → triggerCloseCallback →
+                        // onClose(handlers.ctx), and handlers.ctx is the
+                        // stale HTTPClient pointer from detachOwner(). That
+                        // client is freed by now. http_socket.close(.failure)
+                        // below force-closes the TCP without triggering the
+                        // callback, same as addMemoryBackToPool().
                         rp.deref();
                     }
                     pooled.proxy_tunnel = null;
@@ -542,6 +548,13 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                         continue;
                     }
                     if (!strings.eqlLong(socket.target_hostname, target_hostname, true)) {
+                        continue;
+                    }
+                    // A tunnel established with reject_unauthorized=false never
+                    // ran checkServerIdentity — a CA-valid wrong-hostname cert
+                    // leaves did_have_handshaking_error=false so the outer
+                    // guard passes. Block a strict caller from reusing it.
+                    if (reject_unauthorized and !socket.proxy_tunnel.?.data.established_with_reject_unauthorized) {
                         continue;
                     }
                 }

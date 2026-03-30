@@ -21,6 +21,12 @@ write_buffer: bun.io.StreamBuffer = .{},
 /// would re-pool with the flag erased, letting a later reject_unauthorized=true
 /// request silently reuse a tunnel whose cert failed validation.
 did_have_handshaking_error: bool = false,
+/// Whether the inner TLS session was established with reject_unauthorized=true
+/// (and therefore hostname-verified via checkServerIdentity). A CA-valid but
+/// wrong-hostname cert produces error_no=0 so did_have_handshaking_error stays
+/// false; without this flag, a strict caller could reuse a tunnel where
+/// hostname was never checked.
+established_with_reject_unauthorized: bool = false,
 ref_count: RefCount,
 
 const ProxyTunnelWrapper = SSLWrapper(*HTTPClient);
@@ -381,6 +387,7 @@ pub fn detachOwner(this: *ProxyTunnel, client: *const HTTPClient) void {
     // of the inner TLS session, not the client. adopt() restores it to the
     // next client so re-pooling doesn't erase it.
     this.did_have_handshaking_error = client.flags.did_have_handshaking_error;
+    this.established_with_reject_unauthorized = client.flags.reject_unauthorized;
     // We intentionally leave wrapper.handlers.ctx stale here. The tunnel is
     // idle in the pool and no callbacks will fire until adopt() reattaches
     // a new owner and socket.

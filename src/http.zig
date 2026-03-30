@@ -574,6 +574,7 @@ pub fn isKeepAlivePossible(this: *HTTPClient) bool {
 pub fn proxyAuthHash(this: *const HTTPClient) u64 {
     var combined: u64 = 0;
     var any = false;
+    var name_lower_buf: [256]u8 = undefined;
 
     var user_provided_auth = false;
     if (this.proxy_headers) |hdrs| {
@@ -583,8 +584,14 @@ pub fn proxyAuthHash(this: *const HTTPClient) u64 {
         for (names, 0..) |name_ptr, idx| {
             const name = hdrs.asStr(name_ptr);
             const value = hdrs.asStr(values[idx]);
+            // HTTP header names are case-insensitive (RFC 7230 §3.2) —
+            // lowercase so "X-Foo" and "x-foo" hash identically.
+            const name_lower = if (name.len <= name_lower_buf.len)
+                strings.copyLowercase(name, name_lower_buf[0..name.len])
+            else
+                name;
             var h = std.hash.Wyhash.init(0);
-            h.update(name);
+            h.update(name_lower);
             h.update(":");
             h.update(value);
             combined ^= h.final();
@@ -599,7 +606,7 @@ pub fn proxyAuthHash(this: *const HTTPClient) u64 {
     if (!user_provided_auth) {
         if (this.proxy_authorization) |auth| {
             var h = std.hash.Wyhash.init(0);
-            h.update("Proxy-Authorization:");
+            h.update("proxy-authorization:");
             h.update(auth);
             combined ^= h.final();
             any = true;

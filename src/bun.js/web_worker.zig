@@ -327,24 +327,32 @@ pub fn start(
     this.arena = bun.MimallocArena.init();
     const allocator = this.arena.?.allocator();
 
-    // Bump refcounts on the parent's proxy-env values BEFORE cloning the
-    // env map. The map clone copies slice headers that point into parent's
-    // RefCountedEnvValue.bytes; without refs held first, a concurrent
-    // parent write could free those bytes between the map clone below and
-    // when the worker VM's rareData is populated. Holding refs here keeps
-    // them alive through that window.
+    // Proxy-env values may be RefCountedEnvValue bytes owned by the parent's
+    // RareData. We need a consistent snapshot of (storage slots + env.map
+    // entries) so that every slice we copy into our map is backed by a ref
+    // we hold. The parent's storage.lock serializes against Bun__setEnvValue
+    // on the main thread — it covers both the slot swap and the map.put,
+    // so both cloneFrom and cloneWithAllocator see the same state.
     var temp_proxy_storage: jsc.RareData.ProxyEnvStorage = .{};
     errdefer temp_proxy_storage.deinit();
-    if (this.parent.rare_data) |rd| {
-        temp_proxy_storage.cloneFrom(&rd.proxy_env_storage);
-    }
 
     const map = try allocator.create(bun.DotEnv.Map);
-    map.* = try this.parent.transpiler.env.map.cloneWithAllocator(allocator);
-    // If the parent wrote between cloneFrom and cloneWithAllocator, the
-    // cloned map's proxy-var entries point to different bytes than
-    // temp_proxy_storage holds refs on. Re-put from our reffed storage so
-    // map and refs agree — this fully closes the race.
+    {
+        // If rare_data is null, the parent has never set a proxy var via
+        // process.env — any proxy-var slices in the map point into the
+        // process environ, which never gets freed. No lock or refs needed.
+        const parent_storage: ?*jsc.RareData.ProxyEnvStorage =
+            if (this.parent.rare_data) |rd| &rd.proxy_env_storage else null;
+
+        if (parent_storage) |ps| ps.lock.lock();
+        defer if (parent_storage) |ps| ps.lock.unlock();
+
+        if (parent_storage) |ps| temp_proxy_storage.cloneFrom(ps);
+        map.* = try this.parent.transpiler.env.map.cloneWithAllocator(allocator);
+    }
+    // Ensure map entries point at the exact bytes we hold refs on — covers
+    // the case where a proxy var was in the initial environ (no ref) and
+    // later overwritten by the setter (reffed).
     temp_proxy_storage.syncInto(map);
 
     const loader = try allocator.create(bun.DotEnv.Loader);

@@ -113,6 +113,14 @@ pub const ProxyEnvStorage = struct {
     NO_PROXY: ?*RefCountedEnvValue = null,
     no_proxy: ?*RefCountedEnvValue = null,
 
+    /// Held by Bun__setEnvValue around the slot swap + env.map.put, and by
+    /// the worker around cloneFrom + env.map.cloneWithAllocator. This closes
+    /// two races: (1) worker's cloneFrom reading a slot pointer concurrently
+    /// with the parent's deref → free on the same pointer; (2) the env.map's
+    /// backing ArrayHashMap being iterated during clone while the parent's
+    /// put() rehashes it.
+    lock: bun.Mutex = .{},
+
     pub const Slot = struct {
         /// Static-lifetime field name (e.g. "NO_PROXY") — safe to use as
         /// the env map key without duping.
@@ -122,43 +130,51 @@ pub const ProxyEnvStorage = struct {
 
     pub fn slot(self: *ProxyEnvStorage, name: []const u8) ?Slot {
         inline for (@typeInfo(ProxyEnvStorage).@"struct".fields) |f| {
-            if (bun.strings.eql(name, f.name)) {
-                return .{ .key = f.name, .ptr = &@field(self, f.name) };
+            if (comptime f.type == ?*RefCountedEnvValue) {
+                if (bun.strings.eql(name, f.name)) {
+                    return .{ .key = f.name, .ptr = &@field(self, f.name) };
+                }
             }
         }
         return null;
     }
 
     /// Bump refcounts on all non-null values so a worker can share the
-    /// parent's strings. The worker's cloned env.map already points into
-    /// these values' bytes (map clone copies slice headers, not data).
+    /// parent's strings. Caller must hold parent.lock — the pointer load
+    /// and ref() are not atomic with respect to Bun__setEnvValue's deref().
     pub fn cloneFrom(self: *ProxyEnvStorage, parent: *const ProxyEnvStorage) void {
         inline for (@typeInfo(ProxyEnvStorage).@"struct".fields) |f| {
-            if (@field(parent, f.name)) |val| {
-                val.ref();
-                @field(self, f.name) = val;
+            if (comptime f.type == ?*RefCountedEnvValue) {
+                if (@field(parent, f.name)) |val| {
+                    val.ref();
+                    @field(self, f.name) = val;
+                }
             }
         }
     }
 
     /// Overwrite proxy-var entries in an env map with this storage's reffed
-    /// bytes. Used after map.cloneWithAllocator in the worker: if the parent
-    /// wrote a proxy var between cloneFrom and the map clone, the cloned
-    /// map's slice headers and the reffed storage would disagree. This
-    /// forces them to agree — the map points at bytes we hold refs on.
+    /// bytes. Used after map.cloneWithAllocator in the worker so the cloned
+    /// map and the reffed storage agree — defense-in-depth in case the map
+    /// clone captured a snapshot the storage doesn't hold a ref on (e.g. an
+    /// initial-environ value later overwritten by the setter).
     pub fn syncInto(self: *const ProxyEnvStorage, map: *bun.DotEnv.Map) void {
         inline for (@typeInfo(ProxyEnvStorage).@"struct".fields) |f| {
-            if (@field(self, f.name)) |val| {
-                bun.handleOom(map.put(f.name, val.bytes));
+            if (comptime f.type == ?*RefCountedEnvValue) {
+                if (@field(self, f.name)) |val| {
+                    bun.handleOom(map.put(f.name, val.bytes));
+                }
             }
         }
     }
 
     pub fn deinit(self: *ProxyEnvStorage) void {
         inline for (@typeInfo(ProxyEnvStorage).@"struct".fields) |f| {
-            if (@field(self, f.name)) |val| {
-                val.deref();
-                @field(self, f.name) = null;
+            if (comptime f.type == ?*RefCountedEnvValue) {
+                if (@field(self, f.name)) |val| {
+                    val.deref();
+                    @field(self, f.name) = null;
+                }
             }
         }
     }

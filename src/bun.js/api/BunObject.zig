@@ -1457,6 +1457,14 @@ pub const EnvironmentVariables = struct {
         const storage = &vm.rareData().proxy_env_storage;
         const slot = storage.slot(name_slice.slice()) orelse return;
 
+        // Synchronize the slot swap + env.map.put against a concurrently
+        // spawning worker's cloneFrom + env.map.cloneWithAllocator. Without
+        // this, the worker could load the slot pointer between our deref
+        // (refcount → 0 → free) and the null write below, then call ref()
+        // on freed memory.
+        storage.lock.lock();
+        defer storage.lock.unlock();
+
         // Deref our previous value. If a worker still holds a ref, the
         // bytes stay alive; if not, they're freed now.
         if (slot.ptr.*) |old| {

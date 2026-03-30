@@ -1,6 +1,6 @@
-import { test, expect } from "bun:test";
-import https from "https";
+import { expect, test } from "bun:test";
 import http from "http";
+import https from "https";
 import type { TLSSocket } from "tls";
 
 test("HTTPS res.socket has TLS methods like getPeerCertificate", async () => {
@@ -14,7 +14,7 @@ test("HTTPS res.socket has TLS methods like getPeerCertificate", async () => {
     hasSession: boolean;
     hasIsSessionReused: boolean;
   }>((resolve, reject) => {
-    const req = https.request({ host: "example.com", port: 443, method: "GET" }, (res) => {
+    const req = https.request({ host: "example.com", port: 443, method: "GET" }, res => {
       const socket = res.socket as TLSSocket;
       try {
         resolve({
@@ -59,7 +59,7 @@ test("HTTP res.socket does not report as encrypted", async () => {
     hasPeerCert: boolean;
     peerCert: any;
   }>((resolve, reject) => {
-    const req = http.request(`http://localhost:${server.port}/`, (res) => {
+    const req = http.request(`http://localhost:${server.port}/`, res => {
       const socket = res.socket;
       try {
         resolve({

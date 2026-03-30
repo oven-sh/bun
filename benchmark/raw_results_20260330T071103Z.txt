@@ -1,0 +1,135 @@
+=== debug ===
+=== ZIGGIT LIBRARY vs GIT CLI BENCHMARK ===
+Bare repo: /tmp/bench-bare-repos/debug.git
+Iterations: 20
+
+--- findCommit (rev-parse HEAD) ---
+  ziggit library: 184μs avg (3699μs total over 20 iterations)
+  git CLI spawn:  1303μs avg (26069μs total over 20 iterations)
+  speedup: 7.0x
+
+--- cloneBare (local bare clone) ---
+  ziggit library: 235μs avg (4702μs total over 20 iterations)
+  git CLI spawn:  5385μs avg (107701μs total over 20 iterations)
+  speedup: 22.9x
+
+--- Full bun-install workflow (cloneBare + findCommit + clone) ---
+  ziggit library: 453μs avg (9067μs total over 20 iterations)
+  git CLI spawn:  13296μs avg (265935μs total over 20 iterations)
+  speedup: 29.3x
+
+
+=== chalk ===
+=== ZIGGIT LIBRARY vs GIT CLI BENCHMARK ===
+Bare repo: /tmp/bench-bare-repos/chalk.git
+Iterations: 20
+
+--- findCommit (rev-parse HEAD) ---
+  ziggit library: 148μs avg (2968μs total over 20 iterations)
+  git CLI spawn:  1209μs avg (24186μs total over 20 iterations)
+  speedup: 8.1x
+
+--- cloneBare (local bare clone) ---
+  ziggit library: 236μs avg (4728μs total over 20 iterations)
+  git CLI spawn:  5182μs avg (103645μs total over 20 iterations)
+  speedup: 21.9x
+
+--- Full bun-install workflow (cloneBare + findCommit + clone) ---
+  ziggit library: 473μs avg (9474μs total over 20 iterations)
+  git CLI spawn:  14539μs avg (290783μs total over 20 iterations)
+  speedup: 30.7x
+
+
+=== is ===
+=== ZIGGIT LIBRARY vs GIT CLI BENCHMARK ===
+Bare repo: /tmp/bench-bare-repos/is.git
+Iterations: 20
+
+--- findCommit (rev-parse HEAD) ---
+  ziggit library: 213μs avg (4264μs total over 20 iterations)
+  git CLI spawn:  1246μs avg (24934μs total over 20 iterations)
+  speedup: 5.8x
+
+--- cloneBare (local bare clone) ---
+  ziggit library: 246μs avg (4935μs total over 20 iterations)
+  git CLI spawn:  5170μs avg (103413μs total over 20 iterations)
+  speedup: 21.0x
+
+--- Full bun-install workflow (cloneBare + findCommit + clone) ---
+  ziggit library: 496μs avg (9934μs total over 20 iterations)
+  git CLI spawn:  15545μs avg (310908μs total over 20 iterations)
+  speedup: 31.3x
+
+
+=== node-semver ===
+=== ZIGGIT LIBRARY vs GIT CLI BENCHMARK ===
+Bare repo: /tmp/bench-bare-repos/node-semver.git
+Iterations: 20
+
+--- findCommit (rev-parse HEAD) ---
+  ziggit library: 140μs avg (2803μs total over 20 iterations)
+  git CLI spawn:  1260μs avg (25208μs total over 20 iterations)
+  speedup: 9.0x
+
+--- cloneBare (local bare clone) ---
+  ziggit library: 227μs avg (4554μs total over 20 iterations)
+  git CLI spawn:  7002μs avg (140055μs total over 20 iterations)
+  speedup: 30.8x
+
+--- Full bun-install workflow (cloneBare + findCommit + clone) ---
+  ziggit library: 468μs avg (9369μs total over 20 iterations)
+  git CLI spawn:  18976μs avg (379535μs total over 20 iterations)
+  speedup: 40.5x
+
+
+=== express ===
+=== ZIGGIT LIBRARY vs GIT CLI BENCHMARK ===
+Bare repo: /tmp/bench-bare-repos/express.git
+Iterations: 20
+
+--- findCommit (rev-parse HEAD) ---
+  ziggit library: 120μs avg (2407μs total over 20 iterations)
+  git CLI spawn:  1229μs avg (24597μs total over 20 iterations)
+  speedup: 10.2x
+
+--- cloneBare (local bare clone) ---
+  ziggit library: 223μs avg (4466μs total over 20 iterations)
+  git CLI spawn:  7799μs avg (155991μs total over 20 iterations)
+  speedup: 34.9x
+
+--- Full bun-install workflow (cloneBare + findCommit + clone) ---
+  ziggit library: 526μs avg (10539μs total over 20 iterations)
+  git CLI spawn:  26021μs avg (520436μs total over 20 iterations)
+  speedup: 49.4x
+
+
+
+=== E2E BUN INSTALL (2 git deps via local HTTP) ===
+Stock bun: 52, 48, 44, 53, 48 ms → avg 49ms
+Ziggit bun: 44, 42, 41, 41, 42 ms → avg 42ms
+
+=== DEBUG LOG PROOF ===
+[gitrepository] download: "test-pkg3" attempt 1 (url: http://127.0.0.1:9876/test-pkg3.git)
+[gitrepository] clone: trying ziggit for "test-pkg3" (url: http://127.0.0.1:9876/test-pkg3.git)
+[gitrepository] download: "test-pkg" attempt 1 (url: http://127.0.0.1:9876/test-pkg.git)
+[gitrepository] clone: trying ziggit for "test-pkg" (url: http://127.0.0.1:9876/test-pkg.git)
+[gitrepository] download: "test-pkg2" attempt 1 (url: http://127.0.0.1:9876/test-pkg2.git)
+[gitrepository] clone: trying ziggit for "test-pkg2" (url: http://127.0.0.1:9876/test-pkg2.git)
+[gitrepository] clone: ziggit succeeded for "test-pkg3"
+[gitrepository] findCommit: trying ziggit for "test-pkg3" ref="v1.0.0"
+[gitrepository] findCommit: ziggit resolved "v1.0.0" - da62eab2bba4115f6a35c021a43b3a0bd29d3791
+[gitrepository] checkout: trying ziggit for "test-pkg3" resolved=da62eab2bba4115f6a35c021a43b3a0bd29d3791 bare_path=/root/.bun/install/cache/869e559919aa7c5e.git
+[gitrepository] clone: ziggit succeeded for "test-pkg"
+[gitrepository] findCommit: trying ziggit for "test-pkg" ref="HEAD"
+[gitrepository] findCommit: ziggit resolved "HEAD" - 489046861518d78446a4e3978a4dffd35c5d90a5
+[gitrepository] checkout: trying ziggit for "test-pkg" resolved=489046861518d78446a4e3978a4dffd35c5d90a5 bare_path=/root/.bun/install/cache/8648e8a043e22f9d.git
+[gitrepository] checkout: ziggit succeeded for "test-pkg"
+[gitrepository] checkout: ziggit succeeded for "test-pkg3"
+[gitrepository] clone: ziggit succeeded for "test-pkg2"
+[gitrepository] findCommit: trying ziggit for "test-pkg2" ref="HEAD"
+[gitrepository] findCommit: ziggit resolved "HEAD" - 434f3c69cf5748dcb6610057d1cc2350e4041695
+[gitrepository] checkout: trying ziggit for "test-pkg2" resolved=434f3c69cf5748dcb6610057d1cc2350e4041695 bare_path=/root/.bun/install/cache/92230956124247e9.git
+[gitrepository] checkout: ziggit succeeded for "test-pkg2"
+[gitrepository] findCommit: trying ziggit for "test-pkg" ref="HEAD"
+[gitrepository] findCommit: ziggit resolved "HEAD" - 489046861518d78446a4e3978a4dffd35c5d90a5
+TIMESTAMP=

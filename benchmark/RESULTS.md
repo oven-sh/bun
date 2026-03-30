@@ -54,6 +54,27 @@ All tests verified with `strace -f -e trace=execve`:
 - Test D: 0 git CLI calls ✅
 - Test E: 0 git CLI calls ✅
 
+## Library Micro-Benchmarks (ziggit vs git CLI)
+
+Measured with `lib_bench` (ReleaseFast build, 20 iterations each):
+
+| Repo | Operation | Ziggit (avg) | Git CLI (avg) | Speedup |
+|------|-----------|-------------|---------------|---------|
+| debug | findCommit | 229μs | 1675μs | **7.3x** |
+| debug | cloneBare | 281μs | 6627μs | **23.5x** |
+| debug | full workflow | 535μs | 16412μs | **30.6x** |
+| chalk | findCommit | 196μs | 1673μs | **8.5x** |
+| chalk | cloneBare | 265μs | 6131μs | **23.1x** |
+| chalk | full workflow | 529μs | 16985μs | **32.1x** |
+| node-semver | findCommit | 166μs | 1513μs | **9.1x** |
+| node-semver | cloneBare | 271μs | 7737μs | **28.5x** |
+| node-semver | full workflow | 523μs | 22215μs | **42.4x** |
+| express | findCommit | 162μs | 1503μs | **9.2x** |
+| express | cloneBare | 250μs | 9338μs | **37.3x** |
+| express | full workflow | 528μs | 28360μs | **53.7x** |
+
+**Summary:** ziggit is **30-54x faster** than git CLI for the full bun-install workflow at the library level.
+
 ## Test Configurations
 
 | Test | package.json |

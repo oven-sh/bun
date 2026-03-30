@@ -917,7 +917,7 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
     // lets sync check and destroy the request if it's not complete
     const message = this._httpMessage;
     const req = message?.req;
-    if (req && !req.complete && !req.destroyed) {
+    if (req && !req.complete && !req.destroyed && !req[eofInProgress]) {
       // at this point the handle is not destroyed yet, lets destroy the request
       req.destroy();
     }

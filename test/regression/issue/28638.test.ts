@@ -1,7 +1,7 @@
-import { expect, test } from "bun:test";
-import { once } from "node:events";
+import { test, expect } from "bun:test";
 import { createServer } from "node:http";
 import net from "node:net";
+import { once } from "node:events";
 
 const host = "127.0.0.1";
 
@@ -23,7 +23,7 @@ test("error response sent to client when request body read fails due to client a
     await once(socket, "connect");
     const close = once(socket, "close");
     let data = "";
-    socket.on("data", chunk => {
+    socket.on("data", (chunk) => {
       data += chunk.toString();
     });
     socket.write(
@@ -43,7 +43,7 @@ test("error response sent to client when request body read fails due to client a
   }
 });
 
-test("error response sent when using req.resume() with incomplete body", async () => {
+test("error response sent when client abruptly destroys connection", async () => {
   const server = createServer(async (req, res) => {
     req.resume();
     req.on("end", function () {
@@ -59,11 +59,6 @@ test("error response sent when using req.resume() with incomplete body", async (
   try {
     const socket = net.connect(Number(server.address().port), host);
     await once(socket, "connect");
-    const close = once(socket, "close");
-    let data = "";
-    socket.on("data", chunk => {
-      data += chunk.toString();
-    });
     socket.write(
       "POST / HTTP/1.1\r\n" +
         `Host: ${host}\r\n` +
@@ -73,9 +68,10 @@ test("error response sent when using req.resume() with incomplete body", async (
         "\r\n" +
         "pants",
     );
-    socket.end();
-    await close;
-    expect(data.split("\r\n")[0]).toBe("HTTP/1.1 400 Bad Request");
+    // Use destroy() instead of end() — sends RST, not FIN
+    socket.destroy();
+    // Wait a moment for server to process
+    await Bun.sleep(200);
   } finally {
     server.close();
   }

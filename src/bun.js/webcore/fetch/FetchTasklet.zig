@@ -516,7 +516,7 @@ pub const FetchTasklet = struct {
                 defer result.deinit();
 
                 promise_value.ensureStillAlive();
-                try promise.reject(globalThis, result.toJS(globalThis));
+                try promise.rejectWithAsyncStack(globalThis, result.toJS(globalThis));
 
                 tracker.didDispatch(globalThis);
                 this.promise.deinit();
@@ -579,7 +579,7 @@ pub const FetchTasklet = struct {
                 var prom = self.promise.swap().asAnyPromise().?;
                 const res = self.held.swap();
                 res.ensureStillAlive();
-                try prom.reject(self.globalObject, res);
+                try prom.rejectWithAsyncStack(self.globalObject, res);
             }
         };
         var holder = bun.handleOom(bun.default_allocator.create(Holder));

@@ -15,9 +15,9 @@ import { BuildError } from "./error.ts";
 import { mkdirAll, writeIfChanged } from "./fs.ts";
 import { Ninja } from "./ninja.ts";
 import { registerAllRules } from "./rules.ts";
-import { checkWorkarounds } from "./workarounds.ts";
 import { quote } from "./shell.ts";
 import { findBun, findCargo, findMsvcLinker, findSystemTool, resolveLlvmToolchain } from "./tools.ts";
+import { checkWorkarounds } from "./workarounds.ts";
 
 /**
  * Full toolchain discovery. Returns absolute paths to all required tools.
@@ -63,9 +63,8 @@ export function resolveToolchain(): Toolchain {
   // bun, it's just the path. process.versions.bun distinguishes (undefined
   // in node). Pre-quoted so rule commands can splice it directly.
   const q = (p: string) => quote(p, host.os === "windows");
-  const jsRuntime = process.versions.bun !== undefined
-    ? q(process.execPath)
-    : `${q(process.execPath)} --experimental-strip-types`;
+  const jsRuntime =
+    process.versions.bun !== undefined ? q(process.execPath) : `${q(process.execPath)} --experimental-strip-types`;
 
   return {
     ...llvm,

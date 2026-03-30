@@ -23,7 +23,6 @@
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { interactive, nameColor, status } from "./build/tty.ts";
 import {
   downloadArtifacts,
   isCI,
@@ -38,6 +37,7 @@ import { configure, type ConfigureResult } from "./build/configure.ts";
 import { BuildError } from "./build/error.ts";
 import { getProfile } from "./build/profiles.ts";
 import { STREAM_FD } from "./build/stream.ts";
+import { interactive, nameColor, status } from "./build/tty.ts";
 
 // ───────────────────────────────────────────────────────────────────────────
 // Main

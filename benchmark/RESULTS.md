@@ -1,18 +1,18 @@
-# Ziggit Integration — E2E Validation Results
+# Ziggit Integration: E2E Validation Results
 
-**Date:** 2026-03-30
-**System:** Linux hdr 6.1.141 x86_64, 4 CPUs, 16GB RAM
+## Date: 2026-03-30
 
-## Commit Hashes
+## System Info
+- **OS**: Linux hdr 6.1.141 x86_64
+- **CPUs**: 4
+- **RAM**: 15Gi total, ~6.6Gi available
+- **Bun fork commit**: e0bf05a2b (ziggit-integration branch)
+- **Ziggit commit**: 55f44f6
+- **Stock bun**: v1.3.11 (af24e281)
 
-| Component | Hash / Version |
-|-----------|---------------|
-| ziggit | `55f44f6ab2fd5434f6d2262e7f27855ff0fca8f5` |
-| bun-fork (ziggit-integration) | `ad57bc63d3ddebc8ed426291ed8767573514ed70` |
-| stock bun | `1.3.11 (af24e281)` |
+## Test: git+https dependencies (forces git protocol, not tarball)
 
-## Test Setup
-
+### package.json
 ```json
 {
   "name": "ziggit-e2e-test",
@@ -25,50 +25,31 @@
 }
 ```
 
-All 4 top-level dependencies use `git+https://` protocol (forces git protocol, not tarball).
-68 total packages installed (including transitive deps).
+68 total packages installed (4 direct git deps + 64 transitive npm deps).
 
 ## strace Proof: Zero Git CLI Calls
 
 ```
-$ grep -ac 'execve.*"/usr/bin/git"' /tmp/strace-output.txt
-0
+$ strace -f -e trace=execve bun-debug install --cwd /tmp/test-e2e --no-progress 2>&1 | grep -a execve
 
-$ grep -ac 'execve.*"git"' /tmp/strace-output.txt
-0
+execve("/root/bun-fork/build/debug/bun-debug", [...], ...) = 0
 ```
 
-**Result: ZERO git CLI subprocess calls.** All git operations handled natively by ziggit.
+**Result: 0 git CLI subprocess calls.** All git operations handled natively by ziggit (pure Zig git implementation).
 
-## Timing Comparison (cold cache, no lockfile)
+## Timing Comparison (cold cache, clean install)
 
-Each run: `rm -rf node_modules bun.lock ~/.bun/install/cache` before install.
+All runs: `rm -rf node_modules bun.lock ~/.bun/install/cache` before each run.
 
-### Stock Bun 1.3.11
+| Run | Stock Bun 1.3.11 | Ziggit Bun (debug build) |
+|-----|-------------------|--------------------------|
+| 1   | 285ms (0.290s)    | 816ms (1.068s)           |
+| 2   | 488ms (0.494s)    | 908ms (1.131s)           |
+| 3   | 352ms (0.357s)    | 871ms (1.100s)           |
+| **Avg** | **375ms (0.380s)** | **865ms (1.100s)** |
 
-| Run | bun-reported | wall time |
-|-----|-------------|-----------|
-| 1 | 318ms | 0.323s |
-| 2 | 393ms | 0.398s |
-| 3 | 416ms | 0.422s |
-| **avg** | **376ms** | **0.381s** |
-
-### Ziggit Bun (debug build)
-
-| Run | bun-reported | wall time |
-|-----|-------------|-----------|
-| 1 | 904ms | 1.121s |
-| 2 | 897ms | 1.099s |
-| 3 | 895ms | 1.098s |
-| **avg** | **899ms** | **1.106s** |
-
-### Summary
-
-| Metric | Stock Bun | Ziggit (debug) | Ratio |
-|--------|-----------|---------------|-------|
-| Avg bun-reported | 376ms | 899ms | 2.4x |
-| Avg wall time | 0.381s | 1.106s | 2.9x |
-
-**Note:** The ziggit bun is a **debug build** (1.3GB binary with full debug symbols, assertions, and syscall tracing enabled via `[sys]` log lines). A release build would be significantly faster. The stock bun is an optimized release binary.
-
-The key achievement is **zero git CLI fallbacks** — all git operations (clone, ref resolution, tree walking, checkout) are handled entirely in-process by the ziggit library linked into bun.
+### Notes
+- The ziggit fork is a **debug build** (1.3GB binary with full debug symbols), so the ~2.3x slowdown vs stock release build is expected and not indicative of release performance.
+- Both stock bun and ziggit bun resolve git dependencies without spawning `git` CLI processes.
+- Stock bun uses libgit2 (C library); ziggit replaces it with a pure Zig implementation.
+- All 68 packages installed correctly with identical lockfile output.

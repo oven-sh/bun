@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test";
+import { chmodSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
-describe("bunx --cwd", () => {
+describe.concurrent("bunx --cwd", () => {
   test("changes working directory for package resolution and execution", async () => {
     using dir = tempDir("bunx-cwd", {
       "subdir/package.json": JSON.stringify({
@@ -15,7 +16,6 @@ describe("bunx --cwd", () => {
     });
 
     // Make the bin script executable
-    const { chmodSync } = require("fs");
     chmodSync(join(String(dir), "subdir/node_modules/.bin/test-cwd-bin"), 0o755);
     chmodSync(join(String(dir), "subdir/bin.js"), 0o755);
 
@@ -44,7 +44,6 @@ describe("bunx --cwd", () => {
       "mydir/node_modules/.bin/test-cwd-eq-bin": `#!/usr/bin/env node\nconsole.log(process.cwd());`,
     });
 
-    const { chmodSync } = require("fs");
     chmodSync(join(String(dir), "mydir/node_modules/.bin/test-cwd-eq-bin"), 0o755);
     chmodSync(join(String(dir), "mydir/bin.js"), 0o755);
 

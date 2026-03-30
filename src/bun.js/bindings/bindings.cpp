@@ -760,11 +760,14 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
             }
         }
 
+        // Use unwrapped targets for element access so that sparse array holes
+        // are correctly detected as JSValue() (isEmpty), not as jsUndefined()
+        // which the proxy [[Get]] trap would return for missing indices.
         uint64_t i = 0;
         for (; i < array1Length; i++) {
-            JSValue left = getIndexWithoutAccessors(globalObject, o1, i);
+            JSValue left = getIndexWithoutAccessors(globalObject, a1Obj, i);
             RETURN_IF_EXCEPTION(scope, false);
-            JSValue right = getIndexWithoutAccessors(globalObject, o2, i);
+            JSValue right = getIndexWithoutAccessors(globalObject, a2Obj, i);
             RETURN_IF_EXCEPTION(scope, false);
 
             if constexpr (isStrict) {
@@ -788,7 +791,7 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
         }
 
         for (; i < array2Length; i++) {
-            JSValue right = getIndexWithoutAccessors(globalObject, o2, i);
+            JSValue right = getIndexWithoutAccessors(globalObject, a2Obj, i);
             RETURN_IF_EXCEPTION(scope, false);
 
             if (((right.isEmpty() || right.isUndefined()))) {

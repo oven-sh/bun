@@ -96,6 +96,12 @@ test("nested Proxy chains compare correctly", () => {
   expect(Bun.deepEquals(tripleProxy, { x: "y" }, true)).toBe(true);
 });
 
+test("Proxy-wrapped Array subclass is not equal to plain Array in strict mode", () => {
+  class MyArr extends Array {}
+  expect(Bun.deepEquals(new Proxy(new MyArr(1, 2, 3), {}), [1, 2, 3], true)).toBe(false);
+  expect(Bun.deepEquals(new Proxy(new MyArr(1, 2, 3), {}), new MyArr(1, 2, 3), true)).toBe(true);
+});
+
 test("expect().toStrictEqual works with Proxy-wrapped values", () => {
   expect(new Proxy(["foo"], {})).toStrictEqual(["foo"]);
   expect(new Proxy({ a: 1 }, {})).toStrictEqual({ a: 1 });

@@ -14,10 +14,6 @@ import type { Dependency, DirectBuild } from "../source.ts";
 
 const TINYCC_COMMIT = "12882eee073cfe5c7621bcfadf679e1372d4537b";
 
-// Matches vendor/tinycc/VERSION. Hardcoded rather than read at configure
-// time because the source might not be fetched yet when configure runs.
-const TINYCC_VERSION = "0.9.28rc";
-
 export const tinycc: Dependency = {
   name: "tinycc",
   versionMacro: "TINYCC",
@@ -46,7 +42,10 @@ export const tinycc: Dependency = {
       ONE_SOURCE: 0,
       TCC_LIBTCC1: "",
       CONFIG_TCC_BACKTRACE: 0,
-      TCC_VERSION: TINYCC_VERSION,
+      // TCC_VERSION only appears in CLI help (tcc.c, not built) and DWARF
+      // producer string. Use the commit hash for both so bumping TINYCC_COMMIT
+      // is the only thing to update.
+      TCC_VERSION: TINYCC_COMMIT.slice(0, 8),
       TCC_GITHASH: TINYCC_COMMIT.slice(0, 8),
     };
     if (cfg.darwin) {

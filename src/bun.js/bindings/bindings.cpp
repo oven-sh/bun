@@ -2283,7 +2283,7 @@ static void collectAsyncStackFramesFromPromise(JSC::VM& vm, JSC::JSCell* owner, 
         JSC::JSFunction* asyncFunction = nullptr;
         if (!dynamicCastValue(generator->next(), &asyncFunction))
             return;
-        if (asyncFunction->isHostOrBuiltinFunction())
+        if (asyncFunction->isHostOrPrivateBuiltinFunction())
             return;
         JSC::FunctionExecutable* executable = asyncFunction->jsExecutable();
         if (!executable)

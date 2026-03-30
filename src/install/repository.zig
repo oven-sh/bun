@@ -740,7 +740,8 @@ pub const Repository = extern struct {
             bun.fmt.hexIntLower(task_id.get()),
         });
 
-        return if (cache_dir.openDirZ(folder_name, .{})) |dir| fetch: {
+        return if (cache_dir.openDirZ(folder_name, .{})) |dir_const| fetch: {
+            var dir = dir_const;
             const path = Path.joinAbsString(PackageManager.get().cache_directory_path, &.{folder_name}, .auto);
 
             // Try ziggit first for any protocol (HTTPS, SSH, or SCP-style)
@@ -779,10 +780,12 @@ pub const Repository = extern struct {
                     break :ziggit_fetch;
                 };
                 debug("fetch: ziggit succeeded for \"{s}\"", .{name});
+                std.debug.print("[ZIGGIT] fetch: ziggit succeeded for \"{s}\"\n", .{name});
                 break :fetch dir;
             }
             // Ziggit failed — fall back to git CLI
             debug("fetch: using git CLI for \"{s}\"", .{name});
+            std.debug.print("[ZIGGIT] fetch: using git CLI fallback for \"{s}\"\n", .{name});
             _ = exec(allocator, env, &[_]string{ "git", "-C", path, "fetch", "--quiet" }) catch |err| {
                 dir.close();
                 log.addErrorFmt(null, logger.Loc.Empty, allocator, "\"git fetch\" for \"{s}\" failed", .{name}) catch unreachable;
@@ -829,10 +832,12 @@ pub const Repository = extern struct {
                 };
                 defer repo.close();
                 debug("clone: ziggit succeeded for \"{s}\"", .{name});
+                std.debug.print("[ZIGGIT] clone: ziggit succeeded for \"{s}\"\n", .{name});
                 break :clone try cache_dir.openDirZ(folder_name, .{});
             }
             // Ziggit failed — fall back to git CLI
             debug("clone: using git CLI for \"{s}\"", .{name});
+            std.debug.print("[ZIGGIT] clone: using git CLI fallback for \"{s}\"\n", .{name});
             _ = exec(allocator, env, &[_]string{
                 "git", "clone", "-c", "core.longpaths=true", "--quiet", "--bare", url, target,
             }) catch |exec_err| {
@@ -879,6 +884,7 @@ pub const Repository = extern struct {
                 return findCommitFallback(allocator, env, log, path, name, committish);
             };
             debug("findCommit: ziggit resolved \"{s}\" -> {s}", .{ ref, &hash });
+                std.debug.print("[ZIGGIT] findCommit: ziggit succeeded for \"{s}\"\n", .{name});
             const result = bun.handleOom(allocator.alloc(u8, 40));
             @memcpy(result, &hash);
             return result;
@@ -894,6 +900,7 @@ pub const Repository = extern struct {
         committish: string,
     ) !string {
         debug("findCommit: using git CLI fallback for \"{s}\"", .{name});
+        std.debug.print("[ZIGGIT] findCommit: using git CLI fallback for \"{s}\"\n", .{name});
         return std.mem.trim(u8, exec(
             allocator,
             shared_env.get(allocator, env),

@@ -1,6 +1,7 @@
 .{
-    .name = "bun",
+    .name = .bun,
     .version = "1.2.0",
+    .fingerprint = 0x4c5007b0180bbe35,
     .paths = .{"."},
     .dependencies = .{
         .ziggit = .{

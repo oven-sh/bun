@@ -481,6 +481,7 @@ test("HTTPS proxy tunnel keep-alive does not share tunnel across different crede
     for (const s of sockets) s.destroy();
     for (const s of upstreamSockets) s.destroy();
     proxy.close();
+    await once(proxy, "close");
   }
 });
 

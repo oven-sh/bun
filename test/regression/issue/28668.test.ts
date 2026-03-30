@@ -76,8 +76,10 @@ describe.concurrent("bunx --cwd", () => {
   });
 
   test("errors on invalid --cwd directory", async () => {
+    using dir = tempDir("bunx-cwd-invalid", {});
+    const missing = join(String(dir), "definitely-missing");
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "x", "--cwd", "/nonexistent-path-28668", "some-package"],
+      cmd: [bunExe(), "x", "--cwd", missing, "some-package"],
       stdout: "pipe",
       stderr: "pipe",
       env: bunEnv,

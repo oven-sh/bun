@@ -1,7 +1,7 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
+import { once } from "node:events";
 import { createServer } from "node:http";
 import net from "node:net";
-import { once } from "node:events";
 
 const host = "127.0.0.1";
 
@@ -23,7 +23,7 @@ test("error response sent to client when request body read fails due to client a
     await once(socket, "connect");
     const close = once(socket, "close");
     let data = "";
-    socket.on("data", (chunk) => {
+    socket.on("data", chunk => {
       data += chunk.toString();
     });
     socket.write(

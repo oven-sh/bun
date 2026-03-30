@@ -738,21 +738,17 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
         size_t array1Length;
         size_t array2Length;
 
-        bool eitherIsProxy = o1->isProxy() || o2->isProxy();
-        if (!eitherIsProxy) {
-            array1Length = JSC::jsCast<JSC::JSArray*>(v1)->length();
-            array2Length = JSC::jsCast<JSC::JSArray*>(v2)->length();
-        } else {
-            JSValue len1 = o1->get(globalObject, vm.propertyNames->length);
-            RETURN_IF_EXCEPTION(scope, false);
-            array1Length = len1.toLength(globalObject);
-            RETURN_IF_EXCEPTION(scope, false);
-
-            JSValue len2 = o2->get(globalObject, vm.propertyNames->length);
-            RETURN_IF_EXCEPTION(scope, false);
-            array2Length = len2.toLength(globalObject);
-            RETURN_IF_EXCEPTION(scope, false);
-        }
+        // For proxies wrapping arrays, unwrap to get the target JSArray's
+        // actual length rather than trusting the get trap, which could return
+        // an arbitrarily large value and cause a near-infinite loop.
+        JSObject* a1Obj = o1;
+        JSObject* a2Obj = o2;
+        while (a1Obj->type() == JSC::ProxyObjectType)
+            a1Obj = jsCast<ProxyObject*>(a1Obj)->target();
+        while (a2Obj->type() == JSC::ProxyObjectType)
+            a2Obj = jsCast<ProxyObject*>(a2Obj)->target();
+        array1Length = JSC::jsCast<JSC::JSArray*>(a1Obj)->length();
+        array2Length = JSC::jsCast<JSC::JSArray*>(a2Obj)->length();
         if constexpr (isStrict) {
             if (array1Length != array2Length) {
                 return false;
@@ -799,9 +795,9 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
 
         JSC::PropertyNameArrayBuilder a1(vm, PropertyNameMode::Symbols, PrivateSymbolMode::Exclude);
         JSC::PropertyNameArrayBuilder a2(vm, PropertyNameMode::Symbols, PrivateSymbolMode::Exclude);
-        JSObject::getOwnPropertyNames(o1, globalObject, a1, DontEnumPropertiesMode::Exclude);
+        o1->methodTable()->getOwnPropertyNames(o1, globalObject, a1, DontEnumPropertiesMode::Exclude);
         RETURN_IF_EXCEPTION(scope, false);
-        JSObject::getOwnPropertyNames(o2, globalObject, a2, DontEnumPropertiesMode::Exclude);
+        o2->methodTable()->getOwnPropertyNames(o2, globalObject, a2, DontEnumPropertiesMode::Exclude);
         RETURN_IF_EXCEPTION(scope, false);
 
         size_t propertyLength = a1.size();
@@ -851,9 +847,9 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
         // the proxy wrapper's, so that e.g. new Proxy({}, {}) equals {}.
         JSObject* cn1 = o1;
         JSObject* cn2 = o2;
-        if (cn1->type() == JSC::ProxyObjectType)
+        while (cn1->type() == JSC::ProxyObjectType)
             cn1 = jsCast<ProxyObject*>(cn1)->target();
-        if (cn2->type() == JSC::ProxyObjectType)
+        while (cn2->type() == JSC::ProxyObjectType)
             cn2 = jsCast<ProxyObject*>(cn2)->target();
         if (!equal(JSObject::calculatedClassName(cn1), JSObject::calculatedClassName(cn2))) {
             return false;

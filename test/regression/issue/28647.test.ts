@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import assert from "assert";
 
 // https://github.com/oven-sh/bun/issues/28647
 // assert.deepStrictEqual incorrectly fails for Proxy-wrapped arrays/objects
@@ -44,12 +45,10 @@ test("Bun.deepEquals non-strict mode still works with proxies", () => {
 });
 
 test("assert.deepStrictEqual works with Proxy-wrapped arrays", () => {
-  const assert = require("assert");
   assert.deepStrictEqual(new Proxy(["foo"], {}), ["foo"]);
 });
 
 test("assert.deepStrictEqual works with Proxy-wrapped objects", () => {
-  const assert = require("assert");
   assert.deepStrictEqual(new Proxy({ a: 1 }, {}), { a: 1 });
 });
 
@@ -70,6 +69,21 @@ test("Proxy-wrapped nested structures compare correctly", () => {
   const nested = { arr: [1, 2], obj: { x: "y" } };
   const proxy = new Proxy(nested, {});
   expect(Bun.deepEquals(proxy, { arr: [1, 2], obj: { x: "y" } }, true)).toBe(true);
+});
+
+test("nested Proxy chains compare correctly", () => {
+  // Doubly-nested proxy around object
+  const nestedProxy = new Proxy(new Proxy({ a: 1 }, {}), {});
+  expect(Bun.deepEquals(nestedProxy, { a: 1 }, true)).toBe(true);
+  expect(Bun.deepEquals({ a: 1 }, nestedProxy, true)).toBe(true);
+
+  // Doubly-nested proxy around array
+  const nestedArrProxy = new Proxy(new Proxy([1, 2], {}), {});
+  expect(Bun.deepEquals(nestedArrProxy, [1, 2], true)).toBe(true);
+
+  // Triple-nested
+  const tripleProxy = new Proxy(new Proxy(new Proxy({ x: "y" }, {}), {}), {});
+  expect(Bun.deepEquals(tripleProxy, { x: "y" }, true)).toBe(true);
 });
 
 test("expect().toStrictEqual works with Proxy-wrapped values", () => {

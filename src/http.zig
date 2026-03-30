@@ -562,19 +562,33 @@ pub fn isKeepAlivePossible(this: *HTTPClient) bool {
     return false;
 }
 
-/// Hash of the effective CONNECT-time proxy headers so that pooled tunnels
-/// established with different proxy semantics are never shared. Covers
-/// everything writeProxyConnect sends: all proxy_headers entries plus the
-/// auto-generated Proxy-Authorization (if not overridden by a user header).
-/// Returns 0 if no proxy headers apply.
+/// Hash of the per-request tunnel discriminators beyond the (proxy, target
+/// url.hostname/port, ssl_config) tuple already covered by separate pool-key
+/// fields. Covers the Host-header SNI override (hostname) plus everything
+/// writeProxyConnect sends: all proxy_headers entries and the auto-generated
+/// Proxy-Authorization (if not overridden by a user header). Returns 0 if
+/// none apply.
 ///
-/// Per-header hashes are XOR-combined so header insertion order doesn't
-/// matter — two requests with identical headers in different order produce
-/// the same hash and correctly share a pooled tunnel.
+/// target_hostname in the pool stores url.hostname (the CONNECT TCP target
+/// at writeProxyConnect line 346). But the inner TLS SNI/cert verification
+/// uses hostname orelse url.hostname (ProxyTunnel.zig:44). If a Host header
+/// override sets hostname != url.hostname, two requests to different IPs
+/// with the same Host header must NOT share a tunnel — they're physically
+/// connected to different servers. Hashing hostname here catches that.
+///
+/// Per-header hashes are combined with wrapping add so insertion order
+/// doesn't matter and duplicate headers don't cancel to zero.
 pub fn proxyAuthHash(this: *const HTTPClient) u64 {
     var combined: u64 = 0;
     var any = false;
     var name_lower_buf: [256]u8 = undefined;
+
+    // SNI override — distinct from url.hostname which is stored separately
+    // as the CONNECT target. Only contributes when actually set.
+    if (this.hostname) |sni| {
+        combined +%= bun.hash(sni);
+        any = true;
+    }
 
     var user_provided_auth = false;
     if (this.proxy_headers) |hdrs| {
@@ -1937,12 +1951,10 @@ fn sendProgressUpdateWithoutStageCheck(this: *HTTPClient, comptime is_ssl: bool,
             const tunnel = this.proxy_tunnel;
             this.proxy_tunnel = null;
             if (tunnel) |t| t.detachOwner(this);
-            // The tunnel's inner TLS was CONNECTed/verified against
-            // hostname orelse url.hostname (ProxyTunnel.zig:44), not
-            // url.hostname alone. Key on the same value so a Host
-            // header override can't reuse a tunnel verified against
-            // a different name.
-            const tunnel_target_host = this.hostname orelse this.url.hostname;
+            // target_hostname = url.hostname (the CONNECT TCP target at
+            // writeProxyConnect line 346). The SNI override (hostname) is
+            // hashed into proxyAuthHash separately — both must match, but
+            // they're distinct values when a Host header override is set.
             ctx.releaseSocket(
                 socket,
                 this.flags.did_have_handshaking_error and !this.flags.reject_unauthorized,
@@ -1950,7 +1962,7 @@ fn sendProgressUpdateWithoutStageCheck(this: *HTTPClient, comptime is_ssl: bool,
                 this.connected_url.getPortAuto(),
                 this.tls_props,
                 tunnel,
-                if (tunnel != null) tunnel_target_host else "",
+                if (tunnel != null) this.url.hostname else "",
                 if (tunnel != null) this.url.getPortAuto() else 0,
                 if (tunnel != null) this.proxyAuthHash() else 0,
             );

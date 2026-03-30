@@ -627,9 +627,9 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
 
             if (client.isKeepAlivePossible()) {
                 const want_tunnel = client.http_proxy != null and client.url.isHTTPS();
-                // Match what the tunnel's inner TLS is actually verified against
-                // (ProxyTunnel.zig:44 uses hostname orelse url.hostname).
-                const target_hostname: []const u8 = if (want_tunnel) (client.hostname orelse client.url.hostname) else "";
+                // CONNECT TCP target (writeProxyConnect line 346). The SNI
+                // override (client.hostname) is hashed into proxyAuthHash.
+                const target_hostname: []const u8 = if (want_tunnel) client.url.hostname else "";
                 const target_port: u16 = if (want_tunnel) client.url.getPortAuto() else 0;
                 const proxy_auth_hash: u64 = if (want_tunnel) client.proxyAuthHash() else 0;
 

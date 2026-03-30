@@ -387,7 +387,11 @@ pub fn detachOwner(this: *ProxyTunnel, client: *const HTTPClient) void {
     // of the inner TLS session, not the client. adopt() restores it to the
     // next client so re-pooling doesn't erase it.
     this.did_have_handshaking_error = client.flags.did_have_handshaking_error;
-    this.established_with_reject_unauthorized = client.flags.reject_unauthorized;
+    // OR semantics — a lax client is allowed to reuse a strict tunnel (the
+    // existingSocket guard only blocks the reverse). When that lax client
+    // detaches, it must not downgrade a hostname-verified TLS session to
+    // lax-established; once true, stays true.
+    this.established_with_reject_unauthorized = this.established_with_reject_unauthorized or client.flags.reject_unauthorized;
     // We intentionally leave wrapper.handlers.ctx stale here. The tunnel is
     // idle in the pool and no callbacks will fire until adopt() reattaches
     // a new owner and socket.

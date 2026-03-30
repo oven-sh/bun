@@ -5531,14 +5531,15 @@ pub fn NewParser_(
             switch (expr.data) {
                 .e_dot => |ex| {
                     if (parts.len > 1) {
-                        if (ex.optional_chain != null) {
-                            return false;
-                        }
-
                         // Intermediates must be dot expressions
                         const last = parts.len - 1;
                         const is_tail_match = strings.eql(parts[last], ex.name);
                         return is_tail_match and p.isDotDefineMatch(ex.target, parts[0..last]);
+                    }
+
+                    // Allow globalThis.X to match a define for X (e.g. globalThis.process.env.NODE_ENV)
+                    if (parts.len == 1 and strings.eql(parts[0], ex.name)) {
+                        return p.isGlobalThis(ex.target);
                     }
                 },
                 .e_import_meta => {
@@ -5550,10 +5551,6 @@ pub fn NewParser_(
                 // the intent is to handle people using this form instead of E.Dot. So we really only want to do this if the accessor can also be an identifier
                 .e_index => |index| {
                     if (parts.len > 1 and index.index.data == .e_string and index.index.data.e_string.isUTF8()) {
-                        if (index.optional_chain != null) {
-                            return false;
-                        }
-
                         const last = parts.len - 1;
                         const is_tail_match = strings.eql(parts[last], index.index.data.e_string.slice(p.allocator));
                         return is_tail_match and p.isDotDefineMatch(index.target, parts[0..last]);
@@ -5584,6 +5581,16 @@ pub fn NewParser_(
             }
 
             return false;
+        }
+
+        /// Returns true if the expression is an unbound reference to `globalThis`.
+        fn isGlobalThis(noalias p: *P, expr: Expr) bool {
+            if (expr.data != .e_identifier) return false;
+            const name = p.loadNameFromRef(expr.data.e_identifier.ref);
+            if (!strings.eqlComptime(name, "globalThis")) return false;
+            const result = p.findSymbolWithRecordUsage(expr.loc, name, false) catch return false;
+            if (result.is_inside_with_scope) return false;
+            return (result.ref.isNull() or p.symbols.items[result.ref.innerIndex()].kind == .unbound);
         }
 
         // One statement could potentially expand to several statements

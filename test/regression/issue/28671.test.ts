@@ -40,7 +40,7 @@ for (const cipher of ciphersToTest) {
       cmd: [bunExe(), "-e", code],
       env: bunEnv,
       stdout: "pipe",
-      stderr: "pipe",
+      stderr: "inherit",
     });
 
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);

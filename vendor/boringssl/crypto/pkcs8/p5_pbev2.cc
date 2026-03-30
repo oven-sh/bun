@@ -331,7 +331,7 @@ int bssl::PKCS5_pbe2_decrypt_init(const struct pbe_suite *suite,
   CBS iv;
   if (!CBS_get_asn1(&enc_scheme, &iv, CBS_ASN1_OCTETSTRING) ||
       CBS_len(&enc_scheme) != 0) {
-    OPENSSL_PUT_ERROR(PKCS8, PKCS8_R_UNSUPPORTED_PRF);
+    OPENSSL_PUT_ERROR(PKCS8, PKCS8_R_DECODE_ERROR);
     return 0;
   }
 

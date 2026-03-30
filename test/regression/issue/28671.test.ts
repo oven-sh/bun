@@ -9,6 +9,8 @@ const ciphersToTest = [
   "aes-192-cbc",
   "aes-256-cbc",
   "aes-128-ofb",
+  "aes-192-ofb",
+  "aes-256-ofb",
   "aes-128-cfb",
   "aes-256-cfb",
   "des-cbc",
@@ -41,7 +43,7 @@ for (const cipher of ciphersToTest) {
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
 
     expect(stdout.trim()).toBe("hello world");
     expect(exitCode).toBe(0);

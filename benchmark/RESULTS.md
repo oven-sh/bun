@@ -51,6 +51,27 @@ Test D: 0 git CLI execve calls
 Test E: 0 git CLI execve calls
 ```
 
+## Library Micro-Benchmarks (ziggit vs git CLI)
+
+20 iterations per repo, ReleaseFast build:
+
+| Repo | Operation | Ziggit (avg) | Git CLI (avg) | Speedup |
+|------|-----------|-------------|---------------|---------|
+| debug | findCommit | 201μs | 1400μs | 6.9x |
+| debug | cloneBare | 254μs | 6347μs | 24.9x |
+| debug | Full workflow | 496μs | 15744μs | **31.7x** |
+| chalk | findCommit | 184μs | 1460μs | 7.9x |
+| chalk | cloneBare | 259μs | 5848μs | 22.5x |
+| chalk | Full workflow | 503μs | 16451μs | **32.7x** |
+| node-semver | findCommit | 172μs | 1416μs | 8.2x |
+| node-semver | cloneBare | 254μs | 8059μs | 31.7x |
+| node-semver | Full workflow | 514μs | 21025μs | **40.9x** |
+| express | findCommit | 159μs | 1417μs | 8.9x |
+| express | cloneBare | 252μs | 8884μs | 35.2x |
+| express | Full workflow | 510μs | 28031μs | **54.9x** |
+
+**Summary:** ziggit library calls are **31-55x faster** than spawning git CLI for the full bun-install workflow.
+
 ## Note
 
 The ziggit bun binary is a **debug build** with full debug info and safety checks (1.3GB vs 95MB release).

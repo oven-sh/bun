@@ -40,12 +40,14 @@ for (const cipher of ciphersToTest) {
       cmd: [bunExe(), "-e", code],
       env: bunEnv,
       stdout: "pipe",
-      stderr: "inherit",
+      stderr: "pipe",
     });
 
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stdout.trim()).toBe("hello world");
+    if (stdout.trim() !== "hello world") {
+      throw new Error(`cipher ${cipher} failed (exit ${exitCode}): ${stderr}`);
+    }
     expect(exitCode).toBe(0);
   });
 }

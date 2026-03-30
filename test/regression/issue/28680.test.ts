@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 
 test("TOML multi-line basic strings trim leading newline and handle line ending backslash", () => {
   const toml = `

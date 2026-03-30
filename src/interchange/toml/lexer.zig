@@ -659,7 +659,7 @@ pub const Lexer = struct {
                                     if (lexer.code_point != '\'') continue;
                                     lexer.step();
                                     lexer.token = T.t_string_literal;
-                                    lexer.string_literal_slice = lexer.source.contents[trimMultilineStart(lexer.source.contents, start + 2) .. end];
+                                    lexer.string_literal_slice = lexer.source.contents[trimMultilineStart(lexer.source.contents, start + 2)..end];
                                     return;
                                 },
                                 else => {},
@@ -731,7 +731,7 @@ pub const Lexer = struct {
                                     lexer.step();
 
                                     lexer.token = T.t_string_literal;
-                                    lexer.string_literal_slice = lexer.source.contents[trimMultilineStart(lexer.source.contents, start + 2) .. end];
+                                    lexer.string_literal_slice = lexer.source.contents[trimMultilineStart(lexer.source.contents, start + 2)..end];
                                     if (needs_slow_pass) break;
                                     return;
                                 },

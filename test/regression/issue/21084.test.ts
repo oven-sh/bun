@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 test("bundler inlines process.env.NODE_ENV with optional chaining", async () => {
@@ -31,11 +31,7 @@ if (process?.env?.NODE_ENV !== "production") {
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   // All optional chaining variants should be inlined to "production"
   expect(stdout).not.toContain("process.env");

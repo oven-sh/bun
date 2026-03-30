@@ -2315,11 +2315,18 @@ extern "C" void Bun__attachAsyncStackFromPromise(JSC::JSGlobalObject* globalObje
 
     // Don't overwrite an existing stack trace. User-provided errors (e.g. via
     // StreamError.JSValue or Body.ValueError.JSValue) may already have a
-    // meaningful synchronous stack from where they were created.
+    // meaningful synchronous stack from where they were created. Also skip if
+    // .stack was already accessed — setStackFrames after materialization
+    // would desync m_stackTrace from the cached property.
+    if (instance->hasMaterializedErrorInfo())
+        return;
     if (auto* existing = instance->stackTrace(); existing && !existing->isEmpty())
         return;
 
     size_t limit = globalObject->stackTraceLimit().value_or(10);
+    if (!limit)
+        return;
+
     WTF::Vector<JSC::StackFrame> frames;
     collectAsyncStackFramesFromPromise(vm, instance, promise, frames, limit);
     if (frames.isEmpty())

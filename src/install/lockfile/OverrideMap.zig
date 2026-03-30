@@ -349,5 +349,4 @@ const String = bun.Semver.String;
 
 const Dependency = bun.install.Dependency;
 const Lockfile = bun.install.Lockfile;
-const PackageManager = bun.install.PackageManager;
 const PackageNameHash = bun.install.PackageNameHash;

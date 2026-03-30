@@ -1,16 +1,13 @@
 import { expect, test } from "bun:test";
-import { bunExe, bunEnv, tempDir } from "harness";
-import { join } from "path";
-import { mkdirSync, writeFileSync, readFileSync } from "fs";
 import { execSync } from "child_process";
+import { mkdirSync, readFileSync, writeFileSync } from "fs";
+import { bunEnv, bunExe, tempDir } from "harness";
+import { join } from "path";
 
 function createTarball(baseDir: string, pkgName: string, version: string): string {
   const tmpPkg = join(baseDir, "_tarballs", `${pkgName}-${version}`);
   mkdirSync(join(tmpPkg, "package"), { recursive: true });
-  writeFileSync(
-    join(tmpPkg, "package", "package.json"),
-    JSON.stringify({ name: pkgName, version })
-  );
+  writeFileSync(join(tmpPkg, "package", "package.json"), JSON.stringify({ name: pkgName, version }));
   writeFileSync(join(tmpPkg, "package", "index.js"), `module.exports = '${pkgName}';`);
   const tgzPath = join(baseDir, "_tarballs", `${pkgName}-${version}.tgz`);
   execSync(`tar czf "${tgzPath}" package`, { cwd: tmpPkg });
@@ -81,7 +78,7 @@ test("bun install does not corrupt package names when workspace uses npm alias",
       name: "monorepo",
       private: true,
       workspaces: ["packages/*"],
-    })
+    }),
   );
   writeFileSync(
     join(cwd, "packages", "workspace-a", "package.json"),
@@ -91,7 +88,7 @@ test("bun install does not corrupt package names when workspace uses npm alias",
         // npm alias: "my-pkg" resolves to "real-pkg@1.0.0"
         "my-pkg": "npm:real-pkg@1.0.0",
       },
-    })
+    }),
   );
   writeFileSync(
     join(cwd, "packages", "workspace-b", "package.json"),
@@ -100,7 +97,7 @@ test("bun install does not corrupt package names when workspace uses npm alias",
       dependencies: {
         "my-pkg": "1.0.0",
       },
-    })
+    }),
   );
 
   const spawnEnv = { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(cwd, ".bun-cache") };
@@ -114,11 +111,7 @@ test("bun install does not corrupt package names when workspace uses npm alias",
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).not.toContain("error:");
     expect(exitCode).toBe(0);
   }
@@ -132,7 +125,7 @@ test("bun install does not corrupt package names when workspace uses npm alias",
         "my-pkg": "1.0.0",
         "extra-dep": "1.0.0",
       },
-    })
+    }),
   );
 
   // Second install — this previously caused corrupted package names due to
@@ -145,11 +138,7 @@ test("bun install does not corrupt package names when workspace uses npm alias",
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).not.toContain("error:");
     expect(stderr).not.toContain("405");
     expect(exitCode).toBe(0);

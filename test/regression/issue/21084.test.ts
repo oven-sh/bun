@@ -38,5 +38,6 @@ if (process?.env?.NODE_ENV !== "production") {
   expect(stdout).not.toContain("globalThis");
   expect(stdout).not.toContain("SHOULD_BE_REMOVED");
   expect(stdout).not.toContain("SHOULD_ALSO_BE_REMOVED");
+  expect(stdout).not.toContain("SHOULD_ALSO_BE_REMOVED_2");
   expect(exitCode).toBe(0);
 });

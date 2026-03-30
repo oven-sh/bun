@@ -1060,18 +1060,37 @@ pub const FetchTasklet = struct {
             store.ref();
         }
 
+        var url = fetch_options.url;
         var proxy: ?ZigURL = null;
         if (fetch_options.proxy) |proxy_opt| {
             if (!proxy_opt.isEmpty()) { //if is empty just ignore proxy
                 // Check NO_PROXY even for explicitly-provided proxies
-                if (!jsc_vm.transpiler.env.isNoProxy(fetch_options.url.hostname, fetch_options.url.host)) {
+                if (!jsc_vm.transpiler.env.isNoProxy(url.hostname, url.host)) {
                     proxy = proxy_opt;
                 }
             }
             // else: proxy: "" means explicitly no proxy (direct connection)
         } else {
             // no proxy provided, use default proxy resolution
-            proxy = jsc_vm.transpiler.env.getHttpProxyFor(fetch_options.url);
+            if (jsc_vm.transpiler.env.getHttpProxyFor(url)) |env_proxy| {
+                // env_proxy.href may be a slice into a RefCountedEnvValue's bytes which can
+                // be freed by a subsequent `process.env.HTTP_PROXY = "..."` assignment while
+                // this fetch is in flight on the HTTP thread. Clone it into url_proxy_buffer
+                // alongside the request URL — the same pattern fetch.zig uses for the explicit
+                // `fetch(url, { proxy: "..." })` option.
+                if (env_proxy.href.len > 0) {
+                    const old_url_len = url.href.len;
+                    const new_buffer = try std.fmt.allocPrint(bun.default_allocator, "{s}{s}", .{ fetch_tasklet.url_proxy_buffer, env_proxy.href });
+                    if (fetch_tasklet.url_proxy_buffer.len > 0) {
+                        bun.default_allocator.free(fetch_tasklet.url_proxy_buffer);
+                    }
+                    fetch_tasklet.url_proxy_buffer = new_buffer;
+                    url = ZigURL.parse(new_buffer[0..old_url_len]);
+                    proxy = ZigURL.parse(new_buffer[old_url_len..]);
+                } else {
+                    proxy = env_proxy;
+                }
+            }
         }
 
         if (fetch_tasklet.check_server_identity.has() and fetch_tasklet.reject_unauthorized) {
@@ -1084,7 +1103,7 @@ pub const FetchTasklet = struct {
         fetch_tasklet.http.?.* = http.AsyncHTTP.init(
             bun.default_allocator,
             fetch_options.method,
-            fetch_options.url,
+            url,
             fetch_options.headers.entries,
             fetch_options.headers.buf.items,
             &fetch_tasklet.response_buffer,
@@ -1134,7 +1153,7 @@ pub const FetchTasklet = struct {
         fetch_tasklet.signal_store.header_progress.store(true, .monotonic);
 
         if (fetch_tasklet.request_body == .Sendfile) {
-            bun.assert(fetch_options.url.isHTTP());
+            bun.assert(url.isHTTP());
             bun.assert(fetch_options.proxy == null);
             fetch_tasklet.http.?.request_body = .{ .sendfile = fetch_tasklet.request_body.Sendfile };
         }

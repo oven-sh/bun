@@ -101,6 +101,16 @@ RUN --mount=type=tmpfs,target=/tmp \
       mv /tmp/bun/*/bun /usr/bin/bun && \
       chmod +x /usr/bin/bun'
 
+# Node — build scripts run under node (see scripts/build.ts). Version must
+# match scripts/bootstrap.sh nodejs_version_exact() so container and bare-
+# metal agents use the same runtime. .tar.gz (not .xz) to match bootstrap.sh
+# and avoid needing xz-utils.
+ARG NODE_VERSION="24.3.0"
+RUN ARCH=$(if [ "$TARGETARCH" = "arm64" ]; then echo "arm64"; else echo "x64"; fi) && \
+    curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${ARCH}.tar.gz" \
+      | tar -xz -C /usr/local --strip-components=1 && \
+    node --version
+
 ENV LLVM_VERSION=${REPORTED_LLVM_VERSION}
 
 WORKDIR /workspace

@@ -925,7 +925,7 @@ pub fn setTicketKeys(this: *Listener, global: *jsc.JSGlobalObject, keys: JSValue
     if (!this.ssl) {
         return global.throwInvalidArguments("setTicketKeys requires TLS", .{});
     }
-    const ctx = this.socket_context orelse return global.throw("Server is not listening", .{});
+    const ctx = this.socket_context orelse return .js_undefined;
     const ssl_ctx: *BoringSSL.SSL_CTX = @ptrCast(ctx.getNativeHandle(true));
 
     const buffer = keys.asArrayBuffer(global) orelse {

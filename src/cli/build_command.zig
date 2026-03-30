@@ -504,6 +504,11 @@ pub const BuildCommand = struct {
 
                 Output.flush();
 
+                if (log.errors > 0) {
+                    try log.print(Output.errorWriter());
+                    Global.exit(1);
+                }
+
                 const is_cross_compile = !compile_target.isDefault();
 
                 if (outfile.len == 0 or strings.eqlComptime(outfile, ".") or strings.eqlComptime(outfile, "..") or strings.eqlComptime(outfile, "../")) {

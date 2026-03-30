@@ -1,4 +1,3 @@
-#!/usr/bin/env bun
 /**
  * Subprocess output wrapper for ninja builds. Two modes:
  *
@@ -50,6 +49,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { createWriteStream, writeSync } from "node:fs";
 import { createInterface } from "node:readline";
+import { nameColor } from "./tty.ts";
 
 export const streamPath: string = import.meta.filename;
 
@@ -73,25 +73,16 @@ export const STREAM_FD = 3;
  * the name disambiguates.
  */
 function coloredPrefix(name: string): string {
-  // Override: zig brand orange (hash would give yellow-green).
-  const overrides: Record<string, number> = { zig: 214 };
-  const palette = [220, 184, 154, 120, 114, 86, 87, 81, 111, 147, 141, 183];
-  // fnv-1a — tiny, good-enough distribution for short strings.
-  let h = 2166136261;
-  for (let i = 0; i < name.length; i++) {
-    h ^= name.charCodeAt(i);
-    h = Math.imul(h, 16777619);
-  }
-  const color = overrides[name] ?? palette[(h >>> 0) % palette.length];
-  // 38;5;N = set foreground to 256-color N. 39 = default foreground.
-  return `\x1b[38;5;${color}m[${name}]\x1b[39m `;
+  // Caller already gated on useColor (FD3-based); tty.ts's default check
+  // (FD2-based) would wrongly disable since FD2 is a ninja pipe here.
+  return nameColor(name, `[${name}]`, true) + " ";
 }
 
 // ───────────────────────────────────────────────────────────────────────────
 // CLI — guarded so `import { STREAM_FD } from "./stream.ts"` doesn't run it.
 // ───────────────────────────────────────────────────────────────────────────
 
-if (import.meta.main) {
+if (process.argv[1] === import.meta.filename) {
   main();
 }
 

@@ -753,6 +753,11 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
             if (array1Length != array2Length) {
                 return false;
             }
+            // Check class names on the unwrapped targets so Array subclasses
+            // (e.g. class MyArr extends Array) are distinguished from Array.
+            if (!equal(JSObject::calculatedClassName(a1Obj), JSObject::calculatedClassName(a2Obj))) {
+                return false;
+            }
         }
 
         uint64_t i = 0;
@@ -865,7 +870,8 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
             result = specialObjectsDequal<isStrict, enableAsymmetricMatchers>(globalObject, gcBuffer, stack, scope, cn2, cn1);
             RETURN_IF_EXCEPTION(scope, false);
             if (result.has_value()) return *result;
-            return false;
+            // nullopt means semantic check passed but own-property comparison
+            // is still needed — fall through to normal path.
         }
 
         if (!equal(JSObject::calculatedClassName(cn1), JSObject::calculatedClassName(cn2))) {

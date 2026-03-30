@@ -1021,7 +1021,7 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
     if (response) {
       const resumed = response.resume();
       if (resumed && resumed !== true) {
-        const bodyReadState = handle.hasBody;
+        const bodyReadState = response.hasBody;
 
         const message = this._httpMessage;
         const req = message?.req;

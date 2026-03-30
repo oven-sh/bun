@@ -1276,7 +1276,6 @@ pub fn parseIntoBinaryLockfile(
                     version_sliced.slice,
                     &version_sliced,
                     log,
-                    manager,
                 ) orelse {
                     try log.addError(source, value.loc, "Invalid override version");
                     return error.InvalidOverridesObject;
@@ -1326,7 +1325,6 @@ pub fn parseIntoBinaryLockfile(
                     version_sliced.slice,
                     &version_sliced,
                     log,
-                    manager,
                 ) orelse {
                     try log.addError(source, value.loc, "Invalid catalog version");
                     return error.InvalidCatalogObject;
@@ -1406,7 +1404,6 @@ pub fn parseIntoBinaryLockfile(
                         version_sliced.slice,
                         &version_sliced,
                         log,
-                        manager,
                     ) orelse {
                         try log.addError(source, value.loc, "Invalid catalog version");
                         return error.InvalidCatalogsObject;
@@ -2191,7 +2188,6 @@ fn parseAppendDependencies(
                         version_sliced.slice,
                         &version_sliced,
                         log,
-                        null,
                     ) orelse {
                         try log.addError(source, value.loc, "Invalid dependency version");
                         return error.InvalidDependencyVersion;

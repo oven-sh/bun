@@ -100,9 +100,6 @@ ci_mode: bun.LazyBool(computeIsContinuousIntegration, @This(), "ci_mode") = .{},
 
 peer_dependencies: bun.LinearFifo(DependencyID, .Dynamic) = .init(default_allocator),
 
-// name hash from alias package name -> aliased package dependency version info
-known_npm_aliases: NpmAliasMap = .{},
-
 event_loop: jsc.AnyEventLoop,
 
 // During `installPackages` we learn exactly what dependencies from --trust
@@ -1140,8 +1137,6 @@ const PreallocatedNetworkTasks = bun.HiveArray(NetworkTask, 128).Fallback;
 const ResolveTaskQueue = bun.UnboundedQueue(Task, .next);
 
 const RepositoryMap = std.HashMapUnmanaged(Task.Id, bun.FileDescriptor, IdentityContext(Task.Id), 80);
-const NpmAliasMap = std.HashMapUnmanaged(PackageNameHash, Dependency.Version, IdentityContext(u64), 80);
-
 const NetworkQueue = bun.LinearFifo(*NetworkTask, .{ .Static = 32 });
 const PatchTaskFifo = bun.LinearFifo(*PatchTask, .{ .Static = 32 });
 

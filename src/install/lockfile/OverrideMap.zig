@@ -54,14 +54,14 @@ pub fn count(this: *OverrideMap, lockfile: *Lockfile, builder: *Lockfile.StringB
     }
 }
 
-pub fn clone(this: *OverrideMap, pm: *PackageManager, old_lockfile: *Lockfile, new_lockfile: *Lockfile, new_builder: *Lockfile.StringBuilder) !OverrideMap {
+pub fn clone(this: *OverrideMap, old_lockfile: *Lockfile, new_lockfile: *Lockfile, new_builder: *Lockfile.StringBuilder) !OverrideMap {
     var new = OverrideMap{};
     try new.map.ensureTotalCapacity(new_lockfile.allocator, this.map.entries.len);
 
     for (this.map.keys(), this.map.values()) |k, v| {
         new.map.putAssumeCapacity(
             k,
-            try v.clone(pm, old_lockfile.buffers.string_bytes.items, @TypeOf(new_builder), new_builder),
+            try v.clone(old_lockfile.buffers.string_bytes.items, @TypeOf(new_builder), new_builder),
         );
     }
 
@@ -111,7 +111,6 @@ pub fn parseCount(
 /// It is assumed the input map is uninitialized (zero entries)
 pub fn parseAppend(
     this: *OverrideMap,
-    pm: *PackageManager,
     lockfile: *Lockfile,
     root_package: *Lockfile.Package,
     log: *logger.Log,
@@ -123,9 +122,9 @@ pub fn parseAppend(
         assert(this.map.entries.len == 0); // only call parse once
     }
     if (expr.asProperty("overrides")) |overrides| {
-        try this.parseFromOverrides(pm, lockfile, root_package, json_source, log, overrides.expr, builder);
+        try this.parseFromOverrides(lockfile, root_package, json_source, log, overrides.expr, builder);
     } else if (expr.asProperty("resolutions")) |resolutions| {
-        try this.parseFromResolutions(pm, lockfile, root_package, json_source, log, resolutions.expr, builder);
+        try this.parseFromResolutions(lockfile, root_package, json_source, log, resolutions.expr, builder);
     }
     debug("parsed {d} overrides", .{this.map.entries.len});
 }
@@ -133,7 +132,6 @@ pub fn parseAppend(
 /// https://docs.npmjs.com/cli/v9/configuring-npm/package-json#overrides
 pub fn parseFromOverrides(
     this: *OverrideMap,
-    pm: *PackageManager,
     lockfile: *Lockfile,
     root_package: *Lockfile.Package,
     source: *const logger.Source,
@@ -193,7 +191,6 @@ pub fn parseFromOverrides(
         if (try parseOverrideValue(
             "override",
             lockfile,
-            pm,
             root_package,
             source,
             value.loc,
@@ -211,7 +208,6 @@ pub fn parseFromOverrides(
 /// yarn berry: https://yarnpkg.com/configuration/manifest#resolutions
 pub fn parseFromResolutions(
     this: *OverrideMap,
-    pm: *PackageManager,
     lockfile: *Lockfile,
     root_package: *Lockfile.Package,
     source: *const logger.Source,
@@ -265,7 +261,6 @@ pub fn parseFromResolutions(
         if (try parseOverrideValue(
             "resolution",
             lockfile,
-            pm,
             root_package,
             source,
             value.loc,
@@ -283,7 +278,6 @@ pub fn parseFromResolutions(
 pub fn parseOverrideValue(
     comptime field: []const u8,
     lockfile: *Lockfile,
-    package_manager: *PackageManager,
     root_package: *Lockfile.Package,
     source: *const logger.Source,
     loc: logger.Loc,
@@ -331,7 +325,6 @@ pub fn parseOverrideValue(
             literalSliced.slice,
             &literalSliced,
             log,
-            package_manager,
         ) orelse {
             try log.addWarningFmt(source, loc, lockfile.allocator, "Invalid " ++ field ++ " value \"{s}\"", .{value});
             return null;

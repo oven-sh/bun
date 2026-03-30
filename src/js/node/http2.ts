@@ -4063,6 +4063,14 @@ function http1Fallback(socket: Socket) {
     const req = new Http1FallbackRequest(socket, method, url, headers, rawHeaders, httpVersion);
     const res = new Http1FallbackResponse(socket, req);
 
+    // Clean up req stream on socket close (client disconnect)
+    socket.once("close", () => {
+      if (!req.complete) {
+        req.push(null);
+        req.complete = true;
+      }
+    });
+
     // Handle request body
     const contentLength = parseInt(headers["content-length"], 10);
     if (!isNaN(contentLength) && contentLength > 0) {
@@ -4434,7 +4442,7 @@ class Http1FallbackResponse extends Stream {
       if (chunk) {
         const len = typeof chunk === "string" ? Buffer.byteLength(chunk, encoding) : chunk.length;
         this.setHeader("Content-Length", len);
-      } else if (this._hasBody) {
+      } else if (this._hasBody && this.statusCode !== 204 && !(this.statusCode >= 100 && this.statusCode < 200)) {
         this.setHeader("Content-Length", 0);
       }
     }

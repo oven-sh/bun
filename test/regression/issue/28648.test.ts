@@ -16,7 +16,10 @@ throw new Error('oopsie');
 
   // Spawn as a subprocess to isolate the potential crash
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", `
+    cmd: [
+      bunExe(),
+      "-e",
+      `
 const { Worker } = require('worker_threads');
 const worker = new Worker(require('path').join(process.argv[1], 'worker.cjs'));
 worker.on('exit', (code) => {
@@ -25,7 +28,9 @@ worker.on('exit', (code) => {
   process.exit(0);
 });
 setTimeout(() => { process.stdout.write('timeout\\n'); process.exit(99); }, 10000);
-`, String(dir)],
+`,
+      String(dir),
+    ],
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",

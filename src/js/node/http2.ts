@@ -4384,7 +4384,12 @@ class Http1FallbackResponse extends Stream {
       this._chunked = true;
     }
     // If headers not yet sent and no explicit framing, use chunked encoding
-    if (this._hasBody && !this[kHttp1FallbackHeadersSent] && !this.hasHeader("content-length") && !this.hasHeader("transfer-encoding")) {
+    if (
+      this._hasBody &&
+      !this[kHttp1FallbackHeadersSent] &&
+      !this.hasHeader("content-length") &&
+      !this.hasHeader("transfer-encoding")
+    ) {
       this._chunked = true;
       this.setHeader("Transfer-Encoding", "chunked");
     }

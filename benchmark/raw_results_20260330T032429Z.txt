@@ -178,3 +178,15 @@ Warm cache (3 runs):
   Run 2 wall time: 198ms
 69 packages installed [64.00ms]
   Run 3 wall time: 68ms
+
+========================================
+SECTION 4: Parallel HTTPS Clone (5 repos)
+========================================
+--- git CLI (parallel) ---
+  Run 1: 726ms
+  Run 2: 731ms
+  Run 3: 621ms
+--- ziggit (parallel) ---
+  Run 1: 663ms
+  Run 2: 624ms
+  Run 3: 643ms

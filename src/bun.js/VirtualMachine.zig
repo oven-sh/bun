@@ -665,7 +665,9 @@ pub fn uncaughtException(this: *jsc.VirtualMachine, globalObject: *JSGlobalObjec
 
     if (this.is_handling_uncaught_exception) {
         this.runErrorHandler(err, null);
-        bun.api.node.process.exit(globalObject, 7);
+        // Exit code 7 for main process (Node.js convention for handler failure),
+        // exit code 1 for workers (Node.js uses 1 for all worker uncaught exceptions).
+        bun.api.node.process.exit(globalObject, if (this.worker != null) 1 else 7);
         // For the main thread, process.exit() is noreturn (calls globalExit).
         // For workers, process.exit() sets termination flags and returns,
         // so the worker event loop in spin() can shut down gracefully.

@@ -38,7 +38,7 @@ setTimeout(() => { process.stdout.write('timeout\\n'); process.exit(99); }, 1000
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  // Worker should terminate gracefully (parent receives exit event, not a crash)
-  expect(stdout).toContain("exit:");
+  // Worker should terminate gracefully with exit code 1 (Node.js convention)
+  expect(stdout).toContain("exit:1");
   expect(exitCode).toBe(0);
 }, 30_000);

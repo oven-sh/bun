@@ -856,3 +856,36 @@ test("Error.captureStackTrace with caller not in stack clears async frames too",
   // When caller is not found, V8 clears everything
   expect(err.stack).toBe("Error: async test");
 });
+
+test("Error.captureStackTrace applies stackTraceLimit after caller removal", () => {
+  // Build a deep call chain so the caller sits beyond stackTraceLimit.
+  // If the limit were applied before removal, all collected frames would
+  // be above the caller and get removed, yielding an empty trace.
+  const origLimit = Error.stackTraceLimit;
+  Error.stackTraceLimit = 3;
+  try {
+    function target() {
+      const err = {};
+      Error.captureStackTrace(err, target);
+      return err;
+    }
+    noInline(target);
+
+    function recurse(depth) {
+      if (depth === 0) return target();
+      // Not a tail call — keeps each frame on the stack.
+      const r = recurse(depth - 1);
+      return { ...r };
+    }
+    noInline(recurse);
+
+    const err = recurse(20);
+    const frames = err.stack.split("\n").filter(l => l.includes("    at "));
+    // Should have exactly 3 frames (the limit), all below target()
+    expect(frames.length).toBe(3);
+    expect(err.stack).not.toContain("at target");
+    expect(err.stack).toContain("at recurse");
+  } finally {
+    Error.stackTraceLimit = origLimit;
+  }
+});

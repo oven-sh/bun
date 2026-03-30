@@ -584,10 +584,21 @@ pub fn proxyAuthHash(this: *const HTTPClient) u64 {
     var name_lower_buf: [256]u8 = undefined;
 
     // SNI override — distinct from url.hostname which is stored separately
-    // as the CONNECT target. Only contributes when actually set.
-    if (this.hostname) |sni| {
-        combined +%= bun.hash(sni);
-        any = true;
+    // as the CONNECT target. Normalize before hashing: strip port (Host
+    // header may include ":443"), lowercase (DNS is case-insensitive per
+    // RFC 1035), and skip if it matches url.hostname (no actual override —
+    // a request with an explicit but identical Host header should hit the
+    // same pool entry as one without).
+    if (this.hostname) |sni_raw| {
+        const sni = stripPortFromHost(sni_raw);
+        if (!strings.eqlCaseInsensitiveASCII(sni, this.url.hostname, true)) {
+            const sni_lower = if (sni.len <= name_lower_buf.len)
+                strings.copyLowercase(sni, name_lower_buf[0..sni.len])
+            else
+                sni;
+            combined +%= bun.hash(sni_lower);
+            any = true;
+        }
     }
 
     var user_provided_auth = false;
@@ -1941,12 +1952,20 @@ fn sendProgressUpdateWithoutStageCheck(this: *HTTPClient, comptime is_ssl: bool,
         // would leave the connection mid-request on the inner TLS stream;
         // adopt() resetting write_buffer doesn't restore a clean HTTP/1.1
         // boundary. Only pool a tunnel whose request side is fully drained.
-        const tunnel_request_drained = if (this.proxy_tunnel) |t|
-            this.state.request_stage == .done and t.write_buffer.isEmpty()
+        //
+        // Also check wrapper liveness: a close-delimited body (no
+        // Content-Length, no Transfer-Encoding — RFC 7230 §3.3.3 rule 7)
+        // ends on inner-TLS close; ProxyTunnel.onClose fires but the outer
+        // socket is still alive. Pooling that dead wrapper would hang the
+        // next request (proxy.write() → error.ConnectionClosed, swallowed).
+        const tunnel_poolable = if (this.proxy_tunnel) |t|
+            this.state.request_stage == .done and
+                t.write_buffer.isEmpty() and
+                if (t.wrapper) |*w| !w.isShutdown() else false
         else
             true;
 
-        if (this.isKeepAlivePossible() and !socket.isClosedOrHasError() and tunnel_request_drained) {
+        if (this.isKeepAlivePossible() and !socket.isClosedOrHasError() and tunnel_poolable) {
             log("release socket", .{});
             const tunnel = this.proxy_tunnel;
             this.proxy_tunnel = null;

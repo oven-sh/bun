@@ -1,11 +1,15 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
+import { tls } from "harness";
 import http2 from "node:http2";
 import https from "node:https";
-import { tls } from "harness";
 
 test("http2.createSecureServer with allowHTTP1 handles HTTP/1.1 requests", async () => {
   const { promise: listening, resolve: onListening } = Promise.withResolvers<number>();
-  const { promise: done, resolve: onDone, reject: onError } = Promise.withResolvers<{
+  const {
+    promise: done,
+    resolve: onDone,
+    reject: onError,
+  } = Promise.withResolvers<{
     status: number;
     body: string;
     httpVersion: string;
@@ -28,7 +32,7 @@ test("http2.createSecureServer with allowHTTP1 handles HTTP/1.1 requests", async
 
   const port = await listening;
 
-  const req = https.get(`https://localhost:${port}`, { rejectUnauthorized: false }, (res) => {
+  const req = https.get(`https://localhost:${port}`, { rejectUnauthorized: false }, res => {
     let data = "";
     res.on("data", (chunk: any) => (data += chunk));
     res.on("end", () => {
@@ -71,7 +75,11 @@ test("http2.createSecureServer with allowHTTP1 still handles HTTP/2 requests", a
 
   const port = await listening;
 
-  const { promise: done, resolve: onDone, reject: onError } = Promise.withResolvers<{
+  const {
+    promise: done,
+    resolve: onDone,
+    reject: onError,
+  } = Promise.withResolvers<{
     status: number;
     body: string;
   }>();
@@ -82,7 +90,7 @@ test("http2.createSecureServer with allowHTTP1 still handles HTTP/2 requests", a
   const h2req = client.request({ ":path": "/" });
   let data = "";
   let status = 0;
-  h2req.on("response", (headers) => {
+  h2req.on("response", headers => {
     status = headers[":status"] as number;
   });
   h2req.on("data", (chunk: any) => (data += chunk));
@@ -122,7 +130,7 @@ test("http2.createSecureServer without allowHTTP1 rejects HTTP/1.1", async () =>
 
   const { promise: done, resolve: onDone } = Promise.withResolvers<string>();
 
-  const req = https.get(`https://localhost:${port}`, { rejectUnauthorized: false }, (res) => {
+  const req = https.get(`https://localhost:${port}`, { rejectUnauthorized: false }, res => {
     let data = "";
     res.on("data", (chunk: any) => (data += chunk));
     res.on("end", () => onDone("unexpected-success:" + data));
@@ -160,7 +168,11 @@ test("http2.createSecureServer allowHTTP1 handles request with body", async () =
 
   const port = await listening;
 
-  const { promise: done, resolve: onDone, reject: onError } = Promise.withResolvers<{
+  const {
+    promise: done,
+    resolve: onDone,
+    reject: onError,
+  } = Promise.withResolvers<{
     status: number;
     body: string;
   }>();
@@ -174,7 +186,7 @@ test("http2.createSecureServer allowHTTP1 handles request with body", async () =
     headers: { "Content-Type": "text/plain" },
   };
 
-  const req = https.request(options, (res) => {
+  const req = https.request(options, res => {
     let data = "";
     res.on("data", (chunk: any) => (data += chunk));
     res.on("end", () => {

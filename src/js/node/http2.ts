@@ -3982,7 +3982,8 @@ function http1Fallback(socket: Socket) {
     const method = requestLine.substring(0, spaceIdx);
     const url = requestLine.substring(spaceIdx + 1, lastSpaceIdx);
     const httpVersionStr = requestLine.substring(lastSpaceIdx + 1);
-    const httpVersion = httpVersionStr.indexOf("/") !== -1 ? httpVersionStr.substring(httpVersionStr.indexOf("/") + 1) : "1.1";
+    const httpVersion =
+      httpVersionStr.indexOf("/") !== -1 ? httpVersionStr.substring(httpVersionStr.indexOf("/") + 1) : "1.1";
 
     const headers = Object.create(null);
     const rawHeaders: string[] = [];
@@ -4023,7 +4024,7 @@ function http1Fallback(socket: Socket) {
         req.push(null);
         req.complete = true;
       } else {
-        const onBodyData = (chunk) => {
+        const onBodyData = chunk => {
           req.push(chunk);
           bodyReceived += chunk.length;
           if (bodyReceived >= contentLength) {
@@ -4037,7 +4038,7 @@ function http1Fallback(socket: Socket) {
     } else if (headers["transfer-encoding"] === "chunked") {
       // For chunked encoding, pipe remaining data to request and let consumer handle it
       let chunkedBuffer = remainder;
-      const onChunkedData = (chunk) => {
+      const onChunkedData = chunk => {
         chunkedBuffer = Buffer.concat([chunkedBuffer, chunk]);
         // Look for the end of chunked encoding (0\r\n\r\n)
         if (chunkedBuffer.indexOf("0\r\n\r\n") !== -1) {

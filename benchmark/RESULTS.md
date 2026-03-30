@@ -1,10 +1,16 @@
-# Ziggit E2E Validation — `bun install` with Git Dependencies
+# Ziggit Integration — E2E Validation Results
 
-**Date:** 2026-03-30  
-**System:** Ubuntu 24.04.2 LTS, Linux 6.1.141, x86_64, 4 CPUs, 16GB RAM  
-**Stock bun:** v1.3.11 (af24e281)  
-**Ziggit bun-debug:** v1.3.11-debug (b8f2c7f08, branch: ziggit-integration)  
-**Ziggit commit:** 55f44f6  
+**Date:** 2026-03-30
+**System:** Linux x86_64, Intel Xeon @ 3.00GHz, 16GB RAM
+**Kernel:** 6.1.141
+
+## Commit Hashes
+
+| Component | Commit | Branch |
+|-----------|--------|--------|
+| bun-fork | `1e2def0fcc2e807e41c18bb3cf767d86cfda214a` | `ziggit-integration` |
+| ziggit | `55f44f6ab0fd5434f6d2262e7f27855ff0fca8f5` | `master` |
+| stock bun | `1.3.11 (af24e281)` | release |
 
 ## Test Setup
 
@@ -20,38 +26,57 @@
 }
 ```
 
-All 4 dependencies use `git+https://` protocol (forces git protocol, not tarball download).  
+All 4 top-level dependencies use `git+https://` protocol, forcing git protocol resolution (not npm tarball).
 68 total packages installed (including transitive deps).
 
 ## strace Proof: Zero Git CLI Calls
 
 ```
-$ strace -f -e trace=execve bun-debug install ... 2>&1 | grep 'execve.*"/usr/bin/git"' | wc -l
+$ grep -ac '/usr/bin/git' /tmp/strace-output.txt
 0
 ```
 
-**Result: 0 git CLI subprocess calls.** Ziggit's native Zig git implementation handles all git operations in-process — clone, ref resolution, packfile fetching, tree/blob extraction — without ever spawning `/usr/bin/git`.
+**Result: 0 execve calls to `/usr/bin/git`** — ziggit handles all git operations in-process via the native Zig library linked into bun. No subprocess fallback occurred.
 
 ## Timing Comparison
 
-Each run: cold install (rm node_modules, bun.lock, cache).
+> **Note:** The ziggit bun binary is a **debug build** (`bun-debug`, 1.3GB) with verbose syscall tracing enabled (`[sys]` log lines on every syscall). This adds significant overhead — the numbers below reflect debug instrumentation cost, not production performance.
 
-| Run | Stock bun (release) | Ziggit bun (debug build) |
-|-----|--------------------:|-------------------------:|
-| 1   | 426ms               | 1597ms                   |
-| 2   | 375ms               | 1433ms                   |
-| 3   | 385ms               | 1587ms                   |
-| **Avg** | **395ms**       | **1539ms**               |
+### Stock Bun (release, v1.3.11)
 
-### Notes
+| Run | bun-reported | wall clock |
+|-----|-------------|------------|
+| 1 | 536ms | 0.541s |
+| 2 | 522ms | 0.531s |
+| 3 | 443ms | 0.448s |
+| **avg** | **500ms** | **0.507s** |
 
-- The ziggit binary is a **debug build** (`bun-debug`) with full syscall tracing (`[sys]` log lines on every syscall) and `[uws]` socket debug logging. This adds significant overhead.
-- A release build of ziggit-integrated bun would be expected to perform comparably to stock bun, since the git protocol implementation is I/O-bound (network fetch from GitHub) not CPU-bound.
-- Both versions resolve to identical packages and commit SHAs (chalk#aa06bb5, debug#6704cea, express#6c4249f, semver#6946fef).
-- Stock bun also uses ziggit for git deps — this comparison validates the debug build works correctly end-to-end.
+### Ziggit Bun (debug build, v1.3.11-debug)
 
-## Conclusion
+| Run | bun-reported | wall clock |
+|-----|-------------|------------|
+| 1 | 1.66s | 1.876s |
+| 2 | 1.65s | 1.859s |
+| 3 | 1.51s | 1.724s |
+| **avg** | **1.61s** | **1.82s** |
 
-✅ **Zero git CLI fallbacks** — all git operations handled natively by ziggit  
-✅ **Correct resolution** — same packages, same commits as stock bun  
-✅ **68 packages installed** successfully with 4 git+https dependencies  
+### Analysis
+
+The debug build is ~3.2x slower than stock release bun, which is expected given:
+1. **Debug build** — no optimizations, full assertions, 1.3GB binary
+2. **Verbose syscall tracing** — every `[sys]` log line is a write to stderr
+3. Stock bun uses optimized release build with git CLI subprocess calls
+
+The critical result is **zero git CLI fallbacks** — all git operations (clone, ref resolution, tree walking) are handled entirely in-process by ziggit's native Zig implementation.
+
+## Installed Packages
+
+All 4 git dependencies resolved correctly:
+```
++ chalk@github:chalk/chalk#aa06bb5
++ debug@github:debug-js/debug#6704cea
++ express@github:expressjs/express#6c4249f
++ semver@github:npm/node-semver#6946fef
+```
+
+68 packages installed successfully with lockfile saved.

@@ -540,7 +540,14 @@ private:
                 }
             }
 
-            /* We do not care for half closed sockets */
+            /* If a response was sent during the abort handler, use shutdown
+             * instead of close so the response data is delivered. Otherwise
+             * close immediately as before. */
+            if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) &&
+                !us_socket_is_closed(SSL, s)) {
+                us_socket_shutdown(SSL, s);
+                return s;
+            }
             return asyncSocket->close();
         });
 

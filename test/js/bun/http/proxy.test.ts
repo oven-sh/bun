@@ -440,6 +440,7 @@ test("HTTPS proxy tunnel keep-alive does not share tunnel across different crede
   let connectCount = 0;
   const authPerConnect: string[] = [];
   const sockets = new Set<net.Socket>();
+  const upstreamSockets = new Set<net.Socket>();
   const proxy = net.createServer(clientSocket => {
     sockets.add(clientSocket);
     clientSocket.once("data", data => {
@@ -453,6 +454,8 @@ test("HTTPS proxy tunnel keep-alive does not share tunnel across different crede
         clientSocket.pipe(serverSocket);
         serverSocket.pipe(clientSocket);
       });
+      upstreamSockets.add(serverSocket);
+      serverSocket.on("close", () => upstreamSockets.delete(serverSocket));
       serverSocket.on("error", () => clientSocket.end());
       clientSocket.on("error", () => {});
     });
@@ -476,6 +479,7 @@ test("HTTPS proxy tunnel keep-alive does not share tunnel across different crede
     expect(authPerConnect[0]).not.toBe(authPerConnect[1]);
   } finally {
     for (const s of sockets) s.destroy();
+    for (const s of upstreamSockets) s.destroy();
     proxy.close();
   }
 });

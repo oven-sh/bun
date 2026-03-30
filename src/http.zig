@@ -562,21 +562,45 @@ pub fn isKeepAlivePossible(this: *HTTPClient) bool {
     return false;
 }
 
-/// Hash of the effective Proxy-Authorization header value so that pooled
-/// CONNECT tunnels established with different credentials are never shared.
-/// Returns 0 if no proxy authorization applies.
+/// Hash of the effective CONNECT-time proxy headers so that pooled tunnels
+/// established with different proxy semantics are never shared. Covers
+/// everything writeProxyConnect sends: all proxy_headers entries plus the
+/// auto-generated Proxy-Authorization (if not overridden by a user header).
+/// Returns 0 if no proxy headers apply.
 pub fn proxyAuthHash(this: *const HTTPClient) u64 {
-    // User-supplied header wins over the auto-generated one (matches the
-    // precedence in writeProxyConnect / writeProxyRequest).
+    var hasher = std.hash.Wyhash.init(0);
+    var any = false;
+
+    var user_provided_auth = false;
     if (this.proxy_headers) |hdrs| {
-        if (hdrs.get("proxy-authorization")) |auth| {
-            return bun.hash(auth);
+        const slice = hdrs.entries.slice();
+        const names = slice.items(.name);
+        const values = slice.items(.value);
+        for (names, 0..) |name_ptr, idx| {
+            const name = hdrs.asStr(name_ptr);
+            const value = hdrs.asStr(values[idx]);
+            hasher.update(name);
+            hasher.update(":");
+            hasher.update(value);
+            hasher.update("\r\n");
+            any = true;
+            if (strings.eqlCaseInsensitiveASCII(name, "proxy-authorization", true)) {
+                user_provided_auth = true;
+            }
         }
     }
-    if (this.proxy_authorization) |auth| {
-        return bun.hash(auth);
+    // writeProxyConnect only sends proxy_authorization if the user didn't
+    // already provide one in proxy_headers — match that precedence.
+    if (!user_provided_auth) {
+        if (this.proxy_authorization) |auth| {
+            hasher.update("Proxy-Authorization:");
+            hasher.update(auth);
+            hasher.update("\r\n");
+            any = true;
+        }
     }
-    return 0;
+
+    return if (any) hasher.final() else 0;
 }
 
 /// Returns the SSL context for this client - either the custom context
@@ -863,31 +887,32 @@ pub fn doRedirect(
     assert(this.redirect_type == FetchRedirect.follow);
     this.unregisterAbortTracker();
 
-    // we need to clean the client reference before closing the socket because we are going to reuse the same ref in a another request
-    if (this.isKeepAlivePossible() and !socket.isClosedOrHasError()) {
+    // By the time doRedirect runs, handleResponseMetadata has already mutated
+    // this.url to the redirect destination. Pooling the tunnel here would
+    // store it under the WRONG target hostname — a follow-up request to the
+    // redirect destination could then reuse a TLS session negotiated with the
+    // original host. Close the tunnel on redirect; only pool the raw socket.
+    if (this.proxy_tunnel) |tunnel| {
+        log("close the tunnel in redirect", .{});
+        this.proxy_tunnel = null;
+        tunnel.shutdown();
+        tunnel.detachAndDeref();
+        NewHTTPContext(is_ssl).closeSocket(socket);
+    } else if (this.isKeepAlivePossible() and !socket.isClosedOrHasError()) {
         log("Keep-Alive release in redirect", .{});
         assert(this.connected_url.hostname.len > 0);
-        const tunnel = this.proxy_tunnel;
-        this.proxy_tunnel = null;
-        if (tunnel) |t| t.detachOwner();
         ctx.releaseSocket(
             socket,
             this.flags.did_have_handshaking_error and !this.flags.reject_unauthorized,
             this.connected_url.hostname,
             this.connected_url.getPortAuto(),
             this.tls_props,
-            tunnel,
-            if (tunnel != null) this.url.hostname else "",
-            if (tunnel != null) this.url.getPortAuto() else 0,
-            if (tunnel != null) this.proxyAuthHash() else 0,
+            null,
+            "",
+            0,
+            0,
         );
     } else {
-        if (this.proxy_tunnel) |tunnel| {
-            log("close the tunnel in redirect", .{});
-            this.proxy_tunnel = null;
-            tunnel.shutdown();
-            tunnel.detachAndDeref();
-        }
         NewHTTPContext(is_ssl).closeSocket(socket);
     }
     this.connected_url = URL{};

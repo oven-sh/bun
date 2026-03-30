@@ -819,10 +819,10 @@ pub const Lexer = struct {
             const width = iter.width;
             switch (iter.c) {
                 '\r' => {
-
                     // Convert '\r\n' into '\n'
-                    if (iter.i < text.len and text[iter.i] == '\n') {
-                        iter.i += 1;
+                    const cr_next = iter.i + iter.width;
+                    if (cr_next < text.len and text[cr_next] == '\n') {
+                        iter.i = cr_next;
                     }
 
                     // Convert '\r' into '\n'
@@ -843,25 +843,19 @@ pub const Lexer = struct {
                             continue;
                         },
                         'f' => {
-                            buf.append(9) catch unreachable;
+                            buf.append(0x0C) catch unreachable;
                             continue;
                         },
                         'n' => {
-                            buf.append(10) catch unreachable;
+                            buf.append(0x0A) catch unreachable;
                             continue;
                         },
                         'v' => {
-                            // Vertical tab is invalid JSON
-                            // We're going to allow it.
-                            // if (comptime is_json) {
-                            //     lexer.end = start + iter.i - width2;
-                            //     try lexer.syntaxError();
-                            // }
-                            buf.append(11) catch unreachable;
+                            buf.append(0x0B) catch unreachable;
                             continue;
                         },
                         't' => {
-                            buf.append(12) catch unreachable;
+                            buf.append(0x09) catch unreachable;
                             continue;
                         },
                         'r' => {
@@ -1264,7 +1258,6 @@ fn trimMultilineStart(contents: []const u8, content_start: usize) usize {
         if (content_start + 1 < contents.len and contents[content_start + 1] == '\n') {
             return content_start + 2;
         }
-        return content_start + 1;
     }
     return content_start;
 }

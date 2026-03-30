@@ -59,3 +59,14 @@ str2 = '''no leading newline'''
   expect(result.str1).toBe("no leading newline");
   expect(result.str2).toBe("no leading newline");
 });
+
+test("TOML escape sequences produce correct character codes", () => {
+  const toml = `
+tab = "hello\\tworld"
+ff = "hello\\fworld"
+`;
+
+  const result = Bun.TOML.parse(toml);
+  expect(result.tab).toBe("hello\tworld");
+  expect(result.ff).toBe("hello\fworld");
+});

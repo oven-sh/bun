@@ -1,88 +1,95 @@
 # E2E Benchmark: ziggit bun vs stock bun
 
 **Date:** 2026-03-30
-**Stock bun:** 1.3.11 (release build, 95MB)
-**Ziggit bun:** 1.3.11-debug (debug build with ASan, 1.3GB)
-**Platform:** Linux x86_64
-**Network:** Cold cache each run (`~/.bun/install/cache` cleared)
+**Machine:** Linux x86_64, same host for all tests
+**Stock bun:** v1.3.x release build (99MB)
+**Ziggit bun:** debug build with ASAN + syscall tracing (1.3GB)
 
 ## Results
 
-| Test | Description | Stock Bun (avg) | Ziggit Bun (avg) | Ratio | Git CLI Calls |
-|------|-------------|-----------------|-------------------|-------|---------------|
-| A    | 1 git dep (debug) | 318ms | 512ms | 1.61x | 0 |
-| B    | 4 git deps (debug, chalk, semver, express) | 771ms | 1122ms | 1.45x | 0 |
-| C    | Large repo (three.js, ~65k files) | 30019ms | 21296ms | **0.71x** | 0 |
-| D    | Mixed (2 git + 2 npm) | 575ms | 1250ms | 2.17x | 0 |
-| E    | Specific tag (debug#4.3.4) | 284ms | 507ms | 1.78x | 0 |
+| Test | Description               | Stock Bun (avg) | Ziggit Bun (avg) | Ratio | Git CLI Calls |
+|------|---------------------------|-----------------|-------------------|-------|---------------|
+| A    | 1 git dep                 |          262ms  |           488ms   | 1.86x | 0             |
+| B    | 4 git deps                |         1072ms  |          1155ms   | 1.08x | 0             |
+| C    | Large repo (three.js)     |         7318ms  |         23253ms   | 3.18x | 0             |
+| D    | Mixed git+npm             |          908ms  |          1251ms   | 1.38x | 0             |
+| E    | Specific tag (#4.3.4)     |          285ms  |           480ms   | 1.68x | 0             |
 
-## Key Findings
+### Key findings
 
-1. **Zero git CLI fallbacks** across all tests — confirmed via `strace -f -e trace=execve`
-2. **Large repos are faster**: three.js (Test C) is 29% faster with ziggit despite being a debug build
-   - Stock bun avg: 30.0s → Ziggit bun avg: 21.3s
-   - This suggests ziggit's native git implementation has significantly less overhead for large repos
-3. **Small repos show expected debug overhead**: 1.5-2.2x slower, consistent with debug+ASan build penalty
-4. **All tests pass**: every install completed successfully with correct dependency resolution
+1. **Zero git CLI fallbacks** across all tests — verified via `strace -f -e trace=execve`. No `execve("git", ...)` calls detected.
+2. **Debug build overhead:** The ziggit bun is a debug build with AddressSanitizer and full debug symbols (1.3GB vs 99MB). Expected overhead is 3-5x for CPU-bound operations.
+3. **Test B (4 git deps) shows only 1.08x ratio** — close to parity even with debug overhead, because network latency dominates.
+4. **Test C (three.js) shows 3.18x** — large repo checkout is CPU-intensive (many files to write), so debug overhead is more visible.
+5. **All tests passed** — no errors or failures on any test.
 
-## Raw Timing Data
+## Raw timing data
 
-### Test A — 1 git dep (debug)
+### Stock Bun
 ```
-Stock:  347ms, 314ms, 293ms  (avg: 318ms)
-Ziggit: 580ms, 503ms, 453ms  (avg: 512ms)
-```
-
-### Test B — 4 git deps (debug, chalk, semver, express)
-```
-Stock:  795ms, 850ms, 668ms  (avg: 771ms)
-Ziggit: 1112ms, 1120ms, 1133ms  (avg: 1122ms)
+Test A (1 git dep):       434ms, 230ms, 122ms  → avg 262ms
+Test B (4 git deps):      790ms, 959ms, 1467ms → avg 1072ms
+Test C (three.js):        8255ms, 6382ms        → avg 7318ms
+Test D (mixed git+npm):   1201ms, 441ms, 1082ms → avg 908ms
+Test E (tag #4.3.4):      320ms, 312ms, 223ms   → avg 285ms
 ```
 
-### Test C — Large repo (three.js)
+### Ziggit Bun (debug build)
 ```
-Stock:  31888ms, 28961ms, 29208ms  (avg: 30019ms)
-Ziggit: 37060ms, 13388ms, 13440ms  (avg: 21296ms)
-```
-Note: Ziggit run 1 was slower (cold JIT/compile), but runs 2-3 were 2.2x faster than stock.
-
-### Test D — Mixed (2 git + 2 npm)
-```
-Stock:  508ms, 776ms, 442ms  (avg: 575ms)
-Ziggit: 1294ms, 1222ms, 1233ms  (avg: 1250ms)
+Test A (1 git dep):       539ms, 425ms, 501ms   → avg 488ms
+Test B (4 git deps):      1241ms, 1176ms, 1049ms → avg 1155ms
+Test C (three.js):        33344ms, 13163ms       → avg 23253ms
+Test D (mixed git+npm):   1305ms, 1233ms, 1216ms → avg 1251ms
+Test E (tag #4.3.4):      447ms, 570ms, 423ms   → avg 480ms
 ```
 
-### Test E — Specific tag (debug#4.3.4)
+## Test configurations
+
+### Test A — Small (1 git dep)
+```json
+{"name":"test-a","dependencies":{"debug":"git+https://github.com/debug-js/debug.git"}}
 ```
-Stock:  352ms, 353ms, 148ms  (avg: 284ms)
-Ziggit: 426ms, 614ms, 480ms  (avg: 507ms)
+
+### Test B — Multiple git deps
+```json
+{"name":"test-b","dependencies":{
+  "debug":"git+https://github.com/debug-js/debug.git",
+  "chalk":"git+https://github.com/chalk/chalk.git",
+  "semver":"git+https://github.com/npm/node-semver.git",
+  "express":"git+https://github.com/expressjs/express.git"
+}}
 ```
 
-## Strace Validation
+### Test C — Large repo (many files)
+```json
+{"name":"test-c","dependencies":{"three":"git+https://github.com/mrdoob/three.js.git"}}
+```
 
-All tests verified with `strace -f -e trace=execve`:
-- Test A: `grep -c '"git"' strace-testA.txt` → **0**
-- Test B: `grep -c '"git"' strace-testB.txt` → **0**
-- Test C: `grep -c '"git"' strace-testC.txt` → **0**
-- Test D: `grep -c '"git"' strace-testD.txt` → **0**
-- Test E: `grep -c '"git"' strace-testE.txt` → **0**
+### Test D — Mixed (git + npm)
+```json
+{"name":"test-d","dependencies":{
+  "debug":"git+https://github.com/debug-js/debug.git",
+  "lodash":"^4.17.21",
+  "express":"^4.18.2",
+  "chalk":"git+https://github.com/chalk/chalk.git"
+}}
+```
 
-## Library Micro-Benchmarks (ziggit lib vs git CLI)
+### Test E — Specific commit/tag
+```json
+{"name":"test-e","dependencies":{
+  "debug":"git+https://github.com/debug-js/debug.git#4.3.4"
+}}
+```
 
-Using `lib_bench` (ReleaseFast build), 20 iterations each on local bare repos:
+## Strace verification
 
-| Repo | findCommit (rev-parse) | cloneBare | Full workflow | 
-|------|----------------------|-----------|---------------|
-| debug | 219μs vs 1332μs (**6.0x**) | 268μs vs 5648μs (**21.0x**) | 513μs vs 13644μs (**26.5x**) |
-| chalk | 194μs vs 1284μs (**6.6x**) | 253μs vs 4995μs (**19.7x**) | 487μs vs 14797μs (**30.3x**) |
-| node-semver | 200μs vs 1269μs (**6.3x**) | 297μs vs 6468μs (**21.7x**) | 577μs vs 19200μs (**33.2x**) |
-| express | 157μs vs 1306μs (**8.3x**) | 248μs vs 7804μs (**31.4x**) | 489μs vs 25824μs (**52.8x**) |
+All tests verified with `strace -f -e trace=execve`. The only `execve` calls containing "git" are the bun-debug binary path itself (which contains "ziggit" in its path). Zero calls to `/usr/bin/git` or any git CLI binary.
 
-The ziggit library is **26-53x faster** than git CLI for the full bun-install workflow (clone + resolve + checkout).
+## Methodology
 
-## Notes
-
-- Ziggit bun is a **DEBUG build** (1.3GB with ASan and syscall tracing). A release build would be significantly faster.
-- Stock bun is a release-optimized build (95MB).
-- Debug overhead is typically 3-5x, but for git-heavy workloads the native ziggit implementation compensates for this.
-- The three.js result (0.71x ratio) strongly suggests a release ziggit build would be substantially faster than stock bun for large git dependencies.
+- Each test: cold cache (`rm -rf node_modules bun.lock ~/.bun/install/cache`)
+- Tests A, B, D, E: 3 runs each; Test C: 2 runs (large repo)
+- `timeout 180` per run
+- `--no-progress` flag to suppress UI output
+- Same host, sequential execution

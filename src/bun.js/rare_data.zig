@@ -129,9 +129,24 @@ pub const ProxyEnvStorage = struct {
     };
 
     pub fn slot(self: *ProxyEnvStorage, name: []const u8) ?Slot {
+        // On Windows the env.map is case-insensitive (CaseInsensitiveASCII-
+        // StringArrayHashMap) — map.put("HTTP_PROXY", ...) and
+        // map.put("http_proxy", ...) write the same entry. If we tracked
+        // refs in separate case-variant slots, one slot's value would leak
+        // and syncInto would replay the stale one into the worker's map.
+        // Canonicalize both cases to the uppercase slot on Windows; the
+        // lowercase slots stay null. Posix keeps both — its map and its
+        // getHttpProxy lookup are case-sensitive.
+        const eql = if (comptime bun.Environment.isWindows)
+            bun.strings.eqlCaseInsensitiveASCIIICheckLength
+        else
+            bun.strings.eql;
         inline for (@typeInfo(ProxyEnvStorage).@"struct".fields) |f| {
             if (comptime f.type == ?*RefCountedEnvValue) {
-                if (bun.strings.eql(name, f.name)) {
+                // Uppercase fields are declared first. On Windows the
+                // case-insensitive eql matches the uppercase field for
+                // either input case and returns before reaching lowercase.
+                if (eql(name, f.name)) {
                     return .{ .key = f.name, .ptr = &@field(self, f.name) };
                 }
             }

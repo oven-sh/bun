@@ -67,6 +67,19 @@ All tests verified with `strace -f -e trace=execve`:
 - Test D: `grep -c '"git"' strace-testD.txt` → **0**
 - Test E: `grep -c '"git"' strace-testE.txt` → **0**
 
+## Library Micro-Benchmarks (ziggit lib vs git CLI)
+
+Using `lib_bench` (ReleaseFast build), 20 iterations each on local bare repos:
+
+| Repo | findCommit (rev-parse) | cloneBare | Full workflow | 
+|------|----------------------|-----------|---------------|
+| debug | 219μs vs 1332μs (**6.0x**) | 268μs vs 5648μs (**21.0x**) | 513μs vs 13644μs (**26.5x**) |
+| chalk | 194μs vs 1284μs (**6.6x**) | 253μs vs 4995μs (**19.7x**) | 487μs vs 14797μs (**30.3x**) |
+| node-semver | 200μs vs 1269μs (**6.3x**) | 297μs vs 6468μs (**21.7x**) | 577μs vs 19200μs (**33.2x**) |
+| express | 157μs vs 1306μs (**8.3x**) | 248μs vs 7804μs (**31.4x**) | 489μs vs 25824μs (**52.8x**) |
+
+The ziggit library is **26-53x faster** than git CLI for the full bun-install workflow (clone + resolve + checkout).
+
 ## Notes
 
 - Ziggit bun is a **DEBUG build** (1.3GB with ASan and syscall tracing). A release build would be significantly faster.

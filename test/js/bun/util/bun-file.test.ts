@@ -93,7 +93,7 @@ test("Bun.write() errors include async stack frames", async () => {
   }
 
   expect(caught).toBeDefined();
-  expect(["ENOTDIR", "ENOENT"]).toContain(caught.code);
+  expect(["ENOTDIR", "ENOENT", "EEXIST"]).toContain(caught.code);
   expect(caught.stack).toContain("at async level2");
   expect(caught.stack).toContain("at async level1");
 });

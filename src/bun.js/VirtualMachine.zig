@@ -664,24 +664,14 @@ pub fn uncaughtException(this: *jsc.VirtualMachine, globalObject: *JSGlobalObjec
     }
 
     if (this.is_handling_uncaught_exception) {
-        if (this.worker != null) {
-            // Worker: dispatch error to parent and terminate the worker thread.
-            // onUnhandledRejection for workers calls exitAndDeinit (noreturn).
-            this.exit_handler.exit_code = 1;
-            this.onUnhandledRejection(this, globalObject, err);
-            return true;
-        }
         this.runErrorHandler(err, null);
         bun.api.node.process.exit(globalObject, 7);
         // For the main thread, process.exit() is noreturn (calls globalExit).
+        // For workers, process.exit() sets termination flags and returns,
+        // so the worker event loop in spin() can shut down gracefully.
         return true;
     }
     if (this.exit_on_uncaught_exception) {
-        if (this.worker != null) {
-            this.exit_handler.exit_code = 1;
-            this.onUnhandledRejection(this, globalObject, err);
-            return true;
-        }
         this.runErrorHandler(err, null);
         bun.api.node.process.exit(globalObject, 1);
         return true;

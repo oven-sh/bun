@@ -891,6 +891,70 @@ pub fn jsAddServerName(global: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
     }
     return global.throw("Expected a Listener instance", .{});
 }
+
+const ticket_key_size = 48;
+
+pub fn getTicketKeys(this: *Listener, global: *jsc.JSGlobalObject) bun.JSError!JSValue {
+    if (!this.ssl) {
+        return global.throwInvalidArguments("getTicketKeys requires TLS", .{});
+    }
+    const ctx = this.socket_context orelse return global.throw("Server is not listening", .{});
+    const ssl_ctx: *BoringSSL.SSL_CTX = @ptrCast(ctx.getNativeHandle(true));
+
+    var buf: [ticket_key_size]u8 = undefined;
+    if (BoringSSL.SSL_CTX_get_tlsext_ticket_keys(ssl_ctx, &buf, ticket_key_size) != 1) {
+        return global.throw("Failed to get ticket keys", .{});
+    }
+    return jsc.ArrayBuffer.createBuffer(global, &buf);
+}
+
+pub fn jsGetTicketKeys(global: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
+    jsc.markBinding(@src());
+
+    const arguments = callframe.arguments_old(1);
+    if (arguments.len < 1) {
+        return global.throwNotEnoughArguments("getTicketKeys", 1, arguments.len);
+    }
+    if (arguments.ptr[0].as(Listener)) |this| {
+        return this.getTicketKeys(global);
+    }
+    return global.throw("Expected a Listener instance", .{});
+}
+
+pub fn setTicketKeys(this: *Listener, global: *jsc.JSGlobalObject, keys: JSValue) bun.JSError!JSValue {
+    if (!this.ssl) {
+        return global.throwInvalidArguments("setTicketKeys requires TLS", .{});
+    }
+    const ctx = this.socket_context orelse return global.throw("Server is not listening", .{});
+    const ssl_ctx: *BoringSSL.SSL_CTX = @ptrCast(ctx.getNativeHandle(true));
+
+    const buffer = keys.asArrayBuffer(global) orelse {
+        return global.throwInvalidArguments("keys must be a Buffer or TypedArray", .{});
+    };
+    const slice = buffer.byteSlice();
+    if (slice.len != ticket_key_size) {
+        return global.throw("Session ticket keys must be exactly 48 bytes", .{});
+    }
+
+    if (BoringSSL.SSL_CTX_set_tlsext_ticket_keys(ssl_ctx, slice.ptr, ticket_key_size) != 1) {
+        return global.throw("Failed to set ticket keys", .{});
+    }
+    return .js_undefined;
+}
+
+pub fn jsSetTicketKeys(global: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
+    jsc.markBinding(@src());
+
+    const arguments = callframe.arguments_old(2);
+    if (arguments.len < 2) {
+        return global.throwNotEnoughArguments("setTicketKeys", 2, arguments.len);
+    }
+    if (arguments.ptr[0].as(Listener)) |this| {
+        return this.setTicketKeys(global, arguments.ptr[1]);
+    }
+    return global.throw("Expected a Listener instance", .{});
+}
+
 pub const log = Output.scoped(.Listener, .visible);
 
 fn isValidPipeName(pipe_name: []const u8) bool {

@@ -63,6 +63,7 @@
 /test.zig
 /testdir
 /build/
+cmake/sources
 build.ninja
 bun-binary
 bun-mimalloc

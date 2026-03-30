@@ -1,6 +1,7 @@
-import { test, expect } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+// https://github.com/oven-sh/bun/issues/21081
+import { expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "fs";
+import { bunEnv, bunExe } from "harness";
 
 function getProcessVoluntaryCtxSwitches(pid: number): number {
   let total = 0;

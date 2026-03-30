@@ -86,6 +86,19 @@ Test E (tag #4.3.4):      447ms, 570ms, 423ms   → avg 480ms
 
 All tests verified with `strace -f -e trace=execve`. The only `execve` calls containing "git" are the bun-debug binary path itself (which contains "ziggit" in its path). Zero calls to `/usr/bin/git` or any git CLI binary.
 
+## Library micro-benchmarks (ziggit vs git CLI)
+
+Direct library-level benchmarks using `lib_bench` (ReleaseFast build, 20 iterations each):
+
+| Repo        | findCommit (ziggit) | findCommit (git CLI) | Speedup | Full workflow (ziggit) | Full workflow (git CLI) | Speedup |
+|-------------|--------------------:|---------------------:|--------:|-----------------------:|------------------------:|--------:|
+| debug       |              220μs  |             1310μs   |   5.9x  |                 519μs  |              13320μs    |  25.6x  |
+| chalk       |              183μs  |             1266μs   |   6.9x  |                 495μs  |              14261μs    |  28.8x  |
+| node-semver |              158μs  |             1249μs   |   7.9x  |                 490μs  |              18654μs    |  38.0x  |
+| express     |              162μs  |             1233μs   |   7.6x  |                 505μs  |              24644μs    |  48.8x  |
+
+**Summary:** ziggit library calls are **25-49x faster** than spawning git CLI for the full bun-install workflow (clone + find commit + checkout).
+
 ## Methodology
 
 - Each test: cold cache (`rm -rf node_modules bun.lock ~/.bun/install/cache`)

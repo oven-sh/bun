@@ -836,7 +836,7 @@ Server.prototype.getTicketKeys = function () {
   if (this._handle) {
     return _getTicketKeys(this._handle);
   }
-  throw $ERR_INVALID_ARG_VALUE("Server is not listening");
+  throw $ERR_SERVER_NOT_RUNNING();
 };
 
 Server.prototype.setTicketKeys = function (keys) {

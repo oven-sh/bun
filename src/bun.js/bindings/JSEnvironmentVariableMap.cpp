@@ -74,6 +74,7 @@ JSC_DEFINE_CUSTOM_SETTER(jsSetterEnvironmentVariable, (JSGlobalObject * globalOb
 JSC_DEFINE_CUSTOM_GETTER(jsGetterProxyEnvironmentVariable, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))
 {
     VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = jsDynamicCast<JSObject*>(JSValue::decode(thisValue));
     if (!thisObject) [[unlikely]]
         return JSValue::encode(jsUndefined());
@@ -83,7 +84,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsGetterProxyEnvironmentVariable, (JSGlobalObject * glo
     if (!Bun__getEnvValue(globalObject, &name, &value)) {
         return JSValue::encode(jsUndefined());
     }
-    return JSValue::encode(jsString(vm, Zig::toStringCopy(value)));
+    RELEASE_AND_RETURN(scope, JSValue::encode(jsString(vm, Zig::toStringCopy(value))));
 }
 
 JSC_DEFINE_CUSTOM_SETTER(jsSetterProxyEnvironmentVariable, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, PropertyName propertyName))

@@ -1,5 +1,5 @@
-import { expect, test } from "bun:test";
 import { spawnSync } from "bun";
+import { expect, test } from "bun:test";
 import { mkdirSync, readFileSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";

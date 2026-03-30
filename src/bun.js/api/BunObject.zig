@@ -1451,8 +1451,7 @@ pub const EnvironmentVariables = struct {
     /// bytes while a worker still holds a ref.
     pub export fn Bun__setEnvValue(globalObject: *jsc.JSGlobalObject, name: *ZigString, value: *ZigString) void {
         const vm = globalObject.bunVM();
-        const allocator = vm.allocator;
-        var name_slice = name.toSlice(allocator);
+        var name_slice = name.toSlice(bun.default_allocator);
         defer name_slice.deinit();
 
         const storage = &vm.rareData().proxy_env_storage;
@@ -1470,7 +1469,7 @@ pub const EnvironmentVariables = struct {
             return;
         }
 
-        var value_slice = value.toSlice(allocator);
+        var value_slice = value.toSlice(bun.default_allocator);
         defer value_slice.deinit();
         const new_val = jsc.RareData.RefCountedEnvValue.create(value_slice.slice());
         slot.ptr.* = new_val;

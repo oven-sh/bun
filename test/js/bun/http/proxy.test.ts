@@ -971,7 +971,16 @@ describe.concurrent("NO_PROXY with explicit proxy option", () => {
           process.exit(0);
         `,
       ],
-      env: bunEnv,
+      // Strip inherited NO_PROXY/no_proxy so the first fetch reliably
+      // hits the dead proxy. Setting to "" wouldn't work — isNoProxy
+      // checks lowercase first and an empty no_proxy would mask the
+      // runtime-set uppercase NO_PROXY.
+      env: (() => {
+        const e = { ...bunEnv };
+        delete e.NO_PROXY;
+        delete e.no_proxy;
+        return e;
+      })(),
       stdout: "pipe",
       stderr: "pipe",
     });

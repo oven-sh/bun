@@ -543,10 +543,271 @@ describe("jest-extended", () => {
   // test("toContainValues()")
   // test("toContainAllValues()")
   // test("toContainAnyValues()")
-  // test("toContainEntry()")
-  // test("toContainEntries()")
-  // test("toContainAllEntries()")
-  // test("toContainAnyEntries()")
+
+  test("toContainEntry", () => {
+    const o = {
+      a: [{ a: "hii", b: "hello" }],
+      b: "bar",
+      c: "baz",
+      d: [1, 2],
+      e: 100,
+      f: 20n,
+      g: 20.5,
+      h: "",
+    };
+    expect(o).toContainEntry(["a", [{ a: "hii", b: "hello" }]]);
+    expect(o).toContainEntry(["b", "bar"]);
+    expect(o).toContainEntry(["c", "baz"]);
+    expect(o).not.toContainEntry(["a", "qux"]);
+    expect(o).not.toContainEntry(["b", "barl"]);
+    expect(o).toContainEntry(["d", [1, 2]]);
+    expect(o).toContainEntry(["e", 100]);
+    expect(o).toContainEntry(["f", 20n]);
+    expect(o).toContainEntry(["g", 20.5]);
+
+    const shallow = {
+      hello: "world",
+      foo: 0,
+      bar: false,
+    };
+    const deep = {
+      message: shallow,
+      donald: "duck",
+    };
+    const deepArray = {
+      message: [shallow],
+      donald: "duck",
+    };
+    expect(deep).toContainEntry(["message", { hello: "world", foo: 0, bar: false }]);
+    expect(deepArray).toContainEntry(["message", [shallow]]);
+  });
+
+  test("toContainEntries", () => {
+    const obj = { a: "foo", b: "bar", c: "baz" };
+    expect(obj).toContainEntries([["a", "foo"]]);
+    expect(obj).toContainEntries([
+      ["c", "baz"],
+      ["b", "bar"],
+      ["a", "foo"],
+    ]);
+
+    expect(obj).not.toContainEntries([
+      ["b", "qux"],
+      ["a", "foo"],
+    ]);
+
+    const o = {
+      a: [{ a: "hii", b: "hello" }],
+      b: "bar",
+      c: "baz",
+      d: [1, 2],
+      e: 100,
+      f: 20n,
+      g: 20.5,
+      h: "",
+    };
+
+    expect(o).toContainEntries([
+      ["a", [{ a: "hii", b: "hello" }]],
+      ["c", "baz"],
+    ]);
+    expect(o).toContainEntries([
+      ["b", "bar"],
+      ["c", "baz"],
+    ]);
+    expect(o).toContainEntries([["c", "baz"]]);
+    expect(o).not.toContainEntries([
+      ["b", "invalid"],
+      ["c", "baz"],
+    ]);
+    expect(o).not.toContainEntries([
+      ["b", "barl"],
+      ["c", "baz"],
+    ]);
+    expect(o).toContainEntries([
+      ["d", [1, 2]],
+      ["c", "baz"],
+    ]);
+    expect(o).toContainEntries([
+      ["e", 100],
+      ["c", "baz"],
+    ]);
+    expect(o).toContainEntries([
+      ["f", 20n],
+      ["c", "baz"],
+    ]);
+    expect(o).toContainEntries([
+      ["g", 20.5],
+      ["c", "baz"],
+    ]);
+    expect(o).toContainEntries([
+      ["g", 20.5],
+      ["g", 20.5],
+      ["g", 20.5],
+      ["g", 20.5],
+      ["g", 20.5],
+      ["g", 20.5],
+    ]);
+
+    const shallow = {
+      hello: "world",
+      foo: 0,
+      bar: false,
+    };
+    const deep = {
+      message: shallow,
+      donald: "duck",
+    };
+    const deepArray = {
+      message: [shallow],
+      donald: "duck",
+    };
+    expect(deep).toContainEntries([
+      ["message", { hello: "world", foo: 0, bar: false }],
+      ["donald", "duck"],
+    ]);
+    expect(deepArray).toContainEntries([["message", [shallow]]]);
+  });
+
+  test("toContainAllEntries", () => {
+    const obj = { a: "foo", b: "bar", c: "baz" };
+    expect(obj).toContainAllEntries([
+      ["a", "foo"],
+      ["b", "bar"],
+      ["c", "baz"],
+    ]);
+
+    expect(obj).not.toContainAllEntries([
+      ["a", "foo"],
+      ["b", "baz"],
+      ["c", "bar"],
+    ]);
+
+    expect(obj).not.toContainAllEntries([
+      ["a", "foo"],
+      ["b", "baz"],
+      ["b", "baz"],
+    ]);
+
+    expect(obj).not.toContainAllEntries([
+      ["b", "qux"],
+      ["a", "foo"],
+    ]);
+
+    const o = {
+      a: [{ a: "hii", b: "hello" }],
+      b: "bar",
+      c: "baz",
+      d: [1, 2],
+      e: 100,
+      f: 20n,
+      g: 20.5,
+      h: "",
+    };
+
+    expect(o).toContainAllEntries([
+      ["a", [{ a: "hii", b: "hello" }]],
+      ["b", "bar"],
+      ["c", "baz"],
+      ["d", [1, 2]],
+      ["e", 100],
+      ["f", 20n],
+      ["g", 20.5],
+      ["h", ""],
+    ]);
+    expect(o).not.toContainAllEntries([
+      ["a", [{ a: "hii", b: "hello" }]],
+      ["b", "bar"],
+      ["c", "baz"],
+      ["d", [1, 2]],
+      ["e", 100],
+      ["f", 20n],
+      ["g", 20.5],
+      //one entry is missing here
+    ]);
+
+    const shallow = {
+      hello: "world",
+      foo: 0,
+      bar: false,
+    };
+    const deep = {
+      message: shallow,
+      donald: "duck",
+    };
+    const deepArray = {
+      message: [shallow],
+      donald: "duck",
+    };
+    expect(deep).toContainAllEntries([
+      ["message", { hello: "world", foo: 0, bar: false }],
+      ["donald", "duck"],
+    ]);
+    expect(deepArray).toContainAllEntries([
+      ["message", [shallow]],
+      ["donald", "duck"],
+    ]);
+  });
+
+  test("toContainAnyEntries", () => {
+    const obj = { a: "foo", b: "bar", c: "baz" };
+    expect(obj).toContainAnyEntries([
+      ["c", "bar"],
+      ["b", "bax"],
+      ["a", "foo"],
+    ]);
+
+    expect(obj).not.toContainAnyEntries([
+      ["b", "qux"],
+      ["a", "base"],
+    ]);
+
+    const o = {
+      a: [{ a: "hii", b: "hello" }],
+      b: "bar",
+      c: "baz",
+      d: [1, 2],
+      e: 100,
+      f: 20n,
+      g: 20.5,
+      h: "",
+    };
+
+    expect(o).toContainAnyEntries([
+      ["a", [{ a: "hii", b: "hello" }]],
+      ["b", "bar"],
+      ["c", "baz"],
+      ["d", [1, 2]],
+      ["e", 100],
+      ["f", 20n],
+      ["g", 20.5],
+      ["h", ""],
+    ]);
+    expect(o).not.toContainAnyEntries([["a", "hello"]]);
+
+    const shallow = {
+      hello: "world",
+      foo: 0,
+      bar: false,
+    };
+    const deep = {
+      message: shallow,
+      donald: "duck",
+    };
+    const deepArray = {
+      message: [shallow],
+      donald: "duck",
+    };
+    expect(deep).toContainAnyEntries([
+      ["message", { hello: "world", foo: 0, bar: false }],
+      ["donald", "nothing"],
+    ]);
+    expect(deepArray).toContainAnyEntries([
+      ["donald", "one"],
+      ["message", [shallow]],
+    ]);
+  });
+
   // test("toBeExtensible()")
   // test("toBeFrozen()")
   // test("toBeSealed()")

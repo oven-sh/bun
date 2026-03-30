@@ -660,7 +660,7 @@ pub fn onProcessExit(this: *Subprocess, process: *Process, status: bun.spawn.Sta
                 switch (status) {
                     .exited => |exited| promise.asAnyPromise().?.resolve(globalThis, JSValue.jsNumber(exited.code)) catch {}, // TODO: properly propagate exception upwards
                     .err => |err| {
-                        promise.asAnyPromise().?.rejectWithAsyncStack(globalThis, err.toJS(globalThis) catch return) catch {};
+                        promise.asAnyPromise().?.rejectWithAsyncStack(globalThis, err.toJS(globalThis) catch return) catch {}; // TODO: properly propagate exception upwards
                     },
                     .signaled => promise.asAnyPromise().?.resolve(globalThis, JSValue.jsNumber(128 +% @intFromEnum(status.signaled))) catch {}, // TODO: properly propagate exception upwards
                     else => {

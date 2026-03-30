@@ -311,6 +311,15 @@ pub const Value = union(Tag) {
             return js_value;
         }
 
+        /// Like `toJS` but populates the error's stack trace with async frames
+        /// from the given promise's await chain. Use when rejecting from a
+        /// fetch/body callback at the top of the event loop.
+        pub fn toJSWithAsyncStack(this: *@This(), globalObject: *jsc.JSGlobalObject, promise: *jsc.JSPromise) jsc.JSValue {
+            const js_value = this.toJS(globalObject);
+            js_value.attachAsyncStackFromPromise(globalObject, promise);
+            return js_value;
+        }
+
         pub fn dupe(this: *const @This(), globalObject: *jsc.JSGlobalObject) @This() {
             var value = this.*;
             switch (this.*) {
@@ -899,7 +908,7 @@ pub const Value = union(Tag) {
 
                 if (promise_value.asAnyPromise()) |promise| {
                     if (promise.status() == .pending) {
-                        try promise.reject(global, this.Error.toJS(global));
+                        try promise.rejectWithAsyncStack(global, this.Error.toJS(global));
                     }
                 }
             }

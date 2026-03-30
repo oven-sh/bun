@@ -45,3 +45,62 @@ test("writer.end() should not close the fd if it does not own the fd", async () 
     expect(await Bun.file(filename).text()).toBe("");
   }
 });
+
+test("Bun.file() read errors include async stack frames", async () => {
+  async function level2() {
+    await Bun.file("/nonexistent-path/does-not-exist.txt").text();
+  }
+  async function level1() {
+    await level2();
+  }
+
+  let caught: any;
+  try {
+    await level1();
+  } catch (e) {
+    caught = e;
+  }
+
+  expect(caught).toBeDefined();
+  expect(caught.code).toBe("ENOENT");
+  expect(caught.stack).toContain("at async level2");
+  expect(caught.stack).toContain("at async level1");
+});
+
+test("Bun.write() errors include async stack frames", async () => {
+  async function level2() {
+    await Bun.write("/nonexistent-path/cannot-write.txt", "data");
+  }
+  async function level1() {
+    await level2();
+  }
+
+  let caught: any;
+  try {
+    await level1();
+  } catch (e) {
+    caught = e;
+  }
+
+  expect(caught).toBeDefined();
+  expect(caught.code).toBe("ENOENT");
+  expect(caught.stack).toContain("at async level2");
+  expect(caught.stack).toContain("at async level1");
+});
+
+test("Bun.file().arrayBuffer() errors include async stack frames", async () => {
+  async function caller() {
+    await Bun.file("/nonexistent-path/x.bin").arrayBuffer();
+  }
+
+  let caught: any;
+  try {
+    await caller();
+  } catch (e) {
+    caught = e;
+  }
+
+  expect(caught).toBeDefined();
+  expect(caught.code).toBe("ENOENT");
+  expect(caught.stack).toContain("at async caller");
+});

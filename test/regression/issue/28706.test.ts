@@ -65,6 +65,7 @@ test("POST should not be silently retried on keep-alive disconnect", async () =>
   const sseRes = await fetch(`${base}/sse`, { method: "POST" });
 
   const sns: number[] = [];
+  let streamErrored = false;
   try {
     for await (const chunk of sseRes.body!) {
       const text = new TextDecoder().decode(chunk).trim();
@@ -73,12 +74,14 @@ test("POST should not be silently retried on keep-alive disconnect", async () =>
       }
     }
   } catch {
-    // Expected: connection closed error
+    streamErrored = true;
   }
 
   // Wait for server socket close event
   await allDone;
 
+  // The body stream must error from the truncated chunked response
+  expect(streamErrored).toBe(true);
   // With the bug: the client retries POST, server sees 3 requests
   // (login + sse + retried sse), and chunks from 2 different SNs appear.
   // With the fix: server sees only 2 requests (login + sse), one SN.
@@ -88,9 +91,9 @@ test("POST should not be silently retried on keep-alive disconnect", async () =>
 });
 
 // Verify that GET requests on keep-alive connections are still retried
+// by closing the socket after parsing the request but before sending a response
 test("GET should still be retried on keep-alive disconnect", async () => {
-  let requestCount = 0;
-  const { promise: setupSocketClosed, resolve: onSetupSocketClosed } = Promise.withResolvers<void>();
+  let dataAttempts = 0;
 
   await using server = Bun.listen({
     hostname: "127.0.0.1",
@@ -105,21 +108,21 @@ test("GET should still be retried on keep-alive disconnect", async () => {
 
         const request = socket.data.buffer;
         socket.data.buffer = "";
-        requestCount++;
 
         if (request.startsWith("GET /setup")) {
           socket.write("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: keep-alive\r\n\r\nok");
-          // Close the connection after a brief delay so client fully receives
-          // the response before the socket close event fires.
-          setTimeout(() => socket.end(), 50);
         } else if (request.startsWith("GET /data")) {
+          dataAttempts++;
+          if (dataAttempts === 1) {
+            // Close without responding — forces client to retry via allow_retry
+            socket.end();
+            return;
+          }
           const body = "hello";
           socket.write(`HTTP/1.1 200 OK\r\nContent-Length: ${body.length}\r\n\r\n${body}`);
         }
       },
-      close() {
-        onSetupSocketClosed();
-      },
+      close() {},
       error() {},
     },
     data: { buffer: "" },
@@ -131,13 +134,11 @@ test("GET should still be retried on keep-alive disconnect", async () => {
   const setupRes = await fetch(`${base}/setup`);
   expect(await setupRes.text()).toBe("ok");
 
-  // Wait for the server to actually close the socket (deterministic signal)
-  await setupSocketClosed;
-
-  // GET on stale connection — should be retried transparently
+  // GET on keep-alive connection — server closes without responding on first
+  // attempt, client retries on fresh connection, second attempt succeeds
   const dataRes = await fetch(`${base}/data`);
   expect(await dataRes.text()).toBe("hello");
 
-  // GET should be retried, so server sees setup + (possibly failed attempt) + successful retry
-  expect(requestCount).toBeGreaterThanOrEqual(2);
+  // Exactly 2 attempts: the closed one + the successful retry
+  expect(dataAttempts).toBe(2);
 });

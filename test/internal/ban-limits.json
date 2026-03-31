@@ -35,7 +35,7 @@
   "std.debug.print": 0,
   "std.enums.tagName(": 2,
   "std.fs.Dir": 164,
-  "std.fs.File": 90,
+  "std.fs.File": 96,
   "std.fs.cwd": 109,
   "std.fs.openFileAbsolute": 8,
   "std.log": 1,

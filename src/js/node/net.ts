@@ -151,6 +151,7 @@ const SocketHandlers: SocketHandler = {
     detachSocket(self);
     SocketEmitEndNT(self, err);
     self.data = null;
+    if (!self.destroyed) process.nextTick(destroyNT, self);
   },
   data(socket, buffer) {
     const { data: self } = socket;
@@ -320,6 +321,7 @@ const ServerHandlers: SocketHandler<NetSocket> = {
         SocketEmitEndNT(data, err);
         data.data = null;
         socket[owner_symbol] = null;
+        if (!data.destroyed) process.nextTick(destroyNT, data);
       }
     }
   },
@@ -542,11 +544,11 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     if (err) $debug(err);
     if (self[kclosed]) return;
     self[kclosed] = true;
-    // TODO: should we be doing something with err?
     self[kended] = true;
     if (!self.allowHalfOpen) self.write = writeAfterFIN;
     self.push(null);
     self.read(0);
+    if (!self.destroyed) process.nextTick(destroyNT, self);
   },
   handshake(socket, success, verifyError) {
     $debug("Bun.Socket handshake");

@@ -411,9 +411,7 @@ function ClientRequest(input, options, cb) {
           try {
             setIsNextIncomingMessageHTTPS(isHTTPS);
             setIsNextIncomingMessageAuthorized(
-              isHTTPS &&
-                this[kTls]?.rejectUnauthorized !== false &&
-                process.env.NODE_TLS_REJECT_UNAUTHORIZED !== "0",
+              isHTTPS && this[kTls]?.rejectUnauthorized !== false && process.env.NODE_TLS_REJECT_UNAUTHORIZED !== "0",
             );
             res = this.res = new IncomingMessage(response, {
               [typeSymbol]: NodeHTTPIncomingRequestType.FetchResponse,

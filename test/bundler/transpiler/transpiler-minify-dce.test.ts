@@ -1,4 +1,4 @@
-import { test, expect, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 
 describe("Bun.Transpiler", () => {
   describe("minifySyntax as top-level option", () => {

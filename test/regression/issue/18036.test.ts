@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { existsSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -12,19 +12,17 @@ describe.skipIf(process.platform !== "linux")("statx ENOSYS fallback for old ker
   const blockStatxSrc = path.join(import.meta.dir, "18036", "block_statx.c");
   const blockStatxBin = path.join(tmpdir(), "block_statx_18036");
 
+  beforeAll(() => {
+    const result = Bun.spawnSync({
+      cmd: ["cc", "-o", blockStatxBin, blockStatxSrc],
+    });
+    if (result.exitCode !== 0) throw new Error("Failed to compile block_statx: " + result.stderr.toString());
+  });
+
   afterAll(() => {
     try {
       unlinkSync(blockStatxBin);
     } catch {}
-  });
-
-  test("compile block_statx helper", () => {
-    const result = Bun.spawnSync({
-      cmd: ["cc", "-o", blockStatxBin, blockStatxSrc],
-    });
-    expect(result.stderr.toString()).toBe("");
-    expect(existsSync(blockStatxBin)).toBe(true);
-    expect(result.exitCode).toBe(0);
   });
 
   test("transpile and run TypeScript with statx blocked", async () => {

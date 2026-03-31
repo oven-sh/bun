@@ -67,6 +67,7 @@ if (val) {
     withEnv.exited,
   ]);
 
+  expect(withEnvStderr).not.toContain("TypeError: Expected CommonJS module to have a function wrapper");
   expect(withEnvStdout).toBe("found:bytecode-works\n");
   expect(withEnvExit).toBe(0);
 });

@@ -93,15 +93,17 @@ describe("system-wide bunfig.toml", () => {
 
   test("system→home config merge via readGlobalConfig path", async () => {
     // Exercise loadGlobalBunfig() via a package manager command.
-    // System config sets exact=true, home config sets dryRun=true.
+    // System config sets dryRun=true (prevents node_modules creation).
+    // Home config sets exact=true (doesn't affect dryRun).
+    // If system config is NOT loaded, dryRun won't be set and node_modules will be created.
     using dir = tempDir("system-bunfig-home-merge", {
       "system-bunfig.toml": `
 [install]
-exact = true
+dryRun = true
 `,
       "home-bunfig.toml": `
 [install]
-dryRun = true
+exact = true
 `,
       "package.json": `{ "name": "test-merge", "dependencies": {} }`,
     });
@@ -123,7 +125,8 @@ dryRun = true
 
     const [_stdout, _stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    // dryRun from home config means no node_modules created
+    // dryRun from system config means no node_modules created.
+    // This only passes if system config was actually loaded.
     expect(existsSync(join(String(dir), "node_modules"))).toBe(false);
     expect(exitCode).toBe(0);
   });

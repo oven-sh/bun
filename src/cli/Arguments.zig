@@ -251,6 +251,10 @@ fn loadSystemBunfig(allocator: std.mem.Allocator, ctx: Command.Context, comptime
 
     var config_buf: bun.PathBuffer = undefined;
     const result = getSystemConfigPath(&config_buf);
+    if (result.is_explicit and result.path == null) {
+        Output.errGeneric("BUN_SYSTEM_CONFIG path is too long", .{});
+        Global.exit(1);
+    }
     if (result.path) |path| {
         // Explicit BUN_SYSTEM_CONFIG should fail loudly; auto-discovered default is optional.
         try loadBunfig(allocator, !result.is_explicit, path, ctx, comptime cmd);

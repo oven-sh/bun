@@ -29,8 +29,7 @@ test("ServerResponse emits close event when client disconnects", async () => {
   try {
     const controller = new AbortController();
     const fetchPromise = fetch(`http://localhost:${port}`, { signal: controller.signal });
-    // Give the server a moment to receive the request, then abort
-    await Bun.sleep(50);
+    await requestStartedPromise;
     controller.abort();
     await fetchPromise.catch(() => {});
   } catch {

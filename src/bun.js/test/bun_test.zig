@@ -125,6 +125,10 @@ pub const BunTestPtr = bun.ptr.shared.WithOptions(*BunTest, .{
 pub const BunTestRoot = struct {
     gpa: std.mem.Allocator,
     active_file: BunTestPtr.Optional,
+    /// Set during BunTest.run() so that describe callbacks in parallel mode
+    /// can find their BunTest via cloneActiveFile() even after active_file
+    /// has been detached.
+    running_file: BunTestPtr.Optional = .initNull(),
 
     hook_scope: *DescribeScope,
 
@@ -170,15 +174,30 @@ pub const BunTestRoot = struct {
         this.active_file.deinit();
         this.active_file = .initNull();
     }
+    /// Detach the active file without nullifying its reporter.
+    /// Used for file parallelism: the file is removed from the active slot
+    /// (allowing another file to be loaded) but keeps its reporter alive
+    /// so that test results can still be reported while execution continues.
+    pub fn detachFile(this: *BunTestRoot) void {
+        group.begin(@src());
+        defer group.end();
+
+        bun.assert(this.active_file.get() != null);
+        this.active_file.deinit();
+        this.active_file = .initNull();
+    }
     pub fn getActiveFileUnlessInPreload(this: *BunTestRoot, vm: *jsc.VirtualMachine) ?*BunTest {
         if (vm.is_in_preload) {
             return null;
         }
-        return this.active_file.get();
+        return this.active_file.get() orelse this.running_file.get();
     }
     pub fn cloneActiveFile(this: *BunTestRoot) ?BunTestPtr {
         var clone = this.active_file.clone();
-        return clone.take();
+        if (clone.take()) |ptr| return ptr;
+        // Fallback: check running_file (set during BunTest.run() for parallel mode)
+        var running_clone = this.running_file.clone();
+        return running_clone.take();
     }
 
     pub const FirstLast = struct {
@@ -186,17 +205,27 @@ pub const BunTestRoot = struct {
         last: bool,
     };
 
-    pub fn onBeforePrint(this: *BunTestRoot) void {
-        if (this.active_file.get()) |active_file| {
-            if (active_file.reporter) |reporter| {
-                if (reporter.reporters.dots and reporter.last_printed_dot) {
-                    bun.Output.prettyError("<r>\n", .{});
-                    bun.Output.flush();
-                    reporter.last_printed_dot = false;
+    pub fn onBeforePrint(this: *BunTestRoot, buntest: ?*BunTest) void {
+        const file = buntest orelse if (this.active_file.get()) |af| af else return;
+        if (file.reporter) |reporter| {
+            if (reporter.reporters.dots and reporter.last_printed_dot) {
+                bun.Output.prettyError("<r>\n", .{});
+                bun.Output.flush();
+                reporter.last_printed_dot = false;
+            }
+            if (bun.jsc.Jest.Jest.runner) |runner| {
+                // If the file has changed (or this is the first print), update the current_file header
+                if (runner.current_file_id == null or runner.current_file_id.? != file.file_id) {
+                    const file_path = runner.files.items(.source)[file.file_id].path.text;
+                    const file_title = bun.path.relative(bun.fs.FileSystem.instance.top_level_dir, file_path);
+                    const file_prefix: []const u8 = if (bun.Output.is_github_action) "::group::" else "";
+                    runner.current_file.has_printed_filename = false;
+                    runner.current_file.freeAndClear();
+                    runner.current_file.title = bun.handleOom(bun.default_allocator.dupe(u8, file_title));
+                    runner.current_file.prefix = bun.handleOom(bun.default_allocator.dupe(u8, file_prefix));
+                    runner.current_file_id = file.file_id;
                 }
-                if (bun.jsc.Jest.Jest.runner) |runner| {
-                    runner.current_file.printIfNeeded();
-                }
+                runner.current_file.printIfNeeded();
             }
         }
     }
@@ -531,6 +560,16 @@ pub const BunTest = struct {
         this.in_run_loop = true;
         defer this.in_run_loop = false;
 
+        // Make this BunTest findable via cloneActiveFile() during collection,
+        // even if active_file has been detached (parallel mode).
+        const prev_running = this.bun_test_root.running_file;
+        var cloned = this_strong.clone();
+        this.bun_test_root.running_file = cloned.toOptional();
+        defer {
+            this.bun_test_root.running_file.deinit();
+            this.bun_test_root.running_file = prev_running;
+        }
+
         var min_timeout: bun.timespec = .epoch;
 
         while (this.result_queue.readItem()) |result| {
@@ -732,7 +771,7 @@ pub const BunTest = struct {
         if (handle_status == .hide_error) return; // do not print error, it was already consumed
         if (exception == null) return; // the exception should not be visible (eg m_terminationException)
 
-        this.bun_test_root.onBeforePrint();
+        this.bun_test_root.onBeforePrint(this);
         if (handle_status == .show_unhandled_error_between_tests or handle_status == .show_unhandled_error_in_describe) {
             this.reporter.?.jest.unhandled_errors_between_tests += 1;
             bun.Output.prettyErrorln(

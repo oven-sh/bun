@@ -168,7 +168,7 @@ fn messageWithTypeAndLevel_(
     const Writer = @TypeOf(writer);
 
     if (bun.jsc.Jest.Jest.runner) |runner| {
-        runner.bun_test_root.onBeforePrint();
+        runner.bun_test_root.onBeforePrint(null);
     }
 
     var print_length = len;

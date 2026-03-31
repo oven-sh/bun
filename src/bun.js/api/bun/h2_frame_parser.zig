@@ -2381,12 +2381,16 @@ pub const H2FrameParser = struct {
             this.readBuffer.reset();
 
             if (frame.flags & @intFromEnum(HeadersFrameFlags.PADDED) != 0) {
+                if (payload.len == 0) {
+                    this.sendGoAway(frame.streamIdentifier, ErrorCode.FRAME_SIZE_ERROR, "invalid PUSH_PROMISE frame size", this.lastStreamID, true);
+                    return content.end;
+                }
                 padding = payload[0];
                 offset += 1;
             }
 
             // Parse the 4-byte promised stream ID
-            if (payload.len < offset + 4) {
+            if (payload.len < offset + 4 or payload.len -| (offset + 4) < padding) {
                 this.sendGoAway(frame.streamIdentifier, ErrorCode.FRAME_SIZE_ERROR, "PUSH_PROMISE too short for promised stream ID", this.lastStreamID, true);
                 return content.end;
             }
@@ -2399,16 +2403,30 @@ pub const H2FrameParser = struct {
                 return content.end;
             }
 
+            // RFC 7540 Section 6.6: Validate promised stream ID
+            // Must be non-zero, even (server-initiated), and not already in use
+            const promised_stream_id = promised_id.uint31;
+            if (promised_stream_id == 0 or promised_stream_id % 2 != 0) {
+                this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "Invalid promised stream ID", this.lastStreamID, true);
+                return content.end;
+            }
+            if (this.streams.getEntry(promised_stream_id) != null) {
+                this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "Promised stream ID already in use", this.lastStreamID, true);
+                return content.end;
+            }
+
             // Create the promised stream
-            const promised_stream = this.handleReceivedStreamID(promised_id.uint31) orelse {
+            const promised_stream = this.handleReceivedStreamID(promised_stream_id) orelse {
                 return content.end;
             };
             promised_stream.state = .RESERVED_REMOTE;
 
             // Decode the header block on the promised stream
-            _ = (try this.decodeHeaderBlock(payload[offset..end], promised_stream, frame.flags)) orelse {
+            const result_stream = (try this.decodeHeaderBlock(payload[offset..end], promised_stream, frame.flags)) orelse {
                 return content.end;
             };
+            // Track incomplete header blocks for CONTINUATION frame reassembly
+            result_stream.isWaitingMoreHeaders = frame.flags & @intFromEnum(HeadersFrameFlags.END_HEADERS) == 0;
 
             return content.end;
         }
@@ -4676,7 +4694,40 @@ pub const H2FrameParser = struct {
                     return globalObject.throwValue(exception);
                 }
 
-                if (!js_value.isEmptyOrUndefinedOrNull()) {
+                if (js_value.jsType().isArray()) {
+                    var value_iter = try js_value.arrayIterator(globalObject);
+
+                    if (SingleValueHeaders.indexOf(validated_name)) |idx| {
+                        if (value_iter.len > 1 or single_value_headers[idx]) {
+                            if (!globalObject.hasException()) {
+                                const exception = globalObject.toTypeError(.HTTP2_HEADER_SINGLE_VALUE, "Header field \"{s}\" must only have a single value", .{validated_name});
+                                return globalObject.throwValue(exception);
+                            }
+                            return .zero;
+                        }
+                        single_value_headers[idx] = true;
+                    }
+
+                    while (try value_iter.next()) |item| {
+                        if (item.isEmptyOrUndefinedOrNull()) {
+                            if (!globalObject.hasException()) {
+                                return globalObject.ERR(.HTTP2_INVALID_HEADER_VALUE, "Invalid value for header \"{s}\"", .{validated_name}).throw();
+                            }
+                            return .zero;
+                        }
+                        const arr_value_str = item.toJSString(globalObject) catch {
+                            globalObject.clearException();
+                            return globalObject.ERR(.HTTP2_INVALID_HEADER_VALUE, "Invalid value for header \"{s}\"", .{validated_name}).throw();
+                        };
+                        const never_index = (try sensitive_arg.getTruthyPropertyValue(globalObject, validated_name) orelse try sensitive_arg.getTruthyPropertyValue(globalObject, name)) != null;
+                        const arr_value_slice = arr_value_str.toSlice(globalObject, bun.default_allocator);
+                        defer arr_value_slice.deinit();
+                        const arr_value = arr_value_slice.slice();
+                        _ = this.encodeHeaderIntoList(&encoded_headers, alloc, validated_name, arr_value, never_index) catch {
+                            return globalObject.throw("Failed to encode header", .{});
+                        };
+                    }
+                } else if (!js_value.isEmptyOrUndefinedOrNull()) {
                     if (SingleValueHeaders.indexOf(validated_name)) |idx| {
                         if (single_value_headers[idx]) {
                             const exception = globalObject.toTypeError(.HTTP2_HEADER_SINGLE_VALUE, "Header field \"{s}\" must only have a single value", .{validated_name});

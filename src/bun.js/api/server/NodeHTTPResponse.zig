@@ -30,6 +30,7 @@ server: AnyServer,
 /// This should be pretty uncommon though.
 buffered_request_body_data_during_pause: bun.ByteList = .{},
 bytes_written: usize = 0,
+bytes_read: usize = 0,
 
 upgrade_context: UpgradeCTX = .{},
 
@@ -310,6 +311,7 @@ pub fn create(
             false => uws.AnyResponse{ .TCP = @ptrCast(response_ptr) },
         },
         .body_read_state = if (has_body.*) .pending else .none,
+        .bytes_read = request.headersByteLength(),
     });
     if (has_body.*) {
         response.body_read_ref.ref(vm);
@@ -713,6 +715,7 @@ pub fn abort(this: *NodeHTTPResponse, _: *jsc.JSGlobalObject, _: *jsc.CallFrame)
 
 fn onBufferRequestBodyWhilePaused(this: *NodeHTTPResponse, chunk: []const u8, last: bool) void {
     log("onBufferRequestBodyWhilePaused({d}, {})", .{ chunk.len, last });
+    this.bytes_read +|= chunk.len;
     bun.handleOom(this.buffered_request_body_data_during_pause.appendSlice(
         bun.default_allocator,
         chunk,
@@ -799,7 +802,7 @@ fn onDataOrAborted(this: *NodeHTTPResponse, chunk: []const u8, last: bool, event
 pub const BUN_DEBUG_REFCOUNT_NAME = "NodeHTTPServerResponse";
 pub fn onData(this: *NodeHTTPResponse, chunk: []const u8, last: bool) void {
     log("onData({d} bytes, is_last = {d})", .{ chunk.len, @intFromBool(last) });
-
+    this.bytes_read +|= chunk.len;
     onDataOrAborted(this, chunk, last, .none, this.getThisValue());
 }
 
@@ -1129,6 +1132,10 @@ pub fn end(this: *NodeHTTPResponse, globalObject: *jsc.JSGlobalObject, callframe
 
 pub fn getBytesWritten(this: *NodeHTTPResponse, _: *jsc.JSGlobalObject, _: *jsc.CallFrame) jsc.JSValue {
     return jsc.JSValue.jsNumber(this.bytes_written);
+}
+
+pub fn getBytesRead(this: *NodeHTTPResponse, _: *jsc.JSGlobalObject, _: *jsc.CallFrame) jsc.JSValue {
+    return jsc.JSValue.jsNumber(this.bytes_read);
 }
 
 fn handleCorked(globalObject: *jsc.JSGlobalObject, function: jsc.JSValue, result: *JSValue, is_exception: *bool) void {

@@ -216,7 +216,7 @@ pub const Route = struct {
     }
 
     /// Schedule a production bundle build.
-    fn scheduleBundle(this: *Route, server: AnyServer) !void {
+    pub fn scheduleBundle(this: *Route, server: AnyServer) !void {
         switch (server.getOrLoadPlugins(.{ .js_bundle_route = this })) {
             .err => this.state = .{ .err = bun.logger.Log.init(bun.default_allocator) },
             .ready => |plugins| try onPluginsResolved(this, plugins),

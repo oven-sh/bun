@@ -2645,6 +2645,8 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             // Collect JSBundle routes that have a shared DevServer (from --hot).
             // Callback wiring is done after the loop.
             var js_bundle_routes_with_dev: std.ArrayListUnmanaged(*JSBundle.Route) = .{};
+            // Collect JSBundle routes without DevServer for eager building.
+            var js_bundle_routes_eager: std.ArrayListUnmanaged(*JSBundle.Route) = .{};
 
             if (this.config.static_routes.items.len > 0) {
                 for (this.config.static_routes.items) |*entry| {
@@ -2685,6 +2687,9 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                             // Collect routes whose JSBundle has a shared DevServer (from --hot)
                             if (js_bundle_route.data.bundle.data.dev_server != null) {
                                 js_bundle_routes_with_dev.append(bun.default_allocator, js_bundle_route.data) catch bun.outOfMemory();
+                            } else {
+                                // No DevServer — collect for eager building
+                                js_bundle_routes_eager.append(bun.default_allocator, js_bundle_route.data) catch bun.outOfMemory();
                             }
                             needs_plugins = true;
                         },
@@ -2709,6 +2714,13 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                     if (serve_plugins_config.len > 0) {
                         this.plugins = ServePlugins.init(serve_plugins_config);
                     }
+                }
+            }
+
+            // --- 6b. Eagerly start building JSBundle routes (no DevServer) ---
+            for (js_bundle_routes_eager.items) |route| {
+                if (route.state == .pending) {
+                    bun.handleOom(route.scheduleBundle(any_server));
                 }
             }
 

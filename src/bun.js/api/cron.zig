@@ -169,10 +169,9 @@ pub const CronRegisterJob = struct {
         const ev = jsc.VirtualMachine.get().eventLoop();
         ev.enter();
         defer ev.exit();
-        if (this.err_msg) |msg|
-            this.promise.reject(this.global, this.global.createErrorInstance("{s}", .{msg})) catch {}
-        else
-            this.promise.resolve(this.global, .js_undefined) catch {};
+        if (this.err_msg) |msg| {
+            this.promise.rejectWithAsyncStack(this.global, this.global.createErrorInstance("{s}", .{msg})) catch {};
+        } else this.promise.resolve(this.global, .js_undefined) catch {};
         this.deinit();
     }
 
@@ -670,10 +669,9 @@ pub const CronRemoveJob = struct {
         const ev = jsc.VirtualMachine.get().eventLoop();
         ev.enter();
         defer ev.exit();
-        if (this.err_msg) |msg|
-            this.promise.reject(this.global, this.global.createErrorInstance("{s}", .{msg})) catch {}
-        else
-            this.promise.resolve(this.global, .js_undefined) catch {};
+        if (this.err_msg) |msg| {
+            this.promise.rejectWithAsyncStack(this.global, this.global.createErrorInstance("{s}", .{msg})) catch {};
+        } else this.promise.resolve(this.global, .js_undefined) catch {};
         this.deinit();
     }
 

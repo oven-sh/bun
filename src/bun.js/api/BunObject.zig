@@ -1937,7 +1937,7 @@ pub const JSZstd = struct {
             const promise = this.promise.swap();
 
             if (this.error_message) |err_msg| {
-                try promise.reject(globalThis, globalThis.ERR(.ZSTD, "{s}", .{err_msg}).toJS());
+                try promise.rejectWithAsyncStack(globalThis, globalThis.ERR(.ZSTD, "{s}", .{err_msg}).toJS());
                 return;
             }
 

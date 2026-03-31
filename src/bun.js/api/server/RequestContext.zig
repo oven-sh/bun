@@ -133,7 +133,11 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             ctxLog("onResolve", .{});
 
             const arguments = callframe.arguments_old(2);
-            var ctx = arguments.ptr[1].asPromisePtr(@This());
+            const ctx = NativePromiseContext.take(RequestContext, arguments.ptr[1]) orelse {
+                // The cell's destructor already released the ref (the Promise
+                // was collected before a prior microtask turn reached us).
+                return .js_undefined;
+            };
             defer ctx.deref();
 
             const result = arguments.ptr[0];
@@ -308,9 +312,14 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             ctxLog("onReject", .{});
 
             const arguments = callframe.arguments_old(2);
-            const ctx = arguments.ptr[1].asPromisePtr(@This());
-            const err = arguments.ptr[0];
+            const ctx = NativePromiseContext.take(RequestContext, arguments.ptr[1]) orelse {
+                // The cell's destructor already released the ref (the Promise
+                // was collected before a prior microtask turn reached us).
+                return .js_undefined;
+            };
             defer ctx.deref();
+
+            const err = arguments.ptr[0];
             handleReject(ctx, if (!err.isEmptyOrUndefinedOrNull()) err else .js_undefined);
             return .js_undefined;
         }
@@ -1229,9 +1238,10 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                                 },
                             };
                             this.ref();
-                            assignment_result.then(
+                            const cell = NativePromiseContext.create(globalThis, this);
+                            assignment_result.thenWithValue(
                                 globalThis,
-                                this,
+                                cell,
                                 onResolveStream,
                                 onRejectStream,
                             ) catch {}; // TODO: properly propagate exception upwards
@@ -1595,7 +1605,8 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 switch (promise.unwrap(vm.global.vm(), .mark_handled)) {
                     .pending => {
                         ctx.ref();
-                        response_value.then(this.globalThis, ctx, RequestContext.onResolve, RequestContext.onReject) catch {}; // TODO: properly propagate exception upwards
+                        const cell = NativePromiseContext.create(this.globalThis, ctx);
+                        response_value.thenWithValue(this.globalThis, cell, RequestContext.onResolve, RequestContext.onReject) catch {}; // TODO: properly propagate exception upwards
                         return;
                     },
                     .fulfilled => |fulfilled_value| {
@@ -1694,8 +1705,8 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 
         pub fn onResolveStream(_: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
             streamLog("onResolveStream", .{});
-            var args = callframe.arguments_old(2);
-            var req: *@This() = args.ptr[args.len - 1].asPromisePtr(@This());
+            const args = callframe.arguments_old(2);
+            const req = NativePromiseContext.take(RequestContext, args.ptr[args.len - 1]) orelse return .js_undefined;
             defer req.deref();
             req.handleResolveStream();
             return .js_undefined;
@@ -1703,7 +1714,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
         pub fn onRejectStream(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
             streamLog("onRejectStream", .{});
             const args = callframe.arguments_old(2);
-            var req = args.ptr[args.len - 1].asPromisePtr(@This());
+            const req = NativePromiseContext.take(RequestContext, args.ptr[args.len - 1]) orelse return .js_undefined;
             const err = args.ptr[0];
             defer req.deref();
 
@@ -2166,9 +2177,10 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 .pending => {
                     ctx.flags.is_error_promise_pending = true;
                     ctx.ref();
-                    promise_js.then(
+                    const cell = NativePromiseContext.create(ctx.server.?.globalThis, ctx);
+                    promise_js.thenWithValue(
                         ctx.server.?.globalThis,
-                        ctx,
+                        cell,
                         RequestContext.onResolve,
                         RequestContext.onReject,
                     ) catch {}; // TODO: properly propagate exception upwards
@@ -2695,7 +2707,9 @@ const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
 const VirtualMachine = jsc.VirtualMachine;
+
 const AnyRequestContext = jsc.API.AnyRequestContext;
+const NativePromiseContext = jsc.API.NativePromiseContext;
 
 const WebCore = jsc.WebCore;
 const Blob = jsc.WebCore.Blob;

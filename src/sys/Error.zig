@@ -326,6 +326,14 @@ pub fn toJS(this: Error, ptr: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
     return this.toSystemError().toErrorInstance(ptr);
 }
 
+/// Like `toJS` but populates the error's stack trace with async frames from the
+/// given promise's await chain. Use when rejecting a promise from native code
+/// at the top of the event loop (threadpool callback) — otherwise the error
+/// will have an empty stack trace.
+pub fn toJSWithAsyncStack(this: Error, ptr: *jsc.JSGlobalObject, promise: *jsc.JSPromise) bun.JSError!jsc.JSValue {
+    return this.toSystemError().toErrorInstanceWithAsyncStack(ptr, promise);
+}
+
 const std = @import("std");
 
 const bun = @import("bun");

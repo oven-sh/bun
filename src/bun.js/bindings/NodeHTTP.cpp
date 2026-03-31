@@ -598,8 +598,8 @@ static void NodeHTTPServer__writeHead(
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSObject* headersObject = headersObjectValue.getObject();
-    if (response->getLoopData()->canCork() && response->getBufferedAmount() == 0) {
-        response->getLoopData()->setCorkedSocket(response, isSSL);
+    if (!response->uWS::template AsyncSocket<isSSL>::isCorked() && response->getBufferedAmount() == 0) {
+        response->uWS::template AsyncSocket<isSSL>::cork();
     }
     response->writeStatus(std::string_view(statusMessage, statusMessageLength));
 

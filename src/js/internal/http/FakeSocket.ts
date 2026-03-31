@@ -148,7 +148,7 @@ var FakeSocket = class Socket extends Duplex {
   }
 
   getSession() {
-    return null;
+    return undefined;
   }
 
   getEphemeralKeyInfo() {
@@ -180,7 +180,7 @@ var FakeSocket = class Socket extends Duplex {
   }
 
   setMaxSendFragment(_size) {
-    return false;
+    return this.encrypted ? true : false;
   }
 
   setServername(_name) {}
@@ -198,7 +198,7 @@ var FakeSocket = class Socket extends Duplex {
   enableTrace() {}
 
   getCertificate() {
-    return null;
+    return this.encrypted ? {} : null;
   }
 
   getPeerX509Certificate() {

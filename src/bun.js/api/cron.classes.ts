@@ -22,6 +22,10 @@ export default [
         fn: "doUnref",
         length: 0,
       },
+      _fire: {
+        fn: "doFire",
+        length: 0,
+      },
       name: {
         getter: "getName",
         cache: true,

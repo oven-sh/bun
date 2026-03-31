@@ -1009,6 +1009,16 @@ pub const CronJob = struct {
         return callframe.this();
     }
 
+    /// Reschedule to fire on the next event loop tick instead of waiting
+    /// for the cron expression. For tests only — does not respect no-overlap.
+    pub fn doFire(this: *CronJob, _: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+        if (this.stopped) return callframe.this();
+        const vm = this.global.bunVM();
+        const soon = bun.timespec.msFromNow(.allow_mocked_time, 1);
+        vm.timer.update(&this.event_loop_timer, &soon);
+        return callframe.this();
+    }
+
     pub fn getName(this: *CronJob, globalObject: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
         return bun.String.createUTF8ForJS(globalObject, this.name);
     }

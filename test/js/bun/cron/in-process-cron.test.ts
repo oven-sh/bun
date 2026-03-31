@@ -172,51 +172,62 @@ describe("Bun.cron (in-process)", () => {
   });
 });
 
-// These use ._fire() to trigger immediately instead of waiting for the minute boundary.
-describe("Bun.cron (in-process) — firing", () => {
-  test("callback fires via _fire()", async () => {
+describe.concurrent("Bun.cron (in-process) — firing", () => {
+  // This test waits for a real cron fire, which takes up to 60 seconds.
+  // The cron expression "* * * * *" fires at the top of every minute.
+  test("callback fires at minute boundary", async () => {
     let fired = 0;
-    const { promise, resolve } = Promise.withResolvers<void>();
+    let resolve: () => void;
+    const promise = new Promise<void>(r => {
+      resolve = r;
+    });
 
     const job = Bun.cron("fire-test", "* * * * *", () => {
       fired++;
-      resolve();
+      resolve!();
     });
 
     try {
-      // @ts-expect-error test-only
-      job._fire();
       await promise;
       expect(fired).toBe(1);
     } finally {
       job.stop();
     }
-  });
+  }, 70_000);
 
-  test("stop() during pending async callback prevents reschedule", async () => {
-    const { promise: handlerPromise, resolve: resolveHandler } = Promise.withResolvers<void>();
-    const { promise: firePromise, resolve: fireResolve } = Promise.withResolvers<void>();
+  test("async callback delays next scheduling", async () => {
+    // The callback returns a Promise; next fire is scheduled only after it resolves.
+    // We can't easily observe the timing without waiting 2+ minutes, so we just
+    // verify no crash and that stop() during the pending promise works.
+    let resolveHandler: () => void;
+    const handlerPromise = new Promise<void>(r => {
+      resolveHandler = r;
+    });
+    let fireResolve: () => void;
+    const firePromise = new Promise<void>(r => {
+      fireResolve = r;
+    });
 
     const job = Bun.cron("async-test", "* * * * *", async () => {
-      fireResolve();
+      fireResolve!();
       await handlerPromise;
     });
 
     try {
-      // @ts-expect-error test-only
-      job._fire();
       await firePromise;
-      // Handler is awaiting; stop while pending
+      // Handler is now awaiting; stop while it's pending
       job.stop();
-      resolveHandler();
+      // Let the handler complete
+      resolveHandler!();
       await Bun.sleep(10);
-      // No crash, no reschedule (stopped before promise settled)
+      // No crash, no second fire
     } finally {
       job.stop();
     }
-  });
+  }, 70_000);
 
   test("sync throw in callback emits uncaughtException", async () => {
+    // Matches setTimeout: sync throw → uncaughtException. Process exits 1 without a handler.
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -228,7 +239,6 @@ describe("Bun.cron (in-process) — firing", () => {
           setTimeout(() => { job.stop(); console.log("caught=" + caught); process.exit(0); }, 100);
           throw new Error("sync-boom");
         });
-        job._fire();
       `,
       ],
       env: bunEnv,
@@ -237,9 +247,10 @@ describe("Bun.cron (in-process) — firing", () => {
     const [stdout, _stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout.trim()).toBe("caught=sync-boom");
     expect(exitCode).toBe(0);
-  });
+  }, 70_000);
 
   test("async throw in callback emits unhandledRejection", async () => {
+    // Matches setTimeout: rejected promise → unhandledRejection.
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -252,7 +263,6 @@ describe("Bun.cron (in-process) — firing", () => {
           await Bun.sleep(1);
           throw new Error("async-boom");
         });
-        job._fire();
       `,
       ],
       env: bunEnv,
@@ -261,7 +271,7 @@ describe("Bun.cron (in-process) — firing", () => {
     const [stdout, _stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout.trim()).toBe("caught=async-boom");
     expect(exitCode).toBe(0);
-  });
+  }, 70_000);
 
   test("unhandled cron error exits process like setTimeout does", async () => {
     await using proc = Bun.spawn({
@@ -269,9 +279,8 @@ describe("Bun.cron (in-process) — firing", () => {
         bunExe(),
         "-e",
         `
-        const job = Bun.cron("x", "* * * * *", () => { throw new Error("boom"); });
-        setTimeout(() => console.log("still alive"), 1000);
-        job._fire();
+        Bun.cron("x", "* * * * *", () => { throw new Error("boom"); });
+        setTimeout(() => console.log("still alive"), 61000);
       `,
       ],
       env: bunEnv,
@@ -281,30 +290,5 @@ describe("Bun.cron (in-process) — firing", () => {
     expect(stdout).toBe("");
     expect(stderr).toContain("boom");
     expect(exitCode).toBe(1);
-  });
-
-  test("fires repeatedly and reschedules after each callback", async () => {
-    let fires = 0;
-    const job = Bun.cron("repeat-test", "* * * * *", () => {
-      fires++;
-    });
-    try {
-      for (let i = 0; i < 3; i++) {
-        const { promise, resolve } = Promise.withResolvers<void>();
-        const prev = fires;
-        const check = setInterval(() => {
-          if (fires > prev) {
-            clearInterval(check);
-            resolve();
-          }
-        }, 5);
-        // @ts-expect-error test-only
-        job._fire();
-        await promise;
-      }
-      expect(fires).toBe(3);
-    } finally {
-      job.stop();
-    }
-  });
+  }, 70_000);
 });

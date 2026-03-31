@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 test("worker receives messages during top-level await", async () => {
@@ -49,11 +49,7 @@ test("worker receives messages during top-level await", async () => {
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   // The worker received at least 3 messages during TLA and sent "done"
   expect(stdout.trim()).toBe("done");
@@ -104,14 +100,13 @@ test("worker receives messages during finite top-level await", async () => {
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   // The worker should have received messages DURING the await
-  const countLine = stdout.trim().split("\n").find((l: string) => l.startsWith("count:"));
+  const countLine = stdout
+    .trim()
+    .split("\n")
+    .find((l: string) => l.startsWith("count:"));
   expect(countLine).toBeDefined();
   const count = parseInt(countLine!.split(":")[1]);
   expect(count).toBeGreaterThanOrEqual(1);

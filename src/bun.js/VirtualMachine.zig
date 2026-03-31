@@ -2261,7 +2261,6 @@ pub fn reloadEntryPointForTestRunner(this: *VirtualMachine, entry_path: []const 
     return promise;
 }
 
-
 pub fn loadEntryPointForTestRunner(this: *VirtualMachine, entry_path: string) anyerror!*JSInternalPromise {
     var promise = try this.reloadEntryPointForTestRunner(entry_path);
 

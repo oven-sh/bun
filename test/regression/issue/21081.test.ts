@@ -6,7 +6,13 @@ import { bunEnv, bunExe } from "harness";
 function getProcessVoluntaryCtxSwitches(pid: number): number {
   let total = 0;
   const taskDir = `/proc/${pid}/task`;
-  const threads = readdirSync(taskDir);
+  let threads: string[];
+  try {
+    threads = readdirSync(taskDir);
+  } catch (err: any) {
+    if (err?.code === "ENOENT") return 0;
+    throw err;
+  }
   for (const tid of threads) {
     try {
       const status = readFileSync(`${taskDir}/${tid}/status`, "utf8");

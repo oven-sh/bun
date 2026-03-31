@@ -11,7 +11,7 @@ var FakeSocket = class Socket extends Duplex {
   timeout = 0;
   isServer = false;
 
-  // TLS socket properties — set to true for HTTPS connections by IncomingMessage
+  // TLS socket properties — encrypted/authorized set by IncomingMessage for HTTPS
   encrypted = false;
   authorized = false;
   alpnProtocol: string | false = false;
@@ -144,7 +144,7 @@ var FakeSocket = class Socket extends Duplex {
   }
 
   getProtocol() {
-    return null;
+    return this.encrypted ? "TLSv1.3" : null;
   }
 
   getSession() {
@@ -156,7 +156,7 @@ var FakeSocket = class Socket extends Duplex {
   }
 
   getSharedSigalgs() {
-    return [];
+    return this.encrypted ? [] : null;
   }
 
   isSessionReused() {

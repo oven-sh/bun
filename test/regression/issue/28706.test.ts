@@ -8,7 +8,10 @@ import { bunEnv, bunExe } from "harness";
 // Run in a subprocess to isolate from ASAN shutdown diagnostics.
 test("POST should not be silently retried on keep-alive disconnect", async () => {
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", `
+    cmd: [
+      bunExe(),
+      "-e",
+      `
       let requestCount = 0;
       let sseSocket;
 
@@ -60,17 +63,14 @@ test("POST should not be silently retried on keep-alive disconnect", async () =>
       server.stop();
       console.log(JSON.stringify({ requestCount, sns, streamErrored }));
       process.exit(0);
-    `],
+    `,
+    ],
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   const result = JSON.parse(stdout.trim());
   // The body stream must error from the truncated chunked response
@@ -84,7 +84,10 @@ test("POST should not be silently retried on keep-alive disconnect", async () =>
 
 test("GET should still be retried on keep-alive disconnect", async () => {
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", `
+    cmd: [
+      bunExe(),
+      "-e",
+      `
       let dataAttempts = 0;
 
       const server = Bun.listen({
@@ -122,17 +125,14 @@ test("GET should still be retried on keep-alive disconnect", async () => {
       server.stop();
       console.log(JSON.stringify({ dataAttempts, text }));
       process.exit(0);
-    `],
+    `,
+    ],
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   const result = JSON.parse(stdout.trim());
   expect(result.text).toBe("hello");

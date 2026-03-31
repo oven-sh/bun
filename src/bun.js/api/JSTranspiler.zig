@@ -242,6 +242,14 @@ pub const Config = struct {
             this.minify_whitespace = flag;
         }
 
+        if (try object.getBooleanLoose(globalThis, "minifySyntax")) |flag| {
+            this.minify_syntax = flag;
+        }
+
+        if (try object.getBooleanLoose(globalThis, "minifyIdentifiers")) |flag| {
+            this.minify_identifiers = flag;
+        }
+
         if (try object.getBooleanLoose(globalThis, "deadCodeElimination")) |flag| {
             this.dead_code_elimination = flag;
         }

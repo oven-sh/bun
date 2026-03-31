@@ -16,8 +16,8 @@ describe.skipIf(process.platform !== "linux")("statx ENOSYS fallback for old ker
       cmd: ["cc", "-o", blockStatxBin, blockStatxSrc],
     });
     expect(result.stderr.toString()).toBe("");
-    expect(result.exitCode).toBe(0);
     expect(existsSync(blockStatxBin)).toBe(true);
+    expect(result.exitCode).toBe(0);
   });
 
   test("transpile and run TypeScript with statx blocked", async () => {

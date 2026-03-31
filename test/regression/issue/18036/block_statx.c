@@ -16,8 +16,16 @@
 #include <sys/syscall.h>
 #include <unistd.h>
 
-#ifndef __NR_statx
-#define __NR_statx 332
+#if !defined(__NR_statx)
+#  if defined(SYS_statx)
+#    define __NR_statx SYS_statx
+#  elif defined(__x86_64__)
+#    define __NR_statx 332
+#  elif defined(__aarch64__)
+#    define __NR_statx 291
+#  else
+#    error "__NR_statx is undefined for this architecture"
+#  endif
 #endif
 
 int main(int argc, char *argv[]) {

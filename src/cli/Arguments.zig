@@ -250,8 +250,10 @@ fn loadSystemBunfig(allocator: std.mem.Allocator, ctx: Command.Context, comptime
     ctx.has_loaded_system_config = true;
 
     var config_buf: bun.PathBuffer = undefined;
-    if (getSystemConfigPath(&config_buf)) |path| {
-        try loadBunfig(allocator, true, path, ctx, comptime cmd);
+    const result = getSystemConfigPath(&config_buf);
+    if (result.path) |path| {
+        // Explicit BUN_SYSTEM_CONFIG should fail loudly; auto-discovered default is optional.
+        try loadBunfig(allocator, !result.is_explicit, path, ctx, comptime cmd);
     }
 }
 
@@ -327,32 +329,37 @@ fn getHomeConfigPath(buf: *bun.PathBuffer) ?[:0]const u8 {
     return null;
 }
 
-fn getSystemConfigPath(buf: *bun.PathBuffer) ?[:0]const u8 {
+const SystemConfigResult = struct {
+    path: ?[:0]const u8,
+    is_explicit: bool,
+};
+
+fn getSystemConfigPath(buf: *bun.PathBuffer) SystemConfigResult {
     // Allow overriding the system config path via environment variable.
-    if (bun.getenvZ("BUN_SYSTEM_CONFIG")) |custom_path| {
+    if (bun.env_var.BUN_SYSTEM_CONFIG.get()) |custom_path| {
         if (custom_path.len > 0) {
             if (custom_path.len < bun.MAX_PATH_BYTES) {
                 @memcpy(buf[0..custom_path.len], custom_path);
                 buf[custom_path.len] = 0;
-                return buf[0..custom_path.len :0];
+                return .{ .path = buf[0..custom_path.len :0], .is_explicit = true };
             }
-            return null;
+            return .{ .path = null, .is_explicit = true };
         }
     }
 
     if (comptime bun.Environment.isWindows) {
         // On Windows, use %ALLUSERSPROFILE%\bunfig.toml (typically C:\ProgramData\bunfig.toml).
-        if (bun.getenvZ("ALLUSERSPROFILE")) |all_users| {
+        if (bun.env_var.ALLUSERSPROFILE.get()) |all_users| {
             var paths = [_]string{"bunfig.toml"};
-            return resolve_path.joinAbsStringBufZ(all_users, buf, &paths, .auto);
+            return .{ .path = resolve_path.joinAbsStringBufZ(all_users, buf, &paths, .auto), .is_explicit = false };
         }
-        return null;
+        return .{ .path = null, .is_explicit = false };
     } else {
         // On POSIX systems, use /etc/bunfig.toml.
         const system_path = "/etc/bunfig.toml";
         @memcpy(buf[0..system_path.len], system_path);
         buf[system_path.len] = 0;
-        return buf[0..system_path.len :0];
+        return .{ .path = buf[0..system_path.len :0], .is_explicit = false };
     }
 }
 

@@ -6,6 +6,7 @@ import { expect, test } from "bun:test";
 test("POST should not be silently retried on keep-alive disconnect", async () => {
   let requestCount = 0;
   let retryDetected = false;
+  let sseSocket: ReturnType<typeof Bun.listen> extends { socket: infer S } ? S : any;
   const { promise: allDone, resolve: resolveAll } = Promise.withResolvers<void>();
 
   // Raw TCP server for precise connection control
@@ -32,19 +33,16 @@ test("POST should not be silently retried on keep-alive disconnect", async () =>
           socket.write(`HTTP/1.1 200 OK\r\nContent-Length: ${body.length}\r\nConnection: keep-alive\r\n\r\n${body}`);
         } else if (request.startsWith("POST /sse")) {
           if (requestCount > 2) {
-            // This is a retry — the bug is present
             retryDetected = true;
           }
-          // Send first chunk with chunked encoding, then close the connection
-          // to simulate the server dropping the connection mid-stream.
-          // A brief delay ensures the client receives and parses the response
-          // headers before the socket close event fires.
+          // Send first chunk with chunked encoding. The client will close
+          // the socket after receiving the chunk (no setTimeout needed).
           const chunk = JSON.stringify({ type: "start", sn: requestCount - 1 });
           const hexLen = chunk.length.toString(16);
           socket.write(
             `HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: keep-alive\r\n\r\n${hexLen}\r\n${chunk}\r\n`,
           );
-          setTimeout(() => socket.end(), 50);
+          sseSocket = socket;
         }
       },
       close() {
@@ -71,6 +69,9 @@ test("POST should not be silently retried on keep-alive disconnect", async () =>
       const text = new TextDecoder().decode(chunk).trim();
       if (text.length > 0) {
         sns.push(JSON.parse(text).sn);
+        // Close the socket after the client has received the first chunk.
+        // This is deterministic — no setTimeout needed.
+        sseSocket?.end();
       }
     }
   } catch {

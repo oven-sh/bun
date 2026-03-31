@@ -4,8 +4,8 @@ import { expect, test } from "bun:test";
 // and merges response streams from multiple request lifecycles.
 // https://github.com/oven-sh/bun/issues/28706
 test("POST should not be silently retried on keep-alive disconnect", async () => {
-  let connectionCount = 0;
   let requestCount = 0;
+  let retryDetected = false;
   const { promise: allDone, resolve: resolveAll } = Promise.withResolvers<void>();
 
   // Raw TCP server for precise connection control
@@ -14,7 +14,6 @@ test("POST should not be silently retried on keep-alive disconnect", async () =>
     port: 0,
     socket: {
       open(socket) {
-        connectionCount++;
         socket.data = { buffer: "" };
       },
       data(socket, data) {
@@ -32,22 +31,25 @@ test("POST should not be silently retried on keep-alive disconnect", async () =>
           const body = "success";
           socket.write(`HTTP/1.1 200 OK\r\nContent-Length: ${body.length}\r\nConnection: keep-alive\r\n\r\n${body}`);
         } else if (request.startsWith("POST /sse")) {
+          if (requestCount > 2) {
+            // This is a retry — the bug is present
+            retryDetected = true;
+          }
           // Send first chunk with chunked encoding, then close the connection
-          // to simulate the server dropping the connection mid-stream
+          // to simulate the server dropping the connection mid-stream.
+          // A brief delay ensures the client receives and parses the response
+          // headers before the socket close event fires.
           const chunk = JSON.stringify({ type: "start", sn: requestCount - 1 });
           const hexLen = chunk.length.toString(16);
           socket.write(
             `HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: keep-alive\r\n\r\n${hexLen}\r\n${chunk}\r\n`,
           );
-          // Close the connection after a brief moment to ensure client received data
-          setTimeout(() => {
-            socket.end();
-            // Give time for potential retry, then resolve
-            setTimeout(() => resolveAll(), 500);
-          }, 100);
+          setTimeout(() => socket.end(), 50);
         }
       },
-      close() {},
+      close() {
+        resolveAll();
+      },
       error() {},
     },
     data: { buffer: "" },
@@ -74,12 +76,13 @@ test("POST should not be silently retried on keep-alive disconnect", async () =>
     // Expected: connection closed error
   }
 
-  // Wait for any potential retry to complete
+  // Wait for server socket close event
   await allDone;
 
   // With the bug: the client retries POST, server sees 3 requests
   // (login + sse + retried sse), and chunks from 2 different SNs appear.
   // With the fix: server sees only 2 requests (login + sse), one SN.
+  expect(retryDetected).toBe(false);
   expect(requestCount).toBe(2);
   expect(sns).toEqual([1]);
 });
@@ -87,7 +90,7 @@ test("POST should not be silently retried on keep-alive disconnect", async () =>
 // Verify that GET requests on keep-alive connections are still retried
 test("GET should still be retried on keep-alive disconnect", async () => {
   let requestCount = 0;
-  const { promise: allDone, resolve: resolveAll } = Promise.withResolvers<void>();
+  const { promise: setupSocketClosed, resolve: onSetupSocketClosed } = Promise.withResolvers<void>();
 
   await using server = Bun.listen({
     hostname: "127.0.0.1",
@@ -106,15 +109,17 @@ test("GET should still be retried on keep-alive disconnect", async () => {
 
         if (request.startsWith("GET /setup")) {
           socket.write("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: keep-alive\r\n\r\nok");
-          // Close the connection after response to make it stale
+          // Close the connection after a brief delay so client fully receives
+          // the response before the socket close event fires.
           setTimeout(() => socket.end(), 50);
         } else if (request.startsWith("GET /data")) {
           const body = "hello";
           socket.write(`HTTP/1.1 200 OK\r\nContent-Length: ${body.length}\r\n\r\n${body}`);
-          resolveAll();
         }
       },
-      close() {},
+      close() {
+        onSetupSocketClosed();
+      },
       error() {},
     },
     data: { buffer: "" },
@@ -126,14 +131,13 @@ test("GET should still be retried on keep-alive disconnect", async () => {
   const setupRes = await fetch(`${base}/setup`);
   expect(await setupRes.text()).toBe("ok");
 
-  // Wait for server to close the connection
-  await new Promise(r => setTimeout(r, 200));
+  // Wait for the server to actually close the socket (deterministic signal)
+  await setupSocketClosed;
 
   // GET on stale connection — should be retried transparently
   const dataRes = await fetch(`${base}/data`);
   expect(await dataRes.text()).toBe("hello");
 
-  await allDone;
-  // GET should be retried, so server sees setup + failed attempt + successful retry
+  // GET should be retried, so server sees setup + (possibly failed attempt) + successful retry
   expect(requestCount).toBeGreaterThanOrEqual(2);
 });

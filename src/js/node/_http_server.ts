@@ -908,6 +908,11 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
         req.destroy();
       }
     }
+
+    // Ensure ServerResponse gets its close event when socket closes (#14697)
+    if (message && !message._closed && !message.destroyed) {
+      process.nextTick(emitCloseNT, message);
+    }
   }
   #onCloseForDestroy(closeCallback) {
     this.#onClose();

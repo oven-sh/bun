@@ -1907,12 +1907,11 @@ pub const TestCommand = struct {
                                 file_name,
                                 .{ .first = is_first, .last = is_last },
                             ) catch |err| {
-                                if (comptime bun.Environment.isDebug) {
-                                    if (err != error.ModuleNotFound) {
-                                        Output.debugWarn("Unhandled error loading file: {s}\n", .{@errorName(err)});
-                                    }
+                                if (err == error.ModuleNotFound) {
+                                    // Already reported via unhandledRejection; skip this file.
+                                    continue;
                                 }
-                                continue;
+                                return err;
                             };
 
                             bun.handleOom(running_files.append(this.allocator, buntest_strong));

@@ -44,6 +44,7 @@ describe.skipIf(process.platform !== "linux")("statx ENOSYS fallback for old ker
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stdout).toBe("42\n");
+    expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });
 
@@ -87,6 +88,7 @@ describe.skipIf(process.platform !== "linux")("statx ENOSYS fallback for old ker
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stdout).toBe("number\ntrue\nnumber\n");
+    expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });
 });

@@ -1932,7 +1932,6 @@ pub fn statFile(file: std.fs.File) std.fs.File.StatError!std.fs.File.Stat {
             .result => |stat_| return std.fs.File.Stat.fromPosix(stat_),
             .err => |err| switch (err.getErrno()) {
                 .NOMEM => return error.SystemResources,
-                .ACCES => return error.AccessDenied,
                 else => return std.posix.unexpectedErrno(err.getErrno()),
             },
         }

@@ -12,7 +12,7 @@ test("socket.setTimeout resets on incoming data (reads)", async () => {
   const READ_THRESHOLD = 10;
 
   // Create a server that pushes data every 200ms
-  const server = createServer((socket) => {
+  const server = createServer(socket => {
     const interval = setInterval(() => socket.write("ping\n"), 200);
     socket.on("close", () => clearInterval(interval));
     socket.on("error", () => clearInterval(interval));
@@ -43,7 +43,7 @@ test("socket.setTimeout resets on incoming data (reads)", async () => {
       resolve({ reads, timedOut });
     }
   });
-  client.on("error", (err) => reject(err));
+  client.on("error", err => reject(err));
 
   client.connect(port, "127.0.0.1");
 

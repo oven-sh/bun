@@ -790,3 +790,22 @@ test("captureStackTrace with constructor function not in stack returns error str
     expect(e.stack).toBe("TypeError: bad type");
   }
 });
+
+test("captureStackTrace does not crash when stackTraceLimit is deleted or non-numeric", () => {
+  const origLimit = Error.stackTraceLimit;
+  try {
+    // Setting to non-number makes the internal optional nullopt
+    Error.stackTraceLimit = "not a number";
+    expect(() => Error.captureStackTrace({})).not.toThrow();
+
+    // Deleting also makes it nullopt
+    delete Error.stackTraceLimit;
+    expect(() => Error.captureStackTrace({})).not.toThrow();
+
+    // undefined
+    Error.stackTraceLimit = undefined;
+    expect(() => Error.captureStackTrace({})).not.toThrow();
+  } finally {
+    Error.stackTraceLimit = origLimit;
+  }
+});

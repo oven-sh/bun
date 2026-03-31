@@ -894,12 +894,23 @@ pub fn jsAddServerName(global: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
 
 const ticket_key_size = 48;
 
+fn getSSLCtx(this: *Listener) ?*BoringSSL.SSL_CTX {
+    if (this.socket_context) |ctx| {
+        return @ptrCast(ctx.getNativeHandle(true));
+    }
+    if (Environment.isWindows) {
+        if (this.listener == .namedPipe) {
+            return this.listener.namedPipe.ctx;
+        }
+    }
+    return null;
+}
+
 pub fn getTicketKeys(this: *Listener, global: *jsc.JSGlobalObject) bun.JSError!JSValue {
     if (!this.ssl) {
         return global.throwInvalidArguments("getTicketKeys requires TLS", .{});
     }
-    const ctx = this.socket_context orelse return global.throw("Server is not listening", .{});
-    const ssl_ctx: *BoringSSL.SSL_CTX = @ptrCast(ctx.getNativeHandle(true));
+    const ssl_ctx = this.getSSLCtx() orelse return .js_undefined;
 
     var buf: [ticket_key_size]u8 = undefined;
     if (BoringSSL.SSL_CTX_get_tlsext_ticket_keys(ssl_ctx, &buf, ticket_key_size) != 1) {
@@ -925,8 +936,7 @@ pub fn setTicketKeys(this: *Listener, global: *jsc.JSGlobalObject, keys: JSValue
     if (!this.ssl) {
         return global.throwInvalidArguments("setTicketKeys requires TLS", .{});
     }
-    const ctx = this.socket_context orelse return .js_undefined;
-    const ssl_ctx: *BoringSSL.SSL_CTX = @ptrCast(ctx.getNativeHandle(true));
+    const ssl_ctx = this.getSSLCtx() orelse return .js_undefined;
 
     const buffer = keys.asArrayBuffer(global) orelse {
         return global.throwInvalidArguments("keys must be a Buffer or TypedArray", .{});

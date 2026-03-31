@@ -394,6 +394,8 @@ public:
         Bun__FileStreamWrapper__onResolveRequestStream,
         Bun__FileSink__onResolveStream,
         Bun__FileSink__onRejectStream,
+        Bun__CronJob__onPromiseResolve,
+        Bun__CronJob__onPromiseReject,
     };
     static constexpr size_t promiseFunctionsSize = 36;
 

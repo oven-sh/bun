@@ -7422,7 +7422,57 @@ declare module "bun" {
    * await Bun.cron("./cleanup.ts", "@daily", "daily-cleanup");
    * ```
    */
+  /**
+   * A handle to an in-process cron job returned by {@link Bun.cron} when called with a callback.
+   *
+   * @example
+   * ```ts
+   * const job = Bun.cron("cleanup", "0 * * * *", async () => {
+   *   await cleanupTempFiles();
+   * });
+   * // Later:
+   * job.stop();
+   * ```
+   */
+  interface CronJob {
+    /** The name this job was registered with. */
+    readonly name: string;
+    /** The cron expression string. */
+    readonly cron: string;
+    /** Cancel this cron job. The callback will not fire again. */
+    stop(): CronJob;
+    /** Keep the process alive while this job is scheduled (default). */
+    ref(): CronJob;
+    /** Allow the process to exit even while this job is scheduled. */
+    unref(): CronJob;
+  }
+
   const cron: {
+    /**
+     * Schedule an in-process cron job that calls a function on a schedule.
+     *
+     * The callback is invoked on the event loop. The next execution is scheduled
+     * only after the callback (including any returned Promise) completes, so
+     * invocations never overlap. If the callback throws or rejects, the error is
+     * reported as an uncaught exception but the job continues running.
+     *
+     * Calling again with the same name replaces the previous job, which makes
+     * `--hot` reload work without leaking timers.
+     *
+     * @param name - Unique name for this job (used for replacement)
+     * @param schedule - Cron expression or nickname (e.g. `"*/5 * * * *"`, `"@hourly"`)
+     * @param handler - Function to call on schedule. May be async.
+     * @returns A {@link CronJob} handle with `stop()`, `ref()`, `unref()`
+     *
+     * @example
+     * ```ts
+     * const job = Bun.cron("cleanup", "0 * * * *", async () => {
+     *   await cleanupTempFiles();
+     * });
+     * // Later: job.stop()
+     * ```
+     */
+    (name: string, schedule: CronWithAutocomplete, handler: () => void | Promise<void>): CronJob;
     (path: string, schedule: CronWithAutocomplete, title: string): Promise<void>;
     /**
      * Remove a previously registered cron job by its title.

@@ -13,7 +13,9 @@ test("worker receives messages during top-level await", async () => {
       worker.on("message", (msg) => {
         console.log(msg);
         if (msg === "done") {
+          clearInterval(interval);
           worker.terminate();
+          process.exit(0);
         }
       });
 
@@ -21,7 +23,11 @@ test("worker receives messages during top-level await", async () => {
       const interval = setInterval(() => {
         worker.postMessage("ping");
         count++;
-        if (count >= 5) clearInterval(interval);
+        if (count >= 5) {
+          clearInterval(interval);
+          // If we sent 5 messages and never got "done", the bug is present.
+          setTimeout(() => process.exit(1), 2000);
+        }
       }, 500);
     `,
     "worker.js": `
@@ -53,6 +59,7 @@ test("worker receives messages during top-level await", async () => {
 
   // The worker received at least 3 messages during TLA and sent "done"
   expect(stdout.trim()).toBe("done");
+  expect(exitCode).toBe(0);
 });
 
 test("worker receives messages during finite top-level await", async () => {
@@ -110,4 +117,5 @@ test("worker receives messages during finite top-level await", async () => {
   expect(countLine).toBeDefined();
   const count = parseInt(countLine!.split(":")[1]);
   expect(count).toBeGreaterThanOrEqual(1);
+  expect(exitCode).toBe(0);
 });

@@ -493,6 +493,11 @@ pub const BuildCommand = struct {
             }
 
             if (ctx.bundler_options.compile) {
+                if (log.errors > 0) {
+                    try log.print(Output.errorWriter());
+                    Global.exit(1);
+                }
+
                 printSummary(
                     bundled_end,
                     minify_duration,
@@ -503,11 +508,6 @@ pub const BuildCommand = struct {
                 );
 
                 Output.flush();
-
-                if (log.errors > 0) {
-                    try log.print(Output.errorWriter());
-                    Global.exit(1);
-                }
 
                 const is_cross_compile = !compile_target.isDefault();
 

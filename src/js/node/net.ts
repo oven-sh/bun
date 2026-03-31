@@ -1521,6 +1521,7 @@ function lookupAndConnect(self, options) {
   // If host is an IP, skip performing a lookup
   const addressType = isIP(host);
   if (addressType) {
+    self._host = host;
     process.nextTick(() => {
       if (self.connecting) {
         internalConnect(self, options, host, port, addressType, localAddress, localPort);

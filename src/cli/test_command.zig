@@ -1892,6 +1892,10 @@ pub const TestCommand = struct {
                     var file_index: usize = 0;
                     const bun_test_root = &jest.Jest.runner.?.bun_test_root;
 
+                    // Save the initial timeout so we can restore it between files,
+                    // preventing one file's jest.setTimeout() from leaking to others.
+                    const initial_timeout_override = reporter.jest.default_timeout_override;
+
                     while (file_index < files.len or running_files.items.len > 0) {
                         // Load files up to parallelism limit
                         while (running_files.items.len < parallelism and file_index < files.len) {
@@ -1899,6 +1903,10 @@ pub const TestCommand = struct {
                             const is_last = file_index == files.len - 1;
                             const file_name = files[file_index].slice();
                             file_index += 1;
+
+                            // Restore timeout before loading each file so a previous
+                            // file's jest.setTimeout() doesn't affect new files.
+                            reporter.jest.default_timeout_override = initial_timeout_override;
 
                             const buntest_strong = loadAndStartFile(
                                 reporter,
@@ -1956,7 +1964,7 @@ pub const TestCommand = struct {
                                 vm.auto_killer.clear();
                                 vm.auto_killer.disable();
 
-                                reporter.jest.default_timeout_override = std.math.maxInt(u32);
+                                reporter.jest.default_timeout_override = initial_timeout_override;
                                 Global.mimalloc_cleanup(false);
 
                                 var strong = running_files.orderedRemove(i);

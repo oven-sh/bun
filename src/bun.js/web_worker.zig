@@ -258,15 +258,6 @@ pub fn create(
 
     worker.parent_poll_ref.ref(parent);
 
-    // Eagerly materialize rare_data on the parent before the worker thread
-    // spawns. start() reads parent.rare_data to acquire proxy_env_storage.lock
-    // for the env-map snapshot; if rare_data were still null there, the lock
-    // would be skipped and Bun__setEnvValue on this thread could concurrently
-    // create it + mutate env.map during the worker's cloneWithAllocator —
-    // reopening the UAF/rehash race the mutex was meant to close. This is
-    // the last point we're single-threaded with respect to the worker.
-    _ = parent.rareData();
-
     return worker;
 }
 
@@ -337,22 +328,20 @@ pub fn start(
     const allocator = this.arena.?.allocator();
 
     // Proxy-env values may be RefCountedEnvValue bytes owned by the parent's
-    // RareData. We need a consistent snapshot of (storage slots + env.map
-    // entries) so every slice we copy is backed by a ref we hold. The
-    // parent's storage.lock serializes against Bun__setEnvValue on the main
-    // thread — it covers both the slot swap and the map.put, so cloneFrom
-    // and cloneWithAllocator see the same state.
+    // proxy_env_storage. We need a consistent snapshot of (storage slots +
+    // env.map entries) so every slice we copy is backed by a ref we hold.
+    // The parent's storage.lock serializes against Bun__setEnvValue on the
+    // main thread — it covers both the slot swap and the map.put, so
+    // cloneFrom and cloneWithAllocator see the same state.
     //
-    // rare_data is guaranteed non-null here: create() eagerly materialized
-    // it on the parent thread before spawning us. A null-check fast-path
-    // would be racy — Bun__setEnvValue lazily creates rare_data on the
-    // parent thread and could do so between our check and cloneWithAllocator.
+    // proxy_env_storage lives directly on VirtualMachine (not in lazy
+    // RareData) so there's no null-check race — it always exists.
     var temp_proxy_storage: jsc.RareData.ProxyEnvStorage = .{};
     errdefer temp_proxy_storage.deinit();
 
     const map = try allocator.create(bun.DotEnv.Map);
     {
-        const parent_storage = &this.parent.rare_data.?.proxy_env_storage;
+        const parent_storage = &this.parent.proxy_env_storage;
         parent_storage.lock.lock();
         defer parent_storage.lock.unlock();
 
@@ -377,9 +366,10 @@ pub fn start(
     vm.allocator = allocator;
     vm.arena = &this.arena.?;
 
-    // Move the pre-cloned proxy storage into the worker VM's rareData.
-    // Refs were already bumped before the map clone above.
-    vm.rareData().proxy_env_storage = temp_proxy_storage;
+    // Move the pre-cloned proxy storage into the worker VM. Refs were
+    // already bumped before the map clone above. proxy_env_storage is a
+    // direct field on VirtualMachine — no rareData() lazy-init here.
+    vm.proxy_env_storage = temp_proxy_storage;
     temp_proxy_storage = .{};
 
     var b = &vm.transpiler;

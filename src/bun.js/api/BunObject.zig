@@ -1454,7 +1454,7 @@ pub const EnvironmentVariables = struct {
         var name_slice = name.toSlice(bun.default_allocator);
         defer name_slice.deinit();
 
-        const storage = &vm.rareData().proxy_env_storage;
+        const storage = &vm.proxy_env_storage;
         const slot = storage.slot(name_slice.slice()) orelse return;
 
         // Synchronize the slot swap + env.map.put against a concurrently

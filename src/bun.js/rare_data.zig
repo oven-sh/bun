@@ -42,11 +42,8 @@ valkey_context: ValkeyContext = .{},
 
 tls_default_ciphers: ?[:0]const u8 = null,
 
-/// Owned storage for proxy env vars set via process.env at runtime. The env map
-/// borrows `.bytes` slices from these. Ref-counted so worker_threads can share
-/// the parent's values (bump refcount at spawn) without cloning; a worker only
-/// allocates its own value if it writes to that var.
-proxy_env_storage: ProxyEnvStorage = .{},
+// proxy_env_storage moved to VirtualMachine — see comment there on why
+// lazy RareData creation raced with worker spawn.
 
 #spawn_sync_event_loop: bun.ptr.Owned(?*SpawnSyncEventLoop) = .initNull(),
 
@@ -735,8 +732,6 @@ pub fn deinit(this: *RareData) void {
         this.tls_default_ciphers = null;
         bun.default_allocator.free(ciphers);
     }
-
-    this.proxy_env_storage.deinit();
 
     this.valkey_context.deinit();
 }

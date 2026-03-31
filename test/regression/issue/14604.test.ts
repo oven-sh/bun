@@ -40,11 +40,10 @@ test("tls.Server.setTicketKeys validates key length", async () => {
   expect(() => server.setTicketKeys(Buffer.alloc(64))).toThrow();
 });
 
-test("tls.Server.setTicketKeys validates key type", () => {
-  const server = tls_mod.createServer(tls);
+test("tls.Server.setTicketKeys validates key type", async () => {
+  await using server = tls_mod.createServer(tls);
   expect(() => (server as any).setTicketKeys("not a buffer")).toThrow();
   expect(() => (server as any).setTicketKeys(123)).toThrow();
-  server.close();
 });
 
 test("tls.Server.setTicketKeys accepts Uint8Array", async () => {
@@ -77,11 +76,10 @@ test("tls.Server.setTicketKeys accepts DataView", async () => {
   expect(retrieved[47]).toBe(0xcd);
 });
 
-test("tls.Server ticket key methods before listening", () => {
-  const server = tls_mod.createServer(tls);
+test("tls.Server ticket key methods before listening", async () => {
+  await using server = tls_mod.createServer(tls);
   // Node.js silently ignores setTicketKeys if no handle
   expect(() => server.setTicketKeys(Buffer.alloc(48))).not.toThrow();
   // getTicketKeys throws ERR_SERVER_NOT_RUNNING when not listening
   expect(() => server.getTicketKeys()).toThrow();
-  server.close();
 });

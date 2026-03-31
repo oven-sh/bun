@@ -7,6 +7,7 @@
 <a href="https://bun.com/discord" target="_blank"><img height=20 src="https://img.shields.io/discord/876711213126520882" /></a>
 <img src="https://img.shields.io/github/stars/oven-sh/bun" alt="stars">
 <a href="https://twitter.com/jarredsumner/status/1542824445810642946"><img src="https://img.shields.io/static/v1?label=speed&message=fast&color=success" alt="Bun speed" /></a>
+<a href="https://sladge.net"><img src="https://sladge.net/badge.svg" alt="AI Slop Inside"></a>
 </p>
 
 <div align="center">

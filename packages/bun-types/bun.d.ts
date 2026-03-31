@@ -7482,7 +7482,7 @@ declare module "bun" {
      * });
      *
      * // Background healthcheck that doesn't block process exit
-     * Bun.cron("ping", "*\/30 * * * *", () => fetch("/health")).unref();
+     * Bun.cron("ping", "*\/30 * * * *", () => fetch("https://example.com/health")).unref();
      *
      * // Stop conditionally
      * const job = Bun.cron("poll", "* * * * *", async () => {

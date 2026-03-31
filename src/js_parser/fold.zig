@@ -418,6 +418,7 @@ pub fn AstMaybe(
                                 .target = p.newExpr(E.Identifier{ .ref = process_ref }, target.loc),
                                 .name = "env",
                                 .name_loc = name_loc,
+                                .can_be_removed_if_unused = true,
                             },
                             loc,
                         );

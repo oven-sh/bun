@@ -8,9 +8,13 @@ function getProcessVoluntaryCtxSwitches(pid: number): number {
   const taskDir = `/proc/${pid}/task`;
   const threads = readdirSync(taskDir);
   for (const tid of threads) {
-    const status = readFileSync(`${taskDir}/${tid}/status`, "utf8");
-    const match = status.match(/^voluntary_ctxt_switches:\s+(\d+)/m);
-    if (match) total += parseInt(match[1]);
+    try {
+      const status = readFileSync(`${taskDir}/${tid}/status`, "utf8");
+      const match = status.match(/^voluntary_ctxt_switches:\s+(\d+)/m);
+      if (match) total += Number.parseInt(match[1], 10);
+    } catch (err: any) {
+      if (err?.code !== "ENOENT") throw err;
+    }
   }
   return total;
 }
@@ -38,12 +42,6 @@ test.skipIf(process.platform !== "linux")(
     await proc.exited;
 
     const switchesDuringIdle = after - before;
-
-    // Before fix: ~200+ voluntary context switches in 5 seconds across all
-    // threads due to the GC repeating timer calling collectAsync() every
-    // second even when the heap hasn't changed, waking 7+ HeapHelper threads.
-    // After fix: single-digit context switches because collectAsync() is
-    // skipped when the heap is stable.
     expect(switchesDuringIdle).toBeLessThan(100);
   },
   15000,

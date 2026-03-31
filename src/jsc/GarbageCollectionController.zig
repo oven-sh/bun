@@ -130,6 +130,13 @@ pub fn onGCRepeatingTimer(timer: *uws.Timer) callconv(.c) void {
         if (this.heap_size_didnt_change_for_repeating_timer_ticks_count >= 5) {
             this.updateGCRepeatTimer(.slow);
         }
+        // On platforms where blockBytesAllocated() is unavailable (returns 0,
+        // e.g. Linux without ENABLE(RESOURCE_USAGE)), we can't detect heap
+        // growth. Run periodic GC in slow mode as a safety net since JSC's
+        // own GC timers may not cover all cases.
+        if (current_heap_size == 0 and !this.gc_repeating_timer_fast) {
+            this.performGC();
+        }
     }
 }
 

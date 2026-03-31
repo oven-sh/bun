@@ -19,6 +19,22 @@ describe("Bun.cron (in-process)", () => {
     expect(() => Bun.cron("x", "0 0 30 2 *", () => {})).toThrow(/no future occurrences/);
   });
 
+  test("invalid replacement expression does not kill existing job", () => {
+    const job1 = Bun.cron("keep-me", "* * * * *", () => {});
+    try {
+      // Feb 30 has no future occurrence — should throw WITHOUT stopping job1
+      expect(() => Bun.cron("keep-me", "0 0 30 2 *", () => {})).toThrow(/no future occurrences/);
+      // job1 should still be registered and active
+      expect(job1.name).toBe("keep-me");
+      // Registering a valid replacement should still work after the failed attempt
+      const job2 = Bun.cron("keep-me", "@daily", () => {});
+      expect(job2.cron).toBe("@daily");
+      job2.stop();
+    } finally {
+      job1.stop();
+    }
+  });
+
   test("returns CronJob with name and cron getters", () => {
     const job = Bun.cron("test-getters", "* * * * *", () => {});
     try {

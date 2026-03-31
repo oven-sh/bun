@@ -842,7 +842,21 @@ pub const CronJob = struct {
 
     pub const new = bun.TrivialNew(@This());
 
-    var jobs_map: std.StringHashMapUnmanaged(*CronJob) = .{};
+    const JobKey = struct {
+        vm: *jsc.VirtualMachine,
+        name: []const u8,
+
+        const Context = struct {
+            pub fn hash(_: Context, k: JobKey) u64 {
+                return bun.hash(k.name) ^ @intFromPtr(k.vm);
+            }
+            pub fn eql(_: Context, a: JobKey, b: JobKey) bool {
+                return a.vm == b.vm and bun.strings.eql(a.name, b.name);
+            }
+        };
+    };
+    var jobs_map: std.HashMapUnmanaged(JobKey, *CronJob, JobKey.Context, std.hash_map.default_max_load_percentage) = .{};
+    var jobs_lock: bun.Mutex = .{};
 
     fn ref(this: *CronJob) void {
         this.#ref_count += 1;
@@ -965,10 +979,13 @@ pub const CronJob = struct {
         if (this.stopped) return callframe.this();
         this.stopped = true;
 
-        if (jobs_map.fetchRemove(this.name)) |kv|
-            bun.default_allocator.free(kv.key);
-
         const vm = this.global.bunVM();
+        {
+            jobs_lock.lock();
+            defer jobs_lock.unlock();
+            if (jobs_map.fetchRemove(.{ .vm = vm, .name = this.name })) |kv|
+                bun.default_allocator.free(kv.key.name);
+        }
         if (this.event_loop_timer.state == .ACTIVE)
             vm.timer.remove(&this.event_loop_timer);
         this.cleanupAfterStop(vm);
@@ -1022,18 +1039,7 @@ pub const CronJob = struct {
         const parsed = CronExpression.parse(schedule_slice.slice()) catch
             return globalObject.throwInvalidArguments("Invalid cron expression. Expected 5 space-separated fields (minute hour day month weekday), each being *, a number, or a range/step pattern", .{});
 
-        // Stop any existing job with this name (makes --hot re-registration work).
-        if (jobs_map.fetchRemove(name_slice.slice())) |existing| {
-            bun.default_allocator.free(existing.key);
-            const old = existing.value;
-            if (!old.stopped) {
-                old.stopped = true;
-                const vm = globalObject.bunVM();
-                if (old.event_loop_timer.state == .ACTIVE)
-                    vm.timer.remove(&old.event_loop_timer);
-                old.cleanupAfterStop(vm);
-            }
-        }
+        const vm = globalObject.bunVM();
 
         const job = CronJob.new(.{
             .global = globalObject,
@@ -1051,15 +1057,35 @@ pub const CronJob = struct {
             return globalObject.throwInvalidArguments("Cron expression '{s}' has no future occurrences", .{schedule_slice.slice()});
         };
 
+        // New job is valid — now safe to stop any existing job with this
+        // (vm, name) key (makes --hot re-registration work).
+        {
+            jobs_lock.lock();
+            defer jobs_lock.unlock();
+            if (jobs_map.fetchRemove(.{ .vm = vm, .name = name_slice.slice() })) |existing| {
+                bun.default_allocator.free(existing.key.name);
+                const old = existing.value;
+                if (!old.stopped) {
+                    old.stopped = true;
+                    if (old.event_loop_timer.state == .ACTIVE)
+                        vm.timer.remove(&old.event_loop_timer);
+                    old.cleanupAfterStop(vm);
+                }
+            }
+        }
+
         const js_value = job.toJS(globalObject);
         job.this_value.setStrong(js_value, globalObject);
 
-        const vm = globalObject.bunVM();
         job.poll.ref(vm);
         vm.timer.update(&job.event_loop_timer, &next_time);
 
-        const key = bun.handleOom(bun.default_allocator.dupe(u8, name_slice.slice()));
-        bun.handleOom(jobs_map.put(bun.default_allocator, key, job));
+        {
+            jobs_lock.lock();
+            defer jobs_lock.unlock();
+            const key_name = bun.handleOom(bun.default_allocator.dupe(u8, name_slice.slice()));
+            bun.handleOom(jobs_map.put(bun.default_allocator, .{ .vm = vm, .name = key_name }, job));
+        }
 
         return js_value;
     }

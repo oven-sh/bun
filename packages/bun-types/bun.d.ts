@@ -7493,7 +7493,7 @@ declare module "bun" {
      * @see {@link CronJob} for the returned handle.
      * @see {@link Bun.cron.parse} to preview the next fire time.
      */
-    (name: string, schedule: CronWithAutocomplete, handler: () => void | Promise<void>): CronJob;
+    (name: string, schedule: CronWithAutocomplete, handler: () => MaybePromise<void>): CronJob;
     /**
      * Register an **OS-level** cron job that runs a JavaScript/TypeScript module on a schedule.
      *

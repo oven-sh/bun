@@ -1,9 +1,13 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { tls } from "harness";
 import http2 from "node:http2";
 
 test("HTTP/2 server push streams work", async () => {
-  const { promise: done, resolve, reject } = Promise.withResolvers<{
+  const {
+    promise: done,
+    resolve,
+    reject,
+  } = Promise.withResolvers<{
     mainBody: string;
     pushPath: string;
     pushData: string;

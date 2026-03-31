@@ -437,6 +437,7 @@ pub const Command = struct {
         no_exit_on_error: bool = false,
 
         preloads: []const string = &.{},
+        has_loaded_system_config: bool = false,
         has_loaded_global_config: bool = false,
 
         pub const BundlerOptions = struct {

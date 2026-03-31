@@ -245,11 +245,25 @@ pub const test_only_params = [_]ParamType{
 };
 pub const test_params = test_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
 
+fn loadSystemBunfig(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: Command.Tag) !void {
+    if (ctx.has_loaded_system_config) return;
+    ctx.has_loaded_system_config = true;
+
+    var config_buf: bun.PathBuffer = undefined;
+    if (getSystemConfigPath(&config_buf)) |path| {
+        try loadBunfig(allocator, true, path, ctx, comptime cmd);
+    }
+}
+
 fn loadGlobalBunfig(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: Command.Tag) !void {
     if (ctx.has_loaded_global_config) return;
 
     ctx.has_loaded_global_config = true;
 
+    // Load system-wide config first (lowest priority).
+    try loadSystemBunfig(allocator, ctx, cmd);
+
+    // Then load user/home config (overrides system config).
     var config_buf: bun.PathBuffer = undefined;
     if (getHomeConfigPath(&config_buf)) |path| {
         try loadBunfig(allocator, true, path, ctx, comptime cmd);
@@ -312,6 +326,36 @@ fn getHomeConfigPath(buf: *bun.PathBuffer) ?[:0]const u8 {
 
     return null;
 }
+
+fn getSystemConfigPath(buf: *bun.PathBuffer) ?[:0]const u8 {
+    // Allow overriding the system config path via environment variable.
+    if (bun.getenvZ("BUN_SYSTEM_CONFIG")) |custom_path| {
+        if (custom_path.len > 0) {
+            if (custom_path.len < bun.MAX_PATH_BYTES) {
+                @memcpy(buf[0..custom_path.len], custom_path);
+                buf[custom_path.len] = 0;
+                return buf[0..custom_path.len :0];
+            }
+            return null;
+        }
+    }
+
+    if (comptime bun.Environment.isWindows) {
+        // On Windows, use %ALLUSERSPROFILE%\bunfig.toml (typically C:\ProgramData\bunfig.toml).
+        if (bun.getenvZ("ALLUSERSPROFILE")) |all_users| {
+            var paths = [_]string{"bunfig.toml"};
+            return resolve_path.joinAbsStringBufZ(all_users, buf, &paths, .auto);
+        }
+        return null;
+    } else {
+        // On POSIX systems, use /etc/bunfig.toml.
+        const system_path = "/etc/bunfig.toml";
+        @memcpy(buf[0..system_path.len], system_path);
+        buf[system_path.len] = 0;
+        return buf[0..system_path.len :0];
+    }
+}
+
 pub fn loadConfig(allocator: std.mem.Allocator, user_config_path_: ?string, ctx: Command.Context, comptime cmd: Command.Tag) OOM!void {
     // If running as a standalone executable with autoloadBunfig disabled, skip config loading
     // unless an explicit config path was provided via --config
@@ -324,12 +368,23 @@ pub fn loadConfig(allocator: std.mem.Allocator, user_config_path_: ?string, ctx:
     }
 
     var config_buf: bun.PathBuffer = undefined;
+
+    // Always load system-wide config (lowest priority, for corporate enforcement).
+    loadSystemBunfig(allocator, ctx, cmd) catch |err| {
+        if (ctx.log.hasAny()) {
+            ctx.log.print(Output.errorWriter()) catch {};
+        }
+        if (ctx.log.hasAny()) Output.printError("\n", .{});
+        Output.err(err, "failed to load bunfig", .{});
+        Global.crash();
+    };
+
     if (comptime cmd.readGlobalConfig()) {
         if (!ctx.has_loaded_global_config) {
             ctx.has_loaded_global_config = true;
 
             if (getHomeConfigPath(&config_buf)) |path| {
-                loadConfigPath(allocator, true, path, ctx, comptime cmd) catch |err| {
+                loadBunfig(allocator, true, path, ctx, comptime cmd) catch |err| {
                     if (ctx.log.hasAny()) {
                         ctx.log.print(Output.errorWriter()) catch {};
                     }

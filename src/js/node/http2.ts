@@ -2460,11 +2460,16 @@ class ServerHttp2Stream extends Http2Stream {
     if (pushHeaders[":method"] === undefined) {
       pushHeaders[":method"] = "GET";
     }
+    if (pushHeaders[":path"] === undefined) {
+      throw $ERR_INVALID_ARG_VALUE("headers[:path]", undefined);
+    }
     if (pushHeaders[":scheme"] === undefined) {
-      pushHeaders[":scheme"] = "https";
+      pushHeaders[":scheme"] = session.encrypted ? "https" : "http";
     }
     if (pushHeaders[":authority"] === undefined) {
-      pushHeaders[":authority"] = "localhost";
+      // Inherit from the originating request headers
+      const reqHeaders = this[bunHTTP2Headers];
+      pushHeaders[":authority"] = reqHeaders?.[":authority"] ?? "localhost";
     }
 
     const parser = session[bunHTTP2Native];
@@ -2474,9 +2479,9 @@ class ServerHttp2Stream extends Http2Stream {
       return;
     }
 
-    // Create a new ServerHttp2Stream for the promised stream
-    const pushStream = new ServerHttp2Stream(streamId, session, null);
-    parser.setStreamContext(streamId, pushStream);
+    // The streamStart handler already created a ServerHttp2Stream and
+    // incremented #connections via handleReceivedStreamID -> onStreamStart
+    const pushStream = parser.getStreamContext(streamId);
 
     process.nextTick(callback, null, pushStream, pushHeaders, options || {});
   }
@@ -3430,6 +3435,14 @@ class ClientHttp2Session extends Http2Session {
 
       // Push stream response headers: has PushPromiseReceived, not yet responded
       if ((status & StreamState.PushPromiseReceived) !== 0 && (status & StreamState.StreamResponded) === 0) {
+        if (header_status === HTTP_STATUS_CONTINUE) {
+          stream.emit("continue");
+        }
+        // Informational 1xx headers don't count as final response
+        if (header_status >= 100 && header_status < 200) {
+          stream.emit("headers", headers, flags, rawheaders);
+          return;
+        }
         stream[bunHTTP2StreamStatus] = status | StreamState.StreamResponded;
         stream.emit("response", headers, flags, rawheaders);
         return;

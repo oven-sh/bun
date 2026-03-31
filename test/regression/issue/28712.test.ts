@@ -3,6 +3,7 @@ import { tls } from "harness";
 import http2 from "node:http2";
 
 test("HTTP/2 server push streams work", async () => {
+  let client: ReturnType<typeof http2.connect> | undefined;
   const {
     promise: done,
     resolve,
@@ -15,9 +16,15 @@ test("HTTP/2 server push streams work", async () => {
 
   const server = http2.createSecureServer({ key: tls.key, cert: tls.cert });
 
+  function cleanup() {
+    client?.close();
+    server.close();
+  }
+
   server.on("stream", (stream, _headers) => {
-    stream.pushStream({ ":path": "/style.css" }, (err, pushStream) => {
+    stream.pushStream({ ":path": "/style.css" }, (err: Error | null, pushStream: any) => {
       if (err) {
+        cleanup();
         reject(err);
         return;
       }
@@ -37,10 +44,13 @@ test("HTTP/2 server push streams work", async () => {
 
   server.listen(0, () => {
     const port = (server.address() as any).port;
-    const client = http2.connect(`https://localhost:${port}`, {
+    client = http2.connect(`https://localhost:${port}`, {
       rejectUnauthorized: false,
     });
-    client.on("error", reject);
+    client.on("error", (err: Error) => {
+      cleanup();
+      reject(err);
+    });
 
     let pushPath: string | null = null;
     let pushData: string | null = null;
@@ -49,12 +59,11 @@ test("HTTP/2 server push streams work", async () => {
     function maybeFinish() {
       if (mainBody !== null && pushData !== null && pushPath !== null) {
         resolve({ mainBody, pushPath, pushData });
-        client.close();
-        server.close();
+        cleanup();
       }
     }
 
-    client.on("stream", (pushedStream, headers) => {
+    client.on("stream", (pushedStream: any, headers: any) => {
       const path = headers[":path"];
       if (!path) return; // skip non-push stream events
       pushPath = path as string;

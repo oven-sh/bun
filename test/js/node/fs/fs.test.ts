@@ -1560,10 +1560,9 @@ it.if(isPosix)("realpathSync doesn't block on FIFO", () => {
   unlinkSync(path);
 });
 
-// Regression guard: getFdPath on Linux uses readlink(/proc/self/fd/N) with
-// a /dev/fd/N fallback for environments where /proc is unavailable or broken
-// (minimal containers, FreeBSD Linuxulator). This test ensures the primary
-// path still works on a normal POSIX host.
+// Regression guard for realpathSync on POSIX hosts. On Linux, getFdPath has
+// a /dev/fd fallback for environments where /proc is broken (FreeBSD
+// Linuxulator) or absent (minimal containers).
 it.if(isPosix)("realpathSync resolves root, regular files, and symlinks", () => {
   expect(realpathSync("/")).toBe("/");
 

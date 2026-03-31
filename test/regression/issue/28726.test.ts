@@ -1,4 +1,4 @@
-import { test, expect, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 describe("system-wide bunfig.toml", () => {
@@ -16,11 +16,7 @@ describe("system-wide bunfig.toml", () => {
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stdout.trim()).toBe("preloaded:true");
     expect(exitCode).toBe(0);
@@ -42,11 +38,7 @@ describe("system-wide bunfig.toml", () => {
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     // Project-level bunfig overrides system-level preload
     expect(stdout.trim()).toBe("from:project");
@@ -65,11 +57,7 @@ describe("system-wide bunfig.toml", () => {
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stdout.trim()).toBe("works");
     expect(exitCode).toBe(0);
@@ -91,11 +79,7 @@ describe("system-wide bunfig.toml", () => {
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stdout.trim()).toBe("val:from-system-config");
     expect(exitCode).toBe(0);

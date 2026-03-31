@@ -21,6 +21,9 @@ if (process.env?.NODE_ENV !== "production") {
 if (process?.env?.NODE_ENV !== "production") {
   console.log("SHOULD_ALSO_BE_REMOVED_2");
 }
+if (globalThis.process.env.NODE_ENV !== "production") {
+  console.log("GLOBALTHIS_SHOULD_BE_REMOVED");
+}
 `,
   });
 
@@ -39,5 +42,6 @@ if (process?.env?.NODE_ENV !== "production") {
   expect(stdout).not.toContain("SHOULD_BE_REMOVED");
   expect(stdout).not.toContain("SHOULD_ALSO_BE_REMOVED");
   expect(stdout).not.toContain("SHOULD_ALSO_BE_REMOVED_2");
+  expect(stdout).not.toContain("GLOBALTHIS_SHOULD_BE_REMOVED");
   expect(exitCode).toBe(0);
 });

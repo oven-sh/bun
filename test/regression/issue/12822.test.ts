@@ -27,7 +27,7 @@ test("HTTPS res.socket has TLS methods like getPeerCertificate", async () => {
         method: "GET",
         rejectUnauthorized: false,
       },
-      (res) => {
+      res => {
         const socket = res.socket as TLSSocket;
         try {
           resolve({
@@ -71,7 +71,7 @@ test("HTTP res.socket does not report as encrypted", async () => {
     hasPeerCert: boolean;
     peerCert: any;
   }>((resolve, reject) => {
-    const req = http.request(`http://localhost:${server.port}/`, (res) => {
+    const req = http.request(`http://localhost:${server.port}/`, res => {
       const socket = res.socket;
       try {
         resolve({

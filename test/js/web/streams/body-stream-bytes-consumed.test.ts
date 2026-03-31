@@ -1,5 +1,5 @@
-import { test, expect } from "bun:test";
-import { bunExe, bunEnv } from "harness";
+import { expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 
 test("calling bytes() on a consumed body stream does not crash", async () => {
   await using proc = Bun.spawn({
@@ -18,11 +18,7 @@ test("calling bytes() on a consumed body stream does not crash", async () => {
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   // Must not crash (panic/assertion failure)
   expect(stderr).not.toContain("panic");

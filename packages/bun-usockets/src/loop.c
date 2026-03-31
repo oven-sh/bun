@@ -588,6 +588,24 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                 break;
             }
 
+            /* For UDP, EPOLLERR/EPOLLHUP from ICMP errors (e.g. port unreachable
+             * after sendto to an unreachable destination) are non-fatal. Unlike TCP,
+             * these don't indicate the socket is broken — they just report that a
+             * previous send didn't reach its destination. When EPOLLERR fires
+             * without EPOLLIN, we must call bsd_recvmmsg to drain sk_err from the
+             * kernel socket (otherwise epoll re-fires EPOLLERR in a tight loop).
+             * When EPOLLIN is also set, the readable block below handles draining.
+             * This matches libuv/Node.js behavior. */
+            if (error && !(events & LIBUS_SOCKET_READABLE)) {
+                struct udp_recvbuf recvbuf;
+                bsd_udp_setup_recvbuf(&recvbuf, u->loop->data.recv_buf, LIBUS_RECV_BUFFER_LENGTH);
+                int npackets = bsd_recvmmsg(us_poll_fd(p), &recvbuf, MSG_DONTWAIT);
+                if (npackets > 0) {
+                    u->on_data(u, &recvbuf, npackets);
+                }
+                error = 0;
+            }
+
             if (events & LIBUS_SOCKET_READABLE) {
                 do {
                     struct udp_recvbuf recvbuf;

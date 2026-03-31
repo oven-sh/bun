@@ -57,6 +57,13 @@ static void init_debug_logging() {
 #include <errno.h>
 #else /* _WIN32 */
 #include <mstcpip.h>
+#include <mswsock.h>
+/* SIO_UDP_CONNRESET disables Windows ICMP port-unreachable errors from
+ * surfacing as WSAECONNRESET on UDP sockets. Without this, sending to an
+ * unreachable destination closes the socket on the next recvfrom(). */
+#ifndef SIO_UDP_CONNRESET
+#define SIO_UDP_CONNRESET _WSAIOW(IOC_VENDOR, 12)
+#endif
 #endif
 
 #if defined(__APPLE__)
@@ -132,7 +139,12 @@ int bsd_recvmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_recvbuf *recvbuf, int fl
     while (1) {
         ssize_t ret = recvfrom(fd, recvbuf->buf, LIBUS_RECV_BUFFER_LENGTH, flags, (struct sockaddr *)&recvbuf->addr, &addr_len);
         if (ret < 0) {
-            if (WSAGetLastError() == WSAEINTR) continue;
+            int err = WSAGetLastError();
+            if (err == WSAEINTR) continue;
+            /* WSAECONNRESET/WSAENETRESET indicate a previous sendto() to an
+             * unreachable destination triggered an ICMP error. Treat as
+             * non-fatal to match libuv/Node.js behavior. */
+            if (err == WSAECONNRESET || err == WSAENETRESET) return 0;
             return ret;
         }
         recvbuf->recvlen = ret;
@@ -142,6 +154,10 @@ int bsd_recvmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_recvbuf *recvbuf, int fl
     if (Bun__doesMacOSVersionSupportSendRecvMsgX()) {
         while (1) {
             int ret = recvmsg_x(fd, recvbuf->msgvec, LIBUS_UDP_RECV_COUNT, flags);
+            if (ret < 0 && errno != EINTR) {
+                /* ICMP errors from a previous sendto() are non-fatal for UDP. */
+                if (errno == ECONNREFUSED || errno == ECONNRESET || errno == ENETRESET) return 0;
+            }
             if (ret >= 0 || errno != EINTR) return ret;
         }
     }
@@ -152,6 +168,8 @@ int bsd_recvmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_recvbuf *recvbuf, int fl
             if (ret < 0) {
                 if (errno == EINTR) continue;
                 if (errno == EAGAIN || errno == EWOULDBLOCK) return i;
+                /* ICMP errors from a previous sendto() are non-fatal for UDP. */
+                if (errno == ECONNREFUSED || errno == ECONNRESET || errno == ENETRESET) return i;
                 return ret;
             }
             recvbuf->msgvec[i].msg_len = ret;
@@ -162,6 +180,10 @@ int bsd_recvmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_recvbuf *recvbuf, int fl
 #else
     while (1) {
         int ret = recvmmsg(fd, (struct mmsghdr *)&recvbuf->msgvec, LIBUS_UDP_RECV_COUNT, flags, 0);
+        if (ret < 0 && errno != EINTR) {
+            /* ICMP errors from a previous sendto() are non-fatal for UDP. */
+            if (errno == ECONNREFUSED || errno == ECONNRESET || errno == ENETRESET) return 0;
+        }
         if (ret >= 0 || errno != EINTR) return ret;
     }
 #endif
@@ -1247,6 +1269,16 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port, int op
         freeaddrinfo(result);
         return LIBUS_SOCKET_ERROR;
     }
+
+#ifdef _WIN32
+    /* Prevent ICMP port-unreachable errors from closing the socket.
+     * This matches libuv/Node.js behavior for UDP sockets. */
+    {
+        DWORD no = 0;
+        DWORD bytes;
+        WSAIoctl(listenFd, SIO_UDP_CONNRESET, &no, sizeof(no), NULL, 0, &bytes, NULL, NULL);
+    }
+#endif
 
     if (bsd_set_reuse(listenFd, options) != 0) {
         if (err != NULL) {

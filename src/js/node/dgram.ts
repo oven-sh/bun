@@ -642,7 +642,9 @@ function doSend(ex, self, ip, list, address, port, callback) {
     if (err) {
       err.address = ip;
       err.port = port;
-      err.message = `send ${err.code} ${ip}:${port}`;
+      if (err.code) {
+        err.message = `send ${err.code} ${ip}:${port}`;
+      }
       process.nextTick(callback, err);
     } else {
       const sent = success ? data.byteLength : 0;

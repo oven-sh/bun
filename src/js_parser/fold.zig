@@ -410,8 +410,8 @@ pub fn AstMaybe(
                         }, .loc = loc };
                     }
 
-                    // Lower import.meta.env to process.env when bundling
-                    if (p.options.bundle and strings.eqlComptime(name, "env")) {
+                    // Lower import.meta.env to process.env when bundling for bun/node targets
+                    if (p.options.lower_import_meta_env_to_process_env and strings.eqlComptime(name, "env")) {
                         const process_ref = (p.findSymbol(target.loc, "process") catch unreachable).ref;
                         return p.newExpr(
                             E.Dot{

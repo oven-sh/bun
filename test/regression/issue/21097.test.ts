@@ -10,7 +10,7 @@ test("import.meta.env is lowered to process.env in bun build", async () => {
   });
 
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "build", join(String(dir), "index.ts")],
+    cmd: [bunExe(), "build", "--target=bun", join(String(dir), "index.ts")],
     env: bunEnv,
     stderr: "pipe",
   });

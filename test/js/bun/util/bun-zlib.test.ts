@@ -1,4 +1,4 @@
-import { expect, test, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { deflateSync as nodeDeflateSync } from "node:zlib";
 
 describe("Bun.inflateSync windowBits", () => {

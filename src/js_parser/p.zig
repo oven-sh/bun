@@ -5550,10 +5550,17 @@ pub fn NewParser_(
                 // we do, but only if it's a UTF8 string
                 // the intent is to handle people using this form instead of E.Dot. So we really only want to do this if the accessor can also be an identifier
                 .e_index => |index| {
-                    if (parts.len > 1 and index.index.data == .e_string and index.index.data.e_string.isUTF8()) {
-                        const last = parts.len - 1;
-                        const is_tail_match = strings.eql(parts[last], index.index.data.e_string.slice(p.allocator));
-                        return is_tail_match and p.isDotDefineMatch(index.target, parts[0..last]);
+                    if (index.index.data == .e_string and index.index.data.e_string.isUTF8()) {
+                        if (parts.len > 1) {
+                            const last = parts.len - 1;
+                            const is_tail_match = strings.eql(parts[last], index.index.data.e_string.slice(p.allocator));
+                            return is_tail_match and p.isDotDefineMatch(index.target, parts[0..last]);
+                        }
+
+                        // Allow globalThis["X"] to match a define for X
+                        if (parts.len == 1 and strings.eql(parts[0], index.index.data.e_string.slice(p.allocator))) {
+                            return p.isGlobalThis(index.target);
+                        }
                     }
                 },
                 .e_identifier => |ex| {

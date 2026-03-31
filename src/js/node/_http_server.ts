@@ -830,7 +830,6 @@ function onServerClientError(ssl: boolean, socket: unknown, errorCode: number, r
 const kBytesWritten = Symbol("kBytesWritten");
 const kEnableStreaming = Symbol("kEnableStreaming");
 const NodeHTTPServerSocket = class Socket extends Duplex {
-  bytesRead = 0;
   connecting = false;
   timeout = 0;
   [kBytesWritten] = 0;
@@ -849,6 +848,11 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
 
     this.encrypted = encrypted;
     this.on("timeout", onNodeHTTPServerSocketTimeout);
+  }
+
+  get bytesRead() {
+    const handle = this[kHandle];
+    return handle ? (handle.response?.getBytesRead?.() ?? 0) : 0;
   }
 
   get bytesWritten() {

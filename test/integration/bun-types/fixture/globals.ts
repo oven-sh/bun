@@ -34,8 +34,10 @@ expectType<Uint8Array>(
 );
 expectType<Uint8Array>(Bun.gzipSync(new Uint8Array(128), { level: 9, memLevel: 6, windowBits: 27 }));
 expectType<Uint8Array>(Bun.inflateSync(new Uint8Array(64))); // Pretend this is DEFLATE compressed data
+expectType<Uint8Array>(Bun.inflateSync(new Uint8Array(64), { windowBits: 0 })); // Read window size from zlib header
 expectType<Uint8Array>(Bun.gunzipSync(new Uint8Array(64))); // Pretend this is GZIP compressed data
 expectAssignable<Bun.ZlibCompressionOptions>({ windowBits: -11 });
+expectAssignable<Bun.ZlibCompressionOptions>({ windowBits: 0 });
 
 // Other
 expectType<Promise<number>>(Bun.write("test.json", "lol"));

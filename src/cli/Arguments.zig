@@ -380,15 +380,18 @@ pub fn loadConfig(allocator: std.mem.Allocator, user_config_path_: ?string, ctx:
 
     var config_buf: bun.PathBuffer = undefined;
 
-    // Always load system-wide config (lowest priority, for corporate enforcement).
-    loadSystemBunfig(allocator, ctx, cmd) catch |err| {
-        if (ctx.log.hasAny()) {
-            ctx.log.print(Output.errorWriter()) catch {};
-        }
-        if (ctx.log.hasAny()) Output.printError("\n", .{});
-        Output.err(err, "failed to load bunfig", .{});
-        Global.crash();
-    };
+    // Load system-wide config when an explicit BUN_SYSTEM_CONFIG is set (any command)
+    // or for commands that load global config (package manager commands).
+    if (bun.env_var.BUN_SYSTEM_CONFIG.get() != null or comptime cmd.readGlobalConfig()) {
+        loadSystemBunfig(allocator, ctx, cmd) catch |err| {
+            if (ctx.log.hasAny()) {
+                ctx.log.print(Output.errorWriter()) catch {};
+            }
+            if (ctx.log.hasAny()) Output.printError("\n", .{});
+            Output.err(err, "failed to load bunfig", .{});
+            Global.crash();
+        };
+    }
 
     if (comptime cmd.readGlobalConfig()) {
         if (!ctx.has_loaded_global_config) {

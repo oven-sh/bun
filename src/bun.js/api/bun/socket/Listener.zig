@@ -922,11 +922,8 @@ pub fn getTicketKeys(this: *Listener, global: *jsc.JSGlobalObject) bun.JSError!J
 pub fn jsGetTicketKeys(global: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
     jsc.markBinding(@src());
 
-    const arguments = callframe.arguments_old(1);
-    if (arguments.len < 1) {
-        return global.throwNotEnoughArguments("getTicketKeys", 1, arguments.len);
-    }
-    if (arguments.ptr[0].as(Listener)) |this| {
+    const args = callframe.argumentsAsArray(1);
+    if (args[0].as(Listener)) |this| {
         return this.getTicketKeys(global);
     }
     return global.throw("Expected a Listener instance", .{});
@@ -955,12 +952,9 @@ pub fn setTicketKeys(this: *Listener, global: *jsc.JSGlobalObject, keys: JSValue
 pub fn jsSetTicketKeys(global: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
     jsc.markBinding(@src());
 
-    const arguments = callframe.arguments_old(2);
-    if (arguments.len < 2) {
-        return global.throwNotEnoughArguments("setTicketKeys", 2, arguments.len);
-    }
-    if (arguments.ptr[0].as(Listener)) |this| {
-        return this.setTicketKeys(global, arguments.ptr[1]);
+    const args = callframe.argumentsAsArray(2);
+    if (args[0].as(Listener)) |this| {
+        return this.setTicketKeys(global, args[1]);
     }
     return global.throw("Expected a Listener instance", .{});
 }

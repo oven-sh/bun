@@ -62,9 +62,26 @@ test("tls.Server.setTicketKeys accepts Uint8Array", async () => {
   expect(retrieved[47]).toBe(0xab);
 });
 
-test("tls.Server.setTicketKeys without listening does not throw", () => {
+test("tls.Server.setTicketKeys accepts DataView", async () => {
+  await using server = tls_mod.createServer(tls);
+  server.listen(0);
+  await once(server, "listening");
+
+  const ab = new ArrayBuffer(48);
+  new Uint8Array(ab).fill(0xcd);
+  server.setTicketKeys(new DataView(ab));
+
+  const retrieved = server.getTicketKeys();
+  expect(retrieved.byteLength).toBe(48);
+  expect(retrieved[0]).toBe(0xcd);
+  expect(retrieved[47]).toBe(0xcd);
+});
+
+test("tls.Server ticket key methods before listening", () => {
   const server = tls_mod.createServer(tls);
   // Node.js silently ignores setTicketKeys if no handle
   expect(() => server.setTicketKeys(Buffer.alloc(48))).not.toThrow();
+  // getTicketKeys throws ERR_SERVER_NOT_RUNNING when not listening
+  expect(() => server.getTicketKeys()).toThrow();
   server.close();
 });

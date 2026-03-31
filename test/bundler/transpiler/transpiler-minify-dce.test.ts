@@ -60,9 +60,7 @@ describe("Bun.Transpiler", () => {
 describe("cross-type strict equality folding", () => {
   test("number === string folds to false", () => {
     const t = new Bun.Transpiler({ minify: { syntax: true, whitespace: true } });
-    expect(t.transformSync('if (42 === "b") console.log("DEAD"); console.log("alive");').trim()).not.toContain(
-      "DEAD",
-    );
+    expect(t.transformSync('if (42 === "b") console.log("DEAD"); console.log("alive");').trim()).not.toContain("DEAD");
   });
 
   test("boolean === string folds to false", () => {

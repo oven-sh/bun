@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 
 // https://github.com/oven-sh/bun/issues/16727
 // Bun.color should accept both <number> and <percentage> for all

@@ -79,7 +79,8 @@ security_scanner: ?[]const u8 = null,
 
 // Minimum release age in ms (security feature)
 // Only install packages published at least N ms ago
-minimum_release_age_ms: ?f64 = null,
+// Default: 259200000ms (3 days) to protect against supply chain attacks
+minimum_release_age_ms: ?f64 = 259200000.0,
 // Packages to exclude from minimum release age checking
 minimum_release_age_excludes: ?[]const []const u8 = null,
 

@@ -1805,9 +1805,9 @@ registry = "${mockRegistryUrl}"`,
         ".npmrc": `registry=${mockRegistryUrl}`,
       });
 
-      // First install without minimum-release-age to get latest
+      // First install with minimum-release-age=0 to disable the default 3-day filter and get latest
       let proc = Bun.spawn({
-        cmd: [bunExe(), "install"],
+        cmd: [bunExe(), "install", "--minimum-release-age", "0"],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
@@ -1818,7 +1818,7 @@ registry = "${mockRegistryUrl}"`,
       expect(exitCode).toBe(0);
 
       const lockfile = await Bun.file(`${dir}/bun.lock`).text();
-      expect(lockfile).toContain("regular-package@3.0.0"); // Latest version
+      expect(lockfile).toContain("regular-package@3.0.0"); // Latest version (age filter disabled)
 
       // Now try with frozen lockfile and minimum-release-age
       // Frozen lockfile means no changes to lockfile - versions stay as-is

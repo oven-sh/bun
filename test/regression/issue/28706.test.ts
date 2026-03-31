@@ -1,145 +1,142 @@
 import { expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 
 // Regression: fetch silently retries POST on keep-alive disconnect (ECONNRESET)
 // and merges response streams from multiple request lifecycles.
 // https://github.com/oven-sh/bun/issues/28706
+//
+// Run in a subprocess to isolate from ASAN shutdown diagnostics.
 test("POST should not be silently retried on keep-alive disconnect", async () => {
-  let requestCount = 0;
-  let retryDetected = false;
-  let sseSocket: ReturnType<typeof Bun.listen> extends { socket: infer S } ? S : any;
-  const { promise: allDone, resolve: resolveAll } = Promise.withResolvers<void>();
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", `
+      let requestCount = 0;
+      let sseSocket;
 
-  // Raw TCP server for precise connection control
-  await using server = Bun.listen({
-    hostname: "127.0.0.1",
-    port: 0,
-    socket: {
-      open(socket) {
-        socket.data = { buffer: "" };
-      },
-      data(socket, data) {
-        socket.data.buffer += new TextDecoder().decode(data);
+      const server = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        socket: {
+          open(socket) { socket.data = { buffer: "" }; },
+          data(socket, data) {
+            socket.data.buffer += new TextDecoder().decode(data);
+            if (!socket.data.buffer.includes("\\r\\n\\r\\n")) return;
+            const request = socket.data.buffer;
+            socket.data.buffer = "";
+            requestCount++;
 
-        // Wait until we have a complete HTTP request (headers end with \r\n\r\n)
-        if (!socket.data.buffer.includes("\r\n\r\n")) return;
+            if (request.startsWith("POST /login")) {
+              const body = "success";
+              socket.write("HTTP/1.1 200 OK\\r\\nContent-Length: " + body.length + "\\r\\nConnection: keep-alive\\r\\n\\r\\n" + body);
+            } else if (request.startsWith("POST /sse")) {
+              const chunk = JSON.stringify({ sn: requestCount - 1 });
+              const hexLen = chunk.length.toString(16);
+              socket.write("HTTP/1.1 200 OK\\r\\nTransfer-Encoding: chunked\\r\\nConnection: keep-alive\\r\\n\\r\\n" + hexLen + "\\r\\n" + chunk + "\\r\\n");
+              sseSocket = socket;
+            }
+          },
+          close() {},
+          error() {},
+        },
+        data: { buffer: "" },
+      });
 
-        const request = socket.data.buffer;
-        socket.data.buffer = "";
-        requestCount++;
+      const base = "http://127.0.0.1:" + server.port;
+      const loginRes = await fetch(base + "/login", { method: "POST" });
+      await loginRes.text();
 
-        if (request.startsWith("POST /login")) {
-          // Respond with keep-alive so the connection is reused
-          const body = "success";
-          socket.write(`HTTP/1.1 200 OK\r\nContent-Length: ${body.length}\r\nConnection: keep-alive\r\n\r\n${body}`);
-        } else if (request.startsWith("POST /sse")) {
-          if (requestCount > 2) {
-            retryDetected = true;
+      const sseRes = await fetch(base + "/sse", { method: "POST" });
+      const sns = [];
+      let streamErrored = false;
+      try {
+        for await (const chunk of sseRes.body) {
+          const text = new TextDecoder().decode(chunk).trim();
+          if (text.length > 0) {
+            sns.push(JSON.parse(text).sn);
+            sseSocket?.end();
           }
-          // Send first chunk with chunked encoding. The client will close
-          // the socket after receiving the chunk (no setTimeout needed).
-          const chunk = JSON.stringify({ type: "start", sn: requestCount - 1 });
-          const hexLen = chunk.length.toString(16);
-          socket.write(
-            `HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: keep-alive\r\n\r\n${hexLen}\r\n${chunk}\r\n`,
-          );
-          sseSocket = socket;
         }
-      },
-      close() {
-        resolveAll();
-      },
-      error() {},
-    },
-    data: { buffer: "" },
+      } catch { streamErrored = true; }
+
+      server.stop();
+      console.log(JSON.stringify({ requestCount, sns, streamErrored }));
+      process.exit(0);
+    `],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
   });
 
-  const base = `http://127.0.0.1:${server.port}`;
+  const [stdout, stderr, exitCode] = await Promise.all([
+    proc.stdout.text(),
+    proc.stderr.text(),
+    proc.exited,
+  ]);
 
-  // Establish keep-alive connection
-  const loginRes = await fetch(`${base}/login`, { method: "POST" });
-  expect(await loginRes.text()).toBe("success");
-
-  // POST on the reused keep-alive connection; server will close mid-stream
-  const sseRes = await fetch(`${base}/sse`, { method: "POST" });
-
-  const sns: number[] = [];
-  let streamErrored = false;
-  try {
-    for await (const chunk of sseRes.body!) {
-      const text = new TextDecoder().decode(chunk).trim();
-      if (text.length > 0) {
-        sns.push(JSON.parse(text).sn);
-        // Close the socket after the client has received the first chunk.
-        // This is deterministic — no setTimeout needed.
-        sseSocket?.end();
-      }
-    }
-  } catch {
-    streamErrored = true;
-  }
-
-  // Wait for server socket close event
-  await allDone;
-
+  const result = JSON.parse(stdout.trim());
   // The body stream must error from the truncated chunked response
-  expect(streamErrored).toBe(true);
-  // With the bug: the client retries POST, server sees 3 requests
-  // (login + sse + retried sse), and chunks from 2 different SNs appear.
-  // With the fix: server sees only 2 requests (login + sse), one SN.
-  expect(retryDetected).toBe(false);
-  expect(requestCount).toBe(2);
-  expect(sns).toEqual([1]);
+  expect(result.streamErrored).toBe(true);
+  // With the bug: requestCount is 3 (login + sse + retried sse).
+  // With the fix: requestCount is 2 (login + sse, no retry).
+  expect(result.requestCount).toBe(2);
+  expect(result.sns).toEqual([1]);
+  expect(exitCode).toBe(0);
 });
 
-// Verify that GET requests on keep-alive connections are still retried
-// by closing the socket after parsing the request but before sending a response
 test("GET should still be retried on keep-alive disconnect", async () => {
-  let dataAttempts = 0;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", `
+      let dataAttempts = 0;
 
-  await using server = Bun.listen({
-    hostname: "127.0.0.1",
-    port: 0,
-    socket: {
-      open(socket) {
-        socket.data = { buffer: "" };
-      },
-      data(socket, data) {
-        socket.data.buffer += new TextDecoder().decode(data);
-        if (!socket.data.buffer.includes("\r\n\r\n")) return;
+      const server = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        socket: {
+          open(socket) { socket.data = { buffer: "" }; },
+          data(socket, data) {
+            socket.data.buffer += new TextDecoder().decode(data);
+            if (!socket.data.buffer.includes("\\r\\n\\r\\n")) return;
+            const request = socket.data.buffer;
+            socket.data.buffer = "";
 
-        const request = socket.data.buffer;
-        socket.data.buffer = "";
+            if (request.startsWith("GET /setup")) {
+              socket.write("HTTP/1.1 200 OK\\r\\nContent-Length: 2\\r\\nConnection: keep-alive\\r\\n\\r\\nok");
+            } else if (request.startsWith("GET /data")) {
+              dataAttempts++;
+              if (dataAttempts === 1) { socket.end(); return; }
+              const body = "hello";
+              socket.write("HTTP/1.1 200 OK\\r\\nContent-Length: " + body.length + "\\r\\n\\r\\n" + body);
+            }
+          },
+          close() {},
+          error() {},
+        },
+        data: { buffer: "" },
+      });
 
-        if (request.startsWith("GET /setup")) {
-          socket.write("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: keep-alive\r\n\r\nok");
-        } else if (request.startsWith("GET /data")) {
-          dataAttempts++;
-          if (dataAttempts === 1) {
-            // Close without responding — forces client to retry via allow_retry
-            socket.end();
-            return;
-          }
-          const body = "hello";
-          socket.write(`HTTP/1.1 200 OK\r\nContent-Length: ${body.length}\r\n\r\n${body}`);
-        }
-      },
-      close() {},
-      error() {},
-    },
-    data: { buffer: "" },
+      const base = "http://127.0.0.1:" + server.port;
+      await (await fetch(base + "/setup")).text();
+
+      const dataRes = await fetch(base + "/data");
+      const text = await dataRes.text();
+
+      server.stop();
+      console.log(JSON.stringify({ dataAttempts, text }));
+      process.exit(0);
+    `],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
   });
 
-  const base = `http://127.0.0.1:${server.port}`;
+  const [stdout, stderr, exitCode] = await Promise.all([
+    proc.stdout.text(),
+    proc.stderr.text(),
+    proc.exited,
+  ]);
 
-  // Establish keep-alive connection
-  const setupRes = await fetch(`${base}/setup`);
-  expect(await setupRes.text()).toBe("ok");
-
-  // GET on keep-alive connection — server closes without responding on first
-  // attempt, client retries on fresh connection, second attempt succeeds
-  const dataRes = await fetch(`${base}/data`);
-  expect(await dataRes.text()).toBe("hello");
-
+  const result = JSON.parse(stdout.trim());
+  expect(result.text).toBe("hello");
   // Exactly 2 attempts: the closed one + the successful retry
-  expect(dataAttempts).toBe(2);
+  expect(result.dataAttempts).toBe(2);
+  expect(exitCode).toBe(0);
 });

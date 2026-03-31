@@ -1831,7 +1831,7 @@ pub const TestCommand = struct {
         vm_.arena = &arena;
         vm_.allocator = arena.allocator();
 
-        if (file_parallelism <= 1) {
+        if (file_parallelism <= 1 or reporter_.repeat_count > 1) {
             // Sequential mode (default): run files one at a time
             const SeqContext = struct {
                 reporter: *CommandLineReporter,

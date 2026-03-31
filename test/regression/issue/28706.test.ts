@@ -1,5 +1,4 @@
-import { test, expect } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { expect, test } from "bun:test";
 
 // Regression: fetch silently retries POST on keep-alive disconnect (ECONNRESET)
 // and merges response streams from multiple request lifecycles.
@@ -31,16 +30,14 @@ test("POST should not be silently retried on keep-alive disconnect", async () =>
         if (request.startsWith("POST /login")) {
           // Respond with keep-alive so the connection is reused
           const body = "success";
-          socket.write(
-            `HTTP/1.1 200 OK\r\nContent-Length: ${body.length}\r\nConnection: keep-alive\r\n\r\n${body}`
-          );
+          socket.write(`HTTP/1.1 200 OK\r\nContent-Length: ${body.length}\r\nConnection: keep-alive\r\n\r\n${body}`);
         } else if (request.startsWith("POST /sse")) {
           // Send first chunk with chunked encoding, then close the connection
           // to simulate the server dropping the connection mid-stream
           const chunk = JSON.stringify({ type: "start", sn: requestCount - 1 });
           const hexLen = chunk.length.toString(16);
           socket.write(
-            `HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: keep-alive\r\n\r\n${hexLen}\r\n${chunk}\r\n`
+            `HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: keep-alive\r\n\r\n${hexLen}\r\n${chunk}\r\n`,
           );
           // Close the connection after a brief moment to ensure client received data
           setTimeout(() => {
@@ -108,16 +105,12 @@ test("GET should still be retried on keep-alive disconnect", async () => {
         requestCount++;
 
         if (request.startsWith("GET /setup")) {
-          socket.write(
-            "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: keep-alive\r\n\r\nok"
-          );
+          socket.write("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: keep-alive\r\n\r\nok");
           // Close the connection after response to make it stale
           setTimeout(() => socket.end(), 50);
         } else if (request.startsWith("GET /data")) {
           const body = "hello";
-          socket.write(
-            `HTTP/1.1 200 OK\r\nContent-Length: ${body.length}\r\n\r\n${body}`
-          );
+          socket.write(`HTTP/1.1 200 OK\r\nContent-Length: ${body.length}\r\n\r\n${body}`);
           resolveAll();
         }
       },
@@ -134,7 +127,7 @@ test("GET should still be retried on keep-alive disconnect", async () => {
   expect(await setupRes.text()).toBe("ok");
 
   // Wait for server to close the connection
-  await new Promise((r) => setTimeout(r, 200));
+  await new Promise(r => setTimeout(r, 200));
 
   // GET on stale connection — should be retried transparently
   const dataRes = await fetch(`${base}/data`);

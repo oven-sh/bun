@@ -1,5 +1,5 @@
 import { expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 
 setDefaultTimeout(30_000);
@@ -34,7 +34,7 @@ if (val) {
 `,
   });
 
-  const outfile = join(String(dir), "test-binary-bc");
+  const outfile = join(String(dir), isWindows ? "test-binary-bc.exe" : "test-binary-bc");
 
   // Compile with bytecode - previously failed with "Failed to generate bytecode"
   await using compile = Bun.spawn({

@@ -510,6 +510,7 @@ fn spin(this: *WebWorker) void {
     });
 
     if (this.hasRequestedTerminate()) {
+        this.flushLogs();
         this.exitAndDeinit();
         return;
     }

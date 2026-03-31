@@ -36,7 +36,7 @@ test("worker receives messages during top-level await", async () => {
       let received = 0;
       parentPort.on("message", (msg) => {
         received++;
-        if (received >= 3) {
+        if (received === 3) {
           parentPort.postMessage("done");
         }
       });

@@ -2989,6 +2989,12 @@ pub const Data = union(Tag) {
                     .e_null, .e_undefined => {
                         return Equality.false;
                     },
+                    .e_string => {
+                        if (comptime kind == .strict) {
+                            // "true === 'x'" is false (different types)
+                            return Equality.false;
+                        }
+                    },
                     else => {},
                 }
             },
@@ -3026,6 +3032,12 @@ pub const Data = union(Tag) {
                     .e_null, .e_undefined => {
                         // "(not null or undefined) == undefined" is false
                         return Equality.false;
+                    },
+                    .e_string => {
+                        if (comptime kind == .strict) {
+                            // "42 === 'x'" is false (different types)
+                            return Equality.false;
+                        }
                     },
                     else => {},
                 }
@@ -3088,6 +3100,12 @@ pub const Data = union(Tag) {
                             // the string could still equal 0 or 1 but it could be hex, binary, octal, ...
                             return Equality.unknown;
                         } else {
+                            return Equality.false;
+                        }
+                    },
+                    .e_boolean, .e_branch_boolean => {
+                        if (comptime kind == .strict) {
+                            // "'x' === true" is false (different types)
                             return Equality.false;
                         }
                     },

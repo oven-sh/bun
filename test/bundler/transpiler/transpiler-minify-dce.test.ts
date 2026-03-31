@@ -56,3 +56,33 @@ describe("Bun.Transpiler", () => {
     });
   });
 });
+
+describe("cross-type strict equality folding", () => {
+  test("number === string folds to false", () => {
+    const t = new Bun.Transpiler({ minify: { syntax: true, whitespace: true } });
+    expect(t.transformSync('if (42 === "b") console.log("DEAD"); console.log("alive");').trim()).not.toContain(
+      "DEAD",
+    );
+  });
+
+  test("boolean === string folds to false", () => {
+    const t = new Bun.Transpiler({ minify: { syntax: true, whitespace: true } });
+    expect(t.transformSync('if (true === "b") console.log("DEAD"); console.log("alive");').trim()).not.toContain(
+      "DEAD",
+    );
+  });
+
+  test("string === boolean folds to false", () => {
+    const t = new Bun.Transpiler({ minify: { syntax: true, whitespace: true } });
+    expect(t.transformSync('if ("a" === true) console.log("DEAD"); console.log("alive");').trim()).not.toContain(
+      "DEAD",
+    );
+  });
+
+  test("number !== string folds to true", () => {
+    const t = new Bun.Transpiler({ minify: { syntax: true, whitespace: true } });
+    const result = t.transformSync('if (42 !== "b") console.log("ALIVE");').trim();
+    expect(result).toContain("ALIVE");
+    expect(result).not.toContain("!==");
+  });
+});

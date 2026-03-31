@@ -746,7 +746,8 @@ function Socket(options?) {
     // when the onread option is specified we use a different handlers object
     this[khandlers] = {
       ...SocketHandlers2,
-      data({ data: self }, buffer) {
+      data(socket, buffer) {
+        const { self } = socket.data;
         if (!self) return;
         self._unrefTimer();
         try {

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
-describe("fetch respects --max-http-header-size", () => {
+describe.concurrent("fetch respects --max-http-header-size", () => {
   test("rejects when response headers exceed the limit", async () => {
     await using proc = Bun.spawn({
       cmd: [
@@ -19,13 +19,13 @@ describe("fetch respects --max-http-header-size", () => {
         });
         try {
           const res = await fetch("http://localhost:" + server.port);
+          server.stop(true);
           console.log("ERROR: fetch should have thrown but got status " + res.status);
           process.exit(1);
         } catch (e) {
+          server.stop(true);
           console.log("CAUGHT: " + e.code);
           process.exit(0);
-        } finally {
-          server.stop(true);
         }
         `,
       ],
@@ -59,13 +59,13 @@ describe("fetch respects --max-http-header-size", () => {
         try {
           const res = await fetch("http://localhost:" + server.port);
           const text = await res.text();
+          server.stop(true);
           console.log("OK: " + text);
           process.exit(0);
         } catch (e) {
+          server.stop(true);
           console.log("ERROR: " + e.message);
           process.exit(1);
-        } finally {
-          server.stop(true);
         }
         `,
       ],

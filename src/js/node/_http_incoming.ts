@@ -161,9 +161,7 @@ function IncomingMessage(req, options = defaultIncomingOpts) {
         : false;
 
     if (getIsNextIncomingMessageHTTPS()) {
-      const sock = this.socket;
-      sock.encrypted = true;
-      sock.authorized = true;
+      this.socket.encrypted = true;
       setIsNextIncomingMessageHTTPS(false);
     }
   }

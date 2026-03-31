@@ -14,7 +14,7 @@ var FakeSocket = class Socket extends Duplex {
   // TLS socket properties — set to true for HTTPS connections by IncomingMessage
   encrypted = false;
   authorized = false;
-  alpnProtocol = null;
+  alpnProtocol: string | false = false;
 
   #address;
   _httpMessage: any;
@@ -140,11 +140,11 @@ var FakeSocket = class Socket extends Duplex {
   }
 
   getCipher() {
-    return this.encrypted ? { name: null, standardName: null, version: null } : null;
+    return this.encrypted ? { name: "", standardName: "", version: "" } : null;
   }
 
   getProtocol() {
-    return this.encrypted ? null : null;
+    return null;
   }
 
   getSession() {
@@ -152,7 +152,7 @@ var FakeSocket = class Socket extends Duplex {
   }
 
   getEphemeralKeyInfo() {
-    return {};
+    return this.encrypted ? {} : null;
   }
 
   getSharedSigalgs() {
@@ -187,7 +187,11 @@ var FakeSocket = class Socket extends Duplex {
 
   setSession(_session) {}
 
-  renegotiate(_options, _callback) {}
+  renegotiate(_options, _callback) {
+    if (typeof _callback === "function") {
+      process.nextTick(_callback, new Error("TLS renegotiation is not supported"));
+    }
+  }
 
   disableRenegotiation() {}
 

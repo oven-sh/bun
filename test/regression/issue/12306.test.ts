@@ -23,9 +23,13 @@ test("socket.setTimeout resets on incoming data (reads)", async () => {
   let reads = 0;
   let timedOut = false;
 
+  // 10 reads at 200ms intervals ≈ 2s, well past the 1s timeout.
+  // If reads correctly reset the timer, no timeout fires.
+  const READ_THRESHOLD = 10;
+
   const client = new Socket();
   // Set a 1s timeout — server sends data every 200ms, so if reads
-  // reset the timer this should never fire within our 3s window.
+  // reset the timer this should never fire before we hit the threshold.
   client.setTimeout(1000);
   client.on("timeout", () => {
     timedOut = true;
@@ -34,16 +38,14 @@ test("socket.setTimeout resets on incoming data (reads)", async () => {
   });
   client.on("data", () => {
     reads++;
+    if (reads >= READ_THRESHOLD) {
+      client.end();
+      resolve({ reads, timedOut });
+    }
   });
   client.on("error", err => reject(err));
 
-  client.connect(port, "127.0.0.1", () => {
-    // After 3s of receiving data, close gracefully — timeout should not have fired
-    setTimeout(() => {
-      client.end();
-      resolve({ reads, timedOut });
-    }, 3000);
-  });
+  client.connect(port, "127.0.0.1");
 
   const result = await done;
 

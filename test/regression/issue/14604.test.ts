@@ -44,6 +44,7 @@ test("tls.Server.setTicketKeys validates key type", () => {
   const server = tls_mod.createServer(tls);
   expect(() => (server as any).setTicketKeys("not a buffer")).toThrow();
   expect(() => (server as any).setTicketKeys(123)).toThrow();
+  server.close();
 });
 
 test("tls.Server.setTicketKeys accepts Uint8Array", async () => {
@@ -82,4 +83,5 @@ test("tls.Server ticket key methods before listening", () => {
   expect(() => server.setTicketKeys(Buffer.alloc(48))).not.toThrow();
   // getTicketKeys throws ERR_SERVER_NOT_RUNNING when not listening
   expect(() => server.getTicketKeys()).toThrow();
+  server.close();
 });

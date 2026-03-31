@@ -210,31 +210,69 @@ describe.concurrent("Bun.cron (in-process) — firing", () => {
     }
   }, 70_000);
 
-  test("error in callback is reported but cron continues", async () => {
-    // Spawn a subprocess so we can observe the uncaught exception on stderr
-    // and verify the process doesn't crash.
+  test("sync throw in callback emits uncaughtException", async () => {
+    // Matches setTimeout: sync throw → uncaughtException. Process exits 1 without a handler.
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
         `
-        let fires = 0;
-        const job = Bun.cron("err-test", "* * * * *", () => {
-          fires++;
-          if (fires === 1) {
-            // Stop after second scheduling — the error doesn't kill us
-            setTimeout(() => { job.stop(); console.log("fires=" + fires); }, 100);
-            throw new Error("boom");
-          }
+        let caught;
+        process.on("uncaughtException", e => { caught = e.message; });
+        const job = Bun.cron("err-sync", "* * * * *", () => {
+          setTimeout(() => { job.stop(); console.log("caught=" + caught); process.exit(0); }, 100);
+          throw new Error("sync-boom");
         });
       `,
       ],
       env: bunEnv,
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stdout.trim()).toBe("fires=1");
-    expect(stderr).toContain("boom");
+    const [stdout, _stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toBe("caught=sync-boom");
     expect(exitCode).toBe(0);
+  }, 70_000);
+
+  test("async throw in callback emits unhandledRejection", async () => {
+    // Matches setTimeout: rejected promise → unhandledRejection.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        let caught;
+        process.on("unhandledRejection", e => { caught = e.message; });
+        const job = Bun.cron("err-async", "* * * * *", async () => {
+          setTimeout(() => { job.stop(); console.log("caught=" + caught); process.exit(0); }, 100);
+          await Bun.sleep(1);
+          throw new Error("async-boom");
+        });
+      `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, _stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toBe("caught=async-boom");
+    expect(exitCode).toBe(0);
+  }, 70_000);
+
+  test("unhandled cron error exits process like setTimeout does", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        Bun.cron("x", "* * * * *", () => { throw new Error("boom"); });
+        setTimeout(() => console.log("still alive"), 61000);
+      `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("");
+    expect(stderr).toContain("boom");
+    expect(exitCode).toBe(1);
   }, 70_000);
 });

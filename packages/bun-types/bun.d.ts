@@ -7382,47 +7382,6 @@ declare module "bun" {
     | (string & {});
 
   /**
-   * Register an OS-level cron job that runs a JavaScript/TypeScript module on a schedule.
-   *
-   * The module must export a `default` object with a `scheduled(controller)` method,
-   * conforming to the [Cloudflare Workers Cron Triggers API](https://developers.cloudflare.com/workers/runtime-apis/handlers/scheduled/).
-   *
-   * On Linux, registers with [crontab](https://man7.org/linux/man-pages/man5/crontab.5.html).
-   * On macOS, registers with [launchd](https://developer.apple.com/library/archive/documentation/MacOSX/Conceptual/BPSystemStartup/Chapters/CreatingLaunchdJobs.html).
-   * On Windows, registers with [Task Scheduler](https://learn.microsoft.com/en-us/windows/win32/taskschd/task-scheduler-start-page).
-   *
-   * **Cron expression syntax** (5 fields: `minute hour day month weekday`):
-   *
-   * | Field | Values | Special |
-   * |-------|--------|---------|
-   * | Minute | `0-59` | `*` `,` `-` `/` |
-   * | Hour | `0-23` | `*` `,` `-` `/` |
-   * | Day of month | `1-31` | `*` `,` `-` `/` |
-   * | Month | `1-12` or `JAN-DEC` | `*` `,` `-` `/` |
-   * | Day of week | `0-7` or `SUN-SAT` | `*` `,` `-` `/` |
-   *
-   * - `0` and `7` both mean Sunday in the weekday field.
-   * - Month/day names are case-insensitive (`MON`, `Mon`, `Monday` all work).
-   * - Predefined nicknames: `@yearly`, `@annually`, `@monthly`, `@weekly`, `@daily`, `@midnight`, `@hourly`.
-   * - When both day-of-month and day-of-week are specified (neither is `*`),
-   *   the job runs when **either** field matches ([POSIX cron](https://pubs.opengroup.org/onlinepubs/9699919799/utilities/crontab.html) behavior).
-   *
-   * @param path - Path to the script to run (resolved relative to caller)
-   * @param schedule - Cron expression or predefined nickname (e.g. `"30 2 * * MON"`, `"@daily"`)
-   * @param title - Unique identifier for this cron job (alphanumeric, hyphens, underscores only)
-   * @returns Promise that resolves when the cron job is registered
-   * @throws If the expression is invalid, the title contains invalid characters, or registration fails
-   *
-   * @example
-   * ```ts
-   * // Run every Monday at 2:30 AM
-   * await Bun.cron("./worker.ts", "30 2 * * MON", "weekly-report");
-   *
-   * // Run daily at midnight
-   * await Bun.cron("./cleanup.ts", "@daily", "daily-cleanup");
-   * ```
-   */
-  /**
    * A handle to an in-process cron job returned by {@link Bun.cron} when called with a callback.
    *
    * @example
@@ -7449,30 +7408,177 @@ declare module "bun" {
 
   const cron: {
     /**
-     * Schedule an in-process cron job that calls a function on a schedule.
+     * Schedule an **in-process** cron job that calls a function on a schedule.
      *
-     * The callback is invoked on the event loop. The next execution is scheduled
-     * only after the callback (including any returned Promise) completes, so
-     * invocations never overlap. If the callback throws or rejects, the error is
-     * reported as an uncaught exception but the job continues running.
+     * Unlike the module-path overload, this runs the callback on the current event loop —
+     * the job dies with the process and does not survive reboots. State is shared between
+     * invocations (closures, module-level variables, database connections all persist).
      *
-     * Calling again with the same name replaces the previous job, which makes
-     * `--hot` reload work without leaking timers.
+     * | | In-process (this overload) | OS-level (path + title) |
+     * |---|---|---|
+     * | Survives process exit | No | Yes |
+     * | Shared state between runs | Yes | No (fresh process each time) |
+     * | Windows expression limits | None | 48-trigger cap |
+     * | Return type | {@link CronJob} (sync) | `Promise<void>` |
      *
-     * @param name - Unique name for this job (used for replacement)
-     * @param schedule - Cron expression or nickname (e.g. `"*\/5 * * * *"`, `"@hourly"`)
-     * @param handler - Function to call on schedule. May be async.
-     * @returns A {@link CronJob} handle with `stop()`, `ref()`, `unref()`
+     * ### No-overlap guarantee
+     *
+     * The next fire time is computed only after the callback settles (including any returned
+     * Promise). If your callback takes 3 minutes and runs every minute, it fires at T+0 → runs
+     * until T+3 → next fire is the first minute boundary after T+3. Invocations never stack.
+     *
+     * ### Error semantics
+     *
+     * Matches `setTimeout`: a synchronous throw emits `uncaughtException`, a rejected Promise
+     * emits `unhandledRejection`. Without a listener, the process exits with code 1. The job
+     * reschedules itself after an error — it does not stop on first failure.
+     *
+     * ```ts
+     * process.on("unhandledRejection", (err) => log.error(err)); // keep going
+     * Bun.cron("flaky", "* * * * *", async () => { await mightThrow(); });
+     * ```
+     *
+     * ### Cron expression syntax
+     *
+     * Five fields: `minute hour day-of-month month day-of-week`.
+     *
+     * | Field | Values | Special chars |
+     * |-------|--------|---------------|
+     * | Minute | `0-59` | `*` `,` `-` `/` |
+     * | Hour | `0-23` | `*` `,` `-` `/` |
+     * | Day of month | `1-31` | `*` `,` `-` `/` |
+     * | Month | `1-12` or `JAN`-`DEC` | `*` `,` `-` `/` |
+     * | Day of week | `0-7` or `SUN`-`SAT` | `*` `,` `-` `/` |
+     *
+     * - `0` and `7` both mean Sunday.
+     * - Month and weekday names are case-insensitive 3-letter abbreviations.
+     * - Nicknames: `@yearly`, `@annually`, `@monthly`, `@weekly`, `@daily`, `@midnight`, `@hourly`.
+     * - When both day-of-month and day-of-week are restricted (neither is `*`), the job
+     *   fires when **either** matches — [POSIX cron](https://pubs.opengroup.org/onlinepubs/9699919799/utilities/crontab.html) OR semantics.
+     * - All expressions work on all platforms — there is no Windows trigger limit here.
+     *
+     * ### Lifecycle & `--hot`
+     *
+     * Calling `Bun.cron()` again with the same `name` stops the previous job and replaces it,
+     * so top-level `Bun.cron()` calls are safe under `bun --hot` — reloading your module won't
+     * leak timers. By default the job keeps the process alive (like `setInterval`); call
+     * `.unref()` to let the process exit naturally when nothing else is pending.
+     *
+     * @param name Unique identifier for this job. Registering the same name again replaces
+     *   the previous job. Not written to the OS — purely for in-process bookkeeping.
+     * @param schedule Cron expression or nickname (e.g. `"*\/5 * * * *"`, `"@hourly"`).
+     * @param handler Function to call on each fire. May return a Promise — the next fire
+     *   is not scheduled until it settles.
+     * @returns A {@link CronJob} handle. Chainable: `.stop()`, `.ref()`, `.unref()` all
+     *   return the job itself.
+     * @throws Synchronously if `schedule` is invalid, `name` is empty or not a string, or the
+     *   expression has no future occurrences (e.g. `"0 0 30 2 *"` — February 30th).
      *
      * @example
      * ```ts
-     * const job = Bun.cron("cleanup", "0 * * * *", async () => {
+     * // Hourly cleanup, keeps process alive
+     * Bun.cron("cleanup", "0 * * * *", async () => {
      *   await cleanupTempFiles();
      * });
-     * // Later: job.stop()
+     *
+     * // Background healthcheck that doesn't block process exit
+     * Bun.cron("ping", "*\/30 * * * *", () => fetch("/health")).unref();
+     *
+     * // Stop conditionally
+     * const job = Bun.cron("poll", "* * * * *", async () => {
+     *   if (await isDone()) job.stop();
+     * });
      * ```
+     *
+     * @see {@link CronJob} for the returned handle.
+     * @see {@link Bun.cron.parse} to preview the next fire time.
      */
     (name: string, schedule: CronWithAutocomplete, handler: () => void | Promise<void>): CronJob;
+    /**
+     * Register an **OS-level** cron job that runs a JavaScript/TypeScript module on a schedule.
+     *
+     * Unlike the callback overload, this registers the job with the operating system's
+     * scheduler — the job survives process exit and persists across reboots. Bun spawns
+     * a fresh process for each invocation, so there is no shared state between runs.
+     *
+     * | Platform | Scheduler | Inspect with |
+     * |----------|-----------|--------------|
+     * | Linux    | [crontab](https://man7.org/linux/man-pages/man5/crontab.5.html) | `crontab -l` |
+     * | macOS    | [launchd](https://developer.apple.com/library/archive/documentation/MacOSX/Conceptual/BPSystemStartup/Chapters/CreatingLaunchdJobs.html) | `launchctl list` |
+     * | Windows  | [Task Scheduler](https://learn.microsoft.com/en-us/windows/win32/taskschd/task-scheduler-start-page) | `schtasks /query` |
+     *
+     * ### Module shape
+     *
+     * The target module must have a `default` export with a `scheduled(controller)` method,
+     * matching the [Cloudflare Workers Cron Triggers](https://developers.cloudflare.com/workers/runtime-apis/handlers/scheduled/)
+     * API. The controller exposes `cron` (the expression) and `scheduledTime` (ms since epoch).
+     *
+     * ```ts
+     * // worker.ts
+     * export default {
+     *   async scheduled(controller: Bun.CronController) {
+     *     console.log(`Fired: ${controller.cron} at ${new Date(controller.scheduledTime)}`);
+     *     await doWork();
+     *   },
+     * };
+     * ```
+     *
+     * ### Cron expression syntax
+     *
+     * Five fields: `minute hour day-of-month month day-of-week`.
+     *
+     * | Field | Values | Special chars |
+     * |-------|--------|---------------|
+     * | Minute | `0-59` | `*` `,` `-` `/` |
+     * | Hour | `0-23` | `*` `,` `-` `/` |
+     * | Day of month | `1-31` | `*` `,` `-` `/` |
+     * | Month | `1-12` or `JAN`-`DEC` | `*` `,` `-` `/` |
+     * | Day of week | `0-7` or `SUN`-`SAT` | `*` `,` `-` `/` |
+     *
+     * - `0` and `7` both mean Sunday.
+     * - Month and weekday names are case-insensitive 3-letter abbreviations.
+     * - Nicknames: `@yearly`, `@annually`, `@monthly`, `@weekly`, `@daily`, `@midnight`, `@hourly`.
+     * - When both day-of-month and day-of-week are restricted (neither is `*`), the job
+     *   fires when **either** matches — [POSIX cron](https://pubs.opengroup.org/onlinepubs/9699919799/utilities/crontab.html) OR semantics.
+     *
+     * ### Platform caveats
+     *
+     * - **Windows:** minute steps that don't evenly divide 60 (e.g. `*\/7`, `*\/11`) with
+     *   all hours active exceed Task Scheduler's 48-trigger limit and throw. Divisors
+     *   of 60 (`*\/5`, `*\/10`, `*\/15`, `*\/20`, `*\/30`) and all common patterns work.
+     * - **Windows headless/CI:** registration fails if the current user's SID can't be
+     *   resolved (typical under service accounts). Run as a regular user or create the
+     *   task manually with `schtasks /create /ru SYSTEM`.
+     * - **macOS:** stdout/stderr are written to `/tmp/bun.cron.<title>.{stdout,stderr}.log`.
+     *
+     * ### Idempotency & removal
+     *
+     * Registering with a title that already exists replaces the previous entry. Use
+     * {@link Bun.cron.remove} to unregister. The title is namespaced per user, so
+     * different users can register jobs with the same title independently.
+     *
+     * @param path Path to the module to run. Resolved relative to the calling file.
+     * @param schedule Cron expression or nickname (e.g. `"30 2 * * MON"`, `"@daily"`).
+     * @param title Unique identifier for this job. Alphanumeric, hyphens, and underscores only —
+     *   used directly in crontab markers, launchd service labels, and schtasks task names.
+     * @returns Promise that resolves once the OS scheduler has accepted the job.
+     * @throws If the cron expression is invalid, `title` contains illegal characters,
+     *   the expression exceeds Windows' trigger limit, or the underlying scheduler command fails
+     *   (the error message includes the scheduler's stderr output).
+     *
+     * @example
+     * ```ts
+     * // Register once (e.g. in a postinstall script or setup command)
+     * await Bun.cron("./jobs/weekly-report.ts", "30 2 * * MON", "weekly-report");
+     * await Bun.cron("./jobs/cleanup.ts", "@daily", "daily-cleanup");
+     *
+     * // Later, to unregister:
+     * await Bun.cron.remove("weekly-report");
+     * ```
+     *
+     * @see {@link Bun.cron.remove} to unregister.
+     * @see {@link Bun.cron.parse} to preview the next fire time.
+     */
     (path: string, schedule: CronWithAutocomplete, title: string): Promise<void>;
     /**
      * Remove a previously registered cron job by its title.

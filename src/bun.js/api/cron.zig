@@ -817,8 +817,10 @@ pub const CronRemoveJob = struct {
 // Unlike the OS-level cron above, this runs the callback in the current
 // process on the event loop. The next execution is scheduled only after the
 // callback (including any returned Promise) completes, so callbacks never
-// overlap. Calling Bun.cron() again with the same name replaces the old job,
-// which makes --hot reload work without leaking timers.
+// overlap. Error semantics match setTimeout: sync throws become
+// uncaughtException, rejected Promises become unhandledRejection. Calling
+// Bun.cron() again with the same name replaces the old job, which makes
+// --hot reload work without leaking timers.
 
 pub const CronJob = struct {
     pub const js = jsc.Codegen.JSCronJob;
@@ -911,7 +913,7 @@ pub const CronJob = struct {
 
         const result = cb.call(this.global, .js_undefined, &.{}) catch {
             if (this.global.tryTakeException()) |err|
-                vm.runErrorHandler(err, null);
+                _ = vm.uncaughtException(vm.global, err, false);
             this.scheduleNext(vm);
             return;
         };
@@ -929,7 +931,7 @@ pub const CronJob = struct {
                 .fulfilled => {},
                 .rejected => {
                     promise.setHandled(this.global.vm());
-                    vm.runErrorHandler(promise.result(this.global.vm()), null);
+                    vm.unhandledRejection(vm.global, promise.result(this.global.vm()), result);
                 },
             }
         }
@@ -954,7 +956,7 @@ pub const CronJob = struct {
         defer this.deref();
         const vm = this.global.bunVM();
         const err = if (args.len > 0) args[0] else .js_undefined;
-        vm.runErrorHandler(err, null);
+        vm.unhandledRejection(vm.global, err, .js_undefined);
         this.scheduleNext(vm);
         return .js_undefined;
     }

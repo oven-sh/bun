@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
 test("req.socket.bytesRead returns non-zero with node:http server", async () => {
@@ -28,11 +28,7 @@ test("req.socket.bytesRead returns non-zero with node:http server", async () => 
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   const bytesRead = parseInt(stdout.trim(), 10);
   expect(bytesRead).toBeGreaterThan(0);

@@ -13,7 +13,9 @@ describe.skipIf(process.platform !== "linux")("statx ENOSYS fallback for old ker
   const blockStatxBin = path.join(tmpdir(), "block_statx_18036");
 
   afterAll(() => {
-    try { unlinkSync(blockStatxBin); } catch {}
+    try {
+      unlinkSync(blockStatxBin);
+    } catch {}
   });
 
   test("compile block_statx helper", () => {

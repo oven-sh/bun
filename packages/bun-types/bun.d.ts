@@ -7460,7 +7460,7 @@ declare module "bun" {
      * `--hot` reload work without leaking timers.
      *
      * @param name - Unique name for this job (used for replacement)
-     * @param schedule - Cron expression or nickname (e.g. `"*/5 * * * *"`, `"@hourly"`)
+     * @param schedule - Cron expression or nickname (e.g. `"*\/5 * * * *"`, `"@hourly"`)
      * @param handler - Function to call on schedule. May be async.
      * @returns A {@link CronJob} handle with `stop()`, `ref()`, `unref()`
      *

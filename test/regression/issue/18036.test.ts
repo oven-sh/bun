@@ -1,6 +1,7 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
-import { existsSync } from "node:fs";
+import { existsSync, unlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 
 // Bun crashed on Linux kernels < 4.11 (e.g. Synology NAS kernel 4.4) because
@@ -9,7 +10,11 @@ import path from "node:path";
 // old kernel) and verifies bun still works.
 describe.skipIf(process.platform !== "linux")("statx ENOSYS fallback for old kernels", () => {
   const blockStatxSrc = path.join(import.meta.dir, "18036", "block_statx.c");
-  const blockStatxBin = path.join(import.meta.dir, "18036", "block_statx");
+  const blockStatxBin = path.join(tmpdir(), "block_statx_18036");
+
+  afterAll(() => {
+    try { unlinkSync(blockStatxBin); } catch {}
+  });
 
   test("compile block_statx helper", () => {
     const result = Bun.spawnSync({

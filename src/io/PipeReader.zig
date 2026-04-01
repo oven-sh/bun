@@ -1221,7 +1221,7 @@ pub const WindowsBufferedReader = struct {
             }
         }
 
-        // move cursor foward
+        // move cursor forward
         buf.items.len += amount.result;
 
         _ = this._onReadChunk(slice, hasMore);

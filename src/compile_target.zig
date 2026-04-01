@@ -449,7 +449,7 @@ pub fn from(input_: []const u8) CompileTarget {
     };
 }
 
-// Exists for consistentcy with values.
+// Exists for consistency with values.
 pub fn defineKeys(_: *const CompileTarget) []const []const u8 {
     return &.{
         "process.platform",

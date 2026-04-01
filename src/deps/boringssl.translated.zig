@@ -5973,7 +5973,7 @@ pub extern fn SSL_add_dir_cert_subjects_to_stack(out: ?*struct_stack_st_X509_NAM
 pub extern fn SSL_CTX_enable_tls_channel_id(ctx: ?*SSL_CTX) c_int;
 pub extern fn SSL_enable_tls_channel_id(ssl: ?*SSL) c_int;
 pub extern fn BIO_f_ssl() [*c]const BIO_METHOD;
-pub extern fn BIO_set_ssl(bio: [*c]BIO, ssl: ?*SSL, take_owership: c_int) c_long;
+pub extern fn BIO_set_ssl(bio: [*c]BIO, ssl: ?*SSL, take_ownership: c_int) c_long;
 pub extern fn SSL_get_session(ssl: ?*const SSL) ?*SSL_SESSION;
 pub extern fn SSL_get1_session(ssl: ?*SSL) ?*SSL_SESSION;
 pub extern fn OPENSSL_init_ssl(opts: u64, settings: ?*const OPENSSL_INIT_SETTINGS) c_int;

@@ -1303,7 +1303,7 @@ pub fn WindowsStreamingWriter(comptime Parent: type, function_table: anytype) ty
         }
 
         fn isDone(this: *WindowsWriter) bool {
-            // done is flags andd no more data queued? so we are done!
+            // done is flags and no more data queued? so we are done!
             return this.is_done and !this.hasPendingData();
         }
 

@@ -113,5 +113,4 @@ describe("net.Server.close() must not hang when native socket closes", () => {
       });
     }, "end");
   });
-
 });

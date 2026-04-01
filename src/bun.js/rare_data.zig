@@ -13,6 +13,7 @@ postgresql_context: bun.api.Postgres.PostgresSQLContext = .{},
 entropy_cache: ?*EntropyCache = null,
 
 hot_map: ?HotMap = null,
+cron_jobs: std.ArrayListUnmanaged(*bun.api.cron.CronJob) = .{},
 
 // TODO: make this per JSGlobalObject instead of global
 // This does not handle ShadowRealm correctly!

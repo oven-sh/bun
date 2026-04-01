@@ -843,16 +843,6 @@ pub const CronJob = struct {
     this_value: jsc.JSRef = jsc.JSRef.empty(),
     stopped: bool = false,
 
-    // All live in-process cron jobs across all VMs. clearAllForVM linear-scans
-    // this; an app has at most a handful of cron jobs so a hash map is overkill.
-    var jobs_list: std.ArrayListUnmanaged(*CronJob) = .{};
-    var jobs_lock: bun.Mutex = .{};
-
-    fn removeFromListLocked(this: *CronJob) void {
-        if (std.mem.indexOfScalar(*CronJob, jobs_list.items, this)) |i|
-            _ = jobs_list.swapRemove(i);
-    }
-
     fn stopInternal(this: *CronJob, vm: *jsc.VirtualMachine) void {
         if (this.stopped) return;
         this.stopped = true;
@@ -862,33 +852,21 @@ pub const CronJob = struct {
         this.cleanupAfterStop(vm);
     }
 
-    /// Removes from jobs_list before stopping so GC of the JS wrapper doesn't
-    /// leave a dangling pointer for clearAllForVM to read.
     fn selfStop(this: *CronJob, vm: *jsc.VirtualMachine) void {
-        {
-            jobs_lock.lock();
-            defer jobs_lock.unlock();
-            this.removeFromListLocked();
+        if (vm.rare_data) |rare| {
+            if (std.mem.indexOfScalar(*CronJob, rare.cron_jobs.items, this)) |i|
+                _ = rare.cron_jobs.swapRemove(i);
         }
         this.stopInternal(vm);
     }
 
     /// Called from VirtualMachine.reload() before --hot re-evaluates the
-    /// module graph. Every Bun.cron() call still in the source will
-    /// re-register; deleted ones won't, so no ghost jobs survive an edit.
+    /// module graph, and from WebWorker.exitAndDeinit(). Every Bun.cron()
+    /// call still in the source will re-register on reload.
     pub fn clearAllForVM(vm: *jsc.VirtualMachine) void {
-        jobs_lock.lock();
-        defer jobs_lock.unlock();
-        var i: usize = 0;
-        while (i < jobs_list.items.len) {
-            const job = jobs_list.items[i];
-            if (job.global.bunVM() == vm) {
-                job.stopInternal(vm);
-                _ = jobs_list.swapRemove(i);
-            } else {
-                i += 1;
-            }
-        }
+        const rare = vm.rare_data orelse return;
+        for (rare.cron_jobs.items) |job| job.stopInternal(vm);
+        rare.cron_jobs.clearRetainingCapacity();
     }
 
     fn deinit(this: *CronJob) void {
@@ -1050,11 +1028,7 @@ pub const CronJob = struct {
             return globalObject.throwInvalidArguments("Cron expression '{s}' has no future occurrences", .{schedule_slice.slice()});
         };
 
-        {
-            jobs_lock.lock();
-            defer jobs_lock.unlock();
-            bun.handleOom(jobs_list.append(bun.default_allocator, job));
-        }
+        bun.handleOom(vm.rareData().cron_jobs.append(bun.default_allocator, job));
 
         const js_value = job.toJS(globalObject);
         job.this_value.setStrong(js_value, globalObject);

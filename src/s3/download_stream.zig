@@ -124,7 +124,7 @@ pub const S3HttpDownloadStreamingTask = struct {
                 break :brk buffer;
             }
         };
-        log("reportProgres failed: {} has_more: {} len: {d}", .{ failed, has_more, chunk.list.items.len });
+        log("reportProgress failed: {} has_more: {} len: {d}", .{ failed, has_more, chunk.list.items.len });
         if (failed) {
             if (!has_more) {
                 this.callback(chunk, false, err, this.callback_context);

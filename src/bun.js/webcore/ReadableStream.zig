@@ -153,11 +153,12 @@ pub fn forceDetach(this: *const ReadableStream, globalObject: *JSGlobalObject) v
     ReadableStream__detach(this.value, globalObject);
 }
 
-/// Decrement Source ref count and detach the underlying stream if ref count is zero
-/// be careful, this can invalidate the stream do not call this multiple times
-/// this is meant to be called only once when we are done consuming the stream or from the ReadableStream.Strong.deinit
-pub fn detachIfPossible(_: *const ReadableStream, _: *JSGlobalObject) void {
+/// Force-detach the underlying stream, marking it as disturbed.
+/// This invalidates the native stream pointer immediately — do not call multiple times.
+/// Called when consumption is finalized (e.g. from done() after fast-path blob extraction).
+pub fn detachIfPossible(this: *const ReadableStream, globalObject: *JSGlobalObject) void {
     jsc.markBinding(@src());
+    this.forceDetach(globalObject);
 }
 
 pub const Tag = enum(i32) {

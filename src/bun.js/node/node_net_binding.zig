@@ -132,7 +132,6 @@ pub fn socketFromFd(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) 
         .protos = null,
         .handlers = handlers_ptr,
     });
-    tcp_socket.ref();
 
     const native_socket = bun.api.TCPSocket.Socket.fromFd(context, fd, bun.api.TCPSocket, tcp_socket, null, false) orelse {
         tcp_socket.deref();

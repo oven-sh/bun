@@ -14,14 +14,18 @@ if (cluster.isMaster) {
     const isSocket = h instanceof net.Socket;
     console.log('master recv: cmd=' + m.cmd + ', isSocket=' + isSocket);
     worker.kill();
+    server.close();
     process.exit(0);
   });
 
-  worker.on('online', function() {
-    const sock = new net.Socket();
-    sock.connect(443, 'google.com', function() {
-      console.log('master sending socket');
-      worker.send({ cmd: 'syn', data: 'hello' }, sock);
+  const server = net.createServer();
+  server.listen(0, '127.0.0.1', function() {
+    worker.on('online', function() {
+      const sock = new net.Socket();
+      sock.connect(server.address().port, '127.0.0.1', function() {
+        console.log('master sending socket');
+        worker.send({ cmd: 'syn', data: 'hello' }, sock);
+      });
     });
   });
 } else {
@@ -63,18 +67,22 @@ if (cluster.isMaster) {
     const isSocket = h instanceof net.Socket;
     console.log('master recv: cmd=' + m.cmd + ', dataLen=' + m.data.length + ', isSocket=' + isSocket);
     worker.kill();
+    server.close();
     process.exit(0);
   });
 
-  worker.on('online', function() {
-    const sock = new net.Socket();
-    sock.connect(443, 'google.com', function() {
-      const data = [];
-      for (var i = 0; i < 30000; i++) {
-        data[i] = '1';
-      }
-      console.log('master sending socket with large payload');
-      worker.send({ cmd: 'syn', data: data }, sock);
+  const server = net.createServer();
+  server.listen(0, '127.0.0.1', function() {
+    worker.on('online', function() {
+      const sock = new net.Socket();
+      sock.connect(server.address().port, '127.0.0.1', function() {
+        const data = [];
+        for (var i = 0; i < 30000; i++) {
+          data[i] = '1';
+        }
+        console.log('master sending socket with large payload');
+        worker.send({ cmd: 'syn', data: data }, sock);
+      });
     });
   });
 } else {

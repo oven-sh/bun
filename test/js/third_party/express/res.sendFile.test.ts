@@ -247,7 +247,7 @@ describe("res", function () {
     });
 
     describe.todo("async local storage", function () {
-      it("should presist store", function (done) {
+      it("should persist store", function (done) {
         var app = express();
         var cb = after(2, done);
         var store = { foo: "bar" };
@@ -271,7 +271,7 @@ describe("res", function () {
         request(app).get("/").expect("Content-Type", "text/plain; charset=utf-8").expect(200, "tobi", cb);
       });
 
-      it("should presist store on error", function (done) {
+      it("should persist store on error", function (done) {
         var app = express();
         var store = { foo: "bar" };
 

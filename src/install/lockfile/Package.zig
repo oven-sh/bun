@@ -1324,7 +1324,30 @@ pub fn Package(comptime SemverIntType: type) type {
                     const key = prop.key.?;
                     const value = prop.value.?;
                     if (key.isString() and value.isString()) {
-                        string_builder.count(value.asString(allocator).?);
+                        const relative_path = value.asString(allocator).?;
+                        if (comptime !features.is_main) {
+                            // For folder dependencies, we need to make the patch path absolute
+                            // so it resolves relative to the folder dependency, not the root project
+                            if (!std.fs.path.isAbsolute(relative_path)) {
+                                // source.path.text is something like "/path/to/folder-dep/package.json"
+                                // We need the directory part + relative_path
+                                if (std.fs.path.dirname(source.path.text)) |package_dir| {
+                                    // Count the full absolute path length
+                                    // Path.joinAbsStringBuf joins with a separator, so we need:
+                                    // package_dir + "/" + relative_path
+                                    var abs_path_buf: bun.PathBuffer = undefined;
+                                    const abs_path = Path.joinAbsStringBuf(
+                                        package_dir,
+                                        &abs_path_buf,
+                                        &.{relative_path},
+                                        .auto,
+                                    );
+                                    string_builder.count(abs_path);
+                                    continue;
+                                }
+                            }
+                        }
+                        string_builder.count(relative_path);
                     }
                 }
             }
@@ -1645,7 +1668,27 @@ pub fn Package(comptime SemverIntType: type) type {
                     if (key.isString() and value.isString()) {
                         var sfb = std.heap.stackFallback(1024, allocator);
                         const keyhash = try key.asStringHash(sfb.get(), String.Builder.stringHash) orelse unreachable;
-                        const patch_path = string_builder.append(String, value.asString(allocator).?);
+                        const relative_path = value.asString(allocator).?;
+                        const patch_path = brk: {
+                            if (comptime !features.is_main) {
+                                // For folder dependencies, we need to make the patch path absolute
+                                // so it resolves relative to the folder dependency, not the root project
+                                if (!std.fs.path.isAbsolute(relative_path)) {
+                                    if (std.fs.path.dirname(source.path.text)) |package_dir| {
+                                        // Build the absolute path in a buffer first
+                                        var abs_path_buf: bun.PathBuffer = undefined;
+                                        const abs_path = Path.joinAbsStringBuf(
+                                            package_dir,
+                                            &abs_path_buf,
+                                            &.{relative_path},
+                                            .auto,
+                                        );
+                                        break :brk string_builder.append(String, abs_path);
+                                    }
+                                }
+                            }
+                            break :brk string_builder.append(String, relative_path);
+                        };
                         lockfile.patched_dependencies.put(allocator, keyhash, .{ .path = patch_path }) catch unreachable;
                     }
                 }

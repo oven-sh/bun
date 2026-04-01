@@ -1872,6 +1872,8 @@ fn calculateEstimatedByteSize(this: *Blob) void {
         switch (store.data) {
             .bytes => {
                 size += store.data.bytes.stored_name.estimatedSize();
+                if (store.data.bytes.part_sizes != null)
+                    size += @as(usize, store.data.bytes.part_count) * @sizeOf(SizeType);
                 size += if (this.size != Blob.max_size)
                     this.size
                 else

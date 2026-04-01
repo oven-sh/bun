@@ -12,6 +12,8 @@ pulled: bool = false,
 part_sizes: ?[*]Blob.SizeType = null,
 part_count: Blob.SizeType = 0,
 current_part: Blob.SizeType = 0,
+/// Bytes remaining in the current part (handles partial reads).
+current_part_remain: Blob.SizeType = 0,
 
 /// https://github.com/oven-sh/bun/issues/14988
 /// Necessary for converting a ByteBlobLoader from a Blob -> back into a Blob
@@ -57,7 +59,7 @@ pub fn setup(
     };
     const has_user_chunk_size = user_chunk_size > 0;
     const store = blobe.store.?;
-    const has_parts = !has_user_chunk_size and blobe.offset == 0 and
+    const has_parts = !has_user_chunk_size and blobe.offset == 0 and blobe.size == store.size() and
         store.data == .bytes and store.data.bytes.part_sizes != null and store.data.bytes.part_count > 1;
 
     this.* = ByteBlobLoader{
@@ -72,6 +74,7 @@ pub fn setup(
         .part_sizes = if (has_parts) store.data.bytes.part_sizes else null,
         .part_count = if (has_parts) store.data.bytes.part_count else 0,
         .current_part = 0,
+        .current_part_remain = if (has_parts) store.data.bytes.part_sizes.?[0] else 0,
         .content_type = content_type,
         .content_type_allocated = content_type_allocated,
     };
@@ -101,9 +104,10 @@ pub fn onPull(this: *ByteBlobLoader, buffer: []u8, array: JSValue) streams.Resul
     temporary = temporary[@min(this.offset, temporary.len)..];
 
     // When we have part boundaries, limit this chunk to the current part size
-    const max_chunk = if (this.part_sizes) |sizes| blk: {
-        break :blk if (this.current_part < this.part_count) sizes[this.current_part] else this.remain;
-    } else this.remain;
+    const max_chunk = if (this.part_sizes != null)
+        if (this.current_part_remain > 0) this.current_part_remain else this.remain
+    else
+        this.remain;
 
     temporary = temporary[0..@min(buffer.len, @min(temporary.len, max_chunk))];
     if (temporary.len == 0) {
@@ -116,8 +120,14 @@ pub fn onPull(this: *ByteBlobLoader, buffer: []u8, array: JSValue) streams.Resul
 
     this.remain -|= copied;
     this.offset +|= copied;
-    if (this.part_sizes != null) {
-        this.current_part += 1;
+    if (this.part_sizes) |sizes| {
+        this.current_part_remain -|= copied;
+        if (this.current_part_remain == 0) {
+            this.current_part += 1;
+            if (this.current_part < this.part_count) {
+                this.current_part_remain = sizes[this.current_part];
+            }
+        }
     }
     bun.assert(buffer.ptr != temporary.ptr);
     @memcpy(buffer[0..temporary.len], temporary);
@@ -194,18 +204,26 @@ pub fn drain(this: *ByteBlobLoader) bun.ByteList {
     var temporary = store.sharedView();
     temporary = temporary[this.offset..];
 
-    const max_drain = if (this.part_sizes) |sizes| blk: {
-        break :blk if (this.current_part < this.part_count) sizes[this.current_part] else this.remain;
-    } else @min(16384, this.remain);
+    const max_drain = if (this.part_sizes != null)
+        if (this.current_part_remain > 0) this.current_part_remain else this.remain
+    else
+        @min(16384, this.remain);
 
     temporary = temporary[0..@min(max_drain, temporary.len)];
 
     var byte_list = bun.ByteList.fromBorrowedSliceDangerous(temporary);
     const cloned = bun.handleOom(byte_list.clone(bun.default_allocator));
-    this.offset +|= @as(Blob.SizeType, cloned.len);
-    this.remain -|= @as(Blob.SizeType, cloned.len);
-    if (this.part_sizes != null) {
-        this.current_part += 1;
+    const drained = @as(Blob.SizeType, cloned.len);
+    this.offset +|= drained;
+    this.remain -|= drained;
+    if (this.part_sizes) |sizes| {
+        this.current_part_remain -|= drained;
+        if (this.current_part_remain == 0) {
+            this.current_part += 1;
+            if (this.current_part < this.part_count) {
+                this.current_part_remain = sizes[this.current_part];
+            }
+        }
     }
 
     return cloned;

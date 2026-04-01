@@ -11,7 +11,8 @@ pub const new = bun.TrivialNew(@This());
 
 pub fn memoryCost(this: *const Store) usize {
     return if (this.hasOneRef()) @sizeOf(@This()) + switch (this.data) {
-        .bytes => this.data.bytes.len,
+        .bytes => this.data.bytes.len +
+            if (this.data.bytes.part_sizes != null) @as(usize, this.data.bytes.part_count) * @sizeOf(SizeType) else 0,
         .file => 0,
         .s3 => |s3| s3.estimatedSize(),
     } else 0;

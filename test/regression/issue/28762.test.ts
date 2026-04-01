@@ -66,8 +66,15 @@ test("Blob.stream() single part works normally", async () => {
 test("Blob.stream() total content is correct after chunking", async () => {
   const parts = [new Uint8Array([1, 2, 3]), new Uint8Array([4]), new Uint8Array([5, 6])];
   const blob = new Blob(parts);
-  const result = await blob.arrayBuffer();
-  expect(new Uint8Array(result)).toEqual(new Uint8Array([1, 2, 3, 4, 5, 6]));
+  const chunks: Uint8Array[] = [];
+  await blob.stream().pipeTo(
+    new WritableStream({
+      write(chunk) {
+        chunks.push(new Uint8Array(chunk));
+      },
+    }),
+  );
+  expect(Buffer.concat(chunks)).toEqual(Buffer.from([1, 2, 3, 4, 5, 6]));
 });
 
 test("Blob.stream() empty blob works", async () => {

@@ -1196,7 +1196,7 @@ pub const Resolver = struct {
 
                 return .{
                     .success = Result{
-                        .path_pair = .{ .primary = Path.init(import_path) },
+                        .path_pair = .{ .primary = Path.init(bun.handleOom(r.fs.dirname_store.append(@TypeOf(import_path), import_path))) },
                         .flags = .{ .is_external = true },
                     },
                 };

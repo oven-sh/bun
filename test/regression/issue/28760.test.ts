@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import assert from "node:assert";
 
 test("assert.deepEqual throws for unequal Sets with duplicate-by-value objects", () => {

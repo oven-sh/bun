@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { fileDescriptorLeakChecker, isWindows, tmpdirSync } from "harness";
+import { bunEnv, bunExe, fileDescriptorLeakChecker, isWindows, tmpdirSync } from "harness";
 import { mkfifo } from "mkfifo";
 import { join } from "node:path";
 
@@ -181,6 +181,23 @@ it("end doesn't close when backed by a file descriptor", async () => {
   await writer.end();
   await util.promisify(fs.ftruncate)(fd, written);
   await util.promisify(fs.close)(fd);
+});
+
+it("writer with invalid options throws instead of crashing", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", `
+      const results = [];
+      try { Bun.file("test.txt").writer({ path: 42 }); results.push("no_throw"); } catch(e) { results.push("threw"); }
+      try { Bun.file("test.txt").writer({ fd: "invalid" }); results.push("no_throw"); } catch(e) { results.push("threw"); }
+      console.log(results.join(","));
+    `],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout.trim()).toBe("threw,threw");
+  expect(exitCode).toBe(0);
 });
 
 it("end does close when not backed by a file descriptor", async () => {

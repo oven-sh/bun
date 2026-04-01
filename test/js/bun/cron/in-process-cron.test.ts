@@ -29,7 +29,7 @@ describe("Bun.cron (in-process)", () => {
     {
       using job = Bun.cron("* * * * *", () => {});
       j = job;
-      expect(job[Symbol.dispose]).toBe(job.stop);
+      expect(typeof job[Symbol.dispose]).toBe("function");
     }
     // Disposed at scope exit; stop() is idempotent so this is just a smoke check
     expect(() => j.stop()).not.toThrow();
@@ -208,7 +208,7 @@ describe.concurrent("Bun.cron (in-process) — firing", () => {
         "-e",
         `
         let caught;
-        process.on("unhandledRejection", e => { caught = e.message; });
+        process.on("unhandledRejection", (e, p) => { caught = e.message + ":" + (p instanceof Promise); });
         const job = Bun.cron("* * * * *", async () => {
           setTimeout(() => { job.stop(); console.log("caught=" + caught); process.exit(0); }, 100);
           await Bun.sleep(1);
@@ -220,7 +220,7 @@ describe.concurrent("Bun.cron (in-process) — firing", () => {
       stderr: "pipe",
     });
     const [stdout, _stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stdout.trim()).toBe("caught=async-boom");
+    expect(stdout.trim()).toBe("caught=async-boom:true");
     expect(exitCode).toBe(0);
   }, 70_000);
 

@@ -823,37 +823,34 @@ pub const CronRemoveJob = struct {
 // graph, so deleted Bun.cron() calls don't leave ghost timers.
 
 pub const CronJob = struct {
+    const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
+    pub const ref = RefCount.ref;
+    pub const deref = RefCount.deref;
+
     pub const js = jsc.Codegen.JSCronJob;
     pub const toJS = js.toJS;
     pub const fromJS = js.fromJS;
     pub const fromJSDirect = js.fromJSDirect;
 
+    ref_count: RefCount,
     event_loop_timer: EventLoopTimer = .{ .tag = .CronJob, .next = .epoch },
     callback: jsc.Strong.Optional = .empty,
+    pending_promise: jsc.Strong.Optional = .empty,
     global: *jsc.JSGlobalObject,
     parsed: CronExpression,
     expression: []const u8,
     poll: bun.Async.KeepAlive = .{},
     this_value: jsc.JSRef = jsc.JSRef.empty(),
-    #ref_count: u32 = 1,
     stopped: bool = false,
-    has_js_ref: bool = true,
 
-    pub const new = bun.TrivialNew(@This());
-
-    // All live in-process cron jobs across all VMs. Named-replacement and
-    // hot-reload clearing both linear-scan this; an app has at most a handful
-    // of cron jobs so a hash map is overkill.
+    // All live in-process cron jobs across all VMs. clearAllForVM linear-scans
+    // this; an app has at most a handful of cron jobs so a hash map is overkill.
     var jobs_list: std.ArrayListUnmanaged(*CronJob) = .{};
     var jobs_lock: bun.Mutex = .{};
 
     fn removeFromListLocked(this: *CronJob) void {
-        for (jobs_list.items, 0..) |job, i| {
-            if (job == this) {
-                _ = jobs_list.swapRemove(i);
-                return;
-            }
-        }
+        if (std.mem.indexOfScalar(*CronJob, jobs_list.items, this)) |i|
+            _ = jobs_list.swapRemove(i);
     }
 
     fn stopInternal(this: *CronJob, vm: *jsc.VirtualMachine) void {
@@ -861,7 +858,20 @@ pub const CronJob = struct {
         this.stopped = true;
         if (this.event_loop_timer.state == .ACTIVE)
             vm.timer.remove(&this.event_loop_timer);
+        this.pending_promise.deinit();
         this.cleanupAfterStop(vm);
+    }
+
+    /// Self-initiated stop from inside the timer/promise path (natural expiry,
+    /// callback gone). Removes from jobs_list so GC of the JS wrapper doesn't
+    /// leave a dangling pointer for clearAllForVM/stop() to read.
+    fn selfStop(this: *CronJob, vm: *jsc.VirtualMachine) void {
+        {
+            jobs_lock.lock();
+            defer jobs_lock.unlock();
+            this.removeFromListLocked();
+        }
+        this.stopInternal(vm);
     }
 
     /// Called from VirtualMachine.reload() before --hot re-evaluates the
@@ -882,22 +892,12 @@ pub const CronJob = struct {
         }
     }
 
-    fn ref(this: *CronJob) void {
-        this.#ref_count += 1;
-    }
-
-    fn deref(this: *CronJob) void {
-        this.#ref_count -= 1;
-        if (this.#ref_count == 0) {
-            this.deinit();
-            bun.destroy(this);
-        }
-    }
-
     fn deinit(this: *CronJob) void {
         this.callback.deinit();
+        this.pending_promise.deinit();
         this.this_value.deinit();
         bun.default_allocator.free(this.expression);
+        bun.destroy(this);
     }
 
     pub fn finalize(this: *CronJob) void {
@@ -913,13 +913,9 @@ pub const CronJob = struct {
     }
 
     fn scheduleNext(this: *CronJob, vm: *jsc.VirtualMachine) void {
-        if (this.stopped) {
-            this.cleanupAfterStop(vm);
-            return;
-        }
+        if (this.stopped) return;
         const next_time = this.computeNextTimespec() orelse {
-            this.stopped = true;
-            this.cleanupAfterStop(vm);
+            this.selfStop(vm);
             return;
         };
         vm.timer.update(&this.event_loop_timer, &next_time);
@@ -934,14 +930,14 @@ pub const CronJob = struct {
     pub fn onTimerFire(this: *CronJob, vm: *jsc.VirtualMachine) void {
         this.event_loop_timer.state = .FIRED;
 
-        if (this.stopped or vm.scriptExecutionStatus() != .running) {
-            this.cleanupAfterStop(vm);
+        if (this.stopped) return;
+        if (vm.scriptExecutionStatus() != .running) {
+            this.selfStop(vm);
             return;
         }
 
         const cb = this.callback.get() orelse {
-            this.stopped = true;
-            this.cleanupAfterStop(vm);
+            this.selfStop(vm);
             return;
         };
 
@@ -959,7 +955,9 @@ pub const CronJob = struct {
             switch (promise.status()) {
                 .pending => {
                     this.ref();
+                    this.pending_promise.set(this.global, result);
                     result.then(this.global, this, onPromiseResolve, onPromiseReject) catch {
+                        this.pending_promise.deinit();
                         this.deref();
                         this.scheduleNext(vm);
                     };
@@ -983,6 +981,7 @@ pub const CronJob = struct {
         const args = callframe.arguments();
         var this: *CronJob = args[args.len - 1].asPromisePtr(CronJob);
         defer this.deref();
+        this.pending_promise.deinit();
         this.scheduleNext(this.global.bunVM());
         return .js_undefined;
     }
@@ -993,35 +992,25 @@ pub const CronJob = struct {
         defer this.deref();
         const vm = this.global.bunVM();
         const err = if (args.len > 0) args[0] else .js_undefined;
-        vm.unhandledRejection(vm.global, err, .js_undefined);
+        const promise_value = this.pending_promise.get() orelse .js_undefined;
+        this.pending_promise.deinit();
+        vm.unhandledRejection(vm.global, err, promise_value);
         this.scheduleNext(vm);
         return .js_undefined;
     }
 
     pub fn stop(this: *CronJob, _: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-        if (this.stopped) return callframe.this();
-        {
-            jobs_lock.lock();
-            defer jobs_lock.unlock();
-            this.removeFromListLocked();
-        }
-        this.stopInternal(this.global.bunVM());
+        this.selfStop(this.global.bunVM());
         return callframe.this();
     }
 
     pub fn doRef(this: *CronJob, _: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-        if (!this.has_js_ref and !this.stopped) {
-            this.has_js_ref = true;
-            this.poll.ref(this.global.bunVM());
-        }
+        if (!this.stopped) this.poll.ref(this.global.bunVM());
         return callframe.this();
     }
 
     pub fn doUnref(this: *CronJob, _: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-        if (this.has_js_ref) {
-            this.has_js_ref = false;
-            this.poll.unref(this.global.bunVM());
-        }
+        this.poll.unref(this.global.bunVM());
         return callframe.this();
     }
 
@@ -1043,7 +1032,8 @@ pub const CronJob = struct {
 
         const vm = globalObject.bunVM();
 
-        const job = CronJob.new(.{
+        const job = bun.new(CronJob, .{
+            .ref_count = .init(),
             .global = globalObject,
             .parsed = parsed,
             .expression = bun.handleOom(bun.default_allocator.dupe(u8, schedule_slice.slice())),
@@ -1051,9 +1041,7 @@ pub const CronJob = struct {
         job.callback = .create(callback_arg, globalObject);
 
         const next_time = job.computeNextTimespec() orelse {
-            job.callback.deinit();
-            bun.default_allocator.free(job.expression);
-            bun.destroy(job);
+            job.deref();
             return globalObject.throwInvalidArguments("Cron expression '{s}' has no future occurrences", .{schedule_slice.slice()});
         };
 

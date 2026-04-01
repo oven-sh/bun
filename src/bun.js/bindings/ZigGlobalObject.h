@@ -397,7 +397,7 @@ public:
         Bun__CronJob__onPromiseResolve,
         Bun__CronJob__onPromiseReject,
     };
-    static constexpr size_t promiseFunctionsSize = 36;
+    static constexpr size_t promiseFunctionsSize = 34;
 
     static PromiseFunctions promiseHandlerID(SYSV_ABI EncodedJSValue (*handler)(JSC::JSGlobalObject* arg0, JSC::CallFrame* arg1));
 

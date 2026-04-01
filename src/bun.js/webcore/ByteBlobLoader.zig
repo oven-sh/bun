@@ -7,6 +7,12 @@ remain: Blob.SizeType = 1024 * 1024 * 2,
 done: bool = false,
 pulled: bool = false,
 
+/// Part boundary tracking for multi-part blobs.
+/// When set, chunks are delivered at original part boundaries.
+part_sizes: ?[*]Blob.SizeType = null,
+part_count: Blob.SizeType = 0,
+current_part: Blob.SizeType = 0,
+
 /// https://github.com/oven-sh/bun/issues/14988
 /// Necessary for converting a ByteBlobLoader from a Blob -> back into a Blob
 /// Especially for DOMFormData, where the specific content-type might've been serialized into the data.
@@ -49,21 +55,36 @@ pub fn setup(
         }
         break :brk .{ "", false };
     };
+    const has_user_chunk_size = user_chunk_size > 0;
+    const store = blobe.store.?;
+    const has_parts = !has_user_chunk_size and blobe.offset == 0 and
+        store.data == .bytes and store.data.bytes.part_sizes != null and store.data.bytes.part_count > 1;
+
     this.* = ByteBlobLoader{
         .offset = blobe.offset,
-        .store = blobe.store.?,
+        .store = store,
         .chunk_size = @min(
-            if (user_chunk_size > 0) @min(user_chunk_size, blobe.size) else blobe.size,
+            if (has_user_chunk_size) @min(user_chunk_size, blobe.size) else blobe.size,
             1024 * 1024 * 2,
         ),
         .remain = blobe.size,
         .done = false,
+        .part_sizes = if (has_parts) store.data.bytes.part_sizes else null,
+        .part_count = if (has_parts) store.data.bytes.part_count else 0,
+        .current_part = 0,
         .content_type = content_type,
         .content_type_allocated = content_type_allocated,
     };
 }
 
 pub fn onStart(this: *ByteBlobLoader) streams.Start {
+    if (this.part_sizes) |sizes| {
+        var max_part: Blob.SizeType = 0;
+        for (sizes[0..this.part_count]) |s| {
+            max_part = @max(max_part, s);
+        }
+        return .{ .chunk_size = max_part };
+    }
     return .{ .chunk_size = this.chunk_size };
 }
 
@@ -79,7 +100,12 @@ pub fn onPull(this: *ByteBlobLoader, buffer: []u8, array: JSValue) streams.Resul
     var temporary = store.sharedView();
     temporary = temporary[@min(this.offset, temporary.len)..];
 
-    temporary = temporary[0..@min(buffer.len, @min(temporary.len, this.remain))];
+    // When we have part boundaries, limit this chunk to the current part size
+    const max_chunk = if (this.part_sizes) |sizes| blk: {
+        break :blk if (this.current_part < this.part_count) sizes[this.current_part] else this.remain;
+    } else this.remain;
+
+    temporary = temporary[0..@min(buffer.len, @min(temporary.len, max_chunk))];
     if (temporary.len == 0) {
         this.clearData();
         this.done = true;
@@ -90,6 +116,9 @@ pub fn onPull(this: *ByteBlobLoader, buffer: []u8, array: JSValue) streams.Resul
 
     this.remain -|= copied;
     this.offset +|= copied;
+    if (this.part_sizes != null) {
+        this.current_part += 1;
+    }
     bun.assert(buffer.ptr != temporary.ptr);
     @memcpy(buffer[0..temporary.len], temporary);
     if (this.remain == 0) {
@@ -164,12 +193,20 @@ pub fn drain(this: *ByteBlobLoader) bun.ByteList {
     const store = this.store orelse return .{};
     var temporary = store.sharedView();
     temporary = temporary[this.offset..];
-    temporary = temporary[0..@min(16384, @min(temporary.len, this.remain))];
+
+    const max_drain = if (this.part_sizes) |sizes| blk: {
+        break :blk if (this.current_part < this.part_count) sizes[this.current_part] else this.remain;
+    } else @min(16384, this.remain);
+
+    temporary = temporary[0..@min(max_drain, temporary.len)];
 
     var byte_list = bun.ByteList.fromBorrowedSliceDangerous(temporary);
     const cloned = bun.handleOom(byte_list.clone(bun.default_allocator));
     this.offset +|= @as(Blob.SizeType, cloned.len);
     this.remain -|= @as(Blob.SizeType, cloned.len);
+    if (this.part_sizes != null) {
+        this.current_part += 1;
+    }
 
     return cloned;
 }

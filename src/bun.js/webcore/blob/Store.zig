@@ -478,6 +478,11 @@ pub const Bytes = struct {
     /// Used by standalone module graph and the File constructor
     stored_name: bun.PathString = bun.PathString.empty,
 
+    /// Original part sizes from Blob construction (for streaming with
+    /// preserved part boundaries). Owned by default_allocator.
+    part_sizes: ?[*]SizeType = null,
+    part_count: SizeType = 0,
+
     /// Takes ownership of `bytes`, which must have been allocated with
     /// `allocator`.
     pub fn init(bytes: []u8, allocator: std.mem.Allocator) Bytes {
@@ -540,6 +545,11 @@ pub const Bytes = struct {
 
     pub fn deinit(this: *Bytes) void {
         bun.default_allocator.free(this.stored_name.slice());
+        if (this.part_sizes) |sizes| {
+            bun.default_allocator.free(sizes[0..this.part_count]);
+            this.part_sizes = null;
+            this.part_count = 0;
+        }
         if (this.ptr) |ptr| {
             this.allocator.free(ptr[0..this.cap]);
         }

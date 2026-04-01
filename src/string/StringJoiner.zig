@@ -81,18 +81,45 @@ pub fn push(this: *StringJoiner, data: []const u8, allocator: ?Allocator) void {
 
 /// This deinits the string joiner on success, the new string is owned by `allocator`
 pub fn done(this: *StringJoiner, allocator: Allocator) ![]u8 {
+    const result, _ = try this.doneWithPartSizes(allocator, false);
+    return result;
+}
+
+/// Same as `done`, but also returns an array of part sizes.
+/// `part_sizes` is allocated with `bun.default_allocator`.
+pub fn doneWithPartSizes(this: *StringJoiner, allocator: Allocator, record_parts: bool) !struct { []u8, ?[]u52 } {
     var current: ?*Node = this.head orelse {
         assert(this.tail == null);
         assert(this.len == 0);
-        return &.{};
+        return .{ &.{}, null };
     };
 
     const slice = try allocator.alloc(u8, this.len);
 
+    var part_count: usize = 0;
+    if (record_parts) {
+        var counter = current;
+        while (counter) |node| {
+            part_count += 1;
+            counter = node.next;
+        }
+    }
+
+    const part_sizes: ?[]u52 = if (record_parts and part_count > 1)
+        try bun.default_allocator.alloc(u52, part_count)
+    else
+        null;
+
     var remaining = slice;
+    var part_idx: usize = 0;
     while (current) |node| {
         @memcpy(remaining[0..node.slice.len], node.slice);
         remaining = remaining[node.slice.len..];
+
+        if (part_sizes) |sizes| {
+            sizes[part_idx] = @truncate(node.slice.len);
+            part_idx += 1;
+        }
 
         const prev = node;
         current = node.next;
@@ -101,7 +128,7 @@ pub fn done(this: *StringJoiner, allocator: Allocator) ![]u8 {
 
     bun.assert(remaining.len == 0);
 
-    return slice;
+    return .{ slice, part_sizes };
 }
 
 pub fn deinit(this: *StringJoiner) void {

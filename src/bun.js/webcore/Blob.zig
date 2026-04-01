@@ -3404,6 +3404,17 @@ pub fn initWithAllASCII(bytes: []u8, allocator: std.mem.Allocator, globalThis: *
     };
 }
 
+fn setPartSizes(store: ?*Blob.Store, part_sizes: ?[]SizeType) void {
+    const s = store orelse return;
+    const sizes = part_sizes orelse return;
+    if (sizes.len <= 1) {
+        bun.default_allocator.free(sizes);
+        return;
+    }
+    s.data.bytes.part_sizes = sizes.ptr;
+    s.data.bytes.part_count = @truncate(sizes.len);
+}
+
 /// Takes ownership of `bytes`, which must have been allocated with `allocator`.
 pub fn init(bytes: []u8, allocator: std.mem.Allocator, globalThis: *JSGlobalObject) Blob {
     return Blob{
@@ -4174,12 +4185,16 @@ fn fromJSWithoutDeferGC(
         current = stack.pop() orelse break;
     }
 
-    const joined = try joiner.done(bun.default_allocator);
+    const joined, const part_sizes = try joiner.doneWithPartSizes(bun.default_allocator, true);
 
     if (!could_have_non_ascii) {
-        return Blob.initWithAllASCII(joined, bun.default_allocator, global, true);
+        const blob = Blob.initWithAllASCII(joined, bun.default_allocator, global, true);
+        setPartSizes(blob.store, part_sizes);
+        return blob;
     }
-    return Blob.init(joined, bun.default_allocator, global);
+    const blob = Blob.init(joined, bun.default_allocator, global);
+    setPartSizes(blob.store, part_sizes);
+    return blob;
 }
 
 pub const Any = union(enum) {

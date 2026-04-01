@@ -77,8 +77,8 @@ test("ESM import with encoded slash (%2f) is rejected per spec", async () => {
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(exitCode).not.toBe(0);
   expect(stderr).toContain("Cannot find module");
+  expect(exitCode).not.toBe(0);
 });
 
 test("CJS require does not percent-decode specifiers", async () => {

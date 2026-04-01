@@ -134,6 +134,10 @@ pub fn socketFromFd(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) 
     });
 
     const native_socket = bun.api.TCPSocket.Socket.fromFd(context, fd, bun.api.TCPSocket, tcp_socket, null, false) orelse {
+        // Free handlers before deref — deinit() won't reach Handlers.markInactive()
+        // because onOpen() never fired so is_active stays false.
+        tcp_socket.handlers = null;
+        globalThis.bunVM().allocator.destroy(handlers_ptr);
         tcp_socket.deref();
         return globalThis.throw("Failed to create socket from fd", .{});
     };

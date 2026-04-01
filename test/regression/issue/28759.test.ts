@@ -1,7 +1,8 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 
-test("cluster.send() preserves socket handle", async () => {
+// IPC socket handle passing uses SCM_RIGHTS which is POSIX-only
+test.skipIf(isWindows)("cluster.send() preserves socket handle", async () => {
   using dir = tempDir("issue-28759", {
     "index.cjs": `
 const cluster = require('cluster');
@@ -54,7 +55,7 @@ if (cluster.isMaster) {
   expect(exitCode).toBe(0);
 }, 30_000);
 
-test("process.send() preserves socket handle with large payload", async () => {
+test.skipIf(isWindows)("process.send() preserves socket handle with large payload", async () => {
   using dir = tempDir("issue-28759-large", {
     "index.cjs": `
 const cluster = require('cluster');

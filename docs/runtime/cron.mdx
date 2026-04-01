@@ -199,9 +199,24 @@ job.ref(); // keep the process alive (default)
 
 `CronJob` is [`Disposable`](https://github.com/tc39/proposal-explicit-resource-management) — `using job = Bun.cron(...)` auto-stops at scope exit. `stop()`, `ref()`, and `unref()` all return the job for chaining.
 
-### Fake timers
+### Testing with fake timers
 
-In-process cron is anchored to the real wall clock. `jest.useFakeTimers()`, `setSystemTime()`, `advanceTimersByTime()`, and `runAllTimers()` do not affect when it fires.
+In-process cron respects `bun:test` fake timers. The schedule is computed against the mocked `Date.now()`, so you can drive fires deterministically:
+
+```ts
+import { jest } from "bun:test";
+
+jest.useFakeTimers();
+jest.setSystemTime(new Date("2025-01-01T23:59:30Z"));
+
+const handler = jest.fn();
+Bun.cron("0 0 * * *", handler);
+
+jest.advanceTimersByTime(30_000); // → 2025-01-02T00:00:00Z
+expect(handler).toHaveBeenCalledTimes(1);
+```
+
+Without fake timers, cron fires on the real wall clock.
 
 ---
 

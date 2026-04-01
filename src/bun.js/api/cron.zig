@@ -836,7 +836,6 @@ pub const CronJob = struct {
     event_loop_timer: EventLoopTimer = .{ .tag = .CronJob, .next = .epoch },
     global: *jsc.JSGlobalObject,
     parsed: CronExpression,
-    expression: bun.String,
     poll_ref: bun.Async.KeepAlive = .{},
     this_value: jsc.JSRef = jsc.JSRef.empty(),
     stopped: bool = false,
@@ -855,8 +854,10 @@ pub const CronJob = struct {
 
     fn selfStop(this: *CronJob, vm: *jsc.VirtualMachine) void {
         if (vm.rare_data) |rare| {
-            if (std.mem.indexOfScalar(*CronJob, rare.cron_jobs.items, this)) |i|
+            if (std.mem.indexOfScalar(*CronJob, rare.cron_jobs.items, this)) |i| {
                 _ = rare.cron_jobs.swapRemove(i);
+                this.deref();
+            }
         }
         this.stopInternal(vm);
     }
@@ -866,13 +867,15 @@ pub const CronJob = struct {
     /// call still in the source will re-register on reload.
     pub fn clearAllForVM(vm: *jsc.VirtualMachine) void {
         const rare = vm.rare_data orelse return;
-        for (rare.cron_jobs.items) |job| job.stopInternal(vm);
+        for (rare.cron_jobs.items) |job| {
+            job.stopInternal(vm);
+            job.deref();
+        }
         rare.cron_jobs.clearRetainingCapacity();
     }
 
     fn deinit(this: *CronJob) void {
         this.this_value.deinit();
-        this.expression.deref();
         bun.destroy(this);
     }
 
@@ -882,13 +885,14 @@ pub const CronJob = struct {
     }
 
     fn computeNextTimespec(this: *CronJob) ?bun.timespec {
-        // Cron occurrences are calendar-based (real epoch); the timer heap is
-        // monotonic. Using .allow_mocked_time here would mix the two timebases
-        // under fake timers — anchor both to real time instead.
-        const now_ms: f64 = @floatFromInt(std.time.milliTimestamp());
+        // Cron occurrences are calendar-based, so the input must be epoch ms.
+        // Under fake timers that's the mocked Date.now(); the deadline then
+        // uses .allow_mocked_time so both halves track the same fake clock.
+        const now_ms: f64 = bun.jsc.Jest.bun_test.FakeTimers.current_time.dateNowMs() orelse
+            @floatFromInt(std.time.milliTimestamp());
         const next_ms = (this.parsed.next(this.global, now_ms) catch return null) orelse return null;
         const delta: i64 = @intFromFloat(@max(1.0, next_ms - now_ms));
-        return bun.timespec.msFromNow(.force_real_time, delta);
+        return bun.timespec.msFromNow(.allow_mocked_time, delta);
     }
 
     fn scheduleNext(this: *CronJob, vm: *jsc.VirtualMachine) void {
@@ -1011,8 +1015,8 @@ pub const CronJob = struct {
         return callframe.this();
     }
 
-    pub fn getCron(this: *CronJob, globalObject: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
-        return this.expression.toJS(globalObject);
+    pub fn getCron(_: *CronJob, _: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
+        return .js_undefined; // unreachable — register() pre-populates the cache via cronSetCached
     }
 
     pub fn register(globalObject: *jsc.JSGlobalObject, schedule_arg: jsc.JSValue, callback_arg: jsc.JSValue) bun.JSError!jsc.JSValue {
@@ -1033,7 +1037,6 @@ pub const CronJob = struct {
             .ref_count = .init(),
             .global = globalObject,
             .parsed = parsed,
-            .expression = schedule_str.dupeRef(),
         });
 
         const next_time = job.computeNextTimespec() orelse {
@@ -1041,11 +1044,13 @@ pub const CronJob = struct {
             return globalObject.throwInvalidArguments("Cron expression '{s}' has no future occurrences", .{schedule_slice.slice()});
         };
 
+        job.ref(); // owned by cron_jobs entry
         bun.handleOom(vm.rareData().cron_jobs.append(bun.default_allocator, job));
 
         const js_value = job.toJS(globalObject);
         job.this_value.setStrong(js_value, globalObject);
-        js.callbackSetCached(js_value, globalObject, callback_arg);
+        js.cronSetCached(js_value, globalObject, schedule_arg);
+        js.callbackSetCached(js_value, globalObject, callback_arg.withAsyncContextIfNeeded(globalObject));
 
         job.poll_ref.ref(vm);
         vm.timer.update(&job.event_loop_timer, &next_time);

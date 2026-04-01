@@ -106,7 +106,6 @@ pub const Tag = enum {
             .BunTest, // for test timeouts
             .EventLoopDelayMonitor, // probably important
             .StatWatcherScheduler,
-            .CronJob, // calendar-anchored to real wall clock
             => false,
             else => true,
         };

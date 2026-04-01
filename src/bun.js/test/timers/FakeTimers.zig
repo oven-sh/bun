@@ -18,6 +18,18 @@ pub var current_time: struct {
         if (value.eql(&min_timespec)) return null;
         return value;
     }
+    /// Mocked epoch milliseconds (what JS Date.now() returns under fake timers).
+    pub fn dateNowMs(this: *@This()) ?f64 {
+        const ts = this.getTimespecNow() orelse return null;
+        return this.date_now_offset + @as(f64, @floatFromInt(ts.ms()));
+    }
+    /// Called from JSMock__jsSetSystemTime so that a subsequent
+    /// advanceTimersByTime() continues from the value setSystemTime set
+    /// instead of reverting to the offset captured at useFakeTimers().
+    pub fn onSetSystemTime(this: *@This(), js_epoch_ms: f64) void {
+        const ts = this.getTimespecNow() orelse return;
+        this.date_now_offset = js_epoch_ms - @as(f64, @floatFromInt(ts.ms()));
+    }
     pub fn set(this: *@This(), globalObject: *jsc.JSGlobalObject, v: struct {
         offset: *const bun.timespec,
         js: ?f64 = null,
@@ -364,6 +376,10 @@ pub fn putTimersFns(globalObject: *jsc.JSGlobalObject, jest: jsc.JSValue, vi: js
         vi.put(globalObject, str, jsvalue);
         jest.put(globalObject, str, jsvalue);
     }
+}
+
+pub export fn Bun__FakeTimers__onSetSystemTime(js_epoch_ms: f64) void {
+    current_time.onSetSystemTime(js_epoch_ms);
 }
 
 const bindgen_generated = @import("bindgen_generated");

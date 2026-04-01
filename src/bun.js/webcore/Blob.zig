@@ -3407,12 +3407,12 @@ pub fn initWithAllASCII(bytes: []u8, allocator: std.mem.Allocator, globalThis: *
 }
 
 fn setPartSizes(store: ?*Blob.Store, part_sizes: ?[]SizeType) void {
-    const s = store orelse return;
     const sizes = part_sizes orelse return;
-    if (sizes.len <= 1) {
+    if (store == null or sizes.len <= 1) {
         bun.default_allocator.free(sizes);
         return;
     }
+    const s = store.?;
     s.data.bytes.part_sizes = sizes.ptr;
     s.data.bytes.part_count = @truncate(sizes.len);
 }

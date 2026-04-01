@@ -103,7 +103,11 @@ pub fn onPull(this: *ByteBlobLoader, buffer: []u8, array: JSValue) streams.Resul
     var temporary = store.sharedView();
     temporary = temporary[@min(this.offset, temporary.len)..];
 
-    // When we have part boundaries, limit this chunk to the current part size
+    // When we have part boundaries, limit this chunk to the current part size.
+    // Skip any zero-length parts first.
+    if (this.part_sizes) |sizes| {
+        this.skipEmptyParts(sizes);
+    }
     const max_chunk = if (this.part_sizes != null)
         if (this.current_part_remain > 0) this.current_part_remain else this.remain
     else
@@ -136,6 +140,15 @@ pub fn onPull(this: *ByteBlobLoader, buffer: []u8, array: JSValue) streams.Resul
     }
 
     return .{ .into_array = .{ .value = array, .len = copied } };
+}
+
+fn skipEmptyParts(this: *ByteBlobLoader, sizes: [*]Blob.SizeType) void {
+    while (this.current_part < this.part_count and this.current_part_remain == 0) {
+        this.current_part += 1;
+        if (this.current_part < this.part_count) {
+            this.current_part_remain = sizes[this.current_part];
+        }
+    }
 }
 
 pub fn toAnyBlob(this: *ByteBlobLoader, globalThis: *JSGlobalObject) ?Blob.Any {
@@ -204,6 +217,9 @@ pub fn drain(this: *ByteBlobLoader) bun.ByteList {
     var temporary = store.sharedView();
     temporary = temporary[this.offset..];
 
+    if (this.part_sizes) |sizes| {
+        this.skipEmptyParts(sizes);
+    }
     const max_drain = if (this.part_sizes != null)
         if (this.current_part_remain > 0) this.current_part_remain else this.remain
     else

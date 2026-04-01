@@ -5,6 +5,17 @@
 /// - count (cannot be implemented efficiently with TimerHeap)
 timers: TimerHeap = .{ .context = {} },
 
+/// Auto-advance timer that runs in real time and periodically advances fake time.
+/// When advanceTimers option is enabled, this timer fires every N milliseconds of real time
+/// and advances the fake clock by the same amount.
+#auto_advance_timer: bun.api.Timer.EventLoopTimer = .{
+    .tag = .FakeTimersAutoAdvance,
+    .next = .epoch,
+},
+/// The interval in milliseconds for auto-advancing timers.
+/// 0 means auto-advance is disabled.
+#auto_advance_interval_ms: u32 = 0,
+
 pub var current_time: struct {
     const min_timespec = bun.timespec{ .sec = std.math.minInt(i64), .nsec = std.math.minInt(i64) };
     /// starts at 0. offset in milliseconds.
@@ -63,11 +74,12 @@ pub fn isActive(this: *FakeTimers) bool {
 
     return this.#active;
 }
-fn activate(this: *FakeTimers, js_now: f64, globalObject: *jsc.JSGlobalObject) void {
+fn activate(this: *FakeTimers, js_now: f64, globalObject: *jsc.JSGlobalObject, auto_advance_ms: u32) void {
     this.assertValid(.locked);
     defer this.assertValid(.locked);
 
     this.#active = true;
+    this.#auto_advance_interval_ms = auto_advance_ms;
     current_time.set(globalObject, .{ .offset = &.epoch, .js = js_now });
 }
 fn deactivate(this: *FakeTimers, globalObject: *jsc.JSGlobalObject) void {
@@ -75,6 +87,7 @@ fn deactivate(this: *FakeTimers, globalObject: *jsc.JSGlobalObject) void {
     defer this.assertValid(.locked);
 
     this.clear();
+    this.stopAutoAdvanceTimer(globalObject);
     current_time.clear(globalObject);
     this.#active = false;
 }
@@ -96,7 +109,9 @@ fn executeNext(this: *FakeTimers, globalObject: *jsc.JSGlobalObject) bool {
     const next = blk: {
         timers.lock.lock();
         defer timers.lock.unlock();
-        break :blk this.timers.deleteMin() orelse return false;
+        const timer = this.timers.deleteMin() orelse return false;
+        timer.in_heap = .none;
+        break :blk timer;
     };
 
     this.fire(globalObject, next);
@@ -130,6 +145,7 @@ fn executeUntil(this: *FakeTimers, globalObject: *jsc.JSGlobalObject, until: bun
             const peek = this.timers.peek() orelse break;
             if (peek.next.greater(&until)) break;
             bun.assert(this.timers.deleteMin() == peek);
+            peek.in_heap = .none;
             break :blk peek;
         };
         this.fire(globalObject, next);
@@ -154,6 +170,93 @@ fn executeAllTimers(this: *FakeTimers, globalObject: *jsc.JSGlobalObject) void {
     defer this.assertValid(.unlocked);
 
     while (this.executeNext(globalObject)) {}
+}
+
+// ===
+// Auto-advance timer
+// ===
+
+/// Called when the auto-advance timer fires (in real time).
+/// This advances fake time by the configured interval and fires any timers that are ready.
+pub fn onAutoAdvanceTimer(this: *FakeTimers, vm: *jsc.VirtualMachine) void {
+    this.assertValid(.unlocked);
+    defer this.assertValid(.unlocked);
+
+    const interval_ms = this.#auto_advance_interval_ms;
+    if (interval_ms == 0) return;
+
+    const globalObject = vm.global;
+    const timers = &vm.timer;
+
+    // Check if fake timers are still active
+    {
+        timers.lock.lock();
+        defer timers.lock.unlock();
+        if (!this.isActive()) return;
+    }
+
+    // Get current fake time and advance it
+    const current = current_time.getTimespecNow() orelse return;
+    const target = current.addMs(interval_ms);
+
+    // Execute all timers up to the target time.
+    // Note: This may trigger JavaScript callbacks that could call useRealTimers(),
+    // so we need to check isActive() again after this returns.
+    this.executeUntil(globalObject, target);
+
+    // Re-check if fake timers are still active after executing timers.
+    // JavaScript code in timer callbacks may have called useRealTimers(),
+    // or may have manually advanced time past our target via advanceTimersByTime().
+    {
+        timers.lock.lock();
+        defer timers.lock.unlock();
+        if (!this.isActive()) return;
+
+        // Only advance time to target if it's greater than current time.
+        // Callbacks during executeUntil may have advanced time past target.
+        const current_offset = current_time.getTimespecNow() orelse return;
+        if (target.greater(&current_offset)) {
+            current_time.set(globalObject, .{ .offset = &target });
+        }
+    }
+
+    // Reschedule ourselves using real time
+    this.scheduleAutoAdvanceTimer(vm);
+}
+
+/// Schedule the auto-advance timer to fire after the configured interval (in real time).
+fn scheduleAutoAdvanceTimer(this: *FakeTimers, vm: *jsc.VirtualMachine) void {
+    const interval_ms = this.#auto_advance_interval_ms;
+    if (interval_ms == 0) return;
+
+    // Prevent double-insertion if timer is already scheduled
+    if (this.#auto_advance_timer.in_heap != .none) return;
+
+    const now = bun.timespec.now(.force_real_time);
+    this.#auto_advance_timer.next = now.addMs(interval_ms);
+    this.#auto_advance_timer.state = .PENDING;
+
+    // Insert into the regular timer heap (not the fake heap) using real time.
+    // The FakeTimersAutoAdvance tag has allowFakeTimers() == false so it goes
+    // into the regular heap.
+    vm.timer.insert(&this.#auto_advance_timer);
+}
+
+/// Stop the auto-advance timer. Must be called with timers.lock held.
+fn stopAutoAdvanceTimer(this: *FakeTimers, globalObject: *jsc.JSGlobalObject) void {
+    this.assertValid(.locked);
+    defer this.assertValid(.locked);
+
+    const vm = globalObject.bunVM();
+    this.#auto_advance_interval_ms = 0;
+    // Remove the timer from its heap based on where it's stored
+    switch (this.#auto_advance_timer.in_heap) {
+        .regular => vm.timer.timers.remove(&this.#auto_advance_timer),
+        .fake => this.timers.remove(&this.#auto_advance_timer),
+        .none => {}, // Timer is not in any heap (already fired or not yet started)
+    }
+    this.#auto_advance_timer.in_heap = .none;
+    this.#auto_advance_timer.state = .CANCELLED;
 }
 
 // ===
@@ -197,6 +300,7 @@ fn useFakeTimers(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
     const this = &timers.fake_timers;
 
     var js_now = bun.cpp.JSMock__getCurrentUnixTimeMs();
+    var auto_advance_ms: u32 = 0;
 
     // Check if options object was provided
     const args = callframe.argumentsAsArray(1);
@@ -216,12 +320,40 @@ fn useFakeTimers(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
                 return globalObject.throwInvalidArguments("'now' must be a number or Date", .{});
             }
         }
+
+        // Check if 'advanceTimers' field is provided
+        // advanceTimers: true means advance by 20ms every 20ms (Jest default)
+        // advanceTimers: <number> means advance by that many ms every that many ms
+        if (!config.advanceTimers.isUndefined()) {
+            if (config.advanceTimers.isBoolean()) {
+                if (config.advanceTimers.toBoolean()) {
+                    // Default to 20ms like Jest
+                    auto_advance_ms = 20;
+                }
+            } else if (config.advanceTimers.isNumber()) {
+                const advance_num = config.advanceTimers.asNumber();
+                if (!std.math.isFinite(advance_num)) {
+                    return globalObject.throwInvalidArguments("'advanceTimers' must be a finite number", .{});
+                }
+                if (advance_num < 1 or advance_num > std.math.maxInt(u32)) {
+                    return globalObject.throwInvalidArguments("'advanceTimers' must be a positive number", .{});
+                }
+                auto_advance_ms = @intFromFloat(advance_num);
+            } else {
+                return globalObject.throwInvalidArguments("'advanceTimers' must be a boolean or number", .{});
+            }
+        }
     }
 
     {
         timers.lock.lock();
         defer timers.lock.unlock();
-        this.activate(js_now, globalObject);
+        this.activate(js_now, globalObject, auto_advance_ms);
+    }
+
+    // Start auto-advance timer if enabled (must be done outside the lock)
+    if (auto_advance_ms > 0) {
+        this.scheduleAutoAdvanceTimer(vm);
     }
 
     // Set setTimeout.clock = true to signal that fake timers are enabled.

@@ -1449,9 +1449,9 @@ pub const EnvironmentVariables = struct {
     /// rather than cloning. A worker only allocates its own value if it
     /// writes to that var. Parent deref'ing on overwrite won't free the
     /// bytes while a worker still holds a ref.
-    pub export fn Bun__setEnvValue(globalObject: *jsc.JSGlobalObject, name: *ZigString, value: *ZigString) void {
+    pub export fn Bun__setEnvValue(globalObject: *jsc.JSGlobalObject, name: *bun.String, value: *bun.String) void {
         const vm = globalObject.bunVM();
-        var name_slice = name.toSlice(bun.default_allocator);
+        var name_slice = name.toUTF8(bun.default_allocator);
         defer name_slice.deinit();
 
         const storage = &vm.proxy_env_storage;
@@ -1472,7 +1472,7 @@ pub const EnvironmentVariables = struct {
             slot.ptr.* = null;
         }
 
-        if (value.len == 0) {
+        if (value.isEmpty()) {
             // Store a static empty string rather than removing, so that
             // process.env.X reads back as "" (Node.js semantics) instead
             // of undefined. isNoProxy treats empty strings the same as
@@ -1481,7 +1481,7 @@ pub const EnvironmentVariables = struct {
             return;
         }
 
-        var value_slice = value.toSlice(bun.default_allocator);
+        var value_slice = value.toUTF8(bun.default_allocator);
         defer value_slice.deinit();
         const new_val = jsc.RareData.RefCountedEnvValue.create(value_slice.slice());
         slot.ptr.* = new_val;

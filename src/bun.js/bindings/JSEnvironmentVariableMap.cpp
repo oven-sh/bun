@@ -20,7 +20,7 @@ extern "C" size_t Bun__getEnvCount(JSGlobalObject* globalObject, void** list_ptr
 extern "C" size_t Bun__getEnvKey(void* list, size_t index, unsigned char** out);
 
 extern "C" bool Bun__getEnvValue(JSGlobalObject* globalObject, ZigString* name, ZigString* value);
-extern "C" void Bun__setEnvValue(JSGlobalObject* globalObject, ZigString* name, ZigString* value);
+extern "C" void Bun__setEnvValue(JSGlobalObject* globalObject, BunString* name, BunString* value);
 
 namespace Bun {
 
@@ -100,11 +100,11 @@ JSC_DEFINE_CUSTOM_SETTER(jsSetterProxyEnvironmentVariable, (JSGlobalObject * glo
     if (!string) [[unlikely]]
         return false;
 
-    auto wtfString = string->value(globalObject);
+    auto view = string->view(globalObject);
     RETURN_IF_EXCEPTION(scope, false);
 
-    ZigString name = toZigString(propertyName.publicName());
-    ZigString val = toZigString(wtfString);
+    BunString name = Bun::toStringView(propertyName.publicName());
+    BunString val = Bun::toStringView(view);
     Bun__setEnvValue(globalObject, &name, &val);
     return true;
 }

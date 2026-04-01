@@ -845,10 +845,6 @@ pub const CronJob = struct {
         this.stopped = true;
         if (this.event_loop_timer.state == .ACTIVE)
             vm.timer.remove(&this.event_loop_timer);
-        if (this.this_value.tryGet()) |js_value| {
-            js.callbackSetCached(js_value, this.global, .js_undefined);
-            js.pendingPromiseSetCached(js_value, this.global, .js_undefined);
-        }
         this.cleanupAfterStop(vm);
     }
 
@@ -987,14 +983,13 @@ pub const CronJob = struct {
         const args = callframe.arguments();
         var this: *CronJob = args[args.len - 1].asPromisePtr(CronJob);
         defer this.deref();
-        // stop() / --hot reload / worker exit cleared pendingPromise; the user
-        // cancelled the job, so swallow the in-flight rejection.
-        if (this.stopped) return .js_undefined;
         const vm = this.global.bunVM();
         const err = if (args.len > 0) args[0] else .js_undefined;
-        const js_this = this.this_value.tryGet() orelse return .js_undefined;
-        const promise_value = js.pendingPromiseGetCached(js_this) orelse .js_undefined;
-        js.pendingPromiseSetCached(js_this, this.global, .js_undefined);
+        var promise_value: jsc.JSValue = .js_undefined;
+        if (this.this_value.tryGet()) |js_this| {
+            promise_value = js.pendingPromiseGetCached(js_this) orelse .js_undefined;
+            js.pendingPromiseSetCached(js_this, this.global, .js_undefined);
+        }
         vm.unhandledRejection(vm.global, err, promise_value);
         this.scheduleNext(vm);
         return .js_undefined;

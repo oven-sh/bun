@@ -605,6 +605,7 @@ pub fn deinit(this: *RareData) void {
     }
 
     this.cleanup_hooks.clearAndFree(bun.default_allocator);
+    this.cron_jobs.deinit(bun.default_allocator);
     this.path_buf.deinit();
 
     if (this.websocket_deflate) |deflate| {

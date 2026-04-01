@@ -244,15 +244,17 @@ describe.concurrent("Bun.cron (in-process) — firing (subprocess)", () => {
     expect(exitCode).toBe(0);
   }, 70_000);
 
-  test("stop() while async callback pending suppresses unhandledRejection", async () => {
+  test("stop() while async callback pending still surfaces unhandledRejection with promise", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
         `
-        process.on("unhandledRejection", () => { console.log("LEAKED"); process.exit(1); });
+        process.on("unhandledRejection", (e, p) => {
+          console.log("caught=" + e.message + ":" + (p instanceof Promise));
+          process.exit(0);
+        });
         const job = Bun.cron("* * * * *", async () => {
-          setTimeout(() => { console.log("ok"); process.exit(0); }, 100);
           job.stop();
           await Bun.sleep(10);
           throw new Error("after-stop");
@@ -263,7 +265,7 @@ describe.concurrent("Bun.cron (in-process) — firing (subprocess)", () => {
       stderr: "pipe",
     });
     const [stdout, _stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stdout.trim()).toBe("ok");
+    expect(stdout.trim()).toBe("caught=after-stop:true");
     expect(exitCode).toBe(0);
   }, 70_000);
 

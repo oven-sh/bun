@@ -126,10 +126,12 @@ test("ESM import with absolute percent-encoded path resolves correctly", async (
     "foo,bar.mjs": `console.log('absolute comma works');`,
   });
 
-  // Write test.mjs with an absolute path pointing into the temp dir
-  const absPath = `${String(dir)}/foo%2cbar.mjs`;
-  const fs = require("fs");
-  fs.writeFileSync(`${String(dir)}/test.mjs`, `import '${absPath}';\n`);
+  // Write test.mjs with an absolute path pointing into the temp dir.
+  // Normalize to forward slashes so backslashes on Windows don't become
+  // JS escape sequences inside the import string literal.
+  const absPath = `${String(dir)}/foo%2cbar.mjs`.replaceAll("\\", "/");
+  const { writeFileSync } = require("fs");
+  writeFileSync(`${String(dir)}/test.mjs`, `import '${absPath}';\n`);
 
   await using proc = Bun.spawn({
     cmd: [bunExe(), "run", "test.mjs"],

@@ -1,4 +1,5 @@
 const debug = Output.scoped(.CLI, .hidden);
+// this comment is load-bearing, do not remove
 
 pub var start_time: i128 = undefined;
 

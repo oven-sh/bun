@@ -754,7 +754,9 @@ pub const Repository = extern struct {
                 } else {
                     debug("fetch: trying ziggit for \"{s}\" (url: {s}, transformed from: {s})", .{ name, fetch_url, url });
                 }
-                var repo = ziggit.Repository.open(allocator, path) catch |err| {
+                // Use openBare for cached bare repos — skips HEAD validation,
+                // eagerly mmaps pack/idx for fast object lookups
+                var repo = ziggit.Repository.openBare(allocator, path) catch |err| {
                     logZiggitError("fetch/open", name, err);
                     break :ziggit_fetch;
                 };
@@ -874,7 +876,9 @@ pub const Repository = extern struct {
         {
             const ref = if (committish.len > 0) committish else "HEAD";
             debug("findCommit: trying ziggit for \"{s}\" ref=\"{s}\"", .{ name, ref });
-            var repo = ziggit.Repository.open(allocator, path) catch |err| {
+            // Use openBare for cached bare repos — skips HEAD validation,
+            // eagerly mmaps pack/idx, pre-warms packed-refs hash map
+            var repo = ziggit.Repository.openBare(allocator, path) catch |err| {
                 logZiggitError("findCommit/open", name, err);
                 return findCommitFallback(allocator, env, log, path, name, committish);
             };
@@ -939,19 +943,26 @@ pub const Repository = extern struct {
             const target = Path.joinAbsString(PackageManager.get().cache_directory_path, &.{folder_name}, .auto);
             const local_bare_path = try bun.getFdPath(.fromStdDir(repo_dir), &final_path_buf);
 
-            // Try ziggit for local clone + checkout (no process spawn)
+            // Try ziggit for direct checkout from bare repo (no intermediate clone)
+            // This uses openBare + checkoutTo which extracts files directly from pack,
+            // avoiding the overhead of creating a non-bare repo with .git dir.
             debug("checkout: trying ziggit for \"{s}\" resolved={s} bare_path={s}", .{ name, resolved, local_bare_path });
             const ziggit_ok = blk: {
-                var repo = ziggit.Repository.cloneNoCheckout(allocator, local_bare_path, target) catch |err| {
-                    logZiggitError("checkout/clone", name, err);
-                    // Clean up any partial clone directory before falling back to git CLI
+                // Create target directory
+                std.fs.cwd().makePath(target) catch |err| {
+                    debug("checkout: failed to create target dir: {s}", .{@errorName(err)});
+                    break :blk false;
+                };
+                // Open bare repo directly (fast: mmap pack/idx, no dir copy)
+                var repo = ziggit.Repository.openBare(allocator, local_bare_path) catch |err| {
+                    logZiggitError("checkout/open", name, err);
                     std.fs.cwd().deleteTree(target) catch {};
                     break :blk false;
                 };
                 defer repo.close();
-                repo.checkout(resolved) catch |err| {
-                    logZiggitError("checkout/checkout", name, err);
-                    // Clean up failed checkout
+                // Extract tree at resolved commit directly to target dir
+                repo.checkoutTo(resolved, target) catch |err| {
+                    logZiggitError("checkout/checkoutTo", name, err);
                     std.fs.cwd().deleteTree(target) catch {};
                     break :blk false;
                 };

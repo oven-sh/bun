@@ -20,6 +20,7 @@ extern "C" size_t Bun__getEnvCount(JSGlobalObject* globalObject, void** list_ptr
 extern "C" size_t Bun__getEnvKey(void* list, size_t index, unsigned char** out);
 
 extern "C" bool Bun__getEnvValue(JSGlobalObject* globalObject, ZigString* name, ZigString* value);
+extern "C" bool Bun__getEnvValueBunString(JSGlobalObject* globalObject, BunString* name, BunString* value);
 extern "C" void Bun__setEnvValue(JSGlobalObject* globalObject, BunString* name, BunString* value);
 
 namespace Bun {
@@ -79,12 +80,12 @@ JSC_DEFINE_CUSTOM_GETTER(jsGetterProxyEnvironmentVariable, (JSGlobalObject * glo
     if (!thisObject) [[unlikely]]
         return JSValue::encode(jsUndefined());
 
-    ZigString name = toZigString(propertyName.publicName());
-    ZigString value = { nullptr, 0 };
-    if (!Bun__getEnvValue(globalObject, &name, &value)) {
+    BunString name = Bun::toStringView(propertyName.publicName());
+    BunString value = { BunStringTag::Dead };
+    if (!Bun__getEnvValueBunString(globalObject, &name, &value)) {
         return JSValue::encode(jsUndefined());
     }
-    RELEASE_AND_RETURN(scope, JSValue::encode(jsString(vm, Zig::toStringCopy(value))));
+    RELEASE_AND_RETURN(scope, JSValue::encode(jsString(vm, value.toWTFString())));
 }
 
 JSC_DEFINE_CUSTOM_SETTER(jsSetterProxyEnvironmentVariable, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, PropertyName propertyName))

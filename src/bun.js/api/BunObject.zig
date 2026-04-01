@@ -1439,6 +1439,17 @@ pub const EnvironmentVariables = struct {
         return false;
     }
 
+    /// BunString variant of Bun__getEnvValue. The returned value borrows from
+    /// the env map; caller must copy before the map can mutate.
+    pub export fn Bun__getEnvValueBunString(globalObject: *jsc.JSGlobalObject, name: *bun.String, value: *bun.String) bool {
+        const vm = globalObject.bunVM();
+        var name_slice = name.toUTF8(bun.default_allocator);
+        defer name_slice.deinit();
+        const val = vm.transpiler.env.get(name_slice.slice()) orelse return false;
+        value.* = bun.String.borrowUTF8(val);
+        return true;
+    }
+
     /// Sync a process.env write back to the Zig-side env map so that Zig
     /// consumers (e.g. fetch's proxy resolution via env.getHttpProxyFor)
     /// observe the updated value. Used by custom setters for proxy-related
@@ -1520,6 +1531,7 @@ comptime {
     _ = EnvironmentVariables.Bun__getEnvCount;
     _ = EnvironmentVariables.Bun__getEnvKey;
     _ = EnvironmentVariables.Bun__getEnvValue;
+    _ = EnvironmentVariables.Bun__getEnvValueBunString;
     _ = EnvironmentVariables.Bun__setEnvValue;
 }
 

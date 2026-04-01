@@ -148,10 +148,19 @@
 export function serialize(message, handle, _options) {
   const net = require("node:net");
   if (handle instanceof net.Server) {
+    if (!handle._handle) return null;
     return [handle._handle, { cmd: "NODE_HANDLE", message, type: "net.Server" }];
   } else if (handle instanceof net.Socket) {
     if (!handle._handle) return null;
-    return [handle._handle, { cmd: "NODE_HANDLE", message, type: "net.Socket" }];
+    // TLS sockets cannot be transferred — TLS state is in-process only
+    const tls = require("node:tls");
+    if (handle instanceof tls.TLSSocket) return null;
+    const internal_handle = handle._handle;
+    // Detach the socket from the sender so both sides don't read from the
+    // same underlying fd after SCM_RIGHTS duplicates it to the receiver.
+    handle._handle = null;
+    handle.setTimeout(0);
+    return [internal_handle, { cmd: "NODE_HANDLE", message, type: "net.Socket" }];
   }
   return null;
 }

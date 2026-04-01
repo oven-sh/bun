@@ -754,10 +754,8 @@ pub const Repository = extern struct {
                 } else {
                     debug("fetch: trying ziggit for \"{s}\" (url: {s}, transformed from: {s})", .{ name, fetch_url, url });
                 }
-                // Use openBare for cached bare repos — skips HEAD validation,
-                // eagerly mmaps pack/idx for fast object lookups
                 var repo = ziggit.Repository.openBare(allocator, path) catch |err| {
-                    logZiggitError("fetch/open", name, err);
+                    logZiggitError("fetch/openBare", name, err);
                     break :ziggit_fetch;
                 };
                 defer repo.close();
@@ -782,12 +780,10 @@ pub const Repository = extern struct {
                     break :ziggit_fetch;
                 };
                 debug("fetch: ziggit succeeded for \"{s}\"", .{name});
-                std.debug.print("[ZIGGIT] fetch: ziggit succeeded for \"{s}\"\n", .{name});
                 break :fetch dir;
             }
             // Ziggit failed — fall back to git CLI
             debug("fetch: using git CLI for \"{s}\"", .{name});
-            std.debug.print("[ZIGGIT] fetch: using git CLI fallback for \"{s}\"\n", .{name});
             _ = exec(allocator, env, &[_]string{ "git", "-C", path, "fetch", "--quiet" }) catch |err| {
                 dir.close();
                 log.addErrorFmt(null, logger.Loc.Empty, allocator, "\"git fetch\" for \"{s}\" failed", .{name}) catch unreachable;
@@ -834,12 +830,10 @@ pub const Repository = extern struct {
                 };
                 defer repo.close();
                 debug("clone: ziggit succeeded for \"{s}\"", .{name});
-                std.debug.print("[ZIGGIT] clone: ziggit succeeded for \"{s}\"\n", .{name});
                 break :clone try cache_dir.openDirZ(folder_name, .{});
             }
             // Ziggit failed — fall back to git CLI
             debug("clone: using git CLI for \"{s}\"", .{name});
-            std.debug.print("[ZIGGIT] clone: using git CLI fallback for \"{s}\"\n", .{name});
             _ = exec(allocator, env, &[_]string{
                 "git", "clone", "-c", "core.longpaths=true", "--quiet", "--bare", url, target,
             }) catch |exec_err| {
@@ -876,10 +870,8 @@ pub const Repository = extern struct {
         {
             const ref = if (committish.len > 0) committish else "HEAD";
             debug("findCommit: trying ziggit for \"{s}\" ref=\"{s}\"", .{ name, ref });
-            // Use openBare for cached bare repos — skips HEAD validation,
-            // eagerly mmaps pack/idx, pre-warms packed-refs hash map
             var repo = ziggit.Repository.openBare(allocator, path) catch |err| {
-                logZiggitError("findCommit/open", name, err);
+                logZiggitError("findCommit/openBare", name, err);
                 return findCommitFallback(allocator, env, log, path, name, committish);
             };
             defer repo.close();
@@ -888,7 +880,6 @@ pub const Repository = extern struct {
                 return findCommitFallback(allocator, env, log, path, name, committish);
             };
             debug("findCommit: ziggit resolved \"{s}\" -> {s}", .{ ref, &hash });
-                std.debug.print("[ZIGGIT] findCommit: ziggit succeeded for \"{s}\"\n", .{name});
             const result = bun.handleOom(allocator.alloc(u8, 40));
             @memcpy(result, &hash);
             return result;
@@ -904,7 +895,6 @@ pub const Repository = extern struct {
         committish: string,
     ) !string {
         debug("findCommit: using git CLI fallback for \"{s}\"", .{name});
-        std.debug.print("[ZIGGIT] findCommit: using git CLI fallback for \"{s}\"\n", .{name});
         return std.mem.trim(u8, exec(
             allocator,
             shared_env.get(allocator, env),
@@ -943,24 +933,19 @@ pub const Repository = extern struct {
             const target = Path.joinAbsString(PackageManager.get().cache_directory_path, &.{folder_name}, .auto);
             const local_bare_path = try bun.getFdPath(.fromStdDir(repo_dir), &final_path_buf);
 
-            // Try ziggit for direct checkout from bare repo (no intermediate clone)
-            // This uses openBare + checkoutTo which extracts files directly from pack,
-            // avoiding the overhead of creating a non-bare repo with .git dir.
+            // Try ziggit direct checkout from bare repo (skip intermediate clone)
             debug("checkout: trying ziggit for \"{s}\" resolved={s} bare_path={s}", .{ name, resolved, local_bare_path });
             const ziggit_ok = blk: {
-                // Create target directory
                 std.fs.cwd().makePath(target) catch |err| {
                     debug("checkout: failed to create target dir: {s}", .{@errorName(err)});
                     break :blk false;
                 };
-                // Open bare repo directly (fast: mmap pack/idx, no dir copy)
                 var repo = ziggit.Repository.openBare(allocator, local_bare_path) catch |err| {
-                    logZiggitError("checkout/open", name, err);
+                    logZiggitError("checkout/openBare", name, err);
                     std.fs.cwd().deleteTree(target) catch {};
                     break :blk false;
                 };
                 defer repo.close();
-                // Extract tree at resolved commit directly to target dir
                 repo.checkoutTo(resolved, target) catch |err| {
                     logZiggitError("checkout/checkoutTo", name, err);
                     std.fs.cwd().deleteTree(target) catch {};

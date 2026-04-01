@@ -834,12 +834,10 @@ pub const CronJob = struct {
 
     ref_count: RefCount,
     event_loop_timer: EventLoopTimer = .{ .tag = .CronJob, .next = .epoch },
-    callback: jsc.Strong.Optional = .empty,
-    pending_promise: jsc.Strong.Optional = .empty,
     global: *jsc.JSGlobalObject,
     parsed: CronExpression,
     expression: bun.String,
-    poll: bun.Async.KeepAlive = .{},
+    poll_ref: bun.Async.KeepAlive = .{},
     this_value: jsc.JSRef = jsc.JSRef.empty(),
     stopped: bool = false,
 
@@ -848,8 +846,10 @@ pub const CronJob = struct {
         this.stopped = true;
         if (this.event_loop_timer.state == .ACTIVE)
             vm.timer.remove(&this.event_loop_timer);
-        this.callback.deinit();
-        this.pending_promise.deinit();
+        if (this.this_value.tryGet()) |js_value| {
+            js.callbackSetCached(js_value, this.global, .js_undefined);
+            js.pendingPromiseSetCached(js_value, this.global, .js_undefined);
+        }
         this.cleanupAfterStop(vm);
     }
 
@@ -871,8 +871,6 @@ pub const CronJob = struct {
     }
 
     fn deinit(this: *CronJob) void {
-        this.callback.deinit();
-        this.pending_promise.deinit();
         this.this_value.deinit();
         this.expression.deref();
         bun.destroy(this);
@@ -903,7 +901,7 @@ pub const CronJob = struct {
     }
 
     fn cleanupAfterStop(this: *CronJob, vm: *jsc.VirtualMachine) void {
-        this.poll.unref(vm);
+        this.poll_ref.unref(vm);
         if (this.this_value != .finalized)
             this.this_value.downgrade();
     }
@@ -922,11 +920,18 @@ pub const CronJob = struct {
             return;
         }
 
-        const cb = this.callback.get() orelse {
+        const js_this = this.this_value.tryGet() orelse {
             this.selfStop(vm);
             return;
         };
-        const js_this = this.this_value.tryGet() orelse .js_undefined;
+        const cb = js.callbackGetCached(js_this) orelse {
+            this.selfStop(vm);
+            return;
+        };
+        if (cb.isUndefined()) {
+            this.selfStop(vm);
+            return;
+        }
 
         vm.eventLoop().enter();
         defer vm.eventLoop().exit();
@@ -942,9 +947,9 @@ pub const CronJob = struct {
             switch (promise.status()) {
                 .pending => {
                     this.ref();
-                    this.pending_promise.set(this.global, result);
+                    js.pendingPromiseSetCached(js_this, this.global, result);
                     result.then(this.global, this, onPromiseResolve, onPromiseReject) catch {
-                        this.pending_promise.deinit();
+                        js.pendingPromiseSetCached(js_this, this.global, .js_undefined);
                         this.deref();
                         this.scheduleNext(vm);
                     };
@@ -968,7 +973,8 @@ pub const CronJob = struct {
         const args = callframe.arguments();
         var this: *CronJob = args[args.len - 1].asPromisePtr(CronJob);
         defer this.deref();
-        this.pending_promise.deinit();
+        if (this.this_value.tryGet()) |js_this|
+            js.pendingPromiseSetCached(js_this, this.global, .js_undefined);
         this.scheduleNext(this.global.bunVM());
         return .js_undefined;
     }
@@ -977,13 +983,14 @@ pub const CronJob = struct {
         const args = callframe.arguments();
         var this: *CronJob = args[args.len - 1].asPromisePtr(CronJob);
         defer this.deref();
-        // stop() / --hot reload / worker exit released pending_promise; the
-        // user cancelled the job, so swallow the in-flight rejection.
+        // stop() / --hot reload / worker exit cleared pendingPromise; the user
+        // cancelled the job, so swallow the in-flight rejection.
         if (this.stopped) return .js_undefined;
         const vm = this.global.bunVM();
         const err = if (args.len > 0) args[0] else .js_undefined;
-        const promise_value = this.pending_promise.get() orelse .js_undefined;
-        this.pending_promise.deinit();
+        const js_this = this.this_value.tryGet() orelse return .js_undefined;
+        const promise_value = js.pendingPromiseGetCached(js_this) orelse .js_undefined;
+        js.pendingPromiseSetCached(js_this, this.global, .js_undefined);
         vm.unhandledRejection(vm.global, err, promise_value);
         this.scheduleNext(vm);
         return .js_undefined;
@@ -995,12 +1002,12 @@ pub const CronJob = struct {
     }
 
     pub fn doRef(this: *CronJob, _: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-        if (!this.stopped) this.poll.ref(this.global.bunVM());
+        if (!this.stopped) this.poll_ref.ref(this.global.bunVM());
         return callframe.this();
     }
 
     pub fn doUnref(this: *CronJob, _: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-        this.poll.unref(this.global.bunVM());
+        this.poll_ref.unref(this.global.bunVM());
         return callframe.this();
     }
 
@@ -1028,7 +1035,6 @@ pub const CronJob = struct {
             .parsed = parsed,
             .expression = schedule_str.dupeRef(),
         });
-        job.callback = .create(callback_arg, globalObject);
 
         const next_time = job.computeNextTimespec() orelse {
             job.deref();
@@ -1039,8 +1045,9 @@ pub const CronJob = struct {
 
         const js_value = job.toJS(globalObject);
         job.this_value.setStrong(js_value, globalObject);
+        js.callbackSetCached(js_value, globalObject, callback_arg);
 
-        job.poll.ref(vm);
+        job.poll_ref.ref(vm);
         vm.timer.update(&job.event_loop_timer, &next_time);
 
         return js_value;

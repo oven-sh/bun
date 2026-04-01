@@ -31,5 +31,6 @@ export default [
         cache: true,
       },
     },
+    values: ["callback", "pendingPromise"],
   }),
 ];

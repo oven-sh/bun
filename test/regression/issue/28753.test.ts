@@ -14,12 +14,14 @@ test("Worker async onmessage throw does not SIGABRT", async () => {
       worker.addEventListener("open", () => { worker.postMessage("go"); });
       worker.addEventListener("error", (e) => {
         console.log("error event received");
+      });
+      // Keep the process alive so the worker thread can finish its shutdown.
+      // The SIGABRT (if any) fires during VM teardown on the worker thread
+      // after the close event is already dispatched.
+      worker.addEventListener("close", () => {
+        console.log("close event received");
         setTimeout(() => process.exit(0), 500);
       });
-      setTimeout(() => {
-        console.log("timeout - no error event");
-        process.exit(1);
-      }, 5000);
     `,
   });
 
@@ -34,6 +36,7 @@ test("Worker async onmessage throw does not SIGABRT", async () => {
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stdout).toContain("error event received");
+  expect(stdout).toContain("close event received");
   expect(exitCode).toBe(0);
 });
 
@@ -50,12 +53,11 @@ test("Worker async onmessage rejection does not SIGABRT", async () => {
       worker.addEventListener("open", () => { worker.postMessage("go"); });
       worker.addEventListener("error", (e) => {
         console.log("error event received");
+      });
+      worker.addEventListener("close", () => {
+        console.log("close event received");
         setTimeout(() => process.exit(0), 500);
       });
-      setTimeout(() => {
-        console.log("timeout - no error event");
-        process.exit(1);
-      }, 5000);
     `,
   });
 
@@ -70,5 +72,6 @@ test("Worker async onmessage rejection does not SIGABRT", async () => {
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stdout).toContain("error event received");
+  expect(stdout).toContain("close event received");
   expect(exitCode).toBe(0);
 });

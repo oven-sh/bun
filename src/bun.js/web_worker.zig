@@ -396,6 +396,7 @@ fn flushLogs(this: *WebWorker) void {
         error.JSTerminated => @panic("unhandled exception"),
     };
     defer str.deref();
+    vm.log.msgs.clearRetainingCapacity();
     bun.jsc.fromJSHostCallGeneric(vm.global, @src(), WebWorker__dispatchError, .{ vm.global, this.cpp_worker, str, err }) catch |e| {
         _ = vm.global.reportUncaughtException(vm.global.takeException(e).asException(vm.global.vm()).?);
     };

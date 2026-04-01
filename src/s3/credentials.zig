@@ -736,7 +736,7 @@ pub const S3Credentials = struct {
                 break :brk_sign result;
             };
             if (signQuery) {
-                var token_encoded_buffer: [2048]u8 = undefined; // token is normaly like 600-700 but can be up to 2k
+                var token_encoded_buffer: [2048]u8 = undefined; // token is normally like 600-700 but can be up to 2k
                 var encoded_session_token: ?[]const u8 = null;
                 if (session_token) |token| {
                     encoded_session_token = encodeURIComponent(token, &token_encoded_buffer, true) catch return error.InvalidSessionToken;

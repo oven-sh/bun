@@ -1,53 +1,43 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+import { join } from "node:path";
 
 describe("Bun.cron (in-process)", () => {
   test("validates cron expression", () => {
-    expect(() => Bun.cron("x", "invalid expr", () => {})).toThrow(/Invalid cron expression/);
-    expect(() => Bun.cron("x", "* * * *", () => {})).toThrow(/Invalid cron expression/);
-    expect(() => Bun.cron("x", "60 * * * *", () => {})).toThrow(/Invalid cron expression/);
+    expect(() => Bun.cron("invalid expr", () => {})).toThrow(/Invalid cron expression/);
+    expect(() => Bun.cron("* * * *", () => {})).toThrow(/Invalid cron expression/);
+    expect(() => Bun.cron("60 * * * *", () => {})).toThrow(/Invalid cron expression/);
   });
 
-  test("validates name is non-empty string", () => {
-    expect(() => Bun.cron("", "* * * * *", () => {})).toThrow(/name must not be empty/);
+  test("validates schedule is a string", () => {
     // @ts-expect-error
-    expect(() => Bun.cron(123, "* * * * *", () => {})).toThrow(/string name/);
+    expect(() => Bun.cron(123, () => {})).toThrow(/string cron expression/);
   });
 
   test("rejects expressions with no future occurrences", () => {
     // Feb 30 never exists
-    expect(() => Bun.cron("x", "0 0 30 2 *", () => {})).toThrow(/no future occurrences/);
+    expect(() => Bun.cron("0 0 30 2 *", () => {})).toThrow(/no future occurrences/);
   });
 
-  test("invalid replacement expression does not kill existing job", () => {
-    const job1 = Bun.cron("keep-me", "* * * * *", () => {});
-    try {
-      // Feb 30 has no future occurrence — should throw WITHOUT stopping job1
-      expect(() => Bun.cron("keep-me", "0 0 30 2 *", () => {})).toThrow(/no future occurrences/);
-      // job1 should still be registered and active
-      expect(job1.name).toBe("keep-me");
-      // Registering a valid replacement should still work after the failed attempt
-      const job2 = Bun.cron("keep-me", "@daily", () => {});
-      expect(job2.cron).toBe("@daily");
-      job2.stop();
-    } finally {
-      job1.stop();
-    }
+  test("returns CronJob with cron getter", () => {
+    using job = Bun.cron("* * * * *", () => {});
+    expect(job.cron).toBe("* * * * *");
   });
 
-  test("returns CronJob with name and cron getters", () => {
-    const job = Bun.cron("test-getters", "* * * * *", () => {});
-    try {
-      expect(job.name).toBe("test-getters");
-      expect(job.cron).toBe("* * * * *");
-    } finally {
-      job.stop();
+  test("is Disposable", () => {
+    let j!: Bun.CronJob;
+    {
+      using job = Bun.cron("* * * * *", () => {});
+      j = job;
+      expect(job[Symbol.dispose]).toBe(job.stop);
     }
+    // Disposed at scope exit; stop() is idempotent so this is just a smoke check
+    expect(() => j.stop()).not.toThrow();
   });
 
   test("stop() cancels before first fire", () => {
     let called = false;
-    const job = Bun.cron("test-stop", "* * * * *", () => {
+    const job = Bun.cron("* * * * *", () => {
       called = true;
     });
     job.stop();
@@ -56,7 +46,7 @@ describe("Bun.cron (in-process)", () => {
   });
 
   test("stop() is idempotent", () => {
-    const job = Bun.cron("test-stop-idem", "* * * * *", () => {});
+    const job = Bun.cron("* * * * *", () => {});
     expect(() => {
       job.stop();
       job.stop();
@@ -65,56 +55,29 @@ describe("Bun.cron (in-process)", () => {
   });
 
   test("ref()/unref() are chainable", () => {
-    const job = Bun.cron("test-chain", "* * * * *", () => {});
-    try {
-      expect(job.unref()).toBe(job);
-      expect(job.ref()).toBe(job);
-      expect(job.stop()).toBe(job);
-    } finally {
-      job.stop();
-    }
+    using job = Bun.cron("* * * * *", () => {});
+    expect(job.unref()).toBe(job);
+    expect(job.ref()).toBe(job);
+    expect(job.stop()).toBe(job);
   });
 
-  test("same name replaces previous job", () => {
-    let calls1 = 0;
-    let calls2 = 0;
-    const job1 = Bun.cron("replace-test", "* * * * *", () => {
-      calls1++;
-    });
-    // Registering again with same name should stop job1
-    const job2 = Bun.cron("replace-test", "* * * * *", () => {
-      calls2++;
-    });
-    try {
-      // Both handles exist but only job2 is active
-      expect(job1.name).toBe("replace-test");
-      expect(job2.name).toBe("replace-test");
-      // Stopping job2 is what matters now; job1 was already stopped by replacement
-      job1.stop(); // no-op, already stopped
-      job2.stop();
-    } finally {
-      job2.stop();
-    }
-    expect(calls1).toBe(0);
-    expect(calls2).toBe(0);
+  test("multiple jobs coexist independently", () => {
+    using a = Bun.cron("* * * * *", () => {});
+    using b = Bun.cron("* * * * *", () => {});
+    expect(a).not.toBe(b);
+    a.stop();
+    // b is still a valid handle after stopping a
+    expect(typeof b.stop).toBe("function");
   });
 
   test("accepts @nicknames", () => {
-    const job = Bun.cron("test-nickname", "@hourly", () => {});
-    try {
-      expect(job.cron).toBe("@hourly");
-    } finally {
-      job.stop();
-    }
+    using job = Bun.cron("@hourly", () => {});
+    expect(job.cron).toBe("@hourly");
   });
 
   test("supports named weekdays and months", () => {
-    const job = Bun.cron("test-names", "0 9 * JAN-DEC MON-FRI", () => {});
-    try {
-      expect(job.cron).toBe("0 9 * JAN-DEC MON-FRI");
-    } finally {
-      job.stop();
-    }
+    using job = Bun.cron("0 9 * JAN-DEC MON-FRI", () => {});
+    expect(job.cron).toBe("0 9 * JAN-DEC MON-FRI");
   });
 
   test("keeps process alive by default; unref() allows exit", async () => {
@@ -125,7 +88,7 @@ describe("Bun.cron (in-process)", () => {
         bunExe(),
         "-e",
         `
-        const job = Bun.cron("x", "* * * * *", () => {});
+        const job = Bun.cron("* * * * *", () => {});
         job.unref();
         console.log("scheduled");
       `,
@@ -145,7 +108,7 @@ describe("Bun.cron (in-process)", () => {
         bunExe(),
         "-e",
         `
-        const job = Bun.cron("x", "* * * * *", () => {});
+        const job = Bun.cron("* * * * *", () => {});
         console.log("scheduled");
         setTimeout(() => { job.stop(); console.log("stopped"); }, 50);
       `,
@@ -159,16 +122,12 @@ describe("Bun.cron (in-process)", () => {
   });
 
   test("distinguishes callback overload from OS-level overload", () => {
-    // Callable 3rd arg → in-process; string 3rd arg → OS-level.
+    // Callable 2nd arg → in-process; 3-string-arg → OS-level.
     // We only verify the callback path here; the string path is covered elsewhere.
-    const job = Bun.cron("overload-test", "* * * * *", () => {});
-    try {
-      // CronJob has stop(); Promise would not
-      expect(typeof job.stop).toBe("function");
-      expect(job).not.toBeInstanceOf(Promise);
-    } finally {
-      job.stop();
-    }
+    using job = Bun.cron("* * * * *", () => {});
+    // CronJob has stop(); Promise would not
+    expect(typeof job.stop).toBe("function");
+    expect(job).not.toBeInstanceOf(Promise);
   });
 });
 
@@ -182,17 +141,13 @@ describe.concurrent("Bun.cron (in-process) — firing", () => {
       resolve = r;
     });
 
-    const job = Bun.cron("fire-test", "* * * * *", () => {
+    using job = Bun.cron("* * * * *", () => {
       fired++;
       resolve!();
     });
 
-    try {
-      await promise;
-      expect(fired).toBe(1);
-    } finally {
-      job.stop();
-    }
+    await promise;
+    expect(fired).toBe(1);
   }, 70_000);
 
   test("async callback delays next scheduling", async () => {
@@ -208,22 +163,18 @@ describe.concurrent("Bun.cron (in-process) — firing", () => {
       fireResolve = r;
     });
 
-    const job = Bun.cron("async-test", "* * * * *", async () => {
+    using job = Bun.cron("* * * * *", async () => {
       fireResolve!();
       await handlerPromise;
     });
 
-    try {
-      await firePromise;
-      // Handler is now awaiting; stop while it's pending
-      job.stop();
-      // Let the handler complete
-      resolveHandler!();
-      await Bun.sleep(10);
-      // No crash, no second fire
-    } finally {
-      job.stop();
-    }
+    await firePromise;
+    // Handler is now awaiting; stop while it's pending
+    job.stop();
+    // Let the handler complete
+    resolveHandler!();
+    await Bun.sleep(10);
+    // No crash, no second fire
   }, 70_000);
 
   test("sync throw in callback emits uncaughtException", async () => {
@@ -235,7 +186,7 @@ describe.concurrent("Bun.cron (in-process) — firing", () => {
         `
         let caught;
         process.on("uncaughtException", e => { caught = e.message; });
-        const job = Bun.cron("err-sync", "* * * * *", () => {
+        const job = Bun.cron("* * * * *", () => {
           setTimeout(() => { job.stop(); console.log("caught=" + caught); process.exit(0); }, 100);
           throw new Error("sync-boom");
         });
@@ -258,7 +209,7 @@ describe.concurrent("Bun.cron (in-process) — firing", () => {
         `
         let caught;
         process.on("unhandledRejection", e => { caught = e.message; });
-        const job = Bun.cron("err-async", "* * * * *", async () => {
+        const job = Bun.cron("* * * * *", async () => {
           setTimeout(() => { job.stop(); console.log("caught=" + caught); process.exit(0); }, 100);
           await Bun.sleep(1);
           throw new Error("async-boom");
@@ -279,7 +230,7 @@ describe.concurrent("Bun.cron (in-process) — firing", () => {
         bunExe(),
         "-e",
         `
-        Bun.cron("x", "* * * * *", () => { throw new Error("boom"); });
+        Bun.cron("* * * * *", () => { throw new Error("boom"); });
         setTimeout(() => console.log("still alive"), 61000);
       `,
       ],
@@ -291,4 +242,51 @@ describe.concurrent("Bun.cron (in-process) — firing", () => {
     expect(stderr).toContain("boom");
     expect(exitCode).toBe(1);
   }, 70_000);
+
+  test("--hot reload clears jobs deleted from source", async () => {
+    // We need enough time before the next minute boundary to spawn, see v1
+    // evaluate, edit the file, and let --hot reload v2. If we're within 10s
+    // of a boundary, wait it out so the edit reliably lands first.
+    const sec = new Date().getSeconds();
+    if (sec >= 50) await Bun.sleep((61 - sec) * 1000);
+
+    using dir = tempDir("cron-hot", {
+      "app.ts": `
+        import { writeFileSync } from "node:fs";
+        writeFileSync("v1.evaluated", "");
+        Bun.cron("* * * * *", () => writeFileSync("ghost.fired", ""));
+      `,
+    });
+    const path = (f: string) => join(String(dir), f);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--hot", "--no-clear-screen", "app.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+
+    while (!(await Bun.file(path("v1.evaluated")).exists())) await Bun.sleep(10);
+
+    // Delete the ghost cron; replace with a sentinel that fires on the same
+    // boundary. When the sentinel fires, ghost.fired must NOT exist.
+    await Bun.write(
+      path("app.ts"),
+      `
+        import { writeFileSync, existsSync } from "node:fs";
+        writeFileSync("v2.evaluated", "");
+        Bun.cron("* * * * *", () => {
+          writeFileSync("result", existsSync("ghost.fired") ? "GHOST_FIRED" : "ok");
+          process.exit(0);
+        });
+      `,
+    );
+
+    while (!(await Bun.file(path("v2.evaluated")).exists())) await Bun.sleep(10);
+    await proc.exited;
+
+    expect(await Bun.file(path("result")).text()).toBe("ok");
+    expect(await Bun.file(path("ghost.fired")).exists()).toBe(false);
+  }, 130_000);
 });

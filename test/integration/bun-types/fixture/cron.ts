@@ -40,6 +40,17 @@ expectType(Bun.cron.remove("weekly-report")).is<Promise<void>>();
 
 expectType(Bun.cron("./worker.ts", "@daily", "daily")).is<Promise<void>>();
 
+// -- In-process callback overload --
+
+expectType(Bun.cron("* * * * *", () => {})).is<Bun.CronJob>();
+expectType(Bun.cron("@hourly", async () => {})).is<Bun.CronJob>();
+using job = Bun.cron("0 * * * *", () => {});
+expectType(job.cron).is<string>();
+expectType(job.stop()).is<Bun.CronJob>();
+expectType(job.ref()).is<Bun.CronJob>();
+expectType(job.unref()).is<Bun.CronJob>();
+expectType(job[Symbol.dispose]()).is<void>();
+
 // -- @ts-expect-error cases --
 
 // @ts-expect-error - missing schedule and title

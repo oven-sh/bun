@@ -7386,16 +7386,14 @@ declare module "bun" {
    *
    * @example
    * ```ts
-   * const job = Bun.cron("cleanup", "0 * * * *", async () => {
+   * const job = Bun.cron("0 * * * *", async () => {
    *   await cleanupTempFiles();
    * });
    * // Later:
    * job.stop();
    * ```
    */
-  interface CronJob {
-    /** The name this job was registered with. */
-    readonly name: string;
+  interface CronJob extends Disposable {
     /** The cron expression string. */
     readonly cron: string;
     /** Cancel this cron job. The callback will not fire again. */
@@ -7435,7 +7433,7 @@ declare module "bun" {
      *
      * ```ts
      * process.on("unhandledRejection", (err) => log.error(err)); // keep going
-     * Bun.cron("flaky", "* * * * *", async () => { await mightThrow(); });
+     * Bun.cron("* * * * *", async () => { await mightThrow(); });
      * ```
      *
      * ### Cron expression syntax
@@ -7459,33 +7457,34 @@ declare module "bun" {
      *
      * ### Lifecycle & `--hot`
      *
-     * Calling `Bun.cron()` again with the same `name` stops the previous job and replaces it,
-     * so top-level `Bun.cron()` calls are safe under `bun --hot` — reloading your module won't
-     * leak timers. By default the job keeps the process alive (like `setInterval`); call
-     * `.unref()` to let the process exit naturally when nothing else is pending.
+     * Under `bun --hot`, all in-process cron jobs are stopped immediately before the module
+     * graph is re-evaluated. Each `Bun.cron()` call still in your source then re-registers,
+     * so editing the schedule, editing the callback, or **deleting the line entirely** all
+     * take effect on save without leaking timers.
      *
-     * @param name Unique identifier for this job. Registering the same name again replaces
-     *   the previous job. Not written to the OS — purely for in-process bookkeeping.
+     * By default the job keeps the process alive (like `setInterval`); call `.unref()` to let
+     * the process exit naturally when nothing else is pending.
+     *
      * @param schedule Cron expression or nickname (e.g. `"*\/5 * * * *"`, `"@hourly"`).
      * @param handler Function to call on each fire. May return a Promise — the next fire
      *   is not scheduled until it settles.
      * @returns A {@link CronJob} handle. Chainable: `.stop()`, `.ref()`, `.unref()` all
      *   return the job itself.
-     * @throws Synchronously if `schedule` is invalid, `name` is empty or not a string, or the
-     *   expression has no future occurrences (e.g. `"0 0 30 2 *"` — February 30th).
+     * @throws Synchronously if `schedule` is invalid, or the expression has no future
+     *   occurrences (e.g. `"0 0 30 2 *"` — February 30th).
      *
      * @example
      * ```ts
      * // Hourly cleanup, keeps process alive
-     * Bun.cron("cleanup", "0 * * * *", async () => {
+     * Bun.cron("0 * * * *", async () => {
      *   await cleanupTempFiles();
      * });
      *
      * // Background healthcheck that doesn't block process exit
-     * Bun.cron("ping", "*\/30 * * * *", () => fetch("https://example.com/health")).unref();
+     * Bun.cron("*\/30 * * * *", () => fetch("https://example.com/health")).unref();
      *
      * // Stop conditionally
-     * const job = Bun.cron("poll", "* * * * *", async () => {
+     * const job = Bun.cron("* * * * *", async () => {
      *   if (await isDone()) job.stop();
      * });
      * ```
@@ -7493,7 +7492,7 @@ declare module "bun" {
      * @see {@link CronJob} for the returned handle.
      * @see {@link Bun.cron.parse} to preview the next fire time.
      */
-    (name: string, schedule: CronWithAutocomplete, handler: () => MaybePromise<void>): CronJob;
+    (schedule: CronWithAutocomplete, handler: () => MaybePromise<void>): CronJob;
     /**
      * Register an **OS-level** cron job that runs a JavaScript/TypeScript module on a schedule.
      *

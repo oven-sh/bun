@@ -14,6 +14,10 @@ export default [
         fn: "stop",
         length: 0,
       },
+      "@@dispose": {
+        fn: "stop",
+        length: 0,
+      },
       ref: {
         fn: "doRef",
         length: 0,
@@ -21,10 +25,6 @@ export default [
       unref: {
         fn: "doUnref",
         length: 0,
-      },
-      name: {
-        getter: "getName",
-        cache: true,
       },
       cron: {
         getter: "getCron",

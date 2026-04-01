@@ -413,9 +413,9 @@ pub const CronRegisterJob = struct {
     pub fn cronRegister(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
         const args = callframe.argumentsAsArray(3);
 
-        // In-process callback cron: Bun.cron(name, schedule, handler)
-        if (args[2].isCallable())
-            return CronJob.register(globalObject, args[0], args[1], args[2]);
+        // In-process callback cron: Bun.cron(schedule, handler)
+        if (args[1].isCallable())
+            return CronJob.register(globalObject, args[0], args[1]);
 
         if (!args[0].isString()) return globalObject.throwInvalidArguments("Bun.cron() expects a string path as the first argument", .{});
         if (!args[1].isString()) return globalObject.throwInvalidArguments("Bun.cron() expects a string schedule as the second argument", .{});
@@ -812,15 +812,15 @@ pub const CronRemoveJob = struct {
 // CronJob — in-process callback-style cron (issue #7004)
 // ============================================================================
 //
-// Bun.cron(name, "*/5 * * * *", async () => { ... })
+// Bun.cron("*/5 * * * *", async () => { ... })
 //
 // Unlike the OS-level cron above, this runs the callback in the current
 // process on the event loop. The next execution is scheduled only after the
 // callback (including any returned Promise) completes, so callbacks never
 // overlap. Error semantics match setTimeout: sync throws become
-// uncaughtException, rejected Promises become unhandledRejection. Calling
-// Bun.cron() again with the same name replaces the old job, which makes
-// --hot reload work without leaking timers.
+// uncaughtException, rejected Promises become unhandledRejection. Under --hot,
+// VirtualMachine.reload() calls clearAllForVM before re-evaluating the module
+// graph, so deleted Bun.cron() calls don't leave ghost timers.
 
 pub const CronJob = struct {
     pub const js = jsc.Codegen.JSCronJob;
@@ -832,7 +832,6 @@ pub const CronJob = struct {
     callback: jsc.Strong.Optional = .empty,
     global: *jsc.JSGlobalObject,
     parsed: CronExpression,
-    name: []const u8,
     expression: []const u8,
     poll: bun.Async.KeepAlive = .{},
     this_value: jsc.JSRef = jsc.JSRef.empty(),
@@ -842,21 +841,46 @@ pub const CronJob = struct {
 
     pub const new = bun.TrivialNew(@This());
 
-    const JobKey = struct {
-        vm: *jsc.VirtualMachine,
-        name: []const u8,
-
-        const Context = struct {
-            pub fn hash(_: Context, k: JobKey) u64 {
-                return bun.hash(k.name) ^ @intFromPtr(k.vm);
-            }
-            pub fn eql(_: Context, a: JobKey, b: JobKey) bool {
-                return a.vm == b.vm and bun.strings.eql(a.name, b.name);
-            }
-        };
-    };
-    var jobs_map: std.HashMapUnmanaged(JobKey, *CronJob, JobKey.Context, std.hash_map.default_max_load_percentage) = .{};
+    // All live in-process cron jobs across all VMs. Named-replacement and
+    // hot-reload clearing both linear-scan this; an app has at most a handful
+    // of cron jobs so a hash map is overkill.
+    var jobs_list: std.ArrayListUnmanaged(*CronJob) = .{};
     var jobs_lock: bun.Mutex = .{};
+
+    fn removeFromListLocked(this: *CronJob) void {
+        for (jobs_list.items, 0..) |job, i| {
+            if (job == this) {
+                _ = jobs_list.swapRemove(i);
+                return;
+            }
+        }
+    }
+
+    fn stopInternal(this: *CronJob, vm: *jsc.VirtualMachine) void {
+        if (this.stopped) return;
+        this.stopped = true;
+        if (this.event_loop_timer.state == .ACTIVE)
+            vm.timer.remove(&this.event_loop_timer);
+        this.cleanupAfterStop(vm);
+    }
+
+    /// Called from VirtualMachine.reload() before --hot re-evaluates the
+    /// module graph. Every Bun.cron() call still in the source will
+    /// re-register; deleted ones won't, so no ghost jobs survive an edit.
+    pub fn clearAllForVM(vm: *jsc.VirtualMachine) void {
+        jobs_lock.lock();
+        defer jobs_lock.unlock();
+        var i: usize = 0;
+        while (i < jobs_list.items.len) {
+            const job = jobs_list.items[i];
+            if (job.global.bunVM() == vm) {
+                job.stopInternal(vm);
+                _ = jobs_list.swapRemove(i);
+            } else {
+                i += 1;
+            }
+        }
+    }
 
     fn ref(this: *CronJob) void {
         this.#ref_count += 1;
@@ -873,7 +897,6 @@ pub const CronJob = struct {
     fn deinit(this: *CronJob) void {
         this.callback.deinit();
         this.this_value.deinit();
-        bun.default_allocator.free(this.name);
         bun.default_allocator.free(this.expression);
     }
 
@@ -977,19 +1000,12 @@ pub const CronJob = struct {
 
     pub fn stop(this: *CronJob, _: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
         if (this.stopped) return callframe.this();
-        this.stopped = true;
-
-        const vm = this.global.bunVM();
         {
             jobs_lock.lock();
             defer jobs_lock.unlock();
-            if (jobs_map.fetchRemove(.{ .vm = vm, .name = this.name })) |kv|
-                bun.default_allocator.free(kv.key.name);
+            this.removeFromListLocked();
         }
-        if (this.event_loop_timer.state == .ACTIVE)
-            vm.timer.remove(&this.event_loop_timer);
-        this.cleanupAfterStop(vm);
-
+        this.stopInternal(this.global.bunVM());
         return callframe.this();
     }
 
@@ -1009,27 +1025,13 @@ pub const CronJob = struct {
         return callframe.this();
     }
 
-    pub fn getName(this: *CronJob, globalObject: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
-        return bun.String.createUTF8ForJS(globalObject, this.name);
-    }
-
     pub fn getCron(this: *CronJob, globalObject: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
         return bun.String.createUTF8ForJS(globalObject, this.expression);
     }
 
-    pub fn register(globalObject: *jsc.JSGlobalObject, name_arg: jsc.JSValue, schedule_arg: jsc.JSValue, callback_arg: jsc.JSValue) bun.JSError!jsc.JSValue {
-        if (!name_arg.isString())
-            return globalObject.throwInvalidArguments("Bun.cron() expects a string name as the first argument", .{});
+    pub fn register(globalObject: *jsc.JSGlobalObject, schedule_arg: jsc.JSValue, callback_arg: jsc.JSValue) bun.JSError!jsc.JSValue {
         if (!schedule_arg.isString())
-            return globalObject.throwInvalidArguments("Bun.cron() expects a string cron expression as the second argument", .{});
-
-        const name_str = try name_arg.toBunString(globalObject);
-        defer name_str.deref();
-        const name_slice = name_str.toUTF8(bun.default_allocator);
-        defer name_slice.deinit();
-
-        if (name_slice.slice().len == 0)
-            return globalObject.throwInvalidArguments("Bun.cron() name must not be empty", .{});
+            return globalObject.throwInvalidArguments("Bun.cron() expects a string cron expression", .{});
 
         const schedule_str = try schedule_arg.toBunString(globalObject);
         defer schedule_str.deref();
@@ -1044,34 +1046,21 @@ pub const CronJob = struct {
         const job = CronJob.new(.{
             .global = globalObject,
             .parsed = parsed,
-            .name = bun.handleOom(bun.default_allocator.dupe(u8, name_slice.slice())),
             .expression = bun.handleOom(bun.default_allocator.dupe(u8, schedule_slice.slice())),
         });
         job.callback = .create(callback_arg, globalObject);
 
         const next_time = job.computeNextTimespec() orelse {
             job.callback.deinit();
-            bun.default_allocator.free(job.name);
             bun.default_allocator.free(job.expression);
             bun.destroy(job);
             return globalObject.throwInvalidArguments("Cron expression '{s}' has no future occurrences", .{schedule_slice.slice()});
         };
 
-        // New job is valid — now safe to stop any existing job with this
-        // (vm, name) key (makes --hot re-registration work).
         {
             jobs_lock.lock();
             defer jobs_lock.unlock();
-            if (jobs_map.fetchRemove(.{ .vm = vm, .name = name_slice.slice() })) |existing| {
-                bun.default_allocator.free(existing.key.name);
-                const old = existing.value;
-                if (!old.stopped) {
-                    old.stopped = true;
-                    if (old.event_loop_timer.state == .ACTIVE)
-                        vm.timer.remove(&old.event_loop_timer);
-                    old.cleanupAfterStop(vm);
-                }
-            }
+            bun.handleOom(jobs_list.append(bun.default_allocator, job));
         }
 
         const js_value = job.toJS(globalObject);
@@ -1079,13 +1068,6 @@ pub const CronJob = struct {
 
         job.poll.ref(vm);
         vm.timer.update(&job.event_loop_timer, &next_time);
-
-        {
-            jobs_lock.lock();
-            defer jobs_lock.unlock();
-            const key_name = bun.handleOom(bun.default_allocator.dupe(u8, name_slice.slice()));
-            bun.handleOom(jobs_map.put(bun.default_allocator, .{ .vm = vm, .name = key_name }, job));
-        }
 
         return js_value;
     }

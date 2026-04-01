@@ -920,7 +920,24 @@ function ClientRequest(input, options, cb) {
 
   this._httpMessage = this;
 
-  process.nextTick(emitContinueAndSocketNT, this);
+  const expectsContinue = this.getHeader("expect") === "100-continue";
+  process.nextTick(emitContinueAndSocketNT, this, expectsContinue ? () => {
+    // For 100-continue, start the fetch immediately after emitting "continue".
+    // The underlying HTTP client handles 100-continue internally, so we need to
+    // initiate the connection. Without this, the fetch only starts when end()
+    // is called, causing a deadlock when code awaits "response" before calling end().
+    if (!fetching && !this.destroyed) {
+      this[kAbortController] ??= new AbortController();
+      this[kAbortController].signal.addEventListener("abort", onAbort, { once: true });
+      this.finished = true;
+      var body = this[kBodyChunks] && this[kBodyChunks].length > 1 ? new Blob(this[kBodyChunks]) : this[kBodyChunks]?.[0];
+      startFetch(body);
+      onEnd = () => {
+        handleResponse?.();
+      };
+      process.nextTick(maybeEmitFinish.bind(this));
+    }
+  } : undefined);
 
   this[kEmitState] = 0;
 
@@ -1031,7 +1048,7 @@ function validateHost(host, name) {
   return host;
 }
 
-function emitContinueAndSocketNT(self) {
+function emitContinueAndSocketNT(self, startFetchCb?) {
   if (self.destroyed) return;
   // Ref: https://github.com/nodejs/node/blob/f63e8b7fa7a4b5e041ddec67307609ec8837154f/lib/_http_client.js#L803-L839
   if (!(self[kEmitState] & (1 << ClientRequestEmitState.socket))) {
@@ -1040,8 +1057,10 @@ function emitContinueAndSocketNT(self) {
   }
 
   // Emit continue event for the client (internally we auto handle it)
-  if (!self._closed && self.getHeader("expect") === "100-continue") {
+  if (!self._closed && startFetchCb) {
     self.emit("continue");
+    // Start the fetch so the response event can fire without waiting for end()
+    startFetchCb();
   }
 }
 

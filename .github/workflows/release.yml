@@ -73,6 +73,67 @@ jobs:
           bun-version: "1.2.3"
       - name: Install Dependencies
         run: bun install
+      - name: Create and Upload Compressed Archives
+        working-directory: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+
+          # Install zstd and xz for compression
+          sudo apt-get update && sudo apt-get install -y zstd xz-utils
+
+          # Resolve the release tag once
+          if gh release view "${{ env.BUN_VERSION }}" --json tagName -q '.tagName' > /dev/null 2>&1; then
+            RELEASE_TAG="${{ env.BUN_VERSION }}"
+          else
+            RELEASE_TAG="bun-v${{ env.BUN_VERSION }}"
+          fi
+          echo "Using release tag: $RELEASE_TAG"
+
+          # Create temp directory for processing
+          WORKDIR=$(mktemp -d)
+          ORIG_DIR=$(pwd)
+          trap 'cd "$ORIG_DIR" && rm -rf "$WORKDIR"' EXIT
+          cd "$WORKDIR"
+
+          # Get release assets and process each .zip file safely
+          gh release view "$RELEASE_TAG" --json assets -q '.assets[].name' | while IFS= read -r ASSET; do
+            if [[ "$ASSET" == *.zip ]]; then
+              echo "Processing: $ASSET"
+
+              # Download the zip file
+              gh release download "$RELEASE_TAG" --pattern "$ASSET"
+
+              # Extract the zip
+              EXTRACT_DIR="${ASSET%.zip}"
+              mkdir -p "$EXTRACT_DIR"
+              unzip -q "$ASSET" -d "$EXTRACT_DIR"
+
+              # Create tar.gz
+              TARGZ_NAME="${ASSET%.zip}.tar.gz"
+              tar -czf "$TARGZ_NAME" -C "$EXTRACT_DIR" .
+              gh release upload "$RELEASE_TAG" "$TARGZ_NAME" --clobber
+              echo "Uploaded: $TARGZ_NAME"
+
+              # Create tar.zst (level 12 for good balance of speed and compression)
+              TARZST_NAME="${ASSET%.zip}.tar.zst"
+              tar -cf - -C "$EXTRACT_DIR" . | zstd -12 -o "$TARZST_NAME"
+              gh release upload "$RELEASE_TAG" "$TARZST_NAME" --clobber
+              echo "Uploaded: $TARZST_NAME"
+
+              # Create tar.xz
+              TARXZ_NAME="${ASSET%.zip}.tar.xz"
+              tar -cJf "$TARXZ_NAME" -C "$EXTRACT_DIR" .
+              gh release upload "$RELEASE_TAG" "$TARXZ_NAME" --clobber
+              echo "Uploaded: $TARXZ_NAME"
+
+              # Cleanup
+              rm -rf "$ASSET" "$EXTRACT_DIR" "$TARGZ_NAME" "$TARZST_NAME" "$TARXZ_NAME"
+            fi
+          done
+
+          echo "Done creating compressed archives"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Sign Release
         run: |
           echo "$GPG_PASSPHRASE" | bun upload-assets -- "${{ env.BUN_VERSION }}"

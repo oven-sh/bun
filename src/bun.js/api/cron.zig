@@ -905,10 +905,13 @@ pub const CronJob = struct {
     }
 
     fn computeNextTimespec(this: *CronJob) ?bun.timespec {
+        // Cron occurrences are calendar-based (real epoch); the timer heap is
+        // monotonic. Using .allow_mocked_time here would mix the two timebases
+        // under fake timers — anchor both to real time instead.
         const now_ms: f64 = @floatFromInt(std.time.milliTimestamp());
         const next_ms = (this.parsed.next(this.global, now_ms) catch return null) orelse return null;
         const delta: i64 = @intFromFloat(@max(1.0, next_ms - now_ms));
-        return bun.timespec.msFromNow(.allow_mocked_time, delta);
+        return bun.timespec.msFromNow(.force_real_time, delta);
     }
 
     fn scheduleNext(this: *CronJob, vm: *jsc.VirtualMachine) void {
@@ -989,6 +992,9 @@ pub const CronJob = struct {
         const args = callframe.arguments();
         var this: *CronJob = args[args.len - 1].asPromisePtr(CronJob);
         defer this.deref();
+        // stop() / --hot reload / worker exit released pending_promise; the
+        // user cancelled the job, so swallow the in-flight rejection.
+        if (this.stopped) return .js_undefined;
         const vm = this.global.bunVM();
         const err = if (args.len > 0) args[0] else .js_undefined;
         const promise_value = this.pending_promise.get() orelse .js_undefined;

@@ -215,6 +215,29 @@ describe.concurrent("Bun.cron (in-process) — firing", () => {
     expect(exitCode).toBe(0);
   }, 70_000);
 
+  test("stop() while async callback pending suppresses unhandledRejection", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        process.on("unhandledRejection", () => { console.log("LEAKED"); process.exit(1); });
+        const job = Bun.cron("* * * * *", async () => {
+          setTimeout(() => { console.log("ok"); process.exit(0); }, 100);
+          job.stop();
+          await Bun.sleep(10);
+          throw new Error("after-stop");
+        });
+      `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, _stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toBe("ok");
+    expect(exitCode).toBe(0);
+  }, 70_000);
+
   test("unhandled cron error exits process like setTimeout does", async () => {
     await using proc = Bun.spawn({
       cmd: [

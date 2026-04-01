@@ -966,7 +966,13 @@ pub const Repository = extern struct {
                 };
                 defer repo.close();
                 // Extract tree at resolved commit directly to target dir
-                repo.checkoutTo(resolved, target) catch |err| {
+                // Use checkoutToHash when resolved is a full 40-char hex hash
+                // (avoids redundant findCommit ref resolution inside checkoutTo)
+                const checkout_err = if (resolved.len == 40)
+                    repo.checkoutToHash(resolved, target)
+                else
+                    repo.checkoutTo(resolved, target);
+                checkout_err catch |err| {
                     logZiggitError("checkout/checkoutTo", name, err);
                     std.fs.cwd().deleteTree(target) catch {};
                     break :blk false;

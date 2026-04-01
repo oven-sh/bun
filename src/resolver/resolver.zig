@@ -77,6 +77,7 @@ const Bufs = struct {
     abs_to_rel: bun.PathBuffer = undefined,
     node_modules_paths_buf: bun.PathBuffer = undefined,
     import_path_for_standalone_module_graph: bun.PathBuffer = undefined,
+    percent_decode_buf: bun.PathBuffer = undefined,
 
     win32_normalized_dir_info_cache: if (Environment.isWindows) [bun.MAX_PATH_BYTES * 2]u8 else void = undefined,
 };
@@ -1144,6 +1145,38 @@ pub const Resolver = struct {
 
         var import_path = input_import_path;
 
+        // Per the ESM spec, relative and absolute import specifiers are URL-like
+        // and percent-encoded characters should be decoded before filesystem lookup.
+        // CJS require() does not percent-decode. Encoded path separators (%2f, %5c)
+        // are forbidden per spec.
+        if (!kind.isCommonJS() and !kind.isFromCSS() and
+            bun.strings.containsChar(import_path, '%'))
+        {
+            const is_relative_or_absolute = std.fs.path.isAbsolute(import_path) or
+                bun.strings.hasPrefixComptime(import_path, "./") or
+                bun.strings.hasPrefixComptime(import_path, "../");
+            if (is_relative_or_absolute) {
+                // Encoded "/" (%2f/%2F) and "\" (%5c/%5C) are invalid per ESM spec.
+                if (bun.strings.contains(import_path, "%2f") or
+                    bun.strings.contains(import_path, "%2F") or
+                    bun.strings.contains(import_path, "%5c") or
+                    bun.strings.contains(import_path, "%5C"))
+                {
+                    return .{ .not_found = {} };
+                }
+                const buf = bufs(.percent_decode_buf);
+                var fbs = std.io.fixedBufferStream(buf);
+                const decoded_len = PercentEncoding.decode(
+                    @TypeOf(fbs.writer()),
+                    fbs.writer(),
+                    import_path,
+                ) catch {
+                    return .{ .not_found = {} };
+                };
+                import_path = buf[0..decoded_len];
+            }
+        }
+
         // This implements the module resolution algorithm from node.js, which is
         // described here: https://nodejs.org/api/modules.html#modules_all_together
         var result: Result = Result{
@@ -1219,7 +1252,7 @@ pub const Resolver = struct {
 
                 return .{
                     .success = Result{
-                        .path_pair = .{ .primary = Path.init(import_path) },
+                        .path_pair = .{ .primary = Path.init(bun.handleOom(r.fs.dirname_store.append(@TypeOf(import_path), import_path))) },
                         .flags = .{ .is_external = true },
                     },
                 };
@@ -4383,6 +4416,8 @@ const assert = bun.assert;
 const default_allocator = bun.default_allocator;
 const jsc = bun.jsc;
 const strings = bun.strings;
+
+const PercentEncoding = @import("../url.zig").PercentEncoding;
 
 const logger = bun.logger;
 const Msg = logger.Msg;

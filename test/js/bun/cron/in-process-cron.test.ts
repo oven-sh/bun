@@ -136,14 +136,11 @@ describe.concurrent("Bun.cron (in-process) — firing", () => {
   // The cron expression "* * * * *" fires at the top of every minute.
   test("callback fires at minute boundary", async () => {
     let fired = 0;
-    let resolve: () => void;
-    const promise = new Promise<void>(r => {
-      resolve = r;
-    });
+    const { promise, resolve } = Promise.withResolvers<void>();
 
     using job = Bun.cron("* * * * *", () => {
       fired++;
-      resolve!();
+      resolve();
     });
 
     await promise;
@@ -154,25 +151,19 @@ describe.concurrent("Bun.cron (in-process) — firing", () => {
     // The callback returns a Promise; next fire is scheduled only after it resolves.
     // We can't easily observe the timing without waiting 2+ minutes, so we just
     // verify no crash and that stop() during the pending promise works.
-    let resolveHandler: () => void;
-    const handlerPromise = new Promise<void>(r => {
-      resolveHandler = r;
-    });
-    let fireResolve: () => void;
-    const firePromise = new Promise<void>(r => {
-      fireResolve = r;
-    });
+    const handler = Promise.withResolvers<void>();
+    const fire = Promise.withResolvers<void>();
 
     using job = Bun.cron("* * * * *", async () => {
-      fireResolve!();
-      await handlerPromise;
+      fire.resolve();
+      await handler.promise;
     });
 
-    await firePromise;
+    await fire.promise;
     // Handler is now awaiting; stop while it's pending
     job.stop();
     // Let the handler complete
-    resolveHandler!();
+    handler.resolve();
     await Bun.sleep(10);
     // No crash, no second fire
   }, 70_000);

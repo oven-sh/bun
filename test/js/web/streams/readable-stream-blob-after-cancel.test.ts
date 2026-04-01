@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 
 test("ReadableStream.blob() after stream consumed does not crash", async () => {
   // When a BlobInternalReadableStreamSource has its store detached

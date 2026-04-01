@@ -582,3 +582,17 @@ for (let doClone of [true, false]) {
     }
   });
 }
+
+test("body.text() after response.json() returns empty string", async () => {
+  const response = Response.json({ hello: "world" });
+  const body = response.body!;
+
+  // response.json() drains the blob store via toBlobIfPossible() without
+  // setting $disturbed on the stream, so the subsequent body.text() takes
+  // the fast path with store==null, exercising ByteBlobLoader.toBufferedValue.
+  const json = await response.json();
+  expect(json).toEqual({ hello: "world" });
+
+  const text = await body.text();
+  expect(text).toBe("");
+});

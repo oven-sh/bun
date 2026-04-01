@@ -10,14 +10,12 @@ test.concurrent("Worker async onmessage throw does not SIGABRT", async () => {
       };
     `,
     "main.ts": `
+      setTimeout(() => { process.exit(1); }, 5000);
       const worker = new Worker(new URL("./worker.ts", import.meta.url).href);
       worker.addEventListener("open", () => { worker.postMessage("go"); });
       worker.addEventListener("error", (e) => {
         console.log("error event received");
       });
-      // Keep the process alive so the worker thread can finish its shutdown.
-      // The SIGABRT (if any) fires during VM teardown on the worker thread
-      // after the close event is already dispatched.
       worker.addEventListener("close", () => {
         console.log("close event received");
         setTimeout(() => process.exit(0), 500);
@@ -49,6 +47,7 @@ test.concurrent("Worker async onmessage rejection does not SIGABRT", async () =>
       };
     `,
     "main.ts": `
+      setTimeout(() => { process.exit(1); }, 5000);
       const worker = new Worker(new URL("./worker.ts", import.meta.url).href);
       worker.addEventListener("open", () => { worker.postMessage("go"); });
       worker.addEventListener("error", (e) => {

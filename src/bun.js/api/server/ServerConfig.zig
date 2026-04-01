@@ -509,7 +509,6 @@ pub fn fromJS(
             var init_ctx_: AnyRoute.ServerInitContext = .{
                 .arena = .init(bun.default_allocator),
                 .dedupe_html_bundle_map = .init(bun.default_allocator),
-                .dedupe_js_bundle_map = .init(bun.default_allocator),
                 .framework_router_list = .init(bun.default_allocator),
                 .js_string_allocations = .empty,
                 .user_routes = &args.static_routes,
@@ -522,7 +521,6 @@ pub fn fromJS(
             }
             // These lists are not used in the success case
             defer init_ctx.dedupe_html_bundle_map.deinit();
-            defer init_ctx.dedupe_js_bundle_map.deinit();
 
             var framework_router_list = std.array_list.Managed(bun.bake.FrameworkRouter.Type).init(bun.default_allocator);
             errdefer framework_router_list.deinit();

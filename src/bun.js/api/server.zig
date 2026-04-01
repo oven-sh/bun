@@ -33,10 +33,6 @@ pub const AnyRoute = union(enum) {
     /// import html from "./index.html";
     /// "/": html,
     html: bun.ptr.RefPtr(HTMLBundle.Route),
-    /// Bundle a JS/TS import
-    /// import bundle from "./app.tsx" with { type: "bundle" };
-    /// "/assets/*": bundle,
-    bundle: bun.ptr.RefPtr(JSBundle.Route),
     /// Use file system routing.
     /// "/*": {
     ///   "dir": import.meta.resolve("./pages"),
@@ -49,7 +45,6 @@ pub const AnyRoute = union(enum) {
             .static => |static_route| static_route.memoryCost(),
             .file => |file_route| file_route.memoryCost(),
             .html => |html_bundle_route| html_bundle_route.data.memoryCost(),
-            .bundle => |js_bundle_route| js_bundle_route.data.memoryCost(),
             .framework_router => @sizeOf(bun.bake.Framework.FileSystemRouterType),
         };
     }
@@ -59,7 +54,6 @@ pub const AnyRoute = union(enum) {
             .static => |static_route| static_route.server = server,
             .file => |file_route| file_route.server = server,
             .html => |html_bundle_route| html_bundle_route.server = server,
-            .bundle => |js_bundle_route| js_bundle_route.server = server,
             .framework_router => {}, // DevServer contains .server field
         }
     }
@@ -69,7 +63,6 @@ pub const AnyRoute = union(enum) {
             .static => |static_route| static_route.deref(),
             .file => |file_route| file_route.deref(),
             .html => |html_bundle_route| html_bundle_route.deref(),
-            .bundle => |js_bundle_route| js_bundle_route.deref(),
             .framework_router => {}, // not reference counted
         }
     }
@@ -79,7 +72,6 @@ pub const AnyRoute = union(enum) {
             .static => |static_route| static_route.ref(),
             .file => |file_route| file_route.ref(),
             .html => |html_bundle_route| html_bundle_route.ref(),
-            .bundle => |js_bundle_route| js_bundle_route.ref(),
             .framework_router => {}, // not reference counted
         }
     }
@@ -216,23 +208,9 @@ pub const AnyRoute = union(enum) {
         return null;
     }
 
-    pub fn jsBundleRouteFromJS(argument: jsc.JSValue, init_ctx: *ServerInitContext) bun.JSError!?AnyRoute {
-        if (argument.as(JSBundle)) |js_bundle| {
-            const entry = bun.handleOom(init_ctx.dedupe_js_bundle_map.getOrPut(js_bundle));
-            if (!entry.found_existing) {
-                entry.value_ptr.* = JSBundle.Route.init(js_bundle);
-                return .{ .bundle = entry.value_ptr.* };
-            } else {
-                return .{ .bundle = entry.value_ptr.dupeRef() };
-            }
-        }
-        return null;
-    }
-
     pub const ServerInitContext = struct {
         arena: std.heap.ArenaAllocator,
         dedupe_html_bundle_map: std.AutoHashMap(*HTMLBundle, bun.ptr.RefPtr(HTMLBundle.Route)),
-        dedupe_js_bundle_map: std.AutoHashMap(*JSBundle, bun.ptr.RefPtr(JSBundle.Route)),
         js_string_allocations: bun.bake.StringRefList,
         global: *jsc.JSGlobalObject,
         framework_router_list: std.array_list.Managed(bun.bake.Framework.FileSystemRouterType),
@@ -245,10 +223,6 @@ pub const AnyRoute = union(enum) {
         argument: jsc.JSValue,
         init_ctx: *ServerInitContext,
     ) bun.JSError!?AnyRoute {
-        if (try AnyRoute.jsBundleRouteFromJS(argument, init_ctx)) |bundle_route| {
-            return bundle_route;
-        }
-
         if (try AnyRoute.htmlRouteFromJS(argument, init_ctx)) |html_route| {
             return html_route;
         }
@@ -321,7 +295,6 @@ const ServePlugins = struct {
             plugin: *bun.jsc.API.JSBundler.Plugin,
             promise: jsc.JSPromise.Strong,
             html_bundle_routes: std.ArrayListUnmanaged(*HTMLBundle.Route),
-            js_bundle_routes: std.ArrayListUnmanaged(*JSBundle.Route),
             dev_server: ?*bun.bake.DevServer,
         },
         loaded: *bun.jsc.API.JSBundler.Plugin,
@@ -338,7 +311,6 @@ const ServePlugins = struct {
 
     pub const Callback = union(enum) {
         html_bundle_route: *HTMLBundle.Route,
-        js_bundle_route: *JSBundle.Route,
         dev_server: *bun.bake.DevServer,
     };
 
@@ -367,10 +339,6 @@ const ServePlugins = struct {
                     .html_bundle_route => |route| {
                         route.ref();
                         try pending.html_bundle_routes.append(bun.default_allocator, route);
-                    },
-                    .js_bundle_route => |route| {
-                        route.ref();
-                        try pending.js_bundle_routes.append(bun.default_allocator, route);
                     },
                     .dev_server => |server| {
                         assert(pending.dev_server == null or pending.dev_server == server); // one dev server per server
@@ -413,7 +381,6 @@ const ServePlugins = struct {
             .promise = jsc.JSPromise.Strong.init(global),
             .plugin = plugin,
             .html_bundle_routes = .empty,
-            .js_bundle_routes = .empty,
             .dev_server = null,
         } };
 
@@ -482,19 +449,12 @@ const ServePlugins = struct {
         var html_bundle_routes = pending.html_bundle_routes;
         pending.html_bundle_routes = .empty;
         defer html_bundle_routes.deinit(bun.default_allocator);
-        var js_bundle_routes = pending.js_bundle_routes;
-        pending.js_bundle_routes = .empty;
-        defer js_bundle_routes.deinit(bun.default_allocator);
 
         pending.promise.deinit();
 
         this.state = .{ .loaded = plugin };
 
         for (html_bundle_routes.items) |route| {
-            bun.handleOom(route.onPluginsResolved(plugin));
-            route.deref();
-        }
-        for (js_bundle_routes.items) |route| {
             bun.handleOom(route.onPluginsResolved(plugin));
             route.deref();
         }
@@ -519,19 +479,12 @@ const ServePlugins = struct {
         var html_bundle_routes = pending.html_bundle_routes;
         pending.html_bundle_routes = .empty;
         defer html_bundle_routes.deinit(bun.default_allocator);
-        var js_bundle_routes = pending.js_bundle_routes;
-        pending.js_bundle_routes = .empty;
-        defer js_bundle_routes.deinit(bun.default_allocator);
         pending.plugin.deinit();
         pending.promise.deinit();
 
         this.state = .err;
 
         for (html_bundle_routes.items) |route| {
-            bun.handleOom(route.onPluginsRejected());
-            route.deref();
-        }
-        for (js_bundle_routes.items) |route| {
             bun.handleOom(route.onPluginsRejected());
             route.deref();
         }
@@ -2642,11 +2595,6 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             // --- 5. Register static routes & Track "/*" Coverage ---
             var needs_plugins = dev_server != null;
             var has_static_route_for_star_path = false;
-            // Collect JSBundle routes that have a shared DevServer (from --hot).
-            // Callback wiring is done after the loop.
-            var js_bundle_routes_with_dev: std.ArrayListUnmanaged(*JSBundle.Route) = .{};
-            // Collect JSBundle routes without DevServer for eager building.
-            var js_bundle_routes_eager: std.ArrayListUnmanaged(*JSBundle.Route) = .{};
 
             if (this.config.static_routes.items.len > 0) {
                 for (this.config.static_routes.items) |*entry| {
@@ -2682,29 +2630,8 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                             }
                             needs_plugins = true;
                         },
-                        .bundle => |js_bundle_route| {
-                            ServerConfig.applyStaticRoute(any_server, ssl_enabled, app, *JSBundle.Route, js_bundle_route.data, entry.path, entry.method);
-                            // Collect routes whose JSBundle has a shared DevServer (from --hot)
-                            if (js_bundle_route.data.bundle.data.dev_server != null) {
-                                js_bundle_routes_with_dev.append(bun.default_allocator, js_bundle_route.data) catch bun.outOfMemory();
-                            } else {
-                                // No DevServer — collect for eager building
-                                js_bundle_routes_eager.append(bun.default_allocator, js_bundle_route.data) catch bun.outOfMemory();
-                            }
-                            needs_plugins = true;
-                        },
                         .framework_router => {},
                     }
-                }
-            }
-
-            // --- 5b. Wire up callbacks for JSBundle routes with shared DevServer ---
-            for (js_bundle_routes_with_dev.items) |route| {
-                if (route.bundle.data.dev_server) |dev| {
-                    route.dev_server = dev;
-                    dev.standalone_callback_fn = JSBundle.Route.onDevServerBuildComplete;
-                    dev.standalone_callback_ctxs.append(bun.default_allocator, @ptrCast(route)) catch bun.outOfMemory();
-                    route.updateDevEntrypoint();
                 }
             }
 
@@ -2714,13 +2641,6 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                     if (serve_plugins_config.len > 0) {
                         this.plugins = ServePlugins.init(serve_plugins_config);
                     }
-                }
-            }
-
-            // --- 6b. Eagerly start building JSBundle routes (no DevServer) ---
-            for (js_bundle_routes_eager.items) |route| {
-                if (route.state == .pending) {
-                    bun.handleOom(route.scheduleBundle(any_server));
                 }
             }
 

@@ -1025,7 +1025,10 @@ pub fn serve(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.J
     // When --hot, implicitly self-accept the calling module so that
     // editing the server file triggers selective reload (not full reload).
     // The server instance is already preserved via hotMap()/onReloadFromZig().
-    if (vm.hot_reload == .hot) {
+    // Skip auto-accept when there are active DevServers (bundle imports),
+    // because selective reload of modules with bundle imports leaves the
+    // promise in a pending state. fullReload works correctly instead.
+    if (vm.hot_reload == .hot and vm.shared_dev_server == null) {
         const srcloc = callframe.getCallerSrcLoc(globalObject);
         defer srcloc.str.deref();
         const caller_utf8 = srcloc.str.toUTF8(bun.default_allocator);

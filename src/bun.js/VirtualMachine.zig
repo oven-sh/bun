@@ -895,6 +895,14 @@ fn fullReload(this: *VirtualMachine) void {
     this.runHotDisposeCallbacks();
     this.module_importers.clearRetainingCapacity();
     this.file_to_module_key.clearRetainingCapacity();
+    // Clear accepted/declined flags so they are re-established on re-evaluation.
+    // Without this, stale accepted states can cause selective reload on subsequent
+    // changes, which doesn't work correctly with bundle imports.
+    var it = this.hot_module_states.iterator();
+    while (it.next()) |entry| {
+        entry.value_ptr.accepted = false;
+        entry.value_ptr.declined = false;
+    }
     this.global.reload() catch @panic("Failed to reload");
     this.hot_reload_counter += 1;
     this.pending_internal_promise = this.reloadEntryPoint(this.main) catch @panic("Failed to reload");

@@ -757,17 +757,33 @@ pub fn transpileSourceCode(
             const bundle_config = jsc_vm.bundle_import_configs.get(path.text);
             const js_bundle = try jsc.API.JSBundle.init(globalObject.?, path.text, bundle_config);
 
-            // When --hot, register entry point with the shared DevServer
             if (jsc_vm.hot_reload == .hot) {
+                // HMR path: register with DevServer for incremental builds
                 const dev = try jsc_vm.getOrCreateSharedDevServer();
                 const is_new = try dev.addStandaloneEntryPoint(path.text);
                 js_bundle.dev_server = dev;
-                // Only trigger a build for genuinely new entry points.
-                // On backend --hot reload the module re-evaluates, but
-                // re-building would send spurious HMR updates to the browser.
+                // Register JSBundle as callback for build notifications
+                dev.standalone_callback_fn = jsc.API.JSBundle.onDevServerBuildComplete;
+                bun.handleOom(dev.standalone_callback_ctxs.append(bun.default_allocator, @ptrCast(js_bundle)));
+
                 if (is_new) {
+                    // Trigger the build and wait for the initial build to complete
+                    // so that bundle.files has content when user code runs.
                     bun.handleOom(dev.startStandaloneBuild());
+                    js_bundle.build_state = .building;
+                    while (js_bundle.build_state == .building) {
+                        jsc_vm.eventLoop().tick();
+                    }
+                } else {
+                    // Hot reload re-evaluation: DevServer already has the bundle.
+                    // Use generateStandaloneClientBundle to get the current payload
+                    // instead of empty bytes.
+                    const payload = dev.generateStandaloneClientBundle() catch bun.outOfMemory();
+                    js_bundle.updateDevEntrypoint(payload, dev);
                 }
+            } else {
+                // Build now, blocking until complete
+                try js_bundle.build();
             }
 
             return ResolvedSource{

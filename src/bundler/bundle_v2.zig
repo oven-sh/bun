@@ -1917,7 +1917,7 @@ pub const BundleV2 = struct {
         cancelled: bool = false,
 
         html_build_task: ?*jsc.API.HTMLBundle.HTMLBundleRoute = null,
-        js_bundle_build_task: ?*jsc.API.JSBundle.Route = null,
+        js_bundle_owner: ?*jsc.API.JSBundle = null,
 
         result: Result = .{ .pending = {} },
 
@@ -2334,9 +2334,9 @@ pub const BundleV2 = struct {
                 return;
             }
 
-            if (this.js_bundle_build_task) |js_bundle_build_task| {
+            if (this.js_bundle_owner) |owner| {
                 this.plugins = null;
-                js_bundle_build_task.onComplete(this);
+                owner.onBuildComplete(this);
                 return;
             }
 

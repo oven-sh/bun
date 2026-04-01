@@ -862,9 +862,8 @@ pub const CronJob = struct {
         this.cleanupAfterStop(vm);
     }
 
-    /// Self-initiated stop from inside the timer/promise path (natural expiry,
-    /// callback gone). Removes from jobs_list so GC of the JS wrapper doesn't
-    /// leave a dangling pointer for clearAllForVM/stop() to read.
+    /// Removes from jobs_list before stopping so GC of the JS wrapper doesn't
+    /// leave a dangling pointer for clearAllForVM to read.
     fn selfStop(this: *CronJob, vm: *jsc.VirtualMachine) void {
         {
             jobs_lock.lock();

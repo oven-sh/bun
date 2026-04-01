@@ -235,17 +235,15 @@ describe.concurrent("Bun.cron (in-process) — firing", () => {
   }, 70_000);
 
   test("--hot reload clears jobs deleted from source", async () => {
-    // We need enough time before the next minute boundary to spawn, see v1
-    // evaluate, edit the file, and let --hot reload v2. If we're within 10s
-    // of a boundary, wait it out so the edit reliably lands first.
-    const sec = new Date().getSeconds();
-    if (sec >= 50) await Bun.sleep((61 - sec) * 1000);
-
     using dir = tempDir("cron-hot", {
       "app.ts": `
-        import { writeFileSync } from "node:fs";
+        import { writeFileSync, existsSync } from "node:fs";
         writeFileSync("v1.evaluated", "");
-        Bun.cron("* * * * *", () => writeFileSync("ghost.fired", ""));
+        // A fire before the v2 reload is legitimate (not a ghost) — only
+        // write the marker if v2 has already evaluated.
+        Bun.cron("* * * * *", () => {
+          if (existsSync("v2.evaluated")) writeFileSync("ghost.fired", "");
+        });
       `,
     });
     const path = (f: string) => join(String(dir), f);

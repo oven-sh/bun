@@ -808,7 +808,13 @@ pub const Repository = extern struct {
                 } else {
                     debug("clone: trying ziggit for \"{s}\" (url: {s}, transformed from: {s})", .{ name, clone_url, url });
                 }
-                var repo = ziggit.Repository.cloneBare(allocator, clone_url, target) catch |err| {
+                // Use shallow clone (depth=1) for HTTPS git deps — only need the target commit.
+                // This dramatically reduces download size for large repos.
+                const use_shallow = strings.hasPrefixComptime(clone_url, "https://");
+                var repo = (if (use_shallow)
+                    ziggit.Repository.cloneBareShallow(allocator, clone_url, target, 1)
+                else
+                    ziggit.Repository.cloneBare(allocator, clone_url, target)) catch |err| {
                     if (err == error.RepositoryNotFound) {
                         // Over HTTPS, a 404 is definitive — the remote confirmed
                         // the repo doesn't exist, so no point falling back to git CLI.

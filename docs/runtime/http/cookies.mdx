@@ -1,27 +1,43 @@
 ---
 title: Cookies
-description: Work with cookies in HTTP requests and responses using Bun's built-in Cookie API.
+description: Work with cookies in HTTP requests and responses using Bun's built-in Cookie API and CookieMap.
 ---
 
-Bun provides a built-in API for working with cookies in HTTP requests and responses. The `BunRequest` object includes a `cookies` property that provides a `CookieMap` for easily accessing and manipulating cookies. When using `routes`, `Bun.serve()` automatically tracks `request.cookies.set` and applies them to the response.
+# Cookies
+
+Bun provides a built-in API for managing cookies via the `CookieMap` class. This API is accessible through the `cookies` property on the `BunRequest` object. When using the `routes` property in `Bun.serve()`, any changes made to `request.cookies` are automatically synchronized with the outgoing `Response` headers.
+
+## The CookieMap API
+
+The `CookieMap` behaves similarly to a standard JavaScript `Map`, but it is specifically optimized for handling cookie strings and `Set-Cookie` attributes.
+
+### Methods
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `get` | `(name: string) => string \| undefined` | Retrieves the value of a cookie by name. |
+| `set` | `(name: string, value: string, options?: CookieOptions) => void` | Adds or updates a cookie. |
+| `delete` | `(name: string, options?: CookieOptions) => void` | Sets a `Set-Cookie` header with an expired date to remove the cookie from the client. |
+| `delete` | `(name: string, options?: CookieOptions) => boolean` | Sets a `Set-Cookie` header with an expired date to remove the cookie from the client. |
+| `entries` | `() => IterableIterator<[string, string]>` | Returns an iterator of all cookie name-value pairs. |
+| `keys` | `() => IterableIterator<string>` | Returns an iterator of all cookie names. |
+| `values` | `() => IterableIterator<string>` | Returns an iterator of all cookie values. |
 
 ## Reading cookies
 
-Read cookies from incoming requests using the `cookies` property on the `BunRequest` object:
+Cookies are automatically parsed from the `Cookie` header of incoming requests.
 
 ```ts
 Bun.serve({
   routes: {
-    "/profile": req => {
-      // Access cookies from the request
-      const userId = req.cookies.get("user_id");
-      const theme = req.cookies.get("theme") || "light";
+    "/profile": (req) => {
+      const sessionId = req.cookies.get("session_id");
 
-      return Response.json({
-        userId,
-        theme,
-        message: "Profile page",
-      });
+      if (!sessionId) {
+        return new Response("Unauthorized", { status: 401 });
+      }
+
+      return Response.json({ sessionId });
     },
   },
 });
@@ -29,51 +45,70 @@ Bun.serve({
 
 ## Setting cookies
 
-To set cookies, use the `set` method on the `CookieMap` from the `BunRequest` object.
+Use `req.cookies.set()` to define cookies. Bun automatically generates the appropriate `Set-Cookie` header.
+
+### Cookie Options
+
+The `set` and `delete` methods accept an optional configuration object:
+
+| Option | Type | Description |
+|--------|------|-------------|
+| `domain` | `string` | The domain for which the cookie is valid. |
+| `expires` | `Date` | The absolute expiration date of the cookie. |
+| `httpOnly` | `boolean` | If `true`, the cookie is inaccessible to client-side scripts. |
+| `maxAge` | `number` | Number of seconds until the cookie expires. |
+| `path` | `string` | The URL path that must exist in the requested URL. |
+| `priority` | `string` | `High`, `Medium`, or `Low` (Chrome specific). |
+| `sameSite` | `string` | `Strict`, `Lax`, or `None`. |
+| `secure` | `boolean` | If `true`, the cookie is only sent over HTTPS. |
 
 ```ts
-Bun.serve({
-  routes: {
-    "/login": req => {
-      const cookies = req.cookies;
-
-      // Set a cookie with various options
-      cookies.set("user_id", "12345", {
-        maxAge: 60 * 60 * 24 * 7, // 1 week
-        httpOnly: true,
-        secure: true,
-        path: "/",
-      });
-
-      // Add a theme preference cookie
-      cookies.set("theme", "dark");
-
-      // Modified cookies from the request are automatically applied to the response
-      return new Response("Login successful");
-    },
-  },
+req.cookies.set("auth_token", "secret-value", {
+  httpOnly: true,
+  secure: true,
+  sameSite: "Strict",
+  maxAge: 3600, // 1 hour
+  path: "/",
 });
 ```
-
-`Bun.serve()` automatically tracks modified cookies from the request and applies them to the response.
 
 ## Deleting cookies
 
-To delete a cookie, use the `delete` method on the `request.cookies` (`CookieMap`) object:
+To remove a cookie, call `.delete()`. Note that for a deletion to be successful, the `path` and `domain` options must match the values used when the cookie was originally set.
+
+```ts
+req.cookies.delete("session_id", { path: "/" });
+```
+
+## Manual Usage (Non-Route Handlers)
+
+If you are using the standard `fetch` handler instead of `routes`, Bun still tracks the `CookieMap` associated with the request and applies it to the response automatically.
 
 ```ts
 Bun.serve({
-  routes: {
-    "/logout": req => {
-      // Delete the user_id cookie
-      req.cookies.delete("user_id", {
-        path: "/",
-      });
-
-      return new Response("Logged out successfully");
-    },
-  },
+  fetch(req) {
+    const url = new URL(req.url);
+    if (url.pathname === "/set") {
+      req.cookies.set("not-a-route", "true");
+      return new Response("Cookie set via manual fetch handler");
+    }
+    return new Response("Hello");
+  }
 });
 ```
 
-Deleted cookies become a `Set-Cookie` header on the response with the `maxAge` set to `0` and an empty `value`.
+## Iterating over cookies
+
+You can iterate over all cookies in a request using standard loop syntax:
+
+```ts
+for (const [name, value] of req.cookies) {
+  console.log(`${name} is set to ${value}`);
+}
+
+// Convert all cookies to a plain object
+const allCookies = Object.fromEntries(req.cookies.entries());
+```
+```
+
+Save this as `cookies.md` or whatever filename you prefer.

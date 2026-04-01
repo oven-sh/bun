@@ -186,12 +186,16 @@ it("end doesn't close when backed by a file descriptor", async () => {
 
 it("writer with invalid options throws instead of crashing", async () => {
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", `
+    cmd: [
+      bunExe(),
+      "-e",
+      `
       const results = [];
       try { Bun.file("test.txt").writer({ path: 42 }); results.push("no_throw"); } catch(e) { results.push("threw"); }
       try { Bun.file("test.txt").writer({ fd: "invalid" }); results.push("no_throw"); } catch(e) { results.push("threw"); }
       console.log(results.join(","));
-    `],
+    `,
+    ],
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",

@@ -1055,10 +1055,14 @@ function emitContinueAndSocketNT(self, onContinue?) {
 
   // Emit continue event and start the fetch for 100-continue requests.
   // Re-evaluate the header at call time so late setHeader() calls are respected.
-  if (!self._closed && self.getHeader("expect") === "100-continue") {
+  const expectHeader = self.getHeader("expect");
+  if (!self._closed && expectHeader && expectHeader.toLowerCase() === "100-continue") {
     self.emit("continue");
-    // Start the fetch so the response event can fire without waiting for end()
-    onContinue?.();
+    // A "continue" listener may call req.abort()/req.destroy() — don't start the
+    // fetch if the request was cancelled during the event.
+    if (!self.destroyed && !self._closed && !self.aborted) {
+      onContinue?.();
+    }
   }
 }
 

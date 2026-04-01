@@ -4401,6 +4401,7 @@ const ast = @import("../import_record.zig");
 const options = @import("../options.zig");
 const std = @import("std");
 const Package = @import("../install/lockfile.zig").Package;
+const PercentEncoding = @import("../url.zig").PercentEncoding;
 const Resolution = @import("../install/resolution.zig").Resolution;
 const TSConfigJSON = @import("./tsconfig_json.zig").TSConfigJSON;
 const Timer = @import("../system_timer.zig").Timer;
@@ -4433,8 +4434,6 @@ const assert = bun.assert;
 const default_allocator = bun.default_allocator;
 const jsc = bun.jsc;
 const strings = bun.strings;
-
-const PercentEncoding = @import("../url.zig").PercentEncoding;
 
 const logger = bun.logger;
 const Msg = logger.Msg;

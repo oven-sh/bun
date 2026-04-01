@@ -450,9 +450,7 @@ fn onUnhandledRejection(vm: *jsc.VirtualMachine, globalObject: *jsc.JSGlobalObje
     if (!worker.exit_called) vm.exit_handler.exit_code = 1;
     _ = worker.setRequestedTerminate();
     worker.parent_poll_ref.unrefConcurrently(worker.parent);
-    if (vm.worker != null) {
-        vm.eventLoop().wakeup();
-    }
+    vm.eventLoop().wakeup();
 }
 
 fn setStatus(this: *WebWorker, status: Status) void {

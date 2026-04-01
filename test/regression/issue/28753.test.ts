@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
-test("Worker async onmessage throw does not SIGABRT", async () => {
+test.concurrent("Worker async onmessage throw does not SIGABRT", async () => {
   using dir = tempDir("issue-28753", {
     "worker.ts": `
       declare var self: Worker;
@@ -40,7 +40,7 @@ test("Worker async onmessage throw does not SIGABRT", async () => {
   expect(exitCode).toBe(0);
 });
 
-test("Worker async onmessage rejection does not SIGABRT", async () => {
+test.concurrent("Worker async onmessage rejection does not SIGABRT", async () => {
   using dir = tempDir("issue-28753-reject", {
     "worker.ts": `
       declare var self: Worker;

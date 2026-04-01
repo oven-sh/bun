@@ -838,7 +838,7 @@ pub const CronJob = struct {
     pending_promise: jsc.Strong.Optional = .empty,
     global: *jsc.JSGlobalObject,
     parsed: CronExpression,
-    expression: []const u8,
+    expression: bun.String,
     poll: bun.Async.KeepAlive = .{},
     this_value: jsc.JSRef = jsc.JSRef.empty(),
     stopped: bool = false,
@@ -848,6 +848,7 @@ pub const CronJob = struct {
         this.stopped = true;
         if (this.event_loop_timer.state == .ACTIVE)
             vm.timer.remove(&this.event_loop_timer);
+        this.callback.deinit();
         this.pending_promise.deinit();
         this.cleanupAfterStop(vm);
     }
@@ -873,7 +874,7 @@ pub const CronJob = struct {
         this.callback.deinit();
         this.pending_promise.deinit();
         this.this_value.deinit();
-        bun.default_allocator.free(this.expression);
+        this.expression.deref();
         bun.destroy(this);
     }
 
@@ -1004,7 +1005,7 @@ pub const CronJob = struct {
     }
 
     pub fn getCron(this: *CronJob, globalObject: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
-        return bun.String.createUTF8ForJS(globalObject, this.expression);
+        return this.expression.toJS(globalObject);
     }
 
     pub fn register(globalObject: *jsc.JSGlobalObject, schedule_arg: jsc.JSValue, callback_arg: jsc.JSValue) bun.JSError!jsc.JSValue {
@@ -1025,7 +1026,7 @@ pub const CronJob = struct {
             .ref_count = .init(),
             .global = globalObject,
             .parsed = parsed,
-            .expression = bun.handleOom(bun.default_allocator.dupe(u8, schedule_slice.slice())),
+            .expression = schedule_str.dupeRef(),
         });
         job.callback = .create(callback_arg, globalObject);
 

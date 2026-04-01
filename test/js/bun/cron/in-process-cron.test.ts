@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, jest, test } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 import { join } from "node:path";
 
@@ -119,6 +119,20 @@ describe("Bun.cron (in-process)", () => {
     const [stdout, _stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(normalizeBunSnapshot(stdout)).toBe("scheduled\nstopped");
     expect(exitCode).toBe(0);
+  });
+
+  test("ignores jest fake timers (calendar-anchored to real time)", () => {
+    jest.useFakeTimers();
+    try {
+      let fires = 0;
+      using job = Bun.cron("* * * * *", () => void fires++);
+      jest.runAllTimers();
+      jest.advanceTimersByTime(120_000);
+      jest.runAllTimers();
+      expect(fires).toBe(0);
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   test("distinguishes callback overload from OS-level overload", () => {

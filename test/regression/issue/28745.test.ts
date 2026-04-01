@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { writeFileSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 test("ESM import with percent-encoded comma (%2c) resolves correctly", async () => {
@@ -130,8 +131,7 @@ test("ESM import with absolute percent-encoded path resolves correctly", async (
   // Normalize to forward slashes so backslashes on Windows don't become
   // JS escape sequences inside the import string literal.
   const absPath = `${String(dir)}/foo%2cbar.mjs`.replaceAll("\\", "/");
-  const { writeFileSync } = require("fs");
-  writeFileSync(`${String(dir)}/test.mjs`, `import '${absPath}';\n`);
+  writeFileSync(`${String(dir)}/test.mjs`, `import ${JSON.stringify(absPath)};\n`);
 
   await using proc = Bun.spawn({
     cmd: [bunExe(), "run", "test.mjs"],

@@ -21,8 +21,13 @@ pub const Installer = struct {
 
     trusted_dependencies_from_update_requests: std.AutoArrayHashMapUnmanaged(TruncatedPackageNameHash, void),
 
-    pub fn deinit(this: *const Installer) void {
+    /// Tracks which entries are currently blocked, avoiding O(N) iteration over all entries
+    /// in resumeUnblockedTasks. Only modified from the main thread.
+    blocked_entries: std.AutoArrayHashMapUnmanaged(Store.Entry.Id, void) = .empty,
+
+    pub fn deinit(this: *Installer) void {
         this.trusted_dependencies_from_update_requests.deinit(this.lockfile.allocator);
+        this.blocked_entries.deinit(this.lockfile.allocator);
     }
 
     /// Called from main thread
@@ -215,6 +220,8 @@ pub const Installer = struct {
 
         // .monotonic is okay because the task isn't running right now.
         this.store.entries.items(.step)[entry_id.get()].store(.blocked, .monotonic);
+        // Track this blocked entry for efficient resumption
+        bun.handleOom(this.blocked_entries.put(this.lockfile.allocator, entry_id, {}));
     }
 
     /// Called from both the main thread (via `onTaskBlocked` and `resumeUnblockedTasks`) and the
@@ -304,6 +311,11 @@ pub const Installer = struct {
     // `entry_steps[entry_id.get()].load(.monotonic)`
     // and
     // `entry_steps[entry_id.get()].store(.symlink_dependency_binaries, .monotonic)`
+    //
+    // Optimization: Instead of iterating through all entries O(N), we only iterate
+    // through the blocked_entries list which is typically much smaller. This reduces
+    // the complexity from O(N * D * P) per task completion to O(B * D * P) where
+    // B is the number of blocked entries.
     pub fn resumeUnblockedTasks(this: *Installer) void {
         const entries = this.store.entries.slice();
         const entry_steps = entries.items(.step);
@@ -311,19 +323,20 @@ pub const Installer = struct {
         var parent_dedupe: std.AutoArrayHashMap(Store.Entry.Id, void) = .init(bun.default_allocator);
         defer parent_dedupe.deinit();
 
-        for (0..this.store.entries.len) |id_int| {
-            const entry_id: Store.Entry.Id = .from(@intCast(id_int));
+        // Collect entries to unblock (we can't modify blocked_entries while iterating)
+        var to_unblock: std.ArrayListUnmanaged(Store.Entry.Id) = .empty;
+        defer to_unblock.deinit(bun.default_allocator);
 
-            // .monotonic is okay because only the main thread sets this to `.blocked`.
-            const entry_step = entry_steps[entry_id.get()].load(.monotonic);
-            if (entry_step != .blocked) {
-                continue;
-            }
-
+        for (this.blocked_entries.keys()) |entry_id| {
             if (this.isTaskBlocked(entry_id, &parent_dedupe)) {
                 continue;
             }
+            bun.handleOom(to_unblock.append(bun.default_allocator, entry_id));
+        }
 
+        // Unblock and start tasks
+        for (to_unblock.items) |entry_id| {
+            _ = this.blocked_entries.swapRemove(entry_id);
             // .monotonic is okay because the task isn't running right now.
             entry_steps[entry_id.get()].store(.symlink_dependency_binaries, .monotonic);
             this.startTask(entry_id);

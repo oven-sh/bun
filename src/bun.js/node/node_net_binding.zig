@@ -102,7 +102,49 @@ pub fn doConnect(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun
     return bun.api.Listener.connectInner(globalThis, maybe_tcp, maybe_tls, opts);
 }
 
+/// Create a connected TCPSocket from an existing file descriptor.
+/// Used by IPC parseHandle to reconstruct a net.Socket from a received fd.
+/// The socket is created in a paused state so no events fire until the JS
+/// side has attached handlers via net.Socket.
+pub fn socketFromFd(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+    const args = callframe.argumentsAsArray(1);
+    const fd_value = args[0];
+    if (!fd_value.isNumber()) {
+        return globalThis.throw("Expected a number for fd", .{});
+    }
+    const fd = fd_value.asFileDescriptor();
+
+    const context = uws.SocketContext.createNoSSLContext(uws.Loop.get(), @sizeOf(usize)) orelse {
+        return globalThis.throw("Failed to create socket context", .{});
+    };
+    uws.NewSocketHandler(false).configure(context, true, *bun.api.TCPSocket, bun.api.TCPSocket);
+
+    const handlers_ptr = bun.handleOom(globalThis.bunVM().allocator.create(bun.api.SocketHandlers));
+    handlers_ptr.* = .{
+        .vm = globalThis.bunVM(),
+        .globalObject = globalThis,
+    };
+
+    const tcp_socket = bun.api.TCPSocket.new(.{
+        .socket = .detached,
+        .socket_context = context,
+        .ref_count = .init(),
+        .protos = null,
+        .handlers = handlers_ptr,
+    });
+    tcp_socket.ref();
+
+    const native_socket = bun.api.TCPSocket.Socket.fromFd(context, fd, bun.api.TCPSocket, tcp_socket, null, false) orelse {
+        tcp_socket.deref();
+        return globalThis.throw("Failed to create socket from fd", .{});
+    };
+
+    tcp_socket.socket = native_socket;
+    return tcp_socket.getThisValue(globalThis);
+}
+
 const validators = @import("./util/validators.zig");
 
 const bun = @import("bun");
 const jsc = bun.jsc;
+const uws = bun.uws;

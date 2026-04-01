@@ -821,6 +821,7 @@ extern "C"
 
   void *uws_ws_get_user_data(int ssl, uws_websocket_t *ws)
   {
+    if (!ws) return nullptr;
     if (ssl)
     {
       TLSWebSocket *uws =
@@ -834,6 +835,7 @@ extern "C"
 
   void uws_ws_close(int ssl, uws_websocket_t *ws)
   {
+    if (!ws) return;
     if (ssl)
     {
       TLSWebSocket *uws =
@@ -851,6 +853,7 @@ extern "C"
   uws_sendstatus_t uws_ws_send(int ssl, uws_websocket_t *ws, const char *message,
                                size_t length, uws_opcode_t opcode)
   {
+    if (!ws) return (uws_sendstatus_t)uWS::SendStatus::DROPPED;
     if (ssl)
     {
       TLSWebSocket *uws =
@@ -869,6 +872,7 @@ extern "C"
                                             uws_opcode_t opcode, bool compress,
                                             bool fin)
   {
+    if (!ws) return (uws_sendstatus_t)uWS::SendStatus::DROPPED;
     if (ssl)
     {
       TLSWebSocket *uws =
@@ -892,6 +896,7 @@ extern "C"
                                         const char *message, size_t length,
                                         bool compress)
   {
+    if (!ws) return (uws_sendstatus_t)uWS::SendStatus::DROPPED;
     if (ssl)
     {
       TLSWebSocket *uws =
@@ -908,6 +913,7 @@ extern "C"
                                               const char *message, size_t length,
                                               bool compress)
   {
+    if (!ws) return (uws_sendstatus_t)uWS::SendStatus::DROPPED;
     if (ssl)
     {
       TLSWebSocket *uws =
@@ -925,6 +931,7 @@ extern "C"
                                          const char *message, size_t length,
                                          uws_opcode_t opcode, bool compress)
   {
+    if (!ws) return (uws_sendstatus_t)uWS::SendStatus::DROPPED;
     if (ssl)
     {
       TLSWebSocket *uws =
@@ -943,6 +950,7 @@ extern "C"
                                              const char *message, size_t length,
                                              bool compress)
   {
+    if (!ws) return (uws_sendstatus_t)uWS::SendStatus::DROPPED;
     if (ssl)
     {
       TLSWebSocket *uws =
@@ -959,6 +967,7 @@ extern "C"
   void uws_ws_end(int ssl, uws_websocket_t *ws, int code, const char *message,
                   size_t length)
   {
+    if (!ws) return;
     if (ssl)
     {
       TLSWebSocket *uws =
@@ -976,6 +985,7 @@ extern "C"
   void uws_ws_cork(int ssl, uws_websocket_t *ws, void (*handler)(void *user_data),
                    void *user_data)
   {
+    if (!ws) return;
     if (ssl)
     {
       TLSWebSocket *uws =
@@ -995,6 +1005,7 @@ extern "C"
   bool uws_ws_subscribe(int ssl, uws_websocket_t *ws, const char *topic,
                         size_t length)
   {
+    if (!ws) return false;
     if (ssl)
     {
       TLSWebSocket *uws =
@@ -1008,6 +1019,7 @@ extern "C"
   bool uws_ws_unsubscribe(int ssl, uws_websocket_t *ws, const char *topic,
                           size_t length)
   {
+    if (!ws) return false;
     if (ssl)
     {
       TLSWebSocket *uws =
@@ -1022,6 +1034,7 @@ extern "C"
   bool uws_ws_is_subscribed(int ssl, uws_websocket_t *ws, const char *topic,
                             size_t length)
   {
+    if (!ws) return false;
     if (ssl)
     {
       TLSWebSocket *uws =
@@ -1037,6 +1050,7 @@ extern "C"
                                               void *user_data),
                              void *user_data)
   {
+    if (!ws) return;
     if (ssl)
     {
       TLSWebSocket *uws =
@@ -1058,6 +1072,7 @@ extern "C"
                       size_t topic_length, const char *message,
                       size_t message_length)
   {
+    if (!ws) return false;
     if (ssl)
     {
       TLSWebSocket *uws =
@@ -1076,6 +1091,7 @@ extern "C"
                                    const char *message, size_t message_length,
                                    uws_opcode_t opcode, bool compress)
   {
+    if (!ws) return false;
     if (ssl)
     {
       TLSWebSocket *uws =
@@ -1093,6 +1109,7 @@ extern "C"
 
   size_t uws_ws_get_buffered_amount(int ssl, uws_websocket_t *ws)
   {
+    if (!ws) return 0;
     if (ssl)
     {
       TLSWebSocket *uws =
@@ -1107,6 +1124,10 @@ extern "C"
   size_t uws_ws_get_remote_address(int ssl, uws_websocket_t *ws,
                                    const char **dest)
   {
+    if (!ws) {
+      if (dest) *dest = nullptr;
+      return 0;
+    }
     if (ssl)
     {
       TLSWebSocket *uws =
@@ -1126,6 +1147,10 @@ extern "C"
   size_t uws_ws_get_remote_address_as_text(int ssl, uws_websocket_t *ws,
                                            const char **dest)
   {
+    if (!ws) {
+      if (dest) *dest = nullptr;
+      return 0;
+    }
     if (ssl)
     {
       TLSWebSocket *uws =
@@ -1860,6 +1885,7 @@ __attribute__((callback (corker, ctx)))
   }
 
   size_t uws_ws_memory_cost(int ssl, uws_websocket_t *ws) {
+    if (!ws) return 0;
     if (ssl) {
       return ((TLSWebSocket*)ws)->memoryCost();
     } else {

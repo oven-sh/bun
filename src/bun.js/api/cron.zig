@@ -878,7 +878,7 @@ pub const CronJob = struct {
     }
 
     pub fn finalize(this: *CronJob) void {
-        this.this_value = .{ .finalized = {} };
+        this.this_value.finalize();
         this.deref();
     }
 
@@ -909,6 +909,11 @@ pub const CronJob = struct {
 
     pub fn onTimerFire(this: *CronJob, vm: *jsc.VirtualMachine) void {
         this.event_loop_timer.state = .FIRED;
+        // Keep the struct alive across the user callback — stop() inside the
+        // callback downgrades this_value, and a GC could otherwise finalize +
+        // destroy `this` before we read fields below.
+        this.ref();
+        defer this.deref();
 
         if (this.stopped) return;
         if (vm.scriptExecutionStatus() != .running) {
@@ -920,11 +925,12 @@ pub const CronJob = struct {
             this.selfStop(vm);
             return;
         };
+        const js_this = this.this_value.tryGet() orelse .js_undefined;
 
         vm.eventLoop().enter();
         defer vm.eventLoop().exit();
 
-        const result = cb.call(this.global, .js_undefined, &.{}) catch {
+        const result = cb.call(this.global, js_this, &.{}) catch {
             if (this.global.tryTakeException()) |err|
                 _ = vm.uncaughtException(vm.global, err, false);
             this.scheduleNext(vm);

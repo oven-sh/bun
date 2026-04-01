@@ -136,15 +136,18 @@ describe.concurrent("Bun.cron (in-process) — firing", () => {
   // The cron expression "* * * * *" fires at the top of every minute.
   test("callback fires at minute boundary", async () => {
     let fired = 0;
+    let thisInCallback: unknown;
     const { promise, resolve } = Promise.withResolvers<void>();
 
-    using job = Bun.cron("* * * * *", () => {
+    using job = Bun.cron("* * * * *", function () {
       fired++;
+      thisInCallback = this;
       resolve();
     });
 
     await promise;
     expect(fired).toBe(1);
+    expect(thisInCallback).toBe(job);
   }, 70_000);
 
   test("async callback delays next scheduling", async () => {

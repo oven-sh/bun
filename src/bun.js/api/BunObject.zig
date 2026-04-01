@@ -1455,7 +1455,6 @@ pub const EnvironmentVariables = struct {
         defer name_slice.deinit();
 
         const storage = &vm.proxy_env_storage;
-        const slot = storage.slot(name_slice.slice()) orelse return;
 
         // Synchronize the slot swap + env.map.put against a concurrently
         // spawning worker's cloneFrom + env.map.cloneWithAllocator. Without
@@ -1464,6 +1463,8 @@ pub const EnvironmentVariables = struct {
         // on freed memory.
         storage.lock.lock();
         defer storage.lock.unlock();
+
+        const slot = storage.slot(name_slice.slice()) orelse return;
 
         // Deref our previous value. If a worker still holds a ref, the
         // bytes stay alive; if not, they're freed now.

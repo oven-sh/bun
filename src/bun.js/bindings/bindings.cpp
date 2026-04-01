@@ -1040,6 +1040,11 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
             return false;
         }
 
+        // Track which indices in set2 have been matched during fallback linear scans,
+        // so the same element is not matched more than once.
+        WTF::BitVector matchedIndices;
+        bool needsFallback = false;
+
         auto iter1 = JSSetIterator::create(vm, globalObject->setIteratorStructure(), set1, IterationKind::Keys);
         RETURN_IF_EXCEPTION(scope, {});
         JSValue key1;
@@ -1052,17 +1057,26 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
 
             // We couldn't find the key in the second set. This may be a false positive due to how
             // JSValues are represented in JSC, so we need to fall back to a linear search to be sure.
+            if (!needsFallback) {
+                matchedIndices.ensureSize(set2->size());
+                needsFallback = true;
+            }
             auto iter2 = JSSetIterator::create(vm, globalObject->setIteratorStructure(), set2, IterationKind::Keys);
             RETURN_IF_EXCEPTION(scope, {});
             JSValue key2;
             bool foundMatchingKey = false;
+            size_t idx2 = 0;
             while (iter2->next(globalObject, key2)) {
-                bool equal = Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, key1, key2, gcBuffer, stack, scope, false);
-                RETURN_IF_EXCEPTION(scope, {});
-                if (equal) {
-                    foundMatchingKey = true;
-                    break;
+                if (!matchedIndices.get(idx2)) {
+                    bool equal = Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, key1, key2, gcBuffer, stack, scope, false);
+                    RETURN_IF_EXCEPTION(scope, {});
+                    if (equal) {
+                        matchedIndices.set(idx2);
+                        foundMatchingKey = true;
+                        break;
+                    }
                 }
+                idx2++;
             }
 
             if (!foundMatchingKey) {
@@ -1085,6 +1099,11 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
             return false;
         }
 
+        // Track which indices in map2 have been matched during fallback linear scans,
+        // so the same entry is not matched more than once.
+        WTF::BitVector matchedIndices;
+        bool needsFallback = false;
+
         auto iter1 = JSMapIterator::create(vm, globalObject->mapIteratorStructure(), map1, IterationKind::Entries);
         RETURN_IF_EXCEPTION(scope, {});
         JSValue key1, value1;
@@ -1095,17 +1114,26 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
                 // We couldn't find the key in the second map. This may be a false positive due to
                 // how JSValues are represented in JSC, so we need to fall back to a linear search
                 // to be sure.
+                if (!needsFallback) {
+                    matchedIndices.ensureSize(leftSize);
+                    needsFallback = true;
+                }
                 auto iter2 = JSMapIterator::create(vm, globalObject->mapIteratorStructure(), map2, IterationKind::Entries);
                 RETURN_IF_EXCEPTION(scope, {});
                 JSValue key2;
                 bool foundMatchingKey = false;
+                size_t idx2 = 0;
                 while (iter2->nextKeyValue(globalObject, key2, value2)) {
-                    bool keysEqual = Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, key1, key2, gcBuffer, stack, scope, false);
-                    RETURN_IF_EXCEPTION(scope, {});
-                    if (keysEqual) {
-                        foundMatchingKey = true;
-                        break;
+                    if (!matchedIndices.get(idx2)) {
+                        bool keysEqual = Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, key1, key2, gcBuffer, stack, scope, false);
+                        RETURN_IF_EXCEPTION(scope, {});
+                        if (keysEqual) {
+                            matchedIndices.set(idx2);
+                            foundMatchingKey = true;
+                            break;
+                        }
                     }
+                    idx2++;
                 }
 
                 if (!foundMatchingKey) {

@@ -446,8 +446,12 @@ fn onUnhandledRejection(vm: *jsc.VirtualMachine, globalObject: *jsc.JSGlobalObje
     // (!vm().entryScope in Heap::lastChanceToFinalize). Instead, request
     // termination so spin()'s event loop breaks out and calls exitAndDeinit()
     // after the JS call stack has unwound.
-    vm.exit_handler.exit_code = 1;
-    worker.notifyNeedTermination();
+    if (!worker.exit_called) vm.exit_handler.exit_code = 1;
+    _ = worker.setRequestedTerminate();
+    worker.parent_poll_ref.unrefConcurrently(worker.parent);
+    if (vm.worker != null) {
+        vm.eventLoop().wakeup();
+    }
 }
 
 fn setStatus(this: *WebWorker, status: Status) void {

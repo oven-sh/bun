@@ -93,6 +93,7 @@ pub fn doneWithPartSizes(this: *StringJoiner, allocator: Allocator, record_parts
         assert(this.len == 0);
         return .{ &.{}, null };
     };
+    errdefer this.deinit();
 
     const slice = try allocator.alloc(u8, this.len);
     errdefer allocator.free(slice);

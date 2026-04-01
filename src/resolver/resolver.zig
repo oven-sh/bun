@@ -1147,9 +1147,10 @@ pub const Resolver = struct {
 
         // Per the ESM spec, relative and absolute import specifiers are URL-like
         // and percent-encoded characters should be decoded before filesystem lookup.
-        // CJS require() does not percent-decode. Encoded path separators (%2f, %5c)
-        // are forbidden per spec.
-        if (!kind.isCommonJS() and !kind.isFromCSS() and
+        // Only ESM import statements and dynamic import() are decoded — CJS
+        // require(), CSS imports, and CLI entry points use literal paths.
+        // Encoded path separators (%2f, %5c) are forbidden per spec.
+        if ((kind == .stmt or kind == .dynamic) and
             bun.strings.containsChar(import_path, '%'))
         {
             const is_relative_or_absolute = std.fs.path.isAbsolute(import_path) or
@@ -1173,7 +1174,13 @@ pub const Resolver = struct {
                 ) catch {
                     return .{ .not_found = {} };
                 };
-                import_path = buf[0..decoded_len];
+                const decoded = buf[0..decoded_len];
+                // Reject encoded NUL bytes (%00) — a literal NUL check runs
+                // before this function, so decoded NULs must not bypass it.
+                if (bun.strings.containsChar(decoded, 0)) {
+                    return .{ .not_found = {} };
+                }
+                import_path = decoded;
             }
         }
 

@@ -120,3 +120,27 @@ test("ESM dynamic import() with percent-encoded characters resolves correctly", 
   expect(stdout).toBe("dynamic comma works\n");
   expect(exitCode).toBe(0);
 });
+
+test("ESM import with absolute percent-encoded path resolves correctly", async () => {
+  using dir = tempDir("issue-28745", {
+    "foo,bar.mjs": `console.log('absolute comma works');`,
+  });
+
+  // Write test.mjs with an absolute path pointing into the temp dir
+  const absPath = `${String(dir)}/foo%2cbar.mjs`;
+  const fs = require("fs");
+  fs.writeFileSync(`${String(dir)}/test.mjs`, `import '${absPath}';\n`);
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", "test.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout).toBe("absolute comma works\n");
+  expect(exitCode).toBe(0);
+});

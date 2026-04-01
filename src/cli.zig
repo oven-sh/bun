@@ -995,6 +995,13 @@ pub const Command = struct {
                     return;
                 }
 
+                // If stdin is piped (not a TTY), read and execute JavaScript
+                // from stdin, matching Node.js behavior.
+                if (!Output.isStdinTTY()) {
+                    try RunCommand.bootFromStdin(ctx);
+                    return;
+                }
+
                 Output.flush();
                 try HelpCommand.exec(allocator);
             },

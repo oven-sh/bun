@@ -1395,38 +1395,7 @@ pub const RunCommand = struct {
         // check for stdin
 
         if (target_name.len == 1 and target_name[0] == '-') {
-            log("Executing from stdin", .{});
-
-            // read from stdin
-            var stack_fallback = std.heap.stackFallback(2048, bun.default_allocator);
-            var list = std.Io.Writer.Allocating.init(stack_fallback.get());
-            errdefer list.deinit();
-
-            var file_reader = std.fs.File.stdin().readerStreaming(&.{});
-            _ = file_reader.interface.streamRemaining(&list.writer) catch return false;
-            ctx.runtime_options.eval.script = list.written();
-
-            const trigger = bun.pathLiteral("/[stdin]");
-            var entry_point_buf: [bun.MAX_PATH_BYTES + trigger.len]u8 = undefined;
-            const cwd = try std.posix.getcwd(&entry_point_buf);
-            @memcpy(entry_point_buf[cwd.len..][0..trigger.len], trigger);
-            const entry_path = entry_point_buf[0 .. cwd.len + trigger.len];
-
-            var passthrough_list = try std.array_list.Managed(string).initCapacity(ctx.allocator, ctx.passthrough.len + 1);
-            passthrough_list.appendAssumeCapacity("-");
-            passthrough_list.appendSliceAssumeCapacity(ctx.passthrough);
-            ctx.passthrough = passthrough_list.items;
-
-            Run.boot(ctx, ctx.allocator.dupe(u8, entry_path) catch return false, null) catch |err| {
-                ctx.log.print(Output.errorWriter()) catch {};
-
-                Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{
-                    std.fs.path.basename(target_name),
-                    @errorName(err),
-                });
-                bun.handleErrorReturnTrace(err, @errorReturnTrace());
-                Global.exit(1);
-            };
+            try bootFromStdin(ctx);
             return true;
         }
 
@@ -1625,6 +1594,51 @@ pub const RunCommand = struct {
         return false;
     }
 
+    /// Read JavaScript from stdin and execute it. Used when bun is invoked
+    /// with no arguments and stdin is piped (not a TTY), matching Node.js
+    /// behavior.
+    pub fn bootFromStdin(ctx: Command.Context) !void {
+        log("Executing from stdin", .{});
+
+        var stack_fallback = std.heap.stackFallback(2048, bun.default_allocator);
+        var list = std.Io.Writer.Allocating.init(stack_fallback.get());
+        errdefer list.deinit();
+
+        var file_reader = std.fs.File.stdin().readerStreaming(&.{});
+        _ = file_reader.interface.streamRemaining(&list.writer) catch {
+            Output.errGeneric("Failed to read from stdin", .{});
+            Global.exit(1);
+        };
+        const script = list.written();
+
+        // Empty stdin — exit successfully, matching Node.js behavior.
+        if (script.len == 0) {
+            Global.exit(0);
+        }
+
+        ctx.runtime_options.eval.script = script;
+
+        const trigger = bun.pathLiteral("/[stdin]");
+        var entry_point_buf: [bun.MAX_PATH_BYTES + trigger.len]u8 = undefined;
+        const cwd = try std.posix.getcwd(&entry_point_buf);
+        @memcpy(entry_point_buf[cwd.len..][0..trigger.len], trigger);
+        const entry_path = entry_point_buf[0 .. cwd.len + trigger.len];
+
+        var passthrough_list = try std.array_list.Managed(string).initCapacity(ctx.allocator, ctx.passthrough.len + 1);
+        passthrough_list.appendAssumeCapacity("-");
+        passthrough_list.appendSliceAssumeCapacity(ctx.passthrough);
+        ctx.passthrough = passthrough_list.items;
+
+        Run.boot(ctx, ctx.allocator.dupe(u8, entry_path) catch bun.outOfMemory(), null) catch |err| {
+            ctx.log.print(Output.errorWriter()) catch {};
+            Output.prettyErrorln("<r><red>error<r>: Failed to run <b>stdin<r> due to error <b>{s}<r>", .{
+                @errorName(err),
+            });
+            bun.handleErrorReturnTrace(err, @errorReturnTrace());
+            Global.exit(1);
+        };
+    }
+
     pub fn execAsIfNode(ctx: Command.Context) !void {
         bun.assert(CLI.pretend_to_be_node);
 
@@ -1638,6 +1652,10 @@ pub const RunCommand = struct {
         }
 
         if (ctx.positionals.len == 0) {
+            if (!Output.isStdinTTY()) {
+                try bootFromStdin(ctx);
+                return;
+            }
             Output.errGeneric("Missing script to execute. Bun's provided 'node' cli wrapper does not support a repl.", .{});
             Global.exit(1);
         }

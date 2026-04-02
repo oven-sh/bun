@@ -327,8 +327,31 @@ pub fn start(
     this.arena = bun.MimallocArena.init();
     const allocator = this.arena.?.allocator();
 
+    // Proxy-env values may be RefCountedEnvValue bytes owned by the parent's
+    // proxy_env_storage. We need a consistent snapshot of (storage slots +
+    // env.map entries) so every slice we copy is backed by a ref we hold.
+    // The parent's storage.lock serializes against Bun__setEnvValue on the
+    // main thread — it covers both the slot swap and the map.put, so
+    // cloneFrom and cloneWithAllocator see the same state.
+    //
+    // proxy_env_storage lives directly on VirtualMachine (not in lazy
+    // RareData) so there's no null-check race — it always exists.
+    var temp_proxy_storage: jsc.RareData.ProxyEnvStorage = .{};
+    errdefer temp_proxy_storage.deinit();
+
     const map = try allocator.create(bun.DotEnv.Map);
-    map.* = try this.parent.transpiler.env.map.cloneWithAllocator(allocator);
+    {
+        const parent_storage = &this.parent.proxy_env_storage;
+        parent_storage.lock.lock();
+        defer parent_storage.lock.unlock();
+
+        temp_proxy_storage.cloneFrom(parent_storage);
+        map.* = try this.parent.transpiler.env.map.cloneWithAllocator(allocator);
+    }
+    // Ensure map entries point at the exact bytes we hold refs on — covers
+    // the case where a proxy var was in the initial environ (no ref) and
+    // later overwritten by the setter (reffed).
+    temp_proxy_storage.syncInto(map);
 
     const loader = try allocator.create(bun.DotEnv.Loader);
     loader.* = bun.DotEnv.Loader.init(map, allocator);
@@ -343,6 +366,12 @@ pub fn start(
     vm.allocator = allocator;
     vm.arena = &this.arena.?;
 
+    // Move the pre-cloned proxy storage into the worker VM. Refs were
+    // already bumped before the map clone above. proxy_env_storage is a
+    // direct field on VirtualMachine — no rareData() lazy-init here.
+    vm.proxy_env_storage = temp_proxy_storage;
+    temp_proxy_storage = .{};
+
     var b = &vm.transpiler;
     b.resolver.env_loader = b.env;
 
@@ -351,6 +380,10 @@ pub fn start(
     }
 
     b.configureDefines() catch {
+        // exitAndDeinit's null-guard skips vm.deinit() while this.vm is still
+        // null (we only assign it below). Free the moved-in proxy storage
+        // explicitly so the cloned RefCountedEnvValue refs aren't leaked.
+        vm.proxy_env_storage.deinit();
         this.flushLogs();
         this.exitAndDeinit();
         return;

@@ -43,6 +43,9 @@ valkey_context: ValkeyContext = .{},
 
 tls_default_ciphers: ?[:0]const u8 = null,
 
+// proxy_env_storage moved to VirtualMachine — see comment there on why
+// lazy RareData creation raced with worker spawn.
+
 #spawn_sync_event_loop: bun.ptr.Owned(?*SpawnSyncEventLoop) = .initNull(),
 
 path_buf: PathBuf = .{},
@@ -99,6 +102,120 @@ pub const PathBuf = struct {
 
 const PipeReadBuffer = [256 * 1024]u8;
 const DIGESTED_HMAC_256_LEN = 32;
+
+pub const ProxyEnvStorage = struct {
+    HTTP_PROXY: ?*RefCountedEnvValue = null,
+    http_proxy: ?*RefCountedEnvValue = null,
+    HTTPS_PROXY: ?*RefCountedEnvValue = null,
+    https_proxy: ?*RefCountedEnvValue = null,
+    NO_PROXY: ?*RefCountedEnvValue = null,
+    no_proxy: ?*RefCountedEnvValue = null,
+
+    /// Held by Bun__setEnvValue around the slot swap + env.map.put, and by
+    /// the worker around cloneFrom + env.map.cloneWithAllocator. This closes
+    /// two races: (1) worker's cloneFrom reading a slot pointer concurrently
+    /// with the parent's deref → free on the same pointer; (2) the env.map's
+    /// backing ArrayHashMap being iterated during clone while the parent's
+    /// put() rehashes it.
+    lock: bun.Mutex = .{},
+
+    pub const Slot = struct {
+        /// Static-lifetime field name (e.g. "NO_PROXY") — safe to use as
+        /// the env map key without duping.
+        key: []const u8,
+        ptr: *?*RefCountedEnvValue,
+    };
+
+    pub fn slot(self: *ProxyEnvStorage, name: []const u8) ?Slot {
+        // On Windows the env.map is case-insensitive (CaseInsensitiveASCII-
+        // StringArrayHashMap) — map.put("HTTP_PROXY", ...) and
+        // map.put("http_proxy", ...) write the same entry. If we tracked
+        // refs in separate case-variant slots, one slot's value would leak
+        // and syncInto would replay the stale one into the worker's map.
+        // Canonicalize both cases to the uppercase slot on Windows; the
+        // lowercase slots stay null. Posix keeps both — its map and its
+        // getHttpProxy lookup are case-sensitive.
+        const eql = if (comptime bun.Environment.isWindows)
+            bun.strings.eqlCaseInsensitiveASCIIICheckLength
+        else
+            bun.strings.eql;
+        inline for (@typeInfo(ProxyEnvStorage).@"struct".fields) |f| {
+            if (comptime f.type == ?*RefCountedEnvValue) {
+                // Uppercase fields are declared first. On Windows the
+                // case-insensitive eql matches the uppercase field for
+                // either input case and returns before reaching lowercase.
+                if (eql(name, f.name)) {
+                    return .{ .key = f.name, .ptr = &@field(self, f.name) };
+                }
+            }
+        }
+        return null;
+    }
+
+    /// Bump refcounts on all non-null values so a worker can share the
+    /// parent's strings. Caller must hold parent.lock — the pointer load
+    /// and ref() are not atomic with respect to Bun__setEnvValue's deref().
+    pub fn cloneFrom(self: *ProxyEnvStorage, parent: *const ProxyEnvStorage) void {
+        inline for (@typeInfo(ProxyEnvStorage).@"struct".fields) |f| {
+            if (comptime f.type == ?*RefCountedEnvValue) {
+                if (@field(parent, f.name)) |val| {
+                    val.ref();
+                    @field(self, f.name) = val;
+                }
+            }
+        }
+    }
+
+    /// Overwrite proxy-var entries in an env map with this storage's reffed
+    /// bytes. Used after map.cloneWithAllocator in the worker so the cloned
+    /// map and the reffed storage agree — defense-in-depth in case the map
+    /// clone captured a snapshot the storage doesn't hold a ref on (e.g. an
+    /// initial-environ value later overwritten by the setter).
+    pub fn syncInto(self: *const ProxyEnvStorage, map: *bun.DotEnv.Map) void {
+        inline for (@typeInfo(ProxyEnvStorage).@"struct".fields) |f| {
+            if (comptime f.type == ?*RefCountedEnvValue) {
+                if (@field(self, f.name)) |val| {
+                    bun.handleOom(map.put(f.name, val.bytes));
+                }
+            }
+        }
+    }
+
+    pub fn deinit(self: *ProxyEnvStorage) void {
+        inline for (@typeInfo(ProxyEnvStorage).@"struct".fields) |f| {
+            if (comptime f.type == ?*RefCountedEnvValue) {
+                if (@field(self, f.name)) |val| {
+                    val.deref();
+                    @field(self, f.name) = null;
+                }
+            }
+        }
+    }
+};
+
+/// A ref-counted heap-allocated byte slice. The env map stores borrowed
+/// `.bytes` slices; as long as any VM holds a ref, the bytes stay valid.
+pub const RefCountedEnvValue = struct {
+    const RefCount = bun.ptr.ThreadSafeRefCount(@This(), "ref_count", RefCountedEnvValue.destroy, .{});
+    pub const ref = RefCount.ref;
+    pub const deref = RefCount.deref;
+
+    ref_count: RefCount,
+    bytes: []const u8,
+
+    pub fn create(value: []const u8) *RefCountedEnvValue {
+        return bun.new(RefCountedEnvValue, .{
+            .ref_count = .init(),
+            .bytes = bun.handleOom(bun.default_allocator.dupe(u8, value)),
+        });
+    }
+
+    fn destroy(this: *RefCountedEnvValue) void {
+        bun.default_allocator.free(this.bytes);
+        bun.destroy(this);
+    }
+};
+
 pub const AWSSignatureCache = struct {
     cache: bun.StringArrayHashMap([DIGESTED_HMAC_256_LEN]u8) = bun.StringArrayHashMap([DIGESTED_HMAC_256_LEN]u8).init(bun.default_allocator),
     date: u64 = 0,

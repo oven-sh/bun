@@ -138,9 +138,12 @@ extern "C"
 
   extern "C" void uws_res_clear_corked_socket(us_loop_t *loop) {
     uWS::LoopData *loopData = uWS::Loop::data(loop);
-    void *corkedSocket = loopData->getCorkedSocket();
-    if (corkedSocket) {
-        if (loopData->isCorkedSSL()) {
+    /* Drain any leftover corks. Two slots max. */
+    for (int i = 0; i < 2; i++) {
+        bool ssl;
+        void *corkedSocket = loopData->getAnyCorkedSocket(&ssl);
+        if (!corkedSocket) break;
+        if (ssl) {
             ((uWS::AsyncSocket<true> *) corkedSocket)->uncork();
         } else {
             ((uWS::AsyncSocket<false> *) corkedSocket)->uncork();
@@ -1376,7 +1379,7 @@ extern "C"
     {
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
       if (*length < 16 * 1024 && *length > 0) {
-        if (uwsRes->canCork()) {
+        if (!uwsRes->uWS::AsyncSocket<true>::isCorked()) {
           uwsRes->uWS::AsyncSocket<true>::cork();
         }
       }
@@ -1384,7 +1387,7 @@ extern "C"
     }
     uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
     if (*length < 16 * 1024 && *length > 0) {
-        if (uwsRes->canCork()) {
+        if (!uwsRes->uWS::AsyncSocket<false>::isCorked()) {
           uwsRes->uWS::AsyncSocket<false>::cork();
         }
       }

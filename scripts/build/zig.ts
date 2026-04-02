@@ -31,7 +31,7 @@ import { streamPath } from "./stream.ts";
  * Override via `--zig-commit=<hash>` to test a new compiler.
  * From https://github.com/oven-sh/zig releases.
  */
-export const ZIG_COMMIT = "c031cbebf5b063210473ff5204a24ebfb2492c72";
+export const ZIG_COMMIT = "365343af4fc5a1a632e6b54aadd0b87be30edd81";
 
 // ───────────────────────────────────────────────────────────────────────────
 // Target/optimize/CPU computation
@@ -181,14 +181,12 @@ function zigDownloadUrl(cfg: Config, safe: boolean): string {
 export function registerZigRules(n: Ninja, cfg: Config): void {
   const hostWin = cfg.host.os === "windows";
   const q = (p: string) => quote(p, hostWin);
-  const bun = q(cfg.bun);
-
   // Zig fetch wrapped in stream.ts for the [zig] prefix alongside other
   // dep fetches. Fast (cache hit <100ms) so pool doesn't matter.
-  const stream = `${bun} ${q(streamPath)} zig`;
+  const stream = `${cfg.jsRuntime} ${q(streamPath)} zig`;
 
   n.rule("zig_fetch", {
-    command: `${stream} ${bun} ${q(fetchCliPath)} zig $url $dest $commit`,
+    command: `${stream} ${cfg.jsRuntime} ${q(fetchCliPath)} zig $url $dest $commit`,
     description: "zig download compiler",
     restat: true,
   });

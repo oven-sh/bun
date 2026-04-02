@@ -6,13 +6,15 @@
  * `if(RELEASE)` — the chain is resolved here and the result is a plain value.
  */
 
-import { existsSync, readFileSync } from "node:fs";
+import { execSync } from "node:child_process";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { arch as hostArch, platform as hostPlatform } from "node:os";
-import { isAbsolute, join, resolve } from "node:path";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { NODEJS_ABI_VERSION, NODEJS_VERSION } from "./deps/nodejs-headers.ts";
 import { WEBKIT_VERSION } from "./deps/webkit.ts";
 import { BuildError, assert } from "./error.ts";
 import { clangTargetArch } from "./tools.ts";
+import { cyan, dim, green } from "./tty.ts";
 import { ZIG_COMMIT } from "./zig.ts";
 
 export type OS = "linux" | "darwin" | "windows";
@@ -135,6 +137,8 @@ export interface Config {
   // ─── Toolchain (resolved absolute paths) ───
   cc: string;
   cxx: string;
+  /** Parsed X.Y.Z from clang --version. Captured once at resolve time. */
+  clangVersion: string | undefined;
   ar: string;
   /** llvm-ranlib. undefined on windows (llvm-lib indexes itself). */
   ranlib: string | undefined;
@@ -144,8 +148,15 @@ export interface Config {
   /** darwin-only. */
   dsymutil: string | undefined;
   zig: string;
-  /** Self-host bun for codegen. */
+  /** Self-host bun for codegen (bun install, bun build). */
   bun: string;
+  /**
+   * Shell-ready command prefix for running .ts subprocesses (stream.ts,
+   * fetch-cli.ts, regen). Either the bun path or `node --experimental-strip-types`
+   * depending on what's running configure. Already quoted — splice directly
+   * into rule commands.
+   */
+  jsRuntime: string;
   esbuild: string;
   /** Optional — compiler launcher prefix. */
   ccache: string | undefined;
@@ -226,6 +237,12 @@ export interface PartialConfig {
 export interface Toolchain {
   cc: string;
   cxx: string;
+  /**
+   * Parsed clang --version (X.Y.Z). Captured during toolchain resolution
+   * so downstream checks (workarounds.ts) don't re-spawn. undefined if
+   * version parsing failed — shouldn't happen since we version-gate cc.
+   */
+  clangVersion: string | undefined;
   ar: string;
   ranlib: string | undefined;
   ld: string;
@@ -233,6 +250,7 @@ export interface Toolchain {
   dsymutil: string | undefined;
   zig: string;
   bun: string;
+  jsRuntime: string;
   esbuild: string;
   ccache: string | undefined;
   cmake: string;
@@ -484,6 +502,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     vendorDir,
     cc: toolchain.cc,
     cxx: toolchain.cxx,
+    clangVersion: toolchain.clangVersion,
     ar: toolchain.ar,
     ranlib: toolchain.ranlib,
     ld: toolchain.ld,
@@ -491,6 +510,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     dsymutil: toolchain.dsymutil,
     zig: toolchain.zig,
     bun: toolchain.bun,
+    jsRuntime: toolchain.jsRuntime,
     esbuild: toolchain.esbuild,
     ccache: toolchain.ccache,
     cmake: toolchain.cmake,
@@ -528,9 +548,6 @@ const MIN_OSX_DEPLOYMENT_TARGET = "13.0";
  * the constructed path doesn't exist (exotic installs).
  */
 function detectMacosSdk(ci: boolean): { osxDeploymentTarget: string; osxSysroot: string } {
-  const { execSync } = require("node:child_process") as typeof import("node:child_process");
-  const { existsSync, realpathSync } = require("node:fs") as typeof import("node:fs");
-
   // xcode-select -p prints the active developer dir (respects
   // `xcode-select --switch` and DEVELOPER_DIR). It's a tiny C binary —
   // fast enough to be negligible, unlike xcrun which does a bunch of
@@ -668,7 +685,6 @@ function getGitRevision(cwd: string): string {
     return envSha;
   }
   try {
-    const { execSync } = require("node:child_process") as typeof import("node:child_process");
     return execSync("git rev-parse HEAD", { cwd, encoding: "utf8" }).trim();
   } catch {
     return "unknown";
@@ -717,13 +733,7 @@ export function shouldStrip(cfg: Config): boolean {
   return !cfg.debug && !cfg.asan && !cfg.valgrind && !cfg.assertions;
 }
 
-// ANSI helpers — no-op when output isn't a TTY (pipe, file, `bd` log).
-const useColor = Bun.enableANSIColors && process.stderr.isTTY;
-const c = {
-  dim: (s: string) => (useColor ? `\x1b[2m${s}\x1b[22m` : s),
-  cyan: (s: string) => (useColor ? `\x1b[36m${s}\x1b[39m` : s),
-  green: (s: string) => (useColor ? `\x1b[32m${s}\x1b[39m` : s),
-};
+const c = { dim, cyan, green };
 
 /**
  * Format a config for display (used at configure time).
@@ -732,8 +742,7 @@ const c = {
 export function formatConfig(cfg: Config, exe: string): string {
   const label = (s: string) => c.dim(s.padEnd(12));
   // Relative build dir with ./ prefix — shorter, copy-pastable.
-  const { relative: rel, sep } = require("node:path") as typeof import("node:path");
-  const relBuildDir = `.${sep}${rel(cfg.cwd, cfg.buildDir)}`;
+  const relBuildDir = `.${sep}${relative(cfg.cwd, cfg.buildDir)}`;
   const lines: string[] = [
     `[configured] ${c.green(exe)}`,
     `  ${label("target")} ${cfg.os}-${cfg.arch}${cfg.abi !== undefined ? "-" + cfg.abi : ""}`,

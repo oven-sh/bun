@@ -343,7 +343,7 @@ pub const S3 = struct {
                         try self.promise.resolve(globalObject, .true);
                     },
                     .not_found, .failure => |err| {
-                        try self.promise.reject(globalObject, err.toJS(globalObject, self.store.getPath()));
+                        try self.promise.reject(globalObject, err.toJSWithAsyncStack(globalObject, self.store.getPath(), self.promise.get()));
                     },
                 }
             }
@@ -395,7 +395,7 @@ pub const S3 = struct {
                     },
 
                     inline .not_found, .failure => |err| {
-                        try self.promise.reject(globalObject, err.toJS(globalObject, self.store.getPath()));
+                        try self.promise.reject(globalObject, err.toJSWithAsyncStack(globalObject, self.store.getPath(), self.promise.get()));
                     },
                 }
             }

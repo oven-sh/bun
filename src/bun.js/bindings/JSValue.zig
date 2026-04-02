@@ -974,6 +974,15 @@ pub const JSValue = enum(i64) {
         return res;
     }
 
+    extern fn Bun__attachAsyncStackFromPromise(global: *JSGlobalObject, err: JSValue, promise: *jsc.JSPromise) void;
+    /// If `this` is an Error instance with no stack trace (e.g. created from
+    /// native code at the top of the event loop), populate its stack with async
+    /// frames derived from the given promise's await chain. No-op if `this` is
+    /// not an Error instance or the promise has no awaiting generator.
+    pub fn attachAsyncStackFromPromise(this: JSValue, global: *JSGlobalObject, promise: *jsc.JSPromise) void {
+        Bun__attachAsyncStackFromPromise(global, this, promise);
+    }
+
     /// Returns true if
     /// - `" string literal"`
     /// - `new String("123")`
@@ -1439,6 +1448,18 @@ pub const JSValue = enum(i64) {
         scope.init(global, @src());
         defer scope.deinit();
         this._then(global, JSValue.fromPtrAddress(@intFromPtr(ctx)), resolve, reject);
+        try scope.assertNoExceptionExceptTermination();
+    }
+
+    /// Like `then`, but the context is a JSValue instead of a raw pointer.
+    /// Use this when the context should be GC-managed (e.g., a JSCell that
+    /// gets collected with the Promise's reaction if the Promise is GC'd
+    /// without settling).
+    pub fn thenWithValue(this: JSValue, global: *JSGlobalObject, ctx: JSValue, resolve: jsc.JSHostFnZig, reject: jsc.JSHostFnZig) bun.JSTerminated!void {
+        var scope: TopExceptionScope = undefined;
+        scope.init(global, @src());
+        defer scope.deinit();
+        this._then(global, ctx, resolve, reject);
         try scope.assertNoExceptionExceptTermination();
     }
 

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isCI, isMacOS, isMacOSVersionAtLeast } from "harness";
 
 // Chrome backend works on any platform with Chrome/Chromium installed.
 // Mark tests todo if no Chrome found (CI may not have it). Mirrors
@@ -104,7 +104,14 @@ function findChrome(): string | undefined {
 }
 
 const chromePath = findChrome();
-const it = chromePath ? test : test.todo;
+// TODO: macOS 13 aarch64 CI — findChrome() resolves the Playwright
+// chrome-headless-shell, but `new Bun.WebView({backend: chrome})` throws
+// ERR_DLOPEN_FAILED at spawn time. Recent Chromium builds link against
+// frameworks only present on macOS 14+, so the binary exists but can't
+// load. Gate on CI + macOS < 14 rather than probing the spawn since that
+// adds ~100ms of startup cost to every platform for one broken runner.
+const chromeBroken = isCI && isMacOS && !isMacOSVersionAtLeast(14);
+const it = chromePath && !chromeBroken ? test : test.todo;
 
 // url:false forces spawn-mode — skips DevToolsActivePort auto-detect
 // which would connect to the dev's running Chrome, pop the "Allow remote

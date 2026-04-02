@@ -16,6 +16,6 @@
     "types": ["bun"],
     "verbatimModuleSyntax": true
   },
-  "include": ["./**/*.ts", "../build.ts"],
+  "include": ["./**/*.ts", "../build.ts", "../glob-sources.ts"],
   "exclude": ["node_modules"]
 }

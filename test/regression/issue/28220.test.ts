@@ -111,55 +111,53 @@ int main(int argc, char **argv) {
 }
 `;
 
-describe.skipIf(!isLinux)("issue #28220", () => {
-  let helperPath = "";
-  let landlockSupported = true;
-  using testRoot = tempDir("issue-28220", {});
-  const testBase = join(String(testRoot), "parent", "project");
+function prepareLandlockFixture(root: string) {
+  const helperDir = join(root, "landlock-helper");
+  const helperPath = join(helperDir, "landlock_sandbox");
+  const srcPath = join(helperDir, "landlock_sandbox.c");
+  const testBase = join(root, "parent", "project");
 
-  test("compile landlock helper", () => {
-    mkdirSync("/tmp/landlock-helper", { recursive: true });
+  mkdirSync(helperDir, { recursive: true });
+  mkdirSync(testBase, { recursive: true });
+  writeFileSync(srcPath, LANDLOCK_HELPER_SRC);
 
-    const srcPath = "/tmp/landlock-helper/landlock_sandbox.c";
-    helperPath = "/tmp/landlock-helper/landlock_sandbox";
-
-    writeFileSync(srcPath, LANDLOCK_HELPER_SRC);
-
-    const compiler = process.env.CC || "cc";
-    const result = Bun.spawnSync({
-      cmd: [compiler, "-o", helperPath, srcPath],
-      env: bunEnv,
-      stderr: "pipe",
-      stdout: "pipe",
-    });
-
-    expect(result.exitCode).toBe(0);
-    expect(existsSync(helperPath)).toBe(true);
-
-    mkdirSync(testBase, { recursive: true });
-
-    const check = Bun.spawnSync({
-      cmd: [helperPath, testBase, dirname(bunExe()), "--self-check"],
-      env: bunEnv,
-      cwd: testBase,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const stdout = check.stdout.toString();
-    if (stdout.includes("LANDLOCK_UNSUPPORTED")) {
-      landlockSupported = false;
-      return;
-    }
-
-    expect(stdout).toContain("/:ERR:13");
-    expect(stdout).toContain(`${testBase}:OK`);
+  const compiler = process.env.CC || "cc";
+  const compile = Bun.spawnSync({
+    cmd: [compiler, "-o", helperPath, srcPath],
+    env: bunEnv,
+    stderr: "pipe",
+    stdout: "pipe",
   });
 
+  expect(compile.exitCode).toBe(0);
+  expect(existsSync(helperPath)).toBe(true);
+
+  const check = Bun.spawnSync({
+    cmd: [helperPath, testBase, dirname(bunExe()), "--self-check"],
+    env: bunEnv,
+    cwd: testBase,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const stdout = check.stdout.toString();
+  const landlockSupported = !stdout.includes("LANDLOCK_UNSUPPORTED");
+  if (landlockSupported) {
+    expect(stdout).toContain("/:ERR:13");
+    expect(stdout).toContain(`${testBase}:OK`);
+  }
+
+  return { helperPath, landlockSupported, testBase };
+}
+
+describe.skipIf(!isLinux)("issue #28220", () => {
   test("bun run works when ancestor directories are inaccessible", () => {
+    using root = tempDir("issue-28220-run", {});
+    const { helperPath, landlockSupported, testBase } = prepareLandlockFixture(
+      String(root),
+    );
     if (!landlockSupported) return;
 
-    mkdirSync(testBase, { recursive: true });
     writeFileSync(
       join(testBase, "index.js"),
       "console.log('hello from sandbox');\n",
@@ -190,9 +188,12 @@ describe.skipIf(!isLinux)("issue #28220", () => {
   });
 
   test("bun run with require() works when ancestor directories are inaccessible", () => {
+    using root = tempDir("issue-28220-run-require", {});
+    const { helperPath, landlockSupported, testBase } = prepareLandlockFixture(
+      String(root),
+    );
     if (!landlockSupported) return;
 
-    mkdirSync(testBase, { recursive: true });
     writeFileSync(
       join(testBase, "main.js"),
       "const path = require('path');\nconsole.log(path.join('a', 'b', 'c'));\n",

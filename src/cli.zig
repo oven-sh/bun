@@ -578,6 +578,9 @@ pub const Command = struct {
 
         var next_arg = ((args_iter.next()) orelse return .AutoCommand);
         while (next_arg.len > 0 and next_arg[0] == '-' and !(next_arg.len > 1 and next_arg[1] == 'e')) {
+            if (strings.eqlComptime(next_arg, "-i") or strings.eqlComptime(next_arg, "--interactive")) {
+                return .ReplCommand;
+            }
             next_arg = ((args_iter.next()) orelse return .AutoCommand);
         }
 

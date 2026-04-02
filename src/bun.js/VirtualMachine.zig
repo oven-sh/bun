@@ -1996,6 +1996,7 @@ pub fn deinit(this: *VirtualMachine) void {
     }
     this.source_mappings.deinit();
     if (this.rare_data) |rare_data| {
+        jsc.API.cron.CronJob.clearAllForVM(this, .teardown);
         rare_data.deinit();
     }
     this.overridden_main.deinit();

@@ -234,8 +234,11 @@ describe.concurrent("Bun.cron (in-process) — firing", () => {
           console.log("caught=" + e.message + ":" + (p instanceof Promise));
           process.exit(0);
         });
-        const job = Bun.cron("* * * * *", async () => {
+        let job = Bun.cron("* * * * *", async () => {
           job.stop();
+          job = null;
+          Bun.gc(true);
+          Bun.gc(true);
           await Bun.sleep(10);
           throw new Error("after-stop");
         });

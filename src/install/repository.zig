@@ -383,14 +383,16 @@ pub const Repository = extern struct {
                     strings.containsComptime(result.stderr, "found")) or
                     strings.containsComptime(result.stderr, "does not exist") or
                     // fatal: '<url>' does not appear to be a git repository
-                    strings.containsComptime(result.stderr, "does not appear to be a git repository") or
-                    // fatal: could not read Username for 'https://...': No such device or address
-                    // This happens when GIT_ASKPASS=echo (bun's default) and repo is private/missing.
-                    // Note: don't treat this as RepositoryNotFound — it may be a private repo
-                    // that needs SSH auth, so we should fall through to allow SSH retry.
-                    strings.containsComptime(result.stderr, "could not read Username"))
+                    strings.containsComptime(result.stderr, "does not appear to be a git repository"))
                 {
                     return error.RepositoryNotFound;
+                }
+                // fatal: could not read Username for 'https://...': No such device or address
+                // This happens when GIT_ASKPASS=echo (bun's default) and repo is private/missing.
+                // Don't treat as RepositoryNotFound — it may be a private repo that needs
+                // SSH auth, so return InstallFailed to allow SSH retry.
+                if (strings.containsComptime(result.stderr, "could not read Username")) {
+                    return error.InstallFailed;
                 }
                 return error.InstallFailed;
             },
@@ -784,12 +786,10 @@ pub const Repository = extern struct {
                     break :ziggit_fetch;
                 };
                 debug("fetch: ziggit succeeded for \"{s}\"", .{name});
-                debug("[ZIGGIT] fetch: ziggit succeeded for \"{s}\"", .{name});
                 break :fetch dir;
             }
             // Ziggit failed — fall back to git CLI
             debug("fetch: using git CLI for \"{s}\"", .{name});
-            debug("[ZIGGIT] fetch: using git CLI fallback for \"{s}\"", .{name});
             _ = exec(allocator, env, &[_]string{ "git", "-C", path, "fetch", "--quiet" }) catch |err| {
                 dir.close();
                 log.addErrorFmt(null, logger.Loc.Empty, allocator, "\"git fetch\" for \"{s}\" failed", .{name}) catch unreachable;
@@ -845,12 +845,10 @@ pub const Repository = extern struct {
                 };
                 defer repo.close();
                 debug("clone: ziggit succeeded for \"{s}\"", .{name});
-                debug("[ZIGGIT] clone: ziggit succeeded for \"{s}\"", .{name});
                 break :clone try cache_dir.openDirZ(folder_name, .{});
             }
             // Ziggit failed — fall back to git CLI
             debug("clone: using git CLI for \"{s}\"", .{name});
-            debug("[ZIGGIT] clone: using git CLI fallback for \"{s}\"", .{name});
             _ = exec(allocator, env, &[_]string{
                 "git", "clone", "-c", "core.longpaths=true", "--quiet", "--bare", url, target,
             }) catch |exec_err| {
@@ -899,7 +897,6 @@ pub const Repository = extern struct {
                 return findCommitFallback(allocator, env, log, path, name, committish);
             };
             debug("findCommit: ziggit resolved \"{s}\" -> {s}", .{ ref, &hash });
-                debug("[ZIGGIT] findCommit: ziggit succeeded for \"{s}\"", .{name});
             const result = bun.handleOom(allocator.alloc(u8, 40));
             @memcpy(result, &hash);
             return result;
@@ -915,7 +912,7 @@ pub const Repository = extern struct {
         committish: string,
     ) !string {
         debug("findCommit: using git CLI fallback for \"{s}\"", .{name});
-        return std.mem.trim(u8, exec(
+        return strings.trim(exec(
             allocator,
             shared_env.get(allocator, env),
             if (committish.len > 0)

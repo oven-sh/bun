@@ -8,15 +8,14 @@ const ziggit = @import("ziggit");
 const print = std.debug.print;
 
 const Timer = struct {
-    start: i128,
+    inner: std.time.Timer,
     fn begin() Timer {
-        return .{ .start = std.time.nanoTimestamp() };
+        return .{ .inner = std.time.Timer.start() catch @panic("timer unavailable") };
     }
-    fn elapsedUs(self: Timer) u64 {
-        const end = std.time.nanoTimestamp();
-        return @intCast(@divTrunc(end - self.start, 1000));
+    fn elapsedUs(self: *Timer) u64 {
+        return self.inner.read() / 1000;
     }
-    fn elapsedMs(self: Timer) u64 {
+    fn elapsedMs(self: *Timer) u64 {
         return self.elapsedUs() / 1000;
     }
 };
@@ -52,7 +51,7 @@ pub fn main() !void {
         var lib_total_us: u64 = 0;
         var i: u32 = 0;
         while (i < iterations) : (i += 1) {
-            const t = Timer.begin();
+            var t = Timer.begin();
             var repo = try ziggit.Repository.openBare(allocator, bare_path);
             const hash = try repo.findCommit("HEAD");
             _ = hash;
@@ -66,7 +65,7 @@ pub fn main() !void {
         var cli_total_us: u64 = 0;
         i = 0;
         while (i < iterations) : (i += 1) {
-            const t = Timer.begin();
+            var t = Timer.begin();
             var child = std.process.Child.init(&.{ "git", "-C", bare_path, "rev-parse", "HEAD" }, allocator);
             child.stdout_behavior = .Pipe;
             child.stderr_behavior = .Pipe;
@@ -99,7 +98,7 @@ pub fn main() !void {
         while (i < clone_iters) : (i += 1) {
             const target = "/tmp/lib-bench-clone-zig";
             std.fs.deleteTreeAbsolute(target) catch {};
-            const t = Timer.begin();
+            var t = Timer.begin();
             var repo = try ziggit.Repository.cloneBare(allocator, bare_path, target);
             repo.close();
             lib_total_us += t.elapsedUs();
@@ -113,7 +112,7 @@ pub fn main() !void {
         while (i < clone_iters) : (i += 1) {
             const target = "/tmp/lib-bench-clone-git";
             std.fs.deleteTreeAbsolute(target) catch {};
-            const t = Timer.begin();
+            var t = Timer.begin();
             var child = std.process.Child.init(&.{ "git", "clone", "--bare", "--quiet", bare_path, target }, allocator);
             child.stdout_behavior = .Pipe;
             child.stderr_behavior = .Pipe;
@@ -150,7 +149,7 @@ pub fn main() !void {
             std.fs.deleteTreeAbsolute(bare_target) catch {};
             std.fs.deleteTreeAbsolute(work_target) catch {};
 
-            const t = Timer.begin();
+            var t = Timer.begin();
             // Step 1: cloneBare
             var bare_repo = try ziggit.Repository.cloneBare(allocator, bare_path, bare_target);
             // Step 2: findCommit (rev-parse HEAD)
@@ -176,7 +175,7 @@ pub fn main() !void {
             std.fs.deleteTreeAbsolute(bare_target) catch {};
             std.fs.deleteTreeAbsolute(work_target) catch {};
 
-            const t = Timer.begin();
+            var t = Timer.begin();
             // Step 1: clone --bare
             var c1 = std.process.Child.init(&.{ "git", "clone", "--bare", "--quiet", bare_path, bare_target }, allocator);
             c1.stdout_behavior = .Pipe;

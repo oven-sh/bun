@@ -41,6 +41,12 @@ pub fn init(
     });
 }
 
+pub fn updateBlob(this: *BundleFile, new_blob: jsc.WebCore.Blob, new_size: u64) void {
+    this.blob.deinit();
+    this.blob = new_blob;
+    this.file_size = new_size;
+}
+
 pub fn finalize(this: *BundleFile) void {
     this.deinit();
 }

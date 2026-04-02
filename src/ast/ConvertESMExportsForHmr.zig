@@ -6,6 +6,10 @@ imports_seen: bun.StringArrayHashMapUnmanaged(ImportRef) = .{},
 export_star_props: std.ArrayListUnmanaged(G.Property) = .{},
 export_props: std.ArrayListUnmanaged(G.Property) = .{},
 stmts: std.ArrayListUnmanaged(Stmt) = .{},
+/// Early assignments for hoisted function declarations: `hmr.exports.name = name;`
+/// These run at the start of the factory so cyclic imports can see hoisted functions
+/// before defineExports runs at the end.
+hoisted_export_stmts: std.ArrayListUnmanaged(Stmt) = .{},
 
 const ImportRef = struct {
     /// Index into ConvertESMExportsForHmr.stmts
@@ -181,13 +185,36 @@ pub fn convertStmt(ctx: *ConvertESMExportsForHmr, p: anytype, stmt: Stmt) !void 
 
             st.func.flags.remove(.is_export);
 
+            const func_ref = st.func.name.?.ref.?;
             try ctx.visitRefToExport(
                 p,
-                st.func.name.?.ref.?,
+                func_ref,
                 null,
                 stmt.loc,
                 false,
             );
+
+            // Emit early `hmr.exports.name = name;` so that cyclic imports
+            // can see hoisted function declarations before defineExports runs.
+            // JS hoists function declarations within the factory scope, so the
+            // reference is valid even at the first statement.
+            const func_symbol = p.symbols.items[func_ref.inner_index];
+            if (!func_symbol.has_been_assigned_to) {
+                try ctx.hoisted_export_stmts.append(p.allocator, Stmt.alloc(S.SExpr, .{
+                    .value = Expr.assign(
+                        Expr.init(E.Dot, .{
+                            .target = Expr.init(E.Dot, .{
+                                .target = Expr.initIdentifier(p.hmr_api_ref, logger.Loc.Empty),
+                                .name = "exports",
+                                .name_loc = logger.Loc.Empty,
+                            }, logger.Loc.Empty),
+                            .name = func_symbol.original_name,
+                            .name_loc = stmt.loc,
+                        }, logger.Loc.Empty),
+                        Expr.initIdentifier(func_ref, stmt.loc),
+                    ),
+                }, stmt.loc));
+            }
 
             break :stmt stmt;
         },
@@ -517,6 +544,40 @@ pub fn finalize(ctx: *ConvertESMExportsForHmr, p: anytype, all_parts: []js_ast.P
         p.import_records_for_current_part.items,
     );
     try ctx.last_part.declared_symbols.appendList(p.allocator, p.declared_symbols);
+
+    // Prepend hoisted function export assignments (if any) followed by
+    // `if (hmr._hoistOnly) return;`. The guard is ALWAYS emitted so the
+    // runtime can safely call the factory in "hoist-only mode" on any module.
+    // Skip for lazy export modules (JSON/TOML/text) — the printer expects
+    // s_lazy_export as the first statement, and they don't have ESM exports.
+    {
+        const has_lazy_export = for (ctx.stmts.items) |s| {
+            if (s.data == .s_lazy_export) break true;
+        } else false;
+
+        if (!has_lazy_export) {
+            const hoisted_count = ctx.hoisted_export_stmts.items.len;
+            const prepend_len = hoisted_count + 1;
+            try ctx.stmts.ensureUnusedCapacity(p.allocator, prepend_len);
+            const len = ctx.stmts.items.len;
+            ctx.stmts.items.len += prepend_len;
+            bun.copy(Stmt, ctx.stmts.items[prepend_len..], ctx.stmts.items[0..len]);
+            if (hoisted_count > 0) {
+                @memcpy(ctx.stmts.items[0..hoisted_count], ctx.hoisted_export_stmts.items);
+            }
+
+            // `if (hmr._hoistOnly) return;`
+            ctx.stmts.items[hoisted_count] = Stmt.alloc(S.If, .{
+                .test_ = Expr.init(E.Dot, .{
+                    .target = Expr.initIdentifier(p.hmr_api_ref, logger.Loc.Empty),
+                    .name = "_hoistOnly",
+                    .name_loc = logger.Loc.Empty,
+                }, logger.Loc.Empty),
+                .yes = Stmt.alloc(S.Return, .{ .value = null }, logger.Loc.Empty),
+                .no = null,
+            }, logger.Loc.Empty);
+        }
+    }
 
     ctx.last_part.stmts = ctx.stmts.items;
     ctx.last_part.tag = .none;

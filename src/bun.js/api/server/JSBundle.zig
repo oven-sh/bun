@@ -322,12 +322,6 @@ pub fn updateDevEntrypoint(this: *JSBundle, payload: []const u8, _: *bun.bake.De
     if (this.actual_entrypoint) |old| bun.default_allocator.free(old);
     this.actual_entrypoint = bun.handleOom(bun.default_allocator.dupe(u8, ep));
 
-    // Invalidate cached values so they get regenerated
-    this.files_value.deinit();
-    this.files_value = .empty;
-    this.entrypoint_value.deinit();
-    this.entrypoint_value = .empty;
-
     const globalThis = this.global;
     var blob: jsc.WebCore.Blob = undefined;
     var file_size: u64 = 0;
@@ -340,21 +334,29 @@ pub fn updateDevEntrypoint(this: *JSBundle, payload: []const u8, _: *bun.bake.De
         blob = jsc.WebCore.Blob.initEmpty(globalThis);
     }
 
-    const bundle_file = BundleFile.init(
-        ep,
-        .@"entry-point",
-        content_type,
-        file_size,
-        blob,
-    );
-    const bundle_file_js = BundleFile.toJS(bundle_file, globalThis);
-    this.entrypoint_value = .create(bundle_file_js, globalThis);
+    if (this.entrypoint_value.get()) |existing_js| {
+        // Reuse existing BundleFile — update blob in-place so JS references stay stable
+        if (BundleFile.fromJSDirect(existing_js)) |existing| {
+            existing.updateBlob(blob, file_size);
+        }
+    } else {
+        // First build — create new BundleFile and array objects
+        const bundle_file = BundleFile.init(
+            ep,
+            .@"entry-point",
+            content_type,
+            file_size,
+            blob,
+        );
+        const bundle_file_js = BundleFile.toJS(bundle_file, globalThis);
+        this.entrypoint_value = .create(bundle_file_js, globalThis);
 
-    // files = [entrypoint]
-    if (jsc.JSValue.createEmptyArray(globalThis, 1)) |arr| {
-        arr.putIndex(globalThis, 0, bundle_file_js) catch {};
-        this.files_value = .create(arr, globalThis);
-    } else |_| {}
+        // files = [entrypoint]
+        if (jsc.JSValue.createEmptyArray(globalThis, 1)) |arr| {
+            arr.putIndex(globalThis, 0, bundle_file_js) catch {};
+            this.files_value = .create(arr, globalThis);
+        } else |_| {}
+    }
 
     this.build_state = .complete;
 }

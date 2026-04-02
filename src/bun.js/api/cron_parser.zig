@@ -30,6 +30,17 @@ pub const CronExpression = struct {
         TooFewFields,
     };
 
+    pub fn errorMessage(e: Error) []const u8 {
+        return switch (e) {
+            error.TooFewFields => "Invalid cron expression: expected 5 space-separated fields (minute hour day month weekday)",
+            error.TooManyFields => "Invalid cron expression: too many fields. Bun.cron uses 5 fields (minute hour day month weekday) — seconds are not supported",
+            error.InvalidStep => "Invalid cron expression: step value must be a positive integer",
+            error.InvalidRange => "Invalid cron expression: range must be ascending (use 'a,b' or 'a-max,0-b' for wrap-around)",
+            error.InvalidNumber => "Invalid cron expression: value out of range for field",
+            error.InvalidField => "Invalid cron expression: unrecognized field syntax",
+        };
+    }
+
     /// Parse a 5-field cron expression or predefined nickname into a CronExpression.
     pub fn parse(input: []const u8) Error!CronExpression {
         const expr = bun.strings.trim(input, " \t");
@@ -85,27 +96,16 @@ pub const CronExpression = struct {
 
     /// Compute the next time (in ms since epoch) that matches this expression
     /// in the system's local time zone, starting from `from_ms`. Returns null
-    /// if no match found within ~4 years.
+    /// if no match found within 8 years.
     pub fn next(self: CronExpression, globalObject: *jsc.JSGlobalObject, from_ms: f64) bun.JSError!?f64 {
         var dt = globalObject.msToGregorianDateTime(from_ms);
+        const start_year = dt.year;
 
-        // Advance by 1 minute, zero out seconds
         dt.minute += 1;
-        if (dt.minute > 59) {
-            dt.minute = 0;
-            dt.hour += 1;
-            if (dt.hour > 23) {
-                dt.hour = 0;
-                dt.day += 1;
-            }
-        }
         dt.second = 0;
 
-        // Loop up to ~4 years to prevent infinite iteration
         var date_dirty = true;
-        var iterations: u32 = 0;
-        const max_iterations: u32 = 1500 * 24 * 60;
-        while (iterations < max_iterations) : (iterations += 1) {
+        while (true) {
             // Carry hour/minute overflow explicitly so the candidate hour:minute
             // is checked against the bitfields *before* DST shifts it (croner
             // semantics: gap times fire shifted forward, same day).
@@ -130,6 +130,9 @@ pub const CronExpression = struct {
                 dt.day = n.day;
                 dt.weekday = n.weekday;
                 date_dirty = false;
+                // Impossible day/month combos (Feb 30, Apr 31) overflow to a
+                // non-matching month and loop forever; bail after 8 years.
+                if (dt.year - start_year > 8) return null;
             }
 
             // Check month
@@ -181,8 +184,6 @@ pub const CronExpression = struct {
             }
             return result;
         }
-
-        return null;
     }
 };
 

@@ -605,6 +605,7 @@ pub fn deinit(this: *RareData) void {
     }
 
     this.cleanup_hooks.clearAndFree(bun.default_allocator);
+    bun.debugAssert(this.cron_jobs.items.len == 0);
     this.cron_jobs.deinit(bun.default_allocator);
     this.path_buf.deinit();
 

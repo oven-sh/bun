@@ -162,19 +162,96 @@ describe.concurrent("Bun.cron (in-process) — firing", () => {
     expect(thisInCallback).toBe(job);
   }, 70_000);
 
-  test("async callback delays next scheduling", async () => {
+  test("async callback: stop() during await prevents reschedule", async () => {
+    let fires = 0;
     const handler = Promise.withResolvers<void>();
     const fire = Promise.withResolvers<void>();
 
     using job = Bun.cron("* * * * *", async () => {
+      fires++;
       fire.resolve();
       await handler.promise;
     });
 
     await fire.promise;
+    expect(fires).toBe(1);
     job.stop();
     handler.resolve();
-    await Bun.sleep(10);
+    await Promise.resolve();
+    expect(fires).toBe(1);
+  }, 70_000);
+
+  test("unreferenced running job survives GC", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        Bun.cron("* * * * *", () => { console.log("fired"); process.exit(0); });
+        Bun.gc(true);
+        Bun.gc(true);
+      `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, _stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toBe("fired");
+    expect(exitCode).toBe(0);
+  }, 70_000);
+
+  test("ref() after stop() does not keep process alive", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const job = Bun.cron("* * * * *", () => {});
+        job.stop();
+        job.ref();
+        console.log("done");
+      `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, _stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toBe("done");
+    expect(exitCode).toBe(0);
+  });
+
+  test("worker terminate while async callback pending releases cleanly", async () => {
+    using dir = tempDir("cron-worker", {
+      "worker.ts": `
+        let fired = false;
+        Bun.cron("* * * * *", async () => {
+          fired = true;
+          self.postMessage("fired");
+          await new Promise(() => {}); // never settles
+        });
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const w = new Worker("./worker.ts");
+        w.onmessage = () => {
+          w.terminate();
+          Bun.gc(true);
+          console.log("ok");
+          process.exit(0);
+        };
+      `,
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, _stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toBe("ok");
+    expect(exitCode).toBe(0);
   }, 70_000);
 
   test("sync throw in callback emits uncaughtException", async () => {

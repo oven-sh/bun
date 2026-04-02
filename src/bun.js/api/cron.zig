@@ -445,8 +445,8 @@ pub const CronRegisterJob = struct {
             return globalObject.throwInvalidArguments("Cron title must contain only alphanumeric characters, hyphens, and underscores", .{});
 
         // Parse and normalize cron schedule to numeric form for crontab/launchd/schtasks
-        const parsed = CronExpression.parse(schedule_slice.slice()) catch
-            return globalObject.throwInvalidArguments("Invalid cron expression. Expected 5 space-separated fields (minute hour day month weekday), each being *, a number, or a range/step pattern", .{});
+        const parsed = CronExpression.parse(schedule_slice.slice()) catch |e|
+            return globalObject.throwInvalidArguments("{s}", .{CronExpression.errorMessage(e)});
         var fmt_buf: [512]u8 = undefined;
         const normalized_schedule = parsed.formatNumeric(&fmt_buf);
 
@@ -835,6 +835,9 @@ pub const CronJob = struct {
     poll_ref: bun.Async.KeepAlive = .{},
     this_value: jsc.JSRef = jsc.JSRef.empty(),
     stopped: bool = false,
+    /// Last computed wall-clock fire target (ms epoch); floors the next search
+    /// so monotonic-vs-wall skew can't recompute the same minute.
+    last_next_ms: f64 = 0,
     /// True while a ref() is held across an in-flight callback promise.
     /// Released exactly once by either onPromiseResolve/Reject or
     /// clearAllForVM(.teardown).
@@ -924,7 +927,12 @@ pub const CronJob = struct {
         // Cron occurrences are calendar-based (real epoch); the timer heap is
         // monotonic. Anchor both to real time so fake timers don't half-apply.
         const now_ms: f64 = @floatFromInt(std.time.milliTimestamp());
-        const next_ms = (this.parsed.next(this.global, now_ms) catch return null) orelse return null;
+        // The monotonic timer can fire fractionally before the wall-clock target
+        // (clock skew / NTP step); floor next() at the prior target so it can't
+        // recompute the same minute and double-fire.
+        const from_ms = @max(now_ms, this.last_next_ms);
+        const next_ms = (this.parsed.next(this.global, from_ms) catch return null) orelse return null;
+        this.last_next_ms = next_ms;
         const delta: i64 = @intFromFloat(@max(1.0, next_ms - now_ms));
         return bun.timespec.msFromNow(.force_real_time, delta);
     }
@@ -938,8 +946,8 @@ pub const CronJob = struct {
 
     pub fn onTimerFire(this: *CronJob, vm: *jsc.VirtualMachine) void {
         this.event_loop_timer.state = .FIRED;
-        // stop() inside the callback downgrades this_value; without this
-        // ref() a GC could finalize and destroy `this` mid-callback.
+        // scheduleNext → finishDeferredStop downgrades this_value and derefs the
+        // list entry; bracket-ref so that path can't drop the last ref mid-function.
         this.ref();
         defer this.deref();
 
@@ -1018,7 +1026,7 @@ pub const CronJob = struct {
         var this: *CronJob = args[args.len - 1].asPromisePtr(CronJob);
         defer this.releasePendingRef();
         const vm = this.global.bunVM();
-        const err = if (args.len > 0) args[0] else .js_undefined;
+        const err = args[0];
         var promise_value: jsc.JSValue = .js_undefined;
         if (this.this_value.tryGet()) |js_this| {
             promise_value = js.pendingPromiseGetCached(js_this) orelse .js_undefined;
@@ -1057,8 +1065,8 @@ pub const CronJob = struct {
         const schedule_slice = schedule_str.toUTF8(bun.default_allocator);
         defer schedule_slice.deinit();
 
-        const parsed = CronExpression.parse(schedule_slice.slice()) catch
-            return globalObject.throwInvalidArguments("Invalid cron expression. Expected 5 space-separated fields (minute hour day month weekday), each being *, a number, or a range/step pattern", .{});
+        const parsed = CronExpression.parse(schedule_slice.slice()) catch |e|
+            return globalObject.throwInvalidArguments("{s}", .{CronExpression.errorMessage(e)});
 
         const vm = globalObject.bunVM();
 
@@ -1112,8 +1120,8 @@ pub fn cronParse(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
     const expr_slice = expr_str.toUTF8(bun.default_allocator);
     defer expr_slice.deinit();
 
-    const parsed = CronExpression.parse(expr_slice.slice()) catch
-        return globalObject.throwInvalidArguments("Invalid cron expression. Expected 5 space-separated fields (minute hour day month weekday), each being *, a number, or a range/step pattern", .{});
+    const parsed = CronExpression.parse(expr_slice.slice()) catch |e|
+        return globalObject.throwInvalidArguments("{s}", .{CronExpression.errorMessage(e)});
 
     const from_ms: f64 = if (args[1] != .zero and !args[1].isUndefined() and args[1] != .null) blk: {
         if (args[1].isNumber()) {

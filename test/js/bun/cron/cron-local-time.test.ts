@@ -91,28 +91,32 @@ describe.concurrent("Bun.cron.parse — DST transitions", () => {
     // Next valid 01:30 is the following day (EST): 2025-11-03 01:30 EST = 06:30 UTC.
     expect(next).toBe("2025-11-03T06:30:00.000Z");
   });
-});
 
-describe.concurrent("Bun.cron(schedule, handler) — local time zone", () => {
-  test("registering 0 9 * * * computes the same next-fire as Bun.cron.parse in local time", async () => {
-    // The in-process scheduler uses the same next() — we verify via parse() since
-    // waiting for an actual fire would take up to 24 hours.
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `
-        const expr = "0 9 * * *";
-        const parsed = Bun.cron.parse(expr).getTime();
-        // Register and immediately stop; the deadline was computed from the same next().
-        using job = Bun.cron(expr, () => {});
-        process.stdout.write(String(parsed > Date.now()));
-      `,
-      ],
-      env: { ...bunEnv, TZ: "America/Los_Angeles" },
-    });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    expect(stdout).toBe("true");
-    expect(exitCode).toBe(0);
+  test("fall-back: wildcard hour skips the repeated hour (croner semantics)", async () => {
+    // After the first 1:00 (05:00Z), next() returns 2:00 (07:00Z), NOT the second 1:00 (06:00Z).
+    // Matches croner; cron-parser and Vixie fire through the repeated hour.
+    const next = await parseInTZ("America/New_York", "0 * * * *", "2025-11-02T05:00:01Z");
+    expect(next).toBe("2025-11-02T07:00:00.000Z");
+  });
+
+  test("spring-forward: only the first match in the gap fires shifted (croner semantics)", async () => {
+    // "*/15 2 * * *" has 4 occurrences in the missing hour. Bun fires the first
+    // shifted to 3:00, then skips to next day. cron-parser shifts all four.
+    const first = await parseInTZ("America/New_York", "*/15 2 * * *", "2025-03-09T06:59:00Z");
+    expect(first).toBe("2025-03-09T07:00:00.000Z"); // 03:00 EDT
+    const second = await parseInTZ("America/New_York", "*/15 2 * * *", "2025-03-09T07:00:00Z");
+    expect(second).toBe("2025-03-10T06:00:00.000Z"); // next day 02:00 EDT
+  });
+
+  test("Lord Howe: 30-minute spring-forward gap shifts by 30 min", async () => {
+    // Australia/Lord_Howe 2025-10-05 02:00→02:30. "15 2 * * *" → 02:45 LHDT.
+    const next = await parseInTZ("Australia/Lord_Howe", "15 2 * * *", "2025-10-04T14:30:00Z");
+    expect(next).toBe("2025-10-04T15:45:00.000Z");
+  });
+
+  test("Santiago: midnight spring-forward gap shifts to 01:00 same day", async () => {
+    // America/Santiago 2025-09-07 00:00→01:00. "0 0 * * *" → 01:00 CLST.
+    const next = await parseInTZ("America/Santiago", "0 0 * * *", "2025-09-06T23:00:00-04:00");
+    expect(next).toBe("2025-09-07T04:00:00.000Z");
   });
 });

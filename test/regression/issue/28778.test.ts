@@ -1,9 +1,10 @@
+// https://github.com/oven-sh/bun/issues/28778
 import { describe, expect, test } from "bun:test";
 import { existsSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
-describe("bun add without package.json", () => {
+describe.concurrent("bun add without package.json", () => {
   test("warns when creating package.json in non-TTY mode", async () => {
     using dir = tempDir("bun-add-no-pkg", {
       ".gitkeep": "",
@@ -20,7 +21,7 @@ describe("bun add without package.json", () => {
 
     proc.stdin.end();
 
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
     // Should warn about missing package.json
     expect(stderr).toContain("no package.json found, creating one in");
@@ -48,7 +49,7 @@ describe("bun add without package.json", () => {
 
     proc.stdin.end();
 
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
     // Should warn about missing package.json
     expect(stderr).toContain("no package.json found, creating one in");

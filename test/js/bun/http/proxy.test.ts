@@ -1080,4 +1080,92 @@ describe.concurrent("NO_PROXY with explicit proxy option", () => {
     expect(stdout.trim()).toBe("200");
     expect(exitCode).toBe(0);
   });
+
+  test("S3 ops use runtime process.env.HTTP_PROXY and survive overwrite while in flight", async () => {
+    // Covers two things this PR introduced:
+    //  1) S3's getHttpProxy() observes a runtime process.env.HTTP_PROXY write.
+    //  2) executeSimpleS3Request dupes the env-derived proxy slice — thrashing
+    //     HTTP_PROXY mid-request must not UAF the bytes the HTTP thread reads.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          import net from "node:net";
+
+          // Mock S3 endpoint — only the proxy is supposed to reach this.
+          let endpointHits = 0;
+          using endpoint = Bun.serve({
+            port: 0,
+            fetch(req) {
+              endpointHits++;
+              return new Response("", {
+                headers: { "content-length": "5", "etag": "abc" },
+              });
+            },
+          });
+
+          // Minimal forwarding HTTP proxy. For plain-HTTP proxying the
+          // client sends an absolute-URI request line; we strip it to
+          // origin-form and forward to the endpoint.
+          let proxyHits = 0;
+          const proxy = net.createServer(client => {
+            client.once("data", data => {
+              proxyHits++;
+              const text = data.toString();
+              const firstLine = text.slice(0, text.indexOf("\\r\\n"));
+              const [method, absUrl, ver] = firstLine.split(" ");
+              const u = new URL(absUrl);
+              const upstream = net.connect(+u.port, u.hostname, () => {
+                upstream.write(method + " " + u.pathname + (u.search || "") + " " + ver + "\\r\\n");
+                upstream.write(text.slice(text.indexOf("\\r\\n") + 2));
+                client.pipe(upstream);
+                upstream.pipe(client);
+              });
+              upstream.on("error", () => client.destroy());
+            });
+          });
+          await new Promise(r => proxy.listen(0, "127.0.0.1", r));
+          const proxyUrl = "http://127.0.0.1:" + proxy.address().port;
+
+          process.env.HTTP_PROXY = proxyUrl;
+
+          const stat = Bun.S3Client.stat("key", {
+            accessKeyId: "x",
+            secretAccessKey: "y",
+            bucket: "b",
+            endpoint: endpoint.url.href,
+          });
+
+          // Thrash HTTP_PROXY so the original RefCountedEnvValue is freed
+          // and its bytes reallocated before the HTTP thread reads them.
+          for (let i = 0; i < 64; i++) {
+            process.env.HTTP_PROXY = "http://" + Buffer.alloc(32 + i, "z").toString() + ".invalid:1/";
+          }
+
+          const r = await stat;
+          proxy.close();
+          if (proxyHits === 0) { console.error("proxy never saw the request"); process.exit(1); }
+          if (endpointHits === 0) { console.error("endpoint never saw the request"); process.exit(1); }
+          console.log(r.size);
+          process.exit(0);
+        `,
+      ],
+      env: (() => {
+        const e = { ...bunEnv };
+        delete e.HTTP_PROXY;
+        delete e.http_proxy;
+        delete e.NO_PROXY;
+        delete e.no_proxy;
+        return e;
+      })(),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (exitCode !== 0) console.error("stderr:", stderr);
+    expect(stdout.trim()).toBe("5");
+    expect(exitCode).toBe(0);
+  });
 });

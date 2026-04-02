@@ -7592,7 +7592,9 @@ declare module "bun" {
      */
     remove(title: string): Promise<void>;
     /**
-     * Parse a cron expression and return the next matching UTC Date.
+     * Parse a cron expression and return the next matching `Date` in the
+     * system's local time zone — the same way crontab, launchd, and Windows
+     * Task Scheduler interpret schedules. Set `TZ=UTC` to use UTC.
      *
      * Supports the same syntax as {@link Bun.cron} — 5-field expressions, named
      * days/months, and predefined nicknames like `@daily`.
@@ -7601,23 +7603,24 @@ declare module "bun" {
      * matching uses OR logic per [POSIX cron](https://pubs.opengroup.org/onlinepubs/9699919799/utilities/crontab.html):
      * a date matches if **either** field matches.
      *
+     * DST: schedules in the spring-forward gap fire at the next valid local
+     * minute; schedules in the fall-back duplicated hour fire once (first
+     * occurrence).
+     *
      * @param expression - A cron expression or nickname (e.g. `"0,15,30,45 * * * *"`, `"0 9 * * MON-FRI"`, `"@hourly"`)
      * @param relativeDate - Starting point for the search (defaults to `Date.now()`). Accepts a `Date` or milliseconds since epoch.
-     * @returns The next `Date` matching the expression (UTC), or `null` if no match exists within ~4 years (e.g. `"0 0 30 2 *"` — Feb 30 never occurs)
+     * @returns The next `Date` matching the expression in local time, or `null` if no match exists within ~4 years (e.g. `"0 0 30 2 *"` — Feb 30 never occurs)
      * @throws If the expression is invalid or `relativeDate` is `NaN`/`Infinity`
      *
      * @example
      * ```ts
-     * // Next weekday at 09:30 UTC
+     * // Next weekday at 09:30 local time
      * const next = Bun.cron.parse("30 9 * * MON-FRI");
      *
      * // Chain calls to get a sequence
      * const from = new Date();
      * const first = Bun.cron.parse("@hourly", from);
      * const second = first ? Bun.cron.parse("@hourly", first) : null;
-     *
-     * // With a specific starting point
-     * const nextJan1 = Bun.cron.parse("0 0 1 JAN *", Date.UTC(2025, 0, 1));
      * ```
      */
     parse(expression: CronWithAutocomplete, relativeDate?: Date | number): Date | null;

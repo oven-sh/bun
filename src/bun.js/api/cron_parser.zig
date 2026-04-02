@@ -83,10 +83,11 @@ pub const CronExpression = struct {
         return stream.getWritten();
     }
 
-    /// Compute the next UTC time (in ms since epoch) that matches this expression,
-    /// starting from `from_ms`. Returns null if no match found within ~4 years.
+    /// Compute the next time (in ms since epoch) that matches this expression
+    /// in the system's local time zone, starting from `from_ms`. Returns null
+    /// if no match found within ~4 years.
     pub fn next(self: CronExpression, globalObject: *jsc.JSGlobalObject, from_ms: f64) bun.JSError!?f64 {
-        var dt = globalObject.msToGregorianDateTimeUTC(from_ms);
+        var dt = globalObject.msToGregorianDateTime(from_ms);
 
         // Advance by 1 minute, zero out seconds
         dt.minute += 1;
@@ -104,10 +105,10 @@ pub const CronExpression = struct {
         var iterations: u32 = 0;
         const max_iterations: u32 = 1500 * 24 * 60;
         while (iterations < max_iterations) : (iterations += 1) {
-            // Normalize via round-trip to handle overflows and compute weekday
+            // Normalize via round-trip to handle overflows, DST gaps, and compute weekday
             {
-                const ms = try globalObject.gregorianDateTimeToMSUTC(dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second, 0);
-                dt = globalObject.msToGregorianDateTimeUTC(ms);
+                const ms = try globalObject.gregorianDateTimeToMS(dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second, 0);
+                dt = globalObject.msToGregorianDateTime(ms);
             }
 
             // Check month
@@ -147,7 +148,7 @@ pub const CronExpression = struct {
             }
 
             // All fields match
-            return try globalObject.gregorianDateTimeToMSUTC(dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second, 0);
+            return try globalObject.gregorianDateTimeToMS(dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second, 0);
         }
 
         return null;

@@ -49,6 +49,13 @@ pub const JSGlobalObject = opaque {
         return dt;
     }
 
+    pub fn msToGregorianDateTime(this: *jsc.JSGlobalObject, ms: f64) GregorianDateTime {
+        jsc.markBinding(@src());
+        var dt: GregorianDateTime = undefined;
+        bun.cpp.Bun__msToGregorianDateTime(this, ms, &dt.year, &dt.month, &dt.day, &dt.hour, &dt.minute, &dt.second, &dt.weekday);
+        return dt;
+    }
+
     pub fn throwTODO(this: *JSGlobalObject, msg: []const u8) bun.JSError {
         const err = this.createErrorInstance("{s}", .{msg});
         if (err == .zero) {

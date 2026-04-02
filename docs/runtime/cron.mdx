@@ -18,9 +18,8 @@ Bun.cron("0 * * * *", async () => {
 **Parse a cron expression to find the next matching time:**
 
 ```ts
-// Next weekday at 9:30 AM UTC
+// Next weekday at 9:30 AM local time
 const next = Bun.cron.parse("30 9 * * MON-FRI");
-console.log(next); // => 2025-01-20T09:30:00.000Z
 ```
 
 **Register an OS-level cron job that runs a script on a schedule:**
@@ -33,7 +32,7 @@ await Bun.cron("./worker.ts", "30 2 * * MON", "weekly-report");
 
 ## `Bun.cron.parse()`
 
-Parse a cron expression and return the next matching UTC `Date`.
+Parse a cron expression and return the next matching `Date` in the system's local time zone.
 
 ```ts
 const next = Bun.cron.parse("*/15 * * * *");
@@ -49,20 +48,18 @@ console.log(next); // => next quarter-hour boundary
 
 ### Returns
 
-`Date | null` — the next matching UTC time, or `null` if no match exists within ~4 years (e.g. February 30th).
+`Date | null` — the next matching time, or `null` if no match exists within ~4 years (e.g. February 30th).
 
 ### Chaining calls
 
 Call `parse()` repeatedly to get a sequence of upcoming times:
 
 ```ts
-const from = Date.UTC(2025, 0, 15, 10, 0, 0);
-
-const first = Bun.cron.parse("0 * * * *", from);
-console.log(first); // => 2025-01-15T11:00:00.000Z
-
-const second = Bun.cron.parse("0 * * * *", first);
-console.log(second); // => 2025-01-15T12:00:00.000Z
+let cursor: Date | number = Date.now();
+for (let i = 0; i < 3; i++) {
+  cursor = Bun.cron.parse("0 * * * *", cursor)!;
+  console.log(cursor.toLocaleString()); // next three top-of-hour boundaries
+}
 ```
 
 ---
@@ -116,8 +113,19 @@ Both `0` and `7` mean Sunday in the weekday field.
 
 ```ts
 const next = Bun.cron.parse("@daily");
-console.log(next); // => next midnight UTC
+console.log(next); // => next local midnight
 ```
+
+### Time zone
+
+Schedules are interpreted in the system's **local time zone** — the same way crontab, launchd, and Windows Task Scheduler read them. The OS-level form and the in-process callback form fire at the same wall-clock time.
+
+To use UTC, set `TZ=UTC` in the environment.
+
+DST transitions follow the same rules as `new Date(year, month, day, hour, minute)`:
+
+- **Spring-forward** — schedules in the missing hour fire at the next valid local minute.
+- **Fall-back** — schedules in the duplicated hour fire once, at the first occurrence.
 
 ### Day-of-month and day-of-week interaction
 

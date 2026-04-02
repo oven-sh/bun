@@ -5800,6 +5800,21 @@ extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__msToGregorianDateTimeUTC(JSC::JSGlo
     *weekday = dt.weekDay();
 }
 
+extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__msToGregorianDateTime(JSC::JSGlobalObject* globalObject, double ms,
+    int* year, int* month, int* day, int* hour, int* minute, int* second, int* weekday)
+{
+    auto& vm = JSC::getVM(globalObject);
+    WTF::GregorianDateTime dt;
+    vm.dateCache.msToGregorianDateTime(ms, WTF::TimeType::LocalTime, dt);
+    *year = dt.year();
+    *month = dt.month() + 1;
+    *day = dt.monthDay();
+    *hour = dt.hour();
+    *minute = dt.minute();
+    *second = dt.second();
+    *weekday = dt.weekDay();
+}
+
 extern "C" EncodedJSValue JSC__JSValue__dateInstanceFromNumber(JSC::JSGlobalObject* globalObject, double unixTimestamp)
 {
     auto& vm = JSC::getVM(globalObject);

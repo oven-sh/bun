@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, bunRun, bunRunAsScript, bunTest, isLinux, isWindows, tempDirWithFiles } from "harness";
 import fs from "fs";
+import { bunEnv, bunExe, bunRun, bunRunAsScript, bunTest, isLinux, isWindows, tempDirWithFiles } from "harness";
 import path from "path";
 
 function bunRunWithoutTrim(file: string, env?: Record<string, string>) {
@@ -860,10 +860,7 @@ LARGE3="${"c".repeat(3000)}"
 });
 
 const canUseRunuser =
-  isLinux &&
-  typeof process.getuid === "function" &&
-  process.getuid() === 0 &&
-  !!Bun.which("runuser");
+  isLinux && typeof process.getuid === "function" && process.getuid() === 0 && !!Bun.which("runuser");
 
 test.skipIf(!canUseRunuser)("process.env is preserved when cwd lacks read permission", () => {
   const dir = tempDirWithFiles("env-eacces", {

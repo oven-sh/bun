@@ -180,7 +180,8 @@ pub fn toBufferedValue(this: *ByteBlobLoader, globalThis: *JSGlobalObject, actio
         return blob.toPromise(globalThis, action);
     }
 
-    return .zero;
+    var empty: Blob.Any = .{ .Blob = .{} };
+    return empty.toPromise(globalThis, action);
 }
 
 pub fn memoryCost(this: *const ByteBlobLoader) usize {

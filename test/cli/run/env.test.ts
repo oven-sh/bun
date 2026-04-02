@@ -1,5 +1,6 @@
 import { beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, bunRun, bunRunAsScript, bunTest, isWindows, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, bunRun, bunRunAsScript, bunTest, isLinux, isWindows, tempDirWithFiles } from "harness";
+import fs from "fs";
 import path from "path";
 
 function bunRunWithoutTrim(file: string, env?: Record<string, string>) {
@@ -858,10 +859,13 @@ LARGE3="${"c".repeat(3000)}"
   });
 });
 
-import fs from "fs";
-import { isPosix } from "harness";
+const canUseRunuser =
+  isLinux &&
+  typeof process.getuid === "function" &&
+  process.getuid() === 0 &&
+  !!Bun.which("runuser");
 
-test.skipIf(!isPosix)("process.env is preserved when cwd lacks read permission", () => {
+test.skipIf(!canUseRunuser)("process.env is preserved when cwd lacks read permission", () => {
   const dir = tempDirWithFiles("env-eacces", {
     // Script lives in the readable root; the cwd will be a separate
     // execute-only directory.

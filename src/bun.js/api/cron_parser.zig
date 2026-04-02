@@ -128,8 +128,11 @@ pub const CronExpression = struct {
         dt.minute += 1;
         dt.second = 0;
 
+        // dt.year only changes inside the date-normalize block (gated on
+        // date_dirty), but hour overflow forces date_dirty within ≤1440
+        // iterations, so this check is reached and the loop is bounded.
         var date_dirty = true;
-        while (true) {
+        while (dt.year - start_year <= 8) {
             // Carry hour/minute overflow explicitly so the candidate hour:minute
             // is checked against the bitfields *before* DST shifts it (croner
             // semantics: gap times fire shifted forward, same day).
@@ -154,9 +157,6 @@ pub const CronExpression = struct {
                 dt.day = n.day;
                 dt.weekday = n.weekday;
                 date_dirty = false;
-                // Impossible day/month combos (Feb 30, Apr 31) overflow to a
-                // non-matching month and loop forever; bail after 8 years.
-                if (dt.year - start_year > 8) return null;
             }
 
             // Check month
@@ -211,6 +211,7 @@ pub const CronExpression = struct {
             }
             return result;
         }
+        return null;
     }
 };
 

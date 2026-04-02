@@ -660,45 +660,111 @@ pub fn visibleCodepointWidthType(comptime T: type, cp: T, ambiguousAsWide: bool)
 }
 
 pub const visible = struct {
+    // Returns a 16-bit bitmask of which lanes in `chunk` are printable Latin-1
+    // (i.e. not C0 control, not DEL/C1, not soft hyphen). Used by the unrolled
+    // SIMD width loop — popCount the bitmask to get the printable count.
+    fn printableMaskLatin1(chunk: @Vector(16, u8)) u16 {
+        const lo: @Vector(16, u8) = @splat(0x20);
+        const c1_lo: @Vector(16, u8) = @splat(0x7F);
+        const c1_hi: @Vector(16, u8) = @splat(0x9F);
+        const ad: @Vector(16, u8) = @splat(0xAD);
+
+        const ge_20 = chunk >= lo;
+        const not_c1 = (chunk < c1_lo) | (chunk > c1_hi);
+        const not_ad = chunk != ad;
+        const printable = @select(bool, ge_20, not_c1, @as(@Vector(16, bool), @splat(false))) &
+            not_ad;
+        return @bitCast(@as(@Vector(16, u1), @bitCast(printable)));
+    }
+
     // Ref: https://cs.stanford.edu/people/miles/iso8859.html
     fn visibleLatin1Width(input_: []const u8) usize {
         var length: usize = 0;
-        var input = input_;
-        const input_end_ptr = input.ptr + input.len - (input.len % 16);
-        var input_ptr = input.ptr;
-        while (input_ptr != input_end_ptr) {
-            const input_chunk: [16]u8 = input_ptr[0..16].*;
-            const sums: @Vector(16, u8) = [16]u8{
-                visibleLatin1WidthScalar(input_chunk[0]),
-                visibleLatin1WidthScalar(input_chunk[1]),
-                visibleLatin1WidthScalar(input_chunk[2]),
-                visibleLatin1WidthScalar(input_chunk[3]),
-                visibleLatin1WidthScalar(input_chunk[4]),
-                visibleLatin1WidthScalar(input_chunk[5]),
-                visibleLatin1WidthScalar(input_chunk[6]),
-                visibleLatin1WidthScalar(input_chunk[7]),
-                visibleLatin1WidthScalar(input_chunk[8]),
-                visibleLatin1WidthScalar(input_chunk[9]),
-                visibleLatin1WidthScalar(input_chunk[10]),
-                visibleLatin1WidthScalar(input_chunk[11]),
-                visibleLatin1WidthScalar(input_chunk[12]),
-                visibleLatin1WidthScalar(input_chunk[13]),
-                visibleLatin1WidthScalar(input_chunk[14]),
-                visibleLatin1WidthScalar(input_chunk[15]),
-            };
-            length += @reduce(.Add, sums);
-            input_ptr += 16;
-        }
-        input.len %= 16;
-        input.ptr = input_ptr;
+        var input_ptr = input_.ptr;
+        const input_end = input_.ptr + input_.len;
 
-        for (input) |byte| length += visibleLatin1WidthScalar(byte);
+        // 4x prologue: process 64 bytes per iteration. Each per-chunk popcount
+        // is independent and pipelines, only summing into the scalar accumulator
+        // every 64 bytes — amortizes the addv→fmov hazard that caps throughput
+        // on the no-control-char fast path.
+        while (@intFromPtr(input_end) - @intFromPtr(input_ptr) >= 64) : (input_ptr += 64) {
+            const c0: @Vector(16, u8) = input_ptr[0..16].*;
+            const c1: @Vector(16, u8) = input_ptr[16..32].*;
+            const c2: @Vector(16, u8) = input_ptr[32..48].*;
+            const c3: @Vector(16, u8) = input_ptr[48..64].*;
+            length += @as(usize, @popCount(printableMaskLatin1(c0))) +
+                @as(usize, @popCount(printableMaskLatin1(c1))) +
+                @as(usize, @popCount(printableMaskLatin1(c2))) +
+                @as(usize, @popCount(printableMaskLatin1(c3)));
+        }
+
+        // 1x SIMD tail.
+        while (@intFromPtr(input_end) - @intFromPtr(input_ptr) >= 16) : (input_ptr += 16) {
+            const chunk: @Vector(16, u8) = input_ptr[0..16].*;
+            length += @popCount(printableMaskLatin1(chunk));
+        }
+
+        // Scalar tail.
+        while (input_ptr != input_end) : (input_ptr += 1) {
+            length += visibleLatin1WidthScalar(input_ptr[0]);
+        }
         return length;
     }
 
     fn visibleLatin1WidthScalar(c: u8) u1 {
         // Zero-width: control chars (0x00-0x1F, 0x7F-0x9F) and soft hyphen (0xAD)
         return if ((c >= 127 and c <= 159) or c < 32 or c == 0xAD) 0 else 1;
+    }
+
+    // SIMD scan for the first byte in the inclusive range [Lo, Hi]. Returns
+    // null if not found. Used to find the CSI final byte (0x40-0x7E). Same
+    // wrapping-subtract trick as the C++ ANSI helpers:
+    //   c in [Lo, Hi]  <=>  (c - Lo) <= (Hi - Lo) unsigned
+    fn scanByteInRange(comptime Lo: u8, comptime Hi: u8, slice: []const u8) ?usize {
+        comptime std.debug.assert(Lo <= Hi);
+        var i: usize = 0;
+        const stride = 16;
+        const lo: @Vector(stride, u8) = @splat(Lo);
+        const range: @Vector(stride, u8) = @splat(Hi - Lo);
+
+        while (slice.len - i >= stride) : (i += stride) {
+            const chunk: @Vector(stride, u8) = slice[i..][0..stride].*;
+            const shifted = chunk -% lo;
+            const in_range = shifted <= range;
+            const mask: u16 = @bitCast(@as(@Vector(stride, u1), @bitCast(in_range)));
+            if (mask != 0) return i + @ctz(mask);
+        }
+        while (i < slice.len) : (i += 1) {
+            const c = slice[i];
+            if (c -% Lo <= Hi - Lo) return i;
+        }
+        return null;
+    }
+
+    // SIMD scan for the first byte equal to any of `targets`. Returns null if
+    // not found. Used to find OSC terminators (BEL/ESC; the C1 ST 0x9c is
+    // ASCII-incompatible and not handled by Latin-1 anyway).
+    fn scanAnyByte(comptime targets: []const u8, slice: []const u8) ?usize {
+        comptime std.debug.assert(targets.len > 0);
+        var i: usize = 0;
+        const stride = 16;
+
+        while (slice.len - i >= stride) : (i += stride) {
+            const chunk: @Vector(stride, u8) = slice[i..][0..stride].*;
+            var hit: @Vector(stride, bool) = chunk == @as(@Vector(stride, u8), @splat(targets[0]));
+            inline for (targets[1..]) |t| {
+                hit = hit | (chunk == @as(@Vector(stride, u8), @splat(t)));
+            }
+            const mask: u16 = @bitCast(@as(@Vector(stride, u1), @bitCast(hit)));
+            if (mask != 0) return i + @ctz(mask);
+        }
+        while (i < slice.len) : (i += 1) {
+            const c = slice[i];
+            inline for (targets) |t| {
+                if (c == t) return i;
+            }
+        }
+        return null;
     }
 
     fn visibleLatin1WidthExcludeANSIColors(input_: anytype) usize {
@@ -716,31 +782,35 @@ pub const visible = struct {
 
             if (input[1] == '[') {
                 // CSI sequence: ESC [ <params> <final byte>
-                // Final byte is in range 0x40-0x7E (@ through ~)
+                // Final byte is in range 0x40-0x7E (@ through ~). SIMD-scan
+                // for it instead of stepping byte-by-byte; CSI parameters can
+                // be 1-15+ bytes (e.g. ESC [ 1;31;48;2;255;0;0 m).
                 if (input.len < 3) return length;
                 input = input[2..];
-                while (input.len > 0) {
-                    const c = input[0];
-                    input = input[1..];
-                    // Final byte terminates the sequence
-                    if (c >= 0x40 and c <= 0x7E) break;
+                if (scanByteInRange(0x40, 0x7E, input)) |t| {
+                    input = input[t + 1 ..];
+                } else {
+                    return length;
                 }
             } else if (input[1] == ']') {
-                // OSC sequence: ESC ] ... (BEL or ST)
-                // Find terminator: BEL (0x07) or ST (ESC \)
+                // OSC sequence: ESC ] ... (BEL or ST). The payload is opaque
+                // (titles, hyperlinks, filenames) — SIMD-scan for the
+                // terminators instead of byte-by-byte.
                 input = input[2..];
-                while (input.len > 0) {
-                    if (input[0] == 0x07) {
-                        // BEL terminator
-                        input = input[1..];
-                        break;
-                    } else if (input[0] == 0x1b and input.len > 1 and input[1] == '\\') {
-                        // ST terminator (ESC \)
-                        input = input[2..];
+                while (scanAnyByte(&.{ 0x07, 0x1b }, input)) |t| {
+                    if (input[t] == 0x07) {
+                        // BEL terminator.
+                        input = input[t + 1 ..];
                         break;
                     }
-                    input = input[1..];
-                }
+                    // ESC at offset t — check if next byte is '\\' (ST = ESC \).
+                    if (t + 1 < input.len and input[t + 1] == '\\') {
+                        input = input[t + 2 ..];
+                        break;
+                    }
+                    // Stray ESC inside OSC payload — skip it and keep scanning.
+                    input = input[t + 1 ..];
+                } else input = input[input.len..];
             } else {
                 input = input[1..];
             }
@@ -899,25 +969,47 @@ pub const visible = struct {
         }
     };
 
-    /// Count printable ASCII characters (0x20-0x7E) in a UTF-16 slice using SIMD
+    /// Count printable ASCII characters (0x20-0x7E) in a UTF-16 slice using SIMD.
+    /// 4x-unrolled main loop: process 32 u16s (64 bytes) per iteration, summing
+    /// 4 popcounts. Same hazard amortization as visibleLatin1Width.
     fn countPrintableAscii16(input: []const u16) usize {
         var total: usize = 0;
         var remaining = input;
 
-        // Process 8 u16 values at a time using SIMD
         const vec_len = 8;
+        const low: @Vector(vec_len, u16) = @splat(0x20);
+        const high: @Vector(vec_len, u16) = @splat(0x7F);
+
+        const printableMask = struct {
+            inline fn f(chunk: @Vector(vec_len, u16), l: @Vector(vec_len, u16), h: @Vector(vec_len, u16)) u8 {
+                const ge_low = chunk >= l;
+                const lt_high = chunk < h;
+                const printable = @select(bool, ge_low, lt_high, @as(@Vector(vec_len, bool), @splat(false)));
+                return @bitCast(@as(@Vector(vec_len, u1), @bitCast(printable)));
+            }
+        }.f;
+
+        // 4x prologue: 32 u16s = 64 bytes per iteration.
+        while (remaining.len >= 4 * vec_len) {
+            const c0: @Vector(vec_len, u16) = remaining[0..vec_len].*;
+            const c1: @Vector(vec_len, u16) = remaining[vec_len..][0..vec_len].*;
+            const c2: @Vector(vec_len, u16) = remaining[2 * vec_len ..][0..vec_len].*;
+            const c3: @Vector(vec_len, u16) = remaining[3 * vec_len ..][0..vec_len].*;
+            total += @as(usize, @popCount(printableMask(c0, low, high))) +
+                @as(usize, @popCount(printableMask(c1, low, high))) +
+                @as(usize, @popCount(printableMask(c2, low, high))) +
+                @as(usize, @popCount(printableMask(c3, low, high)));
+            remaining = remaining[4 * vec_len ..];
+        }
+
+        // 1x SIMD tail.
         while (remaining.len >= vec_len) {
             const chunk: @Vector(vec_len, u16) = remaining[0..vec_len].*;
-            const low: @Vector(vec_len, u16) = @splat(0x20);
-            const high: @Vector(vec_len, u16) = @splat(0x7F);
-            const ge_low = chunk >= low;
-            const lt_high = chunk < high;
-            const printable = @select(bool, ge_low, lt_high, @as(@Vector(vec_len, bool), @splat(false)));
-            total += @popCount(@as(u8, @bitCast(printable)));
+            total += @popCount(printableMask(chunk, low, high));
             remaining = remaining[vec_len..];
         }
 
-        // Handle remaining elements
+        // Scalar tail.
         for (remaining) |c| {
             total += @intFromBool(c >= 0x20 and c < 0x7F);
         }

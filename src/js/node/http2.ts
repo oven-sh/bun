@@ -3951,10 +3951,199 @@ function closeAllSessions(server: Http2Server | Http2SecureServer) {
 function connectionListener(socket: Socket) {
   const options = this[bunSocketServerOptions] || {};
   if (socket.alpnProtocol === false || socket.alpnProtocol === "http/1.1") {
-    // TODO: Fallback to HTTP/1.1
-    // if (options.allowHTTP1 === true) {
+    // Handle HTTP/1.1 fallback via ALPN when `allowHTTP1` is enabled.
+    // Note: We cannot use the standard `node:_http_server` ServerResponse here.
+    // Bun's native ServerResponse is heavily optimized and tightly coupled to the
+    // internal `Bun.serve` native handle (`kHandle`). Because this connection is
+    // intercepted from a raw TLSSocket, that native HTTP handle does not exist.
+    // To bridge this gap without crashing the native bindings, we implement a
+    // lightweight, pure-JS HTTP/1.1 header parser and a `FallbackServerResponse`
+    // to manually frame the payload and fulfill the standard `node:http` API contract.
+    if (options.allowHTTP1 === true) {
+      class FallbackServerResponse extends EventEmitter {
+        req: any;
+        socket: Socket;
+        statusCode: number;
+        statusMessage: string;
+        headers: Map<string, [string, any]>;
+        headersSent: boolean;
+        finished: boolean;
+        chunkedEncoding: boolean;
+        constructor(req) {
+          super();
+          this.req = req;
+          this.socket = req.socket;
+          this.statusCode = 200;
+          this.statusMessage = "OK";
+          this.headers = new Map();
+          this.headersSent = false;
+          this.finished = false;
+          this.chunkedEncoding = false;
+        }
+        setHeader(name, value) {
+          this.headers.set(name.toLowerCase(), [name, value]);
+          return this;
+        }
+        getHeader(name) {
+          return this.headers.get(name.toLowerCase())?.[1];
+        }
+        getHeaders() {
+          const out = {};
+          for (const [k, v] of this.headers) out[k] = v[1];
+          return out;
+        }
+        hasHeader(name) {
+          return this.headers.has(name.toLowerCase());
+        }
+        removeHeader(name) {
+          this.headers.delete(name.toLowerCase());
+        }
+        writeHead(statusCode: number, statusMessage?: any, headers?: any) {
+          if (this.headersSent) return this;
+          this.statusCode = statusCode;
+          if (typeof statusMessage === "object") {
+            headers = statusMessage;
+            statusMessage = "OK";
+          }
+          if (statusMessage) this.statusMessage = statusMessage;
+          if (headers) {
+            for (const k in headers) this.setHeader(k, headers[k]);
+          }
+          let head = `HTTP/1.1 ${this.statusCode} ${this.statusMessage}\r\n`;
+          if (!this.headers.has("date")) this.setHeader("Date", new Date().toUTCString());
 
-    // }
+          let hasConnection = this.headers.has("connection");
+          let hasContentLength = this.headers.has("content-length");
+          let hasTransferEncoding = this.headers.has("transfer-encoding");
+
+          if (!hasConnection) {
+            this.setHeader("Connection", "close");
+          }
+          if (!hasContentLength && !hasTransferEncoding) {
+            this.setHeader("Transfer-Encoding", "chunked");
+            this.chunkedEncoding = true;
+          }
+
+          for (const [_, [name, value]] of this.headers) {
+            if (Array.isArray(value)) {
+              for (const v of value) head += `${name}: ${v}\r\n`;
+            } else {
+              head += `${name}: ${value}\r\n`;
+            }
+          }
+          head += "\r\n";
+          this.socket.write(head);
+          this.headersSent = true;
+          return this;
+        }
+        write(chunk: any, encoding?: any, cb?: any) {
+          if (!this.headersSent) this.writeHead(this.statusCode);
+          if (this.chunkedEncoding) {
+            const len = Buffer.byteLength(chunk, encoding);
+            this.socket.write(`${len.toString(16)}\r\n`);
+            this.socket.write(chunk, encoding);
+            return this.socket.write("\r\n", cb);
+          }
+          return this.socket.write(chunk, encoding, cb);
+        }
+        end(chunk?: any, encoding?: any, cb?: any) {
+          if (typeof chunk === "function") {
+            cb = chunk;
+            chunk = null;
+            encoding = null;
+          } else if (typeof encoding === "function") {
+            cb = encoding;
+            encoding = null;
+          }
+          if (chunk) this.write(chunk, encoding);
+          if (!this.headersSent) this.writeHead(this.statusCode);
+          if (this.chunkedEncoding) {
+            this.socket.write("0\r\n\r\n");
+          }
+          this.finished = true;
+          this.socket.end();
+          if (cb) cb();
+          this.emit("finish");
+          return this;
+        }
+      }
+
+      let buffer = Buffer.alloc(0);
+      let parsed = false;
+      let req: any = null;
+
+      socket.on("data", chunk => {
+        if (parsed) {
+          req.push(chunk);
+          return;
+        }
+        buffer = Buffer.concat([buffer, chunk]);
+        const headerEnd = buffer.indexOf("\r\n\r\n");
+        if (headerEnd !== -1) {
+          parsed = true;
+          const headerStr = buffer.subarray(0, headerEnd).toString("utf-8");
+          const lines = headerStr.split("\r\n");
+          const [method, url, version] = lines[0].split(" ");
+
+          const headers = {};
+          const rawHeaders = [];
+          for (let i = 1; i < lines.length; i++) {
+            const colon = lines[i].indexOf(":");
+            if (colon !== -1) {
+              const key = lines[i].slice(0, colon).trim();
+              const val = lines[i].slice(colon + 1).trim();
+              const lowerKey = key.toLowerCase();
+              if (headers[lowerKey]) {
+                headers[lowerKey] += `, ${val}`;
+              } else {
+                headers[lowerKey] = val;
+              }
+              rawHeaders.push(key, val);
+            }
+          }
+
+          req = new Readable({ read() {} });
+          req.method = method;
+          req.url = url;
+
+          const httpVer = version ? version.split("/")[1] : "1.1";
+          req.httpVersion = httpVer;
+
+          const [major, minor] = httpVer.split(".");
+          req.httpVersionMajor = parseInt(major, 10) || 1;
+          req.httpVersionMinor = parseInt(minor, 10) || 1;
+
+          req.headers = headers;
+          req.rawHeaders = rawHeaders;
+          req.socket = socket;
+          req.connection = socket;
+
+          const res = new FallbackServerResponse(req);
+
+          if (headers.expect === "100-continue") {
+            if (this.listenerCount("checkContinue") > 0) {
+              this.emit("checkContinue", req, res);
+            } else {
+              socket.write("HTTP/1.1 100 Continue\r\n\r\n");
+              this.emit("request", req, res);
+            }
+          } else {
+            this.emit("request", req, res);
+          }
+
+          const body = buffer.subarray(headerEnd + 4);
+          if (body.length > 0) req.push(body);
+        }
+      });
+
+      socket.on("end", () => {
+        if (req) req.push(null);
+      });
+
+      socket.resume();
+      return;
+    }
+
     // Let event handler deal with the socket
 
     if (!this.emit("unknownProtocol", socket)) {
@@ -4126,10 +4315,9 @@ class Http2SecureServer extends tls.Server {
   timeout = 0;
   [kSessions] = new SafeSet();
   constructor(options, onRequestHandler) {
-    //TODO: add 'http/1.1' on ALPNProtocols list after allowHTTP1 support
     if (typeof options !== "undefined") {
       if (options && typeof options === "object") {
-        options = { ...options, ALPNProtocols: ["h2"] };
+        options = { ...options, ALPNProtocols: options.allowHTTP1 ? ["h2", "http/1.1"] : ["h2"] };
       } else {
         throw $ERR_INVALID_ARG_TYPE("options", "object", options);
       }

@@ -102,13 +102,33 @@ pub const CronExpression = struct {
         dt.second = 0;
 
         // Loop up to ~4 years to prevent infinite iteration
+        var date_dirty = true;
         var iterations: u32 = 0;
         const max_iterations: u32 = 1500 * 24 * 60;
         while (iterations < max_iterations) : (iterations += 1) {
-            // Normalize via round-trip to handle overflows, DST gaps, and compute weekday
-            {
-                const ms = try globalObject.gregorianDateTimeToMS(dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second, 0);
-                dt = globalObject.msToGregorianDateTime(ms);
+            // Carry hour/minute overflow explicitly so the candidate hour:minute
+            // is checked against the bitfields *before* DST shifts it (Vixie/
+            // cron-parser semantics: gap times fire shifted forward, same day).
+            if (dt.minute > 59) {
+                dt.minute -= 60;
+                dt.hour += 1;
+            }
+            if (dt.hour > 23) {
+                dt.hour -= 24;
+                dt.day += 1;
+                date_dirty = true;
+            }
+            // Normalize the date (year/month/day overflow + weekday) via a
+            // round-trip at noon, where DST transitions don't occur. Skip when
+            // only hour/minute moved.
+            if (date_dirty) {
+                const noon_ms = try globalObject.gregorianDateTimeToMS(dt.year, dt.month, dt.day, 12, 0, 0, 0);
+                const n = globalObject.msToGregorianDateTime(noon_ms);
+                dt.year = n.year;
+                dt.month = n.month;
+                dt.day = n.day;
+                dt.weekday = n.weekday;
+                date_dirty = false;
             }
 
             // Check month
@@ -117,6 +137,7 @@ pub const CronExpression = struct {
                 dt.day = 1;
                 dt.hour = 0;
                 dt.minute = 0;
+                date_dirty = true;
                 continue;
             }
 
@@ -131,6 +152,7 @@ pub const CronExpression = struct {
                 dt.day += 1;
                 dt.hour = 0;
                 dt.minute = 0;
+                date_dirty = true;
                 continue;
             }
 

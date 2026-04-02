@@ -7603,9 +7603,9 @@ declare module "bun" {
      * matching uses OR logic per [POSIX cron](https://pubs.opengroup.org/onlinepubs/9699919799/utilities/crontab.html):
      * a date matches if **either** field matches.
      *
-     * DST: a schedule that lands in the spring-forward gap is skipped that day
-     * and fires at its next normal occurrence; schedules in the fall-back
-     * duplicated hour fire once (first occurrence).
+     * DST: a schedule that lands in the spring-forward gap fires that day,
+     * shifted forward by the gap (matching Vixie cron and `cron-parser`);
+     * schedules in the fall-back duplicated hour fire once (first occurrence).
      *
      * @param expression - A cron expression or nickname (e.g. `"0,15,30,45 * * * *"`, `"0 9 * * MON-FRI"`, `"@hourly"`)
      * @param relativeDate - Starting point for the search (defaults to `Date.now()`). Accepts a `Date` or milliseconds since epoch.

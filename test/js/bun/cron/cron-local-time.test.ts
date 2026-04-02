@@ -51,11 +51,12 @@ describe.concurrent("Bun.cron.parse — local time zone", () => {
 });
 
 describe.concurrent("Bun.cron.parse — DST transitions", () => {
-  test("spring-forward: schedule in the missing hour skips to the next day", async () => {
+  test("spring-forward: schedule in the missing hour fires shifted forward (same day)", async () => {
     // US 2025 spring-forward: 2025-03-09 02:00 EST → 03:00 EDT (2:00-2:59 don't exist).
-    // "30 2 * * *" on that day skips to the next normal occurrence: 2025-03-10 02:30 EDT.
+    // "30 2 * * *" fires at 03:30 EDT — the gap-shifted instant. Matches Vixie cron,
+    // cron-parser, and croner.
     const next = await parseInTZ("America/New_York", "30 2 * * *", "2025-03-09T05:00:00Z"); // = 00:00 EST
-    expect(next).toBe("2025-03-10T06:30:00.000Z"); // 02:30 EDT
+    expect(next).toBe("2025-03-09T07:30:00.000Z"); // 03:30 EDT
   });
 
   test("fall-back: schedule in the duplicated hour fires at the first occurrence", async () => {

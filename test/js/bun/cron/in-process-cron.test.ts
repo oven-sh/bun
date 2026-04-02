@@ -290,8 +290,9 @@ describe.concurrent("Bun.cron (in-process) — firing", () => {
       env: bunEnv,
       cwd: String(dir),
       stdout: "ignore",
-      stderr: "ignore",
+      stderr: "pipe",
     });
+    const stderrP = proc.stderr.text();
 
     while (!(await Bun.file(path("v1.evaluated")).exists())) await Bun.sleep(10);
 
@@ -310,8 +311,10 @@ describe.concurrent("Bun.cron (in-process) — firing", () => {
     );
 
     while (!(await Bun.file(path("v2.evaluated")).exists())) await Bun.sleep(10);
-    await proc.exited;
+    const [exitCode, stderr] = await Promise.all([proc.exited, stderrP]);
 
+    if (exitCode !== 0) console.error(stderr);
+    expect(exitCode).toBe(0);
     expect(await Bun.file(path("result")).text()).toBe("ok");
     expect(await Bun.file(path("ghost.fired")).exists()).toBe(false);
   }, 130_000);

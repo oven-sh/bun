@@ -1,10 +1,12 @@
-/// Bun.cron - Register and remove OS-level cron jobs.
+/// Bun.cron - in-process and OS-level cron scheduling.
 ///
-/// Bun.cron(path, schedule, title) - register a cron job (returns Promise)
-/// Bun.cron.remove(title) - remove a cron job (returns Promise)
+/// Bun.cron(schedule, handler)       - run a callback on a schedule (returns CronJob)
+/// Bun.cron(path, schedule, title)   - register an OS-level job (returns Promise)
+/// Bun.cron.remove(title)            - remove an OS-level job (returns Promise)
+/// Bun.cron.parse(expr, from?)       - next-occurrence calculator (returns Date | null)
 ///
-/// On Linux, uses crontab. On macOS, uses launchctl + launchd plist.
-/// Async, event-loop-integrated implementation using bun.spawn.
+/// OS-level uses crontab (Linux), launchctl + launchd plist (macOS), or
+/// schtasks (Windows). Async, event-loop-integrated via bun.spawn.
 /// Shared base for CronRegisterJob and CronRemoveJob.
 fn CronJobBase(comptime Self: type) type {
     return struct {
@@ -416,6 +418,8 @@ pub const CronRegisterJob = struct {
         // In-process callback cron: Bun.cron(schedule, handler)
         if (args[1].isCallable())
             return CronJob.register(globalObject, args[0], args[1]);
+        if (args[0].isString() and args[2].isUndefined())
+            return globalObject.throwInvalidArguments("Bun.cron(schedule, handler) expects a function handler as the second argument", .{});
 
         if (!args[0].isString()) return globalObject.throwInvalidArguments("Bun.cron() expects a string path as the first argument", .{});
         if (!args[1].isString()) return globalObject.throwInvalidArguments("Bun.cron() expects a string schedule as the second argument", .{});
@@ -868,10 +872,11 @@ pub const CronJob = struct {
     }
 
     fn selfStop(this: *CronJob, vm: *jsc.VirtualMachine) void {
-        // If stop() runs during cb.call() (before .pending is processed), defer
-        // cleanup so the .pending branch can take pending_ref + keep this_value
-        // strong. onTimerFire calls finishDeferredStop() after the result is known.
-        if (this.in_fire) {
+        // While the callback is on the stack or its promise is pending, defer
+        // list removal + downgrade to finishDeferredStop (called from
+        // scheduleNext after settle) so onPromiseReject can read pendingPromise
+        // and clearAllForVM(.teardown) can release pending_ref.
+        if (this.in_fire or this.pending_ref) {
             this.stopped = true;
             this.poll_ref.unref(vm);
             return;
@@ -923,7 +928,7 @@ pub const CronJob = struct {
     }
 
     fn scheduleNext(this: *CronJob, vm: *jsc.VirtualMachine) void {
-        if (this.stopped) return;
+        if (this.stopped) return this.finishDeferredStop(vm);
         const next_time = this.computeNextTimespec() orelse {
             this.selfStop(vm);
             return;
@@ -965,7 +970,7 @@ pub const CronJob = struct {
             this.in_fire = false;
             if (this.global.tryTakeException()) |err|
                 _ = vm.uncaughtException(vm.global, err, false);
-            if (this.stopped) this.finishDeferredStop(vm) else this.scheduleNext(vm);
+            this.scheduleNext(vm);
             return;
         };
         this.in_fire = false;
@@ -979,7 +984,7 @@ pub const CronJob = struct {
                     result.then(this.global, this, onPromiseResolve, onPromiseReject) catch {
                         js.pendingPromiseSetCached(js_this, this.global, .js_undefined);
                         this.releasePendingRef();
-                        if (this.stopped) this.finishDeferredStop(vm) else this.scheduleNext(vm);
+                        this.scheduleNext(vm);
                     };
                     return;
                 },
@@ -991,7 +996,7 @@ pub const CronJob = struct {
             }
         }
 
-        if (this.stopped) this.finishDeferredStop(vm) else this.scheduleNext(vm);
+        this.scheduleNext(vm);
     }
 
     pub export const Bun__CronJob__onPromiseResolve = jsc.toJSHostFn(onPromiseResolve);
@@ -1004,7 +1009,7 @@ pub const CronJob = struct {
         const vm = this.global.bunVM();
         if (this.this_value.tryGet()) |js_this|
             js.pendingPromiseSetCached(js_this, this.global, .js_undefined);
-        if (this.stopped) this.finishDeferredStop(vm) else this.scheduleNext(vm);
+        this.scheduleNext(vm);
         return .js_undefined;
     }
 
@@ -1020,7 +1025,7 @@ pub const CronJob = struct {
             js.pendingPromiseSetCached(js_this, this.global, .js_undefined);
         }
         vm.unhandledRejection(vm.global, err, promise_value);
-        if (this.stopped) this.finishDeferredStop(vm) else this.scheduleNext(vm);
+        this.scheduleNext(vm);
         return .js_undefined;
     }
 

@@ -122,10 +122,10 @@ Schedules are interpreted in the system's **local time zone** — the same way c
 
 To use UTC, set `TZ=UTC` in the environment.
 
-DST transitions:
+DST transitions match Vixie cron and the popular npm parsers (`cron-parser`, `croner`):
 
-- **Spring-forward** — a schedule that lands in the missing hour is skipped that day; it fires at its next normal occurrence.
-- **Fall-back** — schedules in the duplicated hour fire once, at the first occurrence.
+- **Spring-forward** — a schedule that lands in the missing hour fires that day, shifted forward by the gap (e.g. `30 2 * * *` runs at 3:30 on the spring-forward day).
+- **Fall-back** — a schedule in the duplicated hour fires once, at the first occurrence.
 
 ### Day-of-month and day-of-week interaction
 

@@ -1,10 +1,20 @@
-import { test, expect, beforeAll, afterAll } from "bun:test";
-import { mkdirSync, rmSync, readFileSync, writeFileSync } from "fs";
+import { afterAll, beforeAll, expect, test } from "bun:test";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { bunEnv, bunExe, isLinux, tempDir } from "harness";
 import { join } from "path";
-import { bunExe, bunEnv, isLinux, tempDir } from "harness";
 
 // Serve a minimal registry with a single package (no-deps@1.0.0)
-const tgzPath = join(import.meta.dir, "..", "..", "cli", "install", "registry", "packages", "no-deps", "no-deps-1.0.0.tgz");
+const tgzPath = join(
+  import.meta.dir,
+  "..",
+  "..",
+  "cli",
+  "install",
+  "registry",
+  "packages",
+  "no-deps",
+  "no-deps-1.0.0.tgz",
+);
 const tgzData = readFileSync(tgzPath);
 
 let server: ReturnType<typeof Bun.serve>;

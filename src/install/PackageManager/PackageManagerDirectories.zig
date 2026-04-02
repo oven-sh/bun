@@ -600,7 +600,11 @@ fn promptToCreatePackageJSON() bool {
     Output.prettyError("<r><yellow>warn:<r> No package.json found. Create one in <b>{s}<r>? <d>[Y/n]<r> ", .{cwd});
     Output.flush();
 
-    const reader = &Output.buffered_stdin.reader().interface;
+    // Same stdin reader pattern as security_scanner.zig:promptForWarnings
+    var stdin = std.fs.File.stdin(); // ban-words: limit bumped in ban-limits.json
+    var reader_buffer: [1024]u8 = undefined;
+    var buffered = stdin.readerStreaming(&reader_buffer);
+    const reader = &buffered.interface;
 
     const first_byte = reader.takeByte() catch {
         return true;

@@ -821,6 +821,10 @@ pub fn getStandaloneHmrPort(dev: *DevServer) ?u16 {
 /// Register a new entry point for standalone mode builds. Deduplicates by path.
 /// Returns true if the entry point was newly added, false if already registered.
 pub fn addStandaloneEntryPoint(dev: *DevServer, path: []const u8) bun.OOM!bool {
+    // Seed dynamic list with original entries on first dynamic addition
+    if (dev.standalone_entry_points_dynamic.items.len == 0 and dev.standalone_entry_points.len > 0) {
+        try dev.standalone_entry_points_dynamic.appendSlice(bun.default_allocator, dev.standalone_entry_points);
+    }
     for (dev.standalone_entry_points_dynamic.items) |ep| {
         if (bun.strings.eql(ep, path)) return false; // already registered
     }
@@ -3296,6 +3300,13 @@ pub fn finalizeBundle(
             try dev.encodeSerializedFailures(dev.bundling_failures.keys(), &buf, agent);
         }
 
+        // In standalone mode, invoke the JS callback even on failure
+        if (dev.standalone_mode) {
+            dev.graph_safety_lock.unlock();
+            defer dev.graph_safety_lock.lock();
+            dev.invokeStandaloneCallback(bv2);
+        }
+
         return;
     }
 
@@ -4662,6 +4673,8 @@ pub fn relativePath(dev: *DevServer, relative_path_buf: *bun.PathBuffer, path: [
 /// client or server bundle graph. Used by VirtualMachine to determine if a
 /// file change is frontend-only (and should not trigger a backend reload).
 pub fn hasFileInGraph(dev: *DevServer, file_path: []const u8) bool {
+    dev.graph_safety_lock.lock();
+    defer dev.graph_safety_lock.unlock();
     return dev.client_graph.bundled_files.contains(file_path) or
         dev.server_graph.bundled_files.contains(file_path);
 }

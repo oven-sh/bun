@@ -2914,7 +2914,7 @@ pub const BundleV2 = struct {
                         if (patched.value == .buffer) {
                             const rel = bun.strings.trimPrefixComptime(u8, patched.dest_path, "./");
                             var path_buf: bun.PathBuffer = undefined;
-                            _ = jsc.Node.fs.NodeFS.writeFileWithPathBuffer(&path_buf, .{
+                            if (jsc.Node.fs.NodeFS.writeFileWithPathBuffer(&path_buf, .{
                                 .data = .{ .buffer = .{
                                     .buffer = .{
                                         .ptr = @constCast(patched.value.buffer.bytes.ptr),
@@ -2925,8 +2925,9 @@ pub const BundleV2 = struct {
                                 .encoding = .buffer,
                                 .dirfd = .fromStdDir(dir),
                                 .file = .{ .path = .{ .string = bun.PathString.init(rel) } },
-                            }).unwrap() catch {};
-                            patched.value = .{ .saved = .{} };
+                            }).unwrap()) |_| {
+                                patched.value = .{ .saved = .{} };
+                            } else |_| {}
                         }
                     }
                     try output_files.append(patched);

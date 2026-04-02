@@ -232,11 +232,8 @@ const handlers = {
 // the HMR WebSocket needs to connect to that origin, not location.origin.
 const scriptOrigin = (() => {
   try {
-    const src = document.currentScript?.getAttribute("src");
-    if (src) {
-      const url = new URL(src, location.href);
-      if (url.origin !== location.origin) return url.origin;
-    }
+    const url = new URL(import.meta.url);
+    if (url.origin !== location.origin) return url.origin;
   } catch {}
   return null;
 })();

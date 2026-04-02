@@ -58,7 +58,6 @@ pub const Classes = struct {
     pub const Timeout = api.Timer.TimeoutObject;
     pub const Immediate = api.Timer.ImmediateObject;
     pub const BuildArtifact = api.BuildArtifact;
-    pub const WatchBuildResult = api.WatchBuildResult;
     pub const BuildMessage = api.BuildMessage;
     pub const ResolveMessage = api.ResolveMessage;
     pub const FSWatcher = node.fs.Watcher;

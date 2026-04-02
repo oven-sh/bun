@@ -711,11 +711,6 @@ BUN_DECLARE_HOST_FUNCTION(Bun__NodeHTTPRequest__onReject);
 BUN_DECLARE_HOST_FUNCTION(Bun__FileSink__onResolveStream);
 BUN_DECLARE_HOST_FUNCTION(Bun__FileSink__onRejectStream);
 
-BUN_DECLARE_HOST_FUNCTION(Bun__WatchBuildResult__onInitialBuildResolved);
-BUN_DECLARE_HOST_FUNCTION(Bun__WatchBuildResult__onInitialBuildRejected);
-BUN_DECLARE_HOST_FUNCTION(Bun__WatchBuildResult__onRebuildResolved);
-BUN_DECLARE_HOST_FUNCTION(Bun__WatchBuildResult__onRebuildRejected);
-
 #endif
 
 #ifdef __cplusplus

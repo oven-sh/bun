@@ -38,7 +38,6 @@ pub const YAMLObject = @import("./api/YAMLObject.zig");
 pub const Timer = @import("./api/Timer.zig");
 pub const FFIObject = @import("./api/FFIObject.zig");
 pub const BuildArtifact = @import("./api/JSBundler.zig").BuildArtifact;
-pub const WatchBuildResult = @import("./api/JSBundler.zig").WatchBuildResult;
 pub const BuildMessage = @import("./BuildMessage.zig").BuildMessage;
 pub const dns = @import("./api/bun/dns.zig");
 pub const FFI = @import("./api/ffi.zig").FFI;

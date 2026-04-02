@@ -381,7 +381,7 @@ pub fn sourceMapId(this: *const JSBundle) bun.bake.DevServer.SourceMapStore.Key 
 /// Called by DevServer after a build completes in standalone mode.
 pub fn onDevServerBuildComplete(ctx: *anyopaque, dev: *bun.bake.DevServer, success: bool) void {
     const this: *JSBundle = @ptrCast(@alignCast(ctx));
-    _ = success;
+    if (!success) return;
 
     // Unref the previous generation's sourcemap and bump to a new generation
     if (this.source_map_generation > 0) {

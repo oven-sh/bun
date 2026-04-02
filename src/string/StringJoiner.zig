@@ -129,6 +129,9 @@ pub fn doneWithPartSizes(this: *StringJoiner, allocator: Allocator, record_parts
     }
 
     bun.assert(remaining.len == 0);
+    this.head = null;
+    this.tail = null;
+    this.len = 0;
 
     return .{ slice, part_sizes };
 }

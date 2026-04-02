@@ -2992,6 +2992,12 @@ pub const Data = union(Tag) {
                             return Equality.false;
                         }
                     },
+                    .e_inlined_enum => |r| {
+                        if (comptime kind == .strict) {
+                            if (r.value.data == .e_string or r.value.data == .e_number)
+                                return Equality.false;
+                        }
+                    },
                     else => {},
                 }
             },
@@ -3093,6 +3099,11 @@ pub const Data = union(Tag) {
                                 .ok = true,
                                 .equal = r.eql(E.String, l),
                             };
+                        }
+                        if (comptime kind == .strict) {
+                            // e_string vs e_inlined_enum wrapping a non-string type
+                            if (inlined.value.data == .e_number or inlined.value.data == .e_boolean)
+                                return Equality.false;
                         }
                     },
                     .e_null, .e_undefined => {

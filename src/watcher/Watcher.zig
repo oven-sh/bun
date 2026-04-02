@@ -113,7 +113,48 @@ pub fn writeTraceEvents(this: *Watcher, events: []WatchEvent, changed_files: []?
 
 pub fn start(this: *Watcher) !void {
     bun.assert(this.watchloop_handle == null);
-    this.thread = try std.Thread.spawn(.{}, threadMain, .{this});
+    registerActive(this);
+    this.thread = std.Thread.spawn(.{}, threadMain, .{this}) catch |err| {
+        unregisterActive(this);
+        return err;
+    };
+}
+
+/// Global list of running watchers so that `stopAllForExit` can signal them
+/// before `Global.exit` tears the process down. The watcher thread accesses
+/// globals like the resolver's directory cache (BSSMap singleton) whose
+/// storage is freed when mimalloc's atexit handler runs under ASAN. Without
+/// stopping the thread first, those accesses become use-after-poison.
+var active_watchers_mutex: Mutex = .{};
+var active_watchers: std.ArrayListUnmanaged(*Watcher) = .{};
+
+fn registerActive(this: *Watcher) void {
+    active_watchers_mutex.lock();
+    defer active_watchers_mutex.unlock();
+    active_watchers.append(bun.default_allocator, this) catch {};
+}
+
+fn unregisterActive(this: *Watcher) void {
+    active_watchers_mutex.lock();
+    defer active_watchers_mutex.unlock();
+    if (std.mem.indexOfScalar(*Watcher, active_watchers.items, this)) |idx| {
+        _ = active_watchers.swapRemove(idx);
+    }
+}
+
+/// Called from `Global.exit` (main thread) before tearing down heap memory.
+/// Acquires each watcher's mutex, which serialises with the watcher thread's
+/// event dispatch, then sets `running=false` and closes the platform handle
+/// so the next loop iteration exits. Safe to call multiple times.
+pub fn stopAllForExit() void {
+    active_watchers_mutex.lock();
+    defer active_watchers_mutex.unlock();
+    for (active_watchers.items) |watcher| {
+        watcher.mutex.lock();
+        watcher.running = false;
+        watcher.platform.stop();
+        watcher.mutex.unlock();
+    }
 }
 
 pub fn deinit(this: *Watcher, close_descriptors: bool) void {
@@ -256,6 +297,8 @@ fn threadMain(this: *Watcher) !void {
 
     // Close trace file if open
     WatcherTrace.deinit();
+
+    unregisterActive(this);
 
     const allocator = this.allocator;
     allocator.destroy(this);

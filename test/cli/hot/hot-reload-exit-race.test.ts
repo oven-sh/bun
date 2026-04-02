@@ -4,13 +4,15 @@ import { bunEnv, bunExe, tempDir } from "harness";
 // Regression: under ASAN, `Global.exit` runs mimalloc's atexit handler which
 // poisons freed memory. The file watcher thread was not stopped first, so its
 // next `bustDirCache` call would touch the resolver's BSSMap singleton after
-// the memory was poisoned, tripping use-after-poison. Non-ASAN builds don't
-// exhibit the crash but the test is still a useful shutdown smoke test.
-test("bun --hot exits cleanly while watcher is dispatching events", async () => {
-  using dir = tempDir("hot-exit-race", {
-    "script.ts": `setTimeout(() => process.exit(0), 300); console.log("READY");\n`,
+// the memory was poisoned, aborting the process with use-after-poison from
+// thread T2 (File Watcher). Non-ASAN builds don't exhibit the crash but the
+// test is still a useful shutdown smoke test.
+async function runOnce(iteration: number): Promise<{ signal: string | null; stderr: string }> {
+  using dir = tempDir(`hot-exit-race-${iteration}`, {
+    "script.ts": `setTimeout(() => process.exit(0), 120); console.log("READY");\n`,
+    "touch.txt": `0`,
   });
-  const scriptPath = `${String(dir)}/script.ts`;
+  const touchPath = `${String(dir)}/touch.txt`;
 
   await using proc = Bun.spawn({
     cmd: [bunExe(), "--hot", "run", "script.ts"],
@@ -23,29 +25,47 @@ test("bun --hot exits cleanly while watcher is dispatching events", async () => 
   // Wait for the child to print READY so we know --hot is initialized.
   let stdout = "";
   const reader = proc.stdout.getReader();
+  const decoder = new TextDecoder();
   while (!stdout.includes("READY")) {
     const { value, done } = await reader.read();
     if (done) break;
-    stdout += new TextDecoder().decode(value);
+    stdout += decoder.decode(value, { stream: true });
   }
   reader.releaseLock();
 
-  // Rewrite the file in a tight loop to keep the watcher thread busy
-  // dispatching events across the entire lifetime of the 300ms timer.
-  // This widens the window where the main thread calls `Global.exit` while
-  // the watcher thread is still inside `bustDirCache`.
+  // Touch a sibling file in a tight loop. This fires directory-change events
+  // at the watcher without racing the entrypoint reloader against its own
+  // in-flight rewrites. The goal is to keep the watcher thread churning
+  // inside `bustDirCache` right up until `process.exit` tears the VM down.
   const rewrites = (async () => {
-    for (let i = 0; i < 500; i++) {
-      await Bun.write(scriptPath, `setTimeout(() => process.exit(0), 300); console.log("READY"); // ${i}\n`);
+    for (let i = 0; i < 2000; i++) {
+      await Bun.write(touchPath, String(i));
       if ((await Promise.race([proc.exited, Promise.resolve("alive")])) !== "alive") break;
     }
   })();
 
-  const [exitCode, stderr] = await Promise.all([proc.exited, proc.stderr.text()]);
+  const [, stderr] = await Promise.all([proc.exited, proc.stderr.text()]);
   await rewrites;
 
-  expect(stderr).not.toContain("AddressSanitizer");
-  expect(stderr).not.toContain("use-after-poison");
-  // 134 == 128 + SIGABRT; ASAN aborts with that.
-  expect(exitCode).toBe(0);
-});
+  return { signal: proc.signalCode, stderr };
+}
+
+test(
+  "bun --hot exits cleanly while watcher is dispatching events",
+  async () => {
+    // Loop several times because the race is timing-sensitive. Without the
+    // fix, a watcher-thread use-after-poison tends to trip within a few
+    // iterations.
+    for (let i = 0; i < 10; i++) {
+      const { signal, stderr } = await runOnce(i);
+      if (stderr.includes("AddressSanitizer") || stderr.includes("use-after-poison") || signal === "SIGABRT") {
+        console.error(`iteration ${i} failed, signal=${signal}, stderr:\n${stderr}`);
+      }
+      expect(stderr).not.toContain("AddressSanitizer");
+      expect(stderr).not.toContain("use-after-poison");
+      // SIGABRT (exit 134) is what ASAN raises after reporting an error.
+      expect(signal).not.toBe("SIGABRT");
+    }
+  },
+  60_000,
+);

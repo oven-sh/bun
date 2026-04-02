@@ -379,7 +379,9 @@ pub fn putTimersFns(globalObject: *jsc.JSGlobalObject, jest: jsc.JSValue, vi: js
 }
 
 pub export fn Bun__FakeTimers__onSetSystemTime(js_epoch_ms: f64) void {
-    current_time.onSetSystemTime(js_epoch_ms);
+    // -1 = setSystemTime() reset; re-anchor date_now_offset to real time so
+    // a later advanceTimersByTime doesn't resurrect the previously-set value.
+    current_time.onSetSystemTime(if (js_epoch_ms < 0) @floatFromInt(std.time.milliTimestamp()) else js_epoch_ms);
 }
 
 const bindgen_generated = @import("bindgen_generated");

@@ -1462,8 +1462,7 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSetSystemTime, (JSC::JSGlobalObject * globalO
     }
     // number > 0 is a valid date otherwise it's invalid and we should reset the time (set to -1)
     globalObject->overridenDateNow = (argument0.isNumber() && argument0.asNumber() >= 0) ? argument0.asNumber() : -1;
-    if (globalObject->overridenDateNow >= 0)
-        Bun__FakeTimers__onSetSystemTime(globalObject->overridenDateNow);
+    Bun__FakeTimers__onSetSystemTime(globalObject->overridenDateNow);
 
     return JSValue::encode(callframe->thisValue());
 }

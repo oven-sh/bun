@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
 test("readable stream buffer does not grow unbounded under backpressure", async () => {
@@ -51,11 +51,7 @@ rs.pipe(ws);
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   const growthMB = parseFloat(stdout.trim());
   // Without the fix, heap grows ~4-5MB between tick 30 and tick 60 (15s window).

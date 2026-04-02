@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
-import { bunEnv, bunExe, isLinux, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, tempDir, tempDirWithFiles } from "harness";
 
 // https://github.com/oven-sh/bun/issues/28220
 //
@@ -111,14 +111,12 @@ int main(int argc, char **argv) {
 }
 `;
 
-function prepareLandlockFixture(root: string) {
+function compileLandlockHelper(root: string) {
   const helperDir = join(root, "landlock-helper");
   const helperPath = join(helperDir, "landlock_sandbox");
   const srcPath = join(helperDir, "landlock_sandbox.c");
-  const testBase = join(root, "parent", "project");
 
   mkdirSync(helperDir, { recursive: true });
-  mkdirSync(testBase, { recursive: true });
   writeFileSync(srcPath, LANDLOCK_HELPER_SRC);
 
   const compiler = process.env.CC || "cc";
@@ -129,8 +127,18 @@ function prepareLandlockFixture(root: string) {
     stdout: "pipe",
   });
 
-  expect(compile.exitCode).toBe(0);
-  expect(existsSync(helperPath)).toBe(true);
+  const compileSupported = compile.exitCode === 0 && existsSync(helperPath);
+  return { compileSupported, helperPath };
+}
+
+function prepareLandlockFixture(root: string) {
+  const testBase = join(root, "parent", "project");
+  const { compileSupported, helperPath } = compileLandlockHelper(root);
+  if (!compileSupported) {
+    return { compileSupported, helperPath, landlockSupported: false, testBase };
+  }
+
+  mkdirSync(testBase, { recursive: true });
 
   const check = Bun.spawnSync({
     cmd: [helperPath, testBase, dirname(bunExe()), "--self-check"],
@@ -152,13 +160,23 @@ function prepareLandlockFixture(root: string) {
   return { helperPath, landlockSupported, testBase };
 }
 
-describe.skipIf(!isLinux)("issue #28220", () => {
+function canCompileLandlockHelper() {
+  if (!isLinux) return false;
+
+  const root = tempDirWithFiles("issue-28220-probe", {});
+  try {
+    return compileLandlockHelper(root).compileSupported;
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+const landlockCompileSupported = canCompileLandlockHelper();
+
+describe.skipIf(!isLinux || !landlockCompileSupported)("issue #28220", () => {
   test("bun run works when ancestor directories are inaccessible", () => {
     using root = tempDir("issue-28220-run", {});
-    const { helperPath, landlockSupported, testBase } = prepareLandlockFixture(
-      String(root),
-    );
-    if (!landlockSupported) return;
+    const { helperPath, testBase } = prepareLandlockFixture(String(root));
 
     writeFileSync(
       join(testBase, "index.js"),
@@ -191,10 +209,7 @@ describe.skipIf(!isLinux)("issue #28220", () => {
 
   test("bun run with require() works when ancestor directories are inaccessible", () => {
     using root = tempDir("issue-28220-run-require", {});
-    const { helperPath, landlockSupported, testBase } = prepareLandlockFixture(
-      String(root),
-    );
-    if (!landlockSupported) return;
+    const { helperPath, testBase } = prepareLandlockFixture(String(root));
 
     writeFileSync(
       join(testBase, "main.js"),
@@ -223,5 +238,42 @@ describe.skipIf(!isLinux)("issue #28220", () => {
     expect(stderr).not.toContain("error loading current directory");
     expect(stdout).toBe("a/b/c\n");
     expect(result.exitCode).toBe(0);
+  });
+
+  test("bun run still fails when the target directory itself is inaccessible", () => {
+    using root = tempDir("issue-28220-unreadable-target", {});
+    const { helperPath } = prepareLandlockFixture(String(root));
+
+    const allowedBase = join(String(root), "allowed");
+    const blockedBase = join(String(root), "blocked");
+    mkdirSync(allowedBase, { recursive: true });
+    mkdirSync(blockedBase, { recursive: true });
+    writeFileSync(
+      join(blockedBase, "index.js"),
+      "console.log('should not run');\n",
+    );
+
+    const result = Bun.spawnSync({
+      cmd: [
+        helperPath,
+        allowedBase,
+        dirname(bunExe()),
+        bunExe(),
+        "run",
+        "index.js",
+      ],
+      env: bunEnv,
+      cwd: blockedBase,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const stdout = result.stdout.toString();
+    const stderr = result.stderr.toString();
+
+    expect(stdout).not.toContain("should not run");
+    expect(stderr).toContain("CouldntReadCurrentDirectory");
+    expect(stderr).toContain("error loading current directory");
+    expect(result.exitCode).not.toBe(0);
   });
 });

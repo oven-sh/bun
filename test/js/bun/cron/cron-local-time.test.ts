@@ -50,11 +50,30 @@ describe.concurrent("Bun.cron.parse — local time zone", () => {
   });
 });
 
+describe.concurrent("Bun.cron.parse — weekday 7 = Sunday in ranges", () => {
+  // 2026-01-01 is a Thursday. next() is strictly-after, so the first match for an
+  // every-day schedule is 2026-01-02.
+  test("1-7 means Mon-Sun (every day)", async () => {
+    expect(await parseInTZ("UTC", "0 0 * * 1-7", "2026-01-01T00:00:00Z")).toBe("2026-01-02T00:00:00.000Z");
+  });
+  test("5-7 means Fri-Sun", async () => {
+    expect(await parseInTZ("UTC", "0 0 * * 5-7", "2026-01-01T00:00:00Z")).toBe("2026-01-02T00:00:00.000Z");
+  });
+  test("6-7 means Sat-Sun", async () => {
+    expect(await parseInTZ("UTC", "0 0 * * 6-7", "2026-01-01T00:00:00Z")).toBe("2026-01-03T00:00:00.000Z");
+  });
+  test("0-7 means every day", async () => {
+    expect(await parseInTZ("UTC", "0 0 * * 0-7", "2026-01-01T00:00:00Z")).toBe("2026-01-02T00:00:00.000Z");
+  });
+  test("scalar 7 still means Sunday", async () => {
+    expect(await parseInTZ("UTC", "0 0 * * 7", "2026-01-01T00:00:00Z")).toBe("2026-01-04T00:00:00.000Z");
+  });
+});
+
 describe.concurrent("Bun.cron.parse — DST transitions", () => {
   test("spring-forward: schedule in the missing hour fires shifted forward (same day)", async () => {
     // US 2025 spring-forward: 2025-03-09 02:00 EST → 03:00 EDT (2:00-2:59 don't exist).
-    // "30 2 * * *" fires at 03:30 EDT — the gap-shifted instant. Matches Vixie cron,
-    // cron-parser, and croner.
+    // "30 2 * * *" fires at 03:30 EDT — the gap-shifted instant. Matches croner and cron-parser.
     const next = await parseInTZ("America/New_York", "30 2 * * *", "2025-03-09T05:00:00Z"); // = 00:00 EST
     expect(next).toBe("2025-03-09T07:30:00.000Z"); // 03:30 EDT
   });

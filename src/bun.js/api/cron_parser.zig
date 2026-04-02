@@ -54,7 +54,7 @@ pub const CronExpression = struct {
             .hours = try parseField(u32, fields[1], 0, 23, .none),
             .days = try parseField(u32, fields[2], 1, 31, .none),
             .months = try parseField(u16, fields[3], 1, 12, .month),
-            .weekdays = try parseField(u8, fields[4], 0, 6, .weekday),
+            .weekdays = try parseField(u8, fields[4], 0, 7, .weekday),
             .days_is_wildcard = bun.strings.eql(fields[2], "*"),
             .weekdays_is_wildcard = bun.strings.eql(fields[4], "*"),
         };
@@ -107,8 +107,8 @@ pub const CronExpression = struct {
         const max_iterations: u32 = 1500 * 24 * 60;
         while (iterations < max_iterations) : (iterations += 1) {
             // Carry hour/minute overflow explicitly so the candidate hour:minute
-            // is checked against the bitfields *before* DST shifts it (Vixie/
-            // cron-parser semantics: gap times fire shifted forward, same day).
+            // is checked against the bitfields *before* DST shifts it (croner
+            // semantics: gap times fire shifted forward, same day).
             if (dt.minute > 59) {
                 dt.minute -= 60;
                 dt.hour += 1;
@@ -281,6 +281,9 @@ fn parseField(comptime T: type, field: []const u8, min: u7, max: u7, kind: NameK
             if (@as(u8, i) + @as(u8, step) > range_max) break;
         }
     }
+    // Weekday: fold bit 7 (Sunday alias) into bit 0 *after* range expansion so
+    // 5-7, 0-7, etc. work like Vixie/croner/cron-parser.
+    if (kind == .weekday) result = (result | (result >> 7)) & 0x7F;
     return result;
 }
 
@@ -294,7 +297,6 @@ fn splitRange(base: []const u8) ?[2][]const u8 {
 }
 
 /// Parse a single value (number or name), validating range.
-/// For weekday fields, 7 is normalized to 0 (Sunday).
 fn parseValue(str: []const u8, min: u7, max: u7, kind: NameKind) error{InvalidNumber}!u7 {
     // Try named value first via ComptimeStringMap case-insensitive lookup
     switch (kind) {
@@ -304,7 +306,6 @@ fn parseValue(str: []const u8, min: u7, max: u7, kind: NameKind) error{InvalidNu
     }
 
     const val = std.fmt.parseInt(u8, str, 10) catch return error.InvalidNumber;
-    if (kind == .weekday and val == 7) return 0;
     if (val < min or val > max) return error.InvalidNumber;
     return @intCast(val);
 }

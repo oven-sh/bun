@@ -56,7 +56,7 @@ rs.pipe(ws);
   const growthMB = parseFloat(stdout.trim());
   // Without the fix, heap grows ~4-5MB between tick 30 and tick 60 (15s window).
   // With the fix, heap growth stays under 2MB (just normal GC variance).
-  expect(stderr).not.toContain("error");
+  expect(stderr.toLowerCase()).not.toContain("error");
   expect(growthMB).toBeLessThanOrEqual(3);
   expect(exitCode).toBe(0);
 }, 60_000);

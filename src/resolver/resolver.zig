@@ -2611,7 +2611,7 @@ pub const Resolver = struct {
         return PackageJSON.new(pkg);
     }
 
-    fn dirInfoCached(r: *ThisResolver, path: string) !?*DirInfo {
+    pub fn dirInfoCached(r: *ThisResolver, path: string) !?*DirInfo {
         return try r.dirInfoCachedMaybeLog(path, true, true);
     }
 

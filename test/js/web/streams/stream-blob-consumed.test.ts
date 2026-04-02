@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 
 // Regression: ByteBlobLoader.toBufferedValue returned .zero without setting
 // a JS exception when the underlying store was already consumed, causing an

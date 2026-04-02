@@ -615,7 +615,9 @@ fn updatePackageJSONAndInstallAndCLI(
                                     try writer.print(
                                         "{f}",
                                         .{bun.fmt.fmtPath(u8, remaining[0..space], .{
-                                            .escape_backslashes = true,
+                                            // On Windows, backslashes are native path separators and
+                                            // should not be escaped/doubled in display output.
+                                            .escape_backslashes = !Environment.isWindows,
                                             .path_sep = if (Environment.isWindows) .windows else .posix,
                                         })},
                                     );
@@ -626,7 +628,7 @@ fn updatePackageJSONAndInstallAndCLI(
                                 try writer.print(
                                     "{f}",
                                     .{bun.fmt.fmtPath(u8, remaining, .{
-                                        .escape_backslashes = true,
+                                        .escape_backslashes = !Environment.isWindows,
                                         .path_sep = if (Environment.isWindows) .windows else .posix,
                                     })},
                                 );

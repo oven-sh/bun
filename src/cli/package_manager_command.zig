@@ -209,7 +209,10 @@ pub const PackageManagerCommand = struct {
                         if (bun.env_var.PATH.get()) |path| {
                             var path_iter = std.mem.tokenizeScalar(u8, path, std.fs.path.delimiter);
                             while (path_iter.next()) |entry| {
-                                if (strings.eql(entry, output_path)) {
+                                // Trim trailing path separators so that e.g.
+                                // "/home/user/.bun/bin/" matches "/home/user/.bun/bin".
+                                const trimmed = std.mem.trimRight(u8, entry, "/\\");
+                                if (strings.eql(trimmed, output_path)) {
                                     break :warner;
                                 }
                             }

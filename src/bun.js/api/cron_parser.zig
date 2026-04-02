@@ -1,7 +1,7 @@
 /// Cron expression parser and next-occurrence calculator.
 ///
 /// Parses standard 5-field cron expressions (minute hour day month weekday)
-/// into a bitset representation, and computes the next matching local time.
+/// into a bitset representation, and computes the next matching UTC time.
 ///
 /// Supports:
 ///   - Wildcards: *
@@ -94,71 +94,18 @@ pub const CronExpression = struct {
         return stream.getWritten();
     }
 
-    /// POSIX cron: if both DOM and DOW are restricted (not `*`), match either;
-    /// otherwise match both (a `*` field matches all anyway).
-    fn matchesDay(self: CronExpression, day: i32, weekday: i32) bool {
-        const day_ok = bitSet(u32, self.days, @intCast(day));
-        const weekday_ok = bitSet(u8, self.weekdays, @intCast(weekday));
-        return if (!self.days_is_wildcard and !self.weekdays_is_wildcard)
-            day_ok or weekday_ok
-        else
-            day_ok and weekday_ok;
-    }
-
-    /// Check if a real instant matches all five fields in local time.
-    fn matchesInstant(self: CronExpression, globalObject: *jsc.JSGlobalObject, ms: f64) bool {
-        const t = globalObject.msToGregorianDateTime(ms);
-        return bitSet(u64, self.minutes, @intCast(t.minute)) and
-            bitSet(u32, self.hours, @intCast(t.hour)) and
-            bitSet(u16, self.months, @intCast(t.month)) and
-            self.matchesDay(t.day, t.weekday);
-    }
-
-    /// Convert a matching wall-clock `dt` to a real instant strictly after
-    /// `from_ms`, handling DST. Returns null if no such instant exists for
-    /// this wall-clock minute (fall-back FORMER already passed and the
-    /// schedule is fixed-time, so it fires once — cronie semantics).
-    fn resolveLocalMatch(self: CronExpression, globalObject: *jsc.JSGlobalObject, dt: jsc.JSGlobalObject.GregorianDateTime, from_ms: f64) bun.JSError!?f64 {
-        const result = try globalObject.gregorianDateTimeToMS(dt.year, dt.month, dt.day, dt.hour, dt.minute, 0, 0);
-        // During fall-back, `result` is the FORMER occurrence and the wall-clock
-        // walk steps over the second one. For schedules with `*` minute or `*`
-        // hour, scan real-time minutes (capped at the largest DST shift) for an
-        // earlier match in the repeated window.
-        if (self.minutes == all_minutes or self.hours == all_hours) {
-            var probe = (@floor(from_ms / minute_ms) + 1) * minute_ms;
-            const cap = @min(result, from_ms + (max_dst_shift_min + 1) * minute_ms);
-            while (probe < cap) : (probe += minute_ms)
-                if (self.matchesInstant(globalObject, probe)) return probe;
-        }
-        return if (result > from_ms) result else null;
-    }
-
-    /// Compute the next time (in ms since epoch) that matches this expression
-    /// in the system's local time zone, strictly after `from_ms`. Returns null
-    /// if no match found within 8 years.
+    /// Compute the next UTC time (in ms since epoch) that matches this
+    /// expression, strictly after `from_ms`. Returns null if no match found
+    /// within 8 years.
     pub fn next(self: CronExpression, globalObject: *jsc.JSGlobalObject, from_ms: f64) bun.JSError!?f64 {
-        var dt = globalObject.msToGregorianDateTime(from_ms);
+        var dt = globalObject.msToGregorianDateTimeUTC(from_ms);
         const start_year = dt.year;
         dt.minute += 1;
+        dt.second = 0;
 
         while (dt.year - start_year <= 8) {
-            // Carry hour/minute manually so the candidate {hour,minute} is
-            // checked against the bitfields *before* DST shifts it; normalize
-            // the date+weekday via a noon round-trip (DST at midday stays on
-            // the same calendar day, so only date fields are copied back).
-            if (dt.minute > 59) {
-                dt.minute -= 60;
-                dt.hour += 1;
-            }
-            if (dt.hour > 23) {
-                dt.hour -= 24;
-                dt.day += 1;
-            }
-            const n = globalObject.msToGregorianDateTime(try globalObject.gregorianDateTimeToMS(dt.year, dt.month, dt.day, 12, 0, 0, 0));
-            dt.year = n.year;
-            dt.month = n.month;
-            dt.day = n.day;
-            dt.weekday = n.weekday;
+            // Normalize overflow + recompute weekday via a UTC round-trip.
+            dt = globalObject.msToGregorianDateTimeUTC(try globalObject.gregorianDateTimeToMSUTC(dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second, 0));
 
             if (!bitSet(u16, self.months, @intCast(dt.month))) {
                 dt.month += 1;
@@ -167,7 +114,15 @@ pub const CronExpression = struct {
                 dt.minute = 0;
                 continue;
             }
-            if (!self.matchesDay(dt.day, dt.weekday)) {
+            // POSIX: if both DOM and DOW are restricted (not `*`), either
+            // matching is enough; otherwise the `*` field matches all anyway.
+            const day_ok = bitSet(u32, self.days, @intCast(dt.day));
+            const weekday_ok = bitSet(u8, self.weekdays, @intCast(dt.weekday));
+            const day_match = if (!self.days_is_wildcard and !self.weekdays_is_wildcard)
+                day_ok or weekday_ok
+            else
+                day_ok and weekday_ok;
+            if (!day_match) {
                 dt.day += 1;
                 dt.hour = 0;
                 dt.minute = 0;
@@ -183,8 +138,7 @@ pub const CronExpression = struct {
                 continue;
             }
 
-            if (try self.resolveLocalMatch(globalObject, dt, from_ms)) |r| return r;
-            dt.minute += 1;
+            return try globalObject.gregorianDateTimeToMSUTC(dt.year, dt.month, dt.day, dt.hour, dt.minute, 0, 0);
         }
         return null;
     }
@@ -194,11 +148,7 @@ pub const CronExpression = struct {
 // Name lookup tables
 // ============================================================================
 
-const minute_ms: f64 = 60_000;
-const max_dst_shift_min: f64 = 120;
-
-pub const all_minutes: u64 = (1 << 60) - 1;
-pub const all_hours: u32 = (1 << 24) - 1;
+const all_hours: u32 = (1 << 24) - 1;
 pub const all_days: u32 = ((1 << 32) - 1) & ~@as(u32, 1);
 pub const all_months: u16 = ((1 << 13) - 1) & ~@as(u16, 1);
 pub const all_weekdays: u8 = (1 << 7) - 1;

@@ -7438,7 +7438,8 @@ declare module "bun" {
      *
      * ### Cron expression syntax
      *
-     * Five fields: `minute hour day-of-month month day-of-week`.
+     * Five fields: `minute hour day-of-month month day-of-week`. Schedules are
+     * interpreted in **UTC** — `0 9 * * *` fires at 9:00 UTC, regardless of `TZ`.
      *
      * | Field | Values | Special chars |
      * |-------|--------|---------------|
@@ -7592,9 +7593,7 @@ declare module "bun" {
      */
     remove(title: string): Promise<void>;
     /**
-     * Parse a cron expression and return the next matching `Date` in the
-     * system's local time zone — the same way crontab, launchd, and Windows
-     * Task Scheduler interpret schedules. Set `TZ=UTC` to use UTC.
+     * Parse a cron expression and return the next matching `Date` in UTC.
      *
      * Supports the same syntax as {@link Bun.cron} — 5-field expressions, named
      * days/months, and predefined nicknames like `@daily`.
@@ -7603,18 +7602,14 @@ declare module "bun" {
      * matching uses OR logic per [POSIX cron](https://pubs.opengroup.org/onlinepubs/9699919799/utilities/crontab.html):
      * a date matches if **either** field matches.
      *
-     * DST: spring-forward times shift forward by the gap; in the fall-back
-     * duplicated hour, fixed-time schedules fire once (first occurrence) while
-     * schedules with `*` minute or hour fire through both occurrences.
-     *
      * @param expression - A cron expression or nickname (e.g. `"0,15,30,45 * * * *"`, `"0 9 * * MON-FRI"`, `"@hourly"`)
      * @param relativeDate - Starting point for the search (defaults to `Date.now()`). Accepts a `Date` or milliseconds since epoch.
-     * @returns The next `Date` matching the expression in local time, or `null` if no match exists within 8 years (e.g. `"0 0 30 2 *"` — Feb 30 never occurs)
+     * @returns The next `Date` matching the expression in UTC, or `null` if no match exists within 8 years (e.g. `"0 0 30 2 *"` — Feb 30 never occurs)
      * @throws If the expression is invalid or `relativeDate` is `NaN`/`Infinity`
      *
      * @example
      * ```ts
-     * // Next weekday at 09:30 local time
+     * // Next weekday at 09:30 UTC
      * const next = Bun.cron.parse("30 9 * * MON-FRI");
      *
      * // Chain calls to get a sequence

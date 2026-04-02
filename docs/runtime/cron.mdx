@@ -18,7 +18,7 @@ Bun.cron("0 * * * *", async () => {
 **Parse a cron expression to find the next matching time:**
 
 ```ts
-// Next weekday at 9:30 AM local time
+// Next weekday at 9:30 AM UTC
 const next = Bun.cron.parse("30 9 * * MON-FRI");
 ```
 
@@ -32,7 +32,7 @@ await Bun.cron("./worker.ts", "30 2 * * MON", "weekly-report");
 
 ## `Bun.cron.parse()`
 
-Parse a cron expression and return the next matching `Date` in the system's local time zone.
+Parse a cron expression and return the next matching `Date` in UTC.
 
 ```ts
 const next = Bun.cron.parse("*/15 * * * *");
@@ -113,19 +113,14 @@ Both `0` and `7` mean Sunday in the weekday field.
 
 ```ts
 const next = Bun.cron.parse("@daily");
-console.log(next); // => next local midnight
+console.log(next); // => next UTC midnight
 ```
 
 ### Time zone
 
-Schedules are interpreted in the system's **local time zone** — the same way crontab, launchd, and Windows Task Scheduler read them. The OS-level form and the in-process callback form fire at the same wall-clock time.
+`Bun.cron.parse()` and the in-process `Bun.cron(schedule, handler)` interpret schedules in **UTC**. There is no DST to handle — `0 9 * * *` always means 9:00 UTC.
 
-To use UTC, set `TZ=UTC` in the environment.
-
-DST transitions:
-
-- **Spring-forward** — a schedule that lands in the missing hour fires that day, shifted forward by the gap (e.g. `30 2 * * *` runs at 3:30 on the spring-forward day). For multi-minute patterns inside the gap (`*/15 2 * * *`), only the first match fires.
-- **Fall-back** — a fixed-time schedule in the duplicated hour (`30 1 * * *`) fires once, at the first occurrence. A schedule whose minute or hour field is `*` (`0 * * * *`, `* * * * *`) fires through **both** occurrences — once per real-time minute, matching crontab on Linux.
+The OS-level `Bun.cron(path, schedule, title)` uses the **system's local time zone**, because that's how crontab, launchd, and Windows Task Scheduler work. To make the two forms agree, run the process with `TZ=UTC`.
 
 ### Day-of-month and day-of-week interaction
 

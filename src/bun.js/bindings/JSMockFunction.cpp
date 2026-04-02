@@ -1447,8 +1447,6 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsNow, (JSC::JSGlobalObject * globalObject, JSC
 {
     return JSValue::encode(jsNumber(globalObject->jsDateNow()));
 }
-extern "C" void Bun__FakeTimers__onSetSystemTime(double jsEpochMs);
-
 BUN_DEFINE_HOST_FUNCTION(JSMock__jsSetSystemTime, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {
     JSValue argument0 = callframe->argument(0);
@@ -1456,13 +1454,11 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSetSystemTime, (JSC::JSGlobalObject * globalO
     if (auto* dateInstance = jsDynamicCast<DateInstance*>(argument0)) {
         if (std::isnormal(dateInstance->internalNumber())) {
             globalObject->overridenDateNow = dateInstance->internalNumber();
-            Bun__FakeTimers__onSetSystemTime(dateInstance->internalNumber());
         }
         return JSValue::encode(callframe->thisValue());
     }
     // number > 0 is a valid date otherwise it's invalid and we should reset the time (set to -1)
     globalObject->overridenDateNow = (argument0.isNumber() && argument0.asNumber() >= 0) ? argument0.asNumber() : -1;
-    Bun__FakeTimers__onSetSystemTime(globalObject->overridenDateNow);
 
     return JSValue::encode(callframe->thisValue());
 }

@@ -1,4 +1,3 @@
-import { setSystemTime } from "bun:test";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 afterEach(() => vi.useRealTimers());
@@ -214,23 +213,6 @@ describe("isFakeTimers", () => {
   });
 });
 describe("Date.now() mocking", () => {
-  test("setSystemTime composes with advanceTimersByTime", () => {
-    vi.useFakeTimers();
-    setSystemTime(new Date("2020-06-15T12:00:00Z"));
-    expect(Date.now()).toBe(new Date("2020-06-15T12:00:00Z").getTime());
-    vi.advanceTimersByTime(5000);
-    expect(Date.now()).toBe(new Date("2020-06-15T12:00:05Z").getTime());
-  });
-
-  test("setSystemTime() reset then advanceTimersByTime tracks real time", () => {
-    vi.useFakeTimers();
-    setSystemTime(new Date("2020-06-15T12:00:00Z"));
-    setSystemTime(); // reset
-    const realYear = new Date().getFullYear();
-    vi.advanceTimersByTime(1000);
-    expect(new Date().getFullYear()).toBe(realYear);
-  });
-
   test("Date.now() before and after vi.useFakeTimers() should be roughly equal", () => {
     const beforeFake = Date.now();
     vi.useFakeTimers();

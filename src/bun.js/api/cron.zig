@@ -829,6 +829,16 @@ pub const CronJob = struct {
     poll_ref: bun.Async.KeepAlive = .{},
     this_value: jsc.JSRef = jsc.JSRef.empty(),
     stopped: bool = false,
+    /// True while a ref() is held across an in-flight callback promise.
+    /// Released exactly once by either onPromiseResolve/Reject or stopInternal.
+    pending_ref: bool = false,
+
+    fn releasePendingRef(this: *CronJob) void {
+        if (this.pending_ref) {
+            this.pending_ref = false;
+            this.deref();
+        }
+    }
 
     fn stopInternal(this: *CronJob, vm: *jsc.VirtualMachine) void {
         if (this.stopped) return;
@@ -850,13 +860,15 @@ pub const CronJob = struct {
         }
     }
 
-    /// Called from VirtualMachine.reload() before --hot re-evaluates the
-    /// module graph, and from WebWorker.exitAndDeinit(). Every Bun.cron()
-    /// call still in the source re-registers on reload.
-    pub fn clearAllForVM(vm: *jsc.VirtualMachine) void {
+    /// `.reload`: --hot — promises in flight will still settle on this VM, so
+    /// the pending ref is left for onPromiseResolve/Reject to balance.
+    /// `.teardown`: worker exit — the event loop is dying, settle never
+    /// happens, so release the pending ref here to avoid leaking the struct.
+    pub fn clearAllForVM(vm: *jsc.VirtualMachine, comptime mode: enum { reload, teardown }) void {
         const rare = vm.rare_data orelse return;
         for (rare.cron_jobs.items) |job| {
             job.stopInternal(vm);
+            if (mode == .teardown) job.releasePendingRef();
             job.deref();
         }
         rare.cron_jobs.clearRetainingCapacity();
@@ -873,13 +885,12 @@ pub const CronJob = struct {
     }
 
     fn computeNextTimespec(this: *CronJob) ?bun.timespec {
-        // Use mocked Date.now() under fake timers so the deadline and the
-        // cron occurrence track the same clock.
-        const now_ms: f64 = bun.jsc.Jest.bun_test.FakeTimers.current_time.dateNowMs() orelse
-            @floatFromInt(std.time.milliTimestamp());
+        // Cron occurrences are calendar-based (real epoch); the timer heap is
+        // monotonic. Anchor both to real time so fake timers don't half-apply.
+        const now_ms: f64 = @floatFromInt(std.time.milliTimestamp());
         const next_ms = (this.parsed.next(this.global, now_ms) catch return null) orelse return null;
         const delta: i64 = @intFromFloat(@max(1.0, next_ms - now_ms));
-        return bun.timespec.msFromNow(.allow_mocked_time, delta);
+        return bun.timespec.msFromNow(.force_real_time, delta);
     }
 
     fn scheduleNext(this: *CronJob, vm: *jsc.VirtualMachine) void {
@@ -931,10 +942,11 @@ pub const CronJob = struct {
             switch (promise.status()) {
                 .pending => {
                     this.ref();
+                    this.pending_ref = true;
                     js.pendingPromiseSetCached(js_this, this.global, result);
                     result.then(this.global, this, onPromiseResolve, onPromiseReject) catch {
                         js.pendingPromiseSetCached(js_this, this.global, .js_undefined);
-                        this.deref();
+                        this.releasePendingRef();
                         this.scheduleNext(vm);
                     };
                     return;
@@ -956,7 +968,7 @@ pub const CronJob = struct {
     fn onPromiseResolve(_: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
         const args = callframe.arguments();
         var this: *CronJob = args[args.len - 1].asPromisePtr(CronJob);
-        defer this.deref();
+        defer this.releasePendingRef();
         if (this.this_value.tryGet()) |js_this|
             js.pendingPromiseSetCached(js_this, this.global, .js_undefined);
         this.scheduleNext(this.global.bunVM());
@@ -966,7 +978,7 @@ pub const CronJob = struct {
     fn onPromiseReject(_: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
         const args = callframe.arguments();
         var this: *CronJob = args[args.len - 1].asPromisePtr(CronJob);
-        defer this.deref();
+        defer this.releasePendingRef();
         const vm = this.global.bunVM();
         const err = if (args.len > 0) args[0] else .js_undefined;
         var promise_value: jsc.JSValue = .js_undefined;

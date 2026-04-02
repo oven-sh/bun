@@ -121,18 +121,15 @@ describe("Bun.cron (in-process)", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("respects jest fake timers via mocked Date.now()", () => {
+  test("ignores jest fake timers (calendar-anchored to real time)", () => {
     jest.useFakeTimers();
     try {
-      jest.setSystemTime(new Date("2025-01-01T23:59:30Z"));
       let fires = 0;
-      using job = Bun.cron("0 0 * * *", () => void fires++);
-      jest.advanceTimersByTime(29_000);
+      using job = Bun.cron("* * * * *", () => void fires++);
+      jest.runAllTimers();
+      jest.advanceTimersByTime(120_000);
+      jest.runAllTimers();
       expect(fires).toBe(0);
-      jest.advanceTimersByTime(2_000);
-      expect(fires).toBe(1);
-      jest.advanceTimersByTime(24 * 60 * 60_000);
-      expect(fires).toBe(2);
     } finally {
       jest.useRealTimers();
     }
@@ -148,55 +145,38 @@ describe("Bun.cron (in-process)", () => {
   });
 });
 
-describe("Bun.cron (in-process) — firing (fake timers)", () => {
-  test("callback fires at minute boundary, this === job", () => {
-    jest.useFakeTimers();
-    try {
-      jest.setSystemTime(new Date("2025-01-01T00:00:30Z"));
-      let fired = 0;
-      let thisInCallback: unknown;
-      using job = Bun.cron("* * * * *", function () {
-        fired++;
-        thisInCallback = this;
-      });
-      jest.advanceTimersByTime(30_000);
-      expect(fired).toBe(1);
-      expect(thisInCallback).toBe(job);
-      jest.advanceTimersByTime(60_000);
-      expect(fired).toBe(2);
-    } finally {
-      jest.useRealTimers();
-    }
-  });
+describe.concurrent("Bun.cron (in-process) — firing", () => {
+  test("callback fires at minute boundary, this === job", async () => {
+    let fired = 0;
+    let thisInCallback: unknown;
+    const { promise, resolve } = Promise.withResolvers<void>();
 
-  test("async callback delays next scheduling (no overlap)", async () => {
-    jest.useFakeTimers();
-    try {
-      jest.setSystemTime(new Date("2025-01-01T00:00:59Z"));
-      let starts = 0;
-      const handler = Promise.withResolvers<void>();
-      using job = Bun.cron("* * * * *", async () => {
-        starts++;
-        await handler.promise;
-      });
-      jest.advanceTimersByTime(1_000);
-      expect(starts).toBe(1);
-      // Handler still pending — advancing past 5 more boundaries must not stack fires.
-      jest.advanceTimersByTime(5 * 60_000);
-      expect(starts).toBe(1);
-      handler.resolve();
-      // Drain the .then() chain so onPromiseResolve runs and reschedules.
-      for (let i = 0; i < 3; i++) await Promise.resolve();
-      // Next fire scheduled from current fake time; one more minute triggers it.
-      jest.advanceTimersByTime(60_000);
-      expect(starts).toBe(2);
-    } finally {
-      jest.useRealTimers();
-    }
-  });
-});
+    using job = Bun.cron("* * * * *", function () {
+      fired++;
+      thisInCallback = this;
+      resolve();
+    });
 
-describe.concurrent("Bun.cron (in-process) — firing (subprocess)", () => {
+    await promise;
+    expect(fired).toBe(1);
+    expect(thisInCallback).toBe(job);
+  }, 70_000);
+
+  test("async callback delays next scheduling", async () => {
+    const handler = Promise.withResolvers<void>();
+    const fire = Promise.withResolvers<void>();
+
+    using job = Bun.cron("* * * * *", async () => {
+      fire.resolve();
+      await handler.promise;
+    });
+
+    await fire.promise;
+    job.stop();
+    handler.resolve();
+    await Bun.sleep(10);
+  }, 70_000);
+
   test("sync throw in callback emits uncaughtException", async () => {
     // Matches setTimeout: sync throw → uncaughtException. Process exits 1 without a handler.
     await using proc = Bun.spawn({

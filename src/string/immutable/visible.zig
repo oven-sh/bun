@@ -716,22 +716,23 @@ pub const visible = struct {
         return if ((c >= 127 and c <= 159) or c < 32 or c == 0xAD) 0 else 1;
     }
 
-    // SIMD scan for the first byte in the inclusive range [Lo, Hi]. Returns
+    // SIMD scan for the first lane in the inclusive range [Lo, Hi]. Returns
     // null if not found. Used to find the CSI final byte (0x40-0x7E). Same
     // wrapping-subtract trick as the C++ ANSI helpers:
     //   c in [Lo, Hi]  <=>  (c - Lo) <= (Hi - Lo) unsigned
-    fn scanByteInRange(comptime Lo: u8, comptime Hi: u8, slice: []const u8) ?usize {
+    fn scanLaneInRange(comptime T: type, comptime Lo: T, comptime Hi: T, slice: []const T) ?usize {
         comptime std.debug.assert(Lo <= Hi);
+        const stride = 16 / @sizeOf(T);
+        const MaskInt = std.meta.Int(.unsigned, stride);
         var i: usize = 0;
-        const stride = 16;
-        const lo: @Vector(stride, u8) = @splat(Lo);
-        const range: @Vector(stride, u8) = @splat(Hi - Lo);
+        const lo: @Vector(stride, T) = @splat(Lo);
+        const range: @Vector(stride, T) = @splat(Hi - Lo);
 
         while (slice.len - i >= stride) : (i += stride) {
-            const chunk: @Vector(stride, u8) = slice[i..][0..stride].*;
+            const chunk: @Vector(stride, T) = slice[i..][0..stride].*;
             const shifted = chunk -% lo;
             const in_range = shifted <= range;
-            const mask: u16 = @bitCast(@as(@Vector(stride, u1), @bitCast(in_range)));
+            const mask: MaskInt = @bitCast(@as(@Vector(stride, u1), @bitCast(in_range)));
             if (mask != 0) return i + @ctz(mask);
         }
         while (i < slice.len) : (i += 1) {
@@ -741,21 +742,22 @@ pub const visible = struct {
         return null;
     }
 
-    // SIMD scan for the first byte equal to any of `targets`. Returns null if
+    // SIMD scan for the first lane equal to any of `targets`. Returns null if
     // not found. Used to find OSC terminators (BEL/ESC; the C1 ST 0x9c is
     // ASCII-incompatible and not handled by Latin-1 anyway).
-    fn scanAnyByte(comptime targets: []const u8, slice: []const u8) ?usize {
+    fn scanLaneAnyOf(comptime T: type, comptime targets: []const T, slice: []const T) ?usize {
         comptime std.debug.assert(targets.len > 0);
+        const stride = 16 / @sizeOf(T);
+        const MaskInt = std.meta.Int(.unsigned, stride);
         var i: usize = 0;
-        const stride = 16;
 
         while (slice.len - i >= stride) : (i += stride) {
-            const chunk: @Vector(stride, u8) = slice[i..][0..stride].*;
-            var hit: @Vector(stride, bool) = chunk == @as(@Vector(stride, u8), @splat(targets[0]));
+            const chunk: @Vector(stride, T) = slice[i..][0..stride].*;
+            var hit: @Vector(stride, bool) = chunk == @as(@Vector(stride, T), @splat(targets[0]));
             inline for (targets[1..]) |t| {
-                hit = hit | (chunk == @as(@Vector(stride, u8), @splat(t)));
+                hit = hit | (chunk == @as(@Vector(stride, T), @splat(t)));
             }
-            const mask: u16 = @bitCast(@as(@Vector(stride, u1), @bitCast(hit)));
+            const mask: MaskInt = @bitCast(@as(@Vector(stride, u1), @bitCast(hit)));
             if (mask != 0) return i + @ctz(mask);
         }
         while (i < slice.len) : (i += 1) {
@@ -787,7 +789,7 @@ pub const visible = struct {
                 // be 1-15+ bytes (e.g. ESC [ 1;31;48;2;255;0;0 m).
                 if (input.len < 3) return length;
                 input = input[2..];
-                if (scanByteInRange(0x40, 0x7E, input)) |t| {
+                if (scanLaneInRange(u8, 0x40, 0x7E, input)) |t| {
                     input = input[t + 1 ..];
                 } else {
                     return length;
@@ -797,7 +799,7 @@ pub const visible = struct {
                 // (titles, hyperlinks, filenames) — SIMD-scan for the
                 // terminators instead of byte-by-byte.
                 input = input[2..];
-                while (scanAnyByte(&.{ 0x07, 0x1b }, input)) |t| {
+                while (scanLaneAnyOf(u8, &.{ 0x07, 0x1b }, input)) |t| {
                     if (input[t] == 0x07) {
                         // BEL terminator.
                         input = input[t + 1 ..];
@@ -1083,42 +1085,70 @@ pub const visible = struct {
                     }
                 }
 
-                for (0..idx) |j| {
-                    const cp: u32 = input[j];
-                    defer prev = cp;
-
-                    if (saw_osc) {
-                        // In OSC sequence, look for BEL (0x07) or ST (ESC \)
-                        if (cp == 0x07) {
-                            saw_1b = false;
-                            saw_osc = false;
-                            stretch_len = 0;
-                            continue;
-                        } else if (cp == '\\' and prev == 0x1b) {
-                            // ST terminator complete (ESC \)
-                            saw_1b = false;
-                            saw_osc = false;
-                            stretch_len = 0;
-                            continue;
-                        } else if (cp == 0x1b) {
-                            // ESC inside OSC - might be start of ST terminator
-                            // Don't exit OSC yet, wait to see if next char is '\'
-                            continue;
-                        }
-                        stretch_len += visibleCodepointWidth(cp, ambiguousAsWide);
-                        continue;
-                    }
+                var j: usize = 0;
+                while (j < idx) {
+                    // Bulk SIMD scans inside escape states — replace the byte-by-byte
+                    // walk for long CSI parameter strings and OSC payloads (URLs,
+                    // titles, hyperlinks). The grapheme/width tracking lives below
+                    // and only fires on visible codepoints, so the escape body bytes
+                    // don't need per-byte processing here.
                     if (saw_csi) {
-                        // CSI final byte is in range 0x40-0x7E (@ through ~)
-                        if (cp >= 0x40 and cp <= 0x7E) {
+                        // CSI final byte is in [0x40, 0x7E].
+                        const sub = input[j..idx];
+                        if (scanLaneInRange(u16, 0x40, 0x7E, sub)) |t| {
                             saw_1b = false;
                             saw_csi = false;
                             stretch_len = 0;
+                            prev = sub[t];
+                            j += t + 1;
                             continue;
                         }
-                        // Parameter bytes - don't add to width
-                        continue;
+                        // Terminator not in this ASCII run — stay in CSI state and
+                        // advance to end. The next outer iteration (or non-ASCII
+                        // codepoint handler) will continue parsing.
+                        if (idx > j) prev = input[idx - 1];
+                        break;
                     }
+                    if (saw_osc) {
+                        // OSC payload terminates at BEL (0x07) or ESC + '\\' (ST).
+                        // SIMD scan for either ESC or BEL — for ESC we then peek
+                        // the next byte to see if it's '\\'.
+                        const sub = input[j..idx];
+                        if (scanLaneAnyOf(u16, &.{ 0x07, 0x1b }, sub)) |t| {
+                            const term = sub[t];
+                            if (term == 0x07) {
+                                saw_1b = false;
+                                saw_osc = false;
+                                stretch_len = 0;
+                                prev = 0x07;
+                                j += t + 1;
+                                continue;
+                            }
+                            // ESC found at offset t. Peek next byte for '\\' (ST).
+                            if (j + t + 1 < idx and input[j + t + 1] == '\\') {
+                                saw_1b = false;
+                                saw_osc = false;
+                                stretch_len = 0;
+                                prev = '\\';
+                                j += t + 2;
+                                continue;
+                            }
+                            // Lone ESC inside OSC — skip it and keep scanning. The
+                            // next outer iteration will SIMD-scan again from j+t+1.
+                            prev = 0x1b;
+                            j += t + 1;
+                            continue;
+                        }
+                        // Terminator not in this ASCII run — stay in OSC state.
+                        if (idx > j) prev = input[idx - 1];
+                        break;
+                    }
+
+                    // Per-byte path for everything else.
+                    const cp: u32 = input[j];
+                    j += 1;
+                    defer prev = cp;
+
                     if (saw_1b) {
                         if (cp == '[') {
                             saw_csi = true;

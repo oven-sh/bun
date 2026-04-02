@@ -39,9 +39,12 @@ static std::optional<WTF::String> stripANSI(const std::span<const Char> input)
             break;
         }
 
-        // Lazily allocate the worst-case buffer on first ESC found.
+        // Lazily allocate the worst-case buffer on first ESC candidate. Guard
+        // on `cursor == nullptr` (not `!foundANSI`) so a broad-mask false
+        // positive that allocates the buffer doesn't reset the cursor on the
+        // next iteration when a real escape is finally found.
         // POD types skip per-element initialization in Vector::grow.
-        if (!foundANSI) {
+        if (cursor == nullptr) {
             buffer.grow(input.size());
             cursor = buffer.begin();
         }

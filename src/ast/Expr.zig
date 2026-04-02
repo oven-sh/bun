@@ -2989,12 +2989,6 @@ pub const Data = union(Tag) {
                     .e_null, .e_undefined => {
                         return Equality.false;
                     },
-                    .e_string => {
-                        if (comptime kind == .strict) {
-                            // "true === 'x'" is false (different types)
-                            return Equality.false;
-                        }
-                    },
                     else => {},
                 }
             },
@@ -3038,21 +3032,6 @@ pub const Data = union(Tag) {
                     .e_null, .e_undefined => {
                         // "(not null or undefined) == undefined" is false
                         return Equality.false;
-                    },
-                    .e_string => |r| {
-                        if (comptime kind == .strict) {
-                            // "42 === 'x'" is false (different types)
-                            return Equality.false;
-                        }
-                        // Loose: "0" == 0 is true, "" == 0 is true
-                        r.resolveRopeIfNeeded(p.allocator);
-                        if (l.value == 0 and (r.isBlank() or r.eqlComptime("0"))) {
-                            return Equality.true;
-                        }
-                        if (l.value == 1 and r.eqlComptime("1")) {
-                            return Equality.true;
-                        }
-                        return Equality.unknown;
                     },
                     else => {},
                 }
@@ -3115,12 +3094,6 @@ pub const Data = union(Tag) {
                             // the string could still equal 0 or 1 but it could be hex, binary, octal, ...
                             return Equality.unknown;
                         } else {
-                            return Equality.false;
-                        }
-                    },
-                    .e_boolean, .e_branch_boolean => {
-                        if (comptime kind == .strict) {
-                            // "'x' === true" is false (different types)
                             return Equality.false;
                         }
                     },

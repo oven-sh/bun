@@ -128,14 +128,11 @@ pub const CronExpression = struct {
         dt.minute += 1;
         dt.second = 0;
 
-        // dt.year only changes inside the date-normalize block (gated on
-        // date_dirty), but hour overflow forces date_dirty within ≤1440
-        // iterations, so this check is reached and the loop is bounded.
-        var date_dirty = true;
         while (dt.year - start_year <= 8) {
-            // Carry hour/minute overflow explicitly so the candidate hour:minute
-            // is checked against the bitfields *before* DST shifts it (croner
-            // semantics: gap times fire shifted forward, same day).
+            // Carry hour/minute manually so the candidate {hour,minute} is
+            // checked against the bitfields *before* DST shifts it; normalize
+            // the date+weekday via a noon round-trip (DST at midday stays on
+            // the same calendar day, so only date fields are copied back).
             if (dt.minute > 59) {
                 dt.minute -= 60;
                 dt.hour += 1;
@@ -143,55 +140,37 @@ pub const CronExpression = struct {
             if (dt.hour > 23) {
                 dt.hour -= 24;
                 dt.day += 1;
-                date_dirty = true;
             }
-            // Normalize the date (year/month/day overflow + weekday) via a
-            // round-trip at noon. Any DST shift at midday stays within the same
-            // calendar day, so the date and weekday are still correct. Skip
-            // when only hour/minute moved.
-            if (date_dirty) {
-                const noon_ms = try globalObject.gregorianDateTimeToMS(dt.year, dt.month, dt.day, 12, 0, 0, 0);
-                const n = globalObject.msToGregorianDateTime(noon_ms);
-                dt.year = n.year;
-                dt.month = n.month;
-                dt.day = n.day;
-                dt.weekday = n.weekday;
-                date_dirty = false;
-            }
+            const n = globalObject.msToGregorianDateTime(try globalObject.gregorianDateTimeToMS(dt.year, dt.month, dt.day, 12, 0, 0, 0));
+            dt.year = n.year;
+            dt.month = n.month;
+            dt.day = n.day;
+            dt.weekday = n.weekday;
 
-            // Check month
             if (!bitSet(u16, self.months, @intCast(dt.month))) {
                 dt.month += 1;
                 dt.day = 1;
                 dt.hour = 0;
                 dt.minute = 0;
-                date_dirty = true;
                 continue;
             }
-
             if (!self.matchesDay(dt.day, dt.weekday)) {
                 dt.day += 1;
                 dt.hour = 0;
                 dt.minute = 0;
-                date_dirty = true;
                 continue;
             }
-
-            // Check hour
             if (!bitSet(u32, self.hours, @intCast(dt.hour))) {
                 dt.hour += 1;
                 dt.minute = 0;
                 continue;
             }
-
-            // Check minute
             if (!bitSet(u64, self.minutes, @intCast(dt.minute))) {
                 dt.minute += 1;
                 continue;
             }
 
-            // All fields match
-            const result = try globalObject.gregorianDateTimeToMS(dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second, 0);
+            const result = try globalObject.gregorianDateTimeToMS(dt.year, dt.month, dt.day, dt.hour, dt.minute, 0, 0);
             // During DST fall-back, gregorianDateTimeToMS picks the FORMER
             // occurrence of an ambiguous local time, and the wall-clock walk
             // above can step over the entire second occurrence. For wild

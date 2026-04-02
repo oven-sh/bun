@@ -333,9 +333,9 @@ const IOWriter = bun.shell.Interpreter.IOWriter;
 const Pipeline = bun.shell.Interpreter.Pipeline;
 const Script = bun.shell.Interpreter.Script;
 const ShellExecEnv = Interpreter.ShellExecEnv;
-const ShellSyscall = shell.interpret.ShellSyscall;
 const State = bun.shell.Interpreter.State;
 const Stmt = bun.shell.Interpreter.Stmt;
 
+const ShellSyscall = shell.interpret.ShellSyscall;
 const StatePtrUnion = bun.shell.interpret.StatePtrUnion;
 const log = bun.shell.interpret.log;

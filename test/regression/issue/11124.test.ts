@@ -1,5 +1,5 @@
-import { expect, test } from "bun:test";
 import { $ } from "bun";
+import { expect, test } from "bun:test";
 import { bunEnv, tempDir } from "harness";
 
 test("subshell stdout redirect to file", async () => {

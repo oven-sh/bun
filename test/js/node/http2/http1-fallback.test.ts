@@ -2,20 +2,18 @@ import { describe, test, expect, beforeAll, afterAll } from "bun:test";
 import http2 from "node:http2";
 import https from "node:https";
 import { spawnSync } from "node:child_process";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { join, basename } from "node:path";
+import { readFileSync } from "node:fs";
+import { tempDir } from "harness";
 
-let tempDir: string;
 let KEY: Buffer;
 let CERT: Buffer;
 
 beforeAll(() => {
-  // Dynamically generate a valid RSA key and self-signed certificate
-  // so BoringSSL doesn't reject the server creation.
-  tempDir = mkdtempSync(join(tmpdir(), "bun-http2-test-"));
-  const keyPath = join(tempDir, "key.pem");
-  const certPath = join(tempDir, "cert.pem");
+  const tmp = tempDir(basename(import.meta.path), {});
+
+  const keyPath = join(tmp, "key.pem");
+  const certPath = join(tmp, "cert.pem");
 
   const result = spawnSync("openssl", [
     "req",
@@ -39,13 +37,6 @@ beforeAll(() => {
 
   KEY = readFileSync(keyPath);
   CERT = readFileSync(certPath);
-});
-
-afterAll(() => {
-  // Clean up the temporary certificates
-  if (tempDir) {
-    rmSync(tempDir, { recursive: true, force: true });
-  }
 });
 
 describe("http2.createSecureServer", () => {

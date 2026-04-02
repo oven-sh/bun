@@ -34,6 +34,7 @@ const net = require("node:net");
 const fs = require("node:fs");
 const { $data } = require("node:fs/promises");
 const FileHandle = $data.FileHandle;
+const { HTTPParser, allMethods } = process.binding("http_parser");
 const bunTLSConnectOptions = Symbol.for("::buntlsconnectoptions::");
 const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");
 const kInfoHeaders = Symbol("sent-info-headers");
@@ -4068,76 +4069,93 @@ function connectionListener(socket: Socket) {
         }
       }
 
-      let buffer = Buffer.alloc(0);
-      let parsed = false;
+      // Initialize native HTTP parser
+      const parser = new HTTPParser();
+      // 0 = REQUEST type, 16384 = max header size, 0 = strict parsing flags
+      parser.initialize(0, 16384, 0);
+
       let req: any = null;
 
-      socket.on("data", chunk => {
-        if (parsed) {
-          req.push(chunk);
-          return;
-        }
-        buffer = Buffer.concat([buffer, chunk]);
-        const headerEnd = buffer.indexOf("\r\n\r\n");
-        if (headerEnd !== -1) {
-          parsed = true;
-          const headerStr = buffer.subarray(0, headerEnd).toString("utf-8");
-          const lines = headerStr.split("\r\n");
-          const [method, url, version] = lines[0].split(" ");
+      parser[HTTPParser.kOnHeadersComplete] = (
+        versionMajor,
+        versionMinor,
+        headers,
+        method,
+        url,
+        statusCode,
+        statusMessage,
+        upgrade,
+        shouldKeepAlive,
+      ) => {
+        // Initialize the request stream here so it's fresh for every request
+        req = new Readable({ read() {} });
+        req.httpVersionMajor = versionMajor;
+        req.httpVersionMinor = versionMinor;
+        req.httpVersion = `${versionMajor}.${versionMinor}`;
 
-          const headers = {};
-          const rawHeaders = [];
-          for (let i = 1; i < lines.length; i++) {
-            const colon = lines[i].indexOf(":");
-            if (colon !== -1) {
-              const key = lines[i].slice(0, colon).trim();
-              const val = lines[i].slice(colon + 1).trim();
-              const lowerKey = key.toLowerCase();
-              if (headers[lowerKey]) {
-                headers[lowerKey] += `, ${val}`;
-              } else {
-                headers[lowerKey] = val;
-              }
-              rawHeaders.push(key, val);
+        // Use allMethods from process.binding to get the correct HTTP method
+        req.method = typeof method === "number" ? allMethods[method] : method;
+        req.url = url;
+
+        // 'headers' comes as a flat array from C++: [key1, val1, key2, val2, ...]
+        const headersObj = {};
+        const rawHeaders = [];
+        if (headers) {
+          for (let i = 0; i < headers.length; i += 2) {
+            const key = headers[i];
+            const val = headers[i + 1];
+            rawHeaders.push(key, val);
+
+            const lowerKey = key.toLowerCase();
+            if (headersObj[lowerKey]) {
+              headersObj[lowerKey] += `, ${val}`;
+            } else {
+              headersObj[lowerKey] = val;
             }
           }
+        }
 
-          req = new Readable({ read() {} });
-          req.method = method;
-          req.url = url;
+        req.headers = headersObj;
+        req.rawHeaders = rawHeaders;
+        req.socket = socket;
+        req.connection = socket;
 
-          const httpVer = version ? version.split("/")[1] : "1.1";
-          req.httpVersion = httpVer;
+        const res = new FallbackServerResponse(req);
 
-          const [major, minor] = httpVer.split(".");
-          req.httpVersionMajor = parseInt(major, 10) || 1;
-          req.httpVersionMinor = parseInt(minor, 10) || 1;
-
-          req.headers = headers;
-          req.rawHeaders = rawHeaders;
-          req.socket = socket;
-          req.connection = socket;
-
-          const res = new FallbackServerResponse(req);
-
-          if (headers.expect === "100-continue") {
-            if (this.listenerCount("checkContinue") > 0) {
-              this.emit("checkContinue", req, res);
-            } else {
-              socket.write("HTTP/1.1 100 Continue\r\n\r\n");
-              this.emit("request", req, res);
-            }
+        if (headersObj.expect === "100-continue") {
+          if (this.listenerCount("checkContinue") > 0) {
+            this.emit("checkContinue", req, res);
           } else {
+            socket.write("HTTP/1.1 100 Continue\r\n\r\n");
             this.emit("request", req, res);
           }
+        } else {
+          this.emit("request", req, res);
+        }
 
-          const body = buffer.subarray(headerEnd + 4);
-          if (body.length > 0) req.push(body);
+        return 0; // 0 tells the parser to continue processing
+      };
+
+      parser[HTTPParser.kOnBody] = chunk => {
+        if (req) req.push(chunk);
+        return 0;
+      };
+
+      parser[HTTPParser.kOnMessageComplete] = () => {
+        if (req) req.push(null);
+        return 0;
+      };
+
+      // Feed the raw socket data directly into the C++ parser
+      socket.on("data", chunk => {
+        const ret = parser.execute(chunk);
+        if (ret instanceof Error) {
+          socket.destroy(ret); // Destroy socket on parse error (e.g. invalid headers)
         }
       });
 
       socket.on("end", () => {
-        if (req) req.push(null);
+        if (req && !req.readableEnded) req.push(null);
       });
 
       socket.resume();

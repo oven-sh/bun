@@ -809,18 +809,8 @@ pub const CronRemoveJob = struct {
 };
 
 // ============================================================================
-// CronJob — in-process callback-style cron (issue #7004)
+// CronJob — in-process callback-style cron (Bun.cron(expr, cb))
 // ============================================================================
-//
-// Bun.cron("*/5 * * * *", async () => { ... })
-//
-// Unlike the OS-level cron above, this runs the callback in the current
-// process on the event loop. The next execution is scheduled only after the
-// callback (including any returned Promise) completes, so callbacks never
-// overlap. Error semantics match setTimeout: sync throws become
-// uncaughtException, rejected Promises become unhandledRejection. Under --hot,
-// VirtualMachine.reload() calls clearAllForVM before re-evaluating the module
-// graph, so deleted Bun.cron() calls don't leave ghost timers.
 
 pub const CronJob = struct {
     const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
@@ -845,22 +835,24 @@ pub const CronJob = struct {
         this.stopped = true;
         if (this.event_loop_timer.state == .ACTIVE)
             vm.timer.remove(&this.event_loop_timer);
-        this.cleanupAfterStop(vm);
+        this.poll_ref.unref(vm);
+        if (this.this_value != .finalized)
+            this.this_value.downgrade();
     }
 
     fn selfStop(this: *CronJob, vm: *jsc.VirtualMachine) void {
+        this.stopInternal(vm);
         if (vm.rare_data) |rare| {
             if (std.mem.indexOfScalar(*CronJob, rare.cron_jobs.items, this)) |i| {
                 _ = rare.cron_jobs.swapRemove(i);
                 this.deref();
             }
         }
-        this.stopInternal(vm);
     }
 
     /// Called from VirtualMachine.reload() before --hot re-evaluates the
     /// module graph, and from WebWorker.exitAndDeinit(). Every Bun.cron()
-    /// call still in the source will re-register on reload.
+    /// call still in the source re-registers on reload.
     pub fn clearAllForVM(vm: *jsc.VirtualMachine) void {
         const rare = vm.rare_data orelse return;
         for (rare.cron_jobs.items) |job| {
@@ -881,9 +873,8 @@ pub const CronJob = struct {
     }
 
     fn computeNextTimespec(this: *CronJob) ?bun.timespec {
-        // Cron occurrences are calendar-based, so the input must be epoch ms.
-        // Under fake timers that's the mocked Date.now(); the deadline then
-        // uses .allow_mocked_time so both halves track the same fake clock.
+        // Use mocked Date.now() under fake timers so the deadline and the
+        // cron occurrence track the same clock.
         const now_ms: f64 = bun.jsc.Jest.bun_test.FakeTimers.current_time.dateNowMs() orelse
             @floatFromInt(std.time.milliTimestamp());
         const next_ms = (this.parsed.next(this.global, now_ms) catch return null) orelse return null;
@@ -900,17 +891,10 @@ pub const CronJob = struct {
         vm.timer.update(&this.event_loop_timer, &next_time);
     }
 
-    fn cleanupAfterStop(this: *CronJob, vm: *jsc.VirtualMachine) void {
-        this.poll_ref.unref(vm);
-        if (this.this_value != .finalized)
-            this.this_value.downgrade();
-    }
-
     pub fn onTimerFire(this: *CronJob, vm: *jsc.VirtualMachine) void {
         this.event_loop_timer.state = .FIRED;
-        // Keep the struct alive across the user callback — stop() inside the
-        // callback downgrades this_value, and a GC could otherwise finalize +
-        // destroy `this` before we read fields below.
+        // stop() inside the callback downgrades this_value; without this
+        // ref() a GC could finalize and destroy `this` mid-callback.
         this.ref();
         defer this.deref();
 

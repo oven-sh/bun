@@ -569,18 +569,9 @@ pub fn attemptToCreatePackageJSONAndOpen() !std.fs.File {
         Global.exit(1);
     }
 
-    const package_json_file = std.fs.cwd().createFileZ("package.json", .{ .read = true, .exclusive = true }) catch |err| switch (err) {
-        error.PathAlreadyExists => {
-            // Another process created it between the prompt and now — just open it.
-            return std.fs.cwd().openFileZ("package.json", .{ .mode = .read_write }) catch |open_err| {
-                Output.prettyErrorln("<r><red>error:<r> {s} open package.json", .{@errorName(open_err)});
-                Global.crash();
-            };
-        },
-        else => {
-            Output.prettyErrorln("<r><red>error:<r> {s} create package.json", .{@errorName(err)});
-            Global.crash();
-        },
+    const package_json_file = std.fs.cwd().createFileZ("package.json", .{ .read = true }) catch |err| {
+        Output.prettyErrorln("<r><red>error:<r> {s} create package.json", .{@errorName(err)});
+        Global.crash();
     };
 
     try package_json_file.pwriteAll("{\"dependencies\": {}}", 0);
@@ -609,10 +600,7 @@ fn promptToCreatePackageJSON() bool {
     Output.prettyError("<r><yellow>warn:<r> No package.json found. Create one in <b>{s}<r>? <d>[Y/n]<r> ", .{cwd});
     Output.flush();
 
-    var stdin = std.fs.File.stdin();
-    var reader_buffer: [1024]u8 = undefined;
-    var buffered = stdin.readerStreaming(&reader_buffer);
-    const reader = &buffered.interface;
+    const reader = &Output.buffered_stdin.reader().interface;
 
     const first_byte = reader.takeByte() catch {
         return true;

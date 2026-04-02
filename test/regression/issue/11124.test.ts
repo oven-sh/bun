@@ -1,3 +1,4 @@
+// https://github.com/oven-sh/bun/issues/11124
 import { $ } from "bun";
 import { expect, test } from "bun:test";
 import { bunEnv, tempDir } from "harness";

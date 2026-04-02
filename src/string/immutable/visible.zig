@@ -721,7 +721,7 @@ pub const visible = struct {
     // wrapping-subtract trick as the C++ ANSI helpers:
     //   c in [Lo, Hi]  <=>  (c - Lo) <= (Hi - Lo) unsigned
     fn scanLaneInRange(comptime T: type, comptime Lo: T, comptime Hi: T, slice: []const T) ?usize {
-        comptime std.debug.assert(Lo <= Hi);
+        comptime bun.assert(Lo <= Hi);
         const stride = 16 / @sizeOf(T);
         const MaskInt = std.meta.Int(.unsigned, stride);
         var i: usize = 0;
@@ -745,7 +745,7 @@ pub const visible = struct {
     // SIMD scan for the first lane equal to any of `targets`. Returns null if
     // not found. Used to find OSC terminators (BEL/ESC and the C1 ST 0x9C).
     fn scanLaneAnyOf(comptime T: type, comptime targets: []const T, slice: []const T) ?usize {
-        comptime std.debug.assert(targets.len > 0);
+        comptime bun.assert(targets.len > 0);
         const stride = 16 / @sizeOf(T);
         const MaskInt = std.meta.Int(.unsigned, stride);
         var i: usize = 0;

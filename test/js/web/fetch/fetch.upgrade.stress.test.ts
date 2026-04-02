@@ -1,14 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { decodeFrames, encodeCloseFrame, encodeTextFrame, upgradeHeaders } from "./websocket.helpers";
 
-const PADDING = "x".repeat(256);
-const BIG_HEADERS = (() => {
-  const h: Record<string, string> = upgradeHeaders();
-  for (let i = 0; i < 8; i++) h["X-Padding-" + i] = PADDING;
-  return h;
-})();
-
-async function runOnce(): Promise<{ server: string[]; client: string[]; status: number }> {
+async function runOnce(label: string): Promise<void> {
   const serverMessages: string[] = [];
   await using server = Bun.serve({
     port: 0,
@@ -30,7 +23,7 @@ async function runOnce(): Promise<{ server: string[]; client: string[]; status: 
   });
   const res = await fetch(server.url, {
     method: "GET",
-    headers: BIG_HEADERS,
+    headers: upgradeHeaders(),
     async *body() {
       yield encodeTextFrame("hello");
       yield encodeTextFrame("world");
@@ -38,92 +31,61 @@ async function runOnce(): Promise<{ server: string[]; client: string[]; status: 
       yield encodeCloseFrame();
     },
   });
-  if (res.status !== 101) throw new Error("expected 101, got " + res.status);
+  if (res.status !== 101) throw new Error(label + " status=" + res.status);
   const clientMessages: string[] = [];
+  const { promise, resolve } = Promise.withResolvers<void>();
   const reader = res.body!.getReader();
   while (true) {
     const { value, done } = await reader.read();
     if (done) break;
-    let sawClose = false;
     for (const msg of decodeFrames(Buffer.from(value))) {
       if (typeof msg === "string") clientMessages.push(msg);
       else {
         clientMessages.push(msg.type);
-        if (msg.type === "close") sawClose = true;
+        if (msg.type === "close") resolve();
       }
     }
-    if (sawClose) break;
   }
-  return { server: serverMessages, client: clientMessages, status: res.status };
+  await promise;
+  if (serverMessages.join(",") !== "hello,world,bye,close")
+    throw new Error(label + " server=" + serverMessages.join(","));
+  if (clientMessages.join(",") !== "Hello World,close") throw new Error(label + " client=" + clientMessages.join(","));
 }
 
-async function runOnceMixed(server: any, sharedUrl: URL): Promise<{ ok: boolean; reason?: string }> {
-  const res = await fetch(sharedUrl, {
-    method: "GET",
-    headers: BIG_HEADERS,
-    async *body() {
-      yield encodeTextFrame("hello");
-      yield encodeTextFrame("world");
-      yield encodeTextFrame("bye");
-      yield encodeCloseFrame();
-    },
-  });
-  if (res.status !== 101) return { ok: false, reason: "status=" + res.status };
-  const reader = res.body!.getReader();
-  let sawClose = false;
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    for (const msg of decodeFrames(Buffer.from(value))) {
-      if (typeof msg !== "string" && msg.type === "close") {
-        sawClose = true;
-        break;
+describe("fetch upgrade stress (roll the dice)", () => {
+  test("100 sequential repeats of the original test pattern", async () => {
+    const START = Date.now();
+    for (let i = 0; i < 100; i++) {
+      const startedAt = Date.now();
+      try {
+        await Promise.race([
+          runOnce("seq#" + i),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error("seq#" + i + " hung after " + (Date.now() - startedAt) + "ms")), 8000),
+          ),
+        ]);
+      } catch (e) {
+        process.stderr.write(
+          "[stress] FAIL after " + (i + 1) + " runs in " + (Date.now() - START) + "ms: " + String(e) + "\n",
+        );
+        throw e;
       }
     }
-    if (sawClose) break;
-  }
-  return sawClose ? { ok: true } : { ok: false, reason: "missing close frame" };
-}
+    process.stderr.write("[stress] all 100 sequential passed in " + (Date.now() - START) + "ms\n");
+  }, 120_000);
 
-describe("fetch upgrade stress (shared-server cork-pressure)", () => {
-  test("shared server, 200 concurrent upgrades, mixed with HTTP traffic", async () => {
-    let serverHits = 0;
-    await using server = Bun.serve({
-      port: 0,
-      fetch(req) {
-        serverHits++;
-        if (server.upgrade(req)) return;
-        return new Response("Hello World");
-      },
-      websocket: {
-        open(ws) {
-          ws.send("Hello World");
-        },
-        message(_ws, _m) {},
-        close(_ws) {},
-      },
-    });
-    const url = new URL(server.url);
-    const N = 200;
-    const httpNoise = Array.from({ length: 100 }, () =>
-      fetch(new URL("/noise", server.url))
-        .then(r => r.text())
-        .catch(() => null),
-    );
-    const upgrades = Array.from({ length: N }, () =>
-      runOnceMixed(server, url).catch(e => ({ ok: false, reason: String(e) })),
-    );
-    const all = await Promise.race([
-      Promise.all([...upgrades, ...httpNoise]),
-      new Promise<any[]>((_, reject) =>
-        setTimeout(() => reject(new Error("hang 30s — first " + N + " entries are upgrades")), 30000),
+  test("50 concurrent repeats of the original test pattern", async () => {
+    const START = Date.now();
+    const results = await Promise.race([
+      Promise.all(Array.from({ length: 50 }, (_, i) => runOnce("par#" + i).catch(e => String(e)))),
+      new Promise<string[]>((_, reject) =>
+        setTimeout(() => reject(new Error("concurrent batch hung after " + (Date.now() - START) + "ms")), 30000),
       ),
     ]);
-    const upgradeResults = (all as any[]).slice(0, N);
-    const failures = upgradeResults.filter(r => r && !r.ok);
-    if (failures.length) {
-      console.error("failures:", failures.length, "/", N, "first 3:", JSON.stringify(failures.slice(0, 3)));
+    const errs = results.filter(r => typeof r === "string");
+    if (errs.length) {
+      process.stderr.write("[stress] " + errs.length + "/50 failed: " + errs.slice(0, 3).join(" | ") + "\n");
     }
-    expect(failures).toHaveLength(0);
-  });
+    expect(errs).toHaveLength(0);
+  }, 60_000);
 });

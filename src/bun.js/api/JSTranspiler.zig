@@ -238,18 +238,6 @@ pub const Config = struct {
             this.runtime.inlining = flag;
         }
 
-        if (try object.getBooleanLoose(globalThis, "minifyWhitespace")) |flag| {
-            this.minify_whitespace = flag;
-        }
-
-        if (try object.getBooleanLoose(globalThis, "minifySyntax")) |flag| {
-            this.minify_syntax = flag;
-        }
-
-        if (try object.getBooleanLoose(globalThis, "minifyIdentifiers")) |flag| {
-            this.minify_identifiers = flag;
-        }
-
         if (try object.getBooleanLoose(globalThis, "deadCodeElimination")) |flag| {
             this.dead_code_elimination = flag;
         }
@@ -276,6 +264,20 @@ pub const Config = struct {
             } else {
                 return globalThis.throwInvalidArguments("Expected minify to be a boolean or an object", .{});
             }
+        }
+
+        // Top-level minify flags override the composite `minify` option above,
+        // so `{ minify: true, minifyIdentifiers: false }` disables identifiers.
+        if (try object.getBooleanLoose(globalThis, "minifyWhitespace")) |flag| {
+            this.minify_whitespace = flag;
+        }
+
+        if (try object.getBooleanLoose(globalThis, "minifySyntax")) |flag| {
+            this.minify_syntax = flag;
+        }
+
+        if (try object.getBooleanLoose(globalThis, "minifyIdentifiers")) |flag| {
+            this.minify_identifiers = flag;
         }
 
         if (try object.get(globalThis, "sourcemap")) |flag| {

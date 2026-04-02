@@ -1,6 +1,6 @@
-import { expect, test, describe } from "bun:test";
-import { bunExe, bunEnv, tempDir } from "harness";
+import { describe, expect, test } from "bun:test";
 import { existsSync } from "fs";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
 describe("bun add without package.json", () => {
@@ -20,11 +20,7 @@ describe("bun add without package.json", () => {
 
     proc.stdin.end();
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     // Should warn about missing package.json
     expect(stderr).toContain("no package.json found, creating one in");
@@ -52,11 +48,7 @@ describe("bun add without package.json", () => {
 
     proc.stdin.end();
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     // Should warn about missing package.json
     expect(stderr).toContain("no package.json found, creating one in");

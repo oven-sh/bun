@@ -2366,11 +2366,9 @@ describe("subshell", () => {
     // test_oE 'redirection on subshell'
     TestBuilder.command /* sh */ `
   (echo 1; echo 2; echo 3; echo 4) >sub_out
-  # (tail -n 2) <sub_out
   cat sub_out
   `
-      .error("Subshells with redirections are currently not supported. Please open a GitHub issue.")
-      // .stdout("1\n2\n3\n4\n")
+      .stdout("1\n2\n3\n4\n")
       .runAsTest("redirection on subshell");
 
     // test_oE 'subshell ending with semicolon'

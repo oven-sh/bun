@@ -1331,14 +1331,8 @@ pub const Parser = struct {
     }
 
     fn parse_compound_cmd(self: *Parser) anyerror!AST.Expr {
-        // Placeholder for when we fully support subshells
         if (self.peek() == .OpenParen) {
             const subshell = try self.parse_subshell();
-            if (!subshell.redirect_flags.isEmpty()) {
-                try self.add_error("Subshells with redirections are currently not supported. Please open a GitHub issue.", .{});
-                return ParseError.Unsupported;
-            }
-
             return .{
                 .subshell = try self.allocate(AST.Subshell, subshell),
             };

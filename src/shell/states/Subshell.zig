@@ -79,14 +79,17 @@ pub fn initDupeShellState(
 
 pub fn start(this: *Subshell) Yield {
     log("{f} start", .{this});
-    const script = Script.init(this.base.interpreter, this.base.shell, &this.node.script, Script.ParentPtr.init(this), this.io.copy());
-    return script.start();
+    return .{ .subshell = this };
 }
 
 pub fn next(this: *Subshell) Yield {
     while (this.state != .done) {
         switch (this.state) {
             .idle => {
+                // If there are no redirections, go straight to exec
+                if (this.node.redirect == null) {
+                    return this.transitionToExec();
+                }
                 this.state = .{
                     .expanding_redirect = .{ .expansion = undefined },
                 };
@@ -99,7 +102,7 @@ pub fn next(this: *Subshell) Yield {
                 this.state.expanding_redirect.idx += 1;
 
                 // Get the node to expand otherwise go straight to
-                // `expanding_args` state
+                // exec state
                 const node_to_expand = brk: {
                     if (this.node.redirect != null and this.node.redirect.? == .atom) break :brk &this.node.redirect.?.atom;
                     return this.transitionToExec();
@@ -131,14 +134,137 @@ pub fn next(this: *Subshell) Yield {
 
 pub fn transitionToExec(this: *Subshell) Yield {
     log("{f} transitionToExec", .{this});
+
+    if (this.node.redirect != null) {
+        if (this.applyRedirections()) |yield| return yield;
+    }
+
     const script = Script.init(this.base.interpreter, this.base.shell, &this.node.script, Script.ParentPtr.init(this), this.io.copy());
     this.state = .exec;
     return script.start();
 }
 
+fn applyRedirections(this: *Subshell) ?Yield {
+    const redirect_flags = this.node.redirect_flags;
+
+    if (this.node.redirect) |file| {
+        switch (file) {
+            .atom => {
+                if (this.redirection_file.items.len == 0) {
+                    return this.writeFailingError("bun: ambiguous redirect\n", .{});
+                }
+
+                // Regular files are not pollable on linux and macos
+                const is_pollable: bool = if (bun.Environment.isPosix) false else true;
+
+                const path = this.redirection_file.items[0..this.redirection_file.items.len -| 1 :0];
+                const perm = 0o666;
+
+                var pollable = false;
+                var is_socket = false;
+                var is_nonblocking = false;
+
+                const redirfd = redirfd: {
+                    if (redirect_flags.stdin) {
+                        break :redirfd switch (ShellSyscall.openat(this.base.shell.cwd_fd, path, redirect_flags.toFlags(), perm)) {
+                            .err => |e| {
+                                return this.writeFailingError("bun: {f}: {s}\n", .{ e.toShellSystemError().message, path });
+                            },
+                            .result => |f| f,
+                        };
+                    }
+
+                    const result = bun.io.openForWritingImpl(
+                        this.base.shell.cwd_fd,
+                        path,
+                        redirect_flags.toFlags(),
+                        perm,
+                        &pollable,
+                        &is_socket,
+                        false,
+                        &is_nonblocking,
+                        void,
+                        {},
+                        struct {
+                            fn onForceSyncOrIsaTTY(_: void) void {}
+                        }.onForceSyncOrIsaTTY,
+                        shell.interpret.isPollableFromMode,
+                        ShellSyscall.openat,
+                    );
+
+                    break :redirfd switch (result) {
+                        .err => |e| {
+                            return this.writeFailingError("bun: {f}: {s}\n", .{ e.toShellSystemError().message, path });
+                        },
+                        .result => |f| {
+                            if (bun.Environment.isWindows) {
+                                switch (f.makeLibUVOwnedForSyscall(.open, .close_on_fail)) {
+                                    .err => |e| {
+                                        return this.writeFailingError("bun: {f}: {s}\n", .{ e.toShellSystemError().message, path });
+                                    },
+                                    .result => |f2| break :redirfd f2,
+                                }
+                            }
+                            break :redirfd f;
+                        },
+                    };
+                };
+
+                if (redirect_flags.stdin) {
+                    this.io.stdin.deref();
+                    this.io.stdin = .{ .fd = IOReader.init(redirfd, this.base.eventLoop()) };
+                }
+
+                if (!redirect_flags.stdout and !redirect_flags.stderr) {
+                    return null;
+                }
+
+                const redirect_writer: *IOWriter = .init(
+                    redirfd,
+                    .{ .pollable = is_pollable, .nonblocking = is_nonblocking, .is_socket = is_socket },
+                    this.base.eventLoop(),
+                );
+                defer redirect_writer.deref();
+
+                if (redirect_flags.duplicate_out) {
+                    this.io.stdout.deref();
+                    this.io.stdout = .{ .fd = .{ .writer = redirect_writer.dupeRef() } };
+                    this.io.stderr.deref();
+                    this.io.stderr = .{ .fd = .{ .writer = redirect_writer.dupeRef() } };
+                } else {
+                    if (redirect_flags.stdout) {
+                        this.io.stdout.deref();
+                        this.io.stdout = .{ .fd = .{ .writer = redirect_writer.dupeRef() } };
+                    }
+                    if (redirect_flags.stderr) {
+                        this.io.stderr.deref();
+                        this.io.stderr = .{ .fd = .{ .writer = redirect_writer.dupeRef() } };
+                    }
+                }
+            },
+            .jsbuf => {
+                // JS buffer redirections for subshells are not yet supported
+                return this.writeFailingError("bun: JS object redirections in subshells are not supported\n", .{});
+            },
+        }
+    } else if (redirect_flags.duplicate_out) {
+        if (redirect_flags.stdout) {
+            this.io.stderr.deref();
+            this.io.stderr = this.io.stdout.ref();
+        }
+
+        if (redirect_flags.stderr) {
+            this.io.stdout.deref();
+            this.io.stdout = this.io.stderr.ref();
+        }
+    }
+
+    return null;
+}
+
 pub fn childDone(this: *Subshell, child_ptr: ChildPtr, exit_code: ExitCode) Yield {
     this.exit_code = exit_code;
-    if (child_ptr.ptr.is(Expansion) and exit_code != 0) {
+    if (child_ptr.ptr.is(Expansion)) {
         if (exit_code != 0) {
             const err = this.state.expanding_redirect.expansion.state.err;
             defer err.deinit(bun.default_allocator);
@@ -202,9 +328,12 @@ const Interpreter = bun.shell.Interpreter;
 const Binary = bun.shell.Interpreter.Binary;
 const Expansion = bun.shell.Interpreter.Expansion;
 const IO = bun.shell.Interpreter.IO;
+const IOReader = bun.shell.Interpreter.IOReader;
+const IOWriter = bun.shell.Interpreter.IOWriter;
 const Pipeline = bun.shell.Interpreter.Pipeline;
 const Script = bun.shell.Interpreter.Script;
 const ShellExecEnv = Interpreter.ShellExecEnv;
+const ShellSyscall = shell.interpret.ShellSyscall;
 const State = bun.shell.Interpreter.State;
 const Stmt = bun.shell.Interpreter.Stmt;
 

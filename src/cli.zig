@@ -998,7 +998,7 @@ pub const Command = struct {
                 // If stdin is piped (not a TTY), read and execute JavaScript
                 // from stdin, matching Node.js behavior.
                 if (!Output.isStdinTTY()) {
-                    try RunCommand.bootFromStdin(ctx);
+                    try RunCommand.bootFromStdin(ctx, false);
                     return;
                 }
 

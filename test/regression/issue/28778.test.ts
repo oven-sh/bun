@@ -27,9 +27,9 @@ describe.concurrent("bun add without package.json", () => {
     expect(stderr).toContain("no package.json found, creating one in");
     expect(stderr).toContain(String(dir));
 
-    // Should still succeed and create files
+    // Should still succeed and install the package
     expect(existsSync(join(String(dir), "package.json"))).toBe(true);
-    expect(existsSync(join(String(dir), "node_modules"))).toBe(true);
+    expect(existsSync(join(String(dir), "node_modules", "is-number"))).toBe(true);
     expect(exitCode).toBe(0);
   });
 
@@ -55,8 +55,9 @@ describe.concurrent("bun add without package.json", () => {
     expect(stderr).toContain("no package.json found, creating one in");
     expect(stderr).toContain(String(dir));
 
-    // Should still succeed
+    // Should still succeed and install the package
     expect(existsSync(join(String(dir), "package.json"))).toBe(true);
+    expect(existsSync(join(String(dir), "node_modules", "is-number"))).toBe(true);
     expect(exitCode).toBe(0);
   });
 });

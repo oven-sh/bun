@@ -830,12 +830,22 @@ pub const CronJob = struct {
     this_value: jsc.JSRef = jsc.JSRef.empty(),
     stopped: bool = false,
     /// True while a ref() is held across an in-flight callback promise.
-    /// Released exactly once by either onPromiseResolve/Reject or stopInternal.
+    /// Released exactly once by either onPromiseResolve/Reject or
+    /// clearAllForVM(.teardown).
     pending_ref: bool = false,
+
+    /// Defer downgrading the JS wrapper to weak until any in-flight promise
+    /// has settled, so onPromiseReject can still read pendingPromise from
+    /// the wrapper and pass the real Promise to unhandledRejection.
+    fn maybeDowngrade(this: *CronJob) void {
+        if (this.stopped and !this.pending_ref and this.this_value != .finalized)
+            this.this_value.downgrade();
+    }
 
     fn releasePendingRef(this: *CronJob) void {
         if (this.pending_ref) {
             this.pending_ref = false;
+            this.maybeDowngrade();
             this.deref();
         }
     }
@@ -846,8 +856,7 @@ pub const CronJob = struct {
         if (this.event_loop_timer.state == .ACTIVE)
             vm.timer.remove(&this.event_loop_timer);
         this.poll_ref.unref(vm);
-        if (this.this_value != .finalized)
-            this.this_value.downgrade();
+        this.maybeDowngrade();
     }
 
     fn selfStop(this: *CronJob, vm: *jsc.VirtualMachine) void {

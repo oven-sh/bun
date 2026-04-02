@@ -119,8 +119,9 @@ pub const CronExpression = struct {
                 date_dirty = true;
             }
             // Normalize the date (year/month/day overflow + weekday) via a
-            // round-trip at noon, where DST transitions don't occur. Skip when
-            // only hour/minute moved.
+            // round-trip at noon. Any DST shift at midday stays within the same
+            // calendar day, so the date and weekday are still correct. Skip
+            // when only hour/minute moved.
             if (date_dirty) {
                 const noon_ms = try globalObject.gregorianDateTimeToMS(dt.year, dt.month, dt.day, 12, 0, 0, 0);
                 const n = globalObject.msToGregorianDateTime(noon_ms);

@@ -28,6 +28,8 @@ const { SafeSet } = require("internal/primordials");
 const { kAutoDestroyed } = require("internal/shared");
 
 const ObjectDefineProperties = Object.defineProperties;
+const _Bun_gc: ((sync: boolean) => void) | undefined = globalThis.Bun?.gc;
+let _gcBytesConsumed = 0;
 const SymbolAsyncDispose = Symbol.asyncDispose;
 const NumberIsNaN = Number.isNaN;
 const NumberIsInteger = Number.isInteger;
@@ -680,6 +682,19 @@ Readable.prototype.read = function (n) {
       state.awaitDrainWriters.clear();
     } else {
       state.awaitDrainWriters = null;
+    }
+
+    // Track consumed bytes for GC hinting. JSC's minimum heap threshold is
+    // large (32MB), so under moderate allocation rates (e.g. piped streams
+    // with backpressure), dead Buffer objects accumulate without triggering
+    // collection. Periodically running a synchronous GC prevents unbounded
+    // memory growth.
+    if (_Bun_gc && (state[kState] & kObjectMode) === 0) {
+      _gcBytesConsumed += n;
+      if (_gcBytesConsumed >= 2 * 1024 * 1024) {
+        _gcBytesConsumed = 0;
+        _Bun_gc(true);
+      }
     }
   }
 
@@ -1564,8 +1579,8 @@ function fromList(n, state) {
   if (idx === len) {
     state.buffer.length = 0;
     state.bufferIndex = 0;
-  } else if (idx > 1024) {
-    state.buffer.splice(0, idx);
+  } else if (idx > 256) {
+    state.buffer = state.buffer.slice(idx);
     state.bufferIndex = 0;
   } else {
     state.bufferIndex = idx;

@@ -29,6 +29,9 @@ const Stats = struct {
     p95: f64,
 
     fn compute(samples: []i128) Stats {
+        if (samples.len == 0) {
+            return .{ .mean = 0, .min = 0, .max = 0, .p50 = 0, .p95 = 0 };
+        }
         sortI128(samples);
         var sum: i128 = 0;
         for (samples) |s| sum += s;
@@ -81,7 +84,7 @@ fn benchClone(allocator: std.mem.Allocator) ?BenchResult {
             ziggit_samples[i] = -1;
             continue;
         };
-        repo.close();
+        defer repo.close();
         ziggit_samples[i] = timestamp() - start;
         cleanDir(target);
     }

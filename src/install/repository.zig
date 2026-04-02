@@ -385,7 +385,9 @@ pub const Repository = extern struct {
                     // fatal: '<url>' does not appear to be a git repository
                     strings.containsComptime(result.stderr, "does not appear to be a git repository") or
                     // fatal: could not read Username for 'https://...': No such device or address
-                    // This happens when GIT_ASKPASS=echo (bun's default) and repo is private/missing
+                    // This happens when GIT_ASKPASS=echo (bun's default) and repo is private/missing.
+                    // Note: don't treat this as RepositoryNotFound — it may be a private repo
+                    // that needs SSH auth, so we should fall through to allow SSH retry.
                     strings.containsComptime(result.stderr, "could not read Username"))
                 {
                     return error.RepositoryNotFound;
@@ -766,8 +768,8 @@ pub const Repository = extern struct {
                         // Over HTTPS, a 404 is definitive. Over SSH, "not found"
                         // may actually be an auth/permission issue, so fall back
                         // to git CLI which can handle SSH agent prompts.
-                        const used_https = strings.hasPrefixComptime(fetch_url, "https://");
-                        if (used_https) {
+                        const original_was_https = strings.hasPrefixComptime(url, "https://") or strings.hasPrefixComptime(url, "http://");
+                        if (original_was_https) {
                             debug("fetch: ziggit reports repository not found (HTTPS 404) for \"{s}\"", .{name});
                             dir.close();
                             if (attempt > 1) {
@@ -808,9 +810,10 @@ pub const Repository = extern struct {
                 } else {
                     debug("clone: trying ziggit for \"{s}\" (url: {s}, transformed from: {s})", .{ name, clone_url, url });
                 }
-                // Use shallow clone (depth=1) for HTTPS git deps — only need the target commit.
-                // This dramatically reduces download size for large repos.
-                const use_shallow = strings.hasPrefixComptime(clone_url, "https://");
+                // Use shallow clone (depth=1) for HTTPS git deps when targeting HEAD/default branch.
+                // Don't use shallow for explicit tags/commits/branches since they may not be the tip.
+                const use_shallow = strings.hasPrefixComptime(clone_url, "https://") and
+                    (name.len == 0 or strings.eqlComptime(name, "HEAD"));
                 var repo = (if (use_shallow)
                     ziggit.Repository.cloneBareShallow(allocator, clone_url, target, 1)
                 else
@@ -820,8 +823,10 @@ pub const Repository = extern struct {
                         // the repo doesn't exist, so no point falling back to git CLI.
                         // Over SSH, "not found" may mask auth/permission errors,
                         // so fall back to git CLI which handles SSH agent prompts.
-                        const used_https = strings.hasPrefixComptime(clone_url, "https://");
-                        if (used_https) {
+                        // Only treat as definitive 404 if the *original* URL was HTTPS
+                        // (not one we converted from SSH/SCP via tryHTTPS)
+                        const original_was_https = strings.hasPrefixComptime(url, "https://") or strings.hasPrefixComptime(url, "http://");
+                        if (original_was_https) {
                             debug("clone: ziggit reports repository not found (HTTPS 404) for \"{s}\"", .{name});
                             // Clean up any partial clone directory
                             std.fs.cwd().deleteTree(target) catch {};
@@ -966,12 +971,8 @@ pub const Repository = extern struct {
                 };
                 defer repo.close();
                 // Extract tree at resolved commit directly to target dir
-                // Use checkoutToHash when resolved is a full 40-char hex hash
-                // (avoids redundant findCommit ref resolution inside checkoutTo)
-                const checkout_err = if (resolved.len == 40)
-                    repo.checkoutToHash(resolved, target)
-                else
-                    repo.checkoutTo(resolved, target);
+                // checkoutTo handles both refs and full hashes
+                const checkout_err = repo.checkoutTo(resolved, target);
                 checkout_err catch |err| {
                     logZiggitError("checkout/checkoutTo", name, err);
                     std.fs.cwd().deleteTree(target) catch {};

@@ -3,6 +3,7 @@ const ziggit = @import("ziggit");
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
     const args = try std.process.argsAlloc(allocator);
@@ -16,19 +17,22 @@ pub fn main() !void {
     const repo_path = args[1];
     const ref = if (args.len > 2) args[2] else "HEAD";
 
-    // Open repo
-    var repo = ziggit.Repository.open(allocator, repo_path) catch |err| {
+    // Open repo (use openBare to match production code path)
+    var repo = ziggit.Repository.openBare(allocator, repo_path) catch |err| {
         std.debug.print("Failed to open repo {s}: {}\n", .{ repo_path, err });
         return;
     };
     defer repo.close();
 
     // Warm up
-    _ = repo.findCommit(ref) catch {};
+    _ = repo.findCommit(ref) catch |err| {
+        std.debug.print("Warm-up findCommit failed for ref {s}: {}\n", .{ ref, err });
+        return;
+    };
 
-    // Benchmark 1000 iterations
+    // Benchmark 1000 iterations using monotonic timer
     const iterations: u32 = 1000;
-    const start = std.time.nanoTimestamp();
+    var timer = try std.time.Timer.start();
     var i: u32 = 0;
     var last_hash: [40]u8 = undefined;
     while (i < iterations) : (i += 1) {
@@ -37,8 +41,7 @@ pub fn main() !void {
             return;
         };
     }
-    const end = std.time.nanoTimestamp();
-    const total_ns: u64 = @intCast(end - start);
+    const total_ns: u64 = timer.read();
     const per_call_ns = total_ns / iterations;
 
     std.debug.print("repo={s} ref={s} hash={s}\n", .{ repo_path, ref, &last_hash });

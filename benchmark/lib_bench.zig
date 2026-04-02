@@ -53,7 +53,7 @@ pub fn main() !void {
         var i: u32 = 0;
         while (i < iterations) : (i += 1) {
             const t = Timer.begin();
-            var repo = try ziggit.Repository.open(allocator, bare_path);
+            var repo = try ziggit.Repository.openBare(allocator, bare_path);
             const hash = try repo.findCommit("HEAD");
             _ = hash;
             repo.close();
@@ -71,7 +71,11 @@ pub fn main() !void {
             child.stdout_behavior = .Pipe;
             child.stderr_behavior = .Pipe;
             try child.spawn();
-            _ = try child.wait();
+            const term = try child.wait();
+            switch (term) {
+                .Exited => |code| if (code != 0) return error.GitCommandFailed,
+                else => return error.GitCommandFailed,
+            }
             cli_total_us += t.elapsedUs();
         }
         const cli_avg_us = cli_total_us / iterations;
@@ -114,7 +118,11 @@ pub fn main() !void {
             child.stdout_behavior = .Pipe;
             child.stderr_behavior = .Pipe;
             try child.spawn();
-            _ = try child.wait();
+            const term2 = try child.wait();
+            switch (term2) {
+                .Exited => |code| if (code != 0) return error.GitCommandFailed,
+                else => return error.GitCommandFailed,
+            }
             cli_total_us += t.elapsedUs();
             std.fs.deleteTreeAbsolute(target) catch {};
         }

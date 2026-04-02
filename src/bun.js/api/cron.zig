@@ -870,7 +870,7 @@ pub const CronJob = struct {
     fn selfStop(this: *CronJob, vm: *jsc.VirtualMachine) void {
         // If stop() runs during cb.call() (before .pending is processed), defer
         // cleanup so the .pending branch can take pending_ref + keep this_value
-        // strong. onTimerFire calls finishSelfStop() after the result is known.
+        // strong. onTimerFire calls finishDeferredStop() after the result is known.
         if (this.in_fire) {
             this.stopped = true;
             this.poll_ref.unref(vm);

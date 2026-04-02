@@ -64,6 +64,13 @@ describe("Bun.cron.parse — DST transitions", () => {
     const next = await parseInTZ("America/New_York", "30 1 * * *", "2025-11-02T04:30:00Z");
     expect(next).toBe("2025-11-02T05:30:00.000Z");
   });
+
+  test("fall-back: starting from the second occurrence does not return a time before from", async () => {
+    // 06:30 UTC = 01:30 EST (the SECOND 01:30). next() must not return the first 01:30 (05:30 UTC).
+    const next = await parseInTZ("America/New_York", "30 1 * * *", "2025-11-02T06:30:00Z");
+    // Next valid 01:30 is the following day (EST): 2025-11-03 01:30 EST = 06:30 UTC.
+    expect(next).toBe("2025-11-03T06:30:00.000Z");
+  });
 });
 
 describe("Bun.cron(schedule, handler) — local time zone", () => {

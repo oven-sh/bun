@@ -148,7 +148,15 @@ pub const CronExpression = struct {
             }
 
             // All fields match
-            return try globalObject.gregorianDateTimeToMS(dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second, 0);
+            const result = try globalObject.gregorianDateTimeToMS(dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second, 0);
+            // During DST fall-back, gregorianDateTimeToMS picks the first
+            // occurrence of an ambiguous local time. If from_ms is already past
+            // it (in the second occurrence), keep searching.
+            if (result <= from_ms) {
+                dt.minute += 1;
+                continue;
+            }
+            return result;
         }
 
         return null;

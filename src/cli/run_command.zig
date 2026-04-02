@@ -1629,7 +1629,7 @@ pub const RunCommand = struct {
         passthrough_list.appendSliceAssumeCapacity(ctx.passthrough);
         ctx.passthrough = passthrough_list.items;
 
-        Run.boot(ctx, ctx.allocator.dupe(u8, entry_path) catch bun.outOfMemory(), null) catch |err| {
+        Run.boot(ctx, ctx.allocator.dupe(u8, entry_path) catch return error.OutOfMemory, null) catch |err| {
             ctx.log.print(Output.errorWriter()) catch {};
             Output.prettyErrorln("<r><red>error<r>: Failed to run <b>stdin<r> due to error <b>{s}<r>", .{
                 @errorName(err),
@@ -1652,10 +1652,6 @@ pub const RunCommand = struct {
         }
 
         if (ctx.positionals.len == 0) {
-            if (!Output.isStdinTTY()) {
-                try bootFromStdin(ctx);
-                return;
-            }
             Output.errGeneric("Missing script to execute. Bun's provided 'node' cli wrapper does not support a repl.", .{});
             Global.exit(1);
         }

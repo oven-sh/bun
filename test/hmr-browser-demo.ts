@@ -11,7 +11,7 @@
  */
 import { join, basename } from "path";
 
-import bundle from "./hmr-demo/index.tsx" with { type: "bundle" };
+import bundle from "./hmr-demo/index.tsx?bundle" with { target: "browser", sourcemap: "external" };
 
 // Build exact route map from known file names. The handlers read
 // bundle.files dynamically so they always serve the latest blob
@@ -23,7 +23,7 @@ const assetRoutes = Object.fromEntries(
       new Response(bundle.files.find((b: any) => b.name === f.name)!.file(), { headers: { "Content-Type": f.type } }),
   ]),
 );
-
+console.log(bundle)
 const server = Bun.serve({
   port: 0,
   routes: {

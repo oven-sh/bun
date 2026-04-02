@@ -867,7 +867,7 @@ fn invokeStandaloneCallback(dev: *DevServer, bv2: *bun.bundle_v2.BundleV2) void 
 
 /// Generate a client bundle for standalone mode by tracing all entry point
 /// imports and concatenating them with the HMR runtime.
-pub fn generateStandaloneClientBundle(dev: *DevServer) bun.OOM![]u8 {
+pub fn generateStandaloneClientBundle(dev: *DevServer, script_id: SourceMapStore.Key) bun.OOM![]u8 {
     dev.graph_safety_lock.lock();
     defer dev.graph_safety_lock.unlock();
 
@@ -915,22 +915,40 @@ pub fn generateStandaloneClientBundle(dev: *DevServer) bun.OOM![]u8 {
     var origin_buf: [64]u8 = undefined;
     const hmr_origin = dev.getStandaloneOrigin(&origin_buf) orelse "";
 
+    // Register the source map so /_bun/client/{id}.js.map resolves
+    mapLog("inc {x}, 1 for generateStandaloneClientBundle", .{script_id.get()});
+    switch (try dev.source_maps.putOrIncrementRefCount(script_id, 1)) {
+        .uninitialized => |entry| {
+            errdefer dev.source_maps.unref(script_id);
+            gts.clearAndFree(sfa);
+            var arena = std.heap.ArenaAllocator.init(sfa);
+            defer arena.deinit();
+            try dev.client_graph.takeSourceMap(arena.allocator(), dev.allocator(), entry);
+        },
+        .shared => {},
+    }
+
     return dev.client_graph.takeJSBundle(&.{
         .kind = .initial_response,
         .initial_response_entry_point = entry_point_name,
         .react_refresh_entry_point = react_fast_refresh_id,
         .hmr_origin = hmr_origin,
-        .script_id = .init(0),
+        .script_id = script_id,
         .console_log = false,
     });
 }
 
 /// Handle GET /_bun/client/:route in standalone mode.
-/// Serves the concatenated client bundle with HMR runtime.
+/// Serves the concatenated client bundle with HMR runtime,
+/// or dispatches to the sourcemap handler for .js.map requests.
 fn onStandaloneJsRequest(dev: *DevServer, req: *Request, resp: AnyResponse) void {
-    _ = req;
+    const route_id = req.parameter(0);
+    if (bun.strings.hasSuffixComptime(route_id, ".js.map")) {
+        // Dispatch sourcemap requests to the shared handler
+        return onJsRequest(dev, req, resp);
+    }
     const client_bundle = dev.standalone_client_bundle orelse generate: {
-        const payload = dev.generateStandaloneClientBundle() catch |err| bun.handleOom(err);
+        const payload = dev.generateStandaloneClientBundle(.init(0)) catch |err| bun.handleOom(err);
         if (payload.len == 0) {
             // Build hasn't completed yet — return 503
             resp.writeStatus("503 Service Unavailable");

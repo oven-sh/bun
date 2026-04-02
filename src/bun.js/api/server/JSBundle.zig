@@ -28,6 +28,8 @@ entrypoint_value: jsc.Strong.Optional = .empty,
 config: BundleImportConfig = .{},
 /// Shared DevServer when running with --hot. Set at import time.
 dev_server: ?*bun.bake.DevServer = null,
+/// Generation counter for source map keys (mirrors RouteBundle.client_script_generation).
+source_map_generation: u32 = 0,
 /// Tracks progress of the build triggered by build().
 build_state: enum { idle, building, complete, failed } = .idle,
 
@@ -47,6 +49,9 @@ pub fn finalize(this: *JSBundle) void {
 
 fn deinit(this: *JSBundle) void {
     if (this.dev_server) |dev| {
+        if (this.source_map_generation > 0) {
+            dev.source_maps.unref(this.sourceMapId());
+        }
         dev.removeStandaloneCallbackCtx(@ptrCast(this));
         this.dev_server = null;
     }
@@ -135,6 +140,14 @@ pub fn build(this: *JSBundle) !void {
         config.minify.identifiers = m;
     }
     if (this.config.sourcemap) |s| config.source_map = s;
+    if (this.config.target) |t| config.target = t;
+    if (this.config.format) |f| config.format = f;
+    if (this.config.naming) |n| {
+        try config.names.owned_entry_point.appendSliceExact(n);
+        config.names.entry_point.data = config.names.owned_entry_point.list.items;
+        try config.names.owned_chunk.appendSliceExact(n);
+        config.names.chunk.data = config.names.owned_chunk.list.items;
+    }
 
     // Load plugins if configured
     var plugins: ?*jsc.API.JSBundler.Plugin = null;
@@ -361,12 +374,23 @@ pub fn updateDevEntrypoint(this: *JSBundle, payload: []const u8, _: *bun.bake.De
     this.build_state = .complete;
 }
 
+pub fn sourceMapId(this: *const JSBundle) bun.bake.DevServer.SourceMapStore.Key {
+    return .init(@as(u64, this.source_map_generation) << 32);
+}
+
 /// Called by DevServer after a build completes in standalone mode.
 pub fn onDevServerBuildComplete(ctx: *anyopaque, dev: *bun.bake.DevServer, success: bool) void {
     const this: *JSBundle = @ptrCast(@alignCast(ctx));
     _ = success;
 
-    const payload = dev.generateStandaloneClientBundle() catch |err| bun.handleOom(err);
+    // Unref the previous generation's sourcemap and bump to a new generation
+    if (this.source_map_generation > 0) {
+        dev.source_maps.unref(this.sourceMapId());
+    }
+    this.source_map_generation = std.crypto.random.int(u32);
+
+    const script_id = this.sourceMapId();
+    const payload = dev.generateStandaloneClientBundle(script_id) catch |err| bun.handleOom(err);
     this.updateDevEntrypoint(payload, dev);
 }
 

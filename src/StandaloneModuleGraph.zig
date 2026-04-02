@@ -372,7 +372,7 @@ pub const StandaloneModuleGraph = struct {
         return bytes[ptr.offset..][0..ptr.length :0];
     }
 
-    pub fn toBytes(allocator: std.mem.Allocator, prefix: []const u8, output_files: []const bun.options.OutputFile, output_format: bun.options.Format, compile_exec_argv: []const u8, flags: Flags) ![]u8 {
+    pub fn toBytes(allocator: std.mem.Allocator, prefix: []const u8, output_files: []const bun.options.OutputFile, output_format: bun.options.Format, compile_exec_argv: []const u8, flags: Flags, source_map: bun.options.SourceMapOption) ![]u8 {
         var serialize_trace = bun.perf.trace("StandaloneModuleGraph.serialize");
         defer serialize_trace.end();
 
@@ -555,7 +555,7 @@ pub const StandaloneModuleGraph = struct {
                 },
             };
 
-            if (output_file.source_map_index != std.math.maxInt(u32)) {
+            if (output_file.source_map_index != std.math.maxInt(u32) and source_map != .external) {
                 defer source_map_header_list.clearRetainingCapacity();
                 defer source_map_string_list.clearRetainingCapacity();
                 _ = source_map_arena.reset(.retain_capacity);
@@ -1061,8 +1061,9 @@ pub const StandaloneModuleGraph = struct {
         compile_exec_argv: []const u8,
         self_exe_path: ?[]const u8,
         flags: Flags,
+        source_map: bun.options.SourceMapOption,
     ) !CompileResult {
-        const bytes = toBytes(allocator, module_prefix, output_files, output_format, compile_exec_argv, flags) catch |err| {
+        const bytes = toBytes(allocator, module_prefix, output_files, output_format, compile_exec_argv, flags, source_map) catch |err| {
             return CompileResult.failFmt("failed to generate module graph bytes: {s}", .{@errorName(err)});
         };
         if (bytes.len == 0) return CompileResult.fail(.no_output_files);

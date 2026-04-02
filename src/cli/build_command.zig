@@ -537,6 +537,7 @@ pub const BuildCommand = struct {
                         .disable_autoload_tsconfig = !ctx.bundler_options.compile_autoload_tsconfig,
                         .disable_autoload_package_json = !ctx.bundler_options.compile_autoload_package_json,
                     },
+                    this_transpiler.options.source_map,
                 ) catch |err| {
                     Output.printErrorln("failed to create executable: {s}", .{@errorName(err)});
                     Global.exit(1);

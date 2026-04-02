@@ -1628,10 +1628,15 @@ pub const BundleV2 = struct {
         // Without this prefix, build_command.zig's writeToDisk resolves the
         // bare filename against cwd, producing an incorrect nested path.
         for (sub_build_results) |result| {
+            const base_index: u32 = @intCast(output_files.items.len);
             for (result.output_files.items) |of| {
                 var patched = of;
                 if (!bun.strings.startsWith(patched.dest_path, "./")) {
                     patched.dest_path = bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "./{s}", .{patched.dest_path}));
+                }
+                // Adjust source_map_index to account for offset in the combined output array
+                if (patched.source_map_index != std.math.maxInt(u32)) {
+                    patched.source_map_index += base_index;
                 }
                 try output_files.append(patched);
             }
@@ -2198,6 +2203,7 @@ pub const BundleV2 = struct {
                     .disable_autoload_tsconfig = !compile_options.autoload_tsconfig,
                     .disable_autoload_package_json = !compile_options.autoload_package_json,
                 },
+                this.config.source_map,
             ) catch |err| {
                 return bun.StandaloneModuleGraph.CompileResult.failFmt("{s}", .{@errorName(err)});
             };
@@ -2893,10 +2899,15 @@ pub const BundleV2 = struct {
             defer if (out_dir) |*d| d.close();
 
             for (sub_build_results) |result| {
+                const base_index: u32 = @intCast(output_files.items.len);
                 for (result.output_files.items) |of| {
                     var patched = of;
                     if (!bun.strings.startsWith(patched.dest_path, "./")) {
                         patched.dest_path = bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "./{s}", .{patched.dest_path}));
+                    }
+                    // Adjust source_map_index to account for offset in the combined output array
+                    if (patched.source_map_index != std.math.maxInt(u32)) {
+                        patched.source_map_index += base_index;
                     }
                     // Write in-memory buffer files to disk when outdir is set
                     if (out_dir) |dir| {
@@ -3156,12 +3167,15 @@ pub const BundleV2 = struct {
         if (sb.config.sourcemap) |sm| {
             sub_transpiler.options.source_map = sm;
         }
+        if (sb.config.target) |t| sub_transpiler.options.target = t;
+        if (sb.config.format) |f| sub_transpiler.options.output_format = f;
         // Sub-builds produce in-memory output — the parent build handles writing to disk.
         // Empty output_dir forces the in-memory code path in generateChunksInParallel.
         sub_transpiler.options.output_dir = "";
         // Set naming templates so output files get proper filenames with content hashes.
-        sub_transpiler.options.entry_naming = "[name]-[hash].[ext]";
-        sub_transpiler.options.chunk_naming = "[name]-[hash].[ext]";
+        const naming = sb.config.naming orelse "[name]-[hash].[ext]";
+        sub_transpiler.options.entry_naming = naming;
+        sub_transpiler.options.chunk_naming = naming;
 
         sub_transpiler.configureLinker();
         try sub_transpiler.configureDefines();

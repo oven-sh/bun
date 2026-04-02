@@ -226,6 +226,9 @@ pub const ImportRecord = struct {
         splitting: ?bool = null,
         minify: ?bool = null,
         sourcemap: ?bun.options.SourceMapOption = null,
+        target: ?bun.options.Target = null,
+        format: ?bun.options.Format = null,
+        naming: ?[]const u8 = null,
     };
 };
 

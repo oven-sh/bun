@@ -778,7 +778,7 @@ pub fn transpileSourceCode(
                     // Hot reload re-evaluation: DevServer already has the bundle.
                     // Use generateStandaloneClientBundle to get the current payload
                     // instead of empty bytes.
-                    const payload = dev.generateStandaloneClientBundle() catch bun.outOfMemory();
+                    const payload = dev.generateStandaloneClientBundle(js_bundle.sourceMapId()) catch bun.outOfMemory();
                     js_bundle.updateDevEntrypoint(payload, dev);
                 }
             } else {

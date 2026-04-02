@@ -44,6 +44,10 @@ expectType(Bun.cron("./worker.ts", "@daily", "daily")).is<Promise<void>>();
 
 expectType(Bun.cron("* * * * *", () => {})).is<Bun.CronJob>();
 expectType(Bun.cron("@hourly", async () => {})).is<Bun.CronJob>();
+expectType(Bun.cron("*/30 * * * *", () => fetch("http://x"))).is<Bun.CronJob>();
+Bun.cron("* * * * *", function () {
+  this.stop();
+});
 using job = Bun.cron("0 * * * *", () => {});
 expectType(job.cron).is<string>();
 expectType(job.stop()).is<Bun.CronJob>();

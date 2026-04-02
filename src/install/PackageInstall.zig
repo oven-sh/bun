@@ -392,7 +392,7 @@ pub const PackageInstall = struct {
         Output.warn(
             "Failed to {s} files; falling back to full copy. This may lead to degraded performance.\n" ++
                 "         If the cache and target directories are on different filesystems, {s} may not be supported.\n" ++
-                "         If this is intentional, set --backend=copyfile to suppress this warning.\n",
+                "         If this is intentional, pass --backend explicitly (e.g. --backend=copyfile) to suppress this warning.\n",
             .{ from_method, from_method },
         );
     }

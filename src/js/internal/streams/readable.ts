@@ -698,9 +698,9 @@ Readable.prototype.read = function (n) {
     if (_Bun_gc && hadBackpressure && (state[kState] & kObjectMode) === 0) {
       state.gcBytesConsumed += n;
       if (state.gcBytesConsumed >= 2 * 1024 * 1024) {
-        state.gcBytesConsumed = 0;
         const now = Date.now();
         if (now - _lastGCTimestamp >= 1000) {
+          state.gcBytesConsumed = 0;
           _lastGCTimestamp = now;
           _Bun_gc(true);
         }

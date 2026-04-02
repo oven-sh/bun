@@ -179,6 +179,7 @@ pub const CronRegisterJob = struct {
 
     fn deinit(this: *CronRegisterJob) void {
         this.stdout_reader.deinit();
+        this.stderr_reader.deinit();
         if (this.process) |proc| {
             proc.detach();
             proc.deref();
@@ -685,6 +686,7 @@ pub const CronRemoveJob = struct {
 
     fn deinit(this: *CronRemoveJob) void {
         this.stdout_reader.deinit();
+        this.stderr_reader.deinit();
         if (this.process) |proc| {
             proc.detach();
             proc.deref();
@@ -1166,10 +1168,12 @@ fn spawnCmdGeneric(comptime Self: type, this: *Self, argv: anytype, stdin_opt: b
         },
     };
 
+    var envp_arena = std.heap.ArenaAllocator.init(bun.default_allocator);
+    defer envp_arena.deinit();
     const envp: [*:null]?[*:0]const u8 = if (comptime bun.Environment.isPosix)
         @ptrCast(@constCast(std.c.environ))
     else
-        @ptrCast((jsc.VirtualMachine.get().transpiler.env.map.createNullDelimitedEnvMap(bun.default_allocator) catch {
+        @ptrCast((jsc.VirtualMachine.get().transpiler.env.map.createNullDelimitedEnvMap(envp_arena.allocator()) catch {
             this.setErr("Failed to create environment block", .{});
             this.finish();
             return;

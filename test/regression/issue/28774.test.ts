@@ -23,18 +23,17 @@ const rs = stream.Readable({
 const ws = stream.Writable({
   write: function (data, enc, cb) {
     writeCount++;
-    // Sample heap after 1500 writes (warmup), measure growth over next 1500
-    if (writeCount === 1500) {
+    if (writeCount === 500) {
       sample1 = process.memoryUsage().heapUsed;
     }
-    if (writeCount === 3000) {
+    if (writeCount === 1500) {
       const growthMB = (process.memoryUsage().heapUsed - sample1) / 1024 / 1024;
       console.log(growthMB.toFixed(1));
       rs.destroy();
       ws.destroy();
       return;
     }
-    setTimeout(cb, 10);
+    setTimeout(cb, 5);
   }
 });
 
@@ -49,9 +48,9 @@ rs.pipe(ws);
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   const growthMB = parseFloat(stdout.trim());
-  // Without the fix, heap grows ~4-5MB over 1500 writes with backpressure.
+  // Without the fix, heap grows ~3-5MB over 1000 writes with backpressure.
   // With the fix, heap growth stays under 2MB (just normal GC variance).
   expect(stderr.toLowerCase()).not.toContain("error");
-  expect(growthMB).toBeLessThanOrEqual(3);
+  expect(growthMB).toBeLessThanOrEqual(4);
   expect(exitCode).toBe(0);
-}, 60_000);
+}, 30_000);

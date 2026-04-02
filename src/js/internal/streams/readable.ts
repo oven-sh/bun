@@ -681,21 +681,18 @@ Readable.prototype.read = function (n) {
     n = 0;
   } else {
     state.length -= n;
-    // Capture backpressure state before clearing awaitDrainWriters.
-    const hadBackpressure = state.awaitDrainWriters != null;
     if ((state[kState] & kMultiAwaitDrain) !== 0) {
       state.awaitDrainWriters.clear();
     } else {
       state.awaitDrainWriters = null;
     }
 
-    // Track consumed bytes per stream for GC hinting, but only when
-    // the stream was under backpressure (piped to a slow writable).
+    // Track consumed bytes per stream for GC hinting when piped.
     // Buffers allocated in _read() become garbage after consumption,
     // but JSC's minimum heap threshold (32MB) is too high to trigger
     // collection at moderate rates. A per-stream byte counter plus a
     // global 1s cooldown prevents excessive GC with many streams.
-    if (_Bun_gc && hadBackpressure && (state[kState] & kObjectMode) === 0) {
+    if (_Bun_gc && (state[kState] & kObjectMode) === 0 && state.pipes.length > 0) {
       state.gcBytesConsumed += n;
       if (state.gcBytesConsumed >= 2 * 1024 * 1024) {
         const now = Date.now();

@@ -122,9 +122,9 @@ Schedules are interpreted in the system's **local time zone** — the same way c
 
 To use UTC, set `TZ=UTC` in the environment.
 
-DST transitions follow the same rules as `new Date(year, month, day, hour, minute)`:
+DST transitions:
 
-- **Spring-forward** — schedules in the missing hour fire at the next valid local minute.
+- **Spring-forward** — a schedule that lands in the missing hour is skipped that day; it fires at its next normal occurrence.
 - **Fall-back** — schedules in the duplicated hour fire once, at the first occurrence.
 
 ### Day-of-month and day-of-week interaction

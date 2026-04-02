@@ -51,15 +51,11 @@ describe("Bun.cron.parse — local time zone", () => {
 });
 
 describe("Bun.cron.parse — DST transitions", () => {
-  test("spring-forward: schedule in the missing hour rounds forward", async () => {
+  test("spring-forward: schedule in the missing hour skips to the next day", async () => {
     // US 2025 spring-forward: 2025-03-09 02:00 EST → 03:00 EDT (2:00-2:59 don't exist).
-    // Schedule "30 2 * * *" on that day should land at the next valid local minute.
+    // "30 2 * * *" on that day skips to the next normal occurrence: 2025-03-10 02:30 EDT.
     const next = await parseInTZ("America/New_York", "30 2 * * *", "2025-03-09T05:00:00Z"); // = 00:00 EST
-    const date = new Date(next);
-    // The result must be on or after 03:00 EDT (= 07:00 UTC) — the missing 02:30 is skipped.
-    expect(date.getTime()).toBeGreaterThanOrEqual(new Date("2025-03-09T07:00:00Z").getTime());
-    // ...and no later than the next day's 02:30 EDT (= 06:30 UTC on the 10th).
-    expect(date.getTime()).toBeLessThanOrEqual(new Date("2025-03-10T06:30:00Z").getTime());
+    expect(next).toBe("2025-03-10T06:30:00.000Z"); // 02:30 EDT
   });
 
   test("fall-back: schedule in the duplicated hour fires at the first occurrence", async () => {

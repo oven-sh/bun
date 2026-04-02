@@ -461,9 +461,11 @@ pub const PackageInstall = struct {
         this.file_count = FileCopier.copy(
             subdir,
             &walker_,
-        ) catch |err| switch (err) {
-            error.NotSupported => return err,
-            else => return Result.fail(err, .copying_files, @errorReturnTrace()),
+        ) catch |err| {
+            if (err == error.NotSupported) {
+                warnFallbackToFileCopy("clone");
+            }
+            return Result.fail(err, .copying_files, @errorReturnTrace());
         };
 
         return .{ .success = {} };
@@ -1443,7 +1445,6 @@ pub const PackageInstall = struct {
                             error.NotSupported => {
                                 supported_method = .copyfile;
                                 supported_method_to_use = .copyfile;
-                                warnFallbackToFileCopy("clone");
                             },
                             error.FileNotFound => return Result.fail(error.FileNotFound, .opening_cache_dir, @errorReturnTrace()),
                             else => return Result.fail(err, .copying_files, @errorReturnTrace()),

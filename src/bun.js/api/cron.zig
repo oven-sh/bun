@@ -929,10 +929,8 @@ pub const CronJob = struct {
 
     fn scheduleNext(this: *CronJob, vm: *jsc.VirtualMachine) void {
         if (this.stopped) return this.finishDeferredStop(vm);
-        const next_time = this.computeNextTimespec() orelse {
-            this.selfStop(vm);
-            return;
-        };
+        const next_time = this.computeNextTimespec() orelse
+            return this.finishDeferredStop(vm);
         vm.timer.update(&this.event_loop_timer, &next_time);
     }
 

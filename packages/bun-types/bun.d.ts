@@ -7449,7 +7449,7 @@ declare module "bun" {
      * | Day of week | `0-7` or `SUN`-`SAT` | `*` `,` `-` `/` |
      *
      * - `0` and `7` both mean Sunday.
-     * - Month and weekday names are case-insensitive 3-letter abbreviations.
+     * - Month and weekday names are case-insensitive (`MON`, `Monday`, `jan`, `January` all work).
      * - Nicknames: `@yearly`, `@annually`, `@monthly`, `@weekly`, `@daily`, `@midnight`, `@hourly`.
      * - When both day-of-month and day-of-week are restricted (neither is `*`), the job
      *   fires when **either** matches — [POSIX cron](https://pubs.opengroup.org/onlinepubs/9699919799/utilities/crontab.html) OR semantics.
@@ -7535,7 +7535,7 @@ declare module "bun" {
      * | Day of week | `0-7` or `SUN`-`SAT` | `*` `,` `-` `/` |
      *
      * - `0` and `7` both mean Sunday.
-     * - Month and weekday names are case-insensitive 3-letter abbreviations.
+     * - Month and weekday names are case-insensitive (`MON`, `Monday`, `jan`, `January` all work).
      * - Nicknames: `@yearly`, `@annually`, `@monthly`, `@weekly`, `@daily`, `@midnight`, `@hourly`.
      * - When both day-of-month and day-of-week are restricted (neither is `*`), the job
      *   fires when **either** matches — [POSIX cron](https://pubs.opengroup.org/onlinepubs/9699919799/utilities/crontab.html) OR semantics.

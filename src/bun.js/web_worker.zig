@@ -380,6 +380,10 @@ pub fn start(
     }
 
     b.configureDefines() catch {
+        // exitAndDeinit's null-guard skips vm.deinit() while this.vm is still
+        // null (we only assign it below). Free the moved-in proxy storage
+        // explicitly so the cloned RefCountedEnvValue refs aren't leaked.
+        vm.proxy_env_storage.deinit();
         this.flushLogs();
         this.exitAndDeinit();
         return;

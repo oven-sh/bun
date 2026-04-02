@@ -146,6 +146,12 @@ if [[ ! -d $bin_dir ]]; then
         error "Failed to create install directory \"$bin_dir\""
 fi
 
+completions_dir=$install_dir/completions
+if [[ ! -d $completions_dir ]]; then
+    mkdir -p "$completions_dir" ||
+        error "Failed to create completions directory \"$completions_dir\""
+fi
+
 curl --fail --location --progress-bar --output "$exe.zip" "$bun_uri" ||
     error "Failed to download bun from \"$bun_uri\""
 

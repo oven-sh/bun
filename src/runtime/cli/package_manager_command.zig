@@ -207,12 +207,13 @@ pub const PackageManagerCommand = struct {
                 warner: {
                     if (Output.enable_ansi_colors_stderr) {
                         if (bun.env_var.PATH.get()) |path| {
+                            // Trim trailing path separators so that e.g.
+                            // "/home/user/.bun/bin/" matches "/home/user/.bun/bin".
+                            const normalized_output = std.mem.trimRight(u8, output_path, "/\\");
                             var path_iter = std.mem.tokenizeScalar(u8, path, std.fs.path.delimiter);
                             while (path_iter.next()) |entry| {
-                                // Trim trailing path separators so that e.g.
-                                // "/home/user/.bun/bin/" matches "/home/user/.bun/bin".
                                 const trimmed = std.mem.trimRight(u8, entry, "/\\");
-                                if (strings.eql(trimmed, output_path)) {
+                                if (strings.eql(trimmed, normalized_output)) {
                                     break :warner;
                                 }
                             }

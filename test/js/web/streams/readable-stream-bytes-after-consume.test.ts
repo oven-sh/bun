@@ -6,5 +6,5 @@ test("ReadableStream .bytes() after body consumed via Response.bytes() does not 
   // Consume body through Response (drains ByteBlobLoader store via toBlobIfPossible)
   await resp.bytes();
   // Calling .bytes() on the now-drained ReadableStream should reject, not crash
-  expect(async () => await body.bytes()).toThrow("Body already used");
+  await expect(body.bytes()).rejects.toThrow("Body already used");
 });

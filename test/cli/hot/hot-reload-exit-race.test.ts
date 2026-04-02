@@ -36,10 +36,7 @@ test("bun --hot exits cleanly while watcher is dispatching events", async () => 
   // the watcher thread is still inside `bustDirCache`.
   const rewrites = (async () => {
     for (let i = 0; i < 500; i++) {
-      await Bun.write(
-        scriptPath,
-        `setTimeout(() => process.exit(0), 300); console.log("READY"); // ${i}\n`,
-      );
+      await Bun.write(scriptPath, `setTimeout(() => process.exit(0), 300); console.log("READY"); // ${i}\n`);
       if ((await Promise.race([proc.exited, Promise.resolve("alive")])) !== "alive") break;
     }
   })();

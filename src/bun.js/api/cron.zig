@@ -55,7 +55,6 @@ pub const CronRegisterJob = struct {
     bun_exe: [:0]const u8,
     abs_path: [:0]const u8,
     schedule: [:0]const u8, // normalized numeric form for crontab/launchd
-    raw_schedule: [:0]const u8, // original form for --cron-period and schtasks parsing
     title: [:0]const u8,
     parsed_cron: CronExpression,
 
@@ -191,7 +190,6 @@ pub const CronRegisterJob = struct {
         if (this.err_msg) |msg| bun.default_allocator.free(msg);
         bun.default_allocator.free(this.abs_path);
         bun.default_allocator.free(this.schedule);
-        bun.default_allocator.free(this.raw_schedule);
         bun.default_allocator.free(this.title);
         bun.default_allocator.destroy(this);
     }
@@ -477,7 +475,6 @@ pub const CronRegisterJob = struct {
             .bun_exe = bun_exe,
             .abs_path = abs_path,
             .schedule = bun.handleOom(bun.default_allocator.dupeZ(u8, normalized_schedule)),
-            .raw_schedule = bun.handleOom(bun.default_allocator.dupeZ(u8, schedule_slice.slice())),
             .title = bun.handleOom(bun.default_allocator.dupeZ(u8, title_slice.slice())),
             .parsed_cron = parsed,
             .promise = jsc.JSPromise.Strong.init(globalObject),

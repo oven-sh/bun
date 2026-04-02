@@ -8,7 +8,7 @@ test("calling bytes() on a consumed body stream does not crash", async () => {
       "-e",
       `
       const response = new Response("Hello World");
-      response.arrayBuffer();
+      await response.arrayBuffer();
       const body = response.body;
       try { await body.bytes(); } catch {}
       `,
@@ -18,7 +18,6 @@ test("calling bytes() on a consumed body stream does not crash", async () => {
     stderr: "pipe",
   });
 
-  const exitCode = await proc.exited;
-
+  const [, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(exitCode).toBe(0);
 });

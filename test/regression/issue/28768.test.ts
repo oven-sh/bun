@@ -1,8 +1,8 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isLinux, tempDir } from "harness";
-import { join } from "path";
 import { tmpdir } from "os";
+import { join } from "path";
 
 // Serve a minimal registry with a single package (no-deps@1.0.0)
 const tgzPath = join(

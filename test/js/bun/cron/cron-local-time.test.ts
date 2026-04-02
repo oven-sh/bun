@@ -92,11 +92,17 @@ describe.concurrent("Bun.cron.parse — DST transitions", () => {
     expect(next).toBe("2025-11-03T06:30:00.000Z");
   });
 
-  test("fall-back: wildcard hour skips the repeated hour (croner semantics)", async () => {
-    // After the first 1:00 (05:00Z), next() returns 2:00 (07:00Z), NOT the second 1:00 (06:00Z).
-    // Matches croner; cron-parser and Vixie fire through the repeated hour.
+  test("fall-back: wildcard hour fires through both occurrences (cronie semantics)", async () => {
+    // After the first 1:00 (05:00Z), next() returns the SECOND 1:00 (06:00Z).
+    // Matches cronie/Vixie and cron-parser. Fixed-time schedules (30 1 * * *)
+    // still fire once — only `*` minute or `*` hour schedules run through.
     const next = await parseInTZ("America/New_York", "0 * * * *", "2025-11-02T05:00:01Z");
-    expect(next).toBe("2025-11-02T07:00:00.000Z");
+    expect(next).toBe("2025-11-02T06:00:00.000Z");
+  });
+
+  test("fall-back: every-minute fires through both occurrences", async () => {
+    const next = await parseInTZ("America/New_York", "* * * * *", "2025-11-02T05:59:01Z");
+    expect(next).toBe("2025-11-02T06:00:00.000Z");
   });
 
   test("spring-forward: only the first match in the gap fires shifted (croner semantics)", async () => {

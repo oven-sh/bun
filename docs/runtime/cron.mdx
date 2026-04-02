@@ -122,12 +122,10 @@ Schedules are interpreted in the system's **local time zone** — the same way c
 
 To use UTC, set `TZ=UTC` in the environment.
 
-DST transitions follow ECMAScript `Date` semantics (matching the npm `croner` package):
+DST transitions:
 
 - **Spring-forward** — a schedule that lands in the missing hour fires that day, shifted forward by the gap (e.g. `30 2 * * *` runs at 3:30 on the spring-forward day). For multi-minute patterns inside the gap (`*/15 2 * * *`), only the first match fires.
-- **Fall-back** — a schedule in the duplicated hour fires once, at the first occurrence. Wildcard schedules (`* * * * *`, `0 * * * *`) also fire once per wall-clock minute, so the repeated hour is skipped in real time.
-
-This differs from Vixie cron (which runs gap jobs immediately at the end of the gap) and `cron-parser` (which fires through the repeated fall-back hour).
+- **Fall-back** — a fixed-time schedule in the duplicated hour (`30 1 * * *`) fires once, at the first occurrence. A schedule whose minute or hour field is `*` (`0 * * * *`, `* * * * *`) fires through **both** occurrences — once per real-time minute, matching crontab on Linux.
 
 ### Day-of-month and day-of-week interaction
 

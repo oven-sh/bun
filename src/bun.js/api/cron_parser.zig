@@ -94,12 +94,28 @@ pub const CronExpression = struct {
         return stream.getWritten();
     }
 
+    /// Check if a real instant matches all five fields in local time.
+    fn matchesInstant(self: CronExpression, globalObject: *jsc.JSGlobalObject, ms: f64) bool {
+        const t = globalObject.msToGregorianDateTime(ms);
+        if (!bitSet(u64, self.minutes, @intCast(t.minute))) return false;
+        if (!bitSet(u32, self.hours, @intCast(t.hour))) return false;
+        if (!bitSet(u16, self.months, @intCast(t.month))) return false;
+        const day_ok = bitSet(u32, self.days, @intCast(t.day));
+        const weekday_ok = bitSet(u8, self.weekdays, @intCast(t.weekday));
+        const both_restricted = !self.days_is_wildcard and !self.weekdays_is_wildcard;
+        return if (both_restricted) (day_ok or weekday_ok) else (day_ok and weekday_ok);
+    }
+
     /// Compute the next time (in ms since epoch) that matches this expression
     /// in the system's local time zone, starting from `from_ms`. Returns null
     /// if no match found within 8 years.
     pub fn next(self: CronExpression, globalObject: *jsc.JSGlobalObject, from_ms: f64) bun.JSError!?f64 {
         var dt = globalObject.msToGregorianDateTime(from_ms);
         const start_year = dt.year;
+        // cronie: schedules with `*` minute or `*` hour run through a fall-back
+        // repeated hour; fixed-time schedules fire once. We use the semantic
+        // check (all bits set) so `*/1` counts as wild — matches the npm camp.
+        const wild = self.minutes == all_minutes or self.hours == all_hours;
 
         dt.minute += 1;
         dt.second = 0;
@@ -175,9 +191,19 @@ pub const CronExpression = struct {
 
             // All fields match
             const result = try globalObject.gregorianDateTimeToMS(dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second, 0);
-            // During DST fall-back, gregorianDateTimeToMS picks the first
-            // occurrence of an ambiguous local time. If from_ms is already past
-            // it (in the second occurrence), keep searching.
+            // During DST fall-back, gregorianDateTimeToMS picks the FORMER
+            // occurrence of an ambiguous local time, and the wall-clock walk
+            // above can step over the entire second occurrence. For wild
+            // schedules, scan real-time minutes between from_ms and result
+            // (capped at 2h, the largest real-world DST shift) for an earlier
+            // match in the repeated window.
+            if (wild and result > from_ms + 60_000) {
+                var probe = (@floor(from_ms / 60_000) + 1) * 60_000;
+                const cap = @min(result, from_ms + 121 * 60_000);
+                while (probe < cap) : (probe += 60_000) {
+                    if (self.matchesInstant(globalObject, probe)) return probe;
+                }
+            }
             if (result <= from_ms) {
                 dt.minute += 1;
                 continue;
@@ -191,6 +217,7 @@ pub const CronExpression = struct {
 // Name lookup tables
 // ============================================================================
 
+const all_minutes: u64 = (1 << 60) - 1;
 const all_hours: u32 = (1 << 24) - 1;
 const all_days: u32 = ((1 << 32) - 1) & ~@as(u32, 1);
 const all_months: u16 = ((1 << 13) - 1) & ~@as(u16, 1);

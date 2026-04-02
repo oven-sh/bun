@@ -226,20 +226,13 @@ fn applyRedirections(this: *Subshell) ?Yield {
                 );
                 defer redirect_writer.deref();
 
-                if (redirect_flags.duplicate_out) {
+                if (redirect_flags.stdout) {
                     this.io.stdout.deref();
                     this.io.stdout = .{ .fd = .{ .writer = redirect_writer.dupeRef() } };
+                }
+                if (redirect_flags.stderr) {
                     this.io.stderr.deref();
                     this.io.stderr = .{ .fd = .{ .writer = redirect_writer.dupeRef() } };
-                } else {
-                    if (redirect_flags.stdout) {
-                        this.io.stdout.deref();
-                        this.io.stdout = .{ .fd = .{ .writer = redirect_writer.dupeRef() } };
-                    }
-                    if (redirect_flags.stderr) {
-                        this.io.stderr.deref();
-                        this.io.stderr = .{ .fd = .{ .writer = redirect_writer.dupeRef() } };
-                    }
                 }
             },
             .jsbuf => {
@@ -305,6 +298,7 @@ pub fn deinit(this: *Subshell) void {
 }
 
 pub fn writeFailingError(this: *Subshell, comptime fmt: []const u8, args: anytype) Yield {
+    this.exit_code = 1;
     const handler = struct {
         fn enqueueCb(ctx: *Subshell) void {
             ctx.state = .wait_write_err;

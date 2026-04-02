@@ -157,7 +157,7 @@ function prepareLandlockFixture(root: string) {
     expect(stdout).toContain(`${testBase}:OK`);
   }
 
-  return { helperPath, landlockSupported, testBase };
+  return { compileSupported: true, helperPath, landlockSupported, testBase };
 }
 
 function canUseLandlock() {

@@ -160,20 +160,36 @@ function prepareLandlockFixture(root: string) {
   return { helperPath, landlockSupported, testBase };
 }
 
-function canCompileLandlockHelper() {
+function canUseLandlock() {
   if (!isLinux) return false;
 
   const root = tempDirWithFiles("issue-28220-probe", {});
   try {
-    return compileLandlockHelper(root).compileSupported;
+    const testBase = join(root, "parent", "project");
+    const { compileSupported, helperPath } = compileLandlockHelper(root);
+    if (!compileSupported) return false;
+
+    mkdirSync(testBase, { recursive: true });
+    const check = Bun.spawnSync({
+      cmd: [helperPath, testBase, dirname(bunExe()), "--self-check"],
+      env: bunEnv,
+      cwd: testBase,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    return (
+      check.exitCode === 0 &&
+      !check.stdout.toString().includes("LANDLOCK_UNSUPPORTED")
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
 }
 
-const landlockCompileSupported = canCompileLandlockHelper();
+const landlockSupported = canUseLandlock();
 
-describe.skipIf(!isLinux || !landlockCompileSupported)("issue #28220", () => {
+describe.skipIf(!landlockSupported)("issue #28220", () => {
   test("bun run works when ancestor directories are inaccessible", () => {
     using root = tempDir("issue-28220-run", {});
     const { helperPath, testBase } = prepareLandlockFixture(String(root));

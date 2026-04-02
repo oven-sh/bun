@@ -2,8 +2,6 @@ import npmStringWidth from "string-width";
 import { bench, run } from "../runner.mjs";
 
 const bunStringWidth = globalThis?.Bun?.stringWidth;
-
-const stringWidth = bunStringWidth || npmStringWidth;
 const formatter = new Intl.NumberFormat();
 const format = n => {
   return formatter.format(n);
@@ -52,17 +50,24 @@ const maxInputLength = Math.max(...inputs.map(([input]) => input.repeat(Math.max
 for (const [input, textLabel] of inputs) {
   for (let repeatCount of repeatCounts) {
     const str = input.repeat(repeatCount);
-    const name = `${textLabel.padEnd(16, " ")} ${format(str.length).padStart(format(maxInputLength).length, " ")} chars`;
+    const sizeLabel = format(str.length).padStart(format(maxInputLength).length, " ");
+    const suffix = `${textLabel} ${sizeLabel}`;
 
-    bench(name, () => {
-      stringWidth(str);
-    });
+    if (bunStringWidth) {
+      bench(`bun ${suffix}`, () => {
+        bunStringWidth(str);
+      });
 
-    if (bunStringWidth && bunStringWidth(str) !== npmStringWidth(str)) {
-      throw new Error(
-        `string-width mismatch (${textLabel}, repeat=${repeatCount}): bun=${bunStringWidth(str)} npm=${npmStringWidth(str)}`,
-      );
+      if (bunStringWidth(str) !== npmStringWidth(str)) {
+        throw new Error(
+          `string-width mismatch (${textLabel}, repeat=${repeatCount}): bun=${bunStringWidth(str)} npm=${npmStringWidth(str)}`,
+        );
+      }
     }
+
+    bench(`npm ${suffix}`, () => {
+      npmStringWidth(str);
+    });
   }
 }
 

@@ -743,8 +743,7 @@ pub const visible = struct {
     }
 
     // SIMD scan for the first lane equal to any of `targets`. Returns null if
-    // not found. Used to find OSC terminators (BEL/ESC; the C1 ST 0x9c is
-    // ASCII-incompatible and not handled by Latin-1 anyway).
+    // not found. Used to find OSC terminators (BEL/ESC and the C1 ST 0x9C).
     fn scanLaneAnyOf(comptime T: type, comptime targets: []const T, slice: []const T) ?usize {
         comptime std.debug.assert(targets.len > 0);
         const stride = 16 / @sizeOf(T);
@@ -797,11 +796,13 @@ pub const visible = struct {
             } else if (input[1] == ']') {
                 // OSC sequence: ESC ] ... (BEL or ST). The payload is opaque
                 // (titles, hyperlinks, filenames) — SIMD-scan for the
-                // terminators instead of byte-by-byte.
+                // terminators instead of byte-by-byte. Terminators per ECMA-48
+                // and xterm: BEL (0x07), C1 ST (0x9C), or 7-bit ST (ESC \).
                 input = input[2..];
-                while (scanLaneAnyOf(u8, &.{ 0x07, 0x1b }, input)) |t| {
-                    if (input[t] == 0x07) {
-                        // BEL terminator.
+                while (scanLaneAnyOf(u8, &.{ 0x07, 0x9c, 0x1b }, input)) |t| {
+                    const term = input[t];
+                    if (term == 0x07 or term == 0x9c) {
+                        // Single-byte terminator (BEL or C1 ST).
                         input = input[t + 1 ..];
                         break;
                     }
@@ -1203,14 +1204,14 @@ pub const visible = struct {
 
             // Handle non-ASCII characters inside escape sequences
             if (saw_osc) {
-                // In OSC sequence, look for BEL (0x07) or ST (ESC \)
-                // Non-ASCII chars inside OSC should not contribute to width
-                if (cp == 0x07) {
+                // In OSC sequence, look for BEL (0x07) or C1 ST (0x9C). The
+                // 7-bit ST (ESC \) only uses ASCII chars and is handled above.
+                // Non-ASCII chars inside OSC should not contribute to width.
+                if (cp == 0x07 or cp == 0x9c) {
                     saw_1b = false;
                     saw_osc = false;
                     stretch_len = 0;
                 }
-                // Note: ST (ESC \) only uses ASCII chars, so we don't need to check here
                 continue;
             }
             if (saw_csi) {

@@ -92,7 +92,7 @@ test.skipIf(!isLinux || !isCrossDevice)("warns when hardlink falls back to copy 
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stderr).toContain("falling back to full copy");
+    expect(stderr.match(/falling back to full copy/g)?.length ?? 0).toBe(1);
     expect(stderr).toContain("--backend=copyfile");
     expect(exitCode).toBe(0);
   } finally {

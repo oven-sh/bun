@@ -461,7 +461,10 @@ pub const PackageInstall = struct {
         this.file_count = FileCopier.copy(
             subdir,
             &walker_,
-        ) catch |err| return Result.fail(err, .copying_files, @errorReturnTrace());
+        ) catch |err| switch (err) {
+            error.NotSupported => return err,
+            else => return Result.fail(err, .copying_files, @errorReturnTrace()),
+        };
 
         return .{ .success = {} };
     }

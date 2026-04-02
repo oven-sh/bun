@@ -435,14 +435,8 @@ pub const PackageInstall = struct {
                             )) {
                                 0 => {},
                                 else => |errno| switch (std.posix.errno(errno)) {
-                                    .XDEV => {
-                                        warnFallbackToFileCopy("clone");
-                                        return error.NotSupported; // not same file system
-                                    },
-                                    .OPNOTSUPP => {
-                                        warnFallbackToFileCopy("clone");
-                                        return error.NotSupported;
-                                    },
+                                    .XDEV => return error.NotSupported, // not same file system
+                                    .OPNOTSUPP => return error.NotSupported,
                                     .NOENT => return error.FileNotFound,
                                     // sometimes the downloaded npm package has already node_modules with it, so just ignore exist error here
                                     .EXIST => {},
@@ -467,7 +461,10 @@ pub const PackageInstall = struct {
         this.file_count = FileCopier.copy(
             subdir,
             &walker_,
-        ) catch |err| return Result.fail(err, .copying_files, @errorReturnTrace());
+        ) catch |err| switch (err) {
+            error.NotSupported => return err,
+            else => return Result.fail(err, .copying_files, @errorReturnTrace()),
+        };
 
         return .{ .success = {} };
     }
@@ -1446,6 +1443,7 @@ pub const PackageInstall = struct {
                             error.NotSupported => {
                                 supported_method = .copyfile;
                                 supported_method_to_use = .copyfile;
+                                warnFallbackToFileCopy("clone");
                             },
                             error.FileNotFound => return Result.fail(error.FileNotFound, .opening_cache_dir, @errorReturnTrace()),
                             else => return Result.fail(err, .copying_files, @errorReturnTrace()),

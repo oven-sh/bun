@@ -135,7 +135,7 @@ pub fn next(this: *Subshell) Yield {
 pub fn transitionToExec(this: *Subshell) Yield {
     log("{f} transitionToExec", .{this});
 
-    if (this.node.redirect != null) {
+    if (this.node.redirect != null or !this.node.redirect_flags.isEmpty()) {
         if (this.applyRedirections()) |yield| return yield;
     }
 
@@ -151,7 +151,7 @@ fn applyRedirections(this: *Subshell) ?Yield {
         switch (file) {
             .atom => {
                 if (this.redirection_file.items.len == 0) {
-                    return this.writeFailingError("bun: ambiguous redirect\n", .{});
+                    return this.writeFailingError("bun: ambiguous redirect: at `subshell`\n", .{});
                 }
 
                 // Regular files are not pollable on linux and macos

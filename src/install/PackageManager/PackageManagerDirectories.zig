@@ -564,6 +564,11 @@ pub fn computeCacheDirAndSubpath(
 }
 
 pub fn attemptToCreatePackageJSONAndOpen() !std.fs.File {
+    if (!promptToCreatePackageJSON()) {
+        Output.prettyErrorln("\n<r><red>Installation cancelled.<r>", .{});
+        Global.exit(1);
+    }
+
     const package_json_file = std.fs.cwd().createFileZ("package.json", .{ .read = true }) catch |err| {
         Output.prettyErrorln("<r><red>error:<r> {s} create package.json", .{@errorName(err)});
         Global.crash();
@@ -577,6 +582,56 @@ pub fn attemptToCreatePackageJSONAndOpen() !std.fs.File {
 pub fn attemptToCreatePackageJSON() !void {
     var file = try attemptToCreatePackageJSONAndOpen();
     file.close();
+}
+
+/// Prompts the user for confirmation before creating a package.json in the
+/// current directory. Returns true if the user confirms (or stdin is not a
+/// TTY, to avoid breaking CI/scripts). Returns false if the user declines.
+fn promptToCreatePackageJSON() bool {
+    var cwd_buf: bun.PathBuffer = undefined;
+    const cwd = bun.getcwd(&cwd_buf) catch "<unknown>";
+
+    if (!Output.isStdinTTY()) {
+        // Non-interactive — log a warning but proceed to avoid breaking CI/scripts.
+        Output.warn("no package.json found, creating one in {s}", .{cwd});
+        return true;
+    }
+
+    Output.prettyError("<r><yellow>warn:<r> No package.json found. Create one in <b>{s}<r>? <d>[Y/n]<r> ", .{cwd});
+    Output.flush();
+
+    var stdin = std.fs.File.stdin();
+    var reader_buffer: [1024]u8 = undefined;
+    var buffered = stdin.readerStreaming(&reader_buffer);
+    const reader = &buffered.interface;
+
+    const first_byte = reader.takeByte() catch {
+        return true;
+    };
+
+    return switch (first_byte) {
+        '\n' => true,
+        '\r' => blk: {
+            _ = reader.takeByte() catch {
+                break :blk true;
+            };
+            break :blk true;
+        },
+        'y', 'Y' => blk: {
+            const next_byte = reader.takeByte() catch {
+                break :blk true;
+            };
+            if (next_byte == '\n') {
+                break :blk true;
+            } else if (next_byte == '\r') {
+                _ = reader.takeByte() catch {};
+                break :blk true;
+            }
+            break :blk false;
+        },
+        'n', 'N' => false,
+        else => false,
+    };
 }
 
 pub fn saveLockfile(

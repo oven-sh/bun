@@ -3006,11 +3006,17 @@ pub const Data = union(Tag) {
                             .equal = l.value == r.value,
                         };
                     },
-                    .e_inlined_enum => |r| if (r.value.data == .e_number) {
-                        return .{
-                            .ok = true,
-                            .equal = l.value == r.value.data.e_number.value,
-                        };
+                    .e_inlined_enum => |r| {
+                        if (r.value.data == .e_number) {
+                            return .{
+                                .ok = true,
+                                .equal = l.value == r.value.data.e_number.value,
+                            };
+                        }
+                        // Different types under === are never equal
+                        if (comptime kind == .strict) {
+                            if (r.value.data == .e_string) return Equality.false;
+                        }
                     },
                     .e_boolean, .e_branch_boolean => |r| {
                         if (comptime kind == .loose) {
@@ -3033,11 +3039,20 @@ pub const Data = union(Tag) {
                         // "(not null or undefined) == undefined" is false
                         return Equality.false;
                     },
-                    .e_string => {
+                    .e_string => |r| {
                         if (comptime kind == .strict) {
                             // "42 === 'x'" is false (different types)
                             return Equality.false;
                         }
+                        // Loose: "0" == 0 is true, "" == 0 is true
+                        r.resolveRopeIfNeeded(p.allocator);
+                        if (l.value == 0 and (r.isBlank() or r.eqlComptime("0"))) {
+                            return Equality.true;
+                        }
+                        if (l.value == 1 and r.eqlComptime("1")) {
+                            return Equality.true;
+                        }
+                        return Equality.unknown;
                     },
                     else => {},
                 }

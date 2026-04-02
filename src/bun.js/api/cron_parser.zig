@@ -1,7 +1,7 @@
 /// Cron expression parser and next-occurrence calculator.
 ///
 /// Parses standard 5-field cron expressions (minute hour day month weekday)
-/// into a bitset representation, and computes the next matching UTC time.
+/// into a bitset representation, and computes the next matching local time.
 ///
 /// Supports:
 ///   - Wildcards: *

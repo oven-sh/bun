@@ -8,8 +8,8 @@ test("calling bytes() on a consumed body stream does not crash", async () => {
       "-e",
       `
       const response = new Response("Hello World");
-      await response.arrayBuffer();
       const body = response.body;
+      await response.arrayBuffer();
       try { await body.bytes(); } catch {}
       `,
     ],

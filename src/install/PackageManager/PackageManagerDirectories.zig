@@ -618,16 +618,12 @@ fn promptToCreatePackageJSON() bool {
             break :blk true;
         },
         'y', 'Y' => blk: {
-            const next_byte = reader.takeByte() catch {
-                break :blk true;
-            };
-            if (next_byte == '\n') {
-                break :blk true;
-            } else if (next_byte == '\r') {
-                _ = reader.takeByte() catch {};
-                break :blk true;
-            }
-            break :blk false;
+            // Accept any line starting with y/Y (e.g. "yes", "y", "Y")
+            // by draining remaining characters until newline.
+            while (reader.takeByte()) |b| {
+                if (b == '\n' or b == '\r') break;
+            } else |_| {}
+            break :blk true;
         },
         'n', 'N' => false,
         else => false,

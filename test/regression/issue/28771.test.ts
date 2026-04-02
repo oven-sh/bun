@@ -17,7 +17,7 @@ function setupGlobalDirs(dirStr: string) {
   return { binDir, globalDir };
 }
 
-describe("global bin path warnings", () => {
+describe.concurrent("global bin path warnings", () => {
   test("bun pm bin -g does not warn when PATH entry has trailing slash", async () => {
     using dir = tempDir("global-bin-28771", { "placeholder": "" });
     const { binDir, globalDir } = setupGlobalDirs(String(dir));

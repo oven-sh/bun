@@ -8,6 +8,8 @@ test("readable stream buffer does not grow unbounded under backpressure", async 
       "-e",
       `
 const stream = require('stream');
+let writeCount = 0;
+let sample1;
 
 const rs = stream.Readable({
   read: function () {
@@ -20,28 +22,21 @@ const rs = stream.Readable({
 
 const ws = stream.Writable({
   write: function (data, enc, cb) {
+    writeCount++;
+    // Sample heap after 1500 writes (warmup), measure growth over next 1500
+    if (writeCount === 1500) {
+      sample1 = process.memoryUsage().heapUsed;
+    }
+    if (writeCount === 3000) {
+      const growthMB = (process.memoryUsage().heapUsed - sample1) / 1024 / 1024;
+      console.log(growthMB.toFixed(1));
+      rs.destroy();
+      ws.destroy();
+      return;
+    }
     setTimeout(cb, 10);
   }
 });
-
-// Sample heap at two points to detect growth trend
-let sample1;
-let tick = 0;
-const interval = setInterval(function () {
-  tick++;
-  if (tick === 30) {
-    sample1 = process.memoryUsage().heapUsed;
-  }
-  if (tick === 60) {
-    const sample2 = process.memoryUsage().heapUsed;
-    // Report growth in MB between the two samples
-    const growthMB = (sample2 - sample1) / 1024 / 1024;
-    console.log(growthMB.toFixed(1));
-    clearInterval(interval);
-    rs.destroy();
-    ws.destroy();
-  }
-}, 500);
 
 rs.pipe(ws);
 `,
@@ -54,7 +49,7 @@ rs.pipe(ws);
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   const growthMB = parseFloat(stdout.trim());
-  // Without the fix, heap grows ~4-5MB between tick 30 and tick 60 (15s window).
+  // Without the fix, heap grows ~4-5MB over 1500 writes with backpressure.
   // With the fix, heap growth stays under 2MB (just normal GC variance).
   expect(stderr.toLowerCase()).not.toContain("error");
   expect(growthMB).toBeLessThanOrEqual(3);

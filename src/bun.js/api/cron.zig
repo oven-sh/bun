@@ -873,6 +873,7 @@ pub const CronJob = struct {
         // strong. onTimerFire calls finishSelfStop() after the result is known.
         if (this.in_fire) {
             this.stopped = true;
+            this.poll_ref.unref(vm);
             return;
         }
         this.stopInternal(vm);

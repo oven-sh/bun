@@ -1617,8 +1617,6 @@ pub const RunCommand = struct {
             Global.exit(0);
         }
 
-        ctx.runtime_options.eval.script = script;
-
         const trigger = bun.pathLiteral("/[stdin]");
         var entry_point_buf: [bun.MAX_PATH_BYTES + trigger.len]u8 = undefined;
         const cwd = try bun.getcwd(&entry_point_buf);
@@ -1633,6 +1631,13 @@ pub const RunCommand = struct {
             passthrough_list.appendSliceAssumeCapacity(ctx.passthrough);
             ctx.passthrough = passthrough_list.items;
         }
+
+        // Assign eval.script only after all failable operations. The
+        // script slice may point into stack-allocated memory (scripts
+        // ≤2048 bytes live in stack_fallback's on-stack buffer), so
+        // storing it in the global ctx before a potential error return
+        // would leave a dangling pointer.
+        ctx.runtime_options.eval.script = script;
 
         Run.boot(ctx, ctx.allocator.dupe(u8, entry_path) catch return error.OutOfMemory, null) catch |err| {
             ctx.log.print(Output.errorWriter()) catch {};

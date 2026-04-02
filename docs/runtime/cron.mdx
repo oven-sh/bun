@@ -48,7 +48,7 @@ console.log(next); // => next quarter-hour boundary
 
 ### Returns
 
-`Date | null` — the next matching time, or `null` if no match exists within ~4 years (e.g. February 30th).
+`Date | null` — the next matching time, or `null` if no match exists within 8 years (e.g. February 30th).
 
 ### Chaining calls
 
@@ -162,10 +162,10 @@ This is the lightweight option for long-running servers and workers — no syste
 
 ### Parameters
 
-| Parameter  | Type                                       | Description                                                                                          |
-| ---------- | ------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
-| `schedule` | `string`                                   | A [cron expression](#cron-expression-syntax) or nickname like `"@hourly"`.                           |
-| `handler`  | `(this: CronJob) => void \| Promise<void>` | Called on each fire. Inside a `function` callback, `this` is the `CronJob` (so `this.stop()` works). |
+| Parameter  | Type                         | Description                                                                                                                                                                  |
+| ---------- | ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `schedule` | `string`                     | A [cron expression](#cron-expression-syntax) or nickname like `"@hourly"`.                                                                                                   |
+| `handler`  | `(this: CronJob) => unknown` | Called on each fire. May return a Promise — the next fire is not scheduled until it settles. Inside a `function` callback, `this` is the `CronJob` (so `this.stop()` works). |
 
 Returns a [`CronJob`](#the-cronjob-handle) synchronously. Throws a `TypeError` if the expression is invalid or has no future occurrences (e.g. `"0 0 30 2 *"` — February 30th).
 

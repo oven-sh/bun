@@ -94,16 +94,24 @@ pub const CronExpression = struct {
         return stream.getWritten();
     }
 
+    /// POSIX cron: if both DOM and DOW are restricted (not `*`), match either;
+    /// otherwise match both (a `*` field matches all anyway).
+    fn matchesDay(self: CronExpression, day: i32, weekday: i32) bool {
+        const day_ok = bitSet(u32, self.days, @intCast(day));
+        const weekday_ok = bitSet(u8, self.weekdays, @intCast(weekday));
+        return if (!self.days_is_wildcard and !self.weekdays_is_wildcard)
+            day_ok or weekday_ok
+        else
+            day_ok and weekday_ok;
+    }
+
     /// Check if a real instant matches all five fields in local time.
     fn matchesInstant(self: CronExpression, globalObject: *jsc.JSGlobalObject, ms: f64) bool {
         const t = globalObject.msToGregorianDateTime(ms);
-        if (!bitSet(u64, self.minutes, @intCast(t.minute))) return false;
-        if (!bitSet(u32, self.hours, @intCast(t.hour))) return false;
-        if (!bitSet(u16, self.months, @intCast(t.month))) return false;
-        const day_ok = bitSet(u32, self.days, @intCast(t.day));
-        const weekday_ok = bitSet(u8, self.weekdays, @intCast(t.weekday));
-        const both_restricted = !self.days_is_wildcard and !self.weekdays_is_wildcard;
-        return if (both_restricted) (day_ok or weekday_ok) else (day_ok and weekday_ok);
+        return bitSet(u64, self.minutes, @intCast(t.minute)) and
+            bitSet(u32, self.hours, @intCast(t.hour)) and
+            bitSet(u16, self.months, @intCast(t.month)) and
+            self.matchesDay(t.day, t.weekday);
     }
 
     /// Compute the next time (in ms since epoch) that matches this expression
@@ -161,14 +169,7 @@ pub const CronExpression = struct {
                 continue;
             }
 
-            // POSIX cron day-of-month / day-of-week logic:
-            //   - If both are restricted (neither was *): OR — either matching is enough
-            //   - If only one is restricted: only that one matters (the * field matches all)
-            const day_ok = bitSet(u32, self.days, @intCast(dt.day));
-            const weekday_ok = bitSet(u8, self.weekdays, @intCast(dt.weekday));
-            const both_restricted = !self.days_is_wildcard and !self.weekdays_is_wildcard;
-            const day_match = if (both_restricted) (day_ok or weekday_ok) else (day_ok and weekday_ok);
-            if (!day_match) {
+            if (!self.matchesDay(dt.day, dt.weekday)) {
                 dt.day += 1;
                 dt.hour = 0;
                 dt.minute = 0;
@@ -197,10 +198,10 @@ pub const CronExpression = struct {
             // schedules, scan real-time minutes between from_ms and result
             // (capped at 2h, the largest real-world DST shift) for an earlier
             // match in the repeated window.
-            if (wild and result > from_ms + 60_000) {
-                var probe = (@floor(from_ms / 60_000) + 1) * 60_000;
-                const cap = @min(result, from_ms + 121 * 60_000);
-                while (probe < cap) : (probe += 60_000) {
+            if (wild and result > from_ms + minute_ms) {
+                var probe = (@floor(from_ms / minute_ms) + 1) * minute_ms;
+                const cap = @min(result, from_ms + (max_dst_shift_min + 1) * minute_ms);
+                while (probe < cap) : (probe += minute_ms) {
                     if (self.matchesInstant(globalObject, probe)) return probe;
                 }
             }
@@ -217,11 +218,14 @@ pub const CronExpression = struct {
 // Name lookup tables
 // ============================================================================
 
-const all_minutes: u64 = (1 << 60) - 1;
-const all_hours: u32 = (1 << 24) - 1;
-const all_days: u32 = ((1 << 32) - 1) & ~@as(u32, 1);
-const all_months: u16 = ((1 << 13) - 1) & ~@as(u16, 1);
-const all_weekdays: u8 = (1 << 7) - 1;
+const minute_ms: f64 = 60_000;
+const max_dst_shift_min: f64 = 120;
+
+pub const all_minutes: u64 = (1 << 60) - 1;
+pub const all_hours: u32 = (1 << 24) - 1;
+pub const all_days: u32 = ((1 << 32) - 1) & ~@as(u32, 1);
+pub const all_months: u16 = ((1 << 13) - 1) & ~@as(u16, 1);
+pub const all_weekdays: u8 = (1 << 7) - 1;
 
 fn parseNickname(expr: []const u8) ?CronExpression {
     const eql = bun.strings.eqlCaseInsensitiveASCIIICheckLength;

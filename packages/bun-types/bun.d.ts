@@ -7609,7 +7609,7 @@ declare module "bun" {
      *
      * @param expression - A cron expression or nickname (e.g. `"0,15,30,45 * * * *"`, `"0 9 * * MON-FRI"`, `"@hourly"`)
      * @param relativeDate - Starting point for the search (defaults to `Date.now()`). Accepts a `Date` or milliseconds since epoch.
-     * @returns The next `Date` matching the expression in local time, or `null` if no match exists within ~4 years (e.g. `"0 0 30 2 *"` — Feb 30 never occurs)
+     * @returns The next `Date` matching the expression in local time, or `null` if no match exists within 8 years (e.g. `"0 0 30 2 *"` — Feb 30 never occurs)
      * @throws If the expression is invalid or `relativeDate` is `NaN`/`Infinity`
      *
      * @example

@@ -1475,13 +1475,9 @@ fn cronToTaskXml(
 
     // Use semantic checks (bitfield values) not syntax flags for wildcard detection.
     // e.g. "*/1" sets all bits just like "*" but has _is_wildcard=false.
-    const all_days: u32 = ((1 << 32) - 1) & ~@as(u32, 1); // bits 1-31
-    const all_months: u16 = ((1 << 13) - 1) & ~@as(u16, 1); // bits 1-12
-    const all_weekdays: u8 = (1 << 7) - 1; // bits 0-6
-
-    const days_is_wild = cron.days == all_days;
-    const weekdays_is_wild = cron.weekdays == all_weekdays;
-    const months_is_wild = cron.months == all_months;
+    const days_is_wild = cron.days == cron_parser.all_days;
+    const weekdays_is_wild = cron.weekdays == cron_parser.all_weekdays;
+    const months_is_wild = cron.months == cron_parser.all_months;
 
     // Try to use a single trigger with Repetition for simple repeating patterns.
     // This avoids the 48-trigger limit for high-frequency expressions.
@@ -1751,7 +1747,8 @@ fn makeTempPath(comptime prefix: []const u8, title: []const u8) ![:0]const u8 {
 }
 
 const std = @import("std");
-const CronExpression = @import("./cron_parser.zig").CronExpression;
+const cron_parser = @import("./cron_parser.zig");
+const CronExpression = cron_parser.CronExpression;
 
 const bun = @import("bun");
 const jsc = bun.jsc;

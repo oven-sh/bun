@@ -139,10 +139,14 @@ pub fn socketFromFd(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) 
         tcp_socket.handlers = null;
         globalThis.bunVM().allocator.destroy(handlers_ptr);
         tcp_socket.deref();
+        fd.close();
         return globalThis.throw("Failed to create socket from fd", .{});
     };
 
     tcp_socket.socket = native_socket;
+    // Call onOpen so markActive() fires — without this, handlers_ptr leaks
+    // when the socket closes because markInactive() is guarded by is_active.
+    tcp_socket.onOpen(native_socket);
     return tcp_socket.getThisValue(globalThis);
 }
 

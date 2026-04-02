@@ -60,21 +60,23 @@ describe("Bun.Transpiler", () => {
 describe("cross-type strict equality folding", () => {
   test("number === string folds to false", () => {
     const t = new Bun.Transpiler({ minify: { syntax: true, whitespace: true } });
-    expect(t.transformSync('if (42 === "b") console.log("DEAD"); console.log("alive");').trim()).not.toContain("DEAD");
+    const result = t.transformSync('if (42 === "b") console.log("DEAD"); console.log("alive");').trim();
+    expect(result).not.toContain("DEAD");
+    expect(result).toContain("alive");
   });
 
   test("boolean === string folds to false", () => {
     const t = new Bun.Transpiler({ minify: { syntax: true, whitespace: true } });
-    expect(t.transformSync('if (true === "b") console.log("DEAD"); console.log("alive");').trim()).not.toContain(
-      "DEAD",
-    );
+    const result = t.transformSync('if (true === "b") console.log("DEAD"); console.log("alive");').trim();
+    expect(result).not.toContain("DEAD");
+    expect(result).toContain("alive");
   });
 
   test("string === boolean folds to false", () => {
     const t = new Bun.Transpiler({ minify: { syntax: true, whitespace: true } });
-    expect(t.transformSync('if ("a" === true) console.log("DEAD"); console.log("alive");').trim()).not.toContain(
-      "DEAD",
-    );
+    const result = t.transformSync('if ("a" === true) console.log("DEAD"); console.log("alive");').trim();
+    expect(result).not.toContain("DEAD");
+    expect(result).toContain("alive");
   });
 
   test("number !== string folds to true", () => {
@@ -82,5 +84,20 @@ describe("cross-type strict equality folding", () => {
     const result = t.transformSync('if (42 !== "b") console.log("ALIVE");').trim();
     expect(result).toContain("ALIVE");
     expect(result).not.toContain("!==");
+  });
+});
+
+describe("top-level flags override composite minify", () => {
+  test("minify: true + minifyIdentifiers: false keeps identifiers", () => {
+    const t = new Bun.Transpiler({ minify: true, minifyIdentifiers: false });
+    const result = t.transformSync("const longVariableName = 1; console.log(longVariableName);");
+    expect(result).toContain("longVariableName");
+  });
+
+  test("minify: true + minifySyntax: false skips syntax minification", () => {
+    const t = new Bun.Transpiler({ minify: true, minifySyntax: false });
+    const result = t.transformSync("const x = true;");
+    expect(result).toContain("true");
+    expect(result).not.toContain("!0");
   });
 });

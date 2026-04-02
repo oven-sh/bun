@@ -250,7 +250,7 @@ Bun.openInEditor(import.meta.url, {
 
 ## `Bun.deepEquals()`
 
-Recursively checks if two objects are equivalent. This is used internally by `expect().toEqual()` in `bun:test`.
+Recursively checks if two objects are equivalent. `expect().toEqual()` in `bun:test` uses this internally.
 
 ```ts
 const foo = { a: 1, b: 2, c: { d: 3 } };
@@ -262,7 +262,7 @@ Bun.deepEquals(foo, { a: 1, b: 2, c: { d: 3 } });
 Bun.deepEquals(foo, { a: 1, b: 2, c: { d: 4 } });
 ```
 
-A third boolean parameter can be used to enable "strict" mode. This is used by `expect().toStrictEqual()` in the test runner.
+Pass a third boolean parameter to enable "strict" mode. `expect().toStrictEqual()` in the test runner uses this.
 
 ```ts
 const a = { entries: [1, 2] };

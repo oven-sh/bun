@@ -68,7 +68,7 @@ const stream = new ReadableStream({
 });
 ```
 
-When using a direct `ReadableStream`, all chunk queueing is handled by the destination. The consumer of the stream receives exactly what is passed to `controller.write()`, without any encoding or modification.
+When using a direct `ReadableStream`, the destination handles all chunk queueing. The consumer of the stream receives exactly what is passed to `controller.write()`, without any encoding or modification.
 
 ---
 

@@ -145,6 +145,9 @@ pub fn deinit(this: *StringJoiner) void {
         current = node.next;
         prev.deinit(this.allocator);
     }
+    this.head = null;
+    this.tail = null;
+    this.len = 0;
 }
 
 /// Same as `.done`, but appends extra slice `end`

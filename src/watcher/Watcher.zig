@@ -131,7 +131,7 @@ var active_watchers: std.ArrayListUnmanaged(*Watcher) = .{};
 fn registerActive(this: *Watcher) void {
     active_watchers_mutex.lock();
     defer active_watchers_mutex.unlock();
-    active_watchers.append(bun.default_allocator, this) catch {};
+    bun.handleOom(active_watchers.append(bun.default_allocator, this));
 }
 
 fn unregisterActive(this: *Watcher) void {
@@ -285,6 +285,13 @@ fn threadMain(this: *Watcher) !void {
         },
         .result => {},
     }
+
+    // If `Global.exit` is in progress, skip the allocator-touching cleanup.
+    // `stopAllForExit` may have been called on the main thread, and mimalloc's
+    // atexit handler can begin poisoning heap pages at any moment. The OS
+    // reclaims our memory when the process terminates, so leaking is safe
+    // here and avoids a race against atexit teardown.
+    if (bun.Global.isExiting()) return;
 
     // deinit and close descriptors if needed
     if (this.close_descriptors) {

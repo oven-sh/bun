@@ -120,6 +120,51 @@ describe.concurrent("Bun.cron.parse — DST transitions", () => {
     expect(next).toBe("2025-10-04T15:45:00.000Z");
   });
 
+  test("Lord Howe: 30-minute fall-back — wildcard fires through repeated half-hour", async () => {
+    // 2025-04-06 02:00 LHDT (+11) → 01:30 LHST (+10:30); 1:30-1:59 repeats.
+    // After first 1:59 (14:59Z), every-minute → second 1:30 (15:00Z).
+    const a = await parseInTZ("Australia/Lord_Howe", "* * * * *", "2025-04-05T14:59:01Z");
+    expect(a).toBe("2025-04-05T15:00:00.000Z");
+    // After first 1:45, "45 *" → second 1:45.
+    const b = await parseInTZ("Australia/Lord_Howe", "45 * * * *", "2025-04-05T14:45:01Z");
+    expect(b).toBe("2025-04-05T15:15:00.000Z");
+  });
+
+  test("Lord Howe: 30-minute fall-back — fixed-time fires once", async () => {
+    // After first 1:45, "45 1" (fixed) → next day, not the second 1:45.
+    const next = await parseInTZ("Australia/Lord_Howe", "45 1 * * *", "2025-04-05T14:45:01Z");
+    expect(next).toBe("2025-04-06T15:15:00.000Z");
+  });
+
+  test("fall-back: hourly chain walks 0→1→1→2 (both occurrences)", async () => {
+    let t = "2025-11-02T03:59:00Z";
+    const seq: string[] = [];
+    for (let i = 0; i < 4; i++) {
+      t = await parseInTZ("America/New_York", "0 * * * *", t);
+      seq.push(t);
+    }
+    expect(seq).toEqual([
+      "2025-11-02T04:00:00.000Z", // 0:00 EDT
+      "2025-11-02T05:00:00.000Z", // 1st 1:00 EDT
+      "2025-11-02T06:00:00.000Z", // 2nd 1:00 EST
+      "2025-11-02T07:00:00.000Z", // 2:00 EST
+    ]);
+  });
+
+  test("spring-forward: hourly chain walks 1→3→4 (no double-fire at 3)", async () => {
+    let t = "2025-03-09T05:59:00Z";
+    const seq: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      t = await parseInTZ("America/New_York", "0 * * * *", t);
+      seq.push(t);
+    }
+    expect(seq).toEqual([
+      "2025-03-09T06:00:00.000Z", // 1:00 EST
+      "2025-03-09T07:00:00.000Z", // 3:00 EDT (2:00 doesn't exist)
+      "2025-03-09T08:00:00.000Z", // 4:00 EDT
+    ]);
+  });
+
   test("Santiago: midnight spring-forward gap shifts to 01:00 same day", async () => {
     // America/Santiago 2025-09-07 00:00→01:00. "0 0 * * *" → 01:00 CLST.
     const next = await parseInTZ("America/Santiago", "0 0 * * *", "2025-09-06T23:00:00-04:00");

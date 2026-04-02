@@ -4146,17 +4146,44 @@ function connectionListener(socket: Socket) {
         return 0;
       };
 
-      // Feed the raw socket data directly into the C++ parser
-      socket.on("data", chunk => {
+      let isParserClosed = false;
+
+      const cleanupParser = () => {
+        if (isParserClosed) return;
+        isParserClosed = true;
+
+        // Safely free the native C++ memory
+        if (typeof parser.close === "function") {
+          parser.close();
+        } else if (typeof parser.free === "function") {
+          parser.free();
+        }
+
+        // Prevent memory leaks by detaching closures from the socket
+        socket.removeListener("data", onData);
+        socket.removeListener("end", onEnd);
+        socket.removeListener("close", cleanupParser);
+        socket.removeListener("error", cleanupParser);
+      };
+
+      const onData = chunk => {
         const ret = parser.execute(chunk);
         if (ret instanceof Error) {
+          cleanupParser();
           socket.destroy(ret); // Destroy socket on parse error (e.g. invalid headers)
         }
-      });
+      };
 
-      socket.on("end", () => {
+      const onEnd = () => {
         if (req && !req.readableEnded) req.push(null);
-      });
+        cleanupParser();
+      };
+
+      // Attach the named listeners to the socket
+      socket.on("data", onData);
+      socket.on("end", onEnd);
+      socket.on("close", cleanupParser);
+      socket.on("error", cleanupParser);
 
       socket.resume();
       return;

@@ -6,5 +6,10 @@ test("ReadableStream.blob() after body consumed does not crash", async () => {
   // Consume the body through the Response API, detaching the blob store
   await r.arrayBuffer();
   // Calling blob() on the stream whose store is now null should throw, not crash
-  expect(async () => await body.blob()).toThrow();
+  try {
+    await body.blob();
+    expect.unreachable();
+  } catch (e: any) {
+    expect(e.code).toBe("ERR_BODY_ALREADY_USED");
+  }
 });

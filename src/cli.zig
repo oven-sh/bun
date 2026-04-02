@@ -550,6 +550,18 @@ pub const Command = struct {
         return strings.endsWithComptime(argv0, "node");
     }
 
+    /// Returns true if the user passed `--interactive` or `-i` on the
+    /// command line. Used by AutoCommand to distinguish interactive/REPL
+    /// intent from piped-stdin script execution.
+    fn hasInteractiveFlag() bool {
+        for (bun.argv[1..]) |arg| {
+            if (strings.eqlComptime(arg, "--interactive") or strings.eqlComptime(arg, "-i")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     pub fn which() Tag {
         var args_iter = ArgsIterator{ .buf = bun.argv };
 
@@ -578,9 +590,6 @@ pub const Command = struct {
 
         var next_arg = ((args_iter.next()) orelse return .AutoCommand);
         while (next_arg.len > 0 and next_arg[0] == '-' and !(next_arg.len > 1 and next_arg[1] == 'e')) {
-            if (strings.eqlComptime(next_arg, "-i") or strings.eqlComptime(next_arg, "--interactive")) {
-                return .ReplCommand;
-            }
             next_arg = ((args_iter.next()) orelse return .AutoCommand);
         }
 
@@ -999,8 +1008,11 @@ pub const Command = struct {
                 }
 
                 // If stdin is piped (not a TTY), read and execute JavaScript
-                // from stdin, matching Node.js behavior.
-                if (!Output.isStdinTTY()) {
+                // from stdin, matching Node.js behavior. Skip when the user
+                // requested interactive mode — `-i` is also Bun's auto-install
+                // short flag but when used alone (no positional) it's meant
+                // to signal interactive/REPL mode per Node.js semantics.
+                if (!Output.isStdinTTY() and !hasInteractiveFlag()) {
                     try RunCommand.bootFromStdin(ctx, false);
                     return;
                 }

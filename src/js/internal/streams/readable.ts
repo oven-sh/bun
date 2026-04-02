@@ -28,8 +28,10 @@ const { SafeSet } = require("internal/primordials");
 const { kAutoDestroyed } = require("internal/shared");
 
 const ObjectDefineProperties = Object.defineProperties;
+// Cache Bun.gc at module load time for GC hinting under backpressure.
+// Cached early so user code cannot intercept the reference.
 const _Bun_gc: ((sync: boolean) => void) | undefined = globalThis.Bun?.gc;
-let _gcBytesConsumed = 0;
+let _lastGCTimestamp = 0;
 const SymbolAsyncDispose = Symbol.asyncDispose;
 const NumberIsNaN = Number.isNaN;
 const NumberIsInteger = Number.isInteger;
@@ -102,6 +104,7 @@ function ReadableState(options, stream, isDuplex) {
   this.bufferIndex = 0;
   this.length = 0;
   this.pipes = [];
+  this.gcBytesConsumed = 0;
 
   // Should close be emitted on destroy. Defaults to true.
   if (options && options.emitClose === false) this[kState] &= ~kEmitClose;
@@ -684,16 +687,21 @@ Readable.prototype.read = function (n) {
       state.awaitDrainWriters = null;
     }
 
-    // Track consumed bytes for GC hinting. JSC's minimum heap threshold is
-    // large (32MB), so under moderate allocation rates (e.g. piped streams
-    // with backpressure), dead Buffer objects accumulate without triggering
-    // collection. Periodically running a synchronous GC prevents unbounded
-    // memory growth.
-    if (_Bun_gc && (state[kState] & kObjectMode) === 0) {
-      _gcBytesConsumed += n;
-      if (_gcBytesConsumed >= 2 * 1024 * 1024) {
-        _gcBytesConsumed = 0;
-        _Bun_gc(true);
+    // Track consumed bytes per stream for GC hinting, but only when the
+    // stream is piped. Piped streams under backpressure allocate Buffers
+    // in _read() that become garbage after consumption, but JSC's minimum
+    // heap threshold (32MB) is too high to trigger collection at moderate
+    // rates. A per-stream byte counter plus a global 1s cooldown prevents
+    // excessive GC when many streams are active.
+    if (_Bun_gc && (state[kState] & kObjectMode) === 0 && state.pipes.length > 0) {
+      state.gcBytesConsumed += n;
+      if (state.gcBytesConsumed >= 2 * 1024 * 1024) {
+        state.gcBytesConsumed = 0;
+        const now = Date.now();
+        if (now - _lastGCTimestamp >= 1000) {
+          _lastGCTimestamp = now;
+          _Bun_gc(true);
+        }
       }
     }
   }

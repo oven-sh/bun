@@ -121,6 +121,66 @@ static const Char* findEscapeCharacter(const Char* start, const Char* end)
     return nullptr;
 }
 
+// SIMD scan for first byte in the inclusive range [Lo, Hi]. Returns nullptr if
+// not found. Used to find CSI terminators (any byte in 0x40-0x7E, the "final
+// byte" range from ECMA-48). Wrapping subtract + unsigned compare:
+//   c in [Lo, Hi]  <=>  (c - Lo) <= (Hi - Lo) unsigned
+template<uint8_t Lo, uint8_t Hi, typename Char>
+ALWAYS_INLINE static const Char* scanForByteInRange(const Char* start, const Char* end)
+{
+    static_assert(Lo <= Hi);
+    static_assert(sizeof(Char) == 1 || sizeof(Char) == 2);
+    using SIMDType = std::conditional_t<sizeof(Char) == 1, uint8_t, uint16_t>;
+    constexpr size_t stride = SIMD::stride<SIMDType>;
+    constexpr auto vlo = SIMD::splat<SIMDType>(static_cast<SIMDType>(Lo));
+    constexpr auto vrange = SIMD::splat<SIMDType>(static_cast<SIMDType>(Hi - Lo));
+
+    auto it = start;
+    for (; end - it >= static_cast<ptrdiff_t>(stride); it += stride) {
+        const auto chunk = SIMD::load(reinterpret_cast<const SIMDType*>(it));
+        const auto shifted = SIMD::sub(chunk, vlo);
+        const auto inRange = SIMD::lessThanOrEqual(shifted, vrange);
+        if (const auto idx = SIMD::findFirstNonZeroIndex(inRange))
+            return it + *idx;
+    }
+    for (; it != end; ++it) {
+        if (static_cast<SIMDType>(*it - Lo) <= static_cast<SIMDType>(Hi - Lo))
+            return it;
+    }
+    return nullptr;
+}
+
+// SIMD scan for first byte equal to any of `Targets`. Returns nullptr if not
+// found. Used to find OSC terminators (0x07/0x9C/ESC) and ST sequence
+// terminators (0x9C/ESC).
+template<uint8_t... Targets, typename Char>
+ALWAYS_INLINE static const Char* scanForAnyByte(const Char* start, const Char* end)
+{
+    static_assert(sizeof...(Targets) > 0);
+    static_assert(sizeof(Char) == 1 || sizeof(Char) == 2);
+    using SIMDType = std::conditional_t<sizeof(Char) == 1, uint8_t, uint16_t>;
+    constexpr size_t stride = SIMD::stride<SIMDType>;
+
+    auto it = start;
+    for (; end - it >= static_cast<ptrdiff_t>(stride); it += stride) {
+        const auto chunk = SIMD::load(reinterpret_cast<const SIMDType*>(it));
+        const auto match = [&] ALWAYS_INLINE_LAMBDA {
+            if constexpr (sizeof(SIMDType) == 1)
+                return SIMD::equal<static_cast<Latin1Character>(Targets)...>(chunk);
+            else
+                return SIMD::equal<static_cast<char16_t>(Targets)...>(chunk);
+        }();
+        if (const auto idx = SIMD::findFirstNonZeroIndex(match))
+            return it + *idx;
+    }
+    for (; it != end; ++it) {
+        const auto c = static_cast<unsigned>(*it);
+        if (((c == Targets) || ...))
+            return it;
+    }
+    return nullptr;
+}
+
 // Consume an ANSI escape sequence that starts at `start`. Returns a pointer to
 // the first byte immediately following the escape sequence.
 //
@@ -205,23 +265,29 @@ static const Char* consumeANSI(const Char* start, const Char* end)
             state = State::start;
             break;
 
-        case State::inCsi:
-            // ECMA-48, 5th ed. §5.4 d)
-            if (c >= 0x40 && c <= 0x7e)
-                state = State::start;
+        case State::inCsi: {
+            // ECMA-48, 5th ed. §5.4 d) — final byte is in [0x40, 0x7E].
+            // Bulk SIMD scan for the terminator instead of stepping byte-by-byte;
+            // CSI parameters can be 1-15+ bytes (e.g. \x1b[1;31;48;2;255;0;0m).
+            const auto* term = scanForByteInRange<0x40, 0x7e>(it, end);
+            if (!term)
+                return end;
+            it = term; // ++it on next loop iteration steps past terminator
+            state = State::start;
             break;
+        }
 
-        case State::inOsc:
-            switch (c) {
-            case 0x1b:
-                state = State::inOscGotEsc;
-                break;
-            case 0x9c: // ST
-            case 0x07: // XTerm can also end OSC with 0x07
-                state = State::start;
-                break;
-            }
+        case State::inOsc: {
+            // OSC payload ends at BEL (0x07), C1 ST (0x9c), or ESC (which then
+            // looks for backslash). Inside the payload everything else is opaque
+            // (filenames, titles, hyperlinks), so SIMD-scan for those 3 bytes.
+            const auto* term = scanForAnyByte<0x07, 0x9c, 0x1b>(it, end);
+            if (!term)
+                return end;
+            it = term;
+            state = (*term == static_cast<Char>(0x1b)) ? State::inOscGotEsc : State::start;
             break;
+        }
 
         case State::inOscGotEsc:
             if (c == '\\')
@@ -230,16 +296,15 @@ static const Char* consumeANSI(const Char* start, const Char* end)
                 state = State::inOsc;
             break;
 
-        case State::needSt:
-            switch (c) {
-            case 0x1b:
-                state = State::needStGotEsc;
-                break;
-            case 0x9c:
-                state = State::start;
-                break;
-            }
+        case State::needSt: {
+            // ST-terminated payload: scan for ESC or C1 ST.
+            const auto* term = scanForAnyByte<0x1b, 0x9c>(it, end);
+            if (!term)
+                return end;
+            it = term;
+            state = (*term == static_cast<Char>(0x1b)) ? State::needStGotEsc : State::start;
             break;
+        }
 
         case State::needStGotEsc:
             if (c == '\\')

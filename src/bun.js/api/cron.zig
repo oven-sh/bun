@@ -833,6 +833,8 @@ pub const CronJob = struct {
     /// Released exactly once by either onPromiseResolve/Reject or
     /// clearAllForVM(.teardown).
     pending_ref: bool = false,
+    /// True between onTimerFire's cb.call() and processing of its result.
+    in_fire: bool = false,
 
     /// Defer downgrading the JS wrapper to weak until any in-flight promise
     /// has settled, so onPromiseReject can still read pendingPromise from
@@ -850,8 +852,8 @@ pub const CronJob = struct {
         }
     }
 
+    /// Idempotent — every step checks its own state.
     fn stopInternal(this: *CronJob, vm: *jsc.VirtualMachine) void {
-        if (this.stopped) return;
         this.stopped = true;
         if (this.event_loop_timer.state == .ACTIVE)
             vm.timer.remove(&this.event_loop_timer);
@@ -859,8 +861,25 @@ pub const CronJob = struct {
         this.maybeDowngrade();
     }
 
-    fn selfStop(this: *CronJob, vm: *jsc.VirtualMachine) void {
+    /// Runs the cleanup that selfStop deferred while in_fire was true.
+    fn finishDeferredStop(this: *CronJob, vm: *jsc.VirtualMachine) void {
         this.stopInternal(vm);
+        this.removeFromList(vm);
+    }
+
+    fn selfStop(this: *CronJob, vm: *jsc.VirtualMachine) void {
+        // If stop() runs during cb.call() (before .pending is processed), defer
+        // cleanup so the .pending branch can take pending_ref + keep this_value
+        // strong. onTimerFire calls finishSelfStop() after the result is known.
+        if (this.in_fire) {
+            this.stopped = true;
+            return;
+        }
+        this.stopInternal(vm);
+        this.removeFromList(vm);
+    }
+
+    fn removeFromList(this: *CronJob, vm: *jsc.VirtualMachine) void {
         if (vm.rare_data) |rare| {
             if (std.mem.indexOfScalar(*CronJob, rare.cron_jobs.items, this)) |i| {
                 _ = rare.cron_jobs.swapRemove(i);
@@ -940,12 +959,15 @@ pub const CronJob = struct {
         vm.eventLoop().enter();
         defer vm.eventLoop().exit();
 
+        this.in_fire = true;
         const result = cb.call(this.global, js_this, &.{}) catch {
+            this.in_fire = false;
             if (this.global.tryTakeException()) |err|
                 _ = vm.uncaughtException(vm.global, err, false);
-            this.scheduleNext(vm);
+            if (this.stopped) this.finishDeferredStop(vm) else this.scheduleNext(vm);
             return;
         };
+        this.in_fire = false;
 
         if (result.asAnyPromise()) |promise| {
             switch (promise.status()) {
@@ -956,7 +978,7 @@ pub const CronJob = struct {
                     result.then(this.global, this, onPromiseResolve, onPromiseReject) catch {
                         js.pendingPromiseSetCached(js_this, this.global, .js_undefined);
                         this.releasePendingRef();
-                        this.scheduleNext(vm);
+                        if (this.stopped) this.finishDeferredStop(vm) else this.scheduleNext(vm);
                     };
                     return;
                 },
@@ -968,7 +990,7 @@ pub const CronJob = struct {
             }
         }
 
-        this.scheduleNext(vm);
+        if (this.stopped) this.finishDeferredStop(vm) else this.scheduleNext(vm);
     }
 
     pub export const Bun__CronJob__onPromiseResolve = jsc.toJSHostFn(onPromiseResolve);
@@ -978,9 +1000,10 @@ pub const CronJob = struct {
         const args = callframe.arguments();
         var this: *CronJob = args[args.len - 1].asPromisePtr(CronJob);
         defer this.releasePendingRef();
+        const vm = this.global.bunVM();
         if (this.this_value.tryGet()) |js_this|
             js.pendingPromiseSetCached(js_this, this.global, .js_undefined);
-        this.scheduleNext(this.global.bunVM());
+        if (this.stopped) this.finishDeferredStop(vm) else this.scheduleNext(vm);
         return .js_undefined;
     }
 
@@ -996,7 +1019,7 @@ pub const CronJob = struct {
             js.pendingPromiseSetCached(js_this, this.global, .js_undefined);
         }
         vm.unhandledRejection(vm.global, err, promise_value);
-        this.scheduleNext(vm);
+        if (this.stopped) this.finishDeferredStop(vm) else this.scheduleNext(vm);
         return .js_undefined;
     }
 

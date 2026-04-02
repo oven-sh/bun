@@ -379,12 +379,15 @@ pub const PackageInstall = struct {
     pub var backend_explicitly_set: bool = false;
 
     pub fn warnFallbackToFileCopy(from_method: []const u8) void {
-        const warned = struct {
-            var once = false;
-        };
-        if (warned.once) return;
-        warned.once = true;
         if (backend_explicitly_set) return;
+
+        const warned = struct {
+            var once = std.atomic.Value(bool).init(false);
+        };
+        // .monotonic is okay because we only ever set this to true, and
+        // we don't rely on any side effects from a thread that
+        // previously set this to true.
+        if (warned.once.swap(true, .monotonic)) return;
 
         Output.warn(
             "Failed to {s} files; falling back to full copy. This may lead to degraded performance.\n" ++
@@ -1420,7 +1423,7 @@ pub const PackageInstall = struct {
                             error.NotSupported => {
                                 supported_method = .copyfile;
                                 supported_method_to_use = .copyfile;
-                                warnFallbackToFileCopy("clonefile");
+                                warnFallbackToFileCopy("clone");
                             },
                             error.FileNotFound => return Result.fail(error.FileNotFound, .opening_cache_dir, @errorReturnTrace()),
                             else => return Result.fail(err, .copying_files, @errorReturnTrace()),
@@ -1437,7 +1440,7 @@ pub const PackageInstall = struct {
                             error.NotSupported => {
                                 supported_method = .copyfile;
                                 supported_method_to_use = .copyfile;
-                                warnFallbackToFileCopy("clonefile");
+                                warnFallbackToFileCopy("clone");
                             },
                             error.FileNotFound => return Result.fail(error.FileNotFound, .opening_cache_dir, @errorReturnTrace()),
                             else => return Result.fail(err, .copying_files, @errorReturnTrace()),

@@ -924,6 +924,7 @@ pub fn handlePreparedStatement(this: *MySQLConnection, comptime Context: type, r
             // Read column definitions if any
             if (ok.num_columns > 0) {
                 statement.columns = try bun.default_allocator.alloc(ColumnDefinition41, ok.num_columns);
+                for (statement.columns) |*col| col.* = .{};
                 statement.columns_received = 0;
             }
 
@@ -1055,6 +1056,7 @@ fn handleResultSet(this: *MySQLConnection, comptime Context: type, reader: NewRe
                         bun.default_allocator.free(statement.columns);
                     }
                     statement.columns = try bun.default_allocator.alloc(ColumnDefinition41, header.field_count);
+                    for (statement.columns) |*col| col.* = .{};
                     statement.columns_received = 0;
                 }
                 statement.execution_flags.needs_duplicate_check = true;

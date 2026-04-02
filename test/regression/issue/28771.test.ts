@@ -1,4 +1,4 @@
-import { test, expect, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -36,11 +36,7 @@ describe("global bin path warnings", () => {
       },
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stdout).toContain(binDir);
     expect(stderr).not.toContain("not in $PATH");
@@ -63,11 +59,7 @@ describe("global bin path warnings", () => {
       },
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stdout).toContain(binDir);
     expect(stderr).not.toContain("not in $PATH");
@@ -91,11 +83,7 @@ describe("global bin path warnings", () => {
       },
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stdout).toContain(binDir);
     expect(stderr).toContain("not in $PATH");

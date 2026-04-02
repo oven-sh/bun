@@ -4,7 +4,7 @@ import { expect, test } from "bun:test";
 // a JS exception when the underlying store was already consumed, causing an
 // assertion failure ("Expected an exception to be thrown") in debug builds.
 
-test("ReadableStream.blob() after Response.clone() does not crash", async () => {
+test("ReadableStream.blob() on original response after clone works correctly", async () => {
   const response = new Response("Hello World");
   const cloned = response.clone();
   const body = response.body!;
@@ -24,6 +24,7 @@ test("ReadableStream.blob() after cancel returns empty blob", async () => {
   // blob() should return an empty blob, not crash.
   const blob = await body.blob();
   expect(blob.size).toBe(0);
+  expect(await blob.text()).toBe("");
 });
 
 test("ReadableStream.blob() on Response body works correctly", async () => {

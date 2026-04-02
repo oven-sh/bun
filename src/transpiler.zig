@@ -484,16 +484,10 @@ pub const Transpiler = struct {
     pub fn runEnvLoader(this: *Transpiler, skip_default_env: bool) !void {
         switch (this.options.env.behavior) {
             .prefix, .load_all, .load_all_without_inlining => {
-                // Step 1. Load the project root.
-                const dir_info = this.resolver.readDirInfo(this.fs.top_level_dir) catch return orelse return;
-
-                if (dir_info.tsconfig_json) |tsconfig| {
-                    this.options.jsx = tsconfig.mergeJSX(this.options.jsx);
-                }
-
-                const dir = dir_info.getEntries(this.resolver.generation) orelse return;
-
-                // Process always has highest priority.
+                // Process always has highest priority. Load process env vars
+                // unconditionally before attempting directory traversal, so
+                // that inherited environment variables are always available
+                // even when a parent directory is not readable.
                 const was_production = this.options.production;
                 try this.env.loadProcess();
                 const has_production_env = this.env.isProduction();
@@ -501,6 +495,15 @@ pub const Transpiler = struct {
                     this.options.setProduction(true);
                     this.resolver.opts.setProduction(true);
                 }
+
+                // Step 2. Load the project root for .env file discovery.
+                const dir_info = this.resolver.readDirInfo(this.fs.top_level_dir) catch return orelse return;
+
+                if (dir_info.tsconfig_json) |tsconfig| {
+                    this.options.jsx = tsconfig.mergeJSX(this.options.jsx);
+                }
+
+                const dir = dir_info.getEntries(this.resolver.generation) orelse return;
 
                 if (this.options.isTest() or this.env.isTest()) {
                     try this.env.load(dir, this.options.env.files, .@"test", skip_default_env);

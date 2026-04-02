@@ -256,7 +256,43 @@ describe.skipIf(!landlockSupported)("issue #28220", () => {
     expect(result.exitCode).toBe(0);
   });
 
-  test("bun run still fails when the target directory itself is inaccessible", () => {
+  test("bun test works when ancestor directories are inaccessible", () => {
+    using root = tempDir("issue-28220-test", {});
+    const { helperPath, testBase } = prepareLandlockFixture(String(root));
+
+    writeFileSync(
+      join(testBase, "sample.test.js"),
+      "import { expect, test } from 'bun:test';\n\ntest('passes', () => {\n  expect(1 + 1).toBe(2);\n});\n",
+    );
+
+    const result = Bun.spawnSync({
+      cmd: [
+        helperPath,
+        testBase,
+        dirname(bunExe()),
+        bunExe(),
+        "test",
+        "sample.test.js",
+      ],
+      env: bunEnv,
+      cwd: testBase,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const stdout = result.stdout.toString();
+    const stderr = result.stderr.toString();
+    const output = stdout + stderr;
+
+    expect(stderr).not.toContain("CouldntReadCurrentDirectory");
+    expect(stderr).not.toContain("error loading current directory");
+    expect(output).toContain("1 pass");
+    expect(result.exitCode).toBe(0);
+  });
+
+  test("bun run still fails when the target directory itself is inaccessible", {
+    timeout: 15_000,
+  }, () => {
     using root = tempDir("issue-28220-unreadable-target", {});
     const { helperPath } = prepareLandlockFixture(String(root));
 

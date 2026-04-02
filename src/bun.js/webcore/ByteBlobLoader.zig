@@ -180,7 +180,9 @@ pub fn toBufferedValue(this: *ByteBlobLoader, globalThis: *JSGlobalObject, actio
         return blob.toPromise(globalThis, action);
     }
 
-    return .zero;
+    // Store already consumed/detached — return a resolved promise with an empty value.
+    var empty: Blob.Any = .{ .Blob = Blob.initEmpty(globalThis) };
+    return empty.toPromise(globalThis, action);
 }
 
 pub fn memoryCost(this: *const ByteBlobLoader) usize {

@@ -143,6 +143,8 @@ function prepareLandlockFixture(root: string) {
   const stdout = check.stdout.toString();
   const landlockSupported = !stdout.includes("LANDLOCK_UNSUPPORTED");
   if (landlockSupported) {
+    // check exit code inside if block, so we still skip cleanly for unsupported systems
+    expect(check.exitCode).toBe(0);
     expect(stdout).toContain("/:ERR:13");
     expect(stdout).toContain(`${testBase}:OK`);
   }

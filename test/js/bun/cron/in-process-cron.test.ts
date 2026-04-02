@@ -349,50 +349,55 @@ describe.concurrent("Bun.cron (in-process) — firing", () => {
   }, 70_000);
 
   test("--hot reload clears jobs deleted from source", async () => {
+    // Markers live OUTSIDE the --hot-watched dir so inotify doesn't deliver
+    // a write event that races process.exit() teardown (watcher/exit race).
+    using markers = tempDir("cron-hot-markers", {});
+    const m = (f: string) => join(String(markers), f);
     using dir = tempDir("cron-hot", {
       "app.ts": `
         import { writeFileSync, existsSync } from "node:fs";
-        writeFileSync("v1.evaluated", "");
+        const m = process.env.MARKERS;
+        writeFileSync(m + "/v1.evaluated", "");
         // A fire before the v2 reload is legitimate (not a ghost) — only
         // write the marker if v2 has already evaluated.
         Bun.cron("* * * * *", () => {
-          if (existsSync("v2.evaluated")) writeFileSync("ghost.fired", "");
+          if (existsSync(m + "/v2.evaluated")) writeFileSync(m + "/ghost.fired", "");
         });
       `,
     });
-    const path = (f: string) => join(String(dir), f);
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), "--hot", "--no-clear-screen", "app.ts"],
-      env: bunEnv,
+      env: { ...bunEnv, MARKERS: String(markers) },
       cwd: String(dir),
       stdout: "ignore",
       stderr: "pipe",
     });
     const stderrP = proc.stderr.text();
 
-    while (!(await Bun.file(path("v1.evaluated")).exists())) await Bun.sleep(10);
+    while (!(await Bun.file(m("v1.evaluated")).exists())) await Bun.sleep(10);
 
     // Delete the ghost cron; replace with a sentinel that fires on the same
     // boundary. When the sentinel fires, ghost.fired must NOT exist.
     await Bun.write(
-      path("app.ts"),
+      join(String(dir), "app.ts"),
       `
         import { writeFileSync, existsSync } from "node:fs";
-        writeFileSync("v2.evaluated", "");
+        const m = process.env.MARKERS;
+        writeFileSync(m + "/v2.evaluated", "");
         Bun.cron("* * * * *", () => {
-          writeFileSync("result", existsSync("ghost.fired") ? "GHOST_FIRED" : "ok");
+          writeFileSync(m + "/result", existsSync(m + "/ghost.fired") ? "GHOST_FIRED" : "ok");
           process.exit(0);
         });
       `,
     );
 
-    while (!(await Bun.file(path("v2.evaluated")).exists())) await Bun.sleep(10);
+    while (!(await Bun.file(m("v2.evaluated")).exists())) await Bun.sleep(10);
     const [exitCode, stderr] = await Promise.all([proc.exited, stderrP]);
 
     if (exitCode !== 0) console.error(stderr);
     expect(exitCode).toBe(0);
-    expect(await Bun.file(path("result")).text()).toBe("ok");
-    expect(await Bun.file(path("ghost.fired")).exists()).toBe(false);
+    expect(await Bun.file(m("result")).text()).toBe("ok");
+    expect(await Bun.file(m("ghost.fired")).exists()).toBe(false);
   }, 130_000);
 });

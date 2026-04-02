@@ -88,16 +88,21 @@ namespace protocol {
 
 template <typename T>
 T bit_cast(char *c) {
-    T val;
-    memcpy(&val, c, sizeof(T));
-    return val;
+    return __builtin_bit_cast(T, *reinterpret_cast<const char(*)[sizeof(T)]>(c));
 }
 
 /* Byte swap for little-endian systems */
 template <typename T>
 T cond_byte_swap(T value) {
-    uint32_t endian_test = 1;
-    if (*((char *)&endian_test)) {
+#if __has_builtin(__builtin_bswap16) && __has_builtin(__builtin_bswap32) && __has_builtin(__builtin_bswap64)
+    if constexpr (sizeof(T) == 2) {
+        return __builtin_bswap16(value);
+    } else if constexpr (sizeof(T) == 4) {
+        return __builtin_bswap32(value);
+    } else if constexpr (sizeof(T) == 8) {
+        return __builtin_bswap64(value);
+    } else {
+        // Fallback for other sizes
         union {
             T i;
             uint8_t b[sizeof(T)];
@@ -109,7 +114,9 @@ T cond_byte_swap(T value) {
 
         return dst.i;
     }
-    return value;
+#else
+    static_assert(false, "cond_byte_swap is not supported on this platform");
+#endif
 }
 
 static bool isValidUtf8(unsigned char *s, size_t length)

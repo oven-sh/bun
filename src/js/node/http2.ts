@@ -3949,6 +3949,114 @@ function closeAllSessions(server: Http2Server | Http2SecureServer) {
   }
 }
 
+class FallbackServerResponse extends EventEmitter {
+  req: any;
+  socket: Socket;
+  statusCode: number;
+  statusMessage: string;
+  headers: Map<string, [string, any]>;
+  headersSent: boolean;
+  finished: boolean;
+  chunkedEncoding: boolean;
+  constructor(req) {
+    super();
+    this.req = req;
+    this.socket = req.socket;
+    this.statusCode = 200;
+    this.statusMessage = "OK";
+    this.headers = new Map();
+    this.headersSent = false;
+    this.finished = false;
+    this.chunkedEncoding = false;
+  }
+  setHeader(name, value) {
+    this.headers.set(name.toLowerCase(), [name, value]);
+    return this;
+  }
+  getHeader(name) {
+    return this.headers.get(name.toLowerCase())?.[1];
+  }
+  getHeaders() {
+    const out = {};
+    for (const [k, v] of this.headers) out[k] = v[1];
+    return out;
+  }
+  hasHeader(name) {
+    return this.headers.has(name.toLowerCase());
+  }
+  removeHeader(name) {
+    this.headers.delete(name.toLowerCase());
+  }
+  writeHead(statusCode: number, statusMessage?: any, headers?: any) {
+    if (this.headersSent) return this;
+    this.statusCode = statusCode;
+    if (typeof statusMessage === "object") {
+      headers = statusMessage;
+      statusMessage = "OK";
+    }
+    if (statusMessage) this.statusMessage = statusMessage;
+    if (headers) {
+      for (const k in headers) this.setHeader(k, headers[k]);
+    }
+    let head = `HTTP/1.1 ${this.statusCode} ${this.statusMessage}\r\n`;
+    if (!this.headers.has("date")) this.setHeader("Date", new Date().toUTCString());
+
+    let hasConnection = this.headers.has("connection");
+    let hasContentLength = this.headers.has("content-length");
+    let hasTransferEncoding = this.headers.has("transfer-encoding");
+
+    if (!hasConnection) {
+      this.setHeader("Connection", "close");
+    }
+    if (!hasContentLength && !hasTransferEncoding) {
+      this.setHeader("Transfer-Encoding", "chunked");
+      this.chunkedEncoding = true;
+    }
+
+    for (const [_, [name, value]] of this.headers) {
+      if (Array.isArray(value)) {
+        for (const v of value) head += `${name}: ${v}\r\n`;
+      } else {
+        head += `${name}: ${value}\r\n`;
+      }
+    }
+    head += "\r\n";
+    this.socket.write(head);
+    this.headersSent = true;
+    return this;
+  }
+  write(chunk: any, encoding?: any, cb?: any) {
+    if (!this.headersSent) this.writeHead(this.statusCode);
+    if (this.chunkedEncoding) {
+      const len = Buffer.byteLength(chunk, encoding);
+      this.socket.write(`${len.toString(16)}\r\n`);
+      this.socket.write(chunk, encoding);
+      return this.socket.write("\r\n", cb);
+    }
+    return this.socket.write(chunk, encoding, cb);
+  }
+  end(chunk?: any, encoding?: any, cb?: any) {
+    if (typeof chunk === "function") {
+      cb = chunk;
+      chunk = null;
+      encoding = null;
+    } else if (typeof encoding === "function") {
+      cb = encoding;
+      encoding = null;
+    }
+    if (chunk) this.write(chunk, encoding);
+    if (!this.headersSent) this.writeHead(this.statusCode);
+    if (this.chunkedEncoding) {
+      this.socket.write("0\r\n\r\n");
+    }
+    this.finished = true;
+    this.socket.end();
+    if (cb) cb();
+    this.emit("finish");
+    return this;
+  }
+}
+
 function connectionListener(socket: Socket) {
   const options = this[bunSocketServerOptions] || {};
   if (socket.alpnProtocol === false || socket.alpnProtocol === "http/1.1") {
@@ -3957,118 +4065,11 @@ function connectionListener(socket: Socket) {
     // Bun's native ServerResponse is heavily optimized and tightly coupled to the
     // internal `Bun.serve` native handle (`kHandle`). Because this connection is
     // intercepted from a raw TLSSocket, that native HTTP handle does not exist.
-    // To bridge this gap without crashing the native bindings, we implement a
-    // lightweight, pure-JS HTTP/1.1 header parser and a `FallbackServerResponse`
-    // to manually frame the payload and fulfill the standard `node:http` API contract.
+    // To bridge this gap without triggering infinite timeouts in the native state
+    // machine, we use the built-in `http_parser` binding to safely parse the
+    // request, and a custom `FallbackServerResponse` to manually frame the
+    // outbound payload, fulfilling the standard `node:http` API contract.
     if (options.allowHTTP1 === true) {
-      class FallbackServerResponse extends EventEmitter {
-        req: any;
-        socket: Socket;
-        statusCode: number;
-        statusMessage: string;
-        headers: Map<string, [string, any]>;
-        headersSent: boolean;
-        finished: boolean;
-        chunkedEncoding: boolean;
-        constructor(req) {
-          super();
-          this.req = req;
-          this.socket = req.socket;
-          this.statusCode = 200;
-          this.statusMessage = "OK";
-          this.headers = new Map();
-          this.headersSent = false;
-          this.finished = false;
-          this.chunkedEncoding = false;
-        }
-        setHeader(name, value) {
-          this.headers.set(name.toLowerCase(), [name, value]);
-          return this;
-        }
-        getHeader(name) {
-          return this.headers.get(name.toLowerCase())?.[1];
-        }
-        getHeaders() {
-          const out = {};
-          for (const [k, v] of this.headers) out[k] = v[1];
-          return out;
-        }
-        hasHeader(name) {
-          return this.headers.has(name.toLowerCase());
-        }
-        removeHeader(name) {
-          this.headers.delete(name.toLowerCase());
-        }
-        writeHead(statusCode: number, statusMessage?: any, headers?: any) {
-          if (this.headersSent) return this;
-          this.statusCode = statusCode;
-          if (typeof statusMessage === "object") {
-            headers = statusMessage;
-            statusMessage = "OK";
-          }
-          if (statusMessage) this.statusMessage = statusMessage;
-          if (headers) {
-            for (const k in headers) this.setHeader(k, headers[k]);
-          }
-          let head = `HTTP/1.1 ${this.statusCode} ${this.statusMessage}\r\n`;
-          if (!this.headers.has("date")) this.setHeader("Date", new Date().toUTCString());
-
-          let hasConnection = this.headers.has("connection");
-          let hasContentLength = this.headers.has("content-length");
-          let hasTransferEncoding = this.headers.has("transfer-encoding");
-
-          if (!hasConnection) {
-            this.setHeader("Connection", "close");
-          }
-          if (!hasContentLength && !hasTransferEncoding) {
-            this.setHeader("Transfer-Encoding", "chunked");
-            this.chunkedEncoding = true;
-          }
-
-          for (const [_, [name, value]] of this.headers) {
-            if (Array.isArray(value)) {
-              for (const v of value) head += `${name}: ${v}\r\n`;
-            } else {
-              head += `${name}: ${value}\r\n`;
-            }
-          }
-          head += "\r\n";
-          this.socket.write(head);
-          this.headersSent = true;
-          return this;
-        }
-        write(chunk: any, encoding?: any, cb?: any) {
-          if (!this.headersSent) this.writeHead(this.statusCode);
-          if (this.chunkedEncoding) {
-            const len = Buffer.byteLength(chunk, encoding);
-            this.socket.write(`${len.toString(16)}\r\n`);
-            this.socket.write(chunk, encoding);
-            return this.socket.write("\r\n", cb);
-          }
-          return this.socket.write(chunk, encoding, cb);
-        }
-        end(chunk?: any, encoding?: any, cb?: any) {
-          if (typeof chunk === "function") {
-            cb = chunk;
-            chunk = null;
-            encoding = null;
-          } else if (typeof encoding === "function") {
-            cb = encoding;
-            encoding = null;
-          }
-          if (chunk) this.write(chunk, encoding);
-          if (!this.headersSent) this.writeHead(this.statusCode);
-          if (this.chunkedEncoding) {
-            this.socket.write("0\r\n\r\n");
-          }
-          this.finished = true;
-          this.socket.end();
-          if (cb) cb();
-          this.emit("finish");
-          return this;
-        }
-      }
-
       // Initialize native HTTP parser
       const parser = new HTTPParser();
       // 0 = REQUEST type, 16384 = max header size, 0 = strict parsing flags

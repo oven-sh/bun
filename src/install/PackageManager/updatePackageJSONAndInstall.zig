@@ -621,7 +621,9 @@ fn updatePackageJSONAndInstallAndCLI(
                                             .path_sep = if (Environment.isWindows) .windows else .posix,
                                         })},
                                     );
-                                    try writer.writeAll("\\ ");
+                                    // On POSIX shells, spaces must be escaped with backslash.
+                                    // On Windows, spaces inside quoted strings are literal.
+                                    try writer.writeAll(if (Environment.isWindows) " " else "\\ ");
                                     remaining = remaining[@min(space + 1, remaining.len)..];
                                 }
 

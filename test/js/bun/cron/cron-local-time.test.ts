@@ -22,7 +22,7 @@ async function parseInTZ(tz: string, expr: string, fromISO: string): Promise<str
   return stdout;
 }
 
-describe("Bun.cron.parse — local time zone", () => {
+describe.concurrent("Bun.cron.parse — local time zone", () => {
   test("0 9 * * * in America/Los_Angeles is 9am Pacific (PDT = UTC-7)", async () => {
     const next = await parseInTZ("America/Los_Angeles", "0 9 * * *", "2026-06-15T00:00:00Z");
     // 2026-06-15 00:00 UTC = 2026-06-14 17:00 PDT; next 9am PDT = 2026-06-15 09:00 PDT = 16:00 UTC
@@ -50,7 +50,7 @@ describe("Bun.cron.parse — local time zone", () => {
   });
 });
 
-describe("Bun.cron.parse — DST transitions", () => {
+describe.concurrent("Bun.cron.parse — DST transitions", () => {
   test("spring-forward: schedule in the missing hour skips to the next day", async () => {
     // US 2025 spring-forward: 2025-03-09 02:00 EST → 03:00 EDT (2:00-2:59 don't exist).
     // "30 2 * * *" on that day skips to the next normal occurrence: 2025-03-10 02:30 EDT.
@@ -73,7 +73,7 @@ describe("Bun.cron.parse — DST transitions", () => {
   });
 });
 
-describe("Bun.cron(schedule, handler) — local time zone", () => {
+describe.concurrent("Bun.cron(schedule, handler) — local time zone", () => {
   test("registering 0 9 * * * computes the same next-fire as Bun.cron.parse in local time", async () => {
     // The in-process scheduler uses the same next() — we verify via parse() since
     // waiting for an actual fire would take up to 24 hours.

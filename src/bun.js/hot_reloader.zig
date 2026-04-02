@@ -11,6 +11,16 @@ pub const ImportWatcher = union(enum) {
         }
     }
 
+    pub fn deinitAndJoin(this: ImportWatcher) void {
+        switch (this) {
+            inline .hot, .watch => |w| w.deinit(.{
+                .close_descriptors = false,
+                .join_thread = true,
+            }),
+            .none => {},
+        }
+    }
+
     pub inline fn watchlist(this: ImportWatcher) Watcher.WatchList {
         return switch (this) {
             inline .hot, .watch => |w| w.watchlist,

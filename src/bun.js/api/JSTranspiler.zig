@@ -709,6 +709,17 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
     transpiler.options.no_macros = config.no_macros;
     transpiler.configureLinkerWithAutoJSX(false);
     transpiler.options.env.behavior = .disable;
+
+    // These must be set before configureDefines() because loadDefines()
+    // derives omit_unused_global_calls from dead_code_elimination and minify_syntax.
+    // REPL mode disables DCE to preserve expressions like `42`
+    transpiler.options.dead_code_elimination = config.dead_code_elimination and !config.repl_mode;
+    transpiler.options.minify_whitespace = config.minify_whitespace;
+    if (config.minify_syntax)
+        transpiler.options.minify_syntax = true;
+    if (config.minify_identifiers)
+        transpiler.options.minify_identifiers = true;
+
     transpiler.configureDefines() catch |err| {
         if ((log.warnings + log.errors) > 0) {
             return globalThis.throwValue(try log.toJS(globalThis, bun.default_allocator, "Failed to load define"));
@@ -719,17 +730,6 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
     if (config.macro_map.count() > 0) {
         transpiler.options.macro_remap = config.macro_map;
     }
-
-    // REPL mode disables DCE to preserve expressions like `42`
-    transpiler.options.dead_code_elimination = config.dead_code_elimination and !config.repl_mode;
-    transpiler.options.minify_whitespace = config.minify_whitespace;
-
-    // Keep defaults for these
-    if (config.minify_syntax)
-        transpiler.options.minify_syntax = true;
-
-    if (config.minify_identifiers)
-        transpiler.options.minify_identifiers = true;
 
     transpiler.options.transform_only = !transpiler.options.allow_runtime;
 

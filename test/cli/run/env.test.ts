@@ -887,8 +887,13 @@ test.skipIf(!isPosix)("process.env is preserved when cwd lacks read permission",
     // Run via sh so that `cd` happens as the target user.
     const result = Bun.spawnSync({
       cmd: [
-        "runuser", "-m", "-u", "nobody", "--",
-        "/bin/sh", "-c",
+        "runuser",
+        "-m",
+        "-u",
+        "nobody",
+        "--",
+        "/bin/sh",
+        "-c",
         `cd '${noreadDir}' && MY_VAR=visible exec '${bunExe()}' '${scriptPath}'`,
       ],
       stdout: "pipe",

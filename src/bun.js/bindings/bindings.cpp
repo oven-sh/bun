@@ -5759,7 +5759,7 @@ extern "C" [[ZIG_EXPORT(check_slow)]] double Bun__parseDate(JSC::JSGlobalObject*
     return vm.dateCache.parseDate(globalObject, vm, str->toWTFString());
 }
 
-extern "C" [[ZIG_EXPORT(check_slow)]] double Bun__gregorianDateTimeToMS(JSC::JSGlobalObject* globalObject, int year, int month, int day, int hour, int minute, int second, int millisecond)
+extern "C" [[ZIG_EXPORT(check_slow)]] double Bun__gregorianDateTimeToMS(JSC::JSGlobalObject* globalObject, int year, int month, int day, int hour, int minute, int second, int millisecond, bool localTime)
 {
     auto& vm = JSC::getVM(globalObject);
     WTF::GregorianDateTime dateTime;
@@ -5769,43 +5769,15 @@ extern "C" [[ZIG_EXPORT(check_slow)]] double Bun__gregorianDateTimeToMS(JSC::JSG
     dateTime.setHour(hour);
     dateTime.setMinute(minute);
     dateTime.setSecond(second);
-    return vm.dateCache.gregorianDateTimeToMS(dateTime, millisecond, WTF::TimeType::LocalTime);
+    return vm.dateCache.gregorianDateTimeToMS(dateTime, millisecond, localTime ? WTF::TimeType::LocalTime : WTF::TimeType::UTCTime);
 }
 
-extern "C" [[ZIG_EXPORT(check_slow)]] double Bun__gregorianDateTimeToMSUTC(JSC::JSGlobalObject* globalObject, int year, int month, int day, int hour, int minute, int second, int millisecond)
-{
-    auto& vm = JSC::getVM(globalObject);
-    WTF::GregorianDateTime dateTime;
-    dateTime.setYear(year);
-    dateTime.setMonth(month - 1);
-    dateTime.setMonthDay(day);
-    dateTime.setHour(hour);
-    dateTime.setMinute(minute);
-    dateTime.setSecond(second);
-    return vm.dateCache.gregorianDateTimeToMS(dateTime, millisecond, WTF::TimeType::UTCTime);
-}
-
-extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__msToGregorianDateTimeUTC(JSC::JSGlobalObject* globalObject, double ms,
+extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__msToGregorianDateTime(JSC::JSGlobalObject* globalObject, double ms, bool localTime,
     int* year, int* month, int* day, int* hour, int* minute, int* second, int* weekday)
 {
     auto& vm = JSC::getVM(globalObject);
     WTF::GregorianDateTime dt;
-    vm.dateCache.msToGregorianDateTime(ms, WTF::TimeType::UTCTime, dt);
-    *year = dt.year();
-    *month = dt.month() + 1;
-    *day = dt.monthDay();
-    *hour = dt.hour();
-    *minute = dt.minute();
-    *second = dt.second();
-    *weekday = dt.weekDay();
-}
-
-extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__msToGregorianDateTime(JSC::JSGlobalObject* globalObject, double ms,
-    int* year, int* month, int* day, int* hour, int* minute, int* second, int* weekday)
-{
-    auto& vm = JSC::getVM(globalObject);
-    WTF::GregorianDateTime dt;
-    vm.dateCache.msToGregorianDateTime(ms, WTF::TimeType::LocalTime, dt);
+    vm.dateCache.msToGregorianDateTime(ms, localTime ? WTF::TimeType::LocalTime : WTF::TimeType::UTCTime, dt);
     *year = dt.year();
     *month = dt.month() + 1;
     *day = dt.monthDay();

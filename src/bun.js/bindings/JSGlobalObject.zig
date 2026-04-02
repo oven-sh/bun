@@ -24,12 +24,12 @@ pub const JSGlobalObject = opaque {
     }
     pub fn gregorianDateTimeToMS(this: *jsc.JSGlobalObject, year: i32, month: i32, day: i32, hour: i32, minute: i32, second: i32, millisecond: i32) bun.JSError!f64 {
         jsc.markBinding(@src());
-        return bun.cpp.Bun__gregorianDateTimeToMS(this, year, month, day, hour, minute, second, millisecond);
+        return bun.cpp.Bun__gregorianDateTimeToMS(this, year, month, day, hour, minute, second, millisecond, true);
     }
 
     pub fn gregorianDateTimeToMSUTC(this: *jsc.JSGlobalObject, year: i32, month: i32, day: i32, hour: i32, minute: i32, second: i32, millisecond: i32) bun.JSError!f64 {
         jsc.markBinding(@src());
-        return bun.cpp.Bun__gregorianDateTimeToMSUTC(this, year, month, day, hour, minute, second, millisecond);
+        return bun.cpp.Bun__gregorianDateTimeToMS(this, year, month, day, hour, minute, second, millisecond, false);
     }
 
     pub const GregorianDateTime = struct {
@@ -45,14 +45,14 @@ pub const JSGlobalObject = opaque {
     pub fn msToGregorianDateTimeUTC(this: *jsc.JSGlobalObject, ms: f64) GregorianDateTime {
         jsc.markBinding(@src());
         var dt: GregorianDateTime = undefined;
-        bun.cpp.Bun__msToGregorianDateTimeUTC(this, ms, &dt.year, &dt.month, &dt.day, &dt.hour, &dt.minute, &dt.second, &dt.weekday);
+        bun.cpp.Bun__msToGregorianDateTime(this, ms, false, &dt.year, &dt.month, &dt.day, &dt.hour, &dt.minute, &dt.second, &dt.weekday);
         return dt;
     }
 
     pub fn msToGregorianDateTime(this: *jsc.JSGlobalObject, ms: f64) GregorianDateTime {
         jsc.markBinding(@src());
         var dt: GregorianDateTime = undefined;
-        bun.cpp.Bun__msToGregorianDateTime(this, ms, &dt.year, &dt.month, &dt.day, &dt.hour, &dt.minute, &dt.second, &dt.weekday);
+        bun.cpp.Bun__msToGregorianDateTime(this, ms, true, &dt.year, &dt.month, &dt.day, &dt.hour, &dt.minute, &dt.second, &dt.weekday);
         return dt;
     }
 

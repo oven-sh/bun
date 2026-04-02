@@ -241,7 +241,7 @@ pub const CronRegisterJob = struct {
             return;
         };
 
-        const tmp_path = makeTempPath("bun-cron-", this.title) catch {
+        const tmp_path = makeTempPath("bun-cron-") catch {
             this.setErr("Out of memory", .{});
             this.finish();
             return;
@@ -471,30 +471,17 @@ pub const CronRegisterJob = struct {
             bun.default_allocator.free(abs_path);
             return globalObject.throw("Failed to get bun executable path", .{});
         };
-        const schedule_owned = bun.default_allocator.dupeZ(u8, normalized_schedule) catch {
-            bun.default_allocator.free(abs_path);
-            return globalObject.throw("Out of memory", .{});
+        const job = bun.handleOom(bun.default_allocator.create(CronRegisterJob));
+        job.* = .{
+            .global = globalObject,
+            .bun_exe = bun_exe,
+            .abs_path = abs_path,
+            .schedule = bun.handleOom(bun.default_allocator.dupeZ(u8, normalized_schedule)),
+            .raw_schedule = bun.handleOom(bun.default_allocator.dupeZ(u8, schedule_slice.slice())),
+            .title = bun.handleOom(bun.default_allocator.dupeZ(u8, title_slice.slice())),
+            .parsed_cron = parsed,
+            .promise = jsc.JSPromise.Strong.init(globalObject),
         };
-        const raw_schedule_owned = bun.default_allocator.dupeZ(u8, schedule_slice.slice()) catch {
-            bun.default_allocator.free(abs_path);
-            bun.default_allocator.free(schedule_owned);
-            return globalObject.throw("Out of memory", .{});
-        };
-        const title_owned = bun.default_allocator.dupeZ(u8, title_slice.slice()) catch {
-            bun.default_allocator.free(abs_path);
-            bun.default_allocator.free(schedule_owned);
-            bun.default_allocator.free(raw_schedule_owned);
-            return globalObject.throw("Out of memory", .{});
-        };
-
-        const job = bun.default_allocator.create(CronRegisterJob) catch {
-            bun.default_allocator.free(abs_path);
-            bun.default_allocator.free(schedule_owned);
-            bun.default_allocator.free(raw_schedule_owned);
-            bun.default_allocator.free(title_owned);
-            return globalObject.throw("Out of memory", .{});
-        };
-        job.* = .{ .global = globalObject, .bun_exe = bun_exe, .abs_path = abs_path, .schedule = schedule_owned, .raw_schedule = raw_schedule_owned, .title = title_owned, .parsed_cron = parsed, .promise = jsc.JSPromise.Strong.init(globalObject) };
 
         const promise_value = job.promise.value();
         job.poll.ref(jsc.VirtualMachine.get());
@@ -532,7 +519,7 @@ pub const CronRegisterJob = struct {
         };
         defer bun.default_allocator.free(xml);
 
-        const xml_path = makeTempPath("bun-cron-xml-", this.title) catch {
+        const xml_path = makeTempPath("bun-cron-xml-") catch {
             this.setErr("Out of memory", .{});
             this.finish();
             return;
@@ -728,7 +715,7 @@ pub const CronRemoveJob = struct {
             return;
         };
 
-        const tmp_path = makeTempPath("bun-cron-rm-", this.title) catch {
+        const tmp_path = makeTempPath("bun-cron-rm-") catch {
             this.setErr("Out of memory", .{});
             this.finish();
             return;
@@ -783,12 +770,12 @@ pub const CronRemoveJob = struct {
         if (!validateTitle(title_slice.slice()))
             return globalObject.throwInvalidArguments("Cron title must contain only alphanumeric characters, hyphens, and underscores", .{});
 
-        const title_owned = bun.default_allocator.dupeZ(u8, title_slice.slice()) catch return globalObject.throw("Out of memory", .{});
-        const job = bun.default_allocator.create(CronRemoveJob) catch {
-            bun.default_allocator.free(title_owned);
-            return globalObject.throw("Out of memory", .{});
+        const job = bun.handleOom(bun.default_allocator.create(CronRemoveJob));
+        job.* = .{
+            .global = globalObject,
+            .title = bun.handleOom(bun.default_allocator.dupeZ(u8, title_slice.slice())),
+            .promise = jsc.JSPromise.Strong.init(globalObject),
         };
-        job.* = .{ .global = globalObject, .title = title_owned, .promise = jsc.JSPromise.Strong.init(globalObject) };
 
         const promise_value = job.promise.value();
         job.poll.ref(jsc.VirtualMachine.get());
@@ -1733,14 +1720,11 @@ fn computeStepInterval(comptime T: type, bits: T, _: u7, max: u7) ?u32 {
 }
 
 fn allocPrintZ(allocator: std.mem.Allocator, comptime fmt: []const u8, args: anytype) std.mem.Allocator.Error![:0]const u8 {
-    const slice = try std.fmt.allocPrint(allocator, fmt, args);
-    defer allocator.free(slice);
-    return allocator.dupeZ(u8, slice);
+    return std.fmt.allocPrintSentinel(allocator, fmt, args, 0);
 }
 
 /// Create a temp file path with a random suffix to avoid TOCTOU/symlink attacks.
-fn makeTempPath(comptime prefix: []const u8, title: []const u8) ![:0]const u8 {
-    _ = title;
+fn makeTempPath(comptime prefix: []const u8) ![:0]const u8 {
     var name_buf: bun.PathBuffer = undefined;
     const name = bun.fs.FileSystem.tmpname(prefix ++ "tmp", &name_buf, bun.fastRandom()) catch return error.OutOfMemory;
     return bun.default_allocator.dupeZ(u8, bun.path.joinAbsString(bun.fs.FileSystem.RealFS.platformTempDir(), &.{name}, .auto));

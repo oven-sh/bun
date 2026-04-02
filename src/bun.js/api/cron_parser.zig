@@ -352,14 +352,7 @@ inline fn bitSet(comptime T: type, set: T, pos: std.math.Log2Int(T)) bool {
 
 /// Write a bitfield as a cron field string: "*" if all bits set, or comma-separated values.
 fn formatBitfield(w: anytype, comptime T: type, bits: T, min: u8, max: u8) void {
-    var all_set = true;
-    for (min..max + 1) |i| {
-        if ((bits >> @intCast(i)) & 1 == 0) {
-            all_set = false;
-            break;
-        }
-    }
-    if (all_set) {
+    if (@popCount(bits) == @as(u32, max) - min + 1) {
         w.writeByte('*') catch unreachable;
         return;
     }

@@ -1,7 +1,8 @@
+// https://github.com/oven-sh/bun/issues/28771
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 
 // FORCE_COLOR=1 is needed because the "not in $PATH" warning is gated
 // on enable_ansi_colors_stderr, which is false when stderr is piped.
@@ -32,7 +33,7 @@ describe("global bin path warnings", () => {
         ...baseEnv,
         BUN_INSTALL_BIN: binDir,
         BUN_INSTALL_GLOBAL_DIR: globalDir,
-        PATH: pathWithTrailing + ":" + (process.env.PATH ?? ""),
+        PATH: pathWithTrailing + delimiter + (process.env.PATH ?? ""),
       },
     });
 
@@ -55,7 +56,7 @@ describe("global bin path warnings", () => {
         ...baseEnv,
         BUN_INSTALL_BIN: binDir,
         BUN_INSTALL_GLOBAL_DIR: globalDir,
-        PATH: binDir + ":" + (process.env.PATH ?? ""),
+        PATH: binDir + delimiter + (process.env.PATH ?? ""),
       },
     });
 

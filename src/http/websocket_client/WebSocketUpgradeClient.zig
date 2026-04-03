@@ -545,7 +545,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
 
             const head_len: usize = @intCast(response.bytes_read);
             if (this.outgoing_websocket) |ws| {
-                ws.didReceiveHandshakeResponse(@intCast(response.status_code), body[0..head_len], body[head_len..]);
+                ws.didReceiveHandshakeResponse(std.math.cast(u16, response.status_code) orelse 0, body[0..head_len], body[head_len..]);
             }
             this.processResponse(response, body[head_len..]);
         }
@@ -747,7 +747,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
 
             const head_len: usize = @intCast(response.bytes_read);
             if (this.outgoing_websocket) |ws| {
-                ws.didReceiveHandshakeResponse(@intCast(response.status_code), body[0..head_len], body[head_len..]);
+                ws.didReceiveHandshakeResponse(std.math.cast(u16, response.status_code) orelse 0, body[0..head_len], body[head_len..]);
             }
             this.processResponse(response, body[head_len..]);
         }

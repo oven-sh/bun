@@ -242,6 +242,8 @@ const State = struct {
         if (data[data.len - 1] == '\n') {
             data = data[0 .. data.len - 1];
         }
+        // A bare trailing newline (now trimmed to empty) is semantically empty.
+        if (data.len == 0) return .{ .content = &.{}, .elided_count = 0 };
         if (max_lines == null) return .{ .content = data, .elided_count = 0 };
         if (max_lines.? == 0) {
             var elided: usize = 1; // the last line (no trailing newline after trim)
@@ -301,14 +303,28 @@ const State = struct {
         // Without this, `\x1b[1A` escapes below clamp at the top of the
         // viewport once the frame is taller than the terminal, leaving stale
         // lines that look like duplicated output (see #28800).
-        const terminal_rows = if (is_abort) null else getTerminalRows();
+        //
+        // The clamp on `up` below always applies (including during abort), so
+        // the clear loop can't emit more cursor-ups than the terminal can
+        // hold. The content cap below is skipped during abort so we still
+        // dump every line for debugging.
+        const terminal_rows = getTerminalRows();
+        // `show_indicator` reserves an extra line per handle for the
+        // "[N lines elided]" marker. When the terminal is too short even for
+        // that, we drop the marker so the frame still fits.
+        const show_indicator: bool = blk: {
+            if (is_abort) break :blk true;
+            const rows = terminal_rows orelse break :blk true;
+            break :blk rows > 3 * this.handles.len;
+        };
         const terminal_cap: ?usize = blk: {
+            if (is_abort) break :blk null;
             const rows = terminal_rows orelse break :blk null;
             const n = this.handles.len;
             if (n == 0) break :blk null;
-            // Each handle needs at least 2 rows (header + footer) and one more
-            // for the "[N lines elided]" indicator we're about to add.
-            const per_handle_overhead: usize = 3;
+            // Per-handle overhead: header + footer (+ indicator if we're
+            // still showing it).
+            const per_handle_overhead: usize = if (show_indicator) 3 else 2;
             const overhead = per_handle_overhead * n;
             if (rows <= overhead) break :blk @as(usize, 0);
             break :blk (rows - overhead) / n;
@@ -345,7 +361,7 @@ const State = struct {
             const e = elide(handle.buffer.items, elide_lines);
 
             try this.draw_buf.writer().print(fmt("<b>{s}<r> {s} $ <d>{s}<r>\n"), .{ handle.config.package_name, handle.config.script_name, handle.config.script_content });
-            if (e.elided_count > 0) {
+            if (e.elided_count > 0 and show_indicator) {
                 try this.draw_buf.writer().print(
                     fmt("<cyan>│<r> <d>[{d} lines elided]<r>\n"),
                     .{e.elided_count},

@@ -341,6 +341,16 @@ const shouldValidateLeakSan = test => {
 };
 
 /**
+ * Returns whether a test expects spawned child processes to crash (e.g., seccomp tests).
+ * For these tests, we disable core dumps to avoid CI failures from expected crashes.
+ * @param {string} test
+ * @returns {boolean}
+ */
+const expectsSpawnedProcessCrash = test => {
+  return test.endsWith("spawn-sandbox.test.ts");
+};
+
+/**
  * @param {string} testPath
  * @returns {string[]}
  */
@@ -602,6 +612,11 @@ async function runTests() {
               env.ASAN_OPTIONS = "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=1:abort_on_error=1";
               // prettier-ignore
               env.LSAN_OPTIONS = `malloc_context_size=100:print_suppressions=0:suppressions=${process.cwd()}/test/leaksan.supp`;
+            }
+            if (expectsSpawnedProcessCrash(testPath)) {
+              // Tests that spawn processes expected to crash (e.g., seccomp sandbox tests)
+              // should not generate core dumps
+              env.ASAN_OPTIONS = "allow_user_segv_handler=1:disable_coredump=1";
             }
             return runTest(title, async () => {
               const { ok, error, stdout, crashes } = await spawnBun(execPath, {
@@ -1350,9 +1365,27 @@ async function spawnBunTest(execPath, testPath, opts = { cwd }) {
     // prettier-ignore
     env.LSAN_OPTIONS = `malloc_context_size=100:print_suppressions=0:suppressions=${process.cwd()}/test/leaksan.supp`;
   }
+  // For tests that spawn processes expected to crash, disable core dumps
+  const disableCoreDumps = expectsSpawnedProcessCrash(relative(cwd, absPath));
+  const isAsanBuild = basename(execPath).includes("asan");
+  if (disableCoreDumps && isAsanBuild) {
+    // ASAN builds: use ASAN_OPTIONS to disable core dumps
+    env.ASAN_OPTIONS = "allow_user_segv_handler=1:disable_coredump=1";
+  }
 
-  const { ok, error, stdout, crashes } = await spawnBun(execPath, {
-    args: isReallyTest ? testArgs : [...args, absPath],
+  // Build the command args
+  let spawnArgs = isReallyTest ? testArgs : [...args, absPath];
+  let spawnExecPath = execPath;
+
+  // Non-ASAN Linux builds: wrap with ulimit -c 0 to disable core dumps
+  if (disableCoreDumps && isLinux && !isAsanBuild) {
+    const originalCmd = [execPath, ...spawnArgs].map(a => `"${a.replace(/"/g, '\\"')}"`).join(" ");
+    spawnExecPath = "/bin/sh";
+    spawnArgs = ["-c", `ulimit -c 0 && exec ${originalCmd}`];
+  }
+
+  const { ok, error, stdout, crashes } = await spawnBun(spawnExecPath, {
+    args: spawnArgs,
     cwd: opts["cwd"],
     timeout: isReallyTest ? timeout : 30_000,
     env,

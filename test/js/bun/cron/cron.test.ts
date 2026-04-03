@@ -1405,13 +1405,6 @@ function nextN(expr: string, from: number, n: number): number[] {
 }
 
 describe("Bun.cron.parse", () => {
-  // parse() now interprets expressions in local time. These tests were written
-  // with Date.UTC inputs/expectations, so pin to UTC for this block. Local-time
-  // behavior is covered in cron-local-time.test.ts.
-  const savedTZ = process.env.TZ;
-  beforeAll(() => void (process.env.TZ = "UTC"));
-  afterAll(() => void (savedTZ === undefined ? delete process.env.TZ : (process.env.TZ = savedTZ)));
-
   test("is a function that returns a Date", () => {
     expect(typeof Bun.cron.parse).toBe("function");
     const result = Bun.cron.parse("* * * * *", Date.UTC(2025, 0, 15, 10, 30, 0));

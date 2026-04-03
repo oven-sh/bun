@@ -1,12 +1,12 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, tempDir } from "harness";
 
 // Regression: under ASAN, `Global.exit` runs mimalloc's atexit handler which
 // poisons freed memory. The file watcher thread was not stopped first, so its
 // next `bustDirCache` call would touch the resolver's BSSMap singleton after
 // the memory was poisoned, aborting the process with use-after-poison from
-// thread T2 (File Watcher). Non-ASAN builds don't exhibit the crash but the
-// test is still a useful shutdown smoke test.
+// thread T2 (File Watcher). The crash is ASAN-specific (mimalloc only poisons
+// under ASAN), so the test is gated on ASAN builds.
 async function runOnce(iteration: number): Promise<{ signal: string | null; stderr: string }> {
   using dir = tempDir(`hot-exit-race-${iteration}`, {
     "script.ts": `setTimeout(() => process.exit(0), 120); console.log("READY");\n`,
@@ -50,7 +50,7 @@ async function runOnce(iteration: number): Promise<{ signal: string | null; stde
   return { signal: proc.signalCode, stderr };
 }
 
-test("bun --hot exits cleanly while watcher is dispatching events", async () => {
+test.skipIf(!isASAN)("bun --hot exits cleanly while watcher is dispatching events", async () => {
   // Loop several times because the race is timing-sensitive. Without the
   // fix, a watcher-thread use-after-poison tends to trip within a few
   // iterations.

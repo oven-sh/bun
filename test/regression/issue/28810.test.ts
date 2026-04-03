@@ -1,6 +1,4 @@
 // https://github.com/oven-sh/bun/issues/28810
-// Wikilinks with preceding text were rendered out of order: the wikilink HTML
-// was written before the preceding text rather than after it.
 import { expect, test } from "bun:test";
 
 test("wikilink preserves preceding text order", () => {
@@ -26,8 +24,6 @@ test("multiple wikilinks with interleaved text", () => {
 });
 
 test("wikilink parse failure falls back to regular link without duplicating text", () => {
-  // `[[foo]` is not a valid wikilink (single closing bracket) — falls through
-  // to the regular link handler. The preceding text must not be emitted twice.
   const html = Bun.markdown.html("pre [[foo]\n\n[foo]: /url", { wikiLinks: true });
   expect(html).toBe('<p>pre [<a href="/url">foo</a></p>\n');
 });

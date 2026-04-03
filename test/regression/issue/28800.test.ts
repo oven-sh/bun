@@ -18,15 +18,13 @@ describe.skipIf(isWindows)("issue 28800", () => {
       "packages/pkg-a/package.json": JSON.stringify({
         name: "pkg-a",
         scripts: {
-          build:
-            "printf 'a-line-1\\na-line-2\\na-line-3\\na-line-4\\na-line-5\\na-line-6\\na-line-7\\na-line-8\\n'",
+          build: "printf 'a-line-1\\na-line-2\\na-line-3\\na-line-4\\na-line-5\\na-line-6\\na-line-7\\na-line-8\\n'",
         },
       }),
       "packages/pkg-b/package.json": JSON.stringify({
         name: "pkg-b",
         scripts: {
-          build:
-            "printf 'b-line-1\\nb-line-2\\nb-line-3\\nb-line-4\\nb-line-5\\nb-line-6\\nb-line-7\\nb-line-8\\n'",
+          build: "printf 'b-line-1\\nb-line-2\\nb-line-3\\nb-line-4\\nb-line-5\\nb-line-6\\nb-line-7\\nb-line-8\\n'",
         },
       }),
     });

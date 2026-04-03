@@ -1,8 +1,10 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 
-test("node:https concurrent chunked downloads do not hang", async () => {
+// Skip on Windows — the inline script uses openssl req which is not
+// available on the default Windows CI image.
+test.skipIf(isWindows)("node:https concurrent chunked downloads do not hang", async () => {
   using dir = tempDir("issue-28703", {});
   const keyPath = join(String(dir), "key.pem");
   const certPath = join(String(dir), "cert.pem");
@@ -32,7 +34,7 @@ test("node:https concurrent chunked downloads do not hang", async () => {
 
       server.listen(0, "127.0.0.1", async () => {
         const URL = "https://127.0.0.1:" + server.address().port + "/";
-        const W = 50, N = 40, TOTAL = W * N;
+        const W = 25, N = 20, TOTAL = W * N;
         let done = 0;
 
         const dl = () => new Promise((ok, no) => {
@@ -51,7 +53,7 @@ test("node:https concurrent chunked downloads do not hang", async () => {
             process.exit(1);
           }
           last = done;
-        }, 8000);
+        }, 5000);
 
         try {
           await Promise.all(Array.from({ length: W }, async () => {

@@ -1065,8 +1065,13 @@ pub const CronJob = struct {
             return globalObject.throwInvalidArguments("Cron expression '{s}' has no future occurrences", .{schedule_slice.slice()});
         };
 
-        job.ref(); // owned by cron_jobs entry
-        bun.handleOom(vm.rareData().cron_jobs.append(bun.default_allocator, job));
+        // The cron_jobs list exists so --hot reload and worker teardown can
+        // stop/release jobs. Main-thread VMs without --hot never enumerate it,
+        // so skip the list ref + append entirely.
+        if (vm.hot_reload == .hot or vm.worker != null) {
+            job.ref(); // owned by cron_jobs entry
+            bun.handleOom(vm.rareData().cron_jobs.append(bun.default_allocator, job));
+        }
 
         const js_value = job.toJS(globalObject);
         job.this_value.setStrong(js_value, globalObject);

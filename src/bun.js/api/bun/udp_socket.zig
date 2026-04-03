@@ -21,14 +21,16 @@ fn onClose(socket: *uws.udp.Socket) callconv(.c) void {
 fn onRecvError(socket: *uws.udp.Socket, errno: c_int) callconv(.c) void {
     jsc.markBinding(@src());
 
+    // Only called on Linux via IP_RECVERR — loop.c guards the recv-on-error
+    // path with #if defined(__linux__) to preserve the pre-existing
+    // close-on-error behavior on kqueue/Windows (where an error event is a
+    // fatal socket condition, not a drainable error queue). Builds a
+    // SystemError from the ICMP errno (ECONNREFUSED, EHOSTUNREACH,
+    // ENETUNREACH, EMSGSIZE, ...) and dispatches through the 'error' handler.
     const this: *UDPSocket = bun.cast(*UDPSocket, socket.user().?);
-    // Build a SystemError from errno and dispatch through the existing error handler.
-    // Triggered on Linux via IP_RECVERR when the kernel surfaces ICMP errors
-    // (ECONNREFUSED, EHOSTUNREACH, ENETUNREACH, EMSGSIZE, ...) on recv.
-    const e: bun.sys.E = @enumFromInt(errno);
-    const maybe = bun.sys.Maybe(void).errno(e, .recv);
+    const sys_err = bun.sys.Error.fromCodeInt(errno, .recv);
     const globalThis = this.globalThis;
-    const err_value = maybe.err.toJS(globalThis) catch return;
+    const err_value = sys_err.toJS(globalThis) catch return;
     this.callErrorHandler(.zero, err_value);
 }
 

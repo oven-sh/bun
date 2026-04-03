@@ -292,7 +292,11 @@ int bsd_udp_packet_buffer_payload_length(struct udp_recvbuf *msgvec, int index) 
 #if defined(_WIN32)
     return msgvec->recvlen;
 #else
-    return ((struct mmsghdr *) msgvec)[index].msg_len;
+    /* Clamp to the per-datagram buffer capacity so a truncated datagram can
+     * never report more bytes than we actually copied, even if the underlying
+     * kernel (e.g. Darwin's recvmsg_x) reports the original datagram length. */
+    int len = ((struct mmsghdr *) msgvec)[index].msg_len;
+    return len > (int)LIBUS_UDP_MAX_SIZE ? (int)LIBUS_UDP_MAX_SIZE : len;
 #endif
 }
 

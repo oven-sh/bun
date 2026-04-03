@@ -73,18 +73,34 @@ int main(int argc, char **argv) {
 }
 `;
 
-  const tryBuild = () => {
+  // Compile the seccomp helper once. Returns the binary path, or null if
+  // the host genuinely can't build it (no cc, missing kernel headers).
+  // Any other compile failure throws so a source regression isn't silently
+  // hidden as a skip.
+  const tryBuild = (): string | null => {
     const dir = tempDirWithFiles("stat-seccomp", {
       "block_statx.c": helperSrc,
     });
     const src = join(dir, "block_statx.c");
     const bin = join(dir, "block_statx");
     const compile = spawnSync("cc", ["-O0", "-o", bin, src], { stdio: "pipe" });
-    if (compile.status !== 0 || !existsSync(bin)) {
-      return null;
+
+    // compiler not on PATH — expected skip
+    if ((compile.error as NodeJS.ErrnoException | undefined)?.code === "ENOENT") return null;
+
+    if (compile.status !== 0) {
+      const stderr = compile.stderr?.toString() ?? "";
+      // missing linux/*.h on the host — expected skip
+      if (/linux\/(seccomp|filter|audit)\.h|sys\/prctl\.h/.test(stderr)) return null;
+      throw new Error(`failed to compile seccomp helper:\n${stderr}`);
     }
-    return { dir, bin };
+    if (!existsSync(bin)) {
+      throw new Error("seccomp helper compiled successfully but output binary is missing");
+    }
+    return bin;
   };
+
+  const helperBin = tryBuild();
 
   // Run `snippet` in a bun subprocess guarded by the seccomp helper.
   // Returns { stdout, stderr, exitCode } on success, or null if the
@@ -139,24 +155,27 @@ int main(int argc, char **argv) {
 
   for (const c of cases) {
     test(`${c.name} succeeds when statx is blocked by seccomp`, async () => {
-      const built = tryBuild();
-      if (!built) {
+      if (helperBin == null) {
         // bun:test has no runtime-skip; log loudly so CI output distinguishes
         // this from a real pass. Happens when cc or the seccomp headers are
         // missing on the test host.
-        console.warn(`SKIP fs.${c.name} seccomp: compiling the seccomp helper failed (cc/headers missing)`);
+        console.warn(`SKIP fs.${c.name} seccomp: cc or seccomp headers not available`);
         return;
       }
 
       const targetDir = tempDirWithFiles("stat-seccomp-target", { "file.txt": "hello" });
       const target = join(targetDir, "file.txt");
 
-      const out = await runUnderSeccomp(built.bin, c.snippet(target));
+      const out = await runUnderSeccomp(helperBin, c.snippet(target));
       if (out == null) {
         console.warn(`SKIP fs.${c.name} seccomp: seccomp not permitted in this environment`);
         return;
       }
 
+      // Strip the one known ASAN warning that debug builds print on startup;
+      // anything else on stderr is a real regression.
+      const stderr = out.stderr.replace(/^WARNING: ASAN interferes with JSC signal handlers;.*\n?/m, "").trim();
+      expect(stderr).toBe("");
       expect(out.stdout.trim()).toBe(c.expected);
       expect(out.exitCode).toBe(0);
     });

@@ -15,7 +15,6 @@
 
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
-import { once } from "node:events";
 import { join } from "node:path";
 
 /**

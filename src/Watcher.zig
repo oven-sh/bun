@@ -40,6 +40,21 @@ pub const requires_file_descriptors = switch (Environment.os) {
     else => false,
 };
 
+/// Vnode events monitored on macOS via kqueue. Matches the fflags libuv
+/// registers in vendor/node/deps/uv/src/unix/kqueue.c so file-watching
+/// behavior is consistent with Node.
+/// - WRITE: data contents changed
+/// - RENAME: vnode was renamed
+/// - DELETE: vnode was unlinked
+/// - ATTRIB: attributes changed (chmod, utimes, chown, xattr)
+/// - EXTEND: size increased (ftruncate-grow, write past EOF)
+/// - REVOKE: vnode access was revoked (revoke(2), unmount)
+const macos_vnode_fflags: u32 = if (Environment.isMac)
+    std.c.NOTE.WRITE | std.c.NOTE.RENAME | std.c.NOTE.DELETE |
+        std.c.NOTE.ATTRIB | std.c.NOTE.EXTEND | std.c.NOTE.REVOKE
+else
+    0;
+
 pub const Event = WatchEvent;
 pub const Item = WatchItem;
 pub const ItemList = WatchList;
@@ -327,16 +342,7 @@ pub fn addFileDescriptorToKQueueWithoutChecks(this: *Watcher, fd: bun.FileDescri
     event.flags = std.c.EV.ADD | std.c.EV.CLEAR | std.c.EV.ENABLE;
     // we want to know about the vnode
     event.filter = std.c.EVFILT.VNODE;
-
-    // Monitor the same set of flags libuv uses:
-    // - WRITE: data contents changed
-    // - RENAME: vnode was renamed
-    // - DELETE: vnode was unlinked
-    // - ATTRIB: attributes changed (chmod, utimes, chown, xattr)
-    // - EXTEND: size increased (ftruncate-grow, write past EOF)
-    // - REVOKE: vnode access was revoked (revoke(2), unmount)
-    event.fflags = std.c.NOTE.WRITE | std.c.NOTE.RENAME | std.c.NOTE.DELETE |
-        std.c.NOTE.ATTRIB | std.c.NOTE.EXTEND | std.c.NOTE.REVOKE;
+    event.fflags = macos_vnode_fflags;
 
     // id
     event.ident = @intCast(fd.native());
@@ -467,16 +473,7 @@ fn appendDirectoryAssumeCapacity(
         event.flags = std.c.EV.ADD | std.c.EV.CLEAR | std.c.EV.ENABLE;
         // we want to know about the vnode
         event.filter = std.c.EVFILT.VNODE;
-
-        // Monitor the same set of flags libuv uses:
-        // - WRITE: data contents changed
-        // - RENAME: vnode was renamed
-        // - DELETE: vnode was unlinked
-        // - ATTRIB: attributes changed (chmod, utimes, chown, xattr)
-        // - EXTEND: size increased (ftruncate-grow, write past EOF)
-        // - REVOKE: vnode access was revoked (revoke(2), unmount)
-        event.fflags = std.c.NOTE.WRITE | std.c.NOTE.RENAME | std.c.NOTE.DELETE |
-            std.c.NOTE.ATTRIB | std.c.NOTE.EXTEND | std.c.NOTE.REVOKE;
+        event.fflags = macos_vnode_fflags;
 
         // id
         event.ident = @intCast(fd.native());

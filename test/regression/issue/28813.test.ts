@@ -1,9 +1,4 @@
 // https://github.com/oven-sh/bun/issues/28813
-//
-// `bunx --package=<scp-style-git-url> <binary>` was constructing a malformed
-// URL by prefixing `<binary>@` to the SCP URL. The resulting
-// `<binary>@git@host:org/repo.git` got re-detected as an SCP-like path,
-// yielding `https://<binary>@git@host/org/repo.git` passed to `git clone`.
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { chmodSync, writeFileSync } from "node:fs";
@@ -38,10 +33,6 @@ test.skipIf(isWindows)("bunx --package=<scp-url> does not mangle the git URL", a
 
   const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
-  // Expected to fail (our fake git exits 128), but the URL passed to git must
-  // be well-formed — no `somebin@git@...` double-userinfo splice.
-  expect(exitCode).not.toBe(0);
-
   const gitLog = await Bun.file(gitLogFile).text();
   expect(gitLog.length).toBeGreaterThan(0);
 
@@ -62,4 +53,7 @@ test.skipIf(isWindows)("bunx --package=<scp-url> does not mangle the git URL", a
   // binary-prefixed mangled form pointing at a different host.
   expect(stderr).not.toContain("https://somebin@git@");
   expect(stderr).not.toContain("ssh://git@somebin@git@");
+
+  // Expected to fail because our fake git exits 128.
+  expect(exitCode).not.toBe(0);
 });

@@ -495,6 +495,15 @@ pub fn NewParser_(
         /// Set before visitExpr, consumed by lowerStandardDecoratorsImpl.
         decorator_class_name: ?[]const u8 = null,
 
+        /// Persistent counters for decorator lowering across multiple classes in
+        /// the same module. Without these, each class generates identically-named
+        /// helper variables (`_init`, `_dec`, …) via `var` declarations, causing
+        /// later classes to silently overwrite earlier ones at runtime.
+        decorator_class_count: u32 = 0,
+        decorator_dec_count: u32 = 0,
+        decorator_computed_key_count: u32 = 0,
+        decorator_accessor_storage_count: u32 = 0,
+
         const RecentlyVisitedTSNamespace = struct {
             expr: Expr.Data = Expr.empty.data,
             map: ?*js_ast.TSNamespaceMemberMap = null,

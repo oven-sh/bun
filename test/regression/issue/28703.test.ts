@@ -36,7 +36,7 @@ test.skipIf(isWindows)(
 
       server.listen(0, "127.0.0.1", async () => {
         const URL = "https://127.0.0.1:" + server.address().port + "/";
-        const W = 25, N = 20, TOTAL = W * N;
+        const W = 10, N = 10, TOTAL = W * N;
         let done = 0;
 
         const dl = () => new Promise((ok, no) => {

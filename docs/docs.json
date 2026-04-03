@@ -44,7 +44,7 @@
     ]
   },
   "contextual": {
-    "options": ["copy", "view", "chatgpt", "claude", "perplexity", "mcp", "cursor", "vscode"]
+    "options": ["copy", "view", "claude", "mcp", "vscode"]
   },
   "styling": {
     "codeblocks": {

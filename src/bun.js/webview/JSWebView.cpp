@@ -10,6 +10,8 @@
 #include "ipc_protocol.h"
 #include "ZigGlobalObject.h"
 #include "BunClientData.h"
+#include "ScriptExecutionContext.h"
+#include "ScriptWrappableInlines.h"
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/LazyClassStructure.h>
 #include <JavaScriptCore/LazyClassStructureInlines.h>
@@ -59,22 +61,44 @@ void settleSlot(JSGlobalObject* g, JSWebView* v,
     slot.clear();
     v->m_pendingActivityCount.fetch_sub(1, std::memory_order_release);
     if (ok)
-        p->resolve(g, value);
+        p->resolve(g, g->vm(), value);
     else
         p->reject(g->vm(), g, value);
 }
 
+// --- WebViewEventTarget ----------------------------------------------------
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(WebViewEventTarget);
+
+JSValue toJS(JSGlobalObject*, WebCore::JSDOMGlobalObject*, WebViewEventTarget& impl)
+{
+    // The impl's ScriptWrappable holds a Weak<JSDOMObject> set by
+    // JSWebView::create → impl.setWrapper(). EventTargetFactory calls here
+    // to produce event.target/currentTarget — just return the existing
+    // wrapper. If it was collected (user dropped the view mid-event), return
+    // null; event.target will be null, which is unusual but not fatal.
+    if (auto* wrapper = impl.wrapper())
+        return wrapper;
+    return jsNull();
+}
+
 // --- JSWebView class -------------------------------------------------------
 
-JSWebView::JSWebView(VM& vm, Structure* structure)
-    : Base(vm, structure)
+JSWebView::JSWebView(Structure* structure, WebCore::JSDOMGlobalObject& global, Ref<WebViewEventTarget>&& impl)
+    : Base(structure, global, WTF::move(impl))
 {
 }
 
-JSWebView* JSWebView::create(VM& vm, Structure* structure)
+JSWebView* JSWebView::create(Structure* structure, WebCore::JSDOMGlobalObject* global, Ref<WebViewEventTarget>&& impl)
 {
-    JSWebView* instance = new (NotNull, allocateCell<JSWebView>(vm)) JSWebView(vm, structure);
+    auto& vm = global->vm();
+    JSWebView* instance = new (NotNull, allocateCell<JSWebView>(vm)) JSWebView(structure, *global, WTF::move(impl));
     instance->finishCreation(vm);
+    // Wire impl→wrapper so event.target resolves. JSDOMWrapper ctor already
+    // moved the impl into m_wrapped; read it back via wrapped(). The Weak's
+    // owner is our existing activity-count predicate — same one the backend
+    // routing tables use.
+    instance->wrapped().setWrapper(instance, &webViewWeakOwner(), nullptr);
     return instance;
 }
 
@@ -94,6 +118,7 @@ JSWebView::~JSWebView()
     if (m_backend == WebViewBackend::Chrome) {
         auto& t = CDP::transport();
         if (!m_sessionId.isEmpty()) t.m_sessions.remove(m_sessionId);
+        if (m_viewId) t.m_views.remove(m_viewId);
         t.updateKeepAlive();
         return;
     }
@@ -121,6 +146,10 @@ void JSWebView::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
     JSWebView* thisObject = jsCast<JSWebView*>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    // Base::visitChildren → JSEventTarget::visitAdditionalChildren →
+    // wrapped().visitJSEventListeners(visitor) — marks all registered
+    // addEventListener callbacks. The WriteBarrier slots below are our own
+    // promise/handler refs; they're not in the EventTarget listener map.
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_onNavigated);
     visitor.append(thisObject->m_onNavigationFailed);
@@ -129,6 +158,7 @@ void JSWebView::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_pendingEval);
     visitor.append(thisObject->m_pendingScreenshot);
     visitor.append(thisObject->m_pendingMisc);
+    visitor.append(thisObject->m_pendingCdp);
 }
 
 DEFINE_VISIT_CHILDREN(JSWebView);
@@ -165,10 +195,20 @@ JSPromise* JSWebView::evaluate(JSGlobalObject* g, const WTF::String& script)
     WK_DISPATCH(WK::Ops::evaluate(g, this, script));
 }
 
-JSPromise* JSWebView::screenshot(JSGlobalObject* g)
+JSPromise* JSWebView::screenshot(JSGlobalObject* g, ScreenshotFormat format, uint8_t quality)
 {
-    if (m_backend == WebViewBackend::Chrome) return CDP::Ops::screenshot(g, this);
-    WK_DISPATCH(WK::Ops::screenshot(g, this));
+    m_screenshotFormat = format;
+    if (m_backend == WebViewBackend::Chrome) return CDP::Ops::screenshot(g, this, format, quality);
+    WK_DISPATCH(WK::Ops::screenshot(g, this, format, quality));
+}
+
+JSPromise* JSWebView::cdp(JSGlobalObject* g, const WTF::String& method, const WTF::String& paramsJson)
+{
+    // Chrome-only — the prototype function already threw for WebKit. The
+    // backend check here is defensive (RELEASE_ASSERT would work but costs
+    // nothing to return a rejected promise instead).
+    ASSERT(m_backend == WebViewBackend::Chrome);
+    return CDP::Ops::cdp(g, this, method, paramsJson);
 }
 
 JSPromise* JSWebView::click(JSGlobalObject* g, float x, float y, uint8_t button, uint8_t modifiers, uint8_t clickCount)
@@ -260,7 +300,8 @@ JSWebView* JSWebView::createAndSend(JSGlobalObject* g, Structure* structure,
     auto& c = WK::client();
     if (!c.ensureSpawned(zig, stdoutInherit, stderrInherit)) return nullptr;
 
-    JSWebView* view = create(g->vm(), structure);
+    auto impl = WebViewEventTarget::create(*zig->scriptExecutionContext());
+    JSWebView* view = create(structure, zig, WTF::move(impl));
     view->m_viewId = c.nextViewId++;
     c.viewsById.emplace(view->m_viewId, Weak<JSWebView>(view, &webViewWeakOwner()));
     c.updateKeepAlive();
@@ -277,19 +318,57 @@ JSWebView* JSWebView::createAndSend(JSGlobalObject* g, Structure* structure,
 }
 #endif
 
+// Reads DevToolsActivePort from default profile locations. Returns 0
+// if no file found, else writes ws://127.0.0.1:<port>/devtools/... into
+// out and returns the length. Sync file read — instant.
+extern "C" size_t Bun__Chrome__autoDetect(char* out, size_t cap);
+
 JSWebView* JSWebView::createChrome(JSGlobalObject* g, Structure* structure,
     uint32_t width, uint32_t height, const WTF::String& userDataDir,
     const WTF::String& path, const WTF::Vector<WTF::String>& extraArgv,
-    bool stdoutInherit, bool stderrInherit)
+    bool stdoutInherit, bool stderrInherit, const WTF::String& wsUrl, bool skipAutoDetect)
 {
     auto* zig = defaultGlobalObject(g);
     auto& t = CDP::transport();
-    if (!t.ensureSpawned(zig, userDataDir, path, extraArgv, stdoutInherit, stderrInherit)) return nullptr;
 
-    JSWebView* view = create(g->vm(), structure);
+    // Transport selection, in priority order:
+    //   1. url: "ws://..." → connect (autoDetected=false → no fallback)
+    //   2. path/argv set OR url:false → spawn, skip auto-detect
+    //   3. neither → auto-detect DevToolsActivePort → connect OR spawn
+    //
+    // All paths end up in the same singleton; first call wins. A stale
+    // DevToolsActivePort (Chrome crashed/restarted) triggers the
+    // wsOnClose fallback to spawn (autoDetected=true). The file read is
+    // sync/instant so the constructor stays synchronous.
+    bool ok;
+    if (!wsUrl.isEmpty()) {
+        ok = t.ensureConnected(zig, wsUrl, /* autoDetected */ false);
+    } else if (skipAutoDetect || !path.isEmpty() || !extraArgv.isEmpty()) {
+        ok = t.ensureSpawned(zig, userDataDir, path, extraArgv, stdoutInherit, stderrInherit);
+    } else {
+        // Auto-detect. DevToolsActivePort URL caps at
+        // ws://127.0.0.1:65535/devtools/browser/<36-char-uuid> ≈ 70B.
+        char buf[128];
+        size_t len = Bun__Chrome__autoDetect(buf, sizeof(buf));
+        if (len > 0) {
+            ok = t.ensureConnected(zig,
+                WTF::String::fromUTF8(std::span<const char>(buf, len)),
+                /* autoDetected */ true, userDataDir, stdoutInherit, stderrInherit);
+        } else {
+            ok = t.ensureSpawned(zig, userDataDir, path, extraArgv, stdoutInherit, stderrInherit);
+        }
+    }
+    if (!ok) return nullptr;
+
+    auto impl = WebViewEventTarget::create(*zig->scriptExecutionContext());
+    JSWebView* view = create(structure, zig, WTF::move(impl));
     view->m_backend = WebViewBackend::Chrome;
     view->m_width = width;
     view->m_height = height;
+    // One Weak per view, stored in Transport::m_views. All CDP routing
+    // dereferences through this — m_pending and m_sessions hold just the
+    // viewId, not their own Weaks. Mirrors WebKit's HostClient::viewsById.
+    view->m_viewId = t.registerView(view);
     // Target.createTarget deferred to first navigate() — keeps the constructor
     // synchronous and the attach chain owned by the navigate promise (which
     // resolves on Page.loadEventFired, so one await covers the whole sequence).

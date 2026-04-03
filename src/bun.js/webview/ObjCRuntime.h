@@ -159,6 +159,12 @@ struct NSDictionary : Ref {
     static SEL s_dictionaryWithObjects_forKeys_count;
     static SEL s_objectForKey;
     id objectForKey(id key) const { return msg<id>(s_objectForKey, key); }
+    static NSDictionary with1(id v1, id k1)
+    {
+        id vs[1] = { v1 };
+        id ks[1] = { k1 };
+        return msgCls<id>(cls, s_dictionaryWithObjects_forKeys_count, vs, ks, (unsigned long)1);
+    }
     static NSDictionary with2(id v1, id k1, id v2, id k2)
     {
         id vs[2] = { v1, v2 };
@@ -282,15 +288,19 @@ struct NSBitmapImageRep : Ref {
     static SEL s_initWithCGImage;
     static SEL s_representationUsingType_properties;
 
-    // Autoreleased NSData PNG bytes. rep is released before return.
-    static NSData pngFromCGImage(id cgimage)
+    // Autoreleased NSData encoded bytes. rep is released before return.
+    // NSBitmapImageFileType: PNG=4, JPEG=3. WebP is NOT in this enum —
+    // representationUsingType: only does TIFF/BMP/GIF/JPEG/PNG/JPEG2000.
+    // quality (0.0-1.0) goes via NSImageCompressionFactor in the properties
+    // dict; ignored for PNG. nil props means defaults (PNG lossless, JPEG
+    // at some framework default ~0.75).
+    static NSData encodeFromCGImage(id cgimage, unsigned long fileType, id propsDict)
     {
         NSBitmapImageRep rep(msgCls<id>(cls, s_alloc));
         rep.m_id = rep.msg<id>(s_initWithCGImage, cgimage);
-        id png = rep.msg<id>(s_representationUsingType_properties,
-            (unsigned long)4 /* NSBitmapImageFileTypePNG */, (id) nullptr);
+        id data = rep.msg<id>(s_representationUsingType_properties, fileType, propsDict);
         rep.release();
-        return png;
+        return data;
     }
 };
 

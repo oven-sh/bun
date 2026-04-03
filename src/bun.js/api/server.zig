@@ -1550,6 +1550,13 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
             this.notifyInspectorServerStopped();
 
+            if (this.config.address == .unix) {
+                const path = this.config.address.unix;
+                if (path.len > 0 and path[0] != 0) {
+                    _ = bun.sys.unlink(path);
+                }
+            }
+
             if (!abrupt) {
                 listener.close();
             } else if (!this.flags.terminated) {

@@ -208,7 +208,6 @@ const JSC::GlobalObjectMethodTable& GlobalObject::globalObjectMethodTable()
         INHERIT_HOOK_METHOD(supportsRichSourceInfo),
         INHERIT_HOOK_METHOD(shouldInterruptScript),
         INHERIT_HOOK_METHOD(javaScriptRuntimeFlags),
-        INHERIT_HOOK_METHOD(queueMicrotaskToEventLoop),
         INHERIT_HOOK_METHOD(shouldInterruptScriptBeforeTimeout),
         bakeModuleLoaderImportModule,
         bakeModuleLoaderResolve,

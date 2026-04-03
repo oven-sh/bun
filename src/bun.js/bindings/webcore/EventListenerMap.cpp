@@ -73,6 +73,7 @@ bool EventListenerMap::containsActive(const AtomString& eventType) const
 
 void EventListenerMap::clear()
 {
+    releaseAssertOrSetThreadUID();
     Locker locker { m_lock };
 
     for (auto& entry : m_entries) {
@@ -102,6 +103,7 @@ static inline size_t findListener(const EventListenerVector& listeners, EventLis
 
 void EventListenerMap::replace(const AtomString& eventType, EventListener& oldListener, Ref<EventListener>&& newListener, const RegisteredEventListener::Options& options)
 {
+    releaseAssertOrSetThreadUID();
     Locker locker { m_lock };
 
     auto* listeners = find(eventType);
@@ -115,6 +117,7 @@ void EventListenerMap::replace(const AtomString& eventType, EventListener& oldLi
 
 bool EventListenerMap::add(const AtomString& eventType, Ref<EventListener>&& listener, const RegisteredEventListener::Options& options)
 {
+    releaseAssertOrSetThreadUID();
     Locker locker { m_lock };
 
     if (auto* listeners = find(eventType)) {
@@ -141,6 +144,7 @@ static bool removeListenerFromVector(EventListenerVector& listeners, EventListen
 
 bool EventListenerMap::remove(const AtomString& eventType, EventListener& listener, bool useCapture)
 {
+    releaseAssertOrSetThreadUID();
     Locker locker { m_lock };
 
     for (unsigned i = 0; i < m_entries.size(); ++i) {
@@ -179,6 +183,7 @@ static void removeFirstListenerCreatedFromMarkup(EventListenerVector& listenerVe
 
 void EventListenerMap::removeFirstEventListenerCreatedFromMarkup(const AtomString& eventType)
 {
+    releaseAssertOrSetThreadUID();
     Locker locker { m_lock };
 
     for (unsigned i = 0; i < m_entries.size(); ++i) {

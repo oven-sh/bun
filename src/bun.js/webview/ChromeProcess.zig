@@ -108,6 +108,7 @@ fn findChrome(alloc: std.mem.Allocator, explicitPath: ?[*:0]const u8) !?[:0]cons
         "google-chrome",
         "chromium-browser",
         "chromium",
+        "brave-browser",
         "microsoft-edge",
         "chrome", // brew cask symlink, some CI setups
     };
@@ -128,6 +129,7 @@ fn findChrome(alloc: std.mem.Allocator, explicitPath: ?[*:0]const u8) !?[:0]cons
             "Google Chrome.app/Contents/MacOS/Google Chrome",
             "Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary",
             "Chromium.app/Contents/MacOS/Chromium",
+            "Brave Browser.app/Contents/MacOS/Brave Browser",
             "Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
         };
         // /Applications then ~/Applications — per-user installs (non-admin
@@ -150,6 +152,8 @@ fn findChrome(alloc: std.mem.Allocator, explicitPath: ?[*:0]const u8) !?[:0]cons
             "/usr/bin/chromium-browser",
             "/usr/bin/chromium",
             "/snap/bin/chromium",
+            "/usr/bin/brave-browser",
+            "/snap/bin/brave",
             "/usr/bin/microsoft-edge",
         };
         for (absolute) |c| {
@@ -365,6 +369,105 @@ fn spawn(vm: *jsc.VirtualMachine, userDataDir: ?[*:0]const u8, explicitPath: ?[*
 
 // Implemented in ChromeBackend.cpp. Rejects all pending CDP promises.
 extern fn Bun__Chrome__died(signo: i32) void;
+
+// --- DevToolsActivePort discovery -------------------------------------------
+// Chrome writes <port>\n/devtools/browser/<id> to DevToolsActivePort in its
+// profile dir when remote debugging is on (via --remote-debugging-port OR
+// the chrome://inspect toggle). Sync file read — instant answer, no network.
+// The new chrome://inspect toggle does NOT expose /json/version (404), so
+// this file is the ONLY discovery mechanism for that mode. chrome-devtools-
+// mcp does the same.
+
+/// Read DevToolsActivePort from Chrome's default profile directory.
+/// Chrome writes this when --remote-debugging-port is set OR when the
+/// user flips the "Allow remote debugging" toggle in chrome://inspect.
+/// Two lines: port, then path (/devtools/browser/<id>). Returns the
+/// full ws:// URL in out_buf, or null if the file doesn't exist /
+/// is malformed / the profile dir is non-standard.
+///
+fn readDevToolsActivePort(out_buf: *std.ArrayListUnmanaged(u8)) ?void {
+    // Default profile locations. Multiple Chrome channels (stable/beta/
+    // canary) have distinct dirs; try each. Chromium and Edge also
+    // respond to the same debugging protocol.
+    // Windows roots under %LOCALAPPDATA%; POSIX under $HOME. The subdir
+    // names come from each browser's installer — hardcoded, not
+    // discoverable. Edge uses the same CDP + file format as Chrome.
+    const root = if (comptime bun.Environment.isWindows)
+        bun.getenvZ("LOCALAPPDATA") orelse return null
+    else
+        bun.getenvZ("HOME") orelse return null;
+    const candidates: []const []const u8 = if (comptime bun.Environment.isMac) &.{
+        "Library/Application Support/Google/Chrome/DevToolsActivePort",
+        "Library/Application Support/Google/Chrome Canary/DevToolsActivePort",
+        "Library/Application Support/Google/Chrome Beta/DevToolsActivePort",
+        "Library/Application Support/Chromium/DevToolsActivePort",
+        "Library/Application Support/BraveSoftware/Brave-Browser/DevToolsActivePort",
+        "Library/Application Support/Microsoft Edge/DevToolsActivePort",
+    } else if (comptime bun.Environment.isLinux) &.{
+        ".config/google-chrome/DevToolsActivePort",
+        ".config/google-chrome-beta/DevToolsActivePort",
+        ".config/google-chrome-unstable/DevToolsActivePort",
+        ".config/chromium/DevToolsActivePort",
+        ".config/BraveSoftware/Brave-Browser/DevToolsActivePort",
+        ".config/microsoft-edge/DevToolsActivePort",
+    } else if (comptime bun.Environment.isWindows) &.{
+        // Windows installer layout: <vendor>\<channel>\User Data\
+        "Google\\Chrome\\User Data\\DevToolsActivePort",
+        "Google\\Chrome SxS\\User Data\\DevToolsActivePort", // Canary
+        "Google\\Chrome Beta\\User Data\\DevToolsActivePort",
+        "Chromium\\User Data\\DevToolsActivePort",
+        "BraveSoftware\\Brave-Browser\\User Data\\DevToolsActivePort",
+        "Microsoft\\Edge\\User Data\\DevToolsActivePort",
+    } else &.{};
+
+    var path_buf: bun.PathBuffer = undefined;
+    for (candidates) |rel| {
+        const path = bun.path.joinAbsStringBufZ(root, &path_buf, &.{rel}, .auto);
+        const contents = switch (bun.sys.File.readFrom(bun.FD.cwd(), path, bun.default_allocator)) {
+            .err => continue, // ENOENT or EACCES — try next
+            .result => |c| c,
+        };
+        defer bun.default_allocator.free(contents);
+
+        // Parse: line 1 = port, line 2 = path.
+        var lines = std.mem.splitScalar(u8, contents, '\n');
+        const port_str = std.mem.trim(u8, lines.next() orelse continue, " \r\t");
+        const ws_path = std.mem.trim(u8, lines.next() orelse continue, " \r\t");
+        // Validate port (catch stale/corrupt files).
+        const port = std.fmt.parseInt(u16, port_str, 10) catch continue;
+        if (port == 0 or ws_path.len == 0 or ws_path[0] != '/') continue;
+
+        out_buf.clearRetainingCapacity();
+        out_buf.writer(bun.default_allocator).print("ws://127.0.0.1:{d}{s}", .{ port, ws_path }) catch return null;
+        return;
+    }
+    return null;
+}
+
+/// Auto-discover a running Chrome's WebSocket debugger URL by reading
+/// DevToolsActivePort (instant, no network). Writes the ws:// URL into
+/// out_buf and returns its length, or 0 if no file found.
+///
+/// C++ calls this from the constructor when backend:"chrome" has no
+/// explicit path or url — if we get a URL back, connect to the existing
+/// Chrome; else spawn our own. Sync file read means the constructor
+/// stays synchronous and the decision is made before any I/O kicks off.
+///
+/// The file can be stale — Chrome crashed without cleaning up, or was
+/// restarted with a different browser-id. The subsequent WS connect
+/// fails with a close code; C++ falls back to spawn in that case
+/// (m_wasAutoDetected gate in wsOnClose). We don't pre-validate here
+/// because that'd need a network round-trip which defeats the file.
+pub export fn Bun__Chrome__autoDetect(out_buf: [*]u8, out_cap: usize) usize {
+    var buf: std.ArrayListUnmanaged(u8) = .empty;
+    defer buf.deinit(bun.default_allocator);
+    if (readDevToolsActivePort(&buf)) |_| {
+        if (buf.items.len > out_cap) return 0;
+        @memcpy(out_buf[0..buf.items.len], buf.items);
+        return buf.items.len;
+    }
+    return 0;
+}
 
 const log = bun.Output.scoped(.Chrome, .hidden);
 

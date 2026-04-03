@@ -7382,47 +7382,203 @@ declare module "bun" {
     | (string & {});
 
   /**
-   * Register an OS-level cron job that runs a JavaScript/TypeScript module on a schedule.
-   *
-   * The module must export a `default` object with a `scheduled(controller)` method,
-   * conforming to the [Cloudflare Workers Cron Triggers API](https://developers.cloudflare.com/workers/runtime-apis/handlers/scheduled/).
-   *
-   * On Linux, registers with [crontab](https://man7.org/linux/man-pages/man5/crontab.5.html).
-   * On macOS, registers with [launchd](https://developer.apple.com/library/archive/documentation/MacOSX/Conceptual/BPSystemStartup/Chapters/CreatingLaunchdJobs.html).
-   * On Windows, registers with [Task Scheduler](https://learn.microsoft.com/en-us/windows/win32/taskschd/task-scheduler-start-page).
-   *
-   * **Cron expression syntax** (5 fields: `minute hour day month weekday`):
-   *
-   * | Field | Values | Special |
-   * |-------|--------|---------|
-   * | Minute | `0-59` | `*` `,` `-` `/` |
-   * | Hour | `0-23` | `*` `,` `-` `/` |
-   * | Day of month | `1-31` | `*` `,` `-` `/` |
-   * | Month | `1-12` or `JAN-DEC` | `*` `,` `-` `/` |
-   * | Day of week | `0-7` or `SUN-SAT` | `*` `,` `-` `/` |
-   *
-   * - `0` and `7` both mean Sunday in the weekday field.
-   * - Month/day names are case-insensitive (`MON`, `Mon`, `Monday` all work).
-   * - Predefined nicknames: `@yearly`, `@annually`, `@monthly`, `@weekly`, `@daily`, `@midnight`, `@hourly`.
-   * - When both day-of-month and day-of-week are specified (neither is `*`),
-   *   the job runs when **either** field matches ([POSIX cron](https://pubs.opengroup.org/onlinepubs/9699919799/utilities/crontab.html) behavior).
-   *
-   * @param path - Path to the script to run (resolved relative to caller)
-   * @param schedule - Cron expression or predefined nickname (e.g. `"30 2 * * MON"`, `"@daily"`)
-   * @param title - Unique identifier for this cron job (alphanumeric, hyphens, underscores only)
-   * @returns Promise that resolves when the cron job is registered
-   * @throws If the expression is invalid, the title contains invalid characters, or registration fails
+   * A handle to an in-process cron job returned by {@link Bun.cron} when called with a callback.
    *
    * @example
    * ```ts
-   * // Run every Monday at 2:30 AM
-   * await Bun.cron("./worker.ts", "30 2 * * MON", "weekly-report");
-   *
-   * // Run daily at midnight
-   * await Bun.cron("./cleanup.ts", "@daily", "daily-cleanup");
+   * const job = Bun.cron("0 * * * *", async () => {
+   *   await cleanupTempFiles();
+   * });
+   * // Later:
+   * job.stop();
    * ```
    */
+  interface CronJob extends Disposable {
+    /** The cron expression string. */
+    readonly cron: string;
+    /** Cancel this cron job. The callback will not fire again. */
+    stop(): CronJob;
+    /** Keep the process alive while this job is scheduled (default). */
+    ref(): CronJob;
+    /** Allow the process to exit even while this job is scheduled. */
+    unref(): CronJob;
+  }
+
   const cron: {
+    /**
+     * Schedule an **in-process** cron job that calls a function on a schedule.
+     *
+     * Unlike the module-path overload, this runs the callback on the current event loop —
+     * the job dies with the process and does not survive reboots. State is shared between
+     * invocations (closures, module-level variables, database connections all persist).
+     *
+     * | | In-process (this overload) | OS-level (path + title) |
+     * |---|---|---|
+     * | Survives process exit | No | Yes |
+     * | Shared state between runs | Yes | No (fresh process each time) |
+     * | Windows expression limits | None | 48-trigger cap |
+     * | Return type | {@link CronJob} (sync) | `Promise<void>` |
+     *
+     * ### No-overlap guarantee
+     *
+     * The next fire time is computed only after the callback settles (including any returned
+     * Promise). If your callback takes 3 minutes and runs every minute, it fires at T+0 → runs
+     * until T+3 → next fire is the first minute boundary after T+3. Invocations never stack.
+     *
+     * ### Error semantics
+     *
+     * Matches `setTimeout`: a synchronous throw emits `uncaughtException`, a rejected Promise
+     * emits `unhandledRejection`. Without a listener, the process exits with code 1. The job
+     * reschedules itself after an error — it does not stop on first failure.
+     *
+     * ```ts
+     * process.on("unhandledRejection", (err) => log.error(err)); // keep going
+     * Bun.cron("* * * * *", async () => { await mightThrow(); });
+     * ```
+     *
+     * ### Cron expression syntax
+     *
+     * Five fields: `minute hour day-of-month month day-of-week`. Schedules are
+     * interpreted in **UTC** — `0 9 * * *` fires at 9:00 UTC, regardless of `TZ`.
+     *
+     * | Field | Values | Special chars |
+     * |-------|--------|---------------|
+     * | Minute | `0-59` | `*` `,` `-` `/` |
+     * | Hour | `0-23` | `*` `,` `-` `/` |
+     * | Day of month | `1-31` | `*` `,` `-` `/` |
+     * | Month | `1-12` or `JAN`-`DEC` | `*` `,` `-` `/` |
+     * | Day of week | `0-7` or `SUN`-`SAT` | `*` `,` `-` `/` |
+     *
+     * - `0` and `7` both mean Sunday.
+     * - Month and weekday names are case-insensitive (`MON`, `Monday`, `jan`, `January` all work).
+     * - Nicknames: `@yearly`, `@annually`, `@monthly`, `@weekly`, `@daily`, `@midnight`, `@hourly`.
+     * - When both day-of-month and day-of-week are restricted (neither is `*`), the job
+     *   fires when **either** matches — [POSIX cron](https://pubs.opengroup.org/onlinepubs/9699919799/utilities/crontab.html) OR semantics.
+     * - All expressions work on all platforms — there is no Windows trigger limit here.
+     *
+     * ### Lifecycle & `--hot`
+     *
+     * Under `bun --hot`, all in-process cron jobs are stopped immediately before the module
+     * graph is re-evaluated. Each `Bun.cron()` call still in your source then re-registers,
+     * so editing the schedule, editing the callback, or **deleting the line entirely** all
+     * take effect on save without leaking timers.
+     *
+     * By default the job keeps the process alive (like `setInterval`); call `.unref()` to let
+     * the process exit naturally when nothing else is pending.
+     *
+     * @param schedule Cron expression or nickname (e.g. `"*\/5 * * * *"`, `"@hourly"`).
+     * @param handler Function to call on each fire. May return a Promise — the next fire
+     *   is not scheduled until it settles.
+     * @returns A {@link CronJob} handle. Chainable: `.stop()`, `.ref()`, `.unref()` all
+     *   return the job itself.
+     * @throws Synchronously if `schedule` is invalid, or the expression has no future
+     *   occurrences (e.g. `"0 0 30 2 *"` — February 30th).
+     *
+     * @example
+     * ```ts
+     * // Hourly cleanup, keeps process alive
+     * Bun.cron("0 * * * *", async () => {
+     *   await cleanupTempFiles();
+     * });
+     *
+     * // Background healthcheck that doesn't block process exit
+     * Bun.cron("*\/30 * * * *", () => fetch("https://example.com/health")).unref();
+     *
+     * // Stop conditionally
+     * const job = Bun.cron("* * * * *", async () => {
+     *   if (await isDone()) job.stop();
+     * });
+     * ```
+     *
+     * @see {@link CronJob} for the returned handle.
+     * @see {@link Bun.cron.parse} to preview the next fire time.
+     */
+    (schedule: CronWithAutocomplete, handler: (this: CronJob) => unknown): CronJob;
+    /**
+     * Register an **OS-level** cron job that runs a JavaScript/TypeScript module on a schedule.
+     *
+     * Unlike the callback overload, this registers the job with the operating system's
+     * scheduler — the job survives process exit and persists across reboots. Bun spawns
+     * a fresh process for each invocation, so there is no shared state between runs.
+     *
+     * | Platform | Scheduler | Inspect with |
+     * |----------|-----------|--------------|
+     * | Linux    | [crontab](https://man7.org/linux/man-pages/man5/crontab.5.html) | `crontab -l` |
+     * | macOS    | [launchd](https://developer.apple.com/library/archive/documentation/MacOSX/Conceptual/BPSystemStartup/Chapters/CreatingLaunchdJobs.html) | `launchctl list` |
+     * | Windows  | [Task Scheduler](https://learn.microsoft.com/en-us/windows/win32/taskschd/task-scheduler-start-page) | `schtasks /query` |
+     *
+     * ### Module shape
+     *
+     * The target module must have a `default` export with a `scheduled(controller)` method,
+     * matching the [Cloudflare Workers Cron Triggers](https://developers.cloudflare.com/workers/runtime-apis/handlers/scheduled/)
+     * API. The controller exposes `cron` (the expression) and `scheduledTime` (ms since epoch).
+     *
+     * ```ts
+     * // worker.ts
+     * export default {
+     *   async scheduled(controller: Bun.CronController) {
+     *     console.log(`Fired: ${controller.cron} at ${new Date(controller.scheduledTime)}`);
+     *     await doWork();
+     *   },
+     * };
+     * ```
+     *
+     * ### Cron expression syntax
+     *
+     * Five fields: `minute hour day-of-month month day-of-week`.
+     *
+     * | Field | Values | Special chars |
+     * |-------|--------|---------------|
+     * | Minute | `0-59` | `*` `,` `-` `/` |
+     * | Hour | `0-23` | `*` `,` `-` `/` |
+     * | Day of month | `1-31` | `*` `,` `-` `/` |
+     * | Month | `1-12` or `JAN`-`DEC` | `*` `,` `-` `/` |
+     * | Day of week | `0-7` or `SUN`-`SAT` | `*` `,` `-` `/` |
+     *
+     * - `0` and `7` both mean Sunday.
+     * - Month and weekday names are case-insensitive (`MON`, `Monday`, `jan`, `January` all work).
+     * - Nicknames: `@yearly`, `@annually`, `@monthly`, `@weekly`, `@daily`, `@midnight`, `@hourly`.
+     * - When both day-of-month and day-of-week are restricted (neither is `*`), the job
+     *   fires when **either** matches — [POSIX cron](https://pubs.opengroup.org/onlinepubs/9699919799/utilities/crontab.html) OR semantics.
+     *
+     * ### Platform caveats
+     *
+     * - **Windows:** minute steps that don't evenly divide 60 (e.g. `*\/7`, `*\/11`) with
+     *   all hours active exceed Task Scheduler's 48-trigger limit and throw. Divisors
+     *   of 60 (`*\/5`, `*\/10`, `*\/15`, `*\/20`, `*\/30`) and all common patterns work.
+     * - **Windows headless/CI:** registration fails if the current user's SID can't be
+     *   resolved (typical under service accounts). Run as a regular user or create the
+     *   task manually with `schtasks /create /ru SYSTEM`.
+     * - **macOS:** stdout/stderr are written to `/tmp/bun.cron.<title>.{stdout,stderr}.log`.
+     *
+     * ### Idempotency & removal
+     *
+     * Registering with a title that already exists replaces the previous entry. Use
+     * {@link Bun.cron.remove} to unregister. The title is namespaced per user, so
+     * different users can register jobs with the same title independently.
+     *
+     * @param path Path to the module to run. Resolved relative to the calling file.
+     * @param schedule Cron expression or nickname (e.g. `"30 2 * * MON"`, `"@daily"`).
+     * @param title Unique identifier for this job. Alphanumeric, hyphens, and underscores only —
+     *   used directly in crontab markers, launchd service labels, and schtasks task names.
+     * @returns Promise that resolves once the OS scheduler has accepted the job.
+     * @throws If the cron expression is invalid, `title` contains illegal characters,
+     *   the expression exceeds Windows' trigger limit, or the underlying scheduler command fails
+     *   (the error message includes the scheduler's stderr output).
+     *
+     * @example
+     * ```ts
+     * // Register once (e.g. in a postinstall script or setup command)
+     * await Bun.cron("./jobs/weekly-report.ts", "30 2 * * MON", "weekly-report");
+     * await Bun.cron("./jobs/cleanup.ts", "@daily", "daily-cleanup");
+     *
+     * // Later, to unregister:
+     * await Bun.cron.remove("weekly-report");
+     * ```
+     *
+     * @see {@link Bun.cron.remove} to unregister.
+     * @see {@link Bun.cron.parse} to preview the next fire time.
+     */
     (path: string, schedule: CronWithAutocomplete, title: string): Promise<void>;
     /**
      * Remove a previously registered cron job by its title.
@@ -7437,7 +7593,7 @@ declare module "bun" {
      */
     remove(title: string): Promise<void>;
     /**
-     * Parse a cron expression and return the next matching UTC Date.
+     * Parse a cron expression and return the next matching `Date` in UTC.
      *
      * Supports the same syntax as {@link Bun.cron} — 5-field expressions, named
      * days/months, and predefined nicknames like `@daily`.
@@ -7448,7 +7604,7 @@ declare module "bun" {
      *
      * @param expression - A cron expression or nickname (e.g. `"0,15,30,45 * * * *"`, `"0 9 * * MON-FRI"`, `"@hourly"`)
      * @param relativeDate - Starting point for the search (defaults to `Date.now()`). Accepts a `Date` or milliseconds since epoch.
-     * @returns The next `Date` matching the expression (UTC), or `null` if no match exists within ~4 years (e.g. `"0 0 30 2 *"` — Feb 30 never occurs)
+     * @returns The next `Date` matching the expression in UTC, or `null` if no match exists within 8 years (e.g. `"0 0 30 2 *"` — Feb 30 never occurs)
      * @throws If the expression is invalid or `relativeDate` is `NaN`/`Infinity`
      *
      * @example
@@ -7460,9 +7616,6 @@ declare module "bun" {
      * const from = new Date();
      * const first = Bun.cron.parse("@hourly", from);
      * const second = first ? Bun.cron.parse("@hourly", first) : null;
-     *
-     * // With a specific starting point
-     * const nextJan1 = Bun.cron.parse("0 0 1 JAN *", Date.UTC(2025, 0, 1));
      * ```
      */
     parse(expression: CronWithAutocomplete, relativeDate?: Date | number): Date | null;
@@ -7980,7 +8133,53 @@ declare module "bun" {
       | "chrome"
       | {
           type: "chrome";
-          /** Path to the Chrome/Chromium executable. Overrides auto-detection. */
+          /**
+           * Connect to an existing Chrome's DevTools WebSocket directly.
+           * Get the URL from Chrome's `DevToolsActivePort` file
+           * (`<port>\n<path>`, in the profile directory) — the full URL
+           * is `ws://127.0.0.1:<port><path>`.
+           *
+           * Enable remote debugging in Chrome at
+           * `chrome://inspect/#remote-debugging`, or launch with
+           * `--remote-debugging-port=9222`. Both write
+           * `DevToolsActivePort`.
+           *
+           * **Note**: The `chrome://inspect` toggle shows an "Allow
+           * remote debugging?" dialog on **every** new connection.
+           *
+           * Mutually exclusive with `path`/`argv` — you're connecting
+           * to a Chrome that's already running, not spawning one.
+           */
+          url: string;
+        }
+      | {
+          type: "chrome";
+          /**
+           * Controls the connect-vs-spawn choice:
+           *
+           * - `false` — skip auto-detect, always spawn a fresh Chrome.
+           *   Executable path still auto-found unless `path` is set.
+           * - `undefined` (default) — **auto-detect**: if a
+           *   `DevToolsActivePort` file exists (Chrome with remote
+           *   debugging is running), connect to it; else spawn.
+           *
+           * Auto-detect falls back to spawn if the connect fails (stale
+           * file from a dead Chrome). The WebSocket auto-closes when
+           * the last `WebView` is closed. For unattended automation,
+           * pass `url: false`.
+           */
+          url?: false;
+          /**
+           * Path to the Chrome/Chromium executable. Overrides
+           * auto-detection and forces Bun to spawn a fresh Chrome
+           * subprocess (skipping the existing-Chrome auto-connect).
+           *
+           * **Auto-connect**: when neither `path` nor `url` is set, Bun
+           * checks Chrome's `DevToolsActivePort` file — if a Chrome with
+           * remote debugging is already running, Bun connects to it over
+           * WebSocket instead of spawning. Pass `path` (or `argv`) to
+           * force spawn-mode.
+           */
           path?: string;
           /**
            * Extra command-line arguments appended after the default flags.
@@ -8099,7 +8298,7 @@ declare module "bun" {
    *
    * @experimental
    */
-  class WebView {
+  class WebView extends EventTarget {
     /**
      * @throws on non-macOS platforms when `backend` is `"webkit"` (the
      * default). Pass `backend: "chrome"` for cross-platform support.
@@ -8175,9 +8374,110 @@ declare module "bun" {
     evaluate<T = unknown>(script: string): Promise<T>;
 
     /**
-     * Capture a PNG screenshot of the current viewport.
+     * Capture a screenshot of the current viewport.
+     *
+     * **`encoding` controls the return type:**
+     * - `"blob"` (default) — `Blob` with the right MIME type. WebKit:
+     *   zero-copy mmap-backed store. Composes with `Bun.write()`,
+     *   `new Response()`, `blob.bytes()`.
+     * - `"buffer"` — Node `Buffer`. WebKit: zero-copy (the same mmap'd
+     *   pages wrapped as an `ArrayBuffer` that munmap's on GC).
+     * - `"base64"` — base64-encoded `string`. Chrome: zero decode (CDP
+     *   returns base64 natively). Direct Kitty `t=d` transmission.
+     * - `"shmem"` — `{ name, size }`. The POSIX shm name is left linked;
+     *   caller owns `shm_unlink`. Kitty `t=s` transmission: pass `name`
+     *   as the payload, Kitty unlinks after reading. Not on Windows.
+     *
+     * @param options.format Image format. `"webp"` requires Chrome.
+     *   @default `"png"`
+     * @param options.quality Compression quality for JPEG/WebP, 0-100.
+     *   Ignored for PNG. @default `80`
+     * @param options.encoding Return-type encoding. @default `"blob"`
+     *
+     * @example Kitty graphics protocol, shared-memory transmission
+     * ```ts
+     * const { name, size } = await view.screenshot({ encoding: "shmem" });
+     * process.stdout.write(
+     *   `\x1b_Gf=100,t=s,a=T,S=${size};${btoa(name)}\x1b\\`
+     * );
+     * // Kitty shm_open's the name, reads ${size} PNG bytes, unlinks.
+     * ```
      */
-    screenshot(): Promise<Uint8Array>;
+    screenshot(options?: { encoding?: "blob"; format?: "png" | "jpeg" | "webp"; quality?: number }): Promise<Blob>;
+    screenshot(options: { encoding: "buffer"; format?: "png" | "jpeg" | "webp"; quality?: number }): Promise<Buffer>;
+    screenshot(options: { encoding: "base64"; format?: "png" | "jpeg" | "webp"; quality?: number }): Promise<string>;
+    screenshot(options: { encoding: "shmem"; format?: "png" | "jpeg" | "webp"; quality?: number }): Promise<{
+      /** POSIX shm name (pass to `shm_open(2)` or Kitty `t=s`). */
+      name: string;
+      /** Encoded image size in bytes. */
+      size: number;
+    }>;
+
+    /**
+     * Send a raw Chrome DevTools Protocol command. **Chrome backend only.**
+     *
+     * The command is scoped to this view's session (targets the current
+     * tab). Returns the decoded `result` object from the CDP response, or
+     * rejects with the `error.message` if Chrome reports a protocol error.
+     *
+     * Call `await view.navigate(...)` at least once before using `cdp()` —
+     * the first navigate sets up the CDP session.
+     *
+     * @param method Domain-qualified method name, e.g.
+     *   `"Runtime.evaluate"`, `"DOM.querySelector"`,
+     *   `"Emulation.setUserAgentOverride"`.
+     * @param params Command parameters. Must be JSON-serializable.
+     *
+     * @example
+     * ```ts
+     * const view = new Bun.WebView({ backend: "chrome" });
+     * await view.navigate("https://example.com");
+     *
+     * const { root } = await view.cdp("DOM.getDocument");
+     * const { nodeId } = await view.cdp("DOM.querySelector", {
+     *   nodeId: root.nodeId,
+     *   selector: "input#search",
+     * });
+     * await view.cdp("DOM.focus", { nodeId });
+     * ```
+     *
+     * @see https://chromedevtools.github.io/devtools-protocol/
+     */
+    cdp<T = unknown>(method: string, params?: Record<string, unknown>): Promise<T>;
+
+    /**
+     * Subscribe to CDP events. **Chrome backend only.**
+     *
+     * Event types are CDP method names directly —
+     * `"Network.responseReceived"`, `"Page.frameStartedLoading"`,
+     * `"DOM.documentUpdated"`, etc. The listener receives a
+     * `MessageEvent` with the CDP params as `event.data`.
+     *
+     * Enable the domain first with `cdp("Domain.enable")`, or Chrome
+     * won't send those events. Events without a registered listener
+     * are dropped before JSON parsing (no overhead for domains you
+     * enabled but don't fully listen to).
+     *
+     * @example
+     * ```ts
+     * await view.navigate("about:blank");
+     * await view.cdp("Network.enable");
+     * view.addEventListener("Network.responseReceived", e => {
+     *   console.log(e.data.response.status, e.data.response.url);
+     * });
+     * await view.navigate("https://example.com");
+     * ```
+     */
+    addEventListener<T = unknown>(
+      type: `${string}.${string}`,
+      listener: (event: MessageEvent<T>) => void,
+      options?: boolean | AddEventListenerOptions,
+    ): void;
+    addEventListener(
+      type: string,
+      listener: EventListenerOrEventListenerObject,
+      options?: boolean | AddEventListenerOptions,
+    ): void;
 
     /**
      * Click at the given viewport coordinates.

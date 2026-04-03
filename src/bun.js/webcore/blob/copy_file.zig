@@ -75,7 +75,7 @@ pub const CopyFile = struct {
             system_error.message = bun.String.static("Failed to copy file");
         }
 
-        const instance = system_error.toErrorInstance(this.globalThis);
+        const instance = system_error.toErrorInstanceWithAsyncStack(this.globalThis, promise);
         if (this.store) |store| {
             store.deref();
         }
@@ -1040,7 +1040,7 @@ pub const CopyFileWindows = struct {
     pub fn throw(this: *CopyFileWindows, err: bun.sys.Error) void {
         const globalThis = this.event_loop.global;
         const promise = this.promise.swap();
-        const err_instance = err.toJS(globalThis);
+        const err_instance = err.toJSWithAsyncStack(globalThis, promise);
 
         var event_loop = this.event_loop;
         event_loop.enter();

@@ -2,7 +2,8 @@
 
 #include "root.h"
 #include "BunClientData.h"
-#include <JavaScriptCore/JSDestructibleObject.h>
+#include "JSEventTarget.h"
+#include "WebViewEventTarget.h"
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/LazyClassStructure.h>
@@ -19,15 +20,60 @@ enum class WebViewBackend : uint8_t {
     Chrome, // Chrome DevTools Protocol via --remote-debugging-pipe
 };
 
-// IPC client. For WebKit, the actual WKWebView lives in the host subprocess;
-// this object holds a viewId and writes length-prefixed frames. For Chrome,
-// this holds a CDP sessionId and writes NUL-delimited JSON to the pipe.
-// Promises for pending ops live in the WriteBarrier slots — no Strong<>.
-class JSWebView final : public JSC::JSDestructibleObject {
+enum class ScreenshotFormat : uint8_t {
+    Png, // lossless, default.
+    Jpeg, // lossy, quality 0-100.
+    Webp, // lossy/lossless by quality. Chrome via CDP format:"webp";
+          // WebKit via CGImageDestination with public.webp UTI (macOS 11+).
+};
+
+// How the image bytes are handed back to JS. The child (WebKit host,
+// Chrome) always produces encoded image bytes; only the parent-side
+// post-receive handling differs.
+enum class ScreenshotEncoding : uint8_t {
+    Blob, // default. WebKit: mmap'd shm → Blob store (zero-copy).
+          // Chrome: base64-decode → Blob.
+    Buffer, // WebKit: mmap'd shm → ArrayBuffer with munmap destructor
+            // (zero-copy — same mapping as Blob, just wrapped as a
+            // JSUint8Array Buffer). Chrome: base64-decode → Buffer.
+    Base64, // WebKit: mmap → base64Encode → string, munmap.
+            // Chrome: return the CDP "data" field as-is (zero decode).
+    Shmem, // POSIX shm name + size. Parent does NOT shm_unlink —
+           // caller (or Kitty via its t=s transmission mode) owns
+           // cleanup. WebKit: the child already wrote here; just skip
+           // our unlink. Chrome: create a fresh shm, write decoded
+           // bytes, return name. Not supported on Windows.
+};
+
+inline const char* screenshotMimeType(ScreenshotFormat f)
+{
+    switch (f) {
+    case ScreenshotFormat::Png:
+        return "image/png";
+    case ScreenshotFormat::Jpeg:
+        return "image/jpeg";
+    case ScreenshotFormat::Webp:
+        return "image/webp";
+    }
+    return "image/png";
+}
+
+// IPC client + EventTarget wrapper. For WebKit, the actual WKWebView lives
+// in the host subprocess; this object holds a viewId and writes length-
+// prefixed frames. For Chrome, this holds a CDP sessionId and writes NUL-
+// delimited JSON to the pipe. Promises for pending ops live in the
+// WriteBarrier slots — no Strong<>.
+//
+// Inherits JSEventTarget so addEventListener/removeEventListener/
+// dispatchEvent work. The EventTarget impl (m_wrapped) is a thin
+// WebViewEventTarget that holds just the listener map — all WebView state
+// stays on this wrapper. The Ref<EventTarget> keeps the impl alive; the
+// impl's Weak<JSDOMObject> points back here (set by setWrapper in create).
+class JSWebView final : public WebCore::JSEventTarget {
 public:
-    using Base = JSC::JSDestructibleObject;
+    using Base = WebCore::JSEventTarget;
+    using DOMWrapped = WebViewEventTarget;
     static constexpr unsigned StructureFlags = Base::StructureFlags;
-    static constexpr JSC::DestructionMode needsDestruction = JSC::NeedsDestruction;
 
     WebViewBackend m_backend = WebViewBackend::WebKit;
 
@@ -61,6 +107,13 @@ public:
     // goBack/goForward stash — PageGetNavigationHistory chains into
     // navigateToHistoryEntry with entries[currentIndex + delta].id.
     int8_t m_chromeHistoryDelta = 0;
+    // Screenshot format/encoding stash — set by screenshot() before
+    // dispatch, read by both backends' response handlers. CDP/IPC payloads
+    // don't echo these; stashing here is simpler than threading them
+    // through Pending/viewId routing. format → MIME type on the Blob;
+    // encoding → how the bytes are wrapped (Blob/Buffer/base64/shmem).
+    ScreenshotFormat m_screenshotFormat = ScreenshotFormat::Png;
+    ScreenshotEncoding m_screenshotEncoding = ScreenshotEncoding::Blob;
 
     JSC::WriteBarrier<JSC::JSObject> m_onNavigated;
     JSC::WriteBarrier<JSC::JSObject> m_onNavigationFailed;
@@ -81,14 +134,19 @@ public:
     JSC::WriteBarrier<JSC::JSPromise> m_pendingScreenshot;
     // Resize/Back/Forward/Reload/Close — one at a time, the child is fast.
     JSC::WriteBarrier<JSC::JSPromise> m_pendingMisc;
+    // Chrome-only: raw view.cdp(method, params) escape hatch. Separate
+    // slot so it doesn't block resize/goBack. Still one raw op at a time.
+    JSC::WriteBarrier<JSC::JSPromise> m_pendingCdp;
     // Read by isReachableFromOpaqueRoots on the GC thread — the barriers
     // themselves are not safe to read there. Inc BEFORE slot.set(), dec
     // AFTER slot.clear(), so GC never sees a set slot with count==0.
     std::atomic<uint32_t> m_pendingActivityCount { 0 };
 
-    static JSWebView* create(JSC::VM&, JSC::Structure*);
+    static JSWebView* create(JSC::Structure*, WebCore::JSDOMGlobalObject*, Ref<WebViewEventTarget>&&);
     static void destroy(JSC::JSCell*);
     ~JSWebView();
+
+    WebViewEventTarget& wrapped() const { return static_cast<WebViewEventTarget&>(Base::wrapped()); }
 
     // Instance-level operations. Called from JSWebViewPrototype.cpp after arg
     // validation. Each branches on m_backend: WebKit path encodes binary
@@ -101,7 +159,11 @@ public:
     // (constructor already threw).
     JSC::JSPromise* navigate(JSC::JSGlobalObject*, const WTF::String& url);
     JSC::JSPromise* evaluate(JSC::JSGlobalObject*, const WTF::String& script);
-    JSC::JSPromise* screenshot(JSC::JSGlobalObject*);
+    JSC::JSPromise* screenshot(JSC::JSGlobalObject*, ScreenshotFormat, uint8_t quality);
+    // Chrome-only. Raw CDP escape hatch — method is "Domain.method",
+    // paramsJson is JSON.stringify(params) or "{}". Returns the decoded
+    // result object from the CDP response.
+    JSC::JSPromise* cdp(JSC::JSGlobalObject*, const WTF::String& method, const WTF::String& paramsJson);
     JSC::JSPromise* click(JSC::JSGlobalObject*, float x, float y, uint8_t button, uint8_t modifiers, uint8_t clickCount);
     JSC::JSPromise* clickSelector(JSC::JSGlobalObject*, const WTF::String& selector, uint32_t timeout, uint8_t button, uint8_t modifiers, uint8_t clickCount);
     JSC::JSPromise* type(JSC::JSGlobalObject*, const WTF::String& text);
@@ -128,10 +190,13 @@ public:
     // auto-detection; extraArgv appends to the built-in flags. Works on
     // all platforms where Chrome runs (not just Darwin). Returns nullptr
     // if Chrome spawn failed.
+    // wsUrl: connect to an existing Chrome's WebSocket debugger endpoint
+    // instead of spawning. Empty → spawn with --remote-debugging-pipe.
     static JSWebView* createChrome(JSC::JSGlobalObject*, JSC::Structure*,
         uint32_t width, uint32_t height, const WTF::String& userDataDir,
         const WTF::String& path, const WTF::Vector<WTF::String>& extraArgv,
-        bool stdoutInherit, bool stderrInherit);
+        bool stdoutInherit, bool stderrInherit, const WTF::String& wsUrl = {},
+        bool skipAutoDetect = false);
 
     void finishCreation(JSC::VM&);
     static JSC::Structure* createStructure(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue prototype);
@@ -153,8 +218,14 @@ public:
     }
 
 private:
-    JSWebView(JSC::VM&, JSC::Structure*);
+    JSWebView(JSC::Structure*, WebCore::JSDOMGlobalObject&, Ref<WebViewEventTarget>&&);
 };
+
+// toJS overload for WebViewEventTarget. EventTargetFactory dispatches here
+// when event.target (or event.currentTarget) needs to produce a JS wrapper
+// for a WebViewEventTarget impl. The impl's ScriptWrappable holds a
+// Weak<JSDOMObject> set by create() → wrapper().
+JSC::JSValue toJS(JSC::JSGlobalObject*, WebCore::JSDOMGlobalObject*, WebViewEventTarget&);
 
 void setupJSWebViewClassStructure(JSC::LazyClassStructure::Initializer&);
 

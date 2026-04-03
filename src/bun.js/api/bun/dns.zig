@@ -2719,7 +2719,7 @@ pub const Resolver = struct {
         var options = GetAddrInfo.Options{};
         var port: u16 = 0;
 
-        if (arguments.len > 1 and arguments.ptr[1].isCell()) {
+        if (arguments.len > 1 and arguments.ptr[1].isObject()) {
             const optionsObject = arguments.ptr[1];
 
             if (try optionsObject.getTruthy(globalThis, "port")) |port_value| {

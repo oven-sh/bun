@@ -611,10 +611,8 @@ pub fn notifyNeedTermination(this: *WebWorker) callconv(.c) void {
 
     if (this.vm) |vm| {
         vm.eventLoop().wakeup();
-        // TODO(@190n) notifyNeedTermination
     }
 
-    // TODO(@190n) delete
     this.setRefInternal(false);
 }
 
@@ -643,6 +641,12 @@ pub fn exitAndDeinit(this: *WebWorker) noreturn {
     }
     var arena = this.arena;
 
+    // Unref the parent event loop before dispatching exit. The parent thread's
+    // dispatchExit task will call destroy() to free this struct, so we must not
+    // call deinit() here -- that would free the struct while the parent thread
+    // may still access it via pending message event tasks.
+    this.parent_poll_ref.unrefConcurrently(this.parent);
+
     WebWorker__dispatchExit(globalObject, cpp_worker, exit_code);
     if (loop) |loop_| {
         loop_.internal_loop_data.jsc_vm = null;
@@ -658,7 +662,10 @@ pub fn exitAndDeinit(this: *WebWorker) noreturn {
         bun.windows.libuv.Loop.shutdown();
     }
 
-    this.deinit();
+    // Do NOT call this.deinit() here. The parent thread will call destroy()
+    // from the dispatchExit task, after all earlier-posted tasks (including
+    // message events) have been processed. This prevents use-after-free when
+    // terminate() is called from a message handler.
 
     if (vm_to_deinit) |vm| {
         vm.deinit(); // NOTE: deinit here isn't implemented, so freeing workers will leak the vm.
@@ -671,10 +678,24 @@ pub fn exitAndDeinit(this: *WebWorker) noreturn {
     bun.exitThread();
 }
 
+/// Called from the parent thread's dispatchExit task to free the WebWorker struct.
+/// This runs after all earlier-posted tasks (including message events) in FIFO order,
+/// preventing use-after-free when terminate() is called from a message handler.
+pub fn destroy(this: *WebWorker) callconv(.c) void {
+    log("[{d}] destroy", .{this.execution_context_id});
+    bun.default_allocator.free(this.unresolved_specifier);
+    for (this.preloads) |preload| {
+        bun.default_allocator.free(preload);
+    }
+    bun.default_allocator.free(this.preloads);
+    bun.default_allocator.destroy(this);
+}
+
 comptime {
     @export(&create, .{ .name = "WebWorker__create" });
     @export(&notifyNeedTermination, .{ .name = "WebWorker__notifyNeedTermination" });
     @export(&setRef, .{ .name = "WebWorker__setRef" });
+    @export(&destroy, .{ .name = "WebWorker__destroy" });
     _ = WebWorker__updatePtr;
 }
 

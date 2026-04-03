@@ -71,6 +71,8 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(Worker);
 
 extern "C" void WebWorker__notifyNeedTermination(
     void* worker);
+extern "C" void WebWorker__destroy(
+    void* worker);
 
 static Lock allWorkersLock;
 static HashMap<ScriptExecutionContextIdentifier, Worker*>& allWorkers() WTF_REQUIRES_LOCK(allWorkersLock)
@@ -133,7 +135,8 @@ extern "C" void WebWorker__setRef(
 
 void Worker::setKeepAlive(bool keepAlive)
 {
-    WebWorker__setRef(impl_, keepAlive);
+    if (impl_)
+        WebWorker__setRef(impl_, keepAlive);
 }
 
 bool Worker::updatePtr()
@@ -261,9 +264,9 @@ ExceptionOr<void> Worker::postMessage(JSC::JSGlobalObject& state, JSC::JSValue m
 
 void Worker::terminate()
 {
-    // m_contextProxy.terminateWorkerGlobalScope();
     m_terminationFlags.fetch_or(TerminateRequestedFlag);
-    WebWorker__notifyNeedTermination(impl_);
+    if (impl_)
+        WebWorker__notifyNeedTermination(impl_);
 }
 
 // const char* Worker::activeDOMObjectName() const
@@ -444,6 +447,15 @@ void Worker::dispatchExit(int32_t exitCode)
             protectedThis->dispatchCloseEvent(event);
         }
         protectedThis->m_terminationFlags.fetch_or(TerminatedFlag);
+
+        // Destroy the Zig WebWorker struct on the parent thread.
+        // This runs after all earlier-posted tasks (including message events)
+        // in FIFO order, preventing use-after-free when terminate() is called
+        // from a message handler.
+        if (protectedThis->impl_) {
+            WebWorker__destroy(protectedThis->impl_);
+            protectedThis->impl_ = nullptr;
+        }
     });
 }
 

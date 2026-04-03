@@ -1720,8 +1720,8 @@ pub const PackageManifest = struct {
         // If it was only deprecated, we don't affect age stability — but we
         // still need to surface it as "the thing we skipped".
         var prev_package_blocked_from_age: ?*const PackageVersion = if (dist_too_recent) dist_result.package else null;
-        const newest_filtered: ?Semver.Version = if (dist_too_recent) dist_result.version else null;
-        const newest_deprecated: ?Semver.Version = if (dist_deprecated) dist_result.version else null;
+        var newest_filtered: ?Semver.Version = if (dist_too_recent) dist_result.version else null;
+        var newest_deprecated: ?Semver.Version = if (dist_deprecated) dist_result.version else null;
 
         var i: usize = versions.len;
         while (i > 0) : (i -= 1) {
@@ -1739,11 +1739,13 @@ pub const PackageManifest = struct {
             }
 
             if (block_deprecated and isPackageVersionDeprecated(package)) {
+                if (newest_deprecated == null) newest_deprecated = version;
                 continue;
             }
 
             if (min_age_ms) |age| {
                 if (isPackageVersionTooRecent(package, age)) {
+                    if (newest_filtered == null) newest_filtered = version;
                     prev_package_blocked_from_age = package;
                     continue;
                 }
@@ -1791,7 +1793,10 @@ pub const PackageManifest = struct {
             } };
         }
 
-        if (dist_too_recent) {
+        // Report the filter that actually blocked the last hope of a fallback:
+        // if any non-deprecated candidate was rejected by age, attribute the
+        // failure to age; otherwise it was all deprecation.
+        if (newest_filtered != null) {
             return .{ .err = .all_versions_too_recent };
         }
         return .{ .err = .all_versions_deprecated };

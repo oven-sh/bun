@@ -8,7 +8,6 @@ if (isDockerEnabled()) {
     "issue #28799: MySQL adapter should not leak memory with dynamic interpolation",
     {
       image: "mysql_plain",
-      concurrent: true,
     },
     container => {
       let sql: SQL;

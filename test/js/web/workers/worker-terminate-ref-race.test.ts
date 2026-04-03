@@ -14,12 +14,15 @@ import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 // with ASAN (or a debug build that ships ASAN). On release lanes without
 // sanitizers the freed memory is not poisoned, the test cannot catch the bug,
 // and would spuriously pass without the fix.
-test.skipIf(!isDebug && !isASAN)("terminate + ref/unref on exiting worker does not UAF", { timeout: 60_000 }, async () => {
-  // The fixture creates many workers that stay alive (setInterval), terminates
-  // them, yields to let their exit paths run on worker threads, then calls
-  // ref()/unref()/terminate() again. The yields make the race window wide
-  // enough that ASAN reliably catches the use-after-poison without the fix.
-  const fixture = /* js */ `
+test.skipIf(!isDebug && !isASAN)(
+  "terminate + ref/unref on exiting worker does not UAF",
+  { timeout: 60_000 },
+  async () => {
+    // The fixture creates many workers that stay alive (setInterval), terminates
+    // them, yields to let their exit paths run on worker threads, then calls
+    // ref()/unref()/terminate() again. The yields make the race window wide
+    // enough that ASAN reliably catches the use-after-poison without the fix.
+    const fixture = /* js */ `
     const code = "setInterval(() => {}, 1000); onmessage=()=>{};";
     const url = "data:application/javascript," + encodeURIComponent(code);
     for (let round = 0; round < 20; round++) {
@@ -38,19 +41,20 @@ test.skipIf(!isDebug && !isASAN)("terminate + ref/unref on exiting worker does n
     console.log("OK");
   `;
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", fixture],
-    env: bunEnv,
-    stderr: "pipe",
-    stdout: "pipe",
-  });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  // ASAN writes "AddressSanitizer: use-after-poison" / "SUMMARY: AddressSanitizer"
-  // to stderr. The JSC wasm-fault-handler warning is unrelated and harmless.
-  expect(stderr).not.toContain("AddressSanitizer");
-  expect(stderr).not.toContain("use-after-poison");
-  expect(stdout.trim()).toBe("OK");
-  expect(exitCode).toBe(0);
-});
+    // ASAN writes "AddressSanitizer: use-after-poison" / "SUMMARY: AddressSanitizer"
+    // to stderr. The JSC wasm-fault-handler warning is unrelated and harmless.
+    expect(stderr).not.toContain("AddressSanitizer");
+    expect(stderr).not.toContain("use-after-poison");
+    expect(stdout.trim()).toBe("OK");
+    expect(exitCode).toBe(0);
+  },
+);

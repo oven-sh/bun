@@ -1205,3 +1205,16 @@ it("handles exceptions during empty stream creation", () => {
     throw new Error("not stack overflow");
   }).toThrow("not stack overflow");
 });
+
+it("does not crash when buffering a Response body stream whose underlying source has been consumed", async () => {
+  // Regression: calling text()/bytes()/etc. on a ReadableStream whose
+  // underlying Blob source has been detached must not trigger an assertion.
+  const resp = new Response("Hello World 58");
+  const body = resp.body;
+  expect(await body.text()).toBe("Hello World 58");
+  for (const method of ["text", "bytes", "arrayBuffer", "blob", "json"]) {
+    try {
+      await body[method]();
+    } catch {}
+  }
+});

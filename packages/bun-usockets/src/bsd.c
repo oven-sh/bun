@@ -1071,7 +1071,13 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket(const char *host, int port, int
 #include <sys/stat.h>
 #include <stddef.h>
 
-static LIBUS_SOCKET_DESCRIPTOR bsd_create_unix_socket_address(const char *path, size_t path_len, int* dirfd_linux_workaround_for_unix_path_len, struct sockaddr_un *server_address, size_t* addrlen) {
+#if defined(__APPLE__)
+// Per-thread chdir. Not declared in any public header, but a stable syscall since macOS 10.5.
+// Passing -1 clears the per-thread cwd override.
+extern int __pthread_fchdir(int fd);
+#endif
+
+static LIBUS_SOCKET_DESCRIPTOR bsd_create_unix_socket_address(const char *path, size_t path_len, int* dirfd_workaround_for_unix_path_len, struct sockaddr_un *server_address, size_t* addrlen) {
     memset(server_address, 0, sizeof(struct sockaddr_un));
     server_address->sun_family = AF_UNIX;
 
@@ -1125,7 +1131,7 @@ static LIBUS_SOCKET_DESCRIPTOR bsd_create_unix_socket_address(const char *path, 
                 return LIBUS_SOCKET_ERROR;
             }
 
-            *dirfd_linux_workaround_for_unix_path_len = socket_dir_fd;
+            *dirfd_workaround_for_unix_path_len = socket_dir_fd;
             return 0;
         } else if (path_len < sizeof(server_address->sun_path)) {
             memcpy(server_address->sun_path, path, path_len);
@@ -1135,6 +1141,45 @@ static LIBUS_SOCKET_DESCRIPTOR bsd_create_unix_socket_address(const char *path, 
                 *addrlen = offsetof(struct sockaddr_un, sun_path) + path_len;
             }
 
+            return 0;
+        }
+    #endif
+
+    #if defined(__APPLE__)
+        // sun_path is 104 bytes on macOS. /dev/fd/N/ is not traversable like /proc/self/fd/N/ on Linux,
+        // so instead we open the parent directory and let the caller __pthread_fchdir() into it and
+        // bind/connect with a relative basename.
+        if (path_len >= sizeof(server_address->sun_path)) {
+            size_t dirname_len = path_len;
+            while (dirname_len > 1 && path[dirname_len - 1] != '/') {
+                dirname_len--;
+            }
+
+            size_t basename_len = path_len - dirname_len;
+            if (dirname_len < 2 || basename_len + 1 >= sizeof(server_address->sun_path)) {
+                errno = ENAMETOOLONG;
+                return LIBUS_SOCKET_ERROR;
+            }
+
+            char dirname_buf[4096];
+            if (dirname_len + 1 > sizeof(dirname_buf)) {
+                errno = ENAMETOOLONG;
+                return LIBUS_SOCKET_ERROR;
+            }
+
+            memcpy(dirname_buf, path, dirname_len);
+            dirname_buf[dirname_len] = 0;
+
+            int socket_dir_fd = open(dirname_buf, O_CLOEXEC | O_RDONLY | O_DIRECTORY);
+            if (socket_dir_fd == -1) {
+                errno = ENAMETOOLONG;
+                return LIBUS_SOCKET_ERROR;
+            }
+
+            memcpy(server_address->sun_path, path + dirname_len, basename_len);
+            server_address->sun_path[basename_len] = 0;
+
+            *dirfd_workaround_for_unix_path_len = socket_dir_fd;
             return 0;
         }
     #endif
@@ -1186,18 +1231,35 @@ static LIBUS_SOCKET_DESCRIPTOR internal_bsd_create_listen_socket_unix(const char
 }
 
 LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket_unix(const char *path, size_t len, int options, int* error) {
-    int dirfd_linux_workaround_for_unix_path_len = -1;
+    int dirfd_workaround_for_unix_path_len = -1;
     struct sockaddr_un server_address;
     size_t addrlen = 0;
-    if (bsd_create_unix_socket_address(path, len, &dirfd_linux_workaround_for_unix_path_len, &server_address, &addrlen)) {
+    if (bsd_create_unix_socket_address(path, len, &dirfd_workaround_for_unix_path_len, &server_address, &addrlen)) {
         return LIBUS_SOCKET_ERROR;
     }
 
+#if defined(__APPLE__)
+    if (dirfd_workaround_for_unix_path_len != -1) {
+        if (__pthread_fchdir(dirfd_workaround_for_unix_path_len) != 0) {
+            close(dirfd_workaround_for_unix_path_len);
+            errno = ENAMETOOLONG;
+            return LIBUS_SOCKET_ERROR;
+        }
+    }
+#endif
+
     LIBUS_SOCKET_DESCRIPTOR listenFd = internal_bsd_create_listen_socket_unix(path, options, &server_address, addrlen, error);
 
-#if defined(__linux__)
-    if (dirfd_linux_workaround_for_unix_path_len != -1) {
-        close(dirfd_linux_workaround_for_unix_path_len);
+#if defined(__APPLE__)
+    if (dirfd_workaround_for_unix_path_len != -1) {
+        int saved_errno = errno;
+        __pthread_fchdir(-1);
+        close(dirfd_workaround_for_unix_path_len);
+        errno = saved_errno;
+    }
+#elif defined(__linux__)
+    if (dirfd_workaround_for_unix_path_len != -1) {
+        close(dirfd_workaround_for_unix_path_len);
     }
 #endif
 
@@ -1545,18 +1607,35 @@ static LIBUS_SOCKET_DESCRIPTOR internal_bsd_create_connect_socket_unix(const cha
 LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket_unix(const char *server_path, size_t len, int options) {
     struct sockaddr_un server_address;
     size_t addrlen = 0;
-    int dirfd_linux_workaround_for_unix_path_len = -1;
-    if (bsd_create_unix_socket_address(server_path, len, &dirfd_linux_workaround_for_unix_path_len, &server_address, &addrlen)) {
+    int dirfd_workaround_for_unix_path_len = -1;
+    if (bsd_create_unix_socket_address(server_path, len, &dirfd_workaround_for_unix_path_len, &server_address, &addrlen)) {
         return LIBUS_SOCKET_ERROR;
     }
 
+#if defined(__APPLE__)
+    if (dirfd_workaround_for_unix_path_len != -1) {
+        if (__pthread_fchdir(dirfd_workaround_for_unix_path_len) != 0) {
+            close(dirfd_workaround_for_unix_path_len);
+            errno = ENAMETOOLONG;
+            return LIBUS_SOCKET_ERROR;
+        }
+    }
+#endif
+
     LIBUS_SOCKET_DESCRIPTOR fd = internal_bsd_create_connect_socket_unix(server_path, len, options, &server_address, addrlen);
 
-    #if defined(__linux__)
-    if (dirfd_linux_workaround_for_unix_path_len != -1) {
-        close(dirfd_linux_workaround_for_unix_path_len);
+#if defined(__APPLE__)
+    if (dirfd_workaround_for_unix_path_len != -1) {
+        int saved_errno = errno;
+        __pthread_fchdir(-1);
+        close(dirfd_workaround_for_unix_path_len);
+        errno = saved_errno;
     }
-    #endif
+#elif defined(__linux__)
+    if (dirfd_workaround_for_unix_path_len != -1) {
+        close(dirfd_workaround_for_unix_path_len);
+    }
+#endif
 
     return fd;
 }

@@ -151,6 +151,11 @@ const SocketHandlers: SocketHandler = {
     detachSocket(self);
     SocketEmitEndNT(self, err);
     self.data = null;
+    // Ensure the socket transitions to destroyed state and fires the 'close'
+    // event. Without this, a paused or unpiped readable prevents autoDestroy
+    // from running, leaving the socket as a zombie (_handle=null but
+    // destroyed=false) which causes server.close() to hang.
+    if (!self.destroyed) process.nextTick(destroyNT, self);
   },
   data(socket, buffer) {
     const { data: self } = socket;
@@ -320,6 +325,11 @@ const ServerHandlers: SocketHandler<NetSocket> = {
         SocketEmitEndNT(data, err);
         data.data = null;
         socket[owner_symbol] = null;
+        // Ensure the socket transitions to destroyed state and fires the 'close'
+        // event. Without this, a paused or unpiped readable prevents autoDestroy
+        // from running, leaving the socket as a zombie (_handle=null but
+        // destroyed=false) which causes server.close() to hang.
+        if (!data.destroyed) process.nextTick(destroyNT, data);
       }
     }
   },
@@ -542,11 +552,15 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     if (err) $debug(err);
     if (self[kclosed]) return;
     self[kclosed] = true;
-    // TODO: should we be doing something with err?
     self[kended] = true;
     if (!self.allowHalfOpen) self.write = writeAfterFIN;
     self.push(null);
     self.read(0);
+    // Ensure the socket transitions to destroyed state and fires the 'close'
+    // event. Without this, a paused or unpiped readable prevents autoDestroy
+    // from running, leaving the socket as a zombie (_handle=null but
+    // destroyed=false) which causes server.close() to hang.
+    if (!self.destroyed) process.nextTick(destroyNT, self);
   },
   handshake(socket, success, verifyError) {
     $debug("Bun.Socket handshake");

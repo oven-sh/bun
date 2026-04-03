@@ -28,7 +28,7 @@ test.skipIf(isWindows)("bunx --package=<scp-url> does not mangle the git URL", a
     env,
     cwd: join(String(dir), "cwd"),
     stderr: "pipe",
-    stdout: "pipe",
+    stdout: "ignore",
   });
 
   const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);

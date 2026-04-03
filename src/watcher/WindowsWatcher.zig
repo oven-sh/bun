@@ -195,16 +195,15 @@ pub fn next(this: *WindowsWatcher, timeout: Timeout) bun.sys.Maybe(?EventIterato
 pub fn stop(this: *WindowsWatcher) void {
     // Idempotent: `Watcher.stopAllForExit` may call this from the main thread
     // while the watcher thread's own error-path also calls `platform.stop`
-    // after its IOCP wait unblocks. A double `CloseHandle` would assert-fail
-    // in safe builds and close an unrelated reused handle in fast builds.
-    if (this.watcher.dirHandle != w.INVALID_HANDLE_VALUE) {
-        w.CloseHandle(this.watcher.dirHandle);
-        this.watcher.dirHandle = w.INVALID_HANDLE_VALUE;
-    }
-    if (this.iocp != w.INVALID_HANDLE_VALUE) {
-        w.CloseHandle(this.iocp);
-        this.iocp = w.INVALID_HANDLE_VALUE;
-    }
+    // after its IOCP wait unblocks. Take the handle into a local and null
+    // the field *before* calling CloseHandle so a racing caller that sees
+    // INVALID_HANDLE_VALUE can't also try to close it.
+    const dir_handle = this.watcher.dirHandle;
+    this.watcher.dirHandle = w.INVALID_HANDLE_VALUE;
+    if (dir_handle != w.INVALID_HANDLE_VALUE) w.CloseHandle(dir_handle);
+    const iocp = this.iocp;
+    this.iocp = w.INVALID_HANDLE_VALUE;
+    if (iocp != w.INVALID_HANDLE_VALUE) w.CloseHandle(iocp);
 }
 
 pub fn watchLoopCycle(this: *bun.Watcher) bun.sys.Maybe(void) {

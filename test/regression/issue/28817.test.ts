@@ -11,11 +11,7 @@ async function run(nodeOptions: string, script: string) {
     stderr: "pipe",
     stdout: "pipe",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout, stderr, exitCode };
 }
 
@@ -71,39 +67,27 @@ describe("NODE_OPTIONS", () => {
   test("positional args cannot inject scripts via NODE_OPTIONS", async () => {
     // Even though the user put a positional-looking arg in, the entrypoint
     // should still be the -e script, not the injected positional.
-    const { stdout, exitCode } = await run(
-      "/etc/passwd",
-      'console.log("safe");',
-    );
+    const { stdout, exitCode } = await run("/etc/passwd", 'console.log("safe");');
     expect(stdout.trim()).toBe("safe");
     expect(exitCode).toBe(0);
   });
 
   test("--eval is not injectable via NODE_OPTIONS", async () => {
     // --eval is not in the allowlist, so this must not execute.
-    const { stdout, exitCode } = await run(
-      "--eval console.log('HIJACKED')",
-      'console.log("original");',
-    );
+    const { stdout, exitCode } = await run("--eval console.log('HIJACKED')", 'console.log("original");');
     expect(stdout).not.toContain("HIJACKED");
     expect(stdout.trim()).toBe("original");
     expect(exitCode).toBe(0);
   });
 
   test("--expose-gc exposes gc()", async () => {
-    const { stdout, exitCode } = await run(
-      "--expose-gc",
-      'console.log(typeof gc);',
-    );
+    const { stdout, exitCode } = await run("--expose-gc", "console.log(typeof gc);");
     expect(stdout.trim()).toBe("function");
     expect(exitCode).toBe(0);
   });
 
   test("--title sets process.title", async () => {
-    const { stdout, exitCode } = await run(
-      "--title=my-bun-app",
-      'console.log(process.title);',
-    );
+    const { stdout, exitCode } = await run("--title=my-bun-app", "console.log(process.title);");
     expect(stdout.trim()).toBe("my-bun-app");
     expect(exitCode).toBe(0);
   });

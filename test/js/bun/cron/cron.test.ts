@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isMacOS, isWindows, tempDir } from "harness";
 import { existsSync, readFileSync, unlinkSync, watch, writeFileSync } from "node:fs";
 import { basename } from "node:path";

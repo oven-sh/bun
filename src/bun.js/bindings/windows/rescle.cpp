@@ -371,8 +371,9 @@ void VersionInfo::DeserializeVarFileInfo(const unsigned char* offset, std::vecto
     const auto translatePairs = GetChildrenData(offset);
 
     const auto top = reinterpret_cast<const DWORD* const>(translatePairs.first);
-    for (auto pTranslatePair = top; pTranslatePair < top + translatePairs.second; pTranslatePair += sizeof(DWORD)) {
-        auto codePageLangIdPair = *pTranslatePair;
+    const auto translateCount = translatePairs.second / sizeof(DWORD);
+    for (size_t i = 0; i < translateCount; ++i) {
+        auto codePageLangIdPair = top[i];
         Translate translate;
         translate.wLanguage = codePageLangIdPair;
         translate.wCodePage = codePageLangIdPair >> 16;

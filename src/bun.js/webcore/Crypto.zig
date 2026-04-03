@@ -130,7 +130,7 @@ pub fn Bun__randomUUIDv7_(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallF
     };
 
     const timestamp: u64 = brk: {
-        const timestamp_value: jsc.JSValue = if (!encoding_value.isUndefined() and arguments.len > 1)
+        const timestamp_value: jsc.JSValue = if (arguments.len > 1)
             arguments[1]
         else if (arguments.len == 1 and encoding_value.isUndefined())
             arguments[0]

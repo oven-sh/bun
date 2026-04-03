@@ -575,9 +575,41 @@ pub const StatxField = enum(comptime_int) {
 // Linux Kernel v4.11
 pub var supports_statx_on_linux = std.atomic.Value(bool).init(true);
 
-/// Memoize whether /proc/self/fd is usable for getFdPath.
-/// 0 = untested, 1 = use /dev/fd (FreeBSD Linuxulator / no /proc).
-pub var use_devfd_fallback = std.atomic.Value(u8).init(0);
+const LinuxKernel = enum(u8) {
+    unknown,
+    linux,
+    /// FreeBSD Linuxulator (linprocfs).
+    freebsd,
+
+    var cached = std.atomic.Value(LinuxKernel).init(.unknown);
+
+    /// Reads /proc/version to determine if we're under FreeBSD's Linuxulator.
+    /// linprocfs hardcodes "des@freebsd.org" in the version string.
+    fn detect() LinuxKernel {
+        var buf: [512]u8 = undefined;
+        const fd = switch (open("/proc/version", bun.O.RDONLY | bun.O.NOCTTY, 0)) {
+            .result => |fd| fd,
+            .err => return .linux,
+        };
+        defer fd.close();
+        const n = switch (read(fd, &buf)) {
+            .result => |n| n,
+            .err => return .linux,
+        };
+        if (bun.strings.containsCaseInsensitiveASCII(buf[0..n], "freebsd")) {
+            return .freebsd;
+        }
+        return .linux;
+    }
+
+    fn get() LinuxKernel {
+        const v = cached.load(.acquire);
+        if (v != .unknown) return v;
+        const detected = detect();
+        cached.store(detected, .release);
+        return detected;
+    }
+};
 
 /// Linux kernel makedev encoding for device numbers
 /// From glibc sys/sysmacros.h and Linux kernel <linux/kdev_t.h>
@@ -2729,6 +2761,17 @@ pub fn unlinkat(dirfd: bun.FileDescriptor, to: anytype) Maybe(void) {
     }
 }
 
+/// FreeBSD Linuxulator: linprocfs's /proc/<pid>/fd escapes emul_path and lands
+/// on host devfs, so readlink fails. Use fdescfs at /dev/fd instead.
+fn getFdPathFreeBSDLinuxulator(fd: bun.FileDescriptor, out_buffer: *bun.PathBuffer) Maybe([]u8) {
+    var buf: ["/dev/fd/-2147483648".len + 1:0]u8 = undefined;
+    const path = std.fmt.bufPrintZ(&buf, "/dev/fd/{d}", .{fd.cast()}) catch unreachable;
+    return switch (readlink(path, out_buffer)) {
+        .result => |r| .{ .result = r },
+        .err => |err| .{ .err = err },
+    };
+}
+
 pub fn getFdPath(fd: bun.FileDescriptor, out_buffer: *bun.PathBuffer) Maybe([]u8) {
     switch (Environment.os) {
         .windows => {
@@ -2752,37 +2795,26 @@ pub fn getFdPath(fd: bun.FileDescriptor, out_buffer: *bun.PathBuffer) Maybe([]u8
             return .{ .result = bun.sliceTo(out_buffer, 0) };
         },
         .linux => {
-            var procfs_buf: ["/proc/self/fd/-2147483648".len + 1:0]u8 = undefined;
-
-            if (use_devfd_fallback.load(.acquire) == 0) {
-                const proc_path = std.fmt.bufPrintZ(&procfs_buf, "/proc/self/fd/{d}", .{fd.cast()}) catch unreachable;
-                switch (readlink(proc_path, out_buffer)) {
-                    .result => |result| return .{ .result = result },
-                    .err => |proc_err| switch (proc_err.getErrno()) {
-                        // /proc/self/fd/N unreadable: /proc not mounted (minimal
-                        // containers), or FreeBSD linprocfs where /proc/<pid>/fd
-                        // escapes emul_path and lands on host devfs.
-                        .NOENT, .INVAL, .NOTDIR => {
-                            var devfd_buf: ["/dev/fd/-2147483648".len + 1:0]u8 = undefined;
-                            const dev_path = std.fmt.bufPrintZ(&devfd_buf, "/dev/fd/{d}", .{fd.cast()}) catch unreachable;
-                            return switch (readlink(dev_path, out_buffer)) {
-                                .result => |result| {
-                                    use_devfd_fallback.store(1, .release);
-                                    return .{ .result = result };
-                                },
-                                .err => |_| .{ .err = proc_err },
-                            };
-                        },
-                        else => return .{ .err = proc_err },
-                    },
-                }
+            // Fast path: a previous call already proved this is FreeBSD's Linuxulator.
+            if (LinuxKernel.cached.load(.acquire) == .freebsd) {
+                return getFdPathFreeBSDLinuxulator(fd, out_buffer);
             }
-
-            // Previous call confirmed /dev/fd works on this host.
-            const dev_path = std.fmt.bufPrintZ(&procfs_buf, "/dev/fd/{d}", .{fd.cast()}) catch unreachable;
-            return switch (readlink(dev_path, out_buffer)) {
-                .err => |err| .{ .err = err },
-                .result => |result| .{ .result = result },
+            var buf: ["/proc/self/fd/-2147483648".len + 1:0]u8 = undefined;
+            const path = std.fmt.bufPrintZ(&buf, "/proc/self/fd/{d}", .{fd.cast()}) catch unreachable;
+            return switch (readlink(path, out_buffer)) {
+                .result => |r| .{ .result = r },
+                .err => |err| {
+                    // readlink on /proc/self/fd/N basically never fails on real
+                    // Linux. We don't want to guess based on errno -- ENOENT etc.
+                    // could mean any number of things. Instead, pay one syscall
+                    // (memoized) to read /proc/version and only take the /dev/fd
+                    // path when we've positively identified FreeBSD's Linuxulator.
+                    // Otherwise, surface the original error unchanged.
+                    if (LinuxKernel.get() == .freebsd) {
+                        return getFdPathFreeBSDLinuxulator(fd, out_buffer);
+                    }
+                    return .{ .err = err };
+                },
             };
         },
         .wasm => @compileError("querying for canonical path of a handle is unsupported on this host"),

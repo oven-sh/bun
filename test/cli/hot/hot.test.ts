@@ -750,6 +750,11 @@ it.skipIf(!isMacOS)(
   "should hot reload when a watched file is extended via truncate (NOTE_EXTEND)",
   async () => {
     const root = hotRunnerRoot;
+    // Rewrite so the file ends with a trailing line comment (no newline after).
+    // ftruncate(fd, size + 1) zero-fills the extended region; the NUL bytes
+    // land inside the trailing line comment and the file stays valid JS.
+    writeFileSync(root, readFileSync(root, "utf8").replace(/\n+$/, "") + "\n//");
+
     await using runner = spawn({
       cmd: [bunExe(), "--hot", "run", root],
       env: bunEnv,
@@ -781,9 +786,9 @@ it.skipIf(!isMacOS)(
       }
 
       if (any) {
-        // Extend the file via ftruncate. On macOS this fires NOTE_EXTEND only,
-        // which requires the kqueue watcher to have registered NOTE_EXTEND in
-        // its fflags — otherwise the reload never happens.
+        // Extend the file via ftruncate. On macOS this fires NOTE_EXTEND only
+        // (not NOTE_WRITE), so this reload path requires NOTE_EXTEND to be in
+        // the kqueue fflags — otherwise the reload is silently dropped.
         const fd = openSync(root, "r+");
         try {
           const size = statSync(root).size;

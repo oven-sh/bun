@@ -424,11 +424,12 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                             );
                         }
 
-                        if (this.verbose)
-                            debug("File changed: {s}", .{fs.relativeTo(file_path)});
-
                         if (event.op.write or event.op.delete or event.op.rename) {
                             recordChangedPath(file_path);
+
+                            if (this.verbose)
+                                debug("File changed: {s}", .{fs.relativeTo(file_path)});
+
                             if (comptime Environment.isKqueue) {
                                 if (event.op.rename) {
                                     // Special case for entrypoint: defer reload until we get

@@ -130,6 +130,7 @@ pub fn enqueueTarballForReading(
     alias: string,
     resolution: *const Resolution,
     task_context: TaskCallbackContext,
+    patch_name_and_version_hash: ?u64,
 ) void {
     const path = this.lockfile.str(&resolution.value.local_tarball);
     const task_id = Task.Id.forTarball(path);
@@ -151,10 +152,12 @@ pub fn enqueueTarballForReading(
         this,
         task_id,
         dependency_id,
+        package_id,
         alias,
         path,
         resolution.*,
         integrity,
+        patch_name_and_version_hash,
     )));
 }
 
@@ -1168,10 +1171,12 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
                         this,
                         task_id,
                         id,
+                        invalid_package_id,
                         this.lockfile.str(&dependency.name),
                         url,
                         res,
                         .{},
+                        null,
                     )));
                 },
                 .remote => {
@@ -1202,6 +1207,9 @@ pub fn enqueueExtractNPMPackage(
     tarball: *const ExtractTarball,
     network_task: *NetworkTask,
 ) *ThreadPool.Task {
+    const apply_patch_task = network_task.apply_patch_task;
+    network_task.apply_patch_task = null;
+
     var task = this.preallocated_resolve_tasks.get();
     task.* = Task{
         .package_manager = this,
@@ -1215,6 +1223,7 @@ pub fn enqueueExtractNPMPackage(
         },
         .id = network_task.task_id,
         .data = undefined,
+        .apply_patch_task = apply_patch_task,
     };
     task.request.extract.tarball.skip_verify = !this.options.do.verify_integrity;
     return &task.threadpool_task;
@@ -1256,10 +1265,7 @@ fn enqueueGitClone(
         .id = task_id,
         .apply_patch_task = if (patch_name_and_version_hash) |h| brk: {
             const dep = dependency;
-            const pkg_id = switch (this.lockfile.package_index.get(dep.name_hash) orelse @panic("Package not found")) {
-                .id => |p| p,
-                .ids => |ps| ps.items[0], // TODO is this correct
-            };
+            const pkg_id = this.lockfile.getPackageID(dep.name_hash, null, res) orelse @panic("Package not found");
             const patch_hash = this.lockfile.patched_dependencies.get(h).?.patchfileHash().?;
             const pt = PatchTask.newApplyPatchHash(this, pkg_id, patch_hash, h);
             pt.callback.apply.task_id = task_id;
@@ -1311,10 +1317,7 @@ pub fn enqueueGitCheckout(
         },
         .apply_patch_task = if (patch_name_and_version_hash) |h| brk: {
             const dep = this.lockfile.buffers.dependencies.items[dependency_id];
-            const pkg_id = switch (this.lockfile.package_index.get(dep.name_hash) orelse @panic("Package not found")) {
-                .id => |p| p,
-                .ids => |ps| ps.items[0], // TODO is this correct
-            };
+            const pkg_id = this.lockfile.getPackageID(dep.name_hash, null, &resolution) orelse @panic("Package not found");
             const patch_hash = this.lockfile.patched_dependencies.get(h).?.patchfileHash().?;
             const pt = PatchTask.newApplyPatchHash(this, pkg_id, patch_hash, h);
             pt.callback.apply.task_id = task_id;
@@ -1330,10 +1333,12 @@ fn enqueueLocalTarball(
     this: *PackageManager,
     task_id: Task.Id,
     dependency_id: DependencyID,
+    package_id: PackageID,
     name: string,
     path: string,
     resolution: Resolution,
     integrity: Integrity,
+    patch_name_and_version_hash: ?u64,
 ) *ThreadPool.Task {
     var task = this.preallocated_resolve_tasks.get();
     task.* = Task{
@@ -1362,6 +1367,13 @@ fn enqueueLocalTarball(
                 },
             },
         },
+        .apply_patch_task = if (patch_name_and_version_hash) |h| brk: {
+            bun.assert(package_id != invalid_package_id);
+            const patch_hash = this.lockfile.patched_dependencies.get(h).?.patchfileHash().?;
+            const pt = PatchTask.newApplyPatchHash(this, package_id, patch_hash, h);
+            pt.callback.apply.task_id = task_id;
+            break :brk pt;
+        } else null,
         .id = task_id,
         .data = undefined,
     };

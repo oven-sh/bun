@@ -130,11 +130,9 @@ pub const PatchTask = struct {
     }
 
     pub fn runFromMainThreadApply(this: *PatchTask, manager: *PackageManager) void {
-        _ = manager; // autofix
         if (this.callback.apply.logger.errors > 0) {
-            defer this.callback.apply.logger.deinit();
+            bun.handleOom(this.callback.apply.logger.cloneToWithRecycled(manager.log, true));
             Output.errGeneric("failed to apply patchfile ({s})", .{this.callback.apply.patchfilepath});
-            this.callback.apply.logger.print(Output.errorWriter()) catch {};
         }
     }
 

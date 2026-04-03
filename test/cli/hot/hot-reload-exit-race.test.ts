@@ -7,7 +7,7 @@ import { bunEnv, bunExe, isASAN, tempDir } from "harness";
 // the memory was poisoned, aborting the process with use-after-poison from
 // thread T2 (File Watcher). The crash is ASAN-specific (mimalloc only poisons
 // under ASAN), so the test is gated on ASAN builds.
-async function runOnce(iteration: number): Promise<{ signal: string | null; stderr: string }> {
+async function runOnce(iteration: number): Promise<{ exitCode: number | null; signal: string | null; stderr: string }> {
   using dir = tempDir(`hot-exit-race-${iteration}`, {
     "script.ts": `setTimeout(() => process.exit(0), 120); console.log("READY");\n`,
     "touch.txt": `0`,
@@ -44,10 +44,10 @@ async function runOnce(iteration: number): Promise<{ signal: string | null; stde
     }
   })();
 
-  const [, stderr] = await Promise.all([proc.exited, proc.stderr.text()]);
+  const [exitCode, stderr] = await Promise.all([proc.exited, proc.stderr.text()]);
   await rewrites;
 
-  return { signal: proc.signalCode, stderr };
+  return { exitCode, signal: proc.signalCode, stderr };
 }
 
 test.skipIf(!isASAN)(
@@ -57,14 +57,15 @@ test.skipIf(!isASAN)(
     // fix, a watcher-thread use-after-poison tends to trip within a few
     // iterations.
     for (let i = 0; i < 10; i++) {
-      const { signal, stderr } = await runOnce(i);
-      if (stderr.includes("AddressSanitizer") || stderr.includes("use-after-poison") || signal === "SIGABRT") {
-        console.error(`iteration ${i} failed, signal=${signal}, stderr:\n${stderr}`);
+      const { exitCode, signal, stderr } = await runOnce(i);
+      if (exitCode !== 0 || signal !== null) {
+        console.error(`iteration ${i} failed, exitCode=${exitCode}, signal=${signal}, stderr:\n${stderr}`);
       }
       expect(stderr).not.toContain("AddressSanitizer");
       expect(stderr).not.toContain("use-after-poison");
       // SIGABRT (exit 134) is what ASAN raises after reporting an error.
       expect(signal).not.toBe("SIGABRT");
+      expect(exitCode).toBe(0);
     }
   },
   60_000,

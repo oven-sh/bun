@@ -113,7 +113,7 @@ pub fn writeTraceEvents(this: *Watcher, events: []WatchEvent, changed_files: []?
 
 pub fn start(this: *Watcher) !void {
     bun.assert(this.watchloop_handle == null);
-    registerActive(this);
+    if (!registerActive(this)) return error.ProcessExiting;
     this.thread = std.Thread.spawn(.{}, threadMain, .{this}) catch |err| {
         unregisterActive(this);
         return err;
@@ -128,10 +128,16 @@ pub fn start(this: *Watcher) !void {
 var active_watchers_mutex: Mutex = .{};
 var active_watchers: std.ArrayListUnmanaged(*Watcher) = .{};
 
-fn registerActive(this: *Watcher) void {
+/// Returns false if the process is exiting, in which case the caller must
+/// not spawn a watcher thread. The `is_exiting` check runs under the same
+/// mutex `stopAllForExit` holds, so a watcher that wins the register race
+/// will already be in the list when the stop sweep iterates.
+fn registerActive(this: *Watcher) bool {
     active_watchers_mutex.lock();
     defer active_watchers_mutex.unlock();
+    if (bun.Global.isExiting()) return false;
     bun.handleOom(active_watchers.append(bun.default_allocator, this));
+    return true;
 }
 
 fn unregisterActive(this: *Watcher) void {

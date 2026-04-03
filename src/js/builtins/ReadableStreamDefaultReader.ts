@@ -103,6 +103,12 @@ export function readMany(this: ReadableStreamDefaultReader): ReadableStreamDefau
       }
     }
 
+    // Reset the queue BEFORE triggering pull-if-needed. Otherwise pullIfNeeded
+    // sees a full queue and bails out (desiredSize <= 0) without pulling, and
+    // since we are about to reset the queue anyway, the pull would be skipped
+    // entirely — causing hangs when the consumer only calls readMany() and
+    // never adds a read request.
+    $resetQueue($getByIdDirectPrivate(controller, "queue"));
     if (state !== $streamClosed) {
       if ($getByIdDirectPrivate(controller, "closeRequested")) {
         $readableStreamCloseIfPossible($getByIdDirectPrivate(controller, "controlledReadableStream"));
@@ -112,7 +118,6 @@ export function readMany(this: ReadableStreamDefaultReader): ReadableStreamDefau
         $readableByteStreamControllerCallPullIfNeeded(controller);
       }
     }
-    $resetQueue($getByIdDirectPrivate(controller, "queue"));
 
     return { value: outValues, size, done: false };
   }
@@ -144,6 +149,8 @@ export function readMany(this: ReadableStreamDefaultReader): ReadableStreamDefau
     }
 
     var size = queue.size;
+    // Reset the queue BEFORE triggering pull-if-needed (see note above).
+    $resetQueue($getByIdDirectPrivate(controller, "queue"));
     if ($getByIdDirectPrivate(controller, "closeRequested")) {
       $readableStreamCloseIfPossible($getByIdDirectPrivate(controller, "controlledReadableStream"));
     } else if ($isReadableStreamDefaultController(controller)) {
@@ -151,8 +158,6 @@ export function readMany(this: ReadableStreamDefaultReader): ReadableStreamDefau
     } else if ($isReadableByteStreamController(controller)) {
       $readableByteStreamControllerCallPullIfNeeded(controller);
     }
-
-    $resetQueue($getByIdDirectPrivate(controller, "queue"));
 
     return { value: value, size: size, done: false };
   };

@@ -432,13 +432,20 @@ async function consumeStream(self, reader: ReadableStreamDefaultReader) {
     aborted = false;
   try {
     while (true) {
-      ({ done, value } = await reader.read());
+      const result = reader.readMany();
+      if ($isPromise(result)) {
+        ({ done, value } = await result);
+      } else {
+        ({ done, value } = result);
+      }
 
       if (self.destroyed || (aborted = self[abortedSymbol])) {
         break;
       }
-      if (value && !self._dumped) {
-        self.push(value);
+      if (!self._dumped) {
+        for (var v of value) {
+          self.push(v);
+        }
       }
 
       if (self.destroyed || (aborted = self[abortedSymbol]) || done) {

@@ -520,6 +520,16 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                             }
                         }
 
+                        // Skip cache bust + verbose log for metadata-only directory events
+                        // (chmod/utimes/chown/xattr on macOS now fire NOTE_ATTRIB here).
+                        // Directory contents do not change on a metadata event, so busting
+                        // the cache is pure waste.
+                        if (!event.op.write and !event.op.delete and !event.op.rename and
+                            !event.op.create and !event.op.move_to)
+                        {
+                            continue;
+                        }
+
                         _ = this.ctx.bustDirCache(strings.withoutTrailingSlashWindowsPath(file_path));
 
                         if (entries_option) |dir_ent| {

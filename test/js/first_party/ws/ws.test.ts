@@ -5,7 +5,8 @@ import crypto from "crypto";
 import { once } from "events";
 import { bunEnv, bunExe } from "harness";
 import { createServer } from "http";
-import { AddressInfo, connect } from "net";
+import type { IncomingMessage } from "http";
+import { AddressInfo, connect, createServer as createTcpServer } from "net";
 import path from "node:path";
 import { Server, WebSocket, WebSocketServer } from "ws";
 
@@ -904,5 +905,77 @@ describe("ping/pong no-arg payload", () => {
     const ws = new WebSocket("ws://localhost:" + (wss.address() as AddressInfo).port);
     ws.on("open", () => ws.pong(Buffer.from("hello")));
     await promise;
+  });
+});
+
+describe("WebSocket handshake events", () => {
+  async function rawServer(response: string) {
+    const server = createTcpServer(socket => socket.once("data", () => socket.end(response))).listen(0, "127.0.0.1");
+    await once(server, "listening");
+    return server;
+  }
+
+  it("emits 'unexpected-response' with status, headers and body on non-101", async () => {
+    const server = await rawServer(
+      "HTTP/1.1 503 Service Unavailable\r\nContent-Type: text/plain\r\nX-Reason: not-ready\r\n\r\nworkerd starting",
+    );
+    const { promise, resolve, reject } = Promise.withResolvers<IncomingMessage>();
+    try {
+      const ws = new WebSocket("ws://127.0.0.1:" + (server.address() as AddressInfo).port);
+      ws.on("error", reject);
+      ws.once("unexpected-response", (req, res) => {
+        expect(req).toBeNull();
+        resolve(res);
+      });
+
+      const res = await promise;
+      expect(res.statusCode).toBe(503);
+      expect(res.statusMessage).toBe("Service Unavailable");
+      expect(res.headers["content-type"]).toBe("text/plain");
+      expect(res.headers["x-reason"]).toBe("not-ready");
+      expect(await new Response(res as any).text()).toBe("workerd starting");
+      await once(ws, "close");
+    } finally {
+      server.close();
+    }
+  });
+
+  it("emits 'error' with status code when no 'unexpected-response' listener", async () => {
+    const server = await rawServer("HTTP/1.1 503 Service Unavailable\r\n\r\n");
+    const { promise, resolve } = Promise.withResolvers<Error>();
+    try {
+      const ws = new WebSocket("ws://127.0.0.1:" + (server.address() as AddressInfo).port);
+      ws.on("error", resolve);
+      expect((await promise).message).toBe("Unexpected server response: 503");
+      await once(ws, "close");
+    } finally {
+      server.close();
+    }
+  });
+
+  it("emits 'upgrade' with headers before 'open' on 101", async () => {
+    const wss = new WebSocketServer({ port: 0 });
+    const { promise, resolve } = Promise.withResolvers<IncomingMessage>();
+    try {
+      const ws = new WebSocket("ws://localhost:" + (wss.address() as AddressInfo).port);
+      const order: string[] = [];
+      ws.on("upgrade", res => {
+        order.push("upgrade");
+        resolve(res);
+      });
+      ws.on("open", () => {
+        order.push("open");
+        ws.close();
+      });
+
+      const res = await promise;
+      expect(res.statusCode).toBe(101);
+      expect(res.headers["sec-websocket-accept"]).toBeString();
+      expect(res.headers["upgrade"]?.toLowerCase()).toBe("websocket");
+      await once(ws, "close");
+      expect(order).toEqual(["upgrade", "open"]);
+    } finally {
+      wss.close();
+    }
   });
 });

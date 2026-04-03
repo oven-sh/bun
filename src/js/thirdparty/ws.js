@@ -82,6 +82,48 @@ const eventIds = {
   pong: 6,
 };
 
+let lazyReadable;
+function makeHandshakeResponse(statusCode, head, body) {
+  lazyReadable ??= require("node:stream").Readable;
+  const res = new lazyReadable({ read() {} });
+  const headers = (res.headers = { __proto__: null });
+  const rawHeaders = (res.rawHeaders = []);
+  let statusMessage = "";
+  let i = head.indexOf("\r\n");
+  if (i !== -1) {
+    const sp = head.indexOf(" ");
+    if (sp !== -1) {
+      const sp2 = head.indexOf(" ", sp + 1);
+      statusMessage = sp2 !== -1 ? head.slice(sp2 + 1, i) : "";
+    }
+  }
+  while (i !== -1) {
+    const start = i + 2;
+    i = head.indexOf("\r\n", start);
+    const line = i === -1 ? head.slice(start) : head.slice(start, i);
+    if (!line) break;
+    const colon = line.indexOf(":");
+    if (colon === -1) continue;
+    const name = line.slice(0, colon);
+    let v = colon + 1;
+    while (line.charCodeAt(v) === 32 || line.charCodeAt(v) === 9) v++;
+    const value = line.slice(v);
+    rawHeaders.push(name, value);
+    const lower = name.toLowerCase();
+    const prev = headers[lower];
+    headers[lower] = prev === undefined ? value : prev + ", " + value;
+  }
+  res.statusCode = statusCode;
+  res.statusMessage = statusMessage;
+  res.httpVersion = "1.1";
+  res.httpVersionMajor = 1;
+  res.httpVersionMinor = 1;
+  res.socket = res.connection = null;
+  if (body && body.length) res.push(body);
+  res.push(null);
+  return res;
+}
+
 const emittedWarnings = new Set();
 function emitWarning(type, message) {
   if (emittedWarnings.has(type)) return;
@@ -124,6 +166,7 @@ class BunWebSocket extends EventEmitter {
   #paused = false;
   #fragments = false;
   #binaryType = "nodebuffer";
+  #unexpectedResponseEmitted = false;
   // Bitset to track whether event handlers are set.
   #eventId = 0;
 
@@ -256,12 +299,28 @@ class BunWebSocket extends EventEmitter {
     }
     let ws = (this.#ws = new WebSocket(url, wsOptions));
     ws.binaryType = "nodebuffer";
+    ws.addEventListener("handshake", event => this.#onHandshake(event.data), onceObject);
 
     return ws;
   }
 
+  #onHandshake(data) {
+    const { statusCode, head, body } = data;
+    const res = makeHandshakeResponse(statusCode, head, body);
+    if (statusCode === 101) {
+      this.emit("upgrade", res);
+      return;
+    }
+    this.#unexpectedResponseEmitted = true;
+    if (this.listenerCount("unexpected-response") > 0) {
+      this.emit("unexpected-response", null, res);
+    } else {
+      this.emit("error", new Error("Unexpected server response: " + statusCode));
+    }
+  }
+
   #onOrOnce(event, listener, once) {
-    if (event === "unexpected-response" || event === "upgrade" || event === "redirect") {
+    if (event === "redirect") {
       emitWarning(event, "ws.WebSocket '" + event + "' event is not implemented in bun");
     }
     const mask = 1 << eventIds[event];
@@ -312,6 +371,7 @@ class BunWebSocket extends EventEmitter {
         this.#ws.addEventListener(
           "error",
           err => {
+            if (this.#unexpectedResponseEmitted) return;
             this.emit("error", err);
           },
           once,

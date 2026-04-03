@@ -50,18 +50,22 @@ async function runOnce(iteration: number): Promise<{ signal: string | null; stde
   return { signal: proc.signalCode, stderr };
 }
 
-test.skipIf(!isASAN)("bun --hot exits cleanly while watcher is dispatching events", async () => {
-  // Loop several times because the race is timing-sensitive. Without the
-  // fix, a watcher-thread use-after-poison tends to trip within a few
-  // iterations.
-  for (let i = 0; i < 10; i++) {
-    const { signal, stderr } = await runOnce(i);
-    if (stderr.includes("AddressSanitizer") || stderr.includes("use-after-poison") || signal === "SIGABRT") {
-      console.error(`iteration ${i} failed, signal=${signal}, stderr:\n${stderr}`);
+test.skipIf(!isASAN)(
+  "bun --hot exits cleanly while watcher is dispatching events",
+  async () => {
+    // Loop several times because the race is timing-sensitive. Without the
+    // fix, a watcher-thread use-after-poison tends to trip within a few
+    // iterations.
+    for (let i = 0; i < 10; i++) {
+      const { signal, stderr } = await runOnce(i);
+      if (stderr.includes("AddressSanitizer") || stderr.includes("use-after-poison") || signal === "SIGABRT") {
+        console.error(`iteration ${i} failed, signal=${signal}, stderr:\n${stderr}`);
+      }
+      expect(stderr).not.toContain("AddressSanitizer");
+      expect(stderr).not.toContain("use-after-poison");
+      // SIGABRT (exit 134) is what ASAN raises after reporting an error.
+      expect(signal).not.toBe("SIGABRT");
     }
-    expect(stderr).not.toContain("AddressSanitizer");
-    expect(stderr).not.toContain("use-after-poison");
-    // SIGABRT (exit 134) is what ASAN raises after reporting an error.
-    expect(signal).not.toBe("SIGABRT");
-  }
-}, 60_000);
+  },
+  60_000,
+);

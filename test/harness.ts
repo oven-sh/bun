@@ -45,9 +45,12 @@ export const isVerbose = process.env.DEBUG === "1";
 // test.todoIf(isFlaky && isMacOS)("this test is flaky");
 export const isFlaky = isCI;
 export const isBroken = isCI;
-// Matches both dedicated ASAN release binaries (`bun-asan`) and debug builds
-// (`bun-debug`), which always enable ASAN via `-Denable_asan=true`.
-export const isASAN = /bun-(asan|debug)/.test(basename(process.execPath));
+// Matches dedicated ASAN release binaries (`bun-asan`) on any platform, and
+// `bun-debug` on platforms where debug builds default to `-Denable_asan=true`
+// per scripts/build/config.ts (Linux on any arch, arm64 macOS).
+export const isASAN =
+  /bun-asan/.test(basename(process.execPath)) ||
+  (/bun-debug/.test(basename(process.execPath)) && (isLinux || (isMacOS && isArm64)));
 
 export const bunEnv: NodeJS.Dict<string> = {
   ...process.env,

@@ -288,7 +288,15 @@ fn threadMain(this: *Watcher) !void {
         .err => |err| {
             this.watchloop_handle = null;
             this.platform.stop();
-            if (this.running) {
+            // Read `running` under the watcher's mutex — `stopAllForExit` and
+            // `deinit` also write it under the mutex. Without the lock this
+            // would be a data race (UB in Zig) and, since `stopAllForExit`
+            // explicitly closes the platform fd to wake us into this branch,
+            // the race is easy to hit right at exit time.
+            this.mutex.lock();
+            const was_running = this.running;
+            this.mutex.unlock();
+            if (was_running and !bun.Global.isExiting()) {
                 this.onError(this.ctx, err);
             }
         },

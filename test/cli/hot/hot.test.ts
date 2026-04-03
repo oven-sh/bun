@@ -770,11 +770,16 @@ it.skipIf(!isMacOS)(
       str += new TextDecoder().decode(chunk);
       if (!/\[#!root\].*[0-9]\n/g.test(str)) continue;
 
+      // Split on newline, keeping any incomplete trailing line in `str` so the
+      // next chunk can complete it. Processing lines directly from `str` and
+      // then clearing it would drop a partial "[#!root] Reloaded: N" fragment
+      // and can stall the loop until the test timeout.
+      const lines = str.split("\n");
+      str = lines.pop() ?? "";
       let any = false;
-      for (const line of str.split("\n")) {
+      for (const line of lines) {
         if (!line.includes("[#!root]")) continue;
         reloadCounter++;
-        str = "";
 
         if (reloadCounter === 3) {
           runner.kill();

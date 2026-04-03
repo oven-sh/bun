@@ -215,12 +215,7 @@
 #include <dlfcn.h>
 #endif
 
-#ifdef __APPLE__
-#include <sys/sysctl.h>
-#elif defined(__linux__)
-// for sysconf
-#include <unistd.h>
-#endif
+#include <wtf/NumberOfCores.h>
 
 using namespace Bun;
 
@@ -1967,18 +1962,7 @@ void GlobalObject::finishCreation(VM& vm)
 
     m_navigatorObject.initLater(
         [](const Initializer<JSObject>& init) {
-            int cpuCount = 0;
-#ifdef __APPLE__
-            size_t count_len = sizeof(cpuCount);
-            sysctlbyname("hw.logicalcpu", &cpuCount, &count_len, NULL, 0);
-#elif OS(WINDOWS)
-            SYSTEM_INFO sysinfo;
-            GetSystemInfo(&sysinfo);
-            cpuCount = sysinfo.dwNumberOfProcessors;
-#else
-            // TODO: windows
-            cpuCount = sysconf(_SC_NPROCESSORS_ONLN);
-#endif
+            int cpuCount = WTF::numberOfProcessorCores();
 
             auto str = WTF::String::fromUTF8(Bun__userAgent);
             JSC::Identifier userAgentIdentifier = JSC::Identifier::fromString(init.vm, "userAgent"_s);

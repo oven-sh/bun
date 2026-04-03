@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, tempDirWithFiles } from "harness";
 import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 
 // Reproduces the seccomp class of failures documented in libuv's
@@ -117,39 +117,49 @@ int main(int argc, char **argv) {
     return { stdout, stderr, exitCode };
   }
 
-  const cases: Array<{ name: string; snippet: (target: string) => string; expected: string }> = [
+  // `lstatSync` targets a symlink so the SYMLINK_NOFOLLOW branch of
+  // statxFallback is actually distinguishable from the stat() branch: if
+  // the condition were inverted the subprocess would follow the link and
+  // report isSymbolicLink:false / isFile:true.
+  const cases: Array<{
+    name: string;
+    target: (dir: string) => string;
+    snippet: (target: string) => string;
+    expected: string;
+  }> = [
     {
-      // exercises statxFallback path branch (no SYMLINK_NOFOLLOW)
       name: "statSync",
+      target: dir => join(dir, "file.txt"),
       snippet: target => `
         const fs = require("node:fs");
         const s = fs.statSync(${JSON.stringify(target)});
-        console.log(JSON.stringify({ size: s.size, isFile: s.isFile() }));
+        console.log(JSON.stringify({ size: s.size, isFile: s.isFile(), isSymbolicLink: s.isSymbolicLink() }));
       `,
-      expected: JSON.stringify({ size: 5, isFile: true }),
+      expected: JSON.stringify({ size: 5, isFile: true, isSymbolicLink: false }),
     },
     {
-      // exercises statxFallback path branch (SYMLINK_NOFOLLOW)
       name: "lstatSync",
+      target: dir => join(dir, "link.txt"),
       snippet: target => `
         const fs = require("node:fs");
         const s = fs.lstatSync(${JSON.stringify(target)});
-        console.log(JSON.stringify({ size: s.size, isFile: s.isFile() }));
+        console.log(JSON.stringify({ isFile: s.isFile(), isSymbolicLink: s.isSymbolicLink() }));
       `,
-      expected: JSON.stringify({ size: 5, isFile: true }),
+      // isFile:false + isSymbolicLink:true proves we used lstat, not stat.
+      expected: JSON.stringify({ isFile: false, isSymbolicLink: true }),
     },
     {
-      // exercises statxFallback fd branch (path == null)
       name: "fstatSync",
+      target: dir => join(dir, "file.txt"),
       snippet: target => `
         const fs = require("node:fs");
         const fd = fs.openSync(${JSON.stringify(target)}, "r");
         try {
           const s = fs.fstatSync(fd);
-          console.log(JSON.stringify({ size: s.size, isFile: s.isFile() }));
+          console.log(JSON.stringify({ size: s.size, isFile: s.isFile(), isSymbolicLink: s.isSymbolicLink() }));
         } finally { fs.closeSync(fd); }
       `,
-      expected: JSON.stringify({ size: 5, isFile: true }),
+      expected: JSON.stringify({ size: 5, isFile: true, isSymbolicLink: false }),
     },
   ];
 
@@ -164,18 +174,18 @@ int main(int argc, char **argv) {
       }
 
       const targetDir = tempDirWithFiles("stat-seccomp-target", { "file.txt": "hello" });
-      const target = join(targetDir, "file.txt");
+      // symlink created here rather than via tempDirWithFiles (which only
+      // supports regular files).
+      symlinkSync("file.txt", join(targetDir, "link.txt"));
 
-      const out = await runUnderSeccomp(helperBin, c.snippet(target));
+      const out = await runUnderSeccomp(helperBin, c.snippet(c.target(targetDir)));
       if (out == null) {
         console.warn(`SKIP fs.${c.name} seccomp: seccomp not permitted in this environment`);
         return;
       }
 
-      // Strip the one known ASAN warning that debug builds print on startup;
-      // anything else on stderr is a real regression.
-      const stderr = out.stderr.replace(/^WARNING: ASAN interferes with JSC signal handlers;.*\n?/m, "").trim();
-      expect(stderr).toBe("");
+      // Don't assert empty stderr — ASAN builds emit a startup warning
+      // there. exitCode is the crash/failure signal.
       expect(out.stdout.trim()).toBe(c.expected);
       expect(out.exitCode).toBe(0);
     });

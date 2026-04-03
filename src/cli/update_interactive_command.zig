@@ -527,6 +527,12 @@ pub const UpdateInteractiveCommand = struct {
 
                 manager.to_update = true;
 
+                // Skip reloading the lockfile — it's already loaded from the first
+                // loadFromCwd call above. Without this, a second lockfile load would
+                // trigger pnpm migration again (since bun.lock isn't written yet),
+                // causing a use-after-free crash due to AST expression store reset.
+                manager.options.do.load_lockfile = false;
+
                 // Reset the timer to show actual install time instead of total command time
                 var install_ctx = ctx;
                 install_ctx.start_time = std.time.nanoTimestamp();

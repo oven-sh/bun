@@ -653,8 +653,8 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
                                                 this.allocator,
                                                 "No non-deprecated version matching \"{s}\" found for specifier \"{s}\"<r> <d>(blocked by blockDeprecatedDependencies)<r>",
                                                 .{
-                                                    this.lockfile.str(&name),
                                                     this.lockfile.str(&version.literal),
+                                                    this.lockfile.str(&name),
                                                 },
                                             ) catch unreachable;
                                         }
@@ -807,12 +807,13 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
                                                         return;
                                                     }
                                                 }
-                                                if (this.options.block_deprecated_dependencies) {
-                                                    if (!loaded_manifest.?.shouldExcludeFromDeprecatedFilter(this.options.block_deprecated_dependencies_excludes) and Npm.PackageManifest.isPackageVersionDeprecated(find_result.package)) {
-                                                        const package_name = this.lockfile.str(&name);
-                                                        this.log.addErrorFmt(null, logger.Loc.Empty, this.allocator, "Version \"{s}@{f}\" is deprecated and blocked by blockDeprecatedDependencies: {s}", .{ package_name, find_result.version.fmt(this.lockfile.buffers.string_bytes.items), find_result.package.deprecated.slice(loaded_manifest.?.string_buf) }) catch {};
-                                                        return;
-                                                    }
+                                                if (this.options.block_deprecated_dependencies and
+                                                    !loaded_manifest.?.shouldExcludeFromDeprecatedFilter(this.options.block_deprecated_dependencies_excludes) and
+                                                    Npm.PackageManifest.isPackageVersionDeprecated(find_result.package))
+                                                {
+                                                    _ = this.network_dedupe_map.remove(task_id);
+                                                    resolve_result_ = error.DeprecatedVersion;
+                                                    continue :retry_with_new_resolve_result;
                                                 }
                                                 if (getOrPutResolvedPackageWithFindResult(
                                                     this,
@@ -1759,7 +1760,7 @@ fn getOrPutResolvedPackage(
                                     });
                                 },
                                 .npm => {
-                                    const version_str = version.value.npm.version.fmt(manifest.string_buf);
+                                    const version_str = version.value.npm.version.fmt(this.lockfile.buffers.string_bytes.items);
                                     Output.prettyErrorln("<d>[block-deprecated]<r> <b>{s}<r>@{f}<r> selected <green>{f}<r> instead of <yellow>{f}<r> because it is deprecated", .{
                                         package_name,
                                         version_str,

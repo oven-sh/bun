@@ -1619,6 +1619,13 @@ pub const PackageManifest = struct {
                 }
             }
 
+            if (newest_filtered.* != null or newest_deprecated.* != null) {
+                return .{ .found_with_filter = .{
+                    .result = .{ .version = version, .package = package },
+                    .newest_filtered = newest_filtered.*,
+                    .newest_deprecated = newest_deprecated.*,
+                } };
+            }
             return .{
                 .found = .{
                     .version = version,

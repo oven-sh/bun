@@ -193,6 +193,26 @@ describe("issue #28822 - blockDeprecatedDependencies", () => {
     expect({ stdout, exitCode }).not.toMatchObject({ exitCode: 0 });
   });
 
+  test("fails when an exact pinned version is itself deprecated", async () => {
+    using dir = tempDir("issue28822-exact-pin", {
+      "package.json": JSON.stringify({ name: "app", dependencies: { lodashlike: "4.18.0" } }),
+      ".npmrc": `registry=${mockRegistryUrl}`,
+      "bunfig.toml": `[install]\nblockDeprecatedDependencies = true\n`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install", "--lockfile-only"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [_stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("blockDeprecatedDependencies");
+    expect(exitCode).not.toBe(0);
+  });
+
   test("bunfig rejects non-boolean blockDeprecatedDependencies", async () => {
     using dir = tempDir("issue28822-bad-config", {
       "package.json": JSON.stringify({ name: "app", dependencies: { "clean-pkg": "1.0.0" } }),

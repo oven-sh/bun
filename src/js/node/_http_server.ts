@@ -62,6 +62,7 @@ const sendHelper = $newZigFunction("node_cluster_binding.zig", "sendHelperChild"
 
 const kServerResponse = Symbol("ServerResponse");
 const kRejectNonStandardBodyWrites = Symbol("kRejectNonStandardBodyWrites");
+const kPendingListenCallback = Symbol("kPendingListenCallback");
 const GlobalPromise = globalThis.Promise;
 const kEmptyBuffer = Buffer.alloc(0);
 const ObjectKeys = Object.keys;
@@ -414,13 +415,22 @@ Server.prototype.listen = function () {
 
   if ($isCallable(arguments[arguments.length - 1])) {
     onListen = arguments[arguments.length - 1];
+    this[kPendingListenCallback] = onListen;
+  } else if (this[kPendingListenCallback]) {
+    // Re-use callback from a previous failed listen() call (e.g., Vite retries
+    // on EADDRINUSE without passing the callback again).
+    onListen = this[kPendingListenCallback];
+  }
+
+  if ($isCallable(onListen)) {
+    this.once("listening", onListen);
   }
 
   try {
     // listenInCluster
 
     if (isPrimary) {
-      server[kRealListen](tls, port, host, socketPath, false, onListen);
+      server[kRealListen](tls, port, host, socketPath, false);
       return this;
     }
 
@@ -460,15 +470,18 @@ Server.prototype.listen = function () {
       sendHelper(message, null);
     });
 
-    server[kRealListen](tls, port, host, socketPath, true, onListen);
+    server[kRealListen](tls, port, host, socketPath, true);
   } catch (err) {
+    if ($isCallable(onListen)) {
+      this.removeListener("listening", onListen);
+    }
     setTimeout(() => server.emit("error", err), 1);
   }
 
   return this;
 };
 
-Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort, onListen) {
+Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort) {
   {
     const ResponseClass = this[optionsSymbol].ServerResponse || ServerResponse;
     const RequestClass = this[optionsSymbol].IncomingMessage || IncomingMessage;
@@ -720,10 +733,6 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
       this[serverSymbol]?.unref?.();
     }
 
-    if ($isCallable(onListen)) {
-      this.once("listening", onListen);
-    }
-
     if (this[kDeferredTimeouts]) {
       for (const { msecs, callback } of this[kDeferredTimeouts]) {
         this.setTimeout(msecs, callback);
@@ -731,6 +740,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
       delete this[kDeferredTimeouts];
     }
 
+    delete this[kPendingListenCallback];
     setTimeout(emitListeningNextTick, 1, this, this[serverSymbol]?.hostname, this[serverSymbol]?.port);
   }
 };

@@ -11,13 +11,24 @@ url: strings.StringOrTinyString,
 package_manager: *PackageManager,
 
 pub inline fn run(this: *const ExtractTarball, log: *logger.Log, bytes: []const u8) !Install.ExtractData {
-    if (!this.skip_verify and this.integrity.tag.isSupported()) {
-        if (!this.integrity.verify(bytes)) {
+    if (!this.skip_verify) {
+        if (this.integrity.tag.isSupported()) {
+            if (!this.integrity.verify(bytes)) {
+                log.addErrorFmt(
+                    null,
+                    logger.Loc.Empty,
+                    bun.default_allocator,
+                    "Integrity check failed<r> for tarball: {s}",
+                    .{this.name.slice()},
+                ) catch unreachable;
+                return error.IntegrityCheckFailed;
+            }
+        } else if (this.resolution.tag == .npm) {
             log.addErrorFmt(
                 null,
                 logger.Loc.Empty,
                 bun.default_allocator,
-                "Integrity check failed<r> for tarball: {s}",
+                "Missing or unsupported integrity hash for tarball: {s}",
                 .{this.name.slice()},
             ) catch unreachable;
             return error.IntegrityCheckFailed;

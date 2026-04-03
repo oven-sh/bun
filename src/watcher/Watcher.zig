@@ -113,7 +113,10 @@ pub fn writeTraceEvents(this: *Watcher, events: []WatchEvent, changed_files: []?
 
 pub fn start(this: *Watcher) !void {
     bun.assert(this.watchloop_handle == null);
-    if (!registerActive(this)) return error.ProcessExiting;
+    // If the process is already exiting, don't spawn — the watcher would
+    // race mimalloc's atexit teardown. Callers can't usefully recover, and
+    // the process is about to die anyway.
+    if (!registerActive(this)) return;
     this.thread = std.Thread.spawn(.{}, threadMain, .{this}) catch |err| {
         unregisterActive(this);
         return err;

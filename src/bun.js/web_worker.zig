@@ -59,7 +59,10 @@ export fn WebWorker__getParentWorker(vm: *jsc.VirtualMachine) ?*anyopaque {
 }
 
 pub fn hasRequestedTerminate(this: *const WebWorker) bool {
-    return this.requested_terminate.load(.monotonic);
+    // Acquire to pair with `setRequestedTerminate`'s release swap so
+    // parent-thread callers like `setRef` synchronize with the worker's
+    // teardown on weakly-ordered CPUs (ARM/AArch64).
+    return this.requested_terminate.load(.acquire);
 }
 
 pub fn setRequestedTerminate(this: *WebWorker) bool {

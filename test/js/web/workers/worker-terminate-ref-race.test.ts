@@ -8,9 +8,13 @@
 // the parent thread would then dereference freed (ASAN-poisoned) memory in
 // `setRefInternal`, producing a use-after-poison on CI's ASAN lane.
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 
-test("terminate + ref/unref on exiting worker does not UAF", { timeout: 60_000 }, async () => {
+// UAF / use-after-poison is only observable when the child process is built
+// with ASAN (or a debug build that ships ASAN). On release lanes without
+// sanitizers the freed memory is not poisoned, the test cannot catch the bug,
+// and would spuriously pass without the fix.
+test.skipIf(!isDebug && !isASAN)("terminate + ref/unref on exiting worker does not UAF", { timeout: 60_000 }, async () => {
   // The fixture creates many workers that stay alive (setInterval), terminates
   // them, yields to let their exit paths run on worker threads, then calls
   // ref()/unref()/terminate() again. The yields make the race window wide

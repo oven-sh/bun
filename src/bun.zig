@@ -3599,7 +3599,7 @@ pub fn getThreadCount() u16 {
             return null;
         }
         fn getThreadCountOnce() void {
-            cached_thread_count = @min(max_threads, @max(min_threads, getThreadCountFromUser() orelse std.Thread.getCpuCount() catch 0));
+            cached_thread_count = @min(max_threads, @max(min_threads, getThreadCountFromUser() orelse jsc.wtf.numberOfProcessorCores()));
         }
     };
     ThreadCount.cached_thread_count_once.call();

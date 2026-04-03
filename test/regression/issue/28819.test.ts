@@ -1,6 +1,6 @@
 import { SQL } from "bun";
 import { beforeEach, describe, expect, test } from "bun:test";
-import { describeWithContainer, isDockerEnabled } from "harness";
+import { describeWithContainer, isCI, isDockerEnabled } from "harness";
 
 // https://github.com/oven-sh/bun/issues/28819
 //
@@ -96,10 +96,11 @@ if (isDockerEnabled()) {
       runJsonBindingTests(() => databaseUrl);
     },
   );
-} else {
-  // Fall back to a locally running postgres (the farm/container image keeps one
-  // at localhost:5432 as the superuser `postgres`). This lets the gate and
-  // local dev runs exercise the fix without needing Docker.
+} else if (!isCI) {
+  // Fall back to a locally running postgres (the farm/container image keeps
+  // one at localhost:5432 as the superuser `postgres`). This lets the gate
+  // and local dev runs exercise the fix without needing Docker. CI lanes
+  // without Docker (Windows) have no local postgres, so skip there.
   describe("issue 28819 (localhost)", () => {
     runJsonBindingTests(() => process.env.DATABASE_URL || "postgres://postgres@localhost:5432/postgres");
   });

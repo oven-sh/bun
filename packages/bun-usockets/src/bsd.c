@@ -987,6 +987,24 @@ inline __attribute__((always_inline)) LIBUS_SOCKET_DESCRIPTOR bsd_bind_listen_fd
     return listenFd;
 }
 
+int bsd_set_defer_accept(LIBUS_SOCKET_DESCRIPTOR listenFd) {
+#if defined(TCP_DEFER_ACCEPT)
+    /* nginx uses 1 second here: there's no way to know how long a connection sat in the
+     * defer queue (or whether it bypassed it via syncookies), so a short timeout lets the
+     * application's own idle timeout take over for clients that connect but never send. */
+    int timeout = 1;
+    return setsockopt(listenFd, IPPROTO_TCP, TCP_DEFER_ACCEPT, &timeout, sizeof(timeout)) == 0;
+#elif defined(SO_ACCEPTFILTER)
+    struct accept_filter_arg afa;
+    memset(&afa, 0, sizeof(afa));
+    strcpy(afa.af_name, "dataready");
+    return setsockopt(listenFd, SOL_SOCKET, SO_ACCEPTFILTER, &afa, sizeof(afa)) == 0;
+#else
+    (void) listenFd;
+    return 0;
+#endif
+}
+
 // return LIBUS_SOCKET_ERROR or the fd that represents listen socket
 // listen both on ipv6 and ipv4
 LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket(const char *host, int port, int options, int* error) {
@@ -1144,12 +1162,6 @@ static LIBUS_SOCKET_DESCRIPTOR internal_bsd_create_listen_socket_unix(const char
     if (listenFd == LIBUS_SOCKET_ERROR) {
         return LIBUS_SOCKET_ERROR;
     }
-
-#ifdef _WIN32
-    _unlink(path);
-#else
-    unlink(path);
-#endif
 
     if (us_internal_bind_and_listen(listenFd, (struct sockaddr *) server_address, (socklen_t) addrlen, 512, error)) {
         #if defined(_WIN32)

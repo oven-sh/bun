@@ -35,7 +35,7 @@ using namespace JSC;
 
 JSPerformanceObserverCallback::JSPerformanceObserverCallback(JSObject* callback, JSDOMGlobalObject* globalObject)
     : PerformanceObserverCallback(globalObject->scriptExecutionContext())
-    , m_data(new JSCallbackDataWeak(globalObject->vm(), callback, this))
+    , m_data(new JSCallbackData(globalObject->vm(), callback, this))
 {
 }
 

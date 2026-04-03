@@ -1,4 +1,3 @@
-#!/usr/bin/env bun
 /**
  * Fetch CLI — the single entry point ninja invokes for all downloads.
  *
@@ -256,7 +255,7 @@ function applyPatch(dest: string, patchPath: string, patchBody: string): void {
 // Only run if this file is the entry point (not imported as a module).
 // fetch-cli.ts is ALSO imported by source.ts/zig.ts to get fetchCliPath —
 // that import should NOT execute main().
-if (import.meta.main) {
+if (process.argv[1] === import.meta.filename) {
   try {
     await main();
   } catch (err) {

@@ -947,7 +947,9 @@ fn writeFileWithEmptySourceToDestination(ctx: *jsc.JSGlobalObject, destination_b
                     defer this.deinit();
                     switch (result) {
                         .success => try this.promise.resolve(this.global, .jsNumber(0)),
-                        .failure => |err| try this.promise.reject(this.global, err.toJS(this.global, this.store.getPath())),
+                        .failure => |err| {
+                            try this.promise.reject(this.global, err.toJSWithAsyncStack(this.global, this.store.getPath(), this.promise.get()));
+                        },
                     }
                 }
 
@@ -1144,7 +1146,9 @@ pub fn writeFileWithSourceDestination(ctx: *jsc.JSGlobalObject, source_blob: *Bl
                             defer this.deinit();
                             switch (result) {
                                 .success => try this.promise.resolve(this.global, .jsNumber(this.store.data.bytes.len)),
-                                .failure => |err| try this.promise.reject(this.global, err.toJS(this.global, this.store.getPath())),
+                                .failure => |err| {
+                                    try this.promise.reject(this.global, err.toJSWithAsyncStack(this.global, this.store.getPath(), this.promise.get()));
+                                },
                             }
                         }
 
@@ -2242,7 +2246,7 @@ const S3BlobDownloadTask = struct {
                 try jsc.AnyPromise.wrap(.{ .normal = this.promise.get() }, this.globalThis, S3BlobDownloadTask.callHandler, .{ this, bytes });
             },
             inline .not_found, .failure => |err| {
-                try this.promise.reject(this.globalThis, err.toJS(this.globalThis, this.blob.store.?.getPath()));
+                try this.promise.reject(this.globalThis, err.toJSWithAsyncStack(this.globalThis, this.blob.store.?.getPath(), this.promise.get()));
             },
         }
     }

@@ -317,6 +317,7 @@ public:
     Structure* NapiPrototypeStructure() const { return m_NapiPrototypeStructure.getInitializedOnMainThread(this); }
     Structure* NapiHandleScopeImplStructure() const { return m_NapiHandleScopeImplStructure.getInitializedOnMainThread(this); }
     Structure* NapiTypeTagStructure() const { return m_NapiTypeTagStructure.getInitializedOnMainThread(this); }
+    Structure* NativePromiseContextStructure() const { return m_NativePromiseContextStructure.getInitializedOnMainThread(this); }
 
     Structure* JSSQLStatementStructure() const { return m_JSSQLStatementStructure.getInitializedOnMainThread(this); }
 
@@ -393,8 +394,10 @@ public:
         Bun__FileStreamWrapper__onResolveRequestStream,
         Bun__FileSink__onResolveStream,
         Bun__FileSink__onRejectStream,
+        Bun__CronJob__onPromiseResolve,
+        Bun__CronJob__onPromiseReject,
     };
-    static constexpr size_t promiseFunctionsSize = 36;
+    static constexpr size_t promiseFunctionsSize = 34;
 
     static PromiseFunctions promiseHandlerID(SYSV_ABI EncodedJSValue (*handler)(JSC::JSGlobalObject* arg0, JSC::CallFrame* arg1));
 
@@ -627,6 +630,7 @@ public:
     V(private, LazyPropertyOfGlobalObject<Structure>, m_NapiPrototypeStructure)                              \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_NapiHandleScopeImplStructure)                        \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_NapiTypeTagStructure)                                \
+    V(private, LazyPropertyOfGlobalObject<Structure>, m_NativePromiseContextStructure)                       \
                                                                                                              \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_JSSQLStatementStructure)                             \
     V(private, LazyPropertyOfGlobalObject<v8::shim::GlobalInternals>, m_V8GlobalInternals)                   \

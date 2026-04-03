@@ -2009,10 +2009,13 @@ export function createLazyLoadedStreamPrototype(): typeof ReadableStreamDefaultC
 
     #onClose() {
       this.#closed = true;
-      this.#controller = undefined;
       this.$data = undefined;
 
+      // Capture the WeakRef before clearing this.#controller — otherwise the
+      // deref below always returns undefined and the callClose job is never
+      // enqueued, leaving the ReadableStream stuck in the readable state.
       var controller = this.#controller?.deref?.();
+      this.#controller = undefined;
 
       $putByIdDirectPrivate(this, "stream", undefined);
       if (controller) {

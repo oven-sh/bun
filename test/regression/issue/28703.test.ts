@@ -1,7 +1,12 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
+import { join } from "node:path";
 
 test("node:https concurrent chunked downloads do not hang", async () => {
+  using dir = tempDir("issue-28703", {});
+  const keyPath = join(String(dir), "key.pem");
+  const certPath = join(String(dir), "cert.pem");
+
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -11,11 +16,11 @@ test("node:https concurrent chunked downloads do not hang", async () => {
       const { readFileSync } = require("node:fs");
       const { execSync } = require("node:child_process");
 
-      execSync("openssl req -x509 -newkey rsa:2048 -keyout /tmp/key28703.pem -out /tmp/cert28703.pem -days 1 -nodes -subj '/CN=localhost' 2>/dev/null");
+      execSync("openssl req -x509 -newkey rsa:2048 -keyout ${keyPath} -out ${certPath} -days 1 -nodes -subj '/CN=localhost' 2>/dev/null");
 
       const PAYLOAD = Buffer.alloc(25000, "A");
 
-      const server = https.createServer({ key: readFileSync("/tmp/key28703.pem"), cert: readFileSync("/tmp/cert28703.pem") }, (req, res) => {
+      const server = https.createServer({ key: readFileSync("${keyPath}"), cert: readFileSync("${certPath}") }, (req, res) => {
         res.writeHead(200);
         let offset = 0;
         (function send() {
@@ -41,7 +46,7 @@ test("node:https concurrent chunked downloads do not hang", async () => {
 
         let last = -1;
         const hc = setInterval(() => {
-          if (done === last && done > 0 && done < TOTAL) {
+          if (done === last && done < TOTAL) {
             console.error("HUNG " + done + "/" + TOTAL);
             process.exit(1);
           }

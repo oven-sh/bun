@@ -5,9 +5,9 @@ import { bunEnv, bunExe, tempDir } from "harness";
 /**
  * Regression test for https://github.com/oven-sh/bun/issues/28822
  *
- * `blockDeprecatedDependencies` (bunfig) / `--block-deprecated-dependencies`
- * (CLI flag) / per-package excludes. A version with a non-empty `deprecated`
- * string in its npm manifest entry is skipped during resolution.
+ * `blockDeprecatedDependencies` (bunfig, with per-package excludes). A
+ * version with a non-empty `deprecated` string in its npm manifest entry
+ * is skipped during resolution.
  */
 describe.concurrent("issue #28822 - blockDeprecatedDependencies", () => {
   let mockRegistryServer: Server;
@@ -229,7 +229,7 @@ describe.concurrent("issue #28822 - blockDeprecatedDependencies", () => {
     });
 
     const [_stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(exitCode).not.toBe(0);
     expect(stderr.toLowerCase()).toMatch(/blockdeprecateddependencies|boolean/);
+    expect(exitCode).not.toBe(0);
   });
 });

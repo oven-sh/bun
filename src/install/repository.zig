@@ -444,7 +444,7 @@ pub const Repository = extern struct {
 
             bun.copy(u8, rest, url);
             if (colon_index) |colon| rest[colon] = '/';
-            const final = ssh_path_buf[0 .. url.len + "ssh://".len];
+            const final = ssh_path_buf[0 .. url.len + "ssh://git@".len];
             return final;
         }
 

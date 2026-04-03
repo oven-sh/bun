@@ -431,7 +431,10 @@ fn doStop(this: *Listener, force_close: bool) void {
     const listener = this.listener;
 
     defer switch (listener) {
-        .uws => |socket| socket.close(this.ssl),
+        .uws => |socket| {
+            this.unlinkUnixSocketPath();
+            socket.close(this.ssl);
+        },
         .namedPipe => |namedPipe| if (Environment.isWindows) namedPipe.closePipeAndDeinit(),
         .none => {},
     };
@@ -463,11 +466,25 @@ pub fn finalize(this: *Listener) callconv(.c) void {
     const listener = this.listener;
     this.listener = .none;
     switch (listener) {
-        .uws => |socket| socket.close(this.ssl),
+        .uws => |socket| {
+            this.unlinkUnixSocketPath();
+            socket.close(this.ssl);
+        },
         .namedPipe => |namedPipe| if (Environment.isWindows) namedPipe.closePipeAndDeinit(),
         .none => {},
     }
     this.deinit();
+}
+
+/// Match Node.js/libuv: unlink the unix socket file before closing the listening fd.
+/// Unlinking after close would race with another process creating a socket at the same path.
+fn unlinkUnixSocketPath(this: *const Listener) void {
+    if (this.connection != .unix) return;
+    const path = this.connection.unix;
+    // Abstract sockets (Linux) start with a NUL byte and have no filesystem entry.
+    if (path.len == 0 or path[0] == 0) return;
+    var buf: bun.PathBuffer = undefined;
+    _ = bun.sys.unlink(bun.path.z(path, &buf));
 }
 
 pub fn deinit(this: *Listener) void {

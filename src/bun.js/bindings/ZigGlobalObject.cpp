@@ -3075,11 +3075,13 @@ void GlobalObject::reload()
     JSModuleLoader* moduleLoader = this->moduleLoader();
     auto& vm = this->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSC::JSMap* registry = jsCast<JSC::JSMap*>(moduleLoader->get(this, Identifier::fromString(vm, "registry"_s)));
+    JSC::JSMap* registry = jsDynamicCast<JSC::JSMap*>(moduleLoader->get(this, Identifier::fromString(vm, "registry"_s)));
     RETURN_IF_EXCEPTION(scope, );
 
-    registry->clear(this);
-    RETURN_IF_EXCEPTION(scope, );
+    if (registry) {
+        registry->clear(this);
+        RETURN_IF_EXCEPTION(scope, );
+    }
     this->requireMap()->clear(this);
     RETURN_IF_EXCEPTION(scope, );
 

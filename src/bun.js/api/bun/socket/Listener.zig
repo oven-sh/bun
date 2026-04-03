@@ -430,11 +430,11 @@ fn doStop(this: *Listener, force_close: bool) void {
     if (this.listener == .none) return;
     const listener = this.listener;
 
+    // Unlink before any close path (including ctx.deinit below) can release the fd.
+    if (listener == .uws) this.unlinkUnixSocketPath();
+
     defer switch (listener) {
-        .uws => |socket| {
-            this.unlinkUnixSocketPath();
-            socket.close(this.ssl);
-        },
+        .uws => |socket| socket.close(this.ssl),
         .namedPipe => |namedPipe| if (Environment.isWindows) namedPipe.closePipeAndDeinit(),
         .none => {},
     };

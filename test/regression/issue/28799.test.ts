@@ -47,50 +47,42 @@ if (isDockerEnabled()) {
         await sql?.close();
       });
 
-      // Each variant uses a different dynamic-interpolation pattern from the
-      // user's reproduction. The 50-column table amplifies per-column leaks
-      // (like the ColumnDefinition41 `name_or_index` leak fixed in #28633) so
-      // the delta over 5000 iterations is large enough to catch with an RSS
-      // threshold. ASAN inflates RSS with shadow memory, so we double the
+      // Exercises the three dynamic-interpolation patterns from the user's
+      // reproduction in a single test. The 50-column table amplifies per-column
+      // leaks (like the ColumnDefinition41 `name_or_index` leak fixed in #28633)
+      // so the delta over the measured loop is large enough to catch with an
+      // RSS threshold. ASAN inflates RSS with shadow memory, so we double the
       // threshold under ASAN where measurements are noisier.
-      const THRESHOLD_MB = isASAN ? 24 : 12;
-      const WARMUP = 500;
-      const ITERATIONS = 5000;
+      //
+      // A single `test` runs all three patterns back-to-back and compares RSS
+      // against a single baseline. Running them as separate tests would let
+      // each test's RSS delta also capture allocator churn left behind by the
+      // prior test, making the threshold much noisier.
+      test("dynamic interpolation should not leak", async () => {
+        const runQueries = async () => {
+          // value interpolation
+          await sql`SELECT * FROM \`leak_test_28799\` WHERE primary_id = ${"123"} LIMIT 1`;
+          // identifier interpolation
+          await sql`SELECT * FROM ${sql("leak_test_28799")} WHERE primary_id = '123' LIMIT 1`;
+          // value + identifier interpolation
+          await sql`SELECT * FROM ${sql("leak_test_28799")} WHERE primary_id = ${"123"} LIMIT 1`;
+        };
 
-      async function measureLeak(runQuery: () => Promise<unknown>): Promise<number> {
-        for (let i = 0; i < WARMUP; i++) await runQuery();
+        for (let i = 0; i < 500; i++) await runQueries();
         Bun.gc(true);
         await Bun.sleep(50);
         const rssBefore = process.memoryUsage.rss();
 
-        for (let i = 0; i < ITERATIONS; i++) await runQuery();
+        for (let i = 0; i < 5000; i++) await runQueries();
         Bun.gc(true);
         await Bun.sleep(50);
         const rssAfter = process.memoryUsage.rss();
 
-        return (rssAfter - rssBefore) / 1024 / 1024;
-      }
-
-      test("value interpolation should not leak", async () => {
-        const growthMB = await measureLeak(
-          () => sql`SELECT * FROM \`leak_test_28799\` WHERE primary_id = ${"123"} LIMIT 1`,
-        );
-        expect(growthMB).toBeLessThan(THRESHOLD_MB);
-      });
-
-      test("identifier interpolation should not leak", async () => {
-        const growthMB = await measureLeak(
-          () => sql`SELECT * FROM ${sql("leak_test_28799")} WHERE primary_id = '123' LIMIT 1`,
-        );
-        expect(growthMB).toBeLessThan(THRESHOLD_MB);
-      });
-
-      test("value + identifier interpolation should not leak", async () => {
-        const growthMB = await measureLeak(
-          () => sql`SELECT * FROM ${sql("leak_test_28799")} WHERE primary_id = ${"123"} LIMIT 1`,
-        );
-        expect(growthMB).toBeLessThan(THRESHOLD_MB);
-      });
+        const growthMB = (rssAfter - rssBefore) / 1024 / 1024;
+        // Without #28633, 5000 iterations × 3 patterns × 50 columns leaks
+        // ~50 MB (ASAN). With the fix, growth stays small.
+        expect(growthMB).toBeLessThan(isASAN ? 36 : 18);
+      }, 180_000);
     },
   );
 }

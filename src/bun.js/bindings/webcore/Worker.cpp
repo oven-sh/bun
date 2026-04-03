@@ -521,9 +521,16 @@ extern "C" void WebWorker__releaseRef(Worker* worker)
     // fired on the parent), `Worker::~Worker` would run on the wrong thread.
     auto* ctx = worker->scriptExecutionContext();
     if (ctx) {
-        ScriptExecutionContext::postTaskTo(ctx->identifier(), [worker](ScriptExecutionContext&) {
+        bool posted = ScriptExecutionContext::postTaskTo(ctx->identifier(), [worker](ScriptExecutionContext&) {
             worker->deref();
         });
+        if (!posted) {
+            // TOCTOU: the context was removed from the contexts map between the
+            // WeakPtr check above and `postTaskTo` acquiring its lock. The task
+            // (and its capture of `worker`) was dropped, so deref here as a
+            // fallback rather than leak the ref.
+            worker->deref();
+        }
     } else {
         // Parent context is gone; fall back to derefing here.
         worker->deref();

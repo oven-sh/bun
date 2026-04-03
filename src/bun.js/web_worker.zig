@@ -378,6 +378,10 @@ pub fn start(
 export fn WebWorker__deinit(this: *WebWorker) void {
     log("[{d}] deinit", .{this.execution_context_id});
     bun.default_allocator.free(this.unresolved_specifier);
+    // `this.name` is the sentinel-terminated string allocated in `create` from
+    // `bun.default_allocator` when a non-empty name was passed. Empty names
+    // point to the `""` string literal and must not be freed.
+    if (this.name.len > 0) bun.default_allocator.free(this.name);
     for (this.preloads) |preload| {
         bun.default_allocator.free(preload);
     }

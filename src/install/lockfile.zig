@@ -411,8 +411,9 @@ pub fn isResolvedDependencyDisabled(
     meta: *const Package.Meta,
     cpu: Npm.Architecture,
     os: Npm.OperatingSystem,
+    libc: Npm.Libc,
 ) bool {
-    if (meta.isDisabled(cpu, os)) return true;
+    if (meta.isDisabled(cpu, os, libc)) return true;
 
     const dep = lockfile.buffers.dependencies.items[dep_id];
 
@@ -1022,12 +1023,15 @@ pub fn fetchNecessaryPackageMetadataAfterYarnOrPnpmMigration(this: *Lockfile, ma
 
                     pkg_bin.* = pkg.package.bin.clone(manifest.string_buf, manifest.extern_strings_bin_entries, extern_strings_list.items, extern_strings, @TypeOf(&builder), &builder);
 
-                    // Update os/cpu metadata if not already set
+                    // Update os/cpu/libc metadata if not already set
                     if (pkg_meta.os == .all) {
                         pkg_meta.os = pkg.package.os;
                     }
                     if (pkg_meta.arch == .all) {
                         pkg_meta.arch = pkg.package.cpu;
+                    }
+                    if (pkg_meta.libc == .all) {
+                        pkg_meta.libc = pkg.package.libc;
                     }
                 },
                 else => {},

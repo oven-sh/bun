@@ -750,57 +750,51 @@ it.skipIf(!isMacOS)(
   "should hot reload when a watched file is extended via truncate (NOTE_EXTEND)",
   async () => {
     const root = hotRunnerRoot;
-    let runner: ReturnType<typeof spawn> | undefined;
-    try {
-      runner = spawn({
-        cmd: [bunExe(), "--hot", "run", root],
-        env: bunEnv,
-        cwd,
-        stdout: "pipe",
-        stderr: "inherit",
-        stdin: "ignore",
-      });
+    await using runner = spawn({
+      cmd: [bunExe(), "--hot", "run", root],
+      env: bunEnv,
+      cwd,
+      stdout: "pipe",
+      stderr: "inherit",
+      stdin: "ignore",
+    });
 
-      let reloadCounter = 0;
-      let str = "";
-      for await (const chunk of runner.stdout) {
-        str += new TextDecoder().decode(chunk);
-        if (!/\[#!root\].*[0-9]\n/g.test(str)) continue;
+    let reloadCounter = 0;
+    let str = "";
+    for await (const chunk of runner.stdout) {
+      str += new TextDecoder().decode(chunk);
+      if (!/\[#!root\].*[0-9]\n/g.test(str)) continue;
 
-        let any = false;
-        for (const line of str.split("\n")) {
-          if (!line.includes("[#!root]")) continue;
-          reloadCounter++;
-          str = "";
+      let any = false;
+      for (const line of str.split("\n")) {
+        if (!line.includes("[#!root]")) continue;
+        reloadCounter++;
+        str = "";
 
-          if (reloadCounter === 3) {
-            runner.kill();
-            break;
-          }
-
-          expect(line).toContain(`[#!root] Reloaded: ${reloadCounter}`);
-          any = true;
+        if (reloadCounter === 3) {
+          runner.kill();
+          break;
         }
 
-        if (any) {
-          // Extend the file via ftruncate. On macOS this fires NOTE_EXTEND only,
-          // which requires the kqueue watcher to have registered NOTE_EXTEND in
-          // its fflags — otherwise the reload never happens.
-          const fd = openSync(root, "r+");
-          try {
-            const size = statSync(root).size;
-            ftruncateSync(fd, size + 1);
-          } finally {
-            closeSync(fd);
-          }
-        }
+        expect(line).toContain(`[#!root] Reloaded: ${reloadCounter}`);
+        any = true;
       }
 
-      expect(reloadCounter).toBeGreaterThanOrEqual(3);
-    } finally {
-      runner?.unref();
-      runner?.kill(9);
+      if (any) {
+        // Extend the file via ftruncate. On macOS this fires NOTE_EXTEND only,
+        // which requires the kqueue watcher to have registered NOTE_EXTEND in
+        // its fflags — otherwise the reload never happens.
+        const fd = openSync(root, "r+");
+        try {
+          const size = statSync(root).size;
+          ftruncateSync(fd, size + 1);
+        } finally {
+          closeSync(fd);
+        }
+      }
     }
+
+    expect(reloadCounter).toBeGreaterThanOrEqual(3);
   },
   timeout,
 );

@@ -9,7 +9,7 @@ import { bunEnv, bunExe, tempDir } from "harness";
  * (CLI flag) / per-package excludes. A version with a non-empty `deprecated`
  * string in its npm manifest entry is skipped during resolution.
  */
-describe("issue #28822 - blockDeprecatedDependencies", () => {
+describe.concurrent("issue #28822 - blockDeprecatedDependencies", () => {
   let mockRegistryServer: Server;
   let mockRegistryUrl = "";
 

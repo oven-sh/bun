@@ -201,8 +201,12 @@ pub fn processInlineContent(self: *Parser, content: []const u8, base_off: OFF) P
 
         // Wiki links: [[destination]] or [[destination|label]]
         if (c == '[' and self.flags.wiki_links and i + 1 < content.len and content[i + 1] == '[') {
+            // Emit pending text BEFORE processWikiLink, which renders the wikilink
+            // as a side effect. If parsing fails we fall through to the regular link
+            // handler; setting text_start = i prevents it from re-emitting the text.
+            if (i > text_start) try self.emitText(.normal, content[text_start..i]);
+            text_start = i;
             if (try self.processWikiLink(content, i)) |end_pos| {
-                if (i > text_start) try self.emitText(.normal, content[text_start..i]);
                 i = end_pos;
                 text_start = i;
                 continue;

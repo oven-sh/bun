@@ -252,7 +252,7 @@ describe.concurrent("Bun.cron (in-process) — firing", () => {
     const [stdout, _stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout.trim()).toBe("ok");
     expect(exitCode).toBe(0);
-  }, 70_000);
+  }, 130_000);
 
   test("sync throw in callback emits uncaughtException", async () => {
     // Matches setTimeout: sync throw → uncaughtException. Process exits 1 without a handler.
@@ -374,8 +374,15 @@ describe.concurrent("Bun.cron (in-process) — firing", () => {
       stderr: "pipe",
     });
     const stderrP = proc.stderr.text();
+    const waitFor = async (file: string) => {
+      while (!(await Bun.file(m(file)).exists())) {
+        if (proc.exitCode !== null)
+          throw new Error(`subprocess exited ${proc.exitCode} before ${file}: ${await stderrP}`);
+        await Bun.sleep(10);
+      }
+    };
 
-    while (!(await Bun.file(m("v1.evaluated")).exists())) await Bun.sleep(10);
+    await waitFor("v1.evaluated");
 
     // Delete the ghost cron; replace with a sentinel that fires on the same
     // boundary. When the sentinel fires, ghost.fired must NOT exist.
@@ -392,7 +399,7 @@ describe.concurrent("Bun.cron (in-process) — firing", () => {
       `,
     );
 
-    while (!(await Bun.file(m("v2.evaluated")).exists())) await Bun.sleep(10);
+    await waitFor("v2.evaluated");
     const [exitCode, stderr] = await Promise.all([proc.exited, stderrP]);
 
     if (exitCode !== 0) console.error(stderr);

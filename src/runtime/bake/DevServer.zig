@@ -4134,6 +4134,13 @@ pub fn onFileUpdate(dev: *DevServer, events: []Watcher.Event, changed_files: []?
                 }
             },
             .directory => {
+                // Skip metadata-only events (chmod/utimes/chown/xattr on macOS fire
+                // NOTE_ATTRIB which now arrives here). Appending the directory would
+                // submit a HotReloadEvent that fires a spurious
+                // `testing_watch_synchronization` message with no rebuild.
+                if (!(event.op.write or event.op.delete or event.op.rename or
+                    event.op.create or event.op.move_to)) continue;
+
                 // INotifyWatcher stores sub paths into `changed_files`
                 // the other platforms do not appear to write anything into `changed_files` ever.
                 if (Environment.isLinux) {

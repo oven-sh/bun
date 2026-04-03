@@ -272,6 +272,16 @@ fn isUNCPath(comptime T: type, path: []const T) bool {
 pub fn toWPathMaybeDir(wbuf: []u16, utf8: []const u8, comptime add_trailing_lash: bool) [:0]u16 {
     bun.unsafeAssert(wbuf.len > 0);
 
+    // simdutf only receives output.ptr — the slice bound below never reaches it.
+    // Callers must ensure fit. UTF-8→UTF-16 never expands, so the byte count
+    // fitting is sufficient; only check exact UTF-16 count when it doesn't.
+    if (comptime bun.Environment.allow_assert) {
+        const reserve = 1 + @as(usize, @intFromBool(add_trailing_lash));
+        if (utf8.len + reserve > wbuf.len) {
+            bun.assert(bun.simdutf.length.utf16.from.utf8(utf8) + reserve <= wbuf.len);
+        }
+    }
+
     var result = bun.simdutf.convert.utf8.to.utf16.with_errors.le(
         utf8,
         wbuf[0..wbuf.len -| (1 + @as(usize, @intFromBool(add_trailing_lash)))],

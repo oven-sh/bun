@@ -758,14 +758,26 @@ pub const UpdateInteractiveCommand = struct {
                 ) orelse continue;
 
                 const filter = manager.options.manifestFilterOptions();
-                const latest = manifest.findByDistTagWithFilter("latest", filter).unwrap() orelse continue;
+                const latest_result = manifest.findByDistTagWithFilter("latest", filter);
+                // If even `latest` is wholly deprecated under the active filter,
+                // the package has nothing installable to show. Same for age.
+                if (latest_result == .err) continue;
+                const latest = latest_result.unwrap() orelse continue;
 
                 // In interactive mode, show the constrained update version as "Target"
-                // but always include packages (don't filter out breaking changes)
-                const update_version = if (resolved_version.tag == .npm)
-                    manifest.findBestVersionWithFilter(resolved_version.value.npm.version, string_buf, filter).unwrap() orelse latest
+                // but always include packages (don't filter out breaking changes).
+                // Exception: when `blockDeprecatedDependencies` has blocked every
+                // version matching the user's range, skip the package — selecting
+                // `latest` would offer a version outside the user's constraint with
+                // no path to a non-deprecated in-range alternative.
+                const update_result: Install.Npm.PackageManifest.FindVersionResult = if (resolved_version.tag == .npm)
+                    manifest.findBestVersionWithFilter(resolved_version.value.npm.version, string_buf, filter)
                 else
-                    manifest.findByDistTagWithFilter(resolved_version.value.dist_tag.tag.slice(string_buf), filter).unwrap() orelse latest;
+                    manifest.findByDistTagWithFilter(resolved_version.value.dist_tag.tag.slice(string_buf), filter);
+                if (update_result == .err and (update_result.err == .deprecated or update_result.err == .all_versions_deprecated)) {
+                    continue;
+                }
+                const update_version = update_result.unwrap() orelse latest;
 
                 // Skip only if both the constrained update AND the latest version are the same as current
                 // This ensures we show packages where latest is newer even if constrained update isn't

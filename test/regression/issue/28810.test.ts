@@ -15,9 +15,7 @@ test("wikilink preserves preceding text order with label", () => {
 
 test("wikilink with text on both sides and emphasis", () => {
   const html = Bun.markdown.html("*prefix* [[foo]] *suffix*", { wikiLinks: true });
-  expect(html).toBe(
-    '<p><em>prefix</em> <x-wikilink data-target="foo">foo</x-wikilink> <em>suffix</em></p>\n',
-  );
+  expect(html).toBe('<p><em>prefix</em> <x-wikilink data-target="foo">foo</x-wikilink> <em>suffix</em></p>\n');
 });
 
 test("multiple wikilinks with interleaved text", () => {

@@ -4,16 +4,18 @@ import { join } from "node:path";
 
 // Skip on Windows — the inline script uses openssl req which is not
 // available on the default Windows CI image.
-test.skipIf(isWindows)("node:https concurrent chunked downloads do not hang", async () => {
-  using dir = tempDir("issue-28703", {});
-  const keyPath = join(String(dir), "key.pem");
-  const certPath = join(String(dir), "cert.pem");
+test.skipIf(isWindows)(
+  "node:https concurrent chunked downloads do not hang",
+  async () => {
+    using dir = tempDir("issue-28703", {});
+    const keyPath = join(String(dir), "key.pem");
+    const certPath = join(String(dir), "cert.pem");
 
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
       const https = require("node:https");
       const { readFileSync } = require("node:fs");
       const { execSync } = require("node:child_process");
@@ -67,15 +69,17 @@ test.skipIf(isWindows)("node:https concurrent chunked downloads do not hang", as
         } finally { clearInterval(hc); server.close(); }
       });
       `,
-    ],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).not.toContain("HUNG");
-  expect(stderr).not.toContain("BAD");
-  expect(stdout).toContain("OK ");
-  expect(exitCode).toBe(0);
-}, 60_000);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("HUNG");
+    expect(stderr).not.toContain("BAD");
+    expect(stdout).toContain("OK ");
+    expect(exitCode).toBe(0);
+  },
+  60_000,
+);

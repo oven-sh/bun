@@ -100,6 +100,7 @@ test("bun update <pkg>@latest updates past a pinned exact version", async () => 
   };
 
   // Install the pinned version first.
+  let installExitCode: number;
   {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "install"],
@@ -108,16 +109,18 @@ test("bun update <pkg>@latest updates past a pinned exact version", async () => 
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).not.toContain("error:");
-    expect(exitCode).toBe(0);
+    installExitCode = exitCode;
   }
 
   // Sanity: installed version is the pinned one.
   const installedBefore = await Bun.file(join(String(dir), "node_modules", pkgName, "package.json")).json();
   expect(installedBefore.version).toBe(oldVersion);
+  expect(installExitCode).toBe(0);
 
   // Run `bun update <pkg>@latest` — should bump past the pinned version.
+  let updateExitCode: number;
   {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "update", `${pkgName}@latest`],
@@ -126,9 +129,9 @@ test("bun update <pkg>@latest updates past a pinned exact version", async () => 
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).not.toContain("error:");
-    expect(exitCode).toBe(0);
+    updateExitCode = exitCode;
   }
 
   // Installed version on disk should now be the new one.
@@ -138,4 +141,5 @@ test("bun update <pkg>@latest updates past a pinned exact version", async () => 
   // package.json should have been rewritten to the new version, preserving the exact pinning style.
   const editedPkg = await Bun.file(join(String(dir), "package.json")).json();
   expect(editedPkg.dependencies[pkgName]).toBe(newVersion);
+  expect(updateExitCode).toBe(0);
 });

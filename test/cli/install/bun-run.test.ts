@@ -305,13 +305,13 @@ describe.concurrent("bun run", () => {
     });
   }
 
-  it("should show the correct working directory when run with --cwd", async () => {
-    using dir = tempDir("bun-run-cwd", {
+  it.each(["--cwd", "--prefix"])("should show the correct working directory when run with %s", async flag => {
+    using dir = tempDir(`bun-run-${flag.replace("--", "")}`, {
       "subdir/test.js": `console.log(process.cwd());`,
     });
 
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "run", "--cwd", "subdir", "test.js"],
+      cmd: [bunExe(), "run", flag, "subdir", "test.js"],
       cwd: String(dir),
       stdin: "ignore",
       stdout: "pipe",

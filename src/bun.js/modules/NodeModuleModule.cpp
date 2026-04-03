@@ -1,6 +1,7 @@
 #include "root.h"
 #include "headers-handwritten.h"
 #include "NodeModuleModule.h"
+#include "BunProcess.h"
 
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/VM.h>
@@ -870,6 +871,13 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionSyncBuiltinESMExports,
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionRegister, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
+    auto& vm = globalObject->vm();
+    Bun::Process::emitWarning(
+        globalObject,
+        jsString(vm, String("module.register() is not implemented in Bun. Loaders registered with module.register() will not be invoked. To intercept and transform modules, consider using Bun's plugin API: https://bun.sh/docs/bundler/plugins"_s)),
+        jsString(vm, String("Warning"_s)),
+        jsString(vm, String("BUN_UNSUPPORTED_REGISTER"_s)),
+        jsUndefined());
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 

@@ -1,17 +1,5 @@
-// Regression test for https://github.com/oven-sh/bun/issues/28808
-//
-// Bug: `bun update <pkg>@latest` ignores the @latest dist-tag when package.json
-// has a pinned exact version (e.g. `"pkg": "1.0.0"` instead of `"^1.0.0"`).
-// The package stays at the pinned version instead of updating to latest.
-//
-// Cause: PackageJSONEditor.edit() kept the existing pinned literal in the
-// in-memory package.json for `bun update` with an existing non-blank range,
-// unless the user typed an explicit npm semver spec. A CLI-supplied `@latest`
-// (Dependency.Version.tag == .dist_tag) was dropped, so install saw no diff
-// and never re-resolved the package.
-//
-// Fix: treat an explicit dist-tag on the CLI like an explicit npm spec —
-// write it into the in-memory package.json so install re-resolves.
+// https://github.com/oven-sh/bun/issues/28808
+// `bun update <pkg>@latest` should override a pinned exact version in package.json.
 
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";

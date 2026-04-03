@@ -5,9 +5,9 @@
 // `<binary>@git@host:org/repo.git` got re-detected as an SCP-like path,
 // yielding `https://<binary>@git@host/org/repo.git` passed to `git clone`.
 import { expect, test } from "bun:test";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { chmodSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 
 test.skipIf(isWindows)("bunx --package=<scp-url> does not mangle the git URL", async () => {
   // A fake `git` that logs its arguments to a file, then exits non-zero so
@@ -29,12 +29,7 @@ test.skipIf(isWindows)("bunx --package=<scp-url> does not mangle the git URL", a
   };
 
   await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "x",
-      "--package=git@private-repo.example:organization/repo.git",
-      "somebin",
-    ],
+    cmd: [bunExe(), "x", "--package=git@private-repo.example:organization/repo.git", "somebin"],
     env,
     cwd: join(String(dir), "cwd"),
     stderr: "pipe",

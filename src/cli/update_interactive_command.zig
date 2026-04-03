@@ -754,17 +754,18 @@ pub const UpdateInteractiveCommand = struct {
                     package_name,
                     &expired,
                     .load_from_memory_fallback_to_disk,
-                    manager.options.minimum_release_age_ms != null,
+                    manager.options.needsExtendedManifest(),
                 ) orelse continue;
 
-                const latest = manifest.findByDistTagWithFilter("latest", manager.options.minimum_release_age_ms, manager.options.minimum_release_age_excludes).unwrap() orelse continue;
+                const filter = manager.options.manifestFilterOptions();
+                const latest = manifest.findByDistTagWithFilter("latest", filter).unwrap() orelse continue;
 
                 // In interactive mode, show the constrained update version as "Target"
                 // but always include packages (don't filter out breaking changes)
                 const update_version = if (resolved_version.tag == .npm)
-                    manifest.findBestVersionWithFilter(resolved_version.value.npm.version, string_buf, manager.options.minimum_release_age_ms, manager.options.minimum_release_age_excludes).unwrap() orelse latest
+                    manifest.findBestVersionWithFilter(resolved_version.value.npm.version, string_buf, filter).unwrap() orelse latest
                 else
-                    manifest.findByDistTagWithFilter(resolved_version.value.dist_tag.tag.slice(string_buf), manager.options.minimum_release_age_ms, manager.options.minimum_release_age_excludes).unwrap() orelse latest;
+                    manifest.findByDistTagWithFilter(resolved_version.value.dist_tag.tag.slice(string_buf), filter).unwrap() orelse latest;
 
                 // Skip only if both the constrained update AND the latest version are the same as current
                 // This ensures we show packages where latest is newer even if constrained update isn't

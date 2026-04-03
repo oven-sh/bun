@@ -817,6 +817,36 @@ pub const Bunfig = struct {
                         }
                     }
 
+                    if (install_obj.get("blockDeprecatedDependencies")) |block_deprecated| {
+                        switch (block_deprecated.data) {
+                            .e_boolean => |val| {
+                                install.block_deprecated_dependencies = val.value;
+                            },
+                            else => {
+                                try this.addError(block_deprecated.loc, "Expected boolean for blockDeprecatedDependencies");
+                            },
+                        }
+                    }
+
+                    if (install_obj.get("blockDeprecatedDependenciesExcludes")) |exclusions| {
+                        switch (exclusions.data) {
+                            .e_array => |arr| brk: {
+                                const raw_exclusions = arr.items.slice();
+                                if (raw_exclusions.len == 0) break :brk;
+
+                                const exclusions_list = try this.allocator.alloc(string, raw_exclusions.len);
+                                for (raw_exclusions, 0..) |p, i| {
+                                    try this.expectString(p);
+                                    exclusions_list[i] = try p.data.e_string.string(allocator);
+                                }
+                                install.block_deprecated_dependencies_excludes = exclusions_list;
+                            },
+                            else => {
+                                try this.addError(exclusions.loc, "Expected array for blockDeprecatedDependenciesExcludes");
+                            },
+                        }
+                    }
+
                     if (install_obj.get("publicHoistPattern")) |public_hoist_pattern_expr| {
                         install.public_hoist_pattern = bun.install.PnpmMatcher.fromExpr(
                             allocator,

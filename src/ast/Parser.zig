@@ -1160,6 +1160,11 @@ pub const Parser = struct {
             }
         }
 
+        // Reject import.meta in CommonJS files (matches Node.js behavior)
+        if (p.has_import_meta and p.options.module_type == .cjs and p.options.features.commonjs_at_runtime) {
+            try p.log.addRangeError(p.source, p.import_meta_keyword, "Cannot use 'import.meta' outside a module");
+        }
+
         // Handle dirname and filename at runtime.
         //
         // If we reach this point, it means:

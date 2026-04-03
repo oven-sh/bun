@@ -87,7 +87,16 @@ fn handleChangeCwdErr(this: *Cd, err: Syscall.Error, new_cwd_: []const u8) Yield
 
             return this.writeStderrNonBlocking("not a directory: {s}\n", .{new_cwd_});
         },
-        else => return .failed,
+        else => {
+            const message: []const u8 = brk: {
+                if (err.getErrorCodeTagName()) |entry| {
+                    _, const sys_errno = entry;
+                    if (Syscall.coreutils_error_map.get(sys_errno)) |msg| break :brk msg;
+                }
+                break :brk "unknown error";
+            };
+            return this.writeStderrNonBlocking("{s}: {s}\n", .{ new_cwd_, message });
+        },
     }
 }
 

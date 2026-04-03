@@ -77,12 +77,15 @@ export fn WebWorker__updatePtr(worker: *WebWorker, ptr: *anyopaque) bool {
         startWithErrorHandling,
         .{worker},
     ) catch {
-        // Thread spawn failed. Release the parent poll ref now, and release
+        // Thread spawn failed. Mark the worker terminated so late
+        // `setRef`/`notifyNeedTermination` callers that still hold `impl_` see
+        // the teardown guards. Then release the parent poll ref and release
         // the Zig-side C++ `Worker` ref (the `worker->ref()` taken in
         // `Worker::create`) so `Worker::~Worker` can eventually run and free
         // the `WebWorker` via `WebWorker__deinit`. Leave the struct itself
         // alive for that destructor to free, so we don't race with other
         // callers that still hold `impl_`.
+        worker.status.store(.terminated, .release);
         worker.parent_poll_ref.unrefConcurrently(worker.parent);
         WebWorker__releaseRef(worker.cpp_worker);
         return false;

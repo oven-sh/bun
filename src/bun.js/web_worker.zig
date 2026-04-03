@@ -367,17 +367,24 @@ pub fn start(
     vm.global.vm().holdAPILock(this, callback);
 }
 
-/// Deinit will clean up vm and everything.
+/// Releases owned resources.
 /// Early deinit may be called from caller thread, but full vm deinit will only be called within worker's thread.
 fn deinit(this: *WebWorker) void {
     log("[{d}] deinit", .{this.execution_context_id});
     this.parent_poll_ref.unrefConcurrently(this.parent);
     bun.default_allocator.free(this.unresolved_specifier);
+    this.unresolved_specifier = &.{};
     for (this.preloads) |preload| {
         bun.default_allocator.free(preload);
     }
     bun.default_allocator.free(this.preloads);
-    bun.default_allocator.destroy(this);
+    this.preloads = &.{};
+    // Intentionally do NOT `bun.default_allocator.destroy(this)` here: the C++
+    // `Worker` on the parent thread may still hold a raw `impl_` pointer to
+    // this struct and call `.ref()/.unref()/.terminate()` after the worker
+    // thread has exited. Reading `status == .terminated` from the parent
+    // thread's setRef/notifyNeedTermination guards returns safely as long as
+    // the struct itself remains alive.
 }
 
 fn flushLogs(this: *WebWorker) void {
@@ -545,7 +552,11 @@ fn spin(this: *WebWorker) void {
 
 /// This is worker.ref()/.unref() from JS (Caller thread)
 pub fn setRef(this: *WebWorker, value: bool) callconv(.c) void {
-    if (this.hasRequestedTerminate()) {
+    // Also check `.terminated` status: a worker that exited naturally (not via
+    // terminate()) never sets `requested_terminate`, but its parent_poll_ref
+    // has been unref'd in deinit(). A late ref() here would re-pin the parent
+    // loop with no matching unref.
+    if (this.hasRequestedTerminate() or this.status.load(.acquire) == .terminated) {
         return;
     }
 

@@ -410,4 +410,19 @@ describe("worker_threads", () => {
     await p;
     expect(message).toEqual("hello");
   });
+
+  // ref/unref/terminate after the worker thread has exited used to be a
+  // use-after-free because the Zig WebWorker struct was freed on the worker
+  // thread while the C++ Worker on the parent thread still held a dangling
+  // pointer.
+  test("ref/unref/terminate after worker exit does not crash", async () => {
+    const worker = new wt.Worker(new URL("worker-fixture-process-exit.js", import.meta.url).href, {
+      smol: true,
+    });
+    await once(worker, "exit");
+    worker.unref();
+    worker.ref();
+    worker.unref();
+    await worker.terminate();
+  });
 });

@@ -296,6 +296,16 @@ int bsd_udp_packet_buffer_payload_length(struct udp_recvbuf *msgvec, int index) 
 #endif
 }
 
+int bsd_udp_packet_buffer_truncated(struct udp_recvbuf *msgvec, int index) {
+#if defined(_WIN32)
+    /* On Windows, WSARecvFrom signals truncation via WSAEMSGSIZE on recv,
+     * which we don't currently surface here. */
+    return 0;
+#else
+    return (((struct mmsghdr *) msgvec)[index].msg_hdr.msg_flags & MSG_TRUNC) ? 1 : 0;
+#endif
+}
+
 LIBUS_SOCKET_DESCRIPTOR apple_no_sigpipe(LIBUS_SOCKET_DESCRIPTOR fd) {
 #ifdef __APPLE__
     if (fd != LIBUS_SOCKET_ERROR) {
@@ -1290,6 +1300,21 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port, int op
             setsockopt(listenFd, IPPROTO_IP, IP_RECVTOS, &enabled, sizeof(enabled));
         }
     }
+
+#if defined(__linux__)
+    /* Linux suppresses ICMP errors (port unreachable, host unreachable, TTL
+     * exceeded, etc.) on unconnected UDP sockets by default. Enabling
+     * IP_RECVERR/IPV6_RECVERR surfaces them as errors on the next send/recv,
+     * rather than silently dropping them. Matches libuv. */
+#ifdef IP_RECVERR
+    setsockopt(listenFd, IPPROTO_IP, IP_RECVERR, &enabled, sizeof(enabled));
+#endif
+#ifdef IPV6_RECVERR
+    if (listenAddr->ai_family == AF_INET6) {
+        setsockopt(listenFd, IPPROTO_IPV6, IPV6_RECVERR, &enabled, sizeof(enabled));
+    }
+#endif
+#endif
 
     /* We bind here as well */
     if (bind(listenFd, listenAddr->ai_addr, (socklen_t) listenAddr->ai_addrlen)) {

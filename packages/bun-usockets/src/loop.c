@@ -588,7 +588,21 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                 break;
             }
 
-            if (events & LIBUS_SOCKET_READABLE) {
+            // On Linux with IP_RECVERR, EPOLLERR fires when an ICMP error (port
+            // unreachable, host unreachable, TTL exceeded, ...) is queued on
+            // the socket. The kernel may or may not also set EPOLLIN. Calling
+            // recvmmsg on such a socket returns -1 with the ICMP errno
+            // (ECONNREFUSED, EHOSTUNREACH, ENETUNREACH, EMSGSIZE, ...), which
+            // we surface via on_recv_error. The socket stays open.
+            int recv_error_surfaced = 0;
+
+            // recv_would_block_only means: we attempted to recv and the only
+            // outcome was EAGAIN (no packets, no real error). EPOLLERR in that
+            // state is a residual event from the kernel's socket error queue
+            // that has already been drained — not a fatal condition.
+            int recv_would_block_only = 0;
+
+            if ((events & LIBUS_SOCKET_READABLE) || error) {
                 do {
                     struct udp_recvbuf recvbuf;
                     bsd_udp_setup_recvbuf(&recvbuf, u->loop->data.recv_buf, LIBUS_RECV_BUFFER_LENGTH);
@@ -597,9 +611,14 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         u->on_data(u, &recvbuf, npackets);
                     } else {
                         if (npackets == LIBUS_SOCKET_ERROR) {
-                            // If the error was not EAGAIN, mark the error
-                            if (!bsd_would_block()) {
-                                error = 1;
+                            int recv_err = errno;
+                            if (bsd_would_block()) {
+                                recv_would_block_only = 1;
+                            } else {
+                                recv_error_surfaced = 1;
+                                if (u->on_recv_error) {
+                                    u->on_recv_error(u, recv_err);
+                                }
                             }
                         } else {
                             // 0 messages received, we are done
@@ -623,7 +642,12 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                 us_poll_change(&u->p, u->loop, us_poll_events(&u->p) & LIBUS_SOCKET_READABLE);
             }
 
-            if (error && !u->closed) {
+            // Only close on EPOLLERR if we didn't surface the real errno via
+            // recvmmsg + on_recv_error above AND recv wasn't just EAGAIN (which
+            // means the error queue is already drained, leaving a residual
+            // EPOLLERR). Otherwise the socket stays open so the user can keep
+            // sending/receiving after a transient ICMP error.
+            if (error && !recv_error_surfaced && !recv_would_block_only && !u->closed) {
                 us_udp_socket_close(u);
             }
             break;

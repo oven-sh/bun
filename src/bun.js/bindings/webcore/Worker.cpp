@@ -519,18 +519,17 @@ extern "C" void WebWorker__releaseRef(Worker* worker)
     // thread — otherwise, if this turns out to be the last ref (e.g. the
     // JSWorker was already GC'd and the posted close-event task already
     // fired on the parent), `Worker::~Worker` would run on the wrong thread.
-    auto* ctx = worker->scriptExecutionContext();
+    // Hold a ref on the context for the duration of this call so it can't be
+    // destroyed out from under us between the null check and the post. Post
+    // directly on `ctx` rather than via `postTaskTo(identifier)` — the map
+    // lookup can TOCTOU-fail (`removeFromContextsMap` runs before
+    // `~ScriptExecutionContext` nulls our WeakPtr), but the `ctx` itself is
+    // still a valid live object in that window.
+    RefPtr<ScriptExecutionContext> ctx = worker->scriptExecutionContext();
     if (ctx) {
-        bool posted = ScriptExecutionContext::postTaskTo(ctx->identifier(), [worker](ScriptExecutionContext&) {
+        ctx->postTaskConcurrently([worker](ScriptExecutionContext&) {
             worker->deref();
         });
-        if (!posted) {
-            // TOCTOU: the context was removed from the contexts map between the
-            // WeakPtr check above and `postTaskTo` acquiring its lock. The task
-            // (and its capture of `worker`) was dropped, so deref here as a
-            // fallback rather than leak the ref.
-            worker->deref();
-        }
     } else {
         // Parent context is gone; fall back to derefing here.
         worker->deref();

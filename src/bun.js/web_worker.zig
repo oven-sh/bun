@@ -558,7 +558,12 @@ fn spin(this: *WebWorker) void {
 
 /// This is worker.ref()/.unref() from JS (Caller thread)
 pub fn setRef(this: *WebWorker, value: bool) callconv(.c) void {
-    if (this.hasRequestedTerminate()) {
+    // Once the worker has been terminated or has reached `.terminated`
+    // (`exitAndDeinit` already ran `parent_poll_ref.unrefConcurrently`), a late
+    // `ref()`/`unref()` must not touch `parent_poll_ref` — a late `ref()` would
+    // resurrect a parent-loop hold with no matching release, and a late
+    // `unref()` would race the final drop.
+    if (this.hasRequestedTerminate() or this.status.load(.acquire) == .terminated) {
         return;
     }
 

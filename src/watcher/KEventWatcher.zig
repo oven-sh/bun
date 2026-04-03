@@ -24,10 +24,12 @@ pub fn stop(this: *KEventWatcher) void {
 pub fn watchEventFromKEvent(kevent: KEvent) Watcher.Event {
     return .{
         .op = .{
-            .delete = (kevent.fflags & std.c.NOTE.DELETE) > 0,
+            // NOTE_REVOKE (unmount / revoke(2)) makes the vnode unusable, treat as delete.
+            .delete = (kevent.fflags & (std.c.NOTE.DELETE | std.c.NOTE.REVOKE)) > 0,
             .metadata = (kevent.fflags & std.c.NOTE.ATTRIB) > 0,
             .rename = (kevent.fflags & (std.c.NOTE.RENAME | std.c.NOTE.LINK)) > 0,
-            .write = (kevent.fflags & std.c.NOTE.WRITE) > 0,
+            // NOTE_EXTEND (size increased via ftruncate or write past EOF) is a content change.
+            .write = (kevent.fflags & (std.c.NOTE.WRITE | std.c.NOTE.EXTEND)) > 0,
         },
         .index = @truncate(kevent.udata),
     };

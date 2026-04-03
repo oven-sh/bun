@@ -351,7 +351,15 @@ pub fn addFileDescriptorToKQueueWithoutChecks(this: *Watcher, fd: bun.FD, watchl
     // we want to know about the vnode
     event.filter = std.c.EVFILT.VNODE;
 
-    event.fflags = std.c.NOTE.WRITE | std.c.NOTE.RENAME | std.c.NOTE.DELETE;
+    // Monitor the same set of flags libuv uses:
+    // - WRITE: data contents changed
+    // - RENAME: vnode was renamed
+    // - DELETE: vnode was unlinked
+    // - ATTRIB: attributes changed (chmod, utimes, chown, xattr)
+    // - EXTEND: size increased (ftruncate-grow, write past EOF)
+    // - REVOKE: vnode access was revoked (revoke(2), unmount)
+    event.fflags = std.c.NOTE.WRITE | std.c.NOTE.RENAME | std.c.NOTE.DELETE |
+        std.c.NOTE.ATTRIB | std.c.NOTE.EXTEND | std.c.NOTE.REVOKE;
 
     // id
     event.ident = @intCast(fd.native());
@@ -483,11 +491,15 @@ fn appendDirectoryAssumeCapacity(
         // we want to know about the vnode
         event.filter = std.c.EVFILT.VNODE;
 
-        // monitor:
-        // - Write
-        // - Rename
-        // - Delete
-        event.fflags = std.c.NOTE.WRITE | std.c.NOTE.RENAME | std.c.NOTE.DELETE;
+        // Monitor the same set of flags libuv uses:
+        // - WRITE: data contents changed
+        // - RENAME: vnode was renamed
+        // - DELETE: vnode was unlinked
+        // - ATTRIB: attributes changed (chmod, utimes, chown, xattr)
+        // - EXTEND: size increased (ftruncate-grow, write past EOF)
+        // - REVOKE: vnode access was revoked (revoke(2), unmount)
+        event.fflags = std.c.NOTE.WRITE | std.c.NOTE.RENAME | std.c.NOTE.DELETE |
+            std.c.NOTE.ATTRIB | std.c.NOTE.EXTEND | std.c.NOTE.REVOKE;
 
         // id
         event.ident = @intCast(fd.native());

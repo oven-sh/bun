@@ -481,7 +481,7 @@ pub const Run = struct {
                     vm.eventLoop().tickPossiblyForever();
                 }
             } else {
-                while (vm.isEventLoopAlive()) {
+                while (!vm.shouldExitProcess()) {
                     vm.tick();
                     vm.eventLoop().autoTickActive();
                 }
@@ -497,7 +497,7 @@ pub const Run = struct {
                                     vm.tick();
                                     vm.eventLoop().autoTickActive();
 
-                                    while (vm.isEventLoopAlive()) {
+                                    while (!vm.shouldExitProcess()) {
                                         vm.tick();
                                         vm.eventLoop().autoTickActive();
                                     }

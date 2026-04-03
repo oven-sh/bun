@@ -469,6 +469,10 @@ pub const CronRegisterJob = struct {
             bun.default_allocator.free(abs_path);
             return globalObject.throw("Failed to get bun executable path", .{});
         };
+        if (bun.strings.indexOfAny(bun_exe, "'%") != null) {
+            bun.default_allocator.free(abs_path);
+            return globalObject.throwInvalidArguments("Bun executable path '{s}' contains characters (' or %) that cannot be safely embedded in a crontab entry", .{bun_exe});
+        }
         const job = bun.handleOom(bun.default_allocator.create(CronRegisterJob));
         job.* = .{
             .global = globalObject,

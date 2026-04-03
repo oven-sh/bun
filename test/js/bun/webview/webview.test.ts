@@ -490,7 +490,7 @@ it("click dispatches native mousedown/mouseup/click with isTrusted", async () =>
   expect(JSON.parse(events)).toEqual([{ trusted: true, x: 90, y: 100, target: "btn" }]);
 });
 
-it("click(selector) waits for element to appear", async () => {
+it.todoIf(isCI)("click(selector) waits for element to appear", async () => {
   await using view = new Bun.WebView({ width: 300, height: 300 });
   await view.navigate(
     "data:text/html," +

@@ -866,6 +866,43 @@ declare module "bun:sqlite" {
     readonly declaredTypes: Array<string | null>;
 
     /**
+     * Get or set whether this statement returns integers as `bigint`.
+     *
+     * When set to `true`, integers are returned as `bigint` types.
+     * When set to `false`, integers are returned as `number` types and truncated to 52 bits.
+     *
+     * Call with no arguments to return the current setting.
+     *
+     * @param enabled Whether to enable safe integers.
+     * @returns The same statement instance when setting a value.
+     *
+     * @example
+     * ```ts
+     * const db = new Database(":memory:");
+     * db.run("CREATE TABLE foo (id INTEGER PRIMARY KEY, big INTEGER)");
+     * db.run("INSERT INTO foo (big) VALUES (?)", BigInt(Number.MAX_SAFE_INTEGER) + 10n);
+     *
+     * const stmt = db.prepare("SELECT * FROM foo");
+     *
+     * // Default: integers as numbers (may lose precision)
+     * stmt.all();
+     * // => [{ id: 1, big: 9007199254741000 }]
+     *
+     * // Enable safe integers: integers as bigint
+     * stmt.safeIntegers(true);
+     * stmt.all();
+     * // => [{ id: 1n, big: 9007199254741001n }]
+     *
+     * // Check current setting
+     * stmt.safeIntegers();
+     * // => true
+     * ```
+     *
+     */
+    safeIntegers(enabled: boolean): this;
+    safeIntegers(): boolean;
+
+    /**
      * Finalize the prepared statement, freeing the resources used by the
      * statement and preventing it from being executed again.
      *

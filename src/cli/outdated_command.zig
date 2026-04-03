@@ -685,7 +685,7 @@ pub const OutdatedCommand = struct {
         table.printBottomLineSeparator();
 
         if (has_filtered_versions) {
-            Output.prettyln("<d><b>Note:<r> <d>The <r><blue>*<r><d> indicates that version isn't true latest due to minimum release age<r>", .{});
+            Output.prettyln("<d><b>Note:<r> <d>The <r><blue>*<r><d> indicates the displayed version isn't true latest due to an active install filter (minimum release age or blockDeprecatedDependencies)<r>", .{});
         }
     }
 };

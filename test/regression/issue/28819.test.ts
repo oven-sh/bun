@@ -48,12 +48,18 @@ function runJsonBindingTests(getUrl: () => string) {
       await sql`INSERT INTO test_jsonb_28819 (value) VALUES (${JSON.stringify({ hello: "world" })}::jsonb)`;
       await sql`INSERT INTO test_jsonb_28819 (value) VALUES (${JSON.stringify([1, 2, 3])}::jsonb)`;
       await sql`INSERT INTO test_jsonb_28819 (value) VALUES (${JSON.stringify(42)}::jsonb)`;
+      await sql`INSERT INTO test_jsonb_28819 (value) VALUES (${JSON.stringify("bare string")}::jsonb)`;
+      await sql`INSERT INTO test_jsonb_28819 (value) VALUES (${JSON.stringify(null)}::jsonb)`;
+      await sql`INSERT INTO test_jsonb_28819 (value) VALUES (${JSON.stringify(true)}::jsonb)`;
 
       const rows = await sql`SELECT id, value, jsonb_typeof(value) as type FROM test_jsonb_28819 ORDER BY id`;
       expect(rows).toEqual([
         { id: 1, value: { hello: "world" }, type: "object" },
         { id: 2, value: [1, 2, 3], type: "array" },
         { id: 3, value: 42, type: "number" },
+        { id: 4, value: "bare string", type: "string" },
+        { id: 5, value: null, type: "null" },
+        { id: 6, value: true, type: "boolean" },
       ]);
     } finally {
       await sql`DROP TABLE IF EXISTS test_jsonb_28819`;

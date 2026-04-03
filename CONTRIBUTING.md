@@ -238,7 +238,7 @@ This works by downloading the release build from the GitHub Actions artifacts on
 
 ## AddressSanitizer
 
-[AddressSanitizer](https://en.wikipedia.org/wiki/AddressSanitizer) helps find memory issues, and is enabled by default in debug builds of Bun on Linux and macOS. This includes the Zig code and all dependencies. It makes the Zig code take about 2x longer to build, if that's stopping you from being productive you can disable it by setting `-Denable_asan=$<IF:$<BOOL:${ENABLE_ASAN}>,true,false>` to `-Denable_asan=false` in the `cmake/targets/BuildBun.cmake` file, but generally we recommend batching your changes up between builds.
+[AddressSanitizer](https://en.wikipedia.org/wiki/AddressSanitizer) helps find memory issues, and is enabled by default in debug builds of Bun on Linux and macOS. This includes the Zig code and all dependencies. It makes the Zig code take about 2x longer to build, if that's stopping you from being productive you can disable it with `bun run build:debug:noasan` (or pass `--asan=off` to `scripts/build.ts`), but generally we recommend batching your changes up between builds.
 
 To build a release build with Address Sanitizer, run:
 
@@ -256,7 +256,7 @@ WebKit is not cloned by default (to save time and disk space). To clone and buil
 # Clone WebKit into ./vendor/WebKit
 $ git clone https://github.com/oven-sh/WebKit vendor/WebKit
 
-# Check out the commit hash specified in `set(WEBKIT_VERSION <commit_hash>)` in cmake/tools/SetupWebKit.cmake
+# Check out the commit hash specified in WEBKIT_VERSION in scripts/build/deps/webkit.ts
 $ git -C vendor/WebKit checkout <commit_hash>
 
 # Build bun with the local JSC build — this automatically configures and builds JSC
@@ -276,7 +276,7 @@ Note that the WebKit folder, including build artifacts, is 8GB+ in size.
 
 If you are using a JSC debug build and using VScode, make sure to run the `C/C++: Select a Configuration` command to configure intellisense to find the debug headers.
 
-Note that if you make changes to our [WebKit fork](https://github.com/oven-sh/WebKit), you will also have to change [`SetupWebKit.cmake`](/cmake/tools/SetupWebKit.cmake) to point to the commit hash.
+Note that if you make changes to our [WebKit fork](https://github.com/oven-sh/WebKit), you will also have to change `WEBKIT_VERSION` in [`scripts/build/deps/webkit.ts`](/scripts/build/deps/webkit.ts) to point to the commit hash.
 
 ## Troubleshooting
 

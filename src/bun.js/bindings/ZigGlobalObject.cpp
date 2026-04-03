@@ -146,6 +146,7 @@
 #include "napi_external.h"
 #include "napi_handle_scope.h"
 #include "napi_type_tag.h"
+#include "NativePromiseContext.h"
 #include "napi.h"
 #include "NodeHTTP.h"
 #include "NodeVM.h"
@@ -214,12 +215,7 @@
 #include <dlfcn.h>
 #endif
 
-#ifdef __APPLE__
-#include <sys/sysctl.h>
-#elif defined(__linux__)
-// for sysconf
-#include <unistd.h>
-#endif
+#include <wtf/NumberOfCores.h>
 
 using namespace Bun;
 
@@ -1966,18 +1962,7 @@ void GlobalObject::finishCreation(VM& vm)
 
     m_navigatorObject.initLater(
         [](const Initializer<JSObject>& init) {
-            int cpuCount = 0;
-#ifdef __APPLE__
-            size_t count_len = sizeof(cpuCount);
-            sysctlbyname("hw.logicalcpu", &cpuCount, &count_len, NULL, 0);
-#elif OS(WINDOWS)
-            SYSTEM_INFO sysinfo;
-            GetSystemInfo(&sysinfo);
-            cpuCount = sysinfo.dwNumberOfProcessors;
-#else
-            // TODO: windows
-            cpuCount = sysconf(_SC_NPROCESSORS_ONLN);
-#endif
+            int cpuCount = WTF::numberOfProcessorCores();
 
             auto str = WTF::String::fromUTF8(Bun__userAgent);
             JSC::Identifier userAgentIdentifier = JSC::Identifier::fromString(init.vm, "userAgent"_s);
@@ -2087,6 +2072,10 @@ void GlobalObject::finishCreation(VM& vm)
 
     m_NapiTypeTagStructure.initLater([](const JSC::LazyProperty<JSC::JSGlobalObject, Structure>::Initializer& init) {
         init.set(Bun::NapiTypeTag::createStructure(init.vm, init.owner));
+    });
+
+    m_NativePromiseContextStructure.initLater([](const JSC::LazyProperty<JSC::JSGlobalObject, Structure>::Initializer& init) {
+        init.set(Bun::NativePromiseContext::createStructure(init.vm, init.owner));
     });
 
     m_napiTypeTags.initLater([](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSWeakMap>::Initializer& init) {

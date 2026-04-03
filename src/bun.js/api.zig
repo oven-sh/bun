@@ -4,6 +4,7 @@
 pub const Bun = @import("./api/BunObject.zig");
 
 pub const server = @import("./api/server.zig");
+pub const NativePromiseContext = @import("./api/NativePromiseContext.zig");
 pub const AnyRequestContext = server.AnyRequestContext;
 pub const AnyServer = server.AnyServer;
 pub const DebugHTTPSServer = server.DebugHTTPSServer;

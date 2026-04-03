@@ -31,7 +31,7 @@ using namespace JSC;
 
 JSAbortAlgorithm::JSAbortAlgorithm(VM& vm, JSObject* callback)
     : AbortAlgorithm(jsCast<JSDOMGlobalObject*>(callback->globalObject())->scriptExecutionContext())
-    , m_data(new JSCallbackDataStrong(vm, callback, this))
+    , m_data(new JSCallbackData(vm, callback, this))
 {
 }
 
@@ -57,7 +57,11 @@ CallbackResult<typename IDLUndefined::ImplementationType> JSAbortAlgorithm::hand
 
     Ref<JSAbortAlgorithm> protectedThis(*this);
 
-    auto& globalObject = *jsCast<JSDOMGlobalObject*>(m_data->callback()->globalObject());
+    auto* callback = m_data->callback();
+    if (!callback)
+        return CallbackResultType::UnableToExecute;
+
+    auto& globalObject = *jsCast<JSDOMGlobalObject*>(callback->globalObject());
     auto& vm = globalObject.vm();
 
     JSLockHolder lock(vm);
@@ -75,6 +79,16 @@ CallbackResult<typename IDLUndefined::ImplementationType> JSAbortAlgorithm::hand
     }
 
     return {};
+}
+
+void JSAbortAlgorithm::visitJSFunction(JSC::AbstractSlotVisitor& visitor)
+{
+    m_data->visitJSFunction(visitor);
+}
+
+void JSAbortAlgorithm::visitJSFunction(JSC::SlotVisitor& visitor)
+{
+    m_data->visitJSFunction(visitor);
 }
 
 JSC::JSValue toJS(AbortAlgorithm& impl)

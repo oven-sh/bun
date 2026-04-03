@@ -40,7 +40,7 @@ enum class Op : uint8_t {
     Create = 1, // u32 w, u32 h, u8 dataStoreKind, [u32 dirLen, dir bytes]
     Navigate = 2, // u32 urlLen, url bytes
     Evaluate = 3, // u32 scriptLen, script bytes
-    Screenshot = 4, // (empty)
+    Screenshot = 4, // u8 format (0=png 1=jpeg 2=webp), u8 quality (0-100, ignored for png)
     Close = 5, // (empty)
     Resize = 6, // u32 w, u32 h
     GoBack = 7, // (empty)

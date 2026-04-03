@@ -2879,7 +2879,8 @@ pub fn runtimeEmbedFile(
                     \\
                     \\To improve iteration speed, some files are not embedded but
                     \\loaded at runtime, at the cost of making the binary non-portable.
-                    \\To fix this, pass -DCODEGEN_EMBED=ON to CMake
+                    \\To fix this, build with a release profile, or pass
+                    \\-Dcodegen_embed=true to zig build.
                 , .{ abs_path, e });
             };
         }
@@ -3598,7 +3599,7 @@ pub fn getThreadCount() u16 {
             return null;
         }
         fn getThreadCountOnce() void {
-            cached_thread_count = @min(max_threads, @max(min_threads, getThreadCountFromUser() orelse std.Thread.getCpuCount() catch 0));
+            cached_thread_count = @min(max_threads, @max(min_threads, getThreadCountFromUser() orelse jsc.wtf.numberOfProcessorCores()));
         }
     };
     ThreadCount.cached_thread_count_once.call();

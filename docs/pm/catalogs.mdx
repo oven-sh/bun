@@ -3,15 +3,15 @@ title: "Catalogs"
 description: "Share common dependency versions across multiple packages in a monorepo"
 ---
 
-Catalogs in Bun provide a straightforward way to share common dependency versions across multiple packages in a monorepo. Rather than specifying the same versions repeatedly in each workspace package, you define them once in the root package.json and reference them consistently throughout your project.
+Catalogs in Bun let you share common dependency versions across multiple packages in a monorepo. Rather than specifying the same versions repeatedly in each workspace package, you define them once in the root package.json and reference them consistently throughout your project.
 
 ## Overview
 
 Unlike traditional dependency management where each workspace package needs to independently specify versions, catalogs let you:
 
 1. Define version catalogs in the root package.json
-2. Reference these versions with a simple `catalog:` protocol
-3. Update all packages simultaneously by changing the version in just one place
+2. Reference these versions with the `catalog:` protocol
+3. Update all packages simultaneously by changing the version in one place
 
 This is especially useful in large monorepos where dozens of packages need to use the same version of key dependencies.
 
@@ -105,7 +105,7 @@ Bun supports two ways to define catalogs:
    }
    ```
 
-   Reference with simply `catalog:`:
+   Reference with `catalog:`:
 
    ```json packages/app/package.json icon="file-json"
    "dependencies": {
@@ -222,7 +222,7 @@ Here's a more comprehensive example for a React application:
 
 ## Updating Versions
 
-To update versions across all packages, simply change the version in the root package.json:
+To update versions across all packages, change the version in the root package.json:
 
 ```json package.json icon="file-json"
 "catalog": {
@@ -235,7 +235,7 @@ Then run `bun install` to update all packages.
 
 ## Lockfile Integration
 
-Bun's lockfile tracks catalog versions, making it easy to ensure consistent installations across different environments. The lockfile includes:
+Bun's lockfile tracks catalog versions, ensuring consistent installations across different environments. The lockfile includes:
 
 - The catalog definitions from your package.json
 - The resolution of each cataloged dependency
@@ -282,7 +282,7 @@ Bun's lockfile tracks catalog versions, making it easy to ensure consistent inst
 - Invalid dependency versions in catalogs will fail to resolve during `bun install`
 - Catalogs are only available within workspaces; they cannot be used outside the monorepo
 
-Bun's catalog system provides a powerful yet simple way to maintain consistency across your monorepo without introducing additional complexity to your workflow.
+Bun's catalog system maintains consistency across your monorepo without introducing additional complexity to your workflow.
 
 ## Publishing
 

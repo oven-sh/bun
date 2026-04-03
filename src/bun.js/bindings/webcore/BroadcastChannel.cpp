@@ -54,9 +54,9 @@ namespace WebCore {
 WTF_MAKE_TZONE_ALLOCATED_IMPL(BroadcastChannel);
 
 static Lock allBroadcastChannelsLock;
-static UncheckedKeyHashMap<BroadcastChannelIdentifier, BroadcastChannel*>& allBroadcastChannels() WTF_REQUIRES_LOCK(allBroadcastChannelsLock)
+static UncheckedKeyHashMap<BroadcastChannelIdentifier, ThreadSafeWeakPtr<BroadcastChannel>>& allBroadcastChannels() WTF_REQUIRES_LOCK(allBroadcastChannelsLock)
 {
-    static NeverDestroyed<UncheckedKeyHashMap<BroadcastChannelIdentifier, BroadcastChannel*>> map;
+    static NeverDestroyed<UncheckedKeyHashMap<BroadcastChannelIdentifier, ThreadSafeWeakPtr<BroadcastChannel>>> map;
     return map;
 }
 
@@ -165,7 +165,7 @@ BroadcastChannel::BroadcastChannel(ScriptExecutionContext& context, const String
 {
     {
         Locker locker { allBroadcastChannelsLock };
-        allBroadcastChannels().add(m_mainThreadBridge->identifier(), this);
+        allBroadcastChannels().add(m_mainThreadBridge->identifier(), *this);
     }
     m_mainThreadBridge->registerChannel(context);
     jsRef(context.jsGlobalObject());
@@ -241,7 +241,7 @@ void BroadcastChannel::dispatchMessageTo(BroadcastChannelIdentifier channelIdent
         RefPtr<BroadcastChannel> channel;
         {
             Locker locker { allBroadcastChannelsLock };
-            channel = allBroadcastChannels().get(channelIdentifier);
+            channel = allBroadcastChannels().get(channelIdentifier).get();
         }
         if (channel)
             channel->dispatchMessage(WTF::move(message));

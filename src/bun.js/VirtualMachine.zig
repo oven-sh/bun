@@ -136,6 +136,12 @@ ref_strings_mutex: bun.Mutex = undefined,
 active_tasks: usize = 0,
 
 rare_data: ?*jsc.RareData = null,
+/// Owned storage for proxy env vars set via process.env at runtime. Not
+/// in RareData because lazy RareData creation races with worker spawn
+/// (worker thread needs to lock parent.proxy_env_storage.lock atomically
+/// with observing the env map; a null-check on rare_data can't be both
+/// lock-free and correct). ~56 bytes — negligible on VirtualMachine.
+proxy_env_storage: jsc.RareData.ProxyEnvStorage = .{},
 is_us_loop_entered: bool = false,
 pending_internal_promise: ?*JSInternalPromise = null,
 entry_point_result: struct {
@@ -1836,10 +1842,16 @@ pub fn resolveMaybeNeedsTrailingSlash(
     jsc_vm.log = &log;
     jsc_vm.transpiler.resolver.log = &log;
     jsc_vm.transpiler.linker.log = &log;
+    if (jsc_vm.transpiler.resolver.package_manager) |pm| {
+        pm.log = &log;
+    }
     defer {
         jsc_vm.log = old_log;
         jsc_vm.transpiler.linker.log = old_log;
         jsc_vm.transpiler.resolver.log = old_log;
+        if (jsc_vm.transpiler.resolver.package_manager) |pm| {
+            pm.log = old_log;
+        }
     }
     jsc_vm._resolve(&result, specifier_utf8.slice(), normalizeSource(source_utf8.slice()), is_esm, is_a_file_path) catch |err_| {
         var err = err_;
@@ -1991,6 +2003,7 @@ pub fn deinit(this: *VirtualMachine) void {
     if (this.rare_data) |rare_data| {
         rare_data.deinit();
     }
+    this.proxy_env_storage.deinit();
     this.overridden_main.deinit();
     this.has_terminated = true;
 }

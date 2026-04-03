@@ -4,11 +4,7 @@ import { bunEnv, bunExe } from "harness";
 
 async function renderMarkdown(input: string): Promise<string> {
   await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `process.stdout.write(Bun.markdown.html(${JSON.stringify(input)}, { wikiLinks: true }))`,
-    ],
+    cmd: [bunExe(), "-e", `process.stdout.write(Bun.markdown.html(${JSON.stringify(input)}, { wikiLinks: true }))`],
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",
@@ -43,7 +39,5 @@ test("multiple wikilinks with interleaved text", async () => {
 });
 
 test("wikilink parse failure falls back to regular link without duplicating text", async () => {
-  expect(await renderMarkdown("pre [[foo]\n\n[foo]: /url")).toBe(
-    '<p>pre [<a href="/url">foo</a></p>\n',
-  );
+  expect(await renderMarkdown("pre [[foo]\n\n[foo]: /url")).toBe('<p>pre [<a href="/url">foo</a></p>\n');
 });

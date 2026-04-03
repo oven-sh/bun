@@ -75,6 +75,46 @@ function emitErrorEventNT(self, err) {
   }
 }
 
+const kEmptyBuffer = Buffer.alloc(0);
+let UpgradedSocket;
+
+async function* upgradeBodyGenerator(channel) {
+  while (true) {
+    while (channel.chunks.length > 0) {
+      yield channel.chunks.shift();
+    }
+    if (channel.ended) return;
+    await new Promise(resolve => {
+      channel.resolve = resolve;
+    });
+  }
+}
+
+function createUpgradeChannel(initialChunks) {
+  return {
+    chunks: initialChunks ? initialChunks.slice() : [],
+    ended: false,
+    resolve: undefined,
+    push(chunk) {
+      this.chunks.push(chunk);
+      const resolve = this.resolve;
+      if (resolve) {
+        this.resolve = undefined;
+        resolve();
+      }
+    },
+    end() {
+      if (this.ended) return;
+      this.ended = true;
+      const resolve = this.resolve;
+      if (resolve) {
+        this.resolve = undefined;
+        resolve();
+      }
+    },
+  };
+}
+
 function ClientRequest(input, options, cb) {
   if (!(this instanceof ClientRequest)) {
     return new (ClientRequest as any)(input, options, cb);
@@ -322,17 +362,29 @@ function ClientRequest(input, options, cb) {
         keepalive,
       };
       let keepOpen = false;
+      const upgradeHeader = this.getHeader("upgrade");
+      const isUpgrade =
+        typeof upgradeHeader === "string" &&
+        upgradeHeader.length > 0 &&
+        upgradeHeader !== "h2" &&
+        upgradeHeader !== "h2c";
       // no body and not finished
-      const isDuplex = customBody === undefined && !this.finished;
+      const isDuplex = isUpgrade || (customBody === undefined && !this.finished);
 
-      if (isDuplex) {
+      let upgradeChannel;
+      if (isUpgrade) {
+        fetchOptions.duplex = "half";
+        upgradeChannel = createUpgradeChannel(this[kBodyChunks]);
+      } else if (isDuplex) {
         fetchOptions.duplex = "half";
         keepOpen = true;
       }
 
       // Allow body for all methods when explicitly provided via req.write()/req.end()
       // This is needed for Node.js compatibility - Node allows GET requests with bodies
-      if (customBody !== undefined) {
+      if (isUpgrade) {
+        fetchOptions.body = upgradeBodyGenerator(upgradeChannel);
+      } else if (customBody !== undefined) {
         fetchOptions.body = customBody;
       } else if (
         isDuplex &&
@@ -393,8 +445,30 @@ function ClientRequest(input, options, cb) {
       //@ts-ignore
       this[kFetchRequest] = nodeHttpClient(url, fetchOptions).then(response => {
         if (this.aborted) {
+          if (isUpgrade) upgradeChannel.end();
           maybeEmitClose();
           return;
+        }
+
+        if (isUpgrade) {
+          if (response.status === 101) {
+            this[kClearTimeout]();
+            this[kUpgradeOrConnect] = true;
+            const prevIsHTTPS = getIsNextIncomingMessageHTTPS();
+            setIsNextIncomingMessageHTTPS(response.url.startsWith("https:"));
+            const res = (this.res = new IncomingMessage(response, {
+              [typeSymbol]: NodeHTTPIncomingRequestType.FetchResponse,
+              [reqSymbol]: this,
+            }));
+            setIsNextIncomingMessageHTTPS(prevIsHTTPS);
+            res.req = this;
+
+            UpgradedSocket ??= require("internal/http/UpgradedSocket").UpgradedSocket;
+            const socket = new UpgradedSocket(response.body, upgradeChannel);
+            this.emit("upgrade", res, socket, kEmptyBuffer);
+            return;
+          }
+          upgradeChannel.end();
         }
 
         handleResponse = () => {
@@ -466,6 +540,7 @@ function ClientRequest(input, options, cb) {
         // This is for the happy eyeballs implementation.
         this[kFetchRequest]
           .catch(err => {
+            if (isUpgrade) upgradeChannel.end();
             if (err.code === "ConnectionRefused") {
               err = new Error("ECONNREFUSED");
               err.code = "ECONNREFUSED";

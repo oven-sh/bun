@@ -457,6 +457,14 @@ pub const BunxCommand = struct {
                 }),
                 update_request.name,
             }
+        else if (update_request.version.tag == .git)
+            // For git URLs with no alias (e.g. git@host:org/repo.git), pass the
+            // URL directly so that `bun add` re-parses it as a git dependency
+            // instead of mangling it into "binName@gitUrl".
+            .{
+                display_version,
+                initial_bin_name,
+            }
         else
             // When there is not a clear package name (URL/GitHub/etc), we force the package name
             // to be the same as the calculated initial bin name. This allows us to have a predictable

@@ -144,7 +144,7 @@ fn parseWithError(
         if (!Dependency.isTarball(input) and strings.isNPMPackageName(input)) {
             alias = input;
             value = input[input.len..];
-        } else if (input.len > 1) {
+        } else if (input.len > 1 and !Dependency.isSCPLikePath(input)) {
             if (strings.indexOfChar(input[1..], '@')) |at| {
                 const name = input[0 .. at + 1];
                 if (strings.isNPMPackageName(name)) {

@@ -11,7 +11,8 @@
  * that apply uniformly to bun's own C/C++ sources.
  */
 
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { existsSync } from "node:fs";
 import { bunExeName, type Config } from "./config.ts";
 import { slash } from "./shell.ts";
 
@@ -639,6 +640,13 @@ export const linkerFlags: Flag[] = [
     flag: ["-Wl,-ld_new", "-Wl,-no_compact_unwind", "-Wl,-stack_size,0x1200000", "-fno-keep-static-consts"],
     when: c => c.darwin,
     desc: "Use new Apple linker, 18MB stack, skip compact unwind",
+  },
+  {
+    // Homebrew clang puts its bundled include/c++/v1 ahead of -isysroot, so .o files
+    // reference libc++ symbols newer than the SDK's libc++.tbd (e.g. __hash_memory).
+    flag: c => [`-L${join(dirname(dirname(c.cxx)), "lib", "c++")}`],
+    when: c => c.darwin && existsSync(join(dirname(dirname(c.cxx)), "lib", "c++")),
+    desc: "Link against the toolchain's libc++ (matches headers used at compile time)",
   },
   {
     // Must also be passed at link: ld64 reads this to write LC_BUILD_VERSION.minos.

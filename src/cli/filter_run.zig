@@ -550,7 +550,8 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
         .env = this_transpiler.env,
     };
 
-    if (ctx.bundler_options.elide_lines != null and !state.pretty_output) {
+    const stdout_is_terminal = if (Environment.isWindows) windowsIsTerminal() else Output.isStdoutTTY();
+    if (ctx.bundler_options.elide_lines != null and !stdout_is_terminal) {
         Output.warn("elide-lines has no effect in non-terminal environments", .{});
     }
 

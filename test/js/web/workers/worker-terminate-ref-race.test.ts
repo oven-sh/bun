@@ -41,11 +41,7 @@ test("terminate + ref/unref on exiting worker does not UAF", { timeout: 60_000 }
     stdout: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   // ASAN writes "AddressSanitizer: use-after-poison" / "SUMMARY: AddressSanitizer"
   // to stderr. The JSC wasm-fault-handler warning is unrelated and harmless.

@@ -146,14 +146,22 @@ fn messageWithTypeAndLevel_(
         return;
     }
 
-    if (message_type == .Assert and len == 0) {
-        const text = if (Output.enable_ansi_colors_stderr)
-            Output.prettyFmt("<r><red>Assertion failed<r>\n", true)
+    if (message_type == .Assert) {
+        if (len == 0) {
+            const text = if (Output.enable_ansi_colors_stderr)
+                Output.prettyFmt("<r><red>Assertion failed<r>\n", true)
+            else
+                "Assertion failed\n";
+            console.error_writer.writeAll(text) catch {};
+            console.error_writer.flush() catch {};
+            return;
+        }
+        // For assertions with a message, prepend "Assertion failed: "
+        const prefix = if (Output.enable_ansi_colors_stderr)
+            Output.prettyFmt("<r><red>Assertion failed: <r>", false)
         else
-            "Assertion failed\n";
-        console.error_writer.writeAll(text) catch {};
-        console.error_writer.flush() catch {};
-        return;
+            "Assertion failed: ";
+        console.error_writer.writeAll(prefix) catch {};
     }
 
     const enable_colors = if (level == .Warning or level == .Error)

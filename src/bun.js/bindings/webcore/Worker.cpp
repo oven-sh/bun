@@ -130,9 +130,12 @@ extern "C" void* WebWorker__create(
 extern "C" void WebWorker__setRef(
     void* worker,
     bool ref);
+extern "C" void WebWorker__deinit(void* worker);
 
 void Worker::setKeepAlive(bool keepAlive)
 {
+    if (!impl_)
+        return;
     WebWorker__setRef(impl_, keepAlive);
 }
 
@@ -227,6 +230,14 @@ Worker::~Worker()
     {
         Locker locker { allWorkersLock };
         allWorkers().remove(m_clientIdentifier);
+    }
+    // Free the Zig `WebWorker` now that no `Ref<Worker>` can still call into it
+    // via `impl_`. The worker thread already released its parent poll ref in
+    // `exitAndDeinit`, but left the struct alive for us to free here so the
+    // parent thread never touches poisoned/freed memory.
+    if (impl_) {
+        void* impl = std::exchange(impl_, nullptr);
+        WebWorker__deinit(impl);
     }
     // m_contextProxy.workerObjectDestroyed();
 }
@@ -468,8 +479,11 @@ void Worker::forEachWorker(const Function<Function<void(ScriptExecutionContext&)
 extern "C" void WebWorker__dispatchExit(Zig::GlobalObject* globalObject, Worker* worker, int32_t exitCode)
 {
     worker->dispatchExit(exitCode);
-    // no longer referenced by Zig
-    worker->deref();
+    // NOTE: the `worker->ref()` from `Worker::create` is released later via
+    // `WebWorker__releaseRef`, after the Zig `exitAndDeinit` is done touching
+    // `impl_`. Dropping the ref here would risk destroying `Worker` (and
+    // freeing the Zig `WebWorker`) synchronously inside this call if the posted
+    // close-event task could not be queued (e.g. the parent context was gone).
 
     if (globalObject) {
         auto& vm = JSC::getVM(globalObject);
@@ -494,6 +508,28 @@ extern "C" void WebWorker__dispatchExit(Zig::GlobalObject* globalObject, Worker*
         vm.derefSuppressingSaferCPPChecking(); // NOLINT
     }
 }
+extern "C" void WebWorker__releaseRef(Worker* worker)
+{
+    // Release the ref that was taken in `Worker::create` via `worker->ref()`.
+    // Called at the end of Zig's `exitAndDeinit`, once nothing on the worker
+    // thread will touch `impl_` anymore.
+    //
+    // `Worker` is a `ContextDestructionObserver`, whose destructor asserts it
+    // runs on the parent (context) thread. So post the deref to the parent
+    // thread — otherwise, if this turns out to be the last ref (e.g. the
+    // JSWorker was already GC'd and the posted close-event task already
+    // fired on the parent), `Worker::~Worker` would run on the wrong thread.
+    auto* ctx = worker->scriptExecutionContext();
+    if (ctx) {
+        ScriptExecutionContext::postTaskTo(ctx->identifier(), [worker](ScriptExecutionContext&) {
+            worker->deref();
+        });
+    } else {
+        // Parent context is gone; fall back to derefing here.
+        worker->deref();
+    }
+}
+
 extern "C" void WebWorker__dispatchOnline(Worker* worker, Zig::GlobalObject* globalObject)
 {
     worker->dispatchOnline(globalObject);

@@ -2200,12 +2200,12 @@ void GlobalObject::finishCreation(VM& vm)
             auto loaderValue = global->getIfPropertyExists(global, JSC::Identifier::fromString(vm, "Loader"_s));
             scope.assertNoExceptionExceptTermination();
             RETURN_IF_EXCEPTION(scope, setEmpty());
-            if (loaderValue) {
-                auto registryValue = loaderValue.getObject()->getIfPropertyExists(global, JSC::Identifier::fromString(vm, "registry"_s));
+            if (auto* loaderObject = loaderValue.getObject()) {
+                auto registryValue = loaderObject->getIfPropertyExists(global, JSC::Identifier::fromString(vm, "registry"_s));
                 scope.assertNoExceptionExceptTermination();
                 RETURN_IF_EXCEPTION(scope, setEmpty());
                 if (registryValue) {
-                    registry = jsCast<JSC::JSMap*>(registryValue);
+                    registry = jsDynamicCast<JSC::JSMap*>(registryValue);
                 }
             }
 

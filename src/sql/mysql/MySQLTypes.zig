@@ -485,6 +485,15 @@ pub const Value = union(enum) {
             },
 
             .MYSQL_TYPE_JSON => {
+                if (value.isString()) {
+                    // The user pre-serialized their JSON value (e.g. via
+                    // JSON.stringify). Send it verbatim; calling
+                    // jsonStringifyFast here would wrap it in an extra layer
+                    // of quoting.
+                    const str = try bun.String.fromJS(value, globalObject);
+                    defer str.deref();
+                    return Value{ .string = str.toUTF8(bun.default_allocator) };
+                }
                 var str: bun.String = bun.String.empty;
                 // Use jsonStringifyFast for SIMD-optimized serialization
                 try value.jsonStringifyFast(globalObject, &str);

@@ -103,15 +103,30 @@ pub fn writeBind(
         // timezone.
         if (tag.isBinaryFormatSupported() and value.isString()) .text else tag) {
             .jsonb, .json => {
-                var str = bun.String.empty;
-                defer str.deref();
-                // Use jsonStringifyFast for SIMD-optimized serialization
-                try value.jsonStringifyFast(globalObject, &str);
-                const slice = str.toUTF8WithoutRef(bun.default_allocator);
-                defer slice.deinit();
-                const l = try writer.length();
-                try writer.write(slice.slice());
-                try l.writeExcludingSelf();
+                if (value.isString()) {
+                    // The user pre-serialized their JSON value (e.g. via
+                    // JSON.stringify). Send it verbatim; calling
+                    // jsonStringifyFast here would wrap it in an extra layer
+                    // of quoting and Postgres would store it as a JSON string.
+                    const str = try String.fromJS(value, globalObject);
+                    if (str.tag == .Dead) return error.OutOfMemory;
+                    defer str.deref();
+                    const slice = str.toUTF8WithoutRef(bun.default_allocator);
+                    defer slice.deinit();
+                    const l = try writer.length();
+                    try writer.write(slice.slice());
+                    try l.writeExcludingSelf();
+                } else {
+                    var str = bun.String.empty;
+                    defer str.deref();
+                    // Use jsonStringifyFast for SIMD-optimized serialization
+                    try value.jsonStringifyFast(globalObject, &str);
+                    const slice = str.toUTF8WithoutRef(bun.default_allocator);
+                    defer slice.deinit();
+                    const l = try writer.length();
+                    try writer.write(slice.slice());
+                    try l.writeExcludingSelf();
+                }
             },
             .bool => {
                 const l = try writer.length();

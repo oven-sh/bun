@@ -2064,6 +2064,157 @@ pub fn appendOptionsEnv(env: []const u8, comptime ArgType: type, args: *std.arra
     }
 }
 
+/// Kind of flag in `NODE_OPTIONS`: either a boolean flag (no value) or an
+/// option that takes a value. Used by `appendNodeOptionsEnv` to decide
+/// whether the next token should be consumed as a value.
+const NodeOptionKind = enum { bool_flag, option };
+
+/// Allowlist of flags supported by Bun that may appear in `NODE_OPTIONS`.
+///
+/// Matches Node.js's behavior of restricting `NODE_OPTIONS` to a subset of
+/// flags (for security and predictability). We include only flags that Bun
+/// actually implements — unknown flags are silently ignored.
+pub const node_options_allowlist = ComptimeStringMap(NodeOptionKind, .{
+    // Boolean flags (no value)
+    .{ "--expose-gc", .bool_flag },
+    .{ "--no-addons", .bool_flag },
+    .{ "--no-deprecation", .bool_flag },
+    .{ "--preserve-symlinks", .bool_flag },
+    .{ "--preserve-symlinks-main", .bool_flag },
+    .{ "--throw-deprecation", .bool_flag },
+    .{ "--use-bundled-ca", .bool_flag },
+    .{ "--use-openssl-ca", .bool_flag },
+    .{ "--use-system-ca", .bool_flag },
+    .{ "--zero-fill-buffers", .bool_flag },
+    .{ "--cpu-prof", .bool_flag },
+    .{ "--cpu-prof-md", .bool_flag },
+    .{ "--heap-prof", .bool_flag },
+    .{ "--heap-prof-md", .bool_flag },
+
+    // Options that take a value
+    .{ "--conditions", .option },
+    .{ "-C", .option },
+    .{ "--cpu-prof-dir", .option },
+    .{ "--cpu-prof-interval", .option },
+    .{ "--cpu-prof-name", .option },
+    .{ "--dns-result-order", .option },
+    .{ "--heap-prof-dir", .option },
+    .{ "--heap-prof-name", .option },
+    .{ "--import", .option },
+    .{ "--inspect", .option },
+    .{ "--inspect-brk", .option },
+    .{ "--inspect-wait", .option },
+    .{ "--max-http-header-size", .option },
+    .{ "--require", .option },
+    .{ "-r", .option },
+    .{ "--title", .option },
+    .{ "--unhandled-rejections", .option },
+});
+
+/// Parses `NODE_OPTIONS` env var into command-line tokens filtered by
+/// `node_options_allowlist` and inserts them into `args` starting at
+/// `offset` (after argv[0]).
+///
+/// Splits on whitespace with support for single/double quotes and backslash
+/// escapes, matching Node.js's NODE_OPTIONS parsing behavior. Positional
+/// (non-flag) tokens and unrecognized flags are dropped to prevent
+/// unintended script execution via the environment.
+pub fn appendNodeOptionsEnv(env: []const u8, args: *std.array_list.Managed([:0]const u8)) !void {
+    // First, tokenize the NODE_OPTIONS string (quote- and escape-aware).
+    var tokens = std.array_list.Managed([]u8).init(bun.default_allocator);
+    defer {
+        for (tokens.items) |t| bun.default_allocator.free(t);
+        tokens.deinit();
+    }
+
+    var buf = std.array_list.Managed(u8).init(bun.default_allocator);
+    defer buf.deinit();
+
+    var in_quote: ?u8 = null;
+    var escape = false;
+    var has_token = false;
+
+    var i: usize = 0;
+    while (i < env.len) : (i += 1) {
+        const ch = env[i];
+
+        if (escape) {
+            try buf.append(ch);
+            escape = false;
+            has_token = true;
+            continue;
+        }
+
+        if (ch == '\\') {
+            escape = true;
+            continue;
+        }
+
+        if (in_quote) |q| {
+            if (ch == q) {
+                in_quote = null;
+            } else {
+                try buf.append(ch);
+                has_token = true;
+            }
+            continue;
+        }
+
+        if (ch == '\'' or ch == '"') {
+            in_quote = ch;
+            has_token = true;
+            continue;
+        }
+
+        if (std.ascii.isWhitespace(ch)) {
+            if (has_token) {
+                try tokens.append(try buf.toOwnedSlice());
+                has_token = false;
+            }
+            continue;
+        }
+
+        try buf.append(ch);
+        has_token = true;
+    }
+    if (has_token) {
+        try tokens.append(try buf.toOwnedSlice());
+    }
+
+    // Now filter tokens through the allowlist and insert into args.
+    var offset: usize = 1;
+    var j: usize = 0;
+    while (j < tokens.items.len) : (j += 1) {
+        const token = tokens.items[j];
+        if (token.len == 0 or token[0] != '-') {
+            // Positional args are not allowed in NODE_OPTIONS.
+            continue;
+        }
+
+        // Split --flag=value into name and value.
+        const eq_idx = std.mem.indexOfScalar(u8, token, '=');
+        const flag_name = if (eq_idx) |idx| token[0..idx] else token;
+
+        const kind = node_options_allowlist.get(flag_name) orelse continue;
+
+        const token_z = try bun.default_allocator.dupeZ(u8, token);
+        try args.insert(offset, token_z);
+        offset += 1;
+
+        // If this is a value-taking option and the value wasn't inline
+        // (`--flag value` form), consume the next token as its value.
+        if (kind == .option and eq_idx == null and j + 1 < tokens.items.len) {
+            const next_tok = tokens.items[j + 1];
+            if (next_tok.len > 0 and next_tok[0] != '-') {
+                const next_z = try bun.default_allocator.dupeZ(u8, next_tok);
+                try args.insert(offset, next_z);
+                offset += 1;
+                j += 1;
+            }
+        }
+    }
+}
+
 pub fn initArgv() !void {
     if (comptime Environment.isPosix) {
         argv = try bun.default_allocator.alloc([:0]const u8, std.os.argv.len);
@@ -2130,6 +2281,16 @@ pub fn initArgv() !void {
         try appendOptionsEnv(opts, [:0]const u8, &argv_list);
         argv = argv_list.items;
         bun_options_argc = argv.len - original_len;
+    }
+
+    // NODE_OPTIONS: Node.js-compatible env var for injecting CLI flags.
+    // Filtered through an allowlist — unknown flags are dropped.
+    if (bun.env_var.NODE_OPTIONS.get()) |opts| {
+        if (opts.len > 0) {
+            var argv_list = std.array_list.Managed([:0]const u8).fromOwnedSlice(bun.default_allocator, argv);
+            try appendNodeOptionsEnv(opts, &argv_list);
+            argv = argv_list.items;
+        }
     }
 }
 

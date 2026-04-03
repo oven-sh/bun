@@ -1163,12 +1163,6 @@ static LIBUS_SOCKET_DESCRIPTOR internal_bsd_create_listen_socket_unix(const char
         return LIBUS_SOCKET_ERROR;
     }
 
-#ifdef _WIN32
-    _unlink(path);
-#else
-    unlink(path);
-#endif
-
     if (us_internal_bind_and_listen(listenFd, (struct sockaddr *) server_address, (socklen_t) addrlen, 512, error)) {
         #if defined(_WIN32)
           int shouldSimulateENOENT = WSAGetLastError() == WSAENETDOWN;

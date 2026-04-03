@@ -83,9 +83,12 @@ function runJsonBindingTests(getUrl: () => string) {
 async function checkLocal(url: string): Promise<boolean> {
   try {
     const sql = new SQL({ url, connectionTimeout: 2, max: 1, idleTimeout: 1 });
-    await sql`SELECT 1`;
-    await sql.end();
-    return true;
+    try {
+      await sql`SELECT 1`;
+      return true;
+    } finally {
+      await sql.end().catch(() => {});
+    }
   } catch {
     return false;
   }

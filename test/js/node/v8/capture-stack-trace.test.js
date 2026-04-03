@@ -169,6 +169,20 @@ test("capture stack trace limit", () => {
   }
 });
 
+test("captureStackTrace with non-number stackTraceLimit does not crash", () => {
+  const originalLimit = Error.stackTraceLimit;
+  try {
+    for (const bad of [{}, "hello", null, undefined, Symbol("x"), [], Error]) {
+      Error.stackTraceLimit = bad;
+      const e = {};
+      Error.captureStackTrace(e);
+      expect(typeof e.stack).toBe("string");
+    }
+  } finally {
+    Error.stackTraceLimit = originalLimit;
+  }
+});
+
 test("prepare stack trace", () => {
   function f1() {
     f2();
@@ -523,8 +537,8 @@ test("err.stack should invoke prepareStackTrace", () => {
   functionWithAName();
 
   expect(functionName).toBe("functionWithAName");
-  expect(lineNumber).toBe(518);
-  expect(parentLineNumber).toBe(523);
+  expect(lineNumber).toBe(532);
+  expect(parentLineNumber).toBe(537);
 });
 
 test("Error.prepareStackTrace inside a node:vm works", () => {

@@ -1,9 +1,9 @@
-import { test, expect, describe } from "bun:test";
-import { tempDir, isWindows, isLinux } from "harness";
-import { existsSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-import { createServer, connect } from "node:net";
+import { describe, expect, test } from "bun:test";
+import { isLinux, isWindows, tempDir } from "harness";
 import { once } from "node:events";
+import { existsSync, writeFileSync } from "node:fs";
+import { createServer } from "node:net";
+import { join } from "node:path";
 
 // Node.js/libuv behavior for unix domain sockets:
 // - bind() does NOT unlink an existing socket file (returns EADDRINUSE)

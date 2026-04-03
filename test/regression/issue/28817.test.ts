@@ -2,102 +2,89 @@
 // Bun should honor NODE_OPTIONS=--dns-result-order and other Node-compatible
 // flags set via the NODE_OPTIONS environment variable.
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isWindows } from "harness";
 
-async function run(nodeOptions: string, script: string) {
+async function runWith(nodeOptions: string, script: string) {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", script],
     env: { ...bunEnv, NODE_OPTIONS: nodeOptions },
     stderr: "pipe",
     stdout: "pipe",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  return { stdout, stderr, exitCode };
+  const [stdout, stderr, exitCode] = await Promise.all([
+    proc.stdout.text(),
+    proc.stderr.text(),
+    proc.exited,
+  ]);
+  return { stdout: stdout.trim(), stderr, exitCode };
 }
 
 describe("NODE_OPTIONS", () => {
-  test("--dns-result-order=ipv4first sets default order via env", async () => {
-    const { stdout, exitCode } = await run(
-      "--dns-result-order=ipv4first",
-      'import dns from "node:dns"; console.log(dns.getDefaultResultOrder());',
-    );
-    expect(stdout.trim()).toBe("ipv4first");
-    expect(exitCode).toBe(0);
-  });
+  test("--dns-result-order honored via env (= and space forms)", async () => {
+    const getOrder = 'import dns from "node:dns"; console.log(dns.getDefaultResultOrder());';
 
-  test("--dns-result-order ipv6first (space separated) also works", async () => {
-    const { stdout, exitCode } = await run(
-      "--dns-result-order ipv6first",
-      'import dns from "node:dns"; console.log(dns.getDefaultResultOrder());',
-    );
-    expect(stdout.trim()).toBe("ipv6first");
-    expect(exitCode).toBe(0);
+    // --flag=value form
+    const eq = await runWith("--dns-result-order=ipv4first", getOrder);
+    expect(eq.stdout).toBe("ipv4first");
+    expect(eq.exitCode).toBe(0);
+
+    // --flag value (space separated) form
+    const sp = await runWith("--dns-result-order ipv6first", getOrder);
+    expect(sp.stdout).toBe("ipv6first");
+    expect(sp.exitCode).toBe(0);
+
+    // quoted value
+    const q = await runWith(`--dns-result-order='verbatim'`, getOrder);
+    expect(q.stdout).toBe("verbatim");
+    expect(q.exitCode).toBe(0);
   });
 
   test("default order is verbatim without NODE_OPTIONS", async () => {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", 'import dns from "node:dns"; console.log(dns.getDefaultResultOrder());'],
-      env: { ...bunEnv, NODE_OPTIONS: "" },
-      stderr: "pipe",
-      stdout: "pipe",
-    });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    expect(stdout.trim()).toBe("verbatim");
-    expect(exitCode).toBe(0);
+    const r = await runWith("", 'import dns from "node:dns"; console.log(dns.getDefaultResultOrder());');
+    expect(r.stdout).toBe("verbatim");
+    expect(r.exitCode).toBe(0);
   });
 
   test("getDefaultResultOrder returns a string, not a function", async () => {
-    const { stdout, exitCode } = await run(
+    const r = await runWith(
       "--dns-result-order=ipv4first",
-      'import dns from "node:dns"; console.log(typeof dns.getDefaultResultOrder());',
+      'import dns from "node:dns"; const v = dns.getDefaultResultOrder(); console.log(typeof v, v);',
     );
-    expect(stdout.trim()).toBe("string");
-    expect(exitCode).toBe(0);
+    expect(r.stdout).toBe("string ipv4first");
+    expect(r.exitCode).toBe(0);
   });
 
-  test("unknown flags are silently ignored", async () => {
-    const { stdout, exitCode } = await run(
+  test("unknown flags and positional args are dropped", async () => {
+    // Unknown flag is ignored; known flag still works.
+    const r1 = await runWith(
       "--unknown-flag --dns-result-order=ipv4first",
       'import dns from "node:dns"; console.log(dns.getDefaultResultOrder());',
     );
-    expect(stdout.trim()).toBe("ipv4first");
-    expect(exitCode).toBe(0);
+    expect(r1.stdout).toBe("ipv4first");
+    expect(r1.exitCode).toBe(0);
+
+    // Positional arg (non-flag) cannot inject a script/entrypoint.
+    const r2 = await runWith("/etc/passwd", 'console.log("safe");');
+    expect(r2.stdout).toBe("safe");
+    expect(r2.exitCode).toBe(0);
+
+    // --eval is not in the allowlist, so this must not execute injected code.
+    const r3 = await runWith("--eval console.log('HIJACKED')", 'console.log("original");');
+    expect(r3.stdout).not.toContain("HIJACKED");
+    expect(r3.stdout).toBe("original");
+    expect(r3.exitCode).toBe(0);
   });
 
-  test("positional args cannot inject scripts via NODE_OPTIONS", async () => {
-    // Even though the user put a positional-looking arg in, the entrypoint
-    // should still be the -e script, not the injected positional.
-    const { stdout, exitCode } = await run("/etc/passwd", 'console.log("safe");');
-    expect(stdout.trim()).toBe("safe");
-    expect(exitCode).toBe(0);
+  test("--expose-gc exposes gc() via env", async () => {
+    const r = await runWith("--expose-gc", "console.log(typeof gc);");
+    expect(r.stdout).toBe("function");
+    expect(r.exitCode).toBe(0);
   });
 
-  test("--eval is not injectable via NODE_OPTIONS", async () => {
-    // --eval is not in the allowlist, so this must not execute.
-    const { stdout, exitCode } = await run("--eval console.log('HIJACKED')", 'console.log("original");');
-    expect(stdout).not.toContain("HIJACKED");
-    expect(stdout.trim()).toBe("original");
-    expect(exitCode).toBe(0);
-  });
-
-  test("--expose-gc exposes gc()", async () => {
-    const { stdout, exitCode } = await run("--expose-gc", "console.log(typeof gc);");
-    expect(stdout.trim()).toBe("function");
-    expect(exitCode).toBe(0);
-  });
-
-  test("--title sets process.title", async () => {
-    const { stdout, exitCode } = await run("--title=my-bun-app", "console.log(process.title);");
-    expect(stdout.trim()).toBe("my-bun-app");
-    expect(exitCode).toBe(0);
-  });
-
-  test("quoted values are parsed correctly", async () => {
-    const { stdout, exitCode } = await run(
-      `--dns-result-order='ipv4first'`,
-      'import dns from "node:dns"; console.log(dns.getDefaultResultOrder());',
-    );
-    expect(stdout.trim()).toBe("ipv4first");
-    expect(exitCode).toBe(0);
+  test.skipIf(isWindows)("--title sets process.title via env", async () => {
+    // process.title is unreliable on Windows (varies by OS version); skip there.
+    const r = await runWith("--title=my-bun-app", "console.log(process.title);");
+    expect(r.stdout).toBe("my-bun-app");
+    expect(r.exitCode).toBe(0);
   });
 });

@@ -1,6 +1,6 @@
 // https://github.com/oven-sh/bun/issues/28799
 import { SQL } from "bun";
-import { beforeAll, expect, test } from "bun:test";
+import { afterAll, beforeAll, expect, test } from "bun:test";
 import { describeWithContainer, isASAN, isDockerEnabled } from "harness";
 
 if (isDockerEnabled()) {
@@ -42,6 +42,10 @@ if (isDockerEnabled()) {
           column_fortyfive TEXT
         )`;
         await sql`INSERT INTO leak_test_28799 (primary_id) VALUES ('123')`;
+      });
+
+      afterAll(async () => {
+        await sql?.close();
       });
 
       // Each variant uses a different dynamic-interpolation pattern from the

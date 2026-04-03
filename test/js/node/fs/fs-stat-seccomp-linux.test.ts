@@ -8,7 +8,12 @@ import { join } from "node:path";
 // deps/uv/src/unix/fs.c: statx under a seccomp filter that does not
 // whitelist it returns EPERM (libseccomp < 2.3.3, docker < 18.04, various
 // CI sandboxes). Before the fix, fs.stat would throw EPERM here.
-// After the fix, statxImpl falls back to fstatat.
+// After the fix, statxImpl falls back to fstat/lstat/stat.
+//
+// Each stat variant runs in its OWN subprocess so the per-process
+// `supports_statx_on_linux` flag is still `true` on entry — otherwise the
+// first call would flip the flag and subsequent calls would bypass
+// statxImpl/statxFallback entirely and go straight to Syscall.lstat/fstat.
 describe.skipIf(!isLinux)("fs.stat seccomp statx fallback", () => {
   const helperSrc = `
 #define _GNU_SOURCE
@@ -81,49 +86,79 @@ int main(int argc, char **argv) {
     return { dir, bin };
   };
 
-  test("fs.statSync succeeds when statx is blocked by seccomp", async () => {
-    const built = tryBuild();
-    if (!built) {
-      // bun:test has no runtime-skip; log loudly so CI output distinguishes
-      // this from a real pass. Happens when cc or the seccomp headers are
-      // missing on the test host.
-      console.warn("SKIP fs.stat seccomp: compiling the seccomp helper failed (cc/headers missing)");
-      return;
-    }
-
-    const targetDir = tempDirWithFiles("stat-seccomp-target", {
-      "file.txt": "hello",
-    });
-    const target = join(targetDir, "file.txt");
-
+  // Run `snippet` in a bun subprocess guarded by the seccomp helper.
+  // Returns { stdout, stderr, exitCode } on success, or null if the
+  // environment refused to install the seccomp filter (skip).
+  async function runUnderSeccomp(bin: string, snippet: string) {
     await using proc = Bun.spawn({
-      cmd: [
-        built.bin,
-        bunExe(),
-        "-e",
-        `
-          const fs = require("node:fs");
-          const s = fs.statSync(${JSON.stringify(target)});
-          const l = fs.lstatSync(${JSON.stringify(target)});
-          const fd = fs.openSync(${JSON.stringify(target)}, "r");
-          const f = fs.fstatSync(fd);
-          fs.closeSync(fd);
-          console.log(JSON.stringify({ size: s.size, lsize: l.size, fsize: f.size, isFile: s.isFile() }));
-        `,
-      ],
+      cmd: [bin, bunExe(), "-e", snippet],
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (exitCode === 77) return null;
+    return { stdout, stderr, exitCode };
+  }
 
-    if (exitCode === 77) {
-      // Helper couldn't install seccomp in this environment — skip loudly.
-      console.warn("SKIP fs.stat seccomp: seccomp not permitted in this environment:", stderr.trim());
-      return;
-    }
+  const cases: Array<{ name: string; snippet: (target: string) => string; expected: string }> = [
+    {
+      // exercises statxFallback path branch (no SYMLINK_NOFOLLOW)
+      name: "statSync",
+      snippet: target => `
+        const fs = require("node:fs");
+        const s = fs.statSync(${JSON.stringify(target)});
+        console.log(JSON.stringify({ size: s.size, isFile: s.isFile() }));
+      `,
+      expected: JSON.stringify({ size: 5, isFile: true }),
+    },
+    {
+      // exercises statxFallback path branch (SYMLINK_NOFOLLOW)
+      name: "lstatSync",
+      snippet: target => `
+        const fs = require("node:fs");
+        const s = fs.lstatSync(${JSON.stringify(target)});
+        console.log(JSON.stringify({ size: s.size, isFile: s.isFile() }));
+      `,
+      expected: JSON.stringify({ size: 5, isFile: true }),
+    },
+    {
+      // exercises statxFallback fd branch (path == null)
+      name: "fstatSync",
+      snippet: target => `
+        const fs = require("node:fs");
+        const fd = fs.openSync(${JSON.stringify(target)}, "r");
+        try {
+          const s = fs.fstatSync(fd);
+          console.log(JSON.stringify({ size: s.size, isFile: s.isFile() }));
+        } finally { fs.closeSync(fd); }
+      `,
+      expected: JSON.stringify({ size: 5, isFile: true }),
+    },
+  ];
 
-    expect(stdout.trim()).toBe(JSON.stringify({ size: 5, lsize: 5, fsize: 5, isFile: true }));
-    expect(exitCode).toBe(0);
-  });
+  for (const c of cases) {
+    test(`${c.name} succeeds when statx is blocked by seccomp`, async () => {
+      const built = tryBuild();
+      if (!built) {
+        // bun:test has no runtime-skip; log loudly so CI output distinguishes
+        // this from a real pass. Happens when cc or the seccomp headers are
+        // missing on the test host.
+        console.warn(`SKIP fs.${c.name} seccomp: compiling the seccomp helper failed (cc/headers missing)`);
+        return;
+      }
+
+      const targetDir = tempDirWithFiles("stat-seccomp-target", { "file.txt": "hello" });
+      const target = join(targetDir, "file.txt");
+
+      const out = await runUnderSeccomp(built.bin, c.snippet(target));
+      if (out == null) {
+        console.warn(`SKIP fs.${c.name} seccomp: seccomp not permitted in this environment`);
+        return;
+      }
+
+      expect(out.stdout.trim()).toBe(c.expected);
+      expect(out.exitCode).toBe(0);
+    });
+  }
 });

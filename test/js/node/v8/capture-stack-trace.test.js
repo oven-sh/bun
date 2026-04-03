@@ -169,20 +169,6 @@ test("capture stack trace limit", () => {
   }
 });
 
-test("captureStackTrace with non-number stackTraceLimit does not crash", () => {
-  const originalLimit = Error.stackTraceLimit;
-  try {
-    for (const bad of [{}, "hello", null, undefined, Symbol("x"), [], Error]) {
-      Error.stackTraceLimit = bad;
-      const e = {};
-      Error.captureStackTrace(e);
-      expect(typeof e.stack).toBe("string");
-    }
-  } finally {
-    Error.stackTraceLimit = originalLimit;
-  }
-});
-
 test("prepare stack trace", () => {
   function f1() {
     f2();
@@ -537,8 +523,8 @@ test("err.stack should invoke prepareStackTrace", () => {
   functionWithAName();
 
   expect(functionName).toBe("functionWithAName");
-  expect(lineNumber).toBe(532);
-  expect(parentLineNumber).toBe(537);
+  expect(lineNumber).toBe(518);
+  expect(parentLineNumber).toBe(523);
 });
 
 test("Error.prepareStackTrace inside a node:vm works", () => {
@@ -802,5 +788,19 @@ test("captureStackTrace with constructor function not in stack returns error str
     const e = new TypeError("bad type");
     Error.captureStackTrace(e, notInStack);
     expect(e.stack).toBe("TypeError: bad type");
+  }
+});
+
+test("captureStackTrace with non-number stackTraceLimit does not crash", () => {
+  const originalLimit = Error.stackTraceLimit;
+  try {
+    for (const bad of [{}, "hello", null, undefined, Symbol("x"), [], Error]) {
+      Error.stackTraceLimit = bad;
+      const e = {};
+      Error.captureStackTrace(e);
+      expect(typeof e.stack).toBe("string");
+    }
+  } finally {
+    Error.stackTraceLimit = originalLimit;
   }
 });

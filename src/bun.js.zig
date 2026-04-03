@@ -306,6 +306,9 @@ pub const Run = struct {
     pub fn start(this: *Run) void {
         var vm = this.vm;
         vm.hot_reload = this.ctx.debug.hot_reload;
+        if (vm.hot_reload == .hot) {
+            vm.transpiler.options.preserve_import_meta_hot = true;
+        }
         vm.onUnhandledRejection = &onUnhandledRejectionBeforeClose;
 
         // Start CPU profiler if enabled

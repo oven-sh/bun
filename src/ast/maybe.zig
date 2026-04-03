@@ -405,9 +405,14 @@ pub fn AstMaybe(
                     }
 
                     if (strings.eqlComptime(name, "hot")) {
-                        return .{ .data = .{
-                            .e_special = if (p.options.features.hot_module_reloading) .hot_enabled else .hot_disabled,
-                        }, .loc = loc };
+                        if (p.options.features.preserve_import_meta_hot) {
+                            // In --hot mode, let import.meta.hot pass through as a
+                            // normal property access. The runtime provides the hot object.
+                        } else {
+                            return .{ .data = .{
+                                .e_special = if (p.options.features.hot_module_reloading) .hot_enabled else .hot_disabled,
+                            }, .loc = loc };
+                        }
                     }
 
                     // Inline import.meta properties for Bake

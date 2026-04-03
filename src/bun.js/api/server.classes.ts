@@ -338,4 +338,76 @@ export default [
     },
     klass: {},
   }),
+
+  define({
+    name: "JSBundle",
+    noConstructor: true,
+    finalize: true,
+    proto: {
+      entrypoint: {
+        getter: "getEntrypoint",
+      },
+      files: {
+        getter: "getFiles",
+      },
+    },
+    klass: {},
+  }),
+
+  define({
+    name: "BundleFile",
+    noConstructor: true,
+    finalize: true,
+    proto: {
+      name: {
+        getter: "getName",
+        cache: true,
+      },
+      kind: {
+        getter: "getKind",
+        cache: true,
+      },
+      type: {
+        getter: "getType",
+        cache: true,
+      },
+      size: {
+        getter: "getSize",
+      },
+      file: {
+        fn: "getFile",
+        length: 0,
+      },
+    },
+    klass: {},
+  }),
+
+  define({
+    name: "ImportMetaHot",
+    noConstructor: true,
+    finalize: true,
+    proto: {
+      data: {
+        getter: "getData",
+        setter: "setData",
+      },
+      accept: {
+        fn: "accept",
+        length: 0,
+      },
+      dispose: {
+        fn: "dispose",
+        length: 1,
+      },
+      decline: {
+        fn: "decline",
+        length: 0,
+      },
+      invalidate: {
+        fn: "invalidate",
+        length: 0,
+      },
+    },
+    klass: {},
+  }),
 ];

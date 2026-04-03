@@ -519,7 +519,7 @@ pub fn fromJS(
                 init_ctx.arena.deinit();
                 init_ctx.framework_router_list.deinit();
             }
-            // This list is not used in the success case
+            // These lists are not used in the success case
             defer init_ctx.dedupe_html_bundle_map.deinit();
 
             var framework_router_list = std.array_list.Managed(bun.bake.FrameworkRouter.Type).init(bun.default_allocator);
@@ -662,8 +662,8 @@ pub fn fromJS(
                 }) catch |err| bun.handleOom(err);
             }
 
-            // When HTML bundles are provided, ensure DevServer options are ready
-            // The presence of these options causes Bun.serve to initialize things.
+            // When HTML bundles or framework routes are provided, ensure DevServer options are ready.
+            // JSBundle routes manage their own standalone DevServer, so they don't trigger this.
             if ((init_ctx.dedupe_html_bundle_map.count() > 0 or
                 init_ctx.framework_router_list.items.len > 0))
             {

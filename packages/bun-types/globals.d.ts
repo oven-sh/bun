@@ -1348,6 +1348,63 @@ interface ImportMeta {
 
   /** Alias of `import.meta.path`. Exists for Node.js compatibility */
   filename: string;
+
+  /**
+   * Hot Module Replacement API. Only available when running with `bun --hot`.
+   * Returns `undefined` when not in hot reload mode.
+   *
+   * @example
+   * ```ts
+   * if (import.meta.hot) {
+   *   import.meta.hot.accept();
+   *   import.meta.hot.dispose((data) => {
+   *     // cleanup before module is replaced
+   *   });
+   * }
+   * ```
+   */
+  readonly hot: ImportMetaHot | undefined;
+}
+
+interface ImportMetaHot {
+  /**
+   * Persistent data object that survives across hot reloads.
+   * Use this to preserve state when your module is replaced.
+   *
+   * @example
+   * ```ts
+   * const count = (import.meta.hot?.data?.count ?? 0) + 1;
+   * console.log(`Reload #${count}`);
+   * if (import.meta.hot) import.meta.hot.data = { count };
+   * ```
+   */
+  data: any;
+
+  /**
+   * Mark this module as accepting hot updates.
+   * Without arguments, the module is self-accepting.
+   * With a callback, the callback is called when the module is updated.
+   */
+  accept(callback?: () => void): void;
+
+  /**
+   * Register a callback to run when this module is about to be replaced.
+   * Use this for cleanup (closing connections, clearing timers, etc.).
+   *
+   * @param callback - Called with the module's `data` object for state transfer.
+   */
+  dispose(callback: (data: any) => void): void;
+
+  /**
+   * Mark this module as not hot-replaceable.
+   * Any changes to this module will trigger a full reload.
+   */
+  decline(): void;
+
+  /**
+   * Force the runtime to perform a full reload on next change.
+   */
+  invalidate(): void;
 }
 
 /**

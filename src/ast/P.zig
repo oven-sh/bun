@@ -2955,6 +2955,7 @@ pub fn NewParser_(
 
             if (path.loader) |loader| {
                 p.import_records.items[stmt.import_record_index].loader = loader;
+                p.import_records.items[stmt.import_record_index].bundle_config = path.bundle_config;
 
                 if (loader == .sqlite or loader == .sqlite_embedded) {
                     for (stmt.items) |*item| {

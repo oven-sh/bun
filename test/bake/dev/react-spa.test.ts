@@ -748,3 +748,34 @@ devTest("react component with hooks and mutual recursion renders without error",
     );
   },
 });
+devTest("esm component modules self-accept via react refresh", {
+  fixture: "react-spa-simple",
+  async test(dev) {
+    await using c = await dev.client();
+
+    expect(await c.elemText("h1")).toBe("Hello World");
+
+    // Set a global flag to detect if a full page reload happens
+    await c.js`globalThis.__hmrTestFlag = true`;
+
+    // Edit the component — should self-accept via React Fast Refresh,
+    // NOT cause a full page reload. Before the isReactRefreshBoundary
+    // getter fix, ESM modules with getter exports always returned false
+    // from isReactRefreshBoundary, preventing self-acceptance.
+    await dev.write(
+      "App.tsx",
+      `
+        export default function App() {
+          return <h1>Updated</h1>;
+        }
+      `,
+    );
+
+    expect(await c.elemText("h1")).toBe("Updated");
+
+    // Verify no full page reload happened — the global flag should survive
+    // HMR self-accept but would be lost on a full reload
+    const flag = await c.js`globalThis.__hmrTestFlag`;
+    expect(flag).toBe(true);
+  },
+});

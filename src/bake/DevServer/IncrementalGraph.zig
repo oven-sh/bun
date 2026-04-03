@@ -1687,6 +1687,7 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
                 script_id: SourceMapStore.Key,
                 initial_response_entry_point: []const u8 = "",
                 react_refresh_entry_point: []const u8 = "",
+                hmr_origin: []const u8 = "",
                 console_log: bool,
             },
             .server => struct {
@@ -1763,6 +1764,16 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
                             try w.writeAll("\",\n  console: false");
                         }
 
+                        if (options.hmr_origin.len > 0) {
+                            try w.writeAll(",\n  origin: ");
+                            try bun.js_printer.writeJSONString(
+                                options.hmr_origin,
+                                @TypeOf(w),
+                                w,
+                                .utf8,
+                            );
+                        }
+
                         if (options.react_refresh_entry_point.len > 0) {
                             try w.writeAll(",\n  refresh: ");
                             const relative_path_buf = bun.path_buffer_pool.get();
@@ -1786,7 +1797,16 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
                     },
                 }
                 if (comptime side == .client) {
-                    try w.writeAll("\n//# sourceMappingURL=" ++ DevServer.client_prefix ++ "/");
+                    // In standalone mode the JS is served from the user's
+                    // Bun.serve() on a different port, so the sourcemap URL
+                    // must be absolute pointing at the DevServer.
+                    if (options.hmr_origin.len > 0) {
+                        try w.writeAll("\n//# sourceMappingURL=");
+                        try w.writeAll(options.hmr_origin);
+                        try w.writeAll(DevServer.client_prefix ++ "/");
+                    } else {
+                        try w.writeAll("\n//# sourceMappingURL=" ++ DevServer.client_prefix ++ "/");
+                    }
                     try w.writeAll(&std.fmt.bytesToHex(std.mem.asBytes(&options.script_id), .lower));
                     try w.writeAll(".js.map\n");
                 }

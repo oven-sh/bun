@@ -159,7 +159,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
         pub const Task = struct {
             count: u8 = 0,
             hashes: [8]u32,
-            paths: if (Ctx == bun.bake.DevServer) [8][]const u8 else void,
+            paths: [8][]const u8,
             /// Left uninitialized until .enqueue
             concurrent_task: jsc.ConcurrentTask,
             reloader: *Reloader,
@@ -169,19 +169,20 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                     .reloader = reloader,
 
                     .hashes = [_]u32{0} ** 8,
-                    .paths = if (Ctx == bun.bake.DevServer) [_][]const u8{&.{}} ** 8,
+                    .paths = [_][]const u8{&.{}} ** 8,
                     .count = 0,
                     .concurrent_task = undefined,
                 };
             }
 
-            pub fn append(this: *Task, id: u32) void {
+            pub fn append(this: *Task, id: u32, path: []const u8) void {
                 if (this.count == 8) {
                     this.enqueue();
                     this.count = 0;
                 }
 
                 this.hashes[this.count] = id;
+                this.paths[this.count] = path;
                 this.count += 1;
             }
 
@@ -395,7 +396,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                                 }
                             }
 
-                            current_task.append(current_hash);
+                            current_task.append(current_hash, file_path);
                         }
                     },
                     .directory => {
@@ -426,7 +427,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                                     if (this.main.is_waiting_for_dir_change and this.main.dir_hash == current_hash) {
                                         if (bun.sys.faccessat(file_descriptors[event.index], std.fs.path.basename(this.main.file)) == .result) {
                                             this.main.is_waiting_for_dir_change = false;
-                                            current_task.append(this.main.hash);
+                                            current_task.append(this.main.hash, this.main.file);
                                         }
                                     }
                                 }
@@ -494,7 +495,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                                                 if (hash == file_hash) {
                                                     if (file_descriptors[entry_id].isValid()) {
                                                         if (prev_entry_id != entry_id) {
-                                                            current_task.append(hashes[entry_id]);
+                                                            current_task.append(hashes[entry_id], path_string.slice());
                                                             if (this.verbose)
                                                                 debug("Removing file: {s}", .{path_string.slice()});
                                                             ctx.removeAtIndex(

@@ -5652,6 +5652,34 @@ declare module "bun" {
   }
 
   /**
+   * Represents a single output file from a bundle build.
+   * Provides metadata (name, kind, type, size) and lazy content access via `file()`.
+   */
+  interface BundleFile {
+    /** Output filename (e.g., "App-a1b2c3.js") */
+    readonly name: string;
+    /** The kind of output file */
+    readonly kind: "entry-point" | "chunk" | "asset" | "sourcemap";
+    /** MIME type (e.g., "application/javascript") */
+    readonly type: string;
+    /** File size in bytes */
+    readonly size: number;
+    /** Returns a Blob containing the file's content */
+    file(): Blob;
+  }
+
+  /**
+   * Represents a JS/TS bundle created via `import bundle from "./app.tsx" with { type: "bundle" }`.
+   * Can be passed to `Bun.serve()` routes to serve bundled JavaScript with automatic HMR in dev mode.
+   */
+  interface JSBundle {
+    /** The entrypoint BundleFile, or `undefined` before the build completes */
+    readonly entrypoint: BundleFile | undefined;
+    /** All output files from the build */
+    readonly files: BundleFile[];
+  }
+
+  /**
    * Represents a TCP or TLS socket connection used for network communication.
    * This interface provides methods for reading, writing, managing the connection state,
    * and handling TLS-specific features if applicable.

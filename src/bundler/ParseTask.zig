@@ -616,6 +616,11 @@ fn getAST(
         .dataurl, .base64, .bunsh => {
             return try getEmptyAST(log, transpiler, opts, allocator, source, E.String);
         },
+        .bundle => {
+            // The .bundle loader is a build-mode marker handled by ModuleLoader.
+            // It should never reach the bundler's parse task.
+            return try getEmptyAST(log, transpiler, opts, allocator, source, E.Object);
+        },
         .file, .wasm => {
             bun.assert(loader.shouldCopyForBundling());
 

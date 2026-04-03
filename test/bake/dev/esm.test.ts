@@ -395,3 +395,196 @@ devTest("browser field is used", {
     await c.expectMessage("PASS");
   },
 });
+
+devTest("cyclic ESM imports with deferred access", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import { getB } from './a';
+      console.log(getB());
+    `,
+    "a.ts": `
+      import { b } from './b';
+      export const a = "A";
+      export function getB() { return b(); }
+    `,
+    "b.ts": `
+      import { a } from './a';
+      export function b() { return "B+" + a; }
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client();
+    await c.expectMessage("B+A");
+  },
+});
+
+devTest("cyclic ESM imports through barrel files with top-level usage", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import { wrappedValue } from './lib';
+      console.log(wrappedValue);
+    `,
+    // Barrel file re-exports from atoms and molecules
+    "lib/index.ts": `
+      export * from './atoms';
+      export * from './molecules';
+    `,
+    // Atoms: no cycle, just exports a value
+    "lib/atoms/index.ts": `
+      export * from './value';
+    `,
+    "lib/atoms/value.ts": `
+      export const value = "PASS";
+      export function getValue() { return value; }
+    `,
+    // Molecules: imports from the barrel (cycle), uses value at top level
+    "lib/molecules/index.ts": `
+      export * from './wrapper';
+    `,
+    "lib/molecules/wrapper.ts": `
+      import { value, getValue } from '../index';
+      export const wrappedValue = "wrapped:" + value;
+      export function getWrappedValue() { return "wrapped:" + getValue(); }
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client();
+    await c.expectMessage("wrapped:PASS");
+  },
+});
+
+devTest("cyclic ESM imports with hoisted function called at top level", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import { result } from './helpers';
+      console.log(result);
+    `,
+    // helpers.ts imports a function from columns.ts and calls it at top level
+    "helpers.ts": `
+      import { makeColumns } from './columns';
+      export const result = makeColumns("test");
+      export function getTime(val: string) { return val + "-time"; }
+    `,
+    // columns.ts exports a function declaration and imports from helpers (cycle)
+    "columns.ts": `
+      import { getTime } from './helpers';
+      export function makeColumns(name: string) {
+        return "col:" + name;
+      }
+      export function makeTimeCol(val: string) {
+        return getTime(val);
+      }
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client();
+    await c.expectMessage("col:test");
+  },
+});
+
+devTest("client-side HMR hot update with self-accept", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import { value } from './module';
+      console.log('value:' + value);
+      import.meta.hot.accept();
+    `,
+    "module.ts": `
+      export const value = "initial";
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client();
+    await c.expectMessage("value:initial");
+    await dev.write("module.ts", `export const value = "updated";`);
+    await c.expectMessage("value:updated");
+  },
+});
+
+devTest("full reload reflects updated content (no self-accept)", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import { value } from './module';
+      console.log('value:' + value);
+      // No import.meta.hot.accept() — forces full page reload
+    `,
+    "module.ts": `
+      export const value = "initial";
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client();
+    await c.expectMessage("value:initial");
+    await c.expectReload(async () => {
+      await dev.write("module.ts", `export const value = "updated";`);
+    });
+    await c.expectMessage("value:updated");
+  },
+});
+
+devTest("full reload with cyclic imports reflects updated content", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import { getB } from './a';
+      console.log(getB());
+    `,
+    "a.ts": `
+      import { b } from './b';
+      export const a = "A";
+      export function getB() { return b(); }
+    `,
+    "b.ts": `
+      import { a } from './a';
+      export function b() { return "B+" + a; }
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client();
+    await c.expectMessage("B+A");
+    await c.expectReload(async () => {
+      await dev.write(
+        "b.ts",
+        `
+        import { a } from './a';
+        export function b() { return "C+" + a; }
+      `,
+      );
+    });
+    await c.expectMessage("C+A");
+  },
+});
+
+devTest("JSON default import used at top level", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import data from './data.json';
+      console.log(data.message);
+    `,
+    "data.json": JSON.stringify({ message: "PASS" }),
+  },
+  async test(dev) {
+    await using c = await dev.client();
+    await c.expectMessage("PASS");
+  },
+});

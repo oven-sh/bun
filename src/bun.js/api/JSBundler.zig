@@ -1210,7 +1210,6 @@ pub const JSBundler = struct {
             bun.default_allocator,
         );
     }
-
     /// `Bun.build(config)`
     pub fn buildFn(
         globalThis: *jsc.JSGlobalObject,

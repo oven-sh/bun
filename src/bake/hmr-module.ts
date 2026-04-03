@@ -278,6 +278,9 @@ export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModu
     if (mod.state === State.Stale) {
       mod.state = State.Pending;
       isUserDynamic = false;
+      // Reset exports so ??= {} re-initializes. This ensures stale
+      // properties from previous versions are cleared on reload.
+      mod.exports = null;
     } else {
       if (importer) {
         mod.importers.add(importer);
@@ -340,16 +343,22 @@ export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModu
       mod.cjs = null;
       mod.exports = null;
     }
+    // Initialize exports object early so cyclic imports get a live reference
+    // and hoisted export assignments (hmr.exports.name = name) don't fail.
+    mod.exports ??= {};
+    prePopulateStarExports(mod, loadOrEsmModule);
+    // Run factory in "hoist-only mode" to populate hoisted function exports
+    // BEFORE loading dependencies. This fixes cyclic imports where the
+    // function-exporting module is loaded first in the cycle.
+    hoistOnlyCall(mod, load);
     if (importer) {
       mod.importers.add(importer);
     }
 
     const { list: depsList } = parseEsmDependencies(mod, deps, loadModuleSync);
-    const exportsBefore = mod.exports;
     mod.imports = depsList.map(getEsmExports);
     load(mod);
     mod.imports = depsList;
-    if (mod.exports === exportsBefore) mod.exports = {};
     mod.cjs = null;
     mod.state = State.Loaded;
   }
@@ -369,12 +378,18 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
 ): (IsUserDynamic extends true ? null : never) | Promise<HMRModule> | HMRModule {
   // First, try and re-use an existing module.
   let mod = registry.get(id)!;
+  let isReload = false;
   if (mod) {
     const { state } = mod;
     if (state === State.Error) throw mod.failure;
     if (state === State.Stale) {
       mod.state = State.Pending;
       isUserDynamic = false as IsUserDynamic;
+      isReload = true;
+      // Reset exports so ??= {} re-initializes. This ensures stale
+      // properties from previous versions are cleared when a module's
+      // exports change during HMR reload.
+      mod.exports = null;
     } else {
       if (importer) {
         mod.importers.add(importer);
@@ -439,6 +454,16 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
       mod.exports = null;
       mod.cjs = null;
     }
+    // Initialize exports object early so cyclic imports get a live reference
+    // and hoisted export assignments (hmr.exports.name = name) don't fail.
+    mod.exports ??= {};
+    if (!isReload) {
+      // Only needed during initial load for cyclic import resolution.
+      // During HMR reload, modules are already in the registry and
+      // running the factory early would clobber updateImport callbacks.
+      prePopulateStarExports(mod, loadOrEsmModule);
+      hoistOnlyCall(mod, load);
+    }
     if (importer) {
       mod.importers.add(importer);
     }
@@ -471,7 +496,6 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
 
 function finishLoadModuleAsync(mod: HMRModule, load: UnloadedESM[3], modules: HMRModule[]) {
   try {
-    const exportsBefore = mod.exports;
     mod.imports = modules.map(getEsmExports);
     const shouldPatchImporters = !mod.selfAccept || mod.selfAccept === implicitAcceptFunction;
     const p = load(mod);
@@ -479,13 +503,11 @@ function finishLoadModuleAsync(mod: HMRModule, load: UnloadedESM[3], modules: HM
     if (p) {
       return p.then(() => {
         mod.state = State.Loaded;
-        if (mod.exports === exportsBefore) mod.exports = {};
         mod.cjs = null;
         if (shouldPatchImporters) patchImporters(mod);
         return mod;
       });
     }
-    if (mod.exports === exportsBefore) mod.exports = {};
     mod.cjs = null;
     if (shouldPatchImporters) patchImporters(mod);
     mod.state = State.Loaded;
@@ -583,6 +605,65 @@ function getEsmExports(m: HMRModule) {
   return m.esm ? m.exports : (m.exports ??= toESM(m.cjs.exports));
 }
 
+/** Run a module's factory in "hoist-only mode" to populate hoisted function
+ *  exports on `mod.exports` BEFORE dependencies are loaded. The generated
+ *  factory contains `if (hmr._hoistOnly) return;` after the hoisted stmts,
+ *  so only JS-hoisted function declarations get assigned. */
+function hoistOnlyCall(mod: HMRModule, load: UnloadedESM[typeof ESMProps.load]) {
+  const savedImports = mod.imports;
+  mod.imports = [];
+  (mod as any)._hoistOnly = true;
+  try {
+    load(mod);
+  } catch {
+    // Errors during hoist-only are expected when modules have no hoisted stmts
+    // (the guard won't exist, so the factory hits errors on import access).
+    // Ignore all errors here — the real factory call happens after deps load.
+  } finally {
+    delete (mod as any)._hoistOnly;
+    mod.imports = savedImports;
+  }
+}
+
+/** Pre-populate module exports with lazy getters for `export *` re-exports.
+ *  When a cyclic import accesses a barrel's exports before defineExports runs,
+ *  these getters resolve through the chain to already-loaded source modules.
+ *
+ *  Traverses the star export chain transitively — barrel files that only have
+ *  `export *` may have empty ESMProps.exports, so we follow nested stars to
+ *  find the actual source modules with export keys. */
+function prePopulateStarExports(mod: HMRModule, esmModule: UnloadedESM) {
+  const stars: Id[] = esmModule[ESMProps.stars];
+  if (stars.length === 0) return;
+
+  // Transitively collect export keys and map each to its source module.
+  const keyToSource = new Map<string, Id>();
+  const visited = new Set<Id>();
+  const queue = [...stars];
+  while (queue.length > 0) {
+    const starId = queue.shift()!;
+    if (visited.has(starId)) continue;
+    visited.add(starId);
+    const starEntry = unloadedModuleRegistry[starId];
+    if (!starEntry || typeof starEntry === "function") continue;
+    for (const key of starEntry[ESMProps.exports] as string[]) {
+      if (!keyToSource.has(key)) keyToSource.set(key, starId);
+    }
+    for (const nestedId of starEntry[ESMProps.stars] as Id[]) {
+      if (!visited.has(nestedId)) queue.push(nestedId);
+    }
+  }
+
+  for (const [key, sourceId] of keyToSource) {
+    if (Object.prototype.hasOwnProperty.call(mod.exports, key)) continue;
+    Object.defineProperty(mod.exports, key, {
+      get: () => registry.get(sourceId)?.exports?.[key],
+      configurable: true,
+      enumerable: true,
+    });
+  }
+}
+
 type HotAcceptFunction = (esmExports?: any | void) => void;
 type HotArrayAcceptFunction = (esmExports: (any | void)[]) => void;
 type HotDisposeFunction = (data: any) => void | Promise<void>;
@@ -617,7 +698,7 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
   const toDispose: HMRModule[] = [];
 
   // Discover all HMR boundaries
-  outer: for (const key of Object.keys(modules)) {
+  for (const key of Object.keys(modules)) {
     // Unref old source maps, and track new ones
     if (side === "client") {
       DEBUG.ASSERT(sourceMapId);
@@ -631,7 +712,13 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
 
     toReload.add(existing);
 
-    // Discover all HMR boundaries
+    // Discover all HMR boundaries via BFS over the importer graph.
+    // A changed module only triggers full reload if ZERO paths from it
+    // reach a self-accepting boundary (e.g. a React component via Fast
+    // Refresh). depAccepts (targeted accept of a specific dep) don't
+    // count because they only cover that specific importer, not all paths.
+    let hasSelfAcceptBoundary = false;
+    let hitRoot = false;
     const visited = new Set<HMRModule>();
     const queue: HMRModule[] = [existing];
     visited.add(existing);
@@ -645,6 +732,7 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
         toReload.add(mod);
         visited.add(mod);
         hadSelfAccept = false;
+        hasSelfAcceptBoundary = true;
         if (mod.onDispose) {
           toDispose.push(mod);
         }
@@ -655,16 +743,17 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
         toReload.add(mod);
         visited.add(mod);
         hadSelfAccept = false;
+        hasSelfAcceptBoundary = true;
         if (mod.onDispose) {
           toDispose.push(mod);
         }
       }
 
-      // All importers will be visited
+      // Reached a root module with no accept boundary on this path.
+      // Don't bail out — keep searching other paths for self-accept boundaries.
       if (hadSelfAccept && mod.importers.size === 0) {
-        failures ??= new Set();
-        failures.add(key);
-        continue outer;
+        hitRoot = true;
+        continue;
       }
 
       for (const importer of mod.importers) {
@@ -677,6 +766,12 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
           queue.push(importer);
         }
       }
+    }
+
+    // Only mark as failure if no self-accepting boundary was found on any path.
+    if (hitRoot && !hasSelfAcceptBoundary) {
+      failures ??= new Set();
+      failures.add(key);
     }
   }
 
@@ -696,7 +791,10 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
         message += `Module "${boundary}" is a root module that does not self-accept.\n`;
         continue;
       }
+      const visited = new Set<HMRModule>();
       outer: while (current.importers.size > 0) {
+        if (visited.has(current)) break; // cycle detection
+        visited.add(current);
         path.push(current.id);
         inner: for (const importer of current.importers) {
           if (importer.selfAccept) continue inner;
@@ -704,7 +802,6 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
           current = importer;
           continue outer;
         }
-        DEBUG.ASSERT(false);
         break;
       }
       path.push(current.id);
@@ -799,7 +896,7 @@ function patchImporters(mod: HMRModule) {
   const { importers } = mod;
   const exports = getEsmExports(mod);
   for (const importer of importers) {
-    if (!importer.esm || !importer.updateImport) continue;
+    if (!importer.esm || !importer.updateImport || !importer.imports) continue;
     const index = importer.imports!.indexOf(mod);
     if (index === -1) continue; // require or dynamic import
     importer.updateImport![index](exports);
@@ -861,7 +958,7 @@ class AsyncImportError extends Error {
 function toCommonJS(from: any) {
   var desc,
     entry = Object.defineProperty({}, "__esModule", { value: true });
-  if ((from && typeof from === "object") || typeof from === "function")
+  if (from != null && (typeof from === "object" || typeof from === "function"))
     Object.getOwnPropertyNames(from).map(
       key =>
         !Object.prototype.hasOwnProperty.call(entry, key) &&
@@ -874,6 +971,7 @@ function toCommonJS(from: any) {
 }
 
 function toESM(mod: any) {
+  if (mod == null) return Object.defineProperty(Object.create(null), "default", { value: mod, enumerable: true });
   const to = Object.defineProperty(Object.create(null), "default", { value: mod, enumerable: true });
   for (let key of Object.getOwnPropertyNames(mod))
     if (!Object.prototype.hasOwnProperty.call(to, key))
@@ -920,12 +1018,13 @@ function isReactRefreshBoundary(esmExports): boolean {
   let areAllExportsComponents = true;
   for (const key in esmExports) {
     hasExports = true;
-    const desc = Object.getOwnPropertyDescriptor(esmExports, key);
-    if (desc && desc.get) {
-      // Don't invoke getters as they may have side effects.
+    let exportValue;
+    try {
+      exportValue = esmExports[key];
+    } catch {
+      // Getter threw — not safe to treat as refresh boundary
       return false;
     }
-    const exportValue = esmExports[key];
     if (!isLikelyComponentType(exportValue)) {
       areAllExportsComponents = false;
     }

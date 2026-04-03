@@ -194,7 +194,6 @@ pub fn onHEADRequest(this: *StaticRoute, req: *uws.Request, resp: AnyResponse) v
 }
 
 pub fn onHEAD(this: *StaticRoute, resp: AnyResponse) void {
-    bun.debugAssert(this.server != null);
     this.ref();
     if (this.server) |server| {
         server.onPendingRequest();
@@ -237,7 +236,6 @@ pub fn onGET(this: *StaticRoute, req: *uws.Request, resp: AnyResponse) void {
 }
 
 pub fn on(this: *StaticRoute, resp: AnyResponse) void {
-    bun.debugAssert(this.server != null);
     this.ref();
     if (this.server) |server| {
         server.onPendingRequest();

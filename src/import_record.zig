@@ -113,6 +113,11 @@ pub const ImportRecord = struct {
     /// Used for metafile generation.
     original_path: []const u8 = "",
 
+    /// Bundle-specific configuration from import attributes like
+    /// `with { type: "bundle", splitting: "true", minify: "true" }`.
+    /// Only set for imports with `type: "bundle"`.
+    bundle_config: ?BundleImportConfig = null,
+
     /// Pack all boolean flags into 2 bytes to reduce padding overhead.
     /// Previously 15 separate bool fields caused ~14-16 bytes of padding waste.
     flags: Flags = .{},
@@ -213,6 +218,17 @@ pub const ImportRecord = struct {
         import_path,
         css,
         napi_module,
+    };
+
+    /// Configuration for `with { type: "bundle" }` imports.
+    /// Parsed from import attributes and stored on the ImportRecord.
+    pub const BundleImportConfig = struct {
+        splitting: ?bool = null,
+        minify: ?bool = null,
+        sourcemap: ?bun.options.SourceMapOption = null,
+        target: ?bun.options.Target = null,
+        format: ?bun.options.Format = null,
+        naming: ?[]const u8 = null,
     };
 };
 

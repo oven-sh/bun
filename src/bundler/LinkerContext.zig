@@ -48,6 +48,8 @@ pub const LinkerContext = struct {
 
     mangled_props: MangledProps = .{},
 
+    /// Sub-build results for `with { type: "bundle" }` imports, keyed by
+    /// (source_index << 32) | import_record_index.
     pub fn allocator(this: *const LinkerContext) std.mem.Allocator {
         return this.graph.allocator;
     }
@@ -511,7 +513,7 @@ pub const LinkerContext = struct {
                     const loader = loaders[record.source_index.get()];
 
                     switch (loader) {
-                        .jsx, .js, .ts, .tsx, .napi, .sqlite, .json, .jsonc, .json5, .yaml, .html, .sqlite_embedded, .md => {
+                        .jsx, .js, .ts, .tsx, .napi, .sqlite, .json, .jsonc, .json5, .yaml, .html, .sqlite_embedded, .md, .bundle => {
                             log.addErrorFmt(
                                 source,
                                 record.range.loc,

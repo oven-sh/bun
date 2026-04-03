@@ -4,6 +4,9 @@ const ctxLog = Output.scoped(.RequestContext, .visible);
 pub const WebSocketServerContext = @import("./server/WebSocketServerContext.zig");
 pub const HTTPStatusText = @import("./server/HTTPStatusText.zig");
 pub const HTMLBundle = @import("./server/HTMLBundle.zig");
+pub const JSBundle = @import("./server/JSBundle.zig");
+pub const BundleFile = @import("./server/BundleFile.zig");
+pub const ImportMetaHot = @import("./server/ImportMetaHot.zig");
 
 pub fn writeStatus(comptime ssl: bool, resp_ptr: ?*uws.NewApp(ssl).Response, status: u16) void {
     if (resp_ptr) |resp| {

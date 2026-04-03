@@ -1049,6 +1049,12 @@ pub fn Parse(
                 .import_tag = .none,
             };
 
+            // Support `?bundle` query string syntax as alternative to `with { type: "bundle" }`
+            if (bun.strings.hasSuffixComptime(path.text, "?bundle")) {
+                path.text = path.text[0 .. path.text.len - "?bundle".len];
+                path.loader = .bundle;
+            }
+
             if (p.lexer.token == .t_no_substitution_template_literal) {
                 try p.lexer.next();
             } else {
@@ -1070,6 +1076,12 @@ pub fn Parse(
                     type,
                     embed,
                     bunBakeGraph,
+                    splitting,
+                    minify,
+                    sourcemap,
+                    target,
+                    format,
+                    naming,
                 };
 
                 var has_seen_embed_true = false;
@@ -1130,6 +1142,39 @@ pub fn Parse(
                                 } else {
                                     try p.lexer.addRangeError(p.lexer.range(), "'bunBakeGraph' can only be set to 'ssr'", .{}, true);
                                 }
+                            },
+                            .splitting => {
+                                if (path.bundle_config == null) path.bundle_config = .{};
+                                path.bundle_config.?.splitting = strings.eqlComptime(string_literal_text, "true");
+                            },
+                            .minify => {
+                                if (path.bundle_config == null) path.bundle_config = .{};
+                                path.bundle_config.?.minify = strings.eqlComptime(string_literal_text, "true");
+                            },
+                            .sourcemap => {
+                                if (path.bundle_config == null) path.bundle_config = .{};
+                                path.bundle_config.?.sourcemap = if (strings.eqlComptime(string_literal_text, "none"))
+                                    .none
+                                else if (strings.eqlComptime(string_literal_text, "linked"))
+                                    .linked
+                                else if (strings.eqlComptime(string_literal_text, "inline"))
+                                    .@"inline"
+                                else if (strings.eqlComptime(string_literal_text, "external"))
+                                    .external
+                                else
+                                    null;
+                            },
+                            .target => {
+                                if (path.bundle_config == null) path.bundle_config = .{};
+                                path.bundle_config.?.target = bun.options.Target.Map.getWithEql(string_literal_text, bun.strings.eqlComptime);
+                            },
+                            .format => {
+                                if (path.bundle_config == null) path.bundle_config = .{};
+                                path.bundle_config.?.format = bun.options.Format.Map.getWithEql(string_literal_text, bun.strings.eqlComptime);
+                            },
+                            .naming => {
+                                if (path.bundle_config == null) path.bundle_config = .{};
+                                path.bundle_config.?.naming = string_literal_text;
                             },
                         }
                     }

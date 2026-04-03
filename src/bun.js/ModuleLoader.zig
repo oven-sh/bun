@@ -476,6 +476,19 @@ pub fn transpileSourceCode(
                 true,
             );
 
+            // After linking, scan for bundle imports with config and store in VM map.
+            for (parse_result.ast.import_records.slice()) |*record| {
+                if (record.loader != null and record.loader.? == .bundle) {
+                    if (record.bundle_config) |config| {
+                        jsc_vm.bundle_import_configs.put(
+                            bun.default_allocator,
+                            bun.handleOom(bun.default_allocator.dupe(u8, record.path.text)),
+                            config,
+                        ) catch bun.outOfMemory();
+                    }
+                }
+            }
+
             if (parse_result.pending_imports.len > 0) {
                 if (promise_ptr == null) {
                     return error.UnexpectedPendingResolution;
@@ -736,6 +749,52 @@ pub fn transpileSourceCode(
             };
         },
 
+        .bundle => {
+            if (globalObject == null) {
+                return error.NotSupported;
+            }
+
+            const bundle_config = jsc_vm.bundle_import_configs.get(path.text);
+            const js_bundle = try jsc.API.JSBundle.init(globalObject.?, path.text, bundle_config);
+
+            if (jsc_vm.hot_reload == .hot) {
+                // HMR path: register with DevServer for incremental builds
+                const dev = try jsc_vm.getOrCreateSharedDevServer();
+                const is_new = try dev.addStandaloneEntryPoint(path.text);
+                js_bundle.dev_server = dev;
+                // Register JSBundle as callback for build notifications
+                dev.standalone_callback_fn = jsc.API.JSBundle.onDevServerBuildComplete;
+                bun.handleOom(dev.standalone_callback_ctxs.append(bun.default_allocator, @ptrCast(js_bundle)));
+
+                if (is_new) {
+                    // Trigger the build and wait for the initial build to complete
+                    // so that bundle.files has content when user code runs.
+                    bun.handleOom(dev.startStandaloneBuild());
+                    js_bundle.build_state = .building;
+                    while (js_bundle.build_state == .building) {
+                        jsc_vm.eventLoop().tick();
+                    }
+                } else {
+                    // Hot reload re-evaluation: DevServer already has the bundle.
+                    // Use generateStandaloneClientBundle to get the current payload
+                    // instead of empty bytes.
+                    const payload = dev.generateStandaloneClientBundle(js_bundle.sourceMapId()) catch bun.outOfMemory();
+                    js_bundle.updateDevEntrypoint(payload, dev);
+                }
+            } else {
+                // Build now, blocking until complete
+                try js_bundle.build();
+            }
+
+            return ResolvedSource{
+                .allocator = &jsc_vm.allocator,
+                .jsvalue_for_export = js_bundle.toJS(globalObject.?),
+                .specifier = input_specifier,
+                .source_url = input_specifier.createIfDifferent(path.text),
+                .tag = .export_default_object,
+            };
+        },
+
         else => {
             if (flags.disableTranspiling()) {
                 return ResolvedSource{
@@ -965,6 +1024,19 @@ pub export fn Bun__transpileFile(
         if (pkg.name.len > 0) pkg.name else null
     else
         null;
+
+    // Record dependency edges for HMR selective invalidation.
+    // This must be done before the async/sync branch since both paths need tracking.
+    if (jsc_vm.hot_reload == .hot) {
+        const spec = _specifier.slice();
+        const ref = referrer_slice.slice();
+        if (spec.len > 0) {
+            jsc_vm.recordFileToModuleKey(lr.path.text, spec);
+        }
+        if (ref.len > 0 and spec.len > 0 and !strings.eqlComptime(ref, "undefined")) {
+            jsc_vm.recordModuleDependency(ref, spec);
+        }
+    }
 
     // We only run the transpiler concurrently when we can.
     // Today, that's:

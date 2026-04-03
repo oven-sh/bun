@@ -1119,3 +1119,201 @@ export { greeting };`,
     expect(result.success).toBeDefined();
   });
 });
+
+describe("import with { type: 'bundle' }", () => {
+  test("creates JSBundle with entrypoint property at import time", async () => {
+    const dir = tempDirWithFiles("bundle-import-entrypoint", {
+      "index.ts": `export const hello = "world";`,
+      "fixture.ts": `
+        import bundle from "./index.ts" with { type: "bundle" };
+        console.log(JSON.stringify({
+          type: typeof bundle,
+          hasEntrypoint: !!bundle.entrypoint,
+          entrypointName: bundle.entrypoint?.name,
+          entrypointKind: bundle.entrypoint?.kind,
+          filesCount: bundle.files?.length,
+        }));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(dir, "fixture.ts")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const result = JSON.parse(stdout.trim());
+    expect(result.type).toBe("object");
+    expect(result.hasEntrypoint).toBe(true);
+    // entrypoint name ends with .js (may include a hash)
+    expect(result.entrypointName).toMatch(/index.*\.js$/);
+    expect(result.entrypointKind).toBe("entry-point");
+    expect(result.filesCount).toBeGreaterThanOrEqual(1);
+    expect(exitCode).toBe(0);
+  });
+
+  test("serves bundled JS via Bun.serve() with manual routing", async () => {
+    const dir = tempDirWithFiles("bundle-import-serve", {
+      "index.ts": `export const hello = "world"; console.log(hello);`,
+      "fixture.ts": `
+        import bundle from "./index.ts" with { type: "bundle" };
+
+        // Use basename for route keys since name may include relative path
+        const pathMod = require("path");
+        const routes = Object.fromEntries(
+          bundle.files.map(f => {
+            const basename = pathMod.basename(f.name);
+            return [\`/assets/\${basename}\`, new Response(f.file(), {
+              headers: { "Content-Type": f.type },
+            })];
+          })
+        );
+
+        const entryBasename = pathMod.basename(bundle.entrypoint.name);
+
+        const server = Bun.serve({
+          port: 0,
+          routes: {
+            ...routes,
+            "/*": () => new Response("ok"),
+          },
+        });
+
+        const res = await fetch(\`http://localhost:\${server.port}/assets/\${entryBasename}\`);
+        const text = await res.text();
+
+        console.log(JSON.stringify({
+          status: res.status,
+          hasContent: text.length > 0,
+          contentType: res.headers.get("content-type"),
+        }));
+
+        server.stop();
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(dir, "fixture.ts")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const result = JSON.parse(stdout.trim());
+    expect(result.status).toBe(200);
+    expect(result.hasContent).toBe(true);
+    expect(result.contentType).toContain("javascript");
+    expect(exitCode).toBe(0);
+  });
+
+  test("bun build produces sub-build output with inline metadata", async () => {
+    const dir = tempDirWithFiles("bundle-import-build", {
+      "app.ts": `export function greet(name: string) { return "Hello, " + name; }
+export default { greet };`,
+      "server.ts": `import app from "./app.ts" with { type: "bundle" };
+console.log(JSON.stringify({
+  hasEntrypoint: !!app.entrypoint,
+  entrypointName: app.entrypoint?.name,
+  entrypointKind: app.entrypoint?.kind,
+  filesCount: app.files?.length,
+  firstFileName: app.files?.[0]?.name,
+  firstFileKind: app.files?.[0]?.kind,
+  firstFileType: app.files?.[0]?.type,
+  sizeIsNumber: typeof app.files?.[0]?.size === "number",
+}));`,
+    });
+
+    // Build with bun build
+    const buildResult = await Bun.build({
+      entrypoints: [join(dir, "server.ts")],
+      outdir: join(dir, "dist"),
+    });
+
+    expect(buildResult.success).toBe(true);
+
+    // The dist/ should contain both server.js and the sub-build output
+    const outputs = buildResult.outputs.map((o: any) => o.path);
+    expect(outputs.length).toBeGreaterThanOrEqual(2);
+
+    // Find server.js output
+    const serverOutput = buildResult.outputs.find((o: any) => o.path.includes("server"));
+    expect(serverOutput).toBeDefined();
+
+    // Read the server output and verify it contains sub-build metadata
+    const serverCode = await serverOutput!.text();
+    expect(serverCode).toContain("entrypoint:");
+    expect(serverCode).toContain("files:");
+    expect(serverCode).toContain("entry-point");
+
+    // Find the sub-build output (app-HASH.js)
+    const appOutput = buildResult.outputs.find((o: any) => o.path.includes("app"));
+    expect(appOutput).toBeDefined();
+
+    // The sub-build output should be written flat in dist/ (not nested)
+    const appBasename = require("path").basename(appOutput!.path);
+    const appOnDisk = Bun.file(join(dir, "dist", appBasename));
+    expect(await appOnDisk.exists()).toBe(true);
+
+    // The sub-build output should contain the actual transpiled code
+    const appCode = await appOutput!.text();
+    expect(appCode).toContain("greet");
+
+    // Run the built server.js to verify the metadata is correct
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(dir, "dist", "server.js")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    const result = JSON.parse(stdout.trim());
+    expect(result.hasEntrypoint).toBe(true);
+    expect(result.entrypointKind).toBe("entry-point");
+    expect(result.filesCount).toBeGreaterThanOrEqual(1);
+    expect(result.firstFileKind).toBe("entry-point");
+    expect(result.sizeIsNumber).toBe(true);
+    // Entrypoint name should end with .js and contain a hash
+    expect(result.entrypointName).toMatch(/app.*\.js$/);
+    expect(exitCode).toBe(0);
+  });
+
+  test("entrypoint derives .js from various extensions", async () => {
+    for (const [input, expectedBase] of [
+      ["app.tsx", "app"],
+      ["main.ts", "main"],
+      ["entry.jsx", "entry"],
+      ["script.js", "script"],
+    ]) {
+      const dir = tempDirWithFiles(`bundle-import-ext-${input}`, {
+        [input]: `export default 1;`,
+        "fixture.ts": `
+          import bundle from "./${input}" with { type: "bundle" };
+          // name may include relative path prefix, so use path.basename
+          const name = require("path").basename(bundle.entrypoint.name);
+          console.log(name);
+        `,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(dir, "fixture.ts")],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      // Name should start with the base name and end with .js (may include a hash)
+      expect(stdout.trim()).toMatch(new RegExp(`^${expectedBase}.*\\.js$`));
+      expect(exitCode).toBe(0);
+    }
+  });
+});

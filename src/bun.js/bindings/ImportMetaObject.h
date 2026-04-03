@@ -80,6 +80,7 @@ public:
     LazyProperty<JSObject, JSString> urlProperty;
     LazyProperty<JSObject, JSString> fileProperty;
     LazyProperty<JSObject, JSString> pathProperty;
+    LazyProperty<JSObject, JSObject> hotProperty;
 
 private:
     static ImportMetaObject* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, const WTF::String& url);

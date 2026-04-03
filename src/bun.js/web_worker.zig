@@ -637,6 +637,7 @@ pub fn exitAndDeinit(this: *WebWorker) noreturn {
         this.vm = null;
         vm.is_shutting_down = true;
         vm.onExit();
+        jsc.API.cron.CronJob.clearAllForVM(vm, .teardown);
         exit_code = vm.exit_handler.exit_code;
         globalObject = vm.global;
         vm_to_deinit = vm;

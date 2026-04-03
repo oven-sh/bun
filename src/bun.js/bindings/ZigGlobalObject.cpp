@@ -3529,6 +3529,10 @@ GlobalObject::PromiseFunctions GlobalObject::promiseHandlerID(Zig::FFIFunction h
         return GlobalObject::PromiseFunctions::Bun__FileSink__onResolveStream;
     } else if (handler == Bun__FileSink__onRejectStream) {
         return GlobalObject::PromiseFunctions::Bun__FileSink__onRejectStream;
+    } else if (handler == Bun__CronJob__onPromiseResolve) {
+        return GlobalObject::PromiseFunctions::Bun__CronJob__onPromiseResolve;
+    } else if (handler == Bun__CronJob__onPromiseReject) {
+        return GlobalObject::PromiseFunctions::Bun__CronJob__onPromiseReject;
     } else {
         RELEASE_ASSERT_NOT_REACHED();
     }

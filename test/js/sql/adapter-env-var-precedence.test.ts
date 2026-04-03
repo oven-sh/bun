@@ -25,7 +25,7 @@ describe("SQL adapter environment variable precedence", () => {
     'MARIADB_URL', 'MARIADBURL',
     'TLS_MARIADB_DATABASE_URL',
     'SQLITE_URL', 'SQLITEURL',
-    'PGHOST', 'PGUSER', 'PGPASSWORD', 'PGDATABASE', 'PGPORT',
+    'PGHOST', 'PGUSER', 'PGUSERNAME', 'PGPASSWORD', 'PGDATABASE', 'PGPORT',
     'MYSQL_HOST', 'MYSQL_USER', 'MYSQL_PASSWORD', 'MYSQL_DATABASE', 'MYSQL_PORT'
   ];
 
@@ -140,6 +140,30 @@ describe("SQL adapter environment variable precedence", () => {
     });
 
     expect(options.options.username).toBe("postgres-user");
+  });
+
+  test("PGUSERNAME should take precedence over PGUSER (issue #26684)", () => {
+    process.env.USER = "generic-user";
+    process.env.PGUSER = "pguser-fallback";
+    process.env.PGUSERNAME = "pgusername-primary";
+
+    const options = new SQL({
+      adapter: "postgres",
+    });
+
+    expect(options.options.username).toBe("pgusername-primary");
+  });
+
+  test("PGUSER should work when PGUSERNAME is not set", () => {
+    process.env.USER = "generic-user";
+    process.env.PGUSER = "pguser-value";
+    // PGUSERNAME is not set
+
+    const options = new SQL({
+      adapter: "postgres",
+    });
+
+    expect(options.options.username).toBe("pguser-value");
   });
 
   test("should infer mysql adapter from MYSQL_URL env var", () => {

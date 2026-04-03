@@ -83,15 +83,19 @@ int main(int argc, char **argv) {
 
   test("fs.statSync succeeds when statx is blocked by seccomp", async () => {
     const built = tryBuild();
-    if (!built) return; // no compiler / seccomp headers available — skip
+    if (!built) {
+      // bun:test has no runtime-skip; log loudly so CI output distinguishes
+      // this from a real pass. Happens when cc or the seccomp headers are
+      // missing on the test host.
+      console.warn("SKIP fs.stat seccomp: compiling the seccomp helper failed (cc/headers missing)");
+      return;
+    }
 
     const targetDir = tempDirWithFiles("stat-seccomp-target", {
       "file.txt": "hello",
     });
     const target = join(targetDir, "file.txt");
 
-    // Sanity check: the blocker itself must actually block statx. If the
-    // environment doesn't permit seccomp (exit 77), skip.
     await using proc = Bun.spawn({
       cmd: [
         built.bin,
@@ -114,8 +118,8 @@ int main(int argc, char **argv) {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     if (exitCode === 77) {
-      // Helper couldn't install seccomp in this environment — skip.
-      console.log("skip: seccomp not permitted in this environment:", stderr.trim());
+      // Helper couldn't install seccomp in this environment — skip loudly.
+      console.warn("SKIP fs.stat seccomp: seccomp not permitted in this environment:", stderr.trim());
       return;
     }
 

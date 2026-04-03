@@ -483,8 +483,9 @@ fn unlinkUnixSocketPath(this: *const Listener) void {
     const path = this.connection.unix;
     // Abstract sockets (Linux) start with a NUL byte and have no filesystem entry.
     if (path.len == 0 or path[0] == 0) return;
-    var buf: bun.PathBuffer = undefined;
-    _ = bun.sys.unlink(bun.path.z(path, &buf));
+    const buf = bun.path_buffer_pool.get();
+    defer bun.path_buffer_pool.put(buf);
+    _ = bun.sys.unlink(bun.path.z(path, buf));
 }
 
 pub fn deinit(this: *Listener) void {

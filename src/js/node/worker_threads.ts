@@ -328,9 +328,15 @@ class Worker extends EventEmitter {
     }
 
     const { resolve, promise } = Promise.withResolvers();
+    // Use a timer to keep the event loop alive while the terminate promise is
+    // pending. The underlying worker unrefs the parent event loop immediately
+    // on terminate(), but the close event (which resolves this promise) is
+    // dispatched asynchronously from the worker thread.
+    const keepAlive = setTimeout(() => {}, 2 ** 31 - 1);
     this.#worker.addEventListener(
       "close",
       event => {
+        clearTimeout(keepAlive);
         resolve(event.code);
       },
       { once: true },

@@ -270,7 +270,7 @@ pub const Installer = struct {
 
             const dep = this.lockfile.buffers.dependencies.items[dep_id];
 
-            if (dep.behavior.isWorkspace()) {
+            if (dep.behavior.isWorkspace() or dep.version.tag == .workspace) {
                 break :state .{ node_id, .skipped };
             }
 
@@ -338,6 +338,8 @@ pub const Installer = struct {
         next: ?*Task,
 
         result: Result,
+
+        critical_section: bun.safety.CriticalSection = .{},
 
         const Result = union(enum) {
             none,
@@ -1125,47 +1127,60 @@ pub const Installer = struct {
         pub fn callback(task: *ThreadPool.Task) void {
             const this: *Task = @fieldParentPtr("task", task);
 
+            this.critical_section.begin();
+
             const res = this.run() catch |err| switch (err) {
                 error.OutOfMemory => bun.outOfMemory(),
             };
 
+            // Hold locals to avoid touching `this` after push.
+            const installer = this.installer;
+
             switch (res) {
-                .yield => {},
+                .yield => {
+                    this.critical_section.end();
+                },
                 .run_scripts => |list| {
                     if (comptime Environment.ci_assert) {
-                        bun.assertWithLocation(this.installer.store.entries.items(.scripts)[this.entry_id.get()] != null, @src());
+                        bun.assertWithLocation(installer.store.entries.items(.scripts)[this.entry_id.get()] != null, @src());
                     }
                     this.result = .{ .run_scripts = list };
-                    this.installer.task_queue.push(this);
-                    this.installer.manager.wake();
+                    // End the critical section before pushing: after push, the main thread may
+                    // reschedule this task and another worker could enter the critical section.
+                    this.critical_section.end();
+                    installer.task_queue.push(this);
+                    installer.manager.wake();
                 },
                 .done => {
                     if (comptime Environment.ci_assert) {
                         // .monotonic is okay because this should have been set by this thread.
-                        bun.assertWithLocation(this.installer.store.entries.items(.step)[this.entry_id.get()].load(.monotonic) == .done, @src());
+                        bun.assertWithLocation(installer.store.entries.items(.step)[this.entry_id.get()].load(.monotonic) == .done, @src());
                     }
                     this.result = .done;
-                    this.installer.task_queue.push(this);
-                    this.installer.manager.wake();
+                    this.critical_section.end();
+                    installer.task_queue.push(this);
+                    installer.manager.wake();
                 },
                 .blocked => {
                     if (comptime Environment.ci_assert) {
                         // .monotonic is okay because this should have been set by this thread.
-                        bun.assertWithLocation(this.installer.store.entries.items(.step)[this.entry_id.get()].load(.monotonic) == .check_if_blocked, @src());
+                        bun.assertWithLocation(installer.store.entries.items(.step)[this.entry_id.get()].load(.monotonic) == .check_if_blocked, @src());
                     }
                     this.result = .blocked;
-                    this.installer.task_queue.push(this);
-                    this.installer.manager.wake();
+                    this.critical_section.end();
+                    installer.task_queue.push(this);
+                    installer.manager.wake();
                 },
                 .fail => |err| {
                     if (comptime Environment.ci_assert) {
                         // .monotonic is okay because this should have been set by this thread.
-                        bun.assertWithLocation(this.installer.store.entries.items(.step)[this.entry_id.get()].load(.monotonic) != .done, @src());
+                        bun.assertWithLocation(installer.store.entries.items(.step)[this.entry_id.get()].load(.monotonic) != .done, @src());
                     }
-                    this.installer.store.entries.items(.step)[this.entry_id.get()].store(.done, .release);
+                    installer.store.entries.items(.step)[this.entry_id.get()].store(.done, .release);
                     this.result = .{ .err = err };
-                    this.installer.task_queue.push(this);
-                    this.installer.manager.wake();
+                    this.critical_section.end();
+                    installer.task_queue.push(this);
+                    installer.manager.wake();
                 },
             }
         }

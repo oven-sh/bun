@@ -1180,21 +1180,16 @@ pub const Bunfig = struct {
                 if (expr.get("conditions")) |conds_expr| {
                     try this.expect(conds_expr, .e_array);
                     const items = conds_expr.data.e_array.items.slice();
-                    var conditions = try this.allocator.alloc(string, items.len);
-                    for (items, 0..) |item, i| {
-                        try this.expectString(item);
-                        conditions[i] = try item.data.e_string.string(allocator);
-                    }
                     // Append to any existing conditions (e.g. from a previously loaded
                     // global bunfig) so multiple configs stack rather than clobber.
-                    if (this.bunfig.conditions.len > 0) {
-                        const combined = try this.allocator.alloc(string, this.bunfig.conditions.len + conditions.len);
-                        @memcpy(combined[0..this.bunfig.conditions.len], this.bunfig.conditions);
-                        @memcpy(combined[this.bunfig.conditions.len..], conditions);
-                        this.bunfig.conditions = combined;
-                    } else {
-                        this.bunfig.conditions = conditions;
+                    const existing_len = this.bunfig.conditions.len;
+                    const combined = try this.allocator.alloc(string, existing_len + items.len);
+                    @memcpy(combined[0..existing_len], this.bunfig.conditions);
+                    for (items, 0..) |item, i| {
+                        try this.expectString(item);
+                        combined[existing_len + i] = try item.data.e_string.string(allocator);
                     }
+                    this.bunfig.conditions = combined;
                 }
             }
 

@@ -353,6 +353,65 @@ fn computeCrossChunkDependenciesWithChunkMetas(c: *LinkerContext, chunks: []Chun
                         repr.cross_chunk_suffix_stmts = stmts;
                     }
                 },
+                .cjs => {
+                    // For CommonJS output format with code splitting, we need to generate
+                    // module.exports = { alias: symbol, ... } at the end of the chunk
+                    c.sortedCrossChunkExportItems(
+                        chunk_meta.exports,
+                        &stable_ref_list,
+                    );
+                    repr.exports_to_other_chunks.ensureUnusedCapacity(c.allocator(), stable_ref_list.items.len) catch unreachable;
+                    r.clearRetainingCapacity();
+
+                    var properties = BabyList(js_ast.G.Property).initCapacity(c.allocator(), stable_ref_list.items.len) catch unreachable;
+                    properties.len = @as(u32, @truncate(stable_ref_list.items.len));
+
+                    for (stable_ref_list.items, properties.slice()) |stable_ref, *prop| {
+                        const ref = stable_ref.ref;
+                        const alias = if (c.options.minify_identifiers) try r.nextMinifiedName(c.allocator()) else r.nextRenamedName(c.graph.symbols.get(ref).?.original_name);
+
+                        // Create property: { alias: symbol }
+                        prop.* = .{
+                            .key = Expr.init(
+                                js_ast.E.String,
+                                js_ast.E.String{ .data = alias },
+                                Logger.Loc.Empty,
+                            ),
+                            .value = Expr.initIdentifier(ref, Logger.Loc.Empty),
+                        };
+
+                        repr.exports_to_other_chunks.putAssumeCapacity(
+                            ref,
+                            alias,
+                        );
+                    }
+
+                    if (properties.len > 0) {
+                        var stmts = BabyList(js_ast.Stmt).initCapacity(c.allocator(), 1) catch unreachable;
+                        // Generate: module.exports = { ... }
+                        stmts.appendAssumeCapacity(
+                            Stmt.assign(
+                                Expr.init(
+                                    js_ast.E.Dot,
+                                    .{
+                                        .target = Expr.initIdentifier(c.unbound_module_ref, Logger.Loc.Empty),
+                                        .name = "exports",
+                                        .name_loc = Logger.Loc.Empty,
+                                    },
+                                    Logger.Loc.Empty,
+                                ),
+                                Expr.init(
+                                    js_ast.E.Object,
+                                    js_ast.E.Object{
+                                        .properties = properties,
+                                    },
+                                    Logger.Loc.Empty,
+                                ),
+                            ),
+                        );
+                        repr.cross_chunk_suffix_stmts = stmts;
+                    }
+                },
                 else => {},
             }
         }
@@ -410,6 +469,63 @@ fn computeCrossChunkDependenciesWithChunkMetas(c: *LinkerContext, chunks: []Chun
                             },
                         ) catch unreachable;
                     },
+                    .cjs => {
+                        // For CommonJS output format with code splitting, we generate:
+                        // var { alias1, alias2, ... } = require("./chunk.js");
+                        const import_record_index = @as(u32, @intCast(cross_chunk_imports.len));
+
+                        cross_chunk_imports.append(c.allocator(), .{
+                            .import_kind = .require,
+                            .chunk_index = cross_chunk_import.chunk_index,
+                        }) catch unreachable;
+
+                        // Build destructuring binding pattern: { alias1: ref1, alias2: ref2, ... }
+                        var binding_props = BabyList(js_ast.B.Property).initCapacity(c.allocator(), cross_chunk_import.sorted_import_items.len) catch unreachable;
+                        for (cross_chunk_import.sorted_import_items.slice()) |item| {
+                            binding_props.append(c.allocator(), .{
+                                .key = Expr.init(
+                                    js_ast.E.String,
+                                    js_ast.E.String{ .data = item.export_alias },
+                                    Logger.Loc.Empty,
+                                ),
+                                .value = js_ast.Binding.alloc(c.allocator(), js_ast.B.Identifier{ .ref = item.ref }, Logger.Loc.Empty),
+                            }) catch unreachable;
+                        }
+
+                        // Create the require call expression
+                        const require_expr = Expr.init(
+                            js_ast.E.RequireString,
+                            js_ast.E.RequireString{
+                                .import_record_index = import_record_index,
+                            },
+                            Logger.Loc.Empty,
+                        );
+
+                        // Create variable declaration: var { ... } = require("./chunk.js");
+                        var decls = js_ast.G.Decl.List.initCapacity(c.allocator(), 1) catch unreachable;
+                        decls.appendAssumeCapacity(.{
+                            .binding = js_ast.Binding.alloc(
+                                c.allocator(),
+                                js_ast.B.Object{
+                                    .properties = binding_props.slice(),
+                                    .is_single_line = true,
+                                },
+                                Logger.Loc.Empty,
+                            ),
+                            .value = require_expr,
+                        });
+
+                        cross_chunk_prefix_stmts.append(
+                            c.allocator(),
+                            Stmt.alloc(
+                                js_ast.S.Local,
+                                .{
+                                    .decls = decls,
+                                },
+                                Logger.Loc.Empty,
+                            ),
+                        ) catch unreachable;
+                    },
                     else => {},
                 }
             }
@@ -436,6 +552,7 @@ const default_allocator = bun.default_allocator;
 const renamer = bun.renamer;
 
 const js_ast = bun.ast;
+const Expr = js_ast.Expr;
 const Part = js_ast.Part;
 const S = js_ast.S;
 const Stmt = js_ast.Stmt;

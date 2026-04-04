@@ -468,7 +468,12 @@ export function emitZigCheck(n: Ninja, cfg: Config, inputs: ZigBuildInputs): voi
 
   const zigExe = zigExecutable(cfg);
   const cacheDirs = zigCacheDirs(cfg);
+  // `--summary new` instead of `all`: check is a fast-iteration workflow
+  // (mostly cache hits), so skip the "cached" rows zig would otherwise
+  // print for every unchanged step. Matches the pre-ninja `zig:check`
+  // scripts. zigBuildArgs ends with `--summary all`; swap the last arg.
   const args = zigBuildArgs(cfg);
+  args[args.length - 1] = "new";
   const hostWin = cfg.host.os === "windows";
 
   for (const step of CHECK_STEPS) {

@@ -3,7 +3,6 @@
 #include "root.h"
 #include <JavaScriptCore/LazyProperty.h>
 #include <JavaScriptCore/Strong.h>
-
 namespace WebCore {
 }
 

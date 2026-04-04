@@ -613,6 +613,14 @@ pub const JSGlobalObject = opaque {
         return bun.jsc.fromJSHostCallGeneric(this, @src(), JSC__JSGlobalObject__deleteModuleRegistryEntry, .{ this, name_ });
     }
 
+    pub fn beginTestModuleMockingScope(this: *JSGlobalObject) void {
+        JSMock__beginModuleMockScope(this);
+    }
+
+    pub fn endTestModuleMockingScope(this: *JSGlobalObject) void {
+        JSMock__endModuleMockScope(this);
+    }
+
     fn bunVMUnsafe(this: *JSGlobalObject) *anyopaque {
         return JSC__JSGlobalObject__bunVM(this);
     }
@@ -848,6 +856,8 @@ pub const JSGlobalObject = opaque {
     extern fn JSC__JSGlobalObject__bunVM(*JSGlobalObject) *VM;
     extern fn JSC__JSGlobalObject__vm(*JSGlobalObject) *VM;
     extern fn JSC__JSGlobalObject__deleteModuleRegistryEntry(*JSGlobalObject, *const ZigString) void;
+    extern fn JSMock__beginModuleMockScope(*JSGlobalObject) void;
+    extern fn JSMock__endModuleMockScope(*JSGlobalObject) void;
     extern fn JSGlobalObject__clearException(*JSGlobalObject) void;
     extern fn JSGlobalObject__clearExceptionExceptTermination(*JSGlobalObject) bool;
     extern fn JSGlobalObject__clearTerminationException(this: *JSGlobalObject) void;

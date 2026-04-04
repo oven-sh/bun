@@ -1637,6 +1637,21 @@ pub const RunCommand = struct {
             return;
         }
 
+        // Support `node --run <script>` (Node.js v22+ feature).
+        // The --run flag is silently discarded by the arg parser since it's
+        // unrecognized, but the script name ends up as ctx.positionals[0].
+        // Scan the raw argv to detect if --run was present.
+        if (ctx.positionals.len > 0) {
+            for (bun.argv) |arg| {
+                if (strings.eqlComptime(arg, "--run")) {
+                    if (exec(ctx, .{ .bin_dirs_only = false, .log_errors = true, .allow_fast_run_for_extensions = false })) |ok| {
+                        if (ok) return;
+                    } else |_| {}
+                    Global.exit(1);
+                }
+            }
+        }
+
         if (ctx.positionals.len == 0) {
             Output.errGeneric("Missing script to execute. Bun's provided 'node' cli wrapper does not support a repl.", .{});
             Global.exit(1);

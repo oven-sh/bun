@@ -232,6 +232,8 @@ Why not auto-register in emit functions? Some rules are shared (`dep_configure` 
 
 **cmd.exe quoting is partial.** `shell.ts` quote() handles spaces/special chars but NOT `%VAR%` expansion, `^` escape, `&|>` redirection. If an arg contains those, switch to powershell.
 
+**`rm -rf build/` doesn't clear the cache locally.** `cfg.cacheDir` is machine-shared at `$BUN_INSTALL/build-cache` for non-CI builds (ccache, zig, tarballs, prebuilt WebKit). Everything there is content-addressed or version-stamped, so a stale entry can't be hit — don't reach for `bun run clean cache` as a debugging step. If a build misbehaves, the bug is in the inputs or the graph, not the cache; nuking it just costs you a cold rebuild. CI keeps `<buildDir>/cache` so `rm -rf build/` is still a full reset there.
+
 ## Node compatibility
 
 The build system runs under Node 24+ with `--experimental-strip-types` (or Node 25+ without the flag). CI invokes it this way via `process.execPath` in `.buildkite/ci.mjs`.

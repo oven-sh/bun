@@ -7,11 +7,15 @@
 
 import { existsSync, readdirSync } from "node:fs";
 import { rm } from "node:fs/promises";
+import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { allDeps } from "./deps/index.ts";
 
 const cwd = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+// Machine-shared cache (ccache/zig/tarballs/webkit). Matches resolveConfig()'s
+// non-CI default. `clean` is a dev-machine tool so we don't branch on CI here.
+const sharedCacheDir = resolve(process.env.BUN_INSTALL || resolve(homedir(), ".bun"), "build-cache");
 
 const args = process.argv.slice(2);
 const dryRun = args.includes("--dry-run");
@@ -29,6 +33,8 @@ presets:
   release-local    build/release-local/ + vendor/WebKit/WebKitBuild/Release{,LTO}
   zig              zig caches + bun-zig.o across all profiles, .zig-cache, zig-out
   cpp              C++ obj/ + pch/ across all profiles
+  cache            machine-shared build cache (~/.bun/build-cache: ccache, zig,
+                   tarballs, prebuilt webkit) — affects ALL checkouts
   deep             build/, .zig-cache, zig-out, vendor/* (except manually
                    managed deps like WebKit)
 
@@ -69,12 +75,15 @@ const presets: Record<string, () => string[]> = {
 
   zig: () => [
     ...buildProfiles().flatMap(p => [resolve(p, "cache", "zig"), resolve(p, "bun-zig.o")]),
+    resolve(sharedCacheDir, "zig"),
     resolve(cwd, "build", "debug", "zig-check-cache"),
     resolve(cwd, ".zig-cache"),
     resolve(cwd, "zig-out"),
   ],
 
   cpp: () => buildProfiles().flatMap(p => [resolve(p, "obj"), resolve(p, "pch")]),
+
+  cache: () => [sharedCacheDir],
 
   deep: () => [
     resolve(cwd, "build"),

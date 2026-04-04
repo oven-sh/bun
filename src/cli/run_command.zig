@@ -1395,6 +1395,23 @@ pub const RunCommand = struct {
             prefetchRemoteImages(contents, md_opts, &remote_map);
         }
 
+        // Relative image paths in the markdown should resolve against
+        // the document's directory, not the process cwd — otherwise
+        // `bun ./docs/README.md` from `/home/user` can't find `./img.png`
+        // that sits next to README.md. Resolve to an absolute dir first
+        // so joinAbsString downstream doesn't double-apply cwd.
+        var base_buf: bun.PathBuffer = undefined;
+        var cwd_buf: bun.PathBuffer = undefined;
+        const abs_md_path: []const u8 = blk: {
+            if (std.fs.path.isAbsolute(path)) break :blk path;
+            const cwd = switch (bun.sys.getcwd(&cwd_buf)) {
+                .result => |c| c,
+                .err => break :blk path,
+            };
+            break :blk bun.path.joinAbsStringBuf(cwd, &base_buf, &.{path}, .auto);
+        };
+        const image_base_dir = std.fs.path.dirname(abs_md_path) orelse abs_md_path;
+
         const theme: bun.md.AnsiTheme = .{
             .light = bun.md.detectLightBackground(),
             .columns = columns,
@@ -1402,6 +1419,7 @@ pub const RunCommand = struct {
             .hyperlinks = colors and is_tty,
             .kitty_graphics = kitty_graphics,
             .remote_image_paths = if (remote_map.count() > 0) &remote_map else null,
+            .image_base_dir = image_base_dir,
         };
 
         const rendered = bun.md.renderToAnsi(

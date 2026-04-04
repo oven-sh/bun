@@ -37,7 +37,7 @@ exports[`bun <file.md> renders ordered, unordered, and task lists 1`] = `
 
 exports[`bun <file.md> renders blockquotes and nested blockquotes 1`] = `
 "\x1B[38;5;242m│ \x1B[39mA quote\x1B[0m
-
+\x1B[38;5;242m│\x1B[39m
 \x1B[38;5;242m│ │ \x1B[39mNested quote\x1B[0m
 "
 `;

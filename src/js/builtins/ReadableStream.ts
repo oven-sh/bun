@@ -351,6 +351,16 @@ export function createEmptyReadableStream() {
 }
 
 $linkTimeConstant;
+export function createEmptyByteReadableStream() {
+  var stream = new ReadableStream({
+    type: "bytes",
+    pull() {},
+  } as any);
+  $readableStreamClose(stream);
+  return stream;
+}
+
+$linkTimeConstant;
 export function createUsedReadableStream() {
   var stream = new ReadableStream({
     pull() {},
@@ -381,13 +391,15 @@ export function getReader(this, options) {
   if (!$isReadableStream(this)) throw $ERR_INVALID_THIS("ReadableStream");
 
   const mode = $toDictionary(options, {}, "ReadableStream.getReader takes an object as first argument").mode;
-  if (mode === undefined) {
-    var start_ = $getByIdDirectPrivate(this, "start");
-    if (start_) {
-      $putByIdDirectPrivate(this, "start", undefined);
-      start_();
-    }
+  // Trigger lazy initialization for both default and BYOB readers.
+  // Native streams are lazily initialized to defer I/O until actually read.
+  var start_ = $getByIdDirectPrivate(this, "start");
+  if (start_) {
+    $putByIdDirectPrivate(this, "start", undefined);
+    start_();
+  }
 
+  if (mode === undefined) {
     return new ReadableStreamDefaultReader(this);
   }
   // String conversion is required by spec, hence double equals.

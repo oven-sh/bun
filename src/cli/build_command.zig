@@ -183,6 +183,12 @@ pub const BuildCommand = struct {
             }
         }
 
+        if (this_transpiler.options.code_splitting and this_transpiler.options.output_format != .esm) {
+            Output.prettyErrorln("<r><red>error<r><d>:<r> Cannot use <b>--splitting<r> with a non-ESM output format", .{});
+            Global.exit(1);
+            return;
+        }
+
         if (ctx.bundler_options.outdir.len == 0 and !ctx.bundler_options.compile and fetcher == null) {
             if (this_transpiler.options.entry_points.len > 1) {
                 Output.prettyErrorln("<r><red>error<r><d>:<r> Must use <b>--outdir<r> when specifying more than one entry point.", .{});

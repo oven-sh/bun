@@ -37,12 +37,12 @@ Isolate* Isolate::GetCurrent()
 
 Local<Context> Isolate::GetCurrentContext()
 {
-    return currentHandleScope()->createLocal<Context>(m_globalObject->vm(), m_globalObject);
+    return currentHandleScope()->createLocal<Context>(m_globalObject->vm(), m_globalObject.get());
 }
 
 Isolate::Isolate(shim::GlobalInternals* globalInternals)
-    : m_globalInternals(globalInternals)
-    , m_globalObject(globalInternals->m_globalObject)
+    : m_globalInternals(globalInternals, JSC::WriteBarrierEarlyInit)
+    , m_globalObject(globalInternals->m_globalObject.get(), JSC::WriteBarrierEarlyInit)
 {
     m_roots[kUndefinedValueRootIndex] = TaggedPointer(&globalInternals->m_undefinedValue);
     m_roots[kNullValueRootIndex] = TaggedPointer(&globalInternals->m_nullValue);

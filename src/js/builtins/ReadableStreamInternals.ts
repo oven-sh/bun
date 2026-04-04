@@ -1670,6 +1670,14 @@ export function readableStreamClose(stream) {
       for (var request = requests.shift(); request; request = requests.shift())
         $fulfillPromise(request, { value: undefined, done: true });
     }
+  } else if ($isReadableStreamBYOBReader(reader)) {
+    const readIntoRequests = $getByIdDirectPrivate(reader, "readIntoRequests");
+    if (readIntoRequests?.isNotEmpty()) {
+      $putByIdDirectPrivate(reader, "readIntoRequests", $createFIFO());
+
+      for (var request = readIntoRequests.shift(); request; request = readIntoRequests.shift())
+        $fulfillPromise(request, { value: undefined, done: true });
+    }
   }
 
   $getByIdDirectPrivate($getByIdDirectPrivate(stream, "reader"), "closedPromiseCapability").resolve.$call();
@@ -1766,7 +1774,11 @@ export function readableStreamReaderGenericRelease(reader) {
 
   var stream = $getByIdDirectPrivate(reader, "ownerReadableStream");
   if (stream.$bunNativePtr) {
-    $getByIdDirectPrivate($getByIdDirectPrivate(stream, "readableStreamController"), "underlyingSource").$resume(false);
+    var controller = $getByIdDirectPrivate(stream, "readableStreamController");
+    var source =
+      $getByIdDirectPrivate(controller, "underlyingSource") ??
+      $getByIdDirectPrivate(controller, "underlyingByteSource");
+    source?.$resume(false);
   }
   $putByIdDirectPrivate(stream, "reader", undefined);
   $putByIdDirectPrivate(reader, "ownerReadableStream", undefined);
@@ -1942,18 +1954,6 @@ export function createLazyLoadedStreamPrototype(): typeof ReadableStreamDefaultC
     }
   }
 
-  // This was a type: "bytes" until Bun v1.1.44, but pendingPullIntos was not really
-  // compatible with how we send data to the stream, and "mode: 'byob'" wasn't
-  // supported so changing it isn't an observable change.
-  //
-  // When we receive chunks of data from native code, we sometimes read more
-  // than what the input buffer provided. When that happens, we return a typed
-  // array instead of the number of bytes read.
-  //
-  // When that happens, the ReadableByteStreamController creates (byteLength / autoAllocateChunkSize) pending pull into descriptors.
-  // So if that number is something like 16 * 1024, and we actually read 2 MB, you're going to create 128 pending pull into descriptors.
-  //
-  // And those pendingPullIntos were often never actually drained.
   class NativeReadableStreamSource {
     constructor(handle, autoAllocateChunkSize, drainValue) {
       $putByIdDirectPrivate(this, "stream", handle);
@@ -1990,7 +1990,7 @@ export function createLazyLoadedStreamPrototype(): typeof ReadableStreamDefaultC
       }
     }
 
-    #controller?: WeakRef<ReadableStreamDefaultController>;
+    #controller?: WeakRef<ReadableStreamDefaultController | ReadableByteStreamController>;
 
     // eslint-disable-next-line no-unused-vars
     pull;
@@ -2151,7 +2151,7 @@ export function createLazyLoadedStreamPrototype(): typeof ReadableStreamDefaultC
   return NativeReadableStreamSource;
 }
 
-export function lazyLoadStream(stream, autoAllocateChunkSize) {
+export function lazyLoadStream(stream, autoAllocateChunkSize, byob) {
   $debug("lazyLoadStream", stream, autoAllocateChunkSize);
   var handle = stream.$bunNativePtr;
   if (handle === -1) return;
@@ -2180,7 +2180,7 @@ export function lazyLoadStream(stream, autoAllocateChunkSize) {
   // empty file, no need for native back-and-forth on this
   if (chunkSize === 0) {
     if ((drainValue?.byteLength ?? 0) > 0) {
-      return {
+      var source = {
         start(controller) {
           controller.enqueue(drainValue);
           controller.close();
@@ -2189,9 +2189,11 @@ export function lazyLoadStream(stream, autoAllocateChunkSize) {
           controller.close();
         },
       };
+      if (byob) source.type = "bytes";
+      return source;
     }
 
-    return {
+    var source = {
       start(controller) {
         controller.close();
       },
@@ -2199,9 +2201,13 @@ export function lazyLoadStream(stream, autoAllocateChunkSize) {
         controller.close();
       },
     };
+    if (byob) source.type = "bytes";
+    return source;
   }
 
-  return new Prototype(handle, Math.max(chunkSize, autoAllocateChunkSize), drainValue);
+  var instance = new Prototype(handle, Math.max(chunkSize, autoAllocateChunkSize), drainValue);
+  if (byob) instance.type = "bytes";
+  return instance;
 }
 
 export function readableStreamIntoArray(stream) {

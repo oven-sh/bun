@@ -90,8 +90,8 @@ export function initializeReadableStream(
       autoAllocateChunkSize || $getByIdDirectPrivate(strategy, "highWaterMark"),
     );
 
-    $putByIdDirectPrivate(this, "start", () => {
-      const instance = $lazyLoadStream(this, autoAllocateChunkSize);
+    $putByIdDirectPrivate(this, "start", byob => {
+      const instance = $lazyLoadStream(this, autoAllocateChunkSize, byob);
       if (instance) {
         $createReadableStreamController(this, instance, strategy);
       }
@@ -381,21 +381,22 @@ export function getReader(this, options) {
   if (!$isReadableStream(this)) throw $ERR_INVALID_THIS("ReadableStream");
 
   const mode = $toDictionary(options, {}, "ReadableStream.getReader takes an object as first argument").mode;
-  if (mode === undefined) {
-    var start_ = $getByIdDirectPrivate(this, "start");
-    if (start_) {
-      $putByIdDirectPrivate(this, "start", undefined);
-      start_();
-    }
+  // String conversion is required by spec, hence double equals.
+  const isByob = mode == "byob";
 
+  var start_ = $getByIdDirectPrivate(this, "start");
+  if (start_) {
+    $putByIdDirectPrivate(this, "start", undefined);
+    start_(isByob);
+  }
+
+  if (!isByob) {
+    if (mode !== undefined) {
+      throw $ERR_INVALID_ARG_VALUE("mode", mode, "byob");
+    }
     return new ReadableStreamDefaultReader(this);
   }
-  // String conversion is required by spec, hence double equals.
-  if (mode == "byob") {
-    return new ReadableStreamBYOBReader(this);
-  }
-
-  throw $ERR_INVALID_ARG_VALUE("mode", mode, "byob");
+  return new ReadableStreamBYOBReader(this);
 }
 
 export function pipeThrough(this, streams, options) {

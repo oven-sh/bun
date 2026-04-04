@@ -532,10 +532,11 @@ fn discoverNestedWorkspaces(
         // copy is stable for the duration of the recursive call.
         const source_copy = cached.source;
 
-        // Let real errors (OOM, GlobError, InvalidPackageJSON) propagate.
-        // The caller rolls back log messages from this recursive pass, so
-        // best-effort semantics are handled there.
-        try processNamesArrayOnePass(
+        // Best-effort per sub-package: a broken nested `workspaces` field
+        // in one sibling shouldn't stop discovery of the others. Only OOM
+        // is fatal. The caller rolls back log messages from this recursive
+        // pass, so logged errors get swallowed there anyway.
+        processNamesArrayOnePass(
             workspace_names,
             allocator,
             json_cache,
@@ -545,7 +546,10 @@ fn discoverNestedWorkspaces(
             root_dir,
             workspaces_expr.loc,
             string_builder,
-        );
+        ) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => continue,
+        };
     }
 }
 

@@ -1591,8 +1591,8 @@ const bun = @import("bun");
 const helpers = @import("./helpers.zig");
 const root = @import("./root.zig");
 const std = @import("std");
-const Allocator = std.mem.Allocator;
 const PercentEncoding = @import("../url.zig").PercentEncoding;
+const Allocator = std.mem.Allocator;
 
 const types = @import("./types.zig");
 const BlockType = types.BlockType;

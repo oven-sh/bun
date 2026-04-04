@@ -1070,8 +1070,6 @@ static napi_status createErrorWithNapiValues(napi_env env, napi_value code, napi
 {
     auto* globalObject = toJS(env);
     auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    RETURN_IF_EXCEPTION(scope, napi_pending_exception);
 
     NAPI_CHECK_ARG(env, result);
     NAPI_CHECK_ARG(env, message);
@@ -1081,15 +1079,16 @@ static napi_status createErrorWithNapiValues(napi_env env, napi_value code, napi
         js_message.isString() && (js_code.isEmpty() || js_code.isString()),
         napi_string_expected);
 
+    // Do not check for pending exceptions here. This matches Node.js behavior
+    // where napi_create_error and friends only create error values without
+    // checking the VM exception state. The inputs are already validated as
+    // strings above, so getString() won't throw new exceptions.
     auto wtf_code = js_code.isEmpty() ? WTF::String() : js_code.getString(globalObject);
-    RETURN_IF_EXCEPTION(scope, napi_set_last_error(env, napi_pending_exception));
     auto wtf_message = js_message.getString(globalObject);
-    RETURN_IF_EXCEPTION(scope, napi_set_last_error(env, napi_pending_exception));
 
     *result = toNapi(
         createErrorWithCode(vm, globalObject, wtf_code, wtf_message, type),
         globalObject);
-    RETURN_IF_EXCEPTION(scope, napi_set_last_error(env, napi_pending_exception));
     return napi_set_last_error(env, napi_ok);
 }
 

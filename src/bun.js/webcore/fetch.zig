@@ -1,5 +1,6 @@
 pub const fetch_error_no_args = "fetch() expects a string but received no arguments.";
 pub const fetch_error_blank_url = "fetch() URL must not be a blank string.";
+pub const fetch_error_no_hostname = "fetch() URL must have a hostname.";
 pub const fetch_error_unexpected_body = "fetch() request with GET/HEAD/OPTIONS method cannot have body.";
 pub const fetch_error_proxy_unix = "fetch() cannot use a proxy with a unix socket.";
 const JSTypeErrorEnum = std.enums.EnumArray(JSType, string);
@@ -132,7 +133,7 @@ pub fn Bun__fetchPreconnect_(
 
     if (url.hostname.len == 0) {
         bun.default_allocator.free(url.href);
-        return globalObject.ERR(.INVALID_ARG_TYPE, fetch_error_blank_url, .{}).throw();
+        return globalObject.ERR(.INVALID_ARG_TYPE, fetch_error_no_hostname, .{}).throw();
     }
 
     if (!url.hasValidPort()) {

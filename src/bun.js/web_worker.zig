@@ -51,6 +51,7 @@ extern fn WebWorker__dispatchExit(?*jsc.JSGlobalObject, *anyopaque, i32) void;
 extern fn WebWorker__dispatchOnline(cpp_worker: *anyopaque, *jsc.JSGlobalObject) void;
 extern fn WebWorker__fireEarlyMessages(cpp_worker: *anyopaque, *jsc.JSGlobalObject) void;
 extern fn WebWorker__dispatchError(*jsc.JSGlobalObject, *anyopaque, bun.String, JSValue) void;
+extern fn WebWorker__clearImpl(cpp_worker: *anyopaque) void;
 
 export fn WebWorker__getParentWorker(vm: *jsc.VirtualMachine) ?*anyopaque {
     const worker = vm.worker orelse return null;
@@ -643,6 +644,12 @@ pub fn exitAndDeinit(this: *WebWorker) noreturn {
         vm_to_deinit = vm;
     }
     var arena = this.arena;
+
+    // Clear the WebWorker pointer on the C++ side before freeing it here,
+    // so the main thread can't call into freed memory via terminate() or
+    // ref()/unref(). This must happen before WebWorker__dispatchExit, which
+    // may release the last reference to the C++ Worker.
+    WebWorker__clearImpl(cpp_worker);
 
     WebWorker__dispatchExit(globalObject, cpp_worker, exit_code);
     if (loop) |loop_| {

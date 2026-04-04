@@ -1,6 +1,6 @@
 import { dlopen, linkSymbols } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
-import { isArm64, isMusl, isWindows } from "harness";
+import { bunEnv, bunExe, isArm64, isMusl, isWindows } from "harness";
 
 // TinyCC (and all of bun:ffi) is disabled on Windows ARM64
 const isFFIUnavailable = isWindows && isArm64;
@@ -85,5 +85,54 @@ describe.skipIf(isFFIUnavailable)("FFI error messages", () => {
         },
       });
     }).toThrow('you must provide a "ptr" field with the memory address of the native function.');
+  });
+
+  test("closeCallback with invalid argument does not crash", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const cb = Bun.FFI.closeCallback;
+        cb("not a pointer");
+        cb(undefined);
+        cb(null);
+        cb({});
+        cb(true);
+        cb(0);
+        cb(NaN);
+        cb(Infinity);
+        cb(-Infinity);
+        cb(-1);
+        cb(1.5);
+        cb(1e20);
+        cb(2**64);
+        cb(Number.MAX_VALUE);
+      `,
+      ],
+      env: bunEnv,
+    });
+    expect(await proc.exited).toBe(0);
+  });
+
+  test("linkSymbols with numeric ptr edge cases does not crash", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const tryLink = (ptr) => { try { Bun.FFI.linkSymbols({ fn: { args: [], returns: "void", ptr } }); } catch {} };
+        tryLink(NaN);
+        tryLink(Infinity);
+        tryLink(-Infinity);
+        tryLink(-1);
+        tryLink(1.5);
+        tryLink(1e20);
+        tryLink(2**64);
+      `,
+      ],
+      env: bunEnv,
+    });
+    expect(await proc.exited).toBe(0);
   });
 });

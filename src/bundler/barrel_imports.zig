@@ -232,6 +232,57 @@ fn resolveBarrelRecords(this: *BundleV2, barrel_idx: u32, barrels_to_resolve: *s
     return scheduled;
 }
 
+/// In dev server mode, ConvertESMExportsForHmr deduplicates import records by
+/// path — when a file has multiple `import {...} from "pkg"` statements, only
+/// the first record survives (path resolved) while duplicates get is_unused=true
+/// and their paths stay as the bare module specifier. resolveImportRecords skips
+/// is_unused records, so dead records never get their paths resolved.
+///
+/// This function builds a map from original_path (the unresolved module
+/// specifier, e.g. "@tanstack/react-query") → resolved target source_index,
+/// using the surviving records that DID get resolved. Dead records can then
+/// look up their original_path in this map to find the correct target.
+fn buildSpecifierToTargetMap(
+    file_import_records: ImportRecord.List,
+    path_to_source_index_map: *const PathToSourceIndexMap,
+    alloc: std.mem.Allocator,
+) bun.StringArrayHashMapUnmanaged(u32) {
+    var map = bun.StringArrayHashMapUnmanaged(u32){};
+    for (file_import_records.slice()) |ir| {
+        if (ir.original_path.len == 0) continue;
+        if (map.contains(ir.original_path)) continue;
+        // Try source_index first, then fall back to path map lookup.
+        const target_idx = if (ir.source_index.isValid())
+            ir.source_index.get()
+        else
+            path_to_source_index_map.getPath(&ir.path) orelse continue;
+        map.put(alloc, ir.original_path, target_idx) catch continue;
+    }
+    return map;
+}
+
+/// Resolve a named_import's import record to a target source_index.
+/// Tries source_index, then path map, then the specifier fallback map
+/// (for dead HMR-dedup'd records whose paths were never resolved).
+inline fn resolveImportTarget(
+    ir: ImportRecord,
+    path_to_source_index_map: ?*const PathToSourceIndexMap,
+    specifier_fallback: ?*const bun.StringArrayHashMapUnmanaged(u32),
+) ?u32 {
+    if (ir.source_index.isValid()) return ir.source_index.get();
+    if (path_to_source_index_map) |map| {
+        if (map.getPath(&ir.path)) |idx| return idx;
+    }
+    if (specifier_fallback) |fb| {
+        if (ir.original_path.len > 0) {
+            if (fb.get(ir.original_path)) |idx| return idx;
+        }
+        // Dead records may also have path.text == original specifier
+        return fb.get(ir.path.text);
+    }
+    return null;
+}
+
 /// After a new file's import records are patched with source_indices,
 /// record what this file requests from each target in requested_exports
 /// (eagerly, before barrels are known), then BFS through barrel chains
@@ -262,6 +313,21 @@ pub fn scheduleBarrelDeferredImports(this: *BundleV2, result: *ParseTask.Result.
     else
         null;
 
+    // In dev server mode, ConvertESMExportsForHmr deduplicates import records
+    // by path — dead records retain the unresolved module specifier. Build a
+    // fallback map from original specifier → target source_index so that
+    // named_imports pointing to dead records can still seed correctly.
+    var specifier_to_target_stack = std.heap.stackFallback(1024, this.allocator());
+    const specifier_to_target_alloc = specifier_to_target_stack.get();
+    var specifier_to_target: bun.StringArrayHashMapUnmanaged(u32) = if (path_to_source_index_map) |map|
+        buildSpecifierToTargetMap(file_import_records, map, specifier_to_target_alloc)
+    else
+        .{};
+    defer specifier_to_target.deinit(specifier_to_target_alloc);
+
+    const specifier_fallback: ?*const bun.StringArrayHashMapUnmanaged(u32) =
+        if (specifier_to_target.count() > 0) &specifier_to_target else null;
+
     var ni_iter = result.ast.named_imports.iterator();
     while (ni_iter.next()) |ni_entry| {
         const ni = ni_entry.value_ptr;
@@ -272,12 +338,7 @@ pub fn scheduleBarrelDeferredImports(this: *BundleV2, result: *ParseTask.Result.
         // path map as a read-only fallback. Do NOT write back to the import
         // record — the dev server intentionally leaves source_indices unset
         // and other code (IncrementalGraph, printer) depends on that.
-        const target = if (ir.source_index.isValid())
-            ir.source_index.get()
-        else if (path_to_source_index_map) |map|
-            map.getPath(&ir.path) orelse continue
-        else
-            continue;
+        const target = resolveImportTarget(ir, path_to_source_index_map, specifier_fallback) orelse continue;
 
         const gop = try this.requested_exports.getOrPut(this.allocator(), target);
         if (ni.alias_is_star) {
@@ -294,7 +355,17 @@ pub fn scheduleBarrelDeferredImports(this: *BundleV2, result: *ParseTask.Result.
             }
             // Persist the export request on DevServer so it survives across builds.
             if (this.transpiler.options.dev_server) |dev| {
-                persistBarrelExport(dev, ir.path.text, alias);
+                // For dead HMR-dedup'd records, ir.path.text may be the unresolved
+                // specifier. Use the resolved path from the graph for persistence.
+                const persist_path = if (path_to_source_index_map) |map| blk: {
+                    // Try to get the resolved path from the graph source.
+                    if (map.getPath(&ir.path)) |_| break :blk ir.path.text;
+                    // Dead record — use the resolved path from the target's source entry.
+                    if (target < this.graph.input_files.len)
+                        break :blk this.graph.input_files.items(.source)[target].path.text;
+                    break :blk ir.path.text;
+                } else ir.path.text;
+                persistBarrelExport(dev, persist_path, alias);
             }
         } else if (!gop.found_existing) {
             gop.value_ptr.* = .{ .partial = .{} };
@@ -308,12 +379,7 @@ pub fn scheduleBarrelDeferredImports(this: *BundleV2, result: *ParseTask.Result.
     //   can destructure or access any export. Must mark as .all. We cannot
     //   safely assume which exports will be used.
     for (file_import_records.slice(), 0..) |ir, idx| {
-        const target = if (ir.source_index.isValid())
-            ir.source_index.get()
-        else if (path_to_source_index_map) |map|
-            map.getPath(&ir.path) orelse continue
-        else
-            continue;
+        const target = resolveImportTarget(ir, path_to_source_index_map, specifier_fallback) orelse continue;
         if (ir.flags.is_internal) continue;
         if (named_ir_indices.contains(@intCast(idx))) continue;
         if (ir.flags.was_originally_bare_import) continue;
@@ -341,12 +407,7 @@ pub fn scheduleBarrelDeferredImports(this: *BundleV2, result: *ParseTask.Result.
         const ni = ni_entry.value_ptr;
         if (ni.import_record_index >= file_import_records.len) continue;
         const ir = file_import_records.slice()[ni.import_record_index];
-        const ir_target = if (ir.source_index.isValid())
-            ir.source_index.get()
-        else if (path_to_source_index_map) |map|
-            map.getPath(&ir.path) orelse continue
-        else
-            continue;
+        const ir_target = resolveImportTarget(ir, path_to_source_index_map, specifier_fallback) orelse continue;
 
         if (ni.alias_is_star) {
             try queue.append(queue_alloc, .{ .barrel_source_index = ir_target, .alias = "", .is_star = true });
@@ -358,12 +419,7 @@ pub fn scheduleBarrelDeferredImports(this: *BundleV2, result: *ParseTask.Result.
     // Add bare require/dynamic-import targets to BFS as star imports — both
     // always need the full namespace.
     for (file_import_records.slice(), 0..) |ir, idx| {
-        const target = if (ir.source_index.isValid())
-            ir.source_index.get()
-        else if (path_to_source_index_map) |map|
-            map.getPath(&ir.path) orelse continue
-        else
-            continue;
+        const target = resolveImportTarget(ir, path_to_source_index_map, specifier_fallback) orelse continue;
         if (ir.flags.is_internal) continue;
         if (named_ir_indices.contains(@intCast(idx))) continue;
         if (ir.flags.was_originally_bare_import) continue;
@@ -519,6 +575,7 @@ fn persistBarrelExport(dev: *bun.bake.DevServer, barrel_path: []const u8, alias:
     }
 }
 
+const PathToSourceIndexMap = @import("./PathToSourceIndexMap.zig");
 const std = @import("std");
 const BundleV2 = @import("./bundle_v2.zig").BundleV2;
 const ParseTask = @import("./ParseTask.zig").ParseTask;

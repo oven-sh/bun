@@ -1576,11 +1576,21 @@ pub fn fetchWithoutOnLoadPlugins(
 
     var virtual_source_to_use: ?logger.Source = null;
     var blob_to_deinit: ?jsc.WebCore.Blob = null;
+    var data_url_body_to_free: ?[]const u8 = null;
     defer if (blob_to_deinit) |*blob| blob.deinit();
-    const lr = options.getLoaderAndVirtualSource(specifier_clone.slice(), jsc_vm, &virtual_source_to_use, &blob_to_deinit, null) catch {
+    defer if (data_url_body_to_free) |body| jsc_vm.allocator.free(body);
+    const lr = options.getLoaderAndVirtualSource(specifier_clone.slice(), jsc_vm, &virtual_source_to_use, &blob_to_deinit, &data_url_body_to_free, null) catch {
         return error.ModuleNotFound;
     };
     const module_type: options.ModuleType = if (lr.package_json) |pkg| pkg.module_type else .unknown;
+
+    // .print_source returns a non-owning borrow of source.contents.
+    // For data URLs, the body would be freed by the defer above while
+    // the caller still holds the borrow. Null it out to prevent UAF;
+    // the body is small inline JS and only leaks during exception display.
+    if (comptime flags == .print_source) {
+        data_url_body_to_free = null;
+    }
 
     // .print_source, which is used by exceptions avoids duplicating the entire source code
     // but that means we have to be careful of the lifetime of the source code

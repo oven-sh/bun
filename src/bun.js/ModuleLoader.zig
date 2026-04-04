@@ -901,11 +901,13 @@ pub export fn Bun__transpileFile(
 
     var virtual_source_to_use: ?logger.Source = null;
     var blob_to_deinit: ?jsc.WebCore.Blob = null;
-    var lr = options.getLoaderAndVirtualSource(_specifier.slice(), jsc_vm, &virtual_source_to_use, &blob_to_deinit, type_attribute_str) catch {
+    var data_url_body_to_free: ?[]const u8 = null;
+    var lr = options.getLoaderAndVirtualSource(_specifier.slice(), jsc_vm, &virtual_source_to_use, &blob_to_deinit, &data_url_body_to_free, type_attribute_str) catch {
         ret.* = jsc.ErrorableResolvedSource.err(error.JSErrorObject, globalObject.ERR(.MODULE_NOT_FOUND, "Blob not found", .{}).toJS());
         return null;
     };
     defer if (blob_to_deinit) |*blob| blob.deinit();
+    defer if (data_url_body_to_free) |body| jsc_vm.allocator.free(body);
 
     if (force_loader_type.unwrap()) |loader_type| {
         @branchHint(.unlikely);
@@ -934,6 +936,7 @@ pub export fn Bun__transpileFile(
     }
 
     const module_type: options.ModuleType = brk: {
+        if (lr.path.isDataURL()) break :brk .unknown;
         const ext = lr.path.name.ext;
         // regular expression /.[cm][jt]s$/
         if (ext.len == ".cjs".len) {
@@ -1097,6 +1100,9 @@ pub export fn Bun__transpileFile(
             switch (err) {
                 error.AsyncModule => {
                     bun.assert(promise != null);
+                    // AsyncModule owns parse_result whose source.contents
+                    // may alias this buffer; prevent the defer from freeing it.
+                    data_url_body_to_free = null;
                     return promise;
                 },
                 error.PluginError => return null,

@@ -134,7 +134,7 @@ exports[`bun <file.md> renders inline formatting inside table cells 1`] = `
 `;
 
 exports[`bun <file.md> renders inline formatting inside headings 1`] = `
-"\x1B[1m\x1B[35mHello \x1B[1mbold\x1B[22m and \x1B[3mitalic\x1B[23m heading\x1B[0m
+"\x1B[1m\x1B[35mHello \x1B[1mbold\x1B[22m\x1B[1m\x1B[35m and \x1B[3mitalic\x1B[23m\x1B[1m\x1B[35m heading\x1B[0m
 \x1B[2m═════════════════════════════\x1B[0m
 "
 `;

@@ -49,12 +49,14 @@ pub fn renderToAnsi(
     var theme: md.AnsiTheme = .{
         .colors = true,
         .hyperlinks = false,
+        .kitty_graphics = false,
         .light = md.detectLightBackground(),
         .columns = 80,
     };
     if (theme_value.isObject()) {
         if (try theme_value.getBooleanLoose(globalThis, "colors")) |v| theme.colors = v;
         if (try theme_value.getBooleanLoose(globalThis, "hyperlinks")) |v| theme.hyperlinks = v;
+        if (try theme_value.getBooleanLoose(globalThis, "kittyGraphics")) |v| theme.kitty_graphics = v;
         if (try theme_value.getBooleanLoose(globalThis, "light")) |v| theme.light = v;
         if (try theme_value.get(globalThis, "columns")) |cols| {
             if (cols.isNumber()) {
@@ -77,9 +79,13 @@ pub fn renderToAnsi(
         .latex_math = true,
     };
 
-    const result = md.renderToAnsi(input, arena.allocator(), opts, theme) catch {
-        return globalThis.throwOutOfMemory();
+    const result = md.renderToAnsi(input, arena.allocator(), opts, theme) catch |err| switch (err) {
+        error.OutOfMemory => return globalThis.throwOutOfMemory(),
+        error.StackOverflow => return globalThis.throwStackOverflow(),
     } orelse {
+        // The parser can only return null via JSError / JSTerminated
+        // from a renderer callback; the ANSI renderer has none, so this
+        // path is unreachable but handle it safely.
         return globalThis.throwOutOfMemory();
     };
 

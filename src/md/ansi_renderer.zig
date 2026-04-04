@@ -13,6 +13,10 @@ pub const Theme = struct {
     colors: bool = true,
     /// Emit OSC 8 hyperlinks. When false links are shown as "text (url)".
     hyperlinks: bool = true,
+    /// Inline images using the Kitty Graphics Protocol when the `src`
+    /// refers to a local file (absolute or ./relative path, or file://).
+    /// Falls through to the text alt for remote URLs.
+    kitty_graphics: bool = false,
 };
 
 pub const AnsiRenderer = struct {
@@ -233,7 +237,10 @@ pub const AnsiRenderer = struct {
                 var marker_width: u32 = 0;
                 if (task_mark != 0) {
                     const checked = types.isTaskChecked(task_mark);
-                    const glyph = if (checked) "☒ " else "☐ ";
+                    const glyph = if (self.theme.colors)
+                        (if (checked) "☒ " else "☐ ")
+                    else
+                        (if (checked) "[x] " else "[ ] ");
                     const c = if (checked) color(.green) else color(.dim);
                     self.writeStyled(c, glyph);
                     self.writeStyled(reset(), "");
@@ -262,7 +269,9 @@ pub const AnsiRenderer = struct {
             .hr => {
                 self.ensureBlankLine();
                 self.writeIndent();
-                const width: u32 = @min(self.theme.columns, 60);
+                // columns == 0 is the "disable wrapping" sentinel, not a
+                // zero-width rule — fall back to 60 in that case.
+                const width: u32 = if (self.theme.columns == 0) 60 else @min(self.theme.columns, 60);
                 var i: u32 = 0;
                 const dash = if (self.theme.colors) "─" else "-";
                 self.writeStyled(color(.dim), "");
@@ -484,18 +493,24 @@ pub const AnsiRenderer = struct {
             .em => {
                 self.span_flags &= ~SPAN_EM;
                 self.writeStyled("\x1b[23m", "");
+                // An off-code can turn off a heading's own bold/italic —
+                // reapply if we're inside a heading buffer.
+                if (self.heading_level > 0) self.reapplyStyles();
             },
             .strong => {
                 self.span_flags &= ~SPAN_STRONG;
                 self.writeStyled("\x1b[22m", "");
+                if (self.heading_level > 0) self.reapplyStyles();
             },
             .u => {
                 self.span_flags &= ~SPAN_U;
                 self.writeStyled("\x1b[24m", "");
+                if (self.heading_level > 0) self.reapplyStyles();
             },
             .del => {
                 self.span_flags &= ~SPAN_DEL;
                 self.writeStyled("\x1b[29m", "");
+                if (self.heading_level > 0) self.reapplyStyles();
             },
             .code => {
                 self.span_flags &= ~SPAN_CODE;
@@ -565,10 +580,13 @@ pub const AnsiRenderer = struct {
             .br => self.writeContent("\n"),
             .softbr => self.writeContent(" "),
             .html => {
-                // Render raw HTML dimmed.
+                // Render raw HTML dimmed. Close with the targeted dim-off
+                // (\x1b[22m) rather than a full reset, then reapply any
+                // outer span/link styles.
                 self.writeStyled(color(.dim), "");
                 self.writeContent(content);
-                self.writeStyled(reset(), "");
+                self.writeStyled("\x1b[22m", "");
+                self.reapplyStyles();
             },
             .entity => {
                 var buf: [8]u8 = undefined;
@@ -778,11 +796,18 @@ pub const AnsiRenderer = struct {
         self.out.write(data);
     }
 
-    /// Re-emit the currently active inline styles from span_flags and the
-    /// link-styling state. Used after a nested span closes so the outer
+    /// Re-emit the currently active inline styles from span_flags, the
+    /// link-styling state, and — when buffering a heading — the heading's
+    /// bold + color wrapper. Used after a nested span closes so the outer
     /// style doesn't get wiped, and after writeIndent emits its own reset.
     fn reapplyStyles(self: *AnsiRenderer) void {
         if (!self.theme.colors) return;
+        // If we're inside a heading's buffered content, the outer bold +
+        // color wrapper must also be reapplied.
+        if (self.heading_level > 0) {
+            self.emitInline(style(.bold));
+            self.emitInline(headingColor(self.heading_level));
+        }
         if (self.span_flags & SPAN_STRONG != 0) self.emitInline(style(.bold));
         if (self.span_flags & SPAN_EM != 0) self.emitInline(style(.italic));
         if (self.span_flags & SPAN_U != 0) self.emitInline(style(.underline));
@@ -893,16 +918,38 @@ pub const AnsiRenderer = struct {
         const level = self.heading_level;
         const content = self.heading_buf.items;
         self.writeIndent();
-        const prefix = switch (level) {
-            1 => "",
-            2 => "",
-            3 => "",
-            4 => "",
-            5 => "",
-            else => "",
-        };
-        _ = prefix;
-        const heading_color = switch (level) {
+        if (self.theme.colors) {
+            self.out.write("\x1b[1m"); // bold
+            self.out.write(headingColor(level));
+        }
+        self.out.write(content);
+        if (self.theme.colors) self.out.write("\x1b[0m");
+        self.out.writeByte('\n');
+        self.last_was_newline = true;
+        self.col = 0;
+        // Add underline for h1/h2. Indent matches the heading text so
+        // headings inside blockquotes / list items stay aligned.
+        if (level == 1 or level == 2) {
+            self.writeIndent();
+            const text_w = @max(visibleWidth(content), 3);
+            const width = if (self.theme.columns == 0)
+                text_w
+            else
+                @min(text_w, @as(usize, @intCast(self.theme.columns)));
+            if (self.theme.colors) self.out.write(color(.dim));
+            const char = if (self.theme.colors) (if (level == 1) "═" else "─") else (if (level == 1) "=" else "-");
+            var i: usize = 0;
+            while (i < width) : (i += 1) self.out.write(char);
+            if (self.theme.colors) self.out.write("\x1b[0m");
+            self.out.writeByte('\n');
+            self.last_was_newline = true;
+            self.col = 0;
+        }
+    }
+
+    /// ANSI color for a given heading level.
+    fn headingColor(level: u8) []const u8 {
+        return switch (level) {
             1 => color(.magenta),
             2 => color(.cyan),
             3 => color(.yellow),
@@ -910,28 +957,6 @@ pub const AnsiRenderer = struct {
             5 => color(.blue),
             else => color(.white),
         };
-        if (self.theme.colors) {
-            self.out.write("\x1b[1m"); // bold
-            self.out.write(heading_color);
-        }
-        self.out.write(content);
-        if (self.theme.colors) self.out.write("\x1b[0m");
-        self.out.writeByte('\n');
-        self.last_was_newline = true;
-        self.col = 0;
-        // Add underline for h1/h2
-        if (level == 1 or level == 2) {
-            const width = @min(
-                @max(visibleWidth(content), 3),
-                @as(usize, @intCast(self.theme.columns)),
-            );
-            if (self.theme.colors) self.out.write(color(.dim));
-            const char = if (self.theme.colors) (if (level == 1) "═" else "─") else (if (level == 1) "=" else "-");
-            var i: usize = 0;
-            while (i < width) : (i += 1) self.out.write(char);
-            if (self.theme.colors) self.out.write("\x1b[0m");
-            self.out.writeByte('\n');
-        }
     }
 
     // ========================================
@@ -1212,13 +1237,35 @@ pub const AnsiRenderer = struct {
         defer self.image_depth = saved_depth;
 
         const has_src = src != null and src.?.len > 0;
+
+        // Kitty Graphics Protocol path: for local files, emit an APC
+        // sequence that tells the terminal to read the file directly
+        // and display it inline. Only attempts this when:
+        //   1. colors + kitty_graphics are enabled (needs ESC support)
+        //   2. src is a file: URI or a non-URL path
+        //   3. the file exists on disk
+        // On success we also emit an OSC 8 hyperlink so the text alt
+        // remains clickable below the image, and still write the alt
+        // text as a visible caption for non-Kitty terminals that ignore
+        // the APC sequence.
+        var kitty_sent = false;
+        if (self.theme.colors and self.theme.kitty_graphics and has_src) {
+            if (resolveLocalImagePath(src.?, self.allocator)) |abs_path| {
+                defer self.allocator.free(abs_path);
+                self.emitKittyImage(abs_path);
+                kitty_sent = true;
+            }
+        }
+
         if (self.theme.colors and self.theme.hyperlinks and has_src) {
             self.writeRawNoColor("\x1b]8;;");
             self.writeRawNoColor(src.?);
             self.writeRawNoColor("\x1b\\");
         }
-        const img_marker = if (self.theme.colors) "🖼 " else "[img] ";
-        self.writeStyled(color(.magenta), img_marker);
+        const img_marker = if (kitty_sent) "" else if (self.theme.colors) "🖼 " else "[img] ";
+        if (img_marker.len > 0) {
+            self.writeStyled(color(.magenta), img_marker);
+        }
         if (alt.len > 0) {
             self.writeStyled("", alt);
         } else if (self.image_title) |title| if (title.len > 0) {
@@ -1233,6 +1280,35 @@ pub const AnsiRenderer = struct {
         if (self.theme.colors and self.theme.hyperlinks and has_src) {
             self.writeRawNoColor("\x1b]8;;\x1b\\");
         }
+    }
+
+    /// Emit a Kitty Graphics Protocol transmit-and-display sequence for
+    /// the absolute file `path`. Uses `t=f` (transmission medium = regular
+    /// file by path) so the terminal reads the file directly — no need
+    /// to base64 the pixels. Terminals that don't understand the APC
+    /// sequence will silently drop it.
+    fn emitKittyImage(self: *AnsiRenderer, path: []const u8) void {
+        // Base64-encode the file path (Kitty expects payload to be b64).
+        // Path is expected to be ASCII in most cases; use std.base64.
+        const enc = std.base64.standard.Encoder;
+        const encoded_len = enc.calcSize(path.len);
+        const encoded = self.allocator.alloc(u8, encoded_len) catch return;
+        defer self.allocator.free(encoded);
+        _ = enc.encode(encoded, path);
+
+        // APC sequence: \x1b_G<control>;<payload>\x1b\
+        //   a=T  : transmit and display
+        //   t=f  : transmission medium = regular file (by path)
+        //   f=100: format = file (kitty auto-detects PNG/JPEG/etc.)
+        //   q=2  : suppress OK + error responses (don't pollute stdin)
+        self.writeRawNoColor("\x1b_Ga=T,t=f,f=100,q=2;");
+        self.writeRawNoColor(encoded);
+        self.writeRawNoColor("\x1b\\");
+        // End with a newline so the following caption/alt text lands
+        // on its own line under the image.
+        self.out.writeByte('\n');
+        self.col = 0;
+        self.last_was_newline = true;
     }
 };
 
@@ -1343,18 +1419,84 @@ fn resolveHref(detail: SpanDetail, allocator: Allocator) ![]u8 {
 /// 2. Dark mode (default)
 pub fn detectLightBackground() bool {
     if (bun.getenvZ("COLORFGBG")) |value| {
-        // Format: "fg;bg" or "fg;default;bg" — bg index < 8 is dark, >=8 light
+        // Format: "fg;bg" or "fg;default;bg" — only 7 (white) and 15
+        // (bright white) are light terminal backgrounds. Bright colors
+        // 9-14 are high-intensity foreground codes, not light backgrounds.
         var iter = std.mem.splitScalar(u8, value, ';');
         var last: []const u8 = "";
         while (iter.next()) |part| last = part;
         if (last.len > 0) {
             const bg = std.fmt.parseInt(u8, last, 10) catch return false;
-            // Terminals using this convention treat 0-6 and 8 as dark, 7/15 as light.
-            // A higher threshold is safer.
-            return bg >= 7 and bg != 8;
+            return bg == 7 or bg == 15;
         }
     }
     return false;
+}
+
+/// Detect whether the current terminal likely supports the Kitty
+/// Graphics Protocol. Checked heuristics:
+///   - `KITTY_WINDOW_ID` set (native Kitty)
+///   - `TERM` contains "kitty"
+///   - `TERM_PROGRAM=WezTerm` or `ghostty` (compatible terminals)
+///   - `TERM_PROGRAM=ghostty`
+pub fn detectKittyGraphics() bool {
+    if (bun.getenvZ("KITTY_WINDOW_ID")) |_| return true;
+    if (bun.getenvZ("GHOSTTY_RESOURCES_DIR")) |_| return true;
+    if (bun.getenvZ("TERM")) |term| {
+        if (bun.strings.contains(term, "kitty")) return true;
+        if (bun.strings.contains(term, "ghostty")) return true;
+    }
+    if (bun.getenvZ("TERM_PROGRAM")) |tp| {
+        if (bun.strings.eqlCaseInsensitiveASCII(tp, "wezterm", true)) return true;
+        if (bun.strings.eqlCaseInsensitiveASCII(tp, "ghostty", true)) return true;
+    }
+    return false;
+}
+
+/// Resolve an image `src` from markdown to an absolute file path on
+/// disk if it refers to a local file, otherwise return null. Handles
+/// `file://` URIs and relative paths (resolved against the CWD). The
+/// returned slice is owned by the caller.
+fn resolveLocalImagePath(src: []const u8, allocator: Allocator) ?[]u8 {
+    // Reject clearly remote schemes.
+    if (bun.strings.startsWith(src, "http://") or
+        bun.strings.startsWith(src, "https://") or
+        bun.strings.startsWith(src, "data:"))
+    {
+        return null;
+    }
+
+    var path: []const u8 = src;
+    // Strip file:// prefix if present.
+    if (bun.strings.startsWith(src, "file://")) {
+        path = src["file://".len..];
+    }
+
+    // If already absolute, use it.
+    if (std.fs.path.isAbsolute(path)) {
+        const abs = allocator.dupe(u8, path) catch return null;
+        std.fs.accessAbsolute(abs, .{}) catch {
+            allocator.free(abs);
+            return null;
+        };
+        return abs;
+    }
+
+    // Relative path — resolve against CWD.
+    var cwd_buf: bun.PathBuffer = undefined;
+    const cwd = bun.getcwd(&cwd_buf) catch return null;
+    var joined = std.ArrayListUnmanaged(u8){};
+    errdefer joined.deinit(allocator);
+    joined.appendSlice(allocator, cwd) catch return null;
+    joined.append(allocator, std.fs.path.sep) catch return null;
+    joined.appendSlice(allocator, path) catch return null;
+
+    const abs = joined.toOwnedSlice(allocator) catch return null;
+    std.fs.accessAbsolute(abs, .{}) catch {
+        allocator.free(abs);
+        return null;
+    };
+    return abs;
 }
 
 // ========================================

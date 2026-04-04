@@ -1257,11 +1257,13 @@ pub const RunCommand = struct {
             const c = Output.terminal_size.col;
             break :brk if (c == 0) 80 else c;
         };
+        const is_tty = Output.isStdoutTTY();
         const theme: bun.md.AnsiTheme = .{
             .light = bun.md.detectLightBackground(),
             .columns = columns,
             .colors = colors,
-            .hyperlinks = colors and Output.isStdoutTTY(),
+            .hyperlinks = colors and is_tty,
+            .kitty_graphics = colors and is_tty and bun.md.detectKittyGraphics(),
         };
 
         // Terminal rendering enables every syntax we can display nicely —

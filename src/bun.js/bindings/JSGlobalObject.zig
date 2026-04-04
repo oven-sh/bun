@@ -296,6 +296,7 @@ pub const JSGlobalObject = opaque {
                 _ = this.clearExceptionExceptTermination();
                 return ZigString.static(fmt).toErrorInstance(this);
             };
+            _ = this.clearExceptionExceptTermination();
 
             // Ensure we clone it.
             var str = ZigString.initUTF8(buf.written());
@@ -320,6 +321,7 @@ pub const JSGlobalObject = opaque {
                 _ = this.clearExceptionExceptTermination();
                 return ZigString.static(fmt).toTypeErrorInstance(this);
             };
+            _ = this.clearExceptionExceptTermination();
             var str = ZigString.fromUTF8(buf.slice());
             return str.toTypeErrorInstance(this);
         } else {
@@ -351,6 +353,7 @@ pub const JSGlobalObject = opaque {
                 _ = this.clearExceptionExceptTermination();
                 return ZigString.static(fmt).toSyntaxErrorInstance(this);
             };
+            _ = this.clearExceptionExceptTermination();
             var str = ZigString.fromUTF8(buf.slice());
             return str.toSyntaxErrorInstance(this);
         } else {
@@ -368,6 +371,7 @@ pub const JSGlobalObject = opaque {
                 _ = this.clearExceptionExceptTermination();
                 return ZigString.static(fmt).toRangeErrorInstance(this);
             };
+            _ = this.clearExceptionExceptTermination();
             var str = ZigString.fromUTF8(buf.slice());
             return str.toRangeErrorInstance(this);
         } else {

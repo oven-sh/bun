@@ -130,73 +130,78 @@ pub fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chu
             }
         }
 
-        // 2. Collect truly-external imports from the original AST. Bundled imports
-        // (where source_index is valid) are removed by convertStmtsForChunk and
-        // re-created as cross-chunk imports — those are already captured by the
-        // printer when it prints cross_chunk_prefix_stmts above. Only truly-external
-        // imports (node built-ins, etc.) survive as s_import in per-file parts and
-        // need recording here.
-        const all_parts = c.graph.ast.items(.parts);
-        const all_flags = c.graph.meta.items(.flags);
+        // 2. Collect truly-external imports from **converted** statements.
+        // DeclCollector captures s_import statements that survive
+        // convertStmtsForChunk (which removes bundled imports). This avoids
+        // scanning the original AST where import records may have unresolved
+        // source_index from the async resolution pipeline, causing phantom
+        // imports to be recorded in ModuleInfo that don't exist in the
+        // emitted code.
         const all_import_records = c.graph.ast.items(.import_records);
-        for (chunk.content.javascript.parts_in_chunk_in_order) |part_range| {
-            if (all_flags[part_range.source_index.get()].wrap == .cjs) continue;
-            const source_parts = all_parts[part_range.source_index.get()].slice();
-            const source_import_records = all_import_records[part_range.source_index.get()].slice();
-            var part_i = part_range.part_index_begin;
-            while (part_i < part_range.part_index_end) : (part_i += 1) {
-                for (source_parts[part_i].stmts) |stmt| {
-                    switch (stmt.data) {
-                        .s_import => |s| {
-                            const record = &source_import_records[s.import_record_index];
-                            if (record.path.is_disabled) continue;
-                            if (record.tag == .bun) continue;
-                            // Skip bundled imports — these are converted to cross-chunk
-                            // imports by the linker. The printer already recorded them
-                            // when printing cross_chunk_prefix_stmts.
-                            if (record.source_index.isValid()) continue;
-                            // Skip barrel-optimized-away imports — marked is_unused by
-                            // barrel_imports.zig. Never resolved (source_index invalid),
-                            // and removed by convertStmtsForChunk. Not in emitted code.
-                            if (record.flags.is_unused) continue;
+        for (chunk.compile_results_for_chunk) |cr| {
+            const imports = switch (cr) {
+                .javascript => |js| js.imports,
+                else => continue,
+            };
+            for (imports) |import_info| {
+                const source_import_records = all_import_records[import_info.source_index].slice();
+                if (import_info.import_record_index >= source_import_records.len) continue;
+                const record = &source_import_records[import_info.import_record_index];
+                if (record.path.is_disabled) continue;
+                if (record.tag == .bun) continue;
 
-                            const import_path = record.path.text;
-                            const irp_id = mi.str(import_path) catch continue;
-                            mi.requestModule(irp_id, .none) catch continue;
-
-                            if (s.default_name) |name| {
-                                if (name.ref) |name_ref| {
-                                    const local_name = chunk.renamer.nameForSymbol(name_ref);
-                                    const local_name_id = mi.str(local_name) catch continue;
-                                    mi.addVar(local_name_id, .lexical) catch continue;
-                                    mi.addImportInfoSingle(irp_id, mi.str("default") catch continue, local_name_id, false) catch continue;
-                                }
+                // Look up the original s_import statement from the AST to
+                // access default_name, items, and namespace_ref.
+                const source_parts = c.graph.ast.items(.parts)[import_info.source_index].slice();
+                const s_import = brk: {
+                    for (source_parts) |part| {
+                        for (part.stmts) |stmt| {
+                            switch (stmt.data) {
+                                .s_import => |s| {
+                                    if (s.import_record_index == import_info.import_record_index)
+                                        break :brk s;
+                                },
+                                else => {},
                             }
-
-                            for (s.items) |item| {
-                                if (item.name.ref) |name_ref| {
-                                    const local_name = chunk.renamer.nameForSymbol(name_ref);
-                                    const local_name_id = mi.str(local_name) catch continue;
-                                    mi.addVar(local_name_id, .lexical) catch continue;
-                                    mi.addImportInfoSingle(irp_id, mi.str(item.alias) catch continue, local_name_id, false) catch continue;
-                                }
-                            }
-
-                            if (record.flags.contains_import_star) {
-                                const local_name = chunk.renamer.nameForSymbol(s.namespace_ref);
-                                const local_name_id = mi.str(local_name) catch continue;
-                                mi.addVar(local_name_id, .lexical) catch continue;
-                                mi.addImportInfoNamespace(irp_id, local_name_id) catch continue;
-                            }
-                        },
-                        else => {},
+                        }
                     }
+                    continue;
+                };
+
+                const import_path = record.path.text;
+                const irp_id = mi.str(import_path) catch continue;
+                mi.requestModule(irp_id, .none) catch continue;
+
+                if (s_import.default_name) |name| {
+                    if (name.ref) |name_ref| {
+                        const local_name = chunk.renamer.nameForSymbol(name_ref);
+                        const local_name_id = mi.str(local_name) catch continue;
+                        mi.addVar(local_name_id, .lexical) catch continue;
+                        mi.addImportInfoSingle(irp_id, mi.str("default") catch continue, local_name_id, false) catch continue;
+                    }
+                }
+
+                for (s_import.items) |item| {
+                    if (item.name.ref) |name_ref| {
+                        const local_name = chunk.renamer.nameForSymbol(name_ref);
+                        const local_name_id = mi.str(local_name) catch continue;
+                        mi.addVar(local_name_id, .lexical) catch continue;
+                        mi.addImportInfoSingle(irp_id, mi.str(item.alias) catch continue, local_name_id, false) catch continue;
+                    }
+                }
+
+                if (record.flags.contains_import_star) {
+                    const local_name = chunk.renamer.nameForSymbol(s_import.namespace_ref);
+                    const local_name_id = mi.str(local_name) catch continue;
+                    mi.addVar(local_name_id, .lexical) catch continue;
+                    mi.addImportInfoNamespace(irp_id, local_name_id) catch continue;
                 }
             }
         }
 
         // 3. Add wrapper-generated declarations (init_xxx, require_xxx) that are
         // not in any part statement.
+        const all_flags = c.graph.meta.items(.flags);
         const all_wrapper_refs = c.graph.ast.items(.wrapper_ref);
         for (chunk.content.javascript.parts_in_chunk_in_order) |part_range| {
             const source_index = part_range.source_index.get();

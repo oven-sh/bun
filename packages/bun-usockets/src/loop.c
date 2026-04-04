@@ -158,7 +158,15 @@ void us_internal_timer_sweep(struct us_loop_t *loop) {
 
             if (short_ticks == s->timeout) {
                 s->timeout = 255;
-                if (context->on_socket_timeout != NULL) context->on_socket_timeout(s);
+                /* If this socket is still connecting (has a connect_state), treat the
+                 * timeout as a connection failure. This implements Happy Eyeballs-style
+                 * fallback: if an address (e.g. IPv6) doesn't respond within the
+                 * connection timeout, we fail it and try the next address. */
+                if (s->connect_state != NULL) {
+                    us_internal_socket_after_open(s, ETIMEDOUT);
+                } else {
+                    if (context->on_socket_timeout != NULL) context->on_socket_timeout(s);
+                }
             }
 
             if (context->iterator == s && long_ticks == s->long_timeout) {

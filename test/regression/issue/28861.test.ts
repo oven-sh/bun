@@ -15,7 +15,7 @@ test.skipIf(isWindows)("new Worker() rejects file:// URLs with a non-localhost h
           new Worker("file://./worker_source.mjs", { type: "module" });
           console.log("NO_THROW");
         } catch (e) {
-          console.log(JSON.stringify({ name: e.name, message: e.message }));
+          console.log(JSON.stringify({ name: e.name, message: e.message, code: e.code }));
         }
       `,
     ],
@@ -30,6 +30,7 @@ test.skipIf(isWindows)("new Worker() rejects file:// URLs with a non-localhost h
   expect(JSON.parse(stdout.trim())).toEqual({
     name: "TypeError",
     message: `File URL host must be "localhost" or empty on ${platform}`,
+    code: "ERR_INVALID_FILE_URL_HOST",
   });
   expect(exitCode).toBe(0);
 });
@@ -44,7 +45,7 @@ test.skipIf(isWindows)('new Worker() rejects file:// URLs with a host like "exam
           new Worker("file://example.com/worker_source.mjs", { type: "module" });
           console.log("NO_THROW");
         } catch (e) {
-          console.log(JSON.stringify({ name: e.name, message: e.message }));
+          console.log(JSON.stringify({ name: e.name, message: e.message, code: e.code }));
         }
       `,
     ],
@@ -59,6 +60,7 @@ test.skipIf(isWindows)('new Worker() rejects file:// URLs with a host like "exam
   expect(JSON.parse(stdout.trim())).toEqual({
     name: "TypeError",
     message: `File URL host must be "localhost" or empty on ${platform}`,
+    code: "ERR_INVALID_FILE_URL_HOST",
   });
   expect(exitCode).toBe(0);
 });

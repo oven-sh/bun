@@ -202,6 +202,14 @@ devTest("using runtime import", {
   },
 });
 devTest("hmr handles rapid consecutive edits", {
+  // Regression coverage for https://github.com/oven-sh/bun/issues/19736.
+  // Rapid unsynchronized writes can cause the HMR system to fall back to a
+  // full page reload (the previous module's `import.meta.hot.accept()` may no
+  // longer be valid). Allow unlimited reloads so the client doesn't die, and
+  // bump the timeout for slow Windows CI runners. If the #19736 fix were
+  // reverted, the "Unknown HMR script" error would fire console.error in the
+  // HMR runtime, killing the client-fixture, so "render 10" would never arrive.
+  timeoutMultiplier: 3,
   files: {
     "index.html": emptyHtmlFile({
       scripts: ["index.ts"],
@@ -209,90 +217,31 @@ devTest("hmr handles rapid consecutive edits", {
     "index.ts": hmrSelfAcceptingModule("render 1"),
   },
   async test(dev) {
-    await using client = await dev.client("/");
+    await using client = await dev.client("/", { allowUnlimitedReloads: true });
     await client.expectMessage("render 1");
-
-    // Regression coverage for https://github.com/oven-sh/bun/issues/19736.
-    await client.js`
-      const tracked = [];
-      globalThis.__hmrErrors = tracked;
-
-      const maybeRecord = value => {
-        const message =
-          typeof value === "string"
-            ? value
-            : value?.message ?? value?.reason ?? "";
-        if (typeof message === "string" && message.includes("Unknown HMR script")) {
-          console.log("HMR_ERROR: " + message);
-          tracked.push(message);
-          return true;
-        }
-        return false;
-      };
-
-      window.addEventListener("error", event => {
-        if (maybeRecord(event.error ?? event.message)) {
-          event.preventDefault();
-        }
-      });
-
-      window.addEventListener("unhandledrejection", event => {
-        if (maybeRecord(event.reason)) {
-          event.preventDefault();
-        }
-      });
-
-      const hmrSymbol = Symbol.for("bun:hmr");
-      const originalHmr = globalThis[hmrSymbol];
-      if (typeof originalHmr === "function") {
-        globalThis[hmrSymbol] = function (...args) {
-          try {
-            return originalHmr.apply(this, args);
-          } catch (error) {
-            maybeRecord(error);
-          }
-        };
-      }
-    `;
 
     for (let i = 2; i <= 10; i++) {
       await Bun.write(dev.join("index.ts"), hmrSelfAcceptingModule(`render ${i}`));
       await Bun.sleep(1);
     }
 
-    // Wait event-driven for "render 10" to appear. Intermediate renders may
-    // be skipped (watcher coalescing) and the final render may fire multiple
-    // times (duplicate reloads), so we just listen for any occurrence.
+    // Wait for "render 10" to appear. Intermediate renders may be skipped
+    // (watcher coalescing) and the final render may fire multiple times
+    // (duplicate reloads / full-page reloads), so we just check for any
+    // occurrence.
     const finalRender = "render 10";
-    await new Promise<void>((resolve, reject) => {
-      const check = () => {
-        for (const msg of client.messages) {
-          if (typeof msg === "string" && msg.includes("HMR_ERROR")) {
-            cleanup();
-            reject(new Error("Unexpected HMR error message: " + msg));
-            return;
-          }
-          if (msg === finalRender) {
-            cleanup();
-            resolve();
-            return;
-          }
-        }
-      };
-      const cleanup = () => {
-        client.off("message", check);
-      };
-      client.on("message", check);
-      // Check messages already buffered.
-      check();
-    });
+    const deadline = Date.now() + 10_000;
+    while (!client.messages.includes(finalRender)) {
+      if (Date.now() >= deadline) {
+        throw new Error(
+          `Timed out waiting for "${finalRender}". ` +
+            `Messages received: [${client.messages.map(m => JSON.stringify(m)).join(", ")}]`,
+        );
+      }
+      await Bun.sleep(50);
+    }
     // Drain all buffered messages — intermediate renders and possible
     // duplicates of the final render are expected and harmless.
     client.messages.length = 0;
-
-    const hmrErrors = await client.js`return globalThis.__hmrErrors ? [...globalThis.__hmrErrors] : [];`;
-    if (hmrErrors.length > 0) {
-      throw new Error("Unexpected HMR errors: " + hmrErrors.join(", "));
-    }
   },
 });

@@ -1,27 +1,40 @@
-import { test } from "bun:test";
+import { test, expect } from "bun:test";
 
-// A malformed multipart Content-Type with a single quote after boundary=
+// A malformed multipart Content-Type with a lone double-quote after boundary=
 // used to panic in FormData.getBoundary (src/url.zig) because it treated the
 // lone quote as both the opening and closing quote and produced an invalid
 // slice range.
-test('Response.formData() does not crash on boundary=" (single quote)', async () => {
+test('Response.formData() rejects on boundary=" (lone double-quote)', async () => {
   const response = new Response("body", {
     headers: { "content-type": 'multipart/form-data; boundary="' },
   });
-  // Either rejects or resolves — we only care that it does NOT panic.
-  await response.formData().catch(() => {});
+  expect(response.formData()).rejects.toThrow();
 });
 
-test('Request.formData() does not crash on boundary=" (single quote)', async () => {
+test('Request.formData() rejects on boundary=" (lone double-quote)', async () => {
   const request = new Request("http://example.com", {
     method: "POST",
     body: "body",
     headers: { "content-type": 'multipart/form-data; boundary="' },
   });
-  await request.formData().catch(() => {});
+  expect(request.formData()).rejects.toThrow();
 });
 
-test('Blob.formData() does not crash on boundary=" (single quote)', async () => {
+test('Blob.formData() rejects on boundary=" (lone double-quote)', async () => {
   const blob = new Blob(["body"], { type: 'multipart/form-data; boundary="' });
-  await blob.formData().catch(() => {});
+  expect(blob.formData()).rejects.toThrow();
+});
+
+test('Response.formData() rejects on boundary="abc (unclosed double-quote)', async () => {
+  const response = new Response("body", {
+    headers: { "content-type": 'multipart/form-data; boundary="abc' },
+  });
+  expect(response.formData()).rejects.toThrow();
+});
+
+test('Response.formData() rejects on boundary="; (lone double-quote before semicolon)', async () => {
+  const response = new Response("body", {
+    headers: { "content-type": 'multipart/form-data; boundary="; charset=utf-8' },
+  });
+  expect(response.formData()).rejects.toThrow();
 });

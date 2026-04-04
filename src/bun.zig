@@ -2145,7 +2145,7 @@ pub fn appendNodeOptionsEnv(env: []const u8, args: *std.array_list.Managed([:0]c
             continue;
         }
 
-        if (ch == '\\') {
+        if (ch == '\\' and (in_quote == null or in_quote.? != '\'')) {
             escape = true;
             continue;
         }
@@ -2197,20 +2197,28 @@ pub fn appendNodeOptionsEnv(env: []const u8, args: *std.array_list.Managed([:0]c
 
         const kind = node_options_allowlist.get(flag_name) orelse continue;
 
-        const token_z = try bun.default_allocator.dupeZ(u8, token);
-        try args.insert(offset, token_z);
-        offset += 1;
-
-        // If this is a value-taking option and the value wasn't inline
-        // (`--flag value` form), consume the next token as its value.
-        if (kind == .option and eq_idx == null and j + 1 < tokens.items.len) {
-            const next_tok = tokens.items[j + 1];
-            if (next_tok.len > 0 and next_tok[0] != '-') {
-                const next_z = try bun.default_allocator.dupeZ(u8, next_tok);
-                try args.insert(offset, next_z);
-                offset += 1;
-                j += 1;
+        if (kind == .option and eq_idx == null) {
+            // Space-separated value form: only inject if a value token
+            // actually follows in NODE_OPTIONS. Never inject a bare
+            // required-value flag — it would consume a user arg.
+            if (j + 1 < tokens.items.len) {
+                const next_tok = tokens.items[j + 1];
+                if (next_tok.len == 0 or next_tok[0] != '-') {
+                    const token_z = try bun.default_allocator.dupeZ(u8, token);
+                    try args.insert(offset, token_z);
+                    offset += 1;
+                    const next_z = try bun.default_allocator.dupeZ(u8, next_tok);
+                    try args.insert(offset, next_z);
+                    offset += 1;
+                    j += 1;
+                }
             }
+            // No value follows → drop the flag entirely.
+        } else {
+            // bool_flag, or --flag=value form: safe to insert as-is.
+            const token_z = try bun.default_allocator.dupeZ(u8, token);
+            try args.insert(offset, token_z);
+            offset += 1;
         }
     }
 }
@@ -2287,9 +2295,11 @@ pub fn initArgv() !void {
     // Filtered through an allowlist — unknown flags are dropped.
     if (bun.env_var.NODE_OPTIONS.get()) |opts| {
         if (opts.len > 0) {
+            const len_before = argv.len;
             var argv_list = std.array_list.Managed([:0]const u8).fromOwnedSlice(bun.default_allocator, argv);
             try appendNodeOptionsEnv(opts, &argv_list);
             argv = argv_list.items;
+            bun_options_argc += argv.len - len_before;
         }
     }
 }

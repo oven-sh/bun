@@ -186,6 +186,47 @@ pub const HTMLRewriter = struct {
             return out;
         }
 
+        // Handle Blob and BunFile inputs by wrapping in a Response and transforming.
+        // BunFile (file-backed Blob) requires async I/O so we return a Response directly.
+        // In-memory Blobs return a Blob.
+        if (response_value.as(jsc.WebCore.Blob)) |blob| {
+            const body_value = try jsc.WebCore.Body.extract(global, response_value);
+            const resp = bun.new(Response, Response.init(
+                .{
+                    .status_code = 200,
+                },
+                body_value,
+                bun.String.empty,
+                false,
+            ));
+
+            if (blob.needsToReadFile()) {
+                // BunFile requires async I/O via ValueBufferer; return Response directly.
+                const out = try this.beginTransform(global, resp);
+                if (out.toError()) |err| {
+                    return global.throwValue(err);
+                }
+                return out;
+            }
+
+            defer resp.finalize();
+            const out_response_value = try this.beginTransform(global, resp);
+            if (out_response_value.toError()) |err| {
+                return global.throwValue(err);
+            }
+            out_response_value.ensureStillAlive();
+            var out_response = out_response_value.as(Response) orelse return out_response_value;
+            var any_blob = out_response.getBodyValue().useAsAnyBlobAllowNonUTF8String();
+
+            defer {
+                _ = Response.js.dangerouslySetPtr(out_response_value, null);
+                out_response.finalize();
+            }
+
+            const result_blob = jsc.WebCore.Blob.new(any_blob.toBlob(global));
+            return result_blob.toJS(global);
+        }
+
         const ResponseKind = enum { string, array_buffer, other };
         const kind: ResponseKind = brk: {
             if (response_value.isString())
@@ -235,7 +276,7 @@ pub const HTMLRewriter = struct {
             }
         }
 
-        return global.throwInvalidArguments("Expected Response or Body", .{});
+        return global.throwInvalidArguments("Expected Response, Blob, String, or ArrayBuffer", .{});
     }
 
     pub const on = host_fn.wrapInstanceMethod(HTMLRewriter, "on_", false);

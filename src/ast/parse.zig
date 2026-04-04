@@ -1075,6 +1075,8 @@ pub fn Parse(
                 var has_seen_embed_true = false;
 
                 while (p.lexer.token != .t_close_brace) {
+                    const key_range = p.lexer.range();
+                    var unsupported_key: ?[]const u8 = null;
                     const supported_attribute: ?SupportedAttribute = brk: {
                         // Parse the key
                         if (p.lexer.isIdentifierOrKeyword()) {
@@ -1083,13 +1085,15 @@ pub fn Parse(
                                     break :brk t;
                                 }
                             }
+                            unsupported_key = p.lexer.identifier;
                         } else if (p.lexer.token == .t_string_literal) {
-                            const string_literal_text = (try p.lexer.toUTF8EString()).slice8();
+                            const key_text = (try p.lexer.toUTF8EString()).slice8();
                             inline for (comptime std.enums.values(SupportedAttribute)) |t| {
-                                if (strings.eqlComptime(string_literal_text, @tagName(t))) {
+                                if (strings.eqlComptime(key_text, @tagName(t))) {
                                     break :brk t;
                                 }
                             }
+                            unsupported_key = key_text;
                         } else {
                             try p.lexer.expect(.t_identifier);
                         }
@@ -1102,6 +1106,17 @@ pub fn Parse(
 
                     try p.lexer.expect(.t_string_literal);
                     const string_literal_text = (try p.lexer.toUTF8EString()).slice8();
+
+                    if (unsupported_key) |key| {
+                        try p.log.addRangeErrorFmt(
+                            p.source,
+                            key_range,
+                            p.allocator,
+                            "Import attribute \"{s}\" with value \"{s}\" is not supported",
+                            .{ key, string_literal_text },
+                        );
+                    }
+
                     if (supported_attribute) |attr| {
                         switch (attr) {
                             .type => {

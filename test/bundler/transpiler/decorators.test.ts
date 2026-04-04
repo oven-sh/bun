@@ -479,20 +479,27 @@ test("decorators random", () => {
       expect(this.u15).toBe("undefined 😶");
       expect(this.u16).toBe("undefined 😏");
 
+      // Instance fields without initializers are kept as class field
+      // declarations, which create own properties that shadow prototype
+      // getters/setters installed by decorators.
       this.u1 = 100;
-      expect(this.u1).toBe("100 😍");
+      expect(this.u1).toBe(100);
+      this[u5] = 100;
+      expect(this[u5]).toBe(100);
+      this[u6] = 100;
+      expect(this[u6]).toBe(100);
+      this.u7 = 100;
+      expect(this.u7).toBe(100);
+
+      // Static fields: __legacyDecorateClassTS runs after class definition
+      // and Object.defineProperty replaces the own property with a
+      // getter/setter, so the decorator still works.
       S.u2 = 100;
       expect(S.u2).toBe("100 🥳");
       S[u3] = 100;
       expect(S[u3]).toBe("100 🤓");
       S.u4 = 100;
       expect(S.u4).toBe("100 🥺");
-      this[u5] = 100;
-      expect(this[u5]).toBe("100 🤯");
-      this[u6] = 100;
-      expect(this[u6]).toBe("100 🤩");
-      this.u7 = 100;
-      expect(this.u7).toBe("100 ☹️");
       S[u8] = 100;
       expect(S[u8]).toBe("100 🙃");
 

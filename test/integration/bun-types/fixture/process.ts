@@ -1,6 +1,8 @@
 process.memoryUsage();
 process.cpuUsage().system;
 process.cpuUsage().user;
+process.threadCpuUsage().system;
+process.threadCpuUsage().user;
 process.on("SIGINT", () => {
   console.log("Interrupt from keyboard");
 });

@@ -824,7 +824,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             // onWritable reset backpressure state to allow flushing
             this.has_backpressure = false;
             if (this.aborted) {
-                this.signal.close(null);
+                this.signal.close(Syscall.Error.fromCode(.CONNRESET, .close));
                 this.flushPromise() catch {}; // TODO: properly propagate exception upwards
                 this.finalize();
                 return false;
@@ -880,7 +880,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
         pub fn start(this: *@This(), stream_start: Start) bun.sys.Maybe(void) {
             if (this.aborted or this.res == null or this.res.?.hasResponded()) {
                 this.markDone();
-                this.signal.close(null);
+                this.signal.close(if (this.aborted) Syscall.Error.fromCode(.CONNRESET, .close) else null);
                 return .success;
             }
 
@@ -986,7 +986,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
 
             if (this.res == null or this.res.?.hasResponded()) {
                 this.markDone();
-                this.signal.close(null);
+                this.signal.close(if (this.aborted) Syscall.Error.fromCode(.CONNRESET, .close) else null);
             }
 
             return .success;
@@ -1040,7 +1040,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             }
 
             if (this.res == null or this.res.?.hasResponded()) {
-                this.signal.close(null);
+                this.signal.close(if (this.aborted) Syscall.Error.fromCode(.CONNRESET, .close) else null);
                 this.markDone();
                 return .{ .done = {} };
             }
@@ -1098,7 +1098,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             }
 
             if (this.res == null or this.res.?.hasResponded()) {
-                this.signal.close(null);
+                this.signal.close(if (this.aborted) Syscall.Error.fromCode(.CONNRESET, .close) else null);
                 this.markDone();
                 return .{ .done = {} };
             }
@@ -1168,7 +1168,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
 
             if (this.done or this.res == null or this.res.?.hasResponded()) {
                 this.requested_end = true;
-                this.signal.close(null);
+                this.signal.close(if (this.aborted) Syscall.Error.fromCode(.CONNRESET, .close) else null);
                 this.markDone();
                 this.finalize();
                 return .{ .result = jsc.JSValue.jsNumber(0) };
@@ -1212,7 +1212,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
 
             this.aborted = true;
 
-            this.signal.close(null);
+            this.signal.close(Syscall.Error.fromCode(.CONNRESET, .close));
 
             this.flushPromise() catch {}; // TODO: properly propagate exception upwards
             this.finalize();
@@ -1433,7 +1433,7 @@ pub const NetworkSink = struct {
     pub fn abort(this: *@This()) void {
         this.ended = true;
         this.done = true;
-        this.signal.close(null);
+        this.signal.close(Syscall.Error.fromCode(.CONNRESET, .close));
         this.cancel = true;
         this.finalize();
     }

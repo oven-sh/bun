@@ -768,7 +768,17 @@ JSValue fetchCommonJSModule(
         RETURN_IF_EXCEPTION(scope, false);
 
         int status = entry.getObject()->getDirect(vm, WebCore::clientData(vm)->builtinNames().statePublicName()).asInt32();
-        return status > JSModuleLoader::Status::Fetch;
+        if (status > JSModuleLoader::Status::Fetch)
+            return true;
+
+        // Also skip when import() has already started fetching this module
+        // (entry exists with a fetch promise). Calling provideFetch in
+        // fetchCommonJSModuleNonBuiltin would fulfill that promise directly,
+        // conflicting with the pending microtask reaction from import()'s
+        // fetch chain and causing a double-fulfill assertion.
+        // https://github.com/oven-sh/bun/issues/12910
+        JSValue fetchValue = entry.getObject()->getDirect(vm, JSC::Identifier::fromString(vm, "fetch"_s));
+        return fetchValue && !fetchValue.isUndefined();
     }();
     RETURN_IF_EXCEPTION(scope, {});
 

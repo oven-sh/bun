@@ -181,6 +181,13 @@ pub fn toBufferedValue(this: *ByteBlobLoader, globalThis: *JSGlobalObject, actio
     }
 
     var empty: Blob.Any = .{ .Blob = Blob.initEmpty(globalThis) };
+    if (this.content_type.len > 0) {
+        empty.Blob.content_type = this.content_type;
+        empty.Blob.content_type_was_set = true;
+        empty.Blob.content_type_allocated = this.content_type_allocated;
+        this.content_type = "";
+        this.content_type_allocated = false;
+    }
     return empty.toPromise(globalThis, action);
 }
 

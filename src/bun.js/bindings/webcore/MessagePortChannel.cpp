@@ -98,6 +98,13 @@ void MessagePortChannel::disentanglePort(const MessagePortIdentifier& port)
     auto protectedThis = WTF::move(m_entangledToProcessProtectors[i]);
 }
 
+bool MessagePortChannel::isPortClosed(const MessagePortIdentifier& port) const
+{
+    ASSERT(port == m_ports[0] || port == m_ports[1]);
+    size_t i = port == m_ports[0] ? 0 : 1;
+    return m_isClosed[i];
+}
+
 void MessagePortChannel::closePort(const MessagePortIdentifier& port)
 {
     ASSERT(port == m_ports[0] || port == m_ports[1]);

@@ -29,6 +29,7 @@
 #include "MessagePortChannelRegistry.h"
 
 // #include "Logging.h"
+#include "MessagePort.h"
 #include <wtf/CompletionHandler.h>
 #include <wtf/MainThread.h>
 
@@ -116,10 +117,15 @@ void MessagePortChannelRegistry::didCloseMessagePort(const MessagePortIdentifier
     //     LOG(MessagePorts, "Registry: (Note) The channel closed for port %s had messages pending or in flight", port.logString().utf8().data());
 #endif
 
+    // Determine the remote port and whether it is already closed before we close this port.
+    auto remotePort = (channel->port1() == port) ? channel->port2() : channel->port1();
+    bool remoteAlreadyClosed = channel->isPortClosed(remotePort);
+
     channel->closePort(port);
 
-    // FIXME: When making message ports be multi-process, this should probably push a notification
-    // to the remaining port to tell it this port closed.
+    // Notify the remote port that this port was closed, so it can fire a "close" event.
+    if (!remoteAlreadyClosed)
+        MessagePort::notifyRemotePortClosed(remotePort);
 }
 
 bool MessagePortChannelRegistry::didPostMessageToRemote(MessageWithMessagePorts&& message, const MessagePortIdentifier& remoteTarget)

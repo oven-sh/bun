@@ -75,6 +75,309 @@ function emitErrorEventNT(self, err) {
   }
 }
 
+const kHeaderSeparator = Buffer.from("\r\n\r\n");
+
+function parseRawHTTPResponse(buffer: Buffer) {
+  const headerEndIdx = buffer.indexOf(kHeaderSeparator);
+  if (headerEndIdx === -1) return null;
+
+  const headerStr = buffer.slice(0, headerEndIdx).toString("latin1");
+  const head = buffer.slice(headerEndIdx + 4);
+
+  const lines = headerStr.split("\r\n");
+  const statusLine = lines[0];
+  const statusMatch = statusLine.match(/^HTTP\/(\d)\.(\d) (\d{3})(?: (.*))?$/);
+  if (!statusMatch) return false; // Separator found but status line malformed
+
+  const httpVersion = `${statusMatch[1]}.${statusMatch[2]}`;
+  const statusCode = parseInt(statusMatch[3], 10);
+  const statusMessage = statusMatch[4] || "";
+
+  const headers = Object.create(null);
+  const rawHeaders: string[] = [];
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i];
+    const colonIdx = line.indexOf(":");
+    if (colonIdx <= 0) continue;
+    const key = line.slice(0, colonIdx);
+    const value = line.slice(colonIdx + 1).trim();
+    const lowerKey = key.toLowerCase();
+    rawHeaders.push(key, value);
+    if (lowerKey === "set-cookie") {
+      if (headers[lowerKey]) {
+        headers[lowerKey].push(value);
+      } else {
+        headers[lowerKey] = [value];
+      }
+    } else if (headers[lowerKey] !== undefined) {
+      headers[lowerKey] += `, ${value}`;
+    } else {
+      headers[lowerKey] = value;
+    }
+  }
+
+  return { httpVersion, statusCode, statusMessage, headers, rawHeaders, head };
+}
+
+function doUpgradeRequest(
+  this: any,
+  url: string,
+  headers: any,
+  method: string,
+  body: any,
+  maybeEmitSocket: () => void,
+  maybeEmitClose: () => void,
+) {
+  const self = this;
+  // Lazy require to avoid circular dependency at module load time
+  const net = require("node:net");
+  const tls = require("node:tls");
+
+  return new Promise<void>((resolve, reject) => {
+    // Bail out immediately if already aborted
+    if (self[kAbortController]?.signal?.aborted) {
+      reject(new DOMException("This operation was aborted.", "AbortError"));
+      return;
+    }
+
+    const parsedUrl = new URL(url);
+    const isSecure = parsedUrl.protocol === "https:";
+    const connectHost = parsedUrl.hostname;
+    const connectPort = parseInt(parsedUrl.port) || (isSecure ? 443 : 80);
+    const requestPath = (parsedUrl.pathname || "/") + (parsedUrl.search || "");
+
+    const socketPath = self[kSocketPath];
+    const connectOpts: any = socketPath ? { path: socketPath } : { host: connectHost, port: connectPort };
+
+    if (isSecure) {
+      const tlsConfig = self[kTls] || {};
+      ObjectAssign(connectOpts, tlsConfig);
+      if (!connectOpts.servername) {
+        connectOpts.servername = connectHost;
+      }
+    }
+
+    const connectModule = isSecure ? tls : net;
+    const socket = connectModule.connect(connectOpts, () => {
+      // Build and send the raw HTTP request
+      let request = `${method} ${requestPath} HTTP/1.1\r\n`;
+
+      // Synthesize Host header if not already present (HTTP/1.1 requires it)
+      if (!headers["host"] && !headers["Host"]) {
+        const defaultPort = isSecure ? 443 : 80;
+        const bracketedHost = connectHost.includes(":") ? `[${connectHost}]` : connectHost;
+        const hostHeader = connectPort === defaultPort ? bracketedHost : `${bracketedHost}:${connectPort}`;
+        request += `Host: ${hostHeader}\r\n`;
+      }
+
+      for (const key of Object.keys(headers)) {
+        const value = headers[key];
+        if ($isJSArray(value)) {
+          for (const v of value) {
+            request += `${key}: ${v}\r\n`;
+          }
+        } else {
+          request += `${key}: ${value}\r\n`;
+        }
+      }
+      request += "\r\n";
+      socket.write(request);
+
+      if (body != null) {
+        if (typeof body === "string") {
+          socket.write(body);
+        } else if (body instanceof Blob) {
+          body
+            .arrayBuffer()
+            .then(ab => socket.write(Buffer.from(ab)))
+            .catch(err => socket.destroy(err));
+        } else {
+          socket.write(Buffer.from(body));
+        }
+      }
+    });
+
+    // Bind socket to request so req.socket and the "socket" event reference
+    // the actual net.Socket/tls.TLSSocket used for the connection.
+    self.socket = socket;
+
+    let responseBuffer = Buffer.alloc(0);
+    let headersParsed = false;
+    const maxHeaderSize = self[kMaxHeaderSize] ?? 16384;
+
+    const onData = (chunk: Buffer) => {
+      if (headersParsed) return;
+
+      responseBuffer = Buffer.concat([responseBuffer, chunk]);
+
+      const parsed = parseRawHTTPResponse(responseBuffer);
+      if (parsed === null) {
+        // Headers not yet complete — check overflow only on header bytes
+        if (responseBuffer.length > maxHeaderSize) {
+          socket.destroy();
+          reject(ObjectAssign(new Error("Parse Error: Header overflow"), { code: "HPE_HEADER_OVERFLOW" }));
+        }
+        return; // Need more data
+      }
+      if (parsed === false) {
+        // Separator found but status line is malformed
+        socket.destroy();
+        reject(ObjectAssign(new Error("Parse Error"), { code: "HPE_INVALID_STATUS" }));
+        return;
+      }
+
+      headersParsed = true;
+      socket.removeListener("data", onData);
+
+      self[kFetchRequest] = null;
+      self[kClearTimeout]();
+
+      if (parsed.statusCode === 101 || (method === "CONNECT" && parsed.statusCode === 200)) {
+        self[kUpgradeOrConnect] = true;
+
+        const res = new IncomingMessage(null);
+        res.statusCode = parsed.statusCode;
+        res.statusMessage = parsed.statusMessage;
+        res.httpVersion = parsed.httpVersion;
+        res.headers = parsed.headers;
+        res.rawHeaders = parsed.rawHeaders;
+        res.socket = socket;
+        res.complete = true;
+        res.req = self;
+        self.res = res;
+
+        maybeEmitSocket();
+
+        // Remove all HTTP-level listeners — socket is now owned by user code
+        abortSignal?.removeEventListener("abort", onAbortSocket);
+        socket.removeListener("error", onSocketError);
+        socket.removeListener("close", onSocketClose);
+        socket.removeListener("close", onAbortCleanup);
+
+        const eventName = method === "CONNECT" ? "connect" : "upgrade";
+        process.nextTick(() => {
+          if (!self.emit(eventName, res, socket, parsed.head)) {
+            socket.destroy();
+          }
+          maybeEmitClose();
+        });
+
+        resolve();
+      } else {
+        // Non-101 response on an upgrade request — emit as normal response
+        const res = new IncomingMessage(null);
+        res.statusCode = parsed.statusCode;
+        res.statusMessage = parsed.statusMessage;
+        res.httpVersion = parsed.httpVersion;
+        res.headers = parsed.headers;
+        res.rawHeaders = parsed.rawHeaders;
+        res.socket = socket;
+        res.req = self;
+        self.res = res;
+
+        // Override _read to prevent default body-reading logic on null webRequestOrResponse
+        res._read = function () {
+          if (!this._consuming) {
+            this._readableState.readingMore = false;
+            this._consuming = true;
+          }
+        };
+
+        // Ensure socket is cleaned up when response is consumed or destroyed
+        res.on("close", () => {
+          socket.destroy();
+        });
+
+        // Track remaining body bytes for Content-Length framing
+        const contentLength = parsed.headers["content-length"] ? parseInt(parsed.headers["content-length"], 10) : NaN;
+        let bytesReceived = 0;
+
+        if (parsed.head.length > 0) {
+          const headToRead = !isNaN(contentLength) ? parsed.head.slice(0, contentLength) : parsed.head;
+          res.push(headToRead);
+          bytesReceived += headToRead.length;
+        }
+
+        // Complete immediately if Content-Length body is fully consumed
+        if (!isNaN(contentLength) && bytesReceived >= contentLength) {
+          res.push(null);
+          res.complete = true;
+          socket.destroy();
+        } else {
+          socket.on("data", dataChunk => {
+            if (!isNaN(contentLength)) {
+              const remaining = contentLength - bytesReceived;
+              if (remaining <= 0) return;
+              if (dataChunk.length > remaining) {
+                dataChunk = dataChunk.slice(0, remaining);
+              }
+            }
+            if (!res._dumped) {
+              res.push(dataChunk);
+            }
+            bytesReceived += dataChunk.length;
+            // Complete when Content-Length body is fully received
+            if (!isNaN(contentLength) && bytesReceived >= contentLength && !res.complete) {
+              res.push(null);
+              res.complete = true;
+              socket.destroy();
+            }
+          });
+          socket.on("end", () => {
+            if (!res.complete) {
+              res.push(null);
+              res.complete = true;
+            }
+            socket.destroy();
+          });
+        }
+
+        process.nextTick(() => {
+          if (self.aborted || !self.emit("response", res)) {
+            res._dump();
+          }
+          maybeEmitClose();
+        });
+
+        resolve();
+      }
+    };
+
+    socket.on("data", onData);
+
+    const onSocketError = err => {
+      self[kClearTimeout]();
+      if (!headersParsed) {
+        reject(err);
+      } else if (self.res && !self.res.complete) {
+        self.res.destroy(err);
+      }
+    };
+
+    const onSocketClose = () => {
+      if (!headersParsed) {
+        reject(new Error("socket hang up"));
+      }
+    };
+
+    socket.on("error", onSocketError);
+    socket.on("close", onSocketClose);
+
+    // Wire up abort controller
+    const abortSignal = self[kAbortController]?.signal;
+    const onAbortSocket = () => {
+      socket.destroy();
+    };
+    const onAbortCleanup = () => {
+      abortSignal?.removeEventListener("abort", onAbortSocket);
+    };
+    if (abortSignal) {
+      abortSignal.addEventListener("abort", onAbortSocket, { once: true });
+      socket.on("close", onAbortCleanup);
+    }
+  });
+}
+
 function ClientRequest(input, options, cb) {
   if (!(this instanceof ClientRequest)) {
     return new (ClientRequest as any)(input, options, cb);
@@ -204,6 +507,10 @@ function ClientRequest(input, options, cb) {
     if (this.destroyed) return this;
     this.destroyed = true;
 
+    // After a successful upgrade/connect, the socket has been handed off
+    // to user code — don't destroy it from the HTTP request layer.
+    if (this[kUpgradeOrConnect]) return this;
+
     const res = this.res;
 
     // If we're aborting, we don't care about any more response data.
@@ -230,6 +537,7 @@ function ClientRequest(input, options, cb) {
   };
 
   const socketCloseListener = () => {
+    if (this[kUpgradeOrConnect]) return;
     this.destroyed = true;
 
     const res = this.res;
@@ -307,12 +615,52 @@ function ClientRequest(input, options, cb) {
     };
 
     const go = (url, proxy, softFail = false) => {
-      const tls =
+      // Check if this is an upgrade request - use raw socket path for proper upgrade event support
+      const reqHeaders = this.getHeaders();
+      const connectionHeader = reqHeaders["connection"] || reqHeaders["Connection"];
+      const upgradeHeader = reqHeaders["upgrade"] || reqHeaders["Upgrade"];
+      const isUpgradeReq =
+        !proxy &&
+        upgradeHeader &&
+        typeof connectionHeader === "string" &&
+        connectionHeader.toLowerCase().includes("upgrade");
+
+      if (isUpgradeReq) {
+        this[kFetchRequest] = doUpgradeRequest.$call(
+          this,
+          url,
+          reqHeaders,
+          method,
+          customBody,
+          maybeEmitSocket,
+          maybeEmitClose,
+        );
+        if (!softFail) {
+          this[kFetchRequest]
+            .catch(err => {
+              if (isAbortError(err) || this.destroyed || this.aborted) return;
+              if (!!$debug) globalReportError(err);
+              try {
+                this.emit("error", err);
+              } catch (_err) {
+                void _err;
+              }
+            })
+            .finally(() => {
+              fetching = false;
+              this[kFetchRequest] = null;
+              this[kClearTimeout]();
+            });
+        }
+        return this[kFetchRequest];
+      }
+
+      const tlsOpts =
         protocol === "https:" && this[kTls] ? { ...this[kTls], serverName: this[kTls].servername } : undefined;
 
       const fetchOptions: any = {
         method,
-        headers: this.getHeaders(),
+        headers: reqHeaders,
         redirect: "manual",
         signal: this[kAbortController]?.signal,
         // Timeouts are handled via this.setTimeout.
@@ -372,8 +720,8 @@ function ClientRequest(input, options, cb) {
         };
       }
 
-      if (tls) {
-        fetchOptions.tls = tls;
+      if (tlsOpts) {
+        fetchOptions.tls = tlsOpts;
       }
 
       if (!!$debug) {

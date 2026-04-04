@@ -1255,8 +1255,7 @@ pub const RunCommand = struct {
         const colors = Output.enable_ansi_colors_stdout;
         const columns: u16 = brk: {
             const c = Output.terminal_size.col;
-            if (c == 0) break :brk 80;
-            break :brk @min(c, 120);
+            break :brk if (c == 0) 80 else c;
         };
         const theme: bun.md.AnsiTheme = .{
             .light = bun.md.detectLightBackground(),

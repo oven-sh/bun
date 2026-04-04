@@ -77,13 +77,14 @@ describe("bun <file.md>", () => {
     expect(await runMd(["```", "plain text", "no highlighting", "```", ""].join("\n"))).toMatchSnapshot();
   });
 
-  test("renders hyperlinks with OSC 8 escape sequence", async () => {
+  test("renders link text with url fallback when no TTY", async () => {
+    // runMd() spawns Bun with stdout:"pipe", so Output.isStdoutTTY() is
+    // false and hyperlinks fall back to `text (url)`. The OSC 8 path fires
+    // when stdout really is a TTY.
     expect(await runMd("Visit [Bun](https://bun.com) today.\n")).toMatchSnapshot();
   });
 
-  test("renders hyperlinks without OSC 8 when no TTY", async () => {
-    // The spawned process doesn't have a TTY on stdout so hyperlinks fall
-    // back to "text (url)" format. This is the default for runMd().
+  test("renders multiple links as text + url pairs", async () => {
     expect(await runMd("see [Bun](https://bun.com)\n")).toMatchSnapshot();
   });
 

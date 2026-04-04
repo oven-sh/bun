@@ -16,11 +16,7 @@ import { bunEnv, bunExe, tempDir } from "harness";
 
 test("process.browser is undefined at runtime", async () => {
   await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      "console.log(JSON.stringify({ type: typeof process.browser, value: process.browser }))",
-    ],
+    cmd: [bunExe(), "-e", "console.log(JSON.stringify({ type: typeof process.browser, value: process.browser }))"],
     env: bunEnv,
     stdout: "pipe",
     stderr: "inherit",

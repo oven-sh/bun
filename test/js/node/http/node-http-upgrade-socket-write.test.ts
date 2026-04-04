@@ -1,5 +1,5 @@
+import { expect, test } from "bun:test";
 import { createServer } from "node:http";
-import { test, expect } from "bun:test";
 
 function sendUpgradeRequest(
   socket: ReturnType<typeof Bun.connect extends (...args: any) => Promise<infer T> ? T : never>,

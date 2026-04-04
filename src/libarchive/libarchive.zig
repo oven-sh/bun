@@ -205,6 +205,42 @@ fn isSymlinkTargetSafe(symlink_path: []const u8, link_target: [:0]const u8, syml
     return strings.hasPrefix(resolved, fake_root);
 }
 
+/// Verifies that a path within the extraction directory resolves (via realpath,
+/// which follows all symlinks) to a location still within the extraction directory.
+/// This catches chained symlink attacks where individually-safe symlinks combine
+/// to escape the extraction boundary.
+///
+/// Returns true if the resolved path is safe (stays within extraction dir).
+fn isResolvedPathSafe(dir: std.fs.Dir, path_slice: []const u8, realpath_buf: *bun.PathBuffer) bool {
+    // Resolve the real filesystem path, following all symlinks.
+    const resolved = dir.realpath(path_slice, realpath_buf) catch {
+        // If we can't resolve (e.g., broken symlink), treat as safe since
+        // the path doesn't actually lead anywhere exploitable.
+        return true;
+    };
+
+    // Now get the real path of the extraction directory itself.
+    var dir_realpath_buf: bun.PathBuffer = undefined;
+    const dir_resolved = dir.realpath(".", &dir_realpath_buf) catch {
+        // If we can't resolve the extraction dir itself, allow the operation
+        // since we can't perform the check.
+        return true;
+    };
+
+    // The resolved path must start with the extraction directory's real path.
+    if (!strings.hasPrefix(resolved, dir_resolved)) {
+        return false;
+    }
+
+    // Also verify there's either nothing after the prefix, or a path separator follows.
+    // This prevents "/extract2" from matching "/extract".
+    if (resolved.len > dir_resolved.len and resolved[dir_resolved.len] != '/') {
+        return false;
+    }
+
+    return true;
+}
+
 pub const Archiver = struct {
     // impl: *lib.archive = undefined,
     // buf: []const u8 = undefined,
@@ -353,6 +389,8 @@ pub const Archiver = struct {
         var symlink_join_buf: ?*bun.PathBuffer = null;
         defer if (symlink_join_buf) |join_buf| bun.path_buffer_pool.put(join_buf);
 
+        var realpath_buf: bun.PathBuffer = undefined;
+
         var normalized_buf: bun.OSPathBuffer = undefined;
         var use_pwrite = Environment.isPosix;
         var use_lseek = true;
@@ -446,6 +484,21 @@ pub const Archiver = struct {
 
                     switch (kind) {
                         .directory => {
+                            if (Environment.isPosix) {
+                                // Verify that the directory's parent resolves within the
+                                // extraction directory. This prevents creating directories
+                                // through symlink chains that escape the extraction boundary.
+                                const parent_dir = std.fs.path.dirname(path_slice) orelse "";
+                                if (parent_dir.len > 0 and !isResolvedPathSafe(dir, parent_dir, &realpath_buf)) {
+                                    if (options.log) {
+                                        Output.warn("Skipping directory whose parent resolves outside extraction dir: {f}\n", .{
+                                            bun.fmt.fmtOSPath(path_slice, .{}),
+                                        });
+                                    }
+                                    continue;
+                                }
+                            }
+
                             var mode = @as(i32, @intCast(entry.perm()));
 
                             // if dirs are readable, then they should be listable
@@ -495,9 +548,41 @@ pub const Archiver = struct {
                                         else => return err,
                                     }
                                 };
+
+                                // After creating the symlink, verify that it resolves to a path
+                                // within the extraction directory. This catches chained symlink
+                                // attacks where multiple individually-safe symlinks combine to
+                                // escape the extraction boundary.
+                                if (!isResolvedPathSafe(dir, path_slice, &realpath_buf)) {
+                                    // The symlink chain resolves outside the extraction dir.
+                                    // Remove the symlink we just created and skip this entry.
+                                    dir.deleteFile(path_slice) catch {};
+                                    if (options.log) {
+                                        Output.warn("Removing symlink whose resolved path escapes extraction dir: {f} -> {s}\n", .{
+                                            bun.fmt.fmtOSPath(path_slice, .{}),
+                                            link_target,
+                                        });
+                                    }
+                                    continue;
+                                }
                             }
                         },
                         .file => {
+                            if (Environment.isPosix) {
+                                // Verify that the file's parent directory resolves within the
+                                // extraction directory. This prevents writing files through
+                                // symlink chains that escape the extraction boundary.
+                                const parent_dir = std.fs.path.dirname(path_slice) orelse "";
+                                if (parent_dir.len > 0 and !isResolvedPathSafe(dir, parent_dir, &realpath_buf)) {
+                                    if (options.log) {
+                                        Output.warn("Skipping file whose parent resolves outside extraction dir: {f}\n", .{
+                                            bun.fmt.fmtOSPath(path_slice, .{}),
+                                        });
+                                    }
+                                    continue;
+                                }
+                            }
+
                             // first https://github.com/npm/cli/blob/feb54f7e9a39bd52519221bae4fafc8bc70f235e/node_modules/pacote/lib/fetcher.js#L65-L66
                             // this.fmode = opts.fmode || 0o666
                             //

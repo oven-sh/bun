@@ -756,10 +756,24 @@ pub const AnsiRenderer = struct {
             self.last_was_newline = (word.len == 0);
             i = j;
             if (i < data.len and data[i] == ' ') {
-                self.writeRaw(" ");
-                self.col += 1;
-                i += 1;
-                while (i < data.len and data[i] == ' ') i += 1;
+                // Look ahead to the next word: if the space + next word
+                // would overflow, wrap here and drop the space instead of
+                // leaving a trailing space at the end of the wrapped line.
+                var k = i;
+                while (k < data.len and data[k] == ' ') k += 1;
+                var m = k;
+                while (m < data.len and data[m] != ' ' and data[m] != '\n') : (m += 1) {}
+                const next_word_width = visibleWidth(data[k..m]);
+                if (self.col != 0 and self.col + 1 + next_word_width > max and self.col > indent) {
+                    self.writeRaw("\n");
+                    self.last_was_newline = true;
+                    self.col = 0;
+                    self.writeIndent();
+                } else {
+                    self.writeRaw(" ");
+                    self.col += 1;
+                }
+                i = k;
             }
         }
     }
@@ -1352,13 +1366,8 @@ pub const AnsiRenderer = struct {
         //   1. colors + kitty_graphics are enabled (needs ESC support)
         //   2. src is a file: URI or a non-URL path
         //   3. the file exists on disk
-        // On success we also emit an OSC 8 hyperlink so the text alt
-        // remains clickable below the image, and still write the alt
-        // text as a visible caption for non-Kitty terminals that ignore
-        // the APC sequence.
-        // Try to render inline via Kitty Graphics. If the image is
-        // actually displayed, we're done — the image itself is the
-        // content, no caption/alt text needed.
+        // If the image is actually displayed, we're done — the image
+        // itself is the content, no caption/alt text needed.
         // Skip Kitty inside table cells / headings: the APC payload
         // would be counted as visible width by flushTable/flushHeading,
         // blowing up the column / underline size. Images in cells
@@ -1394,14 +1403,17 @@ pub const AnsiRenderer = struct {
 
         // Fallback: image can't be rendered inline. Show the alt text
         // (or title, or "(image)") wrapped in the OSC 8 hyperlink so
-        // the src URL stays clickable. A magenta 🖼 marker makes it
-        // obvious this is a missing/unrendered image.
+        // the src URL stays clickable. A magenta camera marker makes it
+        // obvious this is a missing/unrendered image. (U+1F4F7 instead
+        // of U+1F5BC "FRAME WITH PICTURE" because 1F5BC is classified
+        // Narrow in EastAsianWidth.txt — visibleWidth would undercount
+        // it as 1 column and wrapping would fire one column too late.)
         if (self.theme.colors and self.theme.hyperlinks and has_src) {
             self.writeRawNoColor("\x1b]8;;");
             self.writeRawNoColor(src.?);
             self.writeRawNoColor("\x1b\\");
         }
-        const img_marker = if (self.theme.colors) "🖼 " else "[img] ";
+        const img_marker = if (self.theme.colors) "📷 " else "[img] ";
         self.writeStyled(color(.magenta), img_marker);
         if (alt.len > 0) {
             self.writeStyled("", alt);

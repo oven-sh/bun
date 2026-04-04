@@ -1,4 +1,5 @@
 export const NodeModuleModule__findPath = jsc.host_fn.wrap3(findPath);
+export const NodeModuleModule__findPackageJSON = jsc.host_fn.wrap1(findPackageJSON);
 
 // https://github.com/nodejs/node/blob/40ef9d541ed79470977f90eb445c291b95ab75a0/lib/internal/modules/cjs/loader.js#L666
 fn findPath(
@@ -63,6 +64,51 @@ fn findPathInner(
         else => return null,
     };
     return errorable.unwrap() catch null;
+}
+
+// https://nodejs.org/api/module.html#modulefindpackagejsonstart
+fn findPackageJSON(
+    global: *JSGlobalObject,
+    request_bun_str: bun.String,
+) bun.JSError!JSValue {
+    var stack_buf = std.heap.stackFallback(4096, bun.default_allocator);
+    const alloc = stack_buf.get();
+
+    const request_slice = request_bun_str.toUTF8(alloc);
+    defer request_slice.deinit();
+    const request = request_slice.slice();
+
+    // Start from the request path and work upwards
+    var current_path = try std.fs.path.resolve(alloc, &.{request});
+    defer alloc.free(current_path);
+
+    while (true) {
+        // Check if package.json exists in current directory
+        const package_json_path = try std.fs.path.join(alloc, &.{ current_path, "package.json" });
+        defer alloc.free(package_json_path);
+
+        if (bun.sys.existsAtType(.cwd(), package_json_path) catch null) |exists| {
+            if (exists == .file) {
+                // Found package.json
+                return bun.String.createUTF8ForJS(global, package_json_path).toJS(global);
+            }
+        }
+
+        // Move up to parent directory
+        const parent_path = std.fs.path.dirname(current_path);
+        if (parent_path) |parent| {
+            // Need to duplicate because dirname returns a slice of current_path
+            const parent_copy = try alloc.dupe(u8, parent);
+            alloc.free(current_path);
+            current_path = parent_copy;
+        } else {
+            // Reached the root, no package.json found
+            break;
+        }
+    }
+
+    // No package.json found
+    return .undefined;
 }
 
 pub fn _stat(path: []const u8) i32 {

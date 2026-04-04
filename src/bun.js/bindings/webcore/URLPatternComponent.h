@@ -56,6 +56,8 @@ public:
 private:
     URLPatternComponent(String&&, JSC::Strong<JSC::RegExp>&&, Vector<String>&&, bool);
 
+    bool isFullWildcard() const { return m_patternString == "*"_s; }
+
     String m_patternString;
     JSC::Strong<JSC::RegExp> m_regularExpression;
     Vector<String> m_groupNameList;

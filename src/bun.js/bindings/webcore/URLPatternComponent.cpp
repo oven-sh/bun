@@ -75,6 +75,9 @@ ExceptionOr<URLPatternComponent> URLPatternComponent::compile(Ref<JSC::VM> vm, S
 // https://urlpattern.spec.whatwg.org/#protocol-component-matches-a-special-scheme
 bool URLPatternComponent::matchSpecialSchemeProtocol(JSC::JSGlobalObject* globalObject) const
 {
+    if (isFullWildcard())
+        return true;
+
     static constexpr std::array specialSchemeList { "ftp"_s, "file"_s, "http"_s, "https"_s, "ws"_s, "wss"_s };
 
     auto* regExp = m_regularExpression.get();
@@ -89,6 +92,17 @@ bool URLPatternComponent::matchSpecialSchemeProtocol(JSC::JSGlobalObject* global
 // https://urlpattern.spec.whatwg.org/#create-a-component-match-result
 std::optional<URLPatternComponentResult> URLPatternComponent::componentMatch(JSC::JSGlobalObject* globalObject, String&& input) const
 {
+    if (isFullWildcard()) {
+        // Pattern is a single `*` (regex `^(.*)$`). Canonicalization guarantees inputs
+        // contain no line terminators, so this always matches the full input.
+        URLPatternComponentResult::GroupsRecord groups;
+        groups.reserveInitialCapacity(1);
+        String groupName = !m_groupNameList.isEmpty() ? m_groupNameList[0] : emptyString();
+        String value = input;
+        groups.append(URLPatternComponentResult::NameMatchPair { WTF::move(groupName), Variant<std::monostate, String> { WTF::move(value) } });
+        return URLPatternComponentResult { !input.isEmpty() ? WTF::move(input) : emptyString(), WTF::move(groups) };
+    }
+
     auto* regExp = m_regularExpression.get();
     auto ovector = regExp->ovectorSpan();
     int position = regExp->match(globalObject, input, 0, ovector);

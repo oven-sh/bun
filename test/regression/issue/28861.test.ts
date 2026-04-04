@@ -22,7 +22,7 @@ describe.skipIf(isWindows).concurrent("issue/28861", () => {
       stderr: "pipe",
     });
 
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     const platform = process.platform === "darwin" ? "darwin" : "linux";
     expect(JSON.parse(stdout.trim())).toEqual({
@@ -52,7 +52,7 @@ describe.skipIf(isWindows).concurrent("issue/28861", () => {
       stderr: "pipe",
     });
 
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     const platform = process.platform === "darwin" ? "darwin" : "linux";
     expect(JSON.parse(stdout.trim())).toEqual({
@@ -85,7 +85,7 @@ describe.skipIf(isWindows).concurrent("issue/28861", () => {
       stderr: "pipe",
     });
 
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     const platform = process.platform === "darwin" ? "darwin" : "linux";
     expect(JSON.parse(stdout.trim())).toEqual({
@@ -119,7 +119,7 @@ describe.skipIf(isWindows).concurrent("issue/28861", () => {
       stderr: "pipe",
     });
 
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stdout).toContain("OK");
     expect(exitCode).toBe(0);

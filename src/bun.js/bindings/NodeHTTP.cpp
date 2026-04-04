@@ -538,7 +538,7 @@ static void writeFetchHeadersToUWSResponse(WebCore::FetchHeaders& headers, uWS::
 
     for (const auto& header : internalHeaders.commonHeaders()) {
 
-        const auto& name = WebCore::httpHeaderNameString(header.key);
+        const auto& name = WTF::httpHeaderNameStringImpl(header.key);
         const auto& value = header.value;
 
         // We have to tell uWS not to automatically insert a TransferEncoding or Date header.

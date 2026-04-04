@@ -65,6 +65,39 @@ test.skipIf(isWindows)('new Worker() rejects file:// URLs with a host like "exam
   expect(exitCode).toBe(0);
 });
 
+test.skipIf(isWindows)("new Worker() rejects file:// URLs in the preload option with a non-localhost host", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        try {
+          new Worker("file:///nonexistent_worker_12345.mjs", {
+            type: "module",
+            preload: ["file://example.com/preload.mjs"],
+          });
+          console.log("NO_THROW");
+        } catch (e) {
+          console.log(JSON.stringify({ name: e.name, message: e.message, code: e.code }));
+        }
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+  const platform = process.platform === "darwin" ? "darwin" : "linux";
+  expect(JSON.parse(stdout.trim())).toEqual({
+    name: "TypeError",
+    message: `File URL host must be "localhost" or empty on ${platform}`,
+    code: "ERR_INVALID_FILE_URL_HOST",
+  });
+  expect(exitCode).toBe(0);
+});
+
 test.skipIf(isWindows)("new Worker() accepts file:// URLs with empty or localhost host", async () => {
   // Validate we don't break file:/// (empty host) or file://localhost/ URLs.
   // We use a nonexistent path so the Worker's load fails asynchronously — the

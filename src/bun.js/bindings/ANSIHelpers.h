@@ -297,8 +297,12 @@ static const Char* consumeANSI(const Char* start, const Char* end)
             break;
 
         case State::needSt: {
-            // ST-terminated payload: scan for ESC or C1 ST.
-            const auto* term = scanForAnyByte<0x1b, 0x9c>(it, end);
+            // ST-terminated payload (DCS/SOS/PM/APC): scan for ESC, C1 ST, or
+            // BEL. ECMA-48 only specifies ST, but real-world emitters (e.g.
+            // BuildKite's `\x1b_bk;t=<ms>\x07` timestamp markers) terminate APC
+            // with BEL the same way xterm allows for OSC. Without accepting BEL
+            // here we'd consume the rest of the input.
+            const auto* term = scanForAnyByte<0x07, 0x9c, 0x1b>(it, end);
             if (!term)
                 return end;
             it = term;

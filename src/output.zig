@@ -284,6 +284,13 @@ pub const Source = struct {
             return;
         }
 
+        if (bun.env_var.COLORTERM.get()) |color_term| {
+            if (strings.eqlComptime(color_term, "truecolor") or strings.eqlComptime(color_term, "24bit")) {
+                lazy_color_depth = .@"16m";
+                return;
+            }
+        }
+
         if (bun.env_var.TMUX.get() != null) {
             lazy_color_depth = .@"256";
             return;
@@ -310,15 +317,7 @@ pub const Source = struct {
             }
         }
 
-        var has_color_term_set = false;
-
-        if (bun.env_var.COLORTERM.get()) |color_term| {
-            if (strings.eqlComptime(color_term, "truecolor") or strings.eqlComptime(color_term, "24bit")) {
-                lazy_color_depth = .@"16m";
-                return;
-            }
-            has_color_term_set = true;
-        }
+        const has_color_term_set = bun.env_var.COLORTERM.get() != null;
 
         if (term.len > 0) {
             if (strings.hasPrefixComptime(term, "xterm-256")) {
@@ -350,6 +349,11 @@ pub const Source = struct {
                     lazy_color_depth = pair[1];
                     return;
                 }
+            }
+
+            if (strings.includes(term, "-256")) {
+                lazy_color_depth = .@"256";
+                return;
             }
 
             if (strings.includes(term, "con") or

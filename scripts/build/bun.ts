@@ -168,7 +168,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // instead of a .a — we compile those alongside bun's own sources).
   const depLibs: string[] = [];
   const depIncludes: string[] = [];
-  const depOutputs: string[] = []; // PCH order-only-deps on these
+  const depOutputs: string[] = []; // implicit-dep signal for PCH/cc/no-PCH cxx
   for (const d of deps) {
     depLibs.push(...d.libs);
     depIncludes.push(...d.includes);

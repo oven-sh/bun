@@ -460,6 +460,8 @@ describe("Bun.stripANSI", () => {
     ["a\x1b_bk;t=123\x07b\x1b[31mc\x1b[0m", "abc"],
     // C1 single-byte introducers with BEL:
     ["\x90payload\x07keep", "keep"], // C1 DCS
+    ["\x98payload\x07keep", "keep"], // C1 SOS
+    ["\x9epayload\x07keep", "keep"], // C1 PM
     ["\x9fpayload\x07keep", "keep"], // C1 APC
     // BuildKite log line (APC timestamp + CSI color), repeated to cross SIMD stride
     ["\x1b_bk;t=1743798000000\x07\x1b[90m[2026-04-04]\x1b[0m hello\n".repeat(4), "[2026-04-04] hello\n".repeat(4)],

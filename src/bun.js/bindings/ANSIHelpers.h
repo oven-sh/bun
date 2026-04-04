@@ -151,8 +151,8 @@ ALWAYS_INLINE static const Char* scanForByteInRange(const Char* start, const Cha
 }
 
 // SIMD scan for first byte equal to any of `Targets`. Returns nullptr if not
-// found. Used to find OSC terminators (0x07/0x9C/ESC) and ST sequence
-// terminators (0x9C/ESC).
+// found. Used to find OSC and DCS/SOS/PM/APC payload terminators
+// (0x07/0x9C/ESC).
 template<uint8_t... Targets, typename Char>
 ALWAYS_INLINE static const Char* scanForAnyByte(const Char* start, const Char* end)
 {

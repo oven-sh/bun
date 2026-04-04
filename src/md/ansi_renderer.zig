@@ -1397,6 +1397,9 @@ pub const AnsiRenderer = struct {
         self.writeRaw("\n");
         self.col = 0;
         self.last_was_newline = true;
+        // Re-emit the active block indent so text that follows the image
+        // inside a blockquote / list item keeps its `│ ` / hanging prefix.
+        self.writeIndent();
     }
 
     /// Emit a Kitty Graphics Protocol transmit-and-display sequence with
@@ -1410,6 +1413,7 @@ pub const AnsiRenderer = struct {
         self.writeRaw("\n");
         self.col = 0;
         self.last_was_newline = true;
+        self.writeIndent();
     }
 };
 

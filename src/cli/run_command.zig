@@ -1320,10 +1320,27 @@ pub const RunCommand = struct {
             }
             fd.close();
             if (!ok) {
+                // The file was created by openA + TRUNC, so even a
+                // zero-byte write leaves an orphan on disk. Unlink
+                // before dropping the path string.
+                const z = allocator.dupeZ(u8, path) catch {
+                    allocator.free(path);
+                    continue;
+                };
+                _ = bun.sys.unlink(z);
+                allocator.free(z);
                 allocator.free(path);
                 continue;
             }
             out_map.put(allocator, raw_url, path) catch {
+                // Map insert OOM'd after a successful write — unlink
+                // the now-orphaned temp file so it doesn't leak.
+                const z = allocator.dupeZ(u8, path) catch {
+                    allocator.free(path);
+                    continue;
+                };
+                _ = bun.sys.unlink(z);
+                allocator.free(z);
                 allocator.free(path);
                 continue;
             };

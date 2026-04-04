@@ -483,9 +483,7 @@ if (isDockerEnabled()) {
         test("Binary", async () => {
           const random_name = ("t_" + Bun.randomUUIDv7("hex").replaceAll("-", "")).toLowerCase();
           await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (a binary(1), b varbinary(1), c blob)`;
-          const values = [
-            { a: Buffer.from([1]), b: Buffer.from([2]), c: Buffer.from([3]) },
-          ];
+          const values = [{ a: Buffer.from([1]), b: Buffer.from([2]), c: Buffer.from([3]) }];
           await sql`INSERT INTO ${sql(random_name)} ${sql(values)}`;
           const results = await sql`select * from ${sql(random_name)}`;
           // return buffers
@@ -497,7 +495,7 @@ if (isDockerEnabled()) {
           expect(results2[0].a).toEqual(Buffer.from([1]));
           expect(results2[0].b).toEqual(Buffer.from([2]));
           expect(results2[0].c).toEqual(Buffer.from([3]));
-        })
+        });
 
         test("bulk insert nested sql()", async () => {
           await using sql = new SQL({ ...getOptions(), max: 1 });
@@ -964,6 +962,51 @@ if (isDockerEnabled()) {
             bigint: true,
           });
           expect((await sql`select 9223372036854777 as x`)[0].x).toBe(9223372036854777n);
+        });
+
+        // Regression: previously any in-range BigInt parameter would throw
+        // ERR_OUT_OF_RANGE due to inverted logic in JSC__isBigIntInInt64Range.
+        describe("bigint parameter binding", () => {
+          test("binds BigInt values into BIGINT columns without ERR_OUT_OF_RANGE", async () => {
+            await using sql = new SQL({ ...getOptions(), bigint: true });
+            const table = "t_" + randomUUIDv7("hex").replaceAll("-", "");
+            await sql`CREATE TEMPORARY TABLE ${sql(table)} (s BIGINT, u BIGINT UNSIGNED)`;
+
+            // These should NOT throw ERR_OUT_OF_RANGE (the bug was that they all did)
+            await sql`INSERT INTO ${sql(table)} (s) VALUES (${100n})`;
+            await sql`INSERT INTO ${sql(table)} (s) VALUES (${0n})`;
+            await sql`INSERT INTO ${sql(table)} (s) VALUES (${-1n})`;
+            await sql`INSERT INTO ${sql(table)} (s) VALUES (${9223372036854775807n})`;
+            await sql`INSERT INTO ${sql(table)} (s) VALUES (${-9223372036854775808n})`;
+            await sql`INSERT INTO ${sql(table)} (u) VALUES (${0n})`;
+            await sql`INSERT INTO ${sql(table)} (u) VALUES (${9223372036854775808n})`;
+            await sql`INSERT INTO ${sql(table)} (u) VALUES (${18446744073709551615n})`;
+
+            // Verify i64 boundary values round-trip correctly as BigInt
+            const s = (await sql`SELECT s FROM ${sql(table)} WHERE s IS NOT NULL ORDER BY s`).map(r => r.s);
+            expect(s).toHaveLength(5);
+            expect(s[0]).toBe(-9223372036854775808n);
+            expect(s[s.length - 1]).toBe(9223372036854775807n);
+
+            // Verify u64 boundary values round-trip correctly
+            const u = (await sql`SELECT u FROM ${sql(table)} WHERE u IS NOT NULL ORDER BY u`).map(r => r.u);
+            expect(u).toHaveLength(3);
+            expect(u[u.length - 1]).toBe(18446744073709551615n);
+          });
+
+          test("throws ERR_OUT_OF_RANGE for BigInt exceeding u64", async () => {
+            await using sql = new SQL({ ...getOptions() });
+            await expect(sql`select ${18446744073709551616n} as x`).rejects.toMatchObject({
+              code: "ERR_OUT_OF_RANGE",
+            });
+          });
+
+          test("throws ERR_OUT_OF_RANGE for BigInt below i64 min", async () => {
+            await using sql = new SQL({ ...getOptions() });
+            await expect(sql`select ${-9223372036854775809n} as x`).rejects.toMatchObject({
+              code: "ERR_OUT_OF_RANGE",
+            });
+          });
         });
 
         test("int is returned as Number", async () => {

@@ -2908,7 +2908,7 @@ pub const Formatter = struct {
                 } else if (value.as(bun.api.ResolveMessage)) |resolve_log| {
                     resolve_log.msg.writeFormat(writer_, enable_ansi_colors) catch {};
                     return;
-                } else if (try JestPrettyFormat.printAsymmetricMatcher(this, Format, &writer, writer_, name_buf, value, enable_ansi_colors)) {
+                } else if (try this.printAsymmetricMatcher(Writer, writer_, &writer, value, enable_ansi_colors)) {
                     return;
                 } else if (jsType != .DOMWrapper) {
                     if (remove_before_recurse) {
@@ -3937,6 +3937,135 @@ pub const Formatter = struct {
         }
     }
 
+    fn printAsymmetricMatcherPromisePrefix(this: *ConsoleObject.Formatter, flags: expect.Expect.Flags, writer: anytype) void {
+        switch (flags.promise) {
+            .resolves => {
+                this.addForNewLine("promise resolved to ".len);
+                writer.writeAll("promise resolved to ");
+            },
+            .rejects => {
+                this.addForNewLine("promise rejected to ".len);
+                writer.writeAll("promise rejected to ");
+            },
+            .none => {},
+        }
+    }
+
+    fn printAsymmetricMatcher(
+        this: *ConsoleObject.Formatter,
+        comptime Writer: type,
+        writer_: Writer,
+        writer: anytype,
+        value: JSValue,
+        comptime enable_ansi_colors: bool,
+    ) bun.JSError!bool {
+        if (value.as(expect.ExpectAnything)) |matcher| {
+            this.printAsymmetricMatcherPromisePrefix(matcher.flags, writer);
+            if (matcher.flags.not) {
+                this.addForNewLine("NotAnything".len);
+                writer.writeAll("NotAnything");
+            } else {
+                this.addForNewLine("Anything".len);
+                writer.writeAll("Anything");
+            }
+        } else if (value.as(expect.ExpectAny)) |matcher| {
+            const constructor_value = expect.ExpectAny.js.constructorValueGetCached(value) orelse return true;
+
+            this.printAsymmetricMatcherPromisePrefix(matcher.flags, writer);
+            if (matcher.flags.not) {
+                this.addForNewLine("NotAny<".len);
+                writer.writeAll("NotAny<");
+            } else {
+                this.addForNewLine("Any<".len);
+                writer.writeAll("Any<");
+            }
+
+            var class_name = ZigString.init(&name_buf);
+            try constructor_value.getClassName(this.globalThis, &class_name);
+            this.addForNewLine(class_name.len);
+            writer.print(comptime Output.prettyFmt("<cyan>{f}<r>", enable_ansi_colors), .{class_name});
+            this.addForNewLine(1);
+            writer.writeAll(">");
+        } else if (value.as(expect.ExpectCloseTo)) |matcher| {
+            const number_value = expect.ExpectCloseTo.js.numberValueGetCached(value) orelse return true;
+            const digits_value = expect.ExpectCloseTo.js.digitsValueGetCached(value) orelse return true;
+
+            const number = number_value.toInt32();
+            const digits = digits_value.toInt32();
+
+            this.printAsymmetricMatcherPromisePrefix(matcher.flags, writer);
+            if (matcher.flags.not) {
+                this.addForNewLine("NumberNotCloseTo".len);
+                writer.writeAll("NumberNotCloseTo");
+            } else {
+                this.addForNewLine("NumberCloseTo ".len);
+                writer.writeAll("NumberCloseTo ");
+            }
+            writer.print("{d} ({d} digit{s})", .{ number, digits, if (digits == 1) "" else "s" });
+        } else if (value.as(expect.ExpectObjectContaining)) |matcher| {
+            const object_value = expect.ExpectObjectContaining.js.objectValueGetCached(value) orelse return true;
+
+            this.printAsymmetricMatcherPromisePrefix(matcher.flags, writer);
+            if (matcher.flags.not) {
+                this.addForNewLine("ObjectNotContaining ".len);
+                writer.writeAll("ObjectNotContaining ");
+            } else {
+                this.addForNewLine("ObjectContaining ".len);
+                writer.writeAll("ObjectContaining ");
+            }
+            try this.printAs(.Object, Writer, writer_, object_value, .Object, enable_ansi_colors);
+        } else if (value.as(expect.ExpectStringContaining)) |matcher| {
+            const substring_value = expect.ExpectStringContaining.js.stringValueGetCached(value) orelse return true;
+
+            this.printAsymmetricMatcherPromisePrefix(matcher.flags, writer);
+            if (matcher.flags.not) {
+                this.addForNewLine("StringNotContaining ".len);
+                writer.writeAll("StringNotContaining ");
+            } else {
+                this.addForNewLine("StringContaining ".len);
+                writer.writeAll("StringContaining ");
+            }
+            try this.printAs(.String, Writer, writer_, substring_value, .String, enable_ansi_colors);
+        } else if (value.as(expect.ExpectStringMatching)) |matcher| {
+            const test_value = expect.ExpectStringMatching.js.testValueGetCached(value) orelse return true;
+
+            this.printAsymmetricMatcherPromisePrefix(matcher.flags, writer);
+            if (matcher.flags.not) {
+                this.addForNewLine("StringNotMatching ".len);
+                writer.writeAll("StringNotMatching ");
+            } else {
+                this.addForNewLine("StringMatching ".len);
+                writer.writeAll("StringMatching ");
+            }
+
+            const original_quote_strings = this.quote_strings;
+            if (test_value.isRegExp()) this.quote_strings = false;
+            try this.printAs(.String, Writer, writer_, test_value, .String, enable_ansi_colors);
+            this.quote_strings = original_quote_strings;
+        } else if (value.as(expect.ExpectCustomAsymmetricMatcher)) |instance| {
+            const printed = instance.customPrint(value, this.globalThis, writer_, true) catch unreachable;
+            if (!printed) {
+                const flags = instance.flags;
+                const args_value = expect.ExpectCustomAsymmetricMatcher.js.capturedArgsGetCached(value) orelse return true;
+                const matcher_fn = expect.ExpectCustomAsymmetricMatcher.js.matcherFnGetCached(value) orelse return true;
+                const matcher_name = try matcher_fn.getName(this.globalThis);
+
+                this.printAsymmetricMatcherPromisePrefix(flags, writer);
+                if (flags.not) {
+                    this.addForNewLine("not ".len);
+                    writer.writeAll("not ");
+                }
+                this.addForNewLine(matcher_name.length() + 1);
+                writer.print("{f}", .{matcher_name});
+                writer.writeAll(" ");
+                try this.printAs(.Array, Writer, writer_, args_value, .Array, enable_ansi_colors);
+            }
+        } else {
+            return false;
+        }
+        return true;
+    }
+
     pub fn format(this: *ConsoleObject.Formatter, result: Tag.Result, comptime Writer: type, writer: *std.Io.Writer, value: JSValue, globalThis: *JSGlobalObject, comptime enable_ansi_colors: bool) bun.JSError!void {
         const prevGlobalThis = this.globalThis;
         defer this.globalThis = prevGlobalThis;
@@ -4193,7 +4322,7 @@ const string = []const u8;
 
 const std = @import("std");
 const CLI = @import("../cli.zig").Command;
-const JestPrettyFormat = @import("./test/pretty_format.zig").JestPrettyFormat;
+const expect = @import("./test/expect.zig");
 
 const bun = @import("bun");
 const Environment = bun.Environment;

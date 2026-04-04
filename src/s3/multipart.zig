@@ -101,6 +101,8 @@ pub const MultiPartUpload = struct {
     currentPartNumber: u16 = 1,
     ref_count: RefCount,
     ended: bool = false,
+    /// true when upload_id was provided by the user (resume mode) — skip rollback on failure
+    is_resumed: bool = false,
 
     options: MultiPartUploadOptions = .{},
     acl: ?ACL = null,
@@ -437,7 +439,7 @@ pub const MultiPartUpload = struct {
             this.state = .finished;
             try this.callback(.{ .failure = _err }, this.callback_context);
 
-            if (old_state == .multipart_completed) {
+            if (old_state == .multipart_completed and !this.is_resumed) {
                 // we are a multipart upload so we need to rollback
                 // will deref after rollback
                 try this.rollbackMultiPartRequest();
@@ -595,6 +597,13 @@ pub const MultiPartUpload = struct {
         }, .{ .upload = @ptrCast(&onRollbackMultiPartRequest) }, this);
     }
     fn enqueuePart(this: *@This(), chunk: []const u8, allocated_size: usize, needs_clone: bool) bun.JSTerminated!bool {
+        if (this.currentPartNumber > 10000) {
+            try this.fail(.{
+                .code = "InvalidArgument",
+                .message = "Cannot write data: partNumber exceeds S3 maximum of 10000; use end() without write() for completion-only resume",
+            });
+            return false;
+        }
         const part = this.getCreatePart(chunk, allocated_size, needs_clone) orelse return false;
 
         if (this.state == .not_started) {
@@ -705,7 +714,8 @@ pub const MultiPartUpload = struct {
 
     pub fn continueStream(this: *@This()) void {
         if (this.state == .wait_stream_check) {
-            this.state = .not_started;
+            // If upload_id is already set (resume), skip directly to multipart_completed
+            this.state = if (this.upload_id.len > 0) .multipart_completed else .not_started;
             if (this.ended) {
                 this.processBuffered(this.partSizeInBytes());
             }

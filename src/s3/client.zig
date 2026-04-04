@@ -272,6 +272,9 @@ pub fn writableStream(
     proxy: ?[]const u8,
     storage_class: ?StorageClass,
     request_payer: bool,
+    resume_upload_id: ?[]const u8,
+    resume_part_number: u16,
+    resume_previous_parts: []const S3CredentialsWithOptions.PreviousPart,
 ) bun.JSError!jsc.JSValue {
     const Wrapper = struct {
         pub fn callback(result: S3UploadResult, sink: *jsc.WebCore.NetworkSink) bun.JSTerminated!void {
@@ -324,6 +327,24 @@ pub fn writableStream(
         .options = options,
         .vm = jsc.VirtualMachine.get(),
     });
+
+    // Set up resume state if an upload ID is provided
+    if (resume_upload_id) |id| {
+        const duped = bun.handleOom(bun.default_allocator.alloc(u8, id.len));
+        @memcpy(duped, id);
+        task.uploadid_buffer = .{ .allocator = bun.default_allocator, .list = .{ .items = duped, .capacity = duped.len } };
+        task.upload_id = duped;
+        task.state = .multipart_completed;
+        task.is_resumed = true;
+        task.currentPartNumber = resume_part_number;
+
+        for (resume_previous_parts) |part| {
+            task.multipart_etags.append(bun.default_allocator, .{
+                .number = part.number,
+                .etag = bun.handleOom(bun.default_allocator.dupe(u8, part.etag)),
+            }) catch |err| bun.handleOom(err);
+        }
+    }
 
     task.poll_ref.ref(task.vm);
 
@@ -461,6 +482,9 @@ pub fn uploadStream(
     request_payer: bool,
     callback: ?*const fn (S3UploadResult, *anyopaque) void,
     callback_context: *anyopaque,
+    resume_upload_id: ?[]const u8,
+    resume_part_number: u16,
+    resume_previous_parts: []const S3CredentialsWithOptions.PreviousPart,
 ) bun.JSError!jsc.JSValue {
     this.ref(); // ref the credentials
     const proxy_url = (proxy orelse "");
@@ -506,6 +530,23 @@ pub fn uploadStream(
         .request_payer = request_payer,
         .vm = jsc.VirtualMachine.get(),
     });
+
+    // Set up resume state if an upload ID is provided
+    if (resume_upload_id) |id| {
+        const duped = bun.handleOom(bun.default_allocator.alloc(u8, id.len));
+        @memcpy(duped, id);
+        task.uploadid_buffer = .{ .allocator = bun.default_allocator, .list = .{ .items = duped, .capacity = duped.len } };
+        task.upload_id = duped;
+        task.is_resumed = true;
+        task.currentPartNumber = resume_part_number;
+
+        for (resume_previous_parts) |part| {
+            task.multipart_etags.append(bun.default_allocator, .{
+                .number = part.number,
+                .etag = bun.handleOom(bun.default_allocator.dupe(u8, part.etag)),
+            }) catch |err| bun.handleOom(err);
+        }
+    }
 
     task.poll_ref.ref(task.vm);
 

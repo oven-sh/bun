@@ -1252,6 +1252,19 @@ pub const RunCommand = struct {
         bun.md.renderWithRenderer(contents, allocator, md_opts, collector.renderer()) catch return;
         if (collector.urls.items.len == 0) return;
 
+        // Only spawn the HTTP worker thread if at least one URL is remote.
+        // A doc with only local images (`![logo](./logo.png)`) would hit
+        // the scheme filter inside the loop and skip everything — no point
+        // paying thread-startup cost for that case.
+        var has_remote = false;
+        for (collector.urls.items) |u| {
+            if (bun.strings.startsWith(u, "http://") or bun.strings.startsWith(u, "https://")) {
+                has_remote = true;
+                break;
+            }
+        }
+        if (!has_remote) return;
+
         const HTTP = bun.http;
         HTTP.HTTPThread.init(&.{});
 

@@ -78,7 +78,7 @@ exports[`bun <file.md> renders multiple links as text + url pairs 1`] = `
 `;
 
 exports[`bun <file.md> renders images as alt text with link 1`] = `
-"\x1B[35m🖼 an image\x1B[0m\x1B[0m
+"\x1B[35m📷 an image\x1B[0m\x1B[0m
 "
 `;
 

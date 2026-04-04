@@ -4320,9 +4320,9 @@ comptime {
 
 const string = []const u8;
 
+const expect = @import("./test/expect.zig");
 const std = @import("std");
 const CLI = @import("../cli.zig").Command;
-const expect = @import("./test/expect.zig");
 
 const bun = @import("bun");
 const Environment = bun.Environment;

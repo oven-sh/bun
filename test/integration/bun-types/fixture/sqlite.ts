@@ -1,4 +1,4 @@
-import { type Changes, Database, constants } from "bun:sqlite";
+import { type Changes, Database, type DatabaseBackup, constants } from "bun:sqlite";
 import { expectType } from "./utilities";
 
 expectType(constants.SQLITE_FCNTL_BEGIN_ATOMIC_WRITE).is<number>();
@@ -50,3 +50,26 @@ insertManyCats([
   // @ts-expect-error - Should fail
   { fail: true },
 ]);
+
+// DatabaseBackup API
+const backupToFile = db.backupTo("backup.db");
+expectType<DatabaseBackup>(backupToFile);
+
+const dest = new Database(":memory:");
+const backupToDb = db.backupTo(dest);
+expectType<DatabaseBackup>(backupToDb);
+
+// @ts-expect-error - Should fail: number is not a valid destination
+db.backupTo(123);
+
+// pageCount and remaining getters
+expectType<number>(backupToDb.pageCount);
+expectType<number>(backupToDb.remaining);
+
+// toJSON
+const jsonResult = backupToDb.toJSON();
+expectType<number>(jsonResult.pageCount);
+expectType<number>(jsonResult.remaining);
+
+const strResult = backupToDb.toString();
+expectType<string>(strResult);

@@ -51,6 +51,9 @@ const constants = {
 
   SQLITE_DESERIALIZE_READONLY: 0x00000004 /* Ok for sqlite3_deserialize() */,
 
+  SQLITE_BUSY: 5,
+  SQLITE_LOCKED: 6,
+
   SQLITE_FCNTL_LOCKSTATE: 1,
   SQLITE_FCNTL_GET_LOCKPROXYFILE: 2,
   SQLITE_FCNTL_SET_LOCKPROXYFILE: 3,
@@ -122,6 +125,16 @@ interface CppSQL {
   fcntl(handle: TODO, ...args: TODO[]): TODO;
   close(handle: TODO, throwOnError: boolean): void;
   setCustomSQLite(path: string): void;
+  backupInit(
+    sourceHandle: TODO,
+    dest: string | TODO,
+    finalizationTarget: TODO,
+    sourceSchema?: string,
+    destSchema?: string,
+  ): TODO;
+  backupStep(backupHandle: TODO, pageCount: number): false | { totalPages: number; remainingPages: number };
+  backupFinish(backupHandle: TODO): boolean;
+  backupDispose(backupHandle: TODO): void;
 }
 
 let SQL: CppSQL;
@@ -340,6 +353,20 @@ class Statement {
   }
 }
 
+// Prototype for the result object returned by backupTo().
+// #26884 replaces this with the full DatabaseBackup class (step/finish/abort).
+const DatabaseBackupProto = {
+  get [toStringTag]() {
+    return "DatabaseBackup";
+  },
+  toJSON(this: { pageCount: number; remaining: number }) {
+    return { finished: true, success: true, pageCount: this.pageCount, remaining: 0 };
+  },
+  toString() {
+    return "[DatabaseBackup finished=true success=true]";
+  },
+};
+
 const cachedCount = Symbol.for("Bun.Database.cache.count");
 
 class Database implements SqliteTypes.Database {
@@ -362,6 +389,7 @@ class Database implements SqliteTypes.Database {
 
           if (options.readonly) {
             deserializeFlags |= constants.SQLITE_DESERIALIZE_READONLY;
+            this.#isReadonly = true;
           }
         }
 
@@ -411,6 +439,8 @@ class Database implements SqliteTypes.Database {
       flags = options;
     }
 
+    this.#isReadonly = (flags & constants.SQLITE_OPEN_READONLY) !== 0;
+
     const anonymous = filename === "" || filename === ":memory:";
     if (anonymous && (flags & constants.SQLITE_OPEN_READONLY) !== 0) {
       throw new Error("Cannot open an anonymous database in read-only mode.");
@@ -431,6 +461,7 @@ class Database implements SqliteTypes.Database {
   #cachedQueriesValues: Statement[] = [];
   filename;
   #hasClosed = false;
+  #isReadonly = false;
   get handle() {
     return this.#handle;
   }
@@ -449,6 +480,37 @@ class Database implements SqliteTypes.Database {
 
   serialize(optionalName?: string) {
     return SQL.serialize(this.#handle, optionalName || "main");
+  }
+
+  backupTo(destination: string | Database) {
+    if (this.#hasClosed) {
+      throw new Error("Cannot backup a closed database");
+    }
+
+    let dest;
+    if (destination instanceof Database) {
+      if (destination === this) {
+        throw new Error("Cannot backup a database to itself");
+      }
+      if (destination.#hasClosed) {
+        throw new Error("Cannot backup to a closed database");
+      }
+      if (destination.#isReadonly) {
+        throw new Error("Cannot backup to a readonly database");
+      }
+      dest = destination.#handle;
+    } else if (typeof destination === "string") {
+      dest = destination;
+    } else {
+      throw new TypeError(`Expected 'destination' to be a string or Database, got '${typeof destination}'`);
+    }
+
+    if (!SQL) initializeSQL();
+    const pageCount = SQL.backupTo(this.#handle, dest);
+    const result = Object.create(DatabaseBackupProto);
+    result.pageCount = pageCount;
+    result.remaining = 0;
+    return result;
   }
 
   static #deserialize(serialized: NodeJS.TypedArray | ArrayBufferLike, openFlags: number, deserializeFlags: number) {
@@ -698,6 +760,7 @@ class SQLiteError extends Error {
 export default {
   __esModule: true,
   Database,
+  DatabaseBackup: DatabaseBackupProto,
   Statement,
   constants,
   default: Database,

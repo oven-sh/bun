@@ -95,6 +95,12 @@ typedef int (*lazy_sqlite3_stmt_busy_type)(sqlite3_stmt* pStmt);
 typedef int (*lazy_sqlite3_compileoption_used_type)(const char* zOptName);
 typedef int64_t (*lazy_sqlite3_last_insert_rowid_type)(sqlite3* db);
 
+typedef sqlite3_backup* (*lazy_sqlite3_backup_init_type)(sqlite3* pDest, const char* zDestName, sqlite3* pSource, const char* zSourceName);
+typedef int (*lazy_sqlite3_backup_step_type)(sqlite3_backup* p, int nPage);
+typedef int (*lazy_sqlite3_backup_finish_type)(sqlite3_backup* p);
+typedef int (*lazy_sqlite3_backup_remaining_type)(sqlite3_backup* p);
+typedef int (*lazy_sqlite3_backup_pagecount_type)(sqlite3_backup* p);
+
 static lazy_sqlite3_bind_blob_type lazy_sqlite3_bind_blob;
 static lazy_sqlite3_bind_double_type lazy_sqlite3_bind_double;
 static lazy_sqlite3_bind_int_type lazy_sqlite3_bind_int;
@@ -147,6 +153,11 @@ static lazy_sqlite3_memory_used_type lazy_sqlite3_memory_used;
 static lazy_sqlite3_bind_parameter_name_type lazy_sqlite3_bind_parameter_name;
 static lazy_sqlite3_total_changes_type lazy_sqlite3_total_changes;
 static lazy_sqlite3_last_insert_rowid_type lazy_sqlite3_last_insert_rowid;
+static lazy_sqlite3_backup_init_type lazy_sqlite3_backup_init;
+static lazy_sqlite3_backup_step_type lazy_sqlite3_backup_step;
+static lazy_sqlite3_backup_finish_type lazy_sqlite3_backup_finish;
+static lazy_sqlite3_backup_remaining_type lazy_sqlite3_backup_remaining;
+static lazy_sqlite3_backup_pagecount_type lazy_sqlite3_backup_pagecount;
 
 #define sqlite3_bind_blob lazy_sqlite3_bind_blob
 #define sqlite3_bind_double lazy_sqlite3_bind_double
@@ -199,6 +210,11 @@ static lazy_sqlite3_last_insert_rowid_type lazy_sqlite3_last_insert_rowid;
 #define sqlite3_bind_parameter_name lazy_sqlite3_bind_parameter_name
 #define sqlite3_total_changes lazy_sqlite3_total_changes
 #define sqlite3_last_insert_rowid lazy_sqlite3_last_insert_rowid
+#define sqlite3_backup_init lazy_sqlite3_backup_init
+#define sqlite3_backup_step lazy_sqlite3_backup_step
+#define sqlite3_backup_finish lazy_sqlite3_backup_finish
+#define sqlite3_backup_remaining lazy_sqlite3_backup_remaining
+#define sqlite3_backup_pagecount lazy_sqlite3_backup_pagecount
 
 #if !OS(WINDOWS)
 #define HMODULE void*
@@ -285,6 +301,11 @@ static int lazyLoadSQLite()
     lazy_sqlite3_bind_parameter_name = (lazy_sqlite3_bind_parameter_name_type)dlsym(sqlite3_handle, "sqlite3_bind_parameter_name");
     lazy_sqlite3_total_changes = (lazy_sqlite3_total_changes_type)dlsym(sqlite3_handle, "sqlite3_total_changes");
     lazy_sqlite3_last_insert_rowid = (lazy_sqlite3_last_insert_rowid_type)dlsym(sqlite3_handle, "sqlite3_last_insert_rowid");
+    lazy_sqlite3_backup_init = (lazy_sqlite3_backup_init_type)dlsym(sqlite3_handle, "sqlite3_backup_init");
+    lazy_sqlite3_backup_step = (lazy_sqlite3_backup_step_type)dlsym(sqlite3_handle, "sqlite3_backup_step");
+    lazy_sqlite3_backup_finish = (lazy_sqlite3_backup_finish_type)dlsym(sqlite3_handle, "sqlite3_backup_finish");
+    lazy_sqlite3_backup_remaining = (lazy_sqlite3_backup_remaining_type)dlsym(sqlite3_handle, "sqlite3_backup_remaining");
+    lazy_sqlite3_backup_pagecount = (lazy_sqlite3_backup_pagecount_type)dlsym(sqlite3_handle, "sqlite3_backup_pagecount");
 
     if (!lazy_sqlite3_extended_result_codes) {
         lazy_sqlite3_extended_result_codes = [](sqlite3*, int) -> int {

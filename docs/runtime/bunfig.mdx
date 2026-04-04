@@ -128,7 +128,7 @@ This mirrors TypeScript's `customConditions` in `tsconfig.json`. A common use ca
 }
 ```
 
-Conditions from bunfig.toml and the CLI `--conditions` flag are combined — passing `--conditions foo` adds `foo` to the conditions set by bunfig, it does not replace them.
+Conditions from bunfig.toml and the CLI `--conditions` flag are combined — passing `--conditions foo` adds `foo` to the conditions set by bunfig, it does not replace them. Likewise, `resolve.conditions` from a global bunfig (`~/.bunfig.toml`) and a project bunfig are merged together, not overridden.
 
 ### `telemetry`
 

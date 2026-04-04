@@ -22,6 +22,7 @@
 #include "BunClientData.h"
 #include "CallSite.h"
 #include "ErrorStackTrace.h"
+#include "JSDOMException.h"
 #include "headers-handwritten.h"
 
 using namespace JSC;
@@ -379,6 +380,9 @@ static String computeErrorInfoWithoutPrepareStackTrace(
             RETURN_IF_EXCEPTION(scope, {});
             message = instance->sanitizedMessageString(lexicalGlobalObject);
             RETURN_IF_EXCEPTION(scope, {});
+        } else if (auto* domException = jsDynamicCast<WebCore::JSDOMException*>(errorInstance)) {
+            name = domException->wrapped().name();
+            message = domException->wrapped().message();
         }
     }
 

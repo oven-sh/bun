@@ -46,6 +46,10 @@
 #include <wtf/PointerPreparations.h>
 #include <wtf/URL.h>
 
+#include "FormatStackTraceForJS.h"
+#include "ZigGlobalObject.h"
+#include <JavaScriptCore/Interpreter.h>
+
 namespace WebCore {
 using namespace JSC;
 
@@ -119,6 +123,34 @@ static const HashTableValue JSDOMExceptionConstructorTableValues[] = {
     { "INVALID_NODE_TYPE_ERR"_s, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::ConstantInteger, NoIntrinsic, { HashTableValue::ConstantType, 24 } },
     { "DATA_CLONE_ERR"_s, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::ConstantInteger, NoIntrinsic, { HashTableValue::ConstantType, 25 } },
 };
+
+static void captureStackTraceForDOMException(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSObject* errorObject)
+{
+    if (!vm.topCallFrame)
+        return;
+
+    auto* zigGlobalObject = jsDynamicCast<Zig::GlobalObject*>(lexicalGlobalObject);
+    if (!zigGlobalObject)
+        zigGlobalObject = ::defaultGlobalObject(lexicalGlobalObject);
+
+    size_t stackTraceLimit = zigGlobalObject->stackTraceLimit().value();
+    if (stackTraceLimit == 0)
+        stackTraceLimit = Bun::DEFAULT_ERROR_STACK_TRACE_LIMIT;
+
+    WTF::Vector<JSC::StackFrame> stackTrace;
+    vm.interpreter.getStackTrace(errorObject, stackTrace, 0, stackTraceLimit);
+
+    if (stackTrace.isEmpty())
+        return;
+
+    unsigned int line = 0;
+    unsigned int column = 0;
+    String sourceURL;
+    JSValue result = Bun::computeErrorInfoWrapperToJSValue(vm, stackTrace, line, column, sourceURL, errorObject, nullptr);
+
+    if (result)
+        errorObject->putDirect(vm, vm.propertyNames->stack, result, 0);
+}
 
 template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSDOMExceptionDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
@@ -362,26 +394,12 @@ void JSDOMExceptionOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* conte
 // #endif
 // #endif
 
-JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<DOMException>&& impl)
+JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, Ref<DOMException>&& impl)
 {
-
-    // if constexpr (std::is_polymorphic_v<DOMException>) {
-    // #if ENABLE(BINDING_INTEGRITY)
-    //         // const void* actualVTablePointer = getVTablePointer(impl.ptr());
-    // #if PLATFORM(WIN)
-    //         void* expectedVTablePointer = __identifier("??_7DOMException@WebCore@@6B@");
-    // #else
-    //         // void* expectedVTablePointer = &_ZTVN7WebCore12DOMExceptionE[2];
-    // #endif
-
-    //         // If you hit this assertion you either have a use after free bug, or
-    //         // DOMException has subclasses. If DOMException has subclasses that get passed
-    //         // to toJS() we currently require DOMException you to opt out of binding hardening
-    //         // by adding the SkipVTableValidation attribute to the interface IDL definition
-    //         // RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
-    // #endif
-    // }
-    return createWrapper<DOMException>(globalObject, WTF::move(impl));
+    auto* wrapper = createWrapper<DOMException>(globalObject, WTF::move(impl));
+    auto& vm = globalObject->vm();
+    captureStackTraceForDOMException(vm, lexicalGlobalObject ? lexicalGlobalObject : globalObject, wrapper);
+    return wrapper;
 }
 
 JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, DOMException& impl)

@@ -135,11 +135,19 @@ pub const AnsiRenderer = struct {
         self.image_alt.deinit(self.allocator);
         self.code_buf.deinit(self.allocator);
         self.heading_buf.deinit(self.allocator);
+        // Normally freed by leaveSpan, but rendering can be interrupted
+        // mid-span by an OOM — free defensively here.
+        if (self.link_href) |s| self.allocator.free(s);
+        if (self.image_src) |s| self.allocator.free(s);
+        if (self.image_title) |s| self.allocator.free(s);
         for (self.table_rows.items) |row| {
             for (row.cells) |cell| self.allocator.free(cell.content);
             self.allocator.free(row.cells);
         }
         self.table_rows.deinit(self.allocator);
+        // Same for orphaned cells left in table_cells when interrupted
+        // mid-row.
+        for (self.table_cells.items) |cell| self.allocator.free(cell.content);
         self.table_cells.deinit(self.allocator);
         self.table_cell_buf.deinit(self.allocator);
     }
@@ -497,12 +505,18 @@ pub const AnsiRenderer = struct {
             },
             .a => {
                 if (self.link_depth == 1) {
+                    // Decrement BEFORE reapplyStyles so it doesn't re-emit
+                    // blue+underline for text after the link.
+                    self.link_depth = 0;
+                    const had_href = self.link_href != null;
                     // Underline off, default fg; reapply outer styles so a
                     // link inside **bold** doesn't drop the bold.
                     self.writeStyled("\x1b[24m\x1b[39m", "");
                     self.reapplyStyles();
                     if (self.theme.colors and self.theme.hyperlinks) {
-                        self.writeRawNoColor("\x1b]8;;\x1b\\");
+                        // Only emit the OSC 8 terminator if we emitted the
+                        // opening sequence (which required link_href).
+                        if (had_href) self.writeRawNoColor("\x1b]8;;\x1b\\");
                     } else if (self.link_href) |href| if (href.len > 0) {
                         // Show URL in parens for non-hyperlink terminals
                         self.writeStyled(color(.dim), " (");
@@ -513,8 +527,9 @@ pub const AnsiRenderer = struct {
                     };
                     if (self.link_href) |href| self.allocator.free(href);
                     self.link_href = null;
+                } else if (self.link_depth > 0) {
+                    self.link_depth -= 1;
                 }
-                if (self.link_depth > 0) self.link_depth -= 1;
             },
             .img => {
                 if (self.image_depth == 1) {
@@ -1065,6 +1080,7 @@ pub const AnsiRenderer = struct {
         if (self.theme.colors) self.out.write("\x1b[0m");
         self.out.writeByte('\n');
         self.last_was_newline = true;
+        self.col = 0;
 
         // Free rows
         for (self.table_rows.items) |row| {

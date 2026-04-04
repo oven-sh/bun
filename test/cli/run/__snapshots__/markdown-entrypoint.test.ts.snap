@@ -63,12 +63,12 @@ exports[`bun <file.md> renders fenced code block without language 1`] = `
 `;
 
 exports[`bun <file.md> renders link text with url fallback when no TTY 1`] = `
-"Visit \x1B[34m\x1B[4mBun\x1B[24m\x1B[39m\x1B[34m\x1B[4m\x1B[2m (https://bun.com\x1B[2m)\x1B[39m\x1B[22m\x1B[34m\x1B[4m today.\x1B[0m
+"Visit \x1B[34m\x1B[4mBun\x1B[24m\x1B[39m\x1B[2m (https://bun.com\x1B[2m)\x1B[39m\x1B[22m today.\x1B[0m
 "
 `;
 
 exports[`bun <file.md> renders multiple links as text + url pairs 1`] = `
-"see \x1B[34m\x1B[4mBun\x1B[24m\x1B[39m\x1B[34m\x1B[4m\x1B[2m (https://bun.com\x1B[2m)\x1B[39m\x1B[22m\x1B[34m\x1B[4m\x1B[0m
+"see \x1B[34m\x1B[4mBun\x1B[24m\x1B[39m\x1B[2m (https://bun.com\x1B[2m)\x1B[39m\x1B[22m\x1B[0m
 "
 `;
 
@@ -128,7 +128,7 @@ exports[`bun <file.md> renders inline formatting inside table cells 1`] = `
 \x1B[2m│\x1B[0m \x1B[1mName \x1B[0m \x1B[2m│\x1B[0m \x1B[1mStyle                 \x1B[0m \x1B[2m│\x1B[0m
 \x1B[2m├───────┼────────────────────────┤\x1B[0m
 \x1B[2m│\x1B[0m \x1B[1mAlice\x1B[22m \x1B[2m│\x1B[0m \x1B[3meditor\x1B[23m                 \x1B[2m│\x1B[0m
-\x1B[2m│\x1B[0m \x1B[48;5;236m\x1B[38;5;215mbob\x1B[39m\x1B[49m   \x1B[2m│\x1B[0m \x1B[34m\x1B[4mlink\x1B[24m\x1B[39m\x1B[34m\x1B[4m\x1B[2m (https://bun.com\x1B[2m)\x1B[39m\x1B[22m\x1B[34m\x1B[4m \x1B[2m│\x1B[0m
+\x1B[2m│\x1B[0m \x1B[48;5;236m\x1B[38;5;215mbob\x1B[39m\x1B[49m   \x1B[2m│\x1B[0m \x1B[34m\x1B[4mlink\x1B[24m\x1B[39m\x1B[2m (https://bun.com\x1B[2m)\x1B[39m\x1B[22m \x1B[2m│\x1B[0m
 \x1B[2m└───────┴────────────────────────┘\x1B[0m
 "
 `;
@@ -145,7 +145,7 @@ exports[`bun <file.md> nested code span inside bold keeps outer bold 1`] = `
 `;
 
 exports[`bun <file.md> renders mixed inline styles with autolinks 1`] = `
-"Check \x1B[1m\x1B[34m\x1B[4mhttps://bun.com\x1B[24m\x1B[39m\x1B[1m\x1B[34m\x1B[4m\x1B[2m (https://bun.com\x1B[2m)\x1B[39m\x1B[22m\x1B[1m\x1B[34m\x1B[4m\x1B[22m and \x1B[34m\x1B[4mme@example.com\x1B[24m\x1B[39m\x1B[34m\x1B[4m\x1B[2m (mailto:me@example.com\x1B[2m)\x1B[39m\x1B[22m\x1B[34m\x1B[4m
+"Check \x1B[1m\x1B[34m\x1B[4mhttps://bun.com\x1B[24m\x1B[39m\x1B[1m\x1B[2m (https://bun.com\x1B[2m)\x1B[39m\x1B[22m\x1B[1m\x1B[22m and \x1B[34m\x1B[4mme@example.com\x1B[24m\x1B[39m\x1B[2m (mailto:me@example.com\x1B[2m)\x1B[39m\x1B[22m
 !\x1B[0m
 "
 `;

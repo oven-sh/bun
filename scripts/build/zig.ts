@@ -132,10 +132,7 @@ function zigPath(cfg: Config): string {
 }
 
 function zigExecutable(cfg: Config): string {
-  // Host suffix — zig runs on the host. cfg.exeSuffix is target
-  // (windows target → .exe), wrong for cross-compile from linux.
-  const suffix = cfg.host.os === "windows" ? ".exe" : "";
-  return resolve(zigPath(cfg), "zig" + suffix);
+  return resolve(zigPath(cfg), "zig" + cfg.host.exeSuffix);
 }
 
 /**

@@ -1742,7 +1742,7 @@ __attribute__((callback (corker, ctx)))
     }
   }
 
-  void uws_res_prepare_for_sendfile(int ssl, uws_res_r res)
+  size_t uws_res_prepare_for_sendfile(int ssl, uws_res_r res)
   {
     if (ssl)
     {
@@ -1753,6 +1753,7 @@ __attribute__((callback (corker, ctx)))
       ptr[0] = '\r';
       ptr[1] = '\n';
       uwsRes->uncork();
+      return uwsRes->getBufferedAmount();
     }
     else
     {
@@ -1763,6 +1764,7 @@ __attribute__((callback (corker, ctx)))
       ptr[0] = '\r';
       ptr[1] = '\n';
       uwsRes->uncork();
+      return uwsRes->getBufferedAmount();
     }
   }
 

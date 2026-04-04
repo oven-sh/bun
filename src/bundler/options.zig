@@ -1460,8 +1460,9 @@ pub fn definesFromTransformOptions(
             quoted_node_env,
         );
 
-        // Automatically set `process.browser` to `true` for browsers and false for node+js
-        // This enables some extra dead code elimination
+        // Automatically set `process.browser` to `true` for browsers and `false` for
+        // the node target. Bun runtime targets leave `process.browser` undefined to
+        // match Node.js. This enables some extra dead code elimination.
         if (target.processBrowserDefineValue()) |value| {
             _ = try user_defines.getOrPutValue(DefaultUserDefines.ProcessBrowserDefine.Key, value);
         }

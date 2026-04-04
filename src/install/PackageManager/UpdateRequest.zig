@@ -188,8 +188,14 @@ fn parseWithError(
                 log,
                 pm,
             )) |ver| {
-                alias = null;
-                version = ver;
+                // Only strip the alias when the full input also parses as a
+                // git/github URL. Otherwise the initial alias was legitimate
+                // (e.g. `alias@git@host:path` where `alias` is a real alias
+                // and `git@host:path` is the SCP URL).
+                if (ver.tag == .git or ver.tag == .github) {
+                    alias = null;
+                    version = ver;
+                }
             }
         }
         if (switch (version.tag) {

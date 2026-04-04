@@ -104,7 +104,7 @@ function getArrayBufferOrView(buffer, name, encoding?) {
   if (buffer instanceof KeyObject) {
     if (buffer.type !== "secret") {
       const error = new TypeError(
-        `ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Invalid key object type ${key.type}, expected secret`,
+        `ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Invalid key object type ${buffer.type}, expected secret`,
       );
       error.code = "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE";
       throw error;

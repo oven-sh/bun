@@ -1255,24 +1255,28 @@ pub const AnsiRenderer = struct {
         // remains clickable below the image, and still write the alt
         // text as a visible caption for non-Kitty terminals that ignore
         // the APC sequence.
-        var kitty_sent = false;
+        // Try to render inline via Kitty Graphics. If the image is
+        // actually displayed, we're done — the image itself is the
+        // content, no caption/alt text needed.
         if (self.theme.colors and self.theme.kitty_graphics and has_src) {
             if (resolveLocalImagePath(src.?, self.allocator)) |abs_path| {
                 defer self.allocator.free(abs_path);
                 self.emitKittyImage(abs_path);
-                kitty_sent = true;
+                return;
             }
         }
 
+        // Fallback: image can't be rendered inline. Show the alt text
+        // (or title, or "(image)") wrapped in the OSC 8 hyperlink so
+        // the src URL stays clickable. A magenta 🖼 marker makes it
+        // obvious this is a missing/unrendered image.
         if (self.theme.colors and self.theme.hyperlinks and has_src) {
             self.writeRawNoColor("\x1b]8;;");
             self.writeRawNoColor(src.?);
             self.writeRawNoColor("\x1b\\");
         }
-        const img_marker = if (kitty_sent) "" else if (self.theme.colors) "🖼 " else "[img] ";
-        if (img_marker.len > 0) {
-            self.writeStyled(color(.magenta), img_marker);
-        }
+        const img_marker = if (self.theme.colors) "🖼 " else "[img] ";
+        self.writeStyled(color(.magenta), img_marker);
         if (alt.len > 0) {
             self.writeStyled("", alt);
         } else if (self.image_title) |title| if (title.len > 0) {
@@ -1523,12 +1527,18 @@ fn probeKittyGraphics() bool {
 /// `file://` URIs and relative paths (resolved against the CWD). The
 /// returned slice is owned by the caller.
 fn resolveLocalImagePath(src: []const u8, allocator: Allocator) ?[]u8 {
-    // Reject clearly remote schemes. `data:` is intentionally allowed to
-    // fall through — callers that know how to decode data URIs can.
+    // Reject remote schemes. A renderer-level prefetch pass can feed
+    // http(s) URLs into the renderer via a lookup table as local paths.
     if (bun.strings.startsWith(src, "http://") or
         bun.strings.startsWith(src, "https://"))
     {
         return null;
+    }
+
+    // data: URIs — decode the base64 payload and write it to a
+    // temp file so Kitty's t=f (file path) transmission can load it.
+    if (bun.strings.startsWith(src, "data:")) {
+        return decodeDataUrlToTempFile(src, allocator);
     }
 
     // Strip file:// prefix + optional `localhost` authority, then
@@ -1569,6 +1579,59 @@ fn resolveLocalImagePath(src: []const u8, allocator: Allocator) ?[]u8 {
 // ========================================
 // Public entry point
 // ========================================
+
+/// Decode a `data:` URI's base64 payload and write it to a uniquely-
+/// named temp file. Returns the temp file path (owned by caller) so
+/// Kitty's `t=f` (file path) transmission can display it. Falls back
+/// to null on any parse/decode/write error.
+fn decodeDataUrlToTempFile(src: []const u8, allocator: Allocator) ?[]u8 {
+    // Format: `data:<mediatype>[;base64],<data>` — only base64 payloads
+    // support binary image bytes.
+    const comma = bun.strings.indexOfChar(src, ',') orelse return null;
+    const header = src[0..comma];
+    const payload = src[comma + 1 ..];
+    if (!bun.strings.endsWith(header, ";base64")) return null;
+
+    const decoded = bun.base64.decodeAlloc(allocator, payload) catch return null;
+    defer allocator.free(decoded);
+
+    // Pick a short unique filename inside the OS tmpdir so Kitty can
+    // `t=f` open it. The extension is best-effort from the mediatype —
+    // Kitty auto-detects from magic bytes either way.
+    const ext: []const u8 = if (bun.strings.contains(header, "image/png")) ".png" else if (bun.strings.contains(header, "image/jpeg") or bun.strings.contains(header, "image/jpg")) ".jpg" else if (bun.strings.contains(header, "image/gif")) ".gif" else if (bun.strings.contains(header, "image/webp")) ".webp" else ".bin";
+    var name_buf: [64]u8 = undefined;
+    const name = std.fmt.bufPrint(&name_buf, "bun-md-{x}{s}", .{ bun.fastRandom(), ext }) catch return null;
+    const tmpdir = bun.fs.FileSystem.RealFS.tmpdirPath();
+    const path = std.fmt.allocPrint(allocator, "{s}/{s}", .{ tmpdir, name }) catch return null;
+
+    // Write the bytes. Any error → free the path + drop the fd.
+    // Function returns ?[]u8 (not error union), so errdefer is dead.
+    const fd = switch (bun.sys.openA(path, bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC, 0o600)) {
+        .result => |f| f,
+        .err => {
+            allocator.free(path);
+            return null;
+        },
+    };
+    defer fd.close();
+    var written: usize = 0;
+    while (written < decoded.len) {
+        switch (bun.sys.write(fd, decoded[written..])) {
+            .result => |n| {
+                if (n == 0) {
+                    allocator.free(path);
+                    return null;
+                }
+                written += n;
+            },
+            .err => {
+                allocator.free(path);
+                return null;
+            },
+        }
+    }
+    return path;
+}
 
 /// Render markdown text to ANSI. Caller owns the returned bytes.
 pub fn renderToAnsi(

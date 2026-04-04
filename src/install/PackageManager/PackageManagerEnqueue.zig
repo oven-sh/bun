@@ -1548,7 +1548,7 @@ fn getOrPutResolvedPackage(
                 .id => |existing_id| {
                     if (existing_id < resolutions.len) {
                         const existing_resolution = resolutions[existing_id];
-                        if (resolutionSatisfiesDependency(this, existing_resolution, version)) {
+                        if (resolutionSatisfiesDependency(this, existing_resolution, version, true)) {
                             successFn(this, dependency_id, existing_id);
                             return .{
                                 // we must fetch it from the packages array again, incase the package array mutates the value in the `successFn`
@@ -1582,7 +1582,7 @@ fn getOrPutResolvedPackage(
                     for (list.items) |existing_id| {
                         if (existing_id < resolutions.len) {
                             const existing_resolution = resolutions[existing_id];
-                            if (resolutionSatisfiesDependency(this, existing_resolution, version)) {
+                            if (resolutionSatisfiesDependency(this, existing_resolution, version, true)) {
                                 successFn(this, dependency_id, existing_id);
                                 return .{
                                     .package = this.lockfile.packages.get(existing_id),
@@ -1886,10 +1886,13 @@ fn getOrPutResolvedPackage(
     }
 }
 
-fn resolutionSatisfiesDependency(this: *PackageManager, resolution: Resolution, dependency: Dependency.Version) bool {
+fn resolutionSatisfiesDependency(this: *PackageManager, resolution: Resolution, dependency: Dependency.Version, comptime include_prerelease: bool) bool {
     const buf = this.lockfile.buffers.string_bytes.items;
     if (resolution.tag == .npm and dependency.tag == .npm) {
-        return dependency.value.npm.version.satisfies(resolution.value.npm.version, buf, buf);
+        return if (include_prerelease)
+            dependency.value.npm.version.satisfiesIncludingPrereleases(resolution.value.npm.version, buf, buf)
+        else
+            dependency.value.npm.version.satisfies(resolution.value.npm.version, buf, buf);
     }
 
     if (resolution.tag == .git and dependency.tag == .git) {

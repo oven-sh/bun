@@ -77,7 +77,7 @@ pub const List = struct {
         );
     }
 
-    pub fn satisfiesPre(list: *const List, version: Version, list_buf: string, version_buf: string) bool {
+    pub fn satisfiesPre(list: *const List, version: Version, list_buf: string, version_buf: string, comptime include_prerelease: bool) bool {
         if (comptime Environment.allow_assert) {
             assert(version.tag.hasPre());
         }
@@ -87,16 +87,22 @@ pub const List = struct {
         // - if it does, also needs to match major, minor, patch with at least one of the other versions
         //   with a prerelease
         // https://github.com/npm/node-semver/blob/ac9b35769ab0ddfefd5a3af4a3ecaf3da2012352/classes/range.js#L505
+        //
+        // When include_prerelease is true (used for peer dep validation, following yarn v1's
+        // satisfiesWithPrereleases), the pre_matched gate is skipped. This allows prerelease
+        // versions like 56.0.0-canary to satisfy ranges like >=14.0.4 where no comparator
+        // has a prerelease on the same major.minor.patch.
         var pre_matched = false;
         return (list.head.satisfiesPre(
             version,
             list_buf,
             version_buf,
             &pre_matched,
-        ) and pre_matched) or (list.next orelse return false).satisfiesPre(
+        ) and (include_prerelease or pre_matched)) or (list.next orelse return false).satisfiesPre(
             version,
             list_buf,
             version_buf,
+            include_prerelease,
         );
     }
 
@@ -295,7 +301,22 @@ pub const Group = struct {
         version_buf: string,
     ) bool {
         return if (version.tag.hasPre())
-            group.head.satisfiesPre(version, group_buf, version_buf)
+            group.head.satisfiesPre(version, group_buf, version_buf, false)
+        else
+            group.head.satisfies(version, group_buf, version_buf);
+    }
+
+    /// Like satisfies, but prerelease versions satisfy ranges even when no
+    /// comparator has a prerelease on the same major.minor.patch. Used for
+    /// peer dependency validation (matches yarn v1 behavior).
+    pub inline fn satisfiesIncludingPrereleases(
+        group: *const Group,
+        version: Version,
+        group_buf: string,
+        version_buf: string,
+    ) bool {
+        return if (version.tag.hasPre())
+            group.head.satisfiesPre(version, group_buf, version_buf, true)
         else
             group.head.satisfies(version, group_buf, version_buf);
     }

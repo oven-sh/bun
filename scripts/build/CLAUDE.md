@@ -49,7 +49,7 @@ rule cc
   depfile = $out.d
   deps = gcc
 
-build obj/src/foo.c.o: cc ../../src/foo.c | codegen/generated.h || ../../vendor/zstd/.ref
+build obj/src/foo.c.o: cc ../../src/foo.c | deps/zstd/libzstd.a || codegen/generated.h
   cflags = -O2 -I...
 ```
 
@@ -74,12 +74,12 @@ All rules and edges are written to `build/<profile>/build.ninja` by `n.write()` 
 Edge dependency types:
 
 - **explicit inputs** (`$in`) — listed on the build line, passed to the command
-- **implicit inputs** (`| foo.h`) — tracked for rebuild but not in `$in`. Use for files the command reads that aren't on its command line (generated headers, PCH)
-- **order-only inputs** (`|| stamp`) — must exist before this edge runs, but mtime doesn't trigger rebuild. Use for "X must be fetched/generated first, but the compiler's `.d` depfile will track which files I actually read"
+- **implicit inputs** (`| foo`) — tracked for rebuild but not in `$in`. Use for the PCH, dep lib outputs (invalidation signal for their headers), or a per-file generated header this source is known to read
+- **order-only inputs** (`|| stamp`) — must exist before this edge runs, but mtime doesn't trigger rebuild. Use for bulk codegen headers: "must be generated first, but the compiler's `.d` depfile will track which ones I actually read"
 
 **`restat = 1`** — after the command runs, re-stat outputs; if mtime didn't change, prune downstream. Critical for idempotent steps (fetch no-op, codegen unchanged).
 
-**`depfile`** — compiler writes `foo.o.d` listing every `#include`d header. Ninja reads it on the next build to know which headers this `.o` depends on. This is why cxx uses order-only for dep outputs: the depfile gives exact per-file header deps on build 2+; order-only just ensures headers exist for build 1.
+**`depfile`** — compiler writes `foo.o.d` listing every `#include`d header. Ninja reads it on the next build to know which headers this `.o` depends on. Codegen headers are order-only for this reason: they're declared outputs with restat, the depfile gives exact per-file header deps on build 2+, and order-only just ensures they exist for build 1. Dep outputs (`lib*.a`) are a different story — PCH, cc, and no-PCH cxx use them as _implicit_ deps, because local sub-builds (e.g. WebKit) rewrite forwarding headers as undeclared side effects and order-only would lag one build behind (see Gotchas).
 
 ## Iterating on the build system
 
@@ -224,9 +224,7 @@ Why not auto-register in emit functions? Some rules are shared (`dep_configure` 
 
 **Dep order in `allDeps` matters.** `fetchDeps: ["X"]` means X must come first (its `.ref` stamp node must exist). Link order matters too: static linking resolves left→right, providers after users.
 
-**PCH needs implicit dep on `depOutputs`**, not order-only. Local WebKit regenerates headers mid-build; order-only would let ninja think PCH is fresh while headers change under it → "file modified since PCH was built".
-
-**cxx needs order-only dep on `depOutputs`**, not implicit. Depfile tracks actual header deps. Implicit would recompile every `.c` when `libJavaScriptCore.a` changes — but `.c` files don't include JSC headers.
+**PCH, cc, and no-PCH cxx need implicit dep on `depOutputs`**, not order-only. Local WebKit's sub-build rewrites forwarding headers as an undeclared side effect (only `lib*.a` are declared outputs). Depfiles record those headers, but ninja stats them before the sub-build runs — order-only lags one build. The lib itself is the invalidation signal. Codegen headers stay order-only: they're declared outputs with restat, so depfile tracking is exact.
 
 **Windows `ReleaseFast` → `ReleaseSafe`** in `zig.ts`. Load-bearing since Bun 1.1; caught more crashes. Don't "fix" it.
 

@@ -1416,14 +1416,15 @@ pub const RunCommand = struct {
         var base_buf: bun.PathBuffer = undefined;
         var cwd_buf: bun.PathBuffer = undefined;
         const abs_md_path: []const u8 = blk: {
-            if (std.fs.path.isAbsolute(path)) break :blk path;
+            if (bun.path.isAbsolute(.auto, path)) break :blk path;
             const cwd = switch (bun.sys.getcwd(&cwd_buf)) {
                 .result => |c| c,
                 .err => break :blk path,
             };
             break :blk bun.path.joinAbsStringBuf(cwd, &base_buf, &.{path}, .auto);
         };
-        const image_base_dir = std.fs.path.dirname(abs_md_path) orelse abs_md_path;
+        const dir = bun.path.dirname(abs_md_path, .auto);
+        const image_base_dir = if (dir.len > 0) dir else abs_md_path;
 
         const theme: bun.md.AnsiTheme = .{
             .light = bun.md.detectLightBackground(),

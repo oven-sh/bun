@@ -8,7 +8,7 @@
 
 import { execSync } from "node:child_process";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
-import { arch as hostArch, platform as hostPlatform } from "node:os";
+import { arch as hostArch, homedir, platform as hostPlatform } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { NODEJS_ABI_VERSION, NODEJS_VERSION } from "./deps/nodejs-headers.ts";
 import { WEBKIT_VERSION } from "./deps/webkit.ts";
@@ -435,12 +435,17 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
         : resolve(cwd, partial.buildDir)
       : resolve(cwd, "build", defaultBuildDirName);
   const codegenDir = resolve(buildDir, "codegen");
+  // Local builds share ~/.bun/build-cache across checkouts and profiles so
+  // ccache/zig/tarballs/webkit reuse one another's work. CI stays per-build
+  // so runners remain hermetic and `rm -rf build/` is a full reset.
   const cacheDir =
     partial.cacheDir !== undefined
       ? isAbsolute(partial.cacheDir)
         ? partial.cacheDir
         : resolve(cwd, partial.cacheDir)
-      : resolve(buildDir, "cache");
+      : ci
+        ? resolve(buildDir, "cache")
+        : resolve(homedir(), ".bun", "build-cache");
   const vendorDir = resolve(cwd, "vendor");
 
   // ─── Validation ───

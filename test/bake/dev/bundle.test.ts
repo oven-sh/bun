@@ -309,6 +309,36 @@ devTest("importing html file with text loader (#18154)", {
     await c.expectMessage("<div>hello world</div>");
   },
 });
+devTest("modifying html file imported as text does not crash (#22533)", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import html from "./page.html" with { type: "text" };
+      console.log(html);
+    `,
+    "page.html": "<h1>original</h1>",
+  },
+  htmlFiles: ["index.html"],
+  async test(dev) {
+    {
+      await using c = await dev.client("/", {});
+      await c.expectMessage("<h1>original</h1>");
+    }
+
+    // Writing to the text-imported HTML file should not crash the server.
+    // Before the fix, this caused a panic: "attempt to use null value"
+    // because non-route HTML files lack html_route_bundle_index.
+    await dev.write("page.html", "<h1>updated</h1>");
+
+    // Verify the server is still alive by connecting a fresh client
+    // that gets the updated content.
+    await using c2 = await dev.client("/", {});
+    await c2.expectMessage("<h1>updated</h1>");
+  },
+});
 devTest("importing bun on the client", {
   files: {
     "index.html": emptyHtmlFile({

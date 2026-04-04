@@ -843,6 +843,19 @@ pub const BundleV2 = struct {
 
         const loader = brk: {
             const loader = path.loader(&this.transpiler.options.loaders) orelse .file;
+            // During HMR re-bundling, HTML files that were originally imported
+            // with { type: "text" } get incorrectly assigned the .html loader
+            // from their file extension. Check the dev server's client graph to
+            // detect non-route HTML files and use .text loader instead. (#22533)
+            if (loader == .html) {
+                if (this.transpiler.options.dev_server) |dev| {
+                    if (dev.client_graph.getFileIndex(path.text)) |fi| {
+                        if (dev.client_graph.getFileByIndex(fi).html_route_bundle_index == null) {
+                            break :brk options.Loader.text;
+                        }
+                    }
+                }
+            }
             break :brk loader;
         };
 

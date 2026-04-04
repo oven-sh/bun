@@ -90,11 +90,7 @@ test("bunfig.toml [resolve] conditions applies to bun test", async () => {
     cwd: String(dir),
     stderr: "pipe",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   // bun test prints its summary to stderr; assert both 1 pass and 0 fail.
   expect(stderr).toContain("1 pass");
   expect(stderr).toContain("0 fail");

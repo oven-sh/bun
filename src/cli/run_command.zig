@@ -1584,7 +1584,8 @@ pub const RunCommand = struct {
         if (resolution) |resolved| {
             var resolved_mutable = resolved;
             const path = resolved_mutable.path().?;
-            const loader: bun.options.Loader = this_transpiler.options.loaders.get(path.name.ext) orelse .tsx;
+            const loader: bun.options.Loader = this_transpiler.options.loaders.get(path.name.ext) orelse
+                bun.options.defaultLoaders.get(path.name.ext) orelse .tsx;
             if (loader.canBeRunByBun() or loader == .html or loader == .md) {
                 log("Resolved to: `{s}`", .{path.text});
                 return _bootAndHandleError(ctx, path.text, loader);

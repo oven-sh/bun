@@ -24,8 +24,9 @@ pub const AnsiRenderer = struct {
     block_stack: std.ArrayListUnmanaged(BlockContext) = .{},
     /// Currently open span styles (bit flags).
     span_flags: u32 = 0,
-    /// Non-empty when we're inside a link span; the href to emit in OSC 8.
-    link_href: []const u8 = "",
+    /// Non-null when we're inside a link span; the href to emit in OSC 8.
+    /// Always allocator-owned when non-null (freed in leaveSpan).
+    link_href: ?[]const u8 = null,
     /// Depth of enclosing link spans (brackets can nest in markdown parsers).
     link_depth: u32 = 0,
     /// Depth of enclosing image spans — text inside images becomes alt text
@@ -33,10 +34,10 @@ pub const AnsiRenderer = struct {
     image_depth: u32 = 0,
     /// Buffered alt text for the innermost image.
     image_alt: std.ArrayListUnmanaged(u8) = .{},
-    /// Saved image src URL for when the image span closes.
-    image_src: []const u8 = "",
-    /// Saved image title (rendered after alt).
-    image_title: []const u8 = "",
+    /// Saved image src URL for when the image span closes (owned).
+    image_src: ?[]const u8 = null,
+    /// Saved image title (rendered after alt, owned).
+    image_title: ?[]const u8 = null,
     /// Active paragraph-level wrapping column usage. Tracks visible chars
     /// written on the current line so word wrapping works inside headings
     /// and paragraphs.
@@ -231,13 +232,12 @@ pub const AnsiRenderer = struct {
                     const start = parent_list.?.data;
                     const num = start + entry.index;
                     var buf: [12]u8 = undefined;
-                    const s = std.fmt.bufPrint(&buf, "{d}.", .{num}) catch "?";
+                    const s = std.fmt.bufPrint(&buf, "{d}. ", .{num}) catch "? ";
                     self.writeStyled(color(.cyan), s);
-                    self.writeRaw(" ");
-                    self.col += @intCast(s.len + 1);
+                    self.writeStyled(reset(), "");
                 } else {
                     self.writeStyled(color(.cyan), "• ");
-                    self.col += 2;
+                    self.writeStyled(reset(), "");
                 }
                 self.block_stack.append(self.allocator, entry) catch {
                     self.out.oom = true;
@@ -363,6 +363,10 @@ pub const AnsiRenderer = struct {
                 // Move the collected cells into a table row; widths will be
                 // normalized once the table finishes.
                 const cells = self.allocator.dupe(TableCell, self.table_cells.items) catch {
+                    // Cell content slices in table_cells become orphaned
+                    // if we can't move them into a row; free them here.
+                    for (self.table_cells.items) |c| self.allocator.free(c.content);
+                    self.table_cells.clearRetainingCapacity();
                     self.out.oom = true;
                     return;
                 };
@@ -370,6 +374,9 @@ pub const AnsiRenderer = struct {
                     .cells = cells,
                     .is_header = self.in_thead,
                 }) catch {
+                    for (cells) |c| self.allocator.free(c.content);
+                    self.allocator.free(cells);
+                    self.table_cells.clearRetainingCapacity();
                     self.out.oom = true;
                     return;
                 };
@@ -385,6 +392,7 @@ pub const AnsiRenderer = struct {
                     .content = owned,
                     .alignment = self.cell_align,
                 }) catch {
+                    self.allocator.free(owned);
                     self.out.oom = true;
                 };
             },
@@ -422,14 +430,17 @@ pub const AnsiRenderer = struct {
             .a => {
                 self.link_depth += 1;
                 if (self.link_depth == 1) {
-                    // Resolve final href (prefixes for autolinks)
-                    const href = resolveHref(detail, self.allocator) catch "";
-                    self.link_href = href;
+                    // Resolve final href (prefixes for autolinks). On OOM
+                    // we leave link_href null so leaveSpan doesn't try to
+                    // free a literal.
+                    self.link_href = resolveHref(detail, self.allocator) catch null;
                     if (self.theme.colors and self.theme.hyperlinks) {
-                        // OSC 8 hyperlink start
-                        self.writeRawNoColor("\x1b]8;;");
-                        self.writeRawNoColor(href);
-                        self.writeRawNoColor("\x1b\\");
+                        if (self.link_href) |href| {
+                            // OSC 8 hyperlink start
+                            self.writeRawNoColor("\x1b]8;;");
+                            self.writeRawNoColor(href);
+                            self.writeRawNoColor("\x1b\\");
+                        }
                     }
                     self.writeStyled(color(.blue), "");
                     self.writeStyled(style(.underline), "");
@@ -438,18 +449,16 @@ pub const AnsiRenderer = struct {
             .img => {
                 self.image_depth += 1;
                 if (self.image_depth == 1) {
-                    self.image_src = self.allocator.dupe(u8, detail.href) catch "";
-                    self.image_title = self.allocator.dupe(u8, detail.title) catch "";
+                    self.image_src = self.allocator.dupe(u8, detail.href) catch null;
+                    self.image_title = self.allocator.dupe(u8, detail.title) catch null;
                     self.image_alt.clearRetainingCapacity();
                 }
             },
             .wikilink => {
                 self.writeStyled(color(.blue), "[[");
-                self.col += 2;
             },
             .latexmath, .latexmath_display => {
                 self.writeStyled(color(.magenta), "$");
-                self.col += 1;
             },
         }
     }
@@ -474,47 +483,51 @@ pub const AnsiRenderer = struct {
             },
             .code => {
                 self.span_flags &= ~SPAN_CODE;
-                self.writeStyled(codeSpanClose(), "");
+                // Restore default fg+bg without touching bold/italic/etc.
+                self.writeStyled("\x1b[39m\x1b[49m", "");
+                self.reapplyStyles();
             },
             .a => {
                 if (self.link_depth == 1) {
-                    self.writeStyled("\x1b[24m", ""); // stop underline
-                    self.writeStyled(reset(), "");
+                    // Underline off, default fg; reapply outer styles so a
+                    // link inside **bold** doesn't drop the bold.
+                    self.writeStyled("\x1b[24m\x1b[39m", "");
+                    self.reapplyStyles();
                     if (self.theme.colors and self.theme.hyperlinks) {
                         self.writeRawNoColor("\x1b]8;;\x1b\\");
-                    } else if (self.link_href.len > 0) {
+                    } else if (self.link_href) |href| if (href.len > 0) {
                         // Show URL in parens for non-hyperlink terminals
                         self.writeStyled(color(.dim), " (");
-                        self.writeRaw(self.link_href);
+                        self.writeStyled("", href);
                         self.writeStyled(color(.dim), ")");
-                        self.writeStyled(reset(), "");
-                        self.col += @intCast(self.link_href.len + 3);
-                    }
-                    self.allocator.free(self.link_href);
-                    self.link_href = "";
+                        self.writeStyled("\x1b[39m\x1b[22m", "");
+                        self.reapplyStyles();
+                    };
+                    if (self.link_href) |href| self.allocator.free(href);
+                    self.link_href = null;
                 }
                 if (self.link_depth > 0) self.link_depth -= 1;
             },
             .img => {
                 if (self.image_depth == 1) {
                     self.emitImage();
-                    self.allocator.free(self.image_src);
-                    self.allocator.free(self.image_title);
-                    self.image_src = "";
-                    self.image_title = "";
+                    if (self.image_src) |src| self.allocator.free(src);
+                    if (self.image_title) |title| self.allocator.free(title);
+                    self.image_src = null;
+                    self.image_title = null;
                     self.image_alt.clearRetainingCapacity();
                 }
                 if (self.image_depth > 0) self.image_depth -= 1;
             },
             .wikilink => {
-                self.writeRaw("]]");
-                self.writeStyled(reset(), "");
-                self.col += 2;
+                self.writeStyled("", "]]");
+                self.writeStyled("\x1b[39m", "");
+                self.reapplyStyles();
             },
             .latexmath, .latexmath_display => {
-                self.writeRaw("$");
-                self.writeStyled(reset(), "");
-                self.col += 1;
+                self.writeStyled("", "$");
+                self.writeStyled("\x1b[39m", "");
+                self.reapplyStyles();
             },
         }
     }
@@ -637,35 +650,114 @@ pub const AnsiRenderer = struct {
         }
     }
 
-    /// Emit a styled sequence + text, respecting color settings.
+    /// Route bytes to the active inline sink. Spans inside a table cell,
+    /// heading, or image must write to that buffer so structural code
+    /// (flushTable/flushHeading/emitImage) emits them at the right spot.
+    /// ANSI escape bytes are dropped inside image alt text since alt text
+    /// is plain.
+    fn emitInline(self: *AnsiRenderer, bytes: []const u8) void {
+        if (bytes.len == 0) return;
+        if (self.image_depth > 0) {
+            // Image alt is plain text — strip escape sequences.
+            var i: usize = 0;
+            while (i < bytes.len) {
+                if (bytes[i] == 0x1b) {
+                    i += 1;
+                    if (i < bytes.len and bytes[i] == '[') {
+                        i += 1;
+                        while (i < bytes.len and (bytes[i] < 0x40 or bytes[i] > 0x7e)) : (i += 1) {}
+                        if (i < bytes.len) i += 1;
+                    } else if (i < bytes.len and bytes[i] == ']') {
+                        i += 1;
+                        while (i < bytes.len) : (i += 1) {
+                            if (bytes[i] == 0x07) {
+                                i += 1;
+                                break;
+                            }
+                            if (bytes[i] == 0x1b and i + 1 < bytes.len and bytes[i + 1] == '\\') {
+                                i += 2;
+                                break;
+                            }
+                        }
+                    }
+                    continue;
+                }
+                const start = i;
+                while (i < bytes.len and bytes[i] != 0x1b) : (i += 1) {}
+                self.image_alt.appendSlice(self.allocator, bytes[start..i]) catch {
+                    self.out.oom = true;
+                    return;
+                };
+            }
+            return;
+        }
+        if (self.in_cell) {
+            self.table_cell_buf.appendSlice(self.allocator, bytes) catch {
+                self.out.oom = true;
+            };
+            return;
+        }
+        if (self.heading_level > 0) {
+            self.heading_buf.appendSlice(self.allocator, bytes) catch {
+                self.out.oom = true;
+            };
+            return;
+        }
+        self.out.write(bytes);
+    }
+
+    /// Emit a styled sequence + text, respecting color settings. Routes
+    /// both the escape prefix and the text through the active buffer so
+    /// spans inside cells/headings flush correctly.
     fn writeStyled(self: *AnsiRenderer, prefix: []const u8, text_: []const u8) void {
-        if (self.theme.colors) {
-            self.out.write(prefix);
+        if (self.theme.colors and prefix.len > 0) {
+            self.emitInline(prefix);
         }
         if (text_.len > 0) {
-            self.out.write(text_);
+            self.emitInline(text_);
             self.col += @intCast(visibleWidth(text_));
             self.last_was_newline = false;
         }
     }
 
-    /// Return the visible length of a styled sequence — the prefix adds
-    /// zero visible chars but advances `col` by the text length.
-    fn styledLen(self: *AnsiRenderer, s: []const u8) usize {
-        _ = self;
-        return visibleWidth(s);
-    }
-
-    /// Emit raw text (bypassing styling). Does not track the column.
+    /// Emit raw text (typically a single char or newline). Routes through
+    /// the active inline buffer and keeps last_was_newline current. Does
+    /// not track column width — callers that need it use writeStyled.
     fn writeRaw(self: *AnsiRenderer, data: []const u8) void {
-        self.out.write(data);
-        if (data.len > 0) self.last_was_newline = (data[data.len - 1] == '\n');
+        if (data.len == 0) return;
+        self.emitInline(data);
+        self.last_was_newline = (data[data.len - 1] == '\n');
     }
 
-    /// Emit raw bytes even when colors are off (for OSC sequences).
+    /// Emit raw bytes that must not appear in `image_alt`. Goes through
+    /// the active buffer for cells/headings, but never into image alt.
     fn writeRawNoColor(self: *AnsiRenderer, data: []const u8) void {
         if (!self.theme.colors) return;
+        if (data.len == 0) return;
+        if (self.image_depth > 0) return;
+        if (self.in_cell) {
+            self.table_cell_buf.appendSlice(self.allocator, data) catch {
+                self.out.oom = true;
+            };
+            return;
+        }
+        if (self.heading_level > 0) {
+            self.heading_buf.appendSlice(self.allocator, data) catch {
+                self.out.oom = true;
+            };
+            return;
+        }
         self.out.write(data);
+    }
+
+    /// Re-emit the currently active inline styles from span_flags. Used
+    /// after a nested span closes to avoid wiping the outer styles.
+    fn reapplyStyles(self: *AnsiRenderer) void {
+        if (!self.theme.colors) return;
+        if (self.span_flags & SPAN_STRONG != 0) self.emitInline(style(.bold));
+        if (self.span_flags & SPAN_EM != 0) self.emitInline(style(.italic));
+        if (self.span_flags & SPAN_U != 0) self.emitInline(style(.underline));
+        if (self.span_flags & SPAN_DEL != 0) self.emitInline(style(.strikethrough));
     }
 
     fn writeIndent(self: *AnsiRenderer) void {
@@ -1019,26 +1111,36 @@ pub const AnsiRenderer = struct {
     // ========================================
 
     fn emitImage(self: *AnsiRenderer) void {
+        // Snapshot alt + link fields now — emitImage drops out of the
+        // image context before writing, so image_alt / image_depth checks
+        // in emitInline would otherwise still divert output.
         const alt = self.image_alt.items;
-        // Display as: [alt text] (src)  with OSC 8 hyperlink
-        if (self.theme.colors and self.theme.hyperlinks and self.image_src.len > 0) {
+        const src = self.image_src;
+        // Drop image context so writeStyled/writeRaw flow through the
+        // normal inline path (paragraph, cell, etc.).
+        const saved_depth = self.image_depth;
+        self.image_depth = 0;
+        defer self.image_depth = saved_depth;
+
+        const has_src = src != null and src.?.len > 0;
+        if (self.theme.colors and self.theme.hyperlinks and has_src) {
             self.writeRawNoColor("\x1b]8;;");
-            self.writeRawNoColor(self.image_src);
+            self.writeRawNoColor(src.?);
             self.writeRawNoColor("\x1b\\");
         }
         self.writeStyled(color(.magenta), "🖼 ");
         if (alt.len > 0) {
-            self.writeRaw(alt);
-            self.col += @intCast(visibleWidth(alt));
-        } else if (self.image_title.len > 0) {
-            self.writeRaw(self.image_title);
-            self.col += @intCast(visibleWidth(self.image_title));
+            self.writeStyled("", alt);
+        } else if (self.image_title) |title| if (title.len > 0) {
+            self.writeStyled("", title);
         } else {
-            self.writeRaw("(image)");
-            self.col += 7;
+            self.writeStyled("", "(image)");
+        } else {
+            self.writeStyled("", "(image)");
         }
         self.writeStyled(reset(), "");
-        if (self.theme.colors and self.theme.hyperlinks and self.image_src.len > 0) {
+        self.reapplyStyles();
+        if (self.theme.colors and self.theme.hyperlinks and has_src) {
             self.writeRawNoColor("\x1b]8;;\x1b\\");
         }
     }
@@ -1150,7 +1252,7 @@ fn resolveHref(detail: SpanDetail, allocator: Allocator) ![]u8 {
 /// 1. `COLORFGBG` env var (set by rxvt, xterm, Konsole, iTerm2 in some modes)
 /// 2. Dark mode (default)
 pub fn detectLightBackground() bool {
-    if (std.posix.getenv("COLORFGBG")) |value| {
+    if (bun.getenvZ("COLORFGBG")) |value| {
         // Format: "fg;bg" or "fg;default;bg" — bg index < 8 is dark, >=8 light
         var iter = std.mem.splitScalar(u8, value, ';');
         var last: []const u8 = "";

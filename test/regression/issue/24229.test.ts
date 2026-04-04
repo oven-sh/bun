@@ -10,23 +10,19 @@ import { bunEnv, bunExe } from "harness";
 //
 // Run in a subprocess so the assertions ride the child's exit code — keeps the
 // ws client's socket/timer cleanup out of the harness process.
-test(
-  "ws handshake events: upgrade / unexpected-response",
-  async () => {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", SCRIPT],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    if (exitCode !== 0) {
-      throw new Error(`child failed (exit ${exitCode})\n--- stdout ---\n${stdout}\n--- stderr ---\n${stderr}`);
-    }
-    expect(stdout.trim()).toBe("ok");
-  },
-  30_000,
-);
+test("ws handshake events: upgrade / unexpected-response", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", SCRIPT],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  if (exitCode !== 0) {
+    throw new Error(`child failed (exit ${exitCode})\n--- stdout ---\n${stdout}\n--- stderr ---\n${stderr}`);
+  }
+  expect(stdout.trim()).toBe("ok");
+}, 30_000);
 
 const SCRIPT = /* js */ `
 const assert = require("node:assert");

@@ -83,6 +83,9 @@ pub const ExecutionSequence = struct {
     result: Result = .pending,
     executing: bool = false,
     started_at: bun.timespec = .epoch,
+    /// Snapshot of VM timer count at sequence start, used by printTimeoutHint
+    /// to report only timers created during this test (not leaked from prior tests).
+    timer_count_at_start: i32 = 0,
     /// Number of expect() calls observed in this sequence.
     expect_call_count: u32 = 0,
     /// Expectation set by expect.hasAssertions() or expect.assertions(n).
@@ -202,22 +205,55 @@ pub fn handleTimeout(this: *Execution, globalThis: *jsc.JSGlobalObject) bun.JSEr
     // when using test.concurrent(), we can't do this because it could kill multiple tests at once.
     if (this.activeGroup()) |current_group| {
         const sequences = current_group.sequences(this);
+        // Only kill processes and print hints for non-concurrent groups
+        // (sequences.len == 1). For test.concurrent(), we can't safely
+        // attribute VM-wide resources to a specific test.
         if (sequences.len == 1) {
             const sequence = sequences[0];
             if (sequence.active_entry) |entry| {
                 const now = bun.timespec.now(.force_real_time);
                 if (entry.timespec.order(&now) == .lt) {
-                    const kill_count = globalThis.bunVM().auto_killer.kill();
-                    if (kill_count.processes > 0) {
-                        bun.Output.prettyErrorln("<d>killed {d} dangling process{s}<r>", .{ kill_count.processes, if (kill_count.processes != 1) "es" else "" });
-                        bun.Output.flush();
+                    const vm = globalThis.bunVM();
+                    var kill_result = vm.auto_killer.kill();
+                    defer kill_result.deinit();
+                    if (kill_result.processes > 0) {
+                        if (jsc.Jest.Jest.runner) |runner| {
+                            runner.summary.dangling_processes +|= kill_result.processes;
+                        }
+                        kill_result.printError();
                     }
+                    printTimeoutHint(vm, kill_result.processes, sequence.timer_count_at_start);
+                    bun.Output.flush();
                 }
             }
         }
     }
 
     this.bunTest().addResult(.start);
+}
+
+/// Print a diagnostic hint explaining why a test may be hanging.
+/// Only called for non-concurrent groups (sequences.len == 1).
+/// Uses a snapshot of active_timer_count from sequence start to report
+/// only timers created during this test, not leaked from prior tests.
+fn printTimeoutHint(vm: *jsc.VirtualMachine, killed_processes: u32, timer_count_at_start: i32) void {
+    // Report only timers added since this test started.
+    const delta = vm.timer.active_timer_count - timer_count_at_start;
+    const timer_count: u32 = if (delta > 0) @intCast(delta) else 0;
+
+    if (killed_processes == 0 and timer_count == 0) return;
+
+    bun.Output.prettyError("<d>hint: this test timed out because", .{});
+    var first = true;
+    if (killed_processes > 0) {
+        bun.Output.prettyError(" {d} child process{s} did not exit", .{ killed_processes, if (killed_processes != 1) "es" else "" });
+        first = false;
+    }
+    if (timer_count > 0) {
+        if (!first) bun.Output.prettyError(",", .{});
+        bun.Output.prettyError(" {d} active timer{s}", .{ timer_count, if (timer_count != 1) "s" else "" });
+    }
+    bun.Output.prettyErrorln("<r>", .{});
 }
 
 pub fn step(buntest_strong: bun_test.BunTestPtr, globalThis: *jsc.JSGlobalObject, data: bun_test.BunTest.RefDataValue) bun.JSError!bun_test.StepResult {
@@ -536,6 +572,7 @@ fn onSequenceStarted(_: *Execution, sequence: *ExecutionSequence) void {
     if (sequence.test_entry) |entry| if (entry.callback == null) return;
 
     sequence.started_at = bun.timespec.now(.force_real_time);
+    sequence.timer_count_at_start = jsc.VirtualMachine.get().timer.active_timer_count;
 
     if (sequence.test_entry) |entry| {
         log("Running test: \"{f}\"", .{std.zig.fmtString(entry.base.name orelse "(unnamed)")});

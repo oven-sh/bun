@@ -2348,12 +2348,10 @@ describe("subshell", () => {
     // test_oE 'effect of subshell'
     TestBuilder.command /* sh */ `
   a=1
-  # (a=2; echo $a; exit; echo not reached)
-  # NOTE: We actually implemented exit wrong so changing this for now until we fix it
-  (a=2; echo $a; exit; echo reached)
+  (a=2; echo $a; exit; echo not reached)
   echo $a
   `
-      .stdout("2\nreached\n1\n")
+      .stdout("2\n1\n")
       .runAsTest("effect of subshell");
 
     // test_x -e 23 'exit status of subshell'

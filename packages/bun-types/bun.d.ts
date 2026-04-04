@@ -1312,6 +1312,70 @@ declare module "bun" {
     ): string;
 
     /**
+     * Theme for ANSI terminal rendering.
+     */
+    export interface AnsiTheme {
+      /**
+       * Emit ANSI color + styling escape sequences. When `false`, the
+       * renderer falls back to plain ASCII chrome (no box drawing,
+       * no emoji, no escape codes).
+       * @default true
+       */
+      colors?: boolean;
+      /**
+       * Emit OSC 8 hyperlinks (clickable links in modern terminals).
+       * When `false`, links render as `text (url)`.
+       * @default false
+       */
+      hyperlinks?: boolean;
+      /**
+       * True when the terminal background is light. Affects the color
+       * palette chosen for inline code backgrounds. Defaults to
+       * detecting from the `COLORFGBG` environment variable.
+       */
+      light?: boolean;
+      /**
+       * Line width used for word-wrapping paragraphs and headings and
+       * for the horizontal rule. Pass `0` to disable wrapping.
+       * @default 80
+       */
+      columns?: number;
+    }
+
+    /**
+     * Render markdown to an ANSI-colored terminal string.
+     *
+     * Supports headings, lists, tables, inline styles, syntax-highlighted
+     * code blocks, links, images, and blockquotes. By default, enables all
+     * GFM extensions plus wikilinks, underline, and LaTeX math.
+     *
+     * @param input The markdown string or buffer to render
+     * @param theme Optional theme overrides
+     * @returns An ANSI-colored string
+     *
+     * @example
+     * ```ts
+     * const out = Bun.markdown.ansi("# Hello\n\n**bold** and *italic*\n");
+     * process.stdout.write(out);
+     *
+     * // Plain text, no escape codes
+     * const plain = Bun.markdown.ansi("# Hello", { colors: false });
+     *
+     * // Enable clickable OSC 8 hyperlinks
+     * const html = Bun.markdown.ansi("[docs](https://bun.com)", {
+     *   hyperlinks: true,
+     * });
+     *
+     * // Custom width
+     * const wrapped = Bun.markdown.ansi(longText, { columns: 60 });
+     * ```
+     */
+    export function ansi(
+      input: string | NodeJS.TypedArray | DataView<ArrayBuffer> | ArrayBufferLike,
+      theme?: AnsiTheme,
+    ): string;
+
+    /**
      * Render markdown with custom JavaScript callbacks for each element.
      *
      * Each callback receives the accumulated children as a string and optional

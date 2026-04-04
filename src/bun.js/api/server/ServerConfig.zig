@@ -706,7 +706,10 @@ pub fn fromJS(
                     }
 
                     if (o.conditions.len > 0) {
-                        const arena_alloc = init_ctx.arena.allocator();
+                        // bake.arena is the canonical arena after the value-copy above; use
+                        // its allocator so new buffers land in the chain UserOptions.deinit()
+                        // later frees (init_ctx.arena has diverged after the struct copy).
+                        const arena_alloc = bake.arena.allocator();
                         inline for (.{ &bake.bundler_options.client, &bake.bundler_options.server, &bake.bundler_options.ssr }) |subset| {
                             try subset.conditions.ensureTotalCapacity(arena_alloc, o.conditions.len);
                             for (o.conditions) |condition| {

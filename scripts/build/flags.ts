@@ -1024,9 +1024,11 @@ export function computeDepFlags(cfg: Config): { cflags: string[]; cxxflags: stri
  */
 export function computeCpuTargetFlags(cfg: Config): string[] {
   const out: string[] = [];
-  evalTable(cpuTargetFlags, cfg, out, out);
-  // Dedupe: evalTable pushes into both c and cxx; we passed the same array.
-  return [...new Set(out)];
+  for (const f of cpuTargetFlags) {
+    if (f.when && !f.when(cfg)) continue;
+    out.push(...resolveFlagValue(f.flag, cfg));
+  }
+  return out;
 }
 
 /**

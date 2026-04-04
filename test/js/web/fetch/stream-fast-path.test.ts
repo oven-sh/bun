@@ -62,7 +62,10 @@ describe("ByteBlobLoader", () => {
       const body = resp.body!;
       await resp.arrayBuffer();
       // Should not crash, just return empty content.
-      await body[method]();
+      const value = await body[method]();
+      if (method === "text") expect(value).toBe("");
+      if (method === "bytes") expect((value as Uint8Array).byteLength).toBe(0);
+      if (method === "blob") expect((value as Blob).size).toBe(0);
     }
   });
 });

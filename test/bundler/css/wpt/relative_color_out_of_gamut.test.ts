@@ -5,6 +5,7 @@ let i = 0;
 const testname = () => `test-${i++}`;
 describe("relative_color_out_of_gamut", () => {
   itBundled(testname(), {
+    virtual: true,
     files: {
       "/a.css": /* css */ `
 h1 {
@@ -12,7 +13,7 @@ h1 {
 }
       `,
     },
-    outfile: "out.css",
+    outfile: "/out.css",
 
     onAfterBundle(api) {
       api.expectFile("/out.css").toEqualIgnoringWhitespace(`
@@ -25,6 +26,7 @@ h1 {
   });
 
   itBundled(testname(), {
+    virtual: true,
     files: {
       "/a.css": /* css */ `
   h1 {
@@ -45,6 +47,7 @@ h1 {
   });
 
   itBundled(testname(), {
+    virtual: true,
     files: {
       "/a.css": /* css */ `
   h1 {
@@ -65,6 +68,7 @@ h1 {
   });
 
   itBundled(testname(), {
+    virtual: true,
     files: {
       "/a.css": /* css */ `
   h1 {
@@ -85,6 +89,7 @@ h1 {
   });
 
   itBundled(testname(), {
+    virtual: true,
     files: {
       "/a.css": /* css */ `
   h1 {
@@ -105,6 +110,7 @@ h1 {
   });
 
   itBundled(testname(), {
+    virtual: true,
     files: {
       "/a.css": /* css */ `
   h1 {
@@ -125,6 +131,7 @@ h1 {
   });
 
   itBundled(testname(), {
+    virtual: true,
     files: {
       "/a.css": /* css */ `
   h1 {
@@ -145,6 +152,7 @@ h1 {
   });
 
   itBundled(testname(), {
+    virtual: true,
     files: {
       "/a.css": /* css */ `
   h1 {
@@ -165,6 +173,7 @@ h1 {
   });
 
   itBundled(testname(), {
+    virtual: true,
     files: {
       "/a.css": /* css */ `
   h1 {
@@ -185,6 +194,7 @@ h1 {
   });
 
   itBundled(testname(), {
+    virtual: true,
     files: {
       "/a.css": /* css */ `
   h1 {
@@ -205,6 +215,7 @@ h1 {
   });
 
   itBundled(testname(), {
+    virtual: true,
     files: {
       "/a.css": /* css */ `
   h1 {
@@ -225,6 +236,7 @@ h1 {
   });
 
   itBundled(testname(), {
+    virtual: true,
     files: {
       "/a.css": /* css */ `
   h1 {
@@ -245,6 +257,7 @@ h1 {
   });
 
   itBundled(testname(), {
+    virtual: true,
     files: {
       "/a.css": /* css */ `
   h1 {
@@ -265,6 +278,7 @@ h1 {
   });
 
   itBundled(testname(), {
+    virtual: true,
     files: {
       "/a.css": /* css */ `
   h1 {
@@ -285,6 +299,7 @@ h1 {
   });
 
   itBundled(testname(), {
+    virtual: true,
     files: {
       "/a.css": /* css */ `
   h1 {
@@ -305,6 +320,7 @@ h1 {
   });
 
   itBundled(testname(), {
+    virtual: true,
     files: {
       "/a.css": /* css */ `
   h1 {
@@ -325,6 +341,7 @@ h1 {
   });
 
   itBundled(testname(), {
+    virtual: true,
     files: {
       "/a.css": /* css */ `
   h1 {
@@ -345,6 +362,7 @@ h1 {
   });
 
   itBundled(testname(), {
+    virtual: true,
     files: {
       "/a.css": /* css */ `
   h1 {
@@ -365,6 +383,7 @@ h1 {
   });
 
   itBundled(testname(), {
+    virtual: true,
     files: {
       "/a.css": /* css */ `
   h1 {
@@ -385,6 +404,7 @@ h1 {
   });
 
   itBundled(testname(), {
+    virtual: true,
     files: {
       "/a.css": /* css */ `
   h1 {
@@ -405,6 +425,7 @@ h1 {
   });
 
   itBundled(testname(), {
+    virtual: true,
     files: {
       "/a.css": /* css */ `
   h1 {
@@ -425,6 +446,7 @@ h1 {
   });
 
   itBundled(testname(), {
+    virtual: true,
     files: {
       "/a.css": /* css */ `
   h1 {
@@ -445,6 +467,7 @@ h1 {
   });
 
   itBundled(testname(), {
+    virtual: true,
     files: {
       "/a.css": /* css */ `
   h1 {
@@ -465,6 +488,7 @@ h1 {
   });
 
   itBundled(testname(), {
+    virtual: true,
     files: {
       "/a.css": /* css */ `
   h1 {
@@ -485,6 +509,7 @@ h1 {
   });
 
   itBundled(testname(), {
+    virtual: true,
     files: {
       "/a.css": /* css */ `
   h1 {
@@ -505,6 +530,7 @@ h1 {
   });
 
   itBundled(testname(), {
+    virtual: true,
     files: {
       "/a.css": /* css */ `
   h1 {
@@ -525,6 +551,7 @@ h1 {
   });
 
   itBundled(testname(), {
+    virtual: true,
     files: {
       "/a.css": /* css */ `
   h1 {

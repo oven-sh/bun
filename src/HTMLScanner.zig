@@ -62,7 +62,35 @@ pub fn onHTMLParseError(this: *HTMLScanner, message: []const u8) void {
 }
 
 pub fn onTag(this: *HTMLScanner, _: *lol.Element, path: []const u8, url_attribute: []const u8, kind: ImportKind) void {
-    _ = url_attribute;
+    if (bun.strings.eqlComptime(url_attribute, "srcset")) {
+        // srcset can have multiple URLs
+        var i: usize = 0;
+        while (i < path.len) {
+            // Skip leading whitespace
+            while (i < path.len and std.ascii.isWhitespace(path[i])) : (i += 1) {}
+            if (i >= path.len) break;
+            const url_start = i;
+
+            // data: URLs can contain commas, so only treat commas as terminators for non-data URLs.
+            const is_data_url = bun.strings.hasPrefix(path[url_start..], "data:");
+            if (is_data_url) {
+                while (i < path.len and !std.ascii.isWhitespace(path[i])) : (i += 1) {}
+            } else {
+                while (i < path.len and !std.ascii.isWhitespace(path[i]) and path[i] != ',') : (i += 1) {}
+            }
+            const url_end = i;
+
+            if (url_end > url_start) {
+                this.createImportRecord(path[url_start..url_end], kind) catch {};
+            }
+
+            // Read until next comma to find start of next URL
+            while (i < path.len and path[i] != ',') : (i += 1) {}
+            if (i < path.len) i += 1;
+        }
+        return;
+    }
+
     this.createImportRecord(path, kind) catch {};
 }
 

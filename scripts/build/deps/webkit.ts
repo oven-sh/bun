@@ -190,10 +190,13 @@ export const webkit: Dependency = {
     // build system doesn't automate). Once cloned, we cmake it like any
     // other dep. resolveDep()'s local-mode assert gives a clear "clone it
     // yourself" error if missing.
+    const env = process.env.BUN_WEBKIT_PATH;
     return {
       kind: "local",
       path: webkitSrcDir(cfg),
-      hint: "Clone oven-sh/WebKit to vendor/WebKit/, or set $BUN_WEBKIT_PATH to an existing clone (useful for worktrees)",
+      hint: env
+        ? `$BUN_WEBKIT_PATH is set to '${env}' but that path does not contain a WebKit checkout`
+        : "Clone oven-sh/WebKit to vendor/WebKit/, or set $BUN_WEBKIT_PATH to an existing clone (useful for worktrees)",
     };
   },
 
@@ -248,7 +251,14 @@ export const webkit: Dependency = {
       ...(cfg.asan ? { ENABLE_SANITIZERS: "address" } : {}),
     };
 
-    const spec: NestedCmakeBuild = { kind: "nested-cmake", targets: ["jsc"], args };
+    const spec: NestedCmakeBuild = {
+      kind: "nested-cmake",
+      targets: ["jsc"],
+      args,
+      // Release local WebKit keeps debug info so JSC crashes symbolicate.
+      // LTO stays plain Release (debug info + LTO bloats significantly).
+      buildType: cfg.release && !cfg.lto ? "RelWithDebInfo" : cfg.buildType,
+    };
 
     if (cfg.windows) {
       const icu = icuDir(cfg);

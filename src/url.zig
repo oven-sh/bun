@@ -967,7 +967,7 @@ pub const FormData = struct {
             return null;
 
         var boundary_end = strings.indexOfChar(begin, ';') orelse @as(u32, @truncate(begin.len));
-        if (begin[0] == '"' and boundary_end > 0 and begin[boundary_end -| 1] == '"') {
+        if (begin[0] == '"' and boundary_end > 1 and begin[boundary_end -| 1] == '"') {
             boundary_end -|= 1;
             return begin[1..boundary_end];
         }

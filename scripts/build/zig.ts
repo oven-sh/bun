@@ -213,6 +213,17 @@ export function registerZigRules(n: Ninja, cfg: Config): void {
     ...(consoleMode && { pool: "console" }),
     restat: true,
   });
+
+  // Zig semantic check — `zig build check[-*]`. Type-checks without
+  // emitting object code; output is a stamp file created by --stamp so
+  // ninja can track completion. Same cache dirs as the main zig build —
+  // zig keys by hash, the two coexist cleanly.
+  n.rule("zig_check", {
+    command: `${stream} --console --stamp=$out --env=ZIG_LOCAL_CACHE_DIR=$zig_local_cache --env=ZIG_GLOBAL_CACHE_DIR=$zig_global_cache $zig build $step $args`,
+    description: "zig $step",
+    pool: "console",
+    restat: true,
+  });
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -293,16 +304,43 @@ export function emitZig(n: Ninja, cfg: Config, inputs: ZigBuildInputs): string[]
   // ─── Build ───
   const cacheDirs = zigCacheDirs(cfg);
   const output = resolve(cfg.buildDir, "bun-zig.o");
+  const args = zigBuildArgs(cfg);
 
-  // Extra embed: scanner-entry.ts is @embedFile'd by the zig code directly.
-  // A genuinely odd cross-language embed; there's no cleaner way.
-  const scannerEntry = resolve(cfg.cwd, "src", "install", "PackageManager", "scanner-entry.ts");
+  n.build({
+    outputs: [output],
+    rule: "zig_build",
+    inputs: [],
+    implicitInputs: zigBuildImplicitInputs(cfg, inputs),
+    orderOnlyInputs: zigBuildOrderOnlyInputs(inputs),
+    vars: {
+      zig: zigExe,
+      step: "obj",
+      args: quoteArgs(args, cfg.host.os === "windows"),
+      zig_local_cache: cacheDirs.local,
+      zig_global_cache: cacheDirs.global,
+    },
+  });
+  n.phony("bun-zig", [output]);
+  n.blank();
 
-  // ─── Build args ───
-  // One -D per feature flag. Each maps directly to a build.zig option.
-  // Order doesn't matter but we keep it the same as CMake for easy diffing.
+  return [output];
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Shared `zig build` invocation helpers (obj + check)
+// ───────────────────────────────────────────────────────────────────────────
+
+/**
+ * `zig build` CLI args shared by both the obj build and the check steps.
+ * build.zig options have `orelse` defaults, so unknown-to-a-step options
+ * (e.g. -Dtarget for check-all, which sets targets internally) are ignored
+ * silently — we pass them uniformly for simplicity and diffability.
+ */
+function zigBuildArgs(cfg: Config): string[] {
+  const cacheDirs = zigCacheDirs(cfg);
+  const zigDest = zigPath(cfg);
   const bool = (b: boolean): string => (b ? "true" : "false");
-  const args: string[] = [
+  return [
     // Cache and lib paths. --zig-lib-dir points at OUR bundled stdlib,
     // not any system zig — the compiler and stdlib must match commits.
     "--cache-dir",
@@ -347,43 +385,116 @@ export function emitZig(n: Ninja, cfg: Config, inputs: ZigBuildInputs): string[]
     "--summary",
     "all",
   ];
+}
 
-  n.build({
-    outputs: [output],
-    rule: "zig_build",
-    inputs: [],
-    implicitInputs: [
-      // Compiler itself — rebuild on zig version bump.
-      zigExe,
-      // build.zig — the zig build script.
-      resolve(cfg.cwd, "build.zig"),
-      // All zig source files (codegen outputs already filtered by caller).
-      ...inputs.zigSources,
-      // Codegen outputs zig imports/embeds.
-      ...inputs.codegenInputs,
-      // The odd cross-language embed.
-      scannerEntry,
-    ],
-    orderOnlyInputs: [
-      // zstd headers — must exist for @cImport, but content is tracked by
-      // zig's translate-c cache, not ninja.
-      inputs.zstdStamp,
-      // Debug-mode bake runtime — must exist at runtime-load path, but
-      // zig doesn't track content (not embedded).
-      ...inputs.codegenOrderOnly,
-    ],
-    vars: {
-      zig: zigExe,
-      step: "obj",
-      args: quoteArgs(args, cfg.host.os === "windows"),
-      zig_local_cache: cacheDirs.local,
-      zig_global_cache: cacheDirs.global,
-    },
-  });
-  n.phony("bun-zig", [output]);
+/**
+ * Implicit inputs for any zig build invocation (obj or check). Same set
+ * in both cases — the compiler, build.zig, every .zig source, and every
+ * codegen file zig imports or embeds.
+ */
+function zigBuildImplicitInputs(cfg: Config, inputs: ZigBuildInputs): string[] {
+  // Extra embed: scanner-entry.ts is @embedFile'd by the zig code directly.
+  // A genuinely odd cross-language embed; there's no cleaner way.
+  const scannerEntry = resolve(cfg.cwd, "src", "install", "PackageManager", "scanner-entry.ts");
+  return [
+    // Compiler itself — rebuild on zig version bump.
+    zigExecutable(cfg),
+    // build.zig — the zig build script.
+    resolve(cfg.cwd, "build.zig"),
+    // All zig source files (codegen outputs already filtered by caller).
+    ...inputs.zigSources,
+    // Codegen outputs zig imports/embeds.
+    ...inputs.codegenInputs,
+    // The odd cross-language embed.
+    scannerEntry,
+  ];
+}
+
+/**
+ * Order-only inputs for any zig build invocation — files that must EXIST
+ * but whose content is tracked elsewhere (zig's translate-c cache, or
+ * they're runtime-loaded not embedded).
+ */
+function zigBuildOrderOnlyInputs(inputs: ZigBuildInputs): string[] {
+  return [
+    // zstd headers — must exist for @cImport, but content is tracked by
+    // zig's translate-c cache, not ninja.
+    inputs.zstdStamp,
+    // Debug-mode bake runtime — must exist at runtime-load path, but
+    // zig doesn't track content (not embedded).
+    ...inputs.codegenOrderOnly,
+  ];
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Zig semantic check — `zig build check[-*]`
+// ───────────────────────────────────────────────────────────────────────────
+
+/**
+ * `zig build` check steps exposed as ninja targets. Each becomes a phony
+ * `zig-<step>` plus a stamp file, invokable via `bun bd --target=zig-check`
+ * (etc.). See build.zig for what each step covers.
+ *
+ * `check` type-checks the current platform (uses -Dtarget/-Dcpu). The
+ * `check-*` variants iterate multiple targets internally — our -Dtarget
+ * is inert for them.
+ */
+const CHECK_STEPS = [
+  "check",
+  "check-debug",
+  "check-all",
+  "check-all-debug",
+  "check-windows",
+  "check-windows-debug",
+  "check-macos",
+  "check-macos-debug",
+  "check-linux",
+  "check-linux-debug",
+] as const;
+
+/**
+ * Emit one ninja edge per `zig build check[-*]` step. Each depends on
+ * the same codegen + zig source set as the obj build, so users can run
+ * `bun bd --target=zig-check` and ninja will rebuild any stale codegen
+ * before invoking zig. Output is a stamp file (stream.ts --stamp writes
+ * it on exit 0); restat lets the no-op case prune downstream.
+ *
+ * Assumes the zig compiler download edge (from `emitZig`) has already
+ * been emitted — we depend on zigExecutable but don't re-emit the fetch.
+ */
+export function emitZigCheck(n: Ninja, cfg: Config, inputs: ZigBuildInputs): void {
+  n.comment("─── Zig semantic check ───");
   n.blank();
 
-  return [output];
+  const zigExe = zigExecutable(cfg);
+  const cacheDirs = zigCacheDirs(cfg);
+  // `--summary new` instead of `all`: check is a fast-iteration workflow
+  // (mostly cache hits), so skip the "cached" rows zig would otherwise
+  // print for every unchanged step. Matches the pre-ninja `zig:check`
+  // scripts. zigBuildArgs ends with `--summary all`; swap the last arg.
+  const args = zigBuildArgs(cfg);
+  args[args.length - 1] = "new";
+  const hostWin = cfg.host.os === "windows";
+
+  for (const step of CHECK_STEPS) {
+    const stamp = resolve(cfg.buildDir, `.zig-${step}.stamp`);
+    n.build({
+      outputs: [stamp],
+      rule: "zig_check",
+      inputs: [],
+      implicitInputs: zigBuildImplicitInputs(cfg, inputs),
+      orderOnlyInputs: zigBuildOrderOnlyInputs(inputs),
+      vars: {
+        zig: zigExe,
+        step,
+        args: quoteArgs(args, hostWin),
+        zig_local_cache: cacheDirs.local,
+        zig_global_cache: cacheDirs.global,
+      },
+    });
+    n.phony(`zig-${step}`, [stamp]);
+  }
+  n.blank();
 }
 
 // ───────────────────────────────────────────────────────────────────────────

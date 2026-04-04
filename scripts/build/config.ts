@@ -100,6 +100,10 @@ export interface Config {
 
   // ─── Features (all explicit booleans) ───
   lto: boolean;
+  /** IR PGO: directory for .profraw output (instrumented build). Mutually exclusive with pgoUse. */
+  pgoGenerate: string | undefined;
+  /** IR PGO: .profdata file path (optimized build). Mutually exclusive with pgoGenerate. */
+  pgoUse: string | undefined;
   asan: boolean;
   zigAsan: boolean;
   assertions: boolean;
@@ -207,6 +211,8 @@ export interface PartialConfig {
   buildType?: BuildType;
   mode?: BuildMode;
   lto?: boolean;
+  pgoGenerate?: string;
+  pgoUse?: string;
   asan?: boolean;
   zigAsan?: boolean;
   assertions?: boolean;
@@ -391,6 +397,13 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     lto = false;
   }
 
+  // PGO: paths resolved to absolute. generate/use are mutually exclusive.
+  const pgoGenerate = partial.pgoGenerate ? resolve(partial.pgoGenerate) : undefined;
+  const pgoUse = partial.pgoUse ? resolve(partial.pgoUse) : undefined;
+  if (pgoGenerate && pgoUse) {
+    throw new BuildError("--pgo-generate and --pgo-use are mutually exclusive");
+  }
+
   // Logs: on by default in debug non-test
   const logs = partial.logs ?? debug;
 
@@ -480,6 +493,8 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     release,
     mode: partial.mode ?? "full",
     lto,
+    pgoGenerate,
+    pgoUse,
     asan,
     zigAsan,
     assertions,
@@ -754,6 +769,8 @@ export function formatConfig(cfg: Config, exe: string): string {
   ];
   const features: string[] = [];
   if (cfg.lto) features.push("lto");
+  if (cfg.pgoGenerate) features.push("pgo-gen");
+  if (cfg.pgoUse) features.push("pgo-use");
   if (cfg.asan) features.push("asan");
   if (cfg.assertions) features.push("assertions");
   if (cfg.logs) features.push("logs");

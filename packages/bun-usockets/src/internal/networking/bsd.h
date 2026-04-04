@@ -173,6 +173,7 @@ int bsd_udp_packet_buffer_payload_length(struct udp_recvbuf *msgvec, int index);
 char *bsd_udp_packet_buffer_payload(struct udp_recvbuf *msgvec, int index);
 char *bsd_udp_packet_buffer_peer(struct udp_recvbuf *msgvec, int index);
 int bsd_udp_packet_buffer_local_ip(struct udp_recvbuf *msgvec, int index, char *ip);
+int bsd_udp_packet_buffer_truncated(struct udp_recvbuf *msgvec, int index);
 // int bsd_udp_packet_buffer_ecn(struct udp_recvbuf *msgvec, int index);
 
 LIBUS_SOCKET_DESCRIPTOR apple_no_sigpipe(LIBUS_SOCKET_DESCRIPTOR fd);

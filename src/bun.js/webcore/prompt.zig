@@ -261,6 +261,24 @@ pub const prompt = struct {
             }
         };
 
+        // On POSIX, ensure IUTF8 is set so that the kernel's canonical-mode line
+        // editing erases whole UTF-8 characters on backspace instead of single bytes.
+        const original_termios: if (Environment.isPosix) ?std.posix.termios else void = if (comptime Environment.isPosix) blk: {
+            var termios = std.posix.tcgetattr(bun.FD.stdin().native()) catch break :blk null;
+            if (termios.iflag.IUTF8) break :blk null; // already set, nothing to restore
+            termios.iflag.IUTF8 = true;
+            std.posix.tcsetattr(bun.FD.stdin().native(), .NOW, termios) catch break :blk null;
+            // Return the original termios (with IUTF8 unset) so we can restore it.
+            termios.iflag.IUTF8 = false;
+            break :blk termios;
+        } else {};
+
+        defer if (comptime Environment.isPosix) {
+            if (original_termios) |orig| {
+                std.posix.tcsetattr(bun.FD.stdin().native(), .NOW, orig) catch {};
+            }
+        };
+
         // 7. Pause while waiting for the user's response.
         const reader = bun.Output.buffered_stdin.reader();
         var second_byte: ?u8 = null;

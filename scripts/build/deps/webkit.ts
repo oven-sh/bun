@@ -182,17 +182,30 @@ export const webkit: Dependency = {
 
     // Local: nested cmake, target=jsc.
     //
-    // CMAKE_C_FLAGS/CMAKE_CXX_FLAGS set to empty: clears the global dep
-    // flags source.ts would otherwise pass. WebKit's cmake sets its own
-    // -O/-march/etc.; ours would conflict. Dep args go LAST so they override.
+    // CMAKE_C_FLAGS/CMAKE_CXX_FLAGS: clears the global dep flags source.ts
+    // would otherwise pass — WebKit's cmake sets its own -O/-march/etc.;
+    // ours would conflict. Dep args go LAST so they override. We DO forward
+    // LTO/PGO since WebKit's cmake doesn't set those itself.
     //
     // Windows: ICU built from source via preBuild before cmake configure.
     // WebKit's cmake finds it via ICU_ROOT. On posix, system ICU is used
     // (macOS: Homebrew headers + system libs; Linux: libicu-dev) — cmake
     // auto-detects.
+    const optFlags: string[] = [];
+    if (cfg.lto) optFlags.push("-flto=full");
+    if (cfg.pgoGenerate) optFlags.push(`-fprofile-generate=${cfg.pgoGenerate}`);
+    if (cfg.pgoUse) {
+      optFlags.push(
+        `-fprofile-use=${cfg.pgoUse}`,
+        "-Wno-profile-instr-out-of-date",
+        "-Wno-profile-instr-unprofiled",
+        "-Wno-backend-plugin",
+      );
+    }
+    const optFlagStr = optFlags.join(" ");
     const args: Record<string, string> = {
-      CMAKE_C_FLAGS: "",
-      CMAKE_CXX_FLAGS: "",
+      CMAKE_C_FLAGS: optFlagStr,
+      CMAKE_CXX_FLAGS: optFlagStr,
       PORT: "JSCOnly",
       ENABLE_STATIC_JSC: "ON",
       USE_THIN_ARCHIVES: "OFF",
@@ -220,8 +233,8 @@ export const webkit: Dependency = {
       args.ICU_INCLUDE_DIR = slash(resolve(icu, "include"));
       // U_STATIC_IMPLEMENTATION: ICU headers default to dllimport; we
       // link statically. Matches what the old cmake's SetupWebKit did.
-      args.CMAKE_C_FLAGS = "/DU_STATIC_IMPLEMENTATION";
-      args.CMAKE_CXX_FLAGS = "/DU_STATIC_IMPLEMENTATION /clang:-fno-c++-static-destructors";
+      args.CMAKE_C_FLAGS = `/DU_STATIC_IMPLEMENTATION ${optFlagStr}`.trim();
+      args.CMAKE_CXX_FLAGS = `/DU_STATIC_IMPLEMENTATION /clang:-fno-c++-static-destructors ${optFlagStr}`.trim();
       // Static CRT to match bun + all other deps (we build everything
       // with /MTd or /MT). Without this, cmake defaults to /MDd →
       // RuntimeLibrary mismatch at link.

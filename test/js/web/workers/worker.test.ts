@@ -410,4 +410,19 @@ describe("worker_threads", () => {
     await p;
     expect(message).toEqual("hello");
   });
+
+  test("calling terminate() after the worker thread fails to start does not use-after-free", async () => {
+    // The worker thread frees its WebWorker struct when startup fails (e.g.
+    // module not found). If the main thread then calls terminate() afterwards
+    // it races with that free and reads freed memory. See fuzzilli crash
+    // Address:use-after-poison in WebWorker__notifyNeedTermination.
+    for (let i = 0; i < 10; i++) {
+      const w = new wt.Worker("does-not-exist-" + i);
+      // Wait for the worker to fail startup and run exitAndDeinit, then
+      // terminate() on the main thread exercises the freed-impl_ path.
+      await once(w, "error");
+      w.terminate();
+      w.terminate();
+    }
+  });
 });

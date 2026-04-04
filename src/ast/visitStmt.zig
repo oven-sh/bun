@@ -1115,6 +1115,31 @@ pub fn VisitStmt(
                     }
                 }
 
+                // When code coverage is enabled, unwrap if-statements with compile-time
+                // constant conditions. JSC's ControlFlowProfiler splits basic blocks at
+                // branch points but marks the body of constant-condition branches as not
+                // executed, causing incorrect coverage reports. By replacing the if-statement
+                // with just its body (when the condition is known truthy) or removing it
+                // (when known falsy), we ensure JSC tracks coverage correctly.
+                //
+                // We can't use SideEffects.toBoolean() here because dead_code_elimination
+                // is disabled in coverage mode. Instead, check the condition directly using
+                // toBooleanWithoutDCECheck which doesn't require DCE to be enabled.
+                if (p.options.features.code_coverage) {
+                    const cov_effects = SideEffects.toBooleanWithoutDCECheck(data.test_.data);
+                    if (cov_effects.ok and cov_effects.side_effects != .could_have_side_effects) {
+                        if (cov_effects.value) {
+                            return try p.appendIfBodyPreservingScope(stmts, data.yes);
+                        } else {
+                            // The condition is always false — emit the else branch if present
+                            if (data.no) |no| {
+                                return try p.appendIfBodyPreservingScope(stmts, no);
+                            }
+                            return;
+                        }
+                    }
+                }
+
                 try stmts.append(stmt.*);
             }
             pub fn s_for(noalias p: *P, noalias stmts: *ListManaged(Stmt), noalias stmt: *Stmt, noalias data: *S.For) !void {

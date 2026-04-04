@@ -1258,6 +1258,16 @@ pub fn Package(comptime SemverIntType: type) type {
                             "Duplicate dependency: \"{s}\" specified in package.json",
                             .{external_alias.slice(buf)},
                         );
+
+                        // Replace the existing entry with the duplicate (last-write-wins)
+                        // and return null to prevent appending a second entry.
+                        for (package_dependencies[0..dependencies_count]) |*package_dep| {
+                            if (package_dep.name_hash == this_dep.name_hash) {
+                                package_dep.* = this_dep;
+                                break;
+                            }
+                        }
+                        return null;
                     }
                 }
 

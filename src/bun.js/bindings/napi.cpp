@@ -42,6 +42,9 @@
 #include <JavaScriptCore/ExceptionScope.h>
 #include <JavaScriptCore/FunctionConstructor.h>
 #include <JavaScriptCore/Heap.h>
+#include <JavaScriptCore/Integrity.h>
+#include <JavaScriptCore/MarkedBlock.h>
+#include <JavaScriptCore/PreciseAllocation.h>
 #include <JavaScriptCore/Identifier.h>
 #include <JavaScriptCore/InitializeThreading.h>
 #include <JavaScriptCore/IteratorOperations.h>
@@ -2414,6 +2417,18 @@ extern "C" napi_status napi_typeof(napi_env env, napi_value val,
 
     if (value.isCell()) {
         JSCell* cell = value.asCell();
+
+        // Validate that the cell pointer is a real GC-managed object.
+        // Native modules may accidentally pass garbage (e.g. a C string pointer)
+        // as napi_value, which would crash when we dereference the cell.
+        // isSanePointer rejects obviously invalid addresses (null-near, non-canonical).
+        // The bloom filter provides fast rejection of pointers not in any known
+        // MarkedBlock, using only pointer arithmetic (no dereference).
+        if (!JSC::Integrity::isSanePointer(cell)
+            || (!JSC::PreciseAllocation::isPreciseAllocation(cell)
+                && toJS(env)->vm().heap.objectSpace().blocks().filter().ruleOut(
+                    std::bit_cast<uintptr_t>(JSC::MarkedBlock::blockFor(cell))))) [[unlikely]]
+            return napi_set_last_error(env, napi_invalid_arg);
 
         switch (cell->type()) {
         case JSC::JSFunctionType:

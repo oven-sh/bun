@@ -149,7 +149,7 @@ pub extern "kernel32" fn SetCurrentDirectoryW(
     lpPathName: win32.LPCWSTR,
 ) callconv(.winapi) win32.BOOL;
 pub const SetCurrentDirectory = SetCurrentDirectoryW;
-pub extern "ntdll" fn RtlNtStatusToDosError(win32.NTSTATUS) callconv(.winapi) Win32Error;
+pub extern "ntdll" fn RtlNtStatusToDosError(win32.NTSTATUS) callconv(.winapi) u32;
 pub extern "advapi32" fn SaferiIsExecutableFileType(szFullPathname: win32.LPCWSTR, bFromShellExecute: win32.BOOLEAN) callconv(.winapi) win32.BOOL;
 // This was originally copied from Zig's standard library
 /// Codes are from https://docs.microsoft.com/en-us/openspecs/windows_protocols/ms-erref/18d8fbe8-a967-4f1c-ae50-99ca8e491d2d
@@ -2952,7 +2952,8 @@ pub const Win32Error = enum(u16) {
     pub const WSA_QOS_RESERVED_PETYPE: Win32Error = @enumFromInt(11031);
 
     pub fn get() Win32Error {
-        return @enumFromInt(@intFromEnum(bun.windows.kernel32.GetLastError()));
+        const raw: u16 = @intFromEnum(bun.windows.kernel32.GetLastError());
+        return std.meta.intToEnum(Win32Error, raw) catch .MR_MID_NOT_FOUND;
     }
 
     pub fn int(this: Win32Error) u16 {
@@ -2971,7 +2972,12 @@ pub const Win32Error = enum(u16) {
     }
 
     pub fn fromNTStatus(status: win32.NTSTATUS) Win32Error {
-        return RtlNtStatusToDosError(status);
+        // RtlNtStatusToDosError returns a u32 Win32 error code that may not be
+        // in our Win32Error enum subset. Safely convert to avoid panic on
+        // invalid enum values.
+        const raw = RtlNtStatusToDosError(status);
+        if (raw > std.math.maxInt(u16)) return .MR_MID_NOT_FOUND;
+        return std.meta.intToEnum(Win32Error, @as(u16, @intCast(raw))) catch .MR_MID_NOT_FOUND;
     }
 };
 

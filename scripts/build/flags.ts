@@ -29,13 +29,13 @@ export interface Flag {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// GLOBAL COMPILER FLAGS
-//   Applied to BOTH bun's own sources AND forwarded to vendored deps
-//   via -DCMAKE_C_FLAGS / -DCMAKE_CXX_FLAGS.
+// CPU TARGET FLAGS
+//   -march/-mcpu/-mtune. Split out so deps that manage their own optimization
+//   and sanitizer flags (WebKit) can still inherit the target arch without
+//   the rest of globalFlags.
 // ═══════════════════════════════════════════════════════════════════════════
 
-export const globalFlags: Flag[] = [
-  // ─── CPU target ───
+export const cpuTargetFlags: Flag[] = [
   {
     flag: "-mcpu=apple-m1",
     when: c => c.darwin && c.arm64,
@@ -69,6 +69,17 @@ export const globalFlags: Flag[] = [
     when: c => c.x64 && !c.baseline,
     desc: "x64 default: Haswell (2013) — AVX2, BMI2 available",
   },
+];
+
+// ═══════════════════════════════════════════════════════════════════════════
+// GLOBAL COMPILER FLAGS
+//   Applied to BOTH bun's own sources AND forwarded to vendored deps
+//   via -DCMAKE_C_FLAGS / -DCMAKE_CXX_FLAGS.
+// ═══════════════════════════════════════════════════════════════════════════
+
+export const globalFlags: Flag[] = [
+  // ─── CPU target ───
+  ...cpuTargetFlags,
 
   // ─── MSVC runtime (Windows) ───
   {
@@ -1004,6 +1015,18 @@ export function computeDepFlags(cfg: Config): { cflags: string[]; cxxflags: stri
   const cxxflags: string[] = [];
   evalTable(globalFlags, cfg, cflags, cxxflags);
   return { cflags, cxxflags };
+}
+
+/**
+ * Just the -march/-mcpu/-mtune flags. For deps (WebKit) whose own build system
+ * sets -O/-g/sanitizer flags but never sets a CPU target, so without this they
+ * end up targeting generic x86-64 while the rest of bun targets haswell.
+ */
+export function computeCpuTargetFlags(cfg: Config): string[] {
+  const out: string[] = [];
+  evalTable(cpuTargetFlags, cfg, out, out);
+  // Dedupe: evalTable pushes into both c and cxx; we passed the same array.
+  return [...new Set(out)];
 }
 
 /**

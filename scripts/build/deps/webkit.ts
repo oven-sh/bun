@@ -26,10 +26,10 @@ export const WEBKIT_VERSION = "c2010c47d12c525d36adabe3a17b2eb6ec850960";
  *   `vendor/WebKit/WebKitBuild/`. Better: consistent, cleaned by `rm -rf
  *   build/`, separate per-profile.
  *
- * - Flags: WebKit's own cmake machinery sets compiler flags. We set
- *   `CMAKE_C_FLAGS: ""` in our args to clear the global dep flags
- *   (which would otherwise conflict). Dep args go LAST in source.ts,
- *   so they override.
+ * - Flags: WebKit's own cmake machinery sets -O/-g/sanitizer flags. We
+ *   override `CMAKE_C_FLAGS` to drop the global dep flags (which would
+ *   conflict) but DO forward -march/-mcpu + LTO/PGO, which WebKit never
+ *   sets. Dep args go LAST in source.ts, so they override.
  *
  * - Windows local mode: ICU built from source via preBuild hook
  *   (build-icu.ps1 → msbuild) before cmake configure. Output goes in
@@ -39,6 +39,7 @@ export const WEBKIT_VERSION = "c2010c47d12c525d36adabe3a17b2eb6ec850960";
 
 import { resolve } from "node:path";
 import type { Config } from "../config.ts";
+import { computeCpuTargetFlags } from "../flags.ts";
 import { slash } from "../shell.ts";
 import { type Dependency, type NestedCmakeBuild, type Source, depBuildDir, depSourceDir } from "../source.ts";
 
@@ -182,16 +183,20 @@ export const webkit: Dependency = {
 
     // Local: nested cmake, target=jsc.
     //
-    // CMAKE_C_FLAGS/CMAKE_CXX_FLAGS: clears the global dep flags source.ts
-    // would otherwise pass — WebKit's cmake sets its own -O/-march/etc.;
-    // ours would conflict. Dep args go LAST so they override. We DO forward
-    // LTO/PGO since WebKit's cmake doesn't set those itself.
+    // CMAKE_C_FLAGS/CMAKE_CXX_FLAGS: overrides the global dep flags source.ts
+    // would otherwise pass — WebKit's cmake sets its own -O/-g/sanitizer
+    // flags; ours would conflict. Dep args go LAST so they override. We DO
+    // forward:
+    //   - CPU target (-march/-mcpu): WebKit never sets this — without it,
+    //     local builds target generic x86-64 while bun + prebuilt WebKit
+    //     target haswell/nehalem.
+    //   - LTO/PGO: WebKit's cmake doesn't set those itself.
     //
     // Windows: ICU built from source via preBuild before cmake configure.
     // WebKit's cmake finds it via ICU_ROOT. On posix, system ICU is used
     // (macOS: Homebrew headers + system libs; Linux: libicu-dev) — cmake
     // auto-detects.
-    const optFlags: string[] = [];
+    const optFlags: string[] = computeCpuTargetFlags(cfg);
     if (cfg.lto) optFlags.push("-flto=full");
     if (cfg.pgoGenerate) optFlags.push(`-fprofile-generate=${cfg.pgoGenerate}`);
     if (cfg.pgoUse) {

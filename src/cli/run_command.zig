@@ -1237,7 +1237,73 @@ pub const RunCommand = struct {
         Output.flush();
     }
 
+    /// Read a markdown file, render it to ANSI, print to stdout, and exit.
+    /// Runs without a JavaScript VM — much faster than booting JSC.
+    fn renderMarkdownFileAndExit(path: string) noreturn {
+        const contents = switch (bun.sys.File.readFrom(bun.FD.cwd(), path, bun.default_allocator)) {
+            .result => |bytes| bytes,
+            .err => |err| {
+                Output.prettyErrorln("<r><red>error<r>: {f}", .{err});
+                Output.flush();
+                Global.exit(1);
+            },
+        };
+        defer bun.default_allocator.free(contents);
+
+        // Theme selection: colors when stdout is a TTY (or forced on),
+        // hyperlinks when colors are on. Light/dark detected from env.
+        const colors = Output.enable_ansi_colors_stdout;
+        const columns: u16 = brk: {
+            const c = Output.terminal_size.col;
+            if (c == 0) break :brk 80;
+            break :brk @min(c, 120);
+        };
+        const theme: bun.md.AnsiTheme = .{
+            .light = bun.md.detectLightBackground(),
+            .columns = columns,
+            .colors = colors,
+            .hyperlinks = colors and Output.isStdoutTTY(),
+        };
+
+        // Terminal rendering enables every syntax we can display nicely —
+        // GFM baseline plus wikilinks, underline, and LaTeX math passthrough.
+        const md_opts: bun.md.Options = .{
+            .tables = true,
+            .strikethrough = true,
+            .tasklists = true,
+            .permissive_url_autolinks = true,
+            .permissive_www_autolinks = true,
+            .permissive_email_autolinks = true,
+            .wiki_links = true,
+            .underline = true,
+            .latex_math = true,
+        };
+        const rendered = bun.md.renderToAnsi(
+            contents,
+            bun.default_allocator,
+            md_opts,
+            theme,
+        ) catch {
+            Output.prettyErrorln("<r><red>error<r>: failed to render markdown", .{});
+            Output.flush();
+            Global.exit(1);
+        } orelse {
+            Output.prettyErrorln("<r><red>error<r>: failed to render markdown", .{});
+            Output.flush();
+            Global.exit(1);
+        };
+        defer bun.default_allocator.free(rendered);
+
+        Output.writer().writeAll(rendered) catch {};
+        Output.flush();
+        Global.exit(0);
+    }
+
     fn _bootAndHandleError(ctx: Command.Context, path: string, loader: ?bun.options.Loader) bool {
+        const resolved_loader: ?bun.options.Loader = loader orelse bun.options.defaultLoaders.get(std.fs.path.extension(path));
+        if (resolved_loader) |l| {
+            if (l == .md) renderMarkdownFileAndExit(path);
+        }
         Global.configureAllocator(.{ .long_running = true });
         Run.boot(ctx, ctx.allocator.dupe(u8, path) catch return false, loader) catch |err| {
             ctx.log.print(Output.errorWriter()) catch {};
@@ -1358,7 +1424,7 @@ pub const RunCommand = struct {
         } else if (cfg.allow_fast_run_for_extensions) {
             const ext = std.fs.path.extension(target_name);
             const default_loader = options.defaultLoaders.get(ext);
-            if (default_loader != null and default_loader.?.canBeRunByBun()) {
+            if (default_loader != null and (default_loader.?.canBeRunByBun() or default_loader.? == .md)) {
                 try_fast_run = true;
             }
         }
@@ -1519,7 +1585,7 @@ pub const RunCommand = struct {
             var resolved_mutable = resolved;
             const path = resolved_mutable.path().?;
             const loader: bun.options.Loader = this_transpiler.options.loaders.get(path.name.ext) orelse .tsx;
-            if (loader.canBeRunByBun() or loader == .html) {
+            if (loader.canBeRunByBun() or loader == .html or loader == .md) {
                 log("Resolved to: `{s}`", .{path.text});
                 return _bootAndHandleError(ctx, path.text, loader);
             } else {

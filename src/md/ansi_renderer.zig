@@ -684,8 +684,24 @@ pub const AnsiRenderer = struct {
     /// exceeds `theme.columns`.
     fn writeWrapped(self: *AnsiRenderer, data: []const u8) void {
         if (self.theme.columns == 0) {
-            self.writeRaw(data);
-            self.updateColFromText(data);
+            // No-wrap path: still emit the indent after each embedded
+            // newline so continuation lines inside blockquotes / list
+            // items keep their `│ ` / hanging prefix.
+            var start: usize = 0;
+            var i: usize = 0;
+            while (i < data.len) : (i += 1) {
+                if (data[i] == '\n') {
+                    self.writeRaw(data[start .. i + 1]);
+                    self.col = 0;
+                    self.last_was_newline = true;
+                    self.writeIndent();
+                    start = i + 1;
+                }
+            }
+            if (start < data.len) {
+                self.writeRaw(data[start..]);
+                self.updateColFromText(data[start..]);
+            }
             return;
         }
         const indent = self.currentIndent();

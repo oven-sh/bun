@@ -1521,11 +1521,9 @@ fn probeKittyGraphics() bool {
         .events = std.posix.POLL.IN,
         .revents = 0,
     }};
-    const ready = switch (bun.sys.poll(&pfd, 80)) {
-        .result => |n| n,
-        .err => return false,
-    };
-    if (ready == 0) return false;
+    // bun.sys.poll has a Maybe variant Zig flags as incomplete — keep std.posix.poll.
+    const ready = std.posix.poll(&pfd, 80) catch return false;
+    if (ready <= 0) return false;
 
     var buf: [128]u8 = undefined;
     const n = switch (bun.sys.read(bun.FD.stdin(), &buf)) {

@@ -1311,8 +1311,10 @@ pub const AnsiRenderer = struct {
         self.writeRawNoColor(encoded);
         self.writeRawNoColor("\x1b\\");
         // End with a newline so the following caption/alt text lands
-        // on its own line under the image.
-        self.out.writeByte('\n');
+        // on its own line under the image. Route through writeRaw so
+        // the byte lands in the active buffer (cell/heading) when the
+        // image is rendered inside a table or heading.
+        self.writeRaw("\n");
         self.col = 0;
         self.last_was_newline = true;
     }
@@ -1371,10 +1373,6 @@ fn reset() []const u8 {
 fn codeSpanOpen(light: bool) []const u8 {
     // Distinct inline-code look: soft background tint + yellow text.
     return if (light) "\x1b[48;5;254m\x1b[38;5;124m" else "\x1b[48;5;236m\x1b[38;5;215m";
-}
-
-fn codeSpanClose() []const u8 {
-    return "\x1b[0m";
 }
 
 /// Visible printable width of a UTF-8 byte slice, excluding ANSI escape
@@ -1514,47 +1512,37 @@ fn probeKittyGraphics() bool {
 /// `file://` URIs and relative paths (resolved against the CWD). The
 /// returned slice is owned by the caller.
 fn resolveLocalImagePath(src: []const u8, allocator: Allocator) ?[]u8 {
-    // Reject clearly remote schemes.
+    // Reject clearly remote schemes. `data:` is intentionally allowed to
+    // fall through — callers that know how to decode data URIs can.
     if (bun.strings.startsWith(src, "http://") or
-        bun.strings.startsWith(src, "https://") or
-        bun.strings.startsWith(src, "data:"))
+        bun.strings.startsWith(src, "https://"))
     {
         return null;
     }
 
+    // Strip file:// prefix if present. Other places in bun do the same
+    // prefix-strip (VirtualMachine, node_fs_watcher, etc.) — use the
+    // WTF URL parser only when we need percent-decoding / UNC handling.
     var path: []const u8 = src;
-    // Strip file:// prefix if present.
     if (bun.strings.startsWith(src, "file://")) {
         path = src["file://".len..];
     }
 
-    // If already absolute, use it.
-    if (std.fs.path.isAbsolute(path)) {
-        const abs = allocator.dupe(u8, path) catch return null;
-        std.fs.accessAbsolute(abs, .{}) catch {
-            allocator.free(abs);
-            return null;
-        };
-        return abs;
-    }
-
-    // Relative path — resolve against CWD.
+    // Resolve to an absolute path. bun.path.joinAbsString returns a
+    // slice in a threadlocal buffer — dupe it before leaving this fn.
+    // Use bun's cached cwd when available (fs.FileSystem.instance),
+    // otherwise look it up with bun.sys.getcwd (Windows-aware).
     var cwd_buf: bun.PathBuffer = undefined;
-    const cwd = bun.getcwd(&cwd_buf) catch return null;
-    var joined = std.ArrayListUnmanaged(u8){};
-    // Function returns ?[]u8 (not error union), so errdefer would be dead.
-    // Use defer — after toOwnedSlice() succeeds the list is empty so deinit
-    // is a no-op; on any catch-return-null path we still free the buffer.
-    defer joined.deinit(allocator);
-    joined.appendSlice(allocator, cwd) catch return null;
-    joined.append(allocator, std.fs.path.sep) catch return null;
-    joined.appendSlice(allocator, path) catch return null;
-
-    const abs = joined.toOwnedSlice(allocator) catch return null;
-    std.fs.accessAbsolute(abs, .{}) catch {
+    const cwd = switch (bun.sys.getcwd(&cwd_buf)) {
+        .result => |c| c,
+        .err => return null,
+    };
+    const joined = bun.path.joinAbsString(cwd, &.{path}, .auto);
+    const abs = allocator.dupe(u8, joined) catch return null;
+    if (!bun.sys.exists(abs)) {
         allocator.free(abs);
         return null;
-    };
+    }
     return abs;
 }
 

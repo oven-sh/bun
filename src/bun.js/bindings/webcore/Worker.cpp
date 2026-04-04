@@ -504,26 +504,36 @@ extern "C" void WebWorker__fireEarlyMessages(Worker* worker, Zig::GlobalObject* 
     worker->fireEarlyMessages(globalObject);
 }
 
-extern "C" void WebWorker__dispatchError(Zig::GlobalObject* globalObject, Worker* worker, BunString message, JSC::EncodedJSValue errorValue)
+extern "C" bool WebWorker__dispatchError(Zig::GlobalObject* globalObject, Worker* worker, BunString message, JSC::EncodedJSValue errorValue)
 {
     JSValue error = JSC::JSValue::decode(errorValue);
     ErrorEvent::Init init;
     init.message = message.toWTFString(BunString::ZeroCopy).isolatedCopy();
     init.error = error;
-    init.cancelable = false;
+    init.cancelable = true;
     init.bubbles = false;
 
-    globalObject->globalEventScope->dispatchEvent(ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes));
+    auto event = ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes);
+    globalObject->globalEventScope->dispatchEvent(event);
+
+    // Per the HTML spec, if the error event was canceled (preventDefault() called,
+    // or onerror returned true), the error is considered handled.
+    if (event->defaultPrevented())
+        return true;
+
+    // Error was not handled inside the worker — propagate to the parent.
     switch (worker->options().kind) {
     case WorkerOptions::Kind::Web:
-        return worker->dispatchErrorWithMessage(message.toWTFString(BunString::ZeroCopy));
+        worker->dispatchErrorWithMessage(message.toWTFString(BunString::ZeroCopy));
+        return false;
     case WorkerOptions::Kind::Node:
         if (!worker->dispatchErrorWithValue(globalObject, error)) {
             // If serialization threw an error, use the string instead
             worker->dispatchErrorWithMessage(message.toWTFString(BunString::ZeroCopy));
         }
-        return;
+        return false;
     }
+    return false;
 }
 
 extern "C" WebCore::Worker* WebWorker__getParentWorker(void* bunVM);

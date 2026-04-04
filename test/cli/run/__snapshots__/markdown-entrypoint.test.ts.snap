@@ -1,5 +1,10 @@
 // Bun Snapshot v1, https://bun.sh/docs/test/snapshots
 
+exports[`bun <file.md> falls back to literal text when \`[[\` never closes 1`] = `
+"foo [[bar baz\x1B[0m
+"
+`;
+
 exports[`bun <file.md> renders headings with underlines 1`] = `
 "\x1B[1m\x1B[35mHeading 1\x1B[0m
 \x1B[2m═════════\x1B[0m

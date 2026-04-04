@@ -84,6 +84,30 @@ describe("bun <file.md>", () => {
     expect(await runMd("Visit [Bun](https://bun.com) today.\n")).toMatchSnapshot();
   });
 
+  test("emits OSC 8 escape for links when hyperlinks are enabled", async () => {
+    // runMd() pipes stdout so the CLI path can't see a TTY; drive the
+    // JS API directly with hyperlinks:true to cover the OSC 8 branch.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `process.stdout.write(Bun.markdown.ansi("see [Bun](https://bun.com)\\n", { hyperlinks: true }))`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, _stderr, exitCode] = await Promise.all([
+      proc.stdout.text(),
+      proc.stderr.text(),
+      proc.exited,
+    ]);
+    // Output must contain the OSC 8 opener + closer around the link.
+    expect(stdout).toContain("\x1b]8;;https://bun.com\x1b\\");
+    expect(stdout).toContain("\x1b]8;;\x1b\\");
+    expect(exitCode).toBe(0);
+  });
+
   test("renders multiple links as text + url pairs", async () => {
     expect(await runMd("see [Bun](https://bun.com)\n")).toMatchSnapshot();
   });
@@ -94,6 +118,13 @@ describe("bun <file.md>", () => {
 
   test("renders wikilinks", async () => {
     expect(await runMd("see [[SomePage]] for more\n")).toMatchSnapshot();
+  });
+
+  // Regression: the parser's `[[` fast-path used to skip emitting the
+  // preceding text when the wikilink failed to close. `foo [[bar baz`
+  // should render the full text literally, not drop the `foo ` prefix.
+  test("falls back to literal text when `[[` never closes", async () => {
+    expect(await runMd("foo [[bar baz\n")).toMatchSnapshot();
   });
 
   test("renders simple table with alignment", async () => {

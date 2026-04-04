@@ -53,4 +53,16 @@ describe("ByteBlobLoader", () => {
     expect(result.then).toBeFunction();
     expect(async () => await result).toThrow();
   });
+
+  test("does not crash when the body's store was already detached", async () => {
+    // Consuming the Response drains the underlying blob store
+    // out from under the saved ReadableStream reference.
+    for (const method of ["text", "bytes", "blob"] as const) {
+      const resp = new Response("Hello World");
+      const body = resp.body!;
+      await resp.arrayBuffer();
+      // Should not crash, just return empty content.
+      await body[method]();
+    }
+  });
 });

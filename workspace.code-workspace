@@ -90,7 +90,6 @@
       "__memory": "cpp",
       "memory_resource": "cpp"
     },
-    "git.ignoreLimitWarning": true,
-    "zig.buildOnSaveProvider": false
+    "git.ignoreLimitWarning": true
   }
 }

@@ -19,19 +19,23 @@
  * interrupted (ctrl-c, network drop, OOM), no partial file claims to be
  * complete. Next build retries from scratch.
  *
- * ## Why not stream to disk
+ * ## Streaming to disk
  *
- * We buffer the whole response in memory (`arrayBuffer()`) before writing.
- * For zig (~50MB) and dep tarballs (~few MB) this is fine. For WebKit
- * (~200MB) it's ~200MB peak memory. If that's ever a problem, switch to
- * `Bun.write(dest, res)` which streams. Haven't bothered because CI
- * machines have GBs of RAM and the whole download is a few seconds.
+ * Response body is piped to the temp file via `pipeline()` rather than
+ * buffered through `res.arrayBuffer()`. Under node on Windows arm64,
+ * `arrayBuffer()` on multi-MB responses intermittently fastfails the
+ * process (0xC0000409) — no exception, just gone. Streaming avoids the
+ * large native allocation and keeps peak memory flat regardless of
+ * tarball size (WebKit is ~200MB).
  */
 
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { createWriteStream, existsSync, readFileSync } from "node:fs";
 import { mkdir, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
+import type { ReadableStream as NodeWebReadable } from "node:stream/web";
 import { BuildError, assert } from "./error.ts";
 
 /**
@@ -50,20 +54,22 @@ export async function downloadWithRetry(url: string, dest: string, logPrefix: st
       await new Promise(r => setTimeout(r, backoffMs));
     }
 
+    const tmpPath = `${dest}.${process.pid}.partial`;
     try {
       const res = await fetch(url, { headers: { "User-Agent": "bun-build-system" } });
-      if (!res.ok) {
+      if (!res.ok || res.body === null) {
         lastError = new BuildError(`HTTP ${res.status} ${res.statusText} for ${url}`);
         continue;
       }
 
-      const tmpPath = `${dest}.${process.pid}.partial`;
-      const buf = await res.arrayBuffer();
-      await writeFile(tmpPath, new Uint8Array(buf));
+      // Cast: DOM ReadableStream vs node:stream/web ReadableStream — same
+      // shape at runtime, different TS lib declarations.
+      await pipeline(Readable.fromWeb(res.body as unknown as NodeWebReadable), createWriteStream(tmpPath));
       await rename(tmpPath, dest);
       return;
     } catch (err) {
       lastError = err;
+      await rm(tmpPath, { force: true });
     }
   }
 

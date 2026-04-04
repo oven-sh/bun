@@ -229,13 +229,29 @@ const State = struct {
         }
     }
 
+    /// Returns the tail of `data_` (dropping a single trailing newline) plus
+    /// the number of lines removed off the front.
+    ///
+    /// `max_lines` semantics:
+    /// - `null`: no elision, show everything.
+    /// - `0`: elide everything, show no content.
+    /// - `N > 0`: keep the last `N` lines, elide the rest.
     fn elide(data_: []const u8, max_lines: ?usize) ElideResult {
         var data = data_;
         if (data.len == 0) return .{ .content = &.{}, .elided_count = 0 };
         if (data[data.len - 1] == '\n') {
             data = data[0 .. data.len - 1];
         }
-        if (max_lines == null or max_lines.? == 0) return .{ .content = data, .elided_count = 0 };
+        // A bare trailing newline (now trimmed to empty) is semantically empty.
+        if (data.len == 0) return .{ .content = &.{}, .elided_count = 0 };
+        if (max_lines == null) return .{ .content = data, .elided_count = 0 };
+        if (max_lines.? == 0) {
+            var elided: usize = 1; // the last line (no trailing newline after trim)
+            for (data) |c| {
+                if (c == '\n') elided += 1;
+            }
+            return .{ .content = &.{}, .elided_count = elided };
+        }
         var i: usize = data.len;
         var lines: usize = 0;
         while (i > 0) : (i -= 1) {
@@ -256,25 +272,96 @@ const State = struct {
         return .{ .content = content, .elided_count = elided };
     }
 
+    /// Queries the current terminal height in rows. Returns null when it
+    /// cannot be determined (not a terminal, ioctl/WinAPI failure, etc.).
+    fn getTerminalRows() ?usize {
+        if (comptime Environment.isPosix) {
+            var size: std.posix.winsize = undefined;
+            if (std.posix.system.ioctl(std.posix.STDOUT_FILENO, std.posix.T.IOCGWINSZ, @intFromPtr(&size)) == 0 and size.row > 0) {
+                return size.row;
+            }
+            return null;
+        } else if (comptime Environment.isWindows) {
+            const w = std.os.windows;
+            const handle = bun.FD.stdout().native();
+            var csbi: w.CONSOLE_SCREEN_BUFFER_INFO = undefined;
+            if (w.kernel32.GetConsoleScreenBufferInfo(handle, &csbi) != 0) {
+                const rows = csbi.srWindow.Bottom - csbi.srWindow.Top + 1;
+                if (rows > 0) return @intCast(rows);
+            }
+            return null;
+        }
+        return null;
+    }
+
     fn redraw(this: *This, is_abort: bool) !void {
         if (!this.pretty_output) return;
         this.draw_buf.clearRetainingCapacity();
         try this.draw_buf.appendSlice(Output.synchronized_start);
+
+        // Cap per-handle content so the next frame fits the terminal window.
+        // Without this, `\x1b[1A` escapes below clamp at the top of the
+        // viewport once the frame is taller than the terminal, leaving stale
+        // lines that look like duplicated output (see #28800).
+        //
+        // The clamp on `up` below always applies (including during abort), so
+        // the clear loop can't emit more cursor-ups than the terminal can
+        // hold. The content cap below is skipped during abort so we still
+        // dump every line for debugging.
+        const terminal_rows = getTerminalRows();
+        // `show_indicator` reserves an extra line per handle for the
+        // "[N lines elided]" marker. When the terminal is too short even for
+        // that, we drop the marker so the frame still fits.
+        const show_indicator: bool = blk: {
+            if (is_abort) break :blk true;
+            const rows = terminal_rows orelse break :blk true;
+            break :blk rows > 3 * this.handles.len;
+        };
+        const terminal_cap: ?usize = blk: {
+            if (is_abort) break :blk null;
+            const rows = terminal_rows orelse break :blk null;
+            const n = this.handles.len;
+            if (n == 0) break :blk null;
+            // Per-handle overhead: header + footer (+ indicator if we're
+            // still showing it).
+            const per_handle_overhead: usize = if (show_indicator) 3 else 2;
+            const overhead = per_handle_overhead * n;
+            if (rows <= overhead) break :blk @as(usize, 0);
+            break :blk (rows - overhead) / n;
+        };
+
         if (this.last_lines_written > 0) {
+            // Clamp the upward movement at the terminal height. `\x1b[1A`
+            // clamps at the viewport top on its own, but counting past that
+            // wastes bytes and makes the next frame's position ambiguous
+            // if the terminal was resized smaller between frames.
+            const up = if (terminal_rows) |rows| @min(this.last_lines_written, rows) else this.last_lines_written;
             // move cursor to the beginning of the line and clear it
             try this.draw_buf.appendSlice("\x1b[0G\x1b[K");
-            for (0..this.last_lines_written) |_| {
+            for (0..up) |_| {
                 // move cursor up and clear the line
                 try this.draw_buf.appendSlice("\x1b[1A\x1b[K");
             }
         }
         for (this.handles) |*handle| {
-            // normally we truncate the output to 10 lines, but on abort we print everything to aid debugging
-            const elide_lines = if (is_abort) null else handle.config.elide_count orelse 10;
+            // Normally we truncate the output to 10 lines, but on abort we
+            // print everything to aid debugging. The CLI flag treats `0` as
+            // "show all content" (see --elide-lines help text), so translate
+            // that into `null` before passing it to `elide`, where `0` now
+            // means "elide everything".
+            const user_elide_raw = handle.config.elide_count orelse 10;
+            const user_elide: ?usize = if (user_elide_raw == 0) null else user_elide_raw;
+            const elide_lines: ?usize = blk: {
+                if (is_abort) break :blk null;
+                const cap = terminal_cap orelse break :blk user_elide;
+                // Terminal cap overrides the user setting to prevent overflow.
+                if (user_elide) |u| break :blk @min(u, cap);
+                break :blk cap;
+            };
             const e = elide(handle.buffer.items, elide_lines);
 
             try this.draw_buf.writer().print(fmt("<b>{s}<r> {s} $ <d>{s}<r>\n"), .{ handle.config.package_name, handle.config.script_name, handle.config.script_content });
-            if (e.elided_count > 0) {
+            if (e.elided_count > 0 and show_indicator) {
                 try this.draw_buf.writer().print(
                     fmt("<cyan>│<r> <d>[{d} lines elided]<r>\n"),
                     .{e.elided_count},

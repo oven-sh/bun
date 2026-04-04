@@ -728,8 +728,8 @@ describe("Echo service", () => {
 
     it("should make successful requests only when the credentials are enabled", done => {
       const client1 = new echoService(`localhost:${serverPort}`, grpc.credentials.createSsl(ca), {
-        "grpc.ssl_target_name_override": "foo.test.google.fr",
-        "grpc.default_authority": "foo.test.google.fr",
+        "grpc.ssl_target_name_override": "localhost",
+        "grpc.default_authority": "localhost",
         "grpc.use_local_subchannel_pool": 1,
       });
       const testMessage = { value: "test value", value2: 3 };
@@ -738,8 +738,8 @@ describe("Echo service", () => {
         assert.deepStrictEqual(response, testMessage);
         serverCredentials.disable();
         const client2 = new echoService(`localhost:${serverPort}`, grpc.credentials.createSsl(ca), {
-          "grpc.ssl_target_name_override": "foo.test.google.fr",
-          "grpc.default_authority": "foo.test.google.fr",
+          "grpc.ssl_target_name_override": "localhost",
+          "grpc.default_authority": "localhost",
           "grpc.use_local_subchannel_pool": 1,
         });
         client2.echo(testMessage, (error: ServiceError, response: any) => {
@@ -747,8 +747,8 @@ describe("Echo service", () => {
           assert.strictEqual(error.code, grpc.status.UNAVAILABLE);
           serverCredentials.enable();
           const client3 = new echoService(`localhost:${serverPort}`, grpc.credentials.createSsl(ca), {
-            "grpc.ssl_target_name_override": "foo.test.google.fr",
-            "grpc.default_authority": "foo.test.google.fr",
+            "grpc.ssl_target_name_override": "localhost",
+            "grpc.default_authority": "localhost",
             "grpc.use_local_subchannel_pool": 1,
           });
           client3.echo(testMessage, (error: ServiceError, response: any) => {
@@ -834,8 +834,8 @@ describe.todo("Connection injector", () => {
     tcpServer.listen(0, "localhost", () => {
       const port = (tcpServer.address() as net.AddressInfo).port;
       client = new echoService(`localhost:${port}`, grpc.credentials.createSsl(ca), {
-        "grpc.ssl_target_name_override": "foo.test.google.fr",
-        "grpc.default_authority": "foo.test.google.fr",
+        "grpc.ssl_target_name_override": "localhost",
+        "grpc.default_authority": "localhost",
       });
       done();
     });

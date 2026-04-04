@@ -121,14 +121,12 @@ it("should have checkServerIdentity", async () => {
 });
 
 describe("checkServerIdentity hostname derivation", () => {
-  // Matches Node.js: options.servername || options.host || options.socket?._host || "localhost"
-  // Regression: previously Bun skipped checkServerIdentity when self.servername was undefined.
   async function runScenario(connectOpts: Record<string, unknown>) {
     const server = tls.createServer({ key: COMMON_CERT_.key, cert: COMMON_CERT_.cert }, socket => {
       socket.end("ok");
     });
     try {
-      await once(server.listen(0, "127.0.0.1"), "listening");
+      await once(server.listen(0), "listening");
       const { port } = server.address() as AddressInfo;
 
       const { promise, resolve, reject } = Promise.withResolvers<string | null | undefined>();

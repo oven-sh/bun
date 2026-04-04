@@ -97,8 +97,8 @@ describe("gRPC streaming calls", () => {
 
     const clientCreds = grpc.credentials.createSsl(ca);
     client = new echoService(`127.0.0.1:${serverPort}`, clientCreds, {
-      "grpc.ssl_target_name_override": "foo.test.google.fr",
-      "grpc.default_authority": "foo.test.google.fr",
+      "grpc.ssl_target_name_override": "localhost",
+      "grpc.default_authority": "localhost",
     });
   });
 

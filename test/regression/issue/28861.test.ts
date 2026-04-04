@@ -34,7 +34,7 @@ test.skipIf(isWindows)("new Worker() rejects file:// URLs with a non-localhost h
   expect(exitCode).toBe(0);
 });
 
-test.skipIf(isWindows)("new Worker() rejects file:// URLs with a host like \"example.com\"", async () => {
+test.skipIf(isWindows)('new Worker() rejects file:// URLs with a host like "example.com"', async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),

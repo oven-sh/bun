@@ -874,32 +874,61 @@ pub fn VisitStmt(
                                                 .loc = last.loc_ref.loc,
                                             },
                                         };
-                                        stmts.appendSlice(
-                                            &[_]Stmt{
-                                                p.s(
-                                                    S.Local{
-                                                        .kind = .k_var,
-                                                        .is_export = false,
-                                                        .was_commonjs_export = true,
-                                                        .decls = G.Decl.List.fromOwnedSlice(decls),
-                                                    },
-                                                    stmt.loc,
-                                                ),
-                                                p.s(
-                                                    S.ExportClause{
-                                                        .items = clause_items,
-                                                        .is_single_line = true,
-                                                    },
-                                                    stmt.loc,
-                                                ),
+                                        const export_clause_stmt = p.s(
+                                            S.ExportClause{
+                                                .items = clause_items,
+                                                .is_single_line = true,
                                             },
+                                            stmt.loc,
+                                        );
+
+                                        // Always emit the var declaration inline (var is
+                                        // hoisted in JS so this is valid even inside
+                                        // control flow). But the export clause must be at
+                                        // the module top level — defer it when we're
+                                        // inside control flow (e.g. braceless if/else or
+                                        // while body that doesn't push a new scope).
+                                        stmts.append(
+                                            p.s(
+                                                S.Local{
+                                                    .kind = .k_var,
+                                                    .is_export = false,
+                                                    .was_commonjs_export = true,
+                                                    .decls = G.Decl.List.fromOwnedSlice(decls),
+                                                },
+                                                stmt.loc,
+                                            ),
                                         ) catch unreachable;
+
+                                        if (p.control_flow_nesting_depth > 0) {
+                                            p.deferred_commonjs_export_stmts.append(
+                                                p.allocator,
+                                                export_clause_stmt,
+                                            ) catch unreachable;
+                                        } else {
+                                            stmts.append(export_clause_stmt) catch unreachable;
+                                        }
 
                                         return;
                                     }
                                 }
                             } else if (p.commonjs_replacement_stmts.len > 0) {
-                                if (stmts.items.len == 0) {
+                                if (p.control_flow_nesting_depth > 0) {
+                                    // Inside control flow, var declarations can be
+                                    // emitted inline (var is hoisted), but export
+                                    // clauses must be deferred to the module top level.
+                                    for (p.commonjs_replacement_stmts) |replacement_stmt| {
+                                        if (replacement_stmt.data == .s_export_clause) {
+                                            p.deferred_commonjs_export_stmts.append(
+                                                p.allocator,
+                                                replacement_stmt,
+                                            ) catch unreachable;
+                                        } else {
+                                            stmts.append(replacement_stmt) catch unreachable;
+                                        }
+                                    }
+                                    p.commonjs_replacement_stmts.len = 0;
+                                } else if (stmts.items.len == 0) {
                                     stmts.items = p.commonjs_replacement_stmts;
                                     stmts.capacity = p.commonjs_replacement_stmts.len;
                                     p.commonjs_replacement_stmts.len = 0;
@@ -1024,6 +1053,9 @@ pub fn VisitStmt(
                 if (p.options.features.minify_syntax) {
                     data.test_ = SideEffects.simplifyBoolean(p, data.test_);
                 }
+
+                p.control_flow_nesting_depth += 1;
+                defer p.control_flow_nesting_depth -= 1;
 
                 const effects = SideEffects.toBoolean(p, data.test_.data);
                 if (effects.ok and !effects.value) {

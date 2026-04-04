@@ -613,6 +613,57 @@ devTest("barrel optimization: export star target not deferred (#27521)", {
   },
 });
 
+devTest("barrel optimization: export * as Name cross-package (#28166)", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import { encode } from 'codec';
+      import { u8 } from 'utils';
+      console.log('result: ' + encode(new Uint8Array([1, 2])) + ' ' + u8.pool(4));
+    `,
+    "node_modules/utils/package.json": JSON.stringify({
+      name: "utils",
+      version: "1.0.0",
+      main: "./index.js",
+      sideEffects: false,
+    }),
+    "node_modules/utils/index.js": `
+      export * as typed from './arrays/typed/index.js';
+      export * as u8 from './arrays/u8/pool.js';
+    `,
+    "node_modules/utils/arrays/typed/index.js": `
+      export { toDataView } from './misc.js';
+    `,
+    "node_modules/utils/arrays/typed/misc.js": `
+      export function toDataView(arr) { return arr.byteLength; }
+    `,
+    "node_modules/utils/arrays/u8/pool.js": `
+      export function pool(n) { return n * 2; }
+    `,
+    "node_modules/codec/package.json": JSON.stringify({
+      name: "codec",
+      version: "1.0.0",
+      main: "./index.js",
+      sideEffects: false,
+    }),
+    "node_modules/codec/index.js": `
+      export { encode } from './intermediate.js';
+      export { decode } from './decode.js';
+    `,
+    "node_modules/codec/intermediate.js": `
+      import { typed } from 'utils';
+      export function encode(data) { return typed.toDataView(data); }
+    `,
+    "node_modules/codec/decode.js": `
+      export function decode(data) { return "decoded"; }
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("result: 2 8");
+  },
+});
+
 devTest("barrel optimization: two export-from blocks pointing to the same source", {
   files: {
     "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),

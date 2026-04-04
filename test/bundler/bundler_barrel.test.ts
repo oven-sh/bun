@@ -1591,4 +1591,58 @@ describe("bundler", () => {
     compile: true,
     run: { stdout: "ok" },
   });
+
+  // --- export * as Name through nested barrels (#28166) ---
+  // The bug triggers when a barrel with `export * as Name from '...'` is
+  // consumed indirectly through another barrel. The barrel optimization
+  // defers the namespace target, causing its exports to be missing at runtime.
+  // Entry → codec (uses typed.toDataView) → utils barrel (export * as typed).
+  // On the buggy path, barrel optimization for the utils barrel defers
+  // typed/index.js, so toDataView is never defined in the bundle.
+
+  itBundled("barrel/ExportStarAsNameCrossPackage", {
+    files: {
+      "/entry.js": /* js */ `
+        import { encode } from 'codec';
+        import { u8 } from 'utils';
+        console.log(encode(new Uint8Array([1, 2])) + ' ' + u8.pool(4));
+      `,
+      "/node_modules/utils/package.json": JSON.stringify({
+        name: "utils",
+        main: "./index.js",
+        sideEffects: false,
+      }),
+      "/node_modules/utils/index.js": /* js */ `
+        export * as typed from './arrays/typed/index.js';
+        export * as u8 from './arrays/u8/pool.js';
+      `,
+      "/node_modules/utils/arrays/typed/index.js": /* js */ `
+        export { toDataView } from './misc.js';
+      `,
+      "/node_modules/utils/arrays/typed/misc.js": /* js */ `
+        export function toDataView(arr) { return arr.byteLength; }
+      `,
+      "/node_modules/utils/arrays/u8/pool.js": /* js */ `
+        export function pool(n) { return n * 2; }
+      `,
+      "/node_modules/codec/package.json": JSON.stringify({
+        name: "codec",
+        main: "./index.js",
+        sideEffects: false,
+      }),
+      "/node_modules/codec/index.js": /* js */ `
+        export { encode } from './intermediate.js';
+        export { decode } from './decode.js';
+      `,
+      "/node_modules/codec/intermediate.js": /* js */ `
+        import { typed } from 'utils';
+        export function encode(data) { return typed.toDataView(data); }
+      `,
+      "/node_modules/codec/decode.js": /* js */ `
+        export function decode(data) { return "decoded"; }
+      `,
+    },
+    outdir: "/out",
+    run: { stdout: "2 8" },
+  });
 });

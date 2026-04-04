@@ -102,9 +102,20 @@ describe("basic", () => {
 
     await runBunInstall(bunEnv, packageDir);
 
-    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([".bun", "two-range-deps"]);
+    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([
+      ".bun",
+      "@types",
+      "no-deps",
+      "two-range-deps",
+    ]);
     expect(readlinkSync(join(packageDir, "node_modules", "two-range-deps"))).toBe(
       join(".bun", "two-range-deps@1.0.0", "node_modules", "two-range-deps"),
+    );
+    expect(readlinkSync(join(packageDir, "node_modules", "no-deps"))).toBe(
+      join(".bun", "no-deps@1.1.0", "node_modules", "no-deps"),
+    );
+    expect(readlinkSync(join(packageDir, "node_modules", "@types", "is-number"))).toBe(
+      join("..", ".bun", "@types+is-number@2.0.0", "node_modules", "@types", "is-number"),
     );
     expect(readlinkSync(join(packageDir, "node_modules", ".bun", "node_modules", "two-range-deps"))).toBe(
       join("..", "two-range-deps@1.0.0", "node_modules", "two-range-deps"),
@@ -388,7 +399,14 @@ describe("isolated workspaces", () => {
 
     expect(existsSync(join(packageDir, "node_modules", "pkg-1"))).toBeFalse();
     expect(readlinkSync(join(packageDir, "pkg-1", "node_modules", "pkg-2"))).toBe(join("..", "..", "pkg-2"));
-    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([".bun", "no-deps"]);
+    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([
+      ".bun",
+      "@types",
+      "a-dep",
+      "a-dep-b",
+      "b-dep-a",
+      "no-deps",
+    ]);
     expect(readlinkSync(join(packageDir, "node_modules", "no-deps"))).toBe(
       join(".bun", "no-deps@1.0.0", "node_modules", "no-deps"),
     );
@@ -585,7 +603,12 @@ describe("optional peers", () => {
       });
       expect(await exited).toBe(0);
 
-      expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([".bun", "one-dep", "one-one-dep"]);
+      expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([
+        ".bun",
+        "no-deps",
+        "one-dep",
+        "one-one-dep",
+      ]);
       expect(await readdirSorted(join(packageDir, "node_modules/.bun"))).toEqual([
         "no-deps@1.0.1",
         "node_modules",
@@ -802,7 +825,7 @@ describe("existing node_modules, missing node_modules/.bun", () => {
         readdirSorted(join(packageDir, "packages", "pkg1", "node_modules")),
         readdirSorted(join(packageDir, "packages", "pkg2", "node_modules")),
       ]),
-    ).toEqual([[".bun", expect.stringContaining(".old_modules-"), "no-deps"], ["no-deps"], ["a-dep"]]);
+    ).toEqual([[".bun", expect.stringContaining(".old_modules-"), "a-dep", "no-deps"], ["no-deps"], ["a-dep"]]);
 
     // another install will not reset the node_modules
 
@@ -813,7 +836,7 @@ describe("existing node_modules, missing node_modules/.bun", () => {
         await rm(join(packageDir, "node_modules", entry), { recursive: true, force: true });
       }
     }
-    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([".bun", "no-deps"]);
+    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([".bun", "a-dep", "no-deps"]);
 
     // add things to workspace node_modules. these will go undetected
     await Promise.all([
@@ -838,7 +861,7 @@ describe("existing node_modules, missing node_modules/.bun", () => {
         readdirSorted(join(packageDir, "packages", "pkg2", "node_modules")),
       ]),
     ).toEqual([
-      [".bun", "no-deps"],
+      [".bun", "a-dep", "no-deps"],
       ["no-deps", "oops1"],
       ["a-dep", "oops2"],
     ]);
@@ -992,8 +1015,11 @@ test("many transitive dependencies", async () => {
     "1-peer-dep-a",
     "alias-loop-1",
     "alias-loop-2",
+    "alias1",
+    "alias2",
     "basic-1",
     "is-number",
+    "no-deps",
   ]);
   expect(readlinkSync(join(packageDir, "node_modules", "alias-loop-1"))).toBe(
     join(".bun", "alias-loop-1@1.0.0", "node_modules", "alias-loop-1"),
@@ -1057,7 +1083,7 @@ test("dependency names are preserved", async () => {
 
   await runBunInstall(bunEnv, packageDir);
 
-  expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([".bun", "alias-loop-1"]);
+  expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([".bun", "alias-loop-1", "alias1", "alias2"]);
   expect(readlinkSync(join(packageDir, "node_modules", "alias-loop-1"))).toBe(
     join(".bun", "alias-loop-1@1.0.0", "node_modules", "alias-loop-1"),
   );

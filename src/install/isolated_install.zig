@@ -573,16 +573,18 @@ pub fn installIsolatedPackages(
                     } else {
                         // transitive dependencies (also direct dependencies of workspaces!)
                         const dep_name = dependencies[new_entry_dep_id].name.slice(string_buf);
-                        if (manager.options.public_hoist_pattern) |public_hoist_pattern| {
-                            if (public_hoist_pattern.isMatch(dep_name)) {
-                                const hoist_entry = try public_hoisted.getOrPut(dep_name);
-                                if (!hoist_entry.found_existing) {
-                                    try entry_dependencies[0].insert(
-                                        lockfile.allocator,
-                                        .{ .entry_id = new_entry_id, .dep_id = new_entry_dep_id },
-                                        &ctx,
-                                    );
-                                }
+                        const should_public_hoist = if (manager.options.public_hoist_pattern) |public_hoist_pattern|
+                            public_hoist_pattern.isMatch(dep_name)
+                        else
+                            true; // default: hoist all (like pnpm's default publicHoistPattern: ['*'])
+                        if (should_public_hoist) {
+                            const hoist_entry = try public_hoisted.getOrPut(dep_name);
+                            if (!hoist_entry.found_existing) {
+                                try entry_dependencies[0].insert(
+                                    lockfile.allocator,
+                                    .{ .entry_id = new_entry_id, .dep_id = new_entry_dep_id },
+                                    &ctx,
+                                );
                             }
                         }
                     }

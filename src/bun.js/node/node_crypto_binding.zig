@@ -756,6 +756,16 @@ fn scryptSync(global: *JSGlobalObject, callFrame: *jsc.CallFrame) JSError!JSValu
     defer ctx.deinitSync();
     const buf, const bytes = try jsc.ArrayBuffer.alloc(global, .ArrayBuffer, ctx.keylen);
     ctx.runTask(bytes);
+
+    if (ctx.err) |err| {
+        if (err != 0) {
+            var err_buf: [256]u8 = undefined;
+            const msg = BoringSSL.ERR_error_string_n(err, &err_buf, err_buf.len);
+            return global.ERR(.CRYPTO_OPERATION_FAILED, "Scrypt failed: {s}", .{msg}).throw();
+        }
+        return global.ERR(.CRYPTO_OPERATION_FAILED, "Scrypt failed", .{}).throw();
+    }
+
     return buf;
 }
 

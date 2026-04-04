@@ -1573,10 +1573,26 @@ fn probeKittyGraphics() bool {
     // Honor an explicit opt-out.
     if (bun.getenvZ("BUN_DISABLE_KITTY_PROBE")) |_| return false;
 
-    // Save original mode + switch stdin to raw so the reply bytes
-    // arrive immediately and don't echo.
+    // Save the parent's termios before flipping stdin to raw. If the
+    // parent (a TUI, tmux/Zellij pane, etc.) already had raw mode on,
+    // restoring to a fixed .normal would corrupt it — instead reapply
+    // exactly what we read. tcgetattr failing means stdin isn't a real
+    // TTY in a way we can snapshot; fall back to forcing .normal.
+    var saved_termios: std.posix.termios = undefined;
+    const have_saved = if (std.posix.tcgetattr(0)) |t| blk: {
+        saved_termios = t;
+        break :blk true;
+    } else |_| false;
     _ = bun.tty.setMode(0, .raw);
-    defer _ = bun.tty.setMode(0, .normal);
+    defer {
+        if (have_saved) {
+            std.posix.tcsetattr(0, .NOW, saved_termios) catch {
+                _ = bun.tty.setMode(0, .normal);
+            };
+        } else {
+            _ = bun.tty.setMode(0, .normal);
+        }
+    }
 
     // Query: transmit a 1×1 RGB image (3 zero bytes = "AAAA" b64),
     // id=31. The terminal replies with `\x1b_Gi=31;OK\x1b\\`

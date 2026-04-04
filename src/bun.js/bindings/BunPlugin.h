@@ -71,7 +71,7 @@ public:
 
         VirtualModuleMap* _Nullable virtualModules = nullptr;
         bool mustDoExpensiveRelativeLookup = false;
-        JSC::EncodedJSValue run(JSC::JSGlobalObject* globalObject, BunString* namespaceString, BunString* path);
+        JSC::EncodedJSValue run(JSC::JSGlobalObject* globalObject, BunString* namespaceString, BunString* path, BunString* importer);
 
         bool hasVirtualModules() const { return virtualModules != nullptr; }
 
@@ -104,6 +104,6 @@ class GlobalObject;
 } // namespace Zig
 
 namespace Bun {
-JSC::JSValue runVirtualModule(Zig::GlobalObject*, BunString* specifier, bool& wasModuleMock);
+JSC::JSValue runVirtualModule(Zig::GlobalObject*, BunString* specifier, BunString* referrer, bool& wasModuleMock);
 JSC::Structure* createModuleMockStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype);
 }

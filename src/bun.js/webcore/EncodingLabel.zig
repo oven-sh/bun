@@ -13,6 +13,7 @@ pub const EncodingLabel = enum {
     /// - ASCII
     /// - latin1
     @"windows-1252",
+    @"windows-1251",
     @"windows-1253",
     @"windows-1255",
     @"windows-1257",
@@ -42,6 +43,7 @@ pub const EncodingLabel = enum {
             .@"ISO-8859-8-I" => "iso-8859-8-i",
             .@"KOI8-U" => "koi8-u",
             .@"windows-874" => "windows-874",
+            .@"windows-1251" => "windows-1251",
             .@"windows-1253" => "windows-1253",
             .@"windows-1255" => "windows-1255",
             .@"windows-1257" => "windows-1257",
@@ -161,6 +163,10 @@ pub const EncodingLabel = enum {
         .{ "iso885911", .@"windows-874" },
         .{ "iso_8859-11", .@"windows-874" },
         .{ "tis-620", .@"windows-874" },
+
+        .{ "windows-1251", .@"windows-1251" },
+        .{ "cp1251", .@"windows-1251" },
+        .{ "x-cp1251", .@"windows-1251" },
 
         .{ "windows-1253", .@"windows-1253" },
         .{ "cp1253", .@"windows-1253" },

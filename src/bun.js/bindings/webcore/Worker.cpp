@@ -27,6 +27,7 @@
 #include "config.h"
 #include "Worker.h"
 
+#include "BunClientData.h"
 // #include "ContentSecurityPolicy.h"
 // #include "DedicatedWorkerGlobalScope.h"
 #include "ErrorCode.h"
@@ -262,7 +263,10 @@ ExceptionOr<void> Worker::postMessage(JSC::JSGlobalObject& state, JSC::JSValue m
 void Worker::terminate()
 {
     // m_contextProxy.terminateWorkerGlobalScope();
-    m_terminationFlags.fetch_or(TerminateRequestedFlag);
+    // Use fetch_or to atomically set TerminateRequestedFlag and check the old value.
+    // If either flag was already set, we've already initiated or completed termination.
+    if (m_terminationFlags.fetch_or(TerminateRequestedFlag) & (TerminateRequestedFlag | TerminatedFlag))
+        return;
     WebWorker__notifyNeedTermination(impl_);
 }
 
@@ -474,6 +478,17 @@ extern "C" void WebWorker__dispatchExit(Zig::GlobalObject* globalObject, Worker*
     if (globalObject) {
         auto& vm = JSC::getVM(globalObject);
         vm.setHasTerminationRequest();
+
+        // Cancel all pending deferred work tickets before the final GC.
+        // Bun routes DeferredWorkTimer tickets to JSCTaskScheduler instead of
+        // JSC's internal m_pendingTickets. Without explicitly cancelling them here,
+        // the GC's core constraints may visit stale JSCell* dependencies held by
+        // tickets that JSC doesn't know about, causing a use-after-free crash.
+        {
+            auto* clientData = WebCore::clientData(vm);
+            if (clientData)
+                clientData->deferredWorkTimer.cancelAllPendingWork(clientData->bunVM);
+        }
 
         {
             auto scope = DECLARE_THROW_SCOPE(vm);

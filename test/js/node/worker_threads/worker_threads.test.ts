@@ -295,7 +295,7 @@ test("eval does not leak source code", async () => {
 });
 
 describe("worker event", () => {
-  test("is emitted on the next tick with the right value", () => {
+  test("is emitted on the next tick with the right value", async () => {
     const { promise, resolve } = Promise.withResolvers();
     let worker: Worker | undefined = undefined;
     let called = false;
@@ -306,14 +306,15 @@ describe("worker event", () => {
     });
     worker = new Worker(new URL("data:text/javascript,"));
     expect(called).toBeFalse();
-    return promise;
+    await promise;
+    await worker.terminate();
   });
 
   test("uses an overridden process.emit function", async () => {
     const previousEmit = process.emit;
+    let worker: Worker | undefined;
     try {
       const { promise, resolve, reject } = Promise.withResolvers();
-      let worker: Worker | undefined;
       // should not actually emit the event
       process.on("worker", expect.unreachable);
       worker = new Worker("", { eval: true });
@@ -331,6 +332,7 @@ describe("worker event", () => {
     } finally {
       process.emit = previousEmit;
       process.off("worker", expect.unreachable);
+      if (worker) await worker.terminate();
     }
   });
 
@@ -361,6 +363,7 @@ describe("environmentData", () => {
     );
     const [msg] = await once(worker, "message");
     expect(msg).toEqual(new Map([["hello", "world"]]));
+    await worker.terminate();
   });
 
   test("child modifications do not affect parent", async () => {
@@ -424,7 +427,7 @@ describe("error event", () => {
 });
 
 describe("getHeapSnapshot", () => {
-  test("throws if the wrong options are passed", () => {
+  test("throws if the wrong options are passed", async () => {
     const worker = new Worker("", { eval: true });
     // @ts-expect-error
     expect(() => worker.getHeapSnapshot(0)).toThrow({
@@ -441,15 +444,17 @@ describe("getHeapSnapshot", () => {
       name: "TypeError",
       message: 'The "options.exposeNumericValues" property must be of type boolean. Received type number (0)',
     });
+    await worker.terminate();
   });
 
-  test("returns a rejected promise if the worker is not running", () => {
+  test("returns a rejected promise if the worker is not running", async () => {
     const worker = new Worker("", { eval: true });
-    expect(worker.getHeapSnapshot()).rejects.toMatchObject({
+    await expect(worker.getHeapSnapshot()).rejects.toMatchObject({
       name: "Error",
       code: "ERR_WORKER_NOT_RUNNING",
       message: "Worker instance not running",
     });
+    await worker.terminate();
   });
 
   test("resolves to a Stream.Readable with JSON text in V8 format", async () => {
@@ -485,5 +490,6 @@ describe("getHeapSnapshot", () => {
       "trace_tree",
     ]);
     worker.postMessage(0);
+    await once(worker, "exit");
   });
 });

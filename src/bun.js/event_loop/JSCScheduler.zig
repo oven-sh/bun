@@ -16,10 +16,13 @@ export fn Bun__eventLoop__incrementRefConcurrently(jsc_vm: *VirtualMachine, delt
     jsc.markBinding(@src());
 
     if (delta > 0) {
-        jsc_vm.event_loop.refConcurrently();
+        _ = jsc_vm.event_loop.concurrent_ref.fetchAdd(@intCast(delta), .seq_cst);
+    } else if (delta < 0) {
+        _ = jsc_vm.event_loop.concurrent_ref.fetchSub(@intCast(-delta), .seq_cst);
     } else {
-        jsc_vm.event_loop.unrefConcurrently();
+        return;
     }
+    jsc_vm.event_loop.wakeup();
 }
 
 export fn Bun__queueJSCDeferredWorkTaskConcurrently(jsc_vm: *VirtualMachine, task: *JSCScheduler.JSCDeferredWorkTask) void {

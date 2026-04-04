@@ -447,7 +447,7 @@ pub fn parseFlag(this: *Mv, flag: []const u8) union(enum) { continue_parsing, do
     if (flag[0] != '-') return .done;
 
     const small_flags = flag[1..];
-    for (small_flags) |char| {
+    for (small_flags, 0..) |char, i| {
         switch (char) {
             'f' => {
                 this.opts.force_overwrite = true;
@@ -471,7 +471,7 @@ pub fn parseFlag(this: *Mv, flag: []const u8) union(enum) { continue_parsing, do
                 this.opts.verbose_output = true;
             },
             else => {
-                return .{ .illegal_option = "-" };
+                return .{ .illegal_option = small_flags[i..][0..1] };
             },
         }
     }

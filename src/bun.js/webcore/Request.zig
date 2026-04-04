@@ -703,6 +703,8 @@ pub fn constructInto(globalThis: *jsc.JSGlobalObject, arguments: []const jsc.JSV
                         },
                     }
                 }
+
+                req.request_context = request.request_context;
             }
 
             if (value.asDirect(Response)) |response| {
@@ -1067,6 +1069,7 @@ pub fn cloneInto(
         .method = this.method,
         .flags = this.flags,
         .#headers = headers,
+        .request_context = this.request_context,
     };
 
     if (this.signal) |signal| {

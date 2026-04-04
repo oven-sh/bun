@@ -105,6 +105,31 @@ Bun supports the following loaders:
 - `dataurl`
 - `text`
 
+### `resolve.conditions`
+
+Configure custom [export conditions](https://nodejs.org/api/packages.html#conditional-exports) used when resolving packages. Equivalent to passing `--conditions` on every CLI invocation. Applies to `bun run`, `bun test`, `bun build`, and the dev server.
+
+```toml title="bunfig.toml" icon="settings"
+[resolve]
+conditions = ["source"]
+```
+
+This mirrors TypeScript's `customConditions` in `tsconfig.json`. A common use case is monorepos where workspace packages expose a `"source"` export condition so sibling packages resolve directly to `.ts` source instead of the built output:
+
+```json title="package.json"
+{
+  "exports": {
+    ".": {
+      "source": "./src/index.ts",
+      "types": "./dist/index.d.mts",
+      "import": "./dist/index.mjs"
+    }
+  }
+}
+```
+
+Conditions from bunfig.toml and the CLI `--conditions` flag are combined — passing `--conditions foo` adds `foo` to the conditions set by bunfig, it does not replace them.
+
 ### `telemetry`
 
 The `telemetry` field is used to enable/disable analytics. By default, telemetry is enabled. This is equivalent to the `DO_NOT_TRACK` environment variable.

@@ -33,7 +33,6 @@ pub const CryptoHasher = union(enum) {
                 .ripemd160,
                 .blake2b256,
                 .blake2b512,
-
                 .@"sha512-224",
                 => {
                     if (algorithm.md()) |md| {
@@ -42,6 +41,7 @@ pub const CryptoHasher = union(enum) {
                         });
                     }
                 },
+
                 else => {
                     return null;
                 },
@@ -489,6 +489,7 @@ const CryptoHasherZig = struct {
         .{ "shake128", std.crypto.hash.sha3.Shake128 },
         .{ "shake256", std.crypto.hash.sha3.Shake256 },
         .{ "blake2s256", std.crypto.hash.blake2.Blake2s256 },
+        .{ "blake3-256", std.crypto.hash.Blake3 },
     };
 
     inline fn digestLength(Algorithm: type) comptime_int {

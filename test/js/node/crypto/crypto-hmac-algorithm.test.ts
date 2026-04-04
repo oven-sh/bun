@@ -22,6 +22,7 @@ test("createHmac works with various algorithm names", () => {
     "blake2b256",
     "blake2b512",
     "blake2s256",
+    "blake3-256",
     "md4",
     "sha512-224",
     "sha512-256",

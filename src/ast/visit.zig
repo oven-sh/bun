@@ -136,7 +136,19 @@ pub fn Visit(
 
             for (args) |*arg| {
                 if (arg.ts_decorators.len > 0) {
+                    // Decorator expressions for parameters are evaluated in the
+                    // enclosing scope, not in the function argument scope. This
+                    // is important because the generated code for legacy TS
+                    // decorators hoists decorator expressions outside the
+                    // function. Without this, a parameter binding with the same
+                    // name as an import (e.g. `@Inject(X) X: string`) would
+                    // shadow the import inside the decorator expression.
+                    const current = p.current_scope;
+                    if (current.parent) |parent| {
+                        p.current_scope = parent;
+                    }
                     arg.ts_decorators = p.visitTSDecorators(arg.ts_decorators);
+                    p.current_scope = current;
                 }
 
                 p.visitBinding(arg.binding, duplicate_args_check_ptr);

@@ -42,14 +42,6 @@ export const cpuTargetFlags: Flag[] = [
     desc: "Target Apple M1 (works on all Apple Silicon)",
   },
   {
-    // CMake auto-added these via CMAKE_OSX_DEPLOYMENT_TARGET/CMAKE_OSX_SYSROOT;
-    // we must add explicitly. Without this, clang/ld64 default to the host SDK
-    // version — CI builds get minos=15.0, breaking macOS 13/14 users at launch.
-    flag: c => [`-mmacosx-version-min=${c.osxDeploymentTarget!}`, "-isysroot", c.osxSysroot!],
-    when: c => c.darwin && c.osxDeploymentTarget !== undefined && c.osxSysroot !== undefined,
-    desc: "macOS deployment target + SDK (sets LC_BUILD_VERSION minos)",
-  },
-  {
     flag: ["-march=armv8-a+crc", "-mtune=ampere1"],
     when: c => c.linux && c.arm64,
     desc: "ARM64 Linux: ARMv8-A base + CRC, tuned for Ampere (Graviton-like)",
@@ -80,6 +72,14 @@ export const cpuTargetFlags: Flag[] = [
 export const globalFlags: Flag[] = [
   // ─── CPU target ───
   ...cpuTargetFlags,
+  {
+    // CMake auto-added these via CMAKE_OSX_DEPLOYMENT_TARGET/CMAKE_OSX_SYSROOT;
+    // we must add explicitly. Without this, clang/ld64 default to the host SDK
+    // version — CI builds get minos=15.0, breaking macOS 13/14 users at launch.
+    flag: c => [`-mmacosx-version-min=${c.osxDeploymentTarget!}`, "-isysroot", c.osxSysroot!],
+    when: c => c.darwin && c.osxDeploymentTarget !== undefined && c.osxSysroot !== undefined,
+    desc: "macOS deployment target + SDK (sets LC_BUILD_VERSION minos)",
+  },
 
   // ─── MSVC runtime (Windows) ───
   {

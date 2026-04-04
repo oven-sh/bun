@@ -1424,7 +1424,11 @@ pub const AnsiRenderer = struct {
         // payloads are megabytes of base64 and would exceed typical
         // terminal OSC parameter limits (64KB–1MB), causing rendering
         // artifacts, hangs, or garbage output.
+        // Also skip when we're inside an enclosing link span
+        // (`[![alt](img)](url)`) — emitting our own OSC 8 would overwrite
+        // the outer link destination for subsequent text on that line.
         const link_ok = self.theme.colors and self.theme.hyperlinks and has_src and
+            self.link_depth == 0 and
             !bun.strings.startsWith(src.?, "data:");
         if (link_ok) {
             self.writeRawNoColor("\x1b]8;;");

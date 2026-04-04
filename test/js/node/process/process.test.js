@@ -103,9 +103,9 @@ it("process.title with UTF-16 characters", () => {
 });
 
 it.skipIf(isWindows)("process.chdir() getcwd failure produces a proper error", async () => {
-  // When the resulting cwd exceeds PATH_MAX (1024 on macOS), getcwd() fails
-  // with ERANGE. Bun used to throw {syscall: "TODO", errno: 0}; it should now
-  // surface the real syscall and errno.
+  // When the resulting cwd exceeds PATH_MAX (1024 on macOS, 4096 on Linux),
+  // getcwd() fails with ERANGE. Bun used to throw {syscall: "TODO", errno: 0};
+  // it should now surface the real syscall and errno.
   const base = tmpdirSync();
   try {
     await using proc = Bun.spawn({
@@ -115,13 +115,15 @@ it.skipIf(isWindows)("process.chdir() getcwd failure produces a proper error", a
         `
           const fs = require("node:fs");
           process.chdir(${JSON.stringify(base)});
-          const SEG = "a".repeat(20);
+          const SEG = Buffer.alloc(100, "a").toString();
           try {
-            for (let i = 0; i < 60; i++) {
+            // 50 * 101 = 5050, enough to exceed PATH_MAX on both macOS (1024)
+            // and Linux (4096).
+            for (let i = 0; i < 50; i++) {
               fs.mkdirSync(SEG);
               process.chdir(SEG);
             }
-            process.stdout.write("no-error");
+            process.stdout.write(JSON.stringify({ noError: true }));
           } catch (e) {
             process.stdout.write(JSON.stringify({ code: e.code, syscall: e.syscall, errno: e.errno }));
           }
@@ -132,14 +134,15 @@ it.skipIf(isWindows)("process.chdir() getcwd failure produces a proper error", a
       stderr: "inherit",
     });
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    expect(exitCode).toBe(0);
     const err = JSON.parse(stdout);
     // Depending on the starting tmpdir length, we either hit a real getcwd
     // ERANGE (path > PATH_MAX) or the pre-check that rejects paths that can't
     // fit with a trailing slash.
+    expect(err.noError).toBeUndefined();
     expect(err.syscall).toBe("getcwd");
-    expect(err.code === "ERANGE" || err.code === "ENAMETOOLONG").toBe(true);
-    expect(err.errno === -34 || err.errno === -63).toBe(true);
+    expect(["ERANGE", "ENAMETOOLONG"]).toContain(err.code);
+    expect(err.errno).toBeLessThan(0);
+    expect(exitCode).toBe(0);
   } finally {
     // rm -rf because fs.rmSync can't walk a tree where paths exceed PATH_MAX.
     Bun.spawnSync({ cmd: ["rm", "-rf", base] });

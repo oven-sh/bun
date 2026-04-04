@@ -577,6 +577,11 @@ EXPORTS
   ?GetCurrent@Isolate@v8@@SAPEAV12@XZ
   ?GetCurrentContext@Isolate@v8@@QEAA?AV?$Local@VContext@v8@@@2@XZ
   ?AddEnvironmentCleanupHook@node@@YAXPEAVIsolate@v8@@P6AXPEAX@Z1@Z
+  ?AsyncHooksGetExecutionAsyncId@node@@YANPEAVIsolate@v8@@@Z
+  ?AsyncHooksGetTriggerAsyncId@node@@YANPEAVIsolate@v8@@@Z
+  ?EmitAsyncInit@node@@YA?AUasync_context@1@PEAVIsolate@v8@@V?$Local@VObject@v8@@@4@PEBDN@Z
+  ?EmitAsyncInit@node@@YA?AUasync_context@1@PEAVIsolate@v8@@V?$Local@VObject@v8@@@4@V?$Local@VString@v8@@@4@N@Z
+  ?EmitAsyncDestroy@node@@YAXPEAVIsolate@v8@@Uasync_context@1@@Z
   ?RemoveEnvironmentCleanupHook@node@@YAXPEAVIsolate@v8@@P6AXPEAX@Z1@Z
   ?New@Number@v8@@SA?AV?$Local@VNumber@v8@@@2@PEAVIsolate@2@N@Z
   ?Value@Number@v8@@QEBANXZ

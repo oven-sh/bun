@@ -588,8 +588,10 @@ pub const AnsiRenderer = struct {
                         // Only emit the OSC 8 terminator if we emitted the
                         // opening sequence (which required link_href).
                         if (had_href) self.writeRawNoColor("\x1b]8;;\x1b\\");
-                    } else if (self.link_href) |href| if (href.len > 0) {
-                        // Show URL in parens for non-hyperlink terminals
+                    } else if (self.link_href) |href| if (href.len > 0 and self.image_depth == 0) {
+                        // Show URL in parens for non-hyperlink terminals.
+                        // image_depth==0 keeps " (url)" out of image alt
+                        // text when a link sits inside an image span.
                         self.writeStyled(color(.dim), " (");
                         self.writeStyled("", href);
                         self.writeStyled(color(.dim), ")");
@@ -654,7 +656,11 @@ pub const AnsiRenderer = struct {
                 const decoded = helpers.decodeEntityToUtf8(content, &buf) orelse content;
                 self.writeContent(decoded);
             },
-            .code => self.writeContent(content),
+            // Inline code spans are atomic — don't let writeWrapped split
+            // them at internal spaces. writeStyled with empty prefix routes
+            // the content through the active buffer + updates col in one
+            // pass, without the paragraph word-wrap logic.
+            .code => self.writeStyled("", content),
             .latexmath => self.writeContent(content),
             else => self.writeContent(content),
         }
@@ -905,6 +911,7 @@ pub const AnsiRenderer = struct {
         if (self.span_flags & SPAN_EM != 0) self.emitInline(style(.italic));
         if (self.span_flags & SPAN_U != 0) self.emitInline(style(.underline));
         if (self.span_flags & SPAN_DEL != 0) self.emitInline(style(.strikethrough));
+        if (self.span_flags & SPAN_CODE != 0) self.emitInline(codeSpanOpen(self.theme.light));
         if (self.link_depth > 0) {
             self.emitInline(color(.blue));
             self.emitInline(style(.underline));

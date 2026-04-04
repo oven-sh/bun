@@ -1345,15 +1345,31 @@ pub const RunCommand = struct {
                 allocator.free(path);
                 continue;
             }
-            out_map.put(allocator, raw_url, path) catch {
-                // Map insert OOM'd after a successful write — unlink
-                // the now-orphaned temp file so it doesn't leak.
+            // Dupe raw_url for the map key — `collector.urls.items`
+            // owns raw_url, and `defer collector.deinit()` frees it
+            // when this function returns, leaving out_map with dangling
+            // keys that emitImage() would later hash-compare.
+            const key = allocator.dupe(u8, raw_url) catch {
                 const z = allocator.dupeZ(u8, path) catch {
                     allocator.free(path);
                     continue;
                 };
                 _ = bun.sys.unlink(z);
                 allocator.free(z);
+                allocator.free(path);
+                continue;
+            };
+            out_map.put(allocator, key, path) catch {
+                // Map insert OOM'd after a successful write — unlink
+                // the now-orphaned temp file so it doesn't leak.
+                const z = allocator.dupeZ(u8, path) catch {
+                    allocator.free(key);
+                    allocator.free(path);
+                    continue;
+                };
+                _ = bun.sys.unlink(z);
+                allocator.free(z);
+                allocator.free(key);
                 allocator.free(path);
                 continue;
             };

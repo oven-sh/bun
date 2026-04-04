@@ -105,19 +105,23 @@ pub fn setMaxSendFragment(this: *This, globalObject: *jsc.JSGlobalObject, callfr
 pub fn getPeerCertificate(this: *This, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
     jsc.markBinding(@src());
 
+    // Node.js API: getPeerCertificate([detailed])
+    // detailed=false (default): returns abbreviated cert (just the peer cert)
+    // detailed=true: returns cert with issuerCertificate chain
     const args = callframe.arguments_old(1);
-    var abbreviated: bool = true;
+    var detailed: bool = false;
     if (args.len > 0) {
         const arg = args.ptr[0];
         if (!arg.isBoolean()) {
-            return globalObject.throw("Expected abbreviated to be a boolean", .{});
+            return globalObject.throw("Expected detailed to be a boolean", .{});
         }
-        abbreviated = arg.toBoolean();
+        detailed = arg.toBoolean();
     }
 
     const ssl_ptr = this.socket.ssl() orelse return .js_undefined;
 
-    if (abbreviated) {
+    if (!detailed) {
+        // Abbreviated: return just the peer certificate
         if (this.isServer()) {
             const cert = BoringSSL.SSL_get_peer_certificate(ssl_ptr);
             if (cert) |x509| {
@@ -129,6 +133,8 @@ pub fn getPeerCertificate(this: *This, globalObject: *jsc.JSGlobalObject, callfr
         const cert = BoringSSL.sk_X509_value(cert_chain, 0) orelse return .js_undefined;
         return X509.toJS(cert, globalObject);
     }
+
+    // Detailed: return peer certificate with issuerCertificate chain
     var cert: ?*BoringSSL.X509 = null;
     if (this.isServer()) {
         cert = BoringSSL.SSL_get_peer_certificate(ssl_ptr);
@@ -141,8 +147,47 @@ pub fn getPeerCertificate(this: *This, globalObject: *jsc.JSGlobalObject, callfr
         return .js_undefined;
     }
 
-    // TODO: we need to support the non abbreviated version of this
-    return .js_undefined;
+    // Build the issuerCertificate chain. In Node.js, each cert's
+    // issuerCertificate property points to the next cert in the chain,
+    // and the root CA's issuerCertificate points to itself.
+    const issuer_cert_key = jsc.ZigString.static("issuerCertificate");
+
+    if (cert_chain) |chain| {
+        const chain_len = BoringSSL.sk_X509_num(chain);
+        const start_idx: usize = if (cert != null) 0 else 1;
+
+        // Build chain objects from the end (root) to the start (peer),
+        // so we can link each cert's issuerCertificate to the next.
+        var issuer_obj: JSValue = .js_undefined;
+        var i: usize = chain_len;
+        while (i > start_idx) {
+            i -= 1;
+            const chain_cert = BoringSSL.sk_X509_value(chain, i) orelse continue;
+            const cert_obj = try X509.toJS(chain_cert, globalObject);
+            if (issuer_obj == .js_undefined) {
+                // Root cert: issuerCertificate points to itself
+                cert_obj.put(globalObject, issuer_cert_key, cert_obj);
+            } else {
+                cert_obj.put(globalObject, issuer_cert_key, issuer_obj);
+            }
+            issuer_obj = cert_obj;
+        }
+
+        // Build the peer cert object
+        const peer_obj = try X509.toJS(first_cert.?, globalObject);
+        if (issuer_obj == .js_undefined) {
+            // Self-signed: issuerCertificate points to itself
+            peer_obj.put(globalObject, issuer_cert_key, peer_obj);
+        } else {
+            peer_obj.put(globalObject, issuer_cert_key, issuer_obj);
+        }
+        return peer_obj;
+    }
+
+    // No chain available, just return the peer cert with self-referencing issuer
+    const peer_obj = try X509.toJS(first_cert.?, globalObject);
+    peer_obj.put(globalObject, issuer_cert_key, peer_obj);
+    return peer_obj;
 }
 
 pub fn getCertificate(this: *This, globalObject: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!JSValue {

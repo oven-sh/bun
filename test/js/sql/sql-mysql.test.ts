@@ -167,7 +167,7 @@ if (isDockerEnabled()) {
           expect((err as SQL.MySQLError).code).toBe(`ERR_MYSQL_IDLE_TIMEOUT`);
         });
 
-        test("Max lifetime works", async () => {
+        test("Max lifetime closes idle connection gracefully", async () => {
           const onClosePromise = Promise.withResolvers();
           const onclose = mock(err => {
             onClosePromise.resolve(err);
@@ -180,26 +180,49 @@ if (isDockerEnabled()) {
             onclose,
             max: 1,
           });
-          let error: unknown;
 
-          try {
-            expect<[{ x: number }]>(await sql`select 1 as x`).toEqual([{ x: 1 }]);
+          // Get the server-side connection ID before maxLifetime fires
+          const [{ id: connBefore }] = await sql`select CONNECTION_ID() as id`;
 
-            while (true) {
-              for (let i = 0; i < 100; i++) {
-                await sql`select SLEEP(1)`;
-              }
-            }
-          } catch (e) {
-            error = e;
-          }
-
+          // Wait for maxLifetime to fire and close the idle connection
+          await onClosePromise.promise;
           expect(onclose).toHaveBeenCalledTimes(1);
           expect(onconnect).toHaveBeenCalledTimes(1);
 
-          expect(error).toBeInstanceOf(SQL.SQLError);
-          expect(error).toBeInstanceOf(SQL.MySQLError);
-          expect((error as SQL.MySQLError).code).toBe(`ERR_MYSQL_LIFETIME_TIMEOUT`);
+          // The pool should reconnect — verify via a different connection ID
+          const [{ id: connAfter }] = await sql`select CONNECTION_ID() as id`;
+          expect(connAfter).not.toBe(connBefore);
+        });
+
+        test("Max lifetime does not kill in-flight queries", async () => {
+          const onClosePromise = Promise.withResolvers();
+          const onclose = mock(err => {
+            onClosePromise.resolve(err);
+          });
+          const onconnect = mock();
+          await using sql = new SQL({
+            ...getOptions(),
+            max_lifetime: 1,
+            onconnect,
+            onclose,
+            max: 1,
+          });
+
+          // Get connection ID before the long query
+          const [{ id: connBefore }] = await sql`select CONNECTION_ID() as id`;
+
+          // Start a query that takes longer than maxLifetime (3s > 1s).
+          // Previously this would throw ERR_MYSQL_LIFETIME_TIMEOUT.
+          const result = await sql`select SLEEP(3) as s, 42 as x`;
+          expect(result[0].x).toBe(42);
+
+          // Wait for the connection to be closed after the query finishes
+          await onClosePromise.promise;
+          expect(onclose).toHaveBeenCalledTimes(1);
+
+          // Verify the pool reconnected with a different connection ID
+          const [{ id: connAfter }] = await sql`select CONNECTION_ID() as id`;
+          expect(connAfter).not.toBe(connBefore);
         });
 
         // Last one wins.
@@ -483,9 +506,7 @@ if (isDockerEnabled()) {
         test("Binary", async () => {
           const random_name = ("t_" + Bun.randomUUIDv7("hex").replaceAll("-", "")).toLowerCase();
           await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (a binary(1), b varbinary(1), c blob)`;
-          const values = [
-            { a: Buffer.from([1]), b: Buffer.from([2]), c: Buffer.from([3]) },
-          ];
+          const values = [{ a: Buffer.from([1]), b: Buffer.from([2]), c: Buffer.from([3]) }];
           await sql`INSERT INTO ${sql(random_name)} ${sql(values)}`;
           const results = await sql`select * from ${sql(random_name)}`;
           // return buffers
@@ -497,7 +518,7 @@ if (isDockerEnabled()) {
           expect(results2[0].a).toEqual(Buffer.from([1]));
           expect(results2[0].b).toEqual(Buffer.from([2]));
           expect(results2[0].c).toEqual(Buffer.from([3]));
-        })
+        });
 
         test("bulk insert nested sql()", async () => {
           await using sql = new SQL({ ...getOptions(), max: 1 });

@@ -1258,7 +1258,12 @@ pub const AnsiRenderer = struct {
         // Try to render inline via Kitty Graphics. If the image is
         // actually displayed, we're done — the image itself is the
         // content, no caption/alt text needed.
-        if (self.theme.colors and self.theme.kitty_graphics and has_src) {
+        // Skip Kitty inside table cells / headings: the APC payload
+        // would be counted as visible width by flushTable/flushHeading,
+        // blowing up the column / underline size. Images in cells
+        // always fall back to alt-text rendering.
+        const kitty_allowed = !self.in_cell and self.heading_level == 0;
+        if (kitty_allowed and self.theme.colors and self.theme.kitty_graphics and has_src) {
             if (resolveLocalImagePath(src.?, self.allocator)) |abs_path| {
                 defer self.allocator.free(abs_path);
                 self.emitKittyImage(abs_path);
@@ -1299,13 +1304,11 @@ pub const AnsiRenderer = struct {
     /// to base64 the pixels. Terminals that don't understand the APC
     /// sequence will silently drop it.
     fn emitKittyImage(self: *AnsiRenderer, path: []const u8) void {
-        // Base64-encode the file path (Kitty expects payload to be b64).
-        // Path is expected to be ASCII in most cases; use std.base64.
-        const enc = std.base64.standard.Encoder;
-        const encoded_len = enc.calcSize(path.len);
+        // Base64-encode the file path (Kitty expects the payload to be b64).
+        const encoded_len = bun.base64.encodeLen(path);
         const encoded = self.allocator.alloc(u8, encoded_len) catch return;
         defer self.allocator.free(encoded);
-        _ = enc.encode(encoded, path);
+        _ = bun.base64.encode(encoded, path);
 
         // APC sequence: \x1b_G<control>;<payload>\x1b\
         //   a=T  : transmit and display

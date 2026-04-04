@@ -65,14 +65,33 @@ export async function uploadAsset(tag: string, name: string, blob: Blob) {
   });
 }
 
+export async function downloadAssetContent(assetId: number): Promise<Buffer> {
+  const url = `https://api.github.com/repos/${owner}/${repo}/releases/assets/${assetId}`;
+  const token = process.env["GITHUB_TOKEN"];
+  const response = await fetch(url, {
+    assert: false,
+    headers: {
+      Accept: "application/octet-stream",
+      ...(token ? { Authorization: `token ${token}` } : {}),
+    },
+  });
+  if (!response.ok) {
+    const body = await response.text().catch(() => "");
+    throw new Error(
+      `Failed to download asset ${assetId}: ${response.status} ${response.statusText}${body ? ` - ${body}` : ""}`,
+    );
+  }
+  return Buffer.from(await response.arrayBuffer());
+}
+
 export async function downloadAsset(tag: string, name: string): Promise<Blob> {
   const release = await getRelease(tag);
   const asset = release.assets.find(asset => asset.name === name);
   if (!asset) {
     throw new Error(`Asset not found: ${name}`);
   }
-  const response = await fetch(asset.browser_download_url);
-  return response.blob();
+  const buffer = await downloadAssetContent(asset.id);
+  return new Blob([buffer]);
 }
 
 export async function getSha(tag: string, format?: "short" | "long") {

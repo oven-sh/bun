@@ -617,6 +617,9 @@ pub const Transpiler = struct {
 
         file_path.pretty = Linker.relative_paths_list.append(string, transpiler.fs.relativeTo(file_path.text)) catch unreachable;
 
+        const out_ext = transpiler.options.out_extensions.get(file_path.name.ext) orelse file_path.name.ext;
+        const dest_path = std.fmt.allocPrint(transpiler.allocator, "{s}{s}", .{ file_path.name.base, out_ext }) catch unreachable;
+
         var output_file = options.OutputFile{
             .src_path = file_path,
             .loader = loader,
@@ -624,6 +627,7 @@ pub const Transpiler = struct {
             .side = null,
             .entry_point_index = null,
             .output_kind = .chunk,
+            .dest_path = dest_path,
         };
 
         switch (loader) {

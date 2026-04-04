@@ -1522,14 +1522,6 @@ pub const PackageManifest = struct {
         block_deprecated: bool = false,
         block_deprecated_excludes: ?[]const []const u8 = null,
 
-        pub inline fn none() FilterOptions {
-            return .{};
-        }
-
-        pub inline fn hasAnyFilter(self: FilterOptions) bool {
-            return self.minimum_release_age_ms != null or self.block_deprecated;
-        }
-
         /// Returns the minimum age to apply for this manifest, or null when
         /// age filtering is inactive (disabled or excluded by name).
         pub fn effectiveAgeMs(self: FilterOptions, manifest: *const PackageManifest) ?f64 {

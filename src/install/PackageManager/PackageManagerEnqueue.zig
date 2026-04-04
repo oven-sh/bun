@@ -646,6 +646,17 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
                                                     this.lockfile.str(&version.value.dist_tag.tag),
                                                 },
                                             ) catch unreachable;
+                                        } else if (version.tag == .npm and version.value.npm.version.isExact()) {
+                                            this.log.addErrorFmt(
+                                                null,
+                                                logger.Loc.Empty,
+                                                this.allocator,
+                                                "Version \"{s}@{s}\" is deprecated<r> <d>(blocked by blockDeprecatedDependencies)<r>",
+                                                .{
+                                                    this.lockfile.str(&name),
+                                                    this.lockfile.str(&version.literal),
+                                                },
+                                            ) catch unreachable;
                                         } else {
                                             this.log.addErrorFmt(
                                                 null,

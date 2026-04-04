@@ -762,7 +762,7 @@ pub const UpdateInteractiveCommand = struct {
                 // If even `latest` is wholly deprecated under the active filter,
                 // the package has nothing installable to show. Same for age.
                 if (latest_result == .err) continue;
-                const latest = latest_result.unwrap() orelse continue;
+                const latest = latest_result.unwrap().?;
 
                 // In interactive mode, show the constrained update version as "Target"
                 // but always include packages (don't filter out breaking changes).

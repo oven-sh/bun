@@ -140,7 +140,7 @@ bool isValidHTTPHeaderValue(const StringView& value)
     } else {
         for (unsigned i = 0; i < value.length(); ++i) {
             c = value[i];
-            if (c == 0x00 || c == 0x0A || c == 0x0D || c > 0x7F)
+            if (c == 0x00 || c == 0x0A || c == 0x0D || c > 0xFF)
                 return false;
         }
     }

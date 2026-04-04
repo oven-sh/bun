@@ -814,6 +814,10 @@ pub const UpgradeCommand = struct {
                 };
             }
 
+            // Clean up the temporary directory now that the upgrade succeeded.
+            // This prevents permission conflicts on multi-user systems (see #14793).
+            save_dir_.deleteTree(version_name) catch {};
+
             // Ensure completions are up to date.
             {
                 var completions_argv = [_]string{

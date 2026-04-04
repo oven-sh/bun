@@ -205,6 +205,9 @@ const {
   isBooleanObject,
 } = require("node:util/types");
 
+const getWeakMapEntries = $newCppFunction("NodeUtilTypesModule.cpp", "jsFunctionGetWeakMapEntries", 1);
+const getWeakSetEntries = $newCppFunction("NodeUtilTypesModule.cpp", "jsFunctionGetWeakSetEntries", 1);
+
 //! temp workaround to apply is{BigInt,Symbol}Object fix
 const isBoxedPrimitive = val => isBigIntObject(val) || isSymbolObject(val) || _native_isBoxedPrimitive(val);
 
@@ -2718,9 +2721,8 @@ function previewEntries(val, isIterator = false) {
     // perhaps we should add support for other iterators in the future? (e.g. ArrayIterator and StringIterator)
     else throw new Error("previewEntries(): Invalid iterator received");
   }
-  // TODO(bun): are there any JSC APIs for viewing the contents of these in JS?
-  if (isWeakMap(val)) return [];
-  if (isWeakSet(val)) return [];
+  if (isWeakMap(val)) return getWeakMapEntries(val);
+  if (isWeakSet(val)) return getWeakSetEntries(val);
   else throw new Error("previewEntries(): Invalid object received");
 }
 function internalGetConstructorName(val) {

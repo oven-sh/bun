@@ -1749,57 +1749,47 @@ test("no assertion failures 2", () => {
       [arr, obj],
     ]);
     let out = util.inspect(weakMap, { showHidden: true });
-    // TODO: WeakMap internals
-    // let expect = 'WeakMap { [ [length]: 0 ] => {}, {} => [ [length]: 0 ] }';
-    let expect = "WeakMap {  }";
-    assert.strictEqual(out, expect);
+    let expect = "WeakMap { [ [length]: 0 ] => {}, {} => [ [length]: 0 ] }";
+    let expectAlt = "WeakMap { {} => [ [length]: 0 ], [ [length]: 0 ] => {} }";
+    assert(out === expect || out === expectAlt, `Found: "${out}"\nrather than: "${expect}"\nor: "${expectAlt}"`);
 
     out = util.inspect(weakMap);
     expect = "WeakMap { <items unknown> }";
     assert.strictEqual(out, expect);
 
     out = util.inspect(weakMap, { maxArrayLength: 0, showHidden: true });
-    // expect = 'WeakMap { ... 2 more items }';
-    expect = "WeakMap {  }";
+    expect = "WeakMap { ... 2 more items }";
     assert.strictEqual(out, expect);
 
     weakMap.extra = true;
     out = util.inspect(weakMap, { maxArrayLength: 1, showHidden: true });
     // It is not possible to determine the output reliable.
-    // expect = 'WeakMap { [ [length]: 0 ] => {}, ... 1 more item, extra: true }';
-    // let expectAlt = 'WeakMap { {} => [ [length]: 0 ], ... 1 more item, extra: true }';
-    assert(
-      out === "WeakMap { extra: true }", //out === expect || out === expectAlt,
-      `Found: "${out}"\nrather than: "WeakMap { extra: true }"`,
-    ); //"${expect}"\nor: "${expectAlt}"`);
+    expect = "WeakMap { [ [length]: 0 ] => {}, ... 1 more item, extra: true }";
+    expectAlt = "WeakMap { {} => [ [length]: 0 ], ... 1 more item, extra: true }";
+    assert(out === expect || out === expectAlt, `Found: "${out}"\nrather than: "${expect}"\nor: "${expectAlt}"`);
 
     // Test WeakSet
     arr.push(1);
     const weakSet = new WeakSet([obj, arr]);
     out = util.inspect(weakSet, { showHidden: true });
-    // TODO: WeakSet internals
-    // expect = 'WeakSet { [ 1, [length]: 1 ], {} }';
-    expect = "WeakSet {  }";
-    assert.strictEqual(out, expect);
+    expect = "WeakSet { [ 1, [length]: 1 ], {} }";
+    expectAlt = "WeakSet { {}, [ 1, [length]: 1 ] }";
+    assert(out === expect || out === expectAlt, `Found: "${out}"\nrather than: "${expect}"\nor: "${expectAlt}"`);
 
     out = util.inspect(weakSet);
     expect = "WeakSet { <items unknown> }";
     assert.strictEqual(out, expect);
 
     out = util.inspect(weakSet, { maxArrayLength: -2, showHidden: true });
-    //expect = 'WeakSet { ... 2 more items }';
-    expect = "WeakSet {  }";
+    expect = "WeakSet { ... 2 more items }";
     assert.strictEqual(out, expect);
 
     weakSet.extra = true;
     out = util.inspect(weakSet, { maxArrayLength: 1, showHidden: true });
     // It is not possible to determine the output reliable.
-    // expect = 'WeakSet { {}, ... 1 more item, extra: true }';
-    // expectAlt = 'WeakSet { [ 1, [length]: 1 ], ... 1 more item, extra: true }';
-    assert(
-      out === "WeakSet { extra: true }", //out === expect || out === expectAlt,
-      `Found: "${out}"\nrather than: "WeakSet { extra: true }"`,
-    ); //"${expect}"\nor: "${expectAlt}"`);
+    expect = "WeakSet { {}, ... 1 more item, extra: true }";
+    expectAlt = "WeakSet { [ 1, [length]: 1 ], ... 1 more item, extra: true }";
+    assert(out === expect || out === expectAlt, `Found: "${out}"\nrather than: "${expect}"\nor: "${expectAlt}"`);
     // Keep references to the WeakMap entries, otherwise they could be GCed too early.
     assert(obj && arr);
   }

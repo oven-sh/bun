@@ -998,8 +998,9 @@ pub fn doSend(ipc: ?*SendQueue, globalObject: *jsc.JSGlobalObject, callFrame: *j
         return globalObject.throwInvalidArgumentTypeValueOneOf("message", "string, object, number, or boolean", message);
     }
 
+    const original_message = message;
     if (!handle.isUndefinedOrNull()) {
-        const serialized_array: jsc.JSValue = try ipcSerialize(globalObject, message, handle);
+        const serialized_array: jsc.JSValue = try ipcSerialize(globalObject, message, handle, options_);
         if (serialized_array.isUndefinedOrNull()) {
             handle = .js_undefined;
         } else {
@@ -1025,9 +1026,30 @@ pub fn doSend(ipc: ?*SendQueue, globalObject: *jsc.JSGlobalObject, callFrame: *j
                 },
                 .none => {},
             }
-        } else {
-            //
+        } else if (bun.jsc.API.TCPSocket.fromJS(handle)) |tcp_socket| {
+            log("got tcp socket", .{});
+            const fd = tcp_socket.socket.fd();
+            if (fd != bun.invalid_fd) {
+                zig_handle = .init(fd, handle);
+            }
+        } else if (bun.jsc.API.TLSSocket.fromJS(handle)) |tls_socket| {
+            log("got tls socket", .{});
+            const fd = tls_socket.socket.fd();
+            if (fd != bun.invalid_fd) {
+                zig_handle = .init(fd, handle);
+            }
         }
+    }
+
+    // If JS serialization produced a NODE_HANDLE message but the native layer
+    // couldn't extract an fd (e.g. the handle was reconstructed via parseHandle
+    // and isn't a recognized native type), revert to sending the original
+    // message without a handle to avoid sending a NODE_HANDLE protocol message
+    // that the receiver can't reconstruct.
+    if (zig_handle == null and !handle.isUndefinedOrNull()) {
+        log("handle serialized but fd extraction failed, reverting to original message", .{});
+        message = original_message;
+        handle = .js_undefined;
     }
 
     const status = ipc_data.serializeAndSend(globalObject, message, .external, callback, zig_handle);
@@ -1481,8 +1503,8 @@ pub const IPCHandlers = struct {
     };
 };
 
-pub fn ipcSerialize(globalObject: *jsc.JSGlobalObject, message: jsc.JSValue, handle: jsc.JSValue) bun.JSError!jsc.JSValue {
-    return bun.cpp.IPCSerialize(globalObject, message, handle);
+pub fn ipcSerialize(globalObject: *jsc.JSGlobalObject, message: jsc.JSValue, handle: jsc.JSValue, options: jsc.JSValue) bun.JSError!jsc.JSValue {
+    return bun.cpp.IPCSerialize(globalObject, message, handle, options);
 }
 
 pub fn ipcParse(globalObject: *jsc.JSGlobalObject, target: jsc.JSValue, serialized: jsc.JSValue, fd: jsc.JSValue) bun.JSError!jsc.JSValue {

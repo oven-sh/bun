@@ -939,11 +939,12 @@ pub const Expect = struct {
             var iter = try jsc.JSPropertyIterator(.{
                 .skip_empty_name = false,
                 .include_value = true,
-                .own_properties_only = false,
+                .own_properties_only = true,
             }).init(globalThis, matchers_to_register);
             defer iter.deinit();
 
             while (try iter.next()) |*matcher_name| {
+                if (matcher_name.isSymbol()) continue;
                 const matcher_fn: JSValue = iter.value;
 
                 if (!matcher_fn.jsType().isFunction()) {

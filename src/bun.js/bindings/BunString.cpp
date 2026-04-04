@@ -256,7 +256,7 @@ BunString toString(const WTF::String& wtfString)
 }
 BunString toString(WTF::StringImpl* wtfString)
 {
-    if (wtfString->isEmpty())
+    if (wtfString->isEmpty() && !wtfString->isSymbol())
         return { BunStringTag::Empty };
 
     return { BunStringTag::WTFStringImpl, { .wtf = wtfString } };

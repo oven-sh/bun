@@ -14,10 +14,10 @@ pub const WTFStringImplStruct = extern struct {
     const s_flagMask: u32 = (1 << s_flagCount) - 1;
     const s_flagStringKindCount: u32 = 4;
     const s_hashZeroValue: u32 = 0;
-    const s_hashFlagStringKindIsAtom: u32 = @as(1, u32) << (s_flagStringKindCount);
-    const s_hashFlagStringKindIsSymbol: u32 = @as(1, u32) << (s_flagStringKindCount + 1);
+    const s_hashFlagStringKindIsAtom: u32 = @as(u32, 1) << (s_flagStringKindCount);
+    const s_hashFlagStringKindIsSymbol: u32 = @as(u32, 1) << (s_flagStringKindCount + 1);
     const s_hashMaskStringKind: u32 = s_hashFlagStringKindIsAtom | s_hashFlagStringKindIsSymbol;
-    const s_hashFlagDidReportCost: u32 = @as(1, u32) << 3;
+    const s_hashFlagDidReportCost: u32 = @as(u32, 1) << 3;
     const s_hashFlag8BitBuffer: u32 = 1 << 2;
     const s_hashMaskBufferOwnership: u32 = (1 << 0) | (1 << 1);
 
@@ -55,6 +55,10 @@ pub const WTFStringImplStruct = extern struct {
 
     pub inline fn is8Bit(self: WTFStringImpl) bool {
         return (self.m_hashAndFlags & s_hashFlag8BitBuffer) != 0;
+    }
+
+    pub inline fn isSymbol(self: WTFStringImpl) bool {
+        return (self.m_hashAndFlags & s_hashFlagStringKindIsSymbol) != 0;
     }
 
     pub inline fn length(self: WTFStringImpl) u32 {

@@ -357,26 +357,32 @@ it("should support asymmetric matchers", () => {
 
 it("works on prototypes", () => {
   const Bar = {
-    _toBeBar() {
+    _toBeInherited() {
       return { pass: true };
     },
   };
   const Foo = Object.create(Bar);
+  Foo._toBeOwned = function () {
+    return { pass: true };
+  };
 
+  // Only own properties are registered (matching Jest behavior)
   expect.extend(Foo);
-  expect(123)._toBeBar();
+  expect(123)._toBeOwned();
+  // Inherited matchers should not be registered
+  expect(() => expect(123)._toBeInherited()).toThrow();
 });
 
-it("works on classes", () => {
-  class Bar {
-    _toBeBar() {
+it("works on plain objects", () => {
+  // Only own enumerable properties are registered (matching Jest behavior).
+  const matchers = {
+    _toBeBar2() {
       return { pass: true };
-    }
-  }
-  class Foo extends Bar {}
+    },
+  };
 
-  expect.extend(new Foo());
-  expect(123)._toBeBar();
+  expect.extend(matchers);
+  expect(123)._toBeBar2();
 });
 
 test("expect.extend with numeric index keys does not crash", () => {
@@ -403,4 +409,29 @@ describe("MatcherContext", () => {
       expect(123).toBeCustomColor(456);
     });
   });
+});
+
+it("does not crash when prototype has non-function properties like Symbol.toStringTag", () => {
+  const proto = { [Symbol.toStringTag]: "CustomMatcher", inheritedProp: "not a function" };
+  const matchers = Object.create(proto);
+  matchers._toBeOwnProp = function (actual, expected) {
+    return { pass: actual === expected, message: () => `expected ${actual} to be ${expected}` };
+  };
+
+  // Should not throw due to inherited non-function properties on the prototype
+  expect.extend(matchers);
+  expect(42)._toBeOwnProp(42);
+});
+
+it("skips own symbol-keyed properties", () => {
+  // Own symbol properties should be silently skipped (matching Jest's Object.keys behavior)
+  expect.extend({
+    [Symbol.toStringTag]: "MyMatchers",
+    [Symbol()]: "no-description symbol",
+    [Symbol("")]: "empty-description symbol",
+    _toBeOwnSymbolTest(actual, expected) {
+      return { pass: actual === expected, message: () => `expected ${actual} to be ${expected}` };
+    },
+  });
+  expect(42)._toBeOwnSymbolTest(42);
 });

@@ -752,8 +752,18 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
     ctx.passthrough = args.remaining();
 
     if (cmd == .AutoCommand or cmd == .RunCommand or cmd == .BuildCommand or cmd == .TestCommand) {
-        if (args.options("--conditions").len > 0) {
-            opts.conditions = args.options("--conditions");
+        const cli_conditions = args.options("--conditions");
+        if (cli_conditions.len > 0) {
+            // Append CLI conditions to any conditions already set from bunfig.toml
+            // so both sources stack rather than the CLI clobbering the config.
+            if (opts.conditions.len > 0) {
+                const combined = try allocator.alloc(string, opts.conditions.len + cli_conditions.len);
+                @memcpy(combined[0..opts.conditions.len], opts.conditions);
+                @memcpy(combined[opts.conditions.len..], cli_conditions);
+                opts.conditions = combined;
+            } else {
+                opts.conditions = cli_conditions;
+            }
         }
     }
 

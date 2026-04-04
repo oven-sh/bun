@@ -24,6 +24,27 @@ it("prototype", () => {
   Bun.gc(true);
 });
 
+it("throwing custom inspect in error formatting does not crash", () => {
+  // Direct Bun.inspect() should still throw (Node.js compat).
+  const obj = Object.create({
+    [Symbol.for("nodejs.util.inspect.custom")]() {
+      throw new Error("inspect failed");
+    },
+  });
+  expect(() => Bun.inspect(obj)).toThrow("inspect failed");
+
+  // But the {f} formatter used in error messages should suppress and fall back,
+  // not crash or leak raw format strings.
+  expect(() => expect({}).toHaveLength(obj)).toThrow(/Expected value must be a non-negative integer/);
+
+  // TypedArray with throwing inspect should use type-aware fallback, not plain object
+  const arr = new Uint8Array([1, 2, 3]);
+  arr[Symbol.for("nodejs.util.inspect.custom")] = () => {
+    throw new Error("nope");
+  };
+  expect(() => expect({}).toHaveLength(arr)).toThrow(/Uint8Array/);
+});
+
 it("getters", () => {
   const obj = {
     get foo() {

@@ -50,7 +50,9 @@ describe("ws handshake events", () => {
       expect(res.statusMessage).toBe("Service Unavailable");
       expect(res.headers["content-type"]).toBe("text/plain");
       expect(res.headers["x-reason"]).toBe("not-ready");
-      expect(await new Response(res as any).text()).toBe("workerd starting");
+      let body = "";
+      for await (const chunk of res) body += chunk.toString();
+      expect(body).toBe("workerd starting");
       await once(ws, "close");
     } finally {
       server.close();

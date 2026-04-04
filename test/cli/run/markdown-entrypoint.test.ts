@@ -97,11 +97,7 @@ describe("bun <file.md>", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, _stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, _stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     // Output must contain the OSC 8 opener + closer around the link.
     expect(stdout).toContain("\x1b]8;;https://bun.com\x1b\\");
     expect(stdout).toContain("\x1b]8;;\x1b\\");

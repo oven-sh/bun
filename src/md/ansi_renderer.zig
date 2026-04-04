@@ -24,6 +24,11 @@ pub const Theme = struct {
     /// send remote images through Kitty's `t=f` path. When null, http
     /// and https URLs fall through to the alt-text fallback.
     remote_image_paths: ?*const std.StringHashMapUnmanaged([]const u8) = null,
+    /// Base directory used to resolve relative image `src` paths. When
+    /// null, falls back to the process cwd. The CLI entry point sets
+    /// this to the markdown file's directory so `![](./img.png)` works
+    /// regardless of where `bun ./some/dir/file.md` is invoked from.
+    image_base_dir: ?[]const u8 = null,
 };
 
 /// Renderer that only collects image URLs — no output. Used by the CLI
@@ -118,6 +123,10 @@ pub const AnsiRenderer = struct {
     cell_align: types.Align = .default,
     /// Track whether we just emitted a newline, to collapse extra blanks.
     last_was_newline: bool = true,
+    /// True after ensureBlankLine emitted its blank-line separator and
+    /// no content has been written since. Used to dedup back-to-back
+    /// ensureBlankLine() calls (e.g. enter-quote followed by enter-para).
+    blank_emitted: bool = false,
 
     const BlockContext = struct {
         kind: Kind,
@@ -883,6 +892,10 @@ pub const AnsiRenderer = struct {
     }
 
     fn writeIndent(self: *AnsiRenderer) void {
+        // writeIndent is called at the start of every content line, so
+        // this is the right place to clear the "blank line just emitted"
+        // flag ensureBlankLine uses for dedup.
+        self.blank_emitted = false;
         var quote_bars: u32 = 0;
         var other_indent: u32 = 0;
         for (self.block_stack.items) |entry| {
@@ -934,6 +947,25 @@ pub const AnsiRenderer = struct {
         }
     }
 
+    /// Emit just the blockquote `│` bars (no list indent) for the
+    /// current block_stack. Used by ensureBlankLine so the inter-block
+    /// gap inside a blockquote keeps its visual border.
+    fn writeQuoteBars(self: *AnsiRenderer) void {
+        var quote_bars: u32 = 0;
+        for (self.block_stack.items) |entry| {
+            if (entry.kind == .quote) quote_bars += 1;
+        }
+        if (quote_bars == 0) return;
+        const bar = if (self.theme.colors) "│" else "|";
+        if (self.theme.colors) self.out.write("\x1b[38;5;242m");
+        var i: u32 = 0;
+        while (i < quote_bars) : (i += 1) {
+            self.out.write(bar);
+            self.col += 1;
+        }
+        if (self.theme.colors) self.out.write("\x1b[39m");
+    }
+
     fn ensureNewline(self: *AnsiRenderer) void {
         if (!self.last_was_newline) {
             self.out.writeByte('\n');
@@ -944,18 +976,24 @@ pub const AnsiRenderer = struct {
 
     fn ensureBlankLine(self: *AnsiRenderer) void {
         self.ensureNewline();
+        // Already on a fresh blank line? Don't stack another.
+        if (self.blank_emitted) return;
         // Add an extra blank line only if we already produced output.
         if (self.out.list.items.len > 0) {
             // Check if last two chars are newlines
             const items = self.out.list.items;
             if (items.len >= 2 and items[items.len - 1] == '\n' and items[items.len - 2] != '\n') {
+                self.writeQuoteBars();
                 self.out.writeByte('\n');
                 self.col = 0;
+                self.blank_emitted = true;
             } else if (items.len == 1 and items[0] == '\n') {
                 // single newline — don't add another
             } else if (items.len >= 1 and items[items.len - 1] != '\n') {
+                self.writeQuoteBars();
                 self.out.writeByte('\n');
                 self.col = 0;
+                self.blank_emitted = true;
             }
         }
     }
@@ -1347,7 +1385,7 @@ pub const AnsiRenderer = struct {
                     }
                 }
             }
-            if (resolveLocalImagePath(src.?, self.allocator)) |abs_path| {
+            if (resolveLocalImagePath(src.?, self.allocator, self.theme.image_base_dir)) |abs_path| {
                 defer self.allocator.free(abs_path);
                 self.emitKittyImageFile(abs_path);
                 return;
@@ -1388,7 +1426,10 @@ pub const AnsiRenderer = struct {
     fn emitKittyImageFile(self: *AnsiRenderer, path: []const u8) void {
         // Base64-encode the file path (Kitty expects the payload to be b64).
         const encoded_len = bun.base64.encodeLen(path);
-        const encoded = self.allocator.alloc(u8, encoded_len) catch return;
+        const encoded = self.allocator.alloc(u8, encoded_len) catch {
+            self.out.oom = true;
+            return;
+        };
         defer self.allocator.free(encoded);
         _ = bun.base64.encode(encoded, path);
         self.writeRawNoColor("\x1b_Ga=T,t=f,f=100,q=2;");
@@ -1622,9 +1663,11 @@ fn probeKittyGraphics() bool {
 
 /// Resolve an image `src` from markdown to an absolute file path on
 /// disk if it refers to a local file, otherwise return null. Handles
-/// `file://` URIs and relative paths (resolved against the CWD). The
-/// returned slice is owned by the caller.
-fn resolveLocalImagePath(src: []const u8, allocator: Allocator) ?[]u8 {
+/// `file://` URIs and relative paths. Relative paths resolve against
+/// `base_dir` when non-null (typically the markdown file's directory),
+/// falling back to the process cwd. The returned slice is owned by the
+/// caller.
+fn resolveLocalImagePath(src: []const u8, allocator: Allocator, base_dir: ?[]const u8) ?[]u8 {
     // Reject remote schemes. A renderer-level prefetch pass can feed
     // http(s) URLs into the renderer via a lookup table as local paths.
     // data: URIs are handled separately in emitImage via direct Kitty
@@ -1657,12 +1700,15 @@ fn resolveLocalImagePath(src: []const u8, allocator: Allocator) ?[]u8 {
 
     // Resolve to an absolute path. bun.path.joinAbsString returns a
     // slice in a threadlocal buffer — dupe it before leaving this fn.
+    // Prefer the markdown file's directory when provided; otherwise fall
+    // back to cwd so `Bun.markdown.ansi()` callers without a source path
+    // still work.
     var cwd_buf: bun.PathBuffer = undefined;
-    const cwd = switch (bun.sys.getcwd(&cwd_buf)) {
+    const base: []const u8 = if (base_dir) |d| d else switch (bun.sys.getcwd(&cwd_buf)) {
         .result => |c| c,
         .err => return null,
     };
-    const joined = bun.path.joinAbsString(cwd, &.{decoded}, .auto);
+    const joined = bun.path.joinAbsString(base, &.{decoded}, .auto);
     const abs = allocator.dupe(u8, joined) catch return null;
     if (!bun.sys.exists(abs)) {
         allocator.free(abs);

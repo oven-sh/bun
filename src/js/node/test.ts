@@ -115,27 +115,27 @@ class TestContext {
   }
 
   before(arg0: unknown, arg1: unknown) {
-    const { fn } = createHook(arg0, arg1);
+    const { fn, options } = createHook(arg0, arg1);
     const { beforeAll } = bunTest();
-    beforeAll(fn);
+    beforeAll(fn, options);
   }
 
   after(arg0: unknown, arg1: unknown) {
-    const { fn } = createHook(arg0, arg1);
+    const { fn, options } = createHook(arg0, arg1);
     const { afterAll } = bunTest();
-    afterAll(fn);
+    afterAll(fn, options);
   }
 
   beforeEach(arg0: unknown, arg1: unknown) {
-    const { fn } = createHook(arg0, arg1);
+    const { fn, options } = createHook(arg0, arg1);
     const { beforeEach } = bunTest();
-    beforeEach(fn);
+    beforeEach(fn, options);
   }
 
   afterEach(arg0: unknown, arg1: unknown) {
-    const { fn } = createHook(arg0, arg1);
+    const { fn, options } = createHook(arg0, arg1);
     const { afterEach } = bunTest();
-    afterEach(fn);
+    afterEach(fn, options);
   }
 
   waitFor(_condition: unknown, _options: { timeout?: number } = kEmptyObject) {
@@ -149,13 +149,13 @@ class TestContext {
 
     const { test } = bunTest();
     if (options.only) {
-      test.only(name, fn);
+      test.only(name, fn, options);
     } else if (options.todo) {
-      test.todo(name, fn);
+      test.todo(name, fn, options);
     } else if (options.skip) {
-      test.skip(name, fn);
+      test.skip(name, fn, options);
     } else {
-      test(name, fn);
+      test(name, fn, options);
     }
   }
 
@@ -237,27 +237,27 @@ test.only = function (arg0: unknown, arg1: unknown, arg2: unknown) {
 };
 
 function before(arg0: unknown, arg1: unknown) {
-  const { fn } = createHook(arg0, arg1);
+  const { fn, options } = createHook(arg0, arg1);
   const { beforeAll } = bunTest();
-  beforeAll(fn);
+  beforeAll(fn, options);
 }
 
 function after(arg0: unknown, arg1: unknown) {
-  const { fn } = createHook(arg0, arg1);
+  const { fn, options } = createHook(arg0, arg1);
   const { afterAll } = bunTest();
-  afterAll(fn);
+  afterAll(fn, options);
 }
 
 function beforeEach(arg0: unknown, arg1: unknown) {
-  const { fn } = createHook(arg0, arg1);
+  const { fn, options } = createHook(arg0, arg1);
   const { beforeEach } = bunTest();
-  beforeEach(fn);
+  beforeEach(fn, options);
 }
 
 function afterEach(arg0: unknown, arg1: unknown) {
-  const { fn } = createHook(arg0, arg1);
+  const { fn, options } = createHook(arg0, arg1);
   const { afterEach } = bunTest();
-  afterEach(fn);
+  afterEach(fn, options);
 }
 
 function parseTestOptions(arg0: unknown, arg1: unknown, arg2: unknown) {
@@ -268,14 +268,14 @@ function parseTestOptions(arg0: unknown, arg1: unknown, arg2: unknown) {
   if (typeof arg0 === "function") {
     name = arg0.name || kDefaultName;
     fn = arg0 as TestFn;
-    if (typeof arg1 === "object") {
+    if (typeof arg1 === "object" && arg1 !== null) {
       options = arg1 as TestOptions;
     } else {
       options = kDefaultOptions;
     }
   } else if (typeof arg0 === "string") {
     name = arg0;
-    if (typeof arg1 === "object") {
+    if (typeof arg1 === "object" && arg1 !== null) {
       options = arg1 as TestOptions;
       if (typeof arg2 === "function") {
         fn = arg2 as TestFn;
@@ -286,7 +286,7 @@ function parseTestOptions(arg0: unknown, arg1: unknown, arg2: unknown) {
       fn = arg1 as TestFn;
       options = kDefaultOptions;
     } else {
-      fn = kDefaultFunction;
+      fn = typeof arg2 === "function" ? (arg2 as TestFn) : kDefaultFunction;
       options = kDefaultOptions;
     }
   } else {
@@ -304,32 +304,32 @@ function createTest(arg0: unknown, arg1: unknown, arg2: unknown) {
   checkNotInsideTest(ctx, "test");
   const context = new TestContext(true, name, Bun.main, ctx);
 
-  const runTest = (done: (error?: unknown) => void) => {
+  // Use a zero-parameter wrapper to avoid bun:test detecting a done-callback
+  // (fn.length >= 1 triggers done-callback mode). Preserve sync/async behavior:
+  // if fn() returns a Promise, chain context restoration via .then/.catch;
+  // if fn() is sync, restore context immediately.
+  const runTest = () => {
     const originalContext = ctx;
     ctx = context;
-    const endTest = (error?: unknown) => {
-      try {
-        done(error);
-      } finally {
-        ctx = originalContext;
-      }
-    };
-
     let result: unknown;
     try {
       result = fn(context);
     } catch (error) {
-      endTest(error);
-      return;
+      ctx = originalContext;
+      throw error;
     }
     if (result instanceof Promise) {
-      (result as Promise<unknown>).then(() => endTest()).catch(error => endTest(error));
-    } else {
-      endTest();
+      return (result as Promise<unknown>).finally(() => {
+        ctx = originalContext;
+      });
     }
+    ctx = originalContext;
   };
 
-  return { name, options, fn: runTest };
+  // Node.js node:test has no default timeout — only apply timeout: 0 (unlimited)
+  // when the user hasn't explicitly set one via node:test options.
+  const testOptions = options.timeout !== undefined ? options : { ...options, timeout: 0 };
+  return { name, options: testOptions, fn: runTest };
 }
 
 function createDescribe(arg0: unknown, arg1: unknown, arg2: unknown) {
@@ -365,7 +365,7 @@ function parseHookOptions(arg0: unknown, arg1: unknown) {
     fn = kDefaultFunction;
   }
 
-  if (typeof arg1 === "object") {
+  if (typeof arg1 === "object" && arg1 !== null) {
     options = arg1 as HookOptions;
   } else {
     options = kDefaultOptions;
@@ -377,22 +377,16 @@ function parseHookOptions(arg0: unknown, arg1: unknown) {
 function createHook(arg0: unknown, arg1: unknown) {
   const { fn, options } = parseHookOptions(arg0, arg1);
 
-  const runHook = (done: (error?: unknown) => void) => {
-    let result: unknown;
-    try {
-      result = fn();
-    } catch (error) {
-      done(error);
-      return;
-    }
-    if (result instanceof Promise) {
-      (result as Promise<unknown>).then(() => done()).catch(error => done(error));
-    } else {
-      done();
-    }
-  };
+  // Use a zero-parameter wrapper to avoid bun:test detecting a done-callback
+  // (fn.length >= 1 triggers done-callback mode). Preserve sync/async behavior
+  // by returning the result directly — if fn() returns a Promise, the wrapper
+  // returns a Promise; if fn() is sync, the wrapper is sync.
+  const runHook = () => fn();
 
-  return { options, fn: runHook };
+  // Node.js node:test has no default timeout — only apply timeout: 0 (unlimited)
+  // when the user hasn't explicitly set one via node:test options.
+  const hookOptions = options.timeout !== undefined ? options : { ...options, timeout: 0 };
+  return { options: hookOptions, fn: runHook };
 }
 
 type TestFn = (ctx: TestContext) => unknown | Promise<unknown>;

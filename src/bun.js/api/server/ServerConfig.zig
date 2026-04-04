@@ -704,6 +704,16 @@ pub fn fromJS(
                         bake.bundler_options.server.define = define;
                         bake.bundler_options.ssr.define = define;
                     }
+
+                    if (o.conditions.len > 0) {
+                        const arena_alloc = init_ctx.arena.allocator();
+                        inline for (.{ &bake.bundler_options.client, &bake.bundler_options.server, &bake.bundler_options.ssr }) |subset| {
+                            try subset.conditions.ensureTotalCapacity(arena_alloc, o.conditions.len);
+                            for (o.conditions) |condition| {
+                                subset.conditions.putAssumeCapacity(condition, {});
+                            }
+                        }
+                    }
                 } else {
                     if (init_ctx.framework_router_list.items.len > 0) {
                         return global.throwInvalidArguments("FrameworkRouter is currently only supported when `development: true`", .{});

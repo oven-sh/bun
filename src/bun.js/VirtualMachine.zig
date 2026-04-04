@@ -881,7 +881,7 @@ pub fn onExit(this: *VirtualMachine) void {
     }
 }
 
-extern fn Zig__GlobalObject__destructOnExit(*JSGlobalObject) void;
+extern fn Zig__GlobalObject__destructOnExit(*JSGlobalObject) bool;
 
 pub fn globalExit(this: *VirtualMachine) noreturn {
     bun.assert(this.isShuttingDown());
@@ -891,10 +891,15 @@ pub fn globalExit(this: *VirtualMachine) noreturn {
 
     if (this.shouldDestructMainThreadOnExit()) {
         if (this.eventLoop().forever_timer) |t| t.deinit(true);
-        Zig__GlobalObject__destructOnExit(this.global);
-        this.transpiler.deinit();
-        this.gc_controller.deinit();
-        this.deinit();
+        // destructOnExit returns false when JS is still on the stack (entryScope set).
+        // In that case the JSC VM and its ScriptExecutionContext stay alive, so other
+        // threads (worker dispatchExit) can still postTaskTo() us — skip deinit() to
+        // avoid flipping has_terminated while cross-thread enqueue is still possible.
+        if (Zig__GlobalObject__destructOnExit(this.global)) {
+            this.transpiler.deinit();
+            this.gc_controller.deinit();
+            this.deinit();
+        }
     }
     bun.Global.exit(this.exit_handler.exit_code);
 }

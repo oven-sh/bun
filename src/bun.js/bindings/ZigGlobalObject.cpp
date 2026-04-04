@@ -3571,19 +3571,20 @@ bool GlobalObject::hasNapiFinalizers() const
 
 void GlobalObject::setNodeWorkerEnvironmentData(JSMap* data) { m_nodeWorkerEnvironmentData.set(vm(), this, data); }
 
-extern "C" void Zig__GlobalObject__destructOnExit(Zig::GlobalObject* globalObject)
+extern "C" bool Zig__GlobalObject__destructOnExit(Zig::GlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
     if (vm.entryScope) {
         // Exiting while running JavaScript code (e.g. `process.exit()`), so we can't destroy it
         // just now. Perhaps later in this case we can defer destruction to run later.
-        return;
+        return false;
     }
     gcUnprotect(globalObject);
     globalObject = nullptr;
     vm.heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);
     vm.derefSuppressingSaferCPPChecking();
     vm.derefSuppressingSaferCPPChecking();
+    return true;
 }
 
 #include "ZigGeneratedClasses+lazyStructureImpl.h"

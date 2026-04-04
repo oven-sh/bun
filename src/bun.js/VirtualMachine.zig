@@ -890,10 +890,7 @@ pub fn globalExit(this: *VirtualMachine) noreturn {
     // this.eventLoop().tick();
 
     if (this.shouldDestructMainThreadOnExit()) {
-        if (this.eventLoop().forever_timer) |t| t.deinit(true);
         Zig__GlobalObject__destructOnExit(this.global);
-        this.transpiler.deinit();
-        this.gc_controller.deinit();
         this.deinit();
     }
     bun.Global.exit(this.exit_handler.exit_code);
@@ -1994,7 +1991,8 @@ pub fn processFetchLog(globalThis: *JSGlobalObject, specifier: bun.String, refer
 }
 
 pub fn deinit(this: *VirtualMachine) void {
-    this.auto_killer.deinit();
+    if (this.eventLoop().forever_timer) |t| t.deinit(true);
+    this.gc_controller.deinit();
 
     if (source_code_printer) |print| {
         print.getMutableBuffer().deinit();
@@ -2008,6 +2006,11 @@ pub fn deinit(this: *VirtualMachine) void {
     this.proxy_env_storage.deinit();
     this.overridden_main.deinit();
     this.has_terminated = true;
+
+    if (this.is_main_thread) {
+        this.transpiler.deinit();
+        this.auto_killer.deinit();
+    }
 }
 
 pub const ExceptionList = std.array_list.Managed(api.JsException);

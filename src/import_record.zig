@@ -176,7 +176,12 @@ pub const ImportRecord = struct {
         wrap_with_to_esm: bool = false,
         wrap_with_to_commonjs: bool = false,
 
-        _padding: u1 = 0,
+        /// Set by barrel_imports.zig when this import record is deferred (unused
+        /// submodule of a barrel file). Unlike `is_unused` (which is shared with
+        /// TypeScript type-only import removal), this flag is exclusively for
+        /// barrel optimization and provides a reliable signal for ModuleInfo
+        /// generation to skip these records.
+        is_barrel_deferred: bool = false,
     };
 
     pub const List = bun.BabyList(ImportRecord);

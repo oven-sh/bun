@@ -1303,7 +1303,10 @@ declare module "bun" {
      */
     list(
       input?: S3ListObjectsOptions | null,
-      options?: Pick<S3Options, "accessKeyId" | "secretAccessKey" | "sessionToken" | "region" | "bucket" | "endpoint">,
+      options?: Pick<
+        S3Options,
+        "accessKeyId" | "secretAccessKey" | "sessionToken" | "region" | "bucket" | "endpoint" | "requestPayer"
+      >,
     ): Promise<S3ListObjectsResponse>;
 
     /**
@@ -1339,7 +1342,10 @@ declare module "bun" {
      */
     static list(
       input?: S3ListObjectsOptions | null,
-      options?: Pick<S3Options, "accessKeyId" | "secretAccessKey" | "sessionToken" | "region" | "bucket" | "endpoint">,
+      options?: Pick<
+        S3Options,
+        "accessKeyId" | "secretAccessKey" | "sessionToken" | "region" | "bucket" | "endpoint" | "requestPayer"
+      >,
     ): Promise<S3ListObjectsResponse>;
   }
 

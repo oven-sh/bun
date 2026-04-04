@@ -1003,7 +1003,7 @@ pub const PackageJSON = struct {
 
                 var total_dependency_count: usize = 0;
                 inline for (dependency_groups) |group| {
-                    if (json.get(group.field)) |group_json| {
+                    if (json.get(group.prop)) |group_json| {
                         if (group_json.data == .e_object) {
                             total_dependency_count += group_json.data.e_object.properties.len;
                         }
@@ -1024,7 +1024,7 @@ pub const PackageJSON = struct {
                     ) catch unreachable;
 
                     inline for (dependency_groups) |group| {
-                        if (json.get(group.field)) |group_json| {
+                        if (json.get(group.prop)) |group_json| {
                             if (group_json.data == .e_object) {
                                 var group_obj = group_json.data.e_object;
                                 for (group_obj.properties.slice()) |*prop| {

@@ -534,7 +534,7 @@ function spawnSync(file, args, options) {
       // Bun.spawn() expects cmd[0] to be the command to run, and argv0 to replace the first arg when running the command,
       // so we have to set argv0 to spawnargs[0] and cmd[0] to file
       cmd: [options.file, ...Array.prototype.slice.$call(options.args, 1)],
-      env: options.env || undefined,
+      env: options[kBunEnv] || undefined,
       cwd: options.cwd || undefined,
       stdio: bunStdio,
       windowsVerbatimArguments: options.windowsVerbatimArguments,
@@ -989,6 +989,18 @@ function normalizeSpawnArguments(file, args, options) {
   for (const key of envKeys) {
     const value = env[key];
     if (value !== undefined) {
+      // Don't inherit debugger environment variables to child processes.
+      // This prevents hangs when forking from VSCode's JavaScript Debug Terminal.
+      // See: https://github.com/oven-sh/bun/issues/26704
+      // On Windows, env keys are case-insensitive, so normalize before comparing.
+      const keyNormalized = process.platform === "win32" ? StringPrototypeToUpperCase.$call(key) : key;
+      if (
+        keyNormalized === "BUN_INSPECT" ||
+        keyNormalized === "BUN_INSPECT_CONNECT_TO" ||
+        keyNormalized === "BUN_INSPECT_NOTIFY"
+      ) {
+        continue;
+      }
       validateArgumentNullCheck(key, `options.env['${key}']`);
       validateArgumentNullCheck(value, `options.env['${key}']`);
       bunEnv[key] = value;

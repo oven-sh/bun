@@ -2,7 +2,7 @@ const debug = Output.scoped(.CLI, .hidden);
 
 pub var start_time: i128 = undefined;
 
-pub var Bun__Node__ProcessTitle: ?string = null;
+pub var Bun__Node__ProcessTitle: ?[:0]const u8 = null;
 
 pub const Cli = struct {
     pub const CompileTarget = @import("./compile_target.zig");

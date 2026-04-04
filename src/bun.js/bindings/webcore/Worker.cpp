@@ -155,6 +155,18 @@ ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const S
     if (url.startsWith("file://"_s)) {
         WTF::URL urlObject = WTF::URL(url);
         if (urlObject.isValid()) {
+// On Windows, WTF::URL::fileSystemPath handles UNC paths
+// (`file://server/share/etc` -> `\\server\share\etc`), so the host check
+// only runs on posix systems. This matches `Bun.fileURLToPath`.
+#if !OS(WINDOWS)
+            if (urlObject.host().length() > 0 && urlObject.host() != "localhost"_s) [[unlikely]] {
+#if OS(DARWIN)
+                return Exception { TypeError, "File URL host must be \"localhost\" or empty on darwin"_s };
+#else
+                return Exception { TypeError, "File URL host must be \"localhost\" or empty on linux"_s };
+#endif
+            }
+#endif
             url = urlObject.fileSystemPath();
         } else {
             return Exception { TypeError, makeString("Invalid file URL: \""_s, urlInit, '"') };
@@ -173,6 +185,15 @@ ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const S
             if (!urlObject.isValid()) {
                 return Exception { TypeError, makeString("Invalid file URL: \""_s, str, '"') };
             }
+#if !OS(WINDOWS)
+            if (urlObject.host().length() > 0 && urlObject.host() != "localhost"_s) [[unlikely]] {
+#if OS(DARWIN)
+                return Exception { TypeError, "File URL host must be \"localhost\" or empty on darwin"_s };
+#else
+                return Exception { TypeError, "File URL host must be \"localhost\" or empty on linux"_s };
+#endif
+            }
+#endif
             // We need to replace the string inside preloadModuleStrings (this line replaces because
             // we are iterating by-ref). Otherwise, the string returned by fileSystemPath() will be
             // freed in this block, before it is used by Zig code.

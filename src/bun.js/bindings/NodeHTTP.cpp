@@ -109,6 +109,45 @@ static EncodedJSValue assignHeadersFromFetchHeaders(FetchHeaders& impl, JSObject
     return JSValue::encode(tuple);
 }
 
+// Duplicate header handling policy, matching Node.js behavior per RFC 9110.
+// See: https://github.com/nodejs/node/blob/main/lib/_http_incoming.js (matchKnownFields)
+enum class DuplicateHeaderPolicy : uint8_t {
+    DropDuplicate, // Keep first value only (e.g., Content-Type, Host)
+    JoinComma, // Join with ", " (e.g., Accept, Cache-Control, unknown headers)
+    JoinSemicolon, // Join with "; " (Cookie only)
+    // Set-Cookie is handled separately as an array
+};
+
+static DuplicateHeaderPolicy duplicateHeaderPolicy(WebCore::HTTPHeaderName name)
+{
+    switch (name) {
+    // Headers where only the first value should be kept:
+    case WebCore::HTTPHeaderName::Age:
+    case WebCore::HTTPHeaderName::Authorization:
+    case WebCore::HTTPHeaderName::ContentLength:
+    case WebCore::HTTPHeaderName::ContentType:
+    case WebCore::HTTPHeaderName::ETag:
+    case WebCore::HTTPHeaderName::Expires:
+    case WebCore::HTTPHeaderName::Host:
+    case WebCore::HTTPHeaderName::IfModifiedSince:
+    case WebCore::HTTPHeaderName::IfUnmodifiedSince:
+    case WebCore::HTTPHeaderName::LastModified:
+    case WebCore::HTTPHeaderName::Location:
+    case WebCore::HTTPHeaderName::ProxyAuthorization:
+    case WebCore::HTTPHeaderName::Referer:
+    case WebCore::HTTPHeaderName::UserAgent:
+        return DuplicateHeaderPolicy::DropDuplicate;
+
+    // Cookie is joined with "; "
+    case WebCore::HTTPHeaderName::Cookie:
+        return DuplicateHeaderPolicy::JoinSemicolon;
+
+    // All other known headers are joined with ", "
+    default:
+        return DuplicateHeaderPolicy::JoinComma;
+    }
+}
+
 static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, JSValue methodString, MarkedArgumentBuffer& args, JSC::JSGlobalObject* globalObject, JSC::VM& vm)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -148,7 +187,7 @@ static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, JSVal
         if (pair.second.length() > 0)
             memcpy(data.data(), pair.second.data(), pair.second.length());
 
-        HTTPHeaderName name;
+        HTTPHeaderName name = WebCore::HTTPHeaderName::Age; // initialized to avoid warnings
 
         JSString* jsValue = jsString(vm, value);
 
@@ -156,7 +195,8 @@ static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, JSVal
         Identifier nameIdentifier;
         JSString* nameString = nullptr;
 
-        if (WebCore::findHTTPHeaderName(nameView, name)) {
+        bool isKnownHeader = WebCore::findHTTPHeaderName(nameView, name);
+        if (isKnownHeader) {
             nameString = identifiers.stringFor(globalObject, name);
             nameIdentifier = identifiers.identifierFor(vm, name);
         } else {
@@ -165,7 +205,7 @@ static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, JSVal
             nameIdentifier = Identifier::fromString(vm, wtfString.convertToASCIILowercase());
         }
 
-        if (name == WebCore::HTTPHeaderName::SetCookie) {
+        if (isKnownHeader && name == WebCore::HTTPHeaderName::SetCookie) {
             if (!setCookiesHeaderArray) {
                 setCookiesHeaderArray = constructEmptyArray(globalObject, nullptr);
                 RETURN_IF_EXCEPTION(scope, );
@@ -179,11 +219,38 @@ static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, JSVal
             RETURN_IF_EXCEPTION(scope, void());
 
         } else {
-            headersObject->putDirectMayBeIndex(globalObject, nameIdentifier, jsValue);
-            RETURN_IF_EXCEPTION(scope, void());
-            arrayValues.append(nameString);
-            arrayValues.append(jsValue);
-            RETURN_IF_EXCEPTION(scope, void());
+            // Check if this header already exists (duplicate header handling per Node.js/RFC 9110)
+            JSValue existingValue = headersObject->getDirect(vm, nameIdentifier);
+            if (existingValue) {
+                DuplicateHeaderPolicy policy = isKnownHeader ? duplicateHeaderPolicy(name) : DuplicateHeaderPolicy::JoinComma;
+
+                if (policy == DuplicateHeaderPolicy::DropDuplicate) {
+                    // Keep first value, but still add to rawHeaders array
+                    arrayValues.append(nameString);
+                    arrayValues.append(jsValue);
+                    RETURN_IF_EXCEPTION(scope, void());
+                } else {
+                    // Join with separator: ", " for most headers, "; " for cookie
+                    JSString* existingString = existingValue.toString(globalObject);
+                    RETURN_IF_EXCEPTION(scope, void());
+                    auto existingStringValue = existingString->value(globalObject);
+                    RETURN_IF_EXCEPTION(scope, void());
+                    WTF::String joinedValue = (policy == DuplicateHeaderPolicy::JoinSemicolon)
+                        ? makeString(WTF::String(existingStringValue), "; "_s, value)
+                        : makeString(WTF::String(existingStringValue), ", "_s, value);
+                    JSString* jsJoinedValue = jsString(vm, joinedValue);
+                    headersObject->putDirect(vm, nameIdentifier, jsJoinedValue, 0);
+                    arrayValues.append(nameString);
+                    arrayValues.append(jsValue);
+                    RETURN_IF_EXCEPTION(scope, void());
+                }
+            } else {
+                headersObject->putDirectMayBeIndex(globalObject, nameIdentifier, jsValue);
+                RETURN_IF_EXCEPTION(scope, void());
+                arrayValues.append(nameString);
+                arrayValues.append(jsValue);
+                RETURN_IF_EXCEPTION(scope, void());
+            }
         }
     }
 
@@ -334,11 +401,12 @@ static EncodedJSValue assignHeadersFromUWebSockets(uWS::HttpRequest* request, JS
         if (pair.second.length() > 0)
             memcpy(data.data(), pair.second.data(), pair.second.length());
 
-        HTTPHeaderName name;
+        HTTPHeaderName name = WebCore::HTTPHeaderName::Age; // initialized to avoid warnings
+        bool isKnownHeader = WebCore::findHTTPHeaderName(nameView, name);
         WTF::String nameString;
         WTF::String lowercasedNameString;
 
-        if (WebCore::findHTTPHeaderName(nameView, name)) {
+        if (isKnownHeader) {
             nameString = WTF::httpHeaderNameStringImpl(name);
             lowercasedNameString = nameString;
         } else {
@@ -348,7 +416,7 @@ static EncodedJSValue assignHeadersFromUWebSockets(uWS::HttpRequest* request, JS
 
         JSString* jsValue = jsString(vm, value);
 
-        if (name == WebCore::HTTPHeaderName::SetCookie) {
+        if (isKnownHeader && name == WebCore::HTTPHeaderName::SetCookie) {
             if (!setCookiesHeaderArray) {
                 setCookiesHeaderArray = constructEmptyArray(globalObject, nullptr);
                 RETURN_IF_EXCEPTION(scope, {});
@@ -362,10 +430,39 @@ static EncodedJSValue assignHeadersFromUWebSockets(uWS::HttpRequest* request, JS
             RETURN_IF_EXCEPTION(scope, {});
 
         } else {
-            headersObject->putDirect(vm, Identifier::fromString(vm, lowercasedNameString), jsValue, 0);
-            array->putDirectIndex(globalObject, i++, jsString(vm, nameString));
-            array->putDirectIndex(globalObject, i++, jsValue);
-            RETURN_IF_EXCEPTION(scope, {});
+            auto identifier = Identifier::fromString(vm, lowercasedNameString);
+
+            // Check if this header already exists (duplicate header handling per Node.js/RFC 9110)
+            JSValue existingValue = headersObject->getDirect(vm, identifier);
+            if (existingValue) {
+                DuplicateHeaderPolicy policy = isKnownHeader ? duplicateHeaderPolicy(name) : DuplicateHeaderPolicy::JoinComma;
+
+                if (policy == DuplicateHeaderPolicy::DropDuplicate) {
+                    // Keep first value, but still add to rawHeaders array
+                    array->putDirectIndex(globalObject, i++, jsString(vm, nameString));
+                    array->putDirectIndex(globalObject, i++, jsValue);
+                    RETURN_IF_EXCEPTION(scope, {});
+                } else {
+                    // Join with separator: ", " for most headers, "; " for cookie
+                    JSString* existingString = existingValue.toString(globalObject);
+                    RETURN_IF_EXCEPTION(scope, {});
+                    auto existingStringValue = existingString->value(globalObject);
+                    RETURN_IF_EXCEPTION(scope, {});
+                    WTF::String joinedValue = (policy == DuplicateHeaderPolicy::JoinSemicolon)
+                        ? makeString(WTF::String(existingStringValue), "; "_s, value)
+                        : makeString(WTF::String(existingStringValue), ", "_s, value);
+                    JSString* jsJoinedValue = jsString(vm, joinedValue);
+                    headersObject->putDirect(vm, identifier, jsJoinedValue, 0);
+                    array->putDirectIndex(globalObject, i++, jsString(vm, nameString));
+                    array->putDirectIndex(globalObject, i++, jsValue);
+                    RETURN_IF_EXCEPTION(scope, {});
+                }
+            } else {
+                headersObject->putDirect(vm, identifier, jsValue, 0);
+                array->putDirectIndex(globalObject, i++, jsString(vm, nameString));
+                array->putDirectIndex(globalObject, i++, jsValue);
+                RETURN_IF_EXCEPTION(scope, {});
+            }
         }
     }
 

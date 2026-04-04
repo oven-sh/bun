@@ -18,6 +18,51 @@ pub const Theme = struct {
     /// refers to a local file (absolute or ./relative path, or file://).
     /// Falls through to the text alt for remote URLs.
     kitty_graphics: bool = false,
+    /// Optional lookup table mapping http(s) image URLs to already-
+    /// downloaded local file paths. Populated by a pre-scan pass (see
+    /// `collectImageUrls` + the CLI entry point) so `emitImage` can
+    /// send remote images through Kitty's `t=f` path. When null, http
+    /// and https URLs fall through to the alt-text fallback.
+    remote_image_paths: ?*const std.StringHashMapUnmanaged([]const u8) = null,
+};
+
+/// Renderer that only collects image URLs — no output. Used by the CLI
+/// pre-scan pass to decide which remote images to download.
+pub const ImageUrlCollector = struct {
+    urls: std.ArrayListUnmanaged([]const u8) = .{},
+    allocator: Allocator,
+
+    pub fn init(allocator: Allocator) ImageUrlCollector {
+        return .{ .allocator = allocator };
+    }
+
+    pub fn deinit(self: *ImageUrlCollector) void {
+        self.urls.deinit(self.allocator);
+    }
+
+    pub fn renderer(self: *ImageUrlCollector) Renderer {
+        return .{ .ptr = self, .vtable = &vtable };
+    }
+
+    const vtable: Renderer.VTable = .{
+        .enterBlock = noopEnterBlock,
+        .leaveBlock = noopLeaveBlock,
+        .enterSpan = enterSpanImpl,
+        .leaveSpan = noopLeaveSpan,
+        .text = noopText,
+    };
+
+    fn noopEnterBlock(_: *anyopaque, _: BlockType, _: u32, _: u32) bun.JSError!void {}
+    fn noopLeaveBlock(_: *anyopaque, _: BlockType, _: u32) bun.JSError!void {}
+    fn noopLeaveSpan(_: *anyopaque, _: SpanType) bun.JSError!void {}
+    fn noopText(_: *anyopaque, _: TextType, _: []const u8) bun.JSError!void {}
+
+    fn enterSpanImpl(ptr: *anyopaque, span_type: SpanType, detail: SpanDetail) bun.JSError!void {
+        if (span_type != .img) return;
+        const self: *ImageUrlCollector = @ptrCast(@alignCast(ptr));
+        if (detail.href.len == 0) return;
+        self.urls.append(self.allocator, detail.href) catch return error.OutOfMemory;
+    }
 };
 
 pub const AnsiRenderer = struct {
@@ -1273,6 +1318,18 @@ pub const AnsiRenderer = struct {
             if (extractPngDataUrlBase64(src.?)) |payload| {
                 self.emitKittyImageDirect(payload);
                 return;
+            }
+            // http(s) URL that the CLI pre-scan pass already downloaded
+            // to a temp file → send via Kitty's t=f against that path.
+            if (self.theme.remote_image_paths) |map| {
+                if ((bun.strings.startsWith(src.?, "http://") or
+                    bun.strings.startsWith(src.?, "https://")))
+                {
+                    if (map.get(src.?)) |local_path| {
+                        self.emitKittyImageFile(local_path);
+                        return;
+                    }
+                }
             }
             if (resolveLocalImagePath(src.?, self.allocator)) |abs_path| {
                 defer self.allocator.free(abs_path);

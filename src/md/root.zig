@@ -103,6 +103,7 @@ pub const helpers = @import("./helpers.zig");
 pub const ansi = @import("./ansi_renderer.zig");
 pub const AnsiRenderer = ansi.AnsiRenderer;
 pub const AnsiTheme = ansi.Theme;
+pub const ImageUrlCollector = ansi.ImageUrlCollector;
 pub const renderToAnsi = ansi.renderToAnsi;
 pub const detectLightBackground = ansi.detectLightBackground;
 pub const detectKittyGraphics = ansi.detectKittyGraphics;

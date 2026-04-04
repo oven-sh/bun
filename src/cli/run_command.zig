@@ -1237,6 +1237,99 @@ pub const RunCommand = struct {
         Output.flush();
     }
 
+    /// Parse `contents` once with an ImageUrlCollector, download every
+    /// http(s) image URL it finds to a temp file, and populate `out_map`
+    /// with url → temp-path entries. Failures are silent — an image that
+    /// can't be downloaded just falls back to alt-text rendering.
+    fn prefetchRemoteImages(
+        contents: []const u8,
+        md_opts: bun.md.Options,
+        out_map: *std.StringHashMapUnmanaged([]const u8),
+    ) void {
+        const allocator = bun.default_allocator;
+        var collector = bun.md.ImageUrlCollector.init(allocator);
+        defer collector.deinit();
+        bun.md.renderWithRenderer(contents, allocator, md_opts, collector.renderer()) catch return;
+        if (collector.urls.items.len == 0) return;
+
+        const HTTP = bun.http;
+        HTTP.HTTPThread.init(&.{});
+
+        const tmpdir = bun.fs.FileSystem.RealFS.tmpdirPath();
+        // Guard against the same URL appearing twice: only download once.
+        var seen = std.StringHashMapUnmanaged(void){};
+        defer seen.deinit(allocator);
+
+        for (collector.urls.items) |raw_url| {
+            if (!bun.strings.startsWith(raw_url, "http://") and
+                !bun.strings.startsWith(raw_url, "https://")) continue;
+            const gop = seen.getOrPut(allocator, raw_url) catch continue;
+            if (gop.found_existing) continue;
+
+            const parsed_url = bun.URL.parse(raw_url);
+            var response_buffer = bun.MutableString.init(allocator, 8 * 1024) catch continue;
+            defer response_buffer.deinit();
+
+            var async_http = HTTP.AsyncHTTP.initSync(
+                allocator,
+                .GET,
+                parsed_url,
+                .{},
+                "",
+                &response_buffer,
+                "",
+                null,
+                null,
+                HTTP.FetchRedirect.follow,
+            );
+            const resp = async_http.sendSync() catch continue;
+            if (resp.status_code != 200) continue;
+            const bytes = response_buffer.slice();
+            if (bytes.len == 0) continue;
+
+            // Extension is best-effort from the URL path; Kitty inspects
+            // the file's magic bytes regardless.
+            const ext: []const u8 = if (bun.strings.endsWithAny(raw_url, ".png")) ".png" else if (bun.strings.endsWithAny(raw_url, ".jpg") or bun.strings.endsWithAny(raw_url, ".jpeg")) ".jpg" else if (bun.strings.endsWithAny(raw_url, ".gif")) ".gif" else if (bun.strings.endsWithAny(raw_url, ".webp")) ".webp" else ".bin";
+            var name_buf: [64]u8 = undefined;
+            const name = std.fmt.bufPrint(&name_buf, "bun-md-{x}{s}", .{ bun.fastRandom(), ext }) catch continue;
+            const path = std.fmt.allocPrint(allocator, "{s}/{s}", .{ tmpdir, name }) catch continue;
+
+            const fd = switch (bun.sys.openA(path, bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC, 0o600)) {
+                .result => |f| f,
+                .err => {
+                    allocator.free(path);
+                    continue;
+                },
+            };
+            var written: usize = 0;
+            var ok = true;
+            while (written < bytes.len) {
+                switch (bun.sys.write(fd, bytes[written..])) {
+                    .result => |n| {
+                        if (n == 0) {
+                            ok = false;
+                            break;
+                        }
+                        written += n;
+                    },
+                    .err => {
+                        ok = false;
+                        break;
+                    },
+                }
+            }
+            fd.close();
+            if (!ok) {
+                allocator.free(path);
+                continue;
+            }
+            out_map.put(allocator, raw_url, path) catch {
+                allocator.free(path);
+                continue;
+            };
+        }
+    }
+
     /// Read a markdown file, render it to ANSI, print to stdout, and exit.
     /// Runs without a JavaScript VM — much faster than booting JSC.
     fn renderMarkdownFileAndExit(path: string) noreturn {
@@ -1260,13 +1353,7 @@ pub const RunCommand = struct {
             break :brk if (c == 0) 80 else c;
         };
         const is_tty = Output.isStdoutTTY();
-        const theme: bun.md.AnsiTheme = .{
-            .light = bun.md.detectLightBackground(),
-            .columns = columns,
-            .colors = colors,
-            .hyperlinks = colors and is_tty,
-            .kitty_graphics = colors and is_tty and bun.md.detectKittyGraphics(),
-        };
+        const kitty_graphics = colors and is_tty and bun.md.detectKittyGraphics();
 
         // Terminal rendering enables every syntax we can display nicely —
         // GFM baseline plus wikilinks, underline, and LaTeX math passthrough.
@@ -1281,6 +1368,25 @@ pub const RunCommand = struct {
             .underline = true,
             .latex_math = true,
         };
+
+        // Pre-scan for http(s) image URLs so Kitty can display them
+        // inline. Only runs when kitty_graphics is on and the document
+        // actually contains an image marker — otherwise the whole block
+        // is a no-op.
+        var remote_map: std.StringHashMapUnmanaged([]const u8) = .{};
+        if (kitty_graphics and bun.strings.contains(contents, "![")) {
+            prefetchRemoteImages(contents, md_opts, &remote_map);
+        }
+
+        const theme: bun.md.AnsiTheme = .{
+            .light = bun.md.detectLightBackground(),
+            .columns = columns,
+            .colors = colors,
+            .hyperlinks = colors and is_tty,
+            .kitty_graphics = kitty_graphics,
+            .remote_image_paths = if (remote_map.count() > 0) &remote_map else null,
+        };
+
         const rendered = bun.md.renderToAnsi(
             contents,
             bun.default_allocator,

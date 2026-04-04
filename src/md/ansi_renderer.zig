@@ -73,8 +73,6 @@ pub const AnsiRenderer = struct {
     cell_align: types.Align = .default,
     /// Track whether we just emitted a newline, to collapse extra blanks.
     last_was_newline: bool = true,
-    /// Depth of blockquote nesting for left bar rendering.
-    quote_depth: u32 = 0,
 
     const BlockContext = struct {
         kind: Kind,
@@ -208,7 +206,6 @@ pub const AnsiRenderer = struct {
             .doc => {},
             .quote => {
                 self.ensureBlankLine();
-                self.quote_depth += 1;
                 self.block_stack.append(self.allocator, .{ .kind = .quote, .indent = 2 }) catch {
                     self.out.oom = true;
                 };
@@ -350,7 +347,6 @@ pub const AnsiRenderer = struct {
         switch (block_type) {
             .doc => {},
             .quote => {
-                self.quote_depth -= 1;
                 _ = self.block_stack.pop();
                 self.ensureNewline();
             },
@@ -483,9 +479,8 @@ pub const AnsiRenderer = struct {
             .wikilink => {
                 self.writeStyled(color(.blue), "[[");
             },
-            .latexmath, .latexmath_display => {
-                self.writeStyled(color(.magenta), "$");
-            },
+            .latexmath => self.writeStyled(color(.magenta), "$"),
+            .latexmath_display => self.writeStyled(color(.magenta), "$$"),
         }
     }
 
@@ -563,8 +558,13 @@ pub const AnsiRenderer = struct {
                 self.writeStyled("\x1b[39m", "");
                 self.reapplyStyles();
             },
-            .latexmath, .latexmath_display => {
+            .latexmath => {
                 self.writeStyled("", "$");
+                self.writeStyled("\x1b[39m", "");
+                self.reapplyStyles();
+            },
+            .latexmath_display => {
+                self.writeStyled("", "$$");
                 self.writeStyled("\x1b[39m", "");
                 self.reapplyStyles();
             },
@@ -1516,14 +1516,16 @@ fn probeKittyGraphics() bool {
 
     // Wait up to ~80ms for a response. Kitty/Ghostty/WezTerm reply
     // in < 10ms; anything longer is noise from an unrelated terminal.
-    // poll() stays on std.posix — bun.sys has no TTY poll wrapper.
     var pfd = [_]std.posix.pollfd{.{
         .fd = 0,
         .events = std.posix.POLL.IN,
         .revents = 0,
     }};
-    const ready = std.posix.poll(&pfd, 80) catch return false;
-    if (ready <= 0) return false;
+    const ready = switch (bun.sys.poll(&pfd, 80)) {
+        .result => |n| n,
+        .err => return false,
+    };
+    if (ready == 0) return false;
 
     var buf: [128]u8 = undefined;
     const n = switch (bun.sys.read(bun.FD.stdin(), &buf)) {

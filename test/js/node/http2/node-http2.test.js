@@ -1212,6 +1212,76 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
             server.close();
           }
         });
+        it("should handle HEADERS frame with PADDED flag and empty payload", async () => {
+          const { promise: waitToWrite, resolve: allowWrite } = Promise.withResolvers();
+          const { promise: serverListening, resolve: serverResolve } = Promise.withResolvers();
+          const server = net.createServer(async socket => {
+            const settings = new http2utils.SettingsFrame(true);
+            socket.write(settings.data);
+            await waitToWrite;
+            // HEADERS frame (type=1) on stream 1 with flags=PADDED|END_HEADERS|END_STREAM (0xD) and empty payload.
+            // The PADDED flag demands at least 1 byte for Pad Length, so this must be PROTOCOL_ERROR.
+            const frame = new http2utils.Frame(0, 1, 0xd, 1).data;
+            socket.write(frame);
+          });
+          server.listen(0, "127.0.0.1", () => serverResolve());
+          await serverListening;
+
+          const url = `http://127.0.0.1:${server.address().port}`;
+          try {
+            const { promise, resolve } = Promise.withResolvers();
+            const client = http2.connect(url);
+            client.on("error", resolve);
+            client.on("connect", () => {
+              const req = client.request({ ":path": "/" });
+              req.on("error", () => {});
+              req.end();
+              allowWrite();
+            });
+            const result = await promise;
+            expect(result).toBeDefined();
+            expect(result.code).toBe("ERR_HTTP2_SESSION_ERROR");
+            expect(result.message).toBe("Session closed with error code NGHTTP2_PROTOCOL_ERROR");
+          } finally {
+            server.close();
+          }
+        });
+        it("should handle HEADERS frame with PADDED padding larger than payload", async () => {
+          const { promise: waitToWrite, resolve: allowWrite } = Promise.withResolvers();
+          const { promise: serverListening, resolve: serverResolve } = Promise.withResolvers();
+          const server = net.createServer(async socket => {
+            const settings = new http2utils.SettingsFrame(true);
+            socket.write(settings.data);
+            await waitToWrite;
+            // HEADERS frame (type=1) on stream 1 with flags=PADDED|END_HEADERS|END_STREAM (0xD) and
+            // a 1-byte payload containing Pad Length=255. The padding byte alone claims 255 bytes of
+            // padding follow, but 0 bytes remain, so payload.len - padding would underflow without
+            // the guard. Must be PROTOCOL_ERROR.
+            const frame = Buffer.concat([new http2utils.Frame(1, 1, 0xd, 1).data, Buffer.from([0xff])]);
+            socket.write(frame);
+          });
+          server.listen(0, "127.0.0.1", () => serverResolve());
+          await serverListening;
+
+          const url = `http://127.0.0.1:${server.address().port}`;
+          try {
+            const { promise, resolve } = Promise.withResolvers();
+            const client = http2.connect(url);
+            client.on("error", resolve);
+            client.on("connect", () => {
+              const req = client.request({ ":path": "/" });
+              req.on("error", () => {});
+              req.end();
+              allowWrite();
+            });
+            const result = await promise;
+            expect(result).toBeDefined();
+            expect(result.code).toBe("ERR_HTTP2_SESSION_ERROR");
+            expect(result.message).toBe("Session closed with error code NGHTTP2_PROTOCOL_ERROR");
+          } finally {
+            server.close();
+          }
+        });
         it("should handle bad RST_FRAME server frame size (no stream)", async () => {
           const { promise: waitToWrite, resolve: allowWrite } = Promise.withResolvers();
           const { promise: serverListening, resolve: serverResolve } = Promise.withResolvers();

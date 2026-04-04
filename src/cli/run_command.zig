@@ -1416,7 +1416,7 @@ pub const RunCommand = struct {
         var base_buf: bun.PathBuffer = undefined;
         var cwd_buf: bun.PathBuffer = undefined;
         const abs_md_path: []const u8 = blk: {
-            if (bun.path.isAbsolute(.auto, path)) break :blk path;
+            if (std.fs.path.isAbsolute(path)) break :blk path;
             const cwd = switch (bun.sys.getcwd(&cwd_buf)) {
                 .result => |c| c,
                 .err => break :blk path,

@@ -1459,19 +1459,14 @@ pub const RunCommand = struct {
 
         Output.writer().writeAll(rendered) catch {};
         Output.flush();
-        // Unlink the temp files prefetchRemoteImages() wrote. Flush
-        // above guarantees the APC sequences referencing these paths
-        // have left this process for the terminal; Kitty reads the
-        // file synchronously when it receives the APC, so an unlink
-        // now is safe.
-        if (remote_map.count() > 0) {
-            var it = remote_map.valueIterator();
-            while (it.next()) |tmp_path| {
-                const z = bun.default_allocator.dupeZ(u8, tmp_path.*) catch continue;
-                _ = bun.sys.unlink(z);
-                bun.default_allocator.free(z);
-            }
-        }
+        // Temp files prefetchRemoteImages() wrote are deliberately NOT
+        // unlinked here. Output.flush() only guarantees the APC bytes
+        // reached the terminal's PTY ring buffer — Kitty reads the file
+        // asynchronously from its own event loop, so unlinking inside
+        // this process races Kitty's open() and typically drops images
+        // silently (q=2 suppresses the error). System tmp cleanup
+        // (systemd-tmpfiles, /tmp reboot wipe) eventually removes the
+        // bun-md-*.png files, which are small (~100KB each) and rare.
         Global.exit(0);
     }
 

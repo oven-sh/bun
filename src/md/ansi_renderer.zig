@@ -42,6 +42,7 @@ pub const ImageUrlCollector = struct {
     }
 
     pub fn deinit(self: *ImageUrlCollector) void {
+        for (self.urls.items) |u| self.allocator.free(u);
         self.urls.deinit(self.allocator);
     }
 
@@ -66,7 +67,12 @@ pub const ImageUrlCollector = struct {
         if (span_type != .img) return;
         const self: *ImageUrlCollector = @ptrCast(@alignCast(ptr));
         if (detail.href.len == 0) return;
-        self.urls.append(self.allocator, detail.href) catch return error.OutOfMemory;
+        // detail.href is a slice into the parser's reusable buffer, which
+        // is freed when renderWithRenderer returns (p.deinit). Dupe it so
+        // callers can safely read collector.urls after rendering finishes.
+        const owned = self.allocator.dupe(u8, detail.href) catch return error.OutOfMemory;
+        errdefer self.allocator.free(owned);
+        self.urls.append(self.allocator, owned) catch return error.OutOfMemory;
     }
 };
 
@@ -949,15 +955,21 @@ pub const AnsiRenderer = struct {
     }
 
     fn updateColFromText(self: *AnsiRenderer, data: []const u8) void {
+        // Advance col by visible width per-segment (between newlines) so
+        // multi-byte UTF-8 content stays consistent with every other
+        // col-update site (they all use visibleWidth()).
+        var start: usize = 0;
         var i: usize = 0;
         while (i < data.len) : (i += 1) {
             if (data[i] == '\n') {
                 self.col = 0;
                 self.last_was_newline = true;
-            } else {
-                self.col += 1;
-                self.last_was_newline = false;
+                start = i + 1;
             }
+        }
+        if (start < data.len) {
+            self.col += @intCast(visibleWidth(data[start..]));
+            self.last_was_newline = false;
         }
     }
 

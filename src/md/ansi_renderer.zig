@@ -661,7 +661,9 @@ pub const AnsiRenderer = struct {
             // the content through the active buffer + updates col in one
             // pass, without the paragraph word-wrap logic.
             .code => self.writeStyled("", content),
-            .latexmath => self.writeContent(content),
+            // LaTeX math spans are atomic like .code — don't let
+            // writeWrapped split `$E = mc^2$` at internal spaces.
+            .latexmath => self.writeStyled("", content),
             else => self.writeContent(content),
         }
     }
@@ -1444,14 +1446,18 @@ pub const AnsiRenderer = struct {
         }
         const img_marker = if (self.theme.colors) "📷 " else "[img] ";
         self.writeStyled(color(.magenta), img_marker);
+        // Route alt/title through writeContent so word-wrap applies and
+        // any hard breaks (`\n` captured from .br events) get a proper
+        // writeIndent() afterwards — otherwise long alts overflow and
+        // continuation lines inside blockquotes lose the `│ ` prefix.
         if (alt.len > 0) {
-            self.writeStyled("", alt);
+            self.writeContent(alt);
         } else if (self.image_title) |title| if (title.len > 0) {
-            self.writeStyled("", title);
+            self.writeContent(title);
         } else {
-            self.writeStyled("", "(image)");
+            self.writeContent("(image)");
         } else {
-            self.writeStyled("", "(image)");
+            self.writeContent("(image)");
         }
         self.writeStyled(reset(), "");
         self.reapplyStyles();

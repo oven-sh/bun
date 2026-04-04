@@ -154,7 +154,7 @@ function webkitSrcDir(cfg: Config): string {
   const env = process.env.BUN_WEBKIT_PATH;
   if (!env) return depSourceDir(cfg, "WebKit");
   // Shells don't expand ~ inside quotes; handle it here so a quoted export works.
-  if (env === "~" || env.startsWith("~/")) return join(homedir(), env.slice(1));
+  if (env === "~" || env.startsWith("~/") || env.startsWith("~\\")) return join(homedir(), env.slice(1));
   // Anchor relative paths to the repo root so ninja's regen rule (which runs
   // from buildDir) resolves the same path as the initial configure.
   return resolve(cfg.cwd, env);

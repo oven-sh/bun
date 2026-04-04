@@ -202,7 +202,12 @@ static inline bool setJSMessagePort_onmessageSetter(JSGlobalObject& lexicalGloba
     vm.writeBarrier(&thisObject, value);
     ensureStillAliveHere(value);
 
-    thisObject.wrapped().jsRef(&lexicalGlobalObject);
+    // Only ref when setting to a callable function; unref when clearing or setting to non-function.
+    // This matches Node.js behavior where setting onmessage to a non-function allows the event loop to exit.
+    if (value.isCallable())
+        thisObject.wrapped().jsRef(&lexicalGlobalObject);
+    else
+        thisObject.wrapped().jsUnref(&lexicalGlobalObject);
 
     return true;
 }

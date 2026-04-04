@@ -1382,6 +1382,7 @@ pub fn gitDiffInternal(
             "--irreversible-delete",
             "--full-index",
             "--no-index",
+            "--no-ext-diff",
             old_folder,
             new_folder,
         },

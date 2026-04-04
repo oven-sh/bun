@@ -547,4 +547,100 @@ describe("bun", () => {
       win32ExpectedError: /--elide-lines is only supported in terminal environments/,
     });
   });
+
+  test("single package filter runs in foreground mode without eliding", () => {
+    // When only one package matches the filter, it should run in foreground mode
+    // without the eliding UI (no "│" prefix), which allows interactive scripts to work
+    const dir = tempDirWithFiles("testworkspace", {
+      packages: {
+        singleapp: {
+          "index.js": "console.log('single_package_output');",
+          "package.json": JSON.stringify({
+            name: "single-app",
+            scripts: {
+              start: `${bunExe()} run index.js`,
+            },
+          }),
+        },
+      },
+      "package.json": JSON.stringify({
+        name: "ws",
+        workspaces: ["packages/*"],
+      }),
+    });
+
+    const { exitCode, stdout, stderr } = spawnSync({
+      cwd: dir,
+      cmd: [bunExe(), "run", "--filter", "single-app", "start"],
+      env: { ...bunEnv, FORCE_COLOR: "1", NO_COLOR: "0" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const stdoutval = stdout.toString();
+    expect(stdoutval).toContain("single_package_output");
+    expect(stdoutval).not.toMatch(/│/);
+    expect(stdoutval).not.toMatch(/└─/);
+    expect(exitCode).toBe(0);
+  });
+
+  test("single package filter runs pre/post scripts in order", () => {
+    // Test that pre/post scripts execute correctly in foreground mode for single-package filters
+    const dir = tempDirWithFiles("testworkspace", {
+      packages: {
+        singleapp: {
+          "write.js": "await Bun.write('out.txt', 'pre_success');",
+          "read.js": "console.log(await Bun.file('out.txt').text());",
+          "post.js": "await Bun.write('post.txt', 'post_done'); console.log('post_script_executed');",
+          "package.json": JSON.stringify({
+            name: "single-app",
+            scripts: {
+              prestart: `${bunExe()} run write.js`,
+              start: `${bunExe()} run read.js`,
+              poststart: `${bunExe()} run post.js`,
+            },
+          }),
+        },
+      },
+      "package.json": JSON.stringify({
+        name: "ws",
+        workspaces: ["packages/*"],
+      }),
+    });
+
+    const { exitCode, stdout } = spawnSync({
+      cwd: dir,
+      cmd: [bunExe(), "run", "--filter", "single-app", "start"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const stdoutval = stdout.toString();
+    // prestart writes 'pre_success', start prints it, poststart runs after start
+    // Assert ordering: pre_success must appear before post_script_executed
+    expect(stdoutval).toMatch(/pre_success[\s\S]*post_script_executed/);
+    // Should not have eliding UI markers in foreground mode
+    expect(stdoutval).not.toMatch(/│/);
+    expect(stdoutval).not.toMatch(/└─/);
+    expect(exitCode).toBe(0);
+  });
+
+  test("multi-package filter uses parallel mode with formatted output", () => {
+    const { exitCode, stdout } = spawnSync({
+      cwd: cwd_root,
+      cmd: [bunExe(), "run", "--filter", "pkg*", "present"],
+      env: { ...bunEnv, FORCE_COLOR: "1", NO_COLOR: "0" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const stdoutval = stdout.toString();
+    // multi-package mode should have output from both packages
+    expect(stdoutval).toMatch(/scripta/);
+    expect(stdoutval).toMatch(/scriptb/);
+    // and should include formatted workspace UI markers
+    expect(stdoutval).toMatch(/[│└─]/);
+    expect(exitCode).toBe(0);
+  });
 });

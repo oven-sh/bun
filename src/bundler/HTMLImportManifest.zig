@@ -91,6 +91,13 @@ fn writeEntryItem(
         }).value,
     });
 
+    // Content-hashed assets are immutable — if the content changes, the hash
+    // (and therefore the URL) changes too, so aggressive caching is always safe.
+    // Exclude HTML since it's served at a user-specified URL, not a hashed path.
+    if (hash > 0 and loader != .html) {
+        try writer.writeAll(",\"cache-control\":\"public, max-age=31536000\"");
+    }
+
     try writer.writeAll("}}");
 }
 

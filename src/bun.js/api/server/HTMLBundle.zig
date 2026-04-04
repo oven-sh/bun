@@ -378,7 +378,7 @@ pub const Route = struct {
                             error.NoSpaceLeft => unreachable,
                         };
                         bun.handleOom(headers.append("ETag", etag_str));
-                        if (!server.config().isDevelopment() and (output_file.output_kind == .chunk))
+                        if (!server.config().isDevelopment())
                             bun.handleOom(headers.append("Cache-Control", "public, max-age=31536000"));
                     }
 

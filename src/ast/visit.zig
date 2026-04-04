@@ -1192,8 +1192,11 @@ pub fn Visit(
                 switch (stmt.data) {
                     .s_empty => continue,
 
-                    // skip directives for now
-                    .s_directive => continue,
+                    // Directives like "use client" / "use server" must be preserved.
+                    .s_directive => {
+                        output.append(stmt) catch unreachable;
+                        continue;
+                    },
 
                     .s_local => |local| {
                         // Merge adjacent local statements

@@ -1289,7 +1289,7 @@ pub const RunCommand = struct {
 
             // Extension is best-effort from the URL path; Kitty inspects
             // the file's magic bytes regardless.
-            const ext: []const u8 = if (bun.strings.endsWithAny(raw_url, ".png")) ".png" else if (bun.strings.endsWithAny(raw_url, ".jpg") or bun.strings.endsWithAny(raw_url, ".jpeg")) ".jpg" else if (bun.strings.endsWithAny(raw_url, ".gif")) ".gif" else if (bun.strings.endsWithAny(raw_url, ".webp")) ".webp" else ".bin";
+            const ext: []const u8 = if (bun.strings.endsWith(raw_url, ".png")) ".png" else if (bun.strings.endsWith(raw_url, ".jpg") or bun.strings.endsWith(raw_url, ".jpeg")) ".jpg" else if (bun.strings.endsWith(raw_url, ".gif")) ".gif" else if (bun.strings.endsWith(raw_url, ".webp")) ".webp" else ".bin";
             var name_buf: [64]u8 = undefined;
             const name = std.fmt.bufPrint(&name_buf, "bun-md-{x}{s}", .{ bun.fastRandom(), ext }) catch continue;
             const path = std.fmt.allocPrint(allocator, "{s}/{s}", .{ tmpdir, name }) catch continue;
@@ -1407,6 +1407,19 @@ pub const RunCommand = struct {
 
         Output.writer().writeAll(rendered) catch {};
         Output.flush();
+        // Unlink the temp files prefetchRemoteImages() wrote. Flush
+        // above guarantees the APC sequences referencing these paths
+        // have left this process for the terminal; Kitty reads the
+        // file synchronously when it receives the APC, so an unlink
+        // now is safe.
+        if (remote_map.count() > 0) {
+            var it = remote_map.valueIterator();
+            while (it.next()) |tmp_path| {
+                const z = bun.default_allocator.dupeZ(u8, tmp_path.*) catch continue;
+                _ = bun.sys.unlink(z);
+                bun.default_allocator.free(z);
+            }
+        }
         Global.exit(0);
     }
 

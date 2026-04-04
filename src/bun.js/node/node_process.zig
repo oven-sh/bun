@@ -34,6 +34,52 @@ pub fn setTitle(globalObject: *JSGlobalObject, newvalue: *bun.String) callconv(.
 
     if (bun.cli.Bun__Node__ProcessTitle) |slice| bun.default_allocator.free(slice);
     bun.cli.Bun__Node__ProcessTitle = new_title;
+
+    // Actually set the process title in the OS
+    {
+        const title_z = bun.default_allocator.dupeZ(u8, new_title) catch return;
+        defer bun.default_allocator.free(title_z);
+
+        if (bun.Environment.isWindows) {
+            _ = bun.windows.libuv.uv_set_process_title(title_z.ptr);
+        }
+        if (bun.Environment.isPosix) {
+            _ = bun.windows.libuv.uv_set_process_title(title_z.ptr);
+
+            // Also overwrite argv[0] to update `ps` output
+            // This is "unsafe" because we are writing to the process argument memory,
+            // but it's the standard way to set process title on Unix.
+            const argv = bun.argv;
+            if (argv.len > 0) {
+                const first_arg = argv[0];
+                // Cast away const to write to the argument memory
+                const ptr = @constCast(first_arg.ptr);
+
+                // Calculate available continuous space in argv
+                var available_len = first_arg.len;
+                var next_ptr = ptr + first_arg.len + 1; // +1 for null terminator
+
+                for (argv[1..]) |arg| {
+                    if (arg.ptr == next_ptr) {
+                        available_len += 1 + arg.len;
+                        next_ptr += arg.len + 1;
+                    } else {
+                        break;
+                    }
+                }
+
+                // Copy the new title
+                const write_len = @min(available_len, new_title.len);
+                @memcpy(ptr[0..write_len], new_title[0..write_len]);
+
+                // Helper to zero out remaining memory
+                const remaining = available_len - write_len;
+                if (remaining > 0) {
+                    @memset(ptr[write_len..][0..remaining], 0);
+                }
+            }
+        }
+    }
 }
 
 pub fn createArgv0(globalObject: *jsc.JSGlobalObject) callconv(.c) jsc.JSValue {

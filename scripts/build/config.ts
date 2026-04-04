@@ -435,9 +435,10 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
         : resolve(cwd, partial.buildDir)
       : resolve(cwd, "build", defaultBuildDirName);
   const codegenDir = resolve(buildDir, "codegen");
-  // Local builds share ~/.bun/build-cache across checkouts and profiles so
-  // ccache/zig/tarballs/webkit reuse one another's work. CI stays per-build
+  // Local builds share $BUN_INSTALL/build-cache across checkouts and profiles
+  // so ccache/zig/tarballs/webkit reuse one another's work. CI stays per-build
   // so runners remain hermetic and `rm -rf build/` is a full reset.
+  const bunInstall = process.env.BUN_INSTALL || join(homedir(), ".bun");
   const cacheDir =
     partial.cacheDir !== undefined
       ? isAbsolute(partial.cacheDir)
@@ -445,7 +446,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
         : resolve(cwd, partial.cacheDir)
       : ci
         ? resolve(buildDir, "cache")
-        : resolve(homedir(), ".bun", "build-cache");
+        : resolve(bunInstall, "build-cache");
   const vendorDir = resolve(cwd, "vendor");
 
   // ─── Validation ───

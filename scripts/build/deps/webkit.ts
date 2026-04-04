@@ -15,10 +15,12 @@ export const WEBKIT_VERSION = "c2010c47d12c525d36adabe3a17b2eb6ec850960";
  *   ASAN MUST match bun's setting: WTF::Vector layout changes with ASAN
  *   (see WTF/Vector.h:682), so mixing → silent memory corruption.
  *
- * **local**: Source at `vendor/WebKit/`. User clones manually (clone takes
- *   10+ min — too slow for the build system to do). We cmake it like any
- *   other dep. Headers land in the BUILD dir (generated during configure),
- *   which is why `provides.includes` returns absolute paths.
+ * **local**: Source at `vendor/WebKit/`, or `$BUN_WEBKIT_PATH` if set. User
+ *   clones manually (clone takes 10+ min — too slow for the build system
+ *   to do). Set `BUN_WEBKIT_PATH` to share one clone across worktrees. We
+ *   cmake it like any other dep. Headers land in the BUILD dir (generated
+ *   during configure), which is why `provides.includes` returns absolute
+ *   paths.
  *
  * ## Implementation notes
  *
@@ -37,7 +39,8 @@ export const WEBKIT_VERSION = "c2010c47d12c525d36adabe3a17b2eb6ec850960";
  *   like the old cmake — avoids debug/release mixing.
  */
 
-import { resolve } from "node:path";
+import { homedir } from "node:os";
+import { join, resolve } from "node:path";
 import type { Config } from "../config.ts";
 import { slash } from "../shell.ts";
 import { type Dependency, type NestedCmakeBuild, type Source, depBuildDir, depSourceDir } from "../source.ts";
@@ -142,6 +145,20 @@ function localIcuLibs(cfg: Config): string[] {
   return [resolve(dir, "lib", "sicudt.lib"), resolve(dir, "lib", "icuin.lib"), resolve(dir, "lib", "icuuc.lib")];
 }
 
+/**
+ * WebKit source dir for local mode. Defaults to vendor/WebKit; override via
+ * $BUN_WEBKIT_PATH to share one clone across worktrees.
+ */
+function webkitSrcDir(cfg: Config): string {
+  const env = process.env.BUN_WEBKIT_PATH;
+  if (!env) return depSourceDir(cfg, "WebKit");
+  // Shells don't expand ~ inside quotes; handle it here so a quoted export works.
+  if (env === "~" || env.startsWith("~/")) return join(homedir(), env.slice(1));
+  // Anchor relative paths to the repo root so ninja's regen rule (which runs
+  // from buildDir) resolves the same path as the initial configure.
+  return resolve(cfg.cwd, env);
+}
+
 // ───────────────────────────────────────────────────────────────────────────
 // The Dependency
 // ───────────────────────────────────────────────────────────────────────────
@@ -168,11 +185,15 @@ export const webkit: Dependency = {
       return src;
     }
 
-    // Local: user clones vendor/WebKit/ manually (clone takes 10+ min — the
-    // one thing the build system doesn't automate). Once cloned, we cmake it
-    // like any other dep. resolveDep()'s local-mode assert gives a clear
-    // "clone it yourself" error if missing.
-    return { kind: "local" };
+    // Local: user clones manually (clone takes 10+ min — the one thing the
+    // build system doesn't automate). Once cloned, we cmake it like any
+    // other dep. resolveDep()'s local-mode assert gives a clear "clone it
+    // yourself" error if missing.
+    return {
+      kind: "local",
+      path: webkitSrcDir(cfg),
+      hint: "Clone oven-sh/WebKit to vendor/WebKit/, or set $BUN_WEBKIT_PATH to an existing clone (useful for worktrees)",
+    };
   },
 
   build: cfg => {
@@ -226,7 +247,7 @@ export const webkit: Dependency = {
 
     if (cfg.windows) {
       const icu = icuDir(cfg);
-      const srcDir = depSourceDir(cfg, "WebKit");
+      const srcDir = webkitSrcDir(cfg);
       // slash(): cmake -D values — see shell.ts.
       args.ICU_ROOT = slash(icu);
       args.ICU_LIBRARY = slash(resolve(icu, "lib"));

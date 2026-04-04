@@ -381,8 +381,14 @@ pub fn NewBuilder(comptime SourceMapFormatType: type) type {
         }
 
         /// Like addSourceMapping but also records the original identifier name.
+        /// Does NOT dedup on prev_loc when name_index >= 0 — a named mapping
+        /// at the same position overrides the prior unnamed mapping. Source map
+        /// consumers use the last mapping at any position.
         pub fn addSourceMappingWithName(b: *ThisBuilder, loc: Logger.Loc, output: []const u8, name_index: i32) void {
-            if (b.prev_loc.eql(loc) or loc.start == Logger.Loc.Empty.start)
+            if (loc.start == Logger.Loc.Empty.start)
+                return;
+            // Skip dedup only for unnamed calls; named calls override prior mapping
+            if (name_index < 0 and b.prev_loc.eql(loc))
                 return;
 
             b.prev_loc = loc;

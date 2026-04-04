@@ -103,8 +103,9 @@ pub const PackageManagerCommand = struct {
             \\  <d>└<r> <cyan>--quiet<r>                   only output the tarball filename
             \\  <b><green>bun pm<r> <blue>bin<r>                  print the path to bin folder
             \\  <d>└<r> <cyan>-g<r>                        print the <b>global<r> path to bin folder
-            \\  <b><green>bun<r> <blue>list<r>                  list the dependency tree according to the current lockfile
-            \\  <d>└<r> <cyan>--all<r>                     list the entire dependency tree according to the current lockfile
+            \\  <b><green>bun<r> <blue>list<r>                    list the dependency tree according to the current lockfile
+            \\  <d>├<r> <cyan>--all<r>                     list the entire dependency tree according to the current lockfile
+            \\  <d>└<r> <cyan>--json<r>                    output in JSON format
             \\  <b><green>bun pm<r> <blue>why<r> <d>\<pkg\><r>            show dependency tree explaining why a package is installed
             \\  <b><green>bun pm<r> <blue>whoami<r>               print the current npm username
             \\  <b><green>bun pm<r> <blue>view<r> <d>name[@version]<r>  view package metadata from the registry <d>(use `bun info` instead)<r>
@@ -322,6 +323,14 @@ pub const PackageManagerCommand = struct {
             Output.flush();
             Output.disableBuffering();
             const lockfile = load_lockfile.ok.lockfile;
+            const show_all = strings.leftHasAnyInRight(args, &.{ "-A", "-a", "--all" });
+
+            // JSON output mode
+            if (pm.options.json_output) {
+                try printLsJson(ctx.allocator, lockfile, pm, show_all);
+                Global.exit(0);
+            }
+
             var iterator = Lockfile.Tree.Iterator(.node_modules).init(lockfile);
 
             var max_depth: usize = 0;
@@ -357,7 +366,7 @@ pub const PackageManagerCommand = struct {
             @memset(more_packages, false);
             if (first_directory.dependencies.len > 1) more_packages[0] = true;
 
-            if (strings.leftHasAnyInRight(args, &.{ "-A", "-a", "--all" })) {
+            if (show_all) {
                 try printNodeModulesFolderStructure(&first_directory, null, 0, &directories, lockfile, more_packages);
             } else {
                 var cwd_buf: bun.PathBuffer = undefined;
@@ -586,11 +595,211 @@ fn printNodeModulesFolderStructure(
     }
 }
 
+fn printLsJson(allocator: std.mem.Allocator, lockfile: *Lockfile, pm: *PackageManager, show_all: bool) !void {
+    const dependencies = lockfile.buffers.dependencies.items;
+    const slice = lockfile.packages.slice();
+    const resolutions = slice.items(.resolution);
+    const pkg_dependencies = slice.items(.dependencies);
+    const string_bytes = lockfile.buffers.string_bytes.items;
+
+    var cwd_buf: bun.PathBuffer = undefined;
+    const cwd = bun.getcwd(&cwd_buf) catch "";
+
+    var root_name: []const u8 = pm.root_package_json_name_at_time_of_init;
+    var root_version: []const u8 = "";
+
+    if (pm.root_dir.hasComptimeQuery("package.json")) from_package_json: {
+        if (pm.root_dir.fd.isValid()) {
+            switch (bun.sys.File.readFrom(pm.root_dir.fd, "package.json", allocator)) {
+                .err => {},
+                .result => |str| {
+                    defer allocator.free(str);
+                    const source = &logger.Source.initPathString("package.json", str);
+                    var parse_log = logger.Log.init(allocator);
+                    defer parse_log.deinit();
+                    const json = JSON.parse(source, &parse_log, allocator, false) catch break :from_package_json;
+                    if (json.getStringCloned(allocator, "name") catch null) |name| {
+                        root_name = name;
+                    }
+                    if (json.getStringCloned(allocator, "version") catch null) |version| {
+                        root_version = version;
+                    }
+                },
+            }
+        }
+    }
+
+    var root_obj = js_ast.E.Object{};
+
+    if (root_name.len > 0) {
+        const name_str = try allocator.dupe(u8, root_name);
+        try root_obj.put(allocator, "name", js_ast.Expr.init(js_ast.E.String, js_ast.E.String.init(name_str), logger.Loc.Empty));
+    }
+    if (root_version.len > 0) {
+        try root_obj.put(allocator, "version", js_ast.Expr.init(js_ast.E.String, js_ast.E.String.init(root_version), logger.Loc.Empty));
+    }
+    if (cwd.len > 0) {
+        const path_str = try allocator.dupe(u8, cwd);
+        try root_obj.put(allocator, "path", js_ast.Expr.init(js_ast.E.String, js_ast.E.String.init(path_str), logger.Loc.Empty));
+    }
+
+    var prod_deps_obj = js_ast.E.Object{};
+    var dev_deps_obj = js_ast.E.Object{};
+    var optional_deps_obj = js_ast.E.Object{};
+    var peer_deps_obj = js_ast.E.Object{};
+    var transitive_deps_obj = js_ast.E.Object{};
+
+    // Track direct dependency IDs to identify transitive deps going forward
+    var direct_dep_ids = std.AutoHashMap(DependencyID, void).init(allocator);
+    defer direct_dep_ids.deinit();
+
+    // Direct deps first
+    const root_deps = pkg_dependencies[0];
+    const sorted_direct = try allocator.alloc(DependencyID, root_deps.len);
+    defer allocator.free(sorted_direct);
+    for (sorted_direct, 0..) |*dep, i| {
+        dep.* = @as(DependencyID, @truncate(root_deps.off + i));
+    }
+    std.sort.pdq(DependencyID, sorted_direct, ByName{
+        .dependencies = dependencies,
+        .buf = string_bytes,
+    }, ByName.isLessThan);
+
+    for (sorted_direct) |dependency_id| {
+        const package_id = lockfile.buffers.resolutions.items[dependency_id];
+        if (package_id >= lockfile.packages.len) continue;
+
+        try direct_dep_ids.put(dependency_id, {});
+
+        const dep = dependencies[dependency_id];
+        const dep_expr = try buildDepInfo(allocator, dep, resolutions[package_id], string_bytes, cwd);
+
+        const name = dep.name.slice(string_bytes);
+        const name_copy = try allocator.dupe(u8, name);
+
+        if (dep.behavior.dev) {
+            try dev_deps_obj.put(allocator, name_copy, dep_expr);
+        } else if (dep.behavior.peer) {
+            try peer_deps_obj.put(allocator, name_copy, dep_expr);
+        } else if (dep.behavior.optional and !dep.behavior.peer) {
+            try optional_deps_obj.put(allocator, name_copy, dep_expr);
+        } else {
+            try prod_deps_obj.put(allocator, name_copy, dep_expr);
+        }
+    }
+
+    // Transitive deps
+    if (show_all) {
+        const hoisted_deps = lockfile.buffers.hoisted_dependencies.items;
+        const sorted_hoisted = try allocator.alloc(DependencyID, hoisted_deps.len);
+        defer allocator.free(sorted_hoisted);
+        @memcpy(sorted_hoisted, hoisted_deps);
+        std.sort.pdq(DependencyID, sorted_hoisted, ByName{
+            .dependencies = dependencies,
+            .buf = string_bytes,
+        }, ByName.isLessThan);
+
+        for (sorted_hoisted) |dependency_id| {
+            // Skip if it's a direct dependency (already added above)
+            if (direct_dep_ids.contains(dependency_id)) continue;
+
+            const package_id = lockfile.buffers.resolutions.items[dependency_id];
+            if (package_id >= lockfile.packages.len) continue;
+
+            const dep = dependencies[dependency_id];
+            const dep_expr = try buildDepInfo(allocator, dep, resolutions[package_id], string_bytes, cwd);
+
+            const name = dep.name.slice(string_bytes);
+            const name_copy = try allocator.dupe(u8, name);
+
+            try transitive_deps_obj.put(allocator, name_copy, dep_expr);
+        }
+    }
+
+    if (prod_deps_obj.properties.len > 0) {
+        try root_obj.put(allocator, "dependencies", js_ast.Expr.init(js_ast.E.Object, prod_deps_obj, logger.Loc.Empty));
+    }
+    if (dev_deps_obj.properties.len > 0) {
+        try root_obj.put(allocator, "devDependencies", js_ast.Expr.init(js_ast.E.Object, dev_deps_obj, logger.Loc.Empty));
+    }
+    if (optional_deps_obj.properties.len > 0) {
+        try root_obj.put(allocator, "optionalDependencies", js_ast.Expr.init(js_ast.E.Object, optional_deps_obj, logger.Loc.Empty));
+    }
+    if (peer_deps_obj.properties.len > 0) {
+        try root_obj.put(allocator, "peerDependencies", js_ast.Expr.init(js_ast.E.Object, peer_deps_obj, logger.Loc.Empty));
+    }
+    if (transitive_deps_obj.properties.len > 0) {
+        try root_obj.put(allocator, "transitiveDependencies", js_ast.Expr.init(js_ast.E.Object, transitive_deps_obj, logger.Loc.Empty));
+    }
+
+    const root_expr = js_ast.Expr.init(js_ast.E.Object, root_obj, logger.Loc.Empty);
+    const source = &logger.Source.initEmptyFile("ls.json");
+
+    var buffer_writer = JSPrinter.BufferWriter.init(allocator);
+    buffer_writer.append_newline = true;
+    var printer = JSPrinter.BufferPrinter.init(buffer_writer);
+
+    _ = JSPrinter.printJSON(
+        @TypeOf(&printer),
+        &printer,
+        root_expr,
+        source,
+        .{
+            .mangled_props = null,
+            .indent = .{
+                .scalar = 2,
+                .count = 0,
+            },
+        },
+    ) catch |err| {
+        Output.errGeneric("Failed to serialize JSON: {s}", .{@errorName(err)});
+        Global.exit(1);
+    };
+
+    Output.print("{s}", .{printer.ctx.getWritten()});
+    Output.flush();
+}
+
+fn buildDepInfo(
+    allocator: std.mem.Allocator,
+    dep: Dependency,
+    resolution: Resolution,
+    string_bytes: []const u8,
+    cwd: []const u8,
+) !js_ast.Expr {
+    // ==== Format ====
+    // {
+    //   from: "package-name",
+    //   version: "1.2.3",
+    //   path: "path/to/the/package/in/node_modules"
+    // }
+
+    var dep_info = js_ast.E.Object{};
+
+    const name = dep.name.slice(string_bytes);
+
+    const from_copy = try allocator.dupe(u8, name);
+    try dep_info.put(allocator, "from", js_ast.Expr.init(js_ast.E.String, js_ast.E.String.init(from_copy), logger.Loc.Empty));
+
+    var resolution_buf: [512]u8 = undefined;
+    const version = try std.fmt.bufPrint(&resolution_buf, "{f}", .{resolution.fmt(string_bytes, .auto)});
+    const version_copy = try allocator.dupe(u8, version);
+    try dep_info.put(allocator, "version", js_ast.Expr.init(js_ast.E.String, js_ast.E.String.init(version_copy), logger.Loc.Empty));
+
+    if (cwd.len > 0) {
+        const path_str = try std.fmt.allocPrint(allocator, "{s}" ++ std.fs.path.sep_str ++ "node_modules" ++ std.fs.path.sep_str ++ "{s}", .{ cwd, name });
+        try dep_info.put(allocator, "path", js_ast.Expr.init(js_ast.E.String, js_ast.E.String.init(path_str), logger.Loc.Empty));
+    }
+
+    return js_ast.Expr.init(js_ast.E.Object, dep_info, logger.Loc.Empty);
+}
+
 const string = []const u8;
 
 const Dependency = @import("../install/dependency.zig");
 const Fs = @import("../fs.zig");
 const Lockfile = @import("../install/lockfile.zig");
+const Resolution = @import("../install/resolution.zig").Resolution;
 const Path = @import("../resolver/resolve_path.zig");
 const PmViewCommand = @import("./pm_view_command.zig");
 const std = @import("std");
@@ -606,8 +815,12 @@ const UntrustedCommand = @import("./pm_trusted_command.zig").UntrustedCommand;
 const bun = @import("bun");
 const Environment = bun.Environment;
 const Global = bun.Global;
+const JSON = bun.json;
+const JSPrinter = bun.js_printer;
 const Output = bun.Output;
+const js_ast = bun.ast;
 const log = bun.log;
+const logger = bun.logger;
 const strings = bun.strings;
 const File = bun.sys.File;
 

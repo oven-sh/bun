@@ -31,9 +31,9 @@ exports[`bun <file.md> renders ordered, unordered, and task lists 1`] = `
 `;
 
 exports[`bun <file.md> renders blockquotes and nested blockquotes 1`] = `
-"\x1B[38;5;242m│ \x1B[0mA quote\x1B[0m
+"\x1B[38;5;242m│ \x1B[39mA quote\x1B[0m
 
-\x1B[38;5;242m│ │ \x1B[0mNested quote\x1B[0m
+\x1B[38;5;242m│ │ \x1B[39mNested quote\x1B[0m
 "
 `;
 
@@ -62,13 +62,13 @@ exports[`bun <file.md> renders fenced code block without language 1`] = `
 "
 `;
 
-exports[`bun <file.md> renders hyperlinks with OSC 8 escape sequence 1`] = `
-"Visit \x1B[34m\x1B[4mBun\x1B[24m\x1B[39m\x1B[2m (https://bun.com\x1B[2m)\x1B[39m\x1B[22m today.\x1B[0m
+exports[`bun <file.md> renders link text with url fallback when no TTY 1`] = `
+"Visit \x1B[34m\x1B[4mBun\x1B[24m\x1B[39m\x1B[34m\x1B[4m\x1B[2m (https://bun.com\x1B[2m)\x1B[39m\x1B[22m\x1B[34m\x1B[4m today.\x1B[0m
 "
 `;
 
-exports[`bun <file.md> renders hyperlinks without OSC 8 when no TTY 1`] = `
-"see \x1B[34m\x1B[4mBun\x1B[24m\x1B[39m\x1B[2m (https://bun.com\x1B[2m)\x1B[39m\x1B[22m\x1B[0m
+exports[`bun <file.md> renders multiple links as text + url pairs 1`] = `
+"see \x1B[34m\x1B[4mBun\x1B[24m\x1B[39m\x1B[34m\x1B[4m\x1B[2m (https://bun.com\x1B[2m)\x1B[39m\x1B[22m\x1B[34m\x1B[4m\x1B[0m
 "
 `;
 
@@ -78,7 +78,7 @@ exports[`bun <file.md> renders images as alt text with link 1`] = `
 `;
 
 exports[`bun <file.md> renders wikilinks 1`] = `
-"\x1B[34m[[SomePage]]\x1B[39msee  for more\x1B[0m
+"see \x1B[34m[[SomePage]]\x1B[39m for more\x1B[0m
 "
 `;
 
@@ -128,7 +128,7 @@ exports[`bun <file.md> renders inline formatting inside table cells 1`] = `
 \x1B[2m│\x1B[0m \x1B[1mName \x1B[0m \x1B[2m│\x1B[0m \x1B[1mStyle                 \x1B[0m \x1B[2m│\x1B[0m
 \x1B[2m├───────┼────────────────────────┤\x1B[0m
 \x1B[2m│\x1B[0m \x1B[1mAlice\x1B[22m \x1B[2m│\x1B[0m \x1B[3meditor\x1B[23m                 \x1B[2m│\x1B[0m
-\x1B[2m│\x1B[0m \x1B[48;5;236m\x1B[38;5;215mbob\x1B[39m\x1B[49m   \x1B[2m│\x1B[0m \x1B[34m\x1B[4mlink\x1B[24m\x1B[39m\x1B[2m (https://bun.com\x1B[2m)\x1B[39m\x1B[22m \x1B[2m│\x1B[0m
+\x1B[2m│\x1B[0m \x1B[48;5;236m\x1B[38;5;215mbob\x1B[39m\x1B[49m   \x1B[2m│\x1B[0m \x1B[34m\x1B[4mlink\x1B[24m\x1B[39m\x1B[34m\x1B[4m\x1B[2m (https://bun.com\x1B[2m)\x1B[39m\x1B[22m\x1B[34m\x1B[4m \x1B[2m│\x1B[0m
 \x1B[2m└───────┴────────────────────────┘\x1B[0m
 "
 `;
@@ -145,23 +145,23 @@ exports[`bun <file.md> nested code span inside bold keeps outer bold 1`] = `
 `;
 
 exports[`bun <file.md> renders mixed inline styles with autolinks 1`] = `
-"Check \x1B[1m\x1B[34m\x1B[4mhttps://bun.com\x1B[24m\x1B[39m\x1B[1m\x1B[2m (https://bun.com\x1B[2m)\x1B[39m\x1B[22m\x1B[1m\x1B[22m and \x1B[34m\x1B[4mme@example.com\x1B[24m\x1B[39m\x1B[2m (mailto:me@example.com\x1B[2m)\x1B[39m\x1B[22m
+"Check \x1B[1m\x1B[34m\x1B[4mhttps://bun.com\x1B[24m\x1B[39m\x1B[1m\x1B[34m\x1B[4m\x1B[2m (https://bun.com\x1B[2m)\x1B[39m\x1B[22m\x1B[1m\x1B[34m\x1B[4m\x1B[22m and \x1B[34m\x1B[4mme@example.com\x1B[24m\x1B[39m\x1B[34m\x1B[4m\x1B[2m (mailto:me@example.com\x1B[2m)\x1B[39m\x1B[22m\x1B[34m\x1B[4m
 !\x1B[0m
 "
 `;
 
 exports[`bun <file.md> renders nested lists 1`] = `
 "  \x1B[36m• \x1B[0mouter
-    \x1B[36m• \x1B[0minner 1
-    \x1B[36m• \x1B[0minner 2
-      \x1B[36m• \x1B[0mdeep
+      \x1B[36m• \x1B[0minner 1
+      \x1B[36m• \x1B[0minner 2
+          \x1B[36m• \x1B[0mdeep
   \x1B[36m• \x1B[0msecond outer
 "
 `;
 
 exports[`bun <file.md> runs without colors when NO_COLOR is set 1`] = `
 "Hello
-═════
+=====
 
 world
 "

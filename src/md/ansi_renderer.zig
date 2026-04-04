@@ -222,12 +222,14 @@ pub const AnsiRenderer = struct {
                     entry.index = list.index;
                     list.index += 1;
                 }
+                var marker_width: u32 = 0;
                 if (task_mark != 0) {
                     const checked = types.isTaskChecked(task_mark);
                     const glyph = if (checked) "☒ " else "☐ ";
                     const c = if (checked) color(.green) else color(.dim);
                     self.writeStyled(c, glyph);
                     self.writeStyled(reset(), "");
+                    marker_width = @intCast(visibleWidth(glyph));
                 } else if (parent_list != null and parent_list.?.kind == .ol) {
                     const start = parent_list.?.data;
                     const num = start + entry.index;
@@ -235,10 +237,16 @@ pub const AnsiRenderer = struct {
                     const s = std.fmt.bufPrint(&buf, "{d}. ", .{num}) catch "? ";
                     self.writeStyled(color(.cyan), s);
                     self.writeStyled(reset(), "");
+                    marker_width = @intCast(visibleWidth(s));
                 } else {
-                    self.writeStyled(color(.cyan), "• ");
+                    const bullet = if (self.theme.colors) "• " else "* ";
+                    self.writeStyled(color(.cyan), bullet);
                     self.writeStyled(reset(), "");
+                    marker_width = @intCast(visibleWidth(bullet));
                 }
+                // Wrapped continuation lines need to land under the item's
+                // content (past the marker), so record the marker width.
+                entry.indent = marker_width;
                 self.block_stack.append(self.allocator, entry) catch {
                     self.out.oom = true;
                 };
@@ -248,7 +256,7 @@ pub const AnsiRenderer = struct {
                 self.writeIndent();
                 const width: u32 = @min(self.theme.columns, 60);
                 var i: u32 = 0;
-                const dash = "─";
+                const dash = if (self.theme.colors) "─" else "-";
                 self.writeStyled(color(.dim), "");
                 while (i < width) : (i += 1) self.writeRaw(dash);
                 self.writeStyled(reset(), "");
@@ -715,8 +723,13 @@ pub const AnsiRenderer = struct {
         }
         if (text_.len > 0) {
             self.emitInline(text_);
-            self.col += @intCast(visibleWidth(text_));
-            self.last_was_newline = false;
+            // `col` tracks the visible cursor on the main output only —
+            // bytes buffered into a cell / heading / image-alt / code
+            // block don't move the current line's cursor.
+            if (!self.in_cell and self.heading_level == 0 and !self.in_code_block and self.image_depth == 0) {
+                self.col += @intCast(visibleWidth(text_));
+                self.last_was_newline = false;
+            }
         }
     }
 
@@ -750,14 +763,19 @@ pub const AnsiRenderer = struct {
         self.out.write(data);
     }
 
-    /// Re-emit the currently active inline styles from span_flags. Used
-    /// after a nested span closes to avoid wiping the outer styles.
+    /// Re-emit the currently active inline styles from span_flags and the
+    /// link-styling state. Used after a nested span closes so the outer
+    /// style doesn't get wiped, and after writeIndent emits its own reset.
     fn reapplyStyles(self: *AnsiRenderer) void {
         if (!self.theme.colors) return;
         if (self.span_flags & SPAN_STRONG != 0) self.emitInline(style(.bold));
         if (self.span_flags & SPAN_EM != 0) self.emitInline(style(.italic));
         if (self.span_flags & SPAN_U != 0) self.emitInline(style(.underline));
         if (self.span_flags & SPAN_DEL != 0) self.emitInline(style(.strikethrough));
+        if (self.link_depth > 0) {
+            self.emitInline(color(.blue));
+            self.emitInline(style(.underline));
+        }
     }
 
     fn writeIndent(self: *AnsiRenderer) void {
@@ -769,16 +787,20 @@ pub const AnsiRenderer = struct {
                 else => other_indent += entry.indent,
             }
         }
+        const bar = if (self.theme.colors) "│ " else "| ";
         if (self.theme.colors and quote_bars > 0) {
             self.out.write("\x1b[38;5;242m");
         }
         var i: u32 = 0;
         while (i < quote_bars) : (i += 1) {
-            self.out.write("│ ");
+            self.out.write(bar);
             self.col += 2;
         }
         if (self.theme.colors and quote_bars > 0) {
-            self.out.write("\x1b[0m");
+            // Clear only the indent's fg color; keep any active inline
+            // styles intact by re-applying them after the targeted off.
+            self.out.write("\x1b[39m");
+            self.reapplyStyles();
         }
         var j: u32 = 0;
         while (j < other_indent) : (j += 1) {
@@ -889,7 +911,7 @@ pub const AnsiRenderer = struct {
                 @as(usize, @intCast(self.theme.columns)),
             );
             if (self.theme.colors) self.out.write(color(.dim));
-            const char = if (level == 1) "═" else "─";
+            const char = if (self.theme.colors) (if (level == 1) "═" else "─") else (if (level == 1) "=" else "-");
             var i: usize = 0;
             while (i < width) : (i += 1) self.out.write(char);
             if (self.theme.colors) self.out.write("\x1b[0m");
@@ -906,19 +928,24 @@ pub const AnsiRenderer = struct {
         // Strip exactly one trailing newline (parser adds one).
         const body = if (src.len > 0 and src[src.len - 1] == '\n') src[0 .. src.len - 1] else src;
 
+        const top_border = if (self.theme.colors) "┌─ " else "+- ";
+        const top_bare = if (self.theme.colors) "┌─" else "+-";
+        const side = if (self.theme.colors) "│ " else "| ";
+        const bottom = if (self.theme.colors) "└─" else "+-";
+
         // Language badge
         if (self.theme.colors) self.out.write(color(.dim));
         self.writeIndent();
         const badge = if (self.code_lang.len > 0) self.code_lang else "";
         if (badge.len > 0) {
-            self.out.write("┌─ ");
+            self.out.write(top_border);
             if (self.theme.colors) self.out.write("\x1b[0m");
             if (self.theme.colors) self.out.write("\x1b[2m\x1b[3m");
             self.out.write(badge);
             if (self.theme.colors) self.out.write("\x1b[0m");
         } else {
             if (self.theme.colors) self.out.write(color(.dim));
-            self.out.write("┌─");
+            self.out.write(top_bare);
             if (self.theme.colors) self.out.write("\x1b[0m");
         }
         self.out.writeByte('\n');
@@ -933,7 +960,7 @@ pub const AnsiRenderer = struct {
                 const line = body[line_start..i];
                 self.writeIndent();
                 if (self.theme.colors) self.out.write(color(.dim));
-                self.out.write("│ ");
+                self.out.write(side);
                 if (self.theme.colors) self.out.write("\x1b[0m");
                 if (is_js and self.theme.colors) {
                     self.writeHighlightedJs(line);
@@ -948,7 +975,7 @@ pub const AnsiRenderer = struct {
         // Closing border
         self.writeIndent();
         if (self.theme.colors) self.out.write(color(.dim));
-        self.out.write("└─");
+        self.out.write(bottom);
         if (self.theme.colors) self.out.write("\x1b[0m");
         self.out.writeByte('\n');
         self.col = 0;
@@ -1001,14 +1028,16 @@ pub const AnsiRenderer = struct {
             }
         }
 
+        const chars = self.boxChars();
+
         // Top border
         self.writeIndent();
         if (self.theme.colors) self.out.write(color(.dim));
-        self.out.write("┌");
+        self.out.write(chars.tl);
         for (widths, 0..) |w, i| {
             var j: usize = 0;
-            while (j < w + 2) : (j += 1) self.out.write("─");
-            self.out.write(if (i == widths.len - 1) "┐" else "┬");
+            while (j < w + 2) : (j += 1) self.out.write(chars.h);
+            self.out.write(if (i == widths.len - 1) chars.tr else chars.t);
         }
         if (self.theme.colors) self.out.write("\x1b[0m");
         self.out.writeByte('\n');
@@ -1027,11 +1056,11 @@ pub const AnsiRenderer = struct {
         // Bottom border
         self.writeIndent();
         if (self.theme.colors) self.out.write(color(.dim));
-        self.out.write("└");
+        self.out.write(chars.bl);
         for (widths, 0..) |w, i| {
             var j: usize = 0;
-            while (j < w + 2) : (j += 1) self.out.write("─");
-            self.out.write(if (i == widths.len - 1) "┘" else "┴");
+            while (j < w + 2) : (j += 1) self.out.write(chars.h);
+            self.out.write(if (i == widths.len - 1) chars.br else chars.b);
         }
         if (self.theme.colors) self.out.write("\x1b[0m");
         self.out.writeByte('\n');
@@ -1051,9 +1080,10 @@ pub const AnsiRenderer = struct {
         widths: []const usize,
         aligns: []const types.Align,
     ) void {
+        const chars = self.boxChars();
         self.writeIndent();
         if (self.theme.colors) self.out.write(color(.dim));
-        self.out.write("│");
+        self.out.write(chars.v);
         if (self.theme.colors) self.out.write("\x1b[0m");
         for (widths, 0..) |w, i| {
             const cell: TableCell = if (i < row.cells.len) row.cells[i] else .{ .content = "", .alignment = .default };
@@ -1080,7 +1110,7 @@ pub const AnsiRenderer = struct {
             if (row.is_header and self.theme.colors) self.out.write("\x1b[0m");
             self.out.writeByte(' ');
             if (self.theme.colors) self.out.write(color(.dim));
-            self.out.write("│");
+            self.out.write(chars.v);
             if (self.theme.colors) self.out.write("\x1b[0m");
         }
         self.out.writeByte('\n');
@@ -1088,17 +1118,50 @@ pub const AnsiRenderer = struct {
     }
 
     fn writeTableSeparator(self: *AnsiRenderer, widths: []const usize) void {
+        const chars = self.boxChars();
         self.writeIndent();
         if (self.theme.colors) self.out.write(color(.dim));
-        self.out.write("├");
+        self.out.write(chars.ml);
         for (widths, 0..) |w, i| {
             var j: usize = 0;
-            while (j < w + 2) : (j += 1) self.out.write("─");
-            self.out.write(if (i == widths.len - 1) "┤" else "┼");
+            while (j < w + 2) : (j += 1) self.out.write(chars.h);
+            self.out.write(if (i == widths.len - 1) chars.mr else chars.x);
         }
         if (self.theme.colors) self.out.write("\x1b[0m");
         self.out.writeByte('\n');
         self.last_was_newline = true;
+    }
+
+    const BoxChars = struct {
+        h: []const u8,
+        v: []const u8,
+        tl: []const u8,
+        tr: []const u8,
+        bl: []const u8,
+        br: []const u8,
+        t: []const u8,
+        b: []const u8,
+        ml: []const u8,
+        mr: []const u8,
+        x: []const u8,
+    };
+
+    fn boxChars(self: *AnsiRenderer) BoxChars {
+        return if (self.theme.colors) .{
+            .h = "─", .v = "│",
+            .tl = "┌", .tr = "┐",
+            .bl = "└", .br = "┘",
+            .t = "┬", .b = "┴",
+            .ml = "├", .mr = "┤",
+            .x = "┼",
+        } else .{
+            .h = "-", .v = "|",
+            .tl = "+", .tr = "+",
+            .bl = "+", .br = "+",
+            .t = "+", .b = "+",
+            .ml = "+", .mr = "+",
+            .x = "+",
+        };
     }
 
     fn writePadding(self: *AnsiRenderer, n: usize) void {
@@ -1128,7 +1191,8 @@ pub const AnsiRenderer = struct {
             self.writeRawNoColor(src.?);
             self.writeRawNoColor("\x1b\\");
         }
-        self.writeStyled(color(.magenta), "🖼 ");
+        const img_marker = if (self.theme.colors) "🖼 " else "[img] ";
+        self.writeStyled(color(.magenta), img_marker);
         if (alt.len > 0) {
             self.writeStyled("", alt);
         } else if (self.image_title) |title| if (title.len > 0) {

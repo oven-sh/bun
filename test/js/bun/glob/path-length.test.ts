@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isMusl, isWindows, tmpdirSync } from "harness";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
@@ -35,7 +35,14 @@ describe.skipIf(isWindows)("Glob path length", () => {
       stderr: "pipe",
     });
     const [buildStderr, buildCode] = await Promise.all([buildProc.stderr.text(), buildProc.exited]);
-    expect(buildStderr).toBe("");
+    // On musl, getcwd(3) fails once the cumulative path exceeds PATH_MAX. bash
+    // prints a cd warning for each subsequent level but mkdir/cd still succeed,
+    // so filter that one known warning out before asserting stderr is clean.
+    const filteredBuildStderr = buildStderr
+      .split("\n")
+      .filter(line => !(isMusl && line.startsWith("cd: error retrieving current directory: getcwd:")))
+      .join("\n");
+    expect(filteredBuildStderr).toBe("");
     expect(buildCode).toBe(0);
 
     await using scanProc = Bun.spawn({

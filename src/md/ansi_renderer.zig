@@ -1568,7 +1568,7 @@ pub fn detectKittyGraphics() bool {
 /// the reply with a short timeout. Raw mode is applied + restored
 /// around the read so the bytes don't echo to the user's terminal.
 fn probeKittyGraphics() bool {
-    if (!bun.Environment.isPosix) return false;
+    if (comptime !bun.Environment.isPosix) return false;
     if (bun.Output.bun_stdio_tty[0] == 0 or bun.Output.bun_stdio_tty[1] == 0) return false;
     // Honor an explicit opt-out.
     if (bun.getenvZ("BUN_DISABLE_KITTY_PROBE")) |_| return false;
@@ -1577,22 +1577,12 @@ fn probeKittyGraphics() bool {
     // parent (a TUI, tmux/Zellij pane, etc.) already had raw mode on,
     // restoring to a fixed .normal would corrupt it — instead reapply
     // exactly what we read. tcgetattr failing means stdin isn't a real
-    // TTY in a way we can snapshot; fall back to forcing .normal.
-    var saved_termios: std.posix.termios = undefined;
-    const have_saved = if (std.posix.tcgetattr(0)) |t| blk: {
-        saved_termios = t;
-        break :blk true;
-    } else |_| false;
+    // TTY in a way we can snapshot; skip probing entirely.
+    const saved_termios = std.posix.tcgetattr(0) catch return false;
     _ = bun.tty.setMode(0, .raw);
-    defer {
-        if (have_saved) {
-            std.posix.tcsetattr(0, .NOW, saved_termios) catch {
-                _ = bun.tty.setMode(0, .normal);
-            };
-        } else {
-            _ = bun.tty.setMode(0, .normal);
-        }
-    }
+    defer std.posix.tcsetattr(0, .NOW, saved_termios) catch {
+        _ = bun.tty.setMode(0, .normal);
+    };
 
     // Query: transmit a 1×1 RGB image (3 zero bytes = "AAAA" b64),
     // id=31. The terminal replies with `\x1b_Gi=31;OK\x1b\\`

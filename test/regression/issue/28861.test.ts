@@ -2,9 +2,6 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows } from "harness";
 
 // https://github.com/oven-sh/bun/issues/28861
-// `new Worker("file://./worker.mjs")` used to silently drop the `.` host and
-// try to load `/worker.mjs`. Match Node's behavior: reject non-empty,
-// non-"localhost" hosts synchronously with a TypeError.
 describe.skipIf(isWindows).concurrent("issue/28861", () => {
   test("new Worker() rejects file:// URLs with a non-localhost host", async () => {
     await using proc = Bun.spawn({

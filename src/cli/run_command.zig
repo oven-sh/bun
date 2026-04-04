@@ -1424,7 +1424,10 @@ pub const RunCommand = struct {
             break :blk bun.path.joinAbsStringBuf(cwd, &base_buf, &.{path}, .auto);
         };
         const dir = bun.path.dirname(abs_md_path, .auto);
-        const image_base_dir = if (dir.len > 0) dir else abs_md_path;
+        // When dirname returns empty (bare filename + getcwd failed), fall
+        // back to "." instead of abs_md_path — otherwise joinAbsString
+        // downstream would treat the file path itself as a directory.
+        const image_base_dir = if (dir.len > 0) dir else ".";
 
         const theme: bun.md.AnsiTheme = .{
             .light = bun.md.detectLightBackground(),

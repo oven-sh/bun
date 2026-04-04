@@ -1408,7 +1408,13 @@ pub const AnsiRenderer = struct {
         // of U+1F5BC "FRAME WITH PICTURE" because 1F5BC is classified
         // Narrow in EastAsianWidth.txt — visibleWidth would undercount
         // it as 1 column and wrapping would fire one column too late.)
-        if (self.theme.colors and self.theme.hyperlinks and has_src) {
+        // Skip the OSC 8 wrapper when src is a `data:` URI — those
+        // payloads are megabytes of base64 and would exceed typical
+        // terminal OSC parameter limits (64KB–1MB), causing rendering
+        // artifacts, hangs, or garbage output.
+        const link_ok = self.theme.colors and self.theme.hyperlinks and has_src and
+            !bun.strings.startsWith(src.?, "data:");
+        if (link_ok) {
             self.writeRawNoColor("\x1b]8;;");
             self.writeRawNoColor(src.?);
             self.writeRawNoColor("\x1b\\");
@@ -1426,7 +1432,7 @@ pub const AnsiRenderer = struct {
         }
         self.writeStyled(reset(), "");
         self.reapplyStyles();
-        if (self.theme.colors and self.theme.hyperlinks and has_src) {
+        if (link_ok) {
             self.writeRawNoColor("\x1b]8;;\x1b\\");
         }
     }
@@ -1722,9 +1728,25 @@ fn resolveLocalImagePath(src: []const u8, allocator: Allocator, base_dir: ?[]con
     };
     const joined = bun.path.joinAbsString(base, &.{decoded}, .auto);
     const abs = allocator.dupe(u8, joined) catch return null;
-    if (!bun.sys.exists(abs)) {
+    // Stat instead of plain exists() so a directory like `./assets/` gets
+    // rejected. bun.sys.exists wraps access(path, F_OK) which returns true
+    // for any entry, including directories — and emitKittyImageFile sets
+    // q=2 so the terminal silently drops directory paths without falling
+    // through to alt text.
+    const abs_z = allocator.dupeZ(u8, abs) catch {
         allocator.free(abs);
         return null;
+    };
+    defer allocator.free(abs_z);
+    switch (bun.sys.stat(abs_z)) {
+        .result => |s| if ((s.mode & bun.S.IFMT) != bun.S.IFREG) {
+            allocator.free(abs);
+            return null;
+        },
+        .err => {
+            allocator.free(abs);
+            return null;
+        },
     }
     return abs;
 }

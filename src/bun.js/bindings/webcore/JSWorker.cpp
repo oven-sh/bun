@@ -74,6 +74,9 @@ static JSC_DECLARE_HOST_FUNCTION(jsWorkerPrototypeFunction_postMessage);
 static JSC_DECLARE_HOST_FUNCTION(jsWorkerPrototypeFunction_unref);
 static JSC_DECLARE_HOST_FUNCTION(jsWorkerPrototypeFunction_ref);
 static JSC_DECLARE_HOST_FUNCTION(jsWorkerPrototypeFunction_getHeapSnapshot);
+static JSC_DECLARE_HOST_FUNCTION(jsWorkerPrototypeFunction_getStdoutStream);
+static JSC_DECLARE_HOST_FUNCTION(jsWorkerPrototypeFunction_getStderrStream);
+static JSC_DECLARE_HOST_FUNCTION(jsWorkerPrototypeFunction_getStdinWriteFd);
 
 // Attributes
 
@@ -305,6 +308,33 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
             RETURN_IF_EXCEPTION(throwScope, {});
             options.execArgv.emplace(WTF::move(execArgv));
         }
+
+        // Parse stdio options for node:worker_threads (Node.js compatibility)
+        if (options.kind == WorkerOptions::Kind::Node) {
+            auto stdoutValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "stdout"_s));
+            RETURN_IF_EXCEPTION(throwScope, {});
+            if (stdoutValue) {
+                Bun::V::validateBoolean(throwScope, lexicalGlobalObject, stdoutValue, "options.stdout"_s);
+                RETURN_IF_EXCEPTION(throwScope, {});
+                options.captureStdout = stdoutValue.toBoolean(lexicalGlobalObject);
+            }
+
+            auto stderrValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "stderr"_s));
+            RETURN_IF_EXCEPTION(throwScope, {});
+            if (stderrValue) {
+                Bun::V::validateBoolean(throwScope, lexicalGlobalObject, stderrValue, "options.stderr"_s);
+                RETURN_IF_EXCEPTION(throwScope, {});
+                options.captureStderr = stderrValue.toBoolean(lexicalGlobalObject);
+            }
+
+            auto stdinValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "stdin"_s));
+            RETURN_IF_EXCEPTION(throwScope, {});
+            if (stdinValue) {
+                Bun::V::validateBoolean(throwScope, lexicalGlobalObject, stdinValue, "options.stdin"_s);
+                RETURN_IF_EXCEPTION(throwScope, {});
+                options.captureStdin = stdinValue.toBoolean(lexicalGlobalObject);
+            }
+        }
     }
 
     Vector<RefPtr<MessagePort>> ports;
@@ -411,6 +441,9 @@ static const HashTableValue JSWorkerPrototypeTableValues[] = {
     { "threadId"_s, JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete, NoIntrinsic, { HashTableValue::GetterSetterType, jsWorker_threadIdGetter, nullptr } },
     { "unref"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWorkerPrototypeFunction_unref, 0 } },
     { "getHeapSnapshot"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWorkerPrototypeFunction_getHeapSnapshot, 0 } },
+    { "$getStdoutStream"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWorkerPrototypeFunction_getStdoutStream, 0 } },
+    { "$getStderrStream"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWorkerPrototypeFunction_getStderrStream, 0 } },
+    { "$getStdinWriteFd"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWorkerPrototypeFunction_getStdinWriteFd, 0 } },
 };
 
 const ClassInfo JSWorkerPrototype::s_info = { "Worker"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSWorkerPrototype) };
@@ -708,6 +741,40 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_getHeapSnapshotBody(
 JSC_DEFINE_HOST_FUNCTION(jsWorkerPrototypeFunction_getHeapSnapshot, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     return IDLOperation<JSWorker>::call<jsWorkerPrototypeFunction_getHeapSnapshotBody>(*lexicalGlobalObject, *callFrame, "getHeapSnapshot");
+}
+
+static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_getStdoutStreamBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame*, typename IDLOperation<JSWorker>::ClassParameter castedThis)
+{
+    auto& wrapped = castedThis->wrapped();
+    return JSValue::encode(wrapped.getStdoutStream(lexicalGlobalObject));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsWorkerPrototypeFunction_getStdoutStream, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    return IDLOperation<JSWorker>::call<jsWorkerPrototypeFunction_getStdoutStreamBody>(*lexicalGlobalObject, *callFrame, "$getStdoutStream");
+}
+
+static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_getStderrStreamBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame*, typename IDLOperation<JSWorker>::ClassParameter castedThis)
+{
+    auto& wrapped = castedThis->wrapped();
+    return JSValue::encode(wrapped.getStderrStream(lexicalGlobalObject));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsWorkerPrototypeFunction_getStderrStream, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    return IDLOperation<JSWorker>::call<jsWorkerPrototypeFunction_getStderrStreamBody>(*lexicalGlobalObject, *callFrame, "$getStderrStream");
+}
+
+static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_getStdinWriteFdBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame*, typename IDLOperation<JSWorker>::ClassParameter castedThis)
+{
+    auto& wrapped = castedThis->wrapped();
+    int32_t stdinFd = wrapped.getStdinWriteFd();
+    return JSValue::encode(jsNumber(stdinFd));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsWorkerPrototypeFunction_getStdinWriteFd, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    return IDLOperation<JSWorker>::call<jsWorkerPrototypeFunction_getStdinWriteFdBody>(*lexicalGlobalObject, *callFrame, "$getStdinWriteFd");
 }
 
 JSC::GCClient::IsoSubspace* JSWorker::subspaceForImpl(JSC::VM& vm)

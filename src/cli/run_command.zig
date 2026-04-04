@@ -1237,7 +1237,259 @@ pub const RunCommand = struct {
         Output.flush();
     }
 
+    /// Parse `contents` once with an ImageUrlCollector, download every
+    /// http(s) image URL it finds to a temp file, and populate `out_map`
+    /// with url → temp-path entries. Failures are silent — an image that
+    /// can't be downloaded just falls back to alt-text rendering.
+    fn prefetchRemoteImages(
+        contents: []const u8,
+        md_opts: bun.md.Options,
+        out_map: *bun.StringHashMapUnmanaged([]const u8),
+    ) void {
+        const allocator = bun.default_allocator;
+        var collector = bun.md.ImageUrlCollector.init(allocator);
+        defer collector.deinit();
+        bun.md.renderWithRenderer(contents, allocator, md_opts, collector.renderer()) catch return;
+        if (collector.urls.items.len == 0) return;
+
+        // Only spawn the HTTP worker thread if at least one URL is remote.
+        // A doc with only local images (`![logo](./logo.png)`) would hit
+        // the scheme filter inside the loop and skip everything — no point
+        // paying thread-startup cost for that case.
+        var has_remote = false;
+        for (collector.urls.items) |u| {
+            if (bun.strings.startsWith(u, "http://") or bun.strings.startsWith(u, "https://")) {
+                has_remote = true;
+                break;
+            }
+        }
+        if (!has_remote) return;
+
+        const HTTP = bun.http;
+        HTTP.HTTPThread.init(&.{});
+
+        const tmpdir = bun.fs.FileSystem.RealFS.tmpdirPath();
+        // Guard against the same URL appearing twice: only download once.
+        var seen = bun.StringHashMapUnmanaged(void){};
+        defer seen.deinit(allocator);
+
+        for (collector.urls.items) |raw_url| {
+            if (!bun.strings.startsWith(raw_url, "http://") and
+                !bun.strings.startsWith(raw_url, "https://")) continue;
+            const gop = seen.getOrPut(allocator, raw_url) catch continue;
+            if (gop.found_existing) continue;
+
+            const parsed_url = bun.URL.parse(raw_url);
+            var response_buffer = bun.MutableString.init(allocator, 8 * 1024) catch continue;
+            defer response_buffer.deinit();
+
+            var async_http = HTTP.AsyncHTTP.initSync(
+                allocator,
+                .GET,
+                parsed_url,
+                .{},
+                "",
+                &response_buffer,
+                "",
+                null,
+                null,
+                HTTP.FetchRedirect.follow,
+            );
+            const resp = async_http.sendSync() catch continue;
+            if (resp.status_code != 200) continue;
+            const bytes = response_buffer.slice();
+            if (bytes.len == 0) continue;
+
+            // Extension is best-effort from the URL path; Kitty inspects
+            // the file's magic bytes regardless.
+            const ext: []const u8 = if (bun.strings.endsWith(raw_url, ".png")) ".png" else if (bun.strings.endsWith(raw_url, ".jpg") or bun.strings.endsWith(raw_url, ".jpeg")) ".jpg" else if (bun.strings.endsWith(raw_url, ".gif")) ".gif" else if (bun.strings.endsWith(raw_url, ".webp")) ".webp" else ".bin";
+            var name_buf: [64]u8 = undefined;
+            const name = std.fmt.bufPrint(&name_buf, "bun-md-{x}{s}", .{ bun.fastRandom(), ext }) catch continue;
+            const path = std.fmt.allocPrint(allocator, "{s}/{s}", .{ tmpdir, name }) catch continue;
+
+            const fd = switch (bun.sys.openA(path, bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC, 0o600)) {
+                .result => |f| f,
+                .err => {
+                    allocator.free(path);
+                    continue;
+                },
+            };
+            var written: usize = 0;
+            var ok = true;
+            while (written < bytes.len) {
+                switch (bun.sys.write(fd, bytes[written..])) {
+                    .result => |n| {
+                        if (n == 0) {
+                            ok = false;
+                            break;
+                        }
+                        written += n;
+                    },
+                    .err => {
+                        ok = false;
+                        break;
+                    },
+                }
+            }
+            fd.close();
+            if (!ok) {
+                // The file was created by openA + TRUNC, so even a
+                // zero-byte write leaves an orphan on disk. Unlink
+                // before dropping the path string. Uses a stack buffer
+                // for the null-terminated path so the unlink doesn't
+                // depend on a second allocation (which could also OOM).
+                unlinkStagedPath(path);
+                allocator.free(path);
+                continue;
+            }
+            // Dupe raw_url for the map key — `collector.urls.items`
+            // owns raw_url, and `defer collector.deinit()` frees it
+            // when this function returns, leaving out_map with dangling
+            // keys that emitImage() would later hash-compare.
+            const key = allocator.dupe(u8, raw_url) catch {
+                unlinkStagedPath(path);
+                allocator.free(path);
+                continue;
+            };
+            out_map.put(allocator, key, path) catch {
+                // Map insert OOM'd after a successful write — unlink
+                // the now-orphaned temp file so it doesn't leak.
+                unlinkStagedPath(path);
+                allocator.free(key);
+                allocator.free(path);
+                continue;
+            };
+        }
+    }
+
+    /// Null-terminate `path` on the stack and unlink it. Never allocates,
+    /// so temp-file cleanup can't fail for OOM reasons. Silently skips
+    /// paths too long to fit in PathBuffer — `prefetchRemoteImages`
+    /// generates paths of the form `{tmpdir}/bun-md-{hex8}{ext}` so this
+    /// bound is never hit in practice.
+    fn unlinkStagedPath(path: []const u8) void {
+        var buf: bun.PathBuffer = undefined;
+        if (path.len + 1 > buf.len) return;
+        @memcpy(buf[0..path.len], path);
+        buf[path.len] = 0;
+        _ = bun.sys.unlink(buf[0..path.len :0]);
+    }
+
+    /// Read a markdown file, render it to ANSI, print to stdout, and exit.
+    /// Runs without a JavaScript VM — much faster than booting JSC.
+    fn renderMarkdownFileAndExit(path: string) noreturn {
+        // No explicit free() on contents / rendered below: every path out
+        // of this function calls Global.exit() or bun.outOfMemory() (both
+        // noreturn), so the OS reclaims the allocations on process exit.
+        const contents = switch (bun.sys.File.readFrom(bun.FD.cwd(), path, bun.default_allocator)) {
+            .result => |bytes| bytes,
+            .err => |err| {
+                Output.prettyErrorln("<r><red>error<r>: {f}", .{err});
+                Output.flush();
+                Global.exit(1);
+            },
+        };
+
+        // Theme selection: colors when stdout is a TTY (or forced on),
+        // hyperlinks when colors are on. Light/dark detected from env.
+        const colors = Output.enable_ansi_colors_stdout;
+        const columns: u16 = brk: {
+            const c = Output.terminal_size.col;
+            break :brk if (c == 0) 80 else c;
+        };
+        const is_tty = Output.isStdoutTTY();
+        const kitty_graphics = colors and is_tty and bun.md.detectKittyGraphics();
+
+        // Terminal rendering enables every syntax we can display nicely —
+        // GFM baseline plus wikilinks, underline, and LaTeX math passthrough.
+        const md_opts: bun.md.Options = .{
+            .tables = true,
+            .strikethrough = true,
+            .tasklists = true,
+            .permissive_url_autolinks = true,
+            .permissive_www_autolinks = true,
+            .permissive_email_autolinks = true,
+            .wiki_links = true,
+            .underline = true,
+            .latex_math = true,
+        };
+
+        // Pre-scan for http(s) image URLs so Kitty can display them
+        // inline. Only runs when kitty_graphics is on and the document
+        // actually contains an image marker — otherwise the whole block
+        // is a no-op.
+        var remote_map: bun.StringHashMapUnmanaged([]const u8) = .{};
+        if (kitty_graphics and bun.strings.contains(contents, "![")) {
+            prefetchRemoteImages(contents, md_opts, &remote_map);
+        }
+
+        // Relative image paths in the markdown should resolve against
+        // the document's directory, not the process cwd — otherwise
+        // `bun ./docs/README.md` from `/home/user` can't find `./img.png`
+        // that sits next to README.md. Resolve to an absolute dir first
+        // so joinAbsString downstream doesn't double-apply cwd.
+        var base_buf: bun.PathBuffer = undefined;
+        var cwd_buf: bun.PathBuffer = undefined;
+        const abs_md_path: []const u8 = blk: {
+            if (std.fs.path.isAbsolute(path)) break :blk path;
+            const cwd = switch (bun.sys.getcwd(&cwd_buf)) {
+                .result => |c| c,
+                .err => break :blk path,
+            };
+            break :blk bun.path.joinAbsStringBuf(cwd, &base_buf, &.{path}, .auto);
+        };
+        const dir = bun.path.dirname(abs_md_path, .auto);
+        // When dirname returns empty (bare filename + getcwd failed), fall
+        // back to "." instead of abs_md_path — otherwise joinAbsString
+        // downstream would treat the file path itself as a directory.
+        const image_base_dir = if (dir.len > 0) dir else ".";
+
+        const theme: bun.md.AnsiTheme = .{
+            .light = bun.md.detectLightBackground(),
+            .columns = columns,
+            .colors = colors,
+            .hyperlinks = colors and is_tty,
+            .kitty_graphics = kitty_graphics,
+            .remote_image_paths = if (remote_map.count() > 0) &remote_map else null,
+            .image_base_dir = image_base_dir,
+        };
+
+        const rendered = bun.md.renderToAnsi(
+            contents,
+            bun.default_allocator,
+            md_opts,
+            theme,
+        ) catch |err| switch (err) {
+            error.OutOfMemory => bun.outOfMemory(),
+            error.StackOverflow => {
+                Output.prettyErrorln("<r><red>error<r>: markdown rendering exceeded the stack — input is too deeply nested", .{});
+                Output.flush();
+                Global.exit(1);
+            },
+        } orelse {
+            Output.prettyErrorln("<r><red>error<r>: failed to render markdown", .{});
+            Output.flush();
+            Global.exit(1);
+        };
+
+        Output.writer().writeAll(rendered) catch {};
+        Output.flush();
+        // Temp files prefetchRemoteImages() wrote are deliberately NOT
+        // unlinked here. Output.flush() only guarantees the APC bytes
+        // reached the terminal's PTY ring buffer — Kitty reads the file
+        // asynchronously from its own event loop, so unlinking inside
+        // this process races Kitty's open() and typically drops images
+        // silently (q=2 suppresses the error). System tmp cleanup
+        // (systemd-tmpfiles, /tmp reboot wipe) eventually removes the
+        // bun-md-*.png files, which are small (~100KB each) and rare.
+        Global.exit(0);
+    }
+
     fn _bootAndHandleError(ctx: Command.Context, path: string, loader: ?bun.options.Loader) bool {
+        const resolved_loader: ?bun.options.Loader = loader orelse bun.options.defaultLoaders.get(std.fs.path.extension(path));
+        if (resolved_loader) |l| {
+            if (l == .md) renderMarkdownFileAndExit(path);
+        }
         Global.configureAllocator(.{ .long_running = true });
         Run.boot(ctx, ctx.allocator.dupe(u8, path) catch return false, loader) catch |err| {
             ctx.log.print(Output.errorWriter()) catch {};
@@ -1358,7 +1610,7 @@ pub const RunCommand = struct {
         } else if (cfg.allow_fast_run_for_extensions) {
             const ext = std.fs.path.extension(target_name);
             const default_loader = options.defaultLoaders.get(ext);
-            if (default_loader != null and default_loader.?.canBeRunByBun()) {
+            if (default_loader != null and (default_loader.?.canBeRunByBun() or default_loader.? == .md)) {
                 try_fast_run = true;
             }
         }
@@ -1518,8 +1770,9 @@ pub const RunCommand = struct {
         if (resolution) |resolved| {
             var resolved_mutable = resolved;
             const path = resolved_mutable.path().?;
-            const loader: bun.options.Loader = this_transpiler.options.loaders.get(path.name.ext) orelse .tsx;
-            if (loader.canBeRunByBun() or loader == .html) {
+            const loader: bun.options.Loader = this_transpiler.options.loaders.get(path.name.ext) orelse
+                bun.options.defaultLoaders.get(path.name.ext) orelse .tsx;
+            if (loader.canBeRunByBun() or loader == .html or loader == .md) {
                 log("Resolved to: `{s}`", .{path.text});
                 return _bootAndHandleError(ctx, path.text, loader);
             } else {

@@ -788,6 +788,18 @@ pub const LinkerContext = struct {
         var prev_column_offset: i32 = 0;
         const source_map_chunks = results.items(.source_map_chunk);
         const offsets = results.items(.generated_offset);
+
+        // Accumulate names from all chunks into a global list
+        var all_names: std.ArrayListUnmanaged([]const u8) = .{};
+        for (source_map_chunks) |chunk| {
+            if (chunk.names) |names| {
+                for (names) |name| {
+                    try all_names.append(worker.allocator, name);
+                }
+            }
+        }
+
+        var cumulative_name_count: i32 = 0;
         for (source_map_chunks, offsets, source_indices) |chunk, offset, current_source_index| {
             const mapping_source_index = source_id_map.get(current_source_index) orelse
                 unreachable; // the pass above during printing of "sources" must add the index
@@ -796,6 +808,7 @@ pub const LinkerContext = struct {
                 .source_index = mapping_source_index,
                 .generated_line = offset.lines.zeroBased(),
                 .generated_column = offset.columns.zeroBased(),
+                .name_index = cumulative_name_count, // offset for name remapping
             };
 
             if (offset.lines.zeroBased() == 0) {
@@ -812,8 +825,27 @@ pub const LinkerContext = struct {
                 prev_end_state.generated_column += start_state.generated_column;
                 prev_column_offset += start_state.generated_column;
             }
+
+            // Track cumulative name count for next chunk's offset
+            if (chunk.names) |names| {
+                cumulative_name_count += @intCast(names.len);
+            }
         }
         const mapping_end = j.len;
+
+        // Serialize names array
+        const names_json = if (all_names.items.len > 0) blk: {
+            var names_buf: std.ArrayListUnmanaged(u8) = .{};
+            try names_buf.appendSlice(worker.allocator, "[");
+            for (all_names.items, 0..) |name, idx| {
+                if (idx > 0) try names_buf.appendSlice(worker.allocator, ",");
+                try names_buf.appendSlice(worker.allocator, "\"");
+                try names_buf.appendSlice(worker.allocator, name);
+                try names_buf.appendSlice(worker.allocator, "\"");
+            }
+            try names_buf.appendSlice(worker.allocator, "]");
+            break :blk names_buf.items;
+        } else "[]";
 
         if (comptime FeatureFlags.source_map_debug_id) {
             j.pushStatic("\",\n  \"debugId\": \"");
@@ -821,9 +853,13 @@ pub const LinkerContext = struct {
                 try std.fmt.allocPrint(worker.allocator, "{f}", .{bun.SourceMap.DebugIDFormatter{ .id = isolated_hash }}),
                 worker.allocator,
             );
-            j.pushStatic("\",\n  \"names\": []\n}");
+            j.pushStatic("\",\n  \"names\": ");
+            j.push(names_json, worker.allocator);
+            j.pushStatic("\n}");
         } else {
-            j.pushStatic("\",\n  \"names\": []\n}");
+            j.pushStatic("\",\n  \"names\": ");
+            j.push(names_json, worker.allocator);
+            j.pushStatic("\n}");
         }
 
         const done = try j.done(worker.allocator);

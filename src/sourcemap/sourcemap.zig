@@ -15,6 +15,10 @@ pub const SourceMapState = struct {
     source_index: i32 = 0,
     original_line: i32 = 0,
     original_column: i32 = 0,
+
+    /// Index into the names array, or -1 if no name is associated.
+    /// Only set when the original name differs from the minified name.
+    name_index: i32 = -1,
 };
 
 sources: [][]const u8 = &[_][]u8{},
@@ -861,6 +865,14 @@ pub fn appendSourceMapChunk(
     const original_column = decodeVLQAssumeValid(source_map, i);
     i = original_column.start;
 
+    // Decode optional 5th VLQ field (name index) if present
+    var name_index_value: i32 = -1;
+    if (i < source_map.len and source_map[i] != ',' and source_map[i] != ';') {
+        const name_index = decodeVLQAssumeValid(source_map, i);
+        i = name_index.start;
+        name_index_value = name_index.value;
+    }
+
     source_map = source_map[i..];
 
     // Rewrite the first mapping to be relative to the end state of the previous
@@ -870,6 +882,9 @@ pub fn appendSourceMapChunk(
     start_state.generated_column += generated_column.value;
     start_state.original_line += original_line.value;
     start_state.original_column += original_column.value;
+    if (name_index_value >= 0) {
+        start_state.name_index = name_index_value + start_state.name_index;
+    }
 
     var str = MutableString.initEmpty(allocator);
     appendMappingToBuffer(&str, j.lastByte(), prev_end_state, start_state);
@@ -900,6 +915,7 @@ pub fn appendSourceMappingURLRemote(
 /// This function is extremely hot.
 pub fn appendMappingToBuffer(buffer: *MutableString, last_byte: u8, prev_state: SourceMapState, current_state: SourceMapState) void {
     const needs_comma = last_byte != 0 and last_byte != ';' and last_byte != '"';
+    const has_name = current_state.name_index >= 0;
 
     const vlqs = [_]VLQ{
         // Record the generated column (the line is recorded using ';' elsewhere)
@@ -912,11 +928,18 @@ pub fn appendMappingToBuffer(buffer: *MutableString, last_byte: u8, prev_state: 
         .encode(current_state.original_column -| prev_state.original_column),
     };
 
+    // 5th VLQ field: name index (only when name_index >= 0)
+    const name_vlq = if (has_name)
+        VLQ.encode(current_state.name_index -| prev_state.name_index)
+    else
+        VLQ.encode(0);
+
     // Count exactly how many bytes we need to write
     const total_len = @as(usize, vlqs[0].len) +
         @as(usize, vlqs[1].len) +
         @as(usize, vlqs[2].len) +
-        @as(usize, vlqs[3].len);
+        @as(usize, vlqs[3].len) +
+        if (has_name) @as(usize, name_vlq.len) else 0;
 
     // Instead of updating .len 5 times, we only need to update it once.
     var writable = buffer.writableNBytes(total_len + @as(usize, @intFromBool(needs_comma))) catch unreachable;
@@ -930,6 +953,11 @@ pub fn appendMappingToBuffer(buffer: *MutableString, last_byte: u8, prev_state: 
     inline for (&vlqs) |item| {
         @memcpy(writable[0..item.len], item.slice());
         writable = writable[item.len..];
+    }
+
+    // Append 5th field (name index) when present
+    if (has_name) {
+        @memcpy(writable[0..name_vlq.len], name_vlq.slice());
     }
 }
 

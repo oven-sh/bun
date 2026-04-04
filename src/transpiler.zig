@@ -640,6 +640,7 @@ pub const Transpiler = struct {
                         .jsx = resolve_result.jsx,
                         .emit_decorator_metadata = resolve_result.flags.emit_decorator_metadata,
                         .experimental_decorators = resolve_result.flags.experimental_decorators,
+                        .module_type = resolve_result.module_type,
                     },
                     client_entry_point_,
                 ) orelse {
@@ -838,6 +839,7 @@ pub const Transpiler = struct {
                     .minify_syntax = transpiler.options.minify_syntax,
                     .minify_identifiers = transpiler.options.minify_identifiers,
                     .transform_only = transpiler.options.transform_only,
+                    .module_type = if (ast.exports_kind == .cjs) .cjs else .esm,
                     .import_meta_ref = ast.import_meta_ref,
                     .runtime_transpiler_cache = runtime_transpiler_cache,
                     .print_dce_annotations = transpiler.options.emit_dce_annotations,
@@ -864,12 +866,12 @@ pub const Transpiler = struct {
                         .minify_syntax = transpiler.options.minify_syntax,
                         .minify_identifiers = transpiler.options.minify_identifiers,
                         .transform_only = transpiler.options.transform_only,
-                        .module_type = if (is_bun and transpiler.options.transform_only)
+                        .module_type = if (ast.exports_kind == .cjs)
+                            .cjs
+                        else if (is_bun and transpiler.options.transform_only)
                             // this is for when using `bun build --no-bundle`
                             // it should copy what was passed for the cli
                             transpiler.options.output_format
-                        else if (ast.exports_kind == .cjs)
-                            .cjs
                         else
                             .esm,
                         .inline_require_and_import_errors = false,

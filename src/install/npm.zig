@@ -1842,15 +1842,14 @@ pub const PackageManifest = struct {
 
         if (this.findByDistTag("latest")) |result| {
             if (group.satisfies(result.version, group_buf, this.string_buf)) {
-                if (block_deprecated and isPackageVersionDeprecated(result.package)) {
-                    newest_deprecated = result.version;
-                }
-                if (min_age_ms) |age| {
-                    if (isPackageVersionTooRecent(result.package, age)) {
-                        newest_filtered = result.version;
-                    }
-                }
-                if (newest_filtered == null and newest_deprecated == null) {
+                // Check whether latest is currently blocked so we can decide
+                // whether to short-circuit, but don't seed newest_filtered /
+                // newest_deprecated — `searchVersionList` walks newest-first
+                // and will record the true newest blocked version naturally.
+                // (The `latest` dist-tag isn't always the highest semver.)
+                const latest_too_recent = if (min_age_ms) |age| isPackageVersionTooRecent(result.package, age) else false;
+                const latest_deprecated_now = block_deprecated and isPackageVersionDeprecated(result.package);
+                if (!latest_too_recent and !latest_deprecated_now) {
                     if (group.flags.isSet(Semver.Query.Group.Flags.pre)) {
                         if (left.version.order(result.version, group_buf, this.string_buf) == .eq) {
                             return .{ .found = result };

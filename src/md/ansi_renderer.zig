@@ -1444,6 +1444,11 @@ pub fn detectLightBackground() bool {
 ///   - `TERM_PROGRAM=WezTerm` or `ghostty` (compatible terminals)
 ///   - `TERM_PROGRAM=ghostty`
 pub fn detectKittyGraphics() bool {
+    // TERM=dumb is the standard opt-out for any ESC handling — bail
+    // before any env match or probe runs.
+    if (bun.getenvZ("TERM")) |term| {
+        if (bun.strings.eqlCaseInsensitiveASCII(term, "dumb", true)) return false;
+    }
     // Fast path: env vars set by known-compatible terminals.
     if (bun.getenvZ("KITTY_WINDOW_ID")) |_| return true;
     if (bun.getenvZ("GHOSTTY_RESOURCES_DIR")) |_| return true;
@@ -1472,7 +1477,6 @@ pub fn detectKittyGraphics() bool {
 fn probeKittyGraphics() bool {
     if (!bun.Environment.isPosix) return false;
     if (bun.Output.bun_stdio_tty[0] == 0 or bun.Output.bun_stdio_tty[1] == 0) return false;
-    if (bun.getenvZ("DUMB")) |_| return false;
     // Honor an explicit opt-out.
     if (bun.getenvZ("BUN_DISABLE_KITTY_PROBE")) |_| return false;
 
@@ -1482,14 +1486,17 @@ fn probeKittyGraphics() bool {
     defer _ = bun.tty.setMode(0, .normal);
 
     // Query: transmit a 1×1 RGB image (3 zero bytes = "AAAA" b64),
-    // id=31, suppress OK so we only see errors → no: we NEED the OK
-    // so q is unset. The terminal replies with `\x1b_Gi=31;OK\x1b\\`
+    // id=31. The terminal replies with `\x1b_Gi=31;OK\x1b\\`
     // (or `ENOTSUPPORTED:...`) within a frame.
     const query = "\x1b_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\x1b\\";
-    _ = std.posix.write(1, query) catch return false;
+    switch (bun.sys.write(bun.FD.stdout(), query)) {
+        .result => {},
+        .err => return false,
+    }
 
     // Wait up to ~80ms for a response. Kitty/Ghostty/WezTerm reply
     // in < 10ms; anything longer is noise from an unrelated terminal.
+    // poll() stays on std.posix — bun.sys has no TTY poll wrapper.
     var pfd = [_]std.posix.pollfd{.{
         .fd = 0,
         .events = std.posix.POLL.IN,
@@ -1499,7 +1506,10 @@ fn probeKittyGraphics() bool {
     if (ready <= 0) return false;
 
     var buf: [128]u8 = undefined;
-    const n = std.posix.read(0, &buf) catch return false;
+    const n = switch (bun.sys.read(bun.FD.stdin(), &buf)) {
+        .result => |r| r,
+        .err => return false,
+    };
     if (n == 0) return false;
     const reply = buf[0..n];
     // A successful reply looks like: \x1b_G<...>;OK\x1b\
@@ -1520,24 +1530,33 @@ fn resolveLocalImagePath(src: []const u8, allocator: Allocator) ?[]u8 {
         return null;
     }
 
-    // Strip file:// prefix if present. Other places in bun do the same
-    // prefix-strip (VirtualMachine, node_fs_watcher, etc.) — use the
-    // WTF URL parser only when we need percent-decoding / UNC handling.
+    // Strip file:// prefix + optional `localhost` authority, then
+    // percent-decode. RFC 8089 allows `file://localhost/path`
+    // (equivalent to `file:///path`) and real-world file URLs
+    // contain %XX escapes for spaces and other reserved chars.
     var path: []const u8 = src;
     if (bun.strings.startsWith(src, "file://")) {
         path = src["file://".len..];
+        // Drop `localhost` authority — RFC 8089 treats it as identity.
+        if (bun.strings.startsWith(path, "localhost/")) {
+            path = path["localhost".len..];
+        } else if (bun.strings.eqlComptime(path, "localhost")) {
+            return null;
+        }
     }
+
+    // Percent-decode the path so file:///foo/bar%20baz works.
+    const decoded = PercentEncoding.decodeAlloc(allocator, path) catch return null;
+    defer allocator.free(decoded);
 
     // Resolve to an absolute path. bun.path.joinAbsString returns a
     // slice in a threadlocal buffer — dupe it before leaving this fn.
-    // Use bun's cached cwd when available (fs.FileSystem.instance),
-    // otherwise look it up with bun.sys.getcwd (Windows-aware).
     var cwd_buf: bun.PathBuffer = undefined;
     const cwd = switch (bun.sys.getcwd(&cwd_buf)) {
         .result => |c| c,
         .err => return null,
     };
-    const joined = bun.path.joinAbsString(cwd, &.{path}, .auto);
+    const joined = bun.path.joinAbsString(cwd, &.{decoded}, .auto);
     const abs = allocator.dupe(u8, joined) catch return null;
     if (!bun.sys.exists(abs)) {
         allocator.free(abs);
@@ -1573,6 +1592,7 @@ const helpers = @import("./helpers.zig");
 const root = @import("./root.zig");
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const PercentEncoding = @import("../url.zig").PercentEncoding;
 
 const types = @import("./types.zig");
 const BlockType = types.BlockType;

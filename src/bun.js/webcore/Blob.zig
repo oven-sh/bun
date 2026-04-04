@@ -875,7 +875,36 @@ fn writeFileWithEmptySourceToDestination(ctx: *jsc.JSGlobalObject, destination_b
                         continue :err .NOENT;
                     },
                     .NOENT => {
+                        // Even if mkdirp_if_not_exists is false, we still must create the file itself.
+                        // mkdirp_if_not_exists should only control whether we create missing parent dirs.
+                        var buf: bun.PathBuffer = undefined;
+                        const mode: bun.Mode = options.mode orelse jsc.Node.fs.default_permission;
+
+                        while (true) {
+                            const open_res = switch (file.pathlike) {
+                                .path => |path| bun.sys.open(path.sliceZ(&buf), bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC, mode),
+                                .fd => break :err,
+                            };
+
+                            switch (open_res) {
+                                .err => |err| {
+                                    const open_errno = err.getErrno();
+                                    if (open_errno == .INTR) continue;
+                                    if (open_errno == .NOENT) break;
+                                    result.err = open_res.err;
+                                    break :err;
+                                },
+                                .result => |fd| {
+                                    fd.close();
+                                    return jsc.JSPromise.resolvedPromiseValue(ctx, .jsNumber(0));
+                                },
+                            }
+                        }
+
+                        // If open failed with NOENT, it's likely the parent directory is missing.
+                        // Only attempt mkdirp if enabled.
                         if (options.mkdirp_if_not_exists == false) break :err;
+
                         // NOTE: if .err is PERM, it ~should~ really is a
                         // permissions issue
                         const dirpath: []const u8 = switch (file.pathlike) {
@@ -902,10 +931,12 @@ fn writeFileWithEmptySourceToDestination(ctx: *jsc.JSGlobalObject, destination_b
 
                         // SAFETY: we check if `file.pathlike` is an fd or
                         // not above, returning if it is.
-                        var buf: bun.PathBuffer = undefined;
-                        const mode: bun.Mode = options.mode orelse jsc.Node.fs.default_permission;
                         while (true) {
-                            const open_res = bun.sys.open(file.pathlike.path.sliceZ(&buf), bun.O.CREAT | bun.O.TRUNC, mode);
+                            const open_res = switch (file.pathlike) {
+                                .path => |path| bun.sys.open(path.sliceZ(&buf), bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC, mode),
+                                .fd => break :err,
+                            };
+
                             switch (open_res) {
                                 // errors fall through and are handled below
                                 .err => |err| {

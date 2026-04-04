@@ -223,6 +223,10 @@ struct us_udp_socket_t {
     void (*on_data)(struct us_udp_socket_t *, void *, int);
     void (*on_drain)(struct us_udp_socket_t *);
     void (*on_close)(struct us_udp_socket_t *);
+    /* Called when recvmmsg returns an error (other than EAGAIN). The socket
+     * is NOT closed — caller decides whether to close. Used to surface ICMP
+     * errors delivered via IP_RECVERR on Linux (ECONNREFUSED, etc.). */
+    void (*on_recv_error)(struct us_udp_socket_t *, int err);
     void *user;
     struct us_loop_t *loop;
     /* An UDP socket can only ever be bound to one single port regardless of how

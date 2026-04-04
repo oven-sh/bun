@@ -440,9 +440,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // so runners remain hermetic and `rm -rf build/` is a full reset.
   // Relative BUN_INSTALL is anchored to repo root (not process.cwd()) so the
   // ninja regen rule — which runs from buildDir — resolves the same path.
-  const bunInstall = process.env.BUN_INSTALL
-    ? resolve(cwd, process.env.BUN_INSTALL)
-    : join(homedir(), ".bun");
+  const bunInstall = process.env.BUN_INSTALL ? resolve(cwd, process.env.BUN_INSTALL) : join(homedir(), ".bun");
   const cacheDir =
     partial.cacheDir !== undefined
       ? isAbsolute(partial.cacheDir)

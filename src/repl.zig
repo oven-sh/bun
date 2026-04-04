@@ -1433,7 +1433,9 @@ fn valueToClipboardString(self: *Repl, value: jsc.JSValue) bun.JSError!?[]const 
     return self.allocator.dupe(u8, array.written()) catch null;
 }
 
-/// Copy a JS value to the system clipboard via OSC 52.
+/// Copy a JS value to the system clipboard.
+/// Tries external clipboard tools first (xclip, xsel, wl-copy, pbcopy),
+/// then falls back to OSC 52 escape sequences.
 /// Propagates JS exceptions from value formatting; swallows I/O errors.
 fn copyValueToClipboard(self: *Repl, value: jsc.JSValue) bun.JSError!void {
     const text = (try self.valueToClipboardString(value)) orelse {
@@ -1442,44 +1444,100 @@ fn copyValueToClipboard(self: *Repl, value: jsc.JSValue) bun.JSError!void {
     };
     defer self.allocator.free(text);
 
-    self.copyToClipboardOSC52(text) catch {
+    const clean_text = self.stripAnsiForClipboard(text) catch {
         self.printError("Failed to write to clipboard\n", .{});
         return;
     };
+    defer self.allocator.free(clean_text);
+
+    // Try external clipboard tools first (works on terminals without OSC 52),
+    // then fall back to OSC 52 escape sequences (works over SSH).
+    if (!self.copyToClipboardExternal(clean_text)) {
+        self.copyToClipboardOSC52(clean_text) catch {
+            self.printError("Failed to write to clipboard\n", .{});
+            return;
+        };
+    }
     if (self.use_colors) {
-        self.print("{s}Copied {d} characters to clipboard{s}\n", .{ Color.dim, text.len, Color.reset });
+        self.print("{s}Copied {d} characters to clipboard{s}\n", .{ Color.dim, clean_text.len, Color.reset });
     } else {
-        self.print("Copied {d} characters to clipboard\n", .{text.len});
+        self.print("Copied {d} characters to clipboard\n", .{clean_text.len});
     }
 }
 
-/// Write text to clipboard using OSC 52 escape sequence.
-fn copyToClipboardOSC52(self: *Repl, text: []const u8) !void {
+/// Strip ANSI escape sequences from text for clipboard use.
+/// Caller owns the returned memory.
+fn stripAnsiForClipboard(self: *Repl, text: []const u8) ![]const u8 {
     var it = strings.ANSIIterator.init(text);
-    const first = it.next() orelse return;
+    const first = it.next() orelse return try self.allocator.dupe(u8, "");
 
     if (first.len == text.len) {
-        // No ANSI sequences - encode the original directly
-        var encoded = try bun.base64.encodeAlloc(self.allocator, text);
-        defer encoded.deinit(self.allocator);
-        self.write("\x1b]52;c;");
-        self.write(encoded.slice());
-        self.write("\x07");
-    } else {
-        // Has ANSI sequences - collect clean slices then encode
-        var clean = ArrayList(u8).init(self.allocator);
-        defer clean.deinit();
-        try clean.ensureTotalCapacity(text.len);
-        clean.appendSliceAssumeCapacity(first);
-        while (it.next()) |slice| {
-            clean.appendSliceAssumeCapacity(slice);
-        }
-        var encoded = try bun.base64.encodeAlloc(self.allocator, clean.items);
-        defer encoded.deinit(self.allocator);
-        self.write("\x1b]52;c;");
-        self.write(encoded.slice());
-        self.write("\x07");
+        // No ANSI sequences
+        return try self.allocator.dupe(u8, text);
     }
+
+    // Has ANSI sequences - collect clean slices
+    var clean = ArrayList(u8).init(self.allocator);
+    errdefer clean.deinit();
+    try clean.ensureTotalCapacity(text.len);
+    clean.appendSliceAssumeCapacity(first);
+    while (it.next()) |slice| {
+        clean.appendSliceAssumeCapacity(slice);
+    }
+    return try clean.toOwnedSlice();
+}
+
+/// Try to copy text to clipboard using platform-specific external tools.
+/// Returns true if the text was successfully copied.
+fn copyToClipboardExternal(_: *Repl, text: []const u8) bool {
+    const ClipboardCmd = struct {
+        argv: []const []const u8,
+    };
+    const commands: []const ClipboardCmd = if (Environment.isMac)
+        &.{
+            .{ .argv = &.{"pbcopy"} },
+        }
+    else if (Environment.isLinux)
+        &.{
+            .{ .argv = &.{ "xclip", "-selection", "clipboard" } },
+            .{ .argv = &.{ "xsel", "--clipboard", "--input" } },
+            .{ .argv = &.{"wl-copy"} },
+        }
+    else
+        return false;
+
+    for (commands) |cmd| {
+        var child = std.process.Child.init(cmd.argv, bun.default_allocator);
+        child.stdin_behavior = .Pipe;
+        child.stdout_behavior = .Ignore;
+        child.stderr_behavior = .Ignore;
+
+        child.spawn() catch continue;
+
+        if (child.stdin) |stdin| {
+            stdin.writeAll(text) catch {
+                _ = child.wait() catch {};
+                continue;
+            };
+            stdin.close();
+            child.stdin = null;
+        }
+
+        const term = child.wait() catch continue;
+        if (term == .Exited and term.Exited == 0) return true;
+    }
+
+    return false;
+}
+
+/// Write text to clipboard using OSC 52 escape sequence.
+/// Expects text with ANSI sequences already stripped.
+fn copyToClipboardOSC52(self: *Repl, text: []const u8) !void {
+    var encoded = try bun.base64.encodeAlloc(self.allocator, text);
+    defer encoded.deinit(self.allocator);
+    self.write("\x1b]52;c;");
+    self.write(encoded.slice());
+    self.write("\x07");
 }
 
 /// Transform code using the REPL parser (hoists declarations, wraps expressions)

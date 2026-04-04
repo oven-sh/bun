@@ -14,6 +14,19 @@ describe("Bun.stripANSI", () => {
     expect(heapStats().objectTypeCounts.string).toBe(numStrings);
   });
 
+  test("returns same string object when input ends with false-positive escape byte", () => {
+    // Standalone C1 ST (0x9C) is in the SIMD broad-mask but is not a valid
+    // ANSI sequence introducer — consumeANSI treats it as a false positive.
+    // The pre-allocation false-positive skip path must advance past the byte
+    // without allocating, so the original JSString is reused.
+    const input = "hello\x9C";
+    const stripANSI = Bun.stripANSI;
+    const numStrings = heapStats().objectTypeCounts.string;
+    const result = stripANSI(input);
+    expect(result).toBe(input);
+    expect(heapStats().objectTypeCounts.string).toBe(numStrings);
+  });
+
   test("returns new string when ANSI sequences are removed", () => {
     const input = "\x1b[31mhello\x1b[0m world";
     const result = Bun.stripANSI(input);

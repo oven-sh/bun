@@ -136,6 +136,12 @@ ref_strings_mutex: bun.Mutex = undefined,
 active_tasks: usize = 0,
 
 rare_data: ?*jsc.RareData = null,
+/// Owned storage for proxy env vars set via process.env at runtime. Not
+/// in RareData because lazy RareData creation races with worker spawn
+/// (worker thread needs to lock parent.proxy_env_storage.lock atomically
+/// with observing the env map; a null-check on rare_data can't be both
+/// lock-free and correct). ~56 bytes — negligible on VirtualMachine.
+proxy_env_storage: jsc.RareData.ProxyEnvStorage = .{},
 is_us_loop_entered: bool = false,
 pending_internal_promise: ?*JSInternalPromise = null,
 entry_point_result: struct {
@@ -746,6 +752,7 @@ pub fn reload(this: *VirtualMachine, _: *HotReloader.Task) void {
         Output.enableBuffering();
     }
 
+    jsc.API.cron.CronJob.clearAllForVM(this, .reload);
     this.global.reload() catch @panic("Failed to reload");
     this.hot_reload_counter += 1;
     this.pending_internal_promise = this.reloadEntryPoint(this.main) catch @panic("Failed to reload");
@@ -1995,8 +2002,10 @@ pub fn deinit(this: *VirtualMachine) void {
     }
     this.source_mappings.deinit();
     if (this.rare_data) |rare_data| {
+        jsc.API.cron.CronJob.clearAllForVM(this, .teardown);
         rare_data.deinit();
     }
+    this.proxy_env_storage.deinit();
     this.overridden_main.deinit();
     this.has_terminated = true;
 }

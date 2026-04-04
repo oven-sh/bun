@@ -1,7 +1,6 @@
 import { Subprocess, spawn } from "bun";
 import { afterEach, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isPosix, tempDir } from "harness";
-import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { InspectorSession, connect } from "./junit-reporter";
 import { SocketFramer } from "./socket-framer";
@@ -172,15 +171,11 @@ describe.if(isPosix)("TestReporter inspector protocol", () => {
     using dir = tempDir("test-reporter-delayed-enable", {
       "delayed.test.ts": `
 import { describe, test, expect } from "bun:test";
-import { existsSync, writeFileSync } from "fs";
 
 describe("suite A", () => {
   test("test A1", async () => {
-    // Signal to the parent that execution has begun, then block until the
-    // parent has enabled TestReporter. This keeps A1 running so its end
-    // event is observed without relying on wall-clock sleep races.
-    writeFileSync(process.env.STARTED_FILE!, "1");
-    while (!existsSync(process.env.GATE_FILE!)) await Bun.sleep(10);
+    // Add delay to ensure we have time to enable TestReporter during execution
+    await Bun.sleep(500);
     expect(1).toBe(1);
   });
   test("test A2", () => {
@@ -195,9 +190,6 @@ describe("suite B", () => {
 });
 `,
     });
-
-    const startedFile = join(String(dir), "a1-started");
-    const gateFile = join(String(dir), "a1-gate");
 
     const socketPath = join(String(dir), `inspector-${Math.random().toString(36).substring(2)}.sock`);
 
@@ -218,7 +210,7 @@ describe("suite B", () => {
 
     proc = spawn({
       cmd: [bunExe(), `--inspect-wait=unix:${socketPath}`, "test", "delayed.test.ts"],
-      env: { ...bunEnv, STARTED_FILE: startedFile, GATE_FILE: gateFile },
+      env: bunEnv,
       cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",
@@ -232,23 +224,18 @@ describe("suite B", () => {
     // Signal ready - this allows test collection and execution to proceed
     session.initialize();
 
-    // Wait for the child to enter test A1. This proves discovery has completed
-    // and execution has begun without relying on wall-clock timing.
-    while (!existsSync(startedFile)) await Bun.sleep(10);
+    // Wait for test collection and first test to start running
+    // The first test has a 500ms sleep, so waiting 200ms ensures we're in execution phase
+    await Bun.sleep(200);
 
     // Now enable TestReporter - this should trigger retroactive reporting
     // of all tests that were discovered while TestReporter was disabled
     session.enableTestReporter();
 
     // We should receive found events for all tests retroactively
-    // Structure: 2 describes + 3 tests = 5 items. Wait for them before releasing
-    // A1 so we know the child has processed TestReporter.enable and will emit
-    // end events for the tests that run after the gate opens.
+    // Structure: 2 describes + 3 tests = 5 items
     const foundTests = await session.waitForFoundTests(5, 15000);
     expect(foundTests.size).toBe(5);
-
-    // Release A1 so the remaining tests can run and emit end events.
-    await Bun.write(gateFile, "1");
 
     const testsArray = [...foundTests.values()];
     const describes = testsArray.filter(t => t.type === "describe");

@@ -59,9 +59,13 @@ async function driver() {
   }
 }
 
-// Run both concurrently in the same event loop.
-probe();
+// Run both concurrently in the same event loop. Start the driver first and
+// let it complete one request before the probe flood so the driverOk sanity
+// check has something to verify; otherwise on slow CI the probe can saturate
+// the proxy before the driver ever gets through.
 const driverDone = driver();
+while (driverOk === 0 && !stop) await Bun.sleep(1);
+probe();
 
 // Hard cap so the fixture always terminates.
 await Bun.sleep(HARD_CAP_MS);

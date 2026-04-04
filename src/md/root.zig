@@ -105,6 +105,7 @@ pub const AnsiRenderer = ansi.AnsiRenderer;
 pub const AnsiTheme = ansi.Theme;
 pub const renderToAnsi = ansi.renderToAnsi;
 pub const detectLightBackground = ansi.detectLightBackground;
+pub const detectKittyGraphics = ansi.detectKittyGraphics;
 
 const parser = @import("./parser.zig");
 const std = @import("std");

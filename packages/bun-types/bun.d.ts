@@ -1340,6 +1340,13 @@ declare module "bun" {
        * @default 80
        */
       columns?: number;
+      /**
+       * Inline images using the Kitty Graphics Protocol when the `src`
+       * resolves to a local file on disk. Falls through to the text alt
+       * for remote URLs. Supported by Kitty, WezTerm, and Ghostty.
+       * @default false
+       */
+      kittyGraphics?: boolean;
     }
 
     /**
@@ -1362,8 +1369,13 @@ declare module "bun" {
      * const plain = Bun.markdown.ansi("# Hello", { colors: false });
      *
      * // Enable clickable OSC 8 hyperlinks
-     * const html = Bun.markdown.ansi("[docs](https://bun.com)", {
+     * const linked = Bun.markdown.ansi("[docs](https://bun.com)", {
      *   hyperlinks: true,
+     * });
+     *
+     * // Inline images via Kitty Graphics Protocol
+     * const withImg = Bun.markdown.ansi("![alt](./logo.png)", {
+     *   kittyGraphics: true,
      * });
      *
      * // Custom width

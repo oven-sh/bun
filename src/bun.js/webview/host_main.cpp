@@ -382,7 +382,6 @@ extern "C" [[noreturn]] void Bun__WebView__hostMain(int fd)
     {
         ObjCRuntime::ARPool pool;
         objc::NSProcessInfo::disableAppNap();
-        objc::NSUserDefaults::forceRemoteLayerTreeDrawingArea();
     }
 
     g_host.construct();

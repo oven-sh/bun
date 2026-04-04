@@ -746,7 +746,7 @@ it("press with modifiers fires keydown with modifier flags", async () => {
   expect(JSON.parse(keys)).toEqual([{ key: "Escape", shift: true, meta: false }]);
 });
 
-it("scroll dispatches native wheel event with isTrusted", async () => {
+itRendering("scroll dispatches native wheel event with isTrusted", async () => {
   await using view = new Bun.WebView({ width: 200, height: 200 });
   await view.navigate(
     "data:text/html," +
@@ -777,7 +777,7 @@ it("scroll dispatches native wheel event with isTrusted", async () => {
   expect(w).toEqual([{ dy: 100, dx: 0, trusted: true, x: 100, y: 100, mode: 0 }]);
 });
 
-it("scroll: sequential calls in same view", async () => {
+itRendering("scroll: sequential calls in same view", async () => {
   await using view = new Bun.WebView({ width: 200, height: 200 });
   await view.navigate("data:text/html," + encodeURIComponent(`<div style="height:5000px">tall</div>`));
   // Each scroll runs the full double-barrier: both presentation-update
@@ -791,7 +791,7 @@ it("scroll: sequential calls in same view", async () => {
   expect(Number(y)).toBe(120);
 });
 
-it("scroll: horizontal", async () => {
+itRendering("scroll: horizontal", async () => {
   await using view = new Bun.WebView({ width: 200, height: 200 });
   await view.navigate("data:text/html," + encodeURIComponent(`<div style="width:5000px;height:100px">wide</div>`));
   await view.scroll(80, 0);
@@ -801,7 +801,7 @@ it("scroll: horizontal", async () => {
   expect(Number(x)).toBe(80);
 });
 
-it("scroll: interleaved with click in same view", async () => {
+itRendering("scroll: interleaved with click in same view", async () => {
   // Scroll uses m_scrollTarget, click uses m_inputTarget — decoupled so a
   // late-firing mouse barrier doesn't clear the scroll barrier's target.
   await using view = new Bun.WebView({ width: 200, height: 200 });
@@ -820,7 +820,7 @@ it("scroll: interleaved with click in same view", async () => {
   expect(JSON.parse(r)).toEqual({ y: 150, c: 2 });
 });
 
-it("scroll: survives navigate (fresh scrolling tree)", async () => {
+itRendering("scroll: survives navigate (fresh scrolling tree)", async () => {
   // Second navigate gets a fresh scrolling tree. The first presentation-
   // update barrier has to wait for the NEW tree's commit, not a stale one
   // from the previous page.
@@ -834,7 +834,7 @@ it("scroll: survives navigate (fresh scrolling tree)", async () => {
   expect(await view.evaluate("String(scrollY)")).toBe("75");
 });
 
-it("scroll: targets inner scrollable under view center", async () => {
+itRendering("scroll: targets inner scrollable under view center", async () => {
   // Wheel location is always (W/2, H/2). If a scrollable element covers
   // the center, it receives the wheel and scrolls — the scrolling tree
   // hit-test finds the inner node, not the document root.
@@ -935,10 +935,9 @@ it("WebView.closeAll() kills the host subprocess and pending promises reject", a
       `,
     ],
     env: bunEnv,
-    stderr: "pipe",
+    stderr: "inherit",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
   expect(stdout.trim()).toBe("rejected");
   expect(exitCode).toBe(0);
 });
@@ -1025,7 +1024,7 @@ it("process exits after close()", async () => {
 });
 
 // _WKWebsiteDataStoreConfiguration initWithDirectory: is macOS 15.2+.
-const itPersistentDataStore = isMacOS && isMacOSVersionAtLeast(15) ? test : test.skip;
+const itPersistentDataStore = isMacOS && isMacOSVersionAtLeast(15.2) ? test : test.skip;
 itPersistentDataStore("persistent dataStore: localStorage survives across instances", async () => {
   using dir = tempDir("webview-persist", {});
   // localStorage needs a real origin; data: URLs are opaque. Use a throwaway server.

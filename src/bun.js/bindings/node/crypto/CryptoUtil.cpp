@@ -427,6 +427,7 @@ DSASigEnc getDSASigEnc(JSC::JSGlobalObject* globalObject, ThrowScope& scope, JSV
 
     auto* dsaEncodingStr = dsaEncoding.toString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
+    auto _ = JSC::EnsureStillAliveScope(dsaEncodingStr);
     auto dsaEncodingView = dsaEncodingStr->view(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
@@ -499,6 +500,8 @@ JSC::JSArrayBufferView* getArrayBufferOrView(JSGlobalObject* globalObject, Throw
         JSString* dataString = value.toString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
 
+        auto _ = JSC::EnsureStillAliveScope(dataString);
+
         auto dataView = dataString->view(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
 
@@ -544,6 +547,7 @@ GCOwnedDataScope<std::span<const uint8_t>> getArrayBufferOrView2(JSGlobalObject*
     if (dataValue.isString()) {
         auto* str = dataValue.toString(globalObject);
         RETURN_IF_EXCEPTION(scope, Return(nullptr, {}));
+        auto _ = JSC::EnsureStillAliveScope(str);
         auto strView = str->view(globalObject);
         RETURN_IF_EXCEPTION(scope, Return(nullptr, {}));
 
@@ -551,6 +555,7 @@ GCOwnedDataScope<std::span<const uint8_t>> getArrayBufferOrView2(JSGlobalObject*
         if (encodingValue.isString()) {
             auto* encodingString = encodingValue.toString(globalObject);
             RETURN_IF_EXCEPTION(scope, Return(nullptr, {}));
+            auto _ = JSC::EnsureStillAliveScope(encodingString);
             auto encodingView = encodingString->view(globalObject);
             RETURN_IF_EXCEPTION(scope, Return(nullptr, {}));
 
@@ -577,6 +582,8 @@ JSC::JSArrayBufferView* getArrayBufferOrView(JSGlobalObject* globalObject, Throw
     if (value.isString()) {
         JSString* dataString = value.toString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
+
+        auto _ = JSC::EnsureStillAliveScope(dataString);
 
         auto maybeEncoding = encodingValue.pureToBoolean() == TriState::True ? WebCore::parseEnumerationAllowBuffer(*globalObject, encodingValue) : std::optional<BufferEncodingType> { BufferEncodingType::utf8 };
         RETURN_IF_EXCEPTION(scope, {});
@@ -686,6 +693,7 @@ ncrypto::EVPKeyPointer::PKFormatType parseKeyFormat(JSGlobalObject* globalObject
     if (formatValue.isString()) {
         JSString* formatString = formatValue.toString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
+        auto _ = JSC::EnsureStillAliveScope(formatString);
         GCOwnedDataScope<WTF::StringView> formatView = formatString->view(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
 
@@ -717,6 +725,7 @@ std::optional<EVPKeyPointer::PKEncodingType> parseKeyType(JSGlobalObject* global
     if (typeValue.isString()) {
         JSString* typeString = typeValue.toString(globalObject);
         RETURN_IF_EXCEPTION(scope, std::nullopt);
+        auto _ = JSC::EnsureStillAliveScope(typeString);
         GCOwnedDataScope<WTF::StringView> typeView = typeString->view(globalObject);
         RETURN_IF_EXCEPTION(scope, std::nullopt);
 
@@ -827,6 +836,7 @@ void parseKeyEncoding(JSGlobalObject* globalObject, ThrowScope& scope, JSObject*
             if (cipherValue.isString()) {
                 JSString* cipherString = cipherValue.toString(globalObject);
                 RETURN_IF_EXCEPTION(scope, );
+                auto _ = JSC::EnsureStillAliveScope(cipherString);
                 GCOwnedDataScope<WTF::StringView> cipherView = cipherString->view(globalObject);
                 RETURN_IF_EXCEPTION(scope, );
                 config.cipher = getCipherByName(cipherView);

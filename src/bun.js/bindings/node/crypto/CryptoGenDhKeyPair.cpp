@@ -129,6 +129,7 @@ std::optional<DhKeyPairJobCtx> DhKeyPairJobCtx::fromJS(JSGlobalObject* globalObj
 
         JSString* groupString = groupValue.toString(globalObject);
         RETURN_IF_EXCEPTION(scope, std::nullopt);
+        auto _ = JSC::EnsureStillAliveScope(groupString);
         GCOwnedDataScope<WTF::StringView> groupView = groupString->view(globalObject);
         RETURN_IF_EXCEPTION(scope, std::nullopt);
 

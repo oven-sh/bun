@@ -353,6 +353,7 @@ std::optional<SignJobCtx> SignJobCtx::fromJS(JSGlobalObject* globalObject, Throw
     if (!algorithmValue.isUndefinedOrNull()) {
         auto* algorithmString = algorithmValue.toString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
+        auto _ = JSC::EnsureStillAliveScope(algorithmString);
         auto algorithmView = algorithmString->view(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
 

@@ -143,6 +143,7 @@ JSC_DEFINE_HOST_FUNCTION(jsGenerateKeyPair, (JSC::JSGlobalObject * globalObject,
 
     JSString* typeString = typeValue.toString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
+    auto _ = JSC::EnsureStillAliveScope(typeString);
     GCOwnedDataScope<WTF::StringView> typeView = typeString->view(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
@@ -207,6 +208,7 @@ JSC_DEFINE_HOST_FUNCTION(jsGenerateKeyPairSync, (JSGlobalObject * globalObject, 
 
     JSString* typeString = typeValue.toString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
+    auto _ = JSC::EnsureStillAliveScope(typeString);
     GCOwnedDataScope<WTF::StringView> typeView = typeString->view(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 

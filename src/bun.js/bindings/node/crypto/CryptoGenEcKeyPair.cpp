@@ -107,6 +107,7 @@ std::optional<EcKeyPairJobCtx> EcKeyPairJobCtx::fromJS(JSGlobalObject* globalObj
     } else if (paramEncodingValue.isString()) {
         JSString* paramEncodingString = paramEncodingValue.toString(globalObject);
         RETURN_IF_EXCEPTION(scope, std::nullopt);
+        auto _ = JSC::EnsureStillAliveScope(paramEncodingString);
         GCOwnedDataScope<WTF::StringView> paramEncodingView = paramEncodingString->view(globalObject);
         RETURN_IF_EXCEPTION(scope, std::nullopt);
 
@@ -125,6 +126,7 @@ std::optional<EcKeyPairJobCtx> EcKeyPairJobCtx::fromJS(JSGlobalObject* globalObj
 
     JSString* namedCurveString = namedCurveValue.toString(globalObject);
     RETURN_IF_EXCEPTION(scope, std::nullopt);
+    auto _ = JSC::EnsureStillAliveScope(namedCurveString);
     GCOwnedDataScope<WTF::StringView> namedCurveView = namedCurveString->view(globalObject);
     RETURN_IF_EXCEPTION(scope, std::nullopt);
 

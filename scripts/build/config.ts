@@ -438,7 +438,11 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // Local builds share $BUN_INSTALL/build-cache across checkouts and profiles
   // so ccache/zig/tarballs/webkit reuse one another's work. CI stays per-build
   // so runners remain hermetic and `rm -rf build/` is a full reset.
-  const bunInstall = process.env.BUN_INSTALL || join(homedir(), ".bun");
+  // Relative BUN_INSTALL is anchored to repo root (not process.cwd()) so the
+  // ninja regen rule — which runs from buildDir — resolves the same path.
+  const bunInstall = process.env.BUN_INSTALL
+    ? resolve(cwd, process.env.BUN_INSTALL)
+    : join(homedir(), ".bun");
   const cacheDir =
     partial.cacheDir !== undefined
       ? isAbsolute(partial.cacheDir)

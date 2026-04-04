@@ -69,7 +69,10 @@ export async function downloadWithRetry(url: string, dest: string, logPrefix: st
       return;
     } catch (err) {
       lastError = err;
-      await rm(tmpPath, { force: true });
+      // Swallow cleanup errors: on Windows, AV/indexer can briefly lock the
+      // partial; a failed unlink must not abort the retry loop. Next attempt's
+      // createWriteStream truncates anyway.
+      await rm(tmpPath, { force: true }).catch(() => {});
     }
   }
 

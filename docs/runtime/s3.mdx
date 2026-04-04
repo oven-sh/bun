@@ -39,6 +39,7 @@ await metadata.delete();
 S3 is the [de facto standard](https://en.wikipedia.org/wiki/De_facto_standard) internet filesystem. Bun's S3 API works with S3-compatible storage services like:
 
 - AWS S3
+- Clever Cloud
 - Cloudflare R2
 - DigitalOcean Spaces
 - MinIO
@@ -318,6 +319,36 @@ const s3 = new S3Client({
   bucket: "my-bucket",
   // endpoint: "https://s3.us-east-1.amazonaws.com",
   // region: "us-east-1",
+});
+```
+
+### Using Bun's S3Client with Clever Cloud Cellar
+
+To use Bun's S3 client with [Clever Cloud Cellar](https://www.clever-cloud.com/developers/doc/addons/cellar/), set `endpoint` to the Cellar endpoint in the `S3Client` constructor.
+
+```ts
+import { S3Client } from "bun";
+
+// Clever Cloud Cellar
+const cellar = new S3Client({
+  accessKeyId: "access-key",
+  secretAccessKey: "secret-key",
+  bucket: "my-bucket",
+  endpoint: "https://cellar-c2.services.clever-cloud.com",
+});
+```
+
+If you've linked a Cellar add-on to a Clever Cloud application, you can just use automatically added environment variables:
+
+```ts
+import { S3Client } from "bun";
+
+// Clever Cloud Cellar
+const cellar = new S3Client({
+  accessKeyId: process.env.CELLAR_ADDON_KEY_ID,
+  secretAccessKey: process.env.CELLAR_ADDON_KEY_SECRET,
+  bucket: "my-bucket",
+  endpoint: process.env.CELLAR_ADDON_HOST,
 });
 ```
 

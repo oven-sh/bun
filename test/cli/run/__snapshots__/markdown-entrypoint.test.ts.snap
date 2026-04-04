@@ -72,7 +72,7 @@ exports[`bun <file.md> renders link text with url fallback when no TTY 1`] = `
 "
 `;
 
-exports[`bun <file.md> renders multiple links as text + url pairs 1`] = `
+exports[`bun <file.md> renders link with text + url pair fallback 1`] = `
 "see \x1B[34m\x1B[4mBun\x1B[24m\x1B[39m\x1B[2m (https://bun.com\x1B[2m)\x1B[39m\x1B[22m\x1B[0m
 "
 `;

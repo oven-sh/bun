@@ -104,7 +104,7 @@ describe("bun <file.md>", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("renders multiple links as text + url pairs", async () => {
+  test("renders link with text + url pair fallback", async () => {
     expect(await runMd("see [Bun](https://bun.com)\n")).toMatchSnapshot();
   });
 

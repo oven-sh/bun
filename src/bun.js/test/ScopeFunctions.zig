@@ -66,9 +66,7 @@ pub fn fnEach(this: *ScopeFunctions, globalThis: *JSGlobalObject, callFrame: *Ca
 
     const array = callFrame.argumentsAsArray(1)[0];
     if (array.isUndefinedOrNull() or !array.isArray()) {
-        var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis };
-        defer formatter.deinit();
-        return globalThis.throw("Expected array, got {f}", .{array.toFmt(&formatter)});
+        return globalThis.throw("Expected array, got {s}", .{jsValueTypeName(array)});
     }
 
     if (this.each != .zero) return globalThis.throw("Cannot {s} on {f}", .{ "each", this });
@@ -98,9 +96,7 @@ pub fn callAsFunction(globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JS
 
     if (this.each != .zero) {
         if (this.each.isUndefinedOrNull() or !this.each.isArray()) {
-            var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis };
-            defer formatter.deinit();
-            return globalThis.throw("Expected array, got {f}", .{this.each.toFmt(&formatter)});
+            return globalThis.throw("Expected array, got {s}", .{jsValueTypeName(this.each)});
         }
         var iter = try this.each.arrayIterator(globalThis);
         var test_idx: usize = 0;
@@ -472,6 +468,21 @@ pub fn createBound(globalThis: *JSGlobalObject, mode: Mode, each: jsc.JSValue, c
 
     const value = createUnbound(globalThis, mode, each, cfg);
     return bind(value, globalThis, name);
+}
+
+/// Returns a lightweight type name for a JSValue using only lightweight type
+/// checks that cannot throw or trigger significant stack growth.
+fn jsValueTypeName(value: JSValue) []const u8 {
+    if (value.isNull()) return "null";
+    if (value.isUndefined()) return "undefined";
+    if (value.isBoolean()) return "boolean";
+    if (value.isNumber()) return "number";
+    if (value.isBigInt()) return "bigint";
+    if (value.isString()) return "string";
+    if (value.isSymbol()) return "symbol";
+    if (value.isCallable()) return "function";
+    if (value.isCell()) return bun.tagName(JSValue.JSType, value.jsType()) orelse "object";
+    return "unknown";
 }
 
 const bun = @import("bun");

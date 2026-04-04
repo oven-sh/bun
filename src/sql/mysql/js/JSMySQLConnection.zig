@@ -155,6 +155,10 @@ pub fn enqueueRequest(this: *@This(), item: *JSMySQLQuery) void {
     this.#connection.enqueueRequest(item);
     this.resetConnectionTimeout();
     this.registerAutoFlusher();
+    // Ensure the connection keeps the event loop alive while a query is pending.
+    // Without this, the process may exit before the response arrives if the
+    // connection was previously idle (poll_ref unrefed).
+    this.updateReferenceType();
 }
 
 pub fn close(this: *@This()) void {

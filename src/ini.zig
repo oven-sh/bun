@@ -1011,7 +1011,7 @@ pub fn loadNpmrc(
 
     if (out.asProperty("cache")) |query| {
         if (query.expr.asUtf8StringLiteral()) |str| {
-            install.cache_directory = try allocator.dupe(u8, str);
+            install.cache_directory = try bun.strings.expandTilde(allocator, str);
         } else if (query.expr.asBool()) |b| {
             install.disable_cache = !b;
         }

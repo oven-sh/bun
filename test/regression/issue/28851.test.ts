@@ -39,7 +39,7 @@ test("bunfig.toml [resolve] conditions applies to bun run", async () => {
     cwd: String(dir),
     stderr: "pipe",
   });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [stdout, _stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stdout).toBe("source-file\n");
   expect(exitCode).toBe(0);
 });
@@ -55,7 +55,7 @@ test("without bunfig.toml, the default condition is used", async () => {
     cwd: String(dir),
     stderr: "pipe",
   });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [stdout, _stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stdout).toBe("dist-file\n");
   expect(exitCode).toBe(0);
 });
@@ -72,7 +72,7 @@ test("bunfig.toml [resolve] conditions applies to bun build", async () => {
     cwd: String(dir),
     stderr: "pipe",
   });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [stdout, _stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stdout).toContain("source-file");
   expect(stdout).not.toContain("dist-file");
   expect(exitCode).toBe(0);
@@ -129,7 +129,7 @@ test("CLI --conditions appends to bunfig.toml [resolve] conditions", async () =>
     cwd: String(dir),
     stderr: "pipe",
   });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [stdout, _stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stdout).toBe("source-file\n");
   expect(exitCode).toBe(0);
 
@@ -146,7 +146,7 @@ test("CLI --conditions appends to bunfig.toml [resolve] conditions", async () =>
     cwd: String(dir),
     stderr: "pipe",
   });
-  const [stdout2, exitCode2] = await Promise.all([proc2.stdout.text(), proc2.exited]);
+  const [stdout2, _stderr2, exitCode2] = await Promise.all([proc2.stdout.text(), proc2.stderr.text(), proc2.exited]);
   expect(stdout2).toBe("cli-file\n");
   expect(exitCode2).toBe(0);
 });

@@ -438,7 +438,11 @@ pub const Target = enum {
     pub inline fn processBrowserDefineValue(this: Target) ?string {
         return switch (this) {
             .browser => "true",
-            else => "false",
+            // Bun's runtime leaves `process.browser` undefined to match Node.js.
+            // Defining it would break libraries that check `typeof process.browser === "undefined"`
+            // (e.g. pyodide) to detect Node-like environments.
+            .bun, .bun_macro, .bake_server_components_ssr => null,
+            .node => "false",
         };
     }
 
@@ -1547,8 +1551,9 @@ pub fn definesFromTransformOptions(
             quoted_node_env,
         );
 
-        // Automatically set `process.browser` to `true` for browsers and false for node+js
-        // This enables some extra dead code elimination
+        // Automatically set `process.browser` to `true` for browsers and `false` for
+        // the node target. Bun runtime targets leave `process.browser` undefined to
+        // match Node.js. This enables some extra dead code elimination.
         if (target.processBrowserDefineValue()) |value| {
             _ = try user_defines.getOrPutValue(DefaultUserDefines.ProcessBrowserDefine.Key, value);
         }

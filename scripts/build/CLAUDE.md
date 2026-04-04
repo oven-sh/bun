@@ -172,36 +172,36 @@ Split CI modes: `zig-only` (zstd+codegen+zig), `cpp-only` (deps+codegen+compile 
 
 ## Module inventory
 
-| File                           | Owns                                                                    |
-| ------------------------------ | ----------------------------------------------------------------------- |
-| `build.ts` (parent dir)        | CLI entry — parse args, call configure, spawn ninja, optionally exec    |
-| `configure.ts`                 | `configure()` — toolchain → config → `build.ninja`                      |
-| `config.ts`                    | `Config`/`PartialConfig`/`Toolchain`/`Host` types, `resolveConfig()`    |
-| `profiles.ts`                  | Named `PartialConfig` presets + `getProfile()`                          |
-| `tools.ts`                     | Tool discovery: `findTool()`, `resolveLlvmToolchain()`, version parsing |
+| File                           | Owns                                                                               |
+| ------------------------------ | ---------------------------------------------------------------------------------- |
+| `build.ts` (parent dir)        | CLI entry — parse args, call configure, spawn ninja, optionally exec               |
+| `configure.ts`                 | `configure()` — toolchain → config → `build.ninja`                                 |
+| `config.ts`                    | `Config`/`PartialConfig`/`Toolchain`/`Host` types, `resolveConfig()`               |
+| `profiles.ts`                  | Named `PartialConfig` presets + `getProfile()`                                     |
+| `tools.ts`                     | Tool discovery: `findTool()`, `resolveLlvmToolchain()`, version parsing            |
 | `flags.ts`                     | Flat flag tables, `computeFlags()`, `computeDepFlags()`, `computeCpuTargetFlags()` |
-| `ninja.ts`                     | `Ninja` class — the build-file writer                                   |
-| `rules.ts`                     | `registerAllRules()` — calls each module's `registerXxxRules()`         |
-| `compile.ts`                   | `cc`/`cxx`/`pch`/`link`/`ar` + `registerCompileRules()`                 |
-| `source.ts`                    | `Dependency` types, `resolveDep()`, fetch/configure/build emission      |
-| `codegen.ts`                   | Code generation steps, `emitCodegen()`, `CodegenOutputs`                |
-| `zig.ts`                       | Zig download + `zig build`, `emitZig()`                                 |
-| `bun.ts`                       | `emitBun()` — assembles deps+codegen+zig+compile+link                   |
-| `shims.ts`                     | Platform/toolchain workaround dylibs, `emitShims()`                     |
-| `workarounds.ts`               | Self-obsoleting workaround registry, `checkWorkarounds()`               |
-| `depVersionsHeader.ts`         | Generates `bun_dependency_versions.h` for `process.versions`            |
-| `stream.ts`                    | Subprocess output wrapper — FD-3 sideband, zig progress decoding        |
-| `shell.ts`                     | `quote()`/`slash()` — shell escaping for ninja commands                 |
-| `fs.ts`                        | `writeIfChanged()`, `mkdirAll()`                                        |
-| `error.ts`                     | `BuildError` with hint/file/cause, `assert()`                           |
-| `download.ts`                  | `downloadWithRetry()`, archive extraction                               |
-| `fetch-cli.ts`                 | Build-time CLI ninja invokes for downloads                              |
-| `ci.ts`                        | CI integration — annotations, artifacts, log groups                     |
-| `clean.ts`                     | `bun run clean` preset-based cleanup                                    |
-| `glob-sources.ts` (parent dir) | Source glob patterns + CLI to print them                                |
-| `deps/*.ts`                    | One `Dependency` object per vendored dep                                |
-| `deps/index.ts`                | `allDeps` array — fetch order + link order                              |
-| `shims/*.c`                    | Platform workaround sources                                             |
+| `ninja.ts`                     | `Ninja` class — the build-file writer                                              |
+| `rules.ts`                     | `registerAllRules()` — calls each module's `registerXxxRules()`                    |
+| `compile.ts`                   | `cc`/`cxx`/`pch`/`link`/`ar` + `registerCompileRules()`                            |
+| `source.ts`                    | `Dependency` types, `resolveDep()`, fetch/configure/build emission                 |
+| `codegen.ts`                   | Code generation steps, `emitCodegen()`, `CodegenOutputs`                           |
+| `zig.ts`                       | Zig download + `zig build`, `emitZig()`                                            |
+| `bun.ts`                       | `emitBun()` — assembles deps+codegen+zig+compile+link                              |
+| `shims.ts`                     | Platform/toolchain workaround dylibs, `emitShims()`                                |
+| `workarounds.ts`               | Self-obsoleting workaround registry, `checkWorkarounds()`                          |
+| `depVersionsHeader.ts`         | Generates `bun_dependency_versions.h` for `process.versions`                       |
+| `stream.ts`                    | Subprocess output wrapper — FD-3 sideband, zig progress decoding                   |
+| `shell.ts`                     | `quote()`/`slash()` — shell escaping for ninja commands                            |
+| `fs.ts`                        | `writeIfChanged()`, `mkdirAll()`                                                   |
+| `error.ts`                     | `BuildError` with hint/file/cause, `assert()`                                      |
+| `download.ts`                  | `downloadWithRetry()`, archive extraction                                          |
+| `fetch-cli.ts`                 | Build-time CLI ninja invokes for downloads                                         |
+| `ci.ts`                        | CI integration — annotations, artifacts, log groups                                |
+| `clean.ts`                     | `bun run clean` preset-based cleanup                                               |
+| `glob-sources.ts` (parent dir) | Source glob patterns + CLI to print them                                           |
+| `deps/*.ts`                    | One `Dependency` object per vendored dep                                           |
+| `deps/index.ts`                | `allDeps` array — fetch order + link order                                         |
+| `shims/*.c`                    | Platform workaround sources                                                        |
 
 ## Key types
 

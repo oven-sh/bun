@@ -1244,7 +1244,7 @@ pub const RunCommand = struct {
     fn prefetchRemoteImages(
         contents: []const u8,
         md_opts: bun.md.Options,
-        out_map: *std.StringHashMapUnmanaged([]const u8),
+        out_map: *bun.StringHashMapUnmanaged([]const u8),
     ) void {
         const allocator = bun.default_allocator;
         var collector = bun.md.ImageUrlCollector.init(allocator);
@@ -1270,7 +1270,7 @@ pub const RunCommand = struct {
 
         const tmpdir = bun.fs.FileSystem.RealFS.tmpdirPath();
         // Guard against the same URL appearing twice: only download once.
-        var seen = std.StringHashMapUnmanaged(void){};
+        var seen = bun.StringHashMapUnmanaged(void){};
         defer seen.deinit(allocator);
 
         for (collector.urls.items) |raw_url| {
@@ -1403,7 +1403,7 @@ pub const RunCommand = struct {
         // inline. Only runs when kitty_graphics is on and the document
         // actually contains an image marker — otherwise the whole block
         // is a no-op.
-        var remote_map: std.StringHashMapUnmanaged([]const u8) = .{};
+        var remote_map: bun.StringHashMapUnmanaged([]const u8) = .{};
         if (kitty_graphics and bun.strings.contains(contents, "![")) {
             prefetchRemoteImages(contents, md_opts, &remote_map);
         }

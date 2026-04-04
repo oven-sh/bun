@@ -23,7 +23,7 @@ pub const Theme = struct {
     /// `collectImageUrls` + the CLI entry point) so `emitImage` can
     /// send remote images through Kitty's `t=f` path. When null, http
     /// and https URLs fall through to the alt-text fallback.
-    remote_image_paths: ?*const std.StringHashMapUnmanaged([]const u8) = null,
+    remote_image_paths: ?*const bun.StringHashMapUnmanaged([]const u8) = null,
     /// Base directory used to resolve relative image `src` paths. When
     /// null, falls back to the process cwd. The CLI entry point sets
     /// this to the markdown file's directory so `![](./img.png)` works

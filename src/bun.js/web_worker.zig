@@ -404,13 +404,20 @@ pub fn start(
 /// Early deinit may be called from caller thread, but full vm deinit will only be called within worker's thread.
 fn deinit(this: *WebWorker) void {
     log("[{d}] deinit", .{this.execution_context_id});
+    // Mark as terminated so that any subsequent ref/unref/terminate calls from the
+    // main thread (which still holds a raw pointer to this WebWorker via the C++ side)
+    // observe the flag and become no-ops via hasRequestedTerminate().
+    _ = this.setRequestedTerminate();
     this.parent_poll_ref.unrefConcurrently(this.parent);
     bun.default_allocator.free(this.unresolved_specifier);
     for (this.preloads) |preload| {
         bun.default_allocator.free(preload);
     }
     bun.default_allocator.free(this.preloads);
-    bun.default_allocator.destroy(this);
+    // Intentionally leak the WebWorker struct: the C++ Worker keeps a raw pointer
+    // to it (impl_) that outlives this thread's exit, and race-prone ref/unref/
+    // terminate calls from the main thread would otherwise UAF on the atomic fields.
+    // The struct is tiny and the memory is reclaimed on process exit.
 }
 
 fn flushLogs(this: *WebWorker) void {

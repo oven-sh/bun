@@ -545,8 +545,16 @@ pub const BunTest = struct {
                     min_timeout = bun.timespec.minIgnoreEpoch(min_timeout, waiting.timeout);
                 },
                 .complete => {
-                    if (try this._advance(globalThis) == .exit) return;
-                    this.addResult(.start);
+                    switch (try this._advance(globalThis)) {
+                        .exit => return,
+                        .cont => this.addResult(.start),
+                        .wait => {
+                            // Waiting for pending timers to fire during collection.
+                            // Return to the event loop; we'll be re-triggered when
+                            // timers fire and test_command re-calls run().
+                            return;
+                        },
+                    }
                 },
             }
         }
@@ -578,7 +586,7 @@ pub const BunTest = struct {
         }
     }
 
-    fn _advance(this: *BunTest, _: *jsc.JSGlobalObject) bun.JSError!enum { cont, exit } {
+    fn _advance(this: *BunTest, globalThis: *jsc.JSGlobalObject) bun.JSError!enum { cont, exit, wait } {
         group.begin(@src());
         defer group.end();
         group.log("advance from {s}", .{@tagName(this.phase)});
@@ -586,6 +594,17 @@ pub const BunTest = struct {
 
         switch (this.phase) {
             .collection => {
+                // If there are pending setTimeout timers, wait for them to fire
+                // before transitioning to execution. This allows test() calls
+                // inside setTimeout callbacks to be collected. (See #20087)
+                // Note: we only check setTimeout (not setInterval) because
+                // setInterval timers repeat indefinitely and would block forever.
+                const vm = globalThis.bunVM();
+                if (vm.timer.active_set_timeout_count > 0) {
+                    group.log("advance: waiting for {d} pending setTimeout(s) before finishing collection", .{vm.timer.active_set_timeout_count});
+                    return .wait;
+                }
+
                 this.phase = .execution;
                 try debug.dumpDescribe(this.collection.root_scope);
 

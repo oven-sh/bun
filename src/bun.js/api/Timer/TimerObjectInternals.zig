@@ -251,6 +251,12 @@ fn convertToInterval(this: *TimerObjectInternals, global: *JSGlobalObject, timer
 
     const vm = global.bunVM();
 
+    // If this setTimeout was keeping the event loop alive, adjust the
+    // setTimeout-specific counter since the kind is changing to setInterval.
+    if (this.flags.is_keeping_event_loop_alive) {
+        vm.timer.active_set_timeout_count -= 1;
+    }
+
     const new_interval: u31 = if (repeat.getNumber()) |num| if (num < 1 or num > std.math.maxInt(u31)) 1 else @intFromFloat(num) else 1;
 
     // https://github.com/nodejs/node/blob/a7cbb904745591c9a9d047a364c2c188e5470047/lib/internal/timers.js#L613
@@ -429,7 +435,12 @@ fn setEnableKeepingEventLoopAlive(this: *TimerObjectInternals, vm: *VirtualMachi
     }
     this.flags.is_keeping_event_loop_alive = enable;
     switch (this.flags.kind) {
-        .setTimeout, .setInterval => vm.timer.incrementTimerRef(if (enable) 1 else -1),
+        .setTimeout => {
+            const delta: i32 = if (enable) 1 else -1;
+            vm.timer.incrementTimerRef(delta);
+            vm.timer.active_set_timeout_count += delta;
+        },
+        .setInterval => vm.timer.incrementTimerRef(if (enable) 1 else -1),
 
         // setImmediate has slightly different event loop logic
         .setImmediate => vm.timer.incrementImmediateRef(if (enable) 1 else -1),

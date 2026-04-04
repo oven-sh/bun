@@ -254,14 +254,26 @@ pub const Stringifier = struct {
             );
 
             if (found_trusted_dependencies.count() > 0) {
+                // Collect and sort trusted dependency names for deterministic output
+                var trusted_dep_names = try std.ArrayListUnmanaged(String).initCapacity(allocator, found_trusted_dependencies.count());
+                defer trusted_dep_names.deinit(allocator);
+                var td_values_iter = found_trusted_dependencies.valueIterator();
+                while (td_values_iter.next()) |dep_name| {
+                    trusted_dep_names.appendAssumeCapacity(dep_name.*);
+                }
+                std.sort.pdq(String, trusted_dep_names.items, buf, struct {
+                    pub fn lessThan(string_buf: string, l: String, r: String) bool {
+                        return l.order(&r, string_buf, string_buf) == .lt;
+                    }
+                }.lessThan);
+
                 try writeIndent(writer, indent);
                 try writer.writeAll(
                     \\"trustedDependencies": [
                     \\
                 );
                 indent.* += 1;
-                var values_iter = found_trusted_dependencies.valueIterator();
-                while (values_iter.next()) |dep_name| {
+                for (trusted_dep_names.items) |dep_name| {
                     try writeIndent(writer, indent);
                     try writer.print(
                         \\"{s}",
@@ -277,15 +289,28 @@ pub const Stringifier = struct {
             }
 
             if (found_patched_dependencies.count() > 0) {
+                // Collect and sort patched dependencies by name for deterministic output
+                const PatchEntry = struct { string, String };
+                var patched_entries = try std.ArrayListUnmanaged(PatchEntry).initCapacity(allocator, found_patched_dependencies.count());
+                defer patched_entries.deinit(allocator);
+                var pd_values_iter = found_patched_dependencies.valueIterator();
+                while (pd_values_iter.next()) |value| {
+                    patched_entries.appendAssumeCapacity(value.*);
+                }
+                std.sort.pdq(PatchEntry, patched_entries.items, {}, struct {
+                    pub fn lessThan(_: void, l: PatchEntry, r: PatchEntry) bool {
+                        return strings.order(l[0], r[0]) == .lt;
+                    }
+                }.lessThan);
+
                 try writeIndent(writer, indent);
                 try writer.writeAll(
                     \\"patchedDependencies": {
                     \\
                 );
                 indent.* += 1;
-                var values_iter = found_patched_dependencies.valueIterator();
-                while (values_iter.next()) |value| {
-                    const name_and_version, const patch_path = value.*;
+                for (patched_entries.items) |entry| {
+                    const name_and_version, const patch_path = entry;
                     try writeIndent(writer, indent);
                     try writer.print(
                         \\{f}: {f},

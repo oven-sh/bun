@@ -71,7 +71,6 @@ declare global {
 
     interface Process {
       readonly version: string;
-      browser: boolean;
 
       /**
        * Whether you are using Bun

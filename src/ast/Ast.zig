@@ -71,6 +71,11 @@ has_commonjs_export_names: bool = false,
 has_import_meta: bool = false,
 import_meta_ref: Ref = Ref.None,
 
+/// Specifiers from mock.module("specifier", fn) calls detected during parsing
+/// in test mode. Used to register placeholder virtual modules before the module
+/// graph is built, preventing link errors for mocked modules.
+mock_module_specifiers: bun.StringArrayHashMapUnmanaged(void) = .{},
+
 pub const CommonJSNamedExport = struct {
     loc_ref: LocRef,
     needs_decl: bool = true,

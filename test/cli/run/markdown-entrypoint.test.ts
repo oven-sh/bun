@@ -1,5 +1,9 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+
+// Tracks exit code from the last runMd() call so individual tests can
+// assert it after snapshotting stdout (giving a readable diff on failure).
+let lastExitCode: number | null = null;
 
 async function runMd(source: string, env: Record<string, string> = {}) {
   using dir = tempDir("md-entry-", { "doc.md": source });
@@ -10,13 +14,21 @@ async function runMd(source: string, env: Record<string, string> = {}) {
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  expect(exitCode).toBe(0);
+  // stderr intentionally not asserted: ASAN builds emit a warning there.
+  const [stdout, _stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  lastExitCode = exitCode;
   return stdout;
 }
 
 describe("bun <file.md>", () => {
+  afterEach(() => {
+    // Implicit exit-code assertion for every test that relies on runMd().
+    if (lastExitCode !== null) {
+      expect(lastExitCode).toBe(0);
+      lastExitCode = null;
+    }
+  });
+
   test("renders headings with underlines", async () => {
     expect(
       await runMd(["# Heading 1", "", "## Heading 2", "", "### Heading 3", "", "body", ""].join("\n")),
@@ -127,9 +139,45 @@ describe("bun <file.md>", () => {
   });
 
   test("renders combining characters without breaking alignment", async () => {
-    expect(
-      await runMd(["| Name   | Note |", "|:-------|:-----|", "| café   | hot  |", "| naïve  | ok   |", ""].join("\n")),
-    ).toMatchSnapshot();
+    // Decomposed NFD: 'e' + U+0301 combining acute, 'i' + U+0308 combining diaeresis.
+    // These must be zero-width in the grapheme counter for the table to line up.
+    const stdout = await runMd(
+      [
+        "| Name   | Note |",
+        "|:-------|:-----|",
+        "| cafe\u0301   | hot  |",
+        "| nai\u0308ve  | ok   |",
+        "",
+      ].join("\n"),
+    );
+    expect(stdout).toMatchSnapshot();
+    expect(lastExitCode).toBe(0);
+  });
+
+  test("renders inline formatting inside table cells", async () => {
+    const stdout = await runMd(
+      [
+        "| Name  | Style     |",
+        "|:------|:----------|",
+        "| **Alice** | *editor* |",
+        "| `bob` | [link](https://bun.com) |",
+        "",
+      ].join("\n"),
+    );
+    expect(stdout).toMatchSnapshot();
+    expect(lastExitCode).toBe(0);
+  });
+
+  test("renders inline formatting inside headings", async () => {
+    const stdout = await runMd("# Hello **bold** and *italic* heading\n");
+    expect(stdout).toMatchSnapshot();
+    expect(lastExitCode).toBe(0);
+  });
+
+  test("nested code span inside bold keeps outer bold", async () => {
+    const stdout = await runMd("**before `code` after** tail\n");
+    expect(stdout).toMatchSnapshot();
+    expect(lastExitCode).toBe(0);
   });
 
   test("renders mixed inline styles with autolinks", async () => {
@@ -156,12 +204,11 @@ describe("bun <file.md>", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(exitCode).toBe(0);
+    const [stdout, _stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     // No escape characters expected
     expect(stdout).not.toContain("\x1b[");
     expect(stdout).toMatchSnapshot();
+    expect(exitCode).toBe(0);
   });
 
   test("renders via `bun run ./file.md`", async () => {
@@ -173,10 +220,9 @@ describe("bun <file.md>", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(exitCode).toBe(0);
+    const [stdout, _stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout).toMatchSnapshot();
+    expect(exitCode).toBe(0);
   });
 
   test("renders .markdown extension too", async () => {
@@ -188,9 +234,8 @@ describe("bun <file.md>", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(exitCode).toBe(0);
+    const [stdout, _stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout).toMatchSnapshot();
+    expect(exitCode).toBe(0);
   });
 });

@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
 import { describe, expect, test } from "bun:test";
 import { mkdirSync, realpathSync } from "fs";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import { tmpdir } from "os";
 import { join } from "path";
 const preloadModule = `
@@ -209,5 +209,75 @@ plugin({
       expect(stdout.toString()).toBe("");
       expect(exitCode).toBe(1);
     }
+  });
+
+  test("does not apply cwd bunfig preload when running absolute entrypoint", () => {
+    const root = tempDirWithFiles("bun-preload-cross-repo", {
+      "repo-a": {
+        "bunfig.toml": `preload = ["./src/config/opentelemetry.ts"]`,
+        src: {
+          config: {
+            "opentelemetry.ts": `throw new Error("PRELOAD_FROM_A");`,
+          },
+        },
+      },
+      "repo-b": {
+        "index.ts": `console.log("ENTRY_FROM_B");`,
+      },
+    });
+
+    const repoA = join(root, "repo-a");
+    const entryInRepoB = join(root, "repo-b", "index.ts");
+    const { stdout, stderr, exitCode } = spawnSync({
+      cmd: [bunExe(), entryInRepoB, "help"],
+      cwd: repoA,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    expect(stdout.toString()).toContain("ENTRY_FROM_B");
+    expect(stderr.toString()).not.toContain("PRELOAD_FROM_A");
+    expect(exitCode).toBe(0);
+  });
+
+  test("--config resolves relative preload from config directory", () => {
+    const root = tempDirWithFiles("bun-preload-config-base", {
+      "repo-a": {
+        "bunfig.toml": `preload = ["./src/config/opentelemetry.ts"]`,
+        src: {
+          config: {
+            "opentelemetry.ts": `throw new Error("PRELOAD_FROM_A");`,
+          },
+        },
+      },
+      "repo-b": {
+        "bunfig.toml": `preload = ["./src/config/opentelemetry.ts"]`,
+        src: {
+          config: {
+            "opentelemetry.ts": `console.log("PRELOAD_FROM_B");`,
+          },
+        },
+        "index.ts": `console.log("ENTRY_FROM_B");`,
+      },
+    });
+
+    const repoA = join(root, "repo-a");
+    const repoB = join(root, "repo-b");
+    const configInRepoB = join(repoB, "bunfig.toml");
+    const entryInRepoB = join(repoB, "index.ts");
+
+    const { stdout, stderr, exitCode } = spawnSync({
+      cmd: [bunExe(), "--config", configInRepoB, entryInRepoB, "help"],
+      cwd: repoA,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    expect(stdout.toString()).toContain("PRELOAD_FROM_B");
+    expect(stdout.toString()).toContain("ENTRY_FROM_B");
+    expect(stderr.toString()).not.toContain("PRELOAD_FROM_A");
+    expect(exitCode).toBe(0);
   });
 });

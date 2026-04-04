@@ -1240,6 +1240,9 @@ pub const RunCommand = struct {
     /// Read a markdown file, render it to ANSI, print to stdout, and exit.
     /// Runs without a JavaScript VM — much faster than booting JSC.
     fn renderMarkdownFileAndExit(path: string) noreturn {
+        // No explicit free() on contents / rendered below: every path out
+        // of this function calls Global.exit() or bun.outOfMemory() (both
+        // noreturn), so the OS reclaims the allocations on process exit.
         const contents = switch (bun.sys.File.readFrom(bun.FD.cwd(), path, bun.default_allocator)) {
             .result => |bytes| bytes,
             .err => |err| {
@@ -1248,7 +1251,6 @@ pub const RunCommand = struct {
                 Global.exit(1);
             },
         };
-        defer bun.default_allocator.free(contents);
 
         // Theme selection: colors when stdout is a TTY (or forced on),
         // hyperlinks when colors are on. Light/dark detected from env.
@@ -1296,7 +1298,6 @@ pub const RunCommand = struct {
             Output.flush();
             Global.exit(1);
         };
-        defer bun.default_allocator.free(rendered);
 
         Output.writer().writeAll(rendered) catch {};
         Output.flush();

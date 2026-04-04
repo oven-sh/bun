@@ -12,7 +12,8 @@ pub const Theme = struct {
     /// Emit colors and styles. When false the renderer emits plain text.
     colors: bool = true,
     /// Emit OSC 8 hyperlinks. When false links are shown as "text (url)".
-    hyperlinks: bool = true,
+    /// Default false to match the documented Bun.markdown.ansi() API.
+    hyperlinks: bool = false,
     /// Inline images using the Kitty Graphics Protocol when the `src`
     /// refers to a local file (absolute or ./relative path, or file://).
     /// Falls through to the text alt for remote URLs.

@@ -142,13 +142,7 @@ describe("bun <file.md>", () => {
     // Decomposed NFD: 'e' + U+0301 combining acute, 'i' + U+0308 combining diaeresis.
     // These must be zero-width in the grapheme counter for the table to line up.
     const stdout = await runMd(
-      [
-        "| Name   | Note |",
-        "|:-------|:-----|",
-        "| cafe\u0301   | hot  |",
-        "| nai\u0308ve  | ok   |",
-        "",
-      ].join("\n"),
+      ["| Name   | Note |", "|:-------|:-----|", "| cafe\u0301   | hot  |", "| nai\u0308ve  | ok   |", ""].join("\n"),
     );
     expect(stdout).toMatchSnapshot();
     expect(lastExitCode).toBe(0);

@@ -8821,6 +8821,7 @@ describe.concurrent("bun-install", () => {
             "configVersion": 1,
             "workspaces": {
               "": {
+                "name": "foo",
                 "dependencies": {
                   "jquery": "3.7.1",
                 },

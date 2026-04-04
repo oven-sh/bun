@@ -1284,10 +1284,13 @@ pub const RunCommand = struct {
             bun.default_allocator,
             md_opts,
             theme,
-        ) catch {
-            Output.prettyErrorln("<r><red>error<r>: failed to render markdown", .{});
-            Output.flush();
-            Global.exit(1);
+        ) catch |err| switch (err) {
+            error.OutOfMemory => bun.outOfMemory(),
+            error.StackOverflow => {
+                Output.prettyErrorln("<r><red>error<r>: markdown rendering exceeded the stack — input is too deeply nested", .{});
+                Output.flush();
+                Global.exit(1);
+            },
         } orelse {
             Output.prettyErrorln("<r><red>error<r>: failed to render markdown", .{});
             Output.flush();

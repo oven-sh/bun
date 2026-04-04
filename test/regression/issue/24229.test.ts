@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test";
+import { createHash } from "crypto";
 import { once } from "events";
 import type { IncomingMessage } from "http";
 import { AddressInfo, createServer } from "net";
-import { WebSocket, WebSocketServer } from "ws";
+import { WebSocket } from "ws";
 
 // https://github.com/oven-sh/bun/issues/24229
 // https://github.com/oven-sh/bun/issues/5951
@@ -95,10 +96,36 @@ describe("ws handshake events", () => {
   });
 
   test("emits 'upgrade' with headers before 'open' on 101", async () => {
-    const wss = new WebSocketServer({ port: 0 });
+    // Fake a WS 101 handshake on a raw TCP socket so this test doesn't spin up
+    // a real WebSocketServer (ws's server leaks uWS resources under ASAN).
+    const server = createServer(socket => {
+      let buf = "";
+      socket.on("data", chunk => {
+        buf += chunk.toString();
+        const headerEnd = buf.indexOf("\r\n\r\n");
+        if (headerEnd === -1) return;
+        const keyMatch = buf.match(/sec-websocket-key:\s*(.+)\r\n/i);
+        if (!keyMatch) {
+          socket.destroy();
+          return;
+        }
+        const accept = createHash("sha1")
+          .update(keyMatch[1].trim() + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")
+          .digest("base64");
+        socket.write(
+          "HTTP/1.1 101 Switching Protocols\r\n" +
+            "Upgrade: websocket\r\n" +
+            "Connection: Upgrade\r\n" +
+            "Sec-WebSocket-Accept: " +
+            accept +
+            "\r\n\r\n",
+        );
+      });
+    }).listen(0, "127.0.0.1");
+    await once(server, "listening");
     const { promise, resolve } = Promise.withResolvers<IncomingMessage>();
     try {
-      const ws = new WebSocket("ws://localhost:" + (wss.address() as AddressInfo).port);
+      const ws = new WebSocket("ws://127.0.0.1:" + (server.address() as AddressInfo).port);
       const order: string[] = [];
       ws.on("upgrade", res => {
         order.push("upgrade");
@@ -116,7 +143,7 @@ describe("ws handshake events", () => {
       await once(ws, "close");
       expect(order).toEqual(["upgrade", "open"]);
     } finally {
-      wss.close();
+      server.close();
     }
   });
 });

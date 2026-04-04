@@ -1148,18 +1148,28 @@ pub const AnsiRenderer = struct {
 
     fn boxChars(self: *AnsiRenderer) BoxChars {
         return if (self.theme.colors) .{
-            .h = "─", .v = "│",
-            .tl = "┌", .tr = "┐",
-            .bl = "└", .br = "┘",
-            .t = "┬", .b = "┴",
-            .ml = "├", .mr = "┤",
+            .h = "─",
+            .v = "│",
+            .tl = "┌",
+            .tr = "┐",
+            .bl = "└",
+            .br = "┘",
+            .t = "┬",
+            .b = "┴",
+            .ml = "├",
+            .mr = "┤",
             .x = "┼",
         } else .{
-            .h = "-", .v = "|",
-            .tl = "+", .tr = "+",
-            .bl = "+", .br = "+",
-            .t = "+", .b = "+",
-            .ml = "+", .mr = "+",
+            .h = "-",
+            .v = "|",
+            .tl = "+",
+            .tr = "+",
+            .bl = "+",
+            .br = "+",
+            .t = "+",
+            .b = "+",
+            .ml = "+",
+            .mr = "+",
             .x = "+",
         };
     }

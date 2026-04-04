@@ -916,6 +916,12 @@ pub const AnsiRenderer = struct {
 
     fn flushHeading(self: *AnsiRenderer) void {
         const level = self.heading_level;
+        // Temporarily zero heading_level so writeIndent()'s reapplyStyles()
+        // routes emitInline() to self.out instead of heading_buf. Otherwise
+        // inside a blockquote the bold+color writes reach heading_buf and
+        // may realloc its backing array, dangling the `content` slice below.
+        self.heading_level = 0;
+        defer self.heading_level = level;
         const content = self.heading_buf.items;
         self.writeIndent();
         if (self.theme.colors) {
@@ -1440,6 +1446,7 @@ pub fn detectLightBackground() bool {
 ///   - `TERM_PROGRAM=WezTerm` or `ghostty` (compatible terminals)
 ///   - `TERM_PROGRAM=ghostty`
 pub fn detectKittyGraphics() bool {
+    // Fast path: env vars set by known-compatible terminals.
     if (bun.getenvZ("KITTY_WINDOW_ID")) |_| return true;
     if (bun.getenvZ("GHOSTTY_RESOURCES_DIR")) |_| return true;
     if (bun.getenvZ("TERM")) |term| {
@@ -1450,7 +1457,56 @@ pub fn detectKittyGraphics() bool {
         if (bun.strings.eqlCaseInsensitiveASCII(tp, "wezterm", true)) return true;
         if (bun.strings.eqlCaseInsensitiveASCII(tp, "ghostty", true)) return true;
     }
-    return false;
+    // Runtime probe: send a Kitty query to the terminal and wait for a
+    // response. Compatible terminals reply within a few ms; others stay
+    // silent because they ignore the APC sequence entirely.
+    return probeKittyGraphics();
+}
+
+/// Write a Kitty Graphics Protocol query to stdout and wait briefly
+/// for a response on stdin. Returns true only when the terminal
+/// answers with an OK. stdin and stdout must both be TTYs for the
+/// probe to run.
+///
+/// The query transmits a 1×1 placeholder image with id=31 and reads
+/// the reply with a short timeout. Raw mode is applied + restored
+/// around the read so the bytes don't echo to the user's terminal.
+fn probeKittyGraphics() bool {
+    if (!bun.Environment.isPosix) return false;
+    if (bun.Output.bun_stdio_tty[0] == 0 or bun.Output.bun_stdio_tty[1] == 0) return false;
+    if (bun.getenvZ("DUMB")) |_| return false;
+    // Honor an explicit opt-out.
+    if (bun.getenvZ("BUN_DISABLE_KITTY_PROBE")) |_| return false;
+
+    // Save original mode + switch stdin to raw so the reply bytes
+    // arrive immediately and don't echo.
+    _ = bun.tty.setMode(0, .raw);
+    defer _ = bun.tty.setMode(0, .normal);
+
+    // Query: transmit a 1×1 RGB image (3 zero bytes = "AAAA" b64),
+    // id=31, suppress OK so we only see errors → no: we NEED the OK
+    // so q is unset. The terminal replies with `\x1b_Gi=31;OK\x1b\\`
+    // (or `ENOTSUPPORTED:...`) within a frame.
+    const query = "\x1b_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\x1b\\";
+    _ = std.posix.write(1, query) catch return false;
+
+    // Wait up to ~80ms for a response. Kitty/Ghostty/WezTerm reply
+    // in < 10ms; anything longer is noise from an unrelated terminal.
+    var pfd = [_]std.posix.pollfd{.{
+        .fd = 0,
+        .events = std.posix.POLL.IN,
+        .revents = 0,
+    }};
+    const ready = std.posix.poll(&pfd, 80) catch return false;
+    if (ready <= 0) return false;
+
+    var buf: [128]u8 = undefined;
+    const n = std.posix.read(0, &buf) catch return false;
+    if (n == 0) return false;
+    const reply = buf[0..n];
+    // A successful reply looks like: \x1b_G<...>;OK\x1b\
+    // Failure (but-understood): \x1b_G<...>;ENOTSUPPORTED:...\x1b\
+    return bun.strings.contains(reply, ";OK\x1b\\");
 }
 
 /// Resolve an image `src` from markdown to an absolute file path on
@@ -1486,7 +1542,10 @@ fn resolveLocalImagePath(src: []const u8, allocator: Allocator) ?[]u8 {
     var cwd_buf: bun.PathBuffer = undefined;
     const cwd = bun.getcwd(&cwd_buf) catch return null;
     var joined = std.ArrayListUnmanaged(u8){};
-    errdefer joined.deinit(allocator);
+    // Function returns ?[]u8 (not error union), so errdefer would be dead.
+    // Use defer — after toOwnedSlice() succeeds the list is empty so deinit
+    // is a no-op; on any catch-return-null path we still free the buffer.
+    defer joined.deinit(allocator);
     joined.appendSlice(allocator, cwd) catch return null;
     joined.append(allocator, std.fs.path.sep) catch return null;
     joined.appendSlice(allocator, path) catch return null;

@@ -38,10 +38,9 @@ describe("fetch upgrade", () => {
     expect(res.headers.get("connection")).toBe("Upgrade");
 
     const clientMessages: string[] = [];
-    const { promise, resolve } = Promise.withResolvers<void>();
     const reader = res.body!.getReader();
 
-    while (true) {
+    outer: while (true) {
       const { value, done } = await reader.read();
       if (done) break;
       for (const msg of decodeFrames(Buffer.from(value))) {
@@ -49,14 +48,15 @@ describe("fetch upgrade", () => {
           clientMessages.push(msg);
         } else {
           clientMessages.push(msg.type);
-        }
-
-        if (msg.type === "close") {
-          resolve();
+          if (msg.type === "close") {
+            // The close frame is the protocol-level end of the conversation; stop
+            // reading instead of depending on the upgraded body stream to report done.
+            await reader.cancel();
+            break outer;
+          }
         }
       }
     }
-    await promise;
     expect(serverMessages).toEqual(["hello", "world", "bye", "close"]);
     expect(clientMessages).toEqual(["Hello World", "close"]);
   });

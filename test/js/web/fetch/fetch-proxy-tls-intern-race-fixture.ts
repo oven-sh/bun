@@ -48,10 +48,11 @@ function probe() {
 // the request's deref() before the next intern(). With keepalive:false and
 // no ca/cert/key, requires_custom_request_ctx=false → no SSL context cache
 // ref → refcount cycles through 0 on each iteration IF probes aren't pinning it.
+const driverAbort = new AbortController();
 async function driver() {
   while (!stop) {
     try {
-      const r = await fetch(url, { proxy, keepalive: false, tls });
+      const r = await fetch(url, { proxy, keepalive: false, tls, signal: driverAbort.signal });
       if ((await r.text()) === "ok") driverOk++;
     } catch {}
     await Bun.sleep(1);
@@ -65,6 +66,9 @@ const driverDone = driver();
 // Hard cap so the fixture always terminates.
 await Bun.sleep(HARD_CAP_MS);
 stop = true;
+// Abort any in-flight driver fetch so `await driverDone` can't hang on a stuck
+// proxy connection after the probe loop has exhausted sockets.
+driverAbort.abort();
 await driverDone;
 
 process.stdout.write(JSON.stringify({ driverOk, probes }) + "\n");

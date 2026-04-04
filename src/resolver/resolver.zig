@@ -1803,6 +1803,7 @@ pub const Resolver = struct {
                                 // The condition set is determined by the kind of import
                                 var module_type = package_json.module_type;
                                 const esmodule = ESModule{
+                                    .resolver = r,
                                     .conditions = switch (kind) {
                                         ast.ImportKind.require, ast.ImportKind.require_resolve => r.opts.conditions.require,
                                         ast.ImportKind.at, ast.ImportKind.at_conditional => r.opts.conditions.style,
@@ -1811,6 +1812,7 @@ pub const Resolver = struct {
                                     .allocator = r.allocator,
                                     .debug_logs = if (r.debug_logs) |*debug| debug else null,
                                     .module_type = &module_type,
+                                    .abs_package_path = abs_package_path,
                                 };
 
                                 // Resolve against the path "/", then join it with the absolute
@@ -2081,6 +2083,7 @@ pub const Resolver = struct {
                             if (package_json.exports) |exports_map| {
                                 // The condition set is determined by the kind of import
                                 const esmodule = ESModule{
+                                    .resolver = r,
                                     .conditions = switch (kind) {
                                         ast.ImportKind.require,
                                         ast.ImportKind.require_resolve,
@@ -2093,6 +2096,7 @@ pub const Resolver = struct {
                                         debug
                                     else
                                         null,
+                                    .abs_package_path = abs_package_path,
                                 };
 
                                 // Resolve against the path "/", then join it with the absolute
@@ -3128,6 +3132,7 @@ pub const Resolver = struct {
         var module_type = options.ModuleType.unknown;
 
         const esmodule = ESModule{
+            .resolver = r,
             .conditions = switch (kind) {
                 ast.ImportKind.require,
                 ast.ImportKind.require_resolve,
@@ -3137,6 +3142,7 @@ pub const Resolver = struct {
             .allocator = r.allocator,
             .debug_logs = if (r.debug_logs) |*debug| debug else null,
             .module_type = &module_type,
+            .abs_package_path = dir_info.abs_path,
         };
 
         const esm_resolution = esmodule.resolveImports(import_path, imports_map.root);

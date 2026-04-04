@@ -49,6 +49,9 @@ function shmRead(name: string, n: number): Buffer {
 
 // Bun.WebView only exists on darwin for now.
 const it = isMacOS ? test : test.skip;
+// Tests that need frames to tick (rAF / CSS animation). CI macOS runners
+// have no display, so CVDisplayLink never fires and these hang.
+const itRendering = isMacOS ? test.todoIf(isCI) : test.skip;
 
 // NSURL URLWithString: strictly follows RFC 3986 on x64 macOS system
 // libraries — unencoded <> return nil. arm64 builds of the same OS are
@@ -428,7 +431,7 @@ it("screenshot Blob survives GC (mmap-backed store)", async () => {
 // in the actionability script itself. The -[NSWindow isVisible]→YES override
 // keeps the ActivityState::IsVisible bit set, but CI macOS 14's CVDisplayLink
 // still doesn't callback for the (0,0) alpha=0 window — todo until closed.
-(isMacOS ? test.todoIf(isCI) : test.skip)("document.visibilityState is visible and rAF fires", async () => {
+itRendering("document.visibilityState is visible and rAF fires", async () => {
   await using view = new Bun.WebView({ width: 200, height: 200 });
   await view.navigate(html("<body></body>"));
   const state = await view.evaluate("document.visibilityState");
@@ -467,7 +470,7 @@ it("click dispatches native mousedown/mouseup/click with isTrusted", async () =>
 // TODO: times out on CI (90s) — the rAF-driven actionability poll never
 // resolves. Passes locally; likely a headless/offscreen WKWebView rAF
 // scheduling quirk on the CI runner.
-(isMacOS ? test.todoIf(isCI) : test.skip)("click(selector) waits for actionability, clicks center", async () => {
+itRendering("click(selector) waits for actionability, clicks center", async () => {
   await using view = new Bun.WebView({ width: 300, height: 300 });
   await view.navigate(
     "data:text/html," +
@@ -490,7 +493,7 @@ it("click dispatches native mousedown/mouseup/click with isTrusted", async () =>
   expect(JSON.parse(events)).toEqual([{ trusted: true, x: 90, y: 100, target: "btn" }]);
 });
 
-it.todoIf(isCI)("click(selector) waits for element to appear", async () => {
+itRendering("click(selector) waits for element to appear", async () => {
   await using view = new Bun.WebView({ width: 300, height: 300 });
   await view.navigate(
     "data:text/html," +
@@ -519,7 +522,7 @@ it.todoIf(isCI)("click(selector) waits for element to appear", async () => {
   expect(await view.evaluate("String(__clicked)")).toBe("1");
 });
 
-it("click(selector) waits for element to stop animating", async () => {
+itRendering("click(selector) waits for element to stop animating", async () => {
   await using view = new Bun.WebView({ width: 300, height: 300 });
   await view.navigate(
     "data:text/html," +
@@ -539,7 +542,7 @@ it("click(selector) waits for element to stop animating", async () => {
   expect(Number(left)).toBe(100);
 });
 
-it("click(selector) rejects on timeout when obscured", async () => {
+itRendering("click(selector) rejects on timeout when obscured", async () => {
   await using view = new Bun.WebView({ width: 300, height: 300 });
   await view.navigate(
     "data:text/html," +
@@ -555,7 +558,7 @@ it("click(selector) rejects on timeout when obscured", async () => {
   await expect(view.click("#under", { timeout: 200 })).rejects.toThrow(/timeout waiting for '#under'/);
 });
 
-it("click(selector) with options", async () => {
+itRendering("click(selector) with options", async () => {
   await using view = new Bun.WebView({ width: 300, height: 300 });
   await view.navigate(
     "data:text/html," +
@@ -611,7 +614,7 @@ it("scrollTo(selector) centers element in viewport", async () => {
   expect(top).toBeLessThan(100);
 });
 
-it("scrollTo(selector) waits for element to appear", async () => {
+itRendering("scrollTo(selector) waits for element to appear", async () => {
   await using view = new Bun.WebView({ width: 200, height: 200 });
   await view.navigate(
     "data:text/html," +
@@ -657,7 +660,7 @@ it("scrollTo(selector, { block }) controls alignment", async () => {
   expect(topEnd).toBeGreaterThan(140);
 });
 
-it("scrollTo(selector) rejects on timeout", async () => {
+itRendering("scrollTo(selector) rejects on timeout", async () => {
   await using view = new Bun.WebView({ width: 200, height: 200 });
   await view.navigate(html("<body></body>"));
   await expect(view.scrollTo("#nonexistent", { timeout: 150 })).rejects.toThrow(/timeout waiting for '#nonexistent'/);

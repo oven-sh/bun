@@ -359,6 +359,29 @@ struct NSProcessInfo : Ref {
     }
 };
 
+struct NSUserDefaults : Ref {
+    using Ref::Ref;
+    static Class cls;
+    static SEL s_standardUserDefaults;
+    static SEL s_setBool_forKey;
+
+    // WebViewImpl::WebViewImpl picks the DrawingArea type at construction.
+    // macOS 13's system WebKit defaults to TiledCoreAnimation; 14+ to
+    // RemoteLayerTree (when ENABLE(REMOTE_LAYER_TREE_ON_MAC_BY_DEFAULT) and
+    // cores>=4). scrollIPC's double presentation-update barrier only orders
+    // against scrollWheel: on the RemoteLayerTree path — under TiledCA the
+    // wheel goes to EventDispatcher's WorkQueue while the barrier goes to
+    // WebContent main, so the second barrier can Ack before the scroll lands.
+    // WebViewImpl checks this user-default first (WebViewImpl.mm:1328), so
+    // setting it forces RemoteLayerTree regardless of macOS version.
+    static void forceRemoteLayerTreeDrawingArea()
+    {
+        Ref d(msgCls<id>(cls, s_standardUserDefaults));
+        d.msg<void>(s_setBool_forKey, (signed char)1,
+            NSString::fromWTF("WebKit2UseRemoteLayerTreeDrawingArea"_s).m_id);
+    }
+};
+
 // NSEvent synthesis. WKWebView's mouseDown:/keyDown:/scrollWheel: are NSResponder
 // overrides — calling them directly dispatches to WebContent via XPC, trusted,
 // no window key/firstResponder gate in the basic path (verified in

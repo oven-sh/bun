@@ -81,6 +81,10 @@ SEL NSProcessInfo::s_processInfo;
 SEL NSProcessInfo::s_systemUptime;
 SEL NSProcessInfo::s_beginActivityWithOptions_reason;
 
+Class NSUserDefaults::cls;
+SEL NSUserDefaults::s_standardUserDefaults;
+SEL NSUserDefaults::s_setBool_forKey;
+
 Class NSEvent::cls;
 SEL NSEvent::s_mouseEventWithType;
 SEL NSEvent::s_keyEventWithType;
@@ -412,6 +416,10 @@ bool ObjCRuntime::load()
     NSProcessInfo::s_processInfo = sel("processInfo");
     NSProcessInfo::s_systemUptime = sel("systemUptime");
     NSProcessInfo::s_beginActivityWithOptions_reason = sel("beginActivityWithOptions:reason:");
+
+    CLS(NSUserDefaults::cls, "NSUserDefaults");
+    NSUserDefaults::s_standardUserDefaults = sel("standardUserDefaults");
+    NSUserDefaults::s_setBool_forKey = sel("setBool:forKey:");
 
     CLS(NSEvent::cls, "NSEvent");
     NSEvent::s_mouseEventWithType = sel("mouseEventWithType:location:modifierFlags:timestamp:windowNumber:context:eventNumber:clickCount:pressure:");

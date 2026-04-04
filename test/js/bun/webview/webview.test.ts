@@ -1,6 +1,6 @@
 import { dlopen, FFIType, ptr, toArrayBuffer } from "bun:ffi";
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isCI, isMacOS, tempDir } from "harness";
+import { bunEnv, bunExe, isCI, isMacOS, isMacOSVersionAtLeast, tempDir } from "harness";
 
 // FFI shm access for encoding:"shmem" tests. In real use Kitty (or
 // whoever opens the segment) does this — shm_open + mmap + read + unlink.
@@ -938,6 +938,7 @@ it("WebView.closeAll() kills the host subprocess and pending promises reject", a
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
   expect(stdout.trim()).toBe("rejected");
   expect(exitCode).toBe(0);
 });
@@ -1023,7 +1024,9 @@ it("process exits after close()", async () => {
   expect(exitCode).toBe(0);
 });
 
-it("persistent dataStore: localStorage survives across instances", async () => {
+// _WKWebsiteDataStoreConfiguration initWithDirectory: is macOS 15.2+.
+const itPersistentDataStore = isMacOS && isMacOSVersionAtLeast(15) ? test : test.skip;
+itPersistentDataStore("persistent dataStore: localStorage survives across instances", async () => {
   using dir = tempDir("webview-persist", {});
   // localStorage needs a real origin; data: URLs are opaque. Use a throwaway server.
   using server = Bun.serve({

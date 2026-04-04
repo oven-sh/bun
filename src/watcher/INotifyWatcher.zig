@@ -32,6 +32,11 @@ read_ptr: ?struct {
 watch_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
 /// nanoseconds
 coalesce_interval: isize = 100_000,
+/// Extra inotify mask bits OR'd into watch_file_mask/watch_dir_mask. Used by
+/// fs.watch() to subscribe to IN_ATTRIB (chmod/chown) and IN_MOVED_FROM
+/// (files moved out), matching libuv's mask. The bundler's watcher leaves
+/// this at 0 to avoid spurious rebuilds on metadata-only changes.
+extra_mask: u32 = 0,
 
 pub const EventListIndex = c_int;
 pub const Event = extern struct {
@@ -62,12 +67,17 @@ pub const Event = extern struct {
     }
 };
 
+// Baseline masks used by the bundler's hot-reload watcher. fs.watch()
+// (src/bun.js/node/path_watcher.zig) sets extra_mask to add IN_ATTRIB and
+// IN_MOVED_FROM so chmod/chown/move-out emit events like libuv does.
+const watch_file_mask = IN.EXCL_UNLINK | IN.MOVE_SELF | IN.DELETE_SELF | IN.MOVED_TO | IN.MODIFY;
+const watch_dir_mask = IN.EXCL_UNLINK | IN.DELETE | IN.DELETE_SELF | IN.CREATE | IN.MOVE_SELF | IN.ONLYDIR | IN.MOVED_TO | IN.MODIFY;
+
 pub fn watchPath(this: *INotifyWatcher, pathname: [:0]const u8) bun.sys.Maybe(EventListIndex) {
     bun.assert(this.loaded);
     const old_count = this.watch_count.fetchAdd(1, .release);
     defer if (old_count == 0) Futex.wake(&this.watch_count, 10);
-    const watch_file_mask = IN.EXCL_UNLINK | IN.MOVE_SELF | IN.DELETE_SELF | IN.MOVED_TO | IN.MODIFY;
-    const rc = system.inotify_add_watch(this.fd.cast(), pathname, watch_file_mask);
+    const rc = system.inotify_add_watch(this.fd.cast(), pathname, watch_file_mask | this.extra_mask);
     log("inotify_add_watch({f}) = {}", .{ this.fd, rc });
     return bun.sys.Maybe(EventListIndex).errnoSysP(rc, .watch, pathname) orelse
         .{ .result = rc };
@@ -77,8 +87,7 @@ pub fn watchDir(this: *INotifyWatcher, pathname: [:0]const u8) bun.sys.Maybe(Eve
     bun.assert(this.loaded);
     const old_count = this.watch_count.fetchAdd(1, .release);
     defer if (old_count == 0) Futex.wake(&this.watch_count, 10);
-    const watch_dir_mask = IN.EXCL_UNLINK | IN.DELETE | IN.DELETE_SELF | IN.CREATE | IN.MOVE_SELF | IN.ONLYDIR | IN.MOVED_TO | IN.MODIFY;
-    const rc = system.inotify_add_watch(this.fd.cast(), pathname, watch_dir_mask);
+    const rc = system.inotify_add_watch(this.fd.cast(), pathname, watch_dir_mask | this.extra_mask);
     log("inotify_add_watch({f}) = {}", .{ this.fd, rc });
     return bun.sys.Maybe(EventListIndex).errnoSysP(rc, .watch, pathname) orelse
         .{ .result = rc };
@@ -234,13 +243,20 @@ pub fn watchLoopCycle(this: *bun.Watcher) bun.sys.Maybe(void) {
     };
     if (events.len == 0) return .success;
 
+    // Hold Watcher.mutex for the entire event batch so watchlist cannot be
+    // reallocated by concurrent addDirectory/addFile calls (from WorkPool
+    // threads via DirectoryRegisterTask or NewSubdirBatch in path_watcher).
+    // Previously the lock was only held inside processINotifyEventBatch, but
+    // eventlist_index is captured here and used across multiple batches.
+    this.mutex.lock();
+    defer this.mutex.unlock();
+
     const eventlist_index = this.watchlist.items(.eventlist_index);
 
     var event_id: usize = 0;
     var events_processed: usize = 0;
 
     while (events_processed < events.len) {
-        var name_off: u8 = 0;
         var temp_name_list: [128]?[:0]u8 = undefined;
         var temp_name_off: u8 = 0;
 
@@ -257,7 +273,6 @@ pub fn watchLoopCycle(this: *bun.Watcher) bun.sys.Maybe(void) {
                 }
                 // Reset event_id to start a new batch
                 event_id = 0;
-                name_off = 0;
                 temp_name_off = 0;
             }
 
@@ -271,7 +286,6 @@ pub fn watchLoopCycle(this: *bun.Watcher) bun.sys.Maybe(void) {
                         .result => {},
                     }
                     event_id = 0;
-                    name_off = 0;
                     temp_name_off = 0;
                 }
             }
@@ -347,8 +361,7 @@ fn processINotifyEventBatch(this: *bun.Watcher, event_count: usize, temp_name_li
     }
     if (all_events.len == 0) return .success;
 
-    this.mutex.lock();
-    defer this.mutex.unlock();
+    // Watcher.mutex is held by watchLoopCycle for the entire event batch.
     if (this.running) {
         // all_events.len == 0 is checked above, so last_event_index + 1 is safe
         this.writeTraceEvents(all_events[0 .. last_event_index + 1], this.changed_filepaths[0..name_off]);
@@ -362,10 +375,12 @@ pub fn watchEventFromInotifyEvent(event: *align(1) const INotifyWatcher.Event, i
     return .{
         .op = .{
             .delete = (event.mask & IN.DELETE_SELF) > 0 or (event.mask & IN.DELETE) > 0,
-            .rename = (event.mask & IN.MOVE_SELF) > 0,
+            .metadata = (event.mask & IN.ATTRIB) > 0,
+            .rename = (event.mask & IN.MOVE_SELF) > 0 or (event.mask & IN.MOVED_FROM) > 0,
             .move_to = (event.mask & IN.MOVED_TO) > 0,
             .write = (event.mask & IN.MODIFY) > 0,
             .create = (event.mask & IN.CREATE) > 0,
+            .is_dir = (event.mask & IN.ISDIR) > 0,
         },
         .index = index,
     };

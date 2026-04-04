@@ -125,6 +125,13 @@ pub fn deinit(this: *Watcher, close_descriptors: bool) void {
                 fd.close();
             }
         }
+        // Free cloned file_path strings before freeing the backing arrays.
+        const slice = this.watchlist.slice();
+        const file_paths = slice.items(.file_path);
+        const owns = slice.items(.owns_file_path);
+        for (file_paths, owns) |fp, owned| {
+            if (owned) this.allocator.free(fp);
+        }
         this.watchlist.deinit(this.allocator);
         const allocator = this.allocator;
         allocator.destroy(this);
@@ -165,6 +172,14 @@ pub const WatchEvent = struct {
     }
 
     pub fn merge(this: *WatchEvent, other: WatchEvent) void {
+        // If the base event has no name but the merged one does, adopt
+        // the merged event's remapped name_off so names() indexes
+        // correctly.  Without this, a nameless IN_ATTRIB event sorted
+        // before a named IN_CREATE keeps its stale name_off, causing
+        // an OOB access in names().
+        if (this.name_len == 0 and other.name_len > 0) {
+            this.name_off = other.name_off;
+        }
         this.name_len += other.name_len;
         this.op = Op.merge(this.op, other.op);
     }
@@ -176,7 +191,8 @@ pub const WatchEvent = struct {
         write: bool = false,
         move_to: bool = false,
         create: bool = false,
-        _padding: u2 = 0,
+        is_dir: bool = false,
+        _padding: u1 = 0,
 
         pub fn merge(before: Op, after: Op) Op {
             return .{
@@ -186,6 +202,7 @@ pub const WatchEvent = struct {
                 .rename = before.rename or after.rename,
                 .move_to = before.move_to or after.move_to,
                 .create = before.create or after.create,
+                .is_dir = before.is_dir or after.is_dir,
             };
         }
 
@@ -218,6 +235,9 @@ pub const WatchItem = struct {
     kind: Kind,
     package_json: ?*PackageJSON,
     eventlist_index: if (Environment.isLinux) Platform.EventListIndex else u0 = 0,
+    /// true when file_path was heap-allocated by dupeZ (clone_file_path=true)
+    /// and must be freed on eviction/deinit.
+    owns_file_path: bool = false,
 
     pub const Kind = enum { file, directory };
 };
@@ -248,6 +268,15 @@ fn threadMain(this: *Watcher) !void {
             fd.close();
         }
     }
+    // Free cloned file_path strings before freeing backing arrays.
+    {
+        const slice = this.watchlist.slice();
+        const file_paths = slice.items(.file_path);
+        const owns = slice.items(.owns_file_path);
+        for (file_paths, owns) |fp, owned| {
+            if (owned) this.allocator.free(fp);
+        }
+    }
     this.watchlist.deinit(this.allocator);
 
     // Close trace file if open
@@ -273,6 +302,8 @@ pub fn flushEvictions(this: *Watcher) void {
 
     var slice = this.watchlist.slice();
     const fds = slice.items(.fd);
+    const file_paths = slice.items(.file_path);
+    const owns = slice.items(.owns_file_path);
     var last_item = no_watch_item;
 
     for (this.evict_list[0..this.evict_list_i]) |item| {
@@ -285,6 +316,10 @@ pub fn flushEvictions(this: *Watcher) void {
             if (fds[item].isValid()) {
                 fds[item].close();
             }
+        }
+        // Free cloned file_path strings (from clone_file_path=true).
+        if (owns[item]) {
+            this.allocator.free(file_paths[item]);
         }
         last_item = item;
     }
@@ -386,6 +421,7 @@ fn appendFileAssumeCapacity(
         .parent_hash = parent_hash,
         .package_json = package_json,
         .kind = .file,
+        .owns_file_path = clone_file_path,
     };
 
     if (comptime Environment.isMac) {
@@ -448,6 +484,7 @@ fn appendDirectoryAssumeCapacity(
         .parent_hash = parent_hash,
         .kind = .directory,
         .package_json = null,
+        .owns_file_path = clone_file_path,
     };
 
     if (Environment.isMac) {
@@ -731,12 +768,14 @@ pub fn indexOf(this: *Watcher, hash: HashType) ?u32 {
     return null;
 }
 
-pub fn remove(this: *Watcher, hash: HashType) void {
+pub fn remove(this: *Watcher, hash: HashType) bool {
     this.mutex.lock();
     defer this.mutex.unlock();
     if (this.indexOf(hash)) |index| {
         this.removeAtIndex(@truncate(index), hash, &[_]HashType{}, .file);
+        return true;
     }
+    return false;
 }
 
 pub fn removeAtIndex(this: *Watcher, index: WatchItemIndex, hash: HashType, parents: []HashType, comptime kind: WatchItem.Kind) void {

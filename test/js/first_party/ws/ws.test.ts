@@ -940,6 +940,28 @@ describe("WebSocket handshake events", () => {
     }
   });
 
+  it("keeps 'set-cookie' as array and trims whitespace (Node compat)", async () => {
+    const server = await rawServer(
+      "HTTP/1.1 503 Service Unavailable\r\n" +
+        "Set-Cookie: a=1\r\n" +
+        "Set-Cookie: b=2\r\n" +
+        "X-Multi: foo  \r\n" +
+        "X-Multi:   bar  \r\n\r\n",
+    );
+    const { promise, resolve } = Promise.withResolvers<IncomingMessage>();
+    try {
+      const ws = new WebSocket("ws://127.0.0.1:" + (server.address() as AddressInfo).port);
+      ws.once("unexpected-response", (_req, res) => resolve(res));
+      const res = await promise;
+      expect(res.headers["set-cookie"]).toEqual(["a=1", "b=2"]);
+      expect(res.headers["x-multi"]).toBe("foo, bar");
+      expect(res.rawHeaders).toEqual(["Set-Cookie", "a=1", "Set-Cookie", "b=2", "X-Multi", "foo", "X-Multi", "bar"]);
+      await once(ws, "close");
+    } finally {
+      server.close();
+    }
+  });
+
   it("emits 'error' with status code when no 'unexpected-response' listener", async () => {
     const server = await rawServer("HTTP/1.1 503 Service Unavailable\r\n\r\n");
     const { promise, resolve } = Promise.withResolvers<Error>();

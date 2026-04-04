@@ -107,11 +107,19 @@ function makeHandshakeResponse(statusCode, head, body) {
     const name = line.slice(0, colon);
     let v = colon + 1;
     while (line.charCodeAt(v) === 32 || line.charCodeAt(v) === 9) v++;
-    const value = line.slice(v);
+    let end = line.length;
+    while (end > v && (line.charCodeAt(end - 1) === 32 || line.charCodeAt(end - 1) === 9)) end--;
+    const value = line.slice(v, end);
     rawHeaders.push(name, value);
     const lower = name.toLowerCase();
-    const prev = headers[lower];
-    headers[lower] = prev === undefined ? value : prev + ", " + value;
+    if (lower === "set-cookie") {
+      const prev = headers[lower];
+      if (prev === undefined) headers[lower] = [value];
+      else prev.push(value);
+    } else {
+      const prev = headers[lower];
+      headers[lower] = prev === undefined ? value : prev + ", " + value;
+    }
   }
   res.statusCode = statusCode;
   res.statusMessage = statusMessage;

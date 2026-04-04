@@ -17,5 +17,6 @@ JSC::JSObject* createBunObject(VM& vm, JSObject* globalObject);
 
 JSC::JSObject* BunShell(JSGlobalObject* globalObject);
 JSC::JSValue ShellError(JSGlobalObject* globalObject);
+JSC::JSObject* createRedisErrorConstructor(VM& vm, JSGlobalObject* globalObject);
 
 }

@@ -27,6 +27,7 @@ describe.skipIf(!isEnabled)("Valkey: Connection Failures", () => {
         expect(false).toBe(true); // Should not reach here
       } catch (error) {
         // Expect an error with connection closed message
+        expect(error).toBeInstanceOf(Bun.RedisError);
         expect(error.message).toMatch(/connection closed|socket closed|failed to connect/i);
       } finally {
         // Cleanup
@@ -85,9 +86,16 @@ describe.skipIf(!isEnabled)("Valkey: Connection Failures", () => {
         connectionTimeout: 2, // 2ms second timeout
         autoReconnect: false,
       });
-      expect(async () => {
+      try {
         await client.get("any-key");
-      }).toThrowErrorMatchingInlineSnapshot(`"Connection timeout reached after 2ms"`);
+        expect.unreachable();
+      } catch (error: any) {
+        expect(error).toBeInstanceOf(Bun.RedisError);
+        expect(error.code).toBe("ERR_REDIS_CONNECTION_TIMEOUT");
+        expect(error.message).toBe("Connection timeout reached after 2ms");
+      } finally {
+        await client.close();
+      }
     });
 
     test("should report correct connected status", async () => {

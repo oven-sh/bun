@@ -5,7 +5,6 @@ mode: center
 ---
 
 Bun provides a handful of module-specific utilities on the [`import.meta`](/runtime/module-resolution#import-meta) object. Use `import.meta.main` to check if the current file is the entrypoint of the current process.
-
 ```ts index.ts icon="/icons/typescript.svg"
 if (import.meta.main) {
   // this file is directly executed with `bun run`
@@ -14,6 +13,95 @@ if (import.meta.main) {
 }
 ```
 
+Returns `true` when you run the file directly (like `bun run index.ts`), and `false` when it's imported by another file.
+
+## Why would you use this?
+
+### Making CLI tools that are also libraries
+
+Sometimes you want a file that works both as a command-line tool and as something other files can import. Here's how:
+```ts greet.ts icon="/icons/typescript.svg"
+export function greet(name: string): string {
+  return `Hello, ${name}!`;
+}
+
+if (import.meta.main) {
+  const name = process.argv[2] || "World";
+  console.log(greet(name));
+}
+```
+
+Now you can use it both ways:
+```bash
+bun run greet.ts Alice
+# Hello, Alice!
+```
+```ts main.ts icon="/icons/typescript.svg"
+import { greet } from "./greet.ts";
+
+console.log(greet("Bob"));  // Hello, Bob!
+```
+
+### Running tests in the same file
+
+You can write quick tests that only run when you execute the file directly:
+```ts calculator.ts icon="/icons/typescript.svg"
+export function add(a: number, b: number): number {
+  return a + b;
+}
+
+export function multiply(a: number, b: number): number {
+  return a * b;
+}
+
+if (import.meta.main) {
+  console.assert(add(2, 3) === 5);
+  console.assert(multiply(4, 5) === 20);
+  console.log("Tests passed!");
+}
+```
+
+### Adding example usage to your modules
+
+Drop in some example code that people can run to see how your module works:
+```ts api-client.ts icon="/icons/typescript.svg"
+export class APIClient {
+  constructor(private baseURL: string) {}
+  
+  async get(endpoint: string) {
+    const response = await fetch(`${this.baseURL}${endpoint}`);
+    return response.json();
+  }
+}
+
+if (import.meta.main) {
+  const client = new APIClient("https://jsonplaceholder.typicode.com");
+  const data = await client.get("/posts/1");
+  console.log("Example response:", data);
+}
+```
+
+## Coming from Node.js?
+
+If you've used Node.js before, `import.meta.main` replaces the more awkward patterns you might be used to:
+```js
+// Node.js (CommonJS)
+if (require.main === module) {
+  // ...
+}
+
+// Node.js (ESM)
+import { fileURLToPath } from "url";
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  // ...
+}
+
+// Bun - much simpler
+if (import.meta.main) {
+  // ...
+}
+```
+
 ---
 
-See [Docs > API > import.meta](/runtime/module-resolution#import-meta) for complete documentation.
+See [Module Resolution](/runtime/module-resolution#import-meta) for more on `import.meta`.

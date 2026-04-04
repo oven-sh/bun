@@ -10,11 +10,7 @@ async function runMd(source: string, env: Record<string, string> = {}) {
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
   expect(exitCode).toBe(0);
   return stdout;
@@ -23,27 +19,12 @@ async function runMd(source: string, env: Record<string, string> = {}) {
 describe("bun <file.md>", () => {
   test("renders headings with underlines", async () => {
     expect(
-      await runMd(
-        [
-          "# Heading 1",
-          "",
-          "## Heading 2",
-          "",
-          "### Heading 3",
-          "",
-          "body",
-          "",
-        ].join("\n"),
-      ),
+      await runMd(["# Heading 1", "", "## Heading 2", "", "### Heading 3", "", "body", ""].join("\n")),
     ).toMatchSnapshot();
   });
 
   test("renders bold, italic, strikethrough, inline code", async () => {
-    expect(
-      await runMd(
-        "**bold** *italic* ~~strike~~ `code` regular\n",
-      ),
-    ).toMatchSnapshot();
+    expect(await runMd("**bold** *italic* ~~strike~~ `code` regular\n")).toMatchSnapshot();
   });
 
   test("renders ordered, unordered, and task lists", async () => {
@@ -67,93 +48,39 @@ describe("bun <file.md>", () => {
   });
 
   test("renders blockquotes and nested blockquotes", async () => {
-    expect(
-      await runMd(
-        [
-          "> A quote",
-          ">",
-          "> > Nested quote",
-          "",
-        ].join("\n"),
-      ),
-    ).toMatchSnapshot();
+    expect(await runMd(["> A quote", ">", "> > Nested quote", ""].join("\n"))).toMatchSnapshot();
   });
 
   test("renders horizontal rules", async () => {
-    expect(
-      await runMd(
-        [
-          "above",
-          "",
-          "---",
-          "",
-          "below",
-          "",
-        ].join("\n"),
-      ),
-    ).toMatchSnapshot();
+    expect(await runMd(["above", "", "---", "", "below", ""].join("\n"))).toMatchSnapshot();
   });
 
   test("renders fenced code block with JS syntax highlighting", async () => {
     expect(
-      await runMd(
-        [
-          "```js",
-          'const name = "world";',
-          "console.log(`hello ${name}`);",
-          "```",
-          "",
-        ].join("\n"),
-      ),
+      await runMd(["```js", 'const name = "world";', "console.log(`hello ${name}`);", "```", ""].join("\n")),
     ).toMatchSnapshot();
   });
 
   test("renders fenced code block without language", async () => {
-    expect(
-      await runMd(
-        [
-          "```",
-          "plain text",
-          "no highlighting",
-          "```",
-          "",
-        ].join("\n"),
-      ),
-    ).toMatchSnapshot();
+    expect(await runMd(["```", "plain text", "no highlighting", "```", ""].join("\n"))).toMatchSnapshot();
   });
 
   test("renders hyperlinks with OSC 8 escape sequence", async () => {
-    expect(
-      await runMd(
-        "Visit [Bun](https://bun.com) today.\n",
-      ),
-    ).toMatchSnapshot();
+    expect(await runMd("Visit [Bun](https://bun.com) today.\n")).toMatchSnapshot();
   });
 
   test("renders hyperlinks without OSC 8 when no TTY", async () => {
     // The spawned process doesn't have a TTY on stdout so hyperlinks fall
     // back to "text (url)" format. This is the default for runMd().
-    expect(
-      await runMd(
-        "see [Bun](https://bun.com)\n",
-      ),
-    ).toMatchSnapshot();
+    expect(await runMd("see [Bun](https://bun.com)\n")).toMatchSnapshot();
   });
 
   test("renders images as alt text with link", async () => {
-    expect(
-      await runMd(
-        "![an image](https://bun.com/logo.png)\n",
-      ),
-    ).toMatchSnapshot();
+    expect(await runMd("![an image](https://bun.com/logo.png)\n")).toMatchSnapshot();
   });
 
   test("renders wikilinks", async () => {
-    expect(
-      await runMd(
-        "see [[SomePage]] for more\n",
-      ),
-    ).toMatchSnapshot();
+    expect(await runMd("see [[SomePage]] for more\n")).toMatchSnapshot();
   });
 
   test("renders simple table with alignment", async () => {
@@ -201,38 +128,17 @@ describe("bun <file.md>", () => {
 
   test("renders combining characters without breaking alignment", async () => {
     expect(
-      await runMd(
-        [
-          "| Name   | Note |",
-          "|:-------|:-----|",
-          "| café   | hot  |",
-          "| naïve  | ok   |",
-          "",
-        ].join("\n"),
-      ),
+      await runMd(["| Name   | Note |", "|:-------|:-----|", "| café   | hot  |", "| naïve  | ok   |", ""].join("\n")),
     ).toMatchSnapshot();
   });
 
   test("renders mixed inline styles with autolinks", async () => {
-    expect(
-      await runMd(
-        "Check **https://bun.com** and <me@example.com>!\n",
-      ),
-    ).toMatchSnapshot();
+    expect(await runMd("Check **https://bun.com** and <me@example.com>!\n")).toMatchSnapshot();
   });
 
   test("renders nested lists", async () => {
     expect(
-      await runMd(
-        [
-          "- outer",
-          "  - inner 1",
-          "  - inner 2",
-          "    - deep",
-          "- second outer",
-          "",
-        ].join("\n"),
-      ),
+      await runMd(["- outer", "  - inner 1", "  - inner 2", "    - deep", "- second outer", ""].join("\n")),
     ).toMatchSnapshot();
   });
 
@@ -250,11 +156,7 @@ describe("bun <file.md>", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
     // No escape characters expected
@@ -271,11 +173,7 @@ describe("bun <file.md>", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
     expect(stdout).toMatchSnapshot();
@@ -290,11 +188,7 @@ describe("bun <file.md>", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
     expect(stdout).toMatchSnapshot();

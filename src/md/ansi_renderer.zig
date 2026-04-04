@@ -653,9 +653,11 @@ pub const AnsiRenderer = struct {
                 self.last_was_newline = true;
                 self.col = 0;
                 i += 1;
-                if (i < data.len) {
-                    self.writeIndent();
-                }
+                // Always re-emit the indent after a newline, even when
+                // this is the final byte of `data` — a hard break
+                // (`text(.br)`) arrives as a lone "\n" and the next
+                // text() call starts at col=0 with no indent pushed.
+                self.writeIndent();
                 continue;
             }
             if (c == ' ' and self.col >= max) {
@@ -1264,9 +1266,17 @@ pub const AnsiRenderer = struct {
         // always fall back to alt-text rendering.
         const kitty_allowed = !self.in_cell and self.heading_level == 0;
         if (kitty_allowed and self.theme.colors and self.theme.kitty_graphics and has_src) {
+            // data:image/png;base64,... → transmit payload directly via
+            // t=d so no temp file needs to live on disk. Other data:
+            // formats (jpeg/gif/webp) don't map to a Kitty format code
+            // for direct transmission, so fall through to alt text.
+            if (extractPngDataUrlBase64(src.?)) |payload| {
+                self.emitKittyImageDirect(payload);
+                return;
+            }
             if (resolveLocalImagePath(src.?, self.allocator)) |abs_path| {
                 defer self.allocator.free(abs_path);
-                self.emitKittyImage(abs_path);
+                self.emitKittyImageFile(abs_path);
                 return;
             }
         }
@@ -1300,28 +1310,30 @@ pub const AnsiRenderer = struct {
 
     /// Emit a Kitty Graphics Protocol transmit-and-display sequence for
     /// the absolute file `path`. Uses `t=f` (transmission medium = regular
-    /// file by path) so the terminal reads the file directly — no need
-    /// to base64 the pixels. Terminals that don't understand the APC
-    /// sequence will silently drop it.
-    fn emitKittyImage(self: *AnsiRenderer, path: []const u8) void {
+    /// file by path) so the terminal reads the file directly. Terminals
+    /// that don't understand the APC sequence silently drop it.
+    fn emitKittyImageFile(self: *AnsiRenderer, path: []const u8) void {
         // Base64-encode the file path (Kitty expects the payload to be b64).
         const encoded_len = bun.base64.encodeLen(path);
         const encoded = self.allocator.alloc(u8, encoded_len) catch return;
         defer self.allocator.free(encoded);
         _ = bun.base64.encode(encoded, path);
-
-        // APC sequence: \x1b_G<control>;<payload>\x1b\
-        //   a=T  : transmit and display
-        //   t=f  : transmission medium = regular file (by path)
-        //   f=100: format = file (kitty auto-detects PNG/JPEG/etc.)
-        //   q=2  : suppress OK + error responses (don't pollute stdin)
         self.writeRawNoColor("\x1b_Ga=T,t=f,f=100,q=2;");
         self.writeRawNoColor(encoded);
         self.writeRawNoColor("\x1b\\");
-        // End with a newline so the following caption/alt text lands
-        // on its own line under the image. Route through writeRaw so
-        // the byte lands in the active buffer (cell/heading) when the
-        // image is rendered inside a table or heading.
+        self.writeRaw("\n");
+        self.col = 0;
+        self.last_was_newline = true;
+    }
+
+    /// Emit a Kitty Graphics Protocol transmit-and-display sequence with
+    /// the PNG bytes encoded directly in the APC payload via `t=d`. The
+    /// `base64_payload` is already the base64 body of a `data:image/png`
+    /// URL, so we forward it as-is — no temp file, no re-encoding.
+    fn emitKittyImageDirect(self: *AnsiRenderer, base64_payload: []const u8) void {
+        self.writeRawNoColor("\x1b_Ga=T,t=d,f=100,q=2;");
+        self.writeRawNoColor(base64_payload);
+        self.writeRawNoColor("\x1b\\");
         self.writeRaw("\n");
         self.col = 0;
         self.last_was_newline = true;
@@ -1532,16 +1544,13 @@ fn probeKittyGraphics() bool {
 fn resolveLocalImagePath(src: []const u8, allocator: Allocator) ?[]u8 {
     // Reject remote schemes. A renderer-level prefetch pass can feed
     // http(s) URLs into the renderer via a lookup table as local paths.
+    // data: URIs are handled separately in emitImage via direct Kitty
+    // transmission (t=d) to avoid creating temp files.
     if (bun.strings.startsWith(src, "http://") or
-        bun.strings.startsWith(src, "https://"))
+        bun.strings.startsWith(src, "https://") or
+        bun.strings.startsWith(src, "data:"))
     {
         return null;
-    }
-
-    // data: URIs — decode the base64 payload and write it to a
-    // temp file so Kitty's t=f (file path) transmission can load it.
-    if (bun.strings.startsWith(src, "data:")) {
-        return decodeDataUrlToTempFile(src, allocator);
     }
 
     // Strip file:// prefix + optional `localhost` authority, then
@@ -1583,57 +1592,20 @@ fn resolveLocalImagePath(src: []const u8, allocator: Allocator) ?[]u8 {
 // Public entry point
 // ========================================
 
-/// Decode a `data:` URI's base64 payload and write it to a uniquely-
-/// named temp file. Returns the temp file path (owned by caller) so
-/// Kitty's `t=f` (file path) transmission can display it. Falls back
-/// to null on any parse/decode/write error.
-fn decodeDataUrlToTempFile(src: []const u8, allocator: Allocator) ?[]u8 {
-    // Format: `data:<mediatype>[;base64],<data>` — only base64 payloads
-    // support binary image bytes.
+/// Extract the base64 body of a `data:image/png;base64,...` URI. Returns
+/// a slice into `src` (no allocation) that's the direct payload Kitty
+/// can consume via `t=d,f=100`. Non-PNG data URIs return null because
+/// Kitty's format codes (`f=100` PNG, `f=24` RGB, `f=32` RGBA) don't
+/// cover JPEG/GIF/WebP binary input.
+fn extractPngDataUrlBase64(src: []const u8) ?[]const u8 {
+    if (!bun.strings.startsWith(src, "data:")) return null;
     const comma = bun.strings.indexOfChar(src, ',') orelse return null;
     const header = src[0..comma];
     const payload = src[comma + 1 ..];
     if (!bun.strings.endsWith(header, ";base64")) return null;
-
-    const decoded = bun.base64.decodeAlloc(allocator, payload) catch return null;
-    defer allocator.free(decoded);
-
-    // Pick a short unique filename inside the OS tmpdir so Kitty can
-    // `t=f` open it. The extension is best-effort from the mediatype —
-    // Kitty auto-detects from magic bytes either way.
-    const ext: []const u8 = if (bun.strings.contains(header, "image/png")) ".png" else if (bun.strings.contains(header, "image/jpeg") or bun.strings.contains(header, "image/jpg")) ".jpg" else if (bun.strings.contains(header, "image/gif")) ".gif" else if (bun.strings.contains(header, "image/webp")) ".webp" else ".bin";
-    var name_buf: [64]u8 = undefined;
-    const name = std.fmt.bufPrint(&name_buf, "bun-md-{x}{s}", .{ bun.fastRandom(), ext }) catch return null;
-    const tmpdir = bun.fs.FileSystem.RealFS.tmpdirPath();
-    const path = std.fmt.allocPrint(allocator, "{s}/{s}", .{ tmpdir, name }) catch return null;
-
-    // Write the bytes. Any error → free the path + drop the fd.
-    // Function returns ?[]u8 (not error union), so errdefer is dead.
-    const fd = switch (bun.sys.openA(path, bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC, 0o600)) {
-        .result => |f| f,
-        .err => {
-            allocator.free(path);
-            return null;
-        },
-    };
-    defer fd.close();
-    var written: usize = 0;
-    while (written < decoded.len) {
-        switch (bun.sys.write(fd, decoded[written..])) {
-            .result => |n| {
-                if (n == 0) {
-                    allocator.free(path);
-                    return null;
-                }
-                written += n;
-            },
-            .err => {
-                allocator.free(path);
-                return null;
-            },
-        }
-    }
-    return path;
+    // Only PNG is losslessly transmittable via t=d,f=100.
+    if (!bun.strings.contains(header, "image/png")) return null;
+    return payload;
 }
 
 /// Render markdown text to ANSI. Caller owns the returned bytes.

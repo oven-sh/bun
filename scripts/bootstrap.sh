@@ -1130,7 +1130,18 @@ install_llvm() {
 			"clang$(llvm_version)" \
 			"scudo-malloc" \
 			"lld$(llvm_version)" \
-			"llvm$(llvm_version)-dev" # Ensures llvm-symbolizer is installed
+			"llvm$(llvm_version)-dev"
+		# Alpine uses versioned binary names (e.g. llvm-symbolizer-21, llvm21-symbolizer).
+		# Create unversioned symlinks so tools like bun-tracestrings can find them.
+		if ! command -v llvm-symbolizer > /dev/null 2>&1; then
+			local llvm_v="$(llvm_version)"
+			# Try Debian-style naming (llvm-symbolizer-21), then Alpine-style (llvm21-symbolizer)
+			if command -v "llvm-symbolizer-${llvm_v}" > /dev/null 2>&1; then
+				execute_sudo ln -sf "$(which "llvm-symbolizer-${llvm_v}")" /usr/bin/llvm-symbolizer
+			elif command -v "llvm${llvm_v}-symbolizer" > /dev/null 2>&1; then
+				execute_sudo ln -sf "$(which "llvm${llvm_v}-symbolizer")" /usr/bin/llvm-symbolizer
+			fi
+		fi
 		;;
 	esac
 }

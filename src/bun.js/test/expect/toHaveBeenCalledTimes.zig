@@ -13,7 +13,7 @@ pub fn toHaveBeenCalledTimes(this: *Expect, globalThis: *JSGlobalObject, callfra
     if (!calls.jsType().isArray()) {
         var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
         defer formatter.deinit();
-        return globalThis.throw("Expected value must be a mock function: {f}", .{value.toFmt(&formatter)});
+        return globalThis.throw("Received value must be a mock function: {f}", .{value.toFmt(&formatter)});
     }
 
     if (arguments.len < 1 or !arguments[0].isUInt32AsAnyInt()) {

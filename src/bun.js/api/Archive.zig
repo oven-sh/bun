@@ -184,7 +184,14 @@ fn buildTarballFromObject(globalThis: *jsc.JSGlobalObject, obj: jsc.JSValue) bun
     defer _ = archive.writeFree();
 
     if (archive.writeSetFormatPaxRestricted() != .ok) {
-        return globalThis.throwInvalidArguments("Failed to create tarball: ArchiveFormatError", .{});
+        return globalThis.throwInvalidArguments("Failed to create tarball: ArchiveFormatError: {s}", .{archive.errorString()});
+    }
+
+    // Disable charset conversion so non-ASCII UTF-8 filenames work without
+    // iconv (which is not enabled in this build). BINARY mode stores bytes
+    // as-is, which is correct since our filenames are already valid UTF-8.
+    if (archive.writeSetOptions("hdrcharset=BINARY") != .ok) {
+        return globalThis.throwInvalidArguments("Failed to create tarball: ArchiveOptionError: {s}", .{archive.errorString()});
     }
 
     if (lib.archive_write_open2(
@@ -195,7 +202,7 @@ fn buildTarballFromObject(globalThis: *jsc.JSGlobalObject, obj: jsc.JSValue) bun
         &lib.GrowingBuffer.closeCallback,
         null,
     ) != 0) {
-        return globalThis.throwInvalidArguments("Failed to create tarball: ArchiveOpenError", .{});
+        return globalThis.throwInvalidArguments("Failed to create tarball: ArchiveOpenError: {s}", .{archive.errorString()});
     }
 
     const entry = lib.Archive.Entry.new();
@@ -229,25 +236,28 @@ fn buildTarballFromObject(globalThis: *jsc.JSGlobalObject, obj: jsc.JSValue) bun
         // Write entry to archive
         const data = data_slice.slice();
         _ = entry.clear();
-        entry.setPathnameUtf8(key_str);
+        if (comptime bun.Environment.isWindows)
+            entry.setPathnameUtf8(key_str)
+        else
+            entry.setPathname(key_str);
         entry.setSize(@intCast(data.len));
         entry.setFiletype(@intFromEnum(lib.FileType.regular));
         entry.setPerm(0o644);
         entry.setMtime(now_secs, 0);
 
         if (archive.writeHeader(entry) != .ok) {
-            return globalThis.throwInvalidArguments("Failed to create tarball: ArchiveHeaderError", .{});
+            return globalThis.throwInvalidArguments("Failed to create tarball: ArchiveHeaderError: {s}", .{archive.errorString()});
         }
         if (archive.writeData(data) < 0) {
-            return globalThis.throwInvalidArguments("Failed to create tarball: ArchiveWriteError", .{});
+            return globalThis.throwInvalidArguments("Failed to create tarball: ArchiveWriteError: {s}", .{archive.errorString()});
         }
         if (archive.writeFinishEntry() != .ok) {
-            return globalThis.throwInvalidArguments("Failed to create tarball: ArchiveFinishEntryError", .{});
+            return globalThis.throwInvalidArguments("Failed to create tarball: ArchiveFinishEntryError: {s}", .{archive.errorString()});
         }
     }
 
     if (archive.writeClose() != .ok) {
-        return globalThis.throwInvalidArguments("Failed to create tarball: ArchiveCloseError", .{});
+        return globalThis.throwInvalidArguments("Failed to create tarball: ArchiveCloseError: {s}", .{archive.errorString()});
     }
 
     return growing_buffer.toOwnedSlice() catch {
@@ -815,7 +825,16 @@ const FilesContext = struct {
         while (archive.readNextHeader(&entry) == .ok) {
             if (entry.filetype() != @intFromEnum(lib.FileType.regular)) continue;
 
-            const pathname = entry.pathnameUtf8();
+            const pathname: [:0]const u8 = if (comptime bun.Environment.isWindows) blk: {
+                const pathname_w = entry.pathnameW();
+                var list = bun.handleOom(bun.strings.toUTF8ListWithType(
+                    std.array_list.Managed(u8).init(bun.default_allocator),
+                    pathname_w,
+                ));
+                defer list.deinit();
+                break :blk bun.handleOom(bun.default_allocator.dupeZ(u8, list.items));
+            } else entry.pathname();
+            defer if (comptime bun.Environment.isWindows) bun.default_allocator.free(pathname);
             // Apply glob pattern filtering (supports both positive and negative patterns)
             if (this.glob_patterns) |patterns| {
                 if (!matchGlobPatterns(patterns, pathname)) continue;
@@ -1019,7 +1038,16 @@ fn extractToDiskFiltered(
     var entry: *lib.Archive.Entry = undefined;
 
     while (archive.readNextHeader(&entry) == .ok) {
-        const pathname = entry.pathnameUtf8();
+        const pathname: [:0]const u8 = if (comptime bun.Environment.isWindows) blk: {
+            const pathname_w = entry.pathnameW();
+            var list = bun.handleOom(bun.strings.toUTF8ListWithType(
+                std.array_list.Managed(u8).init(bun.default_allocator),
+                pathname_w,
+            ));
+            defer list.deinit();
+            break :blk bun.handleOom(bun.default_allocator.dupeZ(u8, list.items));
+        } else entry.pathname();
+        defer if (comptime bun.Environment.isWindows) bun.default_allocator.free(pathname);
 
         // Validate path safety (reject absolute paths, path traversal)
         if (!isSafePath(pathname)) continue;

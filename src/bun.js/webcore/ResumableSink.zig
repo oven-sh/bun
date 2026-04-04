@@ -95,8 +95,8 @@ pub fn ResumableSink(
 
                         var bytes = byte_stream.drain();
                         defer bytes.deinit(bun.default_allocator);
-                        log("onWrite {}", .{bytes.len});
-                        _ = onWrite(this.context, bytes.slice());
+                        log("onWrite {}", .{bytes.items.len});
+                        _ = onWrite(this.context, bytes.items);
                         onEnd(this.context, err);
                         this.deref();
                         return this;
@@ -105,11 +105,11 @@ pub fn ResumableSink(
                     var bytes = byte_stream.drain();
                     defer bytes.deinit(bun.default_allocator);
                     // lets write and see if we can still pipe or if we have backpressure
-                    if (bytes.len > 0) {
-                        log("onWrite {}", .{bytes.len});
+                    if (bytes.items.len > 0) {
+                        log("onWrite {}", .{bytes.items.len});
                         // we ignore the return value here because we dont want to pause the stream
                         // if we pause will just buffer in the pipe and we can do the buffer in one place
-                        _ = onWrite(this.context, bytes.slice());
+                        _ = onWrite(this.context, bytes.items);
                     }
                     this.status = .piped;
                     byte_stream.pipe = jsc.WebCore.Pipe.Wrap(@This(), onStreamPipe).init(this);

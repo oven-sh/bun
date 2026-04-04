@@ -461,29 +461,48 @@ fn isPulling(this: *const FileReader) bool {
 pub fn onPull(this: *FileReader, buffer: []u8, array: jsc.JSValue) streams.Result {
     array.ensureStillAlive();
     defer array.ensureStillAlive();
-    const drained = this.drain();
+    var drained = this.drain();
 
-    if (drained.len > 0) {
-        log("onPull({d}) = {d}", .{ buffer.len, drained.len });
+    if (drained.items.len > 0) {
+        log("onPull({d}) = {d}", .{ buffer.len, drained.items.len });
 
         this.pending_value.clearWithoutDeallocation();
         this.pending_view = &.{};
 
-        if (buffer.len >= @as(usize, drained.len)) {
-            @memcpy(buffer[0..drained.len], drained.slice());
+        if (buffer.len >= drained.items.len) {
+            @memcpy(buffer[0..drained.items.len], drained.items);
+            drained.deinit(bun.default_allocator);
             this.buffered.clearAndFree(bun.default_allocator);
 
             if (this.reader.isDone()) {
-                return .{ .into_array_and_done = .{ .value = array, .len = drained.len } };
+                return .{ .into_array_and_done = .{ .value = array, .len = @truncate(drained.items.len) } };
             } else {
-                return .{ .into_array = .{ .value = array, .len = drained.len } };
+                return .{ .into_array = .{ .value = array, .len = @truncate(drained.items.len) } };
             }
         }
 
+        // If the drained data fits in a ByteList (<=4GB), return as owned.
+        if (drained.items.len <= std.math.maxInt(u32)) {
+            const byte_list = bun.ByteList.fromOwnedSlice(drained.items);
+            if (this.reader.isDone()) {
+                return .{ .owned_and_done = byte_list };
+            } else {
+                return .{ .owned = byte_list };
+            }
+        }
+
+        // Drained data exceeds ByteList capacity (>4GB): copy what fits into the
+        // caller's buffer and re-buffer the rest for subsequent pulls.
+        @memcpy(buffer, drained.items[0..buffer.len]);
+        const remaining = drained.items.len - buffer.len;
+        std.mem.copyForwards(u8, drained.items[0..remaining], drained.items[buffer.len..]);
+        drained.items.len = remaining;
+        this.buffered = drained;
+
         if (this.reader.isDone()) {
-            return .{ .owned_and_done = drained };
+            return .{ .into_array_and_done = .{ .value = array, .len = @truncate(buffer.len) } };
         } else {
-            return .{ .owned = drained };
+            return .{ .into_array = .{ .value = array, .len = @truncate(buffer.len) } };
         }
     }
 
@@ -555,12 +574,13 @@ pub fn onPull(this: *FileReader, buffer: []u8, array: jsc.JSValue) streams.Resul
     return .{ .pending = &this.pending };
 }
 
-pub fn drain(this: *FileReader) bun.ByteList {
+pub fn drain(this: *FileReader) std.ArrayListUnmanaged(u8) {
     if (this.buffered.items.len > 0) {
-        const out = bun.ByteList.moveFromList(&this.buffered);
+        const out = this.buffered;
         if (comptime Environment.allow_assert) {
-            bun.assert(this.reader.buffer().items.ptr != out.ptr);
+            bun.assert(this.reader.buffer().items.ptr != out.items.ptr);
         }
+        this.buffered = .{};
         return out;
     }
 
@@ -568,7 +588,7 @@ pub fn drain(this: *FileReader) bun.ByteList {
         return .{};
     }
 
-    return bun.ByteList.moveFromList(this.reader.buffer());
+    return this.reader.buffer().moveToUnmanaged();
 }
 
 pub fn setRefOrUnref(this: *FileReader, enable: bool) void {

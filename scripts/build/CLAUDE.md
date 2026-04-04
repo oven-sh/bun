@@ -224,9 +224,7 @@ Why not auto-register in emit functions? Some rules are shared (`dep_configure` 
 
 **Dep order in `allDeps` matters.** `fetchDeps: ["X"]` means X must come first (its `.ref` stamp node must exist). Link order matters too: static linking resolves left→right, providers after users.
 
-**PCH needs implicit dep on `depOutputs`**, not order-only. Local WebKit regenerates headers mid-build; order-only would let ninja think PCH is fresh while headers change under it → "file modified since PCH was built".
-
-**cxx needs order-only dep on `depOutputs`**, not implicit. Depfile tracks actual header deps. Implicit would recompile every `.c` when `libJavaScriptCore.a` changes — but `.c` files don't include JSC headers.
+**PCH, cc, and no-PCH cxx need implicit dep on `depOutputs`**, not order-only. Local WebKit's sub-build rewrites forwarding headers as an undeclared side effect (only `lib*.a` are declared outputs). Depfiles record those headers, but ninja stats them before the sub-build runs — order-only lags one build. The lib itself is the invalidation signal. Codegen headers stay order-only: they're declared outputs with restat, so depfile tracking is exact.
 
 **Windows `ReleaseFast` → `ReleaseSafe`** in `zig.ts`. Load-bearing since Bun 1.1; caught more crashes. Don't "fix" it.
 

@@ -2554,34 +2554,45 @@ pub fn finalizeBundle(
                 json.ptr,
                 json.len,
             ) catch |err| {
-                // No user code has been evaluated yet, since everything is to
-                // be wrapped in a function clousure. This means that the likely
-                // error is going to be a syntax error, or other mistake in the
-                // bundler.
+                // User code syntax errors (e.g. invalid regex patterns) can
+                // surface here because the bundler does not fully validate all
+                // JS syntax. Log the error and continue instead of crashing.
                 dev.vm.printErrorLikeObjectToConsole(dev.vm.global.takeException(err));
-                @panic("Error thrown while evaluating server code. This is always a bug in the bundler.");
+                Output.prettyError("<red>error<r>: Server code evaluation failed. This is likely a syntax error in your code.\n", .{});
+                break :blk null;
             };
-        } else c.BakeLoadServerHmrPatch(@ptrCast(dev.vm.global), bun.String.cloneLatin1(server_bundle)) catch |err| {
-            dev.vm.printErrorLikeObjectToConsole(dev.vm.global.takeException(err));
-            @panic("Error thrown while evaluating server code. This is always a bug in the bundler.");
+        } else blk: {
+            break :blk c.BakeLoadServerHmrPatch(@ptrCast(dev.vm.global), bun.String.cloneLatin1(server_bundle)) catch |err| {
+                dev.vm.printErrorLikeObjectToConsole(dev.vm.global.takeException(err));
+                Output.prettyError("<red>error<r>: Server code evaluation failed. This is likely a syntax error in your code.\n", .{});
+                break :blk null;
+            };
         };
-        const errors = dev.server_register_update_callback.get().?.call(
-            dev.vm.global,
-            dev.vm.global.toJSValue(),
-            &.{
-                server_modules,
-                try dev.makeArrayForServerComponentsPatch(dev.vm.global, dev.incremental_result.client_components_added.items),
-                try dev.makeArrayForServerComponentsPatch(dev.vm.global, dev.incremental_result.client_components_removed.items),
-            },
-        ) catch |err| {
-            // One module replacement error should NOT prevent follow-up
-            // module replacements to fail. It is the HMR runtime's
-            // responsibility to collect all module load errors, and
-            // bubble them up.
-            dev.vm.printErrorLikeObjectToConsole(dev.vm.global.takeException(err));
-            @panic("Error thrown in Hot-module-replacement code. This is always a bug in the HMR runtime.");
-        };
-        _ = errors; // TODO:
+        if (server_modules) |modules| {
+            if (dev.server_register_update_callback.get().?.call(
+                dev.vm.global,
+                dev.vm.global.toJSValue(),
+                &.{
+                    modules,
+                    try dev.makeArrayForServerComponentsPatch(dev.vm.global, dev.incremental_result.client_components_added.items),
+                    try dev.makeArrayForServerComponentsPatch(dev.vm.global, dev.incremental_result.client_components_removed.items),
+                },
+            )) |update_result| {
+                // The HMR runtime's registerUpdate returns a Promise<void>.
+                // If it somehow returned an error value, log it for debugging.
+                if (update_result.isAnyError()) {
+                    dev.vm.printErrorLikeObjectToConsole(update_result);
+                    Output.prettyError("<red>error<r>: HMR module update returned an error.\n", .{});
+                }
+            } else |err| {
+                // One module replacement error should NOT prevent follow-up
+                // module replacements to fail. It is the HMR runtime's
+                // responsibility to collect all module load errors, and
+                // bubble them up.
+                dev.vm.printErrorLikeObjectToConsole(dev.vm.global.takeException(err));
+                Output.prettyError("<red>error<r>: Error thrown in Hot-module-replacement runtime.\n", .{});
+            }
+        }
     }
 
     var route_bits = try DynamicBitSetUnmanaged.initEmpty(stack_alloc, dev.route_bundles.items.len);

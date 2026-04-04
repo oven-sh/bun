@@ -63,6 +63,15 @@ if (isDockerEnabled()) {
           });
           expect(stderr).toBe("");
         });
+        test("sequential queries should not hang (#27362)", async () => {
+          const { stdout, stderr } = bunRun(path.join(import.meta.dir, "sql-mysql-sequential-fixture.ts"), {
+            ...bunEnv,
+            MYSQL_URL: getOptions().url,
+            CA_PATH: image.name === "MySQL with TLS" ? path.join(import.meta.dir, "mysql-tls", "ssl", "ca.pem") : "",
+          });
+          expect(stderr).toBe("");
+          expect(stdout).toContain("all queries completed");
+        });
         test("should return lastInsertRowid and affectedRows", async () => {
           await using db = new SQL({ ...getOptions(), max: 1, idleTimeout: 5 });
           using sql = await db.reserve();
@@ -483,9 +492,7 @@ if (isDockerEnabled()) {
         test("Binary", async () => {
           const random_name = ("t_" + Bun.randomUUIDv7("hex").replaceAll("-", "")).toLowerCase();
           await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (a binary(1), b varbinary(1), c blob)`;
-          const values = [
-            { a: Buffer.from([1]), b: Buffer.from([2]), c: Buffer.from([3]) },
-          ];
+          const values = [{ a: Buffer.from([1]), b: Buffer.from([2]), c: Buffer.from([3]) }];
           await sql`INSERT INTO ${sql(random_name)} ${sql(values)}`;
           const results = await sql`select * from ${sql(random_name)}`;
           // return buffers
@@ -497,7 +504,7 @@ if (isDockerEnabled()) {
           expect(results2[0].a).toEqual(Buffer.from([1]));
           expect(results2[0].b).toEqual(Buffer.from([2]));
           expect(results2[0].c).toEqual(Buffer.from([3]));
-        })
+        });
 
         test("bulk insert nested sql()", async () => {
           await using sql = new SQL({ ...getOptions(), max: 1 });

@@ -2048,12 +2048,13 @@ export fn ResolvePath__joinAbsStringBufCurrentPlatformBunString(
     const str = in.toUTF8WithoutRef(bun.default_allocator);
     defer str.deinit();
 
-    const out_slice = joinAbsStringBuf(
+    const parts: []const []const u8 = &.{str.slice()};
+    const out_slice = joinAbsStringBufChecked(
         globalObject.bunVM().transpiler.fs.top_level_dir,
         &join_buf,
-        &.{str.slice()},
+        parts,
         .auto,
-    );
+    ) orelse return bun.String.dead;
 
     return bun.String.cloneUTF8(out_slice);
 }

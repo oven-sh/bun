@@ -536,11 +536,19 @@ pub const String = extern struct {
         const has_exception = scope.hasExceptionOrFalseWhenAssertionsAreDisabled();
         if (ok) {
             bun.debugAssert(out.tag != .Dead);
-        } else {
-            bun.debugAssert(has_exception);
+            return out;
         }
 
-        return if (ok) out else error.JSError;
+        // BunString__fromJS returning false without an exception can happen when
+        // a Proxy trap's try/catch clears a pending exception during toString().
+        // Throw a TypeError so callers always see a proper JS error.
+        if (comptime bun.Environment.ci_assert) {
+            if (!has_exception) {
+                return globalObject.throwTypeError("Failed to convert value to string", .{});
+            }
+        }
+
+        return error.JSError;
     }
 
     pub fn toJS(this: *const String, globalObject: *bun.jsc.JSGlobalObject) bun.JSError!jsc.JSValue {

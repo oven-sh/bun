@@ -1455,6 +1455,7 @@ pub fn Package(comptime SemverIntType: type) type {
                                 source,
                                 dependencies_q.loc,
                                 &string_builder,
+                                pm.options.follow_workspace_symlinks,
                             );
                         },
                         .e_object => |obj| {
@@ -1489,6 +1490,7 @@ pub fn Package(comptime SemverIntType: type) type {
                                         source,
                                         packages_query.loc,
                                         &string_builder,
+                                        pm.options.follow_workspace_symlinks,
                                     );
                                 }
 

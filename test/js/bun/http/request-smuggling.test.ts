@@ -150,6 +150,69 @@ test("rejects Transfer-Encoding + Content-Length", async () => {
   });
 });
 
+test("rejects conflicting duplicate Content-Length headers", async () => {
+  // RFC 9112 6.3: multiple Content-Length headers with differing values must be rejected
+  // to prevent request smuggling.
+  await using server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      return new Response("OK");
+    },
+  });
+
+  const client = net.connect(server.port, "127.0.0.1");
+
+  const maliciousRequest = [
+    "POST / HTTP/1.1",
+    "Host: localhost",
+    "Content-Length: 6",
+    "Content-Length: 5",
+    "",
+    "ABCDEF",
+  ].join("\r\n");
+
+  await new Promise<void>((resolve, reject) => {
+    client.on("error", reject);
+    client.on("data", data => {
+      const response = data.toString();
+      expect(response).toContain("HTTP/1.1 400");
+      client.end();
+      resolve();
+    });
+    client.write(maliciousRequest);
+  });
+});
+
+test("accepts duplicate Content-Length headers with identical values", async () => {
+  // RFC 9112 6.3 permits duplicate Content-Length headers if they carry the same value.
+  let receivedBody = "";
+  await using server = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      receivedBody = await req.text();
+      return new Response("OK");
+    },
+  });
+
+  const client = net.connect(server.port, "127.0.0.1");
+
+  const request = ["POST / HTTP/1.1", "Host: localhost", "Content-Length: 5", "Content-Length: 5", "", "Hello"].join(
+    "\r\n",
+  );
+
+  await new Promise<void>((resolve, reject) => {
+    client.on("error", reject);
+    client.on("data", data => {
+      const response = data.toString();
+      expect(response).toContain("HTTP/1.1 200");
+      expect(receivedBody).toBe("Hello");
+      client.end();
+      resolve();
+    });
+    client.write(request);
+  });
+});
+
 test("accepts valid Transfer-Encoding: chunked", async () => {
   let receivedBody = "";
 

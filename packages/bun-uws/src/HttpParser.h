@@ -873,6 +873,20 @@ namespace uWS
             const std::string_view contentLengthString = req->getHeader("content-length");
             const auto contentLengthStringLen = contentLengthString.length();
 
+            /* RFC 9112 6.3: if multiple Content-Length headers are present they must all
+             * carry the same value, otherwise the message is ambiguous and must be rejected
+             * to prevent request smuggling. */
+            if (contentLengthStringLen) {
+                for (HttpRequest::Header *h = req->headers; (++h)->key.length(); ) {
+                    if (h->key.length() == 14 && !strncmp(h->key.data(), "content-length", 14)) {
+                        if (h->value.length() != contentLengthStringLen ||
+                            strncmp(h->value.data(), contentLengthString.data(), contentLengthStringLen)) {
+                            return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_INVALID_CONTENT_LENGTH);
+                        }
+                    }
+                }
+            }
+
             /* Check Transfer-Encoding header validity and conflicts */
             HttpRequest::TransferEncoding transferEncoding = req->getTransferEncoding();
 

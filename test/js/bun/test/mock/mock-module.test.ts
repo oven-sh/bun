@@ -8,6 +8,7 @@
 // - Write test for import {foo} from "./foo"; export {foo}
 
 import { expect, mock, spyOn, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { default as defaultValue, fn, iCallFn, rexported, rexportedAs, variable } from "./mock-module-fixture";
 import * as spyFixture from "./spymodule-fixture";
 
@@ -165,4 +166,51 @@ test("mocking a builtin", async () => {
 
   const { readFile } = await import("node:fs/promises");
   expect(await readFile("hello.txt", "utf8")).toBe("hello world");
+});
+
+test("mock.module does not leak across test files", async () => {
+  using dir = tempDir("mock-module-cross-file", {
+    "repro-greeting.ts": `export function greet(name: string): string {
+  return \`Hello, \${name}!\`;
+}
+`,
+    "repro-a-mock.test.ts": `import { afterAll, expect, mock, test } from "bun:test";
+
+const greet = mock((_name: string) => "MOCKED");
+mock.module("./repro-greeting", () => ({ greet }));
+
+const { greet: greetFn } = await import("./repro-greeting");
+
+test("mock returns MOCKED", () => {
+  expect(greetFn("world")).toBe("MOCKED");
+});
+
+afterAll(() => {
+  mock.restore();
+});
+`,
+    "repro-b-real.test.ts": `import { expect, test } from "bun:test";
+import { greet } from "./repro-greeting";
+
+test("real greet says hello", () => {
+  expect(greet("world")).toBe("Hello, world!");
+});
+`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "repro-a-mock.test.ts", "repro-b-real.test.ts"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const output = stdout + stderr;
+  expect(output).toContain("(pass) mock returns MOCKED");
+  expect(output).toContain("(pass) real greet says hello");
+  expect(output).toContain("2 pass");
+  expect(output).not.toContain("(fail)");
+  expect(exitCode).toBe(0);
 });

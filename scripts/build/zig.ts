@@ -143,7 +143,7 @@ function zigExecutable(cfg: Config): string {
  */
 function zigCacheDirs(cfg: Config): { local: string; global: string } {
   return {
-    local: resolve(cfg.cacheDir, "zig", "local"),
+    local: resolve(cfg.buildDir, "cache", "zig", "local"),
     global: resolve(cfg.cacheDir, "zig", "global"),
   };
 }

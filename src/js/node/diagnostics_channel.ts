@@ -16,20 +16,40 @@ const PromiseResolve = Promise.$resolve.bind(Promise);
 const PromiseReject = Promise.$reject.bind(Promise);
 const PromisePrototypeThen = (promise, onFulfilled, onRejected) => promise.then(onFulfilled, onRejected);
 
-// TODO: https://github.com/nodejs/node/blob/fb47afc335ef78a8cef7eac52b8ee7f045300696/src/node_util.h#L13
-class WeakReference<T extends WeakKey> extends WeakRef<T> {
-  #refs = 0;
+// WeakReference that maintains a strong reference when refCount > 0.
+// This ensures channels with active subscribers aren't garbage collected.
+// See: https://github.com/nodejs/node/blob/fb47afc335ef78a8cef7eac52b8ee7f045300696/lib/internal/util.js#L888
+class WeakReference<T extends WeakKey> {
+  #weak: WeakRef<T>;
+  #strong: T | null = null;
+  #refCount = 0;
+
+  constructor(object: T) {
+    this.#weak = new WeakRef(object);
+  }
 
   get() {
-    return this.deref();
+    // Return strong reference if available (when refCount > 0), otherwise try weak
+    return this.#strong ?? this.#weak.deref();
   }
 
   incRef() {
-    return ++this.#refs;
+    this.#refCount++;
+    if (this.#refCount === 1) {
+      const derefed = this.#weak.deref();
+      if (derefed !== undefined) {
+        this.#strong = derefed;
+      }
+    }
+    return this.#refCount;
   }
 
   decRef() {
-    return --this.#refs;
+    this.#refCount--;
+    if (this.#refCount === 0) {
+      this.#strong = null;
+    }
+    return this.#refCount;
   }
 }
 

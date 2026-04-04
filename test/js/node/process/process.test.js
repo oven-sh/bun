@@ -102,6 +102,50 @@ it("process.title with UTF-16 characters", () => {
   expect(process.title).toBe("bun");
 });
 
+it.skipIf(isWindows)("process.chdir() getcwd failure produces a proper error", async () => {
+  // When the resulting cwd exceeds PATH_MAX (1024 on macOS), getcwd() fails
+  // with ERANGE. Bun used to throw {syscall: "TODO", errno: 0}; it should now
+  // surface the real syscall and errno.
+  const base = tmpdirSync();
+  try {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const fs = require("node:fs");
+          process.chdir(${JSON.stringify(base)});
+          const SEG = "a".repeat(20);
+          try {
+            for (let i = 0; i < 60; i++) {
+              fs.mkdirSync(SEG);
+              process.chdir(SEG);
+            }
+            process.stdout.write("no-error");
+          } catch (e) {
+            process.stdout.write(JSON.stringify({ code: e.code, syscall: e.syscall, errno: e.errno }));
+          }
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(exitCode).toBe(0);
+    const err = JSON.parse(stdout);
+    // Depending on the starting tmpdir length, we either hit a real getcwd
+    // ERANGE (path > PATH_MAX) or the pre-check that rejects paths that can't
+    // fit with a trailing slash.
+    expect(err.syscall).toBe("getcwd");
+    expect(err.code === "ERANGE" || err.code === "ENAMETOOLONG").toBe(true);
+    expect(err.errno === -34 || err.errno === -63).toBe(true);
+  } finally {
+    // rm -rf because fs.rmSync can't walk a tree where paths exceed PATH_MAX.
+    Bun.spawnSync({ cmd: ["rm", "-rf", base] });
+  }
+});
+
 it("process.chdir() on root dir", () => {
   const cwd = process.cwd();
   try {

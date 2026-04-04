@@ -1,326 +1,284 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/bin/sh
 
+# Bun POSIX installation script.
+# Specification at https://pubs.opengroup.org/onlinepubs/000095399.
+
+# Safety options.
+# -e exits immediately on a failed command.
+# -u treats unset variables as an error.
+set -eu
+
+# Colors.
+# Not all terminals support colors.
+if [ -t 1 ]; then
+  # ANSI escape codes.
+  # These are all bold.
+  reset=$(printf '\033[0m')
+  white=$(printf '\033[1m')
+  green=$(printf '\033[1;32m')
+  red=$(printf '\033[1;31m')
+else
+  reset=''
+  white=''
+  green=''
+  red=''
+fi
+
+# Helpers.
+info() { printf "${white}%s${reset}\n" "$*"; }
+success() { printf "${green}%s${reset}\n" "$*"; }
+error() { printf "${red}error${reset}: %s\n" "$*" >&2; exit 1; }
+
+# Is 'unzip' accessible?
+command -v unzip >/dev/null 2>&1 || error "unzip is required to install bun"
+
+# Usage.
+if [ $# -gt 2 ]; then
+  error "Too many arguments, only 2 are allowed. The first can be a specific tag of bun to install. (e.g. \"bun-v0.1.4\") The second can be a build variant of bun to install. (e.g. \"debug-info\")"
+fi
+
+# Platform.
 platform=$(uname -ms)
 
-if [[ ${OS:-} = Windows_NT ]]; then
-  if [[ $platform != MINGW64* ]]; then
-    powershell -c "irm bun.sh/install.ps1|iex"
-    exit $?
+# Windows.
+# Delegating to the PowerShell installation script,
+# if not in a Unix-like environment (e.g. MINGW64).
+if [ "${OS:-}" = Windows_NT ]; then
+  case "$platform" in
+    MINGW*|MSYS*|CYGWIN*) ;;
+    *)
+      # 'irm' is an alias for the 'Invoke-RestMethod' cmdlet.
+      # 'iex' is an alias for the 'Invoke-Expression' cmdlet.
+      powershell -c "irm bun.sh/install.ps1|iex"
+      exit $?
+      ;;
+  esac
+fi
+
+# Target.
+target=''
+case "$platform" in
+  'Darwin x86_64')                 target=darwin-x64 ;;
+  'Darwin arm64')                  target=darwin-aarch64 ;;
+  'Linux aarch64'|'Linux arm64')   target=linux-aarch64 ;;
+  'Linux x86_64')                  target=linux-x64 ;;
+  'Linux riscv64')                 error "Not supported on riscv64" ;;
+  MINGW64*ARM64*|MINGW64*aarch64*) target=windows-aarch64 ;;
+  MINGW64*)                        target=windows-x64 ;;
+  *)                               target=linux-x64 ;;
+esac
+
+# Musl.
+if echo "$target" | grep -q '^linux-'; then
+  is_musl=false
+  # Specific check for Alpine Linux.
+  if [ -f /etc/alpine-release ]; then
+    is_musl=true
+  # Generic check for other distributions.
+  elif ldd --version 2>&1 | grep -q musl; then
+    is_musl=true
+  fi
+  if [ "$is_musl" = true ]; then
+    target="${target}-musl"
   fi
 fi
 
-# Reset
-Color_Off=''
-
-# Regular Colors
-Red=''
-Green=''
-Dim='' # White
-
-# Bold
-Bold_White=''
-Bold_Green=''
-
-if [[ -t 1 ]]; then
-    # Reset
-    Color_Off='\033[0m' # Text Reset
-
-    # Regular Colors
-    Red='\033[0;31m'   # Red
-    Green='\033[0;32m' # Green
-    Dim='\033[0;2m'    # White
-
-    # Bold
-    Bold_Green='\033[1;32m' # Bold Green
-    Bold_White='\033[1m'    # Bold White
-fi
-
-error() {
-    echo -e "${Red}error${Color_Off}:" "$@" >&2
-    exit 1
-}
-
-info() {
-    echo -e "${Dim}$@ ${Color_Off}"
-}
-
-info_bold() {
-    echo -e "${Bold_White}$@ ${Color_Off}"
-}
-
-success() {
-    echo -e "${Green}$@ ${Color_Off}"
-}
-
-command -v unzip >/dev/null ||
-    error 'unzip is required to install bun'
-
-if [[ $# -gt 2 ]]; then
-    error 'Too many arguments, only 2 are allowed. The first can be a specific tag of bun to install. (e.g. "bun-v0.1.4") The second can be a build variant of bun to install. (e.g. "debug-info")'
-fi
-
-case $platform in
-'Darwin x86_64')
-    target=darwin-x64
-    ;;
-'Darwin arm64')
+# Rosetta 2 on Apple Silicon.
+if [ "$target" = darwin-x64 ]; then
+  if [ "$(sysctl -n sysctl.proc_translated 2>/dev/null)" = 1 ]; then
     target=darwin-aarch64
-    ;;
-'Linux aarch64' | 'Linux arm64')
-    target=linux-aarch64
-    ;;
-'MINGW64'*'ARM64'* | 'MINGW64'*'aarch64'*)
-    target=windows-aarch64
-    ;;
-'MINGW64'*)
-    target=windows-x64
-    ;;
-'Linux riscv64')
-    error 'Not supported on riscv64'
-    ;;
-'Linux x86_64' | *)
-    target=linux-x64
-    ;;
-esac
-
-case "$target" in
-'linux'*)
-    if [ -f /etc/alpine-release ]; then
-        target="$target-musl"
-    fi
-    ;;
-esac
-
-if [[ $target = darwin-x64 ]]; then
-    # Is this process running in Rosetta?
-    # redirect stderr to devnull to avoid error message when not running in Rosetta
-    if [[ $(sysctl -n sysctl.proc_translated 2>/dev/null) = 1 ]]; then
-        target=darwin-aarch64
-        info "Your shell is running in Rosetta 2. Downloading bun for $target instead"
-    fi
+    info "Your shell is running in Rosetta 2. Downloading bun for $target instead"
+  fi
 fi
 
-GITHUB=${GITHUB-"https://github.com"}
-
-github_repo="$GITHUB/oven-sh/bun"
-
-# If AVX2 isn't supported, use the -baseline build
-case "$target" in
-'darwin-x64'*)
-    if [[ $(sysctl -a | grep machdep.cpu | grep AVX2) == '' ]]; then
-        target="$target-baseline"
-    fi
-    ;;
-'linux-x64'*)
-    # If AVX2 isn't supported, use the -baseline build
-    if [[ $(cat /proc/cpuinfo | grep avx2) = '' ]]; then
-        target="$target-baseline"
-    fi
-    ;;
-esac
-
-exe_name=bun
-
-if [[ $# = 2 && $2 = debug-info ]]; then
-    target=$target-profile
-    exe_name=bun-profile
-    info "You requested a debug build of bun. More information will be shown if a crash occurs."
-fi
-
-if [[ $# = 0 ]]; then
-    bun_uri=$github_repo/releases/latest/download/bun-$target.zip
+# Repository.
+# Kept the original bash installer GITHUB env variable.
+REPO="${GITHUB:-https://github.com}/oven-sh/bun"
+if [ $# -eq 0 ]; then
+  bun_uri="$REPO/releases/latest/download/bun-${target}.zip"
 else
-    bun_uri=$github_repo/releases/download/$1/bun-$target.zip
+  bun_uri="$REPO/releases/download/$1/bun-${target}.zip"
 fi
 
-install_env=BUN_INSTALL
-bin_env=\$$install_env/bin
-
-install_dir=${!install_env:-$HOME/.bun}
-bin_dir=$install_dir/bin
-exe=$bin_dir/bun
-
-if [[ ! -d $bin_dir ]]; then
-    mkdir -p "$bin_dir" ||
-        error "Failed to create install directory \"$bin_dir\""
-fi
-
-curl --fail --location --progress-bar --output "$exe.zip" "$bun_uri" ||
-    error "Failed to download bun from \"$bun_uri\""
-
-unzip -oqd "$bin_dir" "$exe.zip" ||
-    error 'Failed to extract bun'
-
-mv "$bin_dir/bun-$target/$exe_name" "$exe" ||
-    error 'Failed to move extracted bun to destination'
-
-chmod +x "$exe" ||
-    error 'Failed to set permissions on bun executable'
-
-rm -r "$bin_dir/bun-$target" "$exe.zip"
-
-tildify() {
-    if [[ $1 = $HOME/* ]]; then
-        local replacement=\~/
-
-        echo "${1/$HOME\//$replacement}"
-    else
-        echo "$1"
+# AVX2 fallback.
+# Bun is JIT-compiled.
+# Optimized for AVX2 instructions.
+case "$target" in
+  darwin-x64*)
+    if ! sysctl -a 2>/dev/null | grep machdep.cpu | grep -q AVX2; then
+      target="${target}-baseline"
     fi
+    ;;
+  linux-x64*)
+    if ! grep -q avx2 /proc/cpuinfo 2>/dev/null; then
+      target="${target}-baseline"
+    fi
+    ;;
+esac
+
+# Debug.
+exe_name=bun
+if [ $# -eq 2 ] && [ "$2" = debug-info ]; then
+  target="${target}-profile"
+  exe_name=bun-profile
+  info "You requested a debug build of bun. More information will be shown if a crash occurs."
+fi
+
+# Directories.
+install_dir="${BUN_INSTALL:-$HOME/.bun}"
+bin_dir="$install_dir/bin"
+bin_file="$bin_dir/bun"
+mkdir -p "$bin_dir"
+
+# Downloading.
+download() {
+  url="$1"
+  output="$2"
+  # Is 'curl' accessible?
+  if command -v curl >/dev/null 2>&1; then
+    info "Downloading via curl!"
+    curl --fail --retry 3 --location --progress-bar --output "$output" "$url" && return 0
+  fi
+  # Is 'wget' accessible?
+  if command -v wget >/dev/null 2>&1; then
+    info "Downloading via wget!"
+    wget -q -O "$output" "$url" && return 0
+  fi
+  return 1
+}
+download "$bun_uri" "$bin_file.zip" || error "Failed to download bun from \"$bun_uri\""
+
+# Extracting and installing.
+unzip -oqd "$bin_dir" "$bin_file.zip" || error "Failed to extract bun"
+mv "$bin_dir/bun-${target}/$exe_name" "$bin_file" || error "Failed to move extracted bun to destination"
+chmod +x "$bin_file" || error "Failed to set permissions on bun executable"
+rm -rf "$bin_dir/bun-${target}" "$bin_file.zip"
+
+tildify() { # replaces $HOME with '~' in paths (prettier output.)
+  case "$1" in
+    "$HOME/"*) printf "%s" "$1" | sed "s|^$HOME/|~/|" ;;
+    *) printf "%s" "$1" ;;
+  esac
 }
 
-success "bun was installed successfully to $Bold_Green$(tildify "$exe")"
+success "Bun was installed successfully to $(tildify "$bin_file")"
 
-if command -v bun >/dev/null; then
-    # Install completions, but we don't care if it fails
-    IS_BUN_AUTO_UPDATE=true $exe completions &>/dev/null || :
-
-    echo "Run 'bun --help' to get started"
-    exit
+# Is bun already in $PATH?
+if command -v bun >/dev/null 2>&1; then
+  IS_BUN_AUTO_UPDATE=true "$bin_file" completions >/dev/null 2>&1 || :
+  echo "Run 'bun --help' to get started"
+  exit
 fi
 
+# Shell integration.
 refresh_command=''
+tilde_bin_dir="$(tildify "$bin_dir")"
 
-tilde_bin_dir=$(tildify "$bin_dir")
-quoted_install_dir=\"${install_dir//\"/\\\"}\"
+# Preparing the lines to be added to shell config files.
+quoted_install_dir="\"$(printf "%s" "$install_dir" | sed 's/"/\\"/g')\""
+case "$install_dir" in
+  "$HOME"/*) quoted_install_dir="\"\${HOME}${install_dir#$HOME}\"" ;;
+esac
 
-if [[ $quoted_install_dir = \"$HOME/* ]]; then
-    quoted_install_dir=${quoted_install_dir/$HOME\//\$HOME/}
-fi
+# Manual instructions.
+manual_instructions() {
+  echo "Manually add the directory to your shell config file:"
+  info "  export BUN_INSTALL=$quoted_install_dir"
+  info "  export PATH=\"\$BUN_INSTALL/bin:\$PATH\""
+}
 
 echo
+shell=$(basename "$SHELL")
 
-case $(basename "$SHELL") in
-fish)
-    # Install completions, but we don't care if it fails
-    IS_BUN_AUTO_UPDATE=true SHELL=fish $exe completions &>/dev/null || :
-
-    commands=(
-        "set --export $install_env $quoted_install_dir"
-        "set --export PATH $bin_env \$PATH"
-    )
-
-    fish_config=$HOME/.config/fish/config.fish
-    tilde_fish_config=$(tildify "$fish_config")
-
-    if [[ -w $fish_config ]]; then
-        {
-            echo -e '\n# bun'
-
-            for command in "${commands[@]}"; do
-                echo "$command"
-            done
-        } >>"$fish_config"
-
-        info "Added \"$tilde_bin_dir\" to \$PATH in \"$tilde_fish_config\""
-
-        refresh_command="source $tilde_fish_config"
+case "$shell" in
+  fish)
+    IS_BUN_AUTO_UPDATE=true SHELL=fish "$bin_file" completions >/dev/null 2>&1 || :
+    fish_config="$HOME/.config/fish/config.fish"
+    if [ -w "$fish_config" ]; then
+      {
+        printf '\n# Bun\n'
+        echo "set --export BUN_INSTALL $quoted_install_dir"
+        echo "set --export PATH \$BUN_INSTALL/bin \$PATH"
+      } >> "$fish_config"
+      info "Added \"$tilde_bin_dir\" to \$PATH in \"$(tildify "$fish_config")\""
+      refresh_command="source $(tildify "$fish_config")"
     else
-        echo "Manually add the directory to $tilde_fish_config (or similar):"
-
-        for command in "${commands[@]}"; do
-            info_bold "  $command"
-        done
+      manual_instructions
     fi
     ;;
-zsh)
-    # Install completions, but we don't care if it fails
-    IS_BUN_AUTO_UPDATE=true SHELL=zsh $exe completions &>/dev/null || :
-
-    commands=(
-        "export $install_env=$quoted_install_dir"
-        "export PATH=\"$bin_env:\$PATH\""
-    )
-
-    zsh_config=$HOME/.zshrc
-    tilde_zsh_config=$(tildify "$zsh_config")
-
-    if [[ -w $zsh_config ]]; then
+  zsh)
+    IS_BUN_AUTO_UPDATE=true SHELL=zsh "$bin_file" completions >/dev/null 2>&1 || :
+    config_updated=false
+    for config in "$HOME/.zshrc" "$HOME/.zprofile" "$HOME/.zshenv" \
+                  "${ZDOTDIR:+$ZDOTDIR/.zshrc}" \
+                  "${ZDOTDIR:+$ZDOTDIR/.zprofile}" \
+                  "${ZDOTDIR:+$ZDOTDIR/.zshenv}"; do
+      [ -z "$config" ] && continue
+      if [ -w "$config" ]; then
         {
-            echo -e '\n# bun'
-
-            for command in "${commands[@]}"; do
-                echo "$command"
-            done
-        } >>"$zsh_config"
-
-        info "Added \"$tilde_bin_dir\" to \$PATH in \"$tilde_zsh_config\""
-
+          printf '\n# Bun\n'
+          echo "export BUN_INSTALL=$quoted_install_dir"
+          echo "export PATH=\"\$BUN_INSTALL/bin:\$PATH\""
+        } >> "$config"
+        info "Added \"$tilde_bin_dir\" to \$PATH in \"$(tildify "$config")\""
         refresh_command="exec $SHELL"
-    else
-        echo "Manually add the directory to $tilde_zsh_config (or similar):"
-
-        for command in "${commands[@]}"; do
-            info_bold "  $command"
-        done
-    fi
-    ;;
-bash)
-    # Install completions, but we don't care if it fails
-    IS_BUN_AUTO_UPDATE=true SHELL=bash $exe completions &>/dev/null || :
-
-    commands=(
-        "export $install_env=$quoted_install_dir"
-        "export PATH=\"$bin_env:\$PATH\""
-    )
-
-    bash_configs=(
-        "$HOME/.bash_profile"
-        "$HOME/.bashrc"
-    )
-
-    if [[ ${XDG_CONFIG_HOME:-} ]]; then
-        bash_configs+=(
-            "$XDG_CONFIG_HOME/.bash_profile"
-            "$XDG_CONFIG_HOME/.bashrc"
-            "$XDG_CONFIG_HOME/bash_profile"
-            "$XDG_CONFIG_HOME/bashrc"
-        )
-    fi
-
-    set_manually=true
-    for bash_config in "${bash_configs[@]}"; do
-        tilde_bash_config=$(tildify "$bash_config")
-
-        if [[ -w $bash_config ]]; then
-            {
-                echo -e '\n# bun'
-
-                for command in "${commands[@]}"; do
-                    echo "$command"
-                done
-            } >>"$bash_config"
-
-            info "Added \"$tilde_bin_dir\" to \$PATH in \"$tilde_bash_config\""
-
-            refresh_command="source $bash_config"
-            set_manually=false
-            break
-        fi
+        config_updated=true
+        break
+      fi
     done
-
-    if [[ $set_manually = true ]]; then
-        echo "Manually add the directory to $tilde_bash_config (or similar):"
-
-        for command in "${commands[@]}"; do
-            info_bold "  $command"
-        done
+    if [ "$config_updated" = false ]; then
+      manual_instructions
     fi
     ;;
-*)
-    echo 'Manually add the directory to ~/.bashrc (or similar):'
-    info_bold "  export $install_env=$quoted_install_dir"
-    info_bold "  export PATH=\"$bin_env:\$PATH\""
+  bash)
+    IS_BUN_AUTO_UPDATE=true SHELL=bash "$bin_file" completions >/dev/null 2>&1 || :
+    config_updated=false
+    for config in "$HOME/.bashrc" "$HOME/.bash_profile" \
+                  "${XDG_CONFIG_HOME:+$XDG_CONFIG_HOME/.bash_profile}" \
+                  "${XDG_CONFIG_HOME:+$XDG_CONFIG_HOME/.bashrc}" \
+                  "${XDG_CONFIG_HOME:+$XDG_CONFIG_HOME/bash_profile}" \
+                  "${XDG_CONFIG_HOME:+$XDG_CONFIG_HOME/bashrc}"; do
+      [ -z "$config" ] && continue
+      if [ -w "$config" ]; then
+        {
+          printf '\n# Bun\n'
+          echo "export BUN_INSTALL=$quoted_install_dir"
+          echo "export PATH=\"\$BUN_INSTALL/bin:\$PATH\""
+        } >> "$config"
+        info "Added \"$tilde_bin_dir\" to \$PATH in \"$(tildify "$config")\""
+        refresh_command="source $config"
+        config_updated=true
+        break
+      fi
+    done
+    if [ "$config_updated" = false ]; then
+      manual_instructions
+    fi
+    ;;
+  ash|dash)
+    IS_BUN_AUTO_UPDATE=true SHELL=ash "$bin_file" completions >/dev/null 2>&1 || :
+    profile="$HOME/.profile"
+    if [ -w "$profile" ]; then
+      {
+        printf '\n# Bun\n'
+        echo "export BUN_INSTALL=$quoted_install_dir"
+        echo "export PATH=\"\$BUN_INSTALL/bin:\$PATH\""
+      } >> "$profile"
+      info "Added \"$tilde_bin_dir\" to \$PATH in \"$(tildify "$profile")\""
+      refresh_command=". $profile"
+    else
+      manual_instructions
+    fi
+    ;;
+  *)
+    manual_instructions
     ;;
 esac
 
+# Done!
 echo
-info "To get started, run:"
-echo
-
-if [[ $refresh_command ]]; then
-    info_bold "  $refresh_command"
+if [ -n "$refresh_command" ]; then
+  info "Run $refresh_command to get started!"
 fi
+info "Run '$tilde_bin_dir/bun --help' to get started!"
 
-info_bold "  bun --help"

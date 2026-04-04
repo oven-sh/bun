@@ -72,6 +72,7 @@ const bufs = struct {
     pub threadlocal var abs_to_rel: bun.PathBuffer = undefined;
     pub threadlocal var node_modules_paths_buf: bun.PathBuffer = undefined;
     pub threadlocal var import_path_for_standalone_module_graph: bun.PathBuffer = undefined;
+    pub threadlocal var percent_decode_buf: bun.PathBuffer = undefined;
 
     pub inline fn bufs(comptime field: std.meta.DeclEnum(@This())) *@TypeOf(@field(@This(), @tagName(field))) {
         return &@field(@This(), @tagName(field));
@@ -1081,6 +1082,45 @@ pub const Resolver = struct {
 
         var import_path = input_import_path;
 
+        // Per the ESM spec, relative and absolute import specifiers are URL-like
+        // and percent-encoded characters should be decoded before filesystem lookup.
+        // Only ESM import statements and dynamic import() are decoded — CJS
+        // require(), CSS imports, and CLI entry points use literal paths.
+        // Encoded path separators (%2f, %5c) are forbidden per spec.
+        if ((kind == .stmt or kind == .dynamic) and
+            bun.strings.containsChar(import_path, '%'))
+        {
+            const is_relative_or_absolute = std.fs.path.isAbsolute(import_path) or
+                bun.strings.hasPrefixComptime(import_path, "./") or
+                bun.strings.hasPrefixComptime(import_path, "../");
+            if (is_relative_or_absolute) {
+                // Encoded "/" (%2f/%2F) and "\" (%5c/%5C) are invalid per ESM spec.
+                if (bun.strings.contains(import_path, "%2f") or
+                    bun.strings.contains(import_path, "%2F") or
+                    bun.strings.contains(import_path, "%5c") or
+                    bun.strings.contains(import_path, "%5C"))
+                {
+                    return .{ .not_found = {} };
+                }
+                const buf = bufs(.percent_decode_buf);
+                var fbs = std.io.fixedBufferStream(buf);
+                const decoded_len = PercentEncoding.decode(
+                    @TypeOf(fbs.writer()),
+                    fbs.writer(),
+                    import_path,
+                ) catch {
+                    return .{ .not_found = {} };
+                };
+                const decoded = buf[0..decoded_len];
+                // Reject encoded NUL bytes (%00) — a literal NUL check runs
+                // before this function, so decoded NULs must not bypass it.
+                if (bun.strings.containsChar(decoded, 0)) {
+                    return .{ .not_found = {} };
+                }
+                import_path = decoded;
+            }
+        }
+
         // This implements the module resolution algorithm from node.js, which is
         // described here: https://nodejs.org/api/modules.html#modules_all_together
         var result: Result = Result{
@@ -1156,7 +1196,7 @@ pub const Resolver = struct {
 
                 return .{
                     .success = Result{
-                        .path_pair = .{ .primary = Path.init(import_path) },
+                        .path_pair = .{ .primary = Path.init(bun.handleOom(r.fs.dirname_store.append(@TypeOf(import_path), import_path))) },
                         .flags = .{ .is_external = true },
                     },
                 };
@@ -4368,6 +4408,7 @@ const ast = @import("../import_record.zig");
 const options = @import("../options.zig");
 const std = @import("std");
 const Package = @import("../install/lockfile.zig").Package;
+const PercentEncoding = @import("../url.zig").PercentEncoding;
 const Resolution = @import("../install/resolution.zig").Resolution;
 const TSConfigJSON = @import("./tsconfig_json.zig").TSConfigJSON;
 const Timer = @import("../system_timer.zig").Timer;

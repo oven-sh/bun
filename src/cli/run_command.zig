@@ -1335,13 +1335,10 @@ pub const RunCommand = struct {
             if (!ok) {
                 // The file was created by openA + TRUNC, so even a
                 // zero-byte write leaves an orphan on disk. Unlink
-                // before dropping the path string.
-                const z = allocator.dupeZ(u8, path) catch {
-                    allocator.free(path);
-                    continue;
-                };
-                _ = bun.sys.unlink(z);
-                allocator.free(z);
+                // before dropping the path string. Uses a stack buffer
+                // for the null-terminated path so the unlink doesn't
+                // depend on a second allocation (which could also OOM).
+                unlinkStagedPath(path);
                 allocator.free(path);
                 continue;
             }
@@ -1350,30 +1347,32 @@ pub const RunCommand = struct {
             // when this function returns, leaving out_map with dangling
             // keys that emitImage() would later hash-compare.
             const key = allocator.dupe(u8, raw_url) catch {
-                const z = allocator.dupeZ(u8, path) catch {
-                    allocator.free(path);
-                    continue;
-                };
-                _ = bun.sys.unlink(z);
-                allocator.free(z);
+                unlinkStagedPath(path);
                 allocator.free(path);
                 continue;
             };
             out_map.put(allocator, key, path) catch {
                 // Map insert OOM'd after a successful write — unlink
                 // the now-orphaned temp file so it doesn't leak.
-                const z = allocator.dupeZ(u8, path) catch {
-                    allocator.free(key);
-                    allocator.free(path);
-                    continue;
-                };
-                _ = bun.sys.unlink(z);
-                allocator.free(z);
+                unlinkStagedPath(path);
                 allocator.free(key);
                 allocator.free(path);
                 continue;
             };
         }
+    }
+
+    /// Null-terminate `path` on the stack and unlink it. Never allocates,
+    /// so temp-file cleanup can't fail for OOM reasons. Silently skips
+    /// paths too long to fit in PathBuffer — `prefetchRemoteImages`
+    /// generates paths of the form `{tmpdir}/bun-md-{hex8}{ext}` so this
+    /// bound is never hit in practice.
+    fn unlinkStagedPath(path: []const u8) void {
+        var buf: bun.PathBuffer = undefined;
+        if (path.len + 1 > buf.len) return;
+        @memcpy(buf[0..path.len], path);
+        buf[path.len] = 0;
+        _ = bun.sys.unlink(buf[0..path.len :0]);
     }
 
     /// Read a markdown file, render it to ANSI, print to stdout, and exit.

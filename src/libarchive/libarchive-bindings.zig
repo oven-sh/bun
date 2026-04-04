@@ -917,8 +917,10 @@ pub const Archive = opaque {
             return bun.sliceTo(archive_entry_pathname_utf8(entry), 0);
         }
         extern fn archive_entry_pathname_w(*Entry) [*c]const u16;
-        pub fn pathnameW(entry: *Entry) [:0]const u16 {
-            return bun.sliceTo(archive_entry_pathname_w(entry), 0);
+        pub fn pathnameW(entry: *Entry) ?[:0]const u16 {
+            const ptr = archive_entry_pathname_w(entry);
+            if (ptr == null) return null;
+            return bun.sliceTo(ptr, 0);
         }
         extern fn archive_entry_filetype(*Entry) bun.Mode;
         pub fn filetype(entry: *Entry) bun.Mode {

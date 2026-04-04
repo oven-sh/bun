@@ -2725,7 +2725,7 @@ pub const bindings = struct {
                 },
                 else => {
                     const pathname_string = if (bun.Environment.isWindows) blk: {
-                        const pathname_w = archive_entry.pathnameW();
+                        const pathname_w = archive_entry.pathnameW() orelse continue;
                         const list = std.array_list.Managed(u8).init(bun.default_allocator);
                         var result = bun.handleOom(bun.strings.toUTF8ListWithType(list, pathname_w));
                         defer result.deinit();

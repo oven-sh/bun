@@ -11,6 +11,13 @@ allocator: std.mem.Allocator,
 
 code_splitting: bool = false,
 
+/// Per-entry-point part liveness tracking for tree-shaking with multiple
+/// entry points. Indexed as [source_index][part_index], each AutoBitSet
+/// tracks which entry points make the part live. This enables per-entry-point
+/// tree-shaking so that shared modules only include exports actually used by
+/// each specific entry point's chunk.
+part_entry_bits: [][]AutoBitSet = &[_][]AutoBitSet{},
+
 // This is an alias from Graph
 // it is not a clone!
 ast: MultiArrayList(JSAst) = .{},

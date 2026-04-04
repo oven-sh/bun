@@ -3318,10 +3318,11 @@ it("new Stats", () => {
   expectclose(BigInt(Math.floor(withoutBigInt.ctimeMs)), withBigInt.ctimeMs);
   expectclose(BigInt(Math.floor(withoutBigInt.birthtimeMs)), withBigInt.birthtimeMs);
 
-  expect(withBigInt.atime.getTime()).toEqual(withoutBigInt.atime.getTime());
-  expect(withBigInt.mtime.getTime()).toEqual(withoutBigInt.mtime.getTime());
-  expect(withBigInt.ctime.getTime()).toEqual(withoutBigInt.ctime.getTime());
-  expect(withBigInt.birthtime.getTime()).toEqual(withoutBigInt.birthtime.getTime());
+  // Allow ±1ms leeway: the non-bigint path goes through a float and can round differently.
+  expect(Math.abs(withBigInt.atime.getTime() - withoutBigInt.atime.getTime())).toBeLessThanOrEqual(1);
+  expect(Math.abs(withBigInt.mtime.getTime() - withoutBigInt.mtime.getTime())).toBeLessThanOrEqual(1);
+  expect(Math.abs(withBigInt.ctime.getTime() - withoutBigInt.ctime.getTime())).toBeLessThanOrEqual(1);
+  expect(Math.abs(withBigInt.birthtime.getTime() - withoutBigInt.birthtime.getTime())).toBeLessThanOrEqual(1);
 });
 
 it("test syscall errno, issue#4198", () => {

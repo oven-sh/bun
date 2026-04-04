@@ -6400,12 +6400,25 @@ declare module "bun" {
   namespace udp {
     type Data = string | ArrayBufferView | ArrayBufferLike;
 
+    /**
+     * Extra metadata passed to the `data` callback for each received datagram.
+     */
+    export interface ReceiveFlags {
+      /**
+       * `true` if the datagram was larger than the receive buffer and was
+       * truncated by the kernel (MSG_TRUNC). The `data` passed to the
+       * callback contains only the portion that fit in the buffer.
+       */
+      truncated: boolean;
+    }
+
     export interface SocketHandler<DataBinaryType extends BinaryType> {
       data?(
         socket: Socket<DataBinaryType>,
         data: BinaryTypeList[DataBinaryType],
         port: number,
         address: string,
+        flags: ReceiveFlags,
       ): void | Promise<void>;
       drain?(socket: Socket<DataBinaryType>): void | Promise<void>;
       error?(socket: Socket<DataBinaryType>, error: Error): void | Promise<void>;
@@ -6417,6 +6430,7 @@ declare module "bun" {
         data: BinaryTypeList[DataBinaryType],
         port: number,
         address: string,
+        flags: ReceiveFlags,
       ): void | Promise<void>;
       drain?(socket: ConnectedSocket<DataBinaryType>): void | Promise<void>;
       error?(socket: ConnectedSocket<DataBinaryType>, error: Error): void | Promise<void>;

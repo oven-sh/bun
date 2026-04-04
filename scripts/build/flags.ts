@@ -320,6 +320,23 @@ export const globalFlags: Flag[] = [
     desc: "Enable devirtualization across whole program (LTO only)",
   },
 
+  // ─── PGO (compile-side) ───
+  {
+    flag: c => `-fprofile-generate=${c.pgoGenerate}`,
+    when: c => c.unix && !!c.pgoGenerate,
+    desc: "IR PGO: instrument for profile generation",
+  },
+  {
+    flag: c => [
+      `-fprofile-use=${c.pgoUse}`,
+      "-Wno-profile-instr-out-of-date",
+      "-Wno-profile-instr-unprofiled",
+      "-Wno-backend-plugin",
+    ],
+    when: c => c.unix && !!c.pgoUse,
+    desc: "IR PGO: optimize with profile data",
+  },
+
   // ─── Path remapping (CI reproducibility) ───
   {
     flag: c => [
@@ -606,6 +623,18 @@ export const linkerFlags: Flag[] = [
     flag: "-Os",
     when: c => c.unix && c.lto && c.smol,
     desc: "LTO codegen at -Os (matches compile-side opt level)",
+  },
+
+  // ─── PGO (link-side) ───
+  {
+    flag: c => `-fprofile-generate=${c.pgoGenerate}`,
+    when: c => c.unix && !!c.pgoGenerate,
+    desc: "IR PGO: link profiling runtime",
+  },
+  {
+    flag: c => `-fprofile-use=${c.pgoUse}`,
+    when: c => c.unix && !!c.pgoUse,
+    desc: "IR PGO: LTO+PGO at link time",
   },
 
   // ─── Windows ───

@@ -147,14 +147,43 @@ bool Worker::updatePtr()
     return true;
 }
 
+// On Windows, WTF::URL::fileSystemPath handles UNC paths
+// (`file://server/share/etc` -> `\\server\share\etc`), so the host check
+// only runs on posix systems. This matches `Bun.fileURLToPath` and throws
+// Node's `ERR_INVALID_FILE_URL_HOST` when the host is neither empty nor
+// `"localhost"`.
+static ExceptionOr<void> validateFileURLHost(JSC::JSGlobalObject* globalObject, const WTF::URL& urlObject)
+{
+#if !OS(WINDOWS)
+    if (urlObject.host().length() > 0 && urlObject.host() != "localhost"_s) [[unlikely]] {
+        auto& vm = JSC::getVM(globalObject);
+        auto scope = DECLARE_THROW_SCOPE(vm);
+#if OS(DARWIN)
+        Bun::ERR::INVALID_FILE_URL_HOST(scope, globalObject, "darwin"_s);
+#else
+        Bun::ERR::INVALID_FILE_URL_HOST(scope, globalObject, "linux"_s);
+#endif
+        return Exception { ExceptionCode::ExistingExceptionError };
+    }
+#else
+    UNUSED_PARAM(globalObject);
+    UNUSED_PARAM(urlObject);
+#endif
+    return {};
+}
+
 ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const String& urlInit, WorkerOptions&& options)
 {
     auto worker = adoptRef(*new Worker(context, WTF::move(options)));
+    auto* globalObject = context.jsGlobalObject();
 
     WTF::String url = urlInit;
     if (url.startsWith("file://"_s)) {
         WTF::URL urlObject = WTF::URL(url);
         if (urlObject.isValid()) {
+            auto hostCheck = validateFileURLHost(globalObject, urlObject);
+            if (hostCheck.hasException())
+                return hostCheck.releaseException();
             url = urlObject.fileSystemPath();
         } else {
             return Exception { TypeError, makeString("Invalid file URL: \""_s, urlInit, '"') };
@@ -173,6 +202,9 @@ ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const S
             if (!urlObject.isValid()) {
                 return Exception { TypeError, makeString("Invalid file URL: \""_s, str, '"') };
             }
+            auto hostCheck = validateFileURLHost(globalObject, urlObject);
+            if (hostCheck.hasException())
+                return hostCheck.releaseException();
             // We need to replace the string inside preloadModuleStrings (this line replaces because
             // we are iterating by-ref). Otherwise, the string returned by fileSystemPath() will be
             // freed in this block, before it is used by Zig code.

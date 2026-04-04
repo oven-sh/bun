@@ -1261,4 +1261,90 @@ describe("bundler", () => {
       stdout: "true\n",
     },
   });
+
+  // Test case for https://github.com/oven-sh/bun/issues/8439
+  // Interfaces imported without `import type` should not cause bundler errors
+  // when used in decorator metadata - they should resolve to Object at runtime
+  itBundled("decorator_metadata/InterfaceImportWithoutImportType", {
+    files: {
+      "/entry.ts": /* ts */ `
+            ${reflectMetadata}
+
+            // Importing interface WITHOUT "import type" - this is the bug case
+            import { TestInterface } from "./interface";
+
+            function Decorator() {
+                return function(target: any, key: string) {};
+            }
+
+            class Service {
+                @Decorator()
+                myProperty: TestInterface;
+            }
+
+            // Interface types should resolve to Object since they don't exist at runtime
+            const metadata = Reflect.getMetadata("design:type", Service.prototype, "myProperty");
+            console.log(metadata === Object);
+        `,
+      "/interface.ts": /* ts */ `
+            // This file only exports a TypeScript interface (type-only export)
+            export interface TestInterface {
+                id: string;
+                name: string;
+            }
+        `,
+      "/tsconfig.json": /* json */ `
+            {
+                "compilerOptions": {
+                    "experimentalDecorators": true,
+                    "emitDecoratorMetadata": true,
+                }
+            }
+        `,
+    },
+    run: {
+      stdout: "true\n",
+    },
+  });
+
+  // Additional test: interface as constructor parameter type
+  itBundled("decorator_metadata/InterfaceAsConstructorParam", {
+    files: {
+      "/entry.ts": /* ts */ `
+            ${reflectMetadata}
+
+            import { Config } from "./types";
+
+            function Injectable() {
+                return function(target: any) {};
+            }
+
+            @Injectable()
+            class Service {
+                constructor(config: Config) {}
+            }
+
+            // Interface parameter should resolve to Object
+            const paramTypes = Reflect.getMetadata("design:paramtypes", Service);
+            console.log(paramTypes[0] === Object);
+        `,
+      "/types.ts": /* ts */ `
+            export interface Config {
+                apiUrl: string;
+                timeout: number;
+            }
+        `,
+      "/tsconfig.json": /* json */ `
+            {
+                "compilerOptions": {
+                    "experimentalDecorators": true,
+                    "emitDecoratorMetadata": true,
+                }
+            }
+        `,
+    },
+    run: {
+      stdout: "true\n",
+    },
+  });
 });

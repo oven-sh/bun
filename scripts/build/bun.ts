@@ -38,7 +38,7 @@ import { quote, slash } from "./shell.ts";
 import { emitShims } from "./shims.ts";
 import { computeDepLibs, depSourceStamp, resolveDep, type ResolvedDep } from "./source.ts";
 import { streamPath } from "./stream.ts";
-import { emitZig } from "./zig.ts";
+import { emitZig, emitZigCheck } from "./zig.ts";
 
 // ───────────────────────────────────────────────────────────────────────────
 // Executable naming
@@ -191,12 +191,20 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   if (cfg.mode !== "cpp-only") {
     const codegenZigSet = new Set(zigFilesGeneratedIntoSrc.map(p => resolve(cfg.cwd, p)));
     const zigSources = sources.zig.filter(f => !codegenZigSet.has(f));
-    zigObjects = emitZig(n, cfg, {
+    const zigInputs = {
       codegenInputs: codegen.zigInputs,
       codegenOrderOnly: codegen.zigOrderOnly,
       zigSources,
       zstdStamp: depSourceStamp(cfg, "zstd"),
-    });
+    };
+    zigObjects = emitZig(n, cfg, zigInputs);
+    // `zig build check[-*]` targets share the same inputs as the obj
+    // build. Not default — invoked explicitly via `--target=zig-check`.
+    // Skipped in CI (ci-* profiles do obj or cpp separately) to avoid
+    // accidentally firing.
+    if (!cfg.ci) {
+      emitZigCheck(n, cfg, zigInputs);
+    }
   }
 
   // ─── Step 4: configure-time generated header + assemble flags ───

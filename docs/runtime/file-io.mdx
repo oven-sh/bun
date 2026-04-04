@@ -152,6 +152,31 @@ const response = await fetch("https://bun.com");
 await Bun.write("index.html", response);
 ```
 
+## Renaming files (`Bun.rename()`)
+
+`Bun.rename(from, to, conflict?): Promise<void>`
+
+Atomically rename or move files and directories. Similar to Node.js `fs.promises.rename()` but with an optional third parameter for conflict resolution.
+
+```ts
+// Basic rename (replaces destination if exists)
+await Bun.rename("old.txt", "new.txt");
+
+// Atomic swap (Linux/macOS only, falls back to replace on Windows)
+await Bun.rename("file1.txt", "file2.txt", "swap");
+
+// Fail if destination exists
+await Bun.rename("source.txt", "dest.txt", "no-replace");
+```
+
+The `conflict` parameter controls behavior when the destination already exists:
+
+| Mode           | Description                                                                            |
+| -------------- | -------------------------------------------------------------------------------------- |
+| `"replace"`    | Replace destination if it exists (default)                                             |
+| `"swap"`       | Atomically swap the two files (Linux/macOS only, falls back to `"replace"` on Windows) |
+| `"no-replace"` | Fail with an error if destination exists                                               |
+
 ---
 
 ## Incremental writing with `FileSink`

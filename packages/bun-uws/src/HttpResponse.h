@@ -762,6 +762,14 @@ public:
         return httpResponseData->isConnectRequest;
     }
 
+    /* Mark this connection as a raw/tunnel connection (like CONNECT).
+     * This stops the HTTP parser from parsing subsequent data as HTTP,
+     * enabling raw bidirectional communication after protocol upgrade. */
+    void markAsRawMode() {
+        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
+        httpResponseData->isConnectRequest = true;
+    }
+
     void setWriteOffset(uint64_t offset) {
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
 

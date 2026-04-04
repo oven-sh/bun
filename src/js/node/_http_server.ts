@@ -606,15 +606,16 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           http_res.end();
           socket.destroy();
         } else if (is_upgrade) {
+          // Hand off the connection to userland, mirroring CONNECT handler.
+          // Enable streaming so socket.write() and socket.on("data") work.
+          socket[kEnableStreaming](true);
+          // Tell uWebSockets to stop parsing HTTP on this connection,
+          // switching to raw pass-through mode for bidirectional data.
+          socketHandle.markAsRawMode();
+          const { promise: upgradePromise, resolve: upgradeResolve } = $newPromiseCapability(Promise);
+          socket.once("close", upgradeResolve);
           server.emit("upgrade", http_req, socket, kEmptyBuffer);
-          if (!socket._httpMessage) {
-            if (canUseInternalAssignSocket) {
-              // ~10% performance improvement in JavaScriptCore due to avoiding .once("close", ...) and removing a listener
-              assignSocketInternal(http_res, socket);
-            } else {
-              http_res.assignSocket(socket);
-            }
-          }
+          return upgradePromise;
         } else if (http_req.headers.expect !== undefined) {
           if (http_req.headers.expect === "100-continue") {
             if (server.listenerCount("checkContinue") > 0) {

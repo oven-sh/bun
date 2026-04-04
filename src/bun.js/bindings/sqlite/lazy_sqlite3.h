@@ -215,7 +215,7 @@ static const char* sqlite3_lib_path = "sqlite3.dll";
 #elif OS(DARWIN)
 static const char* sqlite3_lib_path = "libsqlite3.dylib";
 #else
-static const char* sqlite3_lib_path = "sqlite3";
+static const char* sqlite3_lib_path = "libsqlite3.so";
 #endif
 
 static HMODULE sqlite3_handle = nullptr;

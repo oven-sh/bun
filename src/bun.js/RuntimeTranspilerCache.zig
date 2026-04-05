@@ -15,7 +15,8 @@
 /// Version 16: Added typeof undefined minification optimization.
 /// Version 17: Removed transpiler import rewrite for bun:test. Not bumping it causes test/js/bun/http/req-url-leak.test.ts to fail with SyntaxError: Export named 'expect' not found in module 'bun:test'.
 /// Version 18: Include ESM record (module info) with an ES Module, see #15758
-const expected_version = 18;
+/// Version 19: Emits UTF-8 files in rare cases (tagged templates, regex with unicode)
+const expected_version = 19;
 
 const debug = Output.scoped(.cache, .visible);
 const MINIMUM_CACHE_SIZE = 50 * 1024;
@@ -312,6 +313,11 @@ pub const RuntimeTranspilerCache = struct {
                     const read_bytes = try file.preadAll(utf8, this.metadata.output_byte_offset);
                     if (read_bytes != this.metadata.output_byte_length) {
                         return error.MissingData;
+                    }
+                    if (this.metadata.output_hash != 0) {
+                        if (hash(utf8) != this.metadata.output_hash) {
+                            return error.InvalidHash;
+                        }
                     }
                     break :brk .{ .utf8 = utf8 };
                 },
@@ -686,7 +692,7 @@ pub const RuntimeTranspilerCache = struct {
             return;
         }
         bun.assert(this.entry == null);
-        const output_code = bun.String.cloneLatin1(output_code_bytes);
+        const output_code = bun.String.cloneUTF8(output_code_bytes);
         this.output_code = output_code;
 
         toFile(this.input_byte_length.?, this.input_hash.?, this.features_hash.?, sourcemap, esm_record, output_code, this.exports_kind) catch |err| {
@@ -694,7 +700,7 @@ pub const RuntimeTranspilerCache = struct {
             return;
         };
         if (comptime bun.Environment.allow_assert)
-            debug("put() = {d} bytes", .{output_code.latin1().len});
+            debug("put() = {d} bytes", .{output_code.length()});
     }
 };
 

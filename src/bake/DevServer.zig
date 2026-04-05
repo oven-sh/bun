@@ -2561,7 +2561,7 @@ pub fn finalizeBundle(
                 dev.vm.printErrorLikeObjectToConsole(dev.vm.global.takeException(err));
                 @panic("Error thrown while evaluating server code. This is always a bug in the bundler.");
             };
-        } else c.BakeLoadServerHmrPatch(@ptrCast(dev.vm.global), bun.String.cloneLatin1(server_bundle)) catch |err| {
+        } else c.BakeLoadServerHmrPatch(@ptrCast(dev.vm.global), bun.String.cloneUTF8(server_bundle)) catch |err| {
             dev.vm.printErrorLikeObjectToConsole(dev.vm.global.takeException(err));
             @panic("Error thrown while evaluating server code. This is always a bug in the bundler.");
         };

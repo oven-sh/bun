@@ -554,7 +554,9 @@ pub const StandaloneModuleGraph = struct {
                 .loader = output_file.loader,
                 .contents = string_builder.appendCountZ(output_file.value.buffer.bytes),
                 .encoding = switch (output_file.loader) {
-                    .js, .jsx, .ts, .tsx => .latin1,
+                    // Bundler output may contain raw UTF-8 bytes from tagged
+                    // template literals or regex source with non-ASCII characters.
+                    .js, .jsx, .ts, .tsx => .utf8,
                     else => .binary,
                 },
                 .module_format = if (output_file.loader.isJavaScriptLike()) switch (output_format) {

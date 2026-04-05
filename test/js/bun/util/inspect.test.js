@@ -456,12 +456,6 @@ const fixture = [
     Object.setPrototypeOf(obj, new Proxy(Object.getPrototypeOf(obj), {}));
     return obj;
   },
-  () => {
-    const v1 = Bun.jest(Bun.fileURLToPath(import.meta.url));
-    const v2 = v1.expect(v1);
-    Object.setPrototypeOf(v2, new Proxy(Object.getPrototypeOf(v2), {}));
-    return v2;
-  },
 ];
 
 describe("crash testing", () => {

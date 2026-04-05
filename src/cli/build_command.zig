@@ -493,6 +493,11 @@ pub const BuildCommand = struct {
             }
 
             if (ctx.bundler_options.compile) {
+                if (log.errors > 0) {
+                    try log.print(Output.errorWriter());
+                    Global.exit(1);
+                }
+
                 printSummary(
                     bundled_end,
                     minify_duration,

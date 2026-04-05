@@ -410,6 +410,20 @@ pub fn AstMaybe(
                         }, .loc = loc };
                     }
 
+                    // Lower import.meta.env to process.env when bundling for bun/node targets
+                    if (p.options.lower_import_meta_env_to_process_env and strings.eqlComptime(name, "env")) {
+                        const process_ref = (p.findSymbol(target.loc, "process") catch unreachable).ref;
+                        return p.newExpr(
+                            E.Dot{
+                                .target = p.newExpr(E.Identifier{ .ref = process_ref }, target.loc),
+                                .name = "env",
+                                .name_loc = name_loc,
+                                .can_be_removed_if_unused = true,
+                            },
+                            loc,
+                        );
+                    }
+
                     // Inline import.meta properties for Bake
                     if (p.options.framework != null or (p.options.bundle and p.options.output_format == .cjs)) {
                         if (strings.eqlComptime(name, "dir") or strings.eqlComptime(name, "dirname")) {

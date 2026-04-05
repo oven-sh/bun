@@ -37,6 +37,10 @@ pub const Parser = struct {
         import_meta_main_value: ?bool = null,
         lower_import_meta_main_for_node_js: bool = false,
 
+        /// When true, import.meta.env is lowered to process.env during bundling.
+        /// Set for bun/node targets where process.env is available.
+        lower_import_meta_env_to_process_env: bool = false,
+
         /// When using react fast refresh or server components, the framework is
         /// able to customize what import sources are used.
         framework: ?*bun.bake.Framework = null,

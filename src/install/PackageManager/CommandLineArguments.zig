@@ -105,6 +105,8 @@ pub const add_params: []const ParamType = &(shared_params ++ [_]ParamType{
 });
 
 pub const remove_params: []const ParamType = &(shared_params ++ [_]ParamType{
+    clap.parseParam("--filter <STR>...                     Remove packages for the matching workspaces") catch unreachable,
+    clap.parseParam("-r, --recursive                       Remove packages from all workspaces") catch unreachable,
     clap.parseParam("<POS> ...                         \"name\" of package(s) to remove from package.json") catch unreachable,
 });
 
@@ -1054,6 +1056,10 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
     if (comptime subcommand == .update) {
         cli.latest = args.flag("--latest");
         cli.interactive = args.flag("--interactive");
+        cli.recursive = args.flag("--recursive");
+    }
+
+    if (comptime subcommand == .remove) {
         cli.recursive = args.flag("--recursive");
     }
 

@@ -104,7 +104,10 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
     const preserve_trailing_newline_at_eof_for_package_json = current_package_json.source.contents.len > 0 and
         current_package_json.source.contents[current_package_json.source.contents.len - 1] == '\n';
 
-    if (subcommand == .remove) {
+    const is_workspace_remove = subcommand == .remove and
+        (manager.options.do.recursive or manager.options.filter_patterns.len > 0);
+
+    if (subcommand == .remove and !is_workspace_remove) {
         if (current_package_json.root.data != .e_object) {
             Output.errGeneric("package.json is not an Object {{}}, so there's nothing to {s}!", .{@tagName(subcommand)});
             Global.crash();
@@ -136,48 +139,25 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
         .remove => {
             // if we're removing, they don't have to specify where it is installed in the dependencies list
             // they can even put it multiple times and we will just remove all of them
-            for (updates.*) |request| {
-                inline for ([_]string{ "dependencies", "devDependencies", "optionalDependencies", "peerDependencies" }) |list| {
-                    if (current_package_json.root.asProperty(list)) |query| {
-                        if (query.expr.data == .e_object) {
-                            var dependencies = query.expr.data.e_object.properties.slice();
-                            var i: usize = 0;
-                            var new_len = dependencies.len;
-                            while (i < dependencies.len) : (i += 1) {
-                                if (dependencies[i].key.?.data == .e_string) {
-                                    if (dependencies[i].key.?.data.e_string.eql(string, request.name)) {
-                                        if (new_len > 1) {
-                                            dependencies[i] = dependencies[new_len - 1];
-                                            new_len -= 1;
-                                        } else {
-                                            new_len = 0;
-                                        }
 
-                                        any_changes = true;
-                                    }
-                                }
-                            }
+            // When --filter is used (without --recursive), only modify root if filter matches the root package name.
+            // With --recursive or no filter, always modify root.
+            const should_modify_root = if (manager.options.filter_patterns.len > 0 and !manager.options.do.recursive) blk: {
+                const root_name = if (current_package_json.root.asProperty("name")) |name_prop|
+                    (if (name_prop.expr.data == .e_string) name_prop.expr.data.e_string.data else "")
+                else
+                    "";
+                break :blk removeFromWorkspacePackageJSONs_filterMatches(manager, root_name, "", original_cwd);
+            } else true;
 
-                            const changed = new_len != dependencies.len;
-                            if (changed) {
-                                query.expr.data.e_object.properties.len = @as(u32, @truncate(new_len));
+            if (should_modify_root) {
+                any_changes = removeDepsFromPackageJSON(&current_package_json.root, updates.*);
+            }
 
-                                // If the dependencies list is now empty, remove it from the package.json
-                                // since we're swapRemove, we have to re-sort it
-                                if (query.expr.data.e_object.properties.len == 0) {
-                                    // TODO: Theoretically we could change these two lines to
-                                    // `.orderedRemove(query.i)`, but would that change user-facing
-                                    // behavior?
-                                    _ = current_package_json.root.data.e_object.properties.swapRemove(query.i);
-                                    current_package_json.root.data.e_object.packageJSONSort();
-                                } else {
-                                    var obj = query.expr.data.e_object;
-                                    obj.alphabetizeProperties();
-                                }
-                            }
-                        }
-                    }
-                }
+            // When --filter or --recursive is used, also remove from matching workspace package.json files
+            if (is_workspace_remove) {
+                const workspace_changes = try removeFromWorkspacePackageJSONs(manager, updates.*, original_cwd);
+                any_changes = any_changes or workspace_changes;
             }
         },
 
@@ -731,6 +711,283 @@ pub fn updatePackageJSONAndInstall(
 
 const string = []const u8;
 
+/// Remove the given dependencies from all dependency sections of a package.json AST.
+/// Returns true if any changes were made.
+fn removeDepsFromPackageJSON(root: *Expr, updates: []const UpdateRequest) bool {
+    var changed = false;
+    for (updates) |request| {
+        inline for ([_]string{ "dependencies", "devDependencies", "optionalDependencies", "peerDependencies" }) |list| {
+            if (root.asProperty(list)) |query| {
+                if (query.expr.data == .e_object) {
+                    var dependencies = query.expr.data.e_object.properties.slice();
+                    var i: usize = 0;
+                    var new_len = dependencies.len;
+                    while (i < new_len) {
+                        if (dependencies[i].key.?.data == .e_string) {
+                            if (dependencies[i].key.?.data.e_string.eql(string, request.name)) {
+                                if (new_len > 1) {
+                                    dependencies[i] = dependencies[new_len - 1];
+                                    new_len -= 1;
+                                } else {
+                                    new_len = 0;
+                                }
+                                changed = true;
+                                // Don't increment i: re-check the swapped element
+                                continue;
+                            }
+                        }
+                        i += 1;
+                    }
+
+                    const deps_changed = new_len != dependencies.len;
+                    if (deps_changed) {
+                        query.expr.data.e_object.properties.len = @as(u32, @truncate(new_len));
+
+                        if (query.expr.data.e_object.properties.len == 0) {
+                            _ = root.data.e_object.properties.swapRemove(query.i);
+                            root.data.e_object.packageJSONSort();
+                        } else {
+                            var obj = query.expr.data.e_object;
+                            obj.alphabetizeProperties();
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return changed;
+}
+
+/// Check if the given name/path matches the manager's --filter patterns.
+/// Used to determine whether the root package should be modified.
+fn removeFromWorkspacePackageJSONs_filterMatches(
+    manager: *PackageManager,
+    pkg_name: string,
+    workspace_path: string,
+    original_cwd: string,
+) bool {
+    if (manager.options.filter_patterns.len == 0) return true;
+
+    const path_buf = bun.path_buffer_pool.get();
+    defer bun.path_buffer_pool.put(path_buf);
+
+    var matched = false;
+    for (manager.options.filter_patterns) |pattern| {
+        const filter = WorkspaceFilter.init(manager.allocator, pattern, original_cwd, path_buf[0..]) catch continue;
+        defer filter.deinit(manager.allocator);
+
+        const match_pattern, const name_or_path = switch (filter) {
+            .name => |p| .{ p, pkg_name },
+            .path => |p| .{ p, workspace_path },
+            .all => {
+                matched = true;
+                continue;
+            },
+        };
+
+        switch (bun.glob.match(match_pattern, name_or_path)) {
+            .match, .negate_match => matched = true,
+            .negate_no_match => {
+                matched = false;
+                break;
+            },
+            .no_match => {},
+        }
+    }
+    return matched;
+}
+
+/// Remove dependencies from workspace package.json files that match the given filter/recursive options.
+/// Returns true if any workspace package.json files were modified.
+fn removeFromWorkspacePackageJSONs(
+    manager: *PackageManager,
+    updates: []const UpdateRequest,
+    original_cwd: string,
+) !bool {
+    const top_level_dir = strings.withoutTrailingSlash(FileSystem.instance.top_level_dir);
+    // Use top_level_dir (which is resolved to the workspace root during init)
+    // rather than original_package_json_path (which may point to a child workspace
+    // package.json when running from a subdirectory).
+    var root_pkg_json_buf: bun.PathBuffer = undefined;
+    const root_package_json_path = bun.path.joinAbsStringBuf(
+        top_level_dir,
+        &root_pkg_json_buf,
+        &[_]string{"package.json"},
+        .auto,
+    );
+
+    // Build workspace filters from --filter patterns
+    const path_buf = bun.path_buffer_pool.get();
+    defer bun.path_buffer_pool.put(path_buf);
+
+    var workspace_filters: std.ArrayListUnmanaged(WorkspaceFilter) = .{};
+    defer {
+        for (workspace_filters.items) |filter| filter.deinit(manager.allocator);
+        workspace_filters.deinit(manager.allocator);
+    }
+
+    if (manager.options.filter_patterns.len > 0) {
+        try workspace_filters.ensureUnusedCapacity(manager.allocator, manager.options.filter_patterns.len);
+        for (manager.options.filter_patterns) |pattern| {
+            try workspace_filters.append(manager.allocator, try WorkspaceFilter.init(manager.allocator, pattern, original_cwd, path_buf[0..]));
+        }
+    }
+    const is_recursive = manager.options.do.recursive;
+
+    // Discover workspace directories from root package.json's "workspaces" field.
+    // Use processNamesArray to properly handle glob patterns in workspace definitions.
+    const root_entry = manager.workspace_package_json_cache.getWithPath(
+        manager.allocator,
+        manager.log,
+        root_package_json_path,
+        .{},
+        // If root package.json can't be read/parsed, there are no workspaces to process.
+    ).unwrap() catch return false;
+
+    const workspaces_array = if (root_entry.root.asProperty("workspaces")) |prop| switch (prop.expr.data) {
+        .e_array => |arr| arr,
+        .e_object => |obj| if (obj.get("packages")) |packages| switch (packages.data) {
+            .e_array => |arr| arr,
+            else => null,
+        } else null,
+        else => null,
+    } else null;
+
+    if (workspaces_array == null) return false;
+
+    var workspace_names = WorkspaceMap.init(manager.allocator);
+    defer workspace_names.map.deinit();
+
+    var discover_log = logger.Log.init(manager.allocator);
+    defer discover_log.deinit();
+
+    _ = workspace_names.processNamesArray(
+        manager.allocator,
+        &manager.workspace_package_json_cache,
+        &discover_log,
+        workspaces_array.?,
+        &root_entry.source,
+        logger.Loc{},
+        null,
+    ) catch return false;
+
+    // Iterate over discovered workspaces and remove matching dependencies.
+    var any_workspace_changes = false;
+    var filepath_buf: bun.PathBuffer = undefined;
+    for (workspace_names.keys(), workspace_names.values()) |rel_path, entry| {
+        // Build absolute package.json path for this workspace
+        const abs_pkg_json_path = bun.path.joinAbsStringBuf(
+            top_level_dir,
+            &filepath_buf,
+            &[_]string{ rel_path, "package.json" },
+            .auto,
+        );
+
+        // Skip root
+        if (strings.eqlLong(abs_pkg_json_path, root_package_json_path, false)) continue;
+
+        // Check if this workspace matches the filter
+        if (!is_recursive and workspace_filters.items.len > 0) {
+            if (!workspaceMatchesFilter(entry.name, rel_path, workspace_filters.items))
+                continue;
+        }
+
+        // Load workspace package.json from cache (it was added by processNamesArray).
+        // Skip workspaces whose package.json can't be read/parsed rather than failing the entire operation.
+        var pkg_json = manager.workspace_package_json_cache.getWithPath(
+            manager.allocator,
+            manager.log,
+            abs_pkg_json_path,
+            .{ .guess_indentation = true },
+        ).unwrap() catch continue;
+
+        if (pkg_json.root.data != .e_object) continue;
+
+        // Remove the requested dependencies
+        if (removeDepsFromPackageJSON(&pkg_json.root, updates)) {
+            try saveWorkspacePackageJSON(manager, pkg_json, abs_pkg_json_path);
+            any_workspace_changes = true;
+        }
+    }
+    return any_workspace_changes;
+}
+
+/// Check if a workspace matches the given filters by name or path.
+fn workspaceMatchesFilter(
+    pkg_name: string,
+    workspace_path: string,
+    filters: []const WorkspaceFilter,
+) bool {
+    var matched = false;
+    for (filters) |filter| {
+        const pattern, const name_or_path = switch (filter) {
+            .name => |pattern| .{ pattern, pkg_name },
+            .path => |pattern| .{ pattern, workspace_path },
+            .all => {
+                matched = true;
+                continue;
+            },
+        };
+
+        switch (bun.glob.match(pattern, name_or_path)) {
+            .match, .negate_match => matched = true,
+            .negate_no_match => {
+                matched = false;
+                break;
+            },
+            .no_match => {},
+        }
+    }
+    return matched;
+}
+
+/// Serialize and write a workspace package.json back to disk.
+fn saveWorkspacePackageJSON(
+    manager: *PackageManager,
+    pkg_json: *WorkspacePackageJSONCache.MapEntry,
+    pkg_json_path: string,
+) !void {
+    const preserve_trailing_newline = pkg_json.source.contents.len > 0 and
+        pkg_json.source.contents[pkg_json.source.contents.len - 1] == '\n';
+
+    var buffer_writer = JSPrinter.BufferWriter.init(manager.allocator);
+    try buffer_writer.buffer.list.ensureTotalCapacity(manager.allocator, pkg_json.source.contents.len + 1);
+    buffer_writer.append_newline = preserve_trailing_newline;
+    var package_json_writer = JSPrinter.BufferPrinter.init(buffer_writer);
+
+    _ = JSPrinter.printJSON(
+        @TypeOf(&package_json_writer),
+        &package_json_writer,
+        pkg_json.root,
+        &pkg_json.source,
+        .{
+            .indent = pkg_json.indentation,
+            .mangled_props = null,
+        },
+    ) catch |err| {
+        Output.prettyErrorln("package.json failed to write due to error {s}", .{@errorName(err)});
+        Global.crash();
+    };
+
+    const new_source = try manager.allocator.dupe(u8, package_json_writer.ctx.writtenWithoutTrailingZero());
+
+    const path_z = try manager.allocator.dupeZ(u8, pkg_json_path);
+    defer manager.allocator.free(path_z);
+
+    const workspace_pkg_json_file = (try bun.sys.File.openat(
+        .cwd(),
+        path_z,
+        bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC,
+        0o644,
+    ).unwrap());
+    defer workspace_pkg_json_file.close();
+
+    workspace_pkg_json_file.writeAll(new_source).unwrap() catch {
+        Output.errGeneric("failed to write package.json at \"{s}\"", .{pkg_json_path});
+        Global.crash();
+    };
+}
+
 const std = @import("std");
 
 const bun = @import("bun");
@@ -744,13 +1001,19 @@ const logger = bun.logger;
 const strings = bun.strings;
 const Command = bun.cli.Command;
 const File = bun.sys.File;
-const PackageNameHash = bun.install.PackageNameHash;
 
 const Semver = bun.Semver;
 const String = Semver.String;
 
+const js_ast = bun.ast;
+const Expr = js_ast.Expr;
+
 const Fs = bun.fs;
 const FileSystem = Fs.FileSystem;
+
+const Lockfile = bun.install.Lockfile;
+const PackageNameHash = bun.install.PackageNameHash;
+const WorkspaceMap = Lockfile.Package.WorkspaceMap;
 
 const PackageManager = bun.install.PackageManager;
 const CommandLineArguments = PackageManager.CommandLineArguments;
@@ -758,4 +1021,6 @@ const PackageJSONEditor = PackageManager.PackageJSONEditor;
 const PatchCommitResult = PackageManager.PatchCommitResult;
 const Subcommand = PackageManager.Subcommand;
 const UpdateRequest = PackageManager.UpdateRequest;
+const WorkspaceFilter = PackageManager.WorkspaceFilter;
+const WorkspacePackageJSONCache = PackageManager.WorkspacePackageJSONCache;
 const attemptToCreatePackageJSON = PackageManager.attemptToCreatePackageJSON;

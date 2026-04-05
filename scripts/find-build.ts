@@ -236,22 +236,22 @@ function ago(iso: string | null | undefined): string {
   return h ? `${h}h${m}m` : m ? `${m}m` : `${s}s`;
 }
 
-async function printStatus(build: number, onReady?: () => void) {
+async function fetchStatus(build: number) {
   type Full = { state: string; started_at: string | null; finished_at: string | null; web_url: string; jobs: Job[] };
   const [b, anns] = await Promise.all([
     bk<Full>("build", "view", String(build), "--json"),
     annotations(build).catch(() => [] as Annotation[]),
   ]);
-  onReady?.();
 
+  const out: string[] = [];
   const jobs = b.jobs.filter(j => j.type === "script");
   const counts: Record<string, number> = {};
   for (const j of jobs) counts[j.state] = (counts[j.state] ?? 0) + 1;
   const failed = jobs.filter(isFailedJob);
 
   const stateColor = b.state === "passed" ? "\x1b[32m" : b.state === "failed" ? c.red : c.yellow;
-  console.log(`${c.bold}#${build}${c.reset} ${tty ? stateColor : ""}${b.state}${c.reset}  ${b.web_url}`);
-  console.log(
+  out.push(`${c.bold}#${build}${c.reset} ${tty ? stateColor : ""}${b.state}${c.reset}  ${b.web_url}`);
+  out.push(
     `${c.dim}started ${ago(b.started_at)} ago` +
       (b.finished_at ? `, finished ${ago(b.finished_at)} ago` : "") +
       c.reset,
@@ -259,41 +259,48 @@ async function printStatus(build: number, onReady?: () => void) {
 
   const order = ["passed", "failed", "broken", "timed_out", "running", "scheduled", "waiting"];
   const parts = [...new Set([...order, ...Object.keys(counts)])].filter(s => counts[s]).map(s => `${counts[s]} ${s}`);
-  console.log(`\n${c.bold}jobs:${c.reset} ${parts.join(", ")}  ${c.dim}(${jobs.length} total)${c.reset}`);
+  out.push("", `${c.bold}jobs:${c.reset} ${parts.join(", ")}  ${c.dim}(${jobs.length} total)${c.reset}`);
 
   if (failed.length) {
-    console.log(`\n${c.red}${c.bold}failed jobs:${c.reset}`);
-    for (const j of failed) console.log(`  ${j.name.padEnd(48)} ${c.dim}${j.web_url}${c.reset}`);
+    out.push("", `${c.red}${c.bold}failed jobs:${c.reset}`);
+    for (const j of failed) out.push(`  ${j.name.padEnd(48)} ${c.dim}${j.web_url}${c.reset}`);
   }
 
   const err = anns.filter(a => a.style === "error");
   const other = anns.length - err.length;
   if (err.length) {
-    console.log(`\n${c.red}${c.bold}failing tests so far:${c.reset}`);
-    for (const a of err) console.log(`  ${a.context}`);
+    out.push("", `${c.red}${c.bold}failing tests so far:${c.reset}`);
+    for (const a of err) out.push(`  ${a.context}`);
   }
-  if (other) console.log(`${c.dim}  (+${other} warning/flaky)${c.reset}`);
+  if (other) out.push(`${c.dim}  (+${other} warning/flaky)${c.reset}`);
 
   if (!failed.length && !err.length) {
-    console.log(b.finished_at ? `\n${c.dim}no failures${c.reset}` : `\n${c.dim}no failures yet${c.reset}`);
+    out.push("", b.finished_at ? `${c.dim}no failures${c.reset}` : `${c.dim}no failures yet${c.reset}`);
   }
-  return b;
+  return { state: b.state, lines: out };
+}
+
+async function printStatus(build: number) {
+  const { lines } = await fetchStatus(build);
+  console.log(lines.join("\n"));
 }
 
 async function watchStatus(build: number) {
   const terminal = new Set(["passed", "failed", "canceled", "blocked", "skipped", "not_run"]);
   const isTTY = process.stdout.isTTY;
   const frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-  const clear = isTTY ? () => process.stdout.write("\x1b[H\x1b[J") : undefined;
+  let prevLines = 0;
   for (;;) {
-    const b = await printStatus(build, clear);
-    if (terminal.has(b.state)) process.exit(b.state === "passed" ? 0 : 1);
+    const { state, lines } = await fetchStatus(build);
+    if (isTTY && prevLines > 0) process.stdout.write(`\r\x1b[${prevLines}A\x1b[J`);
+    process.stdout.write(lines.join("\n") + "\n");
+    if (terminal.has(state)) process.exit(state === "passed" ? 0 : 1);
     if (!isTTY) {
       console.log();
       await Bun.sleep(10_000);
       continue;
     }
-    process.stdout.write("\n");
+    prevLines = lines.length + 1;
     for (let i = 0; i < 100; i++) {
       const left = 10 - Math.floor(i / 10);
       process.stdout.write(

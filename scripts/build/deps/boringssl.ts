@@ -17,6 +17,8 @@ export const boringssl: Dependency = {
     commit: BORINGSSL_COMMIT,
   }),
 
+  patches: ["patches/boringssl/expose_aes-cfb8.patch"],
+
   build: () => ({
     kind: "nested-cmake",
     // No explicit targets — defaults to lib names (crypto, ssl, decrepit).

@@ -323,9 +323,7 @@ describe("http.ClientRequest 'upgrade' event", () => {
     const server = net.createServer(conn => {
       connectionCount++;
       conn.once("data", () => {
-        conn.write(
-          "HTTP/1.1 101 Switching Protocols\r\n" + "Upgrade: custom\r\n" + "Connection: Upgrade\r\n" + "\r\n",
-        );
+        conn.write("HTTP/1.1 101 Switching Protocols\r\n" + "Upgrade: custom\r\n" + "Connection: Upgrade\r\n" + "\r\n");
       });
     });
     const addr = (await listen(server)) as AddressInfo;

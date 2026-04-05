@@ -1,6 +1,38 @@
 import { describe, expect, test } from "bun:test";
-import { tempDir } from "harness";
+import { isWindows, tempDir } from "harness";
+import { existsSync, readdirSync, rmSync } from "node:fs";
 import { join } from "path";
+
+// Minimal ustar tarball builder (pathnames must be <100 bytes).
+function ustarHeader(name: string, size: number): Buffer {
+  if (Buffer.byteLength(name) > 99) throw new Error("ustar name too long: " + name);
+  const h = Buffer.alloc(512);
+  h.write(name, 0, 100, "utf8");
+  h.write("0000644\0", 100);
+  h.write("0000000\0", 108);
+  h.write("0000000\0", 116);
+  h.write(size.toString(8).padStart(11, "0") + "\0", 124);
+  h.write("00000000000\0", 136);
+  h.write("        ", 148);
+  h.write("0", 156);
+  h.write("ustar\0", 257);
+  h.write("00", 263);
+  let sum = 0;
+  for (let i = 0; i < 512; i++) sum += h[i];
+  h.write(sum.toString(8).padStart(6, "0") + "\0 ", 148);
+  return h;
+}
+
+function ustarEntry(name: string, data: Buffer): Buffer {
+  const pad = Buffer.alloc((512 - (data.length % 512)) % 512);
+  return Buffer.concat([ustarHeader(name, data.length), data, pad]);
+}
+
+function buildTarball(entries: Array<{ name: string; data: Buffer | string }>): Uint8Array {
+  const parts = entries.map(e => ustarEntry(e.name, typeof e.data === "string" ? Buffer.from(e.data) : e.data));
+  parts.push(Buffer.alloc(1024));
+  return new Uint8Array(Buffer.concat(parts));
+}
 
 describe("Bun.Archive", () => {
   describe("new Archive()", () => {
@@ -479,6 +511,42 @@ describe("Bun.Archive", () => {
       await expect(async () => {
         await archive.extract(join(String(dir), "existing-file.txt"));
       }).toThrow();
+    });
+
+    test.skipIf(!isWindows)("skips tar entries whose normalized path is absolute", async () => {
+      using dir = tempDir("archive-extract-absolute", {});
+
+      // A tar entry whose name looks like a Windows drive-letter path. After
+      // tokenize + normalize this becomes `C:\...`, which is absolute —
+      // `openatWindows` would ignore the extraction directory and write the
+      // file to the drive root. The extractor must drop the entry.
+      const uniq = `bun-archive-absolute-${crypto.randomUUID()}.txt`;
+      const driveEntry = `C:/${uniq}`;
+      const windowsAbsPath = `C:\\${uniq}`;
+
+      const tarball = buildTarball([
+        { name: "safe.txt", data: "safe contents" },
+        { name: driveEntry, data: "should not escape" },
+      ]);
+
+      try {
+        const archive = new Bun.Archive(tarball);
+        await archive.extract(String(dir));
+
+        // The safe entry must still be extracted.
+        expect(await Bun.file(join(String(dir), "safe.txt")).text()).toBe("safe contents");
+
+        // The absolute entry must not land at its drive-letter target.
+        expect(existsSync(windowsAbsPath)).toBe(false);
+
+        // The absolute entry is skipped entirely, so only `safe.txt` remains
+        // in the extraction directory.
+        expect(readdirSync(String(dir))).toEqual(["safe.txt"]);
+      } finally {
+        if (existsSync(windowsAbsPath)) {
+          rmSync(windowsAbsPath, { force: true });
+        }
+      }
     });
   });
 

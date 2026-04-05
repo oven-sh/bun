@@ -318,6 +318,58 @@ describe("http.ClientRequest 'upgrade' event", () => {
     }
   });
 
+  test("req.write() after upgrade reuses the live connection", async () => {
+    let connectionCount = 0;
+    const { promise: seen, resolve: resolveSeen } = Promise.withResolvers<string>();
+    const server = net.createServer(conn => {
+      connectionCount++;
+      let buf = "";
+      let upgraded = false;
+      conn.on("data", chunk => {
+        buf += chunk.toString();
+        if (!upgraded && buf.includes("\r\n\r\n")) {
+          upgraded = true;
+          const headerEnd = buf.indexOf("\r\n\r\n") + 4;
+          conn.write(
+            "HTTP/1.1 101 Switching Protocols\r\n" + "Upgrade: custom\r\n" + "Connection: Upgrade\r\n" + "\r\n",
+          );
+          let body = buf.slice(headerEnd);
+          const check = () => {
+            if (body.length >= 12) resolveSeen(body.slice(0, 12));
+          };
+          check();
+          conn.on("data", more => {
+            body += more.toString();
+            check();
+          });
+        }
+      });
+    });
+    const addr = (await listen(server)) as AddressInfo;
+
+    try {
+      const req = http.request({
+        host: "127.0.0.1",
+        port: addr.port,
+        method: "POST",
+        headers: { Connection: "Upgrade", Upgrade: "custom" },
+      });
+      // Start the handshake immediately without sending a body.
+      req.flushHeaders();
+      const [, socket] = await once(req, "upgrade");
+      // After the 101, writing more via req.write() must NOT sever the live
+      // connection nor issue a second upgrade handshake.
+      req.write("aaa");
+      req.write("bbb");
+      req.write("cccddd");
+      expect(await seen).toBe("aaabbbcccddd");
+      expect(connectionCount).toBe(1);
+      socket.destroy();
+    } finally {
+      server.close();
+    }
+  });
+
   test("res._dump() after upgrade does not throw ReadableStream locked", async () => {
     const server = net.createServer(conn => {
       conn.once("data", () => {

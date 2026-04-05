@@ -16,14 +16,16 @@ class UpgradedSocket extends Duplex {
   encrypted = false;
   authorized = false;
 
-  constructor(responseBody, channel, url) {
+  constructor(responseBody, channel, url, rejectUnauthorized = true) {
     super({ readableHighWaterMark: HIGH_WATER_MARK, writableHighWaterMark: HIGH_WATER_MARK });
     this.#channel = channel;
     this.#url = url;
     this.encrypted = typeof url === "string" && url.startsWith("https:");
-    // A 101 over https:// necessarily passed TLS verification (fetch defaults
-    // to rejectUnauthorized=true), so mirror encrypted onto authorized.
-    this.authorized = this.encrypted;
+    // A 101 over https:// with rejectUnauthorized=true (fetch's default)
+    // necessarily passed CA verification. When rejectUnauthorized is false,
+    // the TLS handshake may have accepted an unverified cert — authorized
+    // must stay false so consumers (like ws) don't treat the peer as trusted.
+    this.authorized = this.encrypted && rejectUnauthorized !== false;
     if (responseBody) {
       this.#reader = responseBody.getReader();
     }

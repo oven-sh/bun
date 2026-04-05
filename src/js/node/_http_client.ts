@@ -452,6 +452,10 @@ function ClientRequest(input, options, cb) {
         // resolveNextChunk as a no-op for the upgrade path (req.end doesn't
         // close the channel — the upgraded socket reuses it).
         resolveNextChunk = _end => {};
+        // Keep `fetching` set after the 101 resolves so post-upgrade
+        // req.write() calls don't re-enter startFetch() and issue a
+        // duplicate upgrade handshake.
+        keepOpen = true;
       } else if (isDuplex) {
         fetchOptions.duplex = "half";
         keepOpen = true;
@@ -545,7 +549,10 @@ function ClientRequest(input, options, cb) {
             // http://localhost/…) which isn't a real remote address — pass
             // undefined so the socket doesn't fabricate remoteAddress/Port.
             const socketURL = this[kSocketPath] ? undefined : response.url;
-            const socket = new UpgradedSocket(response.body, upgradeChannel, socketURL);
+            // rejectUnauthorized defaults to true; if the user set it to false,
+            // TLS verification may have been skipped, so authorized must be false.
+            const rejectUnauthorized = this[kTls]?.rejectUnauthorized !== false;
+            const socket = new UpgradedSocket(response.body, upgradeChannel, socketURL, rejectUnauthorized);
 
             // Replace the pre-upgrade placeholder socket on both request and
             // response so teardown paths (req.destroy, etc.) operate on the

@@ -887,6 +887,39 @@ pub const Bin = extern struct {
             return remain;
         }
 
+        /// When a bin target starts with `node_modules/`, it refers to a nested
+        /// dependency's file. If the dependency was hoisted, the nested path won't
+        /// exist on disk. In that case, resolve the target relative to the parent
+        /// node_modules directory where hoisted packages live.
+        fn resolveTargetWithHoisting(this: *const Linker, package_dir: []const u8, target: []const u8) [:0]const u8 {
+            const abs_target = path.joinAbsStringZ(package_dir, &.{target}, .auto);
+
+            // Strip leading "./" or ".\" since joinAbsStringZ normalizes it away
+            // in the absolute path but the prefix check below operates on the raw target.
+            const effective_target = if (strings.hasPrefixComptime(target, "./") or strings.hasPrefixComptime(target, ".\\"))
+                target[2..]
+            else
+                target;
+
+            const node_modules_prefix = comptime if (Environment.isWindows) "node_modules\\" else "node_modules/";
+            const node_modules_prefix_alt = "node_modules/";
+            if (effective_target.len > node_modules_prefix.len and
+                (strings.hasPrefixComptime(effective_target, node_modules_prefix) or
+                    strings.hasPrefixComptime(effective_target, node_modules_prefix_alt)) and
+                !bun.sys.exists(abs_target))
+            {
+                const prefix_len = if (strings.hasPrefixComptime(effective_target, node_modules_prefix))
+                    node_modules_prefix.len
+                else
+                    node_modules_prefix_alt.len;
+                const hoisted_rel = effective_target[prefix_len..];
+                const nm_path = strings.withoutTrailingSlash(this.target_node_modules_path.slice());
+                return path.joinAbsStringZ(nm_path, &.{hoisted_rel}, .auto);
+            }
+
+            return abs_target;
+        }
+
         // target: what the symlink points to
         // destination: where the symlink exists on disk
         pub fn link(this: *Linker, global: bool) void {
@@ -902,7 +935,7 @@ pub const Bin = extern struct {
                     if (target.len == 0) return;
 
                     // for normalizing `target`
-                    const abs_target = path.joinAbsStringZ(package_dir, &.{target}, .auto);
+                    const abs_target = this.resolveTargetWithHoisting(package_dir, target);
 
                     const unscoped_package_name = Dependency.unscopedPackageName(this.package_name.slice());
                     @memcpy(abs_dest_buf_remain[0..unscoped_package_name.len], unscoped_package_name);
@@ -920,7 +953,7 @@ pub const Bin = extern struct {
                     if (normalized_name.len == 0 or target.len == 0) return;
 
                     // for normalizing `target`
-                    const abs_target = path.joinAbsStringZ(package_dir, &.{target}, .auto);
+                    const abs_target = this.resolveTargetWithHoisting(package_dir, target);
 
                     @memcpy(abs_dest_buf_remain[0..normalized_name.len], normalized_name);
                     abs_dest_buf_remain = abs_dest_buf_remain[normalized_name.len..];
@@ -942,7 +975,7 @@ pub const Bin = extern struct {
                         const bin_target = this.extern_string_buf[i + 1].slice(this.string_buf);
                         if (bin_target.len == 0 or normalized_bin_dest.len == 0) continue;
 
-                        const abs_target = path.joinAbsStringZ(package_dir, &.{bin_target}, .auto);
+                        const abs_target = this.resolveTargetWithHoisting(package_dir, bin_target);
 
                         abs_dest_buf_remain = abs_dest_dir_end;
                         @memcpy(abs_dest_buf_remain[0..normalized_bin_dest.len], normalized_bin_dest);
@@ -959,7 +992,7 @@ pub const Bin = extern struct {
                     if (target.len == 0) return;
 
                     // for normalizing `target`
-                    const abs_target_dir = path.joinAbsStringZ(package_dir, &.{target}, .auto);
+                    const abs_target_dir = this.resolveTargetWithHoisting(package_dir, target);
 
                     var target_dir = bun.openDirAbsolute(abs_target_dir) catch |err| {
                         if (err == error.ENOENT) {
@@ -1053,7 +1086,7 @@ pub const Bin = extern struct {
                     const target = this.bin.value.dir.slice(this.string_buf);
                     if (target.len == 0) return;
 
-                    const abs_target_dir = path.joinAbsStringZ(package_dir, &.{target}, .auto);
+                    const abs_target_dir = this.resolveTargetWithHoisting(package_dir, target);
 
                     var target_dir = bun.openDirAbsolute(abs_target_dir) catch |err| {
                         this.err = err;

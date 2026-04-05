@@ -389,6 +389,41 @@ pub const Repository = extern struct {
         return error.InstallFailed;
     }
 
+    /// Given the portion of a URL after `ssh://` (i.e. `user@host:9999/path` or
+    /// `host:path`), returns true if it contains an explicit numeric port.
+    ///
+    /// Used to distinguish a real port from an scp-style path component:
+    ///   - `user@host:9999/path` -> true (port 9999)
+    ///   - `git@github.com:owner/repo` -> false (scp-style path)
+    ///   - `host:9999` -> true
+    ///   - `host:9999#branch` -> true
+    fn hasExplicitPort(after_scheme: string) bool {
+        // Skip past `user@` or `user:pass@` if present.
+        const host_start = if (strings.indexOfChar(after_scheme, '@')) |at| at + 1 else 0;
+        const rest = after_scheme[host_start..];
+
+        // Find the `:` that would separate host from port. If there's a `/` or
+        // `#` before the colon, there's no port.
+        const colon = strings.indexOfChar(rest, ':') orelse return false;
+        for (rest[0..colon]) |c| switch (c) {
+            '/', '#', '?' => return false,
+            else => {},
+        };
+
+        // Everything after the colon up to a path/fragment/query separator must
+        // be digits, and there must be at least one digit.
+        const after_colon = rest[colon + 1 ..];
+        var i: usize = 0;
+        while (i < after_colon.len) : (i += 1) {
+            switch (after_colon[i]) {
+                '0'...'9' => {},
+                '/', '#', '?' => break,
+                else => return false,
+            }
+        }
+        return i > 0;
+    }
+
     pub fn trySSH(url: string) ?string {
         // Do not cast explicit http(s) URLs to SSH
         if (strings.hasPrefixComptime(url, "http")) {
@@ -400,6 +435,14 @@ pub const Repository = extern struct {
         }
 
         if (strings.hasPrefixComptime(url, "ssh://")) {
+            // If the URL already has an explicit numeric port (e.g.
+            // ssh://user@host:9999/path), it's well-formed — don't run it
+            // through correctUrl(), which would turn the `:` into `/` and
+            // mangle the port into a path segment.
+            if (hasExplicitPort(url["ssh://".len..])) {
+                return url;
+            }
+
             // TODO(markovejnovic): This is a stop-gap. One of the problems with the implementation
             // here is that we should integrate hosted_git_info more thoroughly into the codebase
             // to avoid the allocation and copy here. For now, the thread-local buffer is a good
@@ -457,6 +500,14 @@ pub const Repository = extern struct {
         }
 
         if (strings.hasPrefixComptime(url, "ssh://")) {
+            // If the user pinned an explicit port (e.g. ssh://host:9999/...),
+            // the port belongs to SSH. Speaking HTTPS to it would hang (or
+            // fail slowly) waiting for an HTTPS response from sshd — skip the
+            // HTTPS attempt and go straight to SSH.
+            if (hasExplicitPort(url["ssh://".len..])) {
+                return null;
+            }
+
             final_path_buf[0.."https".len].* = "https".*;
             bun.copy(u8, final_path_buf["https".len..], url["ssh".len..]);
             const out = final_path_buf[0 .. url.len - "ssh".len + "https".len];

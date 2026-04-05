@@ -39,6 +39,8 @@ export type WebKitMode = "prebuilt" | "local";
 export interface Host {
   os: OS;
   arch: Arch;
+  /** ".exe" on a Windows host, "" elsewhere. Mirrors Config.exeSuffix (target). */
+  exeSuffix: string;
 }
 
 /**
@@ -315,7 +317,7 @@ export function detectHost(): Host {
             throw new BuildError(`Unsupported host architecture: ${a}`, { hint: "Bun builds on x64 or arm64" });
           })();
 
-  return { os, arch };
+  return { os, arch, exeSuffix: os === "windows" ? ".exe" : "" };
 }
 
 /**

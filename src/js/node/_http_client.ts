@@ -646,7 +646,10 @@ function ClientRequest(input, options, cb) {
           );
         };
 
-        if (!keepOpen) {
+        // For a non-101 upgrade response, deliver 'response' directly because
+        // flushHeaders() may have started the fetch without send(), in which
+        // case `onEnd` is still the initial no-op and would swallow handleResponse.
+        if (!keepOpen || isUpgrade) {
           handleResponse();
         }
 

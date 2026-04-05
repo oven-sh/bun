@@ -516,6 +516,9 @@ pub fn GlobWalker_(
 
                 var path_buf: *bun.PathBuffer = &this.walker.pathBuf;
                 const root_path = root_work_item.path;
+                if (root_path.len >= path_buf.len) {
+                    return .{ .err = Syscall.Error.fromCode(.NAMETOOLONG, .open).withPath(root_path) };
+                }
                 @memcpy(path_buf[0..root_path.len], root_path[0..root_path.len]);
                 path_buf[root_path.len] = 0;
                 const cwd_fd = switch (try Accessor.open(path_buf[0..root_path.len :0])) {
@@ -612,6 +615,9 @@ pub fn GlobWalker_(
                         }
                     }
                     // TODO Optimization: On posix systems filepaths are already null byte terminated so we can skip this if thats the case
+                    if (work_item.path.len >= this.iter_state.directory.path.len) {
+                        return .{ .err = Syscall.Error.fromCode(.NAMETOOLONG, .open).withPath(work_item.path) };
+                    }
                     @memcpy(this.iter_state.directory.path[0..work_item.path.len], work_item.path);
                     this.iter_state.directory.path[work_item.path.len] = 0;
                     break :dir_path this.iter_state.directory.path[0..work_item.path.len :0];
@@ -782,6 +788,9 @@ pub fn GlobWalker_(
                                 },
                                 .symlink => {
                                     var scratch_path_buf: *bun.PathBuffer = &this.walker.pathBuf;
+                                    if (work_item.path.len >= scratch_path_buf.len) {
+                                        return .{ .err = Syscall.Error.fromCode(.NAMETOOLONG, .open).withPath(work_item.path) };
+                                    }
                                     @memcpy(scratch_path_buf[0..work_item.path.len], work_item.path);
                                     scratch_path_buf[work_item.path.len] = 0;
                                     var symlink_full_path_z: [:0]u8 = scratch_path_buf[0..work_item.path.len :0];
@@ -1149,8 +1158,9 @@ pub fn GlobWalker_(
             err: Syscall.Error,
             path_buf: [:0]const u8,
         ) Syscall.Error {
-            bun.copy(u8, this.pathBuf[0..path_buf.len], path_buf[0..path_buf.len]);
-            return err.withPath(this.pathBuf[0..path_buf.len]);
+            const copy_len = @min(path_buf.len, this.pathBuf.len);
+            bun.copy(u8, this.pathBuf[0..copy_len], path_buf[0..copy_len]);
+            return err.withPath(this.pathBuf[0..copy_len]);
         }
 
         pub fn walk(this: *GlobWalker) !Maybe(void) {

@@ -290,6 +290,7 @@ function SocketEmitEndNT(self, _err?) {
     }
     self[kended] = true;
     self.push(null);
+    self.read(0);
   }
   // TODO: check how the best way to handle this
   // if (err) {
@@ -387,10 +388,6 @@ const ServerHandlers: SocketHandler<NetSocket> = {
       }
     }
     self.emit("connection", _socket);
-    // the duplex implementation start paused, so we resume when pauseOnConnect is falsy
-    if (!pauseOnConnect && !isTLS) {
-      _socket.resume();
-    }
   },
   handshake(socket, success, verifyError) {
     const self = socket.data;

@@ -79,8 +79,13 @@ JSC_DEFINE_HOST_FUNCTION(jsCipherUpdate, (JSC::JSGlobalObject * lexicalGlobalObj
         return JSValue::encode(jsUndefined());
     }
 
+    // Match Node.js CipherBase::Update: pass the auth tag on the first update (not in setAuthTag).
+    // Do not use ASSERT — it is stripped in release and broke CCM/GCM decipher.
     if (cipher->m_kind == CipherKind::Decipher && cipher->isAuthenticatedMode()) {
-        ASSERT(cipher->maybePassAuthTagToOpenSSL());
+        if (!cipher->maybePassAuthTagToOpenSSL()) {
+            throwCryptoError(lexicalGlobalObject, scope, popError.peekError(), "Trying to add data in unsupported state");
+            return {};
+        }
     }
 
     const int32_t blockSize = cipher->m_ctx.getBlockSize();

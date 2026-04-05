@@ -198,7 +198,13 @@ function ClientRequest(input, options, cb) {
   let activeUpgradeChannel: any = undefined;
 
   const pushChunk = chunk => {
-    this[kBodyChunks].push(chunk);
+    // After the upgrade is established we won't retry (happy-eyeballs is
+    // done), so skip kBodyChunks — otherwise post-upgrade req.write()
+    // chunks accumulate and saturate the fake-backpressure counter in
+    // write_() after ~1 MiB, permanently returning false.
+    if (!this[kUpgradeOrConnect]) {
+      this[kBodyChunks].push(chunk);
+    }
     const hadChannel = activeUpgradeChannel !== undefined;
     if (writeCount > 1) {
       startFetch();
@@ -535,6 +541,10 @@ function ClientRequest(input, options, cb) {
           if (response.status === 101) {
             this[kClearTimeout]();
             this[kUpgradeOrConnect] = true;
+            // Drain kBodyChunks — happy-eyeballs retries are impossible now
+            // and leaving the pre-upgrade chunks there would trip the
+            // fake-backpressure counter on subsequent req.write() calls.
+            if (this[kBodyChunks]) this[kBodyChunks].length = 0;
             const prevIsHTTPS = getIsNextIncomingMessageHTTPS();
             setIsNextIncomingMessageHTTPS(response.url.startsWith("https:"));
             const res = (this.res = new IncomingMessage(response, {

@@ -400,6 +400,41 @@ describe("http.ClientRequest 'upgrade' event", () => {
     }
   });
 
+  test("req.write() after upgrade doesn't saturate fake-backpressure", async () => {
+    const server = net.createServer(conn => {
+      conn.once("data", () => {
+        conn.write(
+          "HTTP/1.1 101 Switching Protocols\r\n" + "Upgrade: custom\r\n" + "Connection: Upgrade\r\n" + "\r\n",
+        );
+        conn.on("data", () => {}); // drain
+      });
+    });
+    const addr = (await listen(server)) as AddressInfo;
+
+    try {
+      const req = http.request({
+        host: "127.0.0.1",
+        port: addr.port,
+        method: "POST",
+        headers: { Connection: "Upgrade", Upgrade: "custom" },
+      });
+      req.flushHeaders();
+      const [, socket] = await once(req, "upgrade");
+      // Write >1 MiB post-upgrade. Without clearing kBodyChunks on 101,
+      // the fake-backpressure counter saturates at 1 MiB and every
+      // subsequent req.write() permanently returns false with no drain.
+      const chunk = Buffer.alloc(4096, 0x61);
+      let lastResult = true;
+      for (let i = 0; i < 300; i++) {
+        lastResult = req.write(chunk);
+      }
+      expect(lastResult).toBe(true);
+      socket.destroy();
+    } finally {
+      server.close();
+    }
+  });
+
   test("server-initiated half-close auto-ends the writable side", async () => {
     const server = net.createServer(conn => {
       conn.once("data", () => {

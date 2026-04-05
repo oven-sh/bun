@@ -26,6 +26,7 @@ const Packages = union(enum) {
 /// all packages in the lockfile will have their manifests fetched if necessary.
 pub fn populateManifestCache(manager: *PackageManager, packages: Packages) !void {
     const log_level = manager.options.log_level;
+    const needs_extended_manifest = manager.options.needsExtendedManifest();
     const lockfile = manager.lockfile;
     const resolutions = lockfile.buffers.resolutions.items;
     const dependencies = lockfile.buffers.dependencies.items;
@@ -58,7 +59,6 @@ pub fn populateManifestCache(manager: *PackageManager, packages: Packages) !void
                 }
 
                 const pkg_name = pkg_names[pkg_id];
-                const needs_extended_manifest = manager.options.minimum_release_age_ms != null;
 
                 _ = manager.manifests.byName(
                     manager,
@@ -86,7 +86,6 @@ pub fn populateManifestCache(manager: *PackageManager, packages: Packages) !void
                     const resolution: Resolution = pkg_resolutions[pkg_id];
                     if (resolution.tag != .npm) continue;
 
-                    const needs_extended_manifest = manager.options.minimum_release_age_ms != null;
                     const package_name = pkg_names[pkg_id].slice(string_buf);
                     _ = manager.manifests.byName(
                         manager,

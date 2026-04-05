@@ -625,6 +625,54 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
                                 }
                                 return;
                             },
+                            error.DeprecatedVersion => {
+                                if (dependency.behavior.isRequired()) {
+                                    if (failFn) |fail| {
+                                        fail(
+                                            this,
+                                            dependency,
+                                            id,
+                                            err,
+                                        );
+                                    } else {
+                                        if (version.tag == .dist_tag) {
+                                            this.log.addErrorFmt(
+                                                null,
+                                                logger.Loc.Empty,
+                                                this.allocator,
+                                                "Package \"{s}\" with tag \"{s}\" not found<r> <d>(all matching versions blocked by blockDeprecatedDependencies)<r>",
+                                                .{
+                                                    this.lockfile.str(&name),
+                                                    this.lockfile.str(&version.value.dist_tag.tag),
+                                                },
+                                            ) catch unreachable;
+                                        } else if (version.tag == .npm and version.value.npm.version.isExact()) {
+                                            this.log.addErrorFmt(
+                                                null,
+                                                logger.Loc.Empty,
+                                                this.allocator,
+                                                "Version \"{s}@{s}\" is deprecated<r> <d>(blocked by blockDeprecatedDependencies)<r>",
+                                                .{
+                                                    this.lockfile.str(&name),
+                                                    this.lockfile.str(&version.literal),
+                                                },
+                                            ) catch unreachable;
+                                        } else {
+                                            this.log.addErrorFmt(
+                                                null,
+                                                logger.Loc.Empty,
+                                                this.allocator,
+                                                "No non-deprecated version matching \"{s}\" found for specifier \"{s}\"<r> <d>(blocked by blockDeprecatedDependencies)<r>",
+                                                .{
+                                                    this.lockfile.str(&version.literal),
+                                                    this.lockfile.str(&name),
+                                                },
+                                            ) catch unreachable;
+                                        }
+                                    }
+                                }
+                                return;
+                            },
                             error.MissingPackageJSON => {
                                 if (dependency.behavior.isRequired()) {
                                     if (failFn) |fail| {
@@ -745,7 +793,7 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
 
                         if (!dependency.behavior.isPeer() or install_peer) {
                             if (!this.hasCreatedNetworkTask(task_id, dependency.behavior.isRequired())) {
-                                const needs_extended_manifest = this.options.minimum_release_age_ms != null;
+                                const needs_extended_manifest = this.options.needsExtendedManifest();
                                 if (this.options.enable.manifest_cache) {
                                     var expired = false;
                                     if (this.manifests.byNameHashAllowExpired(
@@ -769,6 +817,14 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
                                                         this.log.addErrorFmt(null, logger.Loc.Empty, this.allocator, "Version \"{s}@{f}\" was published within minimum release age of {d} seconds", .{ package_name, find_result.version.fmt(this.lockfile.buffers.string_bytes.items), min_age_seconds }) catch {};
                                                         return;
                                                     }
+                                                }
+                                                if (this.options.block_deprecated_dependencies and
+                                                    !loaded_manifest.?.shouldExcludeFromDeprecatedFilter(this.options.block_deprecated_dependencies_excludes) and
+                                                    Npm.PackageManifest.isPackageVersionDeprecated(find_result.package))
+                                                {
+                                                    _ = this.network_dedupe_map.remove(task_id);
+                                                    resolve_result_ = error.DeprecatedVersion;
+                                                    continue :retry_with_new_resolve_result;
                                                 }
                                                 if (getOrPutResolvedPackageWithFindResult(
                                                     this,
@@ -1663,12 +1719,12 @@ fn getOrPutResolvedPackage(
                 this.scopeForPackageName(name_str),
                 name_hash,
                 .load_from_memory_fallback_to_disk,
-                this.options.minimum_release_age_ms != null,
+                this.options.needsExtendedManifest(),
             ) orelse return null; // manifest might still be downloading. This feels unreliable.
 
             const version_result: Npm.PackageManifest.FindVersionResult = switch (version.tag) {
-                .dist_tag => manifest.findByDistTagWithFilter(this.lockfile.str(&version.value.dist_tag.tag), this.options.minimum_release_age_ms, this.options.minimum_release_age_excludes),
-                .npm => manifest.findBestVersionWithFilter(version.value.npm.version, this.lockfile.buffers.string_bytes.items, this.options.minimum_release_age_ms, this.options.minimum_release_age_excludes),
+                .dist_tag => manifest.findByDistTagWithFilter(this.lockfile.str(&version.value.dist_tag.tag), this.options.manifestFilterOptions()),
+                .npm => manifest.findBestVersionWithFilter(version.value.npm.version, this.lockfile.buffers.string_bytes.items, this.options.manifestFilterOptions()),
                 else => unreachable,
             };
 
@@ -1703,12 +1759,36 @@ fn getOrPutResolvedPackage(
                                 else => unreachable,
                             }
                         }
+                        if (filtered.newest_deprecated) |newest| {
+                            switch (version.tag) {
+                                .dist_tag => {
+                                    const tag_str = this.lockfile.str(&version.value.dist_tag.tag);
+                                    Output.prettyErrorln("<d>[block-deprecated]<r> <b>{s}@{s}<r> selected <green>{f}<r> instead of <yellow>{f}<r> because it is deprecated", .{
+                                        package_name,
+                                        tag_str,
+                                        filtered.result.version.fmt(manifest.string_buf),
+                                        newest.fmt(manifest.string_buf),
+                                    });
+                                },
+                                .npm => {
+                                    const version_str = version.value.npm.version.fmt(this.lockfile.buffers.string_bytes.items);
+                                    Output.prettyErrorln("<d>[block-deprecated]<r> <b>{s}<r>@{f}<r> selected <green>{f}<r> instead of <yellow>{f}<r> because it is deprecated", .{
+                                        package_name,
+                                        version_str,
+                                        filtered.result.version.fmt(manifest.string_buf),
+                                        newest.fmt(manifest.string_buf),
+                                    });
+                                },
+                                else => unreachable,
+                            }
+                        }
                     }
 
                     break :blk filtered.result;
                 },
                 .err => |err_type| switch (err_type) {
                     .too_recent, .all_versions_too_recent => return error.TooRecentVersion,
+                    .deprecated, .all_versions_deprecated => return error.DeprecatedVersion,
                     .not_found => null, // Handle below with existing logic
                 },
             } orelse {

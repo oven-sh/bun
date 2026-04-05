@@ -5,18 +5,28 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
 async function readListenUrl(proc: ReturnType<typeof spawn>): Promise<URL> {
-  let stderr = "";
+  const reader = (proc.stderr as ReadableStream<Uint8Array>).getReader();
   const decoder = new TextDecoder();
-  for await (const chunk of proc.stderr as ReadableStream) {
-    stderr += decoder.decode(chunk);
-    for (const line of stderr.split("\n")) {
-      try {
-        const url = new URL(line.trim());
-        if (url.protocol === "ws:" || url.protocol === "wss:") {
-          return url;
-        }
-      } catch {}
+  let stderr = "";
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      stderr += decoder.decode(value, { stream: true });
+      for (const line of stderr.split("\n")) {
+        try {
+          const url = new URL(line.trim());
+          if (url.protocol === "ws:" || url.protocol === "wss:") {
+            return url;
+          }
+        } catch {}
+      }
     }
+  } finally {
+    // Release the lock and cancel so the stream tears down cleanly rather
+    // than getting interrupted when we return early.
+    reader.releaseLock();
+    (proc.stderr as ReadableStream).cancel().catch(() => {});
   }
   throw new Error("Never saw a ws:// URL in stderr. Got:\n" + stderr);
 }

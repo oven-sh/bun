@@ -274,8 +274,8 @@ async function fetchStatus(build: number) {
   }
   if (other) out.push(`${c.dim}  (+${other} warning/flaky)${c.reset}`);
 
-  if (!failed.length && !err.length) {
-    out.push("", b.finished_at ? `${c.dim}no failures${c.reset}` : `${c.dim}no failures yet${c.reset}`);
+  if (!failed.length && !err.length && b.finished_at) {
+    out.push("", `${c.dim}no failures${c.reset}`);
   }
   return { state: b.state, lines: out };
 }

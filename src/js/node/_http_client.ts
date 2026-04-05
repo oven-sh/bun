@@ -44,7 +44,9 @@ const {
   ClientRequestEmitState,
   kSignal,
   kEmptyObject,
+  getIsNextIncomingMessageAuthorized,
   getIsNextIncomingMessageHTTPS,
+  setIsNextIncomingMessageAuthorized,
   setIsNextIncomingMessageHTTPS,
   typeSymbol,
   NodeHTTPIncomingRequestType,
@@ -403,12 +405,22 @@ function ClientRequest(input, options, cb) {
           handleResponse = undefined;
 
           const prevIsHTTPS = getIsNextIncomingMessageHTTPS();
-          setIsNextIncomingMessageHTTPS(response.url.startsWith("https:"));
-          var res = (this.res = new IncomingMessage(response, {
-            [typeSymbol]: NodeHTTPIncomingRequestType.FetchResponse,
-            [reqSymbol]: this,
-          }));
-          setIsNextIncomingMessageHTTPS(prevIsHTTPS);
+          const prevAuthorized = getIsNextIncomingMessageAuthorized();
+          const isHTTPS = response.url.startsWith("https:");
+          var res;
+          try {
+            setIsNextIncomingMessageHTTPS(isHTTPS);
+            setIsNextIncomingMessageAuthorized(
+              isHTTPS && this[kTls]?.rejectUnauthorized !== false && process.env.NODE_TLS_REJECT_UNAUTHORIZED !== "0",
+            );
+            res = this.res = new IncomingMessage(response, {
+              [typeSymbol]: NodeHTTPIncomingRequestType.FetchResponse,
+              [reqSymbol]: this,
+            });
+          } finally {
+            setIsNextIncomingMessageHTTPS(prevIsHTTPS);
+            setIsNextIncomingMessageAuthorized(prevAuthorized);
+          }
           res.req = this;
           let timer;
           res.setTimeout = (msecs, callback) => {

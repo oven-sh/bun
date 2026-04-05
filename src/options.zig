@@ -1543,7 +1543,15 @@ pub fn definesFromTransformOptions(
             quoted_node_env,
         );
         _ = try user_defines.getOrPutValue(
+            "Bun.env.NODE_ENV",
+            quoted_node_env,
+        );
+        _ = try user_defines.getOrPutValue(
             "process.env.BUN_ENV",
+            quoted_node_env,
+        );
+        _ = try user_defines.getOrPutValue(
+            "Bun.env.BUN_ENV",
             quoted_node_env,
         );
 
@@ -2228,9 +2236,10 @@ pub const TransformOptions = struct {
         }
 
         var define = bun.StringHashMap(string).init(allocator);
-        try define.ensureTotalCapacity(1);
+        try define.ensureTotalCapacity(2);
 
         define.putAssumeCapacity("process.env.NODE_ENV", "development");
+        define.putAssumeCapacity("Bun.env.NODE_ENV", "development");
 
         var loader = Loader.file;
         if (defaultLoaders.get(entryPoint.path.name.ext)) |defaultLoader| {

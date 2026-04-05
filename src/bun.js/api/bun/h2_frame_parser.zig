@@ -2371,8 +2371,16 @@ pub const H2FrameParser = struct {
 
             if (frame.flags & @intFromEnum(HeadersFrameFlags.PADDED) != 0) {
                 // padding length
+                if (payload.len == 0) {
+                    this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "Headers frame padding exceeds payload size", this.lastStreamID, true);
+                    return content.end;
+                }
                 padding = payload[0];
                 offset += 1;
+                if (padding >= payload.len) {
+                    this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "Headers frame padding exceeds payload size", this.lastStreamID, true);
+                    return content.end;
+                }
             }
             if (frame.flags & @intFromEnum(HeadersFrameFlags.PRIORITY) != 0) {
                 // skip priority (client dont need to care about it)

@@ -109,7 +109,57 @@ pub fn writeTraceEvents(this: *Watcher, events: []WatchEvent, changed_files: []?
 
 pub fn start(this: *Watcher) !void {
     bun.assert(this.watchloop_handle == null);
-    this.thread = try std.Thread.spawn(.{}, threadMain, .{this});
+    // If the process is already exiting, don't spawn — the watcher would
+    // race mimalloc's atexit teardown. Callers can't usefully recover, and
+    // the process is about to die anyway.
+    if (!registerActive(this)) return;
+    this.thread = std.Thread.spawn(.{}, threadMain, .{this}) catch |err| {
+        unregisterActive(this);
+        return err;
+    };
+}
+
+/// Global list of running watchers so that `stopAllForExit` can signal them
+/// before `Global.exit` tears the process down. The watcher thread accesses
+/// globals like the resolver's directory cache (BSSMap singleton) whose
+/// storage is freed when mimalloc's atexit handler runs under ASAN. Without
+/// stopping the thread first, those accesses become use-after-poison.
+var active_watchers_mutex: Mutex = .{};
+var active_watchers: std.ArrayListUnmanaged(*Watcher) = .{};
+
+/// Returns false if the process is exiting, in which case the caller must
+/// not spawn a watcher thread. The `is_exiting` check runs under the same
+/// mutex `stopAllForExit` holds, so a watcher that wins the register race
+/// will already be in the list when the stop sweep iterates.
+fn registerActive(this: *Watcher) bool {
+    active_watchers_mutex.lock();
+    defer active_watchers_mutex.unlock();
+    if (bun.Global.isExiting()) return false;
+    bun.handleOom(active_watchers.append(bun.default_allocator, this));
+    return true;
+}
+
+fn unregisterActive(this: *Watcher) void {
+    active_watchers_mutex.lock();
+    defer active_watchers_mutex.unlock();
+    if (std.mem.indexOfScalar(*Watcher, active_watchers.items, this)) |idx| {
+        _ = active_watchers.swapRemove(idx);
+    }
+}
+
+/// Called from `Global.exit` (main thread) before tearing down heap memory.
+/// Acquires each watcher's mutex, which serialises with the watcher thread's
+/// event dispatch, then sets `running=false` and closes the platform handle
+/// so the next loop iteration exits. Safe to call multiple times.
+pub fn stopAllForExit() void {
+    active_watchers_mutex.lock();
+    defer active_watchers_mutex.unlock();
+    for (active_watchers.items) |watcher| {
+        watcher.mutex.lock();
+        watcher.running = false;
+        watcher.platform.stop();
+        watcher.mutex.unlock();
+    }
 }
 
 pub fn deinit(this: *Watcher, close_descriptors: bool) void {
@@ -234,12 +284,27 @@ fn threadMain(this: *Watcher) !void {
         .err => |err| {
             this.watchloop_handle = null;
             this.platform.stop();
-            if (this.running) {
+            // Read `running` under the watcher's mutex — `stopAllForExit` and
+            // `deinit` also write it under the mutex. Without the lock this
+            // would be a data race (UB in Zig) and, since `stopAllForExit`
+            // explicitly closes the platform fd to wake us into this branch,
+            // the race is easy to hit right at exit time.
+            this.mutex.lock();
+            const was_running = this.running;
+            this.mutex.unlock();
+            if (was_running and !bun.Global.isExiting()) {
                 this.onError(this.ctx, err);
             }
         },
         .result => {},
     }
+
+    // If `Global.exit` is in progress, skip the allocator-touching cleanup.
+    // `stopAllForExit` may have been called on the main thread, and mimalloc's
+    // atexit handler can begin poisoning heap pages at any moment. The OS
+    // reclaims our memory when the process terminates, so leaking is safe
+    // here and avoids a race against atexit teardown.
+    if (bun.Global.isExiting()) return;
 
     // deinit and close descriptors if needed
     if (this.close_descriptors) {
@@ -252,6 +317,8 @@ fn threadMain(this: *Watcher) !void {
 
     // Close trace file if open
     WatcherTrace.deinit();
+
+    unregisterActive(this);
 
     const allocator = this.allocator;
     allocator.destroy(this);

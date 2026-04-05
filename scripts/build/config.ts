@@ -8,7 +8,7 @@
 
 import { execSync } from "node:child_process";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
-import { arch as hostArch, platform as hostPlatform } from "node:os";
+import { homedir, arch as hostArch, platform as hostPlatform } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { NODEJS_ABI_VERSION, NODEJS_VERSION } from "./deps/nodejs-headers.ts";
 import { WEBKIT_VERSION } from "./deps/webkit.ts";
@@ -39,6 +39,8 @@ export type WebKitMode = "prebuilt" | "local";
 export interface Host {
   os: OS;
   arch: Arch;
+  /** ".exe" on a Windows host, "" elsewhere. Mirrors Config.exeSuffix (target). */
+  exeSuffix: string;
 }
 
 /**
@@ -315,7 +317,7 @@ export function detectHost(): Host {
             throw new BuildError(`Unsupported host architecture: ${a}`, { hint: "Bun builds on x64 or arm64" });
           })();
 
-  return { os, arch };
+  return { os, arch, exeSuffix: os === "windows" ? ".exe" : "" };
 }
 
 /**
@@ -435,12 +437,20 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
         : resolve(cwd, partial.buildDir)
       : resolve(cwd, "build", defaultBuildDirName);
   const codegenDir = resolve(buildDir, "codegen");
+  // Local builds share $BUN_INSTALL/build-cache across checkouts and profiles
+  // so ccache/zig/tarballs/webkit reuse one another's work. CI stays per-build
+  // so runners remain hermetic and `rm -rf build/` is a full reset.
+  // Relative BUN_INSTALL is anchored to repo root (not process.cwd()) so the
+  // ninja regen rule — which runs from buildDir — resolves the same path.
+  const bunInstall = process.env.BUN_INSTALL ? resolve(cwd, process.env.BUN_INSTALL) : join(homedir(), ".bun");
   const cacheDir =
     partial.cacheDir !== undefined
       ? isAbsolute(partial.cacheDir)
         ? partial.cacheDir
         : resolve(cwd, partial.cacheDir)
-      : resolve(buildDir, "cache");
+      : ci
+        ? resolve(buildDir, "cache")
+        : resolve(bunInstall, "build-cache");
   const vendorDir = resolve(cwd, "vendor");
 
   // ─── Validation ───

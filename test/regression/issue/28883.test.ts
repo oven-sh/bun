@@ -69,8 +69,16 @@ test("/json and /json/list expose webSocketDebuggerUrl for VS Code attach", asyn
   );
   await opened;
 
-  const { promise: replied, resolve: onMessage } = Promise.withResolvers<any>();
-  ws.addEventListener("message", ({ data }) => onMessage(JSON.parse(data.toString())));
+  const { promise: replied, resolve: onMessage, reject: onReplyError } = Promise.withResolvers<any>();
+  ws.addEventListener("error", cause => onReplyError(new Error("WebSocket error after open", { cause })));
+  ws.addEventListener("close", event =>
+    onReplyError(new Error(`WebSocket closed before reply (code ${event.code}, reason: ${event.reason || "(none)"})`)),
+  );
+  ws.addEventListener("message", ({ data }) => {
+    const msg = JSON.parse(data.toString());
+    // CDP can push unsolicited notifications; only resolve on our reply.
+    if (msg.id === 1) onMessage(msg);
+  });
   ws.send(JSON.stringify({ id: 1, method: "Runtime.evaluate", params: { expression: "1 + 1" } }));
   const response = await replied;
   expect(response).toMatchObject({

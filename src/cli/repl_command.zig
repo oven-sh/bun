@@ -48,6 +48,8 @@ pub const ReplCommand = struct {
             .debugger = ctx.runtime_options.debugger,
             .dns_result_order = DNSResolver.Order.fromStringOrDie(ctx.runtime_options.dns_result_order),
             .is_main_thread = true,
+            .disable_sigusr1 = ctx.runtime_options.disable_sigusr1,
+            .inspect_port = ctx.runtime_options.inspect_port,
         });
 
         var b = &vm.transpiler;

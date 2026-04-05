@@ -1,5 +1,6 @@
 pub const fetch_error_no_args = "fetch() expects a string but received no arguments.";
 pub const fetch_error_blank_url = "fetch() URL must not be a blank string.";
+pub const fetch_error_no_hostname = "fetch() URL must have a hostname.";
 pub const fetch_error_unexpected_body = "fetch() request with GET/HEAD/OPTIONS method cannot have body.";
 pub const fetch_error_proxy_unix = "fetch() cannot use a proxy with a unix socket.";
 const JSTypeErrorEnum = std.enums.EnumArray(JSType, string);
@@ -132,7 +133,7 @@ pub fn Bun__fetchPreconnect_(
 
     if (url.hostname.len == 0) {
         bun.default_allocator.free(url.href);
-        return globalObject.ERR(.INVALID_ARG_TYPE, fetch_error_blank_url, .{}).throw();
+        return globalObject.ERR(.INVALID_ARG_TYPE, fetch_error_no_hostname, .{}).throw();
     }
 
     if (!url.hasValidPort()) {
@@ -311,6 +312,7 @@ fn fetchImpl(
         break :brk null;
     };
 
+    var url_was_from_input = true;
     var url_str = extract_url: {
         if (url_str_optional) |str| break :extract_url str;
 
@@ -327,6 +329,7 @@ fn fetchImpl(
             }
         }
 
+        url_was_from_input = false;
         break :extract_url bun.String.empty;
     };
     defer url_str.deref();
@@ -338,7 +341,10 @@ fn fetchImpl(
 
     if (url_str.isEmpty()) {
         is_error = true;
-        const err = ctx.toTypeError(.INVALID_URL, fetch_error_blank_url, .{});
+        const err = if (url_was_from_input)
+            ctx.toTypeError(.INVALID_URL, fetch_error_blank_url, .{})
+        else
+            ctx.toTypeError(.INVALID_URL, "fetch() URL could not be parsed; received a non-string value that is not a URL object.", .{});
         return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err);
     }
 

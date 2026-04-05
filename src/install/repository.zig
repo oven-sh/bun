@@ -397,17 +397,31 @@ pub const Repository = extern struct {
     ///   - `git@github.com:owner/repo` -> false (scp-style path)
     ///   - `host:9999` -> true
     ///   - `host:9999#branch` -> true
+    ///   - `[2001:db8::1]:9999/path` -> true (bracketed IPv6 literal)
+    ///   - `[2001:db8::1]/path` -> false (IPv6 without port)
     fn hasExplicitPort(after_scheme: string) bool {
         // Skip past `user@` or `user:pass@` if present.
         const host_start = if (strings.indexOfChar(after_scheme, '@')) |at| at + 1 else 0;
         const rest = after_scheme[host_start..];
 
-        // Find the `:` that would separate host from port. If there's a `/` or
-        // `#` before the colon, there's no port.
-        const colon = strings.indexOfChar(rest, ':') orelse return false;
-        for (rest[0..colon]) |c| switch (c) {
-            '/', '#', '?' => return false,
-            else => {},
+        // Find the `:` that would separate host from port. Bracketed IPv6
+        // literals like `[2001:db8::1]:9999` have colons inside the brackets
+        // that are part of the address, not a port separator — skip past the
+        // `]` and only accept a colon immediately after it.
+        const colon = brk: {
+            if (rest.len > 0 and rest[0] == '[') {
+                const end_bracket = strings.indexOfChar(rest, ']') orelse return false;
+                if (end_bracket + 1 >= rest.len or rest[end_bracket + 1] != ':') return false;
+                break :brk end_bracket + 1;
+            }
+
+            const c = strings.indexOfChar(rest, ':') orelse return false;
+            // If there's a `/`, `#`, or `?` before the colon, there's no port.
+            for (rest[0..c]) |ch| switch (ch) {
+                '/', '#', '?' => return false,
+                else => {},
+            };
+            break :brk c;
         };
 
         // Everything after the colon up to a path/fragment/query separator must

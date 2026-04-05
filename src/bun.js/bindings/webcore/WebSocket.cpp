@@ -1421,6 +1421,45 @@ void WebSocket::didReceiveBinaryData(const AtomString& eventName, const std::spa
     // });
 }
 
+void WebSocket::didReceiveHandshakeResponse(uint16_t statusCode, std::span<const uint8_t> head, std::span<const uint8_t> body)
+{
+    static NeverDestroyed<const AtomString> handshakeEventName("handshake"_s);
+
+    // The only consumer is the `ws` package shim, which always registers a listener
+    // before connecting. The browser-style `new WebSocket()` path skips this entirely.
+    if (!this->hasEventListeners(handshakeEventName))
+        return;
+
+    auto* context = scriptExecutionContext();
+    if (!context)
+        return;
+    auto* globalObject = context->jsGlobalObject();
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+
+    auto* obj = JSC::constructEmptyObject(globalObject);
+    obj->putDirect(vm, JSC::Identifier::fromString(vm, "statusCode"_s), JSC::jsNumber(statusCode));
+    obj->putDirect(vm, JSC::Identifier::fromString(vm, "head"_s),
+        JSC::jsString(vm, WTF::String::fromUTF8({ head.data(), head.size() })));
+    if (body.size() > 0) {
+        JSC::JSUint8Array* buffer = createBuffer(globalObject, body);
+        if (!buffer || scope.exception()) [[unlikely]] {
+            scope.clearExceptionExceptTermination();
+            return;
+        }
+        obj->putDirect(vm, JSC::Identifier::fromString(vm, "body"_s), buffer);
+    }
+    JSC::EnsureStillAliveScope ensureStillAlive(obj);
+
+    MessageEvent::Init init;
+    init.data = obj;
+    init.origin = m_url.string();
+
+    this->incPendingActivityCount();
+    dispatchEvent(MessageEvent::create(handshakeEventName, WTF::move(init), EventIsTrusted::Yes));
+    this->decPendingActivityCount();
+}
+
 void WebSocket::didReceiveClose(CleanStatus wasClean, unsigned short code, WTF::String reason, bool isConnectionError)
 {
     // LOG(Network, "WebSocket %p didReceiveErrorMessage()", this);
@@ -1790,6 +1829,11 @@ extern "C" void WebSocket__didConnect(WebCore::WebSocket* webSocket, us_socket_t
 extern "C" void WebSocket__didConnectWithTunnel(WebCore::WebSocket* webSocket, void* tunnel, char* bufferedData, size_t len, const PerMessageDeflateParams* deflate_params)
 {
     webSocket->didConnectWithTunnel(tunnel, bufferedData, len, deflate_params);
+}
+
+extern "C" void WebSocket__didReceiveHandshakeResponse(WebCore::WebSocket* webSocket, uint16_t statusCode, const uint8_t* head, size_t headLen, const uint8_t* body, size_t bodyLen)
+{
+    webSocket->didReceiveHandshakeResponse(statusCode, std::span(head, headLen), std::span(body, bodyLen));
 }
 
 extern "C" void WebSocket__didAbruptClose(WebCore::WebSocket* webSocket, Bun::WebSocketErrorCode errorCode)

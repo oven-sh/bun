@@ -528,16 +528,6 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 body = this.body.items;
             }
 
-            const is_first = this.body.items.len == 0;
-            const http_101 = "HTTP/1.1 101 ";
-            if (is_first and body.len > http_101.len) {
-                // fail early if we receive a non-101 status code
-                if (!strings.hasPrefixComptime(body, http_101)) {
-                    this.terminate(ErrorCode.expected_101_status_code);
-                    return;
-                }
-            }
-
             const response = PicoHTTP.Response.parse(body, &this.headers_buf) catch |err| {
                 switch (err) {
                     error.Malformed_HTTP_Response => {
@@ -553,7 +543,11 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 }
             };
 
-            this.processResponse(response, body[@as(usize, @intCast(response.bytes_read))..]);
+            const head_len: usize = @intCast(response.bytes_read);
+            if (this.outgoing_websocket) |ws| {
+                ws.didReceiveHandshakeResponse(std.math.cast(u16, response.status_code) orelse 0, body[0..head_len], body[head_len..]);
+            }
+            this.processResponse(response, body[head_len..]);
         }
 
         fn handleProxyResponse(this: *HTTPClient, socket: Socket, data: []const u8) void {
@@ -736,16 +730,6 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 body = this.body.items;
             }
 
-            const is_first = this.body.items.len == 0;
-            const http_101 = "HTTP/1.1 101 ";
-            if (is_first and body.len > http_101.len) {
-                // fail early if we receive a non-101 status code
-                if (!strings.hasPrefixComptime(body, http_101)) {
-                    this.terminate(ErrorCode.expected_101_status_code);
-                    return;
-                }
-            }
-
             const response = PicoHTTP.Response.parse(body, &this.headers_buf) catch |err| {
                 switch (err) {
                     error.Malformed_HTTP_Response => {
@@ -761,7 +745,11 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 }
             };
 
-            this.processResponse(response, body[@as(usize, @intCast(response.bytes_read))..]);
+            const head_len: usize = @intCast(response.bytes_read);
+            if (this.outgoing_websocket) |ws| {
+                ws.didReceiveHandshakeResponse(std.math.cast(u16, response.status_code) orelse 0, body[0..head_len], body[head_len..]);
+            }
+            this.processResponse(response, body[head_len..]);
         }
 
         pub fn handleEnd(this: *HTTPClient, _: Socket) void {

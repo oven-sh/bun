@@ -58,18 +58,44 @@ test("Dir async iterator closes handle when body throws", async () => {
   expect(() => d.closeSync()).toThrow("Directory handle was closed");
 });
 
-test("Dir async iterator swallows ERR_DIR_CLOSED when user closed manually", async () => {
+test("Dir async iterator throws ERR_DIR_CLOSED on second iteration after auto-close", async () => {
+  using dir = tempDir("dir-iter-reiter", {
+    "a.txt": "",
+    "b.txt": "",
+  });
+  const d = await opendirPromise(String(dir));
+
+  for await (const _entry of d) {
+    break;
+  }
+
+  // The first iteration auto-closed the handle. A second iteration must
+  // throw ERR_DIR_CLOSED immediately instead of silently re-yielding cached
+  // entries. Matches Node's behavior.
+  await expect(
+    (async () => {
+      for await (const _entry of d) {
+        // unreachable
+      }
+    })(),
+  ).rejects.toThrow("Directory handle was closed");
+});
+
+test("Dir async iterator throws ERR_DIR_CLOSED when user closed manually inside loop", async () => {
   using dir = tempDir("dir-iter-user-closed", {
     "a.txt": "",
   });
   const d = await opendirPromise(String(dir));
 
-  // Iterator must not throw even if user already closed inside the loop.
-  for await (const _entry of d) {
-    d.closeSync();
-    break;
-  }
-
-  // Still closed; second close throws.
-  expect(() => d.closeSync()).toThrow("Directory handle was closed");
+  // Matches Node: when the user closes the handle inside the loop, the
+  // iterator's finally tries to close again and the resulting ERR_DIR_CLOSED
+  // propagates out of the `for await`.
+  await expect(
+    (async () => {
+      for await (const _entry of d) {
+        d.closeSync();
+        break;
+      }
+    })(),
+  ).rejects.toThrow("Directory handle was closed");
 });

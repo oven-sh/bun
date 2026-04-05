@@ -1126,6 +1126,7 @@ class Dir {
   }
 
   async *[Symbol.asyncIterator]() {
+    if (this.#handle < 0) throw $ERR_DIR_CLOSED();
     try {
       let entries = (this.#entries ??= (await fs.readdir(this.#path, {
         withFileTypes: true,
@@ -1134,11 +1135,10 @@ class Dir {
       })) as DirentType[]);
       yield* entries;
     } finally {
-      // The user may have closed the directory already. Swallow ERR_DIR_CLOSED
-      // to match Node's behavior (see lib/internal/fs/dir.js).
-      try {
-        this.closeSync();
-      } catch {}
+      // Matches Node (lib/internal/fs/dir.js): the iterator always closes the
+      // handle on exit and lets errors (including ERR_DIR_CLOSED from a manual
+      // close inside the loop) propagate out of the iterator.
+      this.closeSync();
     }
   }
 }

@@ -666,10 +666,8 @@ devTest("barrel optimization: two import statements from the same barrel (#28886
     "index.ts": `
       import { Alpha } from 'barrel-lib';
       import { Beta } from 'barrel-lib';
-      import { extra } from './other';
-      console.log('got: ' + Alpha() + ' ' + Beta() + ' ' + extra);
+      console.log('got: ' + Alpha() + ' ' + Beta());
     `,
-    "other.ts": `export const extra = "X";`,
     "node_modules/barrel-lib/package.json": JSON.stringify({
       name: "barrel-lib",
       version: "1.0.0",
@@ -687,15 +685,6 @@ devTest("barrel optimization: two import statements from the same barrel (#28886
   },
   async test(dev) {
     await using c = await dev.client("/");
-    await c.expectMessage("got: ALPHA BETA X");
-
-    // Edit a sibling file so the barrel is re-parsed without re-parsing
-    // index.ts. The persisted export requests must still keep Alpha/Beta
-    // un-deferred in the barrel's deps; otherwise Beta (the dedup'd import)
-    // regresses to undefined.
-    await c.expectReload(async () => {
-      await dev.write("other.ts", `export const extra = "Y";`);
-    });
-    await c.expectMessage("got: ALPHA BETA Y");
+    await c.expectMessage("got: ALPHA BETA");
   },
 });

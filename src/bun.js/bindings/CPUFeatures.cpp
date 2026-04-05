@@ -1,5 +1,10 @@
 #include "root.h"
 
+// Bit positions are a wire format — sent in crash-report trace strings and
+// decoded by bun.report. Must stay in sync with:
+//   - src/bun.js/bindings/CPUFeatures.zig (Flags packed struct)
+//   - bun.report/backend/sentry.ts (cpu_flag_names)
+// Append only; never reorder or renumber existing entries.
 enum class X86CPUFeature : uint8_t {
     sse42 = 1,
     popcnt = 2,

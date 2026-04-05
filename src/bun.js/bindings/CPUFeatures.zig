@@ -4,6 +4,11 @@ flags: Flags,
 
 extern "c" fn bun_cpu_features() u8;
 
+/// Bit positions are a wire format — sent in crash-report trace strings and
+/// decoded by bun.report. Must stay in sync with:
+///   - src/bun.js/bindings/CPUFeatures.cpp (X86CPUFeature / AArch64CPUFeature enums)
+///   - bun.report/backend/sentry.ts (cpu_flag_names)
+/// Append only; never reorder existing fields.
 pub const Flags = switch (@import("builtin").cpu.arch) {
     .x86_64 => packed struct(u8) {
         none: bool,

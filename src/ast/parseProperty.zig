@@ -300,8 +300,9 @@ pub fn ParseProperty(
                                             }
                                         },
                                         .p_accessor => {
-                                            // "accessor" keyword for auto-accessor fields (TC39 standard decorators)
-                                            if (opts.is_class and p.options.features.standard_decorators and
+                                            // "accessor" keyword for auto-accessor fields (TC39 proposal)
+                                            // Always recognized in classes regardless of decorator mode
+                                            if (opts.is_class and
                                                 (js_lexer.PropertyModifierKeyword.List.get(raw) orelse .p_static) == .p_accessor)
                                             {
                                                 kind = .auto_accessor;

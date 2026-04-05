@@ -209,7 +209,7 @@ pub fn Parse(
                 .body_loc = body_loc,
                 .properties = properties.items,
                 .has_decorators = has_any_decorators,
-                .should_lower_standard_decorators = p.options.features.standard_decorators and (has_any_decorators or has_auto_accessor),
+                .should_lower_standard_decorators = has_auto_accessor or (p.options.features.standard_decorators and has_any_decorators),
             };
         }
 

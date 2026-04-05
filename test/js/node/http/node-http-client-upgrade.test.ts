@@ -148,4 +148,149 @@ describe("http.ClientRequest 'upgrade' event", () => {
       server.close();
     }
   });
+
+  test("socket exposes address()/remoteAddress/remotePort and replaces req.socket/res.socket", async () => {
+    const server = net.createServer(conn => {
+      conn.once("data", () => {
+        conn.write(
+          "HTTP/1.1 101 Switching Protocols\r\n" + "Upgrade: websocket\r\n" + "Connection: Upgrade\r\n" + "\r\n",
+        );
+      });
+    });
+    const addr = (await listen(server)) as AddressInfo;
+
+    try {
+      const req = http.request({
+        host: "127.0.0.1",
+        port: addr.port,
+        headers: { Connection: "Upgrade", Upgrade: "websocket" },
+      });
+      req.end();
+
+      const [res, socket] = await once(req, "upgrade");
+      // socket.address() must exist and return a plain object
+      const info = socket.address();
+      expect(info).toBeDefined();
+      expect(info.address).toBe("127.0.0.1");
+      expect(info.port).toBe(addr.port);
+      expect(info.family).toBe("IPv4");
+      expect(socket.remoteAddress).toBe("127.0.0.1");
+      expect(socket.remotePort).toBe(addr.port);
+      expect(socket.remoteFamily).toBe("IPv4");
+      // req.socket / res.socket now point at the upgraded socket
+      expect(req.socket).toBe(socket);
+      expect(res.socket).toBe(socket);
+
+      socket.destroy();
+    } finally {
+      server.close();
+    }
+  });
+
+  test("emits 'close' on the ClientRequest after upgrade", async () => {
+    const server = net.createServer(conn => {
+      conn.once("data", () => {
+        conn.write(
+          "HTTP/1.1 101 Switching Protocols\r\n" + "Upgrade: websocket\r\n" + "Connection: Upgrade\r\n" + "\r\n",
+        );
+      });
+    });
+    const addr = (await listen(server)) as AddressInfo;
+
+    try {
+      const req = http.request({
+        host: "127.0.0.1",
+        port: addr.port,
+        headers: { Connection: "Upgrade", Upgrade: "websocket" },
+      });
+      req.end();
+
+      const closed = once(req, "close");
+      const [, socket] = await once(req, "upgrade");
+      await closed;
+      socket.destroy();
+    } finally {
+      server.close();
+    }
+  });
+
+  test("multiple req.write() calls before 101 are all delivered", async () => {
+    const { promise, resolve } = Promise.withResolvers<string>();
+    const server = net.createServer(conn => {
+      let buf = "";
+      let upgraded = false;
+      conn.on("data", chunk => {
+        buf += chunk.toString();
+        if (!upgraded && buf.includes("\r\n\r\n")) {
+          upgraded = true;
+          const headerEnd = buf.indexOf("\r\n\r\n") + 4;
+          const afterHeaders = buf.slice(headerEnd);
+          conn.write(
+            "HTTP/1.1 101 Switching Protocols\r\n" + "Upgrade: custom\r\n" + "Connection: Upgrade\r\n" + "\r\n",
+          );
+          // Read 9 bytes of body ("one"+"two"+"3!!")
+          let body = afterHeaders;
+          const check = () => {
+            if (body.length >= 9) resolve(body.slice(0, 9));
+          };
+          check();
+          conn.on("data", more => {
+            body += more.toString();
+            check();
+          });
+        }
+      });
+    });
+    const addr = (await listen(server)) as AddressInfo;
+
+    try {
+      const req = http.request({
+        host: "127.0.0.1",
+        port: addr.port,
+        method: "POST",
+        headers: { Connection: "Upgrade", Upgrade: "custom", "Content-Length": "9" },
+      });
+      req.write("one");
+      req.write("two");
+      // Third write after startFetch fires — previous bug dropped this silently.
+      req.write("3!!");
+      req.end();
+
+      const [, socket] = await once(req, "upgrade");
+      expect(await promise).toBe("onetwo3!!");
+      socket.destroy();
+    } finally {
+      server.close();
+    }
+  });
+
+  test("res._dump() after upgrade does not throw ReadableStream locked", async () => {
+    const server = net.createServer(conn => {
+      conn.once("data", () => {
+        conn.write(
+          "HTTP/1.1 101 Switching Protocols\r\n" + "Upgrade: websocket\r\n" + "Connection: Upgrade\r\n" + "\r\n",
+        );
+      });
+    });
+    const addr = (await listen(server)) as AddressInfo;
+
+    try {
+      const req = http.request({
+        host: "127.0.0.1",
+        port: addr.port,
+        headers: { Connection: "Upgrade", Upgrade: "websocket" },
+      });
+      req.end();
+
+      const [res, socket] = await once(req, "upgrade");
+      // IncomingMessage body and UpgradedSocket share response.body; the
+      // _read code path must not attempt to re-acquire the locked stream.
+      // Calling _dump() forces resume() -> _read() on the IncomingMessage.
+      expect(res.complete).toBe(true);
+      res._dump();
+      socket.destroy();
+    } finally {
+      server.close();
+    }
+  });
 });

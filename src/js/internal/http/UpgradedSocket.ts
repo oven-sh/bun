@@ -1,13 +1,25 @@
 const { Duplex } = require("internal/stream");
 
+const HIGH_WATER_MARK = 64 * 1024;
+
 class UpgradedSocket extends Duplex {
   #reader;
   #channel;
   #reading = false;
+  #url;
+  #addressInfo;
+  bytesRead = 0;
+  bytesWritten = 0;
+  connecting = false;
+  timeout = 0;
+  encrypted = false;
+  authorized = false;
 
-  constructor(responseBody, channel) {
+  constructor(responseBody, channel, url) {
     super();
     this.#channel = channel;
+    this.#url = url;
+    this.encrypted = typeof url === "string" && url.startsWith("https:");
     if (responseBody) {
       this.#reader = responseBody.getReader();
     }
@@ -26,7 +38,9 @@ class UpgradedSocket extends Duplex {
           this.push(null);
           return;
         }
-        if (!this.push(Buffer.from(value))) {
+        const buf = Buffer.from(value);
+        this.bytesRead += buf.length;
+        if (!this.push(buf)) {
           return;
         }
       }
@@ -48,8 +62,8 @@ class UpgradedSocket extends Duplex {
     if (!Buffer.isBuffer(buffer)) {
       buffer = Buffer.from(buffer, encoding);
     }
-    this.#channel.push(buffer);
-    callback();
+    this.bytesWritten += buffer.length;
+    this.#channel.pushBuffered(buffer, callback);
   }
 
   _final(callback) {
@@ -69,6 +83,80 @@ class UpgradedSocket extends Duplex {
     callback(err);
   }
 
+  #parseAddress() {
+    if (this.#addressInfo) return this.#addressInfo;
+    const url = this.#url;
+    let address = "";
+    let port = 0;
+    let family: "IPv4" | "IPv6" = "IPv4";
+    if (typeof url === "string") {
+      try {
+        const parsed = new URL(url);
+        let host = parsed.hostname;
+        if (host.startsWith("[") && host.endsWith("]")) {
+          host = host.slice(1, -1);
+          family = "IPv6";
+        } else if (host.includes(":")) {
+          family = "IPv6";
+        }
+        address = host;
+        const portStr = parsed.port;
+        if (portStr) {
+          port = Number(portStr) | 0;
+        } else {
+          port = parsed.protocol === "https:" ? 443 : 80;
+        }
+      } catch {}
+    }
+    return (this.#addressInfo = { address, port, family });
+  }
+
+  address() {
+    const info = this.#parseAddress();
+    return { address: info.address, family: info.family, port: info.port };
+  }
+
+  get remoteAddress() {
+    return this.#parseAddress().address;
+  }
+
+  get remoteFamily() {
+    return this.#parseAddress().family;
+  }
+
+  get remotePort() {
+    return this.#parseAddress().port;
+  }
+
+  get localAddress() {
+    return this.#parseAddress().family === "IPv6" ? "::" : "0.0.0.0";
+  }
+
+  get localFamily() {
+    return this.#parseAddress().family;
+  }
+
+  get localPort() {
+    return 0;
+  }
+
+  get bufferSize() {
+    return this.writableLength;
+  }
+
+  get pending() {
+    return this.connecting;
+  }
+
+  get readyState() {
+    if (this.connecting) return "opening";
+    if (this.readable) {
+      return this.writable ? "open" : "readOnly";
+    } else {
+      return this.writable ? "writeOnly" : "closed";
+    }
+  }
+
   setNoDelay() {
     return this;
   }
@@ -77,7 +165,8 @@ class UpgradedSocket extends Duplex {
     return this;
   }
 
-  setTimeout() {
+  setTimeout(timeout, callback) {
+    if (callback) this.once("timeout", callback);
     return this;
   }
 
@@ -88,10 +177,15 @@ class UpgradedSocket extends Duplex {
   unref() {
     return this;
   }
+
+  resetAndDestroy() {
+    return this.destroy();
+  }
 }
 
 Object.defineProperty(UpgradedSocket, "name", { value: "Socket" });
 
 export default {
   UpgradedSocket,
+  HIGH_WATER_MARK,
 };

@@ -77,40 +77,77 @@ function emitErrorEventNT(self, err) {
 
 const kEmptyBuffer = Buffer.alloc(0);
 let UpgradedSocket;
+const UPGRADE_HIGH_WATER_MARK = 64 * 1024;
 
 async function* upgradeBodyGenerator(channel) {
   while (true) {
     while (channel.chunks.length > 0) {
-      yield channel.chunks.shift();
+      const chunk = channel.chunks.shift();
+      channel.queuedBytes -= chunk.length;
+      // Resolve any writers waiting for backpressure to clear.
+      while (channel.waiters.length > 0 && channel.queuedBytes < channel.highWaterMark) {
+        const cb = channel.waiters.shift();
+        try {
+          cb();
+        } catch {}
+      }
+      yield chunk;
     }
-    if (channel.ended) return;
+    if (channel.ended) {
+      // Flush any remaining write callbacks so streams don't stall.
+      while (channel.waiters.length > 0) {
+        const cb = channel.waiters.shift();
+        try {
+          cb();
+        } catch {}
+      }
+      return;
+    }
     await new Promise(resolve => {
       channel.resolve = resolve;
     });
   }
 }
 
-function createUpgradeChannel(initialChunks) {
+function createUpgradeChannel(chunks) {
+  // Share the body-chunks array with the ClientRequest so that subsequent
+  // req.write() calls after the fetch starts also reach the upgrade stream.
+  let queuedBytes = 0;
+  if (chunks) {
+    for (let i = 0; i < chunks.length; i++) queuedBytes += chunks[i].length;
+  } else {
+    chunks = [];
+  }
   return {
-    chunks: initialChunks ? initialChunks.slice() : [],
+    chunks,
+    queuedBytes,
+    highWaterMark: UPGRADE_HIGH_WATER_MARK,
+    waiters: [] as Array<() => void>,
     ended: false,
-    resolve: undefined,
-    push(chunk) {
-      this.chunks.push(chunk);
+    resolve: undefined as undefined | (() => void),
+    // Pre-upgrade writes from req.write(): just wake the generator.
+    notify() {
       const resolve = this.resolve;
       if (resolve) {
         this.resolve = undefined;
         resolve();
       }
     },
+    // Post-upgrade writes from socket.write(): apply backpressure.
+    pushBuffered(buffer, callback) {
+      this.chunks.push(buffer);
+      this.queuedBytes += buffer.length;
+      this.notify();
+      if (this.queuedBytes >= this.highWaterMark) {
+        this.waiters.push(callback);
+      } else {
+        callback();
+      }
+    },
     end() {
       if (this.ended) return;
       this.ended = true;
-      const resolve = this.resolve;
-      if (resolve) {
-        this.resolve = undefined;
-        resolve();
-      }
+      this.notify();
     },
   };
 }
@@ -363,18 +400,27 @@ function ClientRequest(input, options, cb) {
       };
       let keepOpen = false;
       const upgradeHeader = this.getHeader("upgrade");
+      const upgradeHeaderLower = typeof upgradeHeader === "string" ? upgradeHeader.toLowerCase() : "";
+      // HTTP upgrade tokens are case-insensitive (RFC 7230 §6.7). Exclude h2/h2c
+      // since HTTP/2 cleartext upgrade follows a different code path in fetch.
       const isUpgrade =
-        typeof upgradeHeader === "string" &&
-        upgradeHeader.length > 0 &&
-        upgradeHeader !== "h2" &&
-        upgradeHeader !== "h2c";
+        upgradeHeaderLower.length > 0 && upgradeHeaderLower !== "h2" && upgradeHeaderLower !== "h2c";
       // no body and not finished
       const isDuplex = isUpgrade || (customBody === undefined && !this.finished);
 
       let upgradeChannel;
       if (isUpgrade) {
         fetchOptions.duplex = "half";
+        // Ensure the request has a body-chunks array so the upgrade channel
+        // shares the same array; subsequent req.write() pushes reach the stream.
+        this[kBodyChunks] ??= [];
         upgradeChannel = createUpgradeChannel(this[kBodyChunks]);
+        // pushChunk / req.end() call resolveNextChunk to wake the generator.
+        // We do NOT end the channel here — the upgraded socket continues to
+        // use it for bidirectional data after the 101 response.
+        resolveNextChunk = _end => {
+          upgradeChannel.notify();
+        };
       } else if (isDuplex) {
         fetchOptions.duplex = "half";
         keepOpen = true;
@@ -464,8 +510,24 @@ function ClientRequest(input, options, cb) {
             res.req = this;
 
             UpgradedSocket ??= require("internal/http/UpgradedSocket").UpgradedSocket;
-            const socket = new UpgradedSocket(response.body, upgradeChannel);
+            const socket = new UpgradedSocket(response.body, upgradeChannel, response.url);
+
+            // Replace the pre-upgrade placeholder socket on both request and
+            // response so teardown paths (req.destroy, etc.) operate on the
+            // real upgraded connection.
+            this.socket = socket;
+            this.connection = socket;
+            res.socket = socket;
+
+            // The upgrade response body is consumed by the UpgradedSocket's
+            // reader; mark the IncomingMessage as complete so its own _read()
+            // path doesn't try to re-acquire the locked stream.
+            res.complete = true;
+            res.push(null);
+
             this.emit("upgrade", res, socket, kEmptyBuffer);
+            // ClientRequest emits 'close' after a successful upgrade in Node.
+            maybeEmitClose();
             return;
           }
           upgradeChannel.end();

@@ -29,31 +29,8 @@ pub const DiffFormatter = struct {
         var expected_buf = std.Io.Writer.Allocating.init(allocator);
         defer expected_buf.deinit();
 
-        {
-            const fmt_options = JestPrettyFormat.FormatOptions{
-                .enable_colors = false,
-                .add_newline = false,
-                .flush = false,
-                .quote_strings = true,
-            };
-            JestPrettyFormat.format(
-                .Debug,
-                this.globalThis,
-                @as([*]const JSValue, @ptrCast(&received)),
-                1,
-                &received_buf.writer,
-                fmt_options,
-            ) catch {}; // TODO:
-
-            JestPrettyFormat.format(
-                .Debug,
-                this.globalThis,
-                @as([*]const JSValue, @ptrCast(&this.expected)),
-                1,
-                &expected_buf.writer,
-                fmt_options,
-            ) catch {}; // TODO:
-        }
+        ConsoleObject.jestSnapshotFormat(this.globalThis, received, &received_buf.writer) catch {}; // TODO:
+        ConsoleObject.jestSnapshotFormat(this.globalThis, this.expected.?, &expected_buf.writer) catch {}; // TODO:
 
         var received_slice = received_buf.written();
         var expected_slice = expected_buf.written();
@@ -69,7 +46,6 @@ pub const DiffFormatter = struct {
 const string = []const u8;
 
 const std = @import("std");
-const JestPrettyFormat = @import("./pretty_format.zig").JestPrettyFormat;
 
 const printDiffFile = @import("./diff/printDiff.zig");
 const DiffConfig = printDiffFile.DiffConfig;
@@ -80,5 +56,6 @@ const Output = bun.Output;
 const default_allocator = bun.default_allocator;
 
 const jsc = bun.jsc;
+const ConsoleObject = jsc.ConsoleObject;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;

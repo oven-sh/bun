@@ -5,7 +5,7 @@
 //   bk build view $(bun run ci:find)
 //   bk job log <uuid> -b $(bun run ci:find)
 //
-// With --status / --errors / --logs, acts on the resolved build directly.
+// With --status / --watch / --errors / --logs, acts on the resolved build directly.
 //
 // Requires: `bk` (BuildKite CLI) and, for PR-number targets, `gh`.
 
@@ -39,6 +39,7 @@ Options:
   -n, --limit <N>      Print the last N builds instead of just the latest
   --branch <name>      Use this branch (same as positional)
   --status             Print a one-screen progress summary for the build
+  --watch              Run \`bk build watch <N>\` on the resolved build
   --errors             Print rendered test-failure annotations for the build
   --logs               Save full logs for each failed job to ./tmp/ci-<build>/
   --all                With --errors, include warning/flaky annotations too
@@ -47,7 +48,7 @@ Options:
   -h, --help           Show this help
 
 For anything else, compose with \`bk\` directly (.bk.yaml sets the pipeline):
-  bk build watch $(bun run ci:find)
+  bk build view $(bun run ci:find)
   bk job log <uuid> -b $(bun run ci:find)
   bk api /pipelines/bun/builds/$(bun run ci:find)/annotations
 `);
@@ -61,6 +62,7 @@ const { values: opts, positionals } = parseArgs({
     limit: { type: "string", short: "n", default: "1" },
     branch: { type: "string" },
     status: { type: "boolean" },
+    watch: { type: "boolean" },
     errors: { type: "boolean" },
     logs: { type: "boolean" },
     all: { type: "boolean" },
@@ -120,7 +122,10 @@ try {
   }
 
   if (opts.status) await printStatus(builds[0].number);
-  else if (opts.logs) await saveLogs(builds[0].number);
+  else if (opts.watch) {
+    const n = String(builds[0].number);
+    process.exit(await Bun.spawn(["bk", "build", "watch", n], { stdio: ["inherit", "inherit", "inherit"] }).exited);
+  } else if (opts.logs) await saveLogs(builds[0].number);
   else if (opts.errors)
     await printErrors(builds[0].number, { all: !!opts.all, compare: !opts["no-compare"] && branch !== "main" });
   else

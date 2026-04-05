@@ -32,7 +32,7 @@
     "ci:status": "bun scripts/find-build.ts --status",
     "ci:errors": "bun scripts/find-build.ts --errors",
     "ci:logs": "bun scripts/find-build.ts --logs",
-    "ci:watch": "bk build watch $(bun scripts/find-build.ts)",
+    "ci:watch": "bun scripts/find-build.ts --watch",
     "watch": "bun run zig build check --watch -fincremental --prominent-compile-errors --global-cache-dir build/debug/zig-check-cache --zig-lib-dir vendor/zig/lib -freference-trace=30",
     "watch-windows": "bun run zig build check-windows --watch -fincremental --prominent-compile-errors --global-cache-dir build/debug/zig-check-cache --zig-lib-dir vendor/zig/lib",
     "bd:v": "bun scripts/build.ts --profile=debug",

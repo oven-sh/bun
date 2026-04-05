@@ -8,7 +8,7 @@
 
 import { execSync } from "node:child_process";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
-import { arch as hostArch, platform as hostPlatform } from "node:os";
+import { homedir, arch as hostArch, platform as hostPlatform } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { NODEJS_ABI_VERSION, NODEJS_VERSION } from "./deps/nodejs-headers.ts";
 import { WEBKIT_VERSION } from "./deps/webkit.ts";
@@ -39,6 +39,8 @@ export type WebKitMode = "prebuilt" | "local";
 export interface Host {
   os: OS;
   arch: Arch;
+  /** ".exe" on a Windows host, "" elsewhere. Mirrors Config.exeSuffix (target). */
+  exeSuffix: string;
 }
 
 /**
@@ -100,6 +102,10 @@ export interface Config {
 
   // ─── Features (all explicit booleans) ───
   lto: boolean;
+  /** IR PGO: directory for .profraw output (instrumented build). Mutually exclusive with pgoUse. */
+  pgoGenerate: string | undefined;
+  /** IR PGO: .profdata file path (optimized build). Mutually exclusive with pgoGenerate. */
+  pgoUse: string | undefined;
   asan: boolean;
   zigAsan: boolean;
   assertions: boolean;
@@ -207,6 +213,8 @@ export interface PartialConfig {
   buildType?: BuildType;
   mode?: BuildMode;
   lto?: boolean;
+  pgoGenerate?: string;
+  pgoUse?: string;
   asan?: boolean;
   zigAsan?: boolean;
   assertions?: boolean;
@@ -309,7 +317,7 @@ export function detectHost(): Host {
             throw new BuildError(`Unsupported host architecture: ${a}`, { hint: "Bun builds on x64 or arm64" });
           })();
 
-  return { os, arch };
+  return { os, arch, exeSuffix: os === "windows" ? ".exe" : "" };
 }
 
 /**
@@ -391,6 +399,13 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     lto = false;
   }
 
+  // PGO: paths resolved to absolute. generate/use are mutually exclusive.
+  const pgoGenerate = partial.pgoGenerate ? resolve(partial.pgoGenerate) : undefined;
+  const pgoUse = partial.pgoUse ? resolve(partial.pgoUse) : undefined;
+  if (pgoGenerate && pgoUse) {
+    throw new BuildError("--pgo-generate and --pgo-use are mutually exclusive");
+  }
+
   // Logs: on by default in debug non-test
   const logs = partial.logs ?? debug;
 
@@ -422,12 +437,20 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
         : resolve(cwd, partial.buildDir)
       : resolve(cwd, "build", defaultBuildDirName);
   const codegenDir = resolve(buildDir, "codegen");
+  // Local builds share $BUN_INSTALL/build-cache across checkouts and profiles
+  // so ccache/zig/tarballs/webkit reuse one another's work. CI stays per-build
+  // so runners remain hermetic and `rm -rf build/` is a full reset.
+  // Relative BUN_INSTALL is anchored to repo root (not process.cwd()) so the
+  // ninja regen rule — which runs from buildDir — resolves the same path.
+  const bunInstall = process.env.BUN_INSTALL ? resolve(cwd, process.env.BUN_INSTALL) : join(homedir(), ".bun");
   const cacheDir =
     partial.cacheDir !== undefined
       ? isAbsolute(partial.cacheDir)
         ? partial.cacheDir
         : resolve(cwd, partial.cacheDir)
-      : resolve(buildDir, "cache");
+      : ci
+        ? resolve(buildDir, "cache")
+        : resolve(bunInstall, "build-cache");
   const vendorDir = resolve(cwd, "vendor");
 
   // ─── Validation ───
@@ -480,6 +503,8 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     release,
     mode: partial.mode ?? "full",
     lto,
+    pgoGenerate,
+    pgoUse,
     asan,
     zigAsan,
     assertions,
@@ -754,6 +779,8 @@ export function formatConfig(cfg: Config, exe: string): string {
   ];
   const features: string[] = [];
   if (cfg.lto) features.push("lto");
+  if (cfg.pgoGenerate) features.push("pgo-gen");
+  if (cfg.pgoUse) features.push("pgo-use");
   if (cfg.asan) features.push("asan");
   if (cfg.assertions) features.push("assertions");
   if (cfg.logs) features.push("logs");

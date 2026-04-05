@@ -516,13 +516,39 @@ fn spin(this: *WebWorker) void {
         return;
     }
 
-    var promise = vm.loadEntryPointForWebWorker(path) catch {
+    // Start loading the entry point module. This kicks off module
+    // resolution and evaluation but does not wait for top-level await.
+    const initial_promise = vm.reloadEntryPoint(path) catch {
         // If we called process.exit(), don't override the exit code
         if (!this.exit_called) vm.exit_handler.exit_code = 1;
         this.flushLogs();
         this.exitAndDeinit();
         return;
     };
+    vm.eventLoop().performGC();
+
+    this.flushLogs();
+    log("[{d}] event loop start", .{this.execution_context_id});
+    // Go online and fire buffered messages BEFORE waiting for TLA.
+    // The event loop spins during waitForPromiseWithTermination, so
+    // messages posted to the worker are processed even while TLA is
+    // pending. This matches Node.js and browser behavior.
+    WebWorker__dispatchOnline(this.cpp_worker, vm.global);
+    WebWorker__fireEarlyMessages(this.cpp_worker, vm.global);
+    this.setStatus(.running);
+
+    // Wait for the module's top-level await to settle (or termination).
+    vm.eventLoop().waitForPromiseWithTermination(jsc.AnyPromise{
+        .internal = initial_promise,
+    });
+
+    if (this.hasRequestedTerminate()) {
+        this.flushLogs();
+        this.exitAndDeinit();
+        return;
+    }
+
+    const promise = vm.pending_internal_promise.?;
 
     if (promise.status() == .rejected) {
         const handled = vm.uncaughtException(vm.global, promise.result(), true);
@@ -535,14 +561,6 @@ fn spin(this: *WebWorker) void {
     } else {
         _ = promise.result();
     }
-
-    this.flushLogs();
-    log("[{d}] event loop start", .{this.execution_context_id});
-    // TODO(@190n) call dispatchOnline earlier (basically as soon as spin() starts, before
-    // we start running JS)
-    WebWorker__dispatchOnline(this.cpp_worker, vm.global);
-    WebWorker__fireEarlyMessages(this.cpp_worker, vm.global);
-    this.setStatus(.running);
 
     // don't run the GC if we don't actually need to
     if (vm.isEventLoopAlive() or

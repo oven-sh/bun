@@ -3948,13 +3948,566 @@ function closeAllSessions(server: Http2Server | Http2SecureServer) {
   }
 }
 
+function decodeChunkedBody(buf) {
+  const decoded: Buffer[] = [];
+  let offset = 0;
+  let complete = false;
+  while (offset < buf.length) {
+    const crlfIdx = buf.indexOf("\r\n", offset);
+    if (crlfIdx === -1) break;
+    const sizeStr = buf.subarray(offset, crlfIdx).toString().trim();
+    const chunkSize = parseInt(sizeStr, 16);
+    if (isNaN(chunkSize)) break;
+    if (chunkSize === 0) {
+      // Wait for full terminator including any trailers (RFC 7230 §4.1.2)
+      const trailerEnd = buf.indexOf("\r\n\r\n", crlfIdx);
+      if (trailerEnd === -1) break; // terminator not fully buffered yet
+      complete = true;
+      offset = trailerEnd + 4;
+      break;
+    }
+    const dataStart = crlfIdx + 2;
+    const dataEnd = dataStart + chunkSize;
+    if (dataEnd + 2 > buf.length) break; // need data + trailing \r\n
+    ArrayPrototypePush.$call(decoded, buf.subarray(dataStart, dataEnd));
+    offset = dataEnd + 2;
+  }
+  return {
+    body: decoded.length > 0 ? Buffer.concat(decoded) : Buffer.alloc(0),
+    complete,
+    consumed: offset,
+  };
+}
+
+const MAX_HTTP1_HEADER_SIZE = 16384;
+
+function http1Fallback(socket: Socket) {
+  const server = this;
+  let chunks: Buffer[] = [];
+  let totalLength = 0;
+
+  socket.on("data", onData);
+  socket.on("error", onError);
+
+  let headersParsed = false;
+
+  function onData(chunk) {
+    ArrayPrototypePush.$call(chunks, chunk);
+    totalLength += chunk.length;
+    // Only enforce header size limit before headers are found
+    if (!headersParsed && totalLength > MAX_HTTP1_HEADER_SIZE) {
+      socket.end("HTTP/1.1 431 Request Header Fields Too Large\r\nConnection: close\r\n\r\n");
+      socket.removeListener("data", onData);
+      return;
+    }
+    tryParseRequest();
+  }
+
+  function onError(err) {
+    server.emit("clientError", err, socket);
+  }
+
+  function tryParseRequest() {
+    const buffer = Buffer.concat(chunks, totalLength);
+    const headerEnd = buffer.indexOf("\r\n\r\n");
+    if (headerEnd === -1) return;
+
+    const headerStr = buffer.subarray(0, headerEnd).toString();
+    const remainder = buffer.subarray(headerEnd + 4);
+
+    const lines = headerStr.split("\r\n");
+    const requestLine = lines[0];
+    const spaceIdx = requestLine.indexOf(" ");
+    const lastSpaceIdx = requestLine.lastIndexOf(" ");
+    if (spaceIdx === -1 || lastSpaceIdx === spaceIdx) {
+      socket.removeListener("data", onData);
+      chunks = [];
+      totalLength = 0;
+      socket.end("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
+      return;
+    }
+    const method = requestLine.substring(0, spaceIdx);
+    const url = requestLine.substring(spaceIdx + 1, lastSpaceIdx);
+    const httpVersionStr = requestLine.substring(lastSpaceIdx + 1);
+    const httpVersion =
+      httpVersionStr.indexOf("/") !== -1 ? httpVersionStr.substring(httpVersionStr.indexOf("/") + 1) : "1.1";
+
+    const headers = Object.create(null);
+    const rawHeaders: string[] = [];
+    for (let i = 1; i < lines.length; i++) {
+      const colonIdx = lines[i].indexOf(":");
+      if (colonIdx === -1) continue;
+      const key = lines[i].substring(0, colonIdx);
+      const value = StringPrototypeTrim.$call(lines[i].substring(colonIdx + 1));
+      const lowerKey = StringPrototypeToLowerCase.$call(key);
+      ArrayPrototypePush.$call(rawHeaders, key, value);
+      if (lowerKey === "set-cookie") {
+        if (headers[lowerKey] !== undefined) {
+          if (!$isArray(headers[lowerKey])) headers[lowerKey] = [headers[lowerKey]];
+          ArrayPrototypePush.$call(headers[lowerKey], value);
+        } else {
+          headers[lowerKey] = value;
+        }
+      } else if (headers[lowerKey] !== undefined) {
+        headers[lowerKey] += ", " + value;
+      } else {
+        headers[lowerKey] = value;
+      }
+    }
+
+    // Stop listening for data while handling this request
+    socket.removeListener("data", onData);
+    headersParsed = true;
+    chunks = [];
+    totalLength = 0;
+
+    const req = new Http1FallbackRequest(socket, method, url, headers, rawHeaders, httpVersion);
+    const res = new Http1FallbackResponse(socket, req);
+
+    // Clean up req stream on socket close (client disconnect)
+    socket.once("close", () => {
+      if (!req.complete) {
+        req.push(null);
+        req.complete = true;
+      }
+    });
+
+    // Handle request body
+    const contentLength = parseInt(headers["content-length"], 10);
+    if (!isNaN(contentLength) && contentLength > 0) {
+      let bodyReceived = 0;
+      if (remainder.length > 0) {
+        // Slice to contentLength to avoid consuming pipelined data
+        const bodyPart = remainder.length > contentLength ? remainder.subarray(0, contentLength) : remainder;
+        req.push(bodyPart);
+        bodyReceived = bodyPart.length;
+        // Save excess for next pipelined request
+        if (remainder.length > contentLength) {
+          chunks = [remainder.subarray(contentLength)];
+          totalLength = remainder.length - contentLength;
+        }
+      }
+      if (bodyReceived >= contentLength) {
+        req.push(null);
+        req.complete = true;
+      } else {
+        const onBodyData = chunk => {
+          const remaining = contentLength - bodyReceived;
+          if (chunk.length > remaining) {
+            req.push(chunk.subarray(0, remaining));
+            // Save excess for next pipelined request
+            chunks = [chunk.subarray(remaining)];
+            totalLength = chunk.length - remaining;
+          } else {
+            req.push(chunk);
+          }
+          bodyReceived += Math.min(chunk.length, remaining);
+          if (bodyReceived >= contentLength) {
+            socket.removeListener("data", onBodyData);
+            req.push(null);
+            req.complete = true;
+          }
+        };
+        socket.on("data", onBodyData);
+      }
+    } else if (StringPrototypeToLowerCase.$call(headers["transfer-encoding"] || "") === "chunked") {
+      // Accumulate chunked data and decode the framing structurally
+      let chunkedChunks: Buffer[] = [];
+      let chunkedLength = 0;
+      if (remainder.length > 0) {
+        ArrayPrototypePush.$call(chunkedChunks, remainder);
+        chunkedLength += remainder.length;
+      }
+      function tryDecodeChunked() {
+        const accumulated = Buffer.concat(chunkedChunks, chunkedLength);
+        const result = decodeChunkedBody(accumulated);
+        if (result.complete) {
+          socket.removeListener("data", onChunkedData);
+          if (result.body.length > 0) req.push(result.body);
+          req.push(null);
+          req.complete = true;
+          // Save pipelined data after chunked terminator
+          if (result.consumed < accumulated.length) {
+            chunks = [accumulated.subarray(result.consumed)];
+            totalLength = accumulated.length - result.consumed;
+          }
+          return true;
+        }
+        return false;
+      }
+      const onChunkedData = chunk => {
+        ArrayPrototypePush.$call(chunkedChunks, chunk);
+        chunkedLength += chunk.length;
+        tryDecodeChunked();
+      };
+      // Check if we already have the complete chunked body in remainder
+      if (chunkedLength > 0 && tryDecodeChunked()) {
+        // Already complete
+      } else {
+        socket.on("data", onChunkedData);
+      }
+    } else {
+      // No body - save remainder for pipelined requests
+      if (remainder.length > 0) {
+        chunks = [remainder];
+        totalLength = remainder.length;
+      }
+      req.push(null);
+      req.complete = true;
+    }
+
+    // After response is finished, decide socket lifecycle
+    res.on("finish", () => {
+      // Drain any unconsumed body data listeners before re-arming
+      if (!req.complete) {
+        req.push(null);
+        req.complete = true;
+      }
+      const reqConnection = (headers["connection"] || "").toLowerCase();
+      const resConnection = (res.getHeader("connection") || "").toLowerCase();
+      if (
+        resConnection === "close" ||
+        reqConnection === "close" ||
+        (httpVersion === "1.0" && reqConnection !== "keep-alive")
+      ) {
+        socket.end();
+      } else {
+        // Re-arm for next request (keep-alive)
+        headersParsed = false;
+        socket.on("data", onData);
+        // Process any pipelined data already buffered (defer to avoid stack recursion)
+        if (totalLength > 0) {
+          process.nextTick(tryParseRequest);
+        }
+      }
+    });
+
+    server.emit("request", req, res);
+  }
+}
+
+class Http1FallbackRequest extends Readable {
+  url;
+  method;
+  headers;
+  rawHeaders;
+  httpVersion;
+  httpVersionMajor;
+  httpVersionMinor;
+  socket;
+  connection;
+  complete;
+  aborted;
+  trailers;
+  rawTrailers;
+  statusCode;
+  statusMessage;
+
+  constructor(socket, method, url, headers, rawHeaders, httpVersion) {
+    super();
+    this.socket = socket;
+    this.connection = socket;
+    this.method = method;
+    this.url = url;
+    this.headers = headers;
+    this.rawHeaders = rawHeaders;
+    this.httpVersion = httpVersion;
+    const dotIdx = httpVersion.indexOf(".");
+    this.httpVersionMajor = dotIdx !== -1 ? parseInt(httpVersion.substring(0, dotIdx), 10) : 1;
+    this.httpVersionMinor = dotIdx !== -1 ? parseInt(httpVersion.substring(dotIdx + 1), 10) : 1;
+    this.complete = false;
+    this.aborted = false;
+    this.trailers = {};
+    this.rawTrailers = [];
+    this.statusCode = null;
+    this.statusMessage = null;
+  }
+
+  _read() {}
+
+  setTimeout(msecs, callback) {
+    if (this.socket) this.socket.setTimeout(msecs, callback);
+    return this;
+  }
+
+  destroy(err?) {
+    if (!this.destroyed) {
+      this.aborted = true;
+    }
+    return super.destroy(err);
+  }
+}
+
+const kHttp1FallbackHeadersSent = Symbol("http1FallbackHeadersSent");
+const kHttp1FallbackHeaders = Symbol("http1FallbackHeaders");
+
+class Http1FallbackResponse extends Stream {
+  socket;
+  connection;
+  req;
+  statusCode;
+  statusMessage;
+  sendDate;
+  finished;
+  [kHttp1FallbackHeadersSent];
+  [kHttp1FallbackHeaders]: Map<string, { name: string; value: string | string[] }>;
+  _hasBody;
+  writable;
+  _ended;
+  _chunked;
+
+  constructor(socket, req) {
+    super();
+    this.socket = socket;
+    this.connection = socket;
+    this.req = req;
+    this.statusCode = 200;
+    this.statusMessage = undefined;
+    this.sendDate = true;
+    this.finished = false;
+    this[kHttp1FallbackHeadersSent] = false;
+    this[kHttp1FallbackHeaders] = new Map();
+    this._hasBody = req.method !== "HEAD";
+    this.writable = true;
+    this._ended = false;
+    this._chunked = false;
+  }
+
+  get headersSent() {
+    return this[kHttp1FallbackHeadersSent];
+  }
+
+  get writableEnded() {
+    return this._ended;
+  }
+
+  get writableFinished() {
+    return this.finished;
+  }
+
+  setHeader(name, value) {
+    if (this[kHttp1FallbackHeadersSent]) throw $ERR_HTTP_HEADERS_SENT("set");
+    this[kHttp1FallbackHeaders].set(StringPrototypeToLowerCase.$call(name), { name, value });
+    return this;
+  }
+
+  getHeader(name) {
+    const entry = this[kHttp1FallbackHeaders].get(StringPrototypeToLowerCase.$call(name));
+    return entry ? entry.value : undefined;
+  }
+
+  getHeaders() {
+    const result = Object.create(null);
+    for (const entry of this[kHttp1FallbackHeaders].values()) {
+      result[StringPrototypeToLowerCase.$call(entry.name)] = entry.value;
+    }
+    return result;
+  }
+
+  getHeaderNames() {
+    const names: string[] = [];
+    for (const entry of this[kHttp1FallbackHeaders].values()) {
+      ArrayPrototypePush.$call(names, StringPrototypeToLowerCase.$call(entry.name));
+    }
+    return names;
+  }
+
+  removeHeader(name) {
+    if (this[kHttp1FallbackHeadersSent]) throw $ERR_HTTP_HEADERS_SENT("remove");
+    this[kHttp1FallbackHeaders].delete(StringPrototypeToLowerCase.$call(name));
+  }
+
+  hasHeader(name) {
+    return this[kHttp1FallbackHeaders].has(StringPrototypeToLowerCase.$call(name));
+  }
+
+  appendHeader(name, value) {
+    const lowerName = StringPrototypeToLowerCase.$call(name);
+    const existing = this[kHttp1FallbackHeaders].get(lowerName);
+    if (existing) {
+      if ($isArray(existing.value)) {
+        ArrayPrototypePush.$call(existing.value, value);
+      } else {
+        existing.value = [existing.value, value];
+      }
+    } else {
+      this[kHttp1FallbackHeaders].set(lowerName, { name, value });
+    }
+    return this;
+  }
+
+  writeHead(statusCode, statusMessage?, headers?) {
+    if (this[kHttp1FallbackHeadersSent]) throw $ERR_HTTP_HEADERS_SENT("writeHead");
+    if (typeof statusMessage === "object") {
+      headers = statusMessage;
+      statusMessage = undefined;
+    }
+    this.statusCode = statusCode;
+    if (statusMessage) this.statusMessage = statusMessage;
+    if (headers) {
+      if ($isArray(headers)) {
+        for (let i = 0; i < headers.length; i += 2) {
+          this.setHeader(headers[i], headers[i + 1]);
+        }
+      } else {
+        const keys = ObjectKeys(headers);
+        for (let i = 0; i < keys.length; i++) {
+          this.setHeader(keys[i], headers[keys[i]]);
+        }
+      }
+    }
+    return this;
+  }
+
+  _flushHeaders() {
+    if (this[kHttp1FallbackHeadersSent]) return;
+    this[kHttp1FallbackHeadersSent] = true;
+    const statusMessage = this.statusMessage || STATUS_CODES[this.statusCode] || "Unknown";
+    let head = "HTTP/1.1 " + this.statusCode + " " + statusMessage + "\r\n";
+    if (this.sendDate && !this.hasHeader("date")) {
+      head += "Date: " + DatePrototypeToUTCString.$call(new Date()) + "\r\n";
+    }
+    for (const entry of this[kHttp1FallbackHeaders].values()) {
+      if ($isArray(entry.value)) {
+        for (let i = 0; i < entry.value.length; i++) {
+          head += entry.name + ": " + entry.value[i] + "\r\n";
+        }
+      } else {
+        head += entry.name + ": " + entry.value + "\r\n";
+      }
+    }
+    head += "\r\n";
+    this.socket.write(head);
+  }
+
+  write(chunk, encoding?, callback?) {
+    if (this._ended) {
+      if (callback) process.nextTick(callback);
+      return false;
+    }
+    if (typeof encoding === "function") {
+      callback = encoding;
+      encoding = undefined;
+    }
+    // Sync _chunked with explicitly set Transfer-Encoding header
+    if (!this._chunked && StringPrototypeToLowerCase.$call(this.getHeader("transfer-encoding") || "") === "chunked") {
+      this._chunked = true;
+    }
+    // If headers not yet sent and no explicit framing, use chunked encoding
+    if (
+      this._hasBody &&
+      !this[kHttp1FallbackHeadersSent] &&
+      !this.hasHeader("content-length") &&
+      !this.hasHeader("transfer-encoding")
+    ) {
+      this._chunked = true;
+      this.setHeader("Transfer-Encoding", "chunked");
+    }
+    this._flushHeaders();
+    if (this._hasBody && chunk) {
+      if (this._chunked) {
+        const len = typeof chunk === "string" ? Buffer.byteLength(chunk, encoding) : chunk.length;
+        this.socket.write(len.toString(16) + "\r\n");
+        this.socket.write(chunk, encoding);
+        this.socket.write("\r\n", undefined, callback);
+      } else {
+        this.socket.write(chunk, encoding, callback);
+      }
+      return true;
+    }
+    if (callback) process.nextTick(callback);
+    return true;
+  }
+
+  end(chunk?, encoding?, callback?) {
+    if (typeof chunk === "function") {
+      callback = chunk;
+      chunk = undefined;
+      encoding = undefined;
+    } else if (typeof encoding === "function") {
+      callback = encoding;
+      encoding = undefined;
+    }
+    if (this._ended) {
+      if (callback) process.nextTick(callback);
+      return this;
+    }
+    this._ended = true;
+
+    // Sync _chunked with explicitly set Transfer-Encoding header
+    if (!this._chunked && StringPrototypeToLowerCase.$call(this.getHeader("transfer-encoding") || "") === "chunked") {
+      this._chunked = true;
+    }
+    // If headers not yet sent, set Content-Length for a simple response
+    if (!this[kHttp1FallbackHeadersSent] && !this.hasHeader("content-length") && !this.hasHeader("transfer-encoding")) {
+      if (chunk) {
+        const len = typeof chunk === "string" ? Buffer.byteLength(chunk, encoding) : chunk.length;
+        this.setHeader("Content-Length", len);
+      } else if (this._hasBody && this.statusCode !== 204 && !(this.statusCode >= 100 && this.statusCode < 200)) {
+        this.setHeader("Content-Length", 0);
+      }
+    }
+
+    this._flushHeaders();
+
+    if (this._hasBody && chunk) {
+      if (this._chunked) {
+        const len = typeof chunk === "string" ? Buffer.byteLength(chunk, encoding) : chunk.length;
+        this.socket.write(len.toString(16) + "\r\n");
+        this.socket.write(chunk, encoding);
+        this.socket.write("\r\n");
+      } else {
+        this.socket.write(chunk, encoding);
+      }
+    }
+    // Write chunked terminator (only if body is expected)
+    if (this._chunked && this._hasBody) {
+      this.socket.write("0\r\n\r\n");
+    }
+    this.finished = true;
+    this.writable = false;
+    this.emit("prefinish");
+    this.emit("finish");
+    process.nextTick(() => this.emit("close"));
+    if (callback) process.nextTick(callback);
+    return this;
+  }
+
+  flushHeaders() {
+    this._flushHeaders();
+  }
+
+  writeContinue(cb?) {
+    this.socket.write("HTTP/1.1 100 Continue\r\n\r\n");
+    if (cb) process.nextTick(cb);
+  }
+
+  setTimeout(msecs, callback?) {
+    if (this.socket) this.socket.setTimeout(msecs, callback);
+    return this;
+  }
+
+  destroy(err?) {
+    if (this.socket) this.socket.destroy(err);
+    return this;
+  }
+
+  cork() {
+    if (this.socket?.cork) this.socket.cork();
+  }
+
+  uncork() {
+    if (this.socket?.uncork) this.socket.uncork();
+  }
+}
+
 function connectionListener(socket: Socket) {
   const options = this[bunSocketServerOptions] || {};
   if (socket.alpnProtocol === false || socket.alpnProtocol === "http/1.1") {
-    // TODO: Fallback to HTTP/1.1
-    // if (options.allowHTTP1 === true) {
-
-    // }
+    if (options.allowHTTP1 === true) {
+      http1Fallback.$call(this, socket);
+      return;
+    }
     // Let event handler deal with the socket
 
     if (!this.emit("unknownProtocol", socket)) {
@@ -4126,10 +4679,9 @@ class Http2SecureServer extends tls.Server {
   timeout = 0;
   [kSessions] = new SafeSet();
   constructor(options, onRequestHandler) {
-    //TODO: add 'http/1.1' on ALPNProtocols list after allowHTTP1 support
     if (typeof options !== "undefined") {
       if (options && typeof options === "object") {
-        options = { ...options, ALPNProtocols: ["h2"] };
+        options = { ...options, ALPNProtocols: options.allowHTTP1 ? ["h2", "http/1.1"] : ["h2"] };
       } else {
         throw $ERR_INVALID_ARG_TYPE("options", "object", options);
       }

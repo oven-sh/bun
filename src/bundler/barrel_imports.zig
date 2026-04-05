@@ -271,7 +271,7 @@ pub fn scheduleBarrelDeferredImports(this: *BundleV2, result: *ParseTask.Result.
     // its index, so the direct path lookup below fails for those entries.
     // Build a fallback: raw specifier → surviving record's resolved path
     // text, using non-unused records in this file. See #28886.
-    var dedup_fallback = std.StringArrayHashMapUnmanaged([]const u8){};
+    var dedup_fallback = bun.StringArrayHashMapUnmanaged([]const u8){};
     defer dedup_fallback.deinit(this.allocator());
     if (this.transpiler.options.dev_server != null) {
         for (file_import_records.slice()) |ir_probe| {

@@ -688,7 +688,7 @@ TLSSocket.prototype[buntls] = function (port, host) {
   return {
     socket: this._handle,
     ALPNProtocols: this.ALPNProtocols,
-    serverName: this.servername || host || "localhost",
+    serverName: this.servername === "" ? "" : (this.servername || (net.isIP(host) ? "" : (host || "localhost"))),
     checkServerIdentity: this[kcheckServerIdentity],
     session: this[ksession],
     rejectUnauthorized: this._rejectUnauthorized,
@@ -816,7 +816,7 @@ function Server(options, secureConnectionListener): void {
   this[buntls] = function (port, host, isClient) {
     return [
       {
-        serverName: this.servername || host || "localhost",
+        serverName: this.servername === "" ? "" : (this.servername || (net.isIP(host) ? "" : (host || "localhost"))),
         key: this.key,
         cert: this.cert,
         ca: this.ca,

@@ -108,8 +108,10 @@ class UpgradedSocket extends Duplex {
       } catch {}
     }
     // Forward the destroy error so queued socket.write callbacks see the
-    // failure instead of a silent success.
-    this.#channel.end(err);
+    // failure instead of a silent success. Even without an explicit error
+    // (socket.destroy() with no argument), raise ERR_STREAM_DESTROYED so
+    // waiters aren't falsely signaled as successful.
+    this.#channel.end(err ?? $ERR_STREAM_DESTROYED("write"));
     callback(err);
   }
 

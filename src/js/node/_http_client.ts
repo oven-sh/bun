@@ -600,6 +600,14 @@ function ClientRequest(input, options, cb) {
               // aren't converted into promise rejections that would trigger
               // spurious happy-eyeballs retries.
               process.nextTick(() => {
+                // If the request was destroyed while waiting for this tick,
+                // 'close' already fired on the ClientRequest — don't then
+                // deliver 'upgrade' afterwards (violates Node event order).
+                if (this.destroyed) {
+                  socket.destroy();
+                  maybeEmitClose();
+                  return;
+                }
                 try {
                   this.emit("upgrade", res, socket, kEmptyBuffer);
                 } finally {

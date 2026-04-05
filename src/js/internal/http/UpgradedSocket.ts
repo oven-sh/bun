@@ -107,7 +107,9 @@ class UpgradedSocket extends Duplex {
         reader.cancel().catch(() => {});
       } catch {}
     }
-    this.#channel.end();
+    // Forward the destroy error so queued socket.write callbacks see the
+    // failure instead of a silent success.
+    this.#channel.end(err);
     callback(err);
   }
 

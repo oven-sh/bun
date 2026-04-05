@@ -463,6 +463,41 @@ describe("http.ClientRequest 'upgrade' event", () => {
     }
   });
 
+  test("pending socket.write callback receives destroy error", async () => {
+    const server = net.createServer(conn => {
+      conn.once("data", () => {
+        conn.write(
+          "HTTP/1.1 101 Switching Protocols\r\n" + "Upgrade: custom\r\n" + "Connection: Upgrade\r\n" + "\r\n",
+        );
+        // Don't drain — keep the channel backpressured.
+      });
+    });
+    const addr = (await listen(server)) as AddressInfo;
+
+    try {
+      const req = http.request({
+        host: "127.0.0.1",
+        port: addr.port,
+        method: "POST",
+        headers: { Connection: "Upgrade", Upgrade: "custom" },
+      });
+      req.flushHeaders();
+      const [, socket] = await once(req, "upgrade");
+      socket.on("error", () => {});
+
+      const big = Buffer.alloc(96 * 1024, 0x61);
+      const { promise, resolve } = Promise.withResolvers<Error | undefined>();
+      socket.write(big); // pushes past 64KiB highWaterMark
+      socket.write(big, err => resolve(err as Error | undefined));
+
+      socket.destroy(new Error("boom"));
+      const cbErr = await promise;
+      expect(cbErr?.message).toBe("boom");
+    } finally {
+      server.close();
+    }
+  });
+
   test("res._dump() after upgrade does not throw ReadableStream locked", async () => {
     const server = net.createServer(conn => {
       conn.once("data", () => {

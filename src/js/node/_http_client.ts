@@ -104,10 +104,13 @@ async function* upgradeBodyGenerator(channel) {
   } finally {
     // Always flush write callbacks — including when the generator is
     // terminated via .return() (fetch abort/destroy at a yield point).
+    // If end() was called with an error, propagate it to each callback
+    // so callers that rely on the write-callback contract see the failure.
+    const endError = channel.endError;
     while (channel.waiters.length > 0) {
       const cb = channel.waiters.shift();
       try {
-        cb();
+        cb(endError);
       } catch {}
     }
   }
@@ -123,8 +126,9 @@ function createUpgradeChannel(initialChunks) {
     chunks,
     queuedBytes,
     highWaterMark: UPGRADE_HIGH_WATER_MARK,
-    waiters: [] as Array<() => void>,
+    waiters: [] as Array<(err?: Error | null) => void>,
     ended: false,
+    endError: undefined as Error | undefined,
     resolve: undefined as undefined | (() => void),
     // Pre-upgrade body chunk from req.write(). Accounts bytes so that
     // post-upgrade backpressure checks stay correct.
@@ -137,7 +141,7 @@ function createUpgradeChannel(initialChunks) {
     // Post-upgrade writes from socket.write(): apply backpressure.
     pushBuffered(buffer, callback) {
       if (this.ended) {
-        callback();
+        callback(this.endError);
         return;
       }
       this.chunks.push(buffer);
@@ -156,15 +160,17 @@ function createUpgradeChannel(initialChunks) {
         resolve();
       }
     },
-    end() {
+    end(err?: Error) {
       if (this.ended) return;
       this.ended = true;
+      if (err) this.endError = err;
       this.notify();
-      // Flush any waiters so socket.write callbacks don't hang.
+      // Flush any waiters so socket.write callbacks don't hang. If we were
+      // ended with an error, forward it to each pending write callback.
       while (this.waiters.length > 0) {
         const cb = this.waiters.shift();
         try {
-          cb();
+          cb(err);
         } catch {}
       }
     },

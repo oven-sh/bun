@@ -843,7 +843,7 @@ pub const Lexer = struct {
                             continue;
                         },
                         'f' => {
-                            buf.append(9) catch unreachable;
+                            buf.append(0x0C) catch unreachable;
                             continue;
                         },
                         'n' => {
@@ -861,7 +861,7 @@ pub const Lexer = struct {
                             continue;
                         },
                         't' => {
-                            buf.append(12) catch unreachable;
+                            buf.append(0x09) catch unreachable;
                             continue;
                         },
                         'r' => {

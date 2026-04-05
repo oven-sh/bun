@@ -21,4 +21,14 @@ describe("body-mixin-errors", () => {
       expect(err instanceof TypeError).toBe(true);
     }
   });
+
+  it.concurrent.each(["json", "text", "bytes", "blob"])(
+    "should reject ReadableStream.%s() after underlying body blob was consumed",
+    async method => {
+      const response = new Response("<html><body><h1>Test</h1></body></html>");
+      const body = response.body!;
+      response.bytes();
+      await expect((body as any)[method]()).rejects.toThrow("Body already used");
+    },
+  );
 });

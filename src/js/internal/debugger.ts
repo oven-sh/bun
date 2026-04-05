@@ -529,7 +529,9 @@ function listInfo(request: Request, listenUrl: URL): unknown {
   // Echo back the Host the client used so e.g. 127.0.0.1 queries get a
   // 127.0.0.1 WebSocket URL even when bun bound to 0.0.0.0. Fall back to the
   // configured listen URL if the Host header is missing.
-  const host = request.headers.get("Host") || `${listenUrl.hostname}:${listenUrl.port}`;
+  // listenUrl.host already omits the protocol-default port (80 for ws:, 443
+  // for wss:), unlike `hostname:port` which would leave a trailing colon.
+  const host = request.headers.get("Host") || listenUrl.host;
   const id = listenUrl.pathname.startsWith("/") ? listenUrl.pathname.slice(1) : listenUrl.pathname;
   const wsUrl = `${host}/${id}`;
   const scriptPath = process.argv[1] || "";

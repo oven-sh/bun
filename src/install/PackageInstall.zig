@@ -374,6 +374,29 @@ pub const PackageInstall = struct {
     else
         Method.hardlink;
 
+    /// Set to true when the user explicitly chose a backend via `--backend` CLI flag.
+    /// When true, we suppress the hardlink-to-copy fallback warning.
+    pub var backend_explicitly_set: bool = false;
+
+    pub fn warnFallbackToFileCopy(from_method: []const u8) void {
+        if (backend_explicitly_set) return;
+
+        const warned = struct {
+            var once = std.atomic.Value(bool).init(false);
+        };
+        // .monotonic is okay because we only ever set this to true, and
+        // we don't rely on any side effects from a thread that
+        // previously set this to true.
+        if (warned.once.swap(true, .monotonic)) return;
+
+        Output.warn(
+            "Failed to {s} files; falling back to full copy. This may lead to degraded performance.\n" ++
+                "         If the cache and target directories are on different filesystems, {s} may not be supported.\n" ++
+                "         If this is intentional, pass --backend explicitly (e.g. --backend=copyfile) to suppress this warning.\n",
+            .{ from_method, from_method },
+        );
+    }
+
     fn installWithClonefileEachDir(this: *@This(), destination_dir: std.fs.Dir) !Result {
         var cached_package_dir = bun.openDir(this.cache_dir, this.cache_dir_subpath) catch |err| return Result.fail(err, .opening_cache_dir, @errorReturnTrace());
         defer cached_package_dir.close();
@@ -834,24 +857,7 @@ pub const PackageInstall = struct {
                 return null;
             }
 
-            if (PackageManager.verbose_install) {
-                const once_log = struct {
-                    var once = false;
-
-                    pub fn get() bool {
-                        const prev = once;
-                        once = true;
-                        return !prev;
-                    }
-                }.get();
-
-                if (once_log) {
-                    Output.warn("CreateHardLinkW failed, falling back to CopyFileW: {f} -> {f}\n", .{
-                        bun.fmt.fmtOSPath(src, .{}),
-                        bun.fmt.fmtOSPath(dest, .{}),
-                    });
-                }
-            }
+            warnFallbackToFileCopy("hardlink");
 
             if (bun.windows.CopyFileW(src.ptr, dest.ptr, 0) != 0) {
                 return null;
@@ -1417,6 +1423,7 @@ pub const PackageInstall = struct {
                             error.NotSupported => {
                                 supported_method = .copyfile;
                                 supported_method_to_use = .copyfile;
+                                warnFallbackToFileCopy("clone");
                             },
                             error.FileNotFound => return Result.fail(error.FileNotFound, .opening_cache_dir, @errorReturnTrace()),
                             else => return Result.fail(err, .copying_files, @errorReturnTrace()),
@@ -1448,6 +1455,7 @@ pub const PackageInstall = struct {
                         if (err == error.NotSameFileSystem) {
                             supported_method = .copyfile;
                             supported_method_to_use = .copyfile;
+                            warnFallbackToFileCopy("hardlink");
                             break :outer;
                         }
                     }

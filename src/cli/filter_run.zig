@@ -550,10 +550,9 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
         .env = this_transpiler.env,
     };
 
-    // Check if elide-lines is used in a non-terminal environment
-    if (ctx.bundler_options.elide_lines != null and !state.pretty_output) {
-        Output.prettyErrorln("<r><red>error<r>: --elide-lines is only supported in terminal environments", .{});
-        Global.exit(1);
+    const stdout_is_terminal = if (Environment.isWindows) windowsIsTerminal() else Output.isStdoutTTY();
+    if (ctx.bundler_options.elide_lines != null and !stdout_is_terminal) {
+        Output.warn("elide-lines has no effect in non-terminal environments", .{});
     }
 
     // initialize the handles

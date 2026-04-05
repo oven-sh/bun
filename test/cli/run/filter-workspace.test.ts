@@ -474,12 +474,12 @@ describe("bun", () => {
     elideLines,
     target_pattern,
     antipattern,
-    win32ExpectedError,
+    env = {},
   }: {
-    elideLines: number;
+    elideLines?: number;
     target_pattern: RegExp[];
     antipattern?: RegExp[];
-    win32ExpectedError: RegExp;
+    env?: Record<string, string | undefined>;
   }) {
     const dir = tempDirWithFiles("testworkspace", {
       packages: {
@@ -500,22 +500,31 @@ describe("bun", () => {
     });
 
     if (process.platform === "win32") {
-      const { exitCode, stderr } = spawnSync({
+      const { exitCode, stderr, stdout } = spawnSync({
         cwd: dir,
-        cmd: [bunExe(), "run", "--filter", "./packages/dep0", "--elide-lines", String(elideLines), "script"],
-        env: { ...bunEnv, FORCE_COLOR: "1", NO_COLOR: "0" },
+        cmd: [
+          bunExe(),
+          "run",
+          "--filter",
+          "./packages/dep0",
+          ...(elideLines !== undefined ? ["--elide-lines", String(elideLines)] : []),
+          "script",
+        ],
+        env: { ...bunEnv, ...env, FORCE_COLOR: "1", NO_COLOR: "0" },
         stdout: "pipe",
         stderr: "pipe",
       });
-      expect(stderr.toString()).toMatch(win32ExpectedError);
-      expect(exitCode).not.toBe(0);
+
+      expect(stderr.toString()).toMatch(/elide-lines has no effect in non-terminal environments/);
+      expect(stdout.toString()).toMatch(/(?:log_line[\s\S]*?){20}/);
+      expect(exitCode).toBe(0);
       return;
     }
 
     runInCwdSuccess({
       cwd: dir,
       pattern: "./packages/dep0",
-      env: { FORCE_COLOR: "1", NO_COLOR: "0" },
+      env: { ...env, FORCE_COLOR: "1", NO_COLOR: "0" },
       target_pattern,
       antipattern,
       command: ["script"],
@@ -527,7 +536,6 @@ describe("bun", () => {
     runElideLinesTest({
       elideLines: 10,
       target_pattern: [/\[10 lines elided\]/, /(?:log_line[\s\S]*?){20}/],
-      win32ExpectedError: /--elide-lines is only supported in terminal environments/,
     });
   });
 
@@ -535,7 +543,6 @@ describe("bun", () => {
     runElideLinesTest({
       elideLines: 15,
       target_pattern: [/\[5 lines elided\]/, /(?:log_line[\s\S]*?){20}/],
-      win32ExpectedError: /--elide-lines is only supported in terminal environments/,
     });
   });
 
@@ -544,7 +551,23 @@ describe("bun", () => {
       elideLines: 0,
       target_pattern: [/(?:log_line[\s\S]*?){20}/],
       antipattern: [/lines elided/],
-      win32ExpectedError: /--elide-lines is only supported in terminal environments/,
+    });
+  });
+
+  test("respects BUN_CONFIG_ELIDE_LINES environment variable", () => {
+    runElideLinesTest({
+      target_pattern: [/\[3 lines elided\]/, /(?:log_line[\s\S]*?){20}/],
+      antipattern: [/\[10 lines elided\]/],
+      env: { BUN_CONFIG_ELIDE_LINES: "17" },
+    });
+  });
+
+  test("command-line flag takes precedence over environment variable", () => {
+    runElideLinesTest({
+      elideLines: 12,
+      target_pattern: [/\[8 lines elided\]/, /(?:log_line[\s\S]*?){20}/],
+      antipattern: [/\[15 lines elided\]/],
+      env: { BUN_CONFIG_ELIDE_LINES: "5" },
     });
   });
 });

@@ -474,6 +474,8 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                     Global.exit(1);
                 };
             }
+        } else if (bun.env_var.BUN_CONFIG_ELIDE_LINES.get()) |value| {
+            ctx.bundler_options.elide_lines = @intCast(value);
         }
     }
 
@@ -1523,6 +1525,8 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                     Global.exit(1);
                 };
             }
+        } else if (bun.env_var.BUN_CONFIG_ELIDE_LINES.get()) |value| {
+            ctx.bundler_options.elide_lines = @intCast(value);
         }
 
         if (opts.define) |define| {

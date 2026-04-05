@@ -1,5 +1,6 @@
 import { beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, bunRun, bunRunAsScript, bunTest, isWindows, tempDirWithFiles } from "harness";
+import fs from "fs";
+import { bunEnv, bunExe, bunRun, bunRunAsScript, bunTest, isLinux, isWindows, tempDirWithFiles } from "harness";
 import path from "path";
 
 function bunRunWithoutTrim(file: string, env?: Record<string, string>) {
@@ -856,4 +857,54 @@ LARGE3="${"c".repeat(3000)}"
     const { stdout } = bunRun(`${dir}/index.ts`);
     expect(stdout).toBe("4096");
   });
+});
+
+const canUseRunuser =
+  isLinux && typeof process.getuid === "function" && process.getuid() === 0 && !!Bun.which("runuser");
+
+test.skipIf(!canUseRunuser)("process.env is preserved when cwd lacks read permission", () => {
+  const dir = tempDirWithFiles("env-eacces", {
+    // Script lives in the readable root; the cwd will be a separate
+    // execute-only directory.
+    "script.ts": "console.log(JSON.stringify(!!process.env.MY_VAR));",
+    "noread/.keep": "",
+  });
+
+  const noreadDir = path.join(dir, "noread");
+  const scriptPath = path.join(dir, "script.ts");
+
+  // Allow "nobody" to traverse the temp dir and read the script.
+  fs.chmodSync(dir, 0o755);
+
+  // Make noread execute-only (0111). A process can cd into it, but
+  // Bun's resolver cannot list it (opendir → EACCES). This causes
+  // readDirInfo to return null, which previously skipped loadProcess()
+  // and left process.env completely empty.
+  fs.chmodSync(noreadDir, 0o111);
+
+  // Use runuser -m to drop to "nobody" while preserving the environment
+  // (root bypasses DAC checks, so we need a non-root user).
+  try {
+    // Run via sh so that `cd` happens as the target user.
+    const result = Bun.spawnSync({
+      cmd: [
+        "runuser",
+        "-m",
+        "-u",
+        "nobody",
+        "--",
+        "/bin/sh",
+        "-c",
+        `cd '${noreadDir}' && MY_VAR=visible exec '${bunExe()}' '${scriptPath}'`,
+      ],
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    expect(result.stdout.toString().trim()).toBe("true");
+    expect(result.exitCode).toBe(0);
+  } finally {
+    // Restore permissions so tempDir cleanup can remove the directory.
+    fs.chmodSync(noreadDir, 0o755);
+  }
 });

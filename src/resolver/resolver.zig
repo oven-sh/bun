@@ -2980,7 +2980,10 @@ pub const Resolver = struct {
             }
         }
 
-        unreachable;
+        // All queue entries were skipped (e.g. every directory including the
+        // target returned EACCES). Return null so the caller can degrade
+        // gracefully instead of crashing.
+        return null;
     }
 
     // This closely follows the behavior of "tryLoadModuleUsingPaths()" in the

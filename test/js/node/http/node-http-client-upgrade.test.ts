@@ -466,9 +466,7 @@ describe("http.ClientRequest 'upgrade' event", () => {
   test("pending socket.write callback receives destroy error", async () => {
     const server = net.createServer(conn => {
       conn.once("data", () => {
-        conn.write(
-          "HTTP/1.1 101 Switching Protocols\r\n" + "Upgrade: custom\r\n" + "Connection: Upgrade\r\n" + "\r\n",
-        );
+        conn.write("HTTP/1.1 101 Switching Protocols\r\n" + "Upgrade: custom\r\n" + "Connection: Upgrade\r\n" + "\r\n");
         // Don't drain — keep the channel backpressured.
       });
     });

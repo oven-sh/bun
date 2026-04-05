@@ -1,0 +1,510 @@
+// MDX Dev Server — loaded when you pass a '.mdx' entry point to Bun.
+//
+// Architecture overview:
+//   1. A Bun.plugin compiles .mdx → TSX in-memory via Bun.mdx.compile()
+//   2. For each .mdx file, a tiny HTML shell + entry.js scaffold is written
+//      to the system temp dir (os.tmpdir). entry.js imports the original .mdx
+//      by absolute path — the plugin intercepts the load and returns compiled
+//      TSX with loader:"tsx".
+//   3. The bundler resolves all imports within the compiled TSX relative to
+//      the original .mdx file's directory. This is critical: relative imports
+//      (e.g. '../components/Foo') and workspace package imports (e.g.
+//      '@org/pkg') resolve correctly because the resolution base is the .mdx
+//      file's location, not the temp directory.
+//   4. react/react-dom are resolved via a node_modules symlink in the temp dir
+//      pointing to the project's node_modules.
+//
+// Why a plugin instead of pre-compiling to a temp .tsx file?
+//   - Writing compiled TSX to a temp dir breaks import resolution (the bundler
+//     resolves relative to the temp dir, not the original source location).
+//   - Writing compiled TSX adjacent to the .mdx file pollutes the user's
+//     project with temporary artifacts.
+//   - The plugin approach keeps everything in-memory. The bundler sees the
+//     original .mdx path and resolves imports from its directory.
+//
+// HMR: the .mdx file is in the bundler's dependency graph (entry.js imports
+// it directly). The plugin re-compiles on each load, so file changes trigger
+// automatic re-bundling through the dev server's built-in file watcher.
+
+import type { HTMLBundle, Server } from "bun";
+const initial = performance.now();
+const argv = process.argv;
+
+const path = require("node:path");
+const fs = require("node:fs");
+const os = require("node:os");
+
+const env = Bun.env;
+
+function ensureDir(dir: string) {
+  fs.mkdirSync(dir, { recursive: true });
+}
+
+function emitMdxWrapperScript(mdxAbsolutePath: string) {
+  // Use string concatenation to avoid the build preprocessor's import-extraction regex
+  // from matching import statements inside this template literal.
+  const imp = "import";
+  // Import the original .mdx file by absolute path. A Bun.plugin registered
+  // before bundling intercepts .mdx loads, compiles to TSX in-memory, and
+  // returns it with loader:"tsx". The bundler resolves imports from the .mdx
+  // file's directory — no temp file written next to the source.
+  const escapedPath = mdxAbsolutePath.replace(/\\/g, "/").replace(/'/g, "\\'");
+  return [
+    imp + ' React from "react";',
+    imp + ' { createRoot } from "react-dom/client";',
+    imp + " MDXContent from '" + escapedPath + "';",
+    "",
+    'const rootEl = document.getElementById("root");',
+    "if (!rootEl) {",
+    '  throw new Error("Missing #root mount element for MDX page");',
+    "}",
+    "",
+    "const root = createRoot(rootEl);",
+    "root.render(React.createElement(MDXContent, {}));",
+  ].join("\n");
+}
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function emitMdxHtmlShell(wrapperScriptName: string, title: string) {
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>${escapeHtml(title)}</title>
+    <style>
+      html, body {
+        margin: 0;
+        padding: 0;
+      }
+      body {
+        font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+        line-height: 1.5;
+        padding: 2rem;
+      }
+      img {
+        max-width: 100%;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="./${wrapperScriptName}"></script>
+  </body>
+</html>
+`;
+}
+
+async function start() {
+  let args: string[] = [];
+  const cwd = process.cwd();
+  let hostname = "localhost";
+  let port: number | undefined = undefined;
+  let enableConsoleLog = false;
+
+  const parseHostnameAndPort = (value: string) => {
+    let parsedHostname = value;
+    let parsedPort: number | undefined = undefined;
+
+    if (parsedHostname.includes(":")) {
+      // Bracketed IPv6 host, optionally followed by :port.
+      if (parsedHostname.startsWith("[") && parsedHostname.includes("]")) {
+        const closingBracketIndex = parsedHostname.indexOf("]");
+        const host = parsedHostname.slice(1, closingBracketIndex);
+        const trailing = parsedHostname.slice(closingBracketIndex + 1);
+        parsedHostname = host;
+
+        if (trailing.startsWith(":")) {
+          const portString = trailing.slice(1);
+          if (portString.length > 0) {
+            parsedPort = parseInt(portString, 10);
+          }
+        }
+      } else {
+        // Non-bracketed host: split on the final colon so IPv6 colons are preserved.
+        const lastColonIndex = parsedHostname.lastIndexOf(":");
+        if (lastColonIndex !== -1) {
+          const host = parsedHostname.slice(0, lastColonIndex);
+          const portString = parsedHostname.slice(lastColonIndex + 1);
+          if (host.length > 0 && !host.endsWith(":") && portString.length > 0) {
+            parsedHostname = host;
+            parsedPort = parseInt(portString, 10);
+          }
+        }
+      }
+    }
+
+    return { hostname: parsedHostname, port: parsedPort };
+  };
+
+  for (let i = 1, argvLength = argv.length; i < argvLength; i++) {
+    const arg = argv[i];
+    const isFileLikeArg =
+      arg.includes("*") || arg.includes("**") || arg.includes("{") || arg.includes("/") || arg.includes("\\");
+
+    if (!arg.endsWith(".mdx") && !isFileLikeArg) {
+      if (arg.startsWith("--hostname=")) {
+        const parsed = parseHostnameAndPort(arg.slice("--hostname=".length));
+        hostname = parsed.hostname;
+        if (parsed.port !== undefined) {
+          port = parsed.port;
+        }
+      } else if (arg.startsWith("--port=")) {
+        port = parseInt(arg.slice("--port=".length), 10);
+      } else if (arg.startsWith("--host=")) {
+        const parsed = parseHostnameAndPort(arg.slice("--host=".length));
+        hostname = parsed.hostname;
+        if (parsed.port !== undefined) {
+          port = parsed.port;
+        }
+      } else if (arg === "--console") {
+        enableConsoleLog = true;
+      } else if (arg === "--no-console") {
+        enableConsoleLog = false;
+      }
+
+      if (arg === "--help") {
+        console.log(`
+Bun v${Bun.version} (mdx)
+
+Usage:
+  bun [...mdx-files] [options]
+
+Options:
+
+  --port=<NUM>
+  --host=<STR>, --hostname=<STR>
+  --console # print console logs from browser
+  --no-console # don't print console logs from browser
+Examples:
+
+  bun index.mdx
+  bun ./index.mdx ./docs/getting-started.mdx --port=3000
+  bun index.mdx --host=localhost:3000
+  bun index.mdx --hostname=localhost:3000
+  bun ./*.mdx
+  bun index.mdx --console
+`);
+        process.exit(0);
+      }
+    }
+  }
+
+  for (let i = 1, argvLength = argv.length; i < argvLength; i++) {
+    const arg = argv[i];
+    const isGlobArg = arg.includes("*") || arg.includes("**") || arg.includes("{");
+
+    if (arg.endsWith(".mdx") || isGlobArg) {
+      if (isGlobArg) {
+        const glob = new Bun.Glob(arg);
+
+        for (const file of glob.scanSync(cwd)) {
+          let resolved = path.resolve(cwd, file);
+          if (resolved.includes(path.sep + "node_modules" + path.sep)) {
+            continue;
+          }
+
+          try {
+            resolved = Bun.resolveSync(resolved, cwd);
+          } catch {
+            resolved = Bun.resolveSync("./" + resolved, cwd);
+          }
+
+          if (resolved.includes(path.sep + "node_modules" + path.sep)) {
+            continue;
+          }
+
+          args.push(resolved);
+        }
+      } else {
+        let resolved = arg;
+        try {
+          resolved = Bun.resolveSync(arg, cwd);
+        } catch {
+          resolved = Bun.resolveSync("./" + arg, cwd);
+        }
+
+        if (resolved.includes(path.sep + "node_modules" + path.sep)) {
+          continue;
+        }
+
+        args.push(resolved);
+      }
+    }
+  }
+
+  if (args.length > 1) {
+    args = [...new Set(args)];
+  }
+
+  if (args.length === 0) {
+    throw new Error("No MDX files found matching " + JSON.stringify(Bun.main));
+  }
+
+  args.sort((a, b) => a.localeCompare(b));
+
+  let needsPop = false;
+  if (args.length === 1) {
+    args.push(process.cwd());
+    needsPop = true;
+  }
+
+  let longestCommonPath = args.reduce((acc, curr) => {
+    if (!acc) return curr;
+    let i = 0;
+    while (i < acc.length && i < curr.length && acc[i] === curr[i]) i++;
+    return acc.slice(0, i);
+  });
+
+  if (process.platform === "win32") {
+    longestCommonPath = longestCommonPath.replaceAll("\\", "/");
+  }
+
+  if (needsPop) {
+    args.pop();
+  }
+
+  const servePaths = args.map(arg => {
+    if (process.platform === "win32") {
+      arg = arg.replaceAll("\\", "/");
+    }
+    const basename = path.basename(arg);
+    const isIndexMdx = basename === "index.mdx";
+
+    let servePath = arg;
+    if (servePath.startsWith(longestCommonPath)) {
+      servePath = servePath.slice(longestCommonPath.length);
+    } else {
+      const relative = path.relative(longestCommonPath, servePath);
+      if (!relative.startsWith("..")) {
+        servePath = relative;
+      }
+    }
+
+    if (isIndexMdx && servePath.length === 0) {
+      servePath = "/";
+    } else if (isIndexMdx) {
+      servePath = servePath.slice(0, -"index.mdx".length);
+    }
+
+    if (servePath.endsWith(".mdx")) {
+      servePath = servePath.slice(0, -".mdx".length);
+    }
+
+    if (servePath.endsWith("/")) {
+      servePath = servePath.slice(0, -1);
+    }
+
+    if (servePath.startsWith("/")) {
+      servePath = servePath.slice(1);
+    }
+
+    if (servePath === "/") servePath = "";
+
+    return servePath;
+  });
+
+  const Mdx = (Bun as any).mdx as { compile(input: string): string };
+
+  // Register a plugin so the bake dev server can load .mdx files in-memory.
+  // The plugin compiles MDX → TSX on each load; the bundler resolves imports
+  // relative to the original .mdx file's directory automatically.
+  // Register for both targets: "browser" is used by the bake dev server's
+  // client bundler, "bun" covers runtime/SSR imports of .mdx files.
+  const mdxPlugin = {
+    name: "mdx-dev-server",
+    setup(build: { onLoad: Function }) {
+      build.onLoad({ filter: /\.mdx$/ }, (args: { path: string }) => {
+        const source = fs.readFileSync(args.path, "utf8");
+        const compiled = Mdx.compile(source);
+        return { contents: compiled, loader: "tsx" };
+      });
+    },
+  };
+  Bun.plugin({ ...mdxPlugin, target: "browser" });
+  Bun.plugin({ ...mdxPlugin, target: "bun" });
+
+  // HTML shells and entry scripts are scaffolding only — put them in the
+  // system temp dir to avoid polluting the project tree.
+  const uniqueId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  const tmpRoot = path.join(os.tmpdir(), `.bun-mdx-${process.pid}-${uniqueId}`);
+  ensureDir(tmpRoot);
+
+  // Symlink node_modules so the bundler can resolve react/react-dom
+  // from entry.js in the temp directory.
+  const cwdNodeModules = path.join(cwd, "node_modules");
+  try {
+    if (fs.existsSync(cwdNodeModules)) {
+      fs.symlinkSync(cwdNodeModules, path.join(tmpRoot, "node_modules"), "junction");
+    }
+  } catch {}
+
+  // Clean up generated scaffolding on exit.
+  process.on("exit", () => {
+    try {
+      fs.rmSync(tmpRoot, { recursive: true, force: true });
+    } catch {}
+  });
+
+  const htmlEntryPaths = args.map((mdxPath, index) => {
+    const entryDir = path.join(tmpRoot, String(index));
+    ensureDir(entryDir);
+
+    const wrapperScriptName = "entry.js";
+    const wrapperScriptPath = path.join(entryDir, wrapperScriptName);
+    const htmlPath = path.join(entryDir, "index.html");
+
+    // entry.js imports the original .mdx — the plugin handles compilation.
+    fs.writeFileSync(wrapperScriptPath, emitMdxWrapperScript(mdxPath), "utf8");
+    const titleBase = path.basename(mdxPath, ".mdx");
+    fs.writeFileSync(htmlPath, emitMdxHtmlShell(wrapperScriptName, titleBase), "utf8");
+    return htmlPath;
+  });
+
+  const htmlImports = await Promise.all(
+    htmlEntryPaths.map(arg => {
+      return import(arg).then(m => m.default as HTMLBundle);
+    }),
+  );
+
+  if (htmlImports.length === 1) {
+    servePaths[0] = "*";
+  }
+
+  const staticRoutes = htmlImports.reduce(
+    (acc, htmlImport, index) => {
+      const servePath = servePaths[index];
+      acc["/" + servePath] = htmlImport;
+      return acc;
+    },
+    {} as Record<string, HTMLBundle>,
+  );
+
+  let server: Server;
+  getServer: {
+    try {
+      server = Bun.serve({
+        static: staticRoutes,
+        development:
+          env.NODE_ENV !== "production"
+            ? {
+                console: enableConsoleLog,
+                hmr: undefined,
+              }
+            : false,
+        hostname,
+        port,
+        fetch() {
+          return new Response("Not found", { status: 404 });
+        },
+      });
+      break getServer;
+    } catch (error: any) {
+      if (error?.code === "EADDRINUSE") {
+        let defaultPort = port || parseInt(env.PORT || env.BUN_PORT || env.NODE_PORT || "3000", 10);
+        for (let remainingTries = 5; remainingTries > 0; remainingTries--) {
+          try {
+            server = Bun.serve({
+              static: staticRoutes,
+              development:
+                env.NODE_ENV !== "production"
+                  ? {
+                      console: enableConsoleLog,
+                      hmr: undefined,
+                    }
+                  : false,
+              hostname,
+              port: ++defaultPort,
+              fetch() {
+                return new Response("Not found", { status: 404 });
+              },
+            });
+            break getServer;
+          } catch (retryError: any) {
+            if (retryError?.code === "EADDRINUSE") {
+              continue;
+            }
+            throw retryError;
+          }
+        }
+      }
+      throw error;
+    }
+  }
+
+  // HMR: the .mdx files are now in the bundler's dependency graph (imported
+  // directly by entry.js). The plugin re-compiles on each load, so the dev
+  // server's built-in file watcher handles changes automatically.
+
+  const elapsed = (performance.now() - initial).toFixed(2);
+  const enableANSIColors = Bun.enableANSIColors;
+
+  function printInitialMessage(isFirst: boolean) {
+    let pathnameToPrint;
+    if (servePaths.length === 1) {
+      pathnameToPrint = servePaths[0];
+    } else {
+      const indexRoute = servePaths.find(a => a === "index" || a === "" || a === "/");
+      pathnameToPrint = indexRoute !== undefined ? indexRoute : servePaths[0];
+    }
+
+    pathnameToPrint ||= "/";
+    if (pathnameToPrint === "*") {
+      pathnameToPrint = "/";
+    }
+
+    if (enableANSIColors) {
+      let topLine = `${server.development ? "\x1b[34;7m DEV \x1b[0m " : ""}\x1b[1;34m\x1b[5mBun\x1b[0m \x1b[1;34mv${Bun.version}\x1b[0m`;
+      if (isFirst) {
+        topLine += ` \x1b[2mready in\x1b[0m \x1b[1m${elapsed}\x1b[0m ms`;
+      }
+      console.log(topLine + "\n");
+      console.log(`\x1b[1;34m➜\x1b[0m \x1b[36m${new URL(pathnameToPrint, server!.url)}\x1b[0m`);
+    } else {
+      let topLine = `Bun v${Bun.version}`;
+      if (isFirst) {
+        if (server.development) {
+          topLine += " dev server";
+        }
+        topLine += ` ready in ${elapsed} ms`;
+      }
+      console.log(topLine + "\n");
+      console.log(`url: ${new URL(pathnameToPrint, server!.url)}`);
+    }
+
+    if (htmlImports.length > 1 || (servePaths[0] !== "" && servePaths[0] !== "*")) {
+      console.log("\nRoutes:");
+      const pairs: { route: string; importPath: string }[] = [];
+      for (let i = 0, length = servePaths.length; i < length; i++) {
+        pairs.push({ route: servePaths[i], importPath: args[i] });
+      }
+      pairs.sort((a, b) => {
+        if (b.route === "") return 1;
+        if (a.route === "") return -1;
+        return a.route.localeCompare(b.route);
+      });
+      for (let i = 0, length = pairs.length; i < length; i++) {
+        const { route, importPath } = pairs[i];
+        const isLast = i === length - 1;
+        const prefix = isLast ? "  └── " : "  ├── ";
+        if (enableANSIColors) {
+          console.log(`${prefix}\x1b[36m/${route}\x1b[0m \x1b[2m→ ${path.relative(process.cwd(), importPath)}\x1b[0m`);
+        } else {
+          console.log(`${prefix}/${route} → ${path.relative(process.cwd(), importPath)}`);
+        }
+      }
+    }
+  }
+
+  printInitialMessage(true);
+}
+
+export default { start };

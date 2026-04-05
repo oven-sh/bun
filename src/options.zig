@@ -666,6 +666,7 @@ pub const Loader = enum(u8) {
     yaml = 18,
     json5 = 19,
     md = 20,
+    mdx = 21,
 
     pub const Optional = enum(u8) {
         none = 254,
@@ -732,7 +733,7 @@ pub const Loader = enum(u8) {
 
     pub fn toMimeType(this: Loader, paths: []const []const u8) bun.http.MimeType {
         return switch (this) {
-            .jsx, .js, .ts, .tsx => bun.http.MimeType.javascript,
+            .jsx, .js, .ts, .tsx, .mdx => bun.http.MimeType.javascript,
             .css => bun.http.MimeType.css,
             .toml, .yaml, .json, .jsonc, .json5 => bun.http.MimeType.json,
             .wasm => bun.http.MimeType.wasm,
@@ -759,14 +760,14 @@ pub const Loader = enum(u8) {
 
     pub fn canHaveSourceMap(this: Loader) bool {
         return switch (this) {
-            .jsx, .js, .ts, .tsx => true,
+            .jsx, .js, .ts, .tsx, .mdx => true,
             else => false,
         };
     }
 
     pub fn canBeRunByBun(this: Loader) bool {
         return switch (this) {
-            .jsx, .js, .ts, .tsx, .wasm, .bunsh => true,
+            .jsx, .js, .ts, .tsx, .wasm, .bunsh, .mdx => true,
             else => false,
         };
     }
@@ -790,6 +791,7 @@ pub const Loader = enum(u8) {
         map.set(.bunsh, "input.sh");
         map.set(.html, "input.html");
         map.set(.md, "input.md");
+        map.set(.mdx, "input.mdx");
         break :brk map;
     };
 
@@ -809,7 +811,7 @@ pub const Loader = enum(u8) {
         if (zig_str.len == 0) return null;
 
         return fromString(zig_str.slice()) orelse {
-            return global.throwInvalidArguments("invalid loader - must be js, jsx, tsx, ts, css, file, toml, yaml, wasm, bunsh, json, or md", .{});
+            return global.throwInvalidArguments("invalid loader - must be js, jsx, tsx, ts, css, file, toml, yaml, wasm, bunsh, json, md, or mdx", .{});
         };
     }
 
@@ -842,6 +844,7 @@ pub const Loader = enum(u8) {
         .{ "html", .html },
         .{ "md", .md },
         .{ "markdown", .md },
+        .{ "mdx", .mdx },
     });
 
     pub const api_names = bun.ComptimeStringMap(api.Loader, .{
@@ -871,6 +874,7 @@ pub const Loader = enum(u8) {
         .{ "html", .html },
         .{ "md", .md },
         .{ "markdown", .md },
+        .{ "mdx", .mdx },
     });
 
     pub fn fromString(slice_: string) ?Loader {
@@ -910,6 +914,7 @@ pub const Loader = enum(u8) {
             .text => .text,
             .sqlite_embedded, .sqlite => .sqlite,
             .md => .md,
+            .mdx => .mdx,
         };
     }
 
@@ -937,6 +942,7 @@ pub const Loader = enum(u8) {
             .sqlite => .sqlite,
             .sqlite_embedded => .sqlite_embedded,
             .md => .md,
+            .mdx => .mdx,
             _ => .file,
         };
     }
@@ -951,7 +957,7 @@ pub const Loader = enum(u8) {
 
     pub fn isJavaScriptLike(loader: Loader) bool {
         return switch (loader) {
-            .jsx, .js, .ts, .tsx => true,
+            .jsx, .js, .ts, .tsx, .mdx => true,
             else => false,
         };
     }
@@ -1156,6 +1162,7 @@ const default_loaders_posix = .{
     .{ ".html", .html },
     .{ ".jsonc", .jsonc },
     .{ ".json5", .json5 },
+    .{ ".mdx", .mdx },
 };
 const default_loaders_win32 = default_loaders_posix ++ .{
     .{ ".sh", .bunsh },
@@ -1579,7 +1586,7 @@ pub fn definesFromTransformOptions(
     );
 }
 
-const default_loader_ext_bun = [_]string{ ".node", ".html" };
+const default_loader_ext_bun = [_]string{ ".node", ".html", ".mdx" };
 const default_loader_ext = [_]string{
     ".jsx",   ".json",
     ".js",    ".mjs",

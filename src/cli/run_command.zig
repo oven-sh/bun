@@ -1319,7 +1319,8 @@ pub const RunCommand = struct {
             };
         }
 
-        _ = _bootAndHandleError(ctx, absolute_script_path.?, null);
+        const fast_run_loader: ?bun.options.Loader = if (strings.hasSuffixComptime(absolute_script_path.?, ".mdx")) .html else null;
+        _ = _bootAndHandleError(ctx, absolute_script_path.?, fast_run_loader);
         return true;
     }
     pub fn exec(
@@ -1336,7 +1337,8 @@ pub const RunCommand = struct {
         // find what to run
 
         var positionals = ctx.positionals;
-        if (positionals.len > 0 and strings.eqlComptime(positionals[0], "run")) {
+        const is_run_subcommand = positionals.len > 0 and strings.eqlComptime(positionals[0], "run");
+        if (is_run_subcommand) {
             positionals = positionals[1..];
         }
 
@@ -1519,6 +1521,11 @@ pub const RunCommand = struct {
             var resolved_mutable = resolved;
             const path = resolved_mutable.path().?;
             const loader: bun.options.Loader = this_transpiler.options.loaders.get(path.name.ext) orelse .tsx;
+            if (loader == .mdx) {
+                log("Resolved to MDX direct-entry mode: `{s}`", .{path.text});
+                return _bootAndHandleError(ctx, path.text, .html);
+            }
+
             if (loader.canBeRunByBun() or loader == .html) {
                 log("Resolved to: `{s}`", .{path.text});
                 return _bootAndHandleError(ctx, path.text, loader);
@@ -1529,6 +1536,11 @@ pub const RunCommand = struct {
         } else |_| {
             // Support globs for HTML entry points.
             if (strings.hasSuffixComptime(target_name, ".html")) {
+                if (strings.containsChar(target_name, '*')) {
+                    return _bootAndHandleError(ctx, target_name, .html);
+                }
+            }
+            if (strings.hasSuffixComptime(target_name, ".mdx")) {
                 if (strings.containsChar(target_name, '*')) {
                     return _bootAndHandleError(ctx, target_name, .html);
                 }

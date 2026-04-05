@@ -17,7 +17,14 @@ class UpgradedSocket extends Duplex {
   authorized = false;
 
   constructor(responseBody, channel, url, rejectUnauthorized = true) {
-    super({ readableHighWaterMark: HIGH_WATER_MARK, writableHighWaterMark: HIGH_WATER_MARK });
+    // allowHalfOpen:false matches net.Socket (Duplex defaults to true).
+    // Without this, server EOF ends only the readable side — _final() is
+    // never called, channel.end() never fires, and the body generator leaks.
+    super({
+      allowHalfOpen: false,
+      readableHighWaterMark: HIGH_WATER_MARK,
+      writableHighWaterMark: HIGH_WATER_MARK,
+    });
     this.#channel = channel;
     this.#url = url;
     this.encrypted = typeof url === "string" && url.startsWith("https:");

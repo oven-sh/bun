@@ -350,10 +350,29 @@ describe("http.ClientRequest 'upgrade' event", () => {
 
   test("req.write() after upgrade does not open a second connection", async () => {
     let connectionCount = 0;
+    const { promise: gotBytes, resolve: resolveGotBytes } = Promise.withResolvers<void>();
     const server = net.createServer(conn => {
       connectionCount++;
-      conn.once("data", () => {
-        conn.write("HTTP/1.1 101 Switching Protocols\r\n" + "Upgrade: custom\r\n" + "Connection: Upgrade\r\n" + "\r\n");
+      let buf = "";
+      let upgraded = false;
+      conn.on("data", chunk => {
+        buf += chunk.toString();
+        if (!upgraded && buf.includes("\r\n\r\n")) {
+          upgraded = true;
+          const after = buf.slice(buf.indexOf("\r\n\r\n") + 4);
+          conn.write(
+            "HTTP/1.1 101 Switching Protocols\r\n" + "Upgrade: custom\r\n" + "Connection: Upgrade\r\n" + "\r\n",
+          );
+          let body = after;
+          const check = () => {
+            if (body.length >= 3) resolveGotBytes();
+          };
+          check();
+          conn.on("data", more => {
+            body += more.toString();
+            check();
+          });
+        }
       });
     });
     const addr = (await listen(server)) as AddressInfo;
@@ -372,9 +391,40 @@ describe("http.ClientRequest 'upgrade' event", () => {
       req.write("x");
       req.write("y");
       req.write("z");
-      await new Promise(r => setTimeout(r, 100));
+      // Await the server actually receiving the bytes instead of sleeping.
+      await gotBytes;
       expect(connectionCount).toBe(1);
       socket.destroy();
+    } finally {
+      server.close();
+    }
+  });
+
+  test("server-initiated half-close auto-ends the writable side", async () => {
+    const server = net.createServer(conn => {
+      conn.once("data", () => {
+        conn.write(
+          "HTTP/1.1 101 Switching Protocols\r\n" + "Upgrade: websocket\r\n" + "Connection: Upgrade\r\n" + "\r\n",
+        );
+        // Immediately half-close the write side from the server.
+        conn.end();
+      });
+    });
+    const addr = (await listen(server)) as AddressInfo;
+
+    try {
+      const req = http.request({
+        host: "127.0.0.1",
+        port: addr.port,
+        headers: { Connection: "Upgrade", Upgrade: "websocket" },
+      });
+      req.end();
+      const [, socket] = await once(req, "upgrade");
+      // Drain the readable side so the 'end' event fires on EOF.
+      socket.resume();
+      // Server EOF must propagate to close the writable side too
+      // (allowHalfOpen: false on the Duplex).
+      await once(socket, "close");
     } finally {
       server.close();
     }

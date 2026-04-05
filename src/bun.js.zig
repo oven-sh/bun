@@ -319,8 +319,8 @@ pub const Run = struct {
                 .json_format = cpu_prof_opts.json_format,
                 .interval = cpu_prof_opts.interval,
             };
-            CPUProfiler.setSamplingInterval(cpu_prof_opts.interval);
-            CPUProfiler.startCPUProfiler(vm.jsc_vm);
+            CPUProfiler.setSamplingInterval(vm.global, cpu_prof_opts.interval);
+            CPUProfiler.startCPUProfiler(vm.global);
             bun.analytics.Features.cpu_profile += 1;
         }
 

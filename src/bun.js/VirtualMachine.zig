@@ -851,7 +851,7 @@ pub fn onExit(this: *VirtualMachine) void {
     // Grab the config and null it out to make this idempotent
     if (this.cpu_profiler_config) |config| {
         this.cpu_profiler_config = null;
-        CPUProfiler.stopAndWriteProfile(this.jsc_vm, config) catch |err| {
+        CPUProfiler.stopAndWriteProfile(this.global, config) catch |err| {
             Output.err(err, "Failed to write CPU profile", .{});
         };
     }

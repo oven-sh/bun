@@ -11,7 +11,7 @@ using namespace JSC;
 JSC_DECLARE_HOST_FUNCTION(jsFunction_startCPUProfiler);
 JSC_DEFINE_HOST_FUNCTION(jsFunction_startCPUProfiler, (JSGlobalObject * globalObject, CallFrame*))
 {
-    Bun::startCPUProfiler(globalObject->vm());
+    Bun::startCPUProfiler(globalObject);
     return JSValue::encode(jsUndefined());
 }
 
@@ -20,7 +20,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_stopCPUProfiler, (JSGlobalObject * globalObj
 {
     auto& vm = globalObject->vm();
     WTF::String result;
-    Bun::stopCPUProfiler(vm, &result, nullptr);
+    Bun::stopCPUProfiler(globalObject, &result, nullptr);
     return JSValue::encode(jsString(vm, result));
 }
 
@@ -39,12 +39,12 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_setCPUSamplingInterval, (JSGlobalObject * gl
     Bun::V::validateInteger(scope, globalObject, callFrame->uncheckedArgument(0), "interval"_s, jsNumber(1), jsUndefined(), &interval);
     RETURN_IF_EXCEPTION(scope, {});
 
-    Bun::setSamplingInterval(interval);
+    Bun::setSamplingInterval(globalObject, interval);
     return JSValue::encode(jsUndefined());
 }
 
 JSC_DECLARE_HOST_FUNCTION(jsFunction_isCPUProfilerRunning);
-JSC_DEFINE_HOST_FUNCTION(jsFunction_isCPUProfilerRunning, (JSGlobalObject*, CallFrame*))
+JSC_DEFINE_HOST_FUNCTION(jsFunction_isCPUProfilerRunning, (JSGlobalObject * globalObject, CallFrame*))
 {
-    return JSValue::encode(jsBoolean(Bun::isCPUProfilerRunning()));
+    return JSValue::encode(jsBoolean(Bun::isCPUProfilerRunning(globalObject)));
 }

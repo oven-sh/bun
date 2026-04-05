@@ -166,7 +166,6 @@ describe("bundler", () => {
     },
   });
   itBundled("edgecase/NodeEnvOptionalChaining", {
-    todo: true,
     files: {
       "/entry.js": /* js */ `
         capture(process?.env?.NODE_ENV);
@@ -178,10 +177,32 @@ describe("bundler", () => {
         capture(process?.env.NODE_ENV);
         capture(process?.env.NODE_ENV === 'production');
         capture(process?.env.NODE_ENV === 'development');
+        capture(globalThis.process.env.NODE_ENV);
+        capture(globalThis.process.env.NODE_ENV === 'production');
+        capture(globalThis.process.env.NODE_ENV === 'development');
+        capture(globalThis.process?.env?.NODE_ENV);
+        capture(globalThis.process?.env?.NODE_ENV === 'production');
+        capture(globalThis.process?.env?.NODE_ENV === 'development');
       `,
     },
     target: "browser",
-    capture: ['"development"', "false", "true", '"development"', "false", "true", '"development"', "false", "true"],
+    capture: [
+      '"development"',
+      "false",
+      "true",
+      '"development"',
+      "false",
+      "true",
+      '"development"',
+      "false",
+      "true",
+      '"development"',
+      "false",
+      "true",
+      '"development"',
+      "false",
+      "true",
+    ],
     env: {
       NODE_ENV: "development",
     },

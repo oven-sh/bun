@@ -5364,7 +5364,11 @@ restart:
                 break;
             if (iterating == globalObject)
                 break;
-            iterating = iterating->getPrototype(globalObject).getObject();
+            JSValue prototypeValue = iterating->getPrototype(globalObject);
+            CLEAR_IF_EXCEPTION(scope);
+            if (!prototypeValue || !prototypeValue.isObject())
+                break;
+            iterating = asObject(prototypeValue);
         }
     }
 

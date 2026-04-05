@@ -48,6 +48,7 @@ pub const Status = enum(u8) {
 };
 
 extern fn WebWorker__dispatchExit(?*jsc.JSGlobalObject, *anyopaque, i32) void;
+extern fn WebWorker__releaseRef(cpp_worker: *anyopaque) void;
 extern fn WebWorker__dispatchOnline(cpp_worker: *anyopaque, *jsc.JSGlobalObject) void;
 extern fn WebWorker__fireEarlyMessages(cpp_worker: *anyopaque, *jsc.JSGlobalObject) void;
 extern fn WebWorker__dispatchError(*jsc.JSGlobalObject, *anyopaque, bun.String, JSValue) void;
@@ -58,7 +59,10 @@ export fn WebWorker__getParentWorker(vm: *jsc.VirtualMachine) ?*anyopaque {
 }
 
 pub fn hasRequestedTerminate(this: *const WebWorker) bool {
-    return this.requested_terminate.load(.monotonic);
+    // Acquire to pair with `setRequestedTerminate`'s release swap so
+    // parent-thread callers like `setRef` synchronize with the worker's
+    // teardown on weakly-ordered CPUs (ARM/AArch64).
+    return this.requested_terminate.load(.acquire);
 }
 
 pub fn setRequestedTerminate(this: *WebWorker) bool {
@@ -73,7 +77,17 @@ export fn WebWorker__updatePtr(worker: *WebWorker, ptr: *anyopaque) bool {
         startWithErrorHandling,
         .{worker},
     ) catch {
-        worker.deinit();
+        // Thread spawn failed. Mark the worker terminated so late
+        // `setRef`/`notifyNeedTermination` callers that still hold `impl_` see
+        // the teardown guards. Then release the parent poll ref and release
+        // the Zig-side C++ `Worker` ref (the `worker->ref()` taken in
+        // `Worker::create`) so `Worker::~Worker` can eventually run and free
+        // the `WebWorker` via `WebWorker__deinit`. Leave the struct itself
+        // alive for that destructor to free, so we don't race with other
+        // callers that still hold `impl_`.
+        worker.status.store(.terminated, .release);
+        worker.parent_poll_ref.unrefConcurrently(worker.parent);
+        WebWorker__releaseRef(worker.cpp_worker);
         return false;
     };
     thread.detach();
@@ -400,12 +414,17 @@ pub fn start(
     vm.global.vm().holdAPILock(this, callback);
 }
 
-/// Deinit will clean up vm and everything.
-/// Early deinit may be called from caller thread, but full vm deinit will only be called within worker's thread.
-fn deinit(this: *WebWorker) void {
+/// Frees the `WebWorker` struct and anything it owns. Called by the C++ `Worker`
+/// destructor on the parent thread after the last `Ref<Worker>` is dropped, so
+/// that `notifyNeedTermination`/`setRef` callers that still hold `impl_` cannot
+/// race with the worker thread freeing its own `WebWorker` in `exitAndDeinit`.
+export fn WebWorker__deinit(this: *WebWorker) void {
     log("[{d}] deinit", .{this.execution_context_id});
-    this.parent_poll_ref.unrefConcurrently(this.parent);
     bun.default_allocator.free(this.unresolved_specifier);
+    // `this.name` is the sentinel-terminated string allocated in `create` from
+    // `bun.default_allocator` when a non-empty name was passed. Empty names
+    // point to the `""` string literal and must not be freed.
+    if (this.name.len > 0) bun.default_allocator.free(this.name);
     for (this.preloads) |preload| {
         bun.default_allocator.free(preload);
     }
@@ -578,7 +597,12 @@ fn spin(this: *WebWorker) void {
 
 /// This is worker.ref()/.unref() from JS (Caller thread)
 pub fn setRef(this: *WebWorker, value: bool) callconv(.c) void {
-    if (this.hasRequestedTerminate()) {
+    // Once the worker has been terminated or has reached `.terminated`
+    // (`exitAndDeinit` already ran `parent_poll_ref.unrefConcurrently`), a late
+    // `ref()`/`unref()` must not touch `parent_poll_ref` — a late `ref()` would
+    // resurrect a parent-loop hold with no matching release, and a late
+    // `unref()` would race the final drop.
+    if (this.hasRequestedTerminate() or this.status.load(.acquire) == .terminated) {
         return;
     }
 
@@ -659,7 +683,16 @@ pub fn exitAndDeinit(this: *WebWorker) noreturn {
         bun.windows.libuv.Loop.shutdown();
     }
 
-    this.deinit();
+    // Release the parent event loop ref now that this worker is done. The
+    // `WebWorker` struct itself stays alive until the C++ `Worker` destructor
+    // calls `WebWorker__deinit`, so that any in-flight `notifyNeedTermination`
+    // or `setRef` call on the parent thread can safely still read `impl_`.
+    this.parent_poll_ref.unrefConcurrently(this.parent);
+
+    // Release the Zig-side ref on the C++ `Worker`. After this point the
+    // `Worker` (and the `WebWorker` it owns) may be destroyed at any time, so
+    // do not touch `this`/`cpp_worker` afterward.
+    WebWorker__releaseRef(cpp_worker);
 
     if (vm_to_deinit) |vm| {
         vm.deinit(); // NOTE: deinit here isn't implemented, so freeing workers will leak the vm.

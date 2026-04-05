@@ -534,11 +534,9 @@ function listInfo(request: Request, listenUrl: URL): unknown {
   const wsUrl = `${host}/${id}`;
   const scriptPath = process.argv[1] || "";
   const title = scriptPath ? `bun[${process.pid}] ${scriptPath}` : `bun[${process.pid}]`;
-  const fileUrl = scriptPath
-    ? process.platform === "win32"
-      ? `file:///${scriptPath.replace(/\\/g, "/")}`
-      : `file://${scriptPath}`
-    : "";
+  // pathToFileURL handles percent-encoding (spaces, #, ?) and UNC paths, which
+  // manual `file://` + replace can't.
+  const fileUrl = scriptPath ? require("node:url").pathToFileURL(scriptPath).href : "";
   return [
     {
       "description": "bun instance",

@@ -1,22 +1,9 @@
 // https://github.com/oven-sh/bun/issues/28883
-//
-// VS Code's "Attach to Node Process" action queries /json (aka /json/list) on
-// the inspector HTTP server to discover the WebSocket URL. Bun used to 404
-// this path, so the attach hung. /json now returns the standard Chrome
-// DevTools Protocol target array with a webSocketDebuggerUrl the client can
-// dial straight through.
 
 import { spawn } from "bun";
-import { afterEach, expect, test } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { WebSocket } from "ws";
-
-let inspectee: ReturnType<typeof spawn> | undefined;
-
-afterEach(() => {
-  inspectee?.kill();
-  inspectee = undefined;
-});
 
 async function readListenUrl(proc: ReturnType<typeof spawn>): Promise<URL> {
   let stderr = "";
@@ -36,7 +23,7 @@ async function readListenUrl(proc: ReturnType<typeof spawn>): Promise<URL> {
 }
 
 test("/json and /json/list expose webSocketDebuggerUrl for VS Code attach", async () => {
-  inspectee = spawn({
+  await using inspectee = spawn({
     cmd: [bunExe(), "--inspect=127.0.0.1:0/abc123", "-e", "setInterval(() => {}, 1000)"],
     env: bunEnv,
     stdout: "ignore",
@@ -94,7 +81,7 @@ test("/json and /json/list expose webSocketDebuggerUrl for VS Code attach", asyn
 });
 
 test("/json echoes the Host header so 0.0.0.0-bound bun is reachable", async () => {
-  inspectee = spawn({
+  await using inspectee = spawn({
     cmd: [bunExe(), "--inspect=0.0.0.0:0/xyz789", "-e", "setInterval(() => {}, 1000)"],
     env: bunEnv,
     stdout: "ignore",

@@ -158,8 +158,8 @@ function emitGeneratorRule(n: Ninja, cfg: Config, partial: PartialConfig): void 
 }
 
 /**
- * ccache environment to set for compile commands. Points ccache into the
- * build dir (not ~/.ccache) so `rm -rf build/` is a complete reset.
+ * ccache environment to set for compile commands. Points ccache into
+ * cfg.cacheDir (machine-shared locally, per-build in CI — see resolveConfig).
  */
 function ccacheEnv(cfg: Config): Record<string, string> {
   if (cfg.ccache === undefined) return {};

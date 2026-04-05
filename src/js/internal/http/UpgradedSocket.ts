@@ -29,6 +29,15 @@ class UpgradedSocket extends Duplex {
     }
   }
 
+  #refreshTimeout() {
+    if (this.timeout <= 0) return;
+    if (this.#timeoutTimer) clearTimeout(this.#timeoutTimer);
+    this.#timeoutTimer = setTimeout(() => {
+      this.#timeoutTimer = undefined;
+      this.emit("timeout");
+    }, this.timeout);
+  }
+
   async #pump() {
     const reader = this.#reader;
     if (!reader) {
@@ -44,6 +53,7 @@ class UpgradedSocket extends Duplex {
         }
         const buf = Buffer.from(value);
         this.bytesRead += buf.length;
+        this.#refreshTimeout();
         if (!this.push(buf)) {
           return;
         }
@@ -67,6 +77,7 @@ class UpgradedSocket extends Duplex {
       buffer = Buffer.from(buffer, encoding);
     }
     this.bytesWritten += buffer.length;
+    this.#refreshTimeout();
     this.#channel.pushBuffered(buffer, callback);
   }
 
@@ -94,9 +105,9 @@ class UpgradedSocket extends Duplex {
   #parseAddress() {
     if (this.#addressInfo) return this.#addressInfo;
     const url = this.#url;
-    let address = "";
-    let port = 0;
-    let family: "IPv4" | "IPv6" = "IPv4";
+    let address: string | undefined;
+    let port: number | undefined;
+    let family: "IPv4" | "IPv6" | undefined;
     if (typeof url === "string") {
       try {
         const parsed = new URL(url);
@@ -106,6 +117,8 @@ class UpgradedSocket extends Duplex {
           family = "IPv6";
         } else if (host.includes(":")) {
           family = "IPv6";
+        } else {
+          family = "IPv4";
         }
         address = host;
         const portStr = parsed.port;
@@ -180,8 +193,11 @@ class UpgradedSocket extends Duplex {
       this.#timeoutTimer = undefined;
     }
     this.timeout = timeout;
-    if (callback) this.once("timeout", callback);
-    if (timeout > 0) {
+    if (timeout === 0) {
+      // Node semantics: setTimeout(0, cb) REMOVES the listener instead of adding.
+      if (callback) this.removeListener("timeout", callback);
+    } else {
+      if (callback) this.once("timeout", callback);
       this.#timeoutTimer = setTimeout(() => {
         this.#timeoutTimer = undefined;
         this.emit("timeout");

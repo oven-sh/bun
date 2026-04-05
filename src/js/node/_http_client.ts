@@ -556,12 +556,23 @@ function ClientRequest(input, options, cb) {
             res.complete = true;
             res.push(null);
 
-            // Match Node: destroy the socket if no 'upgrade' listener attached.
-            if (!this.emit("upgrade", res, socket, kEmptyBuffer)) {
+            if (this.listenerCount("upgrade") === 0) {
+              // Match Node: destroy the socket if no 'upgrade' listener attached.
               socket.destroy();
+              maybeEmitClose();
+            } else {
+              // Emit outside the fetch promise chain so listener exceptions
+              // aren't converted into promise rejections that would trigger
+              // spurious happy-eyeballs retries.
+              process.nextTick(() => {
+                try {
+                  this.emit("upgrade", res, socket, kEmptyBuffer);
+                } finally {
+                  // ClientRequest emits 'close' after a successful upgrade.
+                  maybeEmitClose();
+                }
+              });
             }
-            // ClientRequest emits 'close' after a successful upgrade in Node.
-            maybeEmitClose();
             return;
           }
           upgradeChannel.end();

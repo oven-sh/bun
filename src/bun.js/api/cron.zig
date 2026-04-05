@@ -295,10 +295,30 @@ pub const CronRegisterJob = struct {
         };
         defer bun.default_allocator.free(launch_agents_dir);
         bun.FD.cwd().makePath(u8, launch_agents_dir) catch {
-            this.setErr("Failed to create ~/Library/LaunchAgents directory", .{});
+            this.setErr("Failed to create {s} directory", .{launch_agents_dir});
             this.finish();
             return;
         };
+
+        // Use ~/Library/Logs/bun/cron/ for log files instead of /tmp/ to avoid
+        // writing to the globally shared temp directory (security issue #28298).
+        const log_dir = std.fmt.allocPrint(bun.default_allocator, "{s}/Library/Logs/bun/cron", .{home}) catch {
+            this.setErr("Out of memory", .{});
+            this.finish();
+            return;
+        };
+        defer bun.default_allocator.free(log_dir);
+        bun.FD.cwd().makePath(u8, log_dir) catch {
+            this.setErr("Failed to create {s} directory", .{log_dir});
+            this.finish();
+            return;
+        };
+        const xml_log_dir = xmlEscape(log_dir) catch {
+            this.setErr("Out of memory", .{});
+            this.finish();
+            return;
+        };
+        defer bun.default_allocator.free(xml_log_dir);
 
         const plist_path = allocPrintZ(bun.default_allocator, "{s}/Library/LaunchAgents/bun.cron.{s}.plist", .{ home, this.title }) catch {
             this.setErr("Out of memory", .{});
@@ -306,6 +326,15 @@ pub const CronRegisterJob = struct {
             return;
         };
         this.tmp_path = plist_path;
+
+        // Derive the script's directory for WorkingDirectory (equivalent to import.meta.dir)
+        const script_dir = bun.path.dirname(this.abs_path, .auto);
+        const xml_script_dir = xmlEscape(if (script_dir.len == 0) "/" else script_dir) catch {
+            this.setErr("Out of memory", .{});
+            this.finish();
+            return;
+        };
+        defer bun.default_allocator.free(xml_script_dir);
 
         // XML-escape all dynamic values
         const xml_title = xmlEscape(this.title) catch {
@@ -350,14 +379,16 @@ pub const CronRegisterJob = struct {
             \\    </array>
             \\    <key>StartCalendarInterval</key>
             \\{s}
+            \\    <key>WorkingDirectory</key>
+            \\    <string>{s}</string>
             \\    <key>StandardOutPath</key>
-            \\    <string>/tmp/bun.cron.{s}.stdout.log</string>
+            \\    <string>{s}/bun.cron.{s}.stdout.log</string>
             \\    <key>StandardErrorPath</key>
-            \\    <string>/tmp/bun.cron.{s}.stderr.log</string>
+            \\    <string>{s}/bun.cron.{s}.stderr.log</string>
             \\</dict>
             \\</plist>
             \\
-        , .{ xml_title, xml_bun, xml_title, xml_sched, xml_path, calendar_xml, xml_title, xml_title }) catch {
+        , .{ xml_title, xml_bun, xml_title, xml_sched, xml_path, calendar_xml, xml_script_dir, xml_log_dir, xml_title, xml_log_dir, xml_title }) catch {
             this.setErr("Out of memory", .{});
             this.finish();
             return;
@@ -405,7 +436,8 @@ pub const CronRegisterJob = struct {
         };
         defer bun.default_allocator.free(uid_str);
         var argv = [_:null]?[*:0]const u8{ "/bin/launchctl", "bootstrap", uid_str.ptr, plist_path.ptr, null };
-        this.tmp_path = null; // don't delete the installed plist
+        this.tmp_path = null; // don't delete the installed plist; free the path string only
+        defer bun.default_allocator.free(plist_path);
         this.spawnCmd(&argv, .ignore, .ignore);
     }
 

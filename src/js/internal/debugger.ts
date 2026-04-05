@@ -339,7 +339,7 @@ class Debugger {
         return Response.json(versionInfo());
       case "/json":
       case "/json/list":
-      // TODO?
+        return Response.json(listInfo(request, this.#url!));
     }
 
     if (!this.#url!.protocol.includes("unix") && this.#url!.pathname !== pathname) {
@@ -516,6 +516,35 @@ function versionInfo(): unknown {
     "Bun-Version": Bun.version,
     "Bun-Revision": Bun.revision,
   };
+}
+
+function listInfo(request: Request, listenUrl: URL): unknown {
+  // Echo back the Host the client used so e.g. 127.0.0.1 queries get a
+  // 127.0.0.1 WebSocket URL even when bun bound to 0.0.0.0. Fall back to the
+  // configured listen URL if the Host header is missing.
+  const host = request.headers.get("Host") || `${listenUrl.hostname}:${listenUrl.port}`;
+  const id = listenUrl.pathname.startsWith("/") ? listenUrl.pathname.slice(1) : listenUrl.pathname;
+  const wsUrl = `${host}/${id}`;
+  const scriptPath = process.argv[1] || "";
+  const title = scriptPath ? `bun[${process.pid}] ${scriptPath}` : `bun[${process.pid}]`;
+  const fileUrl = scriptPath
+    ? process.platform === "win32"
+      ? `file:///${scriptPath.replace(/\\/g, "/")}`
+      : `file://${scriptPath}`
+    : "";
+  return [
+    {
+      "description": "bun instance",
+      "devtoolsFrontendUrl": `devtools://devtools/bundled/js_app.html?experiments=true&v8only=true&ws=${wsUrl}`,
+      "devtoolsFrontendUrlCompat": `devtools://devtools/bundled/inspector.html?experiments=true&v8only=true&ws=${wsUrl}`,
+      "faviconUrl": "https://bun.com/favicon.ico",
+      "id": id,
+      "title": title,
+      "type": "node",
+      "url": fileUrl,
+      "webSocketDebuggerUrl": `ws://${wsUrl}`,
+    },
+  ];
 }
 
 function webSocketWriter(ws: ServerWebSocket<unknown>): Writer {

@@ -96,7 +96,7 @@ pub fn onGCTimer(timer: *uws.Timer) callconv(.c) void {
 //    - Slow: GC runs every 30 seconds
 //
 // When the heap size is increasing, we always switch to fast mode
-// When the heap size has been the same or less for 30 seconds, we switch to slow mode
+// When the heap size has been the same or less for 5 consecutive ticks, we switch to slow mode
 pub fn updateGCRepeatTimer(this: *GarbageCollectionController, comptime setting: @Type(.enum_literal)) void {
     if (setting == .fast and !this.gc_repeating_timer_fast) {
         this.gc_repeating_timer_fast = true;
@@ -111,18 +111,32 @@ pub fn updateGCRepeatTimer(this: *GarbageCollectionController, comptime setting:
 
 pub fn onGCRepeatingTimer(timer: *uws.Timer) callconv(.c) void {
     var this = timer.as(*GarbageCollectionController);
+    const vm = this.bunVM().jsc_vm;
+    const current_heap_size = vm.blockBytesAllocated();
     const prev_heap_size = this.gc_last_heap_size_on_repeating_timer;
-    this.performGC();
-    this.gc_last_heap_size_on_repeating_timer = this.gc_last_heap_size;
-    if (prev_heap_size == this.gc_last_heap_size_on_repeating_timer) {
-        this.heap_size_didnt_change_for_repeating_timer_ticks_count +|= 1;
-        if (this.heap_size_didnt_change_for_repeating_timer_ticks_count >= 30) {
-            // make the timer interval longer
-            this.updateGCRepeatTimer(.slow);
-        }
-    } else {
+
+    if (current_heap_size > prev_heap_size) {
+        // Heap is growing — run GC and switch to fast mode.
+        this.performGC();
+        this.gc_last_heap_size_on_repeating_timer = this.gc_last_heap_size;
         this.heap_size_didnt_change_for_repeating_timer_ticks_count = 0;
         this.updateGCRepeatTimer(.fast);
+    } else {
+        // Heap stable or shrinking — skip GC to avoid waking HeapHelper
+        // threads unnecessarily. Just track how long the heap has been
+        // stable and transition to a slower polling interval.
+        this.gc_last_heap_size_on_repeating_timer = current_heap_size;
+        this.heap_size_didnt_change_for_repeating_timer_ticks_count +|= 1;
+        if (this.heap_size_didnt_change_for_repeating_timer_ticks_count >= 5) {
+            this.updateGCRepeatTimer(.slow);
+        }
+        // On platforms where blockBytesAllocated() is unavailable (returns 0,
+        // e.g. Linux without ENABLE(RESOURCE_USAGE)), we can't detect heap
+        // growth. Run periodic GC in slow mode as a safety net since JSC's
+        // own GC timers may not cover all cases.
+        if (current_heap_size == 0 and !this.gc_repeating_timer_fast) {
+            this.performGC();
+        }
     }
 }
 

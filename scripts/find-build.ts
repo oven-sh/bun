@@ -236,12 +236,13 @@ function ago(iso: string | null | undefined): string {
   return h ? `${h}h${m}m` : m ? `${m}m` : `${s}s`;
 }
 
-async function printStatus(build: number) {
+async function printStatus(build: number, onReady?: () => void) {
   type Full = { state: string; started_at: string | null; finished_at: string | null; web_url: string; jobs: Job[] };
   const [b, anns] = await Promise.all([
     bk<Full>("build", "view", String(build), "--json"),
     annotations(build).catch(() => [] as Annotation[]),
   ]);
+  onReady?.();
 
   const jobs = b.jobs.filter(j => j.type === "script");
   const counts: Record<string, number> = {};
@@ -282,13 +283,25 @@ async function printStatus(build: number) {
 async function watchStatus(build: number) {
   const terminal = new Set(["passed", "failed", "canceled", "blocked", "skipped", "not_run"]);
   const isTTY = process.stdout.isTTY;
+  const frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+  const clear = isTTY ? () => process.stdout.write("\x1b[H\x1b[J") : undefined;
   for (;;) {
-    if (isTTY) process.stdout.write("\x1b[H\x1b[J");
-    const b = await printStatus(build);
+    const b = await printStatus(build, clear);
     if (terminal.has(b.state)) process.exit(b.state === "passed" ? 0 : 1);
-    if (isTTY) process.stdout.write(`\n${c.dim}watching… (refresh in 10s, ^C to stop)${c.reset}`);
-    else console.log();
-    await Bun.sleep(10_000);
+    if (!isTTY) {
+      console.log();
+      await Bun.sleep(10_000);
+      continue;
+    }
+    process.stdout.write("\n");
+    for (let i = 0; i < 100; i++) {
+      const left = 10 - Math.floor(i / 10);
+      process.stdout.write(
+        `\r${c.dim}${frames[i % frames.length]} watching — next refresh in ${left}s (^C to stop)${c.reset}  `,
+      );
+      await Bun.sleep(100);
+    }
+    process.stdout.write(`\r${c.dim}${frames[0]} fetching…${c.reset}\x1b[K`);
   }
 }
 

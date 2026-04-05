@@ -2597,6 +2597,19 @@ refs:
           "42": "answer",
         });
       });
+
+      // https://github.com/oven-sh/bun/issues/25108
+      test("block context strings containing colons", () => {
+        const data = { description: "hello :world:" };
+        const pretty = YAML.stringify(data, null, 2);
+        expect(pretty).toContain('description: "hello :world:"');
+        expect(YAML.parse(pretty)).toEqual(data);
+
+        const data2 = { description: "download here:" };
+        const pretty2 = YAML.stringify(data2, null, 2);
+        expect(pretty2).toContain('description: "download here:"');
+        expect(YAML.parse(pretty2)).toEqual(data2);
+      });
     });
   });
 

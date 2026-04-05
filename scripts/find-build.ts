@@ -39,7 +39,7 @@ Options:
   -n, --limit <N>      Print the last N builds instead of just the latest
   --branch <name>      Use this branch (same as positional)
   --status             Print a one-screen progress summary for the build
-  --watch              Run \`bk build watch <N>\` on the resolved build
+  --watch              Poll and redraw --status every 10s until the build finishes
   --errors             Print rendered test-failure annotations for the build
   --logs               Save full logs for each failed job to ./tmp/ci-<build>/
   --all                With --errors, include warning/flaky annotations too
@@ -122,10 +122,8 @@ try {
   }
 
   if (opts.status) await printStatus(builds[0].number);
-  else if (opts.watch) {
-    const n = String(builds[0].number);
-    process.exit(await Bun.spawn(["bk", "build", "watch", n], { stdio: ["inherit", "inherit", "inherit"] }).exited);
-  } else if (opts.logs) await saveLogs(builds[0].number);
+  else if (opts.watch) await watchStatus(builds[0].number);
+  else if (opts.logs) await saveLogs(builds[0].number);
   else if (opts.errors)
     await printErrors(builds[0].number, { all: !!opts.all, compare: !opts["no-compare"] && branch !== "main" });
   else
@@ -277,6 +275,20 @@ async function printStatus(build: number) {
 
   if (!failed.length && !err.length) {
     console.log(b.finished_at ? `\n${c.dim}no failures${c.reset}` : `\n${c.dim}no failures yet${c.reset}`);
+  }
+  return b;
+}
+
+async function watchStatus(build: number) {
+  const terminal = new Set(["passed", "failed", "canceled", "blocked", "skipped", "not_run"]);
+  const isTTY = process.stdout.isTTY;
+  for (;;) {
+    if (isTTY) process.stdout.write("\x1b[H\x1b[J");
+    const b = await printStatus(build);
+    if (terminal.has(b.state)) process.exit(b.state === "passed" ? 0 : 1);
+    if (isTTY) process.stdout.write(`\n${c.dim}watching… (refresh in 10s, ^C to stop)${c.reset}`);
+    else console.log();
+    await Bun.sleep(10_000);
   }
 }
 

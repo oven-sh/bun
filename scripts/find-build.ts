@@ -232,7 +232,7 @@ async function printErrors(build: number, { all, compare }: { all: boolean; comp
 
 function ago(iso: string | null | undefined): string {
   if (!iso) return "-";
-  let s = Math.floor((Date.now() - Date.parse(iso)) / 1000);
+  const s = Math.max(0, Math.floor((Date.now() - Date.parse(iso)) / 1000));
   const h = Math.floor(s / 3600);
   const m = Math.floor((s % 3600) / 60);
   return h ? `${h}h${m}m` : m ? `${m}m` : `${s}s`;

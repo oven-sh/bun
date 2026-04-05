@@ -811,5 +811,5 @@ it("should not crash when accessing .fd on a TLS listener", () => {
     socket: { data() {} },
     tls: { passphrase: "x" },
   });
-  expect(typeof listener.fd).toBe("number");
+  expect(listener.fd).toBeGreaterThan(0);
 });

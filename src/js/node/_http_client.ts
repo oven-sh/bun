@@ -920,7 +920,21 @@ function ClientRequest(input, options, cb) {
 
   this._httpMessage = this;
 
-  process.nextTick(emitContinueAndSocketNT, this);
+  process.nextTick(emitContinueAndSocketNT, this, () => {
+    // For 100-continue, start the fetch immediately after emitting "continue".
+    // The underlying HTTP client handles 100-continue internally, so we need
+    // to initiate the connection. Without this, the fetch only starts when
+    // end() is called, causing a deadlock when code awaits "response" before
+    // calling end().
+    // Use flushHeaders() which starts the fetch in duplex mode, keeping the
+    // request writable so late write()/end(chunk) still work.
+    this.flushHeaders();
+    // Set onEnd so that when the fetch resolves (with keepOpen=true in duplex
+    // mode), calling onEnd() delivers the response.
+    onEnd = () => {
+      handleResponse?.();
+    };
+  });
 
   this[kEmitState] = 0;
 
@@ -1031,7 +1045,7 @@ function validateHost(host, name) {
   return host;
 }
 
-function emitContinueAndSocketNT(self) {
+function emitContinueAndSocketNT(self, onContinue?) {
   if (self.destroyed) return;
   // Ref: https://github.com/nodejs/node/blob/f63e8b7fa7a4b5e041ddec67307609ec8837154f/lib/_http_client.js#L803-L839
   if (!(self[kEmitState] & (1 << ClientRequestEmitState.socket))) {
@@ -1039,9 +1053,16 @@ function emitContinueAndSocketNT(self) {
     self.emit("socket", self.socket);
   }
 
-  // Emit continue event for the client (internally we auto handle it)
-  if (!self._closed && self.getHeader("expect") === "100-continue") {
+  // Emit continue event and start the fetch for 100-continue requests.
+  // Re-evaluate the header at call time so late setHeader() calls are respected.
+  const expectHeader = self.getHeader("expect");
+  if (!self._closed && expectHeader && expectHeader.toLowerCase() === "100-continue") {
     self.emit("continue");
+    // A "continue" listener may call req.abort()/req.destroy() — don't start the
+    // fetch if the request was cancelled during the event.
+    if (!self.destroyed && !self._closed && !self.aborted) {
+      onContinue?.();
+    }
   }
 }
 

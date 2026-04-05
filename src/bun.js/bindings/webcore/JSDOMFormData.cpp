@@ -636,7 +636,6 @@ JSC::JSValue getInternalProperties(JSC::VM& vm, JSGlobalObject* lexicalGlobalObj
     obj->putDirect(vm, vm.propertyNames->toStringTagSymbol, jsString(vm, String("FormData"_s)), PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly);
 
     auto iter = impl.items();
-    WTF::HashSet<String> seenKeys;
 
     auto toJSValue = [&](const DOMFormData::FormDataEntryValue& entry) -> JSValue {
         return toJS<IDLNullable<IDLUnion<IDLUSVString, IDLInterface<Blob>>>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, entry);
@@ -646,47 +645,67 @@ JSC::JSValue getInternalProperties(JSC::VM& vm, JSGlobalObject* lexicalGlobalObj
         auto& key = entry.name;
         auto& value = entry.data;
         auto ident = Identifier::fromString(vm, key);
-        if (seenKeys.contains(key)) {
-            JSValue jsValue = obj->getDirect(vm, ident);
-            if (jsValue.isString() || jsValue.inherits<JSBlob>()) {
-                // Make sure this runs before the deferral scope is called.
-                JSValue resultValue = toJSValue(value);
-                RETURN_IF_EXCEPTION(throwScope, {});
-                ensureStillAliveHere(resultValue);
+        auto index = JSC::parseIndex(ident);
 
-                JSC::JSArray* array = nullptr;
-
-                {
-                    GCDeferralContext deferralContext(lexicalGlobalObject->vm());
-                    JSC::ObjectInitializationScope initializationScope(lexicalGlobalObject->vm());
-
-                    array = JSC::JSArray::tryCreateUninitializedRestricted(
-                        initializationScope, &deferralContext,
-                        lexicalGlobalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous),
-                        2);
-                    RELEASE_ASSERT(array);
-
-                    array->initializeIndex(initializationScope, 0, jsValue);
-                    array->initializeIndex(initializationScope, 1, resultValue);
-                }
-
-                obj->putDirect(vm, ident, array, 0);
-            } else if (jsValue.isObject() && jsValue.getObject()->inherits<JSC::JSArray>()) {
-                JSC::JSArray* array = jsCast<JSC::JSArray*>(jsValue.getObject());
-                JSValue jsValue = toJSValue(value);
-                RETURN_IF_EXCEPTION(throwScope, {});
-                array->push(lexicalGlobalObject, jsValue);
-                RETURN_IF_EXCEPTION(throwScope, {});
-
-            } else {
-                RELEASE_ASSERT_NOT_REACHED();
-            }
+        // Look up the existing value in the object's own storage directly
+        // (rather than tracking seen keys in a separate HashSet). getDirect
+        // only checks the structure's property map and cannot throw; indexed
+        // properties are stored in the butterfly, so use getDirectIndex.
+        JSValue existing;
+        if (index) [[unlikely]] {
+            existing = obj->getDirectIndex(lexicalGlobalObject, index.value());
+            RETURN_IF_EXCEPTION(throwScope, {});
         } else {
-            seenKeys.add(key);
+            existing = obj->getDirect(vm, ident);
+        }
+
+        auto put = [&](JSValue v) {
+            if (index) [[unlikely]]
+                obj->putDirectIndex(lexicalGlobalObject, index.value(), v);
+            else
+                obj->putDirect(vm, ident, v, 0);
+        };
+
+        if (!existing) {
             JSValue jsValue = toJSValue(value);
             RETURN_IF_EXCEPTION(throwScope, {});
-            obj->putDirectMayBeIndex(lexicalGlobalObject, ident, jsValue);
+            put(jsValue);
             RETURN_IF_EXCEPTION(throwScope, {});
+        } else if (existing.isString() || existing.inherits<JSBlob>()) {
+            // Make sure this runs before the deferral scope is called.
+            JSValue resultValue = toJSValue(value);
+            RETURN_IF_EXCEPTION(throwScope, {});
+            ensureStillAliveHere(resultValue);
+
+            JSC::JSArray* array = nullptr;
+
+            {
+                GCDeferralContext deferralContext(lexicalGlobalObject->vm());
+                JSC::ObjectInitializationScope initializationScope(lexicalGlobalObject->vm());
+
+                array = JSC::JSArray::tryCreateUninitializedRestricted(
+                    initializationScope, &deferralContext,
+                    lexicalGlobalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous),
+                    2);
+                if (!array) [[unlikely]] {
+                    throwScope.throwException(lexicalGlobalObject, createOutOfMemoryError(lexicalGlobalObject));
+                    return {};
+                }
+
+                array->initializeIndex(initializationScope, 0, existing);
+                array->initializeIndex(initializationScope, 1, resultValue);
+            }
+
+            put(array);
+            RETURN_IF_EXCEPTION(throwScope, {});
+        } else if (existing.isObject() && existing.getObject()->inherits<JSC::JSArray>()) {
+            JSC::JSArray* array = jsCast<JSC::JSArray*>(existing.getObject());
+            JSValue jsValue = toJSValue(value);
+            RETURN_IF_EXCEPTION(throwScope, {});
+            array->push(lexicalGlobalObject, jsValue);
+            RETURN_IF_EXCEPTION(throwScope, {});
+        } else {
+            RELEASE_ASSERT_NOT_REACHED();
         }
     }
 

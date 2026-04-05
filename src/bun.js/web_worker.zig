@@ -429,6 +429,7 @@ fn flushLogs(this: *WebWorker) void {
         error.JSTerminated => @panic("unhandled exception"),
     };
     defer str.deref();
+    vm.log.msgs.clearRetainingCapacity();
     bun.jsc.fromJSHostCallGeneric(vm.global, @src(), WebWorker__dispatchError, .{ vm.global, this.cpp_worker, str, err }) catch |e| {
         _ = vm.global.reportUncaughtException(vm.global.takeException(e).asException(vm.global.vm()).?);
     };
@@ -473,11 +474,16 @@ fn onUnhandledRejection(vm: *jsc.VirtualMachine, globalObject: *jsc.JSGlobalObje
     };
     jsc.markBinding(@src());
     WebWorker__dispatchError(globalObject, worker.cpp_worker, bun.String.cloneUTF8(array.written()), error_instance);
-    if (vm.worker) |worker_| {
-        _ = worker.setRequestedTerminate();
-        worker.parent_poll_ref.unrefConcurrently(worker.parent);
-        worker_.exitAndDeinit();
-    }
+    // Don't call exitAndDeinit() directly here — we're still inside the JS
+    // execution context (entryScope is active from handleRejectedPromises).
+    // Tearing down the VM now triggers a JSC assertion failure
+    // (!vm().entryScope in Heap::lastChanceToFinalize). Instead, request
+    // termination so spin()'s event loop breaks out and calls exitAndDeinit()
+    // after the JS call stack has unwound.
+    if (!worker.exit_called) vm.exit_handler.exit_code = 1;
+    _ = worker.setRequestedTerminate();
+    worker.parent_poll_ref.unrefConcurrently(worker.parent);
+    vm.eventLoop().wakeup();
 }
 
 fn setStatus(this: *WebWorker, status: Status) void {

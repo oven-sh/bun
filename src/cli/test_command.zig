@@ -895,7 +895,7 @@ pub const CommandLineReporter = struct {
                     } else if (((comptime result.basicResult()) != .fail) and (buntest.reporter != null and buntest.reporter.?.reporters.only_failures)) {
                         // when using --only-failures, only print failures
                     } else {
-                        buntest.bun_test_root.onBeforePrint();
+                        buntest.bun_test_root.onBeforePrint(buntest);
 
                         writeTestStatusLine(result, &writer);
                         const dim = switch (comptime result.basicResult()) {
@@ -1824,35 +1824,248 @@ pub const TestCommand = struct {
         files_: []const PathString,
         allocator_: std.mem.Allocator,
     ) void {
-        const Context = struct {
-            reporter: *CommandLineReporter,
-            vm: *jsc.VirtualMachine,
-            files: []const PathString,
-            allocator: std.mem.Allocator,
-            pub fn begin(this: *@This()) void {
-                const reporter = this.reporter;
-                const vm = this.vm;
-                var files = this.files;
-                bun.assert(files.len > 0);
-
-                if (files.len > 1) {
-                    for (files[0 .. files.len - 1], 0..) |file_name, i| {
-                        TestCommand.run(reporter, vm, file_name.slice(), .{ .first = i == 0, .last = false }) catch |err| handleTopLevelTestErrorBeforeJavaScriptStart(err);
-                        reporter.jest.default_timeout_override = std.math.maxInt(u32);
-                        Global.mimalloc_cleanup(false);
-                    }
-                }
-
-                TestCommand.run(reporter, vm, files[files.len - 1].slice(), .{ .first = files.len == 1, .last = true }) catch |err| handleTopLevelTestErrorBeforeJavaScriptStart(err);
-            }
-        };
+        const file_parallelism = reporter_.jest.test_options.file_parallelism;
 
         var arena = bun.MimallocArena.init();
         vm_.eventLoop().ensureWaker();
         vm_.arena = &arena;
         vm_.allocator = arena.allocator();
-        var ctx = Context{ .reporter = reporter_, .vm = vm_, .files = files_, .allocator = allocator_ };
-        vm_.runWithAPILock(Context, &ctx, Context.begin);
+
+        if (file_parallelism <= 1 or reporter_.repeat_count > 1) {
+            // Sequential mode (default): run files one at a time
+            const SeqContext = struct {
+                reporter: *CommandLineReporter,
+                vm: *jsc.VirtualMachine,
+                files: []const PathString,
+                allocator: std.mem.Allocator,
+                pub fn begin(this: *@This()) void {
+                    const reporter = this.reporter;
+                    const vm = this.vm;
+                    var files = this.files;
+                    bun.assert(files.len > 0);
+
+                    if (files.len > 1) {
+                        for (files[0 .. files.len - 1], 0..) |file_name, i| {
+                            TestCommand.run(reporter, vm, file_name.slice(), .{ .first = i == 0, .last = false }) catch |err| handleTopLevelTestErrorBeforeJavaScriptStart(err);
+                            reporter.jest.default_timeout_override = std.math.maxInt(u32);
+                            Global.mimalloc_cleanup(false);
+                        }
+                    }
+
+                    TestCommand.run(reporter, vm, files[files.len - 1].slice(), .{ .first = files.len == 1, .last = true }) catch |err| handleTopLevelTestErrorBeforeJavaScriptStart(err);
+                }
+            };
+
+            var ctx = SeqContext{ .reporter = reporter_, .vm = vm_, .files = files_, .allocator = allocator_ };
+            vm_.runWithAPILock(SeqContext, &ctx, SeqContext.begin);
+        } else {
+            // Parallel mode: run multiple files concurrently via the event loop
+            const ParContext = struct {
+                reporter: *CommandLineReporter,
+                vm: *jsc.VirtualMachine,
+                files: []const PathString,
+                allocator: std.mem.Allocator,
+                parallelism: u32,
+
+                pub fn begin(this: *@This()) void {
+                    this.runParallel() catch |err| handleTopLevelTestErrorBeforeJavaScriptStart(err);
+                }
+
+                fn runParallel(this: *@This()) !void {
+                    const reporter = this.reporter;
+                    const vm = this.vm;
+                    const files = this.files;
+                    bun.assert(files.len > 0);
+
+                    const parallelism = @min(this.parallelism, @as(u32, @truncate(files.len)));
+
+                    // Track running files with strong references
+                    var running_files: std.ArrayListUnmanaged(bun_test.BunTestPtr) = .{};
+                    defer {
+                        for (running_files.items) |*strong| {
+                            strong.get().reporter = null;
+                            strong.deinit();
+                        }
+                        running_files.deinit(this.allocator);
+                    }
+
+                    var file_index: usize = 0;
+                    const bun_test_root = &jest.Jest.runner.?.bun_test_root;
+
+                    // Save the initial timeout so we can restore it between files,
+                    // preventing one file's jest.setTimeout() from leaking to others.
+                    const initial_timeout_override = reporter.jest.default_timeout_override;
+
+                    while (file_index < files.len or running_files.items.len > 0) {
+                        // Load files up to parallelism limit
+                        while (running_files.items.len < parallelism and file_index < files.len) {
+                            const is_first = file_index == 0;
+                            const is_last = file_index == files.len - 1;
+                            const file_name = files[file_index].slice();
+                            file_index += 1;
+
+                            // Restore timeout before loading each file so a previous
+                            // file's jest.setTimeout() doesn't affect new files.
+                            reporter.jest.default_timeout_override = initial_timeout_override;
+
+                            const buntest_strong = loadAndStartFile(
+                                reporter,
+                                vm,
+                                bun_test_root,
+                                file_name,
+                                .{ .first = is_first, .last = is_last },
+                            ) catch |err| {
+                                if (err == error.ModuleNotFound) {
+                                    // Already reported via unhandledRejection; skip this file.
+                                    continue;
+                                }
+                                return err;
+                            };
+
+                            bun.handleOom(running_files.append(this.allocator, buntest_strong));
+                        }
+
+                        if (running_files.items.len == 0) break;
+
+                        // Process event loop
+                        vm.eventLoop().tick();
+
+                        // Check for wakeup requests from any running file
+                        var any_wants_wakeup = false;
+                        for (running_files.items) |strong| {
+                            const buntest = strong.get();
+                            if (buntest.wants_wakeup) {
+                                buntest.wants_wakeup = false;
+                                any_wants_wakeup = true;
+                            }
+                        }
+                        if (any_wants_wakeup) {
+                            vm.wakeup();
+                        }
+
+                        vm.eventLoop().autoTick();
+                        vm.eventLoop().tick();
+
+                        // Handle unhandled rejections
+                        vm.global.handleRejectedPromises();
+
+                        // Remove completed files
+                        var i: usize = 0;
+                        while (i < running_files.items.len) {
+                            const buntest = running_files.items[i].get();
+                            if (buntest.phase == .done) {
+                                vm.eventLoop().tickImmediateTasks(vm);
+
+                                if (Output.is_github_action) {
+                                    Output.prettyErrorln("<r>\n::endgroup::\n", .{});
+                                    Output.flush();
+                                }
+
+                                vm.auto_killer.clear();
+                                vm.auto_killer.disable();
+
+                                reporter.jest.default_timeout_override = initial_timeout_override;
+                                Global.mimalloc_cleanup(false);
+
+                                var strong = running_files.orderedRemove(i);
+                                strong.get().reporter = null;
+                                strong.deinit();
+                            } else {
+                                i += 1;
+                            }
+                        }
+                    }
+                }
+
+                /// Load a single test file, start its test execution, and return a strong reference.
+                /// The file is detached from active_file after loading, allowing another file to be loaded next.
+                fn loadAndStartFile(
+                    reporter: *CommandLineReporter,
+                    vm: *jsc.VirtualMachine,
+                    bun_test_root: *bun_test.BunTestRoot,
+                    file_name: string,
+                    first_last: bun_test.BunTestRoot.FirstLast,
+                ) !bun_test.BunTestPtr {
+                    js_ast.Expr.Data.Store.reset();
+                    js_ast.Stmt.Data.Store.reset();
+
+                    const resolution = try vm.transpiler.resolveEntryPoint(file_name);
+                    try vm.clearEntryPoint();
+
+                    const file_path = bun.handleOom(bun.fs.FileSystem.instance.filename_store.append([]const u8, resolution.path_pair.primary.text));
+                    const file_id = jest.Jest.runner.?.getOrPutFile(file_path).file_id;
+
+                    vm.onUnhandledRejectionCtx = null;
+                    vm.onUnhandledRejection = jest.on_unhandled_rejection.onUnhandledRejection;
+
+                    const should_run_concurrent = reporter.jest.shouldFileRunConcurrently(file_id);
+                    bun_test_root.enterFile(file_id, reporter, should_run_concurrent, first_last);
+
+                    // Don't call current_file.set() here; onBeforePrint will handle
+                    // printing file headers when test results arrive, which correctly
+                    // interleaves headers with results when files run in parallel.
+
+                    vm.wakeup();
+                    var promise = try vm.loadEntryPointForTestRunner(file_path);
+                    reporter.summary().files += 1;
+
+                    switch (promise.status()) {
+                        .rejected => {
+                            vm.unhandledRejection(vm.global, promise.result(), promise.asValue());
+                            reporter.summary().fail += 1;
+
+                            if (reporter.jest.bail == reporter.summary().fail) {
+                                reporter.printSummary();
+                                Output.prettyError("\nBailed out after {d} failure{s}<r>\n", .{ reporter.jest.bail, if (reporter.jest.bail == 1) "" else "s" });
+                                reporter.writeJUnitReportIfNeeded();
+
+                                vm.exit_handler.exit_code = 1;
+                                vm.is_shutting_down = true;
+                                vm.runWithAPILock(jsc.VirtualMachine, vm, jsc.VirtualMachine.globalExit);
+                            }
+
+                            bun_test_root.exitFile();
+                            return error.ModuleNotFound;
+                        },
+                        else => {},
+                    }
+
+                    vm.eventLoop().tick();
+
+                    var buntest_strong = bun_test_root.cloneActiveFile() orelse {
+                        bun_test_root.exitFile();
+                        return error.ModuleNotFound;
+                    };
+
+                    // Detach from active_file without nullifying reporter;
+                    // the file keeps its reporter alive so test results can still be reported.
+                    bun_test_root.detachFile();
+
+                    const buntest = buntest_strong.get();
+
+                    // Start test execution
+                    if (buntest.result_queue.readableLength() == 0) {
+                        buntest.addResult(.start);
+                    }
+                    bun_test.BunTest.run(buntest_strong, vm.global) catch |e| {
+                        buntest.onUncaughtException(vm.global, vm.global.takeException(e), false, .start);
+                    };
+
+                    vm.eventLoop().tick();
+
+                    return buntest_strong;
+                }
+            };
+
+            var ctx = ParContext{
+                .reporter = reporter_,
+                .vm = vm_,
+                .files = files_,
+                .allocator = allocator_,
+                .parallelism = file_parallelism,
+            };
+            vm_.runWithAPILock(ParContext, &ctx, ParContext.begin);
+        }
     }
 
     fn timerNoop(_: *uws.Timer) callconv(.c) void {}
@@ -1912,6 +2125,7 @@ pub const TestCommand = struct {
             defer bun_test_root.exitFile();
 
             reporter.jest.current_file.set(file_title, file_prefix, repeat_count, repeat_index, reporter);
+            reporter.jest.current_file_id = file_id;
 
             bun.jsc.Jest.bun_test.debug.group.log("loadEntryPointForTestRunner(\"{f}\")", .{std.zig.fmtString(file_path)});
 

@@ -241,6 +241,7 @@ pub const test_only_params = [_]ParamType{
     clap.parseParam("--dots                           Enable dots reporter. Shorthand for --reporter=dots.") catch unreachable,
     clap.parseParam("--only-failures                  Only display test failures, hiding passing tests.") catch unreachable,
     clap.parseParam("--max-concurrency <NUMBER>        Maximum number of concurrent tests to execute at once. Default is 20.") catch unreachable,
+    clap.parseParam("--file-parallelism <NUMBER>      Number of test files to run in parallel. Default is 1 (sequential).") catch unreachable,
     clap.parseParam("--path-ignore-patterns <STR>...   Glob patterns for test file paths to ignore.") catch unreachable,
 };
 pub const test_params = test_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
@@ -494,6 +495,19 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                     Output.prettyErrorln("<r><red>error<r>: Invalid max-concurrency: \"{s}\"", .{max_concurrency});
                     Global.exit(1);
                 };
+            }
+        }
+
+        if (args.option("--file-parallelism")) |file_parallelism| {
+            if (file_parallelism.len > 0) {
+                ctx.test_options.file_parallelism = std.fmt.parseInt(u32, file_parallelism, 10) catch {
+                    Output.prettyErrorln("<r><red>error<r>: Invalid file-parallelism: \"{s}\"", .{file_parallelism});
+                    Global.exit(1);
+                };
+                if (ctx.test_options.file_parallelism == 0) {
+                    Output.prettyErrorln("<r><red>error<r>: --file-parallelism must be greater than 0", .{});
+                    Global.exit(1);
+                }
             }
         }
 

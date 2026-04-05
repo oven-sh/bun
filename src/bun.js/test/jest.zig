@@ -29,7 +29,7 @@ const CurrentFile = struct {
         print(title, prefix, repeat_count, repeat_index);
     }
 
-    fn freeAndClear(this: *CurrentFile) void {
+    pub fn freeAndClear(this: *CurrentFile) void {
         bun.default_allocator.free(this.title);
         bun.default_allocator.free(this.prefix);
     }
@@ -63,6 +63,7 @@ const CurrentFile = struct {
 
 pub const TestRunner = struct {
     current_file: CurrentFile = CurrentFile{},
+    current_file_id: ?File.ID = null,
     files: File.List = .{},
     index: File.Map = File.Map{},
     only: bool = false,

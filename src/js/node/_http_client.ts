@@ -337,6 +337,10 @@ function ClientRequest(input, options, cb) {
     this.destroyed = true;
 
     const res = this.res;
+    // For an upgraded socket (real Duplex), the 'close' event is driven by
+    // the stream's own destroy lifecycle. Calling socket.emit('close')
+    // directly here would fire 'close' twice on the Duplex.
+    const isUpgradedSocket = this[kUpgradeOrConnect] === true;
     if (res) {
       // Socket closed before we emitted 'end' below.
       if (!res.complete) {
@@ -346,7 +350,7 @@ function ClientRequest(input, options, cb) {
         this._closed = true;
         callCloseCallback(this);
         this.emit("close");
-        this.socket?.emit?.("close");
+        if (!isUpgradedSocket) this.socket?.emit?.("close");
       }
       if (!res.aborted && res.readable) {
         res.push(null);
@@ -355,7 +359,7 @@ function ClientRequest(input, options, cb) {
       this._closed = true;
       callCloseCallback(this);
       this.emit("close");
-      this.socket?.emit?.("close");
+      if (!isUpgradedSocket) this.socket?.emit?.("close");
     }
   };
 

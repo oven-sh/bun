@@ -68,11 +68,10 @@ const LibInfo = struct {
             return dns_lookup.promise.value();
         }
 
-        var name_buf: [1024]u8 = undefined;
-        _ = strings.copy(name_buf[0..], query.name);
-
-        name_buf[query.name.len] = 0;
-        const name_z = name_buf[0..query.name.len :0];
+        var stack_fallback = std.heap.stackFallback(1024, bun.default_allocator);
+        const name_allocator = stack_fallback.get();
+        const name_z = bun.handleOom(name_allocator.dupeZ(u8, query.name));
+        defer name_allocator.free(name_z);
 
         var request = GetAddrInfoRequest.init(
             cache,

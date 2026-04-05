@@ -137,6 +137,30 @@ error: Hello World`,
     },
     run: { stdout: "" },
   });
+  for (const compile of [false, true] as const) {
+    itBundled(`bun/HiddenDynamicRequire${compile ? "Compile" : "Bundle"}`, {
+      target: "bun",
+      compile,
+      files: {
+        "/entry.ts": /* js */ `
+          import { make } from "./dep";
+
+          const value = make();
+          console.log(value.constructor.name);
+          console.log(Buffer.isBuffer(value));
+        `,
+        "/dep.ts": /* js */ `
+          export function make() {
+            const req = eval("quire".replace(/^/, "re"));
+            return req("buffer").Buffer.from([1, 2, 3]);
+          }
+        `,
+      },
+      run: {
+        stdout: "Buffer\ntrue",
+      },
+    });
+  }
   if (Bun.version.startsWith("1.3") || Bun.version.startsWith("1.2")) {
     for (const backend of ["api", "cli"] as const) {
       itBundled("bun/ExportsConditionsDevelopment" + backend.toUpperCase(), {

@@ -453,7 +453,14 @@ const fixture = [
     ),
   () => {
     const obj = { a: 1 };
-    Object.setPrototypeOf(obj, new Proxy(Object.getPrototypeOf(obj), {}));
+    Object.setPrototypeOf(
+      obj,
+      new Proxy(Object.getPrototypeOf(obj), {
+        getPrototypeOf() {
+          throw new Error("boom");
+        },
+      }),
+    );
     return obj;
   },
 ];

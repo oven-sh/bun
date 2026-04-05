@@ -491,7 +491,13 @@ function getBuildCommand(target, options, mode) {
   // Windows code signing is handled by a dedicated 'windows-sign' step after
   // all Windows builds complete — see getWindowsSignStep(). smctl is x64-only,
   // so signing on the build agent wouldn't work for ARM64 anyway.
-  return `bun scripts/build.ts ${getBuildArgs(target, options, mode)}`;
+  //
+  // Literal `node` — ci.mjs generates pipeline YAML that runs on a
+  // different agent later, so process.execPath (the generator's path)
+  // is wrong. PATH on the agent has node via bootstrap.sh.
+  // --experimental-strip-types for Node 24's .ts support (unflagged in
+  // 25+; drop once CI bumps past the ABI-141 blocker).
+  return `node --experimental-strip-types scripts/build.ts ${getBuildArgs(target, options, mode)}`;
 }
 
 /**

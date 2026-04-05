@@ -154,6 +154,22 @@ pub const StandaloneModuleGraph = struct {
         }
     };
 
+    const ELF = struct {
+        pub extern "C" fn Bun__getStandaloneModuleGraphELFVaddr() ?*align(1) u64;
+
+        pub fn getData() ?[]const u8 {
+            const vaddr = (Bun__getStandaloneModuleGraphELFVaddr() orelse return null).*;
+            if (vaddr == 0) return null;
+            // BUN_COMPILED.size holds the virtual address of the appended data.
+            // The kernel mapped it via PT_LOAD, so we can dereference directly.
+            // Format at target: [u64 payload_len][payload bytes]
+            const target: [*]const u8 = @ptrFromInt(vaddr);
+            const payload_len = std.mem.readInt(u64, target[0..8], .little);
+            if (payload_len < 8) return null;
+            return target[8..][0..payload_len];
+        }
+    };
+
     pub const File = struct {
         name: []const u8 = "",
         loader: bun.options.Loader,
@@ -885,6 +901,56 @@ pub const StandaloneModuleGraph = struct {
                 }
                 return cloned_executable_fd;
             },
+            .linux => {
+                // ELF section approach: find .bun section and expand it
+                const input_result = bun.sys.File.readToEnd(.{ .handle = cloned_executable_fd }, bun.default_allocator);
+                if (input_result.err) |err| {
+                    Output.prettyErrorln("Error reading executable: {f}", .{err});
+                    cleanup(zname, cloned_executable_fd);
+                    return bun.invalid_fd;
+                }
+
+                const elf_file = bun.elf.ElfFile.init(bun.default_allocator, input_result.bytes.items) catch |err| {
+                    Output.prettyErrorln("Error initializing ELF file: {}", .{err});
+                    cleanup(zname, cloned_executable_fd);
+                    return bun.invalid_fd;
+                };
+                defer elf_file.deinit();
+
+                elf_file.writeBunSection(bytes) catch |err| {
+                    Output.prettyErrorln("Error writing .bun section to ELF: {}", .{err});
+                    cleanup(zname, cloned_executable_fd);
+                    return bun.invalid_fd;
+                };
+                input_result.bytes.deinit();
+
+                switch (Syscall.setFileOffset(cloned_executable_fd, 0)) {
+                    .err => |err| {
+                        Output.prettyErrorln("Error seeking to start of temporary file: {f}", .{err});
+                        cleanup(zname, cloned_executable_fd);
+                        return bun.invalid_fd;
+                    },
+                    else => {},
+                }
+
+                // Write the modified ELF data back to the file
+                const write_file = bun.sys.File{ .handle = cloned_executable_fd };
+                switch (write_file.writeAll(elf_file.data.items)) {
+                    .err => |err| {
+                        Output.prettyErrorln("Error writing ELF file: {f}", .{err});
+                        cleanup(zname, cloned_executable_fd);
+                        return bun.invalid_fd;
+                    },
+                    .result => {},
+                }
+                // Truncate the file to the exact size of the modified ELF
+                _ = Syscall.ftruncate(cloned_executable_fd, @intCast(elf_file.data.items.len));
+
+                if (comptime !Environment.isWindows) {
+                    _ = bun.c.fchmod(cloned_executable_fd.native(), 0o777);
+                }
+                return cloned_executable_fd;
+            },
             else => {
                 var total_byte_count: usize = undefined;
                 if (Environment.isWindows) {
@@ -1261,99 +1327,23 @@ pub const StandaloneModuleGraph = struct {
             return try fromBytesAlloc(allocator, @constCast(pe_bytes), offsets);
         }
 
-        // Do not invoke libuv here.
-        const self_exe = openSelf() catch return null;
-        defer self_exe.close();
-
-        var trailer_bytes: [4096]u8 = undefined;
-        std.posix.lseek_END(self_exe.cast(), -4096) catch return null;
-
-        var read_amount: usize = 0;
-        while (read_amount < trailer_bytes.len) {
-            switch (Syscall.read(self_exe, trailer_bytes[read_amount..])) {
-                .result => |read| {
-                    if (read == 0) return null;
-
-                    read_amount += read;
-                },
-                .err => {
-                    return null;
-                },
+        if (comptime Environment.isLinux) {
+            const elf_bytes = ELF.getData() orelse return null;
+            if (elf_bytes.len < @sizeOf(Offsets) + trailer.len) {
+                Output.debugWarn("bun standalone module graph is too small to be valid", .{});
+                return null;
             }
-        }
-
-        if (read_amount < trailer.len + @sizeOf(usize) + @sizeOf(Offsets))
-            // definitely missing data
-            return null;
-
-        var end = @as([]u8, &trailer_bytes).ptr + read_amount - @sizeOf(usize);
-        const total_byte_count: usize = @as(usize, @bitCast(end[0..8].*));
-
-        if (total_byte_count > std.math.maxInt(u32) or total_byte_count < 4096) {
-            // sanity check: the total byte count should never be more than 4 GB
-            // bun is at least like 30 MB so if it reports a size less than 4096 bytes then something is wrong
-            return null;
-        }
-        end -= trailer.len;
-
-        if (!bun.strings.hasPrefixComptime(end[0..trailer.len], trailer)) {
-            // invalid trailer
-            return null;
-        }
-
-        end -= @sizeOf(Offsets);
-
-        const offsets: Offsets = std.mem.bytesAsValue(Offsets, end[0..@sizeOf(Offsets)]).*;
-        if (offsets.byte_count >= total_byte_count) {
-            // if we hit this branch then the file is corrupted and we should just give up
-            return null;
-        }
-
-        var to_read = try bun.default_allocator.alloc(u8, offsets.byte_count);
-        var to_read_from = to_read;
-
-        // Reading the data and making sure it's page-aligned + won't crash due
-        // to out of bounds using mmap() is very complicated.
-        // we just read the whole thing into memory for now.
-        // at the very least
-        // if you have not a ton of code, we only do a single read() call
-        if (Environment.allow_assert or offsets.byte_count > 1024 * 3) {
-            const offset_from_end = trailer_bytes.len - (@intFromPtr(end) - @intFromPtr(@as([]u8, &trailer_bytes).ptr));
-            std.posix.lseek_END(self_exe.cast(), -@as(i64, @intCast(offset_from_end + offsets.byte_count))) catch return null;
-
-            if (comptime Environment.allow_assert) {
-                // actually we just want to verify this logic is correct in development
-                if (offsets.byte_count <= 1024 * 3) {
-                    to_read_from = try bun.default_allocator.alloc(u8, offsets.byte_count);
-                }
+            const elf_bytes_slice = elf_bytes[elf_bytes.len - @sizeOf(Offsets) - trailer.len ..];
+            const trailer_bytes = elf_bytes[elf_bytes.len - trailer.len ..][0..trailer.len];
+            if (!bun.strings.eqlComptime(trailer_bytes, trailer)) {
+                Output.debugWarn("bun standalone module graph has invalid trailer", .{});
+                return null;
             }
-
-            var remain = to_read_from;
-            while (remain.len > 0) {
-                switch (Syscall.read(self_exe, remain)) {
-                    .result => |read| {
-                        if (read == 0) return null;
-
-                        remain = remain[read..];
-                    },
-                    .err => {
-                        bun.default_allocator.free(to_read);
-                        return null;
-                    },
-                }
-            }
+            const offsets = std.mem.bytesAsValue(Offsets, elf_bytes_slice).*;
+            return try fromBytesAlloc(allocator, @constCast(elf_bytes), offsets);
         }
 
-        if (offsets.byte_count <= 1024 * 3) {
-            // we already have the bytes
-            end -= offsets.byte_count;
-            @memcpy(to_read[0..offsets.byte_count], end[0..offsets.byte_count]);
-            if (comptime Environment.allow_assert) {
-                bun.assert(bun.strings.eqlLong(to_read, end[0..offsets.byte_count], true));
-            }
-        }
-
-        return try fromBytesAlloc(allocator, to_read, offsets);
+        comptime unreachable;
     }
 
     /// Allocates a StandaloneModuleGraph on the heap, populates it from bytes, sets it globally, and returns the pointer.
@@ -1362,107 +1352,6 @@ pub const StandaloneModuleGraph = struct {
         graph_ptr.* = try StandaloneModuleGraph.fromBytes(allocator, raw_bytes, offsets);
         graph_ptr.set();
         return graph_ptr;
-    }
-
-    /// heuristic: `bun build --compile` won't be supported if the name is "bun", "bunx", or "node".
-    /// this is a cheap way to avoid the extra overhead of opening the executable, and also just makes sense.
-    fn isBuiltInExe(comptime T: type, argv0: []const T) bool {
-        if (argv0.len == 0) return false;
-
-        if (argv0.len == 3) {
-            if (bun.strings.eqlComptimeCheckLenWithType(T, argv0, bun.strings.literal(T, "bun"), false)) {
-                return true;
-            }
-        }
-
-        if (argv0.len == 4) {
-            if (bun.strings.eqlComptimeCheckLenWithType(T, argv0, bun.strings.literal(T, "bunx"), false)) {
-                return true;
-            }
-
-            if (bun.strings.eqlComptimeCheckLenWithType(T, argv0, bun.strings.literal(T, "node"), false)) {
-                return true;
-            }
-        }
-
-        if (comptime Environment.isDebug) {
-            if (bun.strings.eqlComptimeCheckLenWithType(T, argv0, bun.strings.literal(T, "bun-debug"), true)) {
-                return true;
-            }
-            if (bun.strings.eqlComptimeCheckLenWithType(T, argv0, bun.strings.literal(T, "bun-debugx"), true)) {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    fn openSelf() std.fs.OpenSelfExeError!bun.FileDescriptor {
-        if (!Environment.isWindows) {
-            const argv = bun.argv;
-            if (argv.len > 0) {
-                if (isBuiltInExe(u8, argv[0])) {
-                    return error.FileNotFound;
-                }
-            }
-        }
-
-        switch (Environment.os) {
-            .linux => {
-                if (std.fs.openFileAbsoluteZ("/proc/self/exe", .{})) |easymode| {
-                    return .fromStdFile(easymode);
-                } else |_| {
-                    if (bun.argv.len > 0) {
-                        // The user doesn't have /proc/ mounted, so now we just guess and hope for the best.
-                        var whichbuf: bun.PathBuffer = undefined;
-                        if (bun.which(
-                            &whichbuf,
-                            bun.env_var.PATH.get() orelse return error.FileNotFound,
-                            "",
-                            bun.argv[0],
-                        )) |path| {
-                            return .fromStdFile(try std.fs.cwd().openFileZ(path, .{}));
-                        }
-                    }
-
-                    return error.FileNotFound;
-                }
-            },
-            .mac => {
-                // Use of MAX_PATH_BYTES here is valid as the resulting path is immediately
-                // opened with no modification.
-                const self_exe_path = try bun.selfExePath();
-                const file = try std.fs.openFileAbsoluteZ(self_exe_path.ptr, .{});
-                return .fromStdFile(file);
-            },
-            .windows => {
-                const image_path_unicode_string = std.os.windows.peb().ProcessParameters.ImagePathName;
-                const image_path = image_path_unicode_string.Buffer.?[0 .. image_path_unicode_string.Length / 2];
-
-                var nt_path_buf: bun.WPathBuffer = undefined;
-                const nt_path = bun.strings.addNTPathPrefixIfNeeded(&nt_path_buf, image_path);
-
-                const basename_start = std.mem.lastIndexOfScalar(u16, nt_path, '\\') orelse
-                    return error.FileNotFound;
-                const basename = nt_path[basename_start + 1 .. nt_path.len - ".exe".len];
-                if (isBuiltInExe(u16, basename)) {
-                    return error.FileNotFound;
-                }
-
-                return bun.sys.openFileAtWindows(
-                    .cwd(),
-                    nt_path,
-                    .{
-                        .access_mask = w.SYNCHRONIZE | w.GENERIC_READ,
-                        .disposition = w.FILE_OPEN,
-                        .options = w.FILE_SYNCHRONOUS_IO_NONALERT | w.FILE_OPEN_REPARSE_POINT,
-                    },
-                ).unwrap() catch {
-                    return error.FileNotFound;
-                };
-            },
-            .wasm => @compileError("TODO"),
-        }
     }
 
     /// Source map serialization in the bundler is specially designed to be

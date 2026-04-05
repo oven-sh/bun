@@ -231,7 +231,7 @@ pub const BuilderMethod = enum {
     resolvable,
 
     /// This will filter out disabled dependencies, resulting in more aggresive
-    /// hoisting compared to `hoist()`. We skip dependencies based on 'os', 'cpu',
+    /// hoisting compared to `.resolvable`. We skip dependencies based on 'os', 'cpu',
     /// 'libc' (TODO), and omitted dependency types (`--omit=dev/peer/optional`).
     /// Dependencies of a disabled package are not included in the output.
     filter,

@@ -160,6 +160,50 @@ error: Hello World`,
         stdout: "Buffer\ntrue",
       },
     });
+
+    itBundled(`bun/ProtoLoaderFromJSONReturnsBuffer${compile ? "Compile" : "Bundle"}`, {
+      target: "bun",
+      compile,
+      files: {
+        "/entry.ts": /* js */ `
+          import protoLoader from "@grpc/proto-loader";
+
+          const def = protoLoader.fromJSON({
+            nested: {
+              demo: {
+                nested: {
+                  PingRequest: {
+                    fields: {
+                      name: { type: "string", id: 1 },
+                    },
+                  },
+                  PingResponse: {
+                    fields: {
+                      name: { type: "string", id: 1 },
+                    },
+                  },
+                  Echo: {
+                    methods: {
+                      Ping: {
+                        requestType: "PingRequest",
+                        responseType: "PingResponse",
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          });
+
+          const bytes = def["demo.Echo"].Ping.requestSerialize({ name: "x" });
+          console.log(bytes.constructor.name);
+          console.log(Buffer.isBuffer(bytes));
+        `,
+      },
+      run: {
+        stdout: "Buffer\ntrue",
+      },
+    });
   }
   if (Bun.version.startsWith("1.3") || Bun.version.startsWith("1.2")) {
     for (const backend of ["api", "cli"] as const) {

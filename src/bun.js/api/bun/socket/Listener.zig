@@ -527,11 +527,10 @@ pub fn getPort(this: *Listener, _: *jsc.JSGlobalObject) JSValue {
 pub fn getFD(this: *Listener, _: *jsc.JSGlobalObject) JSValue {
     switch (this.listener) {
         .uws => |uws_listener| {
-            switch (this.ssl) {
-                inline else => |ssl| {
-                    return uws_listener.socket(ssl).fd().toJSWithoutMakingLibUVOwned();
-                },
-            }
+            // A listen socket is always a plain TCP socket, even for SSL listeners.
+            // The per-connection SSL state doesn't exist on the listen socket itself,
+            // so passing is_ssl=true here would dereference uninitialized memory.
+            return uws_listener.socket(false).fd().toJSWithoutMakingLibUVOwned();
         },
         else => return JSValue.jsNumber(-1),
     }

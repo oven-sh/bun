@@ -496,6 +496,43 @@ describe("http.ClientRequest 'upgrade' event", () => {
     }
   });
 
+  test("req.write() after socket.end() reports write-after-end error", async () => {
+    const server = net.createServer(conn => {
+      conn.once("data", () => {
+        conn.write(
+          "HTTP/1.1 101 Switching Protocols\r\n" + "Upgrade: custom\r\n" + "Connection: Upgrade\r\n" + "\r\n",
+        );
+        conn.on("data", () => {});
+      });
+    });
+    const addr = (await listen(server)) as AddressInfo;
+
+    try {
+      const req = http.request({
+        host: "127.0.0.1",
+        port: addr.port,
+        method: "POST",
+        headers: { Connection: "Upgrade", Upgrade: "custom" },
+      });
+      req.flushHeaders();
+      const [, socket] = await once(req, "upgrade");
+      socket.on("error", () => {});
+      // End the upgraded socket's writable side, then write more data via
+      // req.write(). It must fail with ERR_STREAM_WRITE_AFTER_END instead
+      // of silently dropping the data.
+      socket.end();
+      const { promise, resolve } = Promise.withResolvers<Error | undefined>();
+      const ok = req.write("late", err => resolve(err as Error | undefined));
+      expect(ok).toBe(false);
+      const err = await promise;
+      expect(err).toBeDefined();
+      expect((err as any)?.code).toBe("ERR_STREAM_WRITE_AFTER_END");
+      socket.destroy();
+    } finally {
+      server.close();
+    }
+  });
+
   test("res._dump() after upgrade does not throw ReadableStream locked", async () => {
     const server = net.createServer(conn => {
       conn.once("data", () => {

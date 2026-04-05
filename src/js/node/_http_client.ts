@@ -132,16 +132,17 @@ function createUpgradeChannel(initialChunks) {
     resolve: undefined as undefined | (() => void),
     // Pre-upgrade body chunk from req.write(). Accounts bytes so that
     // post-upgrade backpressure checks stay correct.
-    pushChunk(chunk) {
-      if (this.ended) return;
+    pushChunk(chunk): boolean {
+      if (this.ended) return false;
       this.chunks.push(chunk);
       this.queuedBytes += chunk.length;
       this.notify();
+      return true;
     },
     // Post-upgrade writes from socket.write(): apply backpressure.
     pushBuffered(buffer, callback) {
       if (this.ended) {
-        callback(this.endError);
+        callback(this.endError ?? $ERR_STREAM_WRITE_AFTER_END());
         return;
       }
       this.chunks.push(buffer);
@@ -203,7 +204,9 @@ function ClientRequest(input, options, cb) {
   // Current upgrade channel; replaced by startFetch() on happy-eyeballs retries.
   let activeUpgradeChannel: any = undefined;
 
-  const pushChunk = chunk => {
+  // Returns false when the chunk was rejected because the active upgrade
+  // channel has already been ended (e.g., socket.end() on the upgraded socket).
+  const pushChunk = (chunk): boolean => {
     // After the upgrade is established we won't retry (happy-eyeballs is
     // done), so skip kBodyChunks — otherwise post-upgrade req.write()
     // chunks accumulate and saturate the fake-backpressure counter in
@@ -215,12 +218,14 @@ function ClientRequest(input, options, cb) {
     if (writeCount > 1) {
       startFetch();
     }
+    let accepted = true;
     // If startFetch just created the channel, it already captured this chunk
     // via initialChunks.slice(). Only replay if the channel existed before.
     if (hadChannel) {
-      activeUpgradeChannel.pushChunk(chunk);
+      accepted = activeUpgradeChannel.pushChunk(chunk);
     }
     resolveNextChunk?.(false);
+    return accepted;
   };
 
   const write_ = (chunk, encoding, callback) => {
@@ -239,10 +244,9 @@ function ClientRequest(input, options, cb) {
 
     if (!this[kBodyChunks]) {
       this[kBodyChunks] = [];
-      pushChunk(chunk);
-
-      if (callback) callback();
-      return true;
+      const accepted = pushChunk(chunk);
+      if (callback) callback(accepted ? undefined : $ERR_STREAM_WRITE_AFTER_END());
+      return accepted;
     }
 
     // Signal fake backpressure if the body size is > 1024 * 1024
@@ -255,7 +259,11 @@ function ClientRequest(input, options, cb) {
         break;
       }
     }
-    pushChunk(chunk);
+    const accepted = pushChunk(chunk);
+    if (!accepted) {
+      if (callback) callback($ERR_STREAM_WRITE_AFTER_END());
+      return false;
+    }
 
     if (callback) callback();
     return bodySize < MAX_FAKE_BACKPRESSURE_SIZE;

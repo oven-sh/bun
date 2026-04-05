@@ -451,6 +451,17 @@ const fixture = [
         },
       },
     ),
+  () => {
+    const obj = { a: 1 };
+    Object.setPrototypeOf(obj, new Proxy(Object.getPrototypeOf(obj), {}));
+    return obj;
+  },
+  () => {
+    const v1 = Bun.jest();
+    const v2 = v1.expect(v1);
+    Object.setPrototypeOf(v2, new Proxy(Object.getPrototypeOf(v2), {}));
+    return v2;
+  },
 ];
 
 describe("crash testing", () => {

@@ -121,6 +121,36 @@ describe("http.ClientRequest 'upgrade' event", () => {
     }
   });
 
+  test("non-101 response via flushHeaders emits 'response'", async () => {
+    const server = net.createServer(conn => {
+      conn.once("data", () => {
+        conn.end(
+          "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Type: text/plain\r\nContent-Length: 3\r\n\r\nnah",
+        );
+      });
+    });
+    const addr = (await listen(server)) as AddressInfo;
+
+    try {
+      const req = http.request({
+        host: "127.0.0.1",
+        port: addr.port,
+        headers: { Connection: "Upgrade", Upgrade: "custom" },
+      });
+      // Use flushHeaders() instead of end() — this is the path that
+      // previously left onEnd as a no-op so handleResponse never fired.
+      req.flushHeaders();
+
+      const [res] = await once(req, "response");
+      expect(res.statusCode).toBe(400);
+      let body = "";
+      for await (const chunk of res) body += chunk.toString();
+      expect(body).toBe("nah");
+    } finally {
+      server.close();
+    }
+  });
+
   test("non-upgrade requests can reuse keep-alive connections", async () => {
     let connections = 0;
     const server = http.createServer((_req, res) => {

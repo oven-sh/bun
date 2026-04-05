@@ -248,14 +248,46 @@ ExceptionOr<void> Worker::postMessage(JSC::JSGlobalObject& state, JSC::JSValue m
 
     MessageWithMessagePorts messageWithMessagePorts { serialized.releaseReturnValue(), disentangledPorts.releaseReturnValue() };
 
-    this->postTaskToWorkerGlobalScope([message = WTF::move(messageWithMessagePorts)](auto& context) mutable {
+    // Ref the parent event loop while the worker processes this message.
+    // Without this, an unref'd worker causes the parent event loop to exit
+    // before the worker can process the message and send a response.
+    auto* parentContext = scriptExecutionContext();
+    auto parentContextId = parentContext->identifier();
+
+    auto task = Function<void(ScriptExecutionContext&)>([message = WTF::move(messageWithMessagePorts), parentContextId](auto& context) mutable {
         Zig::GlobalObject* globalObject = jsCast<Zig::GlobalObject*>(context.jsGlobalObject());
 
         auto ports = MessagePort::entanglePorts(context, WTF::move(message.transferredPorts));
         auto event = MessageEvent::create(*globalObject, message.message.releaseNonNull(), nullptr, WTF::move(ports));
 
         globalObject->globalEventScope->dispatchEvent(event.event);
+
+        ScriptExecutionContext::postTaskTo(parentContextId, [](ScriptExecutionContext& parentCtx) {
+            parentCtx.unrefEventLoop();
+        });
     });
+
+    {
+        Locker lock(this->m_pendingTasksMutex);
+        if (m_onlineClosingFlags & ClosingFlag) {
+            return {};
+        }
+        if (!(m_onlineClosingFlags & OnlineFlag)) {
+            // Worker not online yet — ref and queue. Each task in
+            // m_pendingTasks holds one parent event loop ref.
+            // dispatchExit uses m_pendingTasks.size() to unwind leaked refs.
+            parentContext->refEventLoop();
+            this->m_pendingTasks.append(WTF::move(task));
+            return {};
+        }
+    }
+    // Worker is online — ref and post directly. The task posts its own
+    // unrefEventLoop when it runs. If posting fails, unref immediately.
+    parentContext->refEventLoop();
+    if (!ScriptExecutionContext::postTaskTo(m_clientIdentifier, WTF::move(task))) {
+        parentContext->unrefEventLoop();
+    }
+
     return {};
 }
 
@@ -399,13 +431,17 @@ void Worker::dispatchErrorWithMessage(WTF::String message)
     auto* ctx = scriptExecutionContext();
     if (!ctx) return;
 
-    ScriptExecutionContext::postTaskTo(ctx->identifier(), [protectedThis = Ref { *this }, message = message.isolatedCopy()](ScriptExecutionContext& context) -> void {
-        ErrorEvent::Init init;
-        init.message = message;
+    ctx->refEventLoop();
+    if (!ScriptExecutionContext::postTaskTo(ctx->identifier(), [protectedThis = Ref { *this }, message = message.isolatedCopy()](ScriptExecutionContext& context) -> void {
+            ErrorEvent::Init init;
+            init.message = message;
 
-        auto event = ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes);
-        protectedThis->dispatchEvent(event);
-    });
+            auto event = ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes);
+            protectedThis->dispatchEvent(event);
+            context.unrefEventLoop();
+        })) {
+        ctx->unrefEventLoop();
+    }
 }
 
 bool Worker::dispatchErrorWithValue(Zig::GlobalObject* workerGlobalObject, JSValue value)
@@ -415,18 +451,25 @@ bool Worker::dispatchErrorWithValue(Zig::GlobalObject* workerGlobalObject, JSVal
     auto serialized = SerializedScriptValue::create(*workerGlobalObject, value, SerializationForStorage::No, SerializationErrorMode::NonThrowing);
     if (!serialized) return false;
 
-    ScriptExecutionContext::postTaskTo(ctx->identifier(), [protectedThis = Ref { *this }, serialized](ScriptExecutionContext& context) -> void {
-        auto* globalObject = context.globalObject();
-        auto& vm = JSC::getVM(globalObject);
-        auto scope = DECLARE_THROW_SCOPE(vm);
-        ErrorEvent::Init init;
-        JSValue deserialized = serialized->deserialize(*globalObject, globalObject, SerializationErrorMode::NonThrowing);
-        RETURN_IF_EXCEPTION(scope, );
-        init.error = deserialized;
+    ctx->refEventLoop();
+    if (!ScriptExecutionContext::postTaskTo(ctx->identifier(), [protectedThis = Ref { *this }, serialized](ScriptExecutionContext& context) -> void {
+            auto* globalObject = context.globalObject();
+            auto& vm = JSC::getVM(globalObject);
+            auto scope = DECLARE_THROW_SCOPE(vm);
+            ErrorEvent::Init init;
+            JSValue deserialized = serialized->deserialize(*globalObject, globalObject, SerializationErrorMode::NonThrowing);
+            if (scope.exception()) {
+                context.unrefEventLoop();
+                return;
+            }
+            init.error = deserialized;
 
-        auto event = ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes);
-        protectedThis->dispatchEvent(event);
-    });
+            auto event = ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes);
+            protectedThis->dispatchEvent(event);
+            context.unrefEventLoop();
+        })) {
+        ctx->unrefEventLoop();
+    }
     return true;
 }
 
@@ -436,14 +479,26 @@ void Worker::dispatchExit(int32_t exitCode)
     if (!ctx)
         return;
 
-    ScriptExecutionContext::postTaskTo(ctx->identifier(), [exitCode, protectedThis = Ref { *this }](ScriptExecutionContext& context) -> void {
-        protectedThis->m_onlineClosingFlags = ClosingFlag;
+    // Set ClosingFlag and count leaked refs atomically. Each task in
+    // m_pendingTasks holds exactly one parent event loop ref.
+    uint32_t leakedRefs = 0;
+    {
+        Locker lock(this->m_pendingTasksMutex);
+        m_onlineClosingFlags.fetch_or(ClosingFlag);
+        leakedRefs = static_cast<uint32_t>(m_pendingTasks.size());
+        m_pendingTasks.clear();
+    }
+
+    ScriptExecutionContext::postTaskTo(ctx->identifier(), [exitCode, leakedRefs, protectedThis = Ref { *this }](ScriptExecutionContext& context) -> void {
+        for (uint32_t i = 0; i < leakedRefs; i++)
+            context.unrefEventLoop();
+
+        protectedThis->m_terminationFlags.fetch_or(TerminatedFlag);
 
         if (protectedThis->hasEventListeners(eventNames().closeEvent)) {
             auto event = CloseEvent::create(exitCode == 0, static_cast<unsigned short>(exitCode), exitCode == 0 ? "Worker terminated normally"_s : "Worker exited abnormally"_s);
             protectedThis->dispatchCloseEvent(event);
         }
-        protectedThis->m_terminationFlags.fetch_or(TerminatedFlag);
     });
 }
 
@@ -653,21 +708,29 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPostMessage,
 
     ExceptionOr<Vector<TransferredMessagePort>> disentangledPorts = MessagePort::disentanglePorts(WTF::move(ports));
     if (disentangledPorts.hasException()) {
-        WebCore::propagateException(*globalObject, scope, serialized.releaseException());
+        WebCore::propagateException(*globalObject, scope, disentangledPorts.releaseException());
         RELEASE_AND_RETURN(scope, {});
     }
     scope.assertNoException();
 
     MessageWithMessagePorts messageWithMessagePorts { serialized.releaseReturnValue(), disentangledPorts.releaseReturnValue() };
 
-    ScriptExecutionContext::postTaskTo(context->identifier(), [message = messageWithMessagePorts, protectedThis = Ref { *worker }, ports](ScriptExecutionContext& context) mutable {
-        Zig::GlobalObject* globalObject = jsCast<Zig::GlobalObject*>(context.jsGlobalObject());
+    // Ref the parent event loop to keep it alive while this message is in-flight.
+    // Without this, an unref'd worker's messages can be lost because the parent
+    // event loop exits before processing the enqueued task.
+    context->refEventLoop();
 
-        auto ports = MessagePort::entanglePorts(context, WTF::move(message.transferredPorts));
-        auto event = MessageEvent::create(*globalObject, message.message.releaseNonNull(), nullptr, WTF::move(ports));
+    if (!ScriptExecutionContext::postTaskTo(context->identifier(), [message = messageWithMessagePorts, protectedThis = Ref { *worker }](ScriptExecutionContext& context) mutable {
+            Zig::GlobalObject* globalObject = jsCast<Zig::GlobalObject*>(context.jsGlobalObject());
 
-        protectedThis->dispatchEvent(event.event);
-    });
+            auto ports = MessagePort::entanglePorts(context, WTF::move(message.transferredPorts));
+            auto event = MessageEvent::create(*globalObject, message.message.releaseNonNull(), nullptr, WTF::move(ports));
+
+            protectedThis->dispatchEvent(event.event);
+            context.unrefEventLoop();
+        })) {
+        context->unrefEventLoop();
+    }
 
     return JSValue::encode(jsUndefined());
 }

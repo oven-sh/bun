@@ -34,6 +34,7 @@ const net = require("node:net");
 const fs = require("node:fs");
 const { $data } = require("node:fs/promises");
 const FileHandle = $data.FileHandle;
+const { HTTPParser, allMethods } = process.binding("http_parser");
 const bunTLSConnectOptions = Symbol.for("::buntlsconnectoptions::");
 const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");
 const kInfoHeaders = Symbol("sent-info-headers");
@@ -3948,13 +3949,247 @@ function closeAllSessions(server: Http2Server | Http2SecureServer) {
   }
 }
 
+class FallbackServerResponse extends EventEmitter {
+  req: any;
+  socket: Socket;
+  statusCode: number;
+  statusMessage: string;
+  headers: Map<string, [string, any]>;
+  headersSent: boolean;
+  finished: boolean;
+  chunkedEncoding: boolean;
+  constructor(req) {
+    super();
+    this.req = req;
+    this.socket = req.socket;
+    this.statusCode = 200;
+    this.statusMessage = "OK";
+    this.headers = new Map();
+    this.headersSent = false;
+    this.finished = false;
+    this.chunkedEncoding = false;
+  }
+  setHeader(name, value) {
+    this.headers.set(name.toLowerCase(), [name, value]);
+    return this;
+  }
+  getHeader(name) {
+    return this.headers.get(name.toLowerCase())?.[1];
+  }
+  getHeaders() {
+    const out = {};
+    for (const [k, v] of this.headers) out[k] = v[1];
+    return out;
+  }
+  hasHeader(name) {
+    return this.headers.has(name.toLowerCase());
+  }
+  removeHeader(name) {
+    this.headers.delete(name.toLowerCase());
+  }
+  writeHead(statusCode: number, statusMessage?: any, headers?: any) {
+    if (this.headersSent) return this;
+    this.statusCode = statusCode;
+    if (typeof statusMessage === "object") {
+      headers = statusMessage;
+      statusMessage = "OK";
+    }
+    if (statusMessage) this.statusMessage = statusMessage;
+    if (headers) {
+      for (const k in headers) this.setHeader(k, headers[k]);
+    }
+    let head = `HTTP/1.1 ${this.statusCode} ${this.statusMessage}\r\n`;
+    if (!this.headers.has("date")) this.setHeader("Date", new Date().toUTCString());
+
+    let hasConnection = this.headers.has("connection");
+    let hasContentLength = this.headers.has("content-length");
+    let hasTransferEncoding = this.headers.has("transfer-encoding");
+
+    if (!hasConnection) {
+      this.setHeader("Connection", "close");
+    }
+    if (!hasContentLength && !hasTransferEncoding) {
+      this.setHeader("Transfer-Encoding", "chunked");
+      this.chunkedEncoding = true;
+    }
+
+    for (const [_, [name, value]] of this.headers) {
+      if (Array.isArray(value)) {
+        for (const v of value) head += `${name}: ${v}\r\n`;
+      } else {
+        head += `${name}: ${value}\r\n`;
+      }
+    }
+    head += "\r\n";
+    this.socket.write(head);
+    this.headersSent = true;
+    return this;
+  }
+  write(chunk: any, encoding?: any, cb?: any) {
+    if (!this.headersSent) this.writeHead(this.statusCode);
+    if (this.chunkedEncoding) {
+      const len = Buffer.byteLength(chunk, encoding);
+      this.socket.write(`${len.toString(16)}\r\n`);
+      this.socket.write(chunk, encoding);
+      return this.socket.write("\r\n", cb);
+    }
+    return this.socket.write(chunk, encoding, cb);
+  }
+  end(chunk?: any, encoding?: any, cb?: any) {
+    if (typeof chunk === "function") {
+      cb = chunk;
+      chunk = null;
+      encoding = null;
+    } else if (typeof encoding === "function") {
+      cb = encoding;
+      encoding = null;
+    }
+    if (chunk) this.write(chunk, encoding);
+    if (!this.headersSent) this.writeHead(this.statusCode);
+    if (this.chunkedEncoding) {
+      this.socket.write("0\r\n\r\n");
+    }
+    this.finished = true;
+    this.socket.end();
+    if (cb) cb();
+    this.emit("finish");
+    return this;
+  }
+}
+
 function connectionListener(socket: Socket) {
   const options = this[bunSocketServerOptions] || {};
   if (socket.alpnProtocol === false || socket.alpnProtocol === "http/1.1") {
-    // TODO: Fallback to HTTP/1.1
-    // if (options.allowHTTP1 === true) {
+    // Handle HTTP/1.1 fallback via ALPN when `allowHTTP1` is enabled.
+    // Note: We cannot use the standard `node:_http_server` ServerResponse here.
+    // Bun's native ServerResponse is heavily optimized and tightly coupled to the
+    // internal `Bun.serve` native handle (`kHandle`). Because this connection is
+    // intercepted from a raw TLSSocket, that native HTTP handle does not exist.
+    // To bridge this gap without triggering infinite timeouts in the native state
+    // machine, we use the built-in `http_parser` binding to safely parse the
+    // request, and a custom `FallbackServerResponse` to manually frame the
+    // outbound payload, fulfilling the standard `node:http` API contract.
+    if (options.allowHTTP1 === true) {
+      // Initialize native HTTP parser
+      const parser = new HTTPParser();
+      // 0 = REQUEST type, 16384 = max header size, 0 = strict parsing flags
+      parser.initialize(0, 16384, 0);
 
-    // }
+      let req: any = null;
+
+      parser[HTTPParser.kOnHeadersComplete] = (
+        versionMajor,
+        versionMinor,
+        headers,
+        method,
+        url,
+        statusCode,
+        statusMessage,
+        upgrade,
+        shouldKeepAlive,
+      ) => {
+        // Initialize the request stream here so it's fresh for every request
+        req = new Readable({ read() {} });
+        req.httpVersionMajor = versionMajor;
+        req.httpVersionMinor = versionMinor;
+        req.httpVersion = `${versionMajor}.${versionMinor}`;
+
+        // Use allMethods from process.binding to get the correct HTTP method
+        req.method = typeof method === "number" ? allMethods[method] : method;
+        req.url = url;
+
+        // 'headers' comes as a flat array from C++: [key1, val1, key2, val2, ...]
+        const headersObj = {};
+        const rawHeaders = [];
+        if (headers) {
+          for (let i = 0; i < headers.length; i += 2) {
+            const key = headers[i];
+            const val = headers[i + 1];
+            rawHeaders.push(key, val);
+
+            const lowerKey = key.toLowerCase();
+            if (headersObj[lowerKey]) {
+              headersObj[lowerKey] += `, ${val}`;
+            } else {
+              headersObj[lowerKey] = val;
+            }
+          }
+        }
+
+        req.headers = headersObj;
+        req.rawHeaders = rawHeaders;
+        req.socket = socket;
+        req.connection = socket;
+
+        const res = new FallbackServerResponse(req);
+
+        if (headersObj.expect === "100-continue") {
+          if (this.listenerCount("checkContinue") > 0) {
+            this.emit("checkContinue", req, res);
+          } else {
+            socket.write("HTTP/1.1 100 Continue\r\n\r\n");
+            this.emit("request", req, res);
+          }
+        } else {
+          this.emit("request", req, res);
+        }
+
+        return 0; // 0 tells the parser to continue processing
+      };
+
+      parser[HTTPParser.kOnBody] = chunk => {
+        if (req) req.push(chunk);
+        return 0;
+      };
+
+      parser[HTTPParser.kOnMessageComplete] = () => {
+        if (req) req.push(null);
+        return 0;
+      };
+
+      let isParserClosed = false;
+
+      const cleanupParser = () => {
+        if (isParserClosed) return;
+        isParserClosed = true;
+
+        // Safely free the native C++ memory
+        if (typeof parser.close === "function") {
+          parser.close();
+        } else if (typeof parser.free === "function") {
+          parser.free();
+        }
+
+        // Prevent memory leaks by detaching closures from the socket
+        socket.removeListener("data", onData);
+        socket.removeListener("end", onEnd);
+        socket.removeListener("close", cleanupParser);
+        socket.removeListener("error", cleanupParser);
+      };
+
+      const onData = chunk => {
+        const ret = parser.execute(chunk);
+        if (ret instanceof Error) {
+          cleanupParser();
+          socket.destroy(ret); // Destroy socket on parse error (e.g. invalid headers)
+        }
+      };
+
+      const onEnd = () => {
+        if (req && !req.readableEnded) req.push(null);
+        cleanupParser();
+      };
+
+      // Attach the named listeners to the socket
+      socket.on("data", onData);
+      socket.on("end", onEnd);
+      socket.on("close", cleanupParser);
+      socket.on("error", cleanupParser);
+
+      socket.resume();
+      return;
+    }
+
     // Let event handler deal with the socket
 
     if (!this.emit("unknownProtocol", socket)) {
@@ -4126,10 +4361,9 @@ class Http2SecureServer extends tls.Server {
   timeout = 0;
   [kSessions] = new SafeSet();
   constructor(options, onRequestHandler) {
-    //TODO: add 'http/1.1' on ALPNProtocols list after allowHTTP1 support
     if (typeof options !== "undefined") {
       if (options && typeof options === "object") {
-        options = { ...options, ALPNProtocols: ["h2"] };
+        options = { ...options, ALPNProtocols: options.allowHTTP1 ? ["h2", "http/1.1"] : ["h2"] };
       } else {
         throw $ERR_INVALID_ARG_TYPE("options", "object", options);
       }

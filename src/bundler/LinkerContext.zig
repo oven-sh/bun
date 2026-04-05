@@ -808,7 +808,7 @@ pub const LinkerContext = struct {
                 .source_index = mapping_source_index,
                 .generated_line = offset.lines.zeroBased(),
                 .generated_column = offset.columns.zeroBased(),
-                .name_index = cumulative_name_count, // offset for name remapping
+                .name_index = cumulative_name_count,
             };
 
             if (offset.lines.zeroBased() == 0) {
@@ -820,6 +820,11 @@ pub const LinkerContext = struct {
             prev_end_state = chunk.end_state;
             prev_end_state.source_index = mapping_source_index;
             prev_column_offset = chunk.final_generated_column;
+
+            // Remap name_index from chunk-local to global coordinates.
+            if (prev_end_state.name_index >= 0) {
+                prev_end_state.name_index += cumulative_name_count;
+            }
 
             if (prev_end_state.generated_line == 0) {
                 prev_end_state.generated_column += start_state.generated_column;
@@ -833,8 +838,19 @@ pub const LinkerContext = struct {
         }
         const mapping_end = j.len;
 
-        // Serialize names array
-        const names_json = if (all_names.items.len > 0) blk: {
+        if (comptime FeatureFlags.source_map_debug_id) {
+            j.pushStatic("\",\n  \"debugId\": \"");
+            j.push(
+                try std.fmt.allocPrint(worker.allocator, "{f}", .{bun.SourceMap.DebugIDFormatter{ .id = isolated_hash }}),
+                worker.allocator,
+            );
+            j.pushStatic("\",\n  \"names\": ");
+        } else {
+            j.pushStatic("\",\n  \"names\": ");
+        }
+
+        // Serialize names array: use pushStatic for empty, push for dynamic
+        if (all_names.items.len > 0) {
             var names_buf: std.ArrayListUnmanaged(u8) = .{};
             try names_buf.appendSlice(worker.allocator, "[");
             for (all_names.items, 0..) |name, idx| {
@@ -844,23 +860,11 @@ pub const LinkerContext = struct {
                 try names_buf.appendSlice(worker.allocator, "\"");
             }
             try names_buf.appendSlice(worker.allocator, "]");
-            break :blk names_buf.items;
-        } else "[]";
-
-        if (comptime FeatureFlags.source_map_debug_id) {
-            j.pushStatic("\",\n  \"debugId\": \"");
-            j.push(
-                try std.fmt.allocPrint(worker.allocator, "{f}", .{bun.SourceMap.DebugIDFormatter{ .id = isolated_hash }}),
-                worker.allocator,
-            );
-            j.pushStatic("\",\n  \"names\": ");
-            j.push(names_json, worker.allocator);
-            j.pushStatic("\n}");
+            j.push(names_buf.items, worker.allocator);
         } else {
-            j.pushStatic("\",\n  \"names\": ");
-            j.push(names_json, worker.allocator);
-            j.pushStatic("\n}");
+            j.pushStatic("[]");
         }
+        j.pushStatic("\n}");
 
         const done = try j.done(worker.allocator);
         bun.assert(done[0] == '{');

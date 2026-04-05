@@ -236,7 +236,7 @@ pub fn NewBuilder(comptime SourceMapFormatType: type) type {
                 buffer.list.items[8..16].* = @as([8]u8, @bitCast(b.source_map.getCount()));
                 buffer.list.items[16..24].* = @as([8]u8, @bitCast(b.approximate_input_line_count));
             }
-            return Chunk{
+            const chunk = Chunk{
                 .buffer = b.source_map.takeBuffer(),
                 .mappings_count = b.source_map.getCount(),
                 .end_state = b.prev_state,
@@ -244,6 +244,13 @@ pub fn NewBuilder(comptime SourceMapFormatType: type) type {
                 .should_ignore = b.source_map.shouldIgnore(),
                 .names = if (b.names_list.items.len > 0) b.names_list.items else null,
             };
+            // Transfer ownership: reset Builder's list so it won't free the
+            // backing memory when the Builder goes out of scope. The Chunk
+            // now owns the names slice. Also free the dedup map (build-time only).
+            b.names_list = .{};
+            b.names_map.deinit(b.names_allocator);
+            b.names_map = .{};
+            return chunk;
         }
 
         // Scan over the printed text since the last source mapping and update the
@@ -290,6 +297,7 @@ pub fn NewBuilder(comptime SourceMapFormatType: type) type {
                                 .source_index = b.prev_state.source_index,
                                 .original_line = b.prev_state.original_line,
                                 .original_column = b.prev_state.original_column,
+                                .name_index = b.prev_state.name_index,
                             });
                         }
 
@@ -365,6 +373,7 @@ pub fn NewBuilder(comptime SourceMapFormatType: type) type {
                     .source_index = b.prev_state.source_index,
                     .original_line = b.prev_state.original_line,
                     .original_column = b.prev_state.original_column,
+                    .name_index = b.prev_state.name_index,
                 });
             }
 
@@ -412,6 +421,7 @@ pub fn NewBuilder(comptime SourceMapFormatType: type) type {
                     .source_index = b.prev_state.source_index,
                     .original_line = b.prev_state.original_line,
                     .original_column = b.prev_state.original_column,
+                    .name_index = b.prev_state.name_index,
                 });
             }
 

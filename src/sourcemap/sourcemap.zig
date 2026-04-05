@@ -929,8 +929,10 @@ pub fn appendMappingToBuffer(buffer: *MutableString, last_byte: u8, prev_state: 
     };
 
     // 5th VLQ field: name index (only when name_index >= 0)
+    // Use 0 as baseline when previous mapping had no name (name_index == -1),
+    // since the source map spec delta-encodes against the last emitted name index.
     const name_vlq = if (has_name)
-        VLQ.encode(current_state.name_index -| prev_state.name_index)
+        VLQ.encode(current_state.name_index -| @max(prev_state.name_index, 0))
     else
         VLQ.encode(0);
 

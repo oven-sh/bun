@@ -921,7 +921,7 @@ it("WebView.closeAll() kills the host subprocess and pending promises reject", a
       "-e",
       `
         const view = new Bun.WebView({ width: 200, height: 200 });
-        await view.navigate("data:text/html,<body>test</body>");
+        await view.navigate("data:text/html," + encodeURIComponent("<body>test</body>"));
         const p = view.evaluate("new Promise(() => {})"); // never resolves
         Bun.WebView.closeAll();
         // SIGKILL → socket EOF or EVFILT_PROC (whichever wins) →

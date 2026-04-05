@@ -315,6 +315,32 @@ function createTest(arg0: unknown, arg1: unknown, arg2: unknown) {
       }
     };
 
+    // If fn expects a done callback (2+ params: context, done), pass a
+    // guarded callback and wait for the user to call it.
+    if (fn.length >= 2) {
+      let doneCalled = false;
+      const userDone = (error?: unknown) => {
+        if (doneCalled) return;
+        doneCalled = true;
+        endTest(error);
+      };
+
+      let result: unknown;
+      try {
+        result = fn(context, userDone);
+      } catch (error) {
+        userDone(error);
+        return;
+      }
+      // If fn is async, catch rejections so they fail the test instead of
+      // becoming unhandled. Only .catch — .then is omitted because completion
+      // is signaled by the user calling done(), not by promise resolution.
+      if (result instanceof Promise) {
+        (result as Promise<unknown>).catch(error => userDone(error));
+      }
+      return;
+    }
+
     let result: unknown;
     try {
       result = fn(context);
@@ -395,7 +421,7 @@ function createHook(arg0: unknown, arg1: unknown) {
   return { options, fn: runHook };
 }
 
-type TestFn = (ctx: TestContext) => unknown | Promise<unknown>;
+type TestFn = (ctx: TestContext, done?: (error?: unknown) => void) => unknown | Promise<unknown>;
 type HookFn = () => unknown | Promise<unknown>;
 
 type TestOptions = {

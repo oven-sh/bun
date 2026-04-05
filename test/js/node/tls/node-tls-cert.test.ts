@@ -78,7 +78,7 @@ function connect(options: any) {
         resolveOrReject();
       })
       .listen(0, function () {
-        const optClient = { ...options.client, port: server.server.address().port, host: "127.0.0.1" };
+        const optClient = { ...options.client, port: server.server.address().port };
         try {
           const conn = tls
             .connect(optClient, () => {
@@ -591,6 +591,7 @@ describe("tls ciphers should work", () => {
         socket = tls.connect({
           port: (server.address() as AddressInfo).port,
           host: "127.0.0.1",
+          servername: "agent10.example.com",
           ca: serverTls.ca,
           ciphers: cipher_name,
         });

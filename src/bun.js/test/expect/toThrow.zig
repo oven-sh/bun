@@ -117,7 +117,15 @@ pub fn toThrow(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame
             return this.throw(globalThis, signature, "\n\nExpected message: not <green>{f}<r>\n", .{expected_message.toFmt(&formatter)});
         }
 
-        if (!result.isInstanceOf(globalThis, expected_value)) return .js_undefined;
+        const is_instance = blk: {
+            var scope: jsc.TopExceptionScope = undefined;
+            scope.init(globalThis, @src());
+            defer scope.deinit();
+            const r = result.isInstanceOf(globalThis, expected_value);
+            try scope.returnIfException();
+            break :blk r;
+        };
+        if (!is_instance) return .js_undefined;
 
         var expected_class = ZigString.Empty;
         try expected_value.getClassName(globalThis, &expected_class);
@@ -237,7 +245,15 @@ pub fn toThrow(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame
             return this.throw(globalThis, signature, "\n\nExpected message: <green>{f}<r>\nReceived value: <red>{f}<r>\n", .{ expected_fmt, received_fmt });
         }
 
-        if (result.isInstanceOf(globalThis, expected_value)) return .js_undefined;
+        const is_instance = blk: {
+            var scope: jsc.TopExceptionScope = undefined;
+            scope.init(globalThis, @src());
+            defer scope.deinit();
+            const r = result.isInstanceOf(globalThis, expected_value);
+            try scope.returnIfException();
+            break :blk r;
+        };
+        if (is_instance) return .js_undefined;
 
         // error: received error not instance of received error constructor
         var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };

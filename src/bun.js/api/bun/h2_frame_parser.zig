@@ -2345,6 +2345,96 @@ pub const H2FrameParser = struct {
         return data.len;
     }
 
+    /// RFC 7540 Section 6.6: Handle PUSH_PROMISE frame (type=0x5).
+    /// PUSH_PROMISE frames are sent by the server to notify the client that
+    /// it intends to initiate a new stream for a server push.
+    /// Format: [Pad Length (1)?] [R + Promised Stream ID (4)] [Header Block Fragment (*)] [Padding (*)]
+    pub fn handlePushPromiseFrame(this: *H2FrameParser, frame: FrameHeader, data: []const u8, stream_: ?*Stream) bun.JSError!usize {
+        log("handlePushPromiseFrame {s}", .{if (this.isServer) "server" else "client"});
+        _ = stream_ orelse {
+            this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "PUSH_PROMISE on connection stream", this.lastStreamID, true);
+            return data.len;
+        };
+
+        // Servers must not receive PUSH_PROMISE frames
+        if (this.isServer) {
+            this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "Server received PUSH_PROMISE", this.lastStreamID, true);
+            return data.len;
+        }
+
+        // Check if push is enabled in local settings
+        if (this.localSettings.enablePush == 0) {
+            this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "Push is disabled", this.lastStreamID, true);
+            return data.len;
+        }
+
+        const settings = this.remoteSettings orelse this.localSettings;
+        if (frame.length > settings.maxFrameSize) {
+            this.sendGoAway(frame.streamIdentifier, ErrorCode.FRAME_SIZE_ERROR, "invalid PUSH_PROMISE frame size", this.lastStreamID, true);
+            return data.len;
+        }
+
+        if (handleIncommingPayload(this, data, frame.streamIdentifier)) |content| {
+            const payload = content.data;
+            var offset: usize = 0;
+            var padding: usize = 0;
+            this.readBuffer.reset();
+
+            if (frame.flags & @intFromEnum(HeadersFrameFlags.PADDED) != 0) {
+                if (payload.len == 0) {
+                    this.sendGoAway(frame.streamIdentifier, ErrorCode.FRAME_SIZE_ERROR, "invalid PUSH_PROMISE frame size", this.lastStreamID, true);
+                    return content.end;
+                }
+                padding = payload[0];
+                offset += 1;
+            }
+
+            // Parse the 4-byte promised stream ID
+            if (payload.len < offset + 4 or payload.len -| (offset + 4) < padding) {
+                this.sendGoAway(frame.streamIdentifier, ErrorCode.FRAME_SIZE_ERROR, "PUSH_PROMISE too short for promised stream ID", this.lastStreamID, true);
+                return content.end;
+            }
+            const promised_id = UInt31WithReserved.fromBytes(payload[offset..][0..4]);
+            offset += 4;
+
+            const end = payload.len - padding;
+            if (offset > end) {
+                this.sendGoAway(frame.streamIdentifier, ErrorCode.FRAME_SIZE_ERROR, "invalid PUSH_PROMISE frame size", this.lastStreamID, true);
+                return content.end;
+            }
+
+            // RFC 7540 Section 6.6: Validate promised stream ID
+            // Must be non-zero, even (server-initiated), and not already in use
+            const promised_stream_id = promised_id.uint31;
+            if (promised_stream_id == 0 or promised_stream_id % 2 != 0) {
+                this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "Invalid promised stream ID", this.lastStreamID, true);
+                return content.end;
+            }
+            if (this.streams.getEntry(promised_stream_id) != null) {
+                this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "Promised stream ID already in use", this.lastStreamID, true);
+                return content.end;
+            }
+
+            // Create the promised stream
+            const promised_stream = this.handleReceivedStreamID(promised_stream_id) orelse {
+                return content.end;
+            };
+            promised_stream.state = .RESERVED_REMOTE;
+
+            // Decode the header block on the promised stream
+            const result_stream = (try this.decodeHeaderBlock(payload[offset..end], promised_stream, frame.flags)) orelse {
+                return content.end;
+            };
+            // Track incomplete header blocks for CONTINUATION frame reassembly
+            result_stream.isWaitingMoreHeaders = frame.flags & @intFromEnum(HeadersFrameFlags.END_HEADERS) == 0;
+
+            return content.end;
+        }
+
+        // needs more data
+        return data.len;
+    }
+
     pub fn handleHeadersFrame(this: *H2FrameParser, frame: FrameHeader, data: []const u8, stream_: ?*Stream) bun.JSError!usize {
         log("handleHeadersFrame {s}", .{if (this.isServer) "server" else "client"});
         var stream = stream_ orelse {
@@ -2591,6 +2681,7 @@ pub const H2FrameParser = struct {
                 @intFromEnum(FrameType.HTTP_FRAME_RST_STREAM) => this.handleRSTStreamFrame(header, bytes, stream),
                 @intFromEnum(FrameType.HTTP_FRAME_ALTSVC) => this.handleAltsvcFrame(header, bytes, stream),
                 @intFromEnum(FrameType.HTTP_FRAME_ORIGIN) => this.handleOriginFrame(header, bytes, stream),
+                @intFromEnum(FrameType.HTTP_FRAME_PUSH_PROMISE) => this.handlePushPromiseFrame(header, bytes, stream),
                 else => {
                     this.sendGoAway(header.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "Unknown frame type", this.lastStreamID, true);
                     return bytes.len;
@@ -2640,6 +2731,7 @@ pub const H2FrameParser = struct {
                 @intFromEnum(FrameType.HTTP_FRAME_RST_STREAM) => this.handleRSTStreamFrame(header, bytes[needed..], stream) + needed,
                 @intFromEnum(FrameType.HTTP_FRAME_ALTSVC) => (try this.handleAltsvcFrame(header, bytes[needed..], stream)) + needed,
                 @intFromEnum(FrameType.HTTP_FRAME_ORIGIN) => (try this.handleOriginFrame(header, bytes[needed..], stream)) + needed,
+                @intFromEnum(FrameType.HTTP_FRAME_PUSH_PROMISE) => (try this.handlePushPromiseFrame(header, bytes[needed..], stream)) + needed,
                 else => {
                     this.sendGoAway(header.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "Unknown frame type", this.lastStreamID, true);
                     return bytes.len;
@@ -2673,6 +2765,7 @@ pub const H2FrameParser = struct {
             @intFromEnum(FrameType.HTTP_FRAME_RST_STREAM) => this.handleRSTStreamFrame(header, bytes[FrameHeader.byteSize..], stream) + FrameHeader.byteSize,
             @intFromEnum(FrameType.HTTP_FRAME_ALTSVC) => (try this.handleAltsvcFrame(header, bytes[FrameHeader.byteSize..], stream)) + FrameHeader.byteSize,
             @intFromEnum(FrameType.HTTP_FRAME_ORIGIN) => (try this.handleOriginFrame(header, bytes[FrameHeader.byteSize..], stream)) + FrameHeader.byteSize,
+            @intFromEnum(FrameType.HTTP_FRAME_PUSH_PROMISE) => (try this.handlePushPromiseFrame(header, bytes[FrameHeader.byteSize..], stream)) + FrameHeader.byteSize,
             else => {
                 this.sendGoAway(header.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "Unknown frame type", this.lastStreamID, true);
                 return bytes.len;
@@ -4501,6 +4594,232 @@ pub const H2FrameParser = struct {
         }
 
         return jsc.JSValue.jsNumber(stream_id);
+    }
+
+    /// RFC 7540 Section 6.6: Send a PUSH_PROMISE frame from the server.
+    /// Takes: original_stream_id, headers, sensitiveHeaders
+    /// Returns: the promised stream ID (even-numbered), or -1 on error.
+    pub fn sendPushPromise(this: *H2FrameParser, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
+        jsc.markBinding(@src());
+        log("sendPushPromise", .{});
+
+        const args_list = callframe.arguments_old(3);
+        if (args_list.len < 3) {
+            return globalObject.throw("Expected original_stream_id, headers and sensitiveHeaders arguments", .{});
+        }
+
+        const orig_stream_id_arg = args_list.ptr[0];
+        const headers_arg = args_list.ptr[1];
+        const sensitive_arg = args_list.ptr[2];
+
+        if (!orig_stream_id_arg.isNumber()) {
+            return globalObject.throw("Expected original_stream_id to be a number", .{});
+        }
+        const orig_stream_id: u32 = orig_stream_id_arg.to(u32);
+
+        // Verify original stream exists
+        _ = this.streams.getPtr(orig_stream_id) orelse {
+            return globalObject.throw("Invalid original stream id", .{});
+        };
+
+        // Check remote settings allow push
+        if (this.remoteSettings) |rs| {
+            if (rs.enablePush == 0) {
+                return jsc.JSValue.jsNumber(-1);
+            }
+        }
+
+        const headers_obj = headers_arg.getObject() orelse {
+            return globalObject.throw("Expected headers to be an object", .{});
+        };
+
+        if (!sensitive_arg.isObject()) {
+            return globalObject.throw("Expected sensitiveHeaders to be an object", .{});
+        }
+
+        // Encode headers with HPACK
+        var buf_fallback = bun.allocators.BufferFallbackAllocator.init(&shared_request_buffer, bun.default_allocator);
+        const alloc = buf_fallback.allocator();
+        var encoded_headers = std.ArrayListUnmanaged(u8){};
+        defer encoded_headers.deinit(alloc);
+        encoded_headers.ensureTotalCapacity(alloc, shared_request_buffer.len) catch {
+            return globalObject.throw("Failed to allocate header buffer", .{});
+        };
+        var name_buffer: [4096]u8 = undefined;
+        @memset(&name_buffer, 0);
+
+        // Allocate the promised stream ID (even-numbered for server push)
+        const promised_stream_id = this.getNextStreamID();
+        if (promised_stream_id > MAX_STREAM_ID) {
+            return jsc.JSValue.jsNumber(-1);
+        }
+
+        // Encode headers - pseudo-headers first, then regular headers
+        var iter = try jsc.JSPropertyIterator(.{
+            .skip_empty_name = false,
+            .include_value = true,
+        }).init(globalObject, headers_obj);
+        defer iter.deinit();
+        var single_value_headers: [SingleValueHeaders.keys().len]bool = undefined;
+        @memset(&single_value_headers, false);
+
+        for (0..2) |ignore_pseudo_headers| {
+            iter.reset();
+            while (try iter.next()) |header_name| {
+                if (header_name.length() == 0) continue;
+                const name_slice = header_name.toUTF8(bun.default_allocator);
+                defer name_slice.deinit();
+                const name = name_slice.slice();
+                const validated_name = toValidHeaderName(name, name_buffer[0..name.len]) catch {
+                    const exception = globalObject.toTypeError(.INVALID_HTTP_TOKEN, "The arguments Header name is invalid. Received \"{s}\"", .{name});
+                    return globalObject.throwValue(exception);
+                };
+
+                if (header_name.charAt(0) == ':') {
+                    if (ignore_pseudo_headers == 1) continue;
+                    // Push promise headers are request pseudo-headers
+                    if (!ValidRequestPseudoHeaders.has(validated_name)) {
+                        if (!globalObject.hasException()) {
+                            return globalObject.ERR(.HTTP2_INVALID_PSEUDOHEADER, "\"{s}\" is an invalid pseudoheader or is used incorrectly", .{name}).throw();
+                        }
+                        return .zero;
+                    }
+                } else if (ignore_pseudo_headers == 0) {
+                    continue;
+                }
+
+                const js_value = iter.value;
+                if (js_value.isUndefinedOrNull()) {
+                    const exception = globalObject.toTypeError(.HTTP2_INVALID_HEADER_VALUE, "Invalid value for header \"{s}\"", .{name});
+                    return globalObject.throwValue(exception);
+                }
+
+                if (js_value.jsType().isArray()) {
+                    var value_iter = try js_value.arrayIterator(globalObject);
+
+                    if (SingleValueHeaders.indexOf(validated_name)) |idx| {
+                        if (value_iter.len > 1 or single_value_headers[idx]) {
+                            if (!globalObject.hasException()) {
+                                const exception = globalObject.toTypeError(.HTTP2_HEADER_SINGLE_VALUE, "Header field \"{s}\" must only have a single value", .{validated_name});
+                                return globalObject.throwValue(exception);
+                            }
+                            return .zero;
+                        }
+                        single_value_headers[idx] = true;
+                    }
+
+                    while (try value_iter.next()) |item| {
+                        if (item.isEmptyOrUndefinedOrNull()) {
+                            if (!globalObject.hasException()) {
+                                return globalObject.ERR(.HTTP2_INVALID_HEADER_VALUE, "Invalid value for header \"{s}\"", .{validated_name}).throw();
+                            }
+                            return .zero;
+                        }
+                        const arr_value_str = item.toJSString(globalObject) catch {
+                            globalObject.clearException();
+                            return globalObject.ERR(.HTTP2_INVALID_HEADER_VALUE, "Invalid value for header \"{s}\"", .{validated_name}).throw();
+                        };
+                        const never_index = (try sensitive_arg.getTruthyPropertyValue(globalObject, validated_name) orelse try sensitive_arg.getTruthyPropertyValue(globalObject, name)) != null;
+                        const arr_value_slice = arr_value_str.toSlice(globalObject, bun.default_allocator);
+                        defer arr_value_slice.deinit();
+                        const arr_value = arr_value_slice.slice();
+                        _ = this.encodeHeaderIntoList(&encoded_headers, alloc, validated_name, arr_value, never_index) catch {
+                            return globalObject.throw("Failed to encode header", .{});
+                        };
+                    }
+                } else if (!js_value.isEmptyOrUndefinedOrNull()) {
+                    if (SingleValueHeaders.indexOf(validated_name)) |idx| {
+                        if (single_value_headers[idx]) {
+                            const exception = globalObject.toTypeError(.HTTP2_HEADER_SINGLE_VALUE, "Header field \"{s}\" must only have a single value", .{validated_name});
+                            return globalObject.throwValue(exception);
+                        }
+                        single_value_headers[idx] = true;
+                    }
+                    const value_str = js_value.toJSString(globalObject) catch {
+                        globalObject.clearException();
+                        return globalObject.ERR(.HTTP2_INVALID_HEADER_VALUE, "Invalid value for header \"{s}\"", .{name}).throw();
+                    };
+                    const never_index = (try sensitive_arg.getTruthyPropertyValue(globalObject, validated_name) orelse try sensitive_arg.getTruthyPropertyValue(globalObject, name)) != null;
+                    const value_slice = value_str.toSlice(globalObject, bun.default_allocator);
+                    defer value_slice.deinit();
+                    const value = value_slice.slice();
+
+                    _ = this.encodeHeaderIntoList(&encoded_headers, alloc, validated_name, value, never_index) catch {
+                        return globalObject.throw("Failed to encode header", .{});
+                    };
+                }
+            }
+        }
+
+        const encoded_data = encoded_headers.items;
+        const encoded_size = encoded_data.len;
+
+        // Create the promised stream in RESERVED_LOCAL state
+        const promised_stream = this.handleReceivedStreamID(promised_stream_id) orelse {
+            return jsc.JSValue.jsNumber(-1);
+        };
+        promised_stream.state = .RESERVED_LOCAL;
+
+        // Build and send PUSH_PROMISE frame
+        const actual_max_frame_size = (this.remoteSettings orelse this.localSettings).maxFrameSize;
+        // PUSH_PROMISE payload: 4 bytes promised stream ID + encoded headers
+        const promised_id_size: usize = 4;
+        const available_payload = actual_max_frame_size - promised_id_size;
+
+        const writer = this.toWriter();
+
+        if (encoded_size <= available_payload) {
+            // Single PUSH_PROMISE frame
+            const payload_size = promised_id_size + encoded_size;
+            var frame: FrameHeader = .{
+                .type = @intFromEnum(FrameType.HTTP_FRAME_PUSH_PROMISE),
+                .flags = @intFromEnum(HeadersFrameFlags.END_HEADERS),
+                .streamIdentifier = orig_stream_id,
+                .length = @intCast(payload_size),
+            };
+            _ = frame.write(@TypeOf(writer), writer);
+
+            // Write promised stream ID (4 bytes)
+            var promised_id = UInt31WithReserved.init(@intCast(promised_stream_id), false);
+            _ = promised_id.write(@TypeOf(writer), writer);
+
+            // Write encoded headers
+            _ = writer.write(encoded_data) catch 0;
+        } else {
+            // PUSH_PROMISE + CONTINUATION frames
+            const first_chunk_size = available_payload;
+            var pp_frame: FrameHeader = .{
+                .type = @intFromEnum(FrameType.HTTP_FRAME_PUSH_PROMISE),
+                .flags = 0, // no END_HEADERS yet
+                .streamIdentifier = orig_stream_id,
+                .length = @intCast(promised_id_size + first_chunk_size),
+            };
+            _ = pp_frame.write(@TypeOf(writer), writer);
+
+            var promised_id = UInt31WithReserved.init(@intCast(promised_stream_id), false);
+            _ = promised_id.write(@TypeOf(writer), writer);
+            _ = writer.write(encoded_data[0..first_chunk_size]) catch 0;
+
+            // CONTINUATION frames for remaining data
+            var offset: usize = first_chunk_size;
+            while (offset < encoded_size) {
+                const remaining = encoded_size - offset;
+                const chunk_size = @min(remaining, actual_max_frame_size);
+                const is_last = (offset + chunk_size >= encoded_size);
+
+                var cont_frame: FrameHeader = .{
+                    .type = @intFromEnum(FrameType.HTTP_FRAME_CONTINUATION),
+                    .flags = if (is_last) @intFromEnum(HeadersFrameFlags.END_HEADERS) else 0,
+                    .streamIdentifier = orig_stream_id,
+                    .length = @intCast(chunk_size),
+                };
+                _ = cont_frame.write(@TypeOf(writer), writer);
+                _ = writer.write(encoded_data[offset..][0..chunk_size]) catch 0;
+                offset += chunk_size;
+            }
+        }
+
+        return jsc.JSValue.jsNumber(promised_stream_id);
     }
 
     pub fn read(this: *H2FrameParser, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {

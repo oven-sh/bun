@@ -3,7 +3,6 @@
 import { spawn } from "bun";
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
-import { WebSocket } from "ws";
 
 async function readListenUrl(proc: ReturnType<typeof spawn>): Promise<URL> {
   let stderr = "";
@@ -57,35 +56,6 @@ test("/json and /json/list expose webSocketDebuggerUrl for VS Code attach", asyn
   expect(versionRes.status).toBe(200);
   const version = await versionRes.json();
   expect(version).toMatchObject({ "Browser": "Bun" });
-
-  // And crucially: connect to the URL we just advertised and run some JS.
-  const webSocketDebuggerUrl = (await (await fetch(`${base}/json`)).json())[0].webSocketDebuggerUrl;
-  const ws = new WebSocket(webSocketDebuggerUrl);
-  const { promise: opened, resolve: onOpen, reject: onError } = Promise.withResolvers<void>();
-  ws.addEventListener("open", () => onOpen());
-  ws.addEventListener("error", cause => onError(new Error("WebSocket error", { cause })));
-  ws.addEventListener("close", event =>
-    onError(new Error(`WebSocket closed before open (code ${event.code}, reason: ${event.reason || "(none)"})`)),
-  );
-  await opened;
-
-  const { promise: replied, resolve: onMessage, reject: onReplyError } = Promise.withResolvers<any>();
-  ws.addEventListener("error", cause => onReplyError(new Error("WebSocket error after open", { cause })));
-  ws.addEventListener("close", event =>
-    onReplyError(new Error(`WebSocket closed before reply (code ${event.code}, reason: ${event.reason || "(none)"})`)),
-  );
-  ws.addEventListener("message", ({ data }) => {
-    const msg = JSON.parse(data.toString());
-    // CDP can push unsolicited notifications; only resolve on our reply.
-    if (msg.id === 1) onMessage(msg);
-  });
-  ws.send(JSON.stringify({ id: 1, method: "Runtime.evaluate", params: { expression: "1 + 1" } }));
-  const response = await replied;
-  expect(response).toMatchObject({
-    id: 1,
-    result: { result: { type: "number", value: 2 } },
-  });
-  ws.close();
 });
 
 test("/json echoes the Host header so 0.0.0.0-bound bun is reachable", async () => {

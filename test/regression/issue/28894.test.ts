@@ -3,7 +3,6 @@
 // (natural completion, `break`, or thrown error) to match Node.js.
 import { expect, test } from "bun:test";
 import { tempDir } from "harness";
-import { opendir, opendirSync } from "node:fs";
 import { opendir as opendirPromise } from "node:fs/promises";
 
 test("Dir async iterator closes handle on break", async () => {

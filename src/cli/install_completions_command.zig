@@ -479,7 +479,7 @@ pub const InstallCompletionsCommand = struct {
 
                 // Sometimes, stat() lies to us and says the file is 0 bytes
                 // Let's not trust it and read the whole file
-                const input_size = @max(dot_zshrc.getEndPos() catch break :brk true, 64 * 1024);
+                const input_size = @max(bun.getEndPosFile(dot_zshrc) catch break :brk true, 64 * 1024);
 
                 defer dot_zshrc.close();
                 var buf = allocator.alloc(

@@ -294,7 +294,7 @@ pub const Archiver = struct {
                     if (size > 0) {
                         var opened = dir.openFileZ(pathname, .{ .mode = .write_only }) catch continue :loop;
                         defer opened.close();
-                        const stat_size = try opened.getEndPos();
+                        const stat_size = try bun.getEndPosFile(opened);
 
                         if (stat_size > 0) {
                             const is_already_top_level = dirname.len == 0;

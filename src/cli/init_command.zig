@@ -422,7 +422,7 @@ pub const InitCommand = struct {
 
                         break :brk end;
                     }
-                    const stat = pkg.stat() catch break :read_package_json;
+                    const stat = bun.statFile(pkg) catch break :read_package_json;
 
                     if (stat.kind != .file or stat.size == 0) {
                         break :read_package_json;

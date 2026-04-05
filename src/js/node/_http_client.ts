@@ -80,32 +80,36 @@ let UpgradedSocket;
 const UPGRADE_HIGH_WATER_MARK = 64 * 1024;
 
 async function* upgradeBodyGenerator(channel) {
-  while (true) {
-    while (channel.chunks.length > 0) {
-      const chunk = channel.chunks.shift();
-      channel.queuedBytes -= chunk.length;
-      // Resolve any writers waiting for backpressure to clear.
-      while (channel.waiters.length > 0 && channel.queuedBytes < channel.highWaterMark) {
-        const cb = channel.waiters.shift();
-        try {
-          cb();
-        } catch {}
+  try {
+    while (true) {
+      while (channel.chunks.length > 0) {
+        const chunk = channel.chunks.shift();
+        channel.queuedBytes -= chunk.length;
+        // Resolve any writers waiting for backpressure to clear.
+        while (channel.waiters.length > 0 && channel.queuedBytes < channel.highWaterMark) {
+          const cb = channel.waiters.shift();
+          try {
+            cb();
+          } catch {}
+        }
+        yield chunk;
       }
-      yield chunk;
-    }
-    if (channel.ended) {
-      // Flush any remaining write callbacks so streams don't stall.
-      while (channel.waiters.length > 0) {
-        const cb = channel.waiters.shift();
-        try {
-          cb();
-        } catch {}
+      if (channel.ended) {
+        return;
       }
-      return;
+      await new Promise(resolve => {
+        channel.resolve = resolve;
+      });
     }
-    await new Promise(resolve => {
-      channel.resolve = resolve;
-    });
+  } finally {
+    // Always flush write callbacks — including when the generator is
+    // terminated via .return() (fetch abort/destroy at a yield point).
+    while (channel.waiters.length > 0) {
+      const cb = channel.waiters.shift();
+      try {
+        cb();
+      } catch {}
+    }
   }
 }
 
@@ -533,7 +537,11 @@ function ClientRequest(input, options, cb) {
             res.req = this;
 
             UpgradedSocket ??= require("internal/http/UpgradedSocket").UpgradedSocket;
-            const socket = new UpgradedSocket(response.body, upgradeChannel, response.url);
+            // For Unix-socket upgrades, response.url is the HTTP URL (e.g.
+            // http://localhost/…) which isn't a real remote address — pass
+            // undefined so the socket doesn't fabricate remoteAddress/Port.
+            const socketURL = this[kSocketPath] ? undefined : response.url;
+            const socket = new UpgradedSocket(response.body, upgradeChannel, socketURL);
 
             // Replace the pre-upgrade placeholder socket on both request and
             // response so teardown paths (req.destroy, etc.) operate on the

@@ -21,6 +21,9 @@ class UpgradedSocket extends Duplex {
     this.#channel = channel;
     this.#url = url;
     this.encrypted = typeof url === "string" && url.startsWith("https:");
+    // A 101 over https:// necessarily passed TLS verification (fetch defaults
+    // to rejectUnauthorized=true), so mirror encrypted onto authorized.
+    this.authorized = this.encrypted;
     if (responseBody) {
       this.#reader = responseBody.getReader();
     }

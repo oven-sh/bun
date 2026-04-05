@@ -156,6 +156,7 @@ const SocketHandlers: SocketHandler = {
     const { data: self } = socket;
     if (!self) return;
 
+    self._unrefTimer();
     self.bytesRead += buffer.length;
     if (!self.push(buffer)) {
       socket.pause();
@@ -302,6 +303,7 @@ const ServerHandlers: SocketHandler<NetSocket> = {
     const { data: self } = socket;
     if (!self) return;
 
+    self._unrefTimer();
     self.bytesRead += buffer.length;
     if (!self.push(buffer)) {
       socket.pause();
@@ -507,6 +509,7 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
   data(socket, buffer) {
     $debug("Bun.Socket data");
     const { self } = socket.data;
+    self._unrefTimer();
     self.bytesRead += buffer.length;
     if (!self.push(buffer)) socket.pause();
   },
@@ -743,8 +746,10 @@ function Socket(options?) {
     // when the onread option is specified we use a different handlers object
     this[khandlers] = {
       ...SocketHandlers2,
-      data({ data: self }, buffer) {
+      data(socket, buffer) {
+        const { self } = socket.data;
         if (!self) return;
+        self._unrefTimer();
         try {
           onread.callback(buffer.length, buffer);
         } catch (e) {

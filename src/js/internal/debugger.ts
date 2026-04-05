@@ -339,6 +339,13 @@ class Debugger {
         return Response.json(versionInfo());
       case "/json":
       case "/json/list":
+        // Unix socket inspectors don't have a host:port to advertise to HTTP
+        // discovery clients (VS Code, chrome://inspect). Skip discovery for
+        // them so we don't hand out garbage URLs; the client would just fall
+        // through to the WebSocket upgrade path anyway.
+        if (this.#url!.protocol.includes("unix")) {
+          return new Response(null, { status: 404 });
+        }
         return Response.json(listInfo(request, this.#url!));
     }
 

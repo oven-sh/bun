@@ -31,9 +31,6 @@ async function readListenUrl(proc: ReturnType<typeof spawn>): Promise<URL> {
         }
       } catch {}
     }
-    if (stderr.includes("Listening:") && stderr.includes("\n")) {
-      // Give the second line a chance to arrive if it hasn't yet.
-    }
   }
   throw new Error("Never saw a ws:// URL in stderr. Got:\n" + stderr);
 }
@@ -80,7 +77,9 @@ test("/json and /json/list expose webSocketDebuggerUrl for VS Code attach", asyn
   const { promise: opened, resolve: onOpen, reject: onError } = Promise.withResolvers<void>();
   ws.addEventListener("open", () => onOpen());
   ws.addEventListener("error", cause => onError(new Error("WebSocket error", { cause })));
-  ws.addEventListener("close", cause => onError(new Error("WebSocket closed before open", { cause })));
+  ws.addEventListener("close", event =>
+    onError(new Error(`WebSocket closed before open (code ${event.code}, reason: ${event.reason || "(none)"})`)),
+  );
   await opened;
 
   const { promise: replied, resolve: onMessage } = Promise.withResolvers<any>();

@@ -247,6 +247,8 @@ struct us_bun_socket_context_options_t {
     int request_cert;
     unsigned int client_renegotiation_limit;
     unsigned int client_renegotiation_window;
+    const unsigned char *protos;
+    unsigned int protos_len;
 };
 
 /* Return 15-bit timestamp for this context */

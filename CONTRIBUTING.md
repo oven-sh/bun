@@ -248,7 +248,7 @@ bun run ci:watch          # watch until the build finishes
 bun run ci:find           # print the build number (compose with raw `bk`)
 ```
 
-All of these accept a target: `#1234` (PR number), a PR URL, a branch name, or a build number. Without one they use the current git branch.
+All of these (except `ci:watch`, which is current-branch only) accept a target: `#1234` (PR number), a PR URL, a branch name, or a build number. Without one they use the current git branch.
 
 ## AddressSanitizer
 

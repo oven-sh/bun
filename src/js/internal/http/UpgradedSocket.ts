@@ -8,6 +8,7 @@ class UpgradedSocket extends Duplex {
   #reading = false;
   #url;
   #addressInfo;
+  #timeoutTimer;
   bytesRead = 0;
   bytesWritten = 0;
   connecting = false;
@@ -16,7 +17,7 @@ class UpgradedSocket extends Duplex {
   authorized = false;
 
   constructor(responseBody, channel, url) {
-    super();
+    super({ readableHighWaterMark: HIGH_WATER_MARK, writableHighWaterMark: HIGH_WATER_MARK });
     this.#channel = channel;
     this.#url = url;
     this.encrypted = typeof url === "string" && url.startsWith("https:");
@@ -74,6 +75,10 @@ class UpgradedSocket extends Duplex {
   _destroy(err, callback) {
     const reader = this.#reader;
     this.#reader = undefined;
+    if (this.#timeoutTimer) {
+      clearTimeout(this.#timeoutTimer);
+      this.#timeoutTimer = undefined;
+    }
     if (reader) {
       try {
         reader.cancel().catch(() => {});
@@ -112,8 +117,9 @@ class UpgradedSocket extends Duplex {
   }
 
   address() {
-    const info = this.#parseAddress();
-    return { address: info.address, family: info.family, port: info.port };
+    // net.Socket.address() returns the LOCAL (bound) endpoint. We don't have
+    // a real bound address, so return an empty object — matches FakeSocket.
+    return {};
   }
 
   get remoteAddress() {
@@ -129,15 +135,15 @@ class UpgradedSocket extends Duplex {
   }
 
   get localAddress() {
-    return this.#parseAddress().family === "IPv6" ? "::" : "0.0.0.0";
+    return undefined;
   }
 
   get localFamily() {
-    return this.#parseAddress().family;
+    return undefined;
   }
 
   get localPort() {
-    return 0;
+    return undefined;
   }
 
   get bufferSize() {
@@ -166,7 +172,18 @@ class UpgradedSocket extends Duplex {
   }
 
   setTimeout(timeout, callback) {
+    if (this.#timeoutTimer) {
+      clearTimeout(this.#timeoutTimer);
+      this.#timeoutTimer = undefined;
+    }
+    this.timeout = timeout;
     if (callback) this.once("timeout", callback);
+    if (timeout > 0) {
+      this.#timeoutTimer = setTimeout(() => {
+        this.#timeoutTimer = undefined;
+        this.emit("timeout");
+      }, timeout);
+    }
     return this;
   }
 

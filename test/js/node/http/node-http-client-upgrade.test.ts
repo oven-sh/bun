@@ -168,12 +168,10 @@ describe("http.ClientRequest 'upgrade' event", () => {
       req.end();
 
       const [res, socket] = await once(req, "upgrade");
-      // socket.address() must exist and return a plain object
+      // socket.address() must exist (returns local endpoint — empty here).
       const info = socket.address();
       expect(info).toBeDefined();
-      expect(info.address).toBe("127.0.0.1");
-      expect(info.port).toBe(addr.port);
-      expect(info.family).toBe("IPv4");
+      // remote* reflect the server we connected to.
       expect(socket.remoteAddress).toBe("127.0.0.1");
       expect(socket.remotePort).toBe(addr.port);
       expect(socket.remoteFamily).toBe("IPv4");
@@ -259,6 +257,62 @@ describe("http.ClientRequest 'upgrade' event", () => {
       const [, socket] = await once(req, "upgrade");
       expect(await promise).toBe("onetwo3!!");
       socket.destroy();
+    } finally {
+      server.close();
+    }
+  });
+
+  test("socket.setTimeout fires a real timer", async () => {
+    const server = net.createServer(conn => {
+      conn.once("data", () => {
+        conn.write(
+          "HTTP/1.1 101 Switching Protocols\r\n" + "Upgrade: websocket\r\n" + "Connection: Upgrade\r\n" + "\r\n",
+        );
+      });
+    });
+    const addr = (await listen(server)) as AddressInfo;
+
+    try {
+      const req = http.request({
+        host: "127.0.0.1",
+        port: addr.port,
+        headers: { Connection: "Upgrade", Upgrade: "websocket" },
+      });
+      req.end();
+      const [, socket] = await once(req, "upgrade");
+
+      const timedOut = once(socket, "timeout");
+      socket.setTimeout(50);
+      expect(socket.timeout).toBe(50);
+      await timedOut;
+      socket.destroy();
+    } finally {
+      server.close();
+    }
+  });
+
+  test("unhandled 101 upgrade destroys the socket", async () => {
+    const { promise: serverConnClosed, resolve: resolveServerClosed } = Promise.withResolvers<void>();
+    const server = net.createServer(conn => {
+      conn.once("data", () => {
+        conn.write(
+          "HTTP/1.1 101 Switching Protocols\r\n" + "Upgrade: websocket\r\n" + "Connection: Upgrade\r\n" + "\r\n",
+        );
+      });
+      conn.once("close", () => resolveServerClosed());
+    });
+    const addr = (await listen(server)) as AddressInfo;
+
+    try {
+      const req = http.request({
+        host: "127.0.0.1",
+        port: addr.port,
+        headers: { Connection: "Upgrade", Upgrade: "websocket" },
+      });
+      req.end();
+      // No 'upgrade' listener — client socket must be destroyed, which tears
+      // down the TCP connection on the server side.
+      await serverConnClosed;
     } finally {
       server.close();
     }

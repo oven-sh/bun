@@ -109,15 +109,12 @@ async function* upgradeBodyGenerator(channel) {
   }
 }
 
-function createUpgradeChannel(chunks) {
-  // Share the body-chunks array with the ClientRequest so that subsequent
-  // req.write() calls after the fetch starts also reach the upgrade stream.
+function createUpgradeChannel(initialChunks) {
+  // Own a private copy of the chunks so happy-eyeballs retries (which create
+  // a fresh channel per attempt) don't share state with a prior attempt.
+  const chunks = initialChunks ? initialChunks.slice() : [];
   let queuedBytes = 0;
-  if (chunks) {
-    for (let i = 0; i < chunks.length; i++) queuedBytes += chunks[i].length;
-  } else {
-    chunks = [];
-  }
+  for (let i = 0; i < chunks.length; i++) queuedBytes += chunks[i].length;
   return {
     chunks,
     queuedBytes,
@@ -125,16 +122,20 @@ function createUpgradeChannel(chunks) {
     waiters: [] as Array<() => void>,
     ended: false,
     resolve: undefined as undefined | (() => void),
-    // Pre-upgrade writes from req.write(): just wake the generator.
-    notify() {
-      const resolve = this.resolve;
-      if (resolve) {
-        this.resolve = undefined;
-        resolve();
-      }
+    // Pre-upgrade body chunk from req.write(). Accounts bytes so that
+    // post-upgrade backpressure checks stay correct.
+    pushChunk(chunk) {
+      if (this.ended) return;
+      this.chunks.push(chunk);
+      this.queuedBytes += chunk.length;
+      this.notify();
     },
     // Post-upgrade writes from socket.write(): apply backpressure.
     pushBuffered(buffer, callback) {
+      if (this.ended) {
+        callback();
+        return;
+      }
       this.chunks.push(buffer);
       this.queuedBytes += buffer.length;
       this.notify();
@@ -144,10 +145,24 @@ function createUpgradeChannel(chunks) {
         callback();
       }
     },
+    notify() {
+      const resolve = this.resolve;
+      if (resolve) {
+        this.resolve = undefined;
+        resolve();
+      }
+    },
     end() {
       if (this.ended) return;
       this.ended = true;
       this.notify();
+      // Flush any waiters so socket.write callbacks don't hang.
+      while (this.waiters.length > 0) {
+        const cb = this.waiters.shift();
+        try {
+          cb();
+        } catch {}
+      }
     },
   };
 }
@@ -175,11 +190,19 @@ function ClientRequest(input, options, cb) {
 
   let writeCount = 0;
   let resolveNextChunk: ((end: boolean) => void) | undefined = _end => {};
+  // Current upgrade channel; replaced by startFetch() on happy-eyeballs retries.
+  let activeUpgradeChannel: any = undefined;
 
   const pushChunk = chunk => {
     this[kBodyChunks].push(chunk);
+    const hadChannel = activeUpgradeChannel !== undefined;
     if (writeCount > 1) {
       startFetch();
+    }
+    // If startFetch just created the channel, it already captured this chunk
+    // via initialChunks.slice(). Only replay if the channel existed before.
+    if (hadChannel) {
+      activeUpgradeChannel.pushChunk(chunk);
     }
     resolveNextChunk?.(false);
   };
@@ -410,16 +433,17 @@ function ClientRequest(input, options, cb) {
       let upgradeChannel;
       if (isUpgrade) {
         fetchOptions.duplex = "half";
-        // Ensure the request has a body-chunks array so the upgrade channel
-        // shares the same array; subsequent req.write() pushes reach the stream.
-        this[kBodyChunks] ??= [];
+        // End any prior channel (happy-eyeballs retry) so its generator
+        // can finish instead of blocking forever on channel.resolve().
+        if (activeUpgradeChannel) {
+          activeUpgradeChannel.end();
+        }
         upgradeChannel = createUpgradeChannel(this[kBodyChunks]);
-        // pushChunk / req.end() call resolveNextChunk to wake the generator.
-        // We do NOT end the channel here — the upgraded socket continues to
-        // use it for bidirectional data after the 101 response.
-        resolveNextChunk = _end => {
-          upgradeChannel.notify();
-        };
+        activeUpgradeChannel = upgradeChannel;
+        // pushChunk forwards to the active channel directly; keep
+        // resolveNextChunk as a no-op for the upgrade path (req.end doesn't
+        // close the channel — the upgraded socket reuses it).
+        resolveNextChunk = _end => {};
       } else if (isDuplex) {
         fetchOptions.duplex = "half";
         keepOpen = true;
@@ -524,7 +548,10 @@ function ClientRequest(input, options, cb) {
             res.complete = true;
             res.push(null);
 
-            this.emit("upgrade", res, socket, kEmptyBuffer);
+            // Match Node: destroy the socket if no 'upgrade' listener attached.
+            if (!this.emit("upgrade", res, socket, kEmptyBuffer)) {
+              socket.destroy();
+            }
             // ClientRequest emits 'close' after a successful upgrade in Node.
             maybeEmitClose();
             return;

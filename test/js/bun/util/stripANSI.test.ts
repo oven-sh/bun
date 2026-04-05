@@ -439,6 +439,32 @@ describe("Bun.stripANSI", () => {
 
     // Strip a single escape character
     ["\x1b", ""],
+
+    // DCS/SOS/PM/APC sequences (ECMA-48 string-introducers terminated by ST).
+    // strip-ansi does not strip these at all, so expected values are explicit.
+    // ST terminator (ESC \):
+    ["\x1bPpayload\x1b\\keep", "keep"], // DCS
+    ["\x1bXpayload\x1b\\keep", "keep"], // SOS
+    ["\x1b^payload\x1b\\keep", "keep"], // PM
+    ["\x1b_payload\x1b\\keep", "keep"], // APC
+    // C1 ST terminator (0x9C):
+    ["\x1b_payload\x9ckeep", "keep"],
+    // BEL terminator (0x07) — not ECMA-48, but emitted in the wild (BuildKite
+    // APC timestamp markers) and already accepted for OSC. Must not consume
+    // the rest of the string.
+    ["\x1bPpayload\x07keep", "keep"], // DCS
+    ["\x1bXpayload\x07keep", "keep"], // SOS
+    ["\x1b^payload\x07keep", "keep"], // PM
+    ["\x1b_payload\x07keep", "keep"], // APC
+    ["before\x1b_bk;t=1\x07after", "beforeafter"],
+    ["a\x1b_bk;t=123\x07b\x1b[31mc\x1b[0m", "abc"],
+    // C1 single-byte introducers with BEL:
+    ["\x90payload\x07keep", "keep"], // C1 DCS
+    ["\x98payload\x07keep", "keep"], // C1 SOS
+    ["\x9epayload\x07keep", "keep"], // C1 PM
+    ["\x9fpayload\x07keep", "keep"], // C1 APC
+    // BuildKite log line (APC timestamp + CSI color), repeated to cross SIMD stride
+    ["\x1b_bk;t=1743798000000\x07\x1b[90m[2026-04-04]\x1b[0m hello\n".repeat(4), "[2026-04-04] hello\n".repeat(4)],
   ];
 
   for (const testCase of testCases) {

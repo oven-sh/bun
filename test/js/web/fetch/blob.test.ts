@@ -254,3 +254,12 @@ test("#12894", () => {
   const bunFile = Bun.file("foo.txt");
   expect(new File([bunFile], "bar.txt").name).toBe("bar.txt");
 });
+
+test("Blob.prototype.stream().text() called twice does not crash", async () => {
+  const blob = new Blob(["hello"]);
+  const stream = blob.stream();
+  const first = stream.text();
+  const second = stream.text();
+  expect(await first).toBe("hello");
+  expect(await second).toBe("");
+});

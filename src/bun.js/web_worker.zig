@@ -410,7 +410,12 @@ fn deinit(this: *WebWorker) void {
         bun.default_allocator.free(preload);
     }
     bun.default_allocator.free(this.preloads);
-    bun.default_allocator.destroy(this);
+    // Intentionally leak the WebWorker struct: the C++ Worker keeps a raw pointer
+    // to it (impl_) that outlives this thread's exit, and race-prone ref/unref/
+    // terminate calls from the main thread would otherwise UAF on the atomic fields.
+    // Once the worker status is .terminated, hasRequestedTerminate() and the status
+    // check in notifyNeedTermination() make further operations safe no-ops.
+    // The struct is tiny and the memory is reclaimed on process exit.
 }
 
 fn flushLogs(this: *WebWorker) void {
@@ -578,7 +583,7 @@ fn spin(this: *WebWorker) void {
 
 /// This is worker.ref()/.unref() from JS (Caller thread)
 pub fn setRef(this: *WebWorker, value: bool) callconv(.c) void {
-    if (this.hasRequestedTerminate()) {
+    if (this.hasRequestedTerminate() or this.status.load(.acquire) == .terminated) {
         return;
     }
 

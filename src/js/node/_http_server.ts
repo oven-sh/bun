@@ -47,6 +47,7 @@ const {
   setServerIdleTimeout,
   setServerCustomOptions,
   getMaxHTTPHeaderSize,
+  noBodySymbol,
 } = require("internal/http");
 const NumberIsNaN = Number.isNaN;
 
@@ -751,7 +752,35 @@ function onServerRequestEvent(this: NodeHTTPServerSocket, event: NodeHTTPRespons
   switch (event) {
     case NodeHTTPResponseAbortEvent.abort: {
       if (!socket.destroyed) {
-        socket.destroy();
+        const req = socket._httpMessage?.req;
+        const bodyIncomplete =
+          req &&
+          !req.complete &&
+          !req[noBodySymbol] &&
+          !req[eofInProgress] &&
+          !((req[kHandle]?.hasBody ?? 0) & NodeHTTPBodyReadState.done);
+        if (bodyIncomplete) {
+          // Connection closed while still reading the request body (e.g.
+          // incomplete chunked encoding).  Emit a parse-error so that
+          // listeners see it — matching Node.js HPE_INVALID_EOF_STATE.
+          const err = $HPE_INVALID_EOF_STATE("Parse Error");
+          if (socket.listenerCount("error") > 0) {
+            socket.destroy(err);
+          } else {
+            // Emit on req directly — req.destroy(err) can't be used because
+            // IncomingMessage._destroy forwards err to socket.destroy(err),
+            // which would throw without a socket error listener.
+            if (req.listenerCount("error") > 0) {
+              req.emit("error", err);
+            }
+            // Mark req as destroyed so #onClose won't call
+            // req.destroy(ConnResetException) and emit a second error.
+            req.destroy();
+            socket.destroy();
+          }
+        } else {
+          socket.destroy();
+        }
       }
       break;
     }
@@ -1675,7 +1704,7 @@ function emitServerSocketEOFNT(self, req) {
   if (req) {
     req[eofInProgress] = true;
   }
-  process.nextTick(emitServerSocketEOF, self);
+  process.nextTick(emitServerSocketEOF, self, req);
 }
 
 let OriginalWriteHeadFn, OriginalImplicitHeadFn;

@@ -170,6 +170,12 @@ const why_params: []const ParamType = &(shared_params ++ [_]ParamType{
     clap.parseParam("--depth <NUM>                          Maximum depth of the dependency tree to display") catch unreachable,
 });
 
+const prune_params: []const ParamType = &(shared_params ++ [_]ParamType{
+    clap.parseParam("<POS> ...                              Target workspace name to prune for") catch unreachable,
+    clap.parseParam("--docker                               Split output for Docker layer caching (json/ + full/)") catch unreachable,
+    clap.parseParam("--out-dir <STR>                        Output directory (default: \"out\")") catch unreachable,
+});
+
 cache_dir: ?string = null,
 lockfile: string = "",
 token: string = "",
@@ -244,6 +250,10 @@ message: ?string = null,
 // `bun pm why` options
 top_only: bool = false,
 depth: ?usize = null,
+
+// `bun prune` options
+docker: bool = false,
+out_dir: string = "",
 
 // `bun audit` options
 audit_level: ?AuditLevel = null,
@@ -717,6 +727,34 @@ pub fn printHelp(subcommand: Subcommand) void {
             Output.pretty(outro_text, .{});
             Output.flush();
         },
+        .prune => {
+            const intro_text =
+                \\
+                \\<b>Usage<r>: <b><green>bun prune<r> <cyan>[flags]<r> <blue>\<name\><r>
+                \\
+                \\  Generate a pruned monorepo subset for a target workspace.
+                \\
+                \\<b>Flags:<r>
+            ;
+            const outro_text =
+                \\
+                \\
+                \\<b>Examples:<r>
+                \\  <d>Prune for a workspace<r>
+                \\  <b><green>bun prune<r> <blue>@myapp/api<r>
+                \\
+                \\  <d>Split for Docker layer caching<r>
+                \\  <b><green>bun prune<r> <blue>@myapp/api<r> <cyan>--docker<r>
+                \\
+                \\  <d>Custom output directory<r>
+                \\  <b><green>bun prune<r> <blue>@myapp/api<r> <cyan>--docker --out-dir=pruned<r>
+                \\
+            ;
+            Output.pretty(intro_text, .{});
+            clap.simpleHelp(prune_params);
+            Output.pretty(outro_text, .{});
+            Output.flush();
+        },
         .scan => {
             const intro_text =
                 \\
@@ -766,6 +804,7 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
         .pack => pack_params,
         .publish => publish_params,
         .why => why_params,
+        .prune => prune_params,
 
         // TODO: we will probably want to do this for other *_params. this way extra params
         // are not included in the help text
@@ -1133,6 +1172,14 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
                 Output.errGeneric("invalid depth value: '{s}', must be a positive integer", .{depth});
                 Global.exit(1);
             };
+        }
+    }
+
+    // `bun prune` options
+    if (comptime subcommand == .prune) {
+        cli.docker = args.flag("--docker");
+        if (args.option("--out-dir")) |dir| {
+            cli.out_dir = dir;
         }
     }
 

@@ -499,9 +499,7 @@ describe("http.ClientRequest 'upgrade' event", () => {
   test("req.write() after socket.end() reports write-after-end error", async () => {
     const server = net.createServer(conn => {
       conn.once("data", () => {
-        conn.write(
-          "HTTP/1.1 101 Switching Protocols\r\n" + "Upgrade: custom\r\n" + "Connection: Upgrade\r\n" + "\r\n",
-        );
+        conn.write("HTTP/1.1 101 Switching Protocols\r\n" + "Upgrade: custom\r\n" + "Connection: Upgrade\r\n" + "\r\n");
         conn.on("data", () => {});
       });
     });

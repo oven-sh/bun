@@ -424,7 +424,12 @@ pub const CronRegisterJob = struct {
         if (!args[1].isString()) return globalObject.throwInvalidArguments("Bun.cron() expects a string schedule as the second argument", .{});
         if (!args[2].isString()) return globalObject.throwInvalidArguments("Bun.cron() expects a string title as the third argument", .{});
 
-        const path_str = try args[0].toBunString(globalObject);
+        const path_str_raw = try args[0].toBunString(globalObject);
+        defer path_str_raw.deref();
+        const path_str = if (path_str_raw.hasPrefixComptime("file://"))
+            bun.jsc.URL.pathFromFileURL(path_str_raw)
+        else
+            path_str_raw.dupeRef();
         defer path_str.deref();
         const schedule_str = try args[1].toBunString(globalObject);
         defer schedule_str.deref();
@@ -452,8 +457,9 @@ pub const CronRegisterJob = struct {
             return globalObject.throwInvalidArguments("Failed to resolve path", .{});
         };
 
-        // Validate path has no single quotes (shell escaping in crontab) or
-        // percent signs (cron interprets % as newline before the shell sees it)
+        // Validate path has no single quotes (shell escaping in crontab),
+        // percent signs (cron interprets % as newline before the shell sees it),
+        // or newlines/carriage returns (crontab entry injection via multi-line paths)
         for (abs_path) |c| {
             if (c == '\'') {
                 bun.default_allocator.free(abs_path);
@@ -462,6 +468,10 @@ pub const CronRegisterJob = struct {
             if (c == '%') {
                 bun.default_allocator.free(abs_path);
                 return globalObject.throwInvalidArguments("Path must not contain percent signs (cron interprets % as newline)", .{});
+            }
+            if (c == '\n' or c == '\r') {
+                bun.default_allocator.free(abs_path);
+                return globalObject.throwInvalidArguments("Path must not contain newline characters", .{});
             }
         }
 

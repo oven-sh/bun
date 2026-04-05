@@ -403,9 +403,7 @@ describe("http.ClientRequest 'upgrade' event", () => {
   test("req.write() after upgrade doesn't saturate fake-backpressure", async () => {
     const server = net.createServer(conn => {
       conn.once("data", () => {
-        conn.write(
-          "HTTP/1.1 101 Switching Protocols\r\n" + "Upgrade: custom\r\n" + "Connection: Upgrade\r\n" + "\r\n",
-        );
+        conn.write("HTTP/1.1 101 Switching Protocols\r\n" + "Upgrade: custom\r\n" + "Connection: Upgrade\r\n" + "\r\n");
         conn.on("data", () => {}); // drain
       });
     });

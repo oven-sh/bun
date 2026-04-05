@@ -245,11 +245,31 @@ pub const test_only_params = [_]ParamType{
 };
 pub const test_params = test_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
 
+fn loadSystemBunfig(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: Command.Tag) !void {
+    if (ctx.has_loaded_system_config) return;
+    ctx.has_loaded_system_config = true;
+
+    var config_buf: bun.PathBuffer = undefined;
+    const result = getSystemConfigPath(&config_buf);
+    if (result.is_explicit and result.path == null) {
+        Output.errGeneric("BUN_SYSTEM_CONFIG path is too long", .{});
+        Global.exit(1);
+    }
+    if (result.path) |path| {
+        // Explicit BUN_SYSTEM_CONFIG should fail loudly; auto-discovered default is optional.
+        try loadBunfig(allocator, !result.is_explicit, path, ctx, comptime cmd);
+    }
+}
+
 fn loadGlobalBunfig(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: Command.Tag) !void {
     if (ctx.has_loaded_global_config) return;
 
     ctx.has_loaded_global_config = true;
 
+    // Load system-wide config first (lowest priority).
+    try loadSystemBunfig(allocator, ctx, cmd);
+
+    // Then load user/home config (overrides system config).
     var config_buf: bun.PathBuffer = undefined;
     if (getHomeConfigPath(&config_buf)) |path| {
         try loadBunfig(allocator, true, path, ctx, comptime cmd);
@@ -312,6 +332,41 @@ fn getHomeConfigPath(buf: *bun.PathBuffer) ?[:0]const u8 {
 
     return null;
 }
+
+const SystemConfigResult = struct {
+    path: ?[:0]const u8,
+    is_explicit: bool,
+};
+
+fn getSystemConfigPath(buf: *bun.PathBuffer) SystemConfigResult {
+    // Allow overriding the system config path via environment variable.
+    if (bun.env_var.BUN_SYSTEM_CONFIG.get()) |custom_path| {
+        if (custom_path.len > 0) {
+            if (custom_path.len < bun.MAX_PATH_BYTES) {
+                @memcpy(buf[0..custom_path.len], custom_path);
+                buf[custom_path.len] = 0;
+                return .{ .path = buf[0..custom_path.len :0], .is_explicit = true };
+            }
+            return .{ .path = null, .is_explicit = true };
+        }
+    }
+
+    if (comptime bun.Environment.isWindows) {
+        // On Windows, use %ALLUSERSPROFILE%\bunfig.toml (typically C:\ProgramData\bunfig.toml).
+        if (bun.env_var.ALLUSERSPROFILE.get()) |all_users| {
+            var paths = [_]string{"bunfig.toml"};
+            return .{ .path = resolve_path.joinAbsStringBufZ(all_users, buf, &paths, .auto), .is_explicit = false };
+        }
+        return .{ .path = null, .is_explicit = false };
+    } else {
+        // On POSIX systems, use /etc/bunfig.toml.
+        const system_path = "/etc/bunfig.toml";
+        @memcpy(buf[0..system_path.len], system_path);
+        buf[system_path.len] = 0;
+        return .{ .path = buf[0..system_path.len :0], .is_explicit = false };
+    }
+}
+
 pub fn loadConfig(allocator: std.mem.Allocator, user_config_path_: ?string, ctx: Command.Context, comptime cmd: Command.Tag) OOM!void {
     // If running as a standalone executable with autoloadBunfig disabled, skip config loading
     // unless an explicit config path was provided via --config
@@ -324,12 +379,26 @@ pub fn loadConfig(allocator: std.mem.Allocator, user_config_path_: ?string, ctx:
     }
 
     var config_buf: bun.PathBuffer = undefined;
+
+    // Load system-wide config when an explicit BUN_SYSTEM_CONFIG is set (any command)
+    // or for commands that load global config (package manager commands).
+    if (bun.env_var.BUN_SYSTEM_CONFIG.get() != null or comptime cmd.readGlobalConfig()) {
+        loadSystemBunfig(allocator, ctx, cmd) catch |err| {
+            if (ctx.log.hasAny()) {
+                ctx.log.print(Output.errorWriter()) catch {};
+            }
+            if (ctx.log.hasAny()) Output.printError("\n", .{});
+            Output.err(err, "failed to load bunfig", .{});
+            Global.crash();
+        };
+    }
+
     if (comptime cmd.readGlobalConfig()) {
         if (!ctx.has_loaded_global_config) {
             ctx.has_loaded_global_config = true;
 
             if (getHomeConfigPath(&config_buf)) |path| {
-                loadConfigPath(allocator, true, path, ctx, comptime cmd) catch |err| {
+                loadBunfig(allocator, true, path, ctx, comptime cmd) catch |err| {
                     if (ctx.log.hasAny()) {
                         ctx.log.print(Output.errorWriter()) catch {};
                     }

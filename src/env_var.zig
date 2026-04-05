@@ -27,6 +27,7 @@
 //!                      times, even though we could only do it once.
 
 pub const AGENT = New(kind.string, "AGENT", .{});
+pub const ALLUSERSPROFILE = PlatformSpecificNew(kind.string, null, "ALLUSERSPROFILE", .{});
 pub const BUN_AGENT_RULE_DISABLED = New(kind.boolean, "BUN_AGENT_RULE_DISABLED", .{ .default = false });
 pub const BUN_COMPILE_TARGET_TARBALL_URL = New(kind.string, "BUN_COMPILE_TARGET_TARBALL_URL", .{});
 pub const BUN_CONFIG_DISABLE_COPY_FILE_RANGE = New(kind.boolean, "BUN_CONFIG_DISABLE_COPY_FILE_RANGE", .{ .default = false });
@@ -63,6 +64,7 @@ pub const BUN_POSTGRES_SOCKET_MONITOR = New(kind.string, "BUN_POSTGRES_SOCKET_MO
 pub const BUN_POSTGRES_SOCKET_MONITOR_READER = New(kind.string, "BUN_POSTGRES_SOCKET_MONITOR_READER", .{});
 pub const BUN_RUNTIME_TRANSPILER_CACHE_PATH = New(kind.string, "BUN_RUNTIME_TRANSPILER_CACHE_PATH", .{});
 pub const BUN_SSG_DISABLE_STATIC_ROUTE_VISITOR = New(kind.boolean, "BUN_SSG_DISABLE_STATIC_ROUTE_VISITOR", .{ .default = false });
+pub const BUN_SYSTEM_CONFIG = New(kind.string, "BUN_SYSTEM_CONFIG", .{});
 pub const BUN_TCC_OPTIONS = New(kind.string, "BUN_TCC_OPTIONS", .{});
 /// Standard C compiler environment variable for include paths (colon-separated).
 /// Used by bun:ffi's TinyCC integration for systems like NixOS.

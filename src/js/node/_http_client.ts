@@ -403,8 +403,7 @@ function ClientRequest(input, options, cb) {
       const upgradeHeaderLower = typeof upgradeHeader === "string" ? upgradeHeader.toLowerCase() : "";
       // HTTP upgrade tokens are case-insensitive (RFC 7230 §6.7). Exclude h2/h2c
       // since HTTP/2 cleartext upgrade follows a different code path in fetch.
-      const isUpgrade =
-        upgradeHeaderLower.length > 0 && upgradeHeaderLower !== "h2" && upgradeHeaderLower !== "h2c";
+      const isUpgrade = upgradeHeaderLower.length > 0 && upgradeHeaderLower !== "h2" && upgradeHeaderLower !== "h2c";
       // no body and not finished
       const isDuplex = isUpgrade || (customBody === undefined && !this.finished);
 

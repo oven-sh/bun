@@ -795,6 +795,28 @@ pub const ShellRmTask = struct {
         const dirfd = this.cwd;
         debug("removeEntryDir({s})", .{path});
 
+        // On Windows, junctions and directory symlinks are directories with reparse
+        // points. We must not recurse into them — just remove the reparse point
+        // itself using REMOVEDIR. Check file attributes to detect reparse points
+        // without following them.
+        if (bun.Environment.isWindows) {
+            const cwd_path = this.getcwd();
+            const attr_result = ShellSyscall.getAttributes(cwd_path, path);
+            switch (attr_result) {
+                .result => |attrs| {
+                    if (attrs.is_reparse_point) {
+                        return switch (ShellSyscall.unlinkatWithFlags(cwd_path, path, std.posix.AT.REMOVEDIR)) {
+                            .result => this.verboseDeleted(dir_task, path),
+                            .err => |e| .{ .err = this.errorWithPath(e, path) },
+                        };
+                    }
+                },
+                .err => {
+                    // If getting attributes fails, continue with normal directory removal
+                },
+            }
+        }
+
         // If `-d` is specified without `-r` then we can just use `rmdirat`
         if (this.opts.remove_empty_dirs and !this.opts.recursive) out_to_iter: {
             var delete_state = RemoveFileParent{
@@ -883,6 +905,52 @@ pub const ShellRmTask = struct {
             switch (current.kind) {
                 .directory => {
                     this.enqueue(dir_task, current.name.sliceAssumeZ(), is_absolute, .dir);
+                },
+                .sym_link => {
+                    const name = current.name.sliceAssumeZ();
+                    const file_path = switch (this.bufJoin(
+                        buf,
+                        &[_][]const u8{
+                            path[0..path.len],
+                            name[0..name.len],
+                        },
+                        .unlink,
+                    )) {
+                        .err => |e| return .{ .err = e },
+                        .result => |p| p,
+                    };
+
+                    if (bun.Environment.isWindows) {
+                        // On Windows, symlinks and junctions that point to directories
+                        // are themselves directories and must be removed with REMOVEDIR.
+                        // First try as a file (works for file symlinks), then fall back
+                        // to REMOVEDIR (works for directory symlinks and junctions).
+                        switch (ShellSyscall.unlinkatWithFlags(this.getcwd(), file_path, 0)) {
+                            .result => {
+                                switch (this.verboseDeleted(dir_task, file_path)) {
+                                    .err => |e| return .{ .err = e },
+                                    else => {},
+                                }
+                            },
+                            .err => {
+                                switch (ShellSyscall.unlinkatWithFlags(this.getcwd(), file_path, std.posix.AT.REMOVEDIR)) {
+                                    .result => {
+                                        switch (this.verboseDeleted(dir_task, file_path)) {
+                                            .err => |e| return .{ .err = e },
+                                            else => {},
+                                        }
+                                    },
+                                    .err => |e2| return .{ .err = this.errorWithPath(e2, name) },
+                                }
+                            },
+                        }
+                    } else {
+                        // On POSIX, unlink works on all symlinks regardless of target type.
+                        switch (this.removeEntryFile(dir_task, file_path, is_absolute, buf, &remove_child_vtable)) {
+                            .err => |e| return .{ .err = this.errorWithPath(e, name) },
+                            .result => {},
+                        }
+                    }
                 },
                 else => {
                     const name = current.name.sliceAssumeZ();

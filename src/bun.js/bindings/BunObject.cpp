@@ -796,7 +796,9 @@ JSC_DEFINE_HOST_FUNCTION(functionPathToFileURL, (JSC::JSGlobalObject * lexicalGl
         auto object = WebCore::DOMURL::create(fileURL.string(), String());
         jsValue = WebCore::toJSNewlyCreated<IDLInterface<DOMURL>>(*lexicalGlobalObject, globalObject, throwScope, WTF::move(object));
     }
-
+    RETURN_IF_EXCEPTION(throwScope, {});
+    if (!jsValue || !jsValue.isCell()) [[unlikely]]
+        return {};
     auto* jsDOMURL = jsCast<JSDOMURL*>(jsValue.asCell());
     vm.heap.reportExtraMemoryAllocated(jsDOMURL, jsDOMURL->wrapped().memoryCostForGC());
     RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(jsValue));

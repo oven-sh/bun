@@ -24,3 +24,14 @@ test("server.url does not crash when unix socket path produces invalid URL", () 
     process.chdir(prev);
   }
 });
+
+test("server.url does not crash with constructor as unix path", () => {
+  using server = Bun.serve({
+    // @ts-expect-error: intentionally passing invalid type
+    unix: Int8Array,
+    fetch() {
+      return new Response("ok");
+    },
+  });
+  expect(() => server.url).toThrow();
+});

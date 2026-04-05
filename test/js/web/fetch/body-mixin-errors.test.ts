@@ -28,7 +28,14 @@ describe("body-mixin-errors", () => {
       const response = new Response("<html><body><h1>Test</h1></body></html>");
       const body = response.body!;
       response.bytes();
-      await expect((body as any)[method]()).rejects.toThrow("Body already used");
+      try {
+        await (body as any)[method]();
+        expect.unreachable("body is already used");
+      } catch (err: any) {
+        expect(err.name).toBe("TypeError");
+        expect(err.message).toBe("Body already used");
+        expect(err instanceof TypeError).toBe(true);
+      }
     },
   );
 });

@@ -327,10 +327,12 @@ pub fn getcwdZ(buf: *bun.PathBuffer) Maybe([:0]const u8) {
     }
 
     const rc: ?[*:0]u8 = @ptrCast(std.c.getcwd(buf, bun.MAX_PATH_BYTES));
-    return if (rc != null)
-        Result{ .result = rc.?[0..std.mem.len(rc.?) :0] }
-    else
-        Result.errnoSysP(@as(c_int, 0), .getcwd, buf).?;
+    if (rc) |p| return Result{ .result = p[0..std.mem.len(p) :0] };
+    // getcwd returned NULL; errno is set by libc. Any bytes left in buf are
+    // undefined per POSIX, so don't attach it as a path. Pass -1 so errnoSys
+    // reads the real errno; fall back to ENOENT if errno was somehow cleared.
+    return Result.errnoSys(@as(c_int, -1), .getcwd) orelse
+        Result{ .err = bun.sys.Error.fromCode(.NOENT, .getcwd) };
 }
 
 const syscall_or_c = if (Environment.isLinux) syscall else bun.c;

@@ -274,6 +274,13 @@ fn setCwd_(globalObject: *jsc.JSGlobalObject, to: *jsc.ZigString) bun.JSError!js
                     return globalObject.throwValue(try err.toJS(globalObject));
                 },
             };
+            // We need room for the path, an optional trailing slash, and a
+            // null terminator. Reject paths that won't fit so the append below
+            // cannot overflow top_level_dir_buf.
+            if (into_cwd_buf.len + 2 > fs.top_level_dir_buf.len) {
+                _ = Syscall.chdir(fs.top_level_dir, fs.top_level_dir);
+                return globalObject.throwValue(try (bun.sys.Error.fromCode(.NAMETOOLONG, .getcwd)).toJS(globalObject));
+            }
             @memcpy(fs.top_level_dir_buf[0..into_cwd_buf.len], into_cwd_buf);
             fs.top_level_dir_buf[into_cwd_buf.len] = 0;
             fs.top_level_dir = fs.top_level_dir_buf[0..into_cwd_buf.len :0];

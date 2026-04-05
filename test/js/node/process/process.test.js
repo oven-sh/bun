@@ -102,6 +102,53 @@ it("process.title with UTF-16 characters", () => {
   expect(process.title).toBe("bun");
 });
 
+it.skipIf(isWindows)("process.chdir() getcwd failure produces a proper error", async () => {
+  // When the resulting cwd exceeds PATH_MAX (1024 on macOS, 4096 on Linux),
+  // getcwd() fails with ERANGE. Bun used to throw {syscall: "TODO", errno: 0};
+  // it should now surface the real syscall and errno.
+  const base = tmpdirSync();
+  try {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const fs = require("node:fs");
+          process.chdir(${JSON.stringify(base)});
+          const SEG = Buffer.alloc(100, "a").toString();
+          try {
+            // 50 * 101 = 5050, enough to exceed PATH_MAX on both macOS (1024)
+            // and Linux (4096).
+            for (let i = 0; i < 50; i++) {
+              fs.mkdirSync(SEG);
+              process.chdir(SEG);
+            }
+            process.stdout.write(JSON.stringify({ noError: true }));
+          } catch (e) {
+            process.stdout.write(JSON.stringify({ code: e.code, syscall: e.syscall, errno: e.errno }));
+          }
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const err = JSON.parse(stdout);
+    // Depending on the starting tmpdir length, we either hit a real getcwd
+    // ERANGE (path > PATH_MAX) or the pre-check that rejects paths that can't
+    // fit with a trailing slash.
+    expect(err.noError).toBeUndefined();
+    expect(err.syscall).toBe("getcwd");
+    expect(["ERANGE", "ENAMETOOLONG"]).toContain(err.code);
+    expect(err.errno).toBeLessThan(0);
+    expect(exitCode).toBe(0);
+  } finally {
+    // rm -rf because fs.rmSync can't walk a tree where paths exceed PATH_MAX.
+    Bun.spawnSync({ cmd: ["rm", "-rf", base] });
+  }
+});
+
 it("process.chdir() on root dir", () => {
   const cwd = process.cwd();
   try {

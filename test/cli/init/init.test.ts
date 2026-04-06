@@ -715,9 +715,7 @@ import path from "path";
       const agentsStat = fs.lstatSync(path.join(temp, "AGENTS.md"));
       expect(agentsStat.isSymbolicLink()).toBe(false);
       expect(agentsStat.isFile()).toBe(true);
-      expect(fs.readFileSync(path.join(temp, "AGENTS.md"), "utf8").trimStart()).toStartWith(
-        AGENTS_MD_BODY_FIRST_LINE,
-      );
+      expect(fs.readFileSync(path.join(temp, "AGENTS.md"), "utf8").trimStart()).toStartWith(AGENTS_MD_BODY_FIRST_LINE);
       // And `CLAUDE.md` gets the symlink back to the fresh AGENTS.md,
       // not a degraded plain-file fallback.
       expect(fs.existsSync(path.join(temp, "CLAUDE.md"))).toBe(true);

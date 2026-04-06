@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
-import net from "node:net";
 import { once } from "node:events";
+import net from "node:net";
 
 // Data that arrives on a server socket before the user attaches a 'data'
 // listener must not be lost. Previously, ServerHandlers.open called

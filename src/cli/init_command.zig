@@ -1061,6 +1061,20 @@ const Template = enum {
         // AND we don't treat a pre-existing one as a symlink target — users
         // opting into that flag want the old standalone-file workflow, so
         // `CLAUDE.md` falls through to the real-file write in Step 2.
+        //
+        // A dangling `AGENTS.md` symlink (target deleted after a prior init)
+        // needs the same `lstat + unlink` recovery as Steps 2 and 3: without
+        // it, `exists()` follows the broken link and reports missing, then
+        // `createNew()` hits EEXIST on the stale dirent, and the error gets
+        // silently swallowed — `agents_md_available` stays `false` and
+        // `CLAUDE.md` silently degrades to a plain file.
+        if (comptime !Environment.isWindows) {
+            if (bun.sys.lstat("AGENTS.md").unwrap()) |st| {
+                if (!bun.sys.exists("AGENTS.md") and (st.mode & bun.S.IFMT) == bun.S.IFLNK) {
+                    _ = bun.sys.unlink("AGENTS.md");
+                }
+            } else |_| {}
+        }
         var agents_md_available = false;
         if (!bun.env_var.BUN_AGENTS_MD_DISABLED.get()) {
             if (bun.sys.exists("AGENTS.md")) {
@@ -1153,7 +1167,13 @@ const Template = enum {
         }
 
         if (Environment.isWindows) {
-            if (bun.getenvZAnyCase("USER")) |user| {
+            // `bun.env_var.USER` is `PlatformSpecificNew(kind.string, "USER", "USERNAME", ...)`
+            // so `platformGet()` returns `$USERNAME` on Windows (the correct variable
+            // on native cmd.exe / PowerShell) and `$USER` on POSIX. The previous
+            // `getenvZAnyCase("USER")` lookup always failed on Windows because
+            // `getenvZAnyCase` is length-sensitive and `"USER"` never matches
+            // `"USERNAME"`, leaving this whole branch dead on native Windows shells.
+            if (bun.env_var.USER.platformGet()) |user| {
                 const pathbuf = bun.path_buffer_pool.get();
                 defer bun.path_buffer_pool.put(pathbuf);
                 const path = std.fmt.bufPrintZ(pathbuf, "C:\\Users\\{s}\\AppData\\Local\\Programs\\Cursor\\Cursor.exe", .{user}) catch {

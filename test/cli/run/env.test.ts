@@ -896,7 +896,9 @@ test.skipIf(!canUseRunuser)("process.env is preserved when cwd lacks read permis
   fs.chmodSync(noreadDir, 0o111);
 
   // Use runuser -m to drop to "nobody" while preserving the environment
-  // (root bypasses DAC checks, so we need a non-root user).
+  // (root bypasses DAC checks, so we need a non-root user). -m preserves
+  // env vars across the PAM user switch, so MY_VAR set in env: below
+  // reaches the spawned bun.
   try {
     // Run via sh so that `cd` happens as the target user.
     const result = Bun.spawnSync({
@@ -908,8 +910,12 @@ test.skipIf(!canUseRunuser)("process.env is preserved when cwd lacks read permis
         "--",
         "/bin/sh",
         "-c",
-        `cd '${noreadDir}' && MY_VAR=visible exec '${bunExe()}' '${scriptPath}'`,
+        `cd '${noreadDir}' && exec '${bunExe()}' '${scriptPath}'`,
       ],
+      env: {
+        ...bunEnv,
+        MY_VAR: "visible",
+      },
       stdout: "pipe",
       stderr: "pipe",
     });

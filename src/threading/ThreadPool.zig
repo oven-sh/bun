@@ -31,7 +31,7 @@ const ThreadPool = @This();
 sleep_on_idle_network_thread: bool = true,
 stack_size: u32,
 max_threads: u32,
-sync: Atomic(u32) = .init(@as(u32, @bitCast(Sync{}))),
+sync: Atomic(Sync) = .init(.{}),
 idle_event: Event = .{},
 join_event: Event = .{},
 run_queue: Node.Queue = .{},
@@ -42,7 +42,7 @@ wait_group: WaitGroup = .init(),
 /// Used by `schedule` to optimize for the case where the thread pool isn't running yet.
 is_running: Atomic(bool) = .init(false),
 
-const Sync = packed struct {
+const Sync = packed struct(u32) {
     /// Tracks the number of threads not searching for Tasks
     idle: u14 = 0,
     /// Tracks the number of threads spawned
@@ -305,7 +305,7 @@ inline fn notify(self: *ThreadPool, is_waking: bool) void {
         // that clears it synchronizes-with this release and will see the task we just
         // pushed. A plain load (even .seq_cst) allows "we see stale notified=true AND
         // worker sees run_queue empty" → task stranded
-        const sync = @as(Sync, @bitCast(self.sync.fetchOr(0, .release)));
+        const sync = self.sync.fetchOr(.{}, .release);
         if (sync.notified) {
             return;
         }
@@ -332,7 +332,7 @@ pub const default_thread_stack_size = brk: {
 /// https://www.youtube.com/watch?v=ys3qcbO5KWw
 pub fn warm(self: *ThreadPool, count: u14) void {
     self.is_running.store(true, .monotonic);
-    var sync = @as(Sync, @bitCast(self.sync.load(.monotonic)));
+    var sync = self.sync.load(.monotonic);
     if (sync.spawned >= count)
         return;
 
@@ -340,12 +340,12 @@ pub fn warm(self: *ThreadPool, count: u14) void {
     while (sync.spawned < to_spawn) {
         var new_sync = sync;
         new_sync.spawned += 1;
-        sync = @as(Sync, @bitCast(self.sync.cmpxchgWeak(
-            @as(u32, @bitCast(sync)),
-            @as(u32, @bitCast(new_sync)),
+        sync = self.sync.cmpxchgWeak(
+            sync,
+            new_sync,
             .release,
             .monotonic,
-        ) orelse break));
+        ) orelse break;
         const spawn_config = std.Thread.SpawnConfig{ .stack_size = default_thread_stack_size };
         const thread = std.Thread.spawn(spawn_config, Thread.run, .{self}) catch return self.unregister(null);
         thread.detach();
@@ -354,7 +354,7 @@ pub fn warm(self: *ThreadPool, count: u14) void {
 
 noinline fn notifySlow(self: *ThreadPool, is_waking: bool) void {
     self.is_running.store(true, .monotonic);
-    var sync = @as(Sync, @bitCast(self.sync.load(.monotonic)));
+    var sync = self.sync.load(.monotonic);
     while (sync.state != .shutdown) {
         const can_wake = is_waking or (sync.state == .pending);
         if (is_waking) {
@@ -376,9 +376,9 @@ noinline fn notifySlow(self: *ThreadPool, is_waking: bool) void {
 
         // Release barrier synchronizes with Acquire in wait()
         // to ensure pushes to run queues happen before observing a posted notification.
-        sync = @bitCast(self.sync.cmpxchgWeak(
-            @as(u32, @bitCast(sync)),
-            @as(u32, @bitCast(new_sync)),
+        sync = self.sync.cmpxchgWeak(
+            sync,
+            new_sync,
             .release,
             .monotonic,
         ) orelse {
@@ -396,14 +396,14 @@ noinline fn notifySlow(self: *ThreadPool, is_waking: bool) void {
             }
 
             return;
-        });
+        };
     }
 }
 
 noinline fn wait(self: *ThreadPool, _is_waking: bool) error{Shutdown}!bool {
     var is_idle = false;
     var is_waking = _is_waking;
-    var sync = @as(Sync, @bitCast(self.sync.load(.monotonic)));
+    var sync = self.sync.load(.monotonic);
 
     while (true) {
         if (sync.state == .shutdown) return error.Shutdown;
@@ -420,44 +420,44 @@ noinline fn wait(self: *ThreadPool, _is_waking: bool) error{Shutdown}!bool {
 
             // Acquire barrier synchronizes with notify()
             // to ensure that pushes to run queue are observed after wait() returns.
-            sync = @as(Sync, @bitCast(self.sync.cmpxchgWeak(
-                @as(u32, @bitCast(sync)),
-                @as(u32, @bitCast(new_sync)),
+            sync = self.sync.cmpxchgWeak(
+                sync,
+                new_sync,
                 .acquire,
                 .monotonic,
             ) orelse {
                 return is_waking or (sync.state == .signaled);
-            }));
+            };
         } else if (!is_idle) {
             var new_sync = sync;
             new_sync.idle += 1;
             if (is_waking)
                 new_sync.state = .pending;
 
-            sync = @as(Sync, @bitCast(self.sync.cmpxchgWeak(
-                @as(u32, @bitCast(sync)),
-                @as(u32, @bitCast(new_sync)),
+            sync = self.sync.cmpxchgWeak(
+                sync,
+                new_sync,
                 .monotonic,
                 .monotonic,
             ) orelse {
                 is_waking = false;
                 is_idle = true;
                 continue;
-            }));
+            };
         } else {
             if (Thread.current) |current| {
                 current.drainIdleEvents();
             }
 
             self.idle_event.wait();
-            sync = @as(Sync, @bitCast(self.sync.load(.monotonic)));
+            sync = self.sync.load(.monotonic);
         }
     }
 }
 
 /// Marks the thread pool as shutdown
 pub noinline fn shutdown(self: *ThreadPool) void {
-    var sync = @as(Sync, @bitCast(self.sync.load(.monotonic)));
+    var sync = self.sync.load(.monotonic);
     while (sync.state != .shutdown) {
         var new_sync = sync;
         new_sync.notified = true;
@@ -465,9 +465,9 @@ pub noinline fn shutdown(self: *ThreadPool) void {
         new_sync.idle = 0;
 
         // Full barrier to synchronize with both wait() and notify()
-        sync = @as(Sync, @bitCast(self.sync.cmpxchgWeak(
-            @as(u32, @bitCast(sync)),
-            @as(u32, @bitCast(new_sync)),
+        sync = self.sync.cmpxchgWeak(
+            sync,
+            new_sync,
             .acq_rel,
             .monotonic,
         ) orelse {
@@ -475,7 +475,7 @@ pub noinline fn shutdown(self: *ThreadPool) void {
             // TODO: I/O polling notification here.
             if (sync.idle > 0) self.idle_event.shutdown();
             return;
-        }));
+        };
     }
 }
 
@@ -495,8 +495,8 @@ fn register(noalias self: *ThreadPool, noalias thread: *Thread) void {
 
 fn unregister(noalias self: *ThreadPool, noalias maybe_thread: ?*Thread) void {
     // Un-spawn one thread, either due to a failed OS thread spawning or the thread is exiting.
-    const one_spawned = @as(u32, @bitCast(Sync{ .spawned = 1 }));
-    const sync = @as(Sync, @bitCast(self.sync.fetchSub(one_spawned, .release)));
+    const one_spawned: Sync = .{ .spawned = 1 };
+    const sync = self.sync.fetchSub(one_spawned, .release);
     assert(sync.spawned > 0);
 
     // The last thread to exit must wake up the thread pool join()er
@@ -518,10 +518,10 @@ fn unregister(noalias self: *ThreadPool, noalias maybe_thread: ?*Thread) void {
 
 fn join(self: *ThreadPool) void {
     // Wait for the thread pool to be shutdown() then for all threads to enter a joinable state
-    var sync = @as(Sync, @bitCast(self.sync.load(.monotonic)));
+    var sync = self.sync.load(.monotonic);
     if (!(sync.state == .shutdown and sync.spawned == 0)) {
         self.join_event.wait();
-        sync = @as(Sync, @bitCast(self.sync.load(.monotonic)));
+        sync = self.sync.load(.monotonic);
     }
 
     assert(sync.state == .shutdown);
@@ -622,7 +622,7 @@ pub const Thread = struct {
         }
 
         // Then try work stealing from other threads
-        var num_threads: u32 = @as(Sync, @bitCast(thread_pool.sync.load(.monotonic))).spawned;
+        var num_threads = thread_pool.sync.load(.monotonic).spawned;
         while (num_threads > 0) : (num_threads -= 1) {
             // Traverse the stack of registered threads on the thread pool
             const target = self.target orelse thread_pool.threads.load(.acquire) orelse unreachable;

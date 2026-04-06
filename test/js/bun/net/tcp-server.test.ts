@@ -314,5 +314,5 @@ it("listener.fd should not crash on TLS listen socket", () => {
     },
   });
   const fd = server.fd;
-  expect(typeof fd === "number" || typeof fd === "bigint").toBe(true);
+  expect(Number(fd)).toBeGreaterThanOrEqual(0);
 });

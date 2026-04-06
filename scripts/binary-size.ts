@@ -60,7 +60,7 @@ async function getSecret(name: string): Promise<string | undefined> {
 console.log("--- Reading sizes from build meta-data");
 const sizes: Sizes = {};
 for (const { triplet } of targets) {
-  const v = agent(["meta-data", "get", `binary-size:${triplet}`, "--default", ""]);
+  const v = agent(["meta-data", "get", `binary-size:${triplet}`], { quiet: true });
   if (!v) {
     console.log(`  ${triplet}: not set (build may have failed), skipping`);
     continue;

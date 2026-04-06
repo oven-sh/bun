@@ -213,7 +213,7 @@ const tableRows = rows
   })
   .join("\n");
 
-const limit = fmtDelta(thresholdBytes);
+const limit = fmtBytes(thresholdBytes);
 const header =
   overThreshold.length > 0
     ? `<b>${overThreshold.length}</b> over ${limit}`
@@ -247,7 +247,7 @@ Bun.spawnSync(
     "--priority",
     failed ? "5" : "2",
   ],
-  { stdin: new Blob([annotation]) },
+  { stdin: new Blob([annotation]), stderr: "inherit" },
 );
 
 for (const r of rows) {

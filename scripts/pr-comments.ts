@@ -12,10 +12,13 @@
 //   bun run pr:comments 28838 --json       # machine-readable output for jq pipelines
 //
 // JSON mode emits one object per entry — no header, no legend — with fields:
-//   { when, user, kind, location?, body, url? }
-// so you can filter with jq, e.g. (the PR is optional, defaults to current branch):
+//   { when, user, kind, location?, body, url?, resolved?, outdated? }
+// resolved/outdated come from GitHub's GraphQL reviewThreads and are only
+// present on line comments and replies (null for issue comments and review
+// verdicts, which have no thread state). You can filter with jq, e.g.
+// (the PR is optional, defaults to current branch):
 //   bun run pr:comments --json | jq '.[] | select(.user == "Jarred-Sumner")'
-//   bun run pr:comments --json | jq '[.[] | select(.kind == "line comment")]'
+//   bun run pr:comments --json | jq '[.[] | select(.resolved == false)]'
 
 import { $ } from "bun";
 
@@ -35,6 +38,59 @@ async function gh(path: string): Promise<Json[]> {
   } catch (err) {
     console.error(`Could not parse response from \`gh api ${path}\` as JSON: ${(err as Error).message}`);
     process.exit(1);
+  }
+}
+
+// Thread state (isResolved, isOutdated) is only exposed via GraphQL — the REST
+// /pulls/N/comments endpoint omits it entirely. Returns a Map from the REST
+// comment id (GraphQL `databaseId`) to its thread's state. On any failure we
+// return null and the caller proceeds without annotations rather than crashing.
+// Note: pagination is not implemented — limit is 100 threads with 100 comments
+// each. Enough for almost every PR.
+type ThreadState = { resolved: boolean; outdated: boolean };
+
+async function fetchThreadState(repo: string, number: number): Promise<Map<number, ThreadState> | null> {
+  const [owner, name] = repo.split("/");
+  const query = `
+    query($owner: String!, $name: String!, $number: Int!) {
+      repository(owner: $owner, name: $name) {
+        pullRequest(number: $number) {
+          reviewThreads(first: 100) {
+            nodes {
+              isResolved
+              isOutdated
+              comments(first: 100) {
+                nodes { databaseId }
+              }
+            }
+          }
+        }
+      }
+    }
+  `;
+  const result = await $`gh api graphql -f query=${query} -F owner=${owner} -F name=${name} -F number=${number}`
+    .quiet()
+    .nothrow();
+  if (result.exitCode !== 0) {
+    console.error(`Warning: could not fetch thread resolution state (gh api graphql exit ${result.exitCode}).`);
+    const stderr = result.stderr.toString().trim();
+    if (stderr) console.error(`  ${stderr}`);
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(result.stdout.toString());
+    const threads = parsed?.data?.repository?.pullRequest?.reviewThreads?.nodes ?? [];
+    const map = new Map<number, ThreadState>();
+    for (const t of threads) {
+      const state: ThreadState = { resolved: !!t.isResolved, outdated: !!t.isOutdated };
+      for (const c of t.comments?.nodes ?? []) {
+        if (typeof c.databaseId === "number") map.set(c.databaseId, state);
+      }
+    }
+    return map;
+  } catch (err) {
+    console.error(`Warning: could not parse GraphQL thread state response: ${(err as Error).message}`);
+    return null;
   }
 }
 
@@ -136,10 +192,11 @@ const positional = rawArgs.filter(a => !a.startsWith("--"))[0];
 
 const { repo, number } = await resolvePr(positional);
 
-const [issueComments, reviews, reviewComments] = await Promise.all([
+const [issueComments, reviews, reviewComments, threadState] = await Promise.all([
   gh(`repos/${repo}/issues/${number}/comments`),
   gh(`repos/${repo}/pulls/${number}/reviews`),
   gh(`repos/${repo}/pulls/${number}/comments`),
+  fetchThreadState(repo, number),
 ]);
 
 type Entry = {
@@ -149,6 +206,8 @@ type Entry = {
   location?: string;
   body: string;
   url?: string;
+  resolved?: boolean | null;
+  outdated?: boolean | null;
 };
 
 const entries: Entry[] = [];
@@ -178,6 +237,10 @@ for (const r of reviews) {
 
 for (const c of reviewComments) {
   const loc = c.path ? `${c.path}${c.line ? `:${c.line}` : ""}` : undefined;
+  // null means "unknown" — either the GraphQL fetch failed, or the comment
+  // isn't in the (paginated) thread set we fetched. Both are distinct from a
+  // confirmed false, so we keep them null rather than assuming resolved=false.
+  const state = threadState?.get(c.id);
   entries.push({
     when: c.created_at,
     user: c.user?.login ?? "?",
@@ -185,6 +248,8 @@ for (const c of reviewComments) {
     location: loc,
     body: c.body ?? "",
     url: c.html_url,
+    resolved: state ? state.resolved : null,
+    outdated: state ? state.outdated : null,
   });
 }
 
@@ -222,6 +287,24 @@ const pluralLabels: Record<string, string> = {
 };
 const summary = [...byKind.entries()].map(([k, n]) => `${n} ${n === 1 ? k : (pluralLabels[k] ?? k + "s")}`).join(", ");
 console.log(`Found: ${summary}`);
+
+// Count how many line comments / replies still need attention vs. done.
+// Only thread-capable entries (those where resolved !== undefined) contribute.
+let unresolvedCount = 0;
+let resolvedCount = 0;
+let outdatedCount = 0;
+for (const e of entries) {
+  if (e.resolved === true) resolvedCount++;
+  else if (e.resolved === false) unresolvedCount++;
+  if (e.outdated === true) outdatedCount++;
+}
+if (resolvedCount || unresolvedCount) {
+  const parts: string[] = [];
+  if (unresolvedCount) parts.push(`${unresolvedCount} unresolved`);
+  if (resolvedCount) parts.push(`${resolvedCount} resolved`);
+  if (outdatedCount) parts.push(`${outdatedCount} outdated`);
+  console.log(`Threads: ${parts.join(", ")}`);
+}
 console.log("");
 
 console.log("Legend:");
@@ -230,10 +313,16 @@ console.log("  review (*)     — top-level review verdict (approved / changes r
 console.log("  line comment   — inline comment on a specific file line (Files changed tab)");
 console.log("  reply          — threaded reply to another line comment");
 console.log("  + suggestion   — body contains a ```suggestion``` block a maintainer can apply");
+console.log("  [resolved]     — reviewer marked this thread resolved; no action needed");
+console.log("  [outdated]     — the line this comment was attached to has since moved");
 console.log("");
 
 for (const e of entries) {
-  const header = [fmtDate(e.when), e.user, e.kind, e.location].filter(Boolean).join(" | ");
+  const flags: string[] = [];
+  if (e.resolved === true) flags.push("resolved");
+  if (e.outdated === true) flags.push("outdated");
+  const flagSegment = flags.length ? `[${flags.join(", ")}]` : undefined;
+  const header = [fmtDate(e.when), e.user, e.kind, e.location, flagSegment].filter(Boolean).join(" | ");
   console.log("---");
   console.log(header);
   console.log(indent(truncateBody(e.body)));

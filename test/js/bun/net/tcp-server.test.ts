@@ -94,19 +94,15 @@ it("should allow using false, null or undefined tls option", () => {
 });
 
 it.skipIf(isWindows)("listener.fd returns a valid file descriptor for TLS listeners", () => {
-  const server = Bun.listen({
+  using server = Bun.listen({
     socket: { data() {} },
     port: 0,
     hostname: "localhost",
     // @ts-ignore
     tls: { passphrase: "x" },
   });
-  try {
-    expect(typeof server.fd).toBe("number");
-    expect(server.fd).toBeGreaterThan(-1);
-  } finally {
-    server.stop();
-  }
+  expect(typeof server.fd).toBe("number");
+  expect(server.fd).toBeGreaterThan(-1);
 });
 
 it("echo server 1 on 1", async () => {

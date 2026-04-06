@@ -111,11 +111,9 @@ async function fetchCanaryBaseline(token: string): Promise<Baseline | undefined>
 }
 
 // ─── Release baseline ───
-// From v1.3.12 onward, upload-release.sh attaches binary-sizes.json to the
-// GitHub release; fetch that. Until a release ships with it, fall back to the
-// hardcoded v1.3.11 numbers below. Delete the fallback once it's unused.
+// Bump when a new release is tagged.
 
-const releaseFallback: Baseline = {
+const release: Baseline = {
   label: "bun-v1.3.11",
   href: "https://github.com/oven-sh/bun/releases/tag/bun-v1.3.11",
   sizes: {
@@ -132,30 +130,6 @@ const releaseFallback: Baseline = {
     "bun-windows-aarch64": 112043008,
   },
 };
-
-console.log("--- Fetching release baseline");
-const release: Baseline = (await fetchReleaseBaseline().catch(() => undefined)) ?? releaseFallback;
-console.log(`  ${release.label}`);
-
-async function fetchReleaseBaseline(): Promise<Baseline | undefined> {
-  const headers: Record<string, string> = { Accept: "application/vnd.github+json" };
-  const token = (await getSecret("GITHUB_TOKEN")) ?? process.env.GITHUB_TOKEN;
-  if (token) headers.Authorization = `Bearer ${token}`;
-
-  const res = await fetch("https://api.github.com/repos/oven-sh/bun/releases/latest", { headers });
-  if (!res.ok) return;
-  const rel = (await res.json()) as {
-    tag_name: string;
-    html_url: string;
-    assets: { name: string; browser_download_url: string }[];
-  };
-  const asset = rel.assets.find(a => a.name === "binary-sizes.json");
-  if (!asset) return;
-  const dl = await fetch(asset.browser_download_url, { redirect: "follow" });
-  if (!dl.ok) return;
-  const json = (await dl.json()) as { sizes: Sizes };
-  return { label: rel.tag_name, href: rel.html_url, sizes: json.sizes };
-}
 
 // ─── Compare & annotate ───
 

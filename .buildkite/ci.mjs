@@ -854,7 +854,6 @@ function getReleaseStep(buildPlatforms, options, { signed = false } = {}) {
   const depends_on = signed
     ? [...buildPlatforms.filter(p => p.os !== "windows").map(p => `${getTargetKey(p)}-build-bun`), "windows-sign"]
     : buildPlatforms.map(platform => `${getTargetKey(platform)}-build-bun`);
-  depends_on.push("binary-size");
 
   return {
     key: "release",

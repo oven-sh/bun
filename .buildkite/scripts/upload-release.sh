@@ -228,7 +228,6 @@ function create_release() {
     bun-windows-x64-baseline-profile.zip
     bun-windows-aarch64.zip
     bun-windows-aarch64-profile.zip
-    binary-sizes.json
   )
 
   function upload_artifact() {

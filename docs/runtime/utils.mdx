@@ -880,6 +880,204 @@ npm/strip-ansi 212,992 chars long-ansi      1.36 ms/iter   1.38 ms
 
 ---
 
+## `Bun.sliceAnsi()`
+
+<Note>Drop-in replacement for `slice-ansi` and `cli-truncate` npm packages</Note>
+
+`Bun.sliceAnsi(input: string, start?: number, end?: number, options?: SliceAnsiOptions): string`
+
+Slice a string by display width (columns) while preserving ANSI escape codes, hyperlinks, and handling Unicode/emoji correctly. This is like `String.prototype.slice()`, but operates on visible column positions rather than character indices.
+
+```ts
+// Basic slicing by column position
+Bun.sliceAnsi("hello world", 0, 5);
+// => "hello"
+
+// ANSI codes are preserved and properly closed
+Bun.sliceAnsi("\u001b[31mhello world\u001b[39m", 0, 5);
+// => "\u001b[31mhello\u001b[39m"
+
+// Works with colored text in the middle
+Bun.sliceAnsi("The \u001b[31mquick\u001b[39m brown fox", 4, 9);
+// => "\u001b[31mquick\u001b[39m"
+```
+
+This is useful for:
+
+- Truncating strings for terminal display
+- Building terminal UIs with fixed-width columns
+- Text alignment in CLIs
+- Viewport clipping in terminal rendering
+
+### CJK and wide characters
+
+CJK (Chinese, Japanese, Korean) characters are correctly counted as 2 columns wide:
+
+```ts
+const text = "你好世界"; // 4 characters, 8 columns
+
+Bun.sliceAnsi(text, 0, 2);
+// => "你" (1 character, 2 columns)
+
+Bun.sliceAnsi(text, 0, 4);
+// => "你好" (2 characters, 4 columns)
+
+Bun.sliceAnsi(text, 2, 6);
+// => "好世" (2 characters, 4 columns)
+
+// Mixed ASCII and CJK
+Bun.sliceAnsi("a你b好c", 1, 4);
+// => "你b" (2 columns for 你, 1 for b)
+```
+
+### Emoji handling
+
+Emoji are handled correctly, including complex sequences:
+
+```ts
+// Basic emoji (width 2)
+Bun.sliceAnsi("👋hello", 0, 2);
+// => "👋"
+
+Bun.sliceAnsi("👋hello", 2, 7);
+// => "hello"
+
+// Emoji with skin tone modifiers stay together
+Bun.sliceAnsi("👋🏽hello", 0, 2);
+// => "👋🏽" (single grapheme cluster)
+
+// ZWJ sequences (family emoji) are kept intact
+Bun.sliceAnsi("👨‍👩‍👧‍👦hello", 0, 2);
+// => "👨‍👩‍👧‍👦"
+
+// Flag emoji (regional indicators)
+Bun.sliceAnsi("🇺🇸hello", 0, 2);
+// => "🇺🇸"
+```
+
+### Negative indices
+
+Like `String.prototype.slice()`, negative indices count from the end:
+
+```ts
+// Last 2 columns
+Bun.sliceAnsi("hello", -2);
+// => "lo"
+
+// Negative end
+Bun.sliceAnsi("hello", 0, -1);
+// => "hell"
+
+// Both negative
+Bun.sliceAnsi("hello", -3, -1);
+// => "ll"
+```
+
+### Text truncation with ellipsis
+
+Pass an `ellipsis` option to add an ellipsis when text is truncated. This replaces the `cli-truncate` npm package:
+
+```ts
+// Truncate at end with ellipsis
+Bun.sliceAnsi("unicorn", 0, 5, { ellipsis: "…" });
+// => "unic…"
+
+// No ellipsis when text fits
+Bun.sliceAnsi("hi", 0, 10, { ellipsis: "…" });
+// => "hi"
+
+// Truncate from start (negative index)
+Bun.sliceAnsi("unicorn", -5, undefined, { ellipsis: "…" });
+// => "…corn"
+
+// Custom ellipsis string
+Bun.sliceAnsi("unicorn", 0, 6, { ellipsis: "..." });
+// => "uni..."
+
+// Middle slice shows ellipsis at both edges
+Bun.sliceAnsi("0123456789", 2, 8, { ellipsis: "…" });
+// => "…3456…"
+```
+
+For convenience, you can pass the ellipsis as a string directly:
+
+```ts
+// String shorthand
+Bun.sliceAnsi("unicorn", 0, 4, "…");
+// => "uni…"
+```
+
+### Ambiguous width characters
+
+Some Unicode characters have ambiguous width—they display as 1 column in Western terminals but 2 columns in CJK terminals. Use `ambiguousIsNarrow` to control this:
+
+```ts
+const greek = "αβγδε"; // Greek letters are ambiguous width
+
+// Default: narrow (1 column each)
+Bun.sliceAnsi(greek, 0, 3);
+// => "αβγ" (3 characters)
+
+// Treat as wide (2 columns each)
+Bun.sliceAnsi(greek, 0, 4, { ambiguousIsNarrow: false });
+// => "αβ" (2 characters = 4 columns)
+```
+
+This matches the behavior of `Bun.stringWidth()` and `Bun.wrapAnsi()`.
+
+### Options
+
+| Option              | Default | Description                                                                         |
+| ------------------- | ------- | ----------------------------------------------------------------------------------- |
+| `ellipsis`          | `""`    | String to append when text is truncated. Common values: `"…"` or `"..."`            |
+| `ambiguousIsNarrow` | `true`  | If `true`, ambiguous-width characters are 1 column. If `false`, they are 2 columns. |
+
+### TypeScript definition
+
+```ts expandable
+namespace Bun {
+  export function sliceAnsi(
+    /**
+     * The string to slice
+     */
+    input: string,
+    /**
+     * Start column index (0-based). Negative values count from end.
+     */
+    start?: number,
+    /**
+     * End column index (exclusive). Negative values count from end.
+     */
+    end?: number,
+    /**
+     * Options or ellipsis string shorthand
+     */
+    options?:
+      | string
+      | boolean
+      | {
+          /**
+           * String to append when text is truncated.
+           * @default ""
+           */
+          ellipsis?: string;
+          /**
+           * If `true`, ambiguous-width characters count as 1 column.
+           * If `false`, they count as 2 columns.
+           * @default true
+           */
+          ambiguousIsNarrow?: boolean;
+        },
+    /**
+     * When 4th arg is a string (ellipsis), this sets ambiguousIsNarrow.
+     */
+    ambiguousIsNarrow?: boolean,
+  ): string;
+}
+```
+
+---
+
 ## `Bun.wrapAnsi()`
 
 <Note>Drop-in replacement for `wrap-ansi` npm package</Note>

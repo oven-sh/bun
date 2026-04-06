@@ -1056,11 +1056,16 @@ const Template = enum {
         // Step 1: Write `AGENTS.md` — the single source of truth. Never
         //         overwrite an existing one; an existing file is still a
         //         valid symlink target for `CLAUDE.md` below.
+        //
+        // When `BUN_AGENTS_MD_DISABLED=1` is set, we don't create `AGENTS.md`
+        // AND we don't treat a pre-existing one as a symlink target — users
+        // opting into that flag want the old standalone-file workflow, so
+        // `CLAUDE.md` falls through to the real-file write in Step 2.
         var agents_md_available = false;
-        if (bun.sys.exists("AGENTS.md")) {
-            agents_md_available = true;
-        } else if (!bun.env_var.BUN_AGENTS_MD_DISABLED.get()) {
-            if (InitCommand.Assets.createNew("AGENTS.md", trimmed_rule)) |_| {
+        if (!bun.env_var.BUN_AGENTS_MD_DISABLED.get()) {
+            if (bun.sys.exists("AGENTS.md")) {
+                agents_md_available = true;
+            } else if (InitCommand.Assets.createNew("AGENTS.md", trimmed_rule)) |_| {
                 agents_md_available = true;
             } else |_| {}
         }

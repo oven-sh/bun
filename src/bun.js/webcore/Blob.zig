@@ -453,7 +453,10 @@ fn _onStructuredCloneDeserialize(
                 if (version == 2) break :versions;
                 if (version == 3) break :versions;
 
-                // Version 4: part boundaries for multi-part blobs.
+                // Version 4: part boundaries for multi-part blobs. The
+                // serializer only writes trailing sizes when part_count > 1
+                // (setPartSizes refuses shorter arrays), so part_count < 2
+                // means "no trailing sizes" — don't drain anything.
                 const part_count = try reader.readInt(u32, .little);
                 if (part_count > 1) {
                     const sizes = try bun.default_allocator.alloc(SizeType, part_count);
@@ -463,9 +466,6 @@ fn _onStructuredCloneDeserialize(
                         sizes[i] = @truncate(try reader.readInt(u64, .little));
                     }
                     setPartSizes(blob.store, sizes);
-                } else if (part_count == 1) {
-                    // Single-part blobs never had part metadata; drain the size anyway.
-                    _ = try reader.readInt(u64, .little);
                 }
             }
 

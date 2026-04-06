@@ -92,13 +92,19 @@ for (let key in bunEnv) {
 
 delete bunEnv.BUN_INSPECT_CONNECT_TO;
 delete bunEnv.NODE_ENV;
-// Insulate tests from the developer's terminal: Claude Code sets `CLAUDECODE=1`
-// and Cursor sets `CURSOR_TRACE_ID` in every child process they spawn.
-// `bun init` detects those to write agent rule files, which would leak into
-// unrelated snapshot tests. Tests that actually want those env vars set
-// them explicitly in their own spawn env.
+// Insulate tests from the developer's terminal. Claude Code sets `CLAUDECODE=1`
+// and Cursor sets `CURSOR_TRACE_ID` in every child process they spawn; the
+// four `*_DISABLED` variables are the opt-out kill switches for `bun init`'s
+// agent rule generation. Any of these leaking from the shell would flip
+// detection in unrelated tests and cause deterministic, developer-specific
+// failures. Tests that actually need any of these set them explicitly in
+// their own spawn env.
 delete bunEnv.CLAUDECODE;
 delete bunEnv.CURSOR_TRACE_ID;
+delete bunEnv.BUN_AGENT_RULE_DISABLED;
+delete bunEnv.BUN_AGENTS_MD_DISABLED;
+delete bunEnv.CLAUDE_CODE_AGENT_RULE_DISABLED;
+delete bunEnv.CURSOR_AGENT_RULE_DISABLED;
 
 if (isDebug) {
   // This makes debug build memory leak tests more reliable.

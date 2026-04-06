@@ -1073,6 +1073,23 @@ const Template = enum {
         // Step 2: Claude — symlink `CLAUDE.md` to `AGENTS.md` when possible,
         //         otherwise write `CLAUDE.md` as a real file (the original
         //         behavior).
+        //
+        // Recover from a dangling `CLAUDE.md` symlink whose target has been
+        // deleted since a previous `bun init` (e.g. `AGENTS.md` was moved or
+        // removed). `bun.sys.exists` uses `access()` which follows symlinks
+        // and reports a broken link as "missing", but the link dirent is
+        // still there — so both `symlinkat()` and `createNew()` would fail
+        // with EEXIST on the next init and the dead link would persist.
+        // `lstat()` does not follow symlinks, so an `lstat` success combined
+        // with an `exists` failure unambiguously means "dangling symlink".
+        if (comptime !Environment.isWindows) {
+            if (bun.sys.lstat("CLAUDE.md").unwrap()) |st| {
+                if (!bun.sys.exists("CLAUDE.md") and (st.mode & bun.S.IFMT) == bun.S.IFLNK) {
+                    _ = bun.sys.unlink("CLAUDE.md");
+                }
+            } else |_| {}
+        }
+
         const create_claude_md = Template.isClaudeCodeInstalled() and
             // Never overwrite CLAUDE.md
             !bun.sys.exists("CLAUDE.md");

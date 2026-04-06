@@ -345,8 +345,10 @@ import path from "path";
   // Feature: https://github.com/oven-sh/bun/issues/28909
   //
   // `bun init` writes an `AGENTS.md` (https://agents.md/) as the single source
-  // of truth. When Claude Code or Cursor is detected, their rule files become
-  // symlinks to `AGENTS.md` so the content stays in sync.
+  // of truth. When Claude Code is detected, `CLAUDE.md` becomes a symlink to
+  // `AGENTS.md` so the content stays in sync. Cursor's `.cursor/rules/*.mdc`
+  // is always written as a real file with its YAML frontmatter intact —
+  // Cursor needs `globs:` for rule activation, which `AGENTS.md` strips.
   describe("AGENTS.md", () => {
     // First non-empty line of the rule body. Used as a sanity check that
     // the frontmatter was stripped.
@@ -631,6 +633,46 @@ import path from "path";
         expect(fs.lstatSync(path.join(temp, "CLAUDE.md")).isSymbolicLink()).toBe(true);
         expect(fs.readlinkSync(path.join(temp, "CLAUDE.md"))).toBe("AGENTS.md");
         expect(fs.readFileSync(path.join(temp, "CLAUDE.md"), "utf8")).toBe(customContent);
+        expect(exitCode).toBe(0);
+      },
+    );
+
+    test.skipIf(isWindows)(
+      "dangling CLAUDE.md symlink recovers on next init",
+      async () => {
+        // Regression: a previous `bun init` left `CLAUDE.md` as a symlink to
+        // `AGENTS.md`. The user then deleted `AGENTS.md`, so `CLAUDE.md` is
+        // now a dangling link. A fresh `bun init` must notice the broken
+        // link, unlink it, and re-create both files — otherwise both
+        // `symlinkat()` and `createNew()` hit EEXIST and the link stays dead.
+        const temp = tempDirWithFiles("bun-init-agents-dangling", {});
+        // Pre-stage a dangling `CLAUDE.md` symlink pointing at a non-existent
+        // `AGENTS.md`.
+        fs.symlinkSync("AGENTS.md", path.join(temp, "CLAUDE.md"));
+        expect(fs.lstatSync(path.join(temp, "CLAUDE.md")).isSymbolicLink()).toBe(true);
+        expect(fs.existsSync(path.join(temp, "AGENTS.md"))).toBe(false);
+
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "init", "-y"],
+          cwd: temp,
+          stdio: ["ignore", "pipe", "pipe"],
+          env: {
+            ...bunEnv,
+            ...claudeEnv(temp, true),
+            CURSOR_AGENT_RULE_DISABLED: "1",
+          },
+        });
+        const exitCode = await proc.exited;
+
+        // `AGENTS.md` was (re)created, and `CLAUDE.md` is a fresh symlink
+        // pointing at it — no longer dangling.
+        expect(fs.existsSync(path.join(temp, "AGENTS.md"))).toBe(true);
+        expect(fs.existsSync(path.join(temp, "CLAUDE.md"))).toBe(true);
+        expect(fs.lstatSync(path.join(temp, "CLAUDE.md")).isSymbolicLink()).toBe(true);
+        expect(fs.readlinkSync(path.join(temp, "CLAUDE.md"))).toBe("AGENTS.md");
+        expect(fs.readFileSync(path.join(temp, "CLAUDE.md"), "utf8")).toBe(
+          fs.readFileSync(path.join(temp, "AGENTS.md"), "utf8"),
+        );
         expect(exitCode).toBe(0);
       },
     );

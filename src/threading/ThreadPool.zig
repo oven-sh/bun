@@ -300,7 +300,12 @@ inline fn notify(self: *ThreadPool, is_waking: bool) void {
     // Fast path to check the Sync state to avoid calling into notifySlow().
     // If we're waking, then we need to update the state regardless
     if (!is_waking) {
-        const sync = @as(Sync, @bitCast(self.sync.load(.monotonic)));
+        // Must be an RMW, not a load: an RMW participates in `sync`'s modification
+        // order, so if we observe notified=true here, the worker's later acquire-CAS
+        // that clears it synchronizes-with this release and will see the task we just
+        // pushed. A plain load (even .seq_cst) allows "we see stale notified=true AND
+        // worker sees run_queue empty" → task stranded
+        const sync = @as(Sync, @bitCast(self.sync.fetchOr(0, .release)));
         if (sync.notified) {
             return;
         }

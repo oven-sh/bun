@@ -2329,22 +2329,45 @@ pub const H2FrameParser = struct {
             const promised_entry = this.streams.getEntry(this.continuation_promised_stream_id);
             if (promised_entry) |entry| {
                 const promised_stream = entry.value_ptr;
+                const parent_id = frame.streamIdentifier;
                 if (handleIncommingPayload(this, data, frame.streamIdentifier)) |content| {
                     const payload = content.data;
                     this.readBuffer.reset();
-                    _ = (try this.decodeHeaderBlock(payload[0..payload.len], promised_stream, frame.flags)) orelse {
+                    const maybe_result = try this.decodeHeaderBlock(payload[0..payload.len], promised_stream, frame.flags);
+                    // decodeHeaderBlock fires JS callbacks which may grow the
+                    // streams HashMap and invalidate any prior *Stream pointer.
+                    // Always re-fetch the parent by id before touching it.
+                    if (maybe_result == null) {
+                        // Promised stream removed during callbacks — clear all
+                        // continuation state so future frames aren't misrouted.
+                        this.continuation_promised_stream_id = 0;
+                        if (this.streams.getPtr(parent_id)) |p| {
+                            p.isWaitingMoreHeaders = false;
+                        }
                         return content.end;
-                    };
+                    }
                     if (frame.flags & @intFromEnum(HeadersFrameFlags.END_HEADERS) != 0) {
-                        stream.isWaitingMoreHeaders = false;
+                        if (this.streams.getPtr(parent_id)) |p| {
+                            p.isWaitingMoreHeaders = false;
+                        }
                         this.continuation_promised_stream_id = 0;
                     }
                     return content.end;
                 }
                 return data.len;
             }
-            // Promised stream vanished; fall through to normal handling.
+            // Promised stream vanished before data arrived. Consume the
+            // fragment, clear waiting state on the parent, and move on —
+            // the header block can't be routed anywhere meaningful.
             this.continuation_promised_stream_id = 0;
+            if (this.streams.getPtr(frame.streamIdentifier)) |p| {
+                p.isWaitingMoreHeaders = false;
+            }
+            if (handleIncommingPayload(this, data, frame.streamIdentifier)) |content| {
+                this.readBuffer.reset();
+                return content.end;
+            }
+            return data.len;
         }
 
         if (handleIncommingPayload(this, data, frame.streamIdentifier)) |content| {
@@ -2386,11 +2409,26 @@ pub const H2FrameParser = struct {
         // NOTE: Do NOT hold on to the parent_stream pointer — calling
         // handleReceivedStreamID() below can grow the streams HashMap and
         // invalidate it. We re-fetch by id when we need to write to the parent.
-        _ = stream_ orelse {
+        const parent_stream = stream_ orelse {
             this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "PUSH_PROMISE on connection stream", this.lastStreamID, true);
             return data.len;
         };
         const parent_stream_id = frame.streamIdentifier;
+
+        // RFC 7540 Section 6.10: After a frame without END_HEADERS the only
+        // permissible next frame type is CONTINUATION. Reject a PUSH_PROMISE
+        // that arrives mid-CONTINUATION sequence.
+        if (parent_stream.isWaitingMoreHeaders) {
+            this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "PUSH_PROMISE mid-CONTINUATION", this.lastStreamID, true);
+            return data.len;
+        }
+
+        // RFC 7540 Section 6.6: PUSH_PROMISE MUST only be received on a stream
+        // that is in the "open" or "half-closed (local)" state.
+        if (parent_stream.state != .OPEN and parent_stream.state != .HALF_CLOSED_LOCAL) {
+            this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "PUSH_PROMISE on non-open parent stream", this.lastStreamID, true);
+            return data.len;
+        }
 
         // Servers must not receive PUSH_PROMISE frames
         if (this.isServer) {
@@ -4825,10 +4863,21 @@ pub const H2FrameParser = struct {
         const encoded_data = encoded_headers.items;
         const encoded_size = encoded_data.len;
 
-        // Create the promised stream in RESERVED_LOCAL state
+        // Create the promised stream in RESERVED_LOCAL state.
+        // IMPORTANT: handleReceivedStreamID unconditionally advances
+        // this.lastStreamID to any id larger than its current value. For
+        // server push we allocate even ids, but lastStreamID tracks the
+        // highest *peer-initiated* stream the session has seen (used as
+        // the Last-Stream-ID field in GOAWAY per RFC 7540 Section 6.8). If we
+        // let push ids bump it, GOAWAY would falsely claim we processed
+        // client streams up to the push id, leading clients to silently
+        // drop in-flight odd-numbered streams. Save and restore around the
+        // call so only the new stream gets registered.
+        const saved_last_stream_id = this.lastStreamID;
         const promised_stream = this.handleReceivedStreamID(promised_stream_id) orelse {
             return jsc.JSValue.jsNumber(-1);
         };
+        this.lastStreamID = saved_last_stream_id;
         promised_stream.state = .RESERVED_LOCAL;
 
         // Build and send PUSH_PROMISE frame

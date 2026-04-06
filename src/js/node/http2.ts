@@ -2449,8 +2449,10 @@ class ServerHttp2Stream extends Http2Stream {
     const session = this[bunHTTP2Session];
     assertSession(session);
 
+    // RFC 7540 Section 6.5.2: SETTINGS_ENABLE_PUSH defaults to 1.
+    // Only reject if the peer has explicitly disabled push via SETTINGS.
     const remoteSettings = session.remoteSettings;
-    if (!remoteSettings || remoteSettings.enablePush === false) {
+    if (remoteSettings && remoteSettings.enablePush === false) {
       throw $ERR_HTTP2_PUSH_DISABLED();
     }
 
@@ -2470,9 +2472,10 @@ class ServerHttp2Stream extends Http2Stream {
       pushHeaders[":scheme"] = session.encrypted ? "https" : "http";
     }
     if (pushHeaders[":authority"] === undefined) {
-      // Inherit from the originating request headers
+      // RFC 7540 Section 8.1.2.3 allows clients to use either :authority or
+      // the host header. Use getAuthority() which handles both forms.
       const reqHeaders = this[bunHTTP2Headers];
-      pushHeaders[":authority"] = reqHeaders?.[":authority"] ?? "localhost";
+      pushHeaders[":authority"] = (reqHeaders ? getAuthority(reqHeaders) : undefined) ?? "localhost";
     }
 
     const parser = session[bunHTTP2Native];
@@ -3445,6 +3448,11 @@ class ClientHttp2Session extends Http2Session {
       if ((status & StreamState.PushPromiseReceived) !== 0 && (status & StreamState.StreamResponded) === 0) {
         if (header_status === HTTP_STATUS_CONTINUE) {
           stream.emit("continue");
+        }
+        // CONTINUATION fragments of a multi-frame header block can arrive here
+        // without a :status (partial block). Don't consume StreamResponded yet.
+        if (header_status === undefined) {
+          return;
         }
         // Informational 1xx headers don't count as final response
         if (header_status >= 100 && header_status < 200) {

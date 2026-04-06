@@ -24,11 +24,16 @@ import { $ } from "bun";
 
 type Json = Record<string, any>;
 
+// `--paginate` is load-bearing: GitHub's REST API defaults to 30 items per
+// page, and without it a PR with more than 30 issue comments / reviews /
+// line comments would silently truncate — the exact footgun this script is
+// supposed to eliminate. gh follows Link: rel=next headers for us and emits
+// one concatenated array.
 async function gh(path: string): Promise<Json[]> {
-  const result = await $`gh api ${path}`.quiet().nothrow();
+  const result = await $`gh api --paginate ${path}`.quiet().nothrow();
   if (result.exitCode !== 0) {
     const stderr = result.stderr.toString().trim();
-    console.error(`gh api ${path} failed (exit ${result.exitCode}).`);
+    console.error(`gh api --paginate ${path} failed (exit ${result.exitCode}).`);
     if (stderr) console.error(stderr);
     console.error("Check that `gh auth status` is healthy and that the PR exists.");
     process.exit(1);
@@ -36,7 +41,7 @@ async function gh(path: string): Promise<Json[]> {
   try {
     return JSON.parse(result.stdout.toString());
   } catch (err) {
-    console.error(`Could not parse response from \`gh api ${path}\` as JSON: ${(err as Error).message}`);
+    console.error(`Could not parse response from \`gh api --paginate ${path}\` as JSON: ${(err as Error).message}`);
     process.exit(1);
   }
 }
@@ -44,22 +49,48 @@ async function gh(path: string): Promise<Json[]> {
 // Thread state (isResolved, isOutdated) is only exposed via GraphQL — the REST
 // /pulls/N/comments endpoint omits it entirely. Returns a Map from the REST
 // comment id (GraphQL `databaseId`) to its thread's state. On any failure we
-// return null and the caller proceeds without annotations rather than crashing.
-// Note: pagination is not implemented — limit is 100 threads with 100 comments
-// each. Enough for almost every PR.
+// warn to stderr and return null so the caller proceeds without annotations
+// rather than crashing.
+//
+// Pagination is fully manual (not `gh api graphql --paginate`) because the
+// concatenated output format of gh's --paginate for GraphQL responses is not
+// standard JSON. Manual cursor loops let us parse each page with plain
+// JSON.parse and also handle nested pagination (per-thread comments) when a
+// single thread has more than 100 comments.
 type ThreadState = { resolved: boolean; outdated: boolean };
+
+async function runGraphQL(query: string, vars: Record<string, string | number>): Promise<Json | null> {
+  const flags = Object.entries(vars).flatMap(([k, v]) => ["-F", `${k}=${v}`]);
+  const result = await $`gh api graphql -f query=${query} ${flags}`.quiet().nothrow();
+  if (result.exitCode !== 0) {
+    console.error(`Warning: gh api graphql failed (exit ${result.exitCode}).`);
+    const stderr = result.stderr.toString().trim();
+    if (stderr) console.error(`  ${stderr}`);
+    return null;
+  }
+  try {
+    return JSON.parse(result.stdout.toString());
+  } catch (err) {
+    console.error(`Warning: could not parse GraphQL response: ${(err as Error).message}`);
+    return null;
+  }
+}
 
 async function fetchThreadState(repo: string, number: number): Promise<Map<number, ThreadState> | null> {
   const [owner, name] = repo.split("/");
-  const query = `
-    query($owner: String!, $name: String!, $number: Int!) {
+
+  const threadQuery = `
+    query($owner: String!, $name: String!, $number: Int!, $cursor: String) {
       repository(owner: $owner, name: $name) {
         pullRequest(number: $number) {
-          reviewThreads(first: 100) {
+          reviewThreads(first: 100, after: $cursor) {
+            pageInfo { hasNextPage endCursor }
             nodes {
+              id
               isResolved
               isOutdated
               comments(first: 100) {
+                pageInfo { hasNextPage endCursor }
                 nodes { databaseId }
               }
             }
@@ -68,30 +99,62 @@ async function fetchThreadState(repo: string, number: number): Promise<Map<numbe
       }
     }
   `;
-  const result = await $`gh api graphql -f query=${query} -F owner=${owner} -F name=${name} -F number=${number}`
-    .quiet()
-    .nothrow();
-  if (result.exitCode !== 0) {
-    console.error(`Warning: could not fetch thread resolution state (gh api graphql exit ${result.exitCode}).`);
-    const stderr = result.stderr.toString().trim();
-    if (stderr) console.error(`  ${stderr}`);
-    return null;
-  }
-  try {
-    const parsed = JSON.parse(result.stdout.toString());
-    const threads = parsed?.data?.repository?.pullRequest?.reviewThreads?.nodes ?? [];
-    const map = new Map<number, ThreadState>();
-    for (const t of threads) {
+
+  // Inner pagination: if a single thread has more than 100 comments we have
+  // to issue additional queries scoped to that thread to pick up the rest.
+  const innerQuery = `
+    query($threadId: ID!, $cursor: String) {
+      node(id: $threadId) {
+        ... on PullRequestReviewThread {
+          comments(first: 100, after: $cursor) {
+            pageInfo { hasNextPage endCursor }
+            nodes { databaseId }
+          }
+        }
+      }
+    }
+  `;
+
+  const map = new Map<number, ThreadState>();
+  let cursor: string | undefined = undefined;
+
+  while (true) {
+    const vars: Record<string, string | number> = { owner, name, number };
+    if (cursor) vars.cursor = cursor;
+
+    const page = await runGraphQL(threadQuery, vars);
+    if (!page) return null;
+    const threadsField = page?.data?.repository?.pullRequest?.reviewThreads;
+    if (!threadsField) return null;
+
+    for (const t of threadsField.nodes ?? []) {
       const state: ThreadState = { resolved: !!t.isResolved, outdated: !!t.isOutdated };
       for (const c of t.comments?.nodes ?? []) {
         if (typeof c.databaseId === "number") map.set(c.databaseId, state);
       }
+
+      // Paginate inner comments only when this thread overflowed the first 100.
+      let innerCursor: string | undefined = t.comments?.pageInfo?.hasNextPage
+        ? t.comments.pageInfo.endCursor
+        : undefined;
+      while (innerCursor) {
+        const innerVars: Record<string, string | number> = { threadId: t.id, cursor: innerCursor };
+        const innerPage = await runGraphQL(innerQuery, innerVars);
+        if (!innerPage) return null;
+        const innerComments = innerPage?.data?.node?.comments;
+        if (!innerComments) break;
+        for (const c of innerComments.nodes ?? []) {
+          if (typeof c.databaseId === "number") map.set(c.databaseId, state);
+        }
+        innerCursor = innerComments.pageInfo?.hasNextPage ? innerComments.pageInfo.endCursor : undefined;
+      }
     }
-    return map;
-  } catch (err) {
-    console.error(`Warning: could not parse GraphQL thread state response: ${(err as Error).message}`);
-    return null;
+
+    if (!threadsField.pageInfo?.hasNextPage) break;
+    cursor = threadsField.pageInfo.endCursor;
   }
+
+  return map;
 }
 
 async function resolvePr(arg: string | undefined): Promise<{ repo: string; number: number }> {

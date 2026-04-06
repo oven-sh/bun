@@ -433,6 +433,9 @@ pub fn AstMaybe(
                                 loc,
                             );
                         }
+                        // findSymbol recorded a usage on the local `process` binding; undo it
+                        // since we're not actually emitting a reference to it.
+                        p.ignoreUsage(process_ref);
                     }
 
                     // Inline import.meta properties for Bake

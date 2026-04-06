@@ -762,6 +762,40 @@ pub const Repository = extern struct {
     }
 };
 
+pub const TestingAPIs = struct {
+    pub fn jsTrySSH(go: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+        if (callframe.argumentsCount() != 1) {
+            return go.throw("repository.trySSH takes exactly 1 argument", .{});
+        }
+        const arg0 = callframe.argument(0);
+        if (!arg0.isString()) {
+            return go.throw("repository.trySSH takes a string as its first argument", .{});
+        }
+        const url_str = try arg0.toBunString(go);
+        defer url_str.deref();
+        var as_utf8 = url_str.toUTF8(bun.default_allocator);
+        defer as_utf8.deinit();
+        const result = Repository.trySSH(as_utf8.slice()) orelse return .null;
+        return bun.String.fromBytes(result).toJS(go);
+    }
+
+    pub fn jsTryHTTPS(go: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+        if (callframe.argumentsCount() != 1) {
+            return go.throw("repository.tryHTTPS takes exactly 1 argument", .{});
+        }
+        const arg0 = callframe.argument(0);
+        if (!arg0.isString()) {
+            return go.throw("repository.tryHTTPS takes a string as its first argument", .{});
+        }
+        const url_str = try arg0.toBunString(go);
+        defer url_str.deref();
+        var as_utf8 = url_str.toUTF8(bun.default_allocator);
+        defer as_utf8.deinit();
+        const result = Repository.tryHTTPS(as_utf8.slice()) orelse return .null;
+        return bun.String.fromBytes(result).toJS(go);
+    }
+};
+
 const string = []const u8;
 
 const Dependency = @import("./dependency.zig");
@@ -778,6 +812,7 @@ const PackageManager = Install.PackageManager;
 const bun = @import("bun");
 const OOM = bun.OOM;
 const Path = bun.path;
+const jsc = bun.jsc;
 const logger = bun.logger;
 const strings = bun.strings;
 const File = bun.sys.File;

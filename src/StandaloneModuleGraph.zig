@@ -555,7 +555,7 @@ pub const StandaloneModuleGraph = struct {
                 },
             };
 
-            if (output_file.source_map_index != std.math.maxInt(u32) and source_map != .external) {
+            if (output_file.source_map_index != std.math.maxInt(u32) and source_map != .external and !output_file.source_map_external) {
                 defer source_map_header_list.clearRetainingCapacity();
                 defer source_map_string_list.clearRetainingCapacity();
                 _ = source_map_arena.reset(.retain_capacity);

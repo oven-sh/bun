@@ -238,7 +238,8 @@ pub fn onBuildComplete(this: *JSBundle, completion_task: *bun.BundleV2.JSBundleC
                 debug("onBuildComplete: success", .{});
 
             const globalThis = this.global;
-            const output_files = bundle.output_files.items;
+            // Only expose this bundle's own direct files, not nested sub-build outputs
+            const output_files = bundle.output_files.items[0..bundle.direct_file_count];
 
             // Log timing info
             const now = bun.getRoughTickCount(.allow_mocked_time).ns();
@@ -390,7 +391,7 @@ pub fn onDevServerBuildComplete(ctx: *anyopaque, dev: *bun.bake.DevServer, succe
     this.source_map_generation = std.crypto.random.int(u32);
 
     const script_id = this.sourceMapId();
-    const payload = dev.generateStandaloneClientBundle(script_id) catch |err| bun.handleOom(err);
+    const payload = dev.generateStandaloneClientBundleForEntryPoint(this.path, script_id) catch |err| bun.handleOom(err);
     this.updateDevEntrypoint(payload, dev);
 }
 

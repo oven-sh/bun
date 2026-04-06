@@ -229,6 +229,8 @@ pub const ImportRecord = struct {
         target: ?bun.options.Target = null,
         format: ?bun.options.Format = null,
         naming: ?[]const u8 = null,
+        env_behavior: ?bun.schema.api.DotEnvBehavior = null,
+        env_prefix: ?[]const u8 = null,
     };
 };
 

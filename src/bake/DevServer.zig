@@ -942,6 +942,80 @@ pub fn generateStandaloneClientBundle(dev: *DevServer, script_id: SourceMapStore
     });
 }
 
+/// Generate a client bundle for a single standalone entry point.
+/// Unlike `generateStandaloneClientBundle` which traces ALL entry points,
+/// this only traces the specified entry point's imports, producing a
+/// per-bundle payload so each JSBundle gets its own distinct content.
+pub fn generateStandaloneClientBundleForEntryPoint(
+    dev: *DevServer,
+    entry_point: []const u8,
+    script_id: SourceMapStore.Key,
+) bun.OOM![]u8 {
+    dev.graph_safety_lock.lock();
+    defer dev.graph_safety_lock.unlock();
+
+    var sfa_state = std.heap.stackFallback(65536, dev.allocator());
+    const sfa = sfa_state.get();
+    var gts = try dev.initGraphTraceState(sfa, 0);
+    defer gts.deinit(sfa);
+
+    dev.client_graph.reset();
+    var entry_index: ?IncrementalGraph(.client).FileIndex = null;
+
+    if (dev.client_graph.getFileIndex(entry_point)) |file_index| {
+        entry_index = file_index;
+        if (file_index.get() < dev.client_graph.stale_files.bit_length and
+            !dev.client_graph.stale_files.isSet(file_index.get()))
+        {
+            try dev.client_graph.traceImports(file_index, &gts, .find_client_modules);
+        }
+    }
+
+    var react_fast_refresh_id: []const u8 = "";
+    if (dev.framework.react_fast_refresh) |rfr| brk: {
+        const rfr_index = dev.client_graph.getFileIndex(rfr.import_source) orelse
+            break :brk;
+        if (rfr_index.get() < dev.client_graph.stale_files.bit_length and
+            !dev.client_graph.stale_files.isSet(rfr_index.get()))
+        {
+            try dev.client_graph.traceImports(rfr_index, &gts, .find_client_modules);
+            react_fast_refresh_id = rfr.import_source;
+        }
+    }
+
+    // If nothing was traced (build not yet complete), return empty
+    if (dev.client_graph.current_chunk_len == 0) return &.{};
+
+    const entry_point_name: []const u8 = if (entry_index) |idx|
+        dev.client_graph.bundled_files.keys()[idx.get()]
+    else
+        "";
+
+    var origin_buf: [64]u8 = undefined;
+    const hmr_origin = dev.getStandaloneOrigin(&origin_buf) orelse "";
+
+    mapLog("inc {x}, 1 for generateStandaloneClientBundleForEntryPoint", .{script_id.get()});
+    switch (try dev.source_maps.putOrIncrementRefCount(script_id, 1)) {
+        .uninitialized => |entry| {
+            errdefer dev.source_maps.unref(script_id);
+            gts.clearAndFree(sfa);
+            var arena = std.heap.ArenaAllocator.init(sfa);
+            defer arena.deinit();
+            try dev.client_graph.takeSourceMap(arena.allocator(), dev.allocator(), entry);
+        },
+        .shared => {},
+    }
+
+    return dev.client_graph.takeJSBundle(&.{
+        .kind = .initial_response,
+        .initial_response_entry_point = entry_point_name,
+        .react_refresh_entry_point = react_fast_refresh_id,
+        .hmr_origin = hmr_origin,
+        .script_id = script_id,
+        .console_log = false,
+    });
+}
+
 /// Handle GET /_bun/client/:route in standalone mode.
 /// Serves the concatenated client bundle with HMR runtime,
 /// or dispatches to the sourcemap handler for .js.map requests.

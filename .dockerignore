@@ -7,6 +7,8 @@
 examples
 node_modules
 packages/**/bun
+!packages/@types/bun
+!packages/bun-types
 packages/**/bun-profile
 src/bun.js/WebKit
 src/bun.js/WebKit/LayoutTests

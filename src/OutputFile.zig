@@ -26,6 +26,7 @@ entry_point_index: ?u32,
 referenced_css_chunks: []const Index = &.{},
 source_index: Index.Optional = .none,
 bake_extra: BakeExtra = .{},
+source_map_external: bool = false,
 
 pub const zero_value = OutputFile{
     .loader = .file,

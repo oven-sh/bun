@@ -1082,6 +1082,7 @@ pub fn Parse(
                     target,
                     format,
                     naming,
+                    env,
                 };
 
                 var has_seen_embed_true = false;
@@ -1175,6 +1176,21 @@ pub fn Parse(
                             .naming => {
                                 if (path.bundle_config == null) path.bundle_config = .{};
                                 path.bundle_config.?.naming = string_literal_text;
+                            },
+                            .env => {
+                                if (path.bundle_config == null) path.bundle_config = .{};
+                                if (strings.indexOfChar(string_literal_text, '*')) |asterisk| {
+                                    if (asterisk == 0) {
+                                        path.bundle_config.?.env_behavior = .load_all;
+                                    } else {
+                                        path.bundle_config.?.env_behavior = .prefix;
+                                        path.bundle_config.?.env_prefix = string_literal_text[0..asterisk];
+                                    }
+                                } else if (strings.eqlComptime(string_literal_text, "inline") or strings.eqlComptime(string_literal_text, "1")) {
+                                    path.bundle_config.?.env_behavior = .load_all;
+                                } else if (strings.eqlComptime(string_literal_text, "disable") or strings.eqlComptime(string_literal_text, "0")) {
+                                    path.bundle_config.?.env_behavior = .disable;
+                                }
                             },
                         }
                     }

@@ -1621,19 +1621,35 @@ pub const BundleV2 = struct {
         }
 
         var output_files = try this.linker.generateChunksInParallel(chunks, false);
+        const direct_file_count: u32 = @intCast(output_files.items.len);
 
         // Append sub-build output files to the main build's output.
         // Prefix dest_path with "./" to match the parent build's convention
         // (parent chunks use "[dir]/[name].[ext]" which produces "./file.js").
         // Without this prefix, build_command.zig's writeToDisk resolves the
         // bare filename against cwd, producing an incorrect nested path.
-        for (sub_build_results) |result| {
+        //
+        // Deduplicate by dest_path: when multiple sub-builds produce the same
+        // file (e.g. a nested ?bundle re-export triggers a sub-build that also
+        // appears as a direct sub-build), only keep the first occurrence.
+        var seen_dest_paths = std.StringHashMap(void).init(bun.default_allocator);
+        defer seen_dest_paths.deinit();
+        // Pre-populate with existing output files from the main build
+        for (output_files.items) |of| {
+            seen_dest_paths.put(of.dest_path, {}) catch |err| bun.handleOom(err);
+        }
+        for (sub_build_results, sub_builds) |result, sb| {
+            const is_external_sm = if (sb.config.sourcemap) |sm| sm == .external else false;
             const base_index: u32 = @intCast(output_files.items.len);
             for (result.output_files.items) |of| {
                 var patched = of;
+                if (is_external_sm) patched.source_map_external = true;
                 if (!bun.strings.startsWith(patched.dest_path, "./")) {
                     patched.dest_path = bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "./{s}", .{patched.dest_path}));
                 }
+                // Skip duplicate files (from nested sub-builds that overlap with direct sub-builds)
+                const gop = seen_dest_paths.getOrPut(patched.dest_path) catch |err| bun.handleOom(err);
+                if (gop.found_existing) continue;
                 // Adjust source_map_index to account for offset in the combined output array
                 if (patched.source_map_index != std.math.maxInt(u32)) {
                     patched.source_map_index += base_index;
@@ -1656,6 +1672,7 @@ pub const BundleV2 = struct {
             .output_files = output_files,
             .metafile = metafile,
             .metafile_markdown = null,
+            .direct_file_count = direct_file_count,
         };
     }
 
@@ -1870,6 +1887,8 @@ pub const BundleV2 = struct {
         output_files: std.array_list.Managed(options.OutputFile),
         metafile: ?[]const u8 = null,
         metafile_markdown: ?[]const u8 = null,
+        /// Number of direct output files (before nested sub-build files are appended).
+        direct_file_count: u32 = 0,
 
         pub fn deinit(this: *BuildResult) void {
             for (this.output_files.items) |*output_file| {
@@ -2885,11 +2904,16 @@ pub const BundleV2 = struct {
         }
 
         var output_files = try this.linker.generateChunksInParallel(chunks, false);
+        const direct_file_count: u32 = @intCast(output_files.items.len);
 
         // Append sub-build output files to the main build's output.
         // Prefix dest_path with "./" to match the parent build's convention.
         // Also write buffer-type files to disk when outdir is set, since the
         // linker's writeOutputFilesToDisk only handles the parent's own chunks.
+        //
+        // Deduplicate by dest_path: when multiple sub-builds produce the same
+        // file (e.g. a nested ?bundle re-export triggers a sub-build that also
+        // appears as a direct sub-build), only keep the first occurrence.
         {
             const sub_outdir = this.linker.resolver.opts.output_dir;
             var out_dir: ?std.fs.Dir = if (sub_outdir.len > 0)
@@ -2898,13 +2922,24 @@ pub const BundleV2 = struct {
                 null;
             defer if (out_dir) |*d| d.close();
 
-            for (sub_build_results) |result| {
+            var seen_dest_paths = std.StringHashMap(void).init(bun.default_allocator);
+            defer seen_dest_paths.deinit();
+            for (output_files.items) |of| {
+                seen_dest_paths.put(of.dest_path, {}) catch |err| bun.handleOom(err);
+            }
+
+            for (sub_build_results, sub_builds) |result, sb| {
+                const is_external_sm = if (sb.config.sourcemap) |sm| sm == .external else false;
                 const base_index: u32 = @intCast(output_files.items.len);
                 for (result.output_files.items) |of| {
                     var patched = of;
+                    if (is_external_sm) patched.source_map_external = true;
                     if (!bun.strings.startsWith(patched.dest_path, "./")) {
                         patched.dest_path = bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "./{s}", .{patched.dest_path}));
                     }
+                    // Skip duplicate files (from nested sub-builds that overlap with direct sub-builds)
+                    const gop = seen_dest_paths.getOrPut(patched.dest_path) catch |err| bun.handleOom(err);
+                    if (gop.found_existing) continue;
                     // Adjust source_map_index to account for offset in the combined output array
                     if (patched.source_map_index != std.math.maxInt(u32)) {
                         patched.source_map_index += base_index;
@@ -2971,6 +3006,7 @@ pub const BundleV2 = struct {
             .output_files = output_files,
             .metafile = metafile,
             .metafile_markdown = metafile_markdown,
+            .direct_file_count = direct_file_count,
         };
     }
 
@@ -3051,6 +3087,9 @@ pub const BundleV2 = struct {
         output_files: std.array_list.Managed(options.OutputFile),
         /// Index of the entry point file in output_files.
         entry_point_index: ?u32,
+        /// Number of direct output files (before nested sub-build files are appended).
+        /// Used to limit `.files` to only this build's own outputs.
+        direct_file_count: u32,
     };
 
     const sub_build_log = bun.Output.scoped(.sub_build, .hidden);
@@ -3178,6 +3217,14 @@ pub const BundleV2 = struct {
         sub_transpiler.options.entry_naming = naming;
         sub_transpiler.options.chunk_naming = naming;
 
+        // Apply env behavior from import attributes (explicit only, no inheritance)
+        if (sb.config.env_behavior) |env_beh| {
+            sub_transpiler.options.env.behavior = env_beh;
+            if (sb.config.env_prefix) |pfx| {
+                sub_transpiler.options.env.prefix = pfx;
+            }
+        }
+
         sub_transpiler.configureLinker();
         try sub_transpiler.configureDefines();
         sub_transpiler.resolver.env_loader = sub_transpiler.env;
@@ -3217,6 +3264,7 @@ pub const BundleV2 = struct {
         return .{
             .output_files = build_result.output_files,
             .entry_point_index = ep_index,
+            .direct_file_count = build_result.direct_file_count,
         };
     }
 
@@ -3253,8 +3301,13 @@ pub const BundleV2 = struct {
             if (part.stmts.len == 0) continue;
             if (part.stmts[0].data != .s_lazy_export) continue;
 
-            sub_build_log("patchSubBuildExports: patching source[{d}] with {d} output files", .{
+            // Only iterate direct output files — exclude nested sub-build files
+            // so that .files only contains this build's own outputs.
+            const direct_files = result.output_files.items[0..result.direct_file_count];
+
+            sub_build_log("patchSubBuildExports: patching source[{d}] with {d} direct output files ({d} total)", .{
                 resolved_source_index,
+                direct_files.len,
                 result.output_files.items.len,
             });
 
@@ -3285,7 +3338,7 @@ pub const BundleV2 = struct {
             var files_array = E.Array{};
             var entrypoint_expr: ?Expr = null;
 
-            for (result.output_files.items, 0..) |of, idx| {
+            for (direct_files, 0..) |of, idx| {
                 // Skip sourcemaps, bytecode, and metafiles from the files array
                 switch (of.output_kind) {
                     .sourcemap, .bytecode, .module_info, .@"metafile-json", .@"metafile-markdown" => continue,
@@ -4271,6 +4324,41 @@ pub const BundleV2 = struct {
 
             const is_html_entrypoint = import_record_loader == .html and target.isServerSide() and this.transpiler.options.dev_server == null;
 
+            // .bundle imports need their own source entry (with lazy export AST),
+            // separate from normal imports of the same file.
+            if (import_record_loader == .bundle) {
+                const bundle_key = std.fmt.allocPrint(this.allocator(), "{s}?bundle", .{path.text}) catch bun.outOfMemory();
+
+                if (this.pathToSourceIndexMap(target).get(bundle_key)) |id| {
+                    import_record.source_index = .init(id);
+                    continue;
+                }
+
+                const resolve_entry = resolve_queue.getOrPut(bundle_key) catch |err| bun.handleOom(err);
+                if (resolve_entry.found_existing) {
+                    import_record.path = resolve_entry.value_ptr.*.path;
+                    continue;
+                }
+
+                path.* = bun.handleOom(this.pathWithPrettyInitialized(path.*, target));
+                import_record.path = path.*;
+                resolve_entry.key_ptr.* = bundle_key;
+
+                const resolve_task = bun.handleOom(bun.default_allocator.create(ParseTask));
+                resolve_task.* = ParseTask.init(&resolve_result, Index.invalid, this);
+                resolve_task.known_target = target;
+                resolve_task.jsx = resolve_result.jsx;
+                resolve_task.jsx.development = switch (transpiler.options.force_node_env) {
+                    .development => true,
+                    .production => false,
+                    .unspecified => transpiler.options.jsx.development,
+                };
+                resolve_task.loader = .bundle;
+                resolve_task.tree_shaking = transpiler.options.tree_shaking;
+                resolve_entry.value_ptr.* = resolve_task;
+                continue;
+            }
+
             if (this.pathToSourceIndexMap(target).get(path.text)) |id| {
                 if (this.transpiler.options.dev_server != null and loader != .html) {
                     import_record.path = this.graph.input_files.items(.source)[id].path;
@@ -4432,7 +4520,14 @@ pub const BundleV2 = struct {
 
         const path_to_source_index_map = this.pathToSourceIndexMap(ctx.target);
         for (import_records.slice(), 0..) |*record, i| {
-            if (path_to_source_index_map.getPath(&record.path)) |source_index| {
+            // .bundle imports are registered under "path?bundle" key
+            const source_index_lookup = if (record.loader != null and record.loader.? == .bundle)
+                path_to_source_index_map.get(
+                    std.fmt.allocPrint(this.allocator(), "{s}?bundle", .{record.path.text}) catch bun.outOfMemory(),
+                )
+            else
+                path_to_source_index_map.getPath(&record.path);
+            if (source_index_lookup) |source_index| {
                 if (save_import_record_source_index or input_file_loaders[source_index].isCSS())
                     record.source_index.value = source_index;
 

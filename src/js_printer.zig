@@ -4661,7 +4661,7 @@ fn NewPrinter(
                         .sqlite, .sqlite_embedded => p.printWhitespacer(ws(" with { type: \"sqlite\" }")),
                         .html => p.printWhitespacer(ws(" with { type: \"html\" }")),
                         .md => p.printWhitespacer(ws(" with { type: \"md\" }")),
-                        .bundle => p.printWhitespacer(ws(" with { type: \"bundle\" }")),
+                        .bundle => {}, // handled via ?bundle in path
                     };
                     p.printSemicolonAfterStatement();
 
@@ -4819,6 +4819,14 @@ fn NewPrinter(
             } else {
                 p.print(quote);
                 p.printStringCharactersUTF8(import_record.path.text, quote);
+                // Append ?bundle so the module key differentiates from non-bundle imports
+                if (comptime is_bun_platform) {
+                    if (import_record.loader) |loader| {
+                        if (loader == .bundle) {
+                            p.printStringCharactersUTF8("?bundle", quote);
+                        }
+                    }
+                }
                 p.print(quote);
             }
         }

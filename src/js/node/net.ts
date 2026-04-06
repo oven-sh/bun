@@ -290,7 +290,21 @@ function SocketEmitEndNT(self, _err?) {
     }
     self[kended] = true;
     self.push(null);
+    // Mirrors Node's onStreamRead: read(0) forces endReadable() to run when
+    // the Readable buffer is already empty, so 'end' fires even if the
+    // consumer never called read().
     self.read(0);
+    // If bytes were buffered on a still-paused Readable (e.g. a write-only
+    // server handler that never added a 'data' listener) read(0) above is a
+    // no-op — endReadable() skips when state.length > 0. Flip into flowing
+    // mode so the buffered chunks drain, 'end' fires, autoDestroy runs, and
+    // server._connections gets decremented. Without this, a minimal
+    // net.createServer(s => s.end()) leaks a connection whenever the peer
+    // sent any bytes.
+    const state = self._readableState;
+    if (state && state.length > 0 && !state.flowing && !state.destroyed && !state.endEmitted) {
+      self.resume();
+    }
   }
   // TODO: check how the best way to handle this
   // if (err) {

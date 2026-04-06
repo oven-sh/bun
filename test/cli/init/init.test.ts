@@ -724,38 +724,35 @@ import path from "path";
       expect(exitCode).toBe(0);
     });
 
-    test.skipIf(isWindows)(
-      "BUN_AGENTS_MD_DISABLED=1 with dangling AGENTS.md: symlink is left alone",
-      async () => {
-        // When the user opts out of `AGENTS.md` management, `bun init` must
-        // not touch the file at all — not even to clean up a dangling
-        // symlink left over from a prior init. This guards the lstat+unlink
-        // block from running outside the `BUN_AGENTS_MD_DISABLED` check.
-        const temp = tempDirWithFiles("bun-init-agents-disabled-dangling", {});
-        fs.symlinkSync("nonexistent-target.md", path.join(temp, "AGENTS.md"));
-        expect(fs.lstatSync(path.join(temp, "AGENTS.md")).isSymbolicLink()).toBe(true);
+    test.skipIf(isWindows)("BUN_AGENTS_MD_DISABLED=1 with dangling AGENTS.md: symlink is left alone", async () => {
+      // When the user opts out of `AGENTS.md` management, `bun init` must
+      // not touch the file at all — not even to clean up a dangling
+      // symlink left over from a prior init. This guards the lstat+unlink
+      // block from running outside the `BUN_AGENTS_MD_DISABLED` check.
+      const temp = tempDirWithFiles("bun-init-agents-disabled-dangling", {});
+      fs.symlinkSync("nonexistent-target.md", path.join(temp, "AGENTS.md"));
+      expect(fs.lstatSync(path.join(temp, "AGENTS.md")).isSymbolicLink()).toBe(true);
 
-        await using proc = Bun.spawn({
-          cmd: [bunExe(), "init", "-y"],
-          cwd: temp,
-          stdio: ["ignore", "pipe", "pipe"],
-          env: {
-            ...bunEnv,
-            ...claudeEnv(temp, false),
-            BUN_AGENTS_MD_DISABLED: "1",
-            CLAUDE_CODE_AGENT_RULE_DISABLED: "1",
-            CURSOR_AGENT_RULE_DISABLED: "1",
-          },
-        });
-        const exitCode = await proc.exited;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "init", "-y"],
+        cwd: temp,
+        stdio: ["ignore", "pipe", "pipe"],
+        env: {
+          ...bunEnv,
+          ...claudeEnv(temp, false),
+          BUN_AGENTS_MD_DISABLED: "1",
+          CLAUDE_CODE_AGENT_RULE_DISABLED: "1",
+          CURSOR_AGENT_RULE_DISABLED: "1",
+        },
+      });
+      const exitCode = await proc.exited;
 
-        // The dangling symlink is still there — untouched.
-        const agentsStat = fs.lstatSync(path.join(temp, "AGENTS.md"));
-        expect(agentsStat.isSymbolicLink()).toBe(true);
-        expect(fs.readlinkSync(path.join(temp, "AGENTS.md"))).toBe("nonexistent-target.md");
-        expect(exitCode).toBe(0);
-      },
-    );
+      // The dangling symlink is still there — untouched.
+      const agentsStat = fs.lstatSync(path.join(temp, "AGENTS.md"));
+      expect(agentsStat.isSymbolicLink()).toBe(true);
+      expect(fs.readlinkSync(path.join(temp, "AGENTS.md"))).toBe("nonexistent-target.md");
+      expect(exitCode).toBe(0);
+    });
 
     test.skipIf(isWindows)("dangling .cursor/rules/*.mdc symlink is unlinked before re-create", async () => {
       // Regression: older versions of `bun init` symlinked the cursor

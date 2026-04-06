@@ -281,3 +281,16 @@ bun run ci:watch
 For anything else, use `bk` directly — `bk build list`, `bk api`, `bk artifacts`, etc.
 
 If output from these commands looks wrong — mis-parsed annotation HTML, confusing wording, a field BuildKite changed shape on — fix `scripts/find-build.ts` directly rather than working around it. It's a thin presenter over `bk`; keep it accurate.
+
+## Reading PR Feedback
+
+**Never use `gh pr view --comments` on its own** — it only returns the issue-stream (Conversation tab) and silently hides review summaries and line-level review comments. If a reviewer leaves an inline comment on a specific file line, you will miss it.
+
+Use `bun run pr:comments` instead. It fetches all three GitHub endpoints (`/issues/N/comments`, `/pulls/N/reviews`, `/pulls/N/comments`) and prints them in one chronological listing, each labelled with its actual type (issue comment, review verdict, line comment, reply, suggestion block).
+
+```bash
+bun run pr:comments              # current branch's PR
+bun run pr:comments 28838        # by PR number
+bun run pr:comments '#28838'     # also works
+bun run pr:comments https://github.com/oven-sh/bun/pull/28838
+```

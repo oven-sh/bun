@@ -296,9 +296,12 @@ bun run pr:comments https://github.com/oven-sh/bun/pull/28838
 
 # Machine-readable output for jq pipelines — one object per entry with
 # { when, user, kind, location?, body, url?, resolved?, outdated? }.
-# resolved/outdated come from GraphQL reviewThreads and are only set on
-# line comments / replies (null elsewhere). No header, no truncation.
-# The PR is optional here too (defaults to the current branch's PR).
+# resolved/outdated come from GraphQL reviewThreads and are present only
+# on line comments / replies whose thread state was successfully fetched
+# (omitted on issue comments, review verdicts, and on GraphQL fetch
+# failure), so `resolved == false` unambiguously means "confirmed open
+# thread". No header, no truncation. The PR is optional here too
+# (defaults to the current branch's PR).
 bun run pr:comments --json | jq '.[] | select(.user == "Jarred-Sumner")'
 bun run pr:comments --json | jq '[.[] | select(.resolved == false)]'   # still open
 ```

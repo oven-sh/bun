@@ -14,9 +14,11 @@
 // JSON mode emits one object per entry — no header, no legend — with fields:
 //   { when, user, kind, location?, body, url?, resolved?, outdated? }
 // resolved/outdated come from GitHub's GraphQL reviewThreads and are only
-// present on line comments and replies (null for issue comments and review
-// verdicts, which have no thread state). You can filter with jq, e.g.
-// (the PR is optional, defaults to current branch):
+// present on line comments / replies whose thread state was successfully
+// fetched. They're omitted entirely on issue comments, review verdicts, and
+// any entry where the GraphQL fetch failed — so `resolved == false` in jq
+// unambiguously means "confirmed unresolved thread". You can filter with jq,
+// e.g. (the PR is optional, defaults to current branch):
 //   bun run pr:comments --json | jq '.[] | select(.user == "Jarred-Sumner")'
 //   bun run pr:comments --json | jq '[.[] | select(.resolved == false)]'
 
@@ -182,7 +184,10 @@ async function resolvePr(arg: string | undefined): Promise<{ repo: string; numbe
 
   // No argument — look up a PR for the current branch.
   const branch = (await $`git branch --show-current`.quiet().text()).trim();
-  const lookup = await $`gh pr view --json number 2>&1`.quiet().nothrow();
+  // Don't merge stderr into stdout — `gh` occasionally emits diagnostic lines
+  // like "A new release of gh is available" to stderr, which would corrupt the
+  // JSON we're about to parse. Bun's $ already captures the two streams separately.
+  const lookup = await $`gh pr view --json number`.quiet().nothrow();
   if (lookup.exitCode !== 0) {
     console.error(`No pull request found for the current branch (${branch || "detached HEAD"}).`);
     console.error("");
@@ -269,8 +274,14 @@ type Entry = {
   location?: string;
   body: string;
   url?: string;
-  resolved?: boolean | null;
-  outdated?: boolean | null;
+  // Present only on line-level entries whose thread state we successfully
+  // looked up. Omitted entirely on issue comments, review verdicts, and any
+  // thread entry where the GraphQL fetch failed — that way `resolved == false`
+  // in jq unambiguously means "confirmed unresolved thread" with no overlap
+  // between "not applicable" and "unknown". A stderr warning is printed when
+  // the thread-state fetch fails so the omission is visible.
+  resolved?: boolean;
+  outdated?: boolean;
 };
 
 const entries: Entry[] = [];
@@ -289,6 +300,10 @@ for (const r of reviews) {
   // Skip the empty "COMMENTED" review stub that GitHub emits as a container
   // for line-level comments — the real content is in reviewComments below.
   if (!r.body && r.state === "COMMENTED") continue;
+  // PENDING reviews are drafts the viewer hasn't submitted yet. They have
+  // submitted_at=null (which would crash the sort below) and aren't visible
+  // to anyone else, so skip them.
+  if (r.state === "PENDING") continue;
   entries.push({
     when: r.submitted_at,
     user: r.user?.login ?? "?",
@@ -300,20 +315,23 @@ for (const r of reviews) {
 
 for (const c of reviewComments) {
   const loc = c.path ? `${c.path}${c.line ? `:${c.line}` : ""}` : undefined;
-  // null means "unknown" — either the GraphQL fetch failed, or the comment
-  // isn't in the (paginated) thread set we fetched. Both are distinct from a
-  // confirmed false, so we keep them null rather than assuming resolved=false.
+  // Only annotate when we have confirmed thread state. If threadState is null
+  // (GraphQL fetch failed) or this comment isn't in the map, we omit both
+  // fields rather than setting them to null — see the Entry type comment.
   const state = threadState?.get(c.id);
-  entries.push({
+  const entry: Entry = {
     when: c.created_at,
     user: c.user?.login ?? "?",
     kind: labelForReviewComment(c),
     location: loc,
     body: c.body ?? "",
     url: c.html_url,
-    resolved: state ? state.resolved : null,
-    outdated: state ? state.outdated : null,
-  });
+  };
+  if (state) {
+    entry.resolved = state.resolved;
+    entry.outdated = state.outdated;
+  }
+  entries.push(entry);
 }
 
 entries.sort((a, b) => a.when.localeCompare(b.when));

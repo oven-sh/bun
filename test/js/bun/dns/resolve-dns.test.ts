@@ -123,9 +123,9 @@ describe("dns", () => {
   });
 
   describe("setServers", () => {
-    test("triple with non-int32 family (double) should not crash", () => {
+    test("triple with non-int32 family (double) throws TypeError", () => {
       // @ts-expect-error
-      expect(() => dns.setServers([[-9007199254740991, "8.8.8.8", 53]])).toThrow();
+      expect(() => dns.setServers([[-9007199254740991, "8.8.8.8", 53]])).toThrow(TypeError);
     });
 
     test("triple with missing port (undefined) should not crash", () => {
@@ -134,9 +134,9 @@ describe("dns", () => {
       expect(() => dns.setServers([[4, "8.8.8.8"]])).not.toThrow();
     });
 
-    test("triple with missing family (undefined) should not crash", () => {
+    test("triple with missing family (undefined) throws TypeError", () => {
       // @ts-expect-error
-      expect(() => dns.setServers([["8.8.8.8"]])).toThrow();
+      expect(() => dns.setServers([["8.8.8.8"]])).toThrow(TypeError);
     });
 
     test("valid triple should succeed", () => {

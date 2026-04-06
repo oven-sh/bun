@@ -13,9 +13,9 @@
 //
 // JSON mode emits one object per entry — no header, no legend — with fields:
 //   { when, user, kind, location?, body, url? }
-// so you can filter with jq, e.g.:
-//   bun run pr:comments 28838 --json | jq '.[] | select(.user == "Jarred-Sumner")'
-//   bun run pr:comments 28838 --json | jq '[.[] | select(.kind == "line comment")]'
+// so you can filter with jq, e.g. (the PR is optional, defaults to current branch):
+//   bun run pr:comments --json | jq '.[] | select(.user == "Jarred-Sumner")'
+//   bun run pr:comments --json | jq '[.[] | select(.kind == "line comment")]'
 
 import { $ } from "bun";
 

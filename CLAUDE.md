@@ -296,6 +296,7 @@ bun run pr:comments https://github.com/oven-sh/bun/pull/28838
 
 # Machine-readable output for jq pipelines — one object per entry with
 # { when, user, kind, location?, body, url? }. No header, no truncation.
-bun run pr:comments 28838 --json | jq '.[] | select(.user == "Jarred-Sumner")'
-bun run pr:comments 28838 --json | jq '[.[] | select(.kind == "line comment")]'
+# The PR is optional here too (defaults to the current branch's PR).
+bun run pr:comments --json | jq '.[] | select(.user == "Jarred-Sumner")'
+bun run pr:comments --json | jq '[.[] | select(.kind == "line comment")]'
 ```

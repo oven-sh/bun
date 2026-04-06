@@ -38,6 +38,7 @@ describe("HTTP server CONNECT", () => {
       res.end("Hello World from proxy server");
     });
     await using targetServer = net.createServer(socket => {
+      socket.resume();
       socket.write(responseHeader, () => {
         socket.write(BIG_DATA, () => {
           //TODO: is this a net bug? on windows the connection is closed before everything is sended

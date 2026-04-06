@@ -1061,22 +1061,26 @@ const Template = enum {
         // AND we don't treat a pre-existing one as a symlink target — users
         // opting into that flag want the old standalone-file workflow, so
         // `CLAUDE.md` falls through to the real-file write in Step 2.
-        //
-        // A dangling `AGENTS.md` symlink (target deleted after a prior init)
-        // needs the same `lstat + unlink` recovery as Steps 2 and 3: without
-        // it, `exists()` follows the broken link and reports missing, then
-        // `createNew()` hits EEXIST on the stale dirent, and the error gets
-        // silently swallowed — `agents_md_available` stays `false` and
-        // `CLAUDE.md` silently degrades to a plain file.
-        if (comptime !Environment.isWindows) {
-            if (bun.sys.lstat("AGENTS.md").unwrap()) |st| {
-                if (!bun.sys.exists("AGENTS.md") and (st.mode & bun.S.IFMT) == bun.S.IFLNK) {
-                    _ = bun.sys.unlink("AGENTS.md");
-                }
-            } else |_| {}
-        }
         var agents_md_available = false;
         if (!bun.env_var.BUN_AGENTS_MD_DISABLED.get()) {
+            // A dangling `AGENTS.md` symlink (target deleted after a prior
+            // init) needs the same `lstat + unlink` recovery as Steps 2 and 3:
+            // without it, `exists()` follows the broken link and reports
+            // missing, `createNew()` hits EEXIST on the stale dirent, the
+            // error gets silently swallowed, and `agents_md_available` stays
+            // `false` — so `CLAUDE.md` silently degrades to a plain file.
+            //
+            // This guard stays inside the `BUN_AGENTS_MD_DISABLED` check so
+            // we never touch the user's filesystem when they've opted out of
+            // `AGENTS.md` management entirely, even to clean up a stale link.
+            if (comptime !Environment.isWindows) {
+                if (bun.sys.lstat("AGENTS.md").unwrap()) |st| {
+                    if (!bun.sys.exists("AGENTS.md") and (st.mode & bun.S.IFMT) == bun.S.IFLNK) {
+                        _ = bun.sys.unlink("AGENTS.md");
+                    }
+                } else |_| {}
+            }
+
             if (bun.sys.exists("AGENTS.md")) {
                 agents_md_available = true;
             } else if (InitCommand.Assets.createNew("AGENTS.md", trimmed_rule)) |_| {

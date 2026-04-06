@@ -43,7 +43,7 @@ Options:
   --errors             Print rendered test-failure annotations for the build
   --logs               Save full logs for each failed job to ./tmp/ci-<build>/
   --all                With --errors, include warning/flaky annotations too
-  --no-compare         With --errors, skip the "also failing on main" check
+  --no-compare         With --errors, skip the "[pre-existing]" check against recently merged PRs
   --no-dedup           With --errors, print every platform's output in full
   -h, --help           Show this help
 
@@ -125,7 +125,7 @@ try {
   else if (opts.watch) await watchStatus(builds[0].number);
   else if (opts.logs) await saveLogs(builds[0].number);
   else if (opts.errors)
-    await printErrors(builds[0].number, { all: !!opts.all, compare: !opts["no-compare"] && branch !== "main" });
+    await printErrors(builds[0].number, { all: !!opts.all, compare: !opts["no-compare"], excludeBranch: branch });
   else
     for (const b of builds) {
       process.stdout.write(b.number + "\n");
@@ -170,10 +170,10 @@ function renderTermHTML(html: string): string {
   );
 }
 
-function renderAnnotation(a: Annotation, alsoOnMain: boolean | null) {
+function renderAnnotation(a: Annotation, preExisting: boolean | null) {
   const color = a.style === "error" ? c.red : c.yellow;
   const tag =
-    alsoOnMain == null ? "" : alsoOnMain ? ` ${c.dim}[also on main]${c.reset}` : ` ${c.yellow}[new]${c.reset}`;
+    preExisting == null ? "" : preExisting ? ` ${c.dim}[pre-existing]${c.reset}` : ` ${c.yellow}[new]${c.reset}`;
   console.log(`\n${color}${c.bold}== ${a.context} ==${c.reset}${tag}`);
   // body_html is a sequence of <details><summary>…</summary><pre>…</pre></details>, one per platform.
   const sections = [...a.body_html.matchAll(/<details><summary>(.*?)<\/summary>(.*?)<\/details>/gs)];
@@ -204,12 +204,15 @@ function normalizeForDedup(s: string): string {
     .replace(/\s+/g, " ");
 }
 
-async function printErrors(build: number, { all, compare }: { all: boolean; compare: boolean }) {
+async function printErrors(
+  build: number,
+  { all, compare, excludeBranch }: { all: boolean; compare: boolean; excludeBranch: string | null | undefined },
+) {
   console.log(`${c.bold}build #${build}${c.reset}  https://buildkite.com/bun/bun/builds/${build}\n`);
 
-  const [anns, mainContexts] = await Promise.all([
+  const [anns, baseline] = await Promise.all([
     annotations(build),
-    compare ? mainFailingContexts() : Promise.resolve(null),
+    compare ? mergedPRFailingContexts(excludeBranch) : Promise.resolve(null),
   ]);
 
   const shown = anns.filter(a => all || a.style === "error");
@@ -220,11 +223,11 @@ async function printErrors(build: number, { all, compare }: { all: boolean; comp
   }
 
   // New-on-this-branch first.
-  shown.sort((a, b) => Number(mainContexts?.has(a.context) ?? 0) - Number(mainContexts?.has(b.context) ?? 0));
-  for (const a of shown) renderAnnotation(a, mainContexts == null ? null : mainContexts.has(a.context));
+  shown.sort((a, b) => Number(baseline?.has(a.context) ?? 0) - Number(baseline?.has(b.context) ?? 0));
+  for (const a of shown) renderAnnotation(a, baseline == null ? null : baseline.has(a.context));
 
-  if (mainContexts == null && compare) {
-    console.log(`\n${c.dim}(could not fetch main build for comparison)${c.reset}`);
+  if (baseline == null && compare) {
+    console.log(`\n${c.dim}(could not fetch recently merged PRs for comparison)${c.reset}`);
   }
 }
 
@@ -338,11 +341,28 @@ async function saveLogs(build: number) {
   );
 }
 
-async function mainFailingContexts(): Promise<Set<string> | null> {
-  // A single main build may have failed to compile (no test annotations), so union the last few.
-  const main: Build[] = await bk("build", "list", "--branch", "main", "--state", "finished", "--limit", "5", "--json");
-  if (main.length === 0) return null;
-  const results = await Promise.all(main.map(b => annotations(b.number).catch(() => [] as Annotation[])));
+async function mergedPRFailingContexts(excludeBranch: string | null | undefined): Promise<Set<string> | null> {
+  // main builds don't run tests (build-only), so compare against the last few
+  // merged PRs' final builds — anything still failing there is pre-existing.
+  let merged: Array<{ headRefName: string }>;
+  try {
+    merged = await $`gh pr list --repo oven-sh/bun --state merged --limit 5 --json headRefName`.json();
+  } catch {
+    return null;
+  }
+  const branches = merged.map(p => p.headRefName).filter(b => b && b !== excludeBranch);
+  if (branches.length === 0) return null;
+  const builds = await Promise.all(
+    branches.map(b =>
+      bk("build", "list", "--branch", b, "--state", "finished", "--limit", "1", "--json").then(
+        (r: Build[]) => r[0]?.number,
+        () => undefined,
+      ),
+    ),
+  );
+  const results = await Promise.all(
+    builds.filter((n): n is number => n != null).map(n => annotations(n).catch(() => [] as Annotation[])),
+  );
   return new Set(
     results
       .flat()

@@ -17,6 +17,7 @@
 //     --threshold-mb 0.5 \
 //     [--no-fail]
 
+import { mkdirSync, rmSync } from "node:fs";
 import { parseArgs } from "node:util";
 
 type Target = { triplet: string };
@@ -39,8 +40,10 @@ const pipeline = process.env.BUILDKITE_PIPELINE_SLUG || "bun";
 const buildNumber = process.env.BUILDKITE_BUILD_NUMBER;
 const branch = process.env.BUILDKITE_BRANCH;
 
-function agent(args: string[]): string | undefined {
-  const { exitCode, stdout } = Bun.spawnSync(["buildkite-agent", ...args], { stderr: "inherit" });
+function agent(args: string[], opts: { quiet?: boolean } = {}): string | undefined {
+  const { exitCode, stdout } = Bun.spawnSync(["buildkite-agent", ...args], {
+    stderr: opts.quiet ? "ignore" : "inherit",
+  });
   return exitCode === 0 ? stdout.toString().trim() : undefined;
 }
 
@@ -73,46 +76,59 @@ agent(["artifact", "upload", "binary-sizes.json"]);
 
 type Baseline = { label: string; href?: string; sizes: Sizes };
 
-const bkToken = (await getSecret("BUILDKITE_API_TOKEN")) ?? process.env.BUILDKITE_API_TOKEN;
-const api = `https://api.buildkite.com/v2/organizations/${org}/pipelines/${pipeline}`;
-const bkHeaders = { Authorization: `Bearer ${bkToken}` };
+const ghToken = (await getSecret("GITHUB_TOKEN")) ?? process.env.GITHUB_TOKEN;
+const ghHeaders: Record<string, string> = ghToken ? { Authorization: `Bearer ${ghToken}` } : {};
 
-async function findSizesArtifact(query: string, label: (n: number) => string): Promise<Baseline | undefined> {
-  if (!bkToken) throw new Error("no BUILDKITE_API_TOKEN secret available");
-  const builds = await fetch(`${api}/builds?${query}`, { headers: bkHeaders });
-  if (!builds.ok) throw new Error(`builds API returned ${builds.status}`);
-  for (const b of (await builds.json()) as { number: number }[]) {
-    if (String(b.number) === String(buildNumber)) continue;
-    const arts = await fetch(`${api}/builds/${b.number}/artifacts?per_page=100`, { headers: bkHeaders });
-    if (!arts.ok) continue;
-    const hit = ((await arts.json()) as { filename: string; download_url: string }[]).find(
-      a => a.filename === "binary-sizes.json",
-    );
-    if (!hit) continue;
-    const dl = await fetch(hit.download_url, { headers: bkHeaders, redirect: "follow" });
-    if (!dl.ok) continue;
-    const json = (await dl.json()) as { sizes: Sizes };
-    return {
-      label: label(b.number),
-      href: `https://buildkite.com/${org}/${pipeline}/builds/${b.number}`,
-      sizes: json.sizes,
-    };
-  }
+async function githubJson<T>(path: string): Promise<T> {
+  const res = await fetch(`https://api.github.com/repos/oven-sh/bun/${path}`, { headers: ghHeaders });
+  if (!res.ok) throw new Error(`github ${path}: ${res.status}`);
+  return res.json() as Promise<T>;
 }
 
-// Canary: latest finished main build with a binary-sizes.json artifact.
+async function buildNumberForCommit(sha: string): Promise<number | undefined> {
+  const { statuses } = await githubJson<{ statuses: { context: string; target_url: string }[] }>(
+    `commits/${sha}/status`,
+  );
+  const bk = statuses.find(s => s.context.startsWith("buildkite/"));
+  const m = bk?.target_url.match(/\/builds\/(\d+)/);
+  return m ? parseInt(m[1], 10) : undefined;
+}
+
+async function sizesFromBuild(n: number): Promise<Sizes | undefined> {
+  const res = await fetch(`https://buildkite.com/${org}/${pipeline}/builds/${n}.json`);
+  if (!res.ok) return;
+  const { id } = (await res.json()) as { id: string };
+  const dir = "binary-size-tmp";
+  rmSync(dir, { recursive: true, force: true });
+  mkdirSync(dir, { recursive: true });
+  const ok = agent(["artifact", "download", "binary-sizes.json", dir, "--build", id], { quiet: true });
+  if (ok === undefined) return;
+  return ((await Bun.file(`${dir}/binary-sizes.json`).json()) as { sizes: Sizes }).sizes;
+}
+
+async function baselineFromCommit(sha: string, label: (n: number) => string): Promise<Baseline | undefined> {
+  const n = await buildNumberForCommit(sha);
+  if (!n || String(n) === String(buildNumber)) return;
+  const sizes = await sizesFromBuild(n);
+  if (!sizes) return;
+  return { label: label(n), href: `https://buildkite.com/${org}/${pipeline}/builds/${n}`, sizes };
+}
+
+// Canary: walk recent main commits until one whose build has binary-sizes.json.
 console.log("--- Fetching canary baseline");
 let canaryNote = "";
-const canary: Baseline | undefined = await findSizesArtifact(
-  "branch=main&state[]=passed&state[]=failed&per_page=10",
-  n => `main #${n}`,
-).catch(e => ((canaryNote = String(e?.message || e)), undefined));
-if (!canary && !canaryNote) canaryNote = "no recent main build has binary-sizes.json yet";
+const canary: Baseline | undefined = await (async () => {
+  const commits = await githubJson<{ sha: string }[]>("commits?sha=main&per_page=15");
+  for (const { sha } of commits) {
+    const b = await baselineFromCommit(sha, n => `main #${n}`);
+    if (b) return b;
+  }
+  canaryNote = "no recent main build has binary-sizes.json yet";
+})().catch(e => ((canaryNote = String(e?.message || e)), undefined));
 console.log(canary ? `  ${canary.label}` : `  unavailable: ${canaryNote}`);
 
-// Release: resolve the latest bun-v* tag to its commit, then find that
-// commit's build. Falls back to the hardcoded table until a tagged release's
-// build carries binary-sizes.json.
+// Release: latest bun-v* tag's commit. Falls back to the hardcoded table
+// until a tagged commit's build carries binary-sizes.json.
 const releaseFallback: Baseline = {
   label: "bun-v1.3.11",
   href: "https://github.com/oven-sh/bun/releases/tag/bun-v1.3.11",
@@ -141,7 +157,7 @@ async function fetchReleaseBaseline(): Promise<Baseline | undefined> {
   if (!out) return;
   const [sha, ref] = out.split("\t");
   const tag = ref.replace("refs/tags/", "");
-  return findSizesArtifact(`commit=${sha}&branch=main&per_page=5`, n => `${tag} (#${n})`);
+  return baselineFromCommit(sha, n => `${tag} (#${n})`);
 }
 
 console.log("--- Fetching release baseline");

@@ -496,7 +496,10 @@ pub const Transpiler = struct {
                     this.resolver.opts.setProduction(true);
                 }
 
-                // Step 2. Load the project root for .env file discovery.
+                // Load the project root for .env file discovery. If the cwd
+                // (or a parent) is unreadable, readDirInfo may return null;
+                // bail out of .env file loading in that case, but process
+                // env vars were already loaded above.
                 const dir_info = this.resolver.readDirInfo(this.fs.top_level_dir) catch return orelse return;
 
                 if (dir_info.tsconfig_json) |tsconfig| {

@@ -859,8 +859,21 @@ LARGE3="${"c".repeat(3000)}"
   });
 });
 
+function hasNobodyUser(): boolean {
+  try {
+    // /etc/passwd format: "name:x:uid:gid:gecos:home:shell"
+    return /^nobody:/m.test(fs.readFileSync("/etc/passwd", "utf8"));
+  } catch {
+    return false;
+  }
+}
+
 const canUseRunuser =
-  isLinux && typeof process.getuid === "function" && process.getuid() === 0 && !!Bun.which("runuser");
+  isLinux &&
+  typeof process.getuid === "function" &&
+  process.getuid() === 0 &&
+  !!Bun.which("runuser") &&
+  hasNobodyUser();
 
 test.skipIf(!canUseRunuser)("process.env is preserved when cwd lacks read permission", () => {
   const dir = tempDirWithFiles("env-eacces", {

@@ -2980,9 +2980,11 @@ pub const Resolver = struct {
             }
         }
 
-        // All queue entries were skipped (e.g. every directory including the
-        // target returned EACCES). Return null so the caller can degrade
-        // gracefully instead of crashing.
+        // queue_slice was empty on entry — every ancestor was already cached
+        // so there was nothing to walk. A debug assert above guards this, but
+        // release builds should degrade gracefully instead of hitting
+        // undefined behavior.
+        if (Environment.allow_assert) unreachable;
         return null;
     }
 

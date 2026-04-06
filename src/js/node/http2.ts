@@ -2105,8 +2105,11 @@ class Http2Stream extends Duplex {
   get pushAllowed() {
     const session = this[bunHTTP2Session];
     if (!session) return false;
+    // RFC 7540 Section 6.5.2: SETTINGS_ENABLE_PUSH has an initial value of 1.
+    // If we have not yet received a SETTINGS frame from the peer, assume push
+    // is enabled — the peer may still disable it in the first SETTINGS frame.
     const remoteSettings = session.remoteSettings;
-    if (!remoteSettings) return false;
+    if (!remoteSettings) return true;
     return remoteSettings.enablePush !== false;
   }
   close(code, callback) {

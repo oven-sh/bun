@@ -665,7 +665,7 @@ it("chrome: click(selector) rejects on invalid selector syntax", async () => {
   await using view = new Bun.WebView({ backend: chrome, width: 200, height: 200 });
   await view.navigate(html("<body></body>"));
   // querySelector throws SyntaxError page-side; the IIFE rejects.
-  await expect(await view.click(":::invalid")).rejects.toThrow();
+  await expect(view.click(":::invalid")).rejects.toThrow();
 });
 
 // --- Input variants --------------------------------------------------------

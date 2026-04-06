@@ -400,8 +400,19 @@ pub const Repository = extern struct {
     ///   - `[2001:db8::1]:9999/path` -> true (bracketed IPv6 literal)
     ///   - `[2001:db8::1]/path` -> false (IPv6 without port)
     fn hasExplicitPort(after_scheme: string) bool {
-        // Skip past `user@` or `user:pass@` if present.
-        const host_start = if (strings.indexOfChar(after_scheme, '@')) |at| at + 1 else 0;
+        // RFC 3986 §3.2: the authority ends at the first `/`, `?`, or `#`.
+        // A `@` inside the path (e.g. `/@scope/pkg` for scoped npm packages)
+        // is NOT userinfo and must not be mistaken for it.
+        const authority_end = for (after_scheme, 0..) |c, i| {
+            switch (c) {
+                '/', '?', '#' => break i,
+                else => {},
+            }
+        } else after_scheme.len;
+        const authority = after_scheme[0..authority_end];
+
+        // Skip past `user@` or `user:pass@` within the authority only.
+        const host_start = if (strings.indexOfChar(authority, '@')) |at| at + 1 else 0;
         const rest = after_scheme[host_start..];
 
         // Find the `:` that would separate host from port. Bracketed IPv6

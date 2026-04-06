@@ -50,3 +50,13 @@ test("scp-style ssh://host:path (not port) is still corrected", () => {
   const result = repositoryUrl.trySSH("ssh://git@github.com:oven-sh/bun.git");
   expect(result).toBe("ssh://git@github.com/oven-sh/bun.git");
 });
+
+test("ssh:// URL with explicit port and scoped-package path in userinfo-free form", () => {
+  // Scoped npm packages put `@` in the *path* (e.g. `/@company/pkg`). The
+  // RFC 3986 authority ends at the first `/`, so a `@` in the path must
+  // NOT be treated as userinfo — otherwise hasExplicitPort walks past the
+  // real host:port and misses it, and both original bugs resurface.
+  const url = "ssh://registry.company.com:9022/@company/package.git";
+  expect(repositoryUrl.trySSH(url)).toBe(url);
+  expect(repositoryUrl.tryHTTPS(url)).toBeNull();
+});

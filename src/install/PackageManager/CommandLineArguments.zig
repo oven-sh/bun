@@ -131,6 +131,7 @@ const outdated_params: []const ParamType = &(shared_params ++ [_]ParamType{
     // clap.parseParam("--json                                 Output outdated information in JSON format") catch unreachable,
     clap.parseParam("-F, --filter <STR>...                  Display outdated dependencies for each matching workspace") catch unreachable,
     clap.parseParam("-r, --recursive                        Check outdated packages in all workspaces") catch unreachable,
+    clap.parseParam("--changelog                            Show changelog URLs for outdated packages") catch unreachable,
     clap.parseParam("<POS> ...                              Package patterns to filter by") catch unreachable,
 });
 
@@ -234,6 +235,8 @@ lockfile_only: bool = false,
 node_linker: ?Options.NodeLinker = null,
 
 minimum_release_age_ms: ?f64 = null,
+
+changelog: bool = false,
 
 // `bun pm version` options
 git_tag_version: bool = true,
@@ -880,6 +883,7 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
         // fake --dry-run, we don't actually resolve+clean the lockfile
         cli.dry_run = true;
         cli.recursive = args.flag("--recursive");
+        cli.changelog = args.flag("--changelog");
         // cli.json_output = args.flag("--json");
     }
 

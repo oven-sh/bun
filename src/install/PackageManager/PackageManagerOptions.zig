@@ -83,6 +83,9 @@ minimum_release_age_ms: ?f64 = null,
 // Packages to exclude from minimum release age checking
 minimum_release_age_excludes: ?[]const []const u8 = null,
 
+// Show changelog URLs for outdated packages
+changelog: bool = false,
+
 /// Override CPU architecture for optional dependencies filtering
 cpu: Npm.Architecture = Npm.Architecture.current,
 /// Override OS for optional dependencies filtering
@@ -569,6 +572,8 @@ pub fn load(
         if (cli.minimum_release_age_ms) |min_age_ms| {
             this.minimum_release_age_ms = min_age_ms;
         }
+
+        this.changelog = cli.changelog;
 
         this.lockfile_only = cli.lockfile_only;
 

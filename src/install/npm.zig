@@ -916,6 +916,8 @@ pub const PackageManifest = struct {
     package_versions: []const PackageVersion = &[_]PackageVersion{},
     extern_strings_bin_entries: []const ExternalString = &[_]ExternalString{},
     bundled_deps_buf: []const PackageNameHash = &.{},
+    // Repository URL extracted from extended manifest, not serialized to disk cache.
+    repository_url: []const u8 = &.{},
 
     pub inline fn name(this: *const PackageManifest) string {
         return this.pkg.name.slice(this.string_buf);
@@ -942,21 +944,24 @@ pub const PackageManifest = struct {
             if (header_bytes.len != 49)
                 @compileError("header bytes must be exactly 49 bytes long, length is not serialized");
 
-            // skip name
-            const fields = std.meta.fields(Npm.PackageManifest);
-
-            const Data = struct {
-                size: usize,
-                name: []const u8,
-                alignment: usize,
-            };
-            var data: [fields.len]Data = undefined;
-            for (fields, &data) |field_info, *dat| {
-                dat.* = .{
+            const all_fields = std.meta.fields(Npm.PackageManifest);
+            const Data = struct { size: usize, name: []const u8, alignment: usize };
+            // Exclude transient fields before sorting — pdq is unstable and adding
+            // same-alignment fields could reorder the serialized layout.
+            var serialized_count: usize = 0;
+            for (all_fields) |f| {
+                if (!strings.eqlComptime(f.name, "repository_url")) serialized_count += 1;
+            }
+            var data: [serialized_count]Data = undefined;
+            var di: usize = 0;
+            for (all_fields) |field_info| {
+                if (strings.eqlComptime(field_info.name, "repository_url")) continue;
+                data[di] = .{
                     .size = @sizeOf(field_info.type),
                     .name = field_info.name,
                     .alignment = if (@sizeOf(field_info.type) == 0) 1 else field_info.alignment,
                 };
+                di += 1;
             }
             const Sort = struct {
                 fn lessThan(_: void, lhs: Data, rhs: Data) bool {
@@ -964,8 +969,8 @@ pub const PackageManifest = struct {
                 }
             };
             std.sort.pdq(Data, &data, {}, Sort.lessThan);
-            var sizes_bytes: [fields.len]usize = undefined;
-            var names: [fields.len][]const u8 = undefined;
+            var sizes_bytes: [serialized_count]usize = undefined;
+            var names: [serialized_count][]const u8 = undefined;
             for (data, &sizes_bytes, &names) |elem, *size_, *name_| {
                 size_.* = elem.size;
                 name_.* = elem.name;
@@ -2061,6 +2066,25 @@ pub const PackageManifest = struct {
             string_builder.count(etag);
         }
 
+        // Extract repository URL from extended manifest
+        var repository_url: ?[]const u8 = null;
+        if (is_extended_manifest) {
+            if (json.asProperty("repository")) |repo_q| {
+                // repository can be a string or an object with a "url" field
+                const raw_url = if (repo_q.expr.data == .e_object)
+                    (if (repo_q.expr.asProperty("url")) |url_q| url_q.expr.asString(allocator) else null)
+                else
+                    repo_q.expr.asString(allocator);
+
+                if (raw_url) |url| {
+                    const normalized = normalizeRepositoryUrl(url);
+                    if (normalized.len > 0) {
+                        repository_url = normalized;
+                    }
+                }
+            }
+        }
+
         var versioned_packages = try allocator.alloc(PackageVersion, release_versions_len + pre_versions_len);
         const all_semver_versions = try allocator.alloc(Semver.Version, release_versions_len + pre_versions_len + dist_tags_count);
         var all_extern_strings = try allocator.alloc(ExternalString, extern_string_count + tarball_urls_count);
@@ -2616,6 +2640,13 @@ pub const PackageManifest = struct {
             result.pkg.modified = string_builder.append(String, field);
         }
 
+        // repository_url is stored separately (not in string_buf) so it
+        // doesn't bloat the serialized disk cache.
+        var repository_url_duped: []const u8 = &.{};
+        if (repository_url) |repo_url| {
+            repository_url_duped = bun.handleOom(default_allocator.dupe(u8, repo_url));
+        }
+
         result.pkg.releases.keys = VersionSlice.init(all_semver_versions, all_release_versions);
         result.pkg.releases.values = PackageVersionList.init(versioned_packages, all_versioned_package_releases);
 
@@ -2744,7 +2775,73 @@ pub const PackageManifest = struct {
             result.string_buf = ptr[0..string_builder.len];
         }
 
+        result.repository_url = repository_url_duped;
+
         return result;
+    }
+
+    /// Normalize npm repository URLs to browseable HTTPS URLs.
+    /// Returns a slice of the input with prefixes/suffixes stripped.
+    /// The result falls into three categories the display code must handle:
+    ///   - Full URL:     "https://github.com/user/repo"   (has scheme)
+    ///   - Domain+path:  "github.com/user/repo"           (dot before first slash)
+    ///   - Shorthand:    "user/repo"                       (GitHub shorthand)
+    /// Returns empty string for formats that cannot be normalized without allocation
+    /// (e.g. non-GitHub SCP URLs like git@gitlab.com:user/repo.git).
+    fn normalizeRepositoryUrl(raw: []const u8) []const u8 {
+        var url = raw;
+
+        // 1. Strip git+ wrapper
+        var has_ssh_scheme = false;
+        if (strings.hasPrefixComptime(url, "git+")) url = url[4..];
+
+        // 2. Strip URL scheme
+        if (strings.hasPrefixComptime(url, "https://") or strings.hasPrefixComptime(url, "http://")) {
+            // keep scheme, handled below
+        } else if (strings.hasPrefixComptime(url, "git://")) {
+            url = url["git://".len..];
+        } else if (strings.hasPrefixComptime(url, "ssh://")) {
+            url = url["ssh://".len..];
+            has_ssh_scheme = true;
+        } else if (strings.hasPrefixComptime(url, "github:")) {
+            url = url["github:".len..];
+        } else if (strings.hasPrefixComptime(url, "bitbucket:") or
+            strings.hasPrefixComptime(url, "gitlab:") or
+            strings.hasPrefixComptime(url, "gist:"))
+        {
+            return &.{}; // non-GitHub hosted shorthand, cannot normalize without allocation
+        } else if (strings.contains(url, "://")) {
+            return &.{}; // unsupported scheme (file://, svn://, etc.)
+        }
+
+        // 3. Strip git@ user prefix (can appear after ssh:// stripping)
+        if (strings.hasPrefixComptime(url, "git@")) {
+            url = url["git@".len..];
+            // SCP-style URLs use colon separator (git@github.com:user/repo)
+            // which we cannot convert to '/' without allocation.
+            // For github.com, extract just the path portion.
+            if (strings.hasPrefixComptime(url, "github.com:")) {
+                url = url["github.com:".len..];
+                // Skip port number only if ssh:// was present (e.g. ssh://git@github.com:22/user/repo).
+                // Without ssh://, digits after the colon are a GitHub org name, not a port.
+                if (has_ssh_scheme) {
+                    var port_end: usize = 0;
+                    while (port_end < url.len and url[port_end] >= '0' and url[port_end] <= '9') port_end += 1;
+                    if (port_end > 0 and port_end < url.len and url[port_end] == '/') {
+                        url = url[port_end + 1 ..];
+                    }
+                }
+            } else if (strings.indexOfChar(url, ':') != null) {
+                return &.{}; // non-GitHub SCP URL, cannot normalize
+            }
+        }
+
+        // 4. Strip .git suffix
+        if (strings.hasSuffixComptime(url, ".git")) {
+            url = url[0 .. url.len - 4];
+        }
+
+        return url;
     }
 };
 

@@ -421,13 +421,14 @@ pub const OutdatedCommand = struct {
 
                 const package_name = pkg_names[package_id].slice(string_buf);
                 var expired = false;
+                const needs_extended = manager.options.minimum_release_age_ms != null or manager.options.changelog;
                 const manifest = manager.manifests.byNameAllowExpired(
                     manager,
                     manager.scopeForPackageName(package_name),
                     package_name,
                     &expired,
                     .load_from_memory_fallback_to_disk,
-                    manager.options.minimum_release_age_ms != null,
+                    needs_extended,
                 ) orelse continue;
 
                 const actual_latest = manifest.findByDistTag("latest") orelse continue;
@@ -576,13 +577,14 @@ pub const OutdatedCommand = struct {
                 const resolution = pkg_resolutions[package_id];
 
                 var expired = false;
+                const needs_extended = manager.options.minimum_release_age_ms != null or manager.options.changelog;
                 const manifest = manager.manifests.byNameAllowExpired(
                     manager,
                     manager.scopeForPackageName(package_name),
                     package_name,
                     &expired,
                     .load_from_memory_fallback_to_disk,
-                    manager.options.minimum_release_age_ms != null,
+                    needs_extended,
                 ) orelse continue;
 
                 const latest = manifest.findByDistTagWithFilter("latest", manager.options.minimum_release_age_ms, manager.options.minimum_release_age_excludes);
@@ -685,8 +687,63 @@ pub const OutdatedCommand = struct {
         if (has_filtered_versions) {
             Output.prettyln("<d><b>Note:<r> <d>The <r><blue>*<r><d> indicates that version isn't true latest due to minimum release age<r>", .{});
         }
+
+        if (manager.options.changelog) {
+            var has_any_url = false;
+            var seen_pkgs = std.AutoHashMapUnmanaged(PackageID, void){};
+            defer seen_pkgs.deinit(bun.default_allocator);
+            // Print changelog URLs below the table
+            for (grouped_ids.items) |item| {
+                const package_id = item.package_id;
+                if ((seen_pkgs.getOrPut(bun.default_allocator, package_id) catch bun.handleOom(error.OutOfMemory)).found_existing) continue;
+                const package_name = pkg_names[package_id].slice(string_buf);
+
+                var exp = false;
+                const needs_extended = manager.options.minimum_release_age_ms != null or manager.options.changelog;
+                const manifest = manager.manifests.byNameAllowExpired(
+                    manager,
+                    manager.scopeForPackageName(package_name),
+                    package_name,
+                    &exp,
+                    .load_from_memory_fallback_to_disk,
+                    needs_extended,
+                ) orelse continue;
+
+                const repo_url = manifest.repository_url;
+                if (repo_url.len == 0) continue;
+
+                if (!has_any_url) {
+                    Output.prettyln("\n<b>Changelogs:<r>", .{});
+                    has_any_url = true;
+                }
+
+                // Construct a display URL from the normalized repository URL.
+                // Three forms: full URL (has scheme), domain/path (dot before first /), or shorthand (user/repo).
+                if (strings.hasPrefixComptime(repo_url, "https://") or strings.hasPrefixComptime(repo_url, "http://")) {
+                    Output.prettyln("  <cyan>{s}<r> <d>{s}<r>", .{ package_name, repo_url });
+                } else if (hasDomainPrefix(repo_url)) {
+                    Output.prettyln("  <cyan>{s}<r> <d>https://{s}<r>", .{ package_name, repo_url });
+                } else if (strings.contains(repo_url, "/")) {
+                    Output.prettyln("  <cyan>{s}<r> <d>https://github.com/{s}<r>", .{ package_name, repo_url });
+                } else {
+                    Output.prettyln("  <cyan>{s}<r> <d>{s}<r>", .{ package_name, repo_url });
+                }
+            }
+        }
     }
 };
+
+/// Returns true if the string starts with a known hosting domain prefix.
+/// Checks for common Git hosting domains to distinguish "github.com/user/repo"
+/// from GitHub shorthands like "user.name/repo" (dotted usernames).
+fn hasDomainPrefix(s: []const u8) bool {
+    return strings.hasPrefixComptime(s, "github.com/") or
+        strings.hasPrefixComptime(s, "gitlab.com/") or
+        strings.hasPrefixComptime(s, "bitbucket.org/") or
+        strings.hasPrefixComptime(s, "codeberg.org/") or
+        strings.hasPrefixComptime(s, "sr.ht/") or
+        strings.hasPrefixComptime(s, "gitea.com/");
+}
 
 const string = []const u8;
 

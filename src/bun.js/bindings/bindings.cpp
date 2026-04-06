@@ -5048,6 +5048,8 @@ static void JSC__JSValue__forEachPropertyImpl(JSC::EncodedJSValue JSValue0, JSC:
                     prototypeCount = 1;
                 }
             }
+            // Ignore exceptions from Proxy "getPrototype" trap.
+            CLEAR_IF_EXCEPTION(scope);
         }
     }
     auto* propertyNames = vm.propertyNames;
@@ -5238,7 +5240,12 @@ restart:
                 break;
             if (iterating == globalObject)
                 break;
-            iterating = iterating->getPrototype(globalObject).getObject();
+            JSValue proto = iterating->getPrototype(globalObject);
+            if (scope.exception()) [[unlikely]] {
+                (void)scope.tryClearException();
+                break;
+            }
+            iterating = proto.getObject();
         }
     }
 

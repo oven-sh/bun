@@ -148,4 +148,3 @@ test("net.createServer close completes when peer sends unread bytes", async () =
   await once(server, "close");
   expect((server as any)._connections).toBe(0);
 });
-

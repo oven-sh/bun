@@ -22,6 +22,34 @@ test("import.meta.env is lowered to process.env in bun build", async () => {
   expect(exitCode).toBe(0);
 });
 
+test("import.meta.env lowering does not shadow a local process binding", async () => {
+  // When `process` is shadowed by a local parameter, the rewrite must not
+  // silently reference the local. Leave import.meta.env as-is so Bun's
+  // runtime resolves it to the real global.
+  using dir = tempDir("issue-21097-shadow", {
+    "index.ts": `
+function handler(process: any) {
+  return import.meta.env.FOO;
+}
+console.log(handler.toString());
+`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "--target=bun", join(String(dir), "index.ts")],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  // The shadowed scope must NOT be rewritten to `process.env.FOO`,
+  // which would reference the parameter instead of the global.
+  expect(stdout).toContain("import.meta.env.FOO");
+  expect(stdout).not.toContain("process.env.FOO");
+  expect(exitCode).toBe(0);
+});
+
 test("import.meta.env works in bun build --compile --bytecode", async () => {
   using dir = tempDir("issue-21097-bc", {
     "index.ts": `

@@ -2980,12 +2980,7 @@ pub const Resolver = struct {
             }
         }
 
-        // queue_slice was empty on entry — every ancestor was already cached
-        // so there was nothing to walk. A debug assert above guards this, but
-        // release builds should degrade gracefully instead of hitting
-        // undefined behavior.
-        if (Environment.allow_assert) unreachable;
-        return null;
+        unreachable;
     }
 
     // This closely follows the behavior of "tryLoadModuleUsingPaths()" in the

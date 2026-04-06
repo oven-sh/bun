@@ -886,8 +886,11 @@ test.skipIf(!canUseRunuser)("process.env is preserved when cwd lacks read permis
   const noreadDir = path.join(dir, "noread");
   const scriptPath = path.join(dir, "script.ts");
 
-  // Allow "nobody" to traverse the temp dir and read the script.
+  // Allow "nobody" to traverse the temp dir and read the script. Under
+  // restrictive umasks the temp files can default to 0o640 which nobody
+  // can't read, so set them explicitly.
   fs.chmodSync(dir, 0o755);
+  fs.chmodSync(scriptPath, 0o644);
 
   // Make noread execute-only (0111). A process can cd into it, but
   // Bun's resolver cannot list it (opendir → EACCES). This causes

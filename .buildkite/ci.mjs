@@ -809,6 +809,39 @@ function getWindowsSignStep(windowsPlatforms, options) {
 }
 
 /**
+ * Aggregates stripped-binary sizes from every release build, compares them
+ * against the latest main build's binary-sizes.json, and fails if any grew
+ * past the threshold. Runs on PR builds (comparison) and main (record-only,
+ * to produce the baseline artifact).
+ *
+ * @param {Platform[]} releasePlatforms
+ * @param {PipelineOptions} options
+ * @param {{ recordOnly: boolean }} [extra]
+ * @returns {Step}
+ */
+function getBinarySizeStep(releasePlatforms, options, { recordOnly = false } = {}) {
+  const targets = releasePlatforms.map(p => ({ triplet: getTargetTriplet(p) }));
+  const args = [`--targets '${JSON.stringify(targets)}'`, `--threshold-mb ${BINARY_SIZE_THRESHOLD_MB}`];
+  if (recordOnly) args.push("--no-fail");
+
+  return {
+    key: "binary-size",
+    label: `${getBuildkiteEmoji("package")} binary-size`,
+    agents: { queue: "test-darwin" },
+    depends_on: releasePlatforms.map(p => `${getTargetKey(p)}-build-bun`),
+    allow_dependency_failure: true,
+    // [skip size check] in the commit message keeps the annotation but
+    // stops a regression from failing the build.
+    soft_fail: !!options.skipSizeCheck,
+    retry: getRetry(),
+    cancel_on_build_failing: isMergeQueue(),
+    command: `bun scripts/binary-size.ts ${args.join(" ")}`,
+  };
+}
+
+const BINARY_SIZE_THRESHOLD_MB = 0.5;
+
+/**
  * @param {Platform[]} buildPlatforms
  * @param {PipelineOptions} options
  * @param {{ signed: boolean }} [extra]
@@ -823,6 +856,9 @@ function getReleaseStep(buildPlatforms, options, { signed = false } = {}) {
   const depends_on = signed
     ? [...buildPlatforms.filter(p => p.os !== "windows").map(p => `${getTargetKey(p)}-build-bun`), "windows-sign"]
     : buildPlatforms.map(platform => `${getTargetKey(platform)}-build-bun`);
+  // upload-release.sh attaches binary-sizes.json to the release, which the
+  // binary-size step produces.
+  depends_on.push("binary-size");
 
   return {
     key: "release",
@@ -922,6 +958,7 @@ function getReleaseStep(buildPlatforms, options, { signed = false } = {}) {
  * @property {string | boolean} [skipEverything]
  * @property {string | boolean} [skipBuilds]
  * @property {string | boolean} [skipTests]
+ * @property {string | boolean} [skipSizeCheck]
  * @property {string | boolean} [forceBuilds]
  * @property {string | boolean} [forceTests]
  * @property {string | boolean} [buildImages]
@@ -1201,6 +1238,7 @@ async function getPipelineOptions() {
     skipBuilds: parseOption(/\[(skip builds?|no builds?|only tests?)\]/i),
     forceBuilds: parseOption(/\[(force builds?)\]/i),
     skipTests: parseOption(/\[(skip tests?|no tests?|only builds?)\]/i),
+    skipSizeCheck: parseOption(/\[(skip size( check)?|allow size)\]/i),
     signWindows: parseOption(/\[(sign windows)\]/i),
     buildImages: parseOption(/\[(build (?:(?:windows|linux) )?images?)\]/i),
     dryRun: parseOption(/\[(dry run)\]/i),
@@ -1314,6 +1352,14 @@ async function getPipeline(options = {}) {
         })),
       );
     }
+  }
+
+  // Only release-profile builds produce a stripped ${triplet}.zip.
+  const strippedPlatforms = buildPlatforms.filter(p => (p.profile ?? "release") === "release");
+  if (!buildId && strippedPlatforms.length) {
+    // PR builds compare against main and can fail; main just records the
+    // baseline JSON so PRs have something to diff against.
+    steps.push(getBinarySizeStep(strippedPlatforms, options, { recordOnly: isMainBranch() }));
   }
 
   // Sign Windows builds on release (non-canary main) or when [sign windows]

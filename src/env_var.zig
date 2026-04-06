@@ -28,6 +28,7 @@
 
 pub const AGENT = New(kind.string, "AGENT", .{});
 pub const BUN_AGENT_RULE_DISABLED = New(kind.boolean, "BUN_AGENT_RULE_DISABLED", .{ .default = false });
+pub const BUN_AGENTS_MD_DISABLED = New(kind.boolean, "BUN_AGENTS_MD_DISABLED", .{ .default = false });
 pub const BUN_COMPILE_TARGET_TARBALL_URL = New(kind.string, "BUN_COMPILE_TARGET_TARBALL_URL", .{});
 pub const BUN_CONFIG_DISABLE_COPY_FILE_RANGE = New(kind.boolean, "BUN_CONFIG_DISABLE_COPY_FILE_RANGE", .{ .default = false });
 pub const BUN_CONFIG_DISABLE_ioctl_ficlonerange = New(kind.boolean, "BUN_CONFIG_DISABLE_ioctl_ficlonerange", .{ .default = false });

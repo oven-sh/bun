@@ -996,7 +996,7 @@ const Template = enum {
 
     const agent_rule = @embedFile("../init/rule.md");
     const cursor_rule = TemplateFile{ .path = ".cursor/rules/use-bun-instead-of-node-vite-npm-pnpm.mdc", .contents = agent_rule };
-    const cursor_rule_path_to_claude_md = "../../CLAUDE.md";
+    const cursor_rule_path_to_agents_md = "../../AGENTS.md";
 
     fn isClaudeCodeInstalled() bool {
         if (Environment.isWindows) {
@@ -1015,50 +1015,76 @@ const Template = enum {
         return bun.which(pathbuffer, bun.env_var.PATH.get() orelse return false, bun.fs.FileSystem.instance.top_level_dir, "claude") != null;
     }
 
+    /// Writes the agent rule files during `bun init`.
+    ///
+    /// `AGENTS.md` (https://agents.md/) is the single source of truth. When
+    /// Claude Code or Cursor is detected, their respective rule files are
+    /// created as symlinks to `AGENTS.md` so the content stays in sync.
+    ///
+    /// Fallbacks if a symlink can't be created (Windows, disabled, filesystem
+    /// error): write the rule file directly with the same content.
     pub fn createAgentRule() void {
-        var @"create CLAUDE.md" = Template.isClaudeCodeInstalled() and
+        // Master kill switch — disables everything below.
+        if (bun.env_var.BUN_AGENT_RULE_DISABLED.get()) return;
+
+        // The YAML frontmatter at the top of `src/init/rule.md` is only
+        // meaningful to Cursor. Strip it for `AGENTS.md` and any real
+        // `CLAUDE.md` fallback.
+        const end_of_frontmatter = if (bun.strings.lastIndexOf(agent_rule, "---\n")) |start| start + "---\n".len else 0;
+        const trimmed_rule = agent_rule[end_of_frontmatter..];
+
+        // Step 1: Write `AGENTS.md` — the single source of truth. Never
+        //         overwrite an existing one; an existing file is still a
+        //         valid symlink target for the steps below.
+        var agents_md_available = false;
+        if (bun.sys.exists("AGENTS.md")) {
+            agents_md_available = true;
+        } else if (!bun.env_var.BUN_AGENTS_MD_DISABLED.get()) {
+            if (InitCommand.Assets.createNew("AGENTS.md", trimmed_rule)) |_| {
+                agents_md_available = true;
+            } else |_| {}
+        }
+
+        // Step 2: Claude — symlink `CLAUDE.md` to `AGENTS.md` when possible,
+        //         otherwise write `CLAUDE.md` as a real file (the original
+        //         behavior).
+        const create_claude_md = Template.isClaudeCodeInstalled() and
             // Never overwrite CLAUDE.md
             !bun.sys.exists("CLAUDE.md");
-
-        if (Template.getCursorRule()) |template_file| {
-            var did_create_agent_rule = false;
-
-            // If both Cursor & Claude is installed, make the cursor rule a
-            // symlink to ../../CLAUDE.md
-            const asset_path = if (@"create CLAUDE.md") "CLAUDE.md" else template_file.path;
-            const result = InitCommand.Assets.createNew(asset_path, template_file.contents);
-            did_create_agent_rule = true;
-            result catch {
-                did_create_agent_rule = false;
-                if (@"create CLAUDE.md") {
-                    @"create CLAUDE.md" = false;
-                    // If installing the CLAUDE.md fails for some reason, fall back to installing the cursor rule.
-                    InitCommand.Assets.createNew(template_file.path, template_file.contents) catch {};
-                }
-            };
-
+        var claude_md_written = false;
+        if (create_claude_md) {
             if (comptime !Environment.isWindows) {
-                // if we did create the CLAUDE.md, then symlinks the
-                // .cursor/rules/*.mdc -> CLAUDE.md so it's easier to keep them in
-                // sync if you change it locally. we use a symlink for the cursor
-                // rule in this case so that the github UI for CLAUDE.md (which may
-                // appear prominently in repos) doesn't show a file path.
-                if (did_create_agent_rule and @"create CLAUDE.md") symlink_cursor_rule: {
-                    @"create CLAUDE.md" = false;
-                    bun.makePath(bun.FD.cwd().stdDir(), ".cursor/rules") catch {};
-                    bun.sys.symlinkat(cursor_rule_path_to_claude_md, .cwd(), template_file.path).unwrap() catch break :symlink_cursor_rule;
-                    Output.prettyln(" + <r><d>{s} -\\> {s}<r>", .{ template_file.path, asset_path });
+                if (agents_md_available) symlink_claude_md: {
+                    bun.sys.symlinkat("AGENTS.md", .cwd(), "CLAUDE.md").unwrap() catch break :symlink_claude_md;
+                    Output.prettyln(" + <r><d>CLAUDE.md -\\> AGENTS.md<r>", .{});
                     Output.flush();
+                    claude_md_written = true;
                 }
+            }
+            if (!claude_md_written) {
+                InitCommand.Assets.createNew("CLAUDE.md", trimmed_rule) catch {};
             }
         }
 
-        // If cursor is not installed but claude code is installed, then create the CLAUDE.md.
-        if (@"create CLAUDE.md") {
-            // In this case, the frontmatter from the cursor rule is not helpful so let's trim it out.
-            const end_of_frontmatter = if (bun.strings.lastIndexOf(agent_rule, "---\n")) |start| start + "---\n".len else 0;
+        // Step 3: Cursor — symlink `.cursor/rules/*.mdc` to `../../AGENTS.md`
+        //         when possible, otherwise write the cursor rule file directly
+        //         (with the frontmatter intact, since Cursor needs it).
+        if (Template.getCursorRule()) |template_file| {
+            if (bun.sys.existsZ(template_file.path)) return;
 
-            InitCommand.Assets.createNew("CLAUDE.md", agent_rule[end_of_frontmatter..]) catch {};
+            var cursor_rule_written = false;
+            if (comptime !Environment.isWindows) {
+                if (agents_md_available) symlink_cursor_rule: {
+                    bun.makePath(bun.FD.cwd().stdDir(), ".cursor/rules") catch {};
+                    bun.sys.symlinkat(cursor_rule_path_to_agents_md, .cwd(), template_file.path).unwrap() catch break :symlink_cursor_rule;
+                    Output.prettyln(" + <r><d>{s} -\\> {s}<r>", .{ template_file.path, cursor_rule_path_to_agents_md });
+                    Output.flush();
+                    cursor_rule_written = true;
+                }
+            }
+            if (!cursor_rule_written) {
+                InitCommand.Assets.createNew(template_file.path, template_file.contents) catch {};
+            }
         }
     }
 

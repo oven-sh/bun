@@ -242,7 +242,7 @@ pub fn serialize(this: *Store, comptime Writer: type, writer: Writer) !void {
 
             // Version 4: preserve multi-part boundaries so a blob transferred
             // via postMessage/structuredClone still streams one chunk per part.
-            try writer.writeInt(u32, @as(u32, @intCast(bytes.part_count)), .little);
+            try writer.writeInt(u32, @truncate(bytes.part_count), .little);
             if (bytes.part_sizes) |sizes| {
                 var i: SizeType = 0;
                 while (i < bytes.part_count) : (i += 1) {

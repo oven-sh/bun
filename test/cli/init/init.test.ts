@@ -637,45 +637,42 @@ import path from "path";
       },
     );
 
-    test.skipIf(isWindows)(
-      "dangling CLAUDE.md symlink recovers on next init",
-      async () => {
-        // Regression: a previous `bun init` left `CLAUDE.md` as a symlink to
-        // `AGENTS.md`. The user then deleted `AGENTS.md`, so `CLAUDE.md` is
-        // now a dangling link. A fresh `bun init` must notice the broken
-        // link, unlink it, and re-create both files — otherwise both
-        // `symlinkat()` and `createNew()` hit EEXIST and the link stays dead.
-        const temp = tempDirWithFiles("bun-init-agents-dangling", {});
-        // Pre-stage a dangling `CLAUDE.md` symlink pointing at a non-existent
-        // `AGENTS.md`.
-        fs.symlinkSync("AGENTS.md", path.join(temp, "CLAUDE.md"));
-        expect(fs.lstatSync(path.join(temp, "CLAUDE.md")).isSymbolicLink()).toBe(true);
-        expect(fs.existsSync(path.join(temp, "AGENTS.md"))).toBe(false);
+    test.skipIf(isWindows)("dangling CLAUDE.md symlink recovers on next init", async () => {
+      // Regression: a previous `bun init` left `CLAUDE.md` as a symlink to
+      // `AGENTS.md`. The user then deleted `AGENTS.md`, so `CLAUDE.md` is
+      // now a dangling link. A fresh `bun init` must notice the broken
+      // link, unlink it, and re-create both files — otherwise both
+      // `symlinkat()` and `createNew()` hit EEXIST and the link stays dead.
+      const temp = tempDirWithFiles("bun-init-agents-dangling", {});
+      // Pre-stage a dangling `CLAUDE.md` symlink pointing at a non-existent
+      // `AGENTS.md`.
+      fs.symlinkSync("AGENTS.md", path.join(temp, "CLAUDE.md"));
+      expect(fs.lstatSync(path.join(temp, "CLAUDE.md")).isSymbolicLink()).toBe(true);
+      expect(fs.existsSync(path.join(temp, "AGENTS.md"))).toBe(false);
 
-        await using proc = Bun.spawn({
-          cmd: [bunExe(), "init", "-y"],
-          cwd: temp,
-          stdio: ["ignore", "pipe", "pipe"],
-          env: {
-            ...bunEnv,
-            ...claudeEnv(temp, true),
-            CURSOR_AGENT_RULE_DISABLED: "1",
-          },
-        });
-        const exitCode = await proc.exited;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "init", "-y"],
+        cwd: temp,
+        stdio: ["ignore", "pipe", "pipe"],
+        env: {
+          ...bunEnv,
+          ...claudeEnv(temp, true),
+          CURSOR_AGENT_RULE_DISABLED: "1",
+        },
+      });
+      const exitCode = await proc.exited;
 
-        // `AGENTS.md` was (re)created, and `CLAUDE.md` is a fresh symlink
-        // pointing at it — no longer dangling.
-        expect(fs.existsSync(path.join(temp, "AGENTS.md"))).toBe(true);
-        expect(fs.existsSync(path.join(temp, "CLAUDE.md"))).toBe(true);
-        expect(fs.lstatSync(path.join(temp, "CLAUDE.md")).isSymbolicLink()).toBe(true);
-        expect(fs.readlinkSync(path.join(temp, "CLAUDE.md"))).toBe("AGENTS.md");
-        expect(fs.readFileSync(path.join(temp, "CLAUDE.md"), "utf8")).toBe(
-          fs.readFileSync(path.join(temp, "AGENTS.md"), "utf8"),
-        );
-        expect(exitCode).toBe(0);
-      },
-    );
+      // `AGENTS.md` was (re)created, and `CLAUDE.md` is a fresh symlink
+      // pointing at it — no longer dangling.
+      expect(fs.existsSync(path.join(temp, "AGENTS.md"))).toBe(true);
+      expect(fs.existsSync(path.join(temp, "CLAUDE.md"))).toBe(true);
+      expect(fs.lstatSync(path.join(temp, "CLAUDE.md")).isSymbolicLink()).toBe(true);
+      expect(fs.readlinkSync(path.join(temp, "CLAUDE.md"))).toBe("AGENTS.md");
+      expect(fs.readFileSync(path.join(temp, "CLAUDE.md"), "utf8")).toBe(
+        fs.readFileSync(path.join(temp, "AGENTS.md"), "utf8"),
+      );
+      expect(exitCode).toBe(0);
+    });
 
     test("BUN_AGENT_RULE_DISABLED=1: master kill switch — no agent files at all", async () => {
       const temp = tempDirWithFiles("bun-init-agents-master-off", {});

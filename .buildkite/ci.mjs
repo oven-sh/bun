@@ -497,7 +497,11 @@ function getBuildCommand(target, options, mode) {
   // is wrong. PATH on the agent has node via bootstrap.sh.
   // --experimental-strip-types for Node 24's .ts support (unflagged in
   // 25+; drop once CI bumps past the ABI-141 blocker).
-  return `node --experimental-strip-types scripts/build.ts ${getBuildArgs(target, options, mode)}`;
+  //
+  // Windows ARM64 node v24 intermittently fastfails (0xC0000409) in
+  // fetch-cli.ts; run build.ts under bun there instead.
+  const runtime = target.os === "windows" && target.arch === "aarch64" ? "bun" : "node --experimental-strip-types";
+  return `${runtime} scripts/build.ts ${getBuildArgs(target, options, mode)}`;
 }
 
 /**

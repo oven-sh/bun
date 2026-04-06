@@ -683,10 +683,13 @@ pub const H2FrameParser = struct {
     lastPushStreamID: u32 = 0,
     // RFC 7540 Section 6.10: CONTINUATION frames after PUSH_PROMISE carry the
     // parent stream identifier, but the header block belongs to the promised
-    // stream. Track the promised stream ID so the next CONTINUATION arriving
-    // on the parent stream can route its decoded headers to the promised stream.
+    // stream. Track both the promised stream ID (decode target) and the
+    // parent stream ID (expected CONTINUATION stream identifier) so we only
+    // take the push-promise decode path when the CONTINUATION arrives on the
+    // correct parent — a different waiting stream must not be misrouted here.
     // 0 means no pending PUSH_PROMISE continuation.
     continuation_promised_stream_id: u32 = 0,
+    continuation_parent_stream_id: u32 = 0,
     isServer: bool = false,
     prefaceReceivedLen: u8 = 0,
     // we buffer requests until we get the first settings ACK
@@ -2333,8 +2336,12 @@ pub const H2FrameParser = struct {
 
         // RFC 7540 Section 6.10: If this CONTINUATION follows a PUSH_PROMISE,
         // the decoded header block belongs to the promised stream, not the
-        // parent stream that the CONTINUATION frame is addressed to.
-        if (this.continuation_promised_stream_id != 0) {
+        // parent stream that the CONTINUATION frame is addressed to. Only
+        // take this path when the CONTINUATION arrived on the parent stream
+        // we actually saw the PUSH_PROMISE on — otherwise a CONTINUATION for
+        // a different mid-header-block stream could be misrouted into the
+        // push-promise decode, corrupting HPACK state.
+        if (this.continuation_promised_stream_id != 0 and frame.streamIdentifier == this.continuation_parent_stream_id) {
             const promised_entry = this.streams.getEntry(this.continuation_promised_stream_id);
             if (promised_entry) |entry| {
                 const promised_stream = entry.value_ptr;
@@ -2350,6 +2357,7 @@ pub const H2FrameParser = struct {
                         // Promised stream removed during callbacks — clear all
                         // continuation state so future frames aren't misrouted.
                         this.continuation_promised_stream_id = 0;
+                        this.continuation_parent_stream_id = 0;
                         if (this.streams.getPtr(parent_id)) |p| {
                             p.isWaitingMoreHeaders = false;
                         }
@@ -2360,6 +2368,7 @@ pub const H2FrameParser = struct {
                             p.isWaitingMoreHeaders = false;
                         }
                         this.continuation_promised_stream_id = 0;
+                        this.continuation_parent_stream_id = 0;
                     }
                     return content.end;
                 }
@@ -2372,6 +2381,7 @@ pub const H2FrameParser = struct {
             // corrupting every subsequent header block. Treat this as a
             // connection-level compression error.
             this.continuation_promised_stream_id = 0;
+            this.continuation_parent_stream_id = 0;
             if (this.streams.getPtr(frame.streamIdentifier)) |p| {
                 p.isWaitingMoreHeaders = false;
             }
@@ -2532,8 +2542,10 @@ pub const H2FrameParser = struct {
                     p.isWaitingMoreHeaders = true;
                 }
                 this.continuation_promised_stream_id = promised_stream_id;
+                this.continuation_parent_stream_id = parent_stream_id;
             } else {
                 this.continuation_promised_stream_id = 0;
+                this.continuation_parent_stream_id = 0;
             }
 
             return content.end;
@@ -2586,6 +2598,14 @@ pub const H2FrameParser = struct {
                 return content.end;
             };
             stream.isWaitingMoreHeaders = frame.flags & @intFromEnum(HeadersFrameFlags.END_HEADERS) == 0;
+            // RFC 7540 Section 5.1: receiving HEADERS on a RESERVED_REMOTE
+            // push stream transitions it to HALF_CLOSED_LOCAL, independent of
+            // whether END_STREAM is set. Without this the stream state says
+            // the client can still send data on a server push, which is
+            // always wrong.
+            if (!stream.endAfterHeaders and stream.state == .RESERVED_REMOTE) {
+                stream.state = .HALF_CLOSED_LOCAL;
+            }
             if (stream.endAfterHeaders) {
                 const identifier = stream.getIdentifier();
                 identifier.ensureStillAlive();

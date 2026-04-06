@@ -132,6 +132,7 @@ pub fn doneWithPartSizes(this: *StringJoiner, allocator: Allocator, record_parts
     this.head = null;
     this.tail = null;
     this.len = 0;
+    this.watcher = .{};
 
     return .{ slice, part_sizes };
 }
@@ -151,6 +152,7 @@ pub fn deinit(this: *StringJoiner) void {
     this.head = null;
     this.tail = null;
     this.len = 0;
+    this.watcher = .{};
 }
 
 /// Same as `.done`, but appends extra slice `end`

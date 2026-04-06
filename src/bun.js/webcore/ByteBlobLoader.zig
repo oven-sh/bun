@@ -82,11 +82,16 @@ pub fn setup(
 
 pub fn onStart(this: *ByteBlobLoader) streams.Start {
     if (this.part_sizes) |sizes| {
+        // Suggest a buffer large enough to hold the biggest part so each
+        // part fits in a single chunk, but never exceed the 2MB cap that
+        // `setup()` enforces for non-part blobs. Parts larger than the cap
+        // are still split into multiple chunks by `onPull`.
         var max_part: Blob.SizeType = 0;
         for (sizes[0..this.part_count]) |s| {
             max_part = @max(max_part, s);
+            if (max_part >= 1024 * 1024 * 2) break;
         }
-        return .{ .chunk_size = max_part };
+        return .{ .chunk_size = @min(max_part, 1024 * 1024 * 2) };
     }
     return .{ .chunk_size = this.chunk_size };
 }

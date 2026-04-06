@@ -5,10 +5,17 @@
 // which silently hides everything a reviewer leaves on the Files changed tab.
 //
 // Usage:
-//   bun run pr:comments              # current branch's PR
-//   bun run pr:comments 28838        # by PR number
-//   bun run pr:comments '#28838'     # also works
+//   bun run pr:comments                    # current branch's PR
+//   bun run pr:comments 28838              # by PR number
+//   bun run pr:comments '#28838'           # also works
 //   bun run pr:comments https://github.com/oven-sh/bun/pull/28838
+//   bun run pr:comments 28838 --json       # machine-readable output for jq pipelines
+//
+// JSON mode emits one object per entry — no header, no legend — with fields:
+//   { when, user, kind, location?, body, url? }
+// so you can filter with jq, e.g.:
+//   bun run pr:comments 28838 --json | jq '.[] | select(.user == "Jarred-Sumner")'
+//   bun run pr:comments 28838 --json | jq '[.[] | select(.kind == "line comment")]'
 
 import { $ } from "bun";
 
@@ -104,7 +111,11 @@ function labelForReviewComment(c: Json): string {
   return base;
 }
 
-const { repo, number } = await resolvePr(process.argv[2]);
+const rawArgs = process.argv.slice(2);
+const jsonMode = rawArgs.includes("--json");
+const positional = rawArgs.filter(a => !a.startsWith("--"))[0];
+
+const { repo, number } = await resolvePr(positional);
 
 const [issueComments, reviews, reviewComments] = await Promise.all([
   gh(`repos/${repo}/issues/${number}/comments`),
@@ -118,6 +129,7 @@ type Entry = {
   kind: string;
   location?: string;
   body: string;
+  url?: string;
 };
 
 const entries: Entry[] = [];
@@ -128,6 +140,7 @@ for (const c of issueComments) {
     user: c.user?.login ?? "?",
     kind: "issue comment",
     body: c.body ?? "",
+    url: c.html_url,
   });
 }
 
@@ -140,6 +153,7 @@ for (const r of reviews) {
     user: r.user?.login ?? "?",
     kind: labelForReviewState(r.state),
     body: r.body || "(no body)",
+    url: r.html_url,
   });
 }
 
@@ -151,10 +165,16 @@ for (const c of reviewComments) {
     kind: labelForReviewComment(c),
     location: loc,
     body: c.body ?? "",
+    url: c.html_url,
   });
 }
 
 entries.sort((a, b) => a.when.localeCompare(b.when));
+
+if (jsonMode) {
+  process.stdout.write(JSON.stringify(entries, null, 2) + "\n");
+  process.exit(0);
+}
 
 // Summary header — group by kind so you can see at a glance what's there.
 const byKind = new Map<string, number>();

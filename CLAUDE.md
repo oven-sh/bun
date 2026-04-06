@@ -289,8 +289,13 @@ If output from these commands looks wrong — mis-parsed annotation HTML, confus
 When you want the complete picture — especially when responding to a review or checking whether anyone requested changes — use `bun run pr:comments`. It fetches all three GitHub endpoints (`/issues/N/comments`, `/pulls/N/reviews`, `/pulls/N/comments`) and prints them in one chronological listing, each labelled with its actual type (issue comment, review verdict, line comment, reply, suggestion block).
 
 ```bash
-bun run pr:comments              # current branch's PR
-bun run pr:comments 28838        # by PR number
-bun run pr:comments '#28838'     # also works
+bun run pr:comments                    # current branch's PR
+bun run pr:comments 28838              # by PR number
+bun run pr:comments '#28838'           # also works
 bun run pr:comments https://github.com/oven-sh/bun/pull/28838
+
+# Machine-readable output for jq pipelines — one object per entry with
+# { when, user, kind, location?, body, url? }. No header, no truncation.
+bun run pr:comments 28838 --json | jq '.[] | select(.user == "Jarred-Sumner")'
+bun run pr:comments 28838 --json | jq '[.[] | select(.kind == "line comment")]'
 ```

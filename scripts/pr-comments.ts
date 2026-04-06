@@ -22,15 +22,34 @@ import { $ } from "bun";
 type Json = Record<string, any>;
 
 async function gh(path: string): Promise<Json[]> {
-  const out = await $`gh api ${path}`.quiet().text();
-  return JSON.parse(out);
+  const result = await $`gh api ${path}`.quiet().nothrow();
+  if (result.exitCode !== 0) {
+    const stderr = result.stderr.toString().trim();
+    console.error(`gh api ${path} failed (exit ${result.exitCode}).`);
+    if (stderr) console.error(stderr);
+    console.error("Check that `gh auth status` is healthy and that the PR exists.");
+    process.exit(1);
+  }
+  try {
+    return JSON.parse(result.stdout.toString());
+  } catch (err) {
+    console.error(`Could not parse response from \`gh api ${path}\` as JSON: ${(err as Error).message}`);
+    process.exit(1);
+  }
 }
 
 async function resolvePr(arg: string | undefined): Promise<{ repo: string; number: number }> {
   const urlMatch = arg?.match(/github\.com\/([^\/]+\/[^\/]+)\/pull\/(\d+)/);
   if (urlMatch) return { repo: urlMatch[1], number: Number(urlMatch[2]) };
 
-  const repo = (await $`gh repo view --json nameWithOwner -q .nameWithOwner`.quiet().text()).trim();
+  const repoResult = await $`gh repo view --json nameWithOwner -q .nameWithOwner`.quiet().nothrow();
+  if (repoResult.exitCode !== 0) {
+    console.error("Could not determine the GitHub repo for the current directory.");
+    console.error("Run this inside a repo with a GitHub remote, or pass a PR URL instead:");
+    console.error("  bun run pr:comments https://github.com/oven-sh/bun/pull/28838");
+    process.exit(1);
+  }
+  const repo = repoResult.stdout.toString().trim();
 
   if (arg) {
     const n = Number(arg.replace(/^#/, ""));
@@ -187,7 +206,21 @@ if (entries.length === 0) {
   console.log("(no comments)");
   process.exit(0);
 }
-const summary = [...byKind.entries()].map(([k, n]) => `${n} ${k}${n === 1 ? "" : "s"}`).join(", ");
+// Naive `+ "s"` mangles labels like "review (comment)" and "reply", so the
+// plural form is spelled out per kind here.
+const pluralLabels: Record<string, string> = {
+  "issue comment": "issue comments",
+  "line comment": "line comments",
+  reply: "replies",
+  "line comment + suggestion": "line comments + suggestions",
+  "reply + suggestion": "replies + suggestions",
+  "review (approved)": "reviews (approved)",
+  "review (changes requested)": "reviews (changes requested)",
+  "review (comment)": "reviews (comment)",
+  "review (dismissed)": "reviews (dismissed)",
+  "review (pending)": "reviews (pending)",
+};
+const summary = [...byKind.entries()].map(([k, n]) => `${n} ${n === 1 ? k : (pluralLabels[k] ?? k + "s")}`).join(", ");
 console.log(`Found: ${summary}`);
 console.log("");
 

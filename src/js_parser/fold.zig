@@ -410,8 +410,15 @@ pub fn AstMaybe(
                         }, .loc = loc };
                     }
 
-                    // Lower import.meta.env to process.env when bundling for bun/node targets
-                    if (p.options.lower_import_meta_env_to_process_env and strings.eqlComptime(name, "env")) {
+                    // Lower import.meta.env to process.env when bundling for bun/node targets.
+                    // Skip for assignment/delete targets to avoid destructive semantics on
+                    // `delete import.meta.env` or `import.meta.env = x` becoming operations
+                    // on the real `process.env`.
+                    if (p.options.lower_import_meta_env_to_process_env and
+                        strings.eqlComptime(name, "env") and
+                        identifier_opts.assign_target == .none and
+                        !identifier_opts.is_delete_target)
+                    {
                         const process_ref = (p.findSymbol(target.loc, "process") catch unreachable).ref;
                         return p.newExpr(
                             E.Dot{

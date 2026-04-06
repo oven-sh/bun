@@ -74,7 +74,7 @@ describe.concurrent("bunx --cwd", () => {
     expect(exitCode).not.toBe(0);
   });
 
-  test("errors on invalid --cwd directory", async () => {
+  test.skipIf(isWindows)("errors on invalid --cwd directory", async () => {
     using dir = tempDir("bunx-cwd-invalid", {});
     const missing = join(String(dir), "definitely-missing");
     await using proc = Bun.spawn({

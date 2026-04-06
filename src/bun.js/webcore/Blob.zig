@@ -434,7 +434,10 @@ fn _onStructuredCloneDeserialize(
             const bytes_len = try reader.readInt(u32, .little);
             const bytes = try readSlice(reader, bytes_len, allocator);
 
-            const blob = Blob.init(bytes, allocator, globalThis);
+            var blob = Blob.init(bytes, allocator, globalThis);
+            // If any subsequent read fails, tear the blob down so its store
+            // (and any part-size metadata already attached) isn't leaked.
+            errdefer blob.deinit();
 
             versions: {
                 if (version == 1) break :versions;

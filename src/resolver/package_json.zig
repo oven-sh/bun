@@ -2157,9 +2157,9 @@ const OperatingSystem = @import("../install/npm.zig").OperatingSystem;
 
 const bun = @import("bun");
 const Environment = bun.Environment;
+const FD = bun.FD;
 const MainFieldMap = bun.StringMap;
 const Output = bun.Output;
-const FD = bun.FD;
 const default_allocator = bun.default_allocator;
 const glob = bun.glob;
 const js_ast = bun.ast;

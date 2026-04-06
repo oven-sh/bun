@@ -321,11 +321,11 @@ const Define = @import("./defines.zig").Define;
 
 const bun = @import("bun");
 const Environment = bun.Environment;
+const FD = bun.FD;
 const FeatureFlags = bun.FeatureFlags;
 const Global = bun.Global;
 const MutableString = bun.MutableString;
 const Output = bun.Output;
-const FD = bun.FD;
 const default_allocator = bun.default_allocator;
 const js_ast = bun.ast;
 const js_parser = bun.js_parser;

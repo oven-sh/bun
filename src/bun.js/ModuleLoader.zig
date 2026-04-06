@@ -1365,9 +1365,9 @@ const setBreakPointOnFirstLine = @import("./RuntimeTranspilerStore.zig").setBrea
 
 const bun = @import("bun");
 const Environment = bun.Environment;
+const FD = bun.FD;
 const MutableString = bun.MutableString;
 const Output = bun.Output;
-const FD = bun.FD;
 const String = bun.String;
 const Transpiler = bun.Transpiler;
 const analytics = bun.analytics;

@@ -123,6 +123,6 @@ const PackageJSON = @import("./package_json.zig").PackageJSON;
 const TSConfigJSON = @import("./tsconfig_json.zig").TSConfigJSON;
 
 const bun = @import("bun");
-const FeatureFlags = bun.FeatureFlags;
 const FD = bun.FD;
+const FeatureFlags = bun.FeatureFlags;
 const allocators = bun.allocators;

@@ -1652,12 +1652,12 @@ const Resolver = _resolver.Resolver;
 
 const bun = @import("bun");
 const Environment = bun.Environment;
+const FD = bun.FD;
 const FeatureFlags = bun.FeatureFlags;
 const Global = bun.Global;
 const JSON = bun.json;
 const MutableString = bun.MutableString;
 const Output = bun.Output;
-const FD = bun.FD;
 const default_allocator = bun.default_allocator;
 const js_parser = bun.js_parser;
 const js_printer = bun.js_printer;

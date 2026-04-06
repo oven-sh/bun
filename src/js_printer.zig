@@ -6367,12 +6367,12 @@ const std = @import("std");
 
 const bun = @import("bun");
 const Environment = bun.Environment;
+const FD = bun.FD;
 const FeatureFlags = bun.FeatureFlags;
 const FileDescriptorType = bun.FD;
 const ImportRecord = bun.ImportRecord;
 const MutableString = bun.MutableString;
 const Output = bun.Output;
-const FD = bun.FD;
 const assert = bun.assert;
 const default_allocator = bun.default_allocator;
 const js_lexer = bun.js_lexer;

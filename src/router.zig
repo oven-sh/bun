@@ -1899,11 +1899,11 @@ const FileSystem = Fs.FileSystem;
 
 const bun = @import("bun");
 const Environment = bun.Environment;
+const FD = bun.FD;
 const HashedString = bun.HashedString;
 const Logger = bun.logger;
 const Output = bun.Output;
 const PathString = bun.PathString;
-const FD = bun.FD;
 const default_allocator = bun.default_allocator;
 const api = bun.schema.api;
 

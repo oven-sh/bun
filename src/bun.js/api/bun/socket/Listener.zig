@@ -527,11 +527,9 @@ pub fn getPort(this: *Listener, _: *jsc.JSGlobalObject) JSValue {
 pub fn getFD(this: *Listener, _: *jsc.JSGlobalObject) JSValue {
     switch (this.listener) {
         .uws => |uws_listener| {
-            switch (this.ssl) {
-                inline else => |ssl| {
-                    return uws_listener.socket(ssl).fd().toJSWithoutMakingLibUVOwned();
-                },
-            }
+            // A listen socket has no SSL instance — each accepted connection gets
+            // its own. Always read the fd through the non-SSL path.
+            return uws_listener.socket(false).fd().toJSWithoutMakingLibUVOwned();
         },
         else => return JSValue.jsNumber(-1),
     }

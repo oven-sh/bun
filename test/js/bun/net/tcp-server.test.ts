@@ -93,6 +93,18 @@ it("should allow using false, null or undefined tls option", () => {
   });
 });
 
+it("listener.fd returns a valid file descriptor for TLS listeners", () => {
+  using server = Bun.listen({
+    socket: { data() {} },
+    port: 0,
+    hostname: "localhost",
+    // @ts-ignore
+    tls: { passphrase: "x" },
+  });
+  expect(typeof server.fd).toBe("number");
+  expect(server.fd).toBeGreaterThan(-1);
+});
+
 it("echo server 1 on 1", async () => {
   // wrap it in a separate closure so the GC knows to clean it up
   // the sockets & listener don't escape the closure

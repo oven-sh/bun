@@ -4621,15 +4621,31 @@ pub const H2FrameParser = struct {
             }
         }
 
+        // RFC 7540 Section 5.1: A push stream starts in RESERVED_LOCAL. Sending
+        // HEADERS on a RESERVED_LOCAL stream transitions it to HALF_CLOSED_REMOTE
+        // because the client cannot send data on a promised stream.
+        const was_reserved_local = stream.state == .RESERVED_LOCAL;
         if (end_stream) {
             stream.endAfterHeaders = true;
-            stream.state = .HALF_CLOSED_LOCAL;
+            stream.state = if (was_reserved_local) .CLOSED else .HALF_CLOSED_LOCAL;
+
+            if (was_reserved_local) {
+                const identifier = stream.getIdentifier();
+                identifier.ensureStillAlive();
+                stream.freeResources(this, false);
+                this.dispatchWithExtra(.onStreamEnd, identifier, jsc.JSValue.jsNumber(@intFromEnum(stream.state)));
+            }
 
             if (waitForTrailers) {
                 this.dispatch(.onWantTrailers, stream.getIdentifier());
                 return jsc.JSValue.jsNumber(stream_id);
             }
         } else {
+            if (was_reserved_local) {
+                // Transition to HALF_CLOSED_REMOTE so subsequent sendData(close=true)
+                // correctly moves to CLOSED and the JS layer decrements connections.
+                stream.state = .HALF_CLOSED_REMOTE;
+            }
             stream.waitForTrailers = waitForTrailers;
         }
 

@@ -99,7 +99,7 @@ describe("issue 28607 — typed array int32 coercion must follow ECMA-262 ToInt3
     for (let i = 0; i < cases.length; i++) arr[i] = cases[i];
 
     // ECMA-262 ToInt16: wrap mod 2^16, sign-adjust on [2^15, 2^16).
-    const expected = cases.map(v => (((v | 0) << 16) >> 16));
+    const expected = cases.map(v => ((v | 0) << 16) >> 16);
     expect(Array.from(arr)).toEqual(expected);
   });
 

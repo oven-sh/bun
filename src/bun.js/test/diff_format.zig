@@ -43,7 +43,9 @@ pub const DiffFormatter = struct {
                 1,
                 &received_buf.writer,
                 fmt_options,
-            ) catch {}; // TODO:
+            ) catch {
+                _ = this.globalThis.clearExceptionExceptTermination();
+            };
 
             JestPrettyFormat.format(
                 .Debug,
@@ -52,7 +54,9 @@ pub const DiffFormatter = struct {
                 1,
                 &expected_buf.writer,
                 fmt_options,
-            ) catch {}; // TODO:
+            ) catch {
+                _ = this.globalThis.clearExceptionExceptTermination();
+            };
         }
 
         var received_slice = received_buf.written();

@@ -996,7 +996,6 @@ const Template = enum {
 
     const agent_rule = @embedFile("../init/rule.md");
     const cursor_rule = TemplateFile{ .path = ".cursor/rules/use-bun-instead-of-node-vite-npm-pnpm.mdc", .contents = agent_rule };
-    const cursor_rule_path_to_agents_md = "../../AGENTS.md";
 
     fn isClaudeCodeInstalled() bool {
         if (Environment.isWindows) {
@@ -1009,6 +1008,14 @@ const Template = enum {
             return false;
         }
 
+        // Claude Code sets `CLAUDECODE=1` in every child process it spawns —
+        // mirrors how `CURSOR_TRACE_ID` identifies Cursor. This is the most
+        // reliable signal when `bun init` runs inside an agent session on a
+        // container / CI box where `claude` may not be on `$PATH`.
+        if (bun.env_var.CLAUDECODE.get()) {
+            return true;
+        }
+
         const pathbuffer = bun.path_buffer_pool.get();
         defer bun.path_buffer_pool.put(pathbuffer);
 
@@ -1018,24 +1025,37 @@ const Template = enum {
     /// Writes the agent rule files during `bun init`.
     ///
     /// `AGENTS.md` (https://agents.md/) is the single source of truth. When
-    /// Claude Code or Cursor is detected, their respective rule files are
-    /// created as symlinks to `AGENTS.md` so the content stays in sync.
+    /// Claude Code is detected, `CLAUDE.md` becomes a symlink to `AGENTS.md`
+    /// so the content stays in sync.
+    ///
+    /// Cursor's `.cursor/rules/*.mdc` is always written as a real file — it
+    /// needs the YAML frontmatter (`description`/`globs`/`alwaysApply`) to
+    /// know when to activate, and `AGENTS.md` has that stripped, so the two
+    /// files can't share content via symlink.
     ///
     /// Fallbacks if a symlink can't be created (Windows, disabled, filesystem
-    /// error): write the rule file directly with the same content.
+    /// error): write `CLAUDE.md` directly with the same content.
     pub fn createAgentRule() void {
         // Master kill switch — disables everything below.
         if (bun.env_var.BUN_AGENT_RULE_DISABLED.get()) return;
 
-        // The YAML frontmatter at the top of `src/init/rule.md` is only
-        // meaningful to Cursor. Strip it for `AGENTS.md` and any real
-        // `CLAUDE.md` fallback.
-        const end_of_frontmatter = if (bun.strings.lastIndexOf(agent_rule, "---\n")) |start| start + "---\n".len else 0;
-        const trimmed_rule = agent_rule[end_of_frontmatter..];
+        // `src/init/rule.md` starts with a YAML frontmatter block, bracketed
+        // by `---\n`. Only Cursor needs it; strip it for `AGENTS.md` and any
+        // real `CLAUDE.md` fallback. We find the opening delimiter, then the
+        // closing delimiter in the remainder — using sequential `indexOf`
+        // rather than `lastIndexOf` means a Markdown `---` divider added to
+        // the body later won't be mistaken for the frontmatter terminator.
+        const trimmed_rule = trim: {
+            const marker = "---\n";
+            const opener_rel = bun.strings.indexOf(agent_rule, marker) orelse break :trim agent_rule;
+            const after_opener = opener_rel + marker.len;
+            const close_rel = bun.strings.indexOf(agent_rule[after_opener..], marker) orelse break :trim agent_rule;
+            break :trim agent_rule[after_opener + close_rel + marker.len ..];
+        };
 
         // Step 1: Write `AGENTS.md` — the single source of truth. Never
         //         overwrite an existing one; an existing file is still a
-        //         valid symlink target for the steps below.
+        //         valid symlink target for `CLAUDE.md` below.
         var agents_md_available = false;
         if (bun.sys.exists("AGENTS.md")) {
             agents_md_available = true;
@@ -1066,25 +1086,14 @@ const Template = enum {
             }
         }
 
-        // Step 3: Cursor — symlink `.cursor/rules/*.mdc` to `../../AGENTS.md`
-        //         when possible, otherwise write the cursor rule file directly
-        //         (with the frontmatter intact, since Cursor needs it).
+        // Step 3: Cursor — always write `.cursor/rules/*.mdc` as a real file
+        //         with the full YAML frontmatter intact. Cursor uses the
+        //         `globs` field to decide when the rule activates; symlinking
+        //         to `AGENTS.md` would strip that and break rule activation.
         if (Template.getCursorRule()) |template_file| {
             if (bun.sys.existsZ(template_file.path)) return;
-
-            var cursor_rule_written = false;
-            if (comptime !Environment.isWindows) {
-                if (agents_md_available) symlink_cursor_rule: {
-                    bun.makePath(bun.FD.cwd().stdDir(), ".cursor/rules") catch {};
-                    bun.sys.symlinkat(cursor_rule_path_to_agents_md, .cwd(), template_file.path).unwrap() catch break :symlink_cursor_rule;
-                    Output.prettyln(" + <r><d>{s} -\\> {s}<r>", .{ template_file.path, cursor_rule_path_to_agents_md });
-                    Output.flush();
-                    cursor_rule_written = true;
-                }
-            }
-            if (!cursor_rule_written) {
-                InitCommand.Assets.createNew(template_file.path, template_file.contents) catch {};
-            }
+            bun.makePath(bun.FD.cwd().stdDir(), ".cursor/rules") catch {};
+            InitCommand.Assets.createNew(template_file.path, template_file.contents) catch {};
         }
     }
 

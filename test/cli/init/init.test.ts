@@ -373,7 +373,7 @@ import path from "path";
           CURSOR_AGENT_RULE_DISABLED: "1",
         },
       });
-      expect(await proc.exited).toBe(0);
+      const exitCode = await proc.exited;
 
       expect(fs.existsSync(path.join(temp, "AGENTS.md"))).toBe(true);
       expect(fs.existsSync(path.join(temp, "CLAUDE.md"))).toBe(false);
@@ -383,9 +383,10 @@ import path from "path";
       // Frontmatter is stripped — body starts with the standard first line.
       expect(contents).not.toInclude(FRONTMATTER_LINE);
       expect(contents.trimStart()).toStartWith(AGENTS_MD_BODY_FIRST_LINE);
+      expect(exitCode).toBe(0);
     });
 
-    test.skipIf(isWindows)("with Claude detected: CLAUDE.md is a symlink to AGENTS.md", async () => {
+    test.skipIf(isWindows)("with Claude detected via $PATH: CLAUDE.md is a symlink to AGENTS.md", async () => {
       const temp = tempDirWithFiles("bun-init-agents-claude", {});
 
       await using proc = Bun.spawn({
@@ -398,7 +399,7 @@ import path from "path";
           CURSOR_AGENT_RULE_DISABLED: "1",
         },
       });
-      expect(await proc.exited).toBe(0);
+      const exitCode = await proc.exited;
 
       expect(fs.existsSync(path.join(temp, "AGENTS.md"))).toBe(true);
       expect(fs.lstatSync(path.join(temp, "CLAUDE.md")).isSymbolicLink()).toBe(true);
@@ -407,30 +408,72 @@ import path from "path";
       expect(fs.readFileSync(path.join(temp, "CLAUDE.md"), "utf8")).toBe(
         fs.readFileSync(path.join(temp, "AGENTS.md"), "utf8"),
       );
+      expect(exitCode).toBe(0);
     });
 
-    test.skipIf(isWindows)("with Cursor detected: .cursor/rules/*.mdc is a symlink to ../../AGENTS.md", async () => {
-      const temp = tempDirWithFiles("bun-init-agents-cursor", {});
+    test.skipIf(isWindows)(
+      "with Claude detected via CLAUDECODE=1: CLAUDE.md is a symlink to AGENTS.md",
+      async () => {
+        // Claude Code sets `CLAUDECODE=1` in every child process it spawns.
+        // Detection should work even when `claude` is not on $PATH, which is
+        // the common case inside containerised agent sessions.
+        const temp = tempDirWithFiles("bun-init-agents-claudecode-env", {});
 
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "init", "-y"],
-        cwd: temp,
-        stdio: ["ignore", "pipe", "pipe"],
-        env: {
-          ...bunEnv,
-          ...claudeEnv(temp, false),
-          CLAUDE_CODE_AGENT_RULE_DISABLED: "1",
-          CURSOR_TRACE_ID: "test-trace-id",
-        },
-      });
-      expect(await proc.exited).toBe(0);
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "init", "-y"],
+          cwd: temp,
+          stdio: ["ignore", "pipe", "pipe"],
+          env: {
+            ...bunEnv,
+            ...claudeEnv(temp, false),
+            CLAUDECODE: "1",
+            CURSOR_AGENT_RULE_DISABLED: "1",
+          },
+        });
+        const exitCode = await proc.exited;
 
-      expect(fs.existsSync(path.join(temp, "AGENTS.md"))).toBe(true);
-      const cursorRule = path.join(temp, ".cursor/rules/use-bun-instead-of-node-vite-npm-pnpm.mdc");
-      expect(fs.lstatSync(cursorRule).isSymbolicLink()).toBe(true);
-      expect(fs.readlinkSync(cursorRule)).toBe("../../AGENTS.md");
-      expect(fs.readFileSync(cursorRule, "utf8")).toBe(fs.readFileSync(path.join(temp, "AGENTS.md"), "utf8"));
-    });
+        expect(fs.existsSync(path.join(temp, "AGENTS.md"))).toBe(true);
+        expect(fs.lstatSync(path.join(temp, "CLAUDE.md")).isSymbolicLink()).toBe(true);
+        expect(fs.readlinkSync(path.join(temp, "CLAUDE.md"))).toBe("AGENTS.md");
+        expect(exitCode).toBe(0);
+      },
+    );
+
+    test.skipIf(isWindows)(
+      "with Cursor detected: .cursor/rules/*.mdc is a real file with frontmatter intact",
+      async () => {
+        // Cursor needs the YAML `globs` field to know when to activate the
+        // rule. AGENTS.md has the frontmatter stripped, so we can't share
+        // content via symlink — the cursor rule is always a real file.
+        const temp = tempDirWithFiles("bun-init-agents-cursor", {});
+
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "init", "-y"],
+          cwd: temp,
+          stdio: ["ignore", "pipe", "pipe"],
+          env: {
+            ...bunEnv,
+            ...claudeEnv(temp, false),
+            CLAUDE_CODE_AGENT_RULE_DISABLED: "1",
+            CURSOR_TRACE_ID: "test-trace-id",
+          },
+        });
+        const exitCode = await proc.exited;
+
+        expect(fs.existsSync(path.join(temp, "AGENTS.md"))).toBe(true);
+        const cursorRulePath = path.join(temp, ".cursor/rules/use-bun-instead-of-node-vite-npm-pnpm.mdc");
+        const cursorStat = fs.lstatSync(cursorRulePath);
+        expect(cursorStat.isSymbolicLink()).toBe(false);
+        expect(cursorStat.isFile()).toBe(true);
+        const cursorContents = fs.readFileSync(cursorRulePath, "utf8");
+        // The cursor rule keeps its full YAML frontmatter — without `globs`
+        // Cursor does not know which file types to activate on.
+        expect(cursorContents).toInclude(FRONTMATTER_LINE);
+        expect(cursorContents).toInclude("globs:");
+        expect(cursorContents).toInclude(AGENTS_MD_BODY_FIRST_LINE);
+        expect(exitCode).toBe(0);
+      },
+    );
 
     test("BUN_AGENTS_MD_DISABLED=1: no AGENTS.md is written", async () => {
       const temp = tempDirWithFiles("bun-init-agents-disabled", {});
@@ -447,11 +490,12 @@ import path from "path";
           CURSOR_AGENT_RULE_DISABLED: "1",
         },
       });
-      expect(await proc.exited).toBe(0);
+      const exitCode = await proc.exited;
 
       expect(fs.existsSync(path.join(temp, "AGENTS.md"))).toBe(false);
       // Other expected files still land — just checking we didn't break init.
       expect(fs.existsSync(path.join(temp, "package.json"))).toBe(true);
+      expect(exitCode).toBe(0);
     });
 
     test.skipIf(isWindows)("BUN_AGENTS_MD_DISABLED=1 with Claude: CLAUDE.md falls back to a real file", async () => {
@@ -468,7 +512,7 @@ import path from "path";
           CURSOR_AGENT_RULE_DISABLED: "1",
         },
       });
-      expect(await proc.exited).toBe(0);
+      const exitCode = await proc.exited;
 
       expect(fs.existsSync(path.join(temp, "AGENTS.md"))).toBe(false);
       // CLAUDE.md exists as a regular file (not a symlink), with the
@@ -479,6 +523,36 @@ import path from "path";
       const claude = fs.readFileSync(path.join(temp, "CLAUDE.md"), "utf8");
       expect(claude).not.toInclude(FRONTMATTER_LINE);
       expect(claude.trimStart()).toStartWith(AGENTS_MD_BODY_FIRST_LINE);
+      expect(exitCode).toBe(0);
+    });
+
+    test("BUN_AGENTS_MD_DISABLED=1 with Cursor: cursor rule still gets written with frontmatter", async () => {
+      // Verifies the .cursor/rules parent directory is created even when we
+      // bypass the AGENTS.md path entirely — regression guard for a latent
+      // ENOENT in the direct-file write.
+      const temp = tempDirWithFiles("bun-init-agents-disabled-cursor", {});
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "init", "-y"],
+        cwd: temp,
+        stdio: ["ignore", "pipe", "pipe"],
+        env: {
+          ...bunEnv,
+          ...claudeEnv(temp, false),
+          BUN_AGENTS_MD_DISABLED: "1",
+          CLAUDE_CODE_AGENT_RULE_DISABLED: "1",
+          CURSOR_TRACE_ID: "test-trace-id",
+        },
+      });
+      const exitCode = await proc.exited;
+
+      expect(fs.existsSync(path.join(temp, "AGENTS.md"))).toBe(false);
+      const cursorRulePath = path.join(temp, ".cursor/rules/use-bun-instead-of-node-vite-npm-pnpm.mdc");
+      expect(fs.existsSync(cursorRulePath)).toBe(true);
+      const cursorContents = fs.readFileSync(cursorRulePath, "utf8");
+      expect(cursorContents).toInclude(FRONTMATTER_LINE);
+      expect(cursorContents).toInclude("globs:");
+      expect(exitCode).toBe(0);
     });
 
     test.skipIf(isWindows)(
@@ -499,13 +573,14 @@ import path from "path";
             CURSOR_AGENT_RULE_DISABLED: "1",
           },
         });
-        expect(await proc.exited).toBe(0);
+        const exitCode = await proc.exited;
 
         expect(fs.readFileSync(path.join(temp, "AGENTS.md"), "utf8")).toBe(customContent);
         // Claude symlink still gets created, pointing at the user's file.
         expect(fs.lstatSync(path.join(temp, "CLAUDE.md")).isSymbolicLink()).toBe(true);
         expect(fs.readlinkSync(path.join(temp, "CLAUDE.md"))).toBe("AGENTS.md");
         expect(fs.readFileSync(path.join(temp, "CLAUDE.md"), "utf8")).toBe(customContent);
+        expect(exitCode).toBe(0);
       },
     );
 
@@ -523,11 +598,12 @@ import path from "path";
           CURSOR_TRACE_ID: "test-trace-id",
         },
       });
-      expect(await proc.exited).toBe(0);
+      const exitCode = await proc.exited;
 
       expect(fs.existsSync(path.join(temp, "AGENTS.md"))).toBe(false);
       expect(fs.existsSync(path.join(temp, "CLAUDE.md"))).toBe(false);
       expect(fs.existsSync(path.join(temp, ".cursor"))).toBe(false);
+      expect(exitCode).toBe(0);
     });
   });
 });

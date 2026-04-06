@@ -69,51 +69,51 @@ for (const { triplet } of targets) {
 await Bun.write("binary-sizes.json", JSON.stringify({ build: buildNumber, branch, sizes }, null, 2));
 agent(["artifact", "upload", "binary-sizes.json"]);
 
-// ─── Fetch canary baseline (latest finished main build's binary-sizes.json) ───
+// ─── Baselines ───
 
 type Baseline = { label: string; href?: string; sizes: Sizes };
 
-console.log("--- Fetching canary baseline (latest main)");
-let canaryNote = "";
 const bkToken = (await getSecret("BUILDKITE_API_TOKEN")) ?? process.env.BUILDKITE_API_TOKEN;
-const canary: Baseline | undefined = bkToken
-  ? await fetchCanaryBaseline(bkToken).catch(e => ((canaryNote = String(e?.message || e)), undefined))
-  : ((canaryNote = "no BUILDKITE_API_TOKEN secret available"), undefined);
-console.log(canary ? `  ${canary.label}` : `  unavailable: ${canaryNote}`);
+const api = `https://api.buildkite.com/v2/organizations/${org}/pipelines/${pipeline}`;
+const bkHeaders = { Authorization: `Bearer ${bkToken}` };
 
-async function fetchCanaryBaseline(token: string): Promise<Baseline | undefined> {
-  const api = `https://api.buildkite.com/v2/organizations/${org}/pipelines/${pipeline}`;
-  const headers = { Authorization: `Bearer ${token}` };
-
-  const builds = await fetch(`${api}/builds?branch=main&state[]=passed&state[]=failed&per_page=10`, { headers });
-  if (!builds.ok) {
-    canaryNote = `builds API returned ${builds.status}`;
-    return;
-  }
+async function findSizesArtifact(query: string, label: (n: number) => string): Promise<Baseline | undefined> {
+  if (!bkToken) throw new Error("no BUILDKITE_API_TOKEN secret available");
+  const builds = await fetch(`${api}/builds?${query}`, { headers: bkHeaders });
+  if (!builds.ok) throw new Error(`builds API returned ${builds.status}`);
   for (const b of (await builds.json()) as { number: number }[]) {
     if (String(b.number) === String(buildNumber)) continue;
-    const arts = await fetch(`${api}/builds/${b.number}/artifacts?per_page=100`, { headers });
+    const arts = await fetch(`${api}/builds/${b.number}/artifacts?per_page=100`, { headers: bkHeaders });
     if (!arts.ok) continue;
     const hit = ((await arts.json()) as { filename: string; download_url: string }[]).find(
       a => a.filename === "binary-sizes.json",
     );
     if (!hit) continue;
-    const dl = await fetch(hit.download_url, { headers, redirect: "follow" });
+    const dl = await fetch(hit.download_url, { headers: bkHeaders, redirect: "follow" });
     if (!dl.ok) continue;
     const json = (await dl.json()) as { sizes: Sizes };
     return {
-      label: `main #${b.number}`,
+      label: label(b.number),
       href: `https://buildkite.com/${org}/${pipeline}/builds/${b.number}`,
       sizes: json.sizes,
     };
   }
-  canaryNote = "no recent main build has a binary-sizes.json artifact yet";
 }
 
-// ─── Release baseline ───
-// Bump when a new release is tagged.
+// Canary: latest finished main build with a binary-sizes.json artifact.
+console.log("--- Fetching canary baseline");
+let canaryNote = "";
+const canary: Baseline | undefined = await findSizesArtifact(
+  "branch=main&state[]=passed&state[]=failed&per_page=10",
+  n => `main #${n}`,
+).catch(e => ((canaryNote = String(e?.message || e)), undefined));
+if (!canary && !canaryNote) canaryNote = "no recent main build has binary-sizes.json yet";
+console.log(canary ? `  ${canary.label}` : `  unavailable: ${canaryNote}`);
 
-const release: Baseline = {
+// Release: resolve the latest bun-v* tag to its commit, then find that
+// commit's build. Falls back to the hardcoded table until a tagged release's
+// build carries binary-sizes.json.
+const releaseFallback: Baseline = {
   label: "bun-v1.3.11",
   href: "https://github.com/oven-sh/bun/releases/tag/bun-v1.3.11",
   sizes: {
@@ -130,6 +130,23 @@ const release: Baseline = {
     "bun-windows-aarch64": 112043008,
   },
 };
+
+async function fetchReleaseBaseline(): Promise<Baseline | undefined> {
+  const out = Bun.spawnSync(["git", "ls-remote", "--tags", "--sort=-version:refname", "origin", "refs/tags/bun-v*"], {
+    stderr: "inherit",
+  })
+    .stdout.toString()
+    .split("\n")
+    .find(l => l && !l.includes("^{}"));
+  if (!out) return;
+  const [sha, ref] = out.split("\t");
+  const tag = ref.replace("refs/tags/", "");
+  return findSizesArtifact(`commit=${sha}&branch=main&per_page=5`, n => `${tag} (#${n})`);
+}
+
+console.log("--- Fetching release baseline");
+const release: Baseline = (await fetchReleaseBaseline().catch(() => undefined)) ?? releaseFallback;
+console.log(`  ${release.label}`);
 
 // ─── Compare & annotate ───
 

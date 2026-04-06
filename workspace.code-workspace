@@ -10,7 +10,6 @@
     "search.seedWithNearestWord": true,
     "search.smartCase": true,
     "search.followSymlinks": false,
-    "zig.buildOnSave": false,
     "files.associations": {
       "*.idl": "cpp",
       "memory": "cpp",

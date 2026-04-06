@@ -333,7 +333,8 @@ async function saveLogs(build: number) {
       // Strip BuildKite APC timestamp markers first; an unterminated \x1b_ makes Bun.stripANSI eat to EOF.
       const text = stdout
         .toString()
-        .replace(/\x1b_(?:bk;t=\d+\x07)?/g, "")
+        // oxlint-disable-next-line no-control-regex -- BuildKite APC timestamp marker is ESC_…BEL
+        .replace(/\u001b_(?:bk;t=\d+\u0007)?/g, "")
         .replace(/\r/g, "");
       await Bun.write(path, Bun.stripANSI(text));
       console.log(`  ${path}`);

@@ -38,6 +38,7 @@ describe("issue #26638", () => {
           { method: "POST", rejectUnauthorized: false },
           res => {
             let data = "";
+            res.on("error", reject);
             res.on("data", c => (data += c));
             res.on("end", () => {
               try {

@@ -2075,7 +2075,10 @@ pub const H2FrameParser = struct {
                 const identifier = stream.getIdentifier();
                 identifier.ensureStillAlive();
 
-                if (stream.state == .HALF_CLOSED_LOCAL) {
+                // Client-side push streams start in RESERVED_REMOTE and can
+                // only receive from the server. END_STREAM from the remote
+                // transitions them directly to CLOSED.
+                if (stream.state == .HALF_CLOSED_LOCAL or stream.state == .RESERVED_REMOTE) {
                     stream.state = .CLOSED;
                     stream.freeResources(this, false);
                 } else {
@@ -2491,10 +2494,18 @@ pub const H2FrameParser = struct {
                 return content.end;
             }
 
-            // Create the promised stream
+            // Create the promised stream. Save/restore this.lastStreamID
+            // around the call: that field tracks the highest client-initiated
+            // (odd) stream ID for GOAWAY/stream-ID-allocation purposes, and a
+            // peer-supplied push id (even, potentially very large) must not
+            // be allowed to advance it. Otherwise a server sending a large
+            // promised id could exhaust our client stream ID space.
+            const saved_last_stream_id = this.lastStreamID;
             const promised_stream = this.handleReceivedStreamID(promised_stream_id) orelse {
+                this.lastStreamID = saved_last_stream_id;
                 return content.end;
             };
+            this.lastStreamID = saved_last_stream_id;
             promised_stream.state = .RESERVED_REMOTE;
 
             // Decode the header block on the promised stream
@@ -2576,8 +2587,9 @@ pub const H2FrameParser = struct {
                 if (stream.isWaitingMoreHeaders) {
                     stream.state = .HALF_CLOSED_REMOTE;
                 } else {
-                    // no more continuation headers we can call it closed
-                    if (stream.state == .HALF_CLOSED_LOCAL) {
+                    // Client-side push streams start in RESERVED_REMOTE and
+                    // go straight to CLOSED on END_STREAM from the remote.
+                    if (stream.state == .HALF_CLOSED_LOCAL or stream.state == .RESERVED_REMOTE) {
                         stream.state = .CLOSED;
                         stream.freeResources(this, false);
                     } else {

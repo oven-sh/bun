@@ -575,6 +575,42 @@ pub const StatxField = enum(comptime_int) {
 // Linux Kernel v4.11
 pub var supports_statx_on_linux = std.atomic.Value(bool).init(true);
 
+const LinuxKernel = enum(u8) {
+    unknown,
+    linux,
+    /// FreeBSD Linuxulator (linprocfs).
+    freebsd,
+
+    var cached = std.atomic.Value(LinuxKernel).init(.unknown);
+
+    /// Reads /proc/version to determine if we're under FreeBSD's Linuxulator.
+    /// linprocfs hardcodes "des@freebsd.org" in the version string.
+    fn detect() LinuxKernel {
+        var buf: [512]u8 = undefined;
+        const fd = switch (open("/proc/version", bun.O.RDONLY | bun.O.NOCTTY, 0)) {
+            .result => |fd| fd,
+            .err => return .linux,
+        };
+        defer fd.close();
+        const n = switch (read(fd, &buf)) {
+            .result => |n| n,
+            .err => return .linux,
+        };
+        if (bun.strings.containsCaseInsensitiveASCII(buf[0..n], "freebsd")) {
+            return .freebsd;
+        }
+        return .linux;
+    }
+
+    fn get() LinuxKernel {
+        const v = cached.load(.acquire);
+        if (v != .unknown) return v;
+        const detected = detect();
+        cached.store(detected, .release);
+        return detected;
+    }
+};
+
 /// Linux kernel makedev encoding for device numbers
 /// From glibc sys/sysmacros.h and Linux kernel <linux/kdev_t.h>
 /// dev_t layout (64 bits):
@@ -587,6 +623,22 @@ inline fn makedev(major: u32, minor: u32) u64 {
     return (maj << 8) | (min & 0xFF) | ((min & 0xFFF00) << 12);
 }
 
+fn statxFallback(fd: bun.FileDescriptor, path: ?[*:0]const u8, flags: u32) Maybe(PosixStat) {
+    if (path) |p| {
+        const path_span = bun.span(p);
+        const fallback = if (flags & linux.AT.SYMLINK_NOFOLLOW != 0) lstat(path_span) else stat(path_span);
+        return switch (fallback) {
+            .result => |s| .{ .result = PosixStat.init(&s) },
+            .err => |e| .{ .err = e },
+        };
+    } else {
+        return switch (fstat(fd)) {
+            .result => |s| .{ .result = PosixStat.init(&s) },
+            .err => |e| .{ .err = e },
+        };
+    }
+}
+
 fn statxImpl(fd: bun.FileDescriptor, path: ?[*:0]const u8, flags: u32, mask: u32) Maybe(PosixStat) {
     if (comptime !Environment.isLinux) {
         @compileError("statx is only supported on Linux");
@@ -597,29 +649,33 @@ fn statxImpl(fd: bun.FileDescriptor, path: ?[*:0]const u8, flags: u32, mask: u32
     while (true) {
         const rc = linux.statx(@intCast(fd.cast()), if (path) |p| p else "", flags, mask, &buf);
 
+        // On some setups (QEMU user-mode, S390 RHEL docker), statx returns a
+        // positive value other than 0 with errno unset — neither a normal
+        // success (0) nor a kernel -errno. Treat as "not implemented".
+        // See nodejs/node#27275 and libuv/libuv src/unix/fs.c.
+        if (@as(isize, @bitCast(rc)) > 0) {
+            supports_statx_on_linux.store(false, .monotonic);
+            return statxFallback(fd, path, flags);
+        }
+
         if (Maybe(PosixStat).errnoSys(rc, .statx)) |err| {
             // Retry on EINTR
             if (err.getErrno() == .INTR) continue;
 
-            // Handle unsupported statx by setting flag and falling back
-            if (err.getErrno() == .NOSYS or err.getErrno() == .OPNOTSUPP) {
-                supports_statx_on_linux.store(false, .monotonic);
-                if (path) |p| {
-                    const path_span = bun.span(p);
-                    const fallback = if (flags & linux.AT.SYMLINK_NOFOLLOW != 0) lstat(path_span) else stat(path_span);
-                    return switch (fallback) {
-                        .result => |s| .{ .result = PosixStat.init(&s) },
-                        .err => |e| .{ .err = e },
-                    };
-                } else {
-                    return switch (fstat(fd)) {
-                        .result => |s| .{ .result = PosixStat.init(&s) },
-                        .err => |e| .{ .err = e },
-                    };
-                }
+            // Handle unsupported statx by setting the flag and falling back.
+            // Fall back on the same errnos libuv does (deps/uv/src/unix/fs.c):
+            //   ENOSYS:     kernel < 4.11
+            //   EOPNOTSUPP: filesystem doesn't support it
+            //   EPERM:      seccomp filter rejects statx (libseccomp < 2.3.3,
+            //               docker < 18.04, various CI sandboxes)
+            //   EINVAL:     old Android builds
+            switch (err.getErrno()) {
+                .NOSYS, .OPNOTSUPP, .PERM, .INVAL => {
+                    supports_statx_on_linux.store(false, .monotonic);
+                    return statxFallback(fd, path, flags);
+                },
+                else => return err,
             }
-
-            return err;
         }
 
         // Convert statx buffer to PosixStat structure
@@ -2035,10 +2091,10 @@ pub fn readAll(fd: bun.FileDescriptor, buf: []u8) Maybe(usize) {
     return .{ .result = total_read };
 }
 
-const socket_flags_nonblock = c.MSG_DONTWAIT | c.MSG_NOSIGNAL;
+const send_flags_nonblock = c.MSG_DONTWAIT | c.MSG_NOSIGNAL;
 
 pub fn recvNonBlock(fd: bun.FileDescriptor, buf: []u8) Maybe(usize) {
-    return recv(fd, buf, socket_flags_nonblock);
+    return recv(fd, buf, recv_flags_nonblock);
 }
 
 pub fn poll(fds: []std.posix.pollfd, timeout: i32) Maybe(usize) {
@@ -2119,7 +2175,7 @@ pub fn kevent(fd: bun.FileDescriptor, changelist: []const std.c.Kevent, eventlis
 }
 
 pub fn sendNonBlock(fd: bun.FileDescriptor, buf: []const u8) Maybe(usize) {
-    return send(fd, buf, socket_flags_nonblock);
+    return send(fd, buf, send_flags_nonblock);
 }
 
 pub fn send(fd: bun.FileDescriptor, buf: []const u8, flag: u32) Maybe(usize) {
@@ -2725,6 +2781,17 @@ pub fn unlinkat(dirfd: bun.FileDescriptor, to: anytype) Maybe(void) {
     }
 }
 
+/// FreeBSD Linuxulator: linprocfs's /proc/<pid>/fd escapes emul_path and lands
+/// on host devfs, so readlink fails. Use fdescfs at /dev/fd instead.
+fn getFdPathFreeBSDLinuxulator(fd: bun.FileDescriptor, out_buffer: *bun.PathBuffer) Maybe([]u8) {
+    var buf: ["/dev/fd/-2147483648".len + 1:0]u8 = undefined;
+    const path = std.fmt.bufPrintZ(&buf, "/dev/fd/{d}", .{fd.cast()}) catch unreachable;
+    return switch (readlink(path, out_buffer)) {
+        .result => |r| .{ .result = r },
+        .err => |err| .{ .err = err },
+    };
+}
+
 pub fn getFdPath(fd: bun.FileDescriptor, out_buffer: *bun.PathBuffer) Maybe([]u8) {
     switch (Environment.os) {
         .windows => {
@@ -2748,12 +2815,26 @@ pub fn getFdPath(fd: bun.FileDescriptor, out_buffer: *bun.PathBuffer) Maybe([]u8
             return .{ .result = bun.sliceTo(out_buffer, 0) };
         },
         .linux => {
-            // TODO: alpine linux may not have /proc/self
-            var procfs_buf: ["/proc/self/fd/-2147483648".len + 1:0]u8 = undefined;
-            const proc_path = std.fmt.bufPrintZ(&procfs_buf, "/proc/self/fd/{d}", .{fd.cast()}) catch unreachable;
-            return switch (readlink(proc_path, out_buffer)) {
-                .err => |err| return .{ .err = err },
-                .result => |result| .{ .result = result },
+            // Fast path: a previous call already proved this is FreeBSD's Linuxulator.
+            if (LinuxKernel.cached.load(.acquire) == .freebsd) {
+                return getFdPathFreeBSDLinuxulator(fd, out_buffer);
+            }
+            var buf: ["/proc/self/fd/-2147483648".len + 1:0]u8 = undefined;
+            const path = std.fmt.bufPrintZ(&buf, "/proc/self/fd/{d}", .{fd.cast()}) catch unreachable;
+            return switch (readlink(path, out_buffer)) {
+                .result => |r| .{ .result = r },
+                .err => |err| {
+                    // readlink on /proc/self/fd/N basically never fails on real
+                    // Linux. We don't want to guess based on errno -- ENOENT etc.
+                    // could mean any number of things. Instead, pay one syscall
+                    // (memoized) to read /proc/version and only take the /dev/fd
+                    // path when we've positively identified FreeBSD's Linuxulator.
+                    // Otherwise, surface the original error unchanged.
+                    if (LinuxKernel.get() == .freebsd) {
+                        return getFdPathFreeBSDLinuxulator(fd, out_buffer);
+                    }
+                    return .{ .err = err };
+                },
             };
         },
         .wasm => @compileError("querying for canonical path of a handle is unsupported on this host"),
@@ -4092,6 +4173,12 @@ pub fn copyFileZSlowWithHandle(in_handle: bun.FileDescriptor, to_dir: bun.FileDe
             _ = std.os.linux.fallocate(out_handle.cast(), 0, 0, @intCast(stat_.size));
         }
 
+        // Seek input to beginning — the caller may have written to this fd,
+        // leaving the file offset at EOF. copy_file_range / sendfile / read
+        // all use the current offset when called with null offsets.
+        // Ignore errors: the fd may be non-seekable (e.g. a pipe).
+        _ = setFileOffset(in_handle, 0);
+
         switch (bun.copyFile(in_handle, out_handle)) {
             .err => |e| return .{ .err = e },
             .result => {},
@@ -4353,10 +4440,12 @@ const bun = @import("bun");
 const Environment = bun.Environment;
 const FD = bun.FD;
 const MAX_PATH_BYTES = bun.MAX_PATH_BYTES;
-const c = bun.c; // translated c headers
 const jsc = bun.jsc;
 const libc_stat = bun.Stat;
 const darwin_nocancel = bun.darwin.nocancel;
+
+const c = bun.c; // translated c headers
+const recv_flags_nonblock = c.MSG_DONTWAIT;
 
 const windows = bun.windows;
 const kernel32 = bun.windows.kernel32;

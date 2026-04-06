@@ -50,6 +50,36 @@ pub fn stringHashMapFromArrays(comptime t: type, allocator: std.mem.Allocator, t
     return hash_map;
 }
 
+pub const AllowUnresolved = union(enum) {
+    /// Default. Skip all checks — current behavior.
+    all,
+    /// Always error on dynamic specifiers.
+    none,
+    /// Glob patterns; at least one must match the extracted shape.
+    patterns: []const string,
+
+    pub const default: AllowUnresolved = .all;
+
+    /// Normalize from raw CLI/JS input.
+    /// [] → .none, contains "*" → .all, else → .patterns
+    pub fn fromStrings(strs: []const string) AllowUnresolved {
+        if (strs.len == 0) return .none;
+        for (strs) |s| if (bun.strings.eqlComptime(s, "*")) return .all;
+        return .{ .patterns = strs };
+    }
+
+    /// shape is the extracted template representation (may be "").
+    pub fn allows(self: AllowUnresolved, shape: []const u8) bool {
+        return switch (self) {
+            .all => true,
+            .none => false,
+            .patterns => |pats| for (pats) |p| {
+                if (bun.glob.match(p, shape).matches()) break true;
+            } else false,
+        };
+    }
+};
+
 pub const ExternalModules = struct {
     node_modules: std.BufSet,
     abs_paths: std.BufSet,
@@ -1740,6 +1770,7 @@ pub const BundleOptions = struct {
     resolve_dir: string = "/",
     jsx: JSX.Pragma = JSX.Pragma{},
     emit_decorator_metadata: bool = false,
+    experimental_decorators: bool = false,
     auto_import_jsx: bool = true,
     allow_runtime: bool = true,
 
@@ -1773,6 +1804,7 @@ pub const BundleOptions = struct {
     /// TODO: remove this in favor accessing bundler.log
     log: *logger.Log,
     external: ExternalModules,
+    allow_unresolved: AllowUnresolved = .all,
     entry_points: []const string,
     entry_naming: []const u8 = "",
     asset_naming: []const u8 = "",
@@ -1832,6 +1864,7 @@ pub const BundleOptions = struct {
     debugger: bool = false,
 
     compile: bool = false,
+    compile_to_standalone_html: bool = false,
     metafile: bool = false,
     /// Path to write JSON metafile (for Bun.build API)
     metafile_json_path: []const u8 = "",
@@ -1854,9 +1887,6 @@ pub const BundleOptions = struct {
     /// So we have a list of packages which we know are safe to do this with.
     unwrap_commonjs_packages: []const string = &default_unwrap_commonjs_packages,
 
-    /// Wildcard patterns for unwrapping CJS to ESM (e.g. "react-*" becomes prefix="react-", suffix="").
-    unwrap_commonjs_patterns: []const ExternalModules.WildcardPattern = &.{},
-
     supports_multiple_outputs: bool = true,
 
     /// This is set by the process environment, which is used to override the
@@ -1866,6 +1896,12 @@ pub const BundleOptions = struct {
     force_node_env: ForceNodeEnv = .unspecified,
 
     ignore_module_resolution_errors: bool = false,
+
+    /// Package names whose barrel files should be optimized.
+    /// When set, barrel files from these packages will only load submodules
+    /// that are actually imported. Also, any file with sideEffects: false
+    /// in its package.json is automatically a barrel candidate.
+    optimize_imports: ?*const bun.StringSet = null,
 
     pub const ForceNodeEnv = enum {
         unspecified,

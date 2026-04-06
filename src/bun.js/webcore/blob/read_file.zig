@@ -27,7 +27,7 @@ pub fn NewReadFileHandler(comptime Function: anytype) type {
                     try jsc.AnyPromise.wrap(.{ .normal = promise }, globalThis, WrappedFn.wrapped, .{ &blob, globalThis, bytes });
                 },
                 .err => |err| {
-                    try promise.reject(globalThis, err.toErrorInstance(globalThis));
+                    try promise.reject(globalThis, err.toErrorInstanceWithAsyncStack(globalThis, promise));
                 },
             }
         }
@@ -523,6 +523,7 @@ pub const ReadFileUV = struct {
     pub const doClose = FileCloser(@This()).doClose;
 
     loop: *libuv.Loop,
+    event_loop: *jsc.EventLoop,
     file_store: FileStore,
     byte_store: ByteStore = ByteStore{ .allocator = bun.default_allocator },
     store: *Store,
@@ -543,10 +544,11 @@ pub const ReadFileUV = struct {
 
     req: libuv.fs_t = std.mem.zeroes(libuv.fs_t),
 
-    pub fn start(loop: *libuv.Loop, store: *Store, off: SizeType, max_len: SizeType, comptime Handler: type, handler: *anyopaque) void {
+    pub fn start(event_loop: *jsc.EventLoop, store: *Store, off: SizeType, max_len: SizeType, comptime Handler: type, handler: *anyopaque) void {
         log("ReadFileUV.start", .{});
         var this = bun.new(ReadFileUV, .{
-            .loop = loop,
+            .loop = event_loop.virtual_machine.uvLoop(),
+            .event_loop = event_loop,
             .file_store = store.data.file,
             .store = store,
             .offset = off,
@@ -555,15 +557,20 @@ pub const ReadFileUV = struct {
             .on_complete_fn = @ptrCast(&Handler.run),
         });
         store.ref();
+        // Keep the event loop alive while the async operation is pending
+        event_loop.refConcurrently();
         this.getFd(onFileOpen);
     }
 
     pub fn finalize(this: *ReadFileUV) void {
         log("ReadFileUV.finalize", .{});
+        const event_loop = this.event_loop;
         defer {
             this.store.deref();
             this.req.deinit();
             bun.destroy(this);
+            // Release the event loop reference now that we're done
+            event_loop.unrefConcurrently();
             log("ReadFileUV.finalize destroy", .{});
         }
 
@@ -691,8 +698,9 @@ pub const ReadFileUV = struct {
             return;
         }
         // add an extra 16 bytes to the buffer to avoid having to resize it for trailing extra data
-        this.buffer.ensureTotalCapacityPrecise(this.byte_store.allocator, @min(this.size + 16, @as(usize, std.math.maxInt(bun.windows.ULONG)))) catch |err| {
-            this.errno = err;
+        this.buffer.ensureTotalCapacityPrecise(this.byte_store.allocator, @min(this.size + 16, @as(usize, std.math.maxInt(bun.windows.ULONG)))) catch {
+            this.errno = error.OutOfMemory;
+            this.system_error = bun.sys.Error.fromCode(bun.sys.E.NOMEM, .read).toSystemError();
             this.onFinish();
             return;
         };
@@ -719,9 +727,11 @@ pub const ReadFileUV = struct {
                 // non-regular files have variable sizes, so we always ensure
                 // theres at least 4096 bytes of free space. there has already
                 // been an initial allocation done for us
-                this.buffer.ensureUnusedCapacity(this.byte_store.allocator, 4096) catch |err| {
-                    this.errno = err;
+                this.buffer.ensureUnusedCapacity(this.byte_store.allocator, 4096) catch {
+                    this.errno = error.OutOfMemory;
+                    this.system_error = bun.sys.Error.fromCode(bun.sys.E.NOMEM, .read).toSystemError();
                     this.onFinish();
+                    return;
                 };
             }
 
@@ -750,8 +760,9 @@ pub const ReadFileUV = struct {
 
             // We are done reading.
             this.byte_store = ByteStore.init(
-                this.buffer.toOwnedSlice(this.byte_store.allocator) catch |err| {
-                    this.errno = err;
+                this.buffer.toOwnedSlice(this.byte_store.allocator) catch {
+                    this.errno = error.OutOfMemory;
+                    this.system_error = bun.sys.Error.fromCode(bun.sys.E.NOMEM, .read).toSystemError();
                     this.onFinish();
                     return;
                 },
@@ -769,15 +780,16 @@ pub const ReadFileUV = struct {
         if (result.errEnum()) |errno| {
             this.errno = bun.errnoToZigErr(errno);
             this.system_error = bun.sys.Error.fromCode(errno, .read).toSystemError();
-            this.finalize();
+            this.onFinish();
             return;
         }
 
         if (result.int() == 0) {
             // We are done reading.
             this.byte_store = ByteStore.init(
-                this.buffer.toOwnedSlice(this.byte_store.allocator) catch |err| {
-                    this.errno = err;
+                this.buffer.toOwnedSlice(this.byte_store.allocator) catch {
+                    this.errno = error.OutOfMemory;
+                    this.system_error = bun.sys.Error.fromCode(bun.sys.E.NOMEM, .read).toSystemError();
                     this.onFinish();
                     return;
                 },

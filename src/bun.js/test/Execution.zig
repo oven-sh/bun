@@ -78,6 +78,8 @@ pub const ExecutionSequence = struct {
     test_entry: ?*ExecutionEntry,
     remaining_repeat_count: u32,
     remaining_retry_count: u32,
+    flaky_attempt_count: usize = 0,
+    flaky_attempts_buf: [MAX_FLAKY_ATTEMPTS]FlakyAttempt = std.mem.zeroes([MAX_FLAKY_ATTEMPTS]FlakyAttempt),
     result: Result = .pending,
     executing: bool = false,
     started_at: bun.timespec = .epoch,
@@ -104,6 +106,17 @@ pub const ExecutionSequence = struct {
             .remaining_repeat_count = cfg.repeat_count,
             .remaining_retry_count = cfg.retry_count,
         };
+    }
+
+    pub const MAX_FLAKY_ATTEMPTS: usize = 16;
+
+    pub const FlakyAttempt = struct {
+        result: Result,
+        elapsed_ns: u64,
+    };
+
+    pub fn flakyAttempts(this: *const ExecutionSequence) []const FlakyAttempt {
+        return this.flaky_attempts_buf[0..this.flaky_attempt_count];
     }
 
     fn entryMode(this: ExecutionSequence) bun_test.ScopeMode {
@@ -480,6 +493,14 @@ fn advanceSequence(this: *Execution, sequence: *ExecutionSequence, group: *Concu
 
         // Handle retry logic: if test failed and we have retries remaining, retry it
         if (test_failed and sequence.remaining_retry_count > 0) {
+            if (sequence.flaky_attempt_count < ExecutionSequence.MAX_FLAKY_ATTEMPTS) {
+                const elapsed_ns = if (sequence.started_at.eql(&.epoch)) 0 else sequence.started_at.sinceNow(.force_real_time);
+                sequence.flaky_attempts_buf[sequence.flaky_attempt_count] = .{
+                    .result = sequence.result,
+                    .elapsed_ns = elapsed_ns,
+                };
+                sequence.flaky_attempt_count += 1;
+            }
             sequence.remaining_retry_count -= 1;
             this.resetSequence(sequence);
             return;
@@ -604,13 +625,17 @@ pub fn resetSequence(this: *Execution, sequence: *ExecutionSequence) void {
         }
     }
 
-    // Preserve the current remaining_repeat_count and remaining_retry_count
+    // Preserve retry/repeat counts and flaky attempt history across reset
+    const saved_flaky_attempt_count = sequence.flaky_attempt_count;
+    const saved_flaky_attempts_buf = sequence.flaky_attempts_buf;
     sequence.* = .init(.{
         .first_entry = sequence.first_entry,
         .test_entry = sequence.test_entry,
         .retry_count = sequence.remaining_retry_count,
         .repeat_count = sequence.remaining_repeat_count,
     });
+    sequence.flaky_attempt_count = saved_flaky_attempt_count;
+    sequence.flaky_attempts_buf = saved_flaky_attempts_buf;
     _ = this;
 }
 

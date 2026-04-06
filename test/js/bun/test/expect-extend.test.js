@@ -379,6 +379,17 @@ it("works on classes", () => {
   expect(123)._toBeBar();
 });
 
+test("expect.extend with numeric index keys does not crash", () => {
+  // Numeric keys are valid array indices. putDirect asserts they are not indices,
+  // so putMayBeIndex must be used instead. Without the fix, putDirect incorrectly
+  // stores the property in the Structure table rather than indexed storage,
+  // making the matcher inaccessible via normal property lookup.
+  expect.extend({
+    1073741820: received => ({ pass: received === 42, message: () => "not 42" }),
+  });
+  expect(typeof expect[1073741820]).toBe("function");
+});
+
 describe("MatcherContext", () => {
   describe("utils", () => {
     test("RECEIVED_COLOR is a function", () => {

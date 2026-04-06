@@ -191,6 +191,7 @@ pub const linux = @import("./linux.zig");
 
 /// Translated from `c-headers-for-zig.h` for the current platform.
 pub const c = @import("translated-c-headers");
+pub const tty = @import("./tty.zig");
 
 pub const sha = @import("./sha.zig");
 pub const FeatureFlags = @import("./feature_flags.zig");
@@ -2551,6 +2552,64 @@ pub noinline fn outOfMemory() noreturn {
 
 pub const handleOom = @import("./handle_oom.zig").handleOom;
 
+/// Like `std.heap.StackFallbackAllocator` but takes a runtime-provided buffer
+/// instead of a comptime-sized inline array. Use this when the "stack" buffer
+/// is heap-cached (e.g. in RareData) and you want the same try-fixed-then-fallback
+/// semantics without putting a large buffer on the actual call stack.
+pub const StackFallbackAllocator = struct {
+    fixed: std.heap.FixedBufferAllocator,
+    fallback: std.mem.Allocator,
+
+    pub fn init(buf: []u8, fallback: std.mem.Allocator) StackFallbackAllocator {
+        return .{
+            .fixed = std.heap.FixedBufferAllocator.init(buf),
+            .fallback = fallback,
+        };
+    }
+
+    pub fn get(self: *StackFallbackAllocator) std.mem.Allocator {
+        return .{
+            .ptr = self,
+            .vtable = &.{
+                .alloc = alloc,
+                .resize = resize,
+                .remap = remap,
+                .free = free,
+            },
+        };
+    }
+
+    fn alloc(ctx: *anyopaque, n: usize, alignment: std.mem.Alignment, ra: usize) ?[*]u8 {
+        const self: *StackFallbackAllocator = @ptrCast(@alignCast(ctx));
+        return std.heap.FixedBufferAllocator.alloc(&self.fixed, n, alignment, ra) orelse
+            self.fallback.rawAlloc(n, alignment, ra);
+    }
+
+    fn resize(ctx: *anyopaque, buf: []u8, alignment: std.mem.Alignment, new_len: usize, ra: usize) bool {
+        const self: *StackFallbackAllocator = @ptrCast(@alignCast(ctx));
+        if (self.fixed.ownsPtr(buf.ptr)) {
+            return std.heap.FixedBufferAllocator.resize(&self.fixed, buf, alignment, new_len, ra);
+        }
+        return self.fallback.rawResize(buf, alignment, new_len, ra);
+    }
+
+    fn remap(ctx: *anyopaque, mem: []u8, alignment: std.mem.Alignment, new_len: usize, ra: usize) ?[*]u8 {
+        const self: *StackFallbackAllocator = @ptrCast(@alignCast(ctx));
+        if (self.fixed.ownsPtr(mem.ptr)) {
+            return std.heap.FixedBufferAllocator.remap(&self.fixed, mem, alignment, new_len, ra);
+        }
+        return self.fallback.rawRemap(mem, alignment, new_len, ra);
+    }
+
+    fn free(ctx: *anyopaque, buf: []u8, alignment: std.mem.Alignment, ra: usize) void {
+        const self: *StackFallbackAllocator = @ptrCast(@alignCast(ctx));
+        if (self.fixed.ownsPtr(buf.ptr)) {
+            return std.heap.FixedBufferAllocator.free(&self.fixed, buf, alignment, ra);
+        }
+        return self.fallback.rawFree(buf, alignment, ra);
+    }
+};
+
 pub fn todoPanic(
     src: std.builtin.SourceLocation,
     comptime format: []const u8,
@@ -2820,7 +2879,8 @@ pub fn runtimeEmbedFile(
                     \\
                     \\To improve iteration speed, some files are not embedded but
                     \\loaded at runtime, at the cost of making the binary non-portable.
-                    \\To fix this, pass -DCODEGEN_EMBED=ON to CMake
+                    \\To fix this, build with a release profile, or pass
+                    \\-Dcodegen_embed=true to zig build.
                 , .{ abs_path, e });
             };
         }
@@ -3539,7 +3599,7 @@ pub fn getThreadCount() u16 {
             return null;
         }
         fn getThreadCountOnce() void {
-            cached_thread_count = @min(max_threads, @max(min_threads, getThreadCountFromUser() orelse std.Thread.getCpuCount() catch 0));
+            cached_thread_count = @min(max_threads, @max(min_threads, getThreadCountFromUser() orelse jsc.wtf.numberOfProcessorCores()));
         }
     };
     ThreadCount.cached_thread_count_once.call();
@@ -3704,6 +3764,7 @@ pub fn freeSensitive(allocator: std.mem.Allocator, slice: anytype) void {
 
 pub const macho = @import("./macho.zig");
 pub const pe = @import("./pe.zig");
+pub const elf = @import("./elf.zig");
 pub const valkey = @import("./valkey/index.zig");
 pub const highway = @import("./highway.zig");
 

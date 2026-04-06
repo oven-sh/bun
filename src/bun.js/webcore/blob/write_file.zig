@@ -657,7 +657,7 @@ pub const WriteFilePromise = struct {
         value.ensureStillAlive();
         switch (count) {
             .err => |err| {
-                try promise.reject(globalThis, err.toErrorInstance(globalThis));
+                try promise.reject(globalThis, err.toErrorInstanceWithAsyncStack(globalThis, promise));
             },
             .result => |wrote| {
                 try promise.resolve(globalThis, .jsNumberFromUint64(wrote));
@@ -686,7 +686,7 @@ pub const WriteFileWaitFromLockedValueTask = struct {
                 _ = value.use();
                 this.promise.deinit();
                 bun.destroy(this);
-                try promise.reject(globalThis, err_ref.toJS(globalThis));
+                try promise.rejectWithAsyncStack(globalThis, err_ref.toJS(globalThis));
             },
             .Used => {
                 file_blob.detach();

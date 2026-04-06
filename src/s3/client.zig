@@ -204,6 +204,7 @@ pub fn listObjects(
 
     const url = bun.URL.parse(result.url);
     const proxy = proxy_url orelse "";
+    task.proxy_url = if (proxy.len > 0) bun.handleOom(bun.default_allocator.dupe(u8, proxy)) else "";
 
     task.http = bun.http.AsyncHTTP.init(
         bun.default_allocator,
@@ -219,7 +220,7 @@ pub fn listObjects(
         ).init(task),
         .follow,
         .{
-            .http_proxy = if (proxy.len > 0) bun.URL.parse(proxy) else null,
+            .http_proxy = if (task.proxy_url.len > 0) bun.URL.parse(task.proxy_url) else null,
             .verbose = task.vm.getVerboseFetch(),
             .reject_unauthorized = task.vm.getTLSRejectUnauthorized(),
         },
@@ -539,8 +540,6 @@ pub fn downloadStream(
 ) void {
     const range = brk: {
         if (size) |size_| {
-            if (offset == 0) break :brk null;
-
             var end = (offset + size_);
             if (size_ > 0) {
                 end -= 1;
@@ -675,10 +674,33 @@ pub fn readableStream(
             }
         }
 
+        /// Clear the cancel_handler on the ByteStream.Source to prevent use-after-free.
+        /// Must be called before releasing readable_stream_ref.
+        fn clearStreamCancelHandler(self: *@This()) void {
+            if (self.readable_stream_ref.get(self.global)) |readable| {
+                if (readable.ptr == .Bytes) {
+                    const source = readable.ptr.Bytes.parent();
+                    source.cancel_handler = null;
+                    source.cancel_ctx = null;
+                }
+            }
+        }
+
         pub fn deinit(self: *@This()) void {
+            self.clearStreamCancelHandler();
             self.readable_stream_ref.deinit();
             bun.default_allocator.free(self.path);
             bun.destroy(self);
+        }
+
+        fn onStreamCancelled(ctx: ?*anyopaque) void {
+            const self: *@This() = @ptrCast(@alignCast(ctx.?));
+            // Release the Strong ref so the ReadableStream can be GC'd.
+            // The download may still be in progress, but the callback will
+            // see readable_stream_ref.get() return null and skip data delivery.
+            // When the download finishes (has_more == false), deinit() will
+            // clean up the remaining resources.
+            self.readable_stream_ref.deinit();
         }
 
         pub fn opaqueCallback(chunk: bun.MutableString, has_more: bool, err: ?Error.S3Error, opaque_self: *anyopaque) void {
@@ -686,6 +708,18 @@ pub fn readableStream(
             callback(chunk, has_more, err, self) catch {}; // TODO: properly propagate exception upwards
         }
     };
+
+    const wrapper = S3DownloadStreamWrapper.new(.{
+        .readable_stream_ref = jsc.WebCore.ReadableStream.Strong.init(.{
+            .ptr = .{ .Bytes = &reader.context },
+            .value = readable_value,
+        }, globalThis),
+        .path = bun.handleOom(bun.default_allocator.dupe(u8, path)),
+        .global = globalThis,
+    });
+
+    reader.cancel_handler = S3DownloadStreamWrapper.onStreamCancelled;
+    reader.cancel_ctx = wrapper;
 
     downloadStream(
         this,
@@ -695,14 +729,7 @@ pub fn readableStream(
         proxy_url,
         request_payer,
         S3DownloadStreamWrapper.opaqueCallback,
-        S3DownloadStreamWrapper.new(.{
-            .readable_stream_ref = jsc.WebCore.ReadableStream.Strong.init(.{
-                .ptr = .{ .Bytes = &reader.context },
-                .value = readable_value,
-            }, globalThis),
-            .path = bun.handleOom(bun.default_allocator.dupe(u8, path)),
-            .global = globalThis,
-        }),
+        wrapper,
     );
     return readable_value;
 }

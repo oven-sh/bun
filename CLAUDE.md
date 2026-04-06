@@ -15,6 +15,23 @@ BUN_JSC_dumpSimulatedThrows=1 bun bd <command>`
 
 Tip: Bun is already installed and in $PATH. The `bd` subcommand is a package.json script.
 
+**All build scripts support build-then-exec.** Any `bun run build*` command (and `bun bd`, and `bun scripts/build.ts` directly) accepts trailing args which are passed to the built executable after building. This is the recommended way to run your build — you never invoke `./build/debug/bun-debug` directly.
+
+```sh
+bun bd test foo.test.ts                    # debug build + quiet debug logs
+bun run build test foo.test.ts             # debug build
+bun run build:release -p 'Bun.version'     # release build
+bun run build:local run script.ts          # debug build with local WebKit
+```
+
+When exec args are present, build output is suppressed unless the build fails — you see only the binary's output. Build flags (e.g. `--asan=off`) go before the exec args; see `scripts/build.ts` header for the full arg routing rules.
+
+**Comparing builds:** normally use the default `build/<profile>/` dir. If you need to preserve a build as a comparison point (rare — e.g. benchmarking before/after a change), `--build-dir` parks it somewhere the next build won't overwrite:
+
+```sh
+bun run build:release --build-dir=build/baseline
+```
+
 ## Testing
 
 ### Running Tests
@@ -161,6 +178,31 @@ test("(multi-file test) my feature", async () => {
 - `src/sql/` - SQL database integrations
 - `src/bake/` - Server-side rendering framework
 
+#### Vendored Dependencies (`vendor/`)
+
+Third-party C/C++ libraries are vendored locally and can be read from disk (these are not git submodules):
+
+- `vendor/boringssl/` - BoringSSL (TLS/crypto)
+- `vendor/brotli/` - Brotli compression
+- `vendor/cares/` - c-ares (async DNS)
+- `vendor/hdrhistogram/` - HdrHistogram (latency tracking)
+- `vendor/highway/` - Google Highway (SIMD)
+- `vendor/libarchive/` - libarchive (tar/zip)
+- `vendor/libdeflate/` - libdeflate (fast deflate)
+- `vendor/libuv/` - libuv (Windows event loop)
+- `vendor/lolhtml/` - lol-html (HTML rewriter)
+- `vendor/lshpack/` - ls-hpack (HTTP/2 HPACK)
+- `vendor/mimalloc/` - mimalloc (memory allocator)
+- `vendor/nodejs/` - Node.js headers (compatibility)
+- `vendor/picohttpparser/` - PicoHTTPParser (HTTP parsing)
+- `vendor/tinycc/` - TinyCC (FFI JIT compiler, fork: oven-sh/tinycc)
+- `vendor/WebKit/` - WebKit/JavaScriptCore (JS engine)
+- `vendor/zig/` - Zig compiler/stdlib
+- `vendor/zlib/` - zlib (compression, cloudflare fork)
+- `vendor/zstd/` - Zstandard (compression)
+
+Build configuration for these is in `scripts/build/deps/*.ts`.
+
 ### JavaScript Class Implementation (C++)
 
 When implementing JavaScript classes in C++:
@@ -214,21 +256,28 @@ Built-in JavaScript modules use special syntax and are organized as:
 
 ## Debugging CI Failures
 
-Use `scripts/buildkite-failures.ts` to fetch and analyze CI build failures:
+Requires the BuildKite CLI (`brew install buildkite/buildkite/bk`) and a read-scoped token in `BUILDKITE_API_TOKEN`. The repo's `.bk.yaml` sets the org/pipeline so `-p bun` is not needed.
 
 ```bash
-# View failures for current branch
-bun run scripts/buildkite-failures.ts
+# Show rendered test-failure output for the current branch's latest build,
+# tagged [new] vs [also on main]
+bun run ci:errors
+bun run ci:errors '#26173'          # or a PR number / URL / branch / build number
 
-# View failures for a specific build number
-bun run scripts/buildkite-failures.ts 35051
+# One-screen progress summary (job counts, failed jobs, failing tests so far)
+bun run ci:status
 
-# View failures for a GitHub PR
-bun run scripts/buildkite-failures.ts #26173
-bun run scripts/buildkite-failures.ts https://github.com/oven-sh/bun/pull/26173
+# Save full logs for every failed job to ./tmp/ci-<build>/
+bun run ci:logs
 
-# Wait for build to complete (polls every 10s until pass/fail)
-bun run scripts/buildkite-failures.ts --wait
+# Just the build number, for composing with raw `bk`
+bun run ci:find
+bk job log <job-uuid> -b $(bun run ci:find)
+
+# Watch the current branch's build until it finishes
+bun run ci:watch
 ```
 
-The script fetches logs from BuildKite's public API and saves complete logs to `/tmp/bun-build-{number}-{platform}-{step}.log`. It displays a summary of errors and the file path for each failed job. Use `--wait` to poll continuously until the build completes or fails.
+For anything else, use `bk` directly — `bk build list`, `bk api`, `bk artifacts`, etc.
+
+If output from these commands looks wrong — mis-parsed annotation HTML, confusing wording, a field BuildKite changed shape on — fix `scripts/find-build.ts` directly rather than working around it. It's a thin presenter over `bk`; keep it accurate.

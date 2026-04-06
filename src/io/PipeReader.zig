@@ -760,7 +760,7 @@ pub const WindowsBufferedReader = struct {
                 return Type.onReaderError(@as(*Type, @ptrCast(@alignCast(this))), err);
             }
             fn loop(this: *anyopaque) *Async.Loop {
-                return Type.loop(@as(*Type, @alignCast(@ptrCast(this))));
+                return Type.loop(@as(*Type, @ptrCast(@alignCast(this))));
             }
         };
         return .{
@@ -1200,7 +1200,7 @@ pub const WindowsBufferedReader = struct {
 
     fn onPipeClose(handle: *uv.Pipe) callconv(.c) void {
         const this = bun.cast(*uv.Pipe, handle.data);
-        bun.default_allocator.destroy(this);
+        bun.destroy(this);
     }
 
     fn onTTYClose(handle: *uv.uv_tty_t) callconv(.c) void {

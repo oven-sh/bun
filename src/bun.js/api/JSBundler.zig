@@ -234,6 +234,7 @@ pub const JSBundler = struct {
         emit_dce_annotations: ?bool = null,
         names: Names = .{},
         external: bun.StringSet = bun.StringSet.init(bun.default_allocator),
+        allow_unresolved: ?bun.StringSet = null,
         source_map: options.SourceMapOption = .none,
         public_path: OwnedString = OwnedString.initEmpty(bun.default_allocator),
         conditions: bun.StringSet = bun.StringSet.init(bun.default_allocator),
@@ -260,6 +261,10 @@ pub const JSBundler = struct {
         files: FileMap = .{},
         /// Generate metafile (JSON module graph)
         metafile: bool = false,
+        /// Package names whose barrel files should be optimized.
+        /// Named imports from these packages will only load the submodules
+        /// that are actually used instead of parsing all re-exported submodules.
+        optimize_imports: bun.StringSet = bun.StringSet.init(bun.default_allocator),
 
         pub const CompileOptions = struct {
             compile_target: CompileTarget = .{},
@@ -435,6 +440,7 @@ pub const JSBundler = struct {
             var this = Config{
                 .entry_points = bun.StringSet.init(allocator),
                 .external = bun.StringSet.init(allocator),
+                .optimize_imports = bun.StringSet.init(allocator),
                 .define = bun.StringMap.init(allocator, true),
                 .dir = OwnedString.initEmpty(allocator),
                 .outdir = OwnedString.initEmpty(allocator),
@@ -703,14 +709,6 @@ pub const JSBundler = struct {
                     if (try minify.getBooleanLoose(globalThis, "keepNames")) |keep_names| {
                         this.minify.keep_names = keep_names;
                     }
-                    if (try minify.getArray(globalThis, "unwrapCJSToESM")) |arr| {
-                        var iter = try arr.arrayIterator(globalThis);
-                        while (try iter.next()) |entry| {
-                            var slice = try entry.toSliceOrNull(globalThis);
-                            defer slice.deinit();
-                            try this.minify.unwrap_cjs_to_esm.insert(slice.slice());
-                        }
-                    }
                 } else {
                     return globalThis.throwInvalidArguments("Expected minify to be a boolean or an object", .{});
                 }
@@ -809,6 +807,23 @@ pub const JSBundler = struct {
                 }
             }
 
+            if (try config.getOwn(globalThis, "allowUnresolved")) |allow_unresolved_val| {
+                if (!allow_unresolved_val.isUndefined() and !allow_unresolved_val.isNull()) {
+                    if (!allow_unresolved_val.jsTypeLoose().isArray()) {
+                        return globalThis.throwInvalidArguments("allowUnresolved must be an array", .{});
+                    }
+                    this.allow_unresolved = bun.StringSet.init(bun.default_allocator);
+                    if (try allow_unresolved_val.getLength(globalThis) > 0) {
+                        var iter = try allow_unresolved_val.arrayIterator(globalThis);
+                        while (try iter.next()) |entry| {
+                            var slice = try entry.toSliceOrNull(globalThis);
+                            defer slice.deinit();
+                            try this.allow_unresolved.?.insert(slice.slice());
+                        }
+                    }
+                }
+            }
+
             if (try config.getOwnArray(globalThis, "drop")) |drops| {
                 var iter = try drops.arrayIterator(globalThis);
                 while (try iter.next()) |entry| {
@@ -824,6 +839,15 @@ pub const JSBundler = struct {
                     var slice = try entry.toSliceOrNull(globalThis);
                     defer slice.deinit();
                     try this.features.insert(slice.slice());
+                }
+            }
+
+            if (try config.getOwnArray(globalThis, "optimizeImports")) |optimize_imports| {
+                var iter = try optimize_imports.arrayIterator(globalThis);
+                while (try iter.next()) |entry| {
+                    var slice = try entry.toSliceOrNull(globalThis);
+                    defer slice.deinit();
+                    try this.optimize_imports.insert(slice.slice());
                 }
             }
 
@@ -985,45 +1009,57 @@ pub const JSBundler = struct {
             }
 
             if (this.compile) |*compile| {
-                this.target = .bun;
+                // When compile + target=browser + all HTML entrypoints, produce standalone HTML.
+                // Otherwise, default to bun executable compile.
+                const has_all_html_entrypoints = brk: {
+                    if (this.entry_points.count() == 0) break :brk false;
+                    for (this.entry_points.keys()) |ep| {
+                        if (!strings.hasSuffixComptime(ep, ".html")) break :brk false;
+                    }
+                    break :brk true;
+                };
+                const is_standalone_html = this.target == .browser and has_all_html_entrypoints;
+                if (!is_standalone_html) {
+                    this.target = .bun;
 
-                const define_keys = compile.compile_target.defineKeys();
-                const define_values = compile.compile_target.defineValues();
-                for (define_keys, define_values) |key, value| {
-                    try this.define.insert(key, value);
-                }
-
-                const base_public_path = bun.StandaloneModuleGraph.targetBasePublicPath(this.compile.?.compile_target.os, "root/");
-                try this.public_path.append(base_public_path);
-
-                // When using --compile, only `external` sourcemaps work, as we do not
-                // look at the source map comment. Override any other sourcemap type.
-                if (this.source_map != .none) {
-                    this.source_map = .external;
-                }
-
-                if (compile.outfile.isEmpty()) {
-                    const entry_point = this.entry_points.keys()[0];
-                    var outfile = std.fs.path.basename(entry_point);
-                    const ext = std.fs.path.extension(outfile);
-                    if (ext.len > 0) {
-                        outfile = outfile[0 .. outfile.len - ext.len];
+                    const define_keys = compile.compile_target.defineKeys();
+                    const define_values = compile.compile_target.defineValues();
+                    for (define_keys, define_values) |key, value| {
+                        try this.define.insert(key, value);
                     }
 
-                    if (strings.eqlComptime(outfile, "index")) {
-                        outfile = std.fs.path.basename(std.fs.path.dirname(entry_point) orelse "index");
+                    const base_public_path = bun.StandaloneModuleGraph.targetBasePublicPath(this.compile.?.compile_target.os, "root/");
+                    try this.public_path.append(base_public_path);
+
+                    // When using --compile, only `external` sourcemaps work, as we do not
+                    // look at the source map comment. Override any other sourcemap type.
+                    if (this.source_map != .none) {
+                        this.source_map = .external;
                     }
 
-                    if (strings.eqlComptime(outfile, "bun")) {
-                        outfile = std.fs.path.basename(std.fs.path.dirname(entry_point) orelse "bun");
-                    }
+                    if (compile.outfile.isEmpty()) {
+                        const entry_point = this.entry_points.keys()[0];
+                        var outfile = std.fs.path.basename(entry_point);
+                        const ext = std.fs.path.extension(outfile);
+                        if (ext.len > 0) {
+                            outfile = outfile[0 .. outfile.len - ext.len];
+                        }
 
-                    // If argv[0] is "bun" or "bunx", we don't check if the binary is standalone
-                    if (strings.eqlComptime(outfile, "bun") or strings.eqlComptime(outfile, "bunx")) {
-                        return globalThis.throwInvalidArguments("cannot use compile with an output file named 'bun' because bun won't realize it's a standalone executable. Please choose a different name for compile.outfile", .{});
-                    }
+                        if (strings.eqlComptime(outfile, "index")) {
+                            outfile = std.fs.path.basename(std.fs.path.dirname(entry_point) orelse "index");
+                        }
 
-                    try compile.outfile.appendSliceExact(outfile);
+                        if (strings.eqlComptime(outfile, "bun")) {
+                            outfile = std.fs.path.basename(std.fs.path.dirname(entry_point) orelse "bun");
+                        }
+
+                        // If argv[0] is "bun" or "bunx", we don't check if the binary is standalone
+                        if (strings.eqlComptime(outfile, "bun") or strings.eqlComptime(outfile, "bunx")) {
+                            return globalThis.throwInvalidArguments("cannot use compile with an output file named 'bun' because bun won't realize it's a standalone executable. Please choose a different name for compile.outfile", .{});
+                        }
+
+                        try compile.outfile.appendSliceExact(outfile);
+                    }
                 }
             }
 
@@ -1032,6 +1068,20 @@ pub const JSBundler = struct {
             // twice (once for module analysis, once for bytecode), which is a deopt.
             if (this.bytecode and this.format == .esm and this.compile == null) {
                 return globalThis.throwInvalidArguments("ESM bytecode requires compile: true. Use format: 'cjs' for bytecode without compile.", .{});
+            }
+
+            // Validate standalone HTML mode: compile + browser target + all HTML entrypoints
+            if (this.compile != null and this.target == .browser) {
+                const has_all_html = brk: {
+                    if (this.entry_points.count() == 0) break :brk false;
+                    for (this.entry_points.keys()) |ep| {
+                        if (!strings.hasSuffixComptime(ep, ".html")) break :brk false;
+                    }
+                    break :brk true;
+                };
+                if (has_all_html and this.code_splitting) {
+                    return globalThis.throwInvalidArguments("Cannot use compile with target 'browser' and splitting for standalone HTML", .{});
+                }
             }
 
             return this;
@@ -1058,11 +1108,6 @@ pub const JSBundler = struct {
             identifiers: bool = false,
             syntax: bool = false,
             keep_names: bool = false,
-            unwrap_cjs_to_esm: bun.StringSet = bun.StringSet.init(bun.default_allocator),
-
-            pub fn deinit(self: *Minify) void {
-                self.unwrap_cjs_to_esm.deinit();
-            }
         };
 
         pub const Serve = struct {
@@ -1079,10 +1124,10 @@ pub const JSBundler = struct {
         pub fn deinit(self: *Config, allocator: std.mem.Allocator) void {
             self.entry_points.deinit();
             self.external.deinit();
+            if (self.allow_unresolved) |*a| a.deinit();
             self.define.deinit();
             self.dir.deinit();
             self.serve.deinit(allocator);
-            self.minify.deinit();
             if (self.loaders) |loaders| {
                 for (loaders.extensions) |ext| {
                     bun.default_allocator.free(ext);
@@ -1117,6 +1162,7 @@ pub const JSBundler = struct {
             self.env_prefix.deinit();
             self.footer.deinit();
             self.tsconfig_override.deinit();
+            self.optimize_imports.deinit();
             self.files.deinitAndUnprotect();
             self.metafile_json_path.deinit();
             self.metafile_markdown_path.deinit();

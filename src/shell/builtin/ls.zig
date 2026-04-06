@@ -175,8 +175,8 @@ pub const ShellLsOutputTask = OutputTask(Ls, .{
 const ShellLsOutputTaskVTable = struct {
     pub fn writeErr(this: *Ls, childptr: anytype, errbuf: []const u8) ?Yield {
         log("ShellLsOutputTaskVTable.writeErr(0x{x}, {s})", .{ @intFromPtr(this), errbuf });
+        this.state.exec.output_waiting += 1;
         if (this.bltn().stderr.needsIO()) |safeguard| {
-            this.state.exec.output_waiting += 1;
             return this.bltn().stderr.enqueue(childptr, errbuf, safeguard);
         }
         _ = this.bltn().writeNoIO(.stderr, errbuf);
@@ -190,8 +190,8 @@ const ShellLsOutputTaskVTable = struct {
 
     pub fn writeOut(this: *Ls, childptr: anytype, output: *OutputSrc) ?Yield {
         log("ShellLsOutputTaskVTable.writeOut(0x{x}, {s})", .{ @intFromPtr(this), output.slice() });
+        this.state.exec.output_waiting += 1;
         if (this.bltn().stdout.needsIO()) |safeguard| {
-            this.state.exec.output_waiting += 1;
             return this.bltn().stdout.enqueue(childptr, output.slice(), safeguard);
         }
         log("ShellLsOutputTaskVTable.writeOut(0x{x}, {s}) no IO", .{ @intFromPtr(this), output.slice() });

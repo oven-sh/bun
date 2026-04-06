@@ -48,10 +48,6 @@ pub const LinkerContext = struct {
 
     mangled_props: MangledProps = .{},
 
-    /// Files whose exports_kind was changed from .cjs to .esm_with_dynamic_fallback_from_cjs
-    /// in step 1 of scanImportsAndExports. Used by matchImportWithExport.
-    force_unwrapped_cjs: bun.bit_set.DynamicBitSetUnmanaged = .{},
-
     pub fn allocator(this: *const LinkerContext) std.mem.Allocator {
         return this.graph.allocator;
     }
@@ -72,6 +68,7 @@ pub const LinkerContext = struct {
         banner: []const u8 = "",
         footer: []const u8 = "",
         css_chunking: bool = false,
+        compile_to_standalone_html: bool = false,
         source_maps: options.SourceMapOption = .none,
         target: options.Target = .browser,
         compile: bool = false,
@@ -190,7 +187,7 @@ pub const LinkerContext = struct {
     pub fn shouldIncludePart(c: *LinkerContext, source_index: Index.Int, part: Part) bool {
         // As an optimization, ignore parts containing a single import statement to
         // an internal non-wrapped file. These will be ignored anyway and it's a
-        // performance hit to spin up a goroutine only to discover this later.
+        // performance hit to include the part only to discover it's unnecessary later.
         if (part.stmts.len == 1) {
             if (part.stmts[0].data == .s_import) {
                 const record = c.graph.ast.items(.import_records)[source_index].at(part.stmts[0].data.s_import.import_record_index);
@@ -1190,6 +1187,10 @@ pub const LinkerContext = struct {
         ast: *const JSAst,
     ) !bool {
         const record = ast.import_records.at(import_record_index);
+        // Barrel optimization: deferred import records should be dropped
+        if (record.flags.is_unused) {
+            return true;
+        }
         // Is this an external import?
         if (!record.source_index.isValid()) {
             // Keep the "import" statement if import statements are supported
@@ -1240,7 +1241,7 @@ pub const LinkerContext = struct {
         switch (other_flags.wrap) {
             .none => {},
             .cjs => {
-                // Replace the statement with a call to "require()" if this module is not wrapped
+                // Replace the statement with a call to "require()" since the other module is CJS-wrapped
                 try stmts.inside_wrapper_prefix.appendNonDependency(
                     Stmt.alloc(S.Local, .{
                         .decls = try G.Decl.List.fromSlice(
@@ -1686,6 +1687,25 @@ pub const LinkerContext = struct {
                 if (record.source_index.isValid()) {
                     c.markFileLiveForTreeShaking(
                         other_source_index,
+                        side_effects,
+                        parts,
+                        import_records,
+                        entry_point_kinds,
+                        css_reprs,
+                    );
+                }
+            }
+            return;
+        }
+
+        // HTML files can reference non-JS/CSS assets (favicons, images, etc.)
+        // via .url kind import records. Follow all import records for HTML files
+        // so these assets are marked live and included in the manifest.
+        if (c.parse_graph.input_files.items(.loader)[source_index] == .html) {
+            for (import_records[source_index].slice()) |*record| {
+                if (record.source_index.isValid()) {
+                    c.markFileLiveForTreeShaking(
+                        record.source_index.get(),
                         side_effects,
                         parts,
                         import_records,
@@ -2325,6 +2345,14 @@ pub const LinkerContext = struct {
             };
         }
 
+        // Barrel optimization: deferred import records point to empty ASTs
+        if (record.flags.is_unused) {
+            return .{
+                .value = .{},
+                .status = .external,
+            };
+        }
+
         // Is this a disabled file?
         const other_source_index = record.source_index.get();
         const other_id = other_source_index;
@@ -2344,9 +2372,9 @@ pub const LinkerContext = struct {
         if (!named_import.alias_is_star and
             flags.has_lazy_export and
 
-            // CommonJS exports
-            !flags.uses_export_keyword and !strings.eqlComptime(named_import.alias orelse "", "default") and
             // ESM exports
+            !flags.uses_export_keyword and !strings.eqlComptime(named_import.alias orelse "", "default") and
+            // CommonJS exports
             !flags.uses_exports_ref and !flags.uses_module_ref)
         {
             // Just warn about it and replace the import with "undefined"
@@ -2400,17 +2428,12 @@ pub const LinkerContext = struct {
         // Is this a file with dynamic exports?
         const is_commonjs_to_esm = flags.force_cjs_to_esm;
         if (other_kind.isESMWithDynamicFallback() or is_commonjs_to_esm) {
-            // For force-unwrapped CJS files (tracked in the bitset), use
-            // dynamic_fallback so imports resolve via property access on the
-            // exports object instead of resolving to undefined.
-            const is_force_unwrapped = c.force_unwrapped_cjs.capacity() > 0 and
-                c.force_unwrapped_cjs.isSet(other_id);
             return .{
                 .value = .{
                     .source_index = Index.source(other_source_index),
                     .import_ref = c.graph.ast.items(.exports_ref)[other_id],
                 },
-                .status = if (is_commonjs_to_esm and !is_force_unwrapped)
+                .status = if (is_commonjs_to_esm)
                     .dynamic_fallback_interop_default
                 else
                     .dynamic_fallback,

@@ -541,7 +541,7 @@ WTF::String computeErrorInfoWrapperToString(JSC::VM& vm, Vector<StackFrame>& sta
     return result;
 }
 
-void computeLineColumnWithSourcemap(JSC::VM& vm, JSC::SourceProvider* _Nonnull sourceProvider, JSC::LineColumn& lineColumn)
+void computeLineColumnWithSourcemap(JSC::VM& vm, JSC::SourceProvider* _Nonnull sourceProvider, JSC::LineColumn& lineColumn, WTF::String& remappedSourceURL)
 {
     auto sourceURL = sourceProvider->sourceURL();
     if (sourceURL.isEmpty()) {
@@ -561,6 +561,7 @@ void computeLineColumnWithSourcemap(JSC::VM& vm, JSC::SourceProvider* _Nonnull s
     if (frame.remapped) {
         lineColumn.line = frame.position.line().oneBasedInt();
         lineColumn.column = frame.position.column().oneBasedInt();
+        remappedSourceURL = frame.source_url.toWTFString();
     }
 }
 
@@ -641,13 +642,16 @@ JSC_DEFINE_CUSTOM_GETTER(errorInstanceLazyStackCustomGetter, (JSGlobalObject * g
     OrdinalNumber column;
     String sourceURL;
     auto stackTrace = errorObject->stackTrace();
-    if (stackTrace == nullptr) {
-        return JSValue::encode(jsUndefined());
-    }
 
-    JSValue result = computeErrorInfoToJSValue(vm, *stackTrace, line, column, sourceURL, errorObject, nullptr);
-    stackTrace->clear();
-    errorObject->setStackFrames(vm, {});
+    JSValue result;
+    if (stackTrace == nullptr) {
+        WTF::Vector<JSC::StackFrame> emptyTrace;
+        result = computeErrorInfoToJSValue(vm, emptyTrace, line, column, sourceURL, errorObject, nullptr);
+    } else {
+        result = computeErrorInfoToJSValue(vm, *stackTrace, line, column, sourceURL, errorObject, nullptr);
+        stackTrace->clear();
+        errorObject->setStackFrames(vm, {});
+    }
     RETURN_IF_EXCEPTION(scope, {});
     errorObject->putDirect(vm, vm.propertyNames->stack, result, 0);
     return JSValue::encode(result);
@@ -687,12 +691,30 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
     JSCStackTrace::getFramesForCaller(vm, callFrame, errorObject, caller, stackTrace, stackTraceLimit);
 
     if (auto* instance = jsDynamicCast<JSC::ErrorInstance*>(errorObject)) {
-        instance->setStackFrames(vm, WTF::move(stackTrace));
         if (instance->hasMaterializedErrorInfo()) {
-            const auto& propertyName = vm.propertyNames->stack;
-            VM::DeletePropertyModeScope scope(vm, VM::DeletePropertyMode::IgnoreConfigurable);
-            DeletePropertySlot slot;
-            JSObject::deleteProperty(instance, globalObject, propertyName, slot);
+            // Error info was already materialized (e.g. .stack was previously accessed).
+            // Don't call setStackFrames — it would leave m_errorInfoMaterialized=true with
+            // a non-null m_stackTrace, causing ASSERT(!m_errorInfoMaterialized) in
+            // computeErrorInfo when GC's finalizeUnconditionally finds unmarked frames.
+            // Eagerly compute and set the .stack property instead.
+            OrdinalNumber line;
+            OrdinalNumber column;
+            String sourceURL;
+            JSValue result = computeErrorInfoToJSValue(vm, stackTrace, line, column, sourceURL, errorObject, nullptr);
+            RETURN_IF_EXCEPTION(scope, {});
+            errorObject->putDirect(vm, vm.propertyNames->stack, result, 0);
+        } else {
+            // Not yet materialized — safe to install new frames with a lazy getter.
+            instance->setStackFrames(vm, WTF::move(stackTrace));
+
+            {
+                const auto& propertyName = vm.propertyNames->stack;
+                VM::DeletePropertyModeScope deleteScope(vm, VM::DeletePropertyMode::IgnoreConfigurable);
+                DeletePropertySlot slot;
+                JSObject::deleteProperty(instance, globalObject, propertyName, slot);
+            }
+            RETURN_IF_EXCEPTION(scope, {});
+
             if (auto* zigGlobalObject = jsDynamicCast<Zig::GlobalObject*>(globalObject)) {
                 instance->putDirectCustomAccessor(vm, vm.propertyNames->stack, zigGlobalObject->m_lazyStackCustomGetterSetter.get(zigGlobalObject), JSC::PropertyAttribute::CustomAccessor | 0);
             } else {

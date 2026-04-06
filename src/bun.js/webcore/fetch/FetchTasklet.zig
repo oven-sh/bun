@@ -78,6 +78,10 @@ pub const FetchTasklet = struct {
         bun.debugAssert(count > 0);
 
         if (count == 1) {
+            if (this.javascript_vm.isShuttingDown()) {
+                this.deinit() catch |err| switch (err) {};
+                return;
+            }
             // this is really unlikely to happen, but can happen
             // lets make sure that we always call deinit from main thread
 
@@ -231,6 +235,7 @@ pub const FetchTasklet = struct {
             response.unref();
         }
 
+        this.clearStreamCancelHandler();
         this.readable_stream_ref.deinit();
 
         this.scheduled_response_buffer.deinit();
@@ -363,6 +368,7 @@ pub const FetchTasklet = struct {
                         bun.default_allocator,
                     );
                 } else {
+                    this.clearStreamCancelHandler();
                     var prev = this.readable_stream_ref;
                     this.readable_stream_ref = .{};
                     defer prev.deinit();
@@ -510,7 +516,7 @@ pub const FetchTasklet = struct {
                 defer result.deinit();
 
                 promise_value.ensureStillAlive();
-                try promise.reject(globalThis, result.toJS(globalThis));
+                try promise.rejectWithAsyncStack(globalThis, result.toJS(globalThis));
 
                 tracker.didDispatch(globalThis);
                 this.promise.deinit();
@@ -573,7 +579,7 @@ pub const FetchTasklet = struct {
                 var prom = self.promise.swap().asAnyPromise().?;
                 const res = self.held.swap();
                 res.ensureStillAlive();
-                try prom.reject(self.globalObject, res);
+                try prom.rejectWithAsyncStack(self.globalObject, res);
             }
         };
         var holder = bun.handleOom(bun.default_allocator.create(Holder));
@@ -865,6 +871,25 @@ pub const FetchTasklet = struct {
         };
     }
 
+    /// Clear the cancel_handler on the ByteStream.Source to prevent use-after-free.
+    /// Must be called before releasing readable_stream_ref, while the Strong ref
+    /// still keeps the ReadableStream (and thus the ByteStream.Source) alive.
+    fn clearStreamCancelHandler(this: *FetchTasklet) void {
+        if (this.readable_stream_ref.get(this.global_this)) |readable| {
+            if (readable.ptr == .Bytes) {
+                const source = readable.ptr.Bytes.parent();
+                source.cancel_handler = null;
+                source.cancel_ctx = null;
+            }
+        }
+    }
+
+    fn onStreamCancelledCallback(ctx: ?*anyopaque) void {
+        const this = bun.cast(*FetchTasklet, ctx.?);
+        if (this.ignore_data) return;
+        this.ignoreRemainingResponseBody();
+    }
+
     fn toBodyValue(this: *FetchTasklet) Body.Value {
         if (this.getAbortError()) |err| {
             return .{ .Error = err };
@@ -877,6 +902,7 @@ pub const FetchTasklet = struct {
                     .global = this.global_this,
                     .onStartStreaming = FetchTasklet.onStartStreamingHTTPResponseBodyCallback,
                     .onReadableStreamAvailable = FetchTasklet.onReadableStreamAvailable,
+                    .onStreamCancelled = FetchTasklet.onStreamCancelledCallback,
                 },
             };
             return response;
@@ -930,7 +956,8 @@ pub const FetchTasklet = struct {
         // we should not keep the process alive if we are ignoring the body
         const vm = this.javascript_vm;
         this.poll_ref.unref(vm);
-        // clean any remaining refereces
+        // clean any remaining references
+        this.clearStreamCancelHandler();
         this.readable_stream_ref.deinit();
         this.response.deinit();
 
@@ -1033,18 +1060,37 @@ pub const FetchTasklet = struct {
             store.ref();
         }
 
+        var url = fetch_options.url;
         var proxy: ?ZigURL = null;
         if (fetch_options.proxy) |proxy_opt| {
             if (!proxy_opt.isEmpty()) { //if is empty just ignore proxy
                 // Check NO_PROXY even for explicitly-provided proxies
-                if (!jsc_vm.transpiler.env.isNoProxy(fetch_options.url.hostname, fetch_options.url.host)) {
+                if (!jsc_vm.transpiler.env.isNoProxy(url.hostname, url.host)) {
                     proxy = proxy_opt;
                 }
             }
             // else: proxy: "" means explicitly no proxy (direct connection)
         } else {
             // no proxy provided, use default proxy resolution
-            proxy = jsc_vm.transpiler.env.getHttpProxyFor(fetch_options.url);
+            if (jsc_vm.transpiler.env.getHttpProxyFor(url)) |env_proxy| {
+                // env_proxy.href may be a slice into a RefCountedEnvValue's bytes which can
+                // be freed by a subsequent `process.env.HTTP_PROXY = "..."` assignment while
+                // this fetch is in flight on the HTTP thread. Clone it into url_proxy_buffer
+                // alongside the request URL — the same pattern fetch.zig uses for the explicit
+                // `fetch(url, { proxy: "..." })` option.
+                if (env_proxy.href.len > 0) {
+                    const old_url_len = url.href.len;
+                    const new_buffer = try std.fmt.allocPrint(bun.default_allocator, "{s}{s}", .{ fetch_tasklet.url_proxy_buffer, env_proxy.href });
+                    if (fetch_tasklet.url_proxy_buffer.len > 0) {
+                        bun.default_allocator.free(fetch_tasklet.url_proxy_buffer);
+                    }
+                    fetch_tasklet.url_proxy_buffer = new_buffer;
+                    url = ZigURL.parse(new_buffer[0..old_url_len]);
+                    proxy = ZigURL.parse(new_buffer[old_url_len..]);
+                } else {
+                    proxy = env_proxy;
+                }
+            }
         }
 
         if (fetch_tasklet.check_server_identity.has() and fetch_tasklet.reject_unauthorized) {
@@ -1057,7 +1103,7 @@ pub const FetchTasklet = struct {
         fetch_tasklet.http.?.* = http.AsyncHTTP.init(
             bun.default_allocator,
             fetch_options.method,
-            fetch_options.url,
+            url,
             fetch_options.headers.entries,
             fetch_options.headers.buf.items,
             &fetch_tasklet.response_buffer,
@@ -1107,7 +1153,7 @@ pub const FetchTasklet = struct {
         fetch_tasklet.signal_store.header_progress.store(true, .monotonic);
 
         if (fetch_tasklet.request_body == .Sendfile) {
-            bun.assert(fetch_options.url.isHTTP());
+            bun.assert(url.isHTTP());
             bun.assert(fetch_options.proxy == null);
             fetch_tasklet.http.?.request_body = .{ .sendfile = fetch_tasklet.request_body.Sendfile };
         }
@@ -1132,6 +1178,7 @@ pub const FetchTasklet = struct {
 
     /// This is ALWAYS called from the http thread and we cannot touch the buffer here because is locked
     pub fn onWriteRequestDataDrain(this: *FetchTasklet) void {
+        if (this.javascript_vm.isShuttingDown()) return;
         // ref until the main thread callback is called
         this.ref();
         this.javascript_vm.eventLoop().enqueueTaskConcurrent(jsc.ConcurrentTask.fromCallback(this, FetchTasklet.resumeRequestDataStream));
@@ -1152,6 +1199,14 @@ pub const FetchTasklet = struct {
             }
             sink.drain();
         }
+    }
+
+    /// Whether the request body should skip chunked transfer encoding framing.
+    /// True for upgraded connections (e.g. WebSocket) or when the user explicitly
+    /// set Content-Length without setting Transfer-Encoding.
+    fn skipChunkedFraming(this: *const FetchTasklet) bool {
+        return this.upgraded_connection or
+            (this.request_headers.get("content-length") != null and this.request_headers.get("transfer-encoding") == null);
     }
 
     pub fn writeRequestData(this: *FetchTasklet, data: []const u8) ResumableSinkBackpressure {
@@ -1175,7 +1230,7 @@ pub const FetchTasklet = struct {
         // dont have backpressure so we will schedule the data to be written
         // if we have backpressure the onWritable will drain the buffer
         needs_schedule = stream_buffer.isEmpty();
-        if (this.upgraded_connection) {
+        if (this.skipChunkedFraming()) {
             bun.handleOom(stream_buffer.write(data));
         } else {
             //16 is the max size of a hex number size that represents 64 bits + 2 for the \r\n
@@ -1209,15 +1264,14 @@ pub const FetchTasklet = struct {
             }
             this.abortTask();
         } else {
-            if (!this.upgraded_connection) {
-                // If is not upgraded we need to send the terminating chunk
+            if (!this.skipChunkedFraming()) {
+                // Using chunked transfer encoding, send the terminating chunk
                 const thread_safe_stream_buffer = this.request_body_streaming_buffer orelse return;
                 const stream_buffer = thread_safe_stream_buffer.acquire();
                 defer thread_safe_stream_buffer.release();
                 bun.handleOom(stream_buffer.write(http.end_of_chunked_http1_1_encoding_response_body));
             }
             if (this.http) |http_| {
-                // just tell to write the end of the chunked encoding aka 0\r\n\r\n
                 http.http_thread.scheduleRequestWrite(http_, .end);
             }
         }
@@ -1252,7 +1306,7 @@ pub const FetchTasklet = struct {
         hostname: ?[]u8 = null,
         check_server_identity: jsc.Strong.Optional = .empty,
         unix_socket_path: ZigString.Slice,
-        ssl_config: ?*SSLConfig = null,
+        ssl_config: ?SSLConfig.SharedPtr = null,
         upgraded_connection: bool = false,
     };
 
@@ -1353,7 +1407,8 @@ pub const FetchTasklet = struct {
                 return;
             }
         }
-
+        // will deinit when done with the http client (when is_done = true)
+        if (task.javascript_vm.isShuttingDown()) return;
         task.javascript_vm.eventLoop().enqueueTaskConcurrent(task.concurrent_task.from(task, .manual_deinit));
     }
 };

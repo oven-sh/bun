@@ -327,8 +327,9 @@ pub fn NewSocket(comptime ssl: bool) type {
                     this.has_pending_activity.store(false, .release);
 
                     // reject the promise on connect() error
-                    const err_value = err.toErrorInstance(globalObject);
-                    try promise.asPromise().?.reject(globalObject, err_value);
+                    const js_promise = promise.asPromise().?;
+                    const err_value = err.toErrorInstanceWithAsyncStack(globalObject, js_promise);
+                    try js_promise.reject(globalObject, err_value);
                 }
 
                 return;
@@ -348,7 +349,7 @@ pub fn NewSocket(comptime ssl: bool) type {
                 // They've defined a `connectError` callback
                 // The error is effectively handled, but we should still reject the promise.
                 var promise = val.asPromise().?;
-                const err_ = err.toErrorInstance(globalObject);
+                const err_ = err.toErrorInstanceWithAsyncStack(globalObject, promise);
                 try promise.rejectAsHandled(globalObject, err_);
             }
         }
@@ -1707,6 +1708,15 @@ pub fn NewWrappedHandler(comptime tls: bool) type {
 
         pub fn onClose(this: WrappedSocket, socket: Socket, err: c_int, data: ?*anyopaque) bun.JSError!void {
             if (comptime tls) {
+                // Clean up the raw TCP socket from upgradeTLS() — its onClose
+                // never fires because uws closes through the TLS context only.
+                defer {
+                    if (!this.tcp.socket.isDetached()) {
+                        this.tcp.socket.detach();
+                        this.tcp.has_pending_activity.store(false, .release);
+                        this.tcp.deref();
+                    }
+                }
                 try TLSSocket.onClose(this.tls, socket, err, data);
             } else {
                 try TLSSocket.onClose(this.tcp, socket, err, data);

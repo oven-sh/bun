@@ -93,6 +93,9 @@ void us_internal_loop_data_free(struct us_loop_t *loop) {
 }
 
 void us_wakeup_loop(struct us_loop_t *loop) {
+#ifndef LIBUS_USE_LIBUV
+    __atomic_fetch_add(&loop->pending_wakeups, 1, __ATOMIC_RELEASE);
+#endif
     us_internal_async_wakeup(loop->data.wakeup_async);
 }
 
@@ -370,7 +373,17 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         if(s && s->flags.adopted && s->prev) {
                             s = s->prev;
                         }
-                        /* Exit accept loop if listen socket was closed in on_open handler */
+
+                        /* When the kernel deferred the accept until data arrived (TCP_DEFER_ACCEPT
+                         * on Linux, SO_ACCEPTFILTER on FreeBSD), the request/ClientHello is already
+                         * in the buffer. Dispatch readable now instead of returning to epoll just to
+                         * learn what we already know. The POLL_TYPE_SOCKET handler tolerates
+                         * EWOULDBLOCK for the rare case where the defer timed out with no data. */
+                        if (listen_socket->deferred_accept && s && !us_socket_is_closed(0, s)) {
+                            us_internal_dispatch_ready_poll((struct us_poll_t *) s, 0, 0, LIBUS_SOCKET_READABLE);
+                        }
+
+                        /* Exit accept loop if listen socket was closed in on_open or the request handler */
                         if (us_socket_is_closed(0, &listen_socket->s)) {
                             break;
                         }
@@ -393,8 +406,12 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
             if (events & LIBUS_SOCKET_WRITABLE && !error) {
                 s->flags.last_write_failed = 0;
                 #ifdef LIBUS_USE_KQUEUE
-                /* Kqueue is one-shot so is not writable anymore */
-                p->state.poll_type = us_internal_poll_type(p) | ((events & LIBUS_SOCKET_READABLE) ? POLL_TYPE_POLLING_IN : 0);
+                /* Kqueue EVFILT_WRITE is one-shot so the filter is removed after delivery.
+                 * Clear POLLING_OUT to reflect this.
+                 * Keep POLLING_IN from the poll's own state, NOT from `events`: kqueue delivers
+                 * each filter as a separate kevent, so a pure EVFILT_WRITE event won't have
+                 * LIBUS_SOCKET_READABLE set even though the socket is still registered for reads. */
+                p->state.poll_type = us_internal_poll_type(p) | (p->state.poll_type & POLL_TYPE_POLLING_IN);
                 #endif
 
                 s = s->context->on_writable(s);
@@ -412,7 +429,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                     us_poll_change(&s->p, loop, us_poll_events(&s->p) & LIBUS_SOCKET_READABLE);
                 } else {
                     #ifdef LIBUS_USE_KQUEUE
-                    /* Kqueue one-shot writable needs to be re-enabled */
+                    /* Kqueue one-shot writable needs to be re-registered */
                     us_poll_change(&s->p, loop, us_poll_events(&s->p) | LIBUS_SOCKET_WRITABLE);
                     #endif
                 }
@@ -455,7 +472,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                     #ifdef _WIN32
                       const int recv_flags = MSG_PUSH_IMMEDIATE;
                     #else
-                      const int recv_flags = MSG_DONTWAIT | MSG_NOSIGNAL;
+                      const int recv_flags = MSG_DONTWAIT;
                     #endif
 
                     int length;
@@ -571,7 +588,28 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                 break;
             }
 
-            if (events & LIBUS_SOCKET_READABLE) {
+#if defined(__linux__)
+            /* On Linux with IP_RECVERR, EPOLLERR fires when an ICMP error
+             * (port unreachable, host unreachable, TTL exceeded, ...) is
+             * queued on the socket. The kernel may or may not also set
+             * EPOLLIN. Calling recvmmsg on such a socket returns -1 with
+             * the ICMP errno (ECONNREFUSED, EHOSTUNREACH, ENETUNREACH,
+             * EMSGSIZE, ...), which we surface via on_recv_error. The
+             * socket stays open. On other platforms (kqueue's EV_ERROR,
+             * Windows) an error event is a fatal socket condition, not a
+             * drainable error queue — preserve the pre-existing
+             * close-on-error behavior. */
+            int recv_error_surfaced = 0;
+            /* recv_would_block_only means: we drained the error queue and
+             * the only remaining outcome was EAGAIN, so the residual
+             * EPOLLERR is stale — don't treat it as fatal. */
+            int recv_would_block_only = 0;
+            int recv_drain_for_error = error;
+#else
+            int recv_drain_for_error = 0;
+#endif
+
+            if ((events & LIBUS_SOCKET_READABLE) || recv_drain_for_error) {
                 do {
                     struct udp_recvbuf recvbuf;
                     bsd_udp_setup_recvbuf(&recvbuf, u->loop->data.recv_buf, LIBUS_RECV_BUFFER_LENGTH);
@@ -580,10 +618,23 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         u->on_data(u, &recvbuf, npackets);
                     } else {
                         if (npackets == LIBUS_SOCKET_ERROR) {
-                            // If the error was not EAGAIN, mark the error
                             if (!bsd_would_block()) {
+#if defined(__linux__)
+                                int recv_err = errno;
+                                recv_error_surfaced = 1;
+                                if (u->on_recv_error) {
+                                    u->on_recv_error(u, recv_err);
+                                }
+#else
+                                /* non-Linux: fall through and close below */
                                 error = 1;
+#endif
                             }
+#if defined(__linux__)
+                            else {
+                                recv_would_block_only = 1;
+                            }
+#endif
                         } else {
                             // 0 messages received, we are done
                             // this case can happen if either:
@@ -606,9 +657,21 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                 us_poll_change(&u->p, u->loop, us_poll_events(&u->p) & LIBUS_SOCKET_READABLE);
             }
 
+#if defined(__linux__)
+            /* Only close on EPOLLERR if we didn't surface the real errno
+             * via recvmmsg + on_recv_error above AND recv wasn't just
+             * EAGAIN (which means the error queue is already drained,
+             * leaving a residual EPOLLERR). Otherwise the socket stays
+             * open so the user can keep sending/receiving after a
+             * transient ICMP error. */
+            if (error && !recv_error_surfaced && !recv_would_block_only && !u->closed) {
+                us_udp_socket_close(u);
+            }
+#else
             if (error && !u->closed) {
                 us_udp_socket_close(u);
             }
+#endif
             break;
         }
     }

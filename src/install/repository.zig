@@ -787,7 +787,12 @@ pub const TestingAPIs = struct {
         var as_utf8 = url_str.toUTF8(bun.default_allocator);
         defer as_utf8.deinit();
         const result = Repository.trySSH(as_utf8.slice()) orelse return .null;
-        return bun.String.fromBytes(result).toJS(go);
+        // trySSH may return either a slice into `as_utf8` (pass-through) or a
+        // slice into the thread-local `ssh_path_buf` (rewritten). Copy it into
+        // an owned String before returning to JS.
+        var cloned = bun.String.cloneUTF8(result);
+        defer cloned.deref();
+        return cloned.toJS(go);
     }
 
     pub fn jsTryHTTPS(go: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
@@ -803,7 +808,11 @@ pub const TestingAPIs = struct {
         var as_utf8 = url_str.toUTF8(bun.default_allocator);
         defer as_utf8.deinit();
         const result = Repository.tryHTTPS(as_utf8.slice()) orelse return .null;
-        return bun.String.fromBytes(result).toJS(go);
+        // tryHTTPS may return a slice into `as_utf8` (http pass-through) or a
+        // slice into the thread-local `final_path_buf` (rewritten). Copy.
+        var cloned = bun.String.cloneUTF8(result);
+        defer cloned.deref();
+        return cloned.toJS(go);
     }
 };
 

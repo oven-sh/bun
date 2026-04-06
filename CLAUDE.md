@@ -284,9 +284,9 @@ If output from these commands looks wrong — mis-parsed annotation HTML, confus
 
 ## Reading PR Feedback
 
-**Never use `gh pr view --comments` on its own** — it only returns the issue-stream (Conversation tab) and silently hides review summaries and line-level review comments. If a reviewer leaves an inline comment on a specific file line, you will miss it.
+`gh pr view --comments` is fine for a quick look at the Conversation tab, but it has a footgun worth knowing about: it only returns issue-stream comments and silently omits review summaries and line-level review comments. If a reviewer leaves an inline comment on a specific file line, it will not show up — no error, no hint that anything is missing.
 
-Use `bun run pr:comments` instead. It fetches all three GitHub endpoints (`/issues/N/comments`, `/pulls/N/reviews`, `/pulls/N/comments`) and prints them in one chronological listing, each labelled with its actual type (issue comment, review verdict, line comment, reply, suggestion block).
+When you want the complete picture — especially when responding to a review or checking whether anyone requested changes — use `bun run pr:comments`. It fetches all three GitHub endpoints (`/issues/N/comments`, `/pulls/N/reviews`, `/pulls/N/comments`) and prints them in one chronological listing, each labelled with its actual type (issue comment, review verdict, line comment, reply, suggestion block).
 
 ```bash
 bun run pr:comments              # current branch's PR

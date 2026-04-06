@@ -58,10 +58,15 @@ exit 1
         stderr: "pipe",
       });
 
-      const [_stdout, _stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const [_stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
       // The install should fail (our fake git returns 1), not hang.
       expect(exitCode).not.toBe(0);
+
+      // Clone failures must be reported to the user, not silently suppressed.
+      // Since HTTPS is skipped, the SSH attempt is the only attempt and its
+      // failure needs to surface.
+      expect(stderr).toContain(`"git clone" for "${url}" failed`);
 
       const trace = readFileSync(tracePath, "utf8");
 

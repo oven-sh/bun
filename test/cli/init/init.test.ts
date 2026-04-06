@@ -411,33 +411,30 @@ import path from "path";
       expect(exitCode).toBe(0);
     });
 
-    test.skipIf(isWindows)(
-      "with Claude detected via CLAUDECODE=1: CLAUDE.md is a symlink to AGENTS.md",
-      async () => {
-        // Claude Code sets `CLAUDECODE=1` in every child process it spawns.
-        // Detection should work even when `claude` is not on $PATH, which is
-        // the common case inside containerised agent sessions.
-        const temp = tempDirWithFiles("bun-init-agents-claudecode-env", {});
+    test.skipIf(isWindows)("with Claude detected via CLAUDECODE=1: CLAUDE.md is a symlink to AGENTS.md", async () => {
+      // Claude Code sets `CLAUDECODE=1` in every child process it spawns.
+      // Detection should work even when `claude` is not on $PATH, which is
+      // the common case inside containerised agent sessions.
+      const temp = tempDirWithFiles("bun-init-agents-claudecode-env", {});
 
-        await using proc = Bun.spawn({
-          cmd: [bunExe(), "init", "-y"],
-          cwd: temp,
-          stdio: ["ignore", "pipe", "pipe"],
-          env: {
-            ...bunEnv,
-            ...claudeEnv(temp, false),
-            CLAUDECODE: "1",
-            CURSOR_AGENT_RULE_DISABLED: "1",
-          },
-        });
-        const exitCode = await proc.exited;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "init", "-y"],
+        cwd: temp,
+        stdio: ["ignore", "pipe", "pipe"],
+        env: {
+          ...bunEnv,
+          ...claudeEnv(temp, false),
+          CLAUDECODE: "1",
+          CURSOR_AGENT_RULE_DISABLED: "1",
+        },
+      });
+      const exitCode = await proc.exited;
 
-        expect(fs.existsSync(path.join(temp, "AGENTS.md"))).toBe(true);
-        expect(fs.lstatSync(path.join(temp, "CLAUDE.md")).isSymbolicLink()).toBe(true);
-        expect(fs.readlinkSync(path.join(temp, "CLAUDE.md"))).toBe("AGENTS.md");
-        expect(exitCode).toBe(0);
-      },
-    );
+      expect(fs.existsSync(path.join(temp, "AGENTS.md"))).toBe(true);
+      expect(fs.lstatSync(path.join(temp, "CLAUDE.md")).isSymbolicLink()).toBe(true);
+      expect(fs.readlinkSync(path.join(temp, "CLAUDE.md"))).toBe("AGENTS.md");
+      expect(exitCode).toBe(0);
+    });
 
     test.skipIf(isWindows)(
       "with Cursor detected: .cursor/rules/*.mdc is a real file with frontmatter intact",

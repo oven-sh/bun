@@ -65,7 +65,7 @@ pub const max_size = std.math.maxInt(SizeType);
 ///    and f64 for `last_modified`. Removed reserved bytes, it's handled by version
 ///    number.
 /// 3: Added File name serialization for File objects (when is_jsdom_file is true)
-const serialization_version: u8 = 3;
+const serialization_version: u8 = 4;
 
 comptime {
     _ = Bun__Blob__getSizeForBindings;
@@ -448,6 +448,22 @@ fn _onStructuredCloneDeserialize(
                 };
 
                 if (version == 2) break :versions;
+                if (version == 3) break :versions;
+
+                // Version 4: part boundaries for multi-part blobs.
+                const part_count = try reader.readInt(u32, .little);
+                if (part_count > 1) {
+                    const sizes = try bun.default_allocator.alloc(SizeType, part_count);
+                    errdefer bun.default_allocator.free(sizes);
+                    var i: u32 = 0;
+                    while (i < part_count) : (i += 1) {
+                        sizes[i] = @truncate(try reader.readInt(u64, .little));
+                    }
+                    setPartSizes(blob.store, sizes);
+                } else if (part_count == 1) {
+                    // Single-part blobs never had part metadata; drain the size anyway.
+                    _ = try reader.readInt(u64, .little);
+                }
             }
 
             break :bytes Blob.new(blob);

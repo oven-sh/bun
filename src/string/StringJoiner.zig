@@ -167,6 +167,7 @@ pub fn doneWithEnd(this: *StringJoiner, allocator: Allocator, end: []const u8) !
 
         return &.{};
     };
+    errdefer this.deinit();
 
     const slice = try allocator.alloc(u8, this.len + end.len);
 
@@ -182,6 +183,11 @@ pub fn doneWithEnd(this: *StringJoiner, allocator: Allocator, end: []const u8) !
 
     bun.assert(remaining.len == end.len);
     @memcpy(remaining, end);
+
+    this.head = null;
+    this.tail = null;
+    this.len = 0;
+    this.watcher = .{};
 
     return slice;
 }

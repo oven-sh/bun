@@ -830,8 +830,6 @@ function getBinarySizeStep(releasePlatforms, options, { recordOnly = false } = {
     agents: { queue: "test-darwin" },
     depends_on: releasePlatforms.map(p => `${getTargetKey(p)}-build-bun`),
     allow_dependency_failure: true,
-    // [skip size check] in the commit message keeps the annotation but
-    // stops a regression from failing the build.
     soft_fail: !!options.skipSizeCheck,
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
@@ -856,8 +854,6 @@ function getReleaseStep(buildPlatforms, options, { signed = false } = {}) {
   const depends_on = signed
     ? [...buildPlatforms.filter(p => p.os !== "windows").map(p => `${getTargetKey(p)}-build-bun`), "windows-sign"]
     : buildPlatforms.map(platform => `${getTargetKey(platform)}-build-bun`);
-  // upload-release.sh attaches binary-sizes.json to the release, which the
-  // binary-size step produces.
   depends_on.push("binary-size");
 
   return {
@@ -1354,11 +1350,8 @@ async function getPipeline(options = {}) {
     }
   }
 
-  // Only release-profile builds produce a stripped ${triplet}.zip.
   const strippedPlatforms = buildPlatforms.filter(p => (p.profile ?? "release") === "release");
   if (!buildId && strippedPlatforms.length) {
-    // PR builds compare against main and can fail; main just records the
-    // baseline JSON so PRs have something to diff against.
     steps.push(getBinarySizeStep(strippedPlatforms, options, { recordOnly: isMainBranch() }));
   }
 

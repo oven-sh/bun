@@ -13,6 +13,7 @@ postgresql_context: bun.api.Postgres.PostgresSQLContext = .{},
 entropy_cache: ?*EntropyCache = null,
 
 hot_map: ?HotMap = null,
+cron_jobs: std.ArrayListUnmanaged(*bun.api.cron.CronJob) = .{},
 
 // TODO: make this per JSGlobalObject instead of global
 // This does not handle ShadowRealm correctly!
@@ -721,6 +722,8 @@ pub fn deinit(this: *RareData) void {
     }
 
     this.cleanup_hooks.clearAndFree(bun.default_allocator);
+    bun.debugAssert(this.cron_jobs.items.len == 0);
+    this.cron_jobs.deinit(bun.default_allocator);
     this.path_buf.deinit();
 
     if (this.websocket_deflate) |deflate| {

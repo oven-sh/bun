@@ -30,25 +30,17 @@ export interface Flag {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// GLOBAL COMPILER FLAGS
-//   Applied to BOTH bun's own sources AND forwarded to vendored deps
-//   via -DCMAKE_C_FLAGS / -DCMAKE_CXX_FLAGS.
+// CPU TARGET FLAGS
+//   -march/-mcpu/-mtune. Split out so deps that manage their own optimization
+//   and sanitizer flags (WebKit) can still inherit the target arch without
+//   the rest of globalFlags.
 // ═══════════════════════════════════════════════════════════════════════════
 
-export const globalFlags: Flag[] = [
-  // ─── CPU target ───
+export const cpuTargetFlags: Flag[] = [
   {
     flag: "-mcpu=apple-m1",
     when: c => c.darwin && c.arm64,
     desc: "Target Apple M1 (works on all Apple Silicon)",
-  },
-  {
-    // CMake auto-added these via CMAKE_OSX_DEPLOYMENT_TARGET/CMAKE_OSX_SYSROOT;
-    // we must add explicitly. Without this, clang/ld64 default to the host SDK
-    // version — CI builds get minos=15.0, breaking macOS 13/14 users at launch.
-    flag: c => [`-mmacosx-version-min=${c.osxDeploymentTarget!}`, "-isysroot", c.osxSysroot!],
-    when: c => c.darwin && c.osxDeploymentTarget !== undefined && c.osxSysroot !== undefined,
-    desc: "macOS deployment target + SDK (sets LC_BUILD_VERSION minos)",
   },
   {
     flag: ["-march=armv8-a+crc", "-mtune=ampere1"],
@@ -69,6 +61,25 @@ export const globalFlags: Flag[] = [
     flag: "-march=haswell",
     when: c => c.x64 && !c.baseline,
     desc: "x64 default: Haswell (2013) — AVX2, BMI2 available",
+  },
+];
+
+// ═══════════════════════════════════════════════════════════════════════════
+// GLOBAL COMPILER FLAGS
+//   Applied to BOTH bun's own sources AND forwarded to vendored deps
+//   via -DCMAKE_C_FLAGS / -DCMAKE_CXX_FLAGS.
+// ═══════════════════════════════════════════════════════════════════════════
+
+export const globalFlags: Flag[] = [
+  // ─── CPU target ───
+  ...cpuTargetFlags,
+  {
+    // CMake auto-added these via CMAKE_OSX_DEPLOYMENT_TARGET/CMAKE_OSX_SYSROOT;
+    // we must add explicitly. Without this, clang/ld64 default to the host SDK
+    // version — CI builds get minos=15.0, breaking macOS 13/14 users at launch.
+    flag: c => [`-mmacosx-version-min=${c.osxDeploymentTarget!}`, "-isysroot", c.osxSysroot!],
+    when: c => c.darwin && c.osxDeploymentTarget !== undefined && c.osxSysroot !== undefined,
+    desc: "macOS deployment target + SDK (sets LC_BUILD_VERSION minos)",
   },
 
   // ─── MSVC runtime (Windows) ───
@@ -319,6 +330,23 @@ export const globalFlags: Flag[] = [
     when: c => c.unix && c.lto,
     lang: "cxx",
     desc: "Enable devirtualization across whole program (LTO only)",
+  },
+
+  // ─── PGO (compile-side) ───
+  {
+    flag: c => `-fprofile-generate=${c.pgoGenerate}`,
+    when: c => c.unix && !!c.pgoGenerate,
+    desc: "IR PGO: instrument for profile generation",
+  },
+  {
+    flag: c => [
+      `-fprofile-use=${c.pgoUse}`,
+      "-Wno-profile-instr-out-of-date",
+      "-Wno-profile-instr-unprofiled",
+      "-Wno-backend-plugin",
+    ],
+    when: c => c.unix && !!c.pgoUse,
+    desc: "IR PGO: optimize with profile data",
   },
 
   // ─── Path remapping (CI reproducibility) ───
@@ -607,6 +635,18 @@ export const linkerFlags: Flag[] = [
     flag: "-Os",
     when: c => c.unix && c.lto && c.smol,
     desc: "LTO codegen at -Os (matches compile-side opt level)",
+  },
+
+  // ─── PGO (link-side) ───
+  {
+    flag: c => `-fprofile-generate=${c.pgoGenerate}`,
+    when: c => c.unix && !!c.pgoGenerate,
+    desc: "IR PGO: link profiling runtime",
+  },
+  {
+    flag: c => `-fprofile-use=${c.pgoUse}`,
+    when: c => c.unix && !!c.pgoUse,
+    desc: "IR PGO: LTO+PGO at link time",
   },
 
   // ─── Windows ───
@@ -983,6 +1023,20 @@ export function computeDepFlags(cfg: Config): { cflags: string[]; cxxflags: stri
   const cxxflags: string[] = [];
   evalTable(globalFlags, cfg, cflags, cxxflags);
   return { cflags, cxxflags };
+}
+
+/**
+ * Just the -march/-mcpu/-mtune flags. For deps (WebKit) whose own build system
+ * sets -O/-g/sanitizer flags but never sets a CPU target, so without this they
+ * end up targeting generic x86-64 while the rest of bun targets haswell.
+ */
+export function computeCpuTargetFlags(cfg: Config): string[] {
+  const out: string[] = [];
+  for (const f of cpuTargetFlags) {
+    if (f.when && !f.when(cfg)) continue;
+    out.push(...resolveFlagValue(f.flag, cfg));
+  }
+  return out;
 }
 
 /**

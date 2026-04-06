@@ -195,11 +195,6 @@ pub fn callback(task: *ThreadPool.Task) void {
                     attempt += 1;
                     break :brk null;
                 };
-                // tryHTTPS() returned null (e.g. ssh:// URL with an explicit
-                // port). The SSH attempt below is the only attempt — treat it
-                // as the second so that `download()` logs its failure instead
-                // of suppressing it under the `attempt > 1` guard.
-                attempt += 1;
                 break :brk null;
             } orelse if (Repository.trySSH(url)) |ssh| Repository.download(
                 manager.allocator,

@@ -225,8 +225,16 @@ pub fn drain(this: *ByteBlobLoader) bun.ByteList {
     if (this.part_sizes) |sizes| {
         this.skipEmptyParts(sizes);
     }
+    // For multi-part blobs, prefer delivering a full part in one chunk, but
+    // cap the clone at 2MB so a single huge part doesn't allocate synchronously.
+    // Parts larger than the cap are split across multiple drain/pull calls —
+    // `current_part_remain` is decremented below and only advances to the next
+    // part when it reaches zero, so boundary preservation still holds.
     const max_drain = if (this.part_sizes != null)
-        if (this.current_part_remain > 0) this.current_part_remain else this.remain
+        @min(
+            1024 * 1024 * 2,
+            if (this.current_part_remain > 0) this.current_part_remain else this.remain,
+        )
     else
         @min(16384, this.remain);
 

@@ -11,8 +11,8 @@ describe.concurrent("bunx --cwd", () => {
         version: "1.0.0",
         bin: { "test-cwd-bin": "./bin.js" },
       }),
-      "subdir/bin.js": `#!/usr/bin/env node\nconsole.log(process.cwd());`,
-      "subdir/node_modules/.bin/test-cwd-bin": `#!/usr/bin/env node\nconsole.log(process.cwd());`,
+      "subdir/bin.js": `#!/bin/sh\npwd\n`,
+      "subdir/node_modules/.bin/test-cwd-bin": `#!/bin/sh\npwd\n`,
     });
 
     chmodSync(join(String(dir), "subdir/node_modules/.bin/test-cwd-bin"), 0o755);
@@ -39,8 +39,8 @@ describe.concurrent("bunx --cwd", () => {
         version: "1.0.0",
         bin: { "test-cwd-eq-bin": "./bin.js" },
       }),
-      "mydir/bin.js": `#!/usr/bin/env node\nconsole.log(process.cwd());`,
-      "mydir/node_modules/.bin/test-cwd-eq-bin": `#!/usr/bin/env node\nconsole.log(process.cwd());`,
+      "mydir/bin.js": `#!/bin/sh\npwd\n`,
+      "mydir/node_modules/.bin/test-cwd-eq-bin": `#!/bin/sh\npwd\n`,
     });
 
     chmodSync(join(String(dir), "mydir/node_modules/.bin/test-cwd-eq-bin"), 0o755);

@@ -294,15 +294,20 @@ function SocketEmitEndNT(self, _err?) {
     // the Readable buffer is already empty, so 'end' fires even if the
     // consumer never called read().
     self.read(0);
-    // If bytes were buffered on a still-paused Readable (e.g. a write-only
-    // server handler that never added a 'data' listener) read(0) above is a
-    // no-op — endReadable() skips when state.length > 0. Flip into flowing
-    // mode so the buffered chunks drain, 'end' fires, autoDestroy runs, and
-    // server._connections gets decremented. Without this, a minimal
-    // net.createServer(s => s.end()) leaks a connection whenever the peer
-    // sent any bytes.
+    // If bytes were buffered on a Readable that was never put into flowing
+    // mode (a write-only server handler that never added a 'data' listener)
+    // read(0) above is a no-op — endReadable() skips when state.length > 0.
+    // Flip into flowing mode so the buffered chunks drain, 'end' fires,
+    // autoDestroy runs, and server._connections gets decremented. Without
+    // this, a minimal net.createServer(s => s.end()) leaks a connection
+    // whenever the peer sent any bytes.
+    //
+    // Use state.flowing === null (NEVER flowed) rather than !state.flowing
+    // so we do not bypass an explicit user pause (state.flowing === false),
+    // which is a legitimate back-pressure signal that the user is
+    // responsible for resolving via resume()/read().
     const state = self._readableState;
-    if (state && state.length > 0 && !state.flowing && !state.destroyed && !state.endEmitted) {
+    if (state && state.flowing === null && state.length > 0 && !state.destroyed && !state.endEmitted) {
       self.resume();
     }
   }

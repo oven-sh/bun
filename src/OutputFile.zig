@@ -15,6 +15,7 @@ hash: u64 = 0,
 is_executable: bool = false,
 source_map_index: u32 = std.math.maxInt(u32),
 bytecode_index: u32 = std.math.maxInt(u32),
+module_info_index: u32 = std.math.maxInt(u32),
 output_kind: jsc.API.BuildArtifact.OutputKind,
 /// Relative
 dest_path: []const u8 = "",
@@ -74,7 +75,7 @@ pub const FileOperation = struct {
 
     pub fn getPathname(file: *const FileOperation) string {
         if (file.is_tmpdir) {
-            return resolve_path.joinAbs(@TypeOf(Fs.FileSystem.instance.fs).tmpdir_path, .auto, file.pathname);
+            return resolve_path.joinAbs(Fs.FileSystem.RealFS.tmpdirPath(), .auto, file.pathname);
         } else {
             return file.pathname;
         }
@@ -133,7 +134,7 @@ pub const Value = union(Kind) {
                 const FreeContext = struct {
                     allocator: std.mem.Allocator,
 
-                    fn onFree(ctx: *@This(), buffer: *anyopaque, len: u32) callconv(.C) void {
+                    fn onFree(ctx: *@This(), buffer: *anyopaque, len: u32) callconv(.c) void {
                         ctx.allocator.free(@as([*]u8, @ptrCast(buffer))[0..len]);
                         bun.destroy(ctx);
                     }
@@ -210,6 +211,7 @@ pub const Options = struct {
     hash: ?u64 = null,
     source_map_index: ?u32 = null,
     bytecode_index: ?u32 = null,
+    module_info_index: ?u32 = null,
     output_path: string,
     source_index: Index.Optional = .none,
     size: ?usize = null,
@@ -251,6 +253,7 @@ pub fn init(options: Options) OutputFile {
         .hash = options.hash orelse 0,
         .output_kind = options.output_kind,
         .bytecode_index = options.bytecode_index orelse std.math.maxInt(u32),
+        .module_info_index = options.module_info_index orelse std.math.maxInt(u32),
         .source_map_index = options.source_map_index orelse std.math.maxInt(u32),
         .is_executable = options.is_executable,
         .value = switch (options.data) {
@@ -322,7 +325,7 @@ pub fn moveTo(file: *const OutputFile, _: string, rel_path: []const u8, dir: Fil
 pub fn copyTo(file: *const OutputFile, _: string, rel_path: []const u8, dir: FileDescriptorType) !void {
     const fd_out = bun.FD.fromStdFile(try dir.stdDir().createFile(rel_path, .{}));
     var do_close = false;
-    const fd_in = bun.FD.fromStdFile(try std.fs.openFileAbsolute(file.src_path.text, .{ .mode = .read_only }));
+    const fd_in = bun.FD.fromStdFile(try std.fs.cwd().openFile(file.src_path.text, .{ .mode = .read_only }));
 
     if (Environment.isWindows) {
         do_close = Fs.FileSystem.instance.fs.needToCloseFiles();

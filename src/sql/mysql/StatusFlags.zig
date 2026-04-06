@@ -33,7 +33,7 @@ pub const StatusFlags = struct {
     /// Indicates if a transaction is currently active
     _value: u16 = 0,
 
-    pub fn format(self: @This(), comptime _: []const u8, _: anytype, writer: anytype) !void {
+    pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
         var first = true;
         inline for (comptime std.meta.fieldNames(StatusFlags)) |field| {
             if (@TypeOf(@field(self, field)) == bool) {

@@ -1,13 +1,14 @@
 const Walker = @This();
 
-stack: std.ArrayList(StackItem),
+stack: std.array_list.Managed(StackItem),
 name_buffer: NameBufferList,
 skip_filenames: []const u64 = &[_]u64{},
 skip_dirnames: []const u64 = &[_]u64{},
 skip_all: []const u64 = &[_]u64{},
 seed: u64 = 0,
+resolve_unknown_entry_types: bool = false,
 
-const NameBufferList = std.ArrayList(bun.OSPathChar);
+const NameBufferList = std.array_list.Managed(bun.OSPathChar);
 
 const WrappedIterator = DirIterator.NewWrappedIterator(if (Environment.isWindows) .u16 else .u8);
 
@@ -38,7 +39,22 @@ pub fn next(self: *Walker) bun.sys.Maybe(?WalkerEntry) {
             .err => |err| return .initErr(err),
             .result => |res| {
                 if (res) |base| {
-                    switch (base.kind) {
+                    // Some filesystems (NFS, FUSE, bind mounts) don't provide
+                    // d_type and return DT_UNKNOWN. Optionally resolve via
+                    // fstatat so callers get accurate types for recursion.
+                    // This only affects POSIX; Windows always provides types.
+                    const kind: @TypeOf(base.kind) = if (comptime !Environment.isWindows)
+                        (if (base.kind == .unknown and self.resolve_unknown_entry_types) brk: {
+                            const dir_fd = top.iter.iter.dir;
+                            break :brk switch (bun.sys.lstatat(dir_fd, base.name.sliceAssumeZ())) {
+                                .result => |stat_buf| bun.sys.kindFromMode(stat_buf.mode),
+                                .err => continue, // skip entries we can't stat
+                            };
+                        } else base.kind)
+                    else
+                        base.kind;
+
+                    switch (kind) {
                         .directory => {
                             if (std.mem.indexOfScalar(
                                 u64,
@@ -78,7 +94,7 @@ pub fn next(self: *Walker) bun.sys.Maybe(?WalkerEntry) {
                     const cur_len = self.name_buffer.items.len;
                     bun.handleOom(self.name_buffer.append(0));
 
-                    if (base.kind == .directory) {
+                    if (kind == .directory) {
                         const new_dir = switch (bun.openDirForIterationOSPath(top.iter.iter.dir, base.name.slice())) {
                             .result => |fd| fd,
                             .err => |err| return .initErr(err),
@@ -95,7 +111,7 @@ pub fn next(self: *Walker) bun.sys.Maybe(?WalkerEntry) {
                         .dir = top.iter.iter.dir,
                         .basename = self.name_buffer.items[dirname_len..cur_len :0],
                         .path = self.name_buffer.items[0..cur_len :0],
-                        .kind = base.kind,
+                        .kind = kind,
                     });
                 } else {
                     var item = self.stack.pop().?;
@@ -109,7 +125,7 @@ pub fn next(self: *Walker) bun.sys.Maybe(?WalkerEntry) {
     return .initResult(null);
 }
 
-pub fn deinit(self: *const Walker) void {
+pub fn deinit(self: *Walker) void {
     if (self.stack.items.len > 0) {
         for (self.stack.items[1..]) |*item| {
             if (self.stack.items.len != 0) {
@@ -137,7 +153,7 @@ pub fn walk(
     var name_buffer = NameBufferList.init(allocator);
     errdefer name_buffer.deinit();
 
-    var stack = std.ArrayList(Walker.StackItem).init(allocator);
+    var stack = std.array_list.Managed(Walker.StackItem).init(allocator);
     errdefer stack.deinit();
 
     var skip_names = try allocator.alloc(u64, skip_filenames.len + skip_dirnames.len);

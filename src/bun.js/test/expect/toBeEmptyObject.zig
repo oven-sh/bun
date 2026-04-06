@@ -18,11 +18,11 @@ pub fn toBeEmptyObject(this: *Expect, globalThis: *JSGlobalObject, callFrame: *C
 
     if (not) {
         const signature = comptime getSignature("toBeEmptyObject", "", true);
-        return this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{any}<r>\n", .{received});
+        return this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{f}<r>\n", .{received});
     }
 
     const signature = comptime getSignature("toBeEmptyObject", "", false);
-    return this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{any}<r>\n", .{received});
+    return this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{f}<r>\n", .{received});
 }
 
 const bun = @import("bun");

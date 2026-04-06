@@ -31,7 +31,7 @@ pub fn NewParser_(
         pub const is_typescript_enabled = js_parser_features.typescript;
         pub const is_jsx_enabled = js_parser_jsx != .none;
         pub const only_scan_imports_and_do_not_visit = js_parser_features.scan_only;
-        const ImportRecordList = if (only_scan_imports_and_do_not_visit) *std.ArrayList(ImportRecord) else std.ArrayList(ImportRecord);
+        const ImportRecordList = if (only_scan_imports_and_do_not_visit) *std.array_list.Managed(ImportRecord) else std.array_list.Managed(ImportRecord);
         const NamedImportsType = if (only_scan_imports_and_do_not_visit) *js_ast.Ast.NamedImports else js_ast.Ast.NamedImports;
         const NeedsJSXType = if (only_scan_imports_and_do_not_visit) bool else void;
         pub const track_symbol_usage_during_parse_pass = only_scan_imports_and_do_not_visit and is_typescript_enabled;
@@ -99,6 +99,7 @@ pub fn NewParser_(
         pub const parseStmtsUpTo = parse_zig.parseStmtsUpTo;
         pub const parseAsyncPrefixExpr = parse_zig.parseAsyncPrefixExpr;
         pub const parseTypeScriptDecorators = parse_zig.parseTypeScriptDecorators;
+        pub const parseStandardDecorator = parse_zig.parseStandardDecorator;
         pub const parseTypeScriptNamespaceStmt = parse_zig.parseTypeScriptNamespaceStmt;
         pub const parseTypeScriptImportEqualsStmt = parse_zig.parseTypeScriptImportEqualsStmt;
         pub const parseTypescriptEnumStmt = parse_zig.parseTypescriptEnumStmt;
@@ -135,6 +136,10 @@ pub fn NewParser_(
         const symbols_zig = @import("./symbols.zig").Symbols(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only);
         pub const findSymbol = symbols_zig.findSymbol;
         pub const findSymbolWithRecordUsage = symbols_zig.findSymbolWithRecordUsage;
+
+        const lowerDecorators_zig = @import("./lowerDecorators.zig").LowerDecorators(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only);
+        pub const lowerStandardDecoratorsStmt = lowerDecorators_zig.lowerStandardDecoratorsStmt;
+        pub const lowerStandardDecoratorsExpr = lowerDecorators_zig.lowerStandardDecoratorsExpr;
 
         macro: MacroState = undefined,
         allocator: Allocator,
@@ -185,6 +190,13 @@ pub fn NewParser_(
         /// it to the symbol so the code generated `e_import_identifier`'s
         bun_app_namespace_ref: Ref = Ref.None,
 
+        /// Used to track the `feature` function from `import { feature } from "bun:bundle"`.
+        /// When visiting e_call, if the target ref matches this, we replace the call with
+        /// a boolean based on whether the feature flag is enabled.
+        bundler_feature_flag_ref: Ref = Ref.None,
+        /// Set to true when visiting an if/ternary condition. feature() calls are only valid in this context.
+        in_branch_condition: bool = false,
+
         scopes_in_order_visitor_index: usize = 0,
         has_classic_runtime_warned: bool = false,
         macro_call_count: MacroCallCountType = 0,
@@ -202,7 +214,7 @@ pub fn NewParser_(
 
         has_called_runtime: bool = false,
 
-        legacy_cjs_import_stmts: std.ArrayList(Stmt),
+        legacy_cjs_import_stmts: std.array_list.Managed(Stmt),
 
         injected_define_symbols: List(Ref) = .{},
         symbol_uses: SymbolUseMap = .{},
@@ -479,6 +491,10 @@ pub fn NewParser_(
         /// Used for react refresh, it must be able to insert `const _s = $RefreshSig$();`
         nearest_stmt_list: ?*ListManaged(Stmt) = null,
 
+        /// Name from assignment context for anonymous decorated class expressions.
+        /// Set before visitExpr, consumed by lowerStandardDecoratorsImpl.
+        decorator_class_name: ?[]const u8 = null,
+
         const RecentlyVisitedTSNamespace = struct {
             expr: Expr.Data = Expr.empty.data,
             map: ?*js_ast.TSNamespaceMemberMap = null,
@@ -493,6 +509,73 @@ pub fn NewParser_(
         /// because when not bundling, p.source.index is `0`
         pub inline fn isSourceRuntime(p: *const P) bool {
             return p.options.bundle and p.source.index.isRuntime();
+        }
+
+        /// Extracts a matchable "shape" from a dynamic import argument.
+        /// Template literals: static parts joined by \x00 placeholders.
+        /// Everything else: empty string.
+        fn extractDynamicSpecifierShape(p: *P, arg: Expr, buf: *std.array_list.Managed(u8)) ![]const u8 {
+            if (arg.data.as(.e_template)) |tmpl| {
+                if (tmpl.tag != null) return ""; // tagged template — opaque
+                switch (tmpl.head) {
+                    .cooked => |*head| {
+                        try buf.appendSlice(head.slice(p.allocator));
+                    },
+                    .raw => return "", // shouldn't happen post-visit but be safe
+                }
+                for (tmpl.parts) |*part| {
+                    try buf.append(0); // \x00 placeholder per interpolation
+                    switch (part.tail) {
+                        .cooked => |*tail| {
+                            try buf.appendSlice(tail.slice(p.allocator));
+                        },
+                        .raw => return "", // raw tail — treat as opaque
+                    }
+                }
+                return buf.items;
+            }
+            return "";
+        }
+
+        pub fn checkDynamicSpecifier(p: *P, arg: Expr, loc: logger.Loc, comptime kind: []const u8) !void {
+            if (!p.options.bundle or p.options.allow_unresolved.* == .all) return;
+
+            var shape_buf = std.array_list.Managed(u8).init(p.allocator);
+            defer shape_buf.deinit();
+            const shape = try p.extractDynamicSpecifierShape(arg, &shape_buf);
+            if (!p.options.allow_unresolved.allows(shape)) {
+                const r = js_lexer.rangeOfIdentifier(p.source, loc);
+                if (shape.len > 0) {
+                    // Print a human-readable shape: replace \x00 with *
+                    const display = try p.allocator.dupe(u8, shape);
+                    defer p.allocator.free(display);
+                    for (display) |*c| if (c.* == 0) {
+                        c.* = '*';
+                    };
+                    try p.log.addRangeErrorFmtWithNote(
+                        p.source,
+                        r,
+                        p.allocator,
+                        "This " ++ kind ++ " expression will not be bundled because the argument is not a string literal",
+                        .{},
+                        "The specifier shape \"{s}\" does not match any --allow-unresolved pattern. " ++
+                            "To allow it, add a matching pattern: Bun.build({{ allowUnresolved: [\"{s}\"] }}) or --allow-unresolved '{s}'",
+                        .{ display, display, display },
+                        r,
+                    );
+                } else {
+                    try p.log.addRangeErrorFmtWithNote(
+                        p.source,
+                        r,
+                        p.allocator,
+                        "This " ++ kind ++ " expression will not be bundled because the argument is not a string literal",
+                        .{},
+                        "To allow opaque dynamic specifiers, use Bun.build({{ allowUnresolved: [\"\"] }}) or pass --allow-unresolved with an empty-string pattern",
+                        .{},
+                        r,
+                    );
+                }
+            }
         }
 
         pub fn transposeImport(noalias p: *P, arg: Expr, state: *const TransposeState) Expr {
@@ -511,7 +594,11 @@ pub fn NewParser_(
                     p.import_records.items[import_record_index].tag = tag;
                 }
 
-                p.import_records.items[import_record_index].handles_import_errors = (state.is_await_target and p.fn_or_arrow_data_visit.try_body_count != 0) or state.is_then_catch_target;
+                if (state.import_loader) |loader| {
+                    p.import_records.items[import_record_index].loader = loader;
+                }
+
+                p.import_records.items[import_record_index].flags.handles_import_errors = (state.is_await_target and p.fn_or_arrow_data_visit.try_body_count != 0) or state.is_then_catch_target;
                 p.import_records_for_current_part.append(p.allocator, import_record_index) catch unreachable;
 
                 return p.newExpr(E.Import{
@@ -526,6 +613,8 @@ pub fn NewParser_(
                 const r = js_lexer.rangeOfIdentifier(p.source, state.loc);
                 p.log.addRangeDebug(p.source, r, "This \"import\" expression cannot be bundled because the argument is not a string literal") catch unreachable;
             }
+
+            bun.handleOom(p.checkDynamicSpecifier(arg, state.loc, "import()"));
 
             return p.newExpr(E.Import{
                 .expr = arg,
@@ -545,6 +634,8 @@ pub fn NewParser_(
                 const r = js_lexer.rangeOfIdentifier(p.source, arg.loc);
                 p.log.addRangeDebug(p.source, r, "This \"require.resolve\" expression cannot be bundled because the argument is not a string literal") catch unreachable;
             }
+
+            bun.handleOom(p.checkDynamicSpecifier(arg, arg.loc, "require.resolve()"));
 
             const args = p.allocator.alloc(Expr, 1) catch unreachable;
             args[0] = arg;
@@ -566,7 +657,7 @@ pub fn NewParser_(
             }
 
             const import_record_index = p.addImportRecord(.require_resolve, arg.loc, arg.data.e_string.string(p.allocator) catch unreachable);
-            p.import_records.items[import_record_index].handles_import_errors = p.fn_or_arrow_data_visit.try_body_count != 0;
+            p.import_records.items[import_record_index].flags.handles_import_errors = p.fn_or_arrow_data_visit.try_body_count != 0;
             p.import_records_for_current_part.append(p.allocator, import_record_index) catch unreachable;
 
             return p.newExpr(
@@ -618,7 +709,7 @@ pub fn NewParser_(
 
                     if (should_unwrap_require) {
                         const import_record_index = p.addImportRecordByRangeAndPath(.stmt, p.source.rangeOfString(arg.loc), path);
-                        p.import_records.items[import_record_index].handles_import_errors = handles_import_errors;
+                        p.import_records.items[import_record_index].flags.handles_import_errors = handles_import_errors;
 
                         // Note that this symbol may be completely removed later.
                         var path_name = fs.PathName.init(path.text);
@@ -651,12 +742,13 @@ pub fn NewParser_(
                     }
 
                     const import_record_index = p.addImportRecordByRangeAndPath(.require, p.source.rangeOfString(arg.loc), path);
-                    p.import_records.items[import_record_index].handles_import_errors = handles_import_errors;
+                    p.import_records.items[import_record_index].flags.handles_import_errors = handles_import_errors;
                     p.import_records_for_current_part.append(p.allocator, import_record_index) catch unreachable;
 
                     return p.newExpr(E.RequireString{ .import_record_index = import_record_index }, arg.loc);
                 },
                 else => {
+                    bun.handleOom(p.checkDynamicSpecifier(arg, arg.loc, "require()"));
                     p.recordUsageOfRuntimeRequire();
                     const args = p.allocator.alloc(Expr, 1) catch unreachable;
                     args[0] = arg;
@@ -1325,7 +1417,7 @@ pub fn NewParser_(
             var import_record: *ImportRecord = &p.import_records.items[import_record_i];
             if (comptime is_internal)
                 import_record.path.namespace = "runtime";
-            import_record.is_internal = is_internal;
+            import_record.flags.is_internal = is_internal;
             const import_path_identifier = try import_record.path.name.nonUniqueNameString(allocator);
             var namespace_identifier = try allocator.alloc(u8, import_path_identifier.len + prefix.len);
             const clause_items = try allocator.alloc(js_ast.ClauseItem, imports.len);
@@ -2621,7 +2713,7 @@ pub fn NewParser_(
             if (is_macro) {
                 const id = p.addImportRecord(.stmt, path.loc, path.text);
                 p.import_records.items[id].path.namespace = js_ast.Macro.namespace;
-                p.import_records.items[id].is_unused = true;
+                p.import_records.items[id].flags.is_unused = true;
 
                 if (stmt.default_name) |name_loc| {
                     const name = p.loadNameFromRef(name_loc.ref.?);
@@ -2653,13 +2745,41 @@ pub fn NewParser_(
                 return p.s(S.Empty{}, loc);
             }
 
+            // Handle `import { feature } from "bun:bundle"` - this is a special import
+            // that provides static feature flag checking at bundle time.
+            // We handle it here at parse time (similar to macros) rather than at visit time.
+            if (strings.eqlComptime(path.text, "bun:bundle")) {
+                // Look for the "feature" import and validate specifiers
+                for (stmt.items) |*item| {
+                    // In ClauseItem from parseImportClause:
+                    // - alias is the name from the source module ("feature")
+                    // - original_name is the local binding name
+                    // - name.ref is the ref for the local binding
+                    if (strings.eqlComptime(item.alias, "feature")) {
+                        // Check for duplicate imports of feature
+                        if (p.bundler_feature_flag_ref.isValid()) {
+                            try p.log.addError(p.source, item.alias_loc, "`feature` from \"bun:bundle\" may only be imported once");
+                            continue;
+                        }
+                        // Declare the symbol and store the ref
+                        const name = p.loadNameFromRef(item.name.ref.?);
+                        const ref = try p.declareSymbol(.other, item.name.loc, name);
+                        p.bundler_feature_flag_ref = ref;
+                    } else {
+                        try p.log.addErrorFmt(p.source, item.alias_loc, p.allocator, "\"bun:bundle\" has no export named \"{s}\"", .{item.alias});
+                    }
+                }
+                // Return empty statement - the import is completely removed
+                return p.s(S.Empty{}, loc);
+            }
+
             const macro_remap = if (comptime allow_macros)
                 p.options.macro_context.getRemap(path.text)
             else
                 null;
 
             stmt.import_record_index = p.addImportRecord(.stmt, path.loc, path.text);
-            p.import_records.items[stmt.import_record_index].was_originally_bare_import = was_originally_bare_import;
+            p.import_records.items[stmt.import_record_index].flags.was_originally_bare_import = was_originally_bare_import;
 
             if (stmt.star_name_loc) |star| {
                 const name = p.loadNameFromRef(stmt.namespace_ref);
@@ -2720,9 +2840,9 @@ pub fn NewParser_(
                         });
 
                         p.import_records.items[new_import_id].path.namespace = js_ast.Macro.namespace;
-                        p.import_records.items[new_import_id].is_unused = true;
+                        p.import_records.items[new_import_id].flags.is_unused = true;
                         if (comptime only_scan_imports_and_do_not_visit) {
-                            p.import_records.items[new_import_id].is_internal = true;
+                            p.import_records.items[new_import_id].flags.is_internal = true;
                             p.import_records.items[new_import_id].path.is_disabled = true;
                         }
                         stmt.default_name = null;
@@ -2781,9 +2901,9 @@ pub fn NewParser_(
                         });
 
                         p.import_records.items[new_import_id].path.namespace = js_ast.Macro.namespace;
-                        p.import_records.items[new_import_id].is_unused = true;
+                        p.import_records.items[new_import_id].flags.is_unused = true;
                         if (comptime only_scan_imports_and_do_not_visit) {
-                            p.import_records.items[new_import_id].is_internal = true;
+                            p.import_records.items[new_import_id].flags.is_internal = true;
                             p.import_records.items[new_import_id].path.is_disabled = true;
                         }
                         remap_count += 1;
@@ -2809,11 +2929,11 @@ pub fn NewParser_(
 
             if (remap_count > 0 and stmt.items.len == 0 and stmt.default_name == null) {
                 p.import_records.items[stmt.import_record_index].path.namespace = js_ast.Macro.namespace;
-                p.import_records.items[stmt.import_record_index].is_unused = true;
+                p.import_records.items[stmt.import_record_index].flags.is_unused = true;
 
                 if (comptime only_scan_imports_and_do_not_visit) {
                     p.import_records.items[stmt.import_record_index].path.is_disabled = true;
-                    p.import_records.items[stmt.import_record_index].is_internal = true;
+                    p.import_records.items[stmt.import_record_index].flags.is_internal = true;
                 }
 
                 return p.s(S.Empty{}, loc);
@@ -3428,8 +3548,8 @@ pub fn NewParser_(
         }
 
         pub fn panicLoc(p: *P, comptime fmt: string, args: anytype, loc: ?logger.Loc) noreturn {
-            var panic_buffer = p.allocator.alloc(u8, 32 * 1024) catch unreachable;
-            var panic_stream = std.io.fixedBufferStream(panic_buffer);
+            const panic_buffer = p.allocator.alloc(u8, 32 * 1024) catch unreachable;
+            var panic_stream = std.Io.Writer.fixed(panic_buffer);
 
             // panic during visit pass leaves the lexer at the end, which
             // would make this location absolutely useless.
@@ -3445,9 +3565,9 @@ pub fn NewParser_(
             }
 
             p.log.level = .verbose;
-            p.log.print(panic_stream.writer()) catch unreachable;
+            p.log.print(&panic_stream) catch unreachable;
 
-            Output.panic(fmt ++ "\n{s}", args ++ .{panic_buffer[0..panic_stream.pos]});
+            Output.panic(fmt ++ "\n{s}", args ++ .{panic_stream.buffered()});
         }
 
         pub fn jsxStringsToMemberExpression(p: *P, loc: logger.Loc, parts: []const []const u8) !Expr {
@@ -3724,7 +3844,10 @@ pub fn NewParser_(
                                         }
                                     },
                                     else => {
-                                        Output.panic("Unexpected type in export default: {any}", .{s2});
+                                        // Standard decorator lowering can produce non-class
+                                        // statements as the export default value; conservatively
+                                        // assume they have side effects.
+                                        return false;
                                     },
                                 }
                             },
@@ -3932,6 +4055,7 @@ pub fn NewParser_(
                 .e_undefined,
                 .e_missing,
                 .e_boolean,
+                .e_branch_boolean,
                 .e_number,
                 .e_big_int,
                 .e_string,
@@ -4821,6 +4945,11 @@ pub fn NewParser_(
         ) []Stmt {
             switch (stmtorexpr) {
                 .stmt => |stmt| {
+                    // Standard decorator lowering path (for both JS and TS files)
+                    if (stmt.data.s_class.class.should_lower_standard_decorators) {
+                        return p.lowerStandardDecoratorsStmt(stmt);
+                    }
+
                     if (comptime !is_typescript_enabled) {
                         if (!stmt.data.s_class.class.has_decorators) {
                             var stmts = p.allocator.alloc(Stmt, 1) catch unreachable;
@@ -4889,7 +5018,7 @@ pub fn NewParser_(
                                 target = p.newExpr(E.Dot{ .target = p.newExpr(E.Identifier{ .ref = class.class_name.?.ref.? }, class.class_name.?.loc), .name = "prototype", .name_loc = loc }, loc);
                             }
 
-                            var array: std.ArrayList(Expr) = .init(p.allocator);
+                            var array: std.array_list.Managed(Expr) = .init(p.allocator);
 
                             if (p.options.features.emit_decorator_metadata) {
                                 switch (prop.kind) {
@@ -4971,7 +5100,7 @@ pub fn NewParser_(
                                             }
                                         }
                                     },
-                                    .spread, .declare => {}, // not allowed in a class
+                                    .spread, .declare, .auto_accessor => {}, // not allowed in a class (auto_accessor is standard decorators only)
                                     .class_static_block => {}, // not allowed to decorate this
                                 }
                             }
@@ -5975,7 +6104,7 @@ pub fn NewParser_(
         /// specifiers that were imported. We enforce that they line up exactly
         /// with ones that were imported, so that it can share an import record.
         ///
-        /// This function replaces all specifier strings with `e_require_resolve_string`
+        /// This function replaces all specifier strings with `e_special.resolved_specifier_string`
         pub fn handleImportMetaHotAcceptCall(p: *@This(), call: *E.Call) void {
             if (call.args.len == 0) return;
             switch (call.args.at(0).data) {
@@ -6431,6 +6560,11 @@ pub fn NewParser_(
                 parts.items[0].stmts = top_level_stmts;
             }
 
+            // REPL mode transforms
+            if (p.options.repl_mode) {
+                try repl_transforms.ReplTransforms(P).apply(p, parts, allocator);
+            }
+
             var top_level_symbols_to_parts = js_ast.Ast.TopLevelSymbolToParts{};
             var top_level = &top_level_symbols_to_parts;
 
@@ -6491,12 +6625,14 @@ pub fn NewParser_(
                     break :brk p.hmr_api_ref;
                 }
 
-                if (p.options.bundle and p.needsWrapperRef(parts.items)) {
+                // When code splitting is enabled, always create wrapper_ref to match esbuild behavior.
+                // Otherwise, use needsWrapperRef() to optimize away unnecessary wrappers.
+                if (p.options.bundle and (p.options.code_splitting or p.needsWrapperRef(parts.items))) {
                     break :brk p.newSymbol(
                         .other,
                         std.fmt.allocPrint(
                             p.allocator,
-                            "require_{any}",
+                            "require_{f}",
                             .{p.source.fmtIdentifier()},
                         ) catch |err| bun.handleOom(err),
                     ) catch |err| bun.handleOom(err);
@@ -6548,6 +6684,7 @@ pub fn NewParser_(
                 .top_level_await_keyword = p.top_level_await_keyword,
                 .commonjs_named_exports = p.commonjs_named_exports,
                 .has_commonjs_export_names = p.has_commonjs_export_names,
+                .has_import_meta = p.has_import_meta,
 
                 .hashbang = hashbang,
                 // TODO: cross-module constant inlining
@@ -6685,7 +6822,7 @@ pub fn NewParser_(
                 break :brk false;
             };
 
-            this.symbols = std.ArrayList(Symbol).init(allocator);
+            this.symbols = std.array_list.Managed(Symbol).init(allocator);
 
             if (comptime !only_scan_imports_and_do_not_visit) {
                 this.import_records = @TypeOf(this.import_records).init(allocator);
@@ -6723,6 +6860,8 @@ var nullValueExpr = Expr.Data{ .e_null = nullExprValueData };
 var falseValueExpr = Expr.Data{ .e_boolean = E.Boolean{ .value = false } };
 
 const string = []const u8;
+
+const repl_transforms = @import("./repl_transforms.zig");
 
 const Define = @import("../defines.zig").Define;
 const DefineData = @import("../defines.zig").DefineData;
@@ -6822,6 +6961,6 @@ const statementCaresAboutScope = js_parser.statementCaresAboutScope;
 
 const std = @import("std");
 const List = std.ArrayListUnmanaged;
-const ListManaged = std.ArrayList;
 const Map = std.AutoHashMapUnmanaged;
 const Allocator = std.mem.Allocator;
+const ListManaged = std.array_list.Managed;

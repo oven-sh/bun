@@ -22,6 +22,7 @@ pub fn Parse(
         pub const parseImportClause = @import("./parseImportExport.zig").ParseImportExport(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only).parseImportClause;
         pub const parseExportClause = @import("./parseImportExport.zig").ParseImportExport(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only).parseExportClause;
         pub const parseTypeScriptDecorators = @import("./parseTypescript.zig").ParseTypescript(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only).parseTypeScriptDecorators;
+        pub const parseStandardDecorator = @import("./parseTypescript.zig").ParseTypescript(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only).parseStandardDecorator;
         pub const parseTypeScriptNamespaceStmt = @import("./parseTypescript.zig").ParseTypescript(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only).parseTypeScriptNamespaceStmt;
         pub const parseTypeScriptImportEqualsStmt = @import("./parseTypescript.zig").ParseTypescript(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only).parseTypeScriptImportEqualsStmt;
         pub const parseTypescriptEnumStmt = @import("./parseTypescript.zig").ParseTypescript(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only).parseTypescriptEnumStmt;
@@ -102,6 +103,7 @@ pub fn Parse(
         pub fn parseClass(p: *P, class_keyword: logger.Range, name: ?js_ast.LocRef, class_opts: ParseClassOptions) !G.Class {
             var extends: ?Expr = null;
             var has_decorators: bool = false;
+            var has_auto_accessor: bool = false;
 
             if (p.lexer.token == .t_extends) {
                 try p.lexer.next();
@@ -168,10 +170,11 @@ pub fn Parse(
                 // This property may turn out to be a type in TypeScript, which should be ignored
                 if (try p.parseProperty(.normal, &opts, null)) |property| {
                     properties.append(property) catch unreachable;
+                    has_auto_accessor = has_auto_accessor or property.kind == .auto_accessor;
 
                     // Forbid decorators on class constructors
                     if (opts.ts_decorators.len > 0) {
-                        switch ((property.key orelse p.panic("Internal error: Expected property {any} to have a key.", .{property})).data) {
+                        switch ((property.key orelse p.panic("Internal error: Expected property to have a key.", .{})).data) {
                             .e_string => |str| {
                                 if (str.eqlComptime("constructor")) {
                                     p.log.addError(p.source, first_decorator_loc, "TypeScript does not allow decorators on class constructors") catch unreachable;
@@ -196,6 +199,7 @@ pub fn Parse(
             const close_brace_loc = p.lexer.loc();
             try p.lexer.expect(.t_close_brace);
 
+            const has_any_decorators = has_decorators or class_opts.ts_decorators.len > 0;
             return G.Class{
                 .class_name = name,
                 .extends = extends,
@@ -204,7 +208,8 @@ pub fn Parse(
                 .class_keyword = class_keyword,
                 .body_loc = body_loc,
                 .properties = properties.items,
-                .has_decorators = has_decorators or class_opts.ts_decorators.len > 0,
+                .has_decorators = has_any_decorators,
+                .should_lower_standard_decorators = p.options.features.standard_decorators and (has_any_decorators or has_auto_accessor),
             };
         }
 
@@ -1399,4 +1404,4 @@ const options = js_parser.options;
 
 const std = @import("std");
 const List = std.ArrayListUnmanaged;
-const ListManaged = std.ArrayList;
+const ListManaged = std.array_list.Managed;

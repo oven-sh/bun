@@ -15,10 +15,7 @@ connection_timeout_ms: u32 = 0,
 /// After being connected, this is an idle timeout timer.
 timer: bun.api.Timer.EventLoopTimer = .{
     .tag = .MySQLConnectionTimeout,
-    .next = .{
-        .sec = 0,
-        .nsec = 0,
-    },
+    .next = .epoch,
 },
 
 /// This timer controls the maximum lifetime of a connection.
@@ -27,16 +24,14 @@ timer: bun.api.Timer.EventLoopTimer = .{
 max_lifetime_interval_ms: u32 = 0,
 max_lifetime_timer: bun.api.Timer.EventLoopTimer = .{
     .tag = .MySQLConnectionMaxLifetime,
-    .next = .{
-        .sec = 0,
-        .nsec = 0,
-    },
+    .next = .epoch,
 },
 
 pub const ref = RefCount.ref;
 pub const deref = RefCount.deref;
 
 pub fn onAutoFlush(this: *@This()) bool {
+    debug("onAutoFlush", .{});
     if (this.#connection.hasBackpressure()) {
         this.auto_flusher.registered = false;
         // if we have backpressure, wait for onWritable
@@ -93,8 +88,8 @@ fn getTimeoutInterval(this: *@This()) u32 {
     };
 }
 pub fn resetConnectionTimeout(this: *@This()) void {
-    debug("resetConnectionTimeout", .{});
     const interval = this.getTimeoutInterval();
+    debug("resetConnectionTimeout {d}", .{interval});
     if (this.timer.state == .ACTIVE) {
         this.#vm.timer.remove(&this.timer);
     }
@@ -102,7 +97,7 @@ pub fn resetConnectionTimeout(this: *@This()) void {
         this.#connection.isProcessingData() or
         interval == 0) return;
 
-    this.timer.next = bun.timespec.msFromNow(@intCast(interval));
+    this.timer.next = bun.timespec.msFromNow(.allow_mocked_time, @intCast(interval));
     this.#vm.timer.insert(&this.timer);
 }
 
@@ -122,16 +117,16 @@ pub fn onConnectionTimeout(this: *@This()) void {
 
     switch (this.#connection.status) {
         .connected => {
-            this.failFmt(error.IdleTimeout, "Idle timeout reached after {}", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.idle_timeout_interval_ms) *| std.time.ns_per_ms)});
+            this.failFmt(error.IdleTimeout, "Idle timeout reached after {f}", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.idle_timeout_interval_ms) *| std.time.ns_per_ms)});
         },
         .connecting => {
-            this.failFmt(error.ConnectionTimedOut, "Connection timeout after {}", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.connection_timeout_ms) *| std.time.ns_per_ms)});
+            this.failFmt(error.ConnectionTimedOut, "Connection timeout after {f}", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.connection_timeout_ms) *| std.time.ns_per_ms)});
         },
         .handshaking,
         .authenticating,
         .authentication_awaiting_pk,
         => {
-            this.failFmt(error.ConnectionTimedOut, "Connection timeout after {} (during authentication)", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.connection_timeout_ms) *| std.time.ns_per_ms)});
+            this.failFmt(error.ConnectionTimedOut, "Connection timeout after {f} (during authentication)", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.connection_timeout_ms) *| std.time.ns_per_ms)});
         },
         .disconnected, .failed => {},
     }
@@ -140,13 +135,13 @@ pub fn onConnectionTimeout(this: *@This()) void {
 pub fn onMaxLifetimeTimeout(this: *@This()) void {
     this.max_lifetime_timer.state = .FIRED;
     if (this.#connection.status == .failed) return;
-    this.failFmt(error.LifetimeTimeout, "Max lifetime timeout reached after {}", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.max_lifetime_interval_ms) *| std.time.ns_per_ms)});
+    this.failFmt(error.LifetimeTimeout, "Max lifetime timeout reached after {f}", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.max_lifetime_interval_ms) *| std.time.ns_per_ms)});
 }
 fn setupMaxLifetimeTimerIfNecessary(this: *@This()) void {
     if (this.max_lifetime_interval_ms == 0) return;
     if (this.max_lifetime_timer.state == .ACTIVE) return;
 
-    this.max_lifetime_timer.next = bun.timespec.msFromNow(@intCast(this.max_lifetime_interval_ms));
+    this.max_lifetime_timer.next = bun.timespec.msFromNow(.allow_mocked_time, @intCast(this.max_lifetime_interval_ms));
     this.#vm.timer.insert(&this.max_lifetime_timer);
 }
 pub fn constructor(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!*@This() {
@@ -178,6 +173,7 @@ pub fn close(this: *@This()) void {
 }
 
 fn drainInternal(this: *@This()) void {
+    debug("drainInternal", .{});
     if (this.#vm.isShuttingDown()) return this.close();
     this.ref();
     defer this.deref();
@@ -225,13 +221,15 @@ fn SocketHandler(comptime ssl: bool) type {
             const socket = _socket(s);
             this.#connection.setSocket(socket);
 
-            this.setupMaxLifetimeTimerIfNecessary();
-            this.resetConnectionTimeout();
             if (socket == .SocketTCP) {
-                // when upgrading to TLS the onOpen callback will be called again and at this moment we dont wanna to change the status to handshaking
+                // This handshake is not TLS handleshake is actually the MySQL handshake
+                // When a connection is upgraded to TLS, the onOpen callback is called again and at this moment we dont wanna to change the status to handshaking
                 this.#connection.status = .handshaking;
                 this.ref(); // keep a ref for the socket
             }
+            // Only set up the timers after all status changes are complete — the timers rely on the status to determine timeouts.
+            this.setupMaxLifetimeTimerIfNecessary();
+            this.resetConnectionTimeout();
             this.updateReferenceType();
         }
 
@@ -243,7 +241,7 @@ fn SocketHandler(comptime ssl: bool) type {
         ) void {
             const handshakeWasSuccessful = this.#connection.doHandshake(success, ssl_error) catch |err| return this.failFmt(err, "Failed to send handshake response", .{});
             if (!handshakeWasSuccessful) {
-                this.failWithJSValue(ssl_error.toJS(this.#globalObject));
+                this.failWithJSValue(ssl_error.toJS(this.#globalObject) catch return);
             }
         }
 
@@ -305,15 +303,17 @@ fn updateReferenceType(this: *@This()) void {
     if (this.#connection.isActive()) {
         debug("connection is active", .{});
         if (this.#js_value.isNotEmpty() and this.#js_value == .weak) {
-            debug("strong ref", .{});
+            debug("strong ref until connection is closed", .{});
             this.#js_value.upgrade(this.#globalObject);
         }
-        this.#poll_ref.ref(this.#vm);
+        if (this.#connection.status == .connected and this.#connection.isIdle()) {
+            this.#poll_ref.unref(this.#vm);
+        } else {
+            this.#poll_ref.ref(this.#vm);
+        }
         return;
     }
-    debug("connection is not active", .{});
     if (this.#js_value.isNotEmpty() and this.#js_value == .strong) {
-        debug("week ref", .{});
         this.#js_value.downgrade();
     }
     this.#poll_ref.unref(this.#vm);
@@ -360,13 +360,9 @@ pub fn createInstance(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFra
             return .zero;
         }
 
-        // we always request the cert so we can verify it and also we manually abort the connection if the hostname doesn't match
-        const original_reject_unauthorized = tls_config.reject_unauthorized;
-        tls_config.reject_unauthorized = 0;
-        tls_config.request_cert = 1;
-
+        // We always request the cert so we can verify it and also we manually abort the connection if the hostname doesn't match.
         // We create it right here so we can throw errors early.
-        const context_options = tls_config.asUSockets();
+        const context_options = tls_config.asUSocketsForClientVerification();
         var err: uws.create_bun_socket_error_t = .none;
         tls_ctx = uws.SocketContext.createSSLContext(vm.uwsLoop(), @sizeOf(*@This()), context_options, &err) orelse {
             if (err != .none) {
@@ -375,9 +371,6 @@ pub fn createInstance(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFra
                 return globalObject.throwValue(err.toJS(globalObject));
             }
         };
-
-        // restore the original reject_unauthorized
-        tls_config.reject_unauthorized = original_reject_unauthorized;
         if (err != .none) {
             tls_config.deinit();
             if (tls_ctx) |ctx| {
@@ -428,6 +421,19 @@ pub fn createInstance(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFra
 
         break :brk b.allocatedSlice();
     };
+
+    // Reject null bytes in connection parameters to prevent protocol injection
+    // (null bytes act as field terminators in the MySQL wire protocol).
+    inline for (.{ .{ username, "username" }, .{ password, "password" }, .{ database, "database" }, .{ path, "path" } }) |entry| {
+        if (entry[0].len > 0 and std.mem.indexOfScalar(u8, entry[0], 0) != null) {
+            bun.default_allocator.free(options_buf);
+            tls_config.deinit();
+            if (tls_ctx) |tls| {
+                tls.deinit(true);
+            }
+            return globalObject.throwInvalidArguments(entry[1] ++ " must not contain null bytes", .{});
+        }
+    }
 
     const on_connect = arguments[9];
     const on_close = arguments[10];

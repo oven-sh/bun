@@ -43,7 +43,7 @@ pub fn allocator(self: *Self) std.mem.Allocator {
 
 pub fn from(allocator_: std.mem.Allocator) ?*Self {
     if (allocator_.vtable == AllocatorInterface.VTable) {
-        return @alignCast(@ptrCast(allocator_.ptr));
+        return @ptrCast(@alignCast(allocator_.ptr));
     }
 
     return null;
@@ -61,9 +61,9 @@ const AllocatorInterface = struct {
         _: std.mem.Alignment,
         _: usize,
     ) void {
-        var self: *Self = @alignCast(@ptrCast(ptr));
+        var self: *Self = @ptrCast(@alignCast(ptr));
         defer self.deref();
-        bun.sys.munmap(@alignCast(@ptrCast(buf))).unwrap() catch |err| {
+        bun.sys.munmap(@ptrCast(@alignCast(buf))).unwrap() catch |err| {
             bun.Output.debugWarn("Failed to munmap memfd: {}", .{err});
         };
     }
@@ -132,7 +132,7 @@ pub fn create(bytes: []const u8) bun.sys.Maybe(bun.webcore.Blob.Store.Bytes) {
     const label = std.fmt.bufPrintZ(&label_buf, "memfd-num-{d}", .{memfd_counter.fetchAdd(1, .monotonic)}) catch "";
 
     // Using huge pages was slower.
-    const fd = switch (bun.sys.memfd_create(label, std.os.linux.MFD.CLOEXEC)) {
+    const fd = switch (bun.sys.memfd_create(label, .non_executable)) {
         .err => |err| return .{ .err = bun.sys.Error.fromCode(err.getErrno(), .open) },
         .result => |fd| fd,
     };
@@ -152,7 +152,7 @@ pub fn create(bytes: []const u8) bun.sys.Maybe(bun.webcore.Blob.Store.Bytes) {
                     continue;
                 }
 
-                bun.Output.debugWarn("Failed to write to memfd: {}", .{err});
+                bun.Output.debugWarn("Failed to write to memfd: {f}", .{err});
                 fd.close();
                 return .{ .err = err };
             },

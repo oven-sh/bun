@@ -13,7 +13,7 @@ parent: ParentPtr,
 io: IO,
 
 word_idx: u32,
-current_out: std.ArrayList(u8),
+current_out: std.array_list.Managed(u8),
 state: union(enum) {
     normal,
     braces,
@@ -36,6 +36,9 @@ child_state: union(enum) {
 out_exit_code: ExitCode = 0,
 out: Result,
 out_idx: u32,
+/// Set when the word contains a quoted_empty atom, indicating that an empty
+/// result should still be preserved as an argument (POSIX: `""` produces an empty arg).
+has_quoted_empty: bool = false,
 
 pub const ParentPtr = StatePtrUnion(.{
     Cmd,
@@ -50,10 +53,10 @@ pub const ChildPtr = StatePtrUnion(.{
 });
 
 pub const Result = union(enum) {
-    array_of_slice: *std.ArrayList([:0]const u8),
-    array_of_ptr: *std.ArrayList(?[*:0]const u8),
+    array_of_slice: *std.array_list.Managed([:0]const u8),
+    array_of_ptr: *std.array_list.Managed(?[*:0]const u8),
     single: struct {
-        list: *std.ArrayList(u8),
+        list: *std.array_list.Managed(u8),
         done: bool = false,
     },
 
@@ -89,7 +92,7 @@ pub const Result = union(enum) {
         }
     }
 
-    pub fn pushResult(this: *Result, buf: *std.ArrayList(u8)) PushAction {
+    pub fn pushResult(this: *Result, buf: *std.array_list.Managed(u8)) PushAction {
         if (comptime bun.Environment.allow_assert) {
             assert(buf.items[buf.items.len - 1] == 0);
         }
@@ -112,7 +115,7 @@ pub const Result = union(enum) {
     }
 };
 
-pub fn format(this: *const Expansion, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+pub fn format(this: *const Expansion, writer: *std.Io.Writer) !void {
     try writer.print("Expansion(0x{x})", .{@intFromPtr(this)});
 }
 
@@ -143,7 +146,7 @@ pub fn init(
         .current_out = undefined,
         .io = io,
     };
-    expansion.current_out = std.ArrayList(u8).init(expansion.base.allocator());
+    expansion.current_out = std.array_list.Managed(u8).init(expansion.base.allocator());
 }
 
 pub fn deinit(expansion: *Expansion) void {
@@ -193,6 +196,9 @@ pub fn next(this: *Expansion) Yield {
                                     bun.handleOom(this.current_out.insert(0, '~'));
                                 },
                             }
+                        } else if (this.has_quoted_empty) {
+                            // ~"" or ~'' should expand to the home directory
+                            bun.handleOom(this.current_out.appendSlice(homedir.slice()));
                         }
                     }
 
@@ -233,14 +239,14 @@ pub fn next(this: *Expansion) Yield {
 
                 const stack_max = comptime 16;
                 comptime {
-                    assert(@sizeOf([]std.ArrayList(u8)) * stack_max <= 256);
+                    assert(@sizeOf([]std.array_list.Managed(u8)) * stack_max <= 256);
                 }
-                var maybe_stack_alloc = std.heap.stackFallback(@sizeOf([]std.ArrayList(u8)) * stack_max, arena_allocator);
+                var maybe_stack_alloc = std.heap.stackFallback(@sizeOf([]std.array_list.Managed(u8)) * stack_max, arena_allocator);
                 const stack_alloc = maybe_stack_alloc.get();
-                const expanded_strings = bun.handleOom(stack_alloc.alloc(std.ArrayList(u8), expansion_count));
+                const expanded_strings = bun.handleOom(stack_alloc.alloc(std.array_list.Managed(u8), expansion_count));
 
                 for (0..expansion_count) |i| {
-                    expanded_strings[i] = std.ArrayList(u8).init(this.base.allocator());
+                    expanded_strings[i] = std.array_list.Managed(u8).init(this.base.allocator());
                 }
 
                 Braces.expand(
@@ -523,7 +529,7 @@ pub fn childDone(this: *Expansion, child: ChildPtr, exit_code: ExitCode) Yield {
 }
 
 fn onGlobWalkDone(this: *Expansion, task: *ShellGlobTask) Yield {
-    log("{} onGlobWalkDone", .{this});
+    log("{f} onGlobWalkDone", .{this});
     if (comptime bun.Environment.allow_assert) {
         assert(this.child_state == .glob);
     }
@@ -581,10 +587,15 @@ fn onGlobWalkDone(this: *Expansion, task: *ShellGlobTask) Yield {
 }
 
 /// If the atom is actually a command substitution then does nothing and returns true
-pub fn expandSimpleNoIO(this: *Expansion, atom: *const ast.SimpleAtom, str_list: *std.ArrayList(u8), comptime expand_tilde: bool) bool {
+pub fn expandSimpleNoIO(this: *Expansion, atom: *const ast.SimpleAtom, str_list: *std.array_list.Managed(u8), comptime expand_tilde: bool) bool {
     switch (atom.*) {
         .Text => |txt| {
             bun.handleOom(str_list.appendSlice(txt));
+        },
+        .quoted_empty => {
+            // A quoted empty string ("", '', or ${''}). We must ensure the word
+            // is not dropped by pushCurrentOut, so mark it with a flag.
+            this.has_quoted_empty = true;
         },
         .Var => |label| {
             bun.handleOom(str_list.appendSlice(this.expandVar(label)));
@@ -624,20 +635,20 @@ pub fn expandSimpleNoIO(this: *Expansion, atom: *const ast.SimpleAtom, str_list:
     return false;
 }
 
-pub fn appendSlice(this: *Expansion, buf: *std.ArrayList(u8), slice: []const u8) void {
+pub fn appendSlice(this: *Expansion, buf: *std.array_list.Managed(u8), slice: []const u8) void {
     _ = this;
     bun.handleOom(buf.appendSlice(slice));
 }
 
 pub fn pushCurrentOut(this: *Expansion) void {
-    if (this.current_out.items.len == 0) return;
-    if (this.current_out.items[this.current_out.items.len - 1] != 0) bun.handleOom(this.current_out.append(0));
+    if (this.current_out.items.len == 0 and !this.has_quoted_empty) return;
+    if (this.current_out.items.len == 0 or this.current_out.items[this.current_out.items.len - 1] != 0) bun.handleOom(this.current_out.append(0));
     switch (this.out.pushResult(&this.current_out)) {
         .copied => {
             this.current_out.clearRetainingCapacity();
         },
         .moved => {
-            this.current_out = std.ArrayList(u8).init(this.base.allocator());
+            this.current_out = std.array_list.Managed(u8).init(this.base.allocator());
         },
     }
 }
@@ -709,6 +720,7 @@ fn expansionSizeHint(this: *const Expansion, atom: *const ast.Atom, has_unknown:
 fn expansionSizeHintSimple(this: *const Expansion, simple: *const ast.SimpleAtom, has_unknown: *bool) usize {
     return switch (simple.*) {
         .Text => |txt| txt.len,
+        .quoted_empty => 0,
         .Var => |label| this.expandVar(label).len,
         .VarArgv => |int| this.expandVarArgv(int).len,
         .brace_begin, .brace_end, .comma, .asterisk => 1,
@@ -752,7 +764,7 @@ pub const ShellGlobTask = struct {
     /// Not owned by this struct
     walker: *GlobWalker,
 
-    result: std.ArrayList([:0]const u8),
+    result: std.array_list.Managed([:0]const u8),
     event_loop: jsc.EventLoopHandle,
     concurrent_task: jsc.EventLoopTask,
     // This is a poll because we want it to enter the uSockets loop
@@ -784,7 +796,7 @@ pub const ShellGlobTask = struct {
             .concurrent_task = jsc.EventLoopTask.fromEventLoop(expansion.base.eventLoop()),
             .walker = walker,
             .expansion = expansion,
-            .result = std.ArrayList([:0]const u8).init(this.alloc_scope.allocator()),
+            .result = std.array_list.Managed([:0]const u8).init(this.alloc_scope.allocator()),
         };
 
         this.ref.ref(this.event_loop);

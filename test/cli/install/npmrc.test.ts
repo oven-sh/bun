@@ -233,6 +233,7 @@ registry=http://localhost:\${PORT}/
       default_registry_token: string;
       default_registry_username: string;
       default_registry_password: string;
+      default_registry_email: string;
     }) => void,
   ) {
     const optionName = await Promise.all(options.map(async ([name, val]) => `${name} = ${val}`));
@@ -444,4 +445,52 @@ ${Object.keys(opts)
       expect(stderr).toContain("received an empty string");
     },
   );
+
+  await makeTest([["email", "user@example.com"]], result => {
+    expect(result.default_registry_url).toEqual("https://registry.npmjs.org/");
+    expect(result.default_registry_email).toEqual("user@example.com");
+  });
+
+  await makeTest(
+    [
+      ["username", "testuser"],
+      ["_password", "testpass"],
+      ["email", "test@example.com"],
+    ],
+    result => {
+      expect(result.default_registry_url).toEqual("https://registry.npmjs.org/");
+      expect(result.default_registry_username).toEqual("testuser");
+      expect(result.default_registry_password).toEqual("testpass");
+      expect(result.default_registry_email).toEqual("test@example.com");
+    },
+  );
+
+  test("applies auth tokens to default registry correctly - same host different paths", () => {
+    // Regression test for https://github.com/oven-sh/bun/issues/26350
+    // When multiple auth tokens exist for the same host but different paths,
+    // Bun should match the token by both host AND path, not just host.
+    const ini = `
+registry=https://somehost.com/org1/npm/registry/
+//somehost.com/org1/npm/registry/:_authToken=jwt1
+//somehost.com/org2/npm/registry/:_authToken=jwt2
+//somehost.com/org3/npm/registry/:_authToken=jwt3
+`;
+    const result = loadNpmrc(ini);
+    expect(result.default_registry_url).toEqual("https://somehost.com/org1/npm/registry/");
+    expect(result.default_registry_token).toBe("jwt1");
+  });
+
+  test("auth token not applied when paths don't match - same host", () => {
+    // Regression test for https://github.com/oven-sh/bun/issues/26350
+    // When auth tokens exist for a different path on the same host,
+    // they should not be applied to the default registry.
+    const ini = `
+registry=https://somehost.com/org1/npm/registry/
+//somehost.com/org2/npm/registry/:_authToken=jwt2
+`;
+    const result = loadNpmrc(ini);
+    expect(result.default_registry_url).toEqual("https://somehost.com/org1/npm/registry/");
+    // Should be empty since there's no matching token for /org1/npm/registry/
+    expect(result.default_registry_token).toBe("");
+  });
 });

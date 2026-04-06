@@ -22,7 +22,7 @@ pub fn buntaghashbuf_make(buf: *BuntagHashBuf, patch_hash: u64) [:0]u8 {
 pub const StorePathFormatter = struct {
     str: string,
 
-    pub fn format(this: StorePathFormatter, comptime _: string, _: std.fmt.FormatOptions, writer: anytype) @TypeOf(writer).Error!void {
+    pub fn format(this: StorePathFormatter, writer: *std.Io.Writer) std.Io.Writer.Error!void {
         // if (!this.opts.replace_slashes) {
         //     try writer.writeAll(this.str);
         //     return;
@@ -46,7 +46,6 @@ pub fn fmtStorePath(str: string) StorePathFormatter {
 
 // these bytes are skipped
 // so we just make it repeat bun bun bun bun bun bun bun bun bun
-// because why not
 pub const alignment_bytes_to_repeat_buffer = [_]u8{0} ** 144;
 
 pub fn initializeStore() void {
@@ -209,11 +208,15 @@ pub const ExtractData = struct {
         path: string = "",
         buf: []u8 = "",
     } = null,
+    /// Integrity hash computed from the raw tarball bytes.
+    /// Used for HTTPS/local tarball dependencies where the hash
+    /// is not available from a registry manifest.
+    integrity: Integrity = .{},
 };
 
 pub const DependencyInstallContext = struct {
     tree_id: Lockfile.Tree.Id = 0,
-    path: std.ArrayList(u8) = std.ArrayList(u8).init(bun.default_allocator),
+    path: std.array_list.Managed(u8) = std.array_list.Managed(u8).init(bun.default_allocator),
     dependency_id: DependencyID,
 };
 
@@ -256,6 +259,8 @@ pub const Repository = @import("./repository.zig").Repository;
 pub const Resolution = @import("./resolution.zig").Resolution;
 pub const Store = @import("./isolated_install/Store.zig").Store;
 pub const FileCopier = @import("./isolated_install/FileCopier.zig").FileCopier;
+pub const PnpmMatcher = @import("./PnpmMatcher.zig");
+pub const PostinstallOptimizer = @import("./postinstall_optimizer.zig").PostinstallOptimizer;
 
 pub const ArrayIdentityContext = @import("../identity_context.zig").ArrayIdentityContext;
 pub const IdentityContext = @import("../identity_context.zig").IdentityContext;
@@ -267,6 +272,7 @@ pub const ExternalStringList = external.ExternalStringList;
 pub const ExternalStringMap = external.ExternalStringMap;
 pub const VersionSlice = external.VersionSlice;
 
+pub const Integrity = @import("./integrity.zig").Integrity;
 pub const Dependency = @import("./dependency.zig");
 pub const Behavior = @import("./dependency.zig").Behavior;
 

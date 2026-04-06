@@ -5,6 +5,10 @@ pub const Task = TaggedPointerUnion(.{
     Access,
     AnyTask,
     AppendFile,
+    ArchiveExtractTask,
+    ArchiveBlobTask,
+    ArchiveWriteTask,
+    ArchiveFilesTask,
     AsyncGlobWalkTask,
     AsyncTransformTask,
     bun.bake.DevServer.HotReloadEvent,
@@ -40,6 +44,7 @@ pub const Task = TaggedPointerUnion(.{
     Mkdtemp,
     napi_async_work,
     NapiFinalizerTask,
+    NativePromiseContextDeferredDerefTask,
     NativeBrotli,
     NativeZlib,
     NativeZstd,
@@ -104,7 +109,7 @@ pub fn tickQueueWithCount(this: *EventLoop, virtual_machine: *VirtualMachine, co
                 bun.Output.panic(
                     \\<b>{d} JavaScript functions<r> were called outside of the microtask queue without draining microtasks.
                     \\
-                    \\Last function name: {}
+                    \\Last function name: {f}
                     \\
                     \\Use EventLoop.runCallback() to run JavaScript functions outside of the microtask queue.
                     \\
@@ -133,6 +138,22 @@ pub fn tickQueueWithCount(this: *EventLoop, virtual_machine: *VirtualMachine, co
         log("run {s}", .{@tagName(task.tag())});
         defer counter.* += 1;
         switch (task.tag()) {
+            @field(Task.Tag, @typeName(ArchiveExtractTask)) => {
+                var archive_task: *ArchiveExtractTask = task.get(ArchiveExtractTask).?;
+                try archive_task.runFromJS();
+            },
+            @field(Task.Tag, @typeName(ArchiveBlobTask)) => {
+                var archive_task: *ArchiveBlobTask = task.get(ArchiveBlobTask).?;
+                try archive_task.runFromJS();
+            },
+            @field(Task.Tag, @typeName(ArchiveWriteTask)) => {
+                var archive_task: *ArchiveWriteTask = task.get(ArchiveWriteTask).?;
+                try archive_task.runFromJS();
+            },
+            @field(Task.Tag, @typeName(ArchiveFilesTask)) => {
+                var archive_task: *ArchiveFilesTask = task.get(ArchiveFilesTask).?;
+                try archive_task.runFromJS();
+            },
             @field(Task.Tag, @typeName(ShellAsync)) => {
                 var shell_ls_task: *ShellAsync = task.get(ShellAsync).?;
                 shell_ls_task.runFromMainThread();
@@ -483,6 +504,9 @@ pub fn tickQueueWithCount(this: *EventLoop, virtual_machine: *VirtualMachine, co
                 var any: *NapiFinalizerTask = task.get(NapiFinalizerTask).?;
                 any.runOnJSThread();
             },
+            @field(Task.Tag, @typeName(NativePromiseContextDeferredDerefTask)) => {
+                NativePromiseContextDeferredDerefTask.runFromJSThread(@intCast(task.asUintptr()));
+            },
             @field(Task.Tag, @typeName(StatFS)) => {
                 var any: *StatFS = task.get(StatFS).?;
                 try any.runFromJSThread();
@@ -613,8 +637,14 @@ const StreamPending = jsc.WebCore.streams.Result.Pending;
 const NativeBrotli = jsc.API.NativeBrotli;
 const NativeZlib = jsc.API.NativeZlib;
 const NativeZstd = jsc.API.NativeZstd;
+const NativePromiseContextDeferredDerefTask = jsc.API.NativePromiseContext.DeferredDerefTask;
 const AsyncGlobWalkTask = jsc.API.Glob.WalkTask.AsyncGlobWalkTask;
 const AsyncTransformTask = jsc.API.JSTranspiler.TransformTask.AsyncTransformTask;
+
+const ArchiveBlobTask = jsc.API.Archive.BlobTask;
+const ArchiveExtractTask = jsc.API.Archive.ExtractTask;
+const ArchiveFilesTask = jsc.API.Archive.FilesTask;
+const ArchiveWriteTask = jsc.API.Archive.WriteTask;
 
 const Timer = jsc.API.Timer;
 const ImmediateObject = Timer.ImmediateObject;

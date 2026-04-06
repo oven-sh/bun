@@ -110,7 +110,7 @@ pub fn processNamesArray(
 
     const orig_msgs_len = log.msgs.items.len;
 
-    var workspace_globs = std.ArrayList(string).init(allocator);
+    var workspace_globs = std.array_list.Managed(string).init(allocator);
     defer workspace_globs.deinit();
     const filepath_bufOS = allocator.create(bun.PathBuffer) catch unreachable;
     const filepath_buf = std.mem.asBytes(filepath_bufOS);

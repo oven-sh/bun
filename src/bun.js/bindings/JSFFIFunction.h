@@ -98,5 +98,3 @@ private:
 };
 
 } // namespace JSC
-
-extern "C" Zig::JSFFIFunction* Bun__CreateFFIFunction(Zig::GlobalObject* globalObject, const ZigString* symbolName, unsigned argCount, Zig::FFIFunction functionPointer, bool strong);

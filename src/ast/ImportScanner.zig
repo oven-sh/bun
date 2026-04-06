@@ -25,7 +25,7 @@ pub fn scan(
                 const record: *ImportRecord = &p.import_records.items[st.import_record_index];
 
                 if (record.path.isMacro()) {
-                    record.is_unused = true;
+                    record.flags.is_unused = true;
                     record.path.is_disabled = true;
                     continue;
                 }
@@ -190,8 +190,8 @@ pub fn scan(
                     {
                         // internal imports are presumed to be always used
                         // require statements cannot be stripped
-                        if (!record.is_internal and !record.was_originally_require) {
-                            record.is_unused = true;
+                        if (!record.flags.is_internal and !record.flags.was_originally_require) {
+                            record.flags.is_unused = true;
                             continue;
                         }
                     }
@@ -204,7 +204,7 @@ pub fn scan(
                     st.star_name_loc = null;
                 }
 
-                record.contains_default_alias = record.contains_default_alias or st.default_name != null;
+                record.flags.contains_default_alias = record.flags.contains_default_alias or st.default_name != null;
 
                 const existing_items: ImportItemForNamespaceMap = p.import_items_for_namespace.get(namespace_ref) orelse
                     ImportItemForNamespaceMap.init(allocator);
@@ -265,7 +265,7 @@ pub fn scan(
                     ) catch |err| bun.handleOom(err);
 
                     if (st.star_name_loc) |loc| {
-                        record.contains_import_star = true;
+                        record.flags.contains_import_star = true;
                         p.named_imports.putAssumeCapacity(
                             namespace_ref,
                             js_ast.NamedImport{
@@ -279,7 +279,7 @@ pub fn scan(
                     }
 
                     if (st.default_name) |default| {
-                        record.contains_default_alias = true;
+                        record.flags.contains_default_alias = true;
                         p.named_imports.putAssumeCapacity(
                             default.ref.?,
                             .{
@@ -313,7 +313,7 @@ pub fn scan(
                     // We do not know at this stage whether or not the import statement is bundled
                     // This keeps track of the `namespace_alias` incase, at printing time, we determine that we should print it with the namespace
                     for (st.items) |item| {
-                        record.contains_default_alias = record.contains_default_alias or strings.eqlComptime(item.alias, "default");
+                        record.flags.contains_default_alias = record.flags.contains_default_alias or strings.eqlComptime(item.alias, "default");
 
                         const name: LocRef = item.name;
                         const name_ref = name.ref.?;
@@ -327,7 +327,7 @@ pub fn scan(
 
                         // Make sure the printer prints this as a property access
                         var symbol: *Symbol = &p.symbols.items[name_ref.innerIndex()];
-                        if (record.contains_import_star or st.star_name_loc != null)
+                        if (record.flags.contains_import_star or st.star_name_loc != null)
                             symbol.namespace_alias = G.NamespaceAlias{
                                 .namespace_ref = namespace_ref,
                                 .alias = item.alias,
@@ -336,7 +336,7 @@ pub fn scan(
                             };
                     }
 
-                    if (record.was_originally_require) {
+                    if (record.flags.was_originally_require) {
                         var symbol = &p.symbols.items[namespace_ref.innerIndex()];
                         symbol.namespace_alias = G.NamespaceAlias{
                             .namespace_ref = namespace_ref,
@@ -349,12 +349,12 @@ pub fn scan(
 
                 try p.import_records_for_current_part.append(allocator, st.import_record_index);
 
-                record.contains_import_star = record.contains_import_star or st.star_name_loc != null;
-                record.contains_default_alias = record.contains_default_alias or st.default_name != null;
+                record.flags.contains_import_star = record.flags.contains_import_star or st.star_name_loc != null;
+                record.flags.contains_default_alias = record.flags.contains_default_alias or st.default_name != null;
 
                 for (st.items) |*item| {
-                    record.contains_default_alias = record.contains_default_alias or strings.eqlComptime(item.alias, "default");
-                    record.contains_es_module_alias = record.contains_es_module_alias or strings.eqlComptime(item.alias, "__esModule");
+                    record.flags.contains_default_alias = record.flags.contains_default_alias or strings.eqlComptime(item.alias, "default");
+                    record.flags.contains_es_module_alias = record.flags.contains_es_module_alias or strings.eqlComptime(item.alias, "__esModule");
                 }
             },
 
@@ -456,7 +456,7 @@ pub fn scan(
                     });
                     try p.recordExport(alias.loc, alias.original_name, st.namespace_ref);
                     var record = &p.import_records.items[st.import_record_index];
-                    record.contains_import_star = true;
+                    record.flags.contains_import_star = true;
                 } else {
                     // "export * from 'path'"
                     try p.export_star_import_records.append(allocator, st.import_record_index);
@@ -466,7 +466,7 @@ pub fn scan(
                 try p.import_records_for_current_part.append(allocator, st.import_record_index);
                 p.named_imports.ensureUnusedCapacity(p.allocator, st.items.len) catch unreachable;
                 for (st.items) |item| {
-                    const ref = item.name.ref orelse p.panic("Expected export from item to have a name {any}", .{st});
+                    const ref = item.name.ref orelse p.panic("Expected export from item to have a name", .{});
                     // Note that the imported alias is not item.Alias, which is the
                     // exported alias. This is somewhat confusing because each
                     // SExportFrom statement is basically SImport + SExportClause in one.
@@ -482,9 +482,9 @@ pub fn scan(
 
                     var record = &p.import_records.items[st.import_record_index];
                     if (strings.eqlComptime(item.original_name, "default")) {
-                        record.contains_default_alias = true;
+                        record.flags.contains_default_alias = true;
                     } else if (strings.eqlComptime(item.original_name, "__esModule")) {
-                        record.contains_es_module_alias = true;
+                        record.flags.contains_es_module_alias = true;
                     }
                 }
             },

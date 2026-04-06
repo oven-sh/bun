@@ -88,7 +88,7 @@ pub const StatWatcherScheduler = struct {
         }
 
         // reschedule the timer
-        this.vm.timer.update(&this.event_loop_timer, &bun.timespec.msFromNow(interval));
+        this.vm.timer.update(&this.event_loop_timer, &bun.timespec.msFromNow(.allow_mocked_time, interval));
     }
 
     /// Schedule a task to set the timer in the main thread
@@ -186,12 +186,12 @@ pub const StatWatcher = struct {
     last_check: std.time.Instant,
 
     globalThis: *jsc.JSGlobalObject,
-    js_this: jsc.JSValue,
+
+    this_value: jsc.JSRef,
 
     poll_ref: bun.Async.KeepAlive = .{},
 
-    last_stat: bun.sys.PosixStat,
-    last_jsvalue: jsc.Strong.Optional,
+    #last_stat: bun.threading.Guarded(bun.sys.PosixStat),
 
     scheduler: bun.ptr.RefPtr(StatWatcherScheduler),
 
@@ -204,23 +204,43 @@ pub const StatWatcher = struct {
     pub const fromJS = js.fromJS;
     pub const fromJSDirect = js.fromJSDirect;
 
-    pub fn eventLoop(this: StatWatcher) *EventLoop {
+    pub fn eventLoop(this: *const StatWatcher) *EventLoop {
         return this.ctx.eventLoop();
     }
 
-    pub fn enqueueTaskConcurrent(this: StatWatcher, task: *jsc.ConcurrentTask) void {
+    pub fn enqueueTaskConcurrent(this: *const StatWatcher, task: *jsc.ConcurrentTask) void {
         this.eventLoop().enqueueTaskConcurrent(task);
+    }
+
+    /// Copy the last stat by value.
+    ///
+    /// This field is sometimes set from aonther thread, so we should copy by
+    /// value instead of referencing by pointer.
+    pub fn getLastStat(this: *StatWatcher) bun.sys.PosixStat {
+        const value = this.#last_stat.lock();
+        defer this.#last_stat.unlock();
+        return value.*;
+    }
+
+    /// Set the last stat.
+    pub fn setLastStat(this: *StatWatcher, stat: *const bun.sys.PosixStat) void {
+        const value = this.#last_stat.lock();
+        defer this.#last_stat.unlock();
+        value.* = stat.*;
     }
 
     pub fn deinit(this: *StatWatcher) void {
         log("deinit {x}", .{@intFromPtr(this)});
 
-        if (this.persistent) {
-            this.persistent = false;
-            this.poll_ref.unref(this.ctx);
+        this.persistent = false;
+        if (comptime bun.Environment.allow_assert) {
+            if (this.poll_ref.isActive()) {
+                bun.assert(jsc.VirtualMachine.get() == this.ctx); // We cannot unref() on another thread this way.
+            }
         }
+        this.poll_ref.unref(this.ctx);
         this.closed = true;
-        this.last_jsvalue.deinit();
+        this.this_value.deinit();
 
         bun.default_allocator.free(this.path);
         bun.default_allocator.destroy(this);
@@ -286,10 +306,7 @@ pub const StatWatcher = struct {
 
         pub fn createStatWatcher(this: Arguments) !jsc.JSValue {
             const obj = try StatWatcher.init(this);
-            if (obj.js_this != .zero) {
-                return obj.js_this;
-            }
-            return .js_undefined;
+            return obj.this_value.tryGet() orelse .js_undefined;
         }
     };
 
@@ -313,10 +330,10 @@ pub const StatWatcher = struct {
     pub fn close(this: *StatWatcher) void {
         if (this.persistent) {
             this.persistent = false;
-            this.poll_ref.unref(this.ctx);
         }
+        this.poll_ref.unref(this.ctx);
         this.closed = true;
-        this.last_jsvalue.clearWithoutDeallocation();
+        this.this_value.downgrade();
     }
 
     pub fn doClose(this: *StatWatcher, _: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
@@ -327,6 +344,7 @@ pub const StatWatcher = struct {
     /// If the scheduler is not using this, free instantly, otherwise mark for being freed.
     pub fn finalize(this: *StatWatcher) void {
         log("Finalize\n", .{});
+        this.this_value.finalize();
         this.closed = true;
         this.scheduler.deref();
         this.deref(); // but don't deinit until the scheduler drops its reference
@@ -338,6 +356,7 @@ pub const StatWatcher = struct {
 
         pub fn createAndSchedule(watcher: *StatWatcher) void {
             const task = bun.new(InitialStatTask, .{ .watcher = watcher });
+            watcher.ref();
             jsc.WorkPool.schedule(&task.task);
         }
 
@@ -347,6 +366,7 @@ pub const StatWatcher = struct {
             const this = initial_stat_task.watcher;
 
             if (this.closed) {
+                this.deref(); // Balance the ref() from createAndSchedule().
                 return;
             }
 
@@ -360,15 +380,15 @@ pub const StatWatcher = struct {
                 };
             };
             switch (stat) {
-                .result => |res| {
+                .result => |*res| {
                     // we store the stat, but do not call the callback
-                    this.last_stat = res;
+                    this.setLastStat(res);
                     this.enqueueTaskConcurrent(jsc.ConcurrentTask.fromCallback(this, initialStatSuccessOnMainThread));
                 },
                 .err => {
                     // on enoent, eperm, we call cb with two zeroed stat objects
                     // and store previous stat as a zeroed stat object, and then call the callback.
-                    this.last_stat = std.mem.zeroes(bun.sys.PosixStat);
+                    this.setLastStat(&std.mem.zeroes(bun.sys.PosixStat));
                     this.enqueueTaskConcurrent(jsc.ConcurrentTask.fromCallback(this, initialStatErrorOnMainThread));
                 },
             }
@@ -376,32 +396,39 @@ pub const StatWatcher = struct {
     };
 
     pub fn initialStatSuccessOnMainThread(this: *StatWatcher) void {
+        defer this.deref(); // Balance the ref from createAndSchedule().
         if (this.closed) {
             return;
         }
 
-        const jsvalue = statToJSStats(this.globalThis, &this.last_stat, this.bigint) catch |err| return this.globalThis.reportActiveExceptionAsUnhandled(err);
-        this.last_jsvalue = .create(jsvalue, this.globalThis);
+        const js_this = this.this_value.tryGet() orelse return;
+        const globalThis = this.globalThis;
+
+        const jsvalue = statToJSStats(globalThis, &this.getLastStat(), this.bigint) catch |err| return globalThis.reportActiveExceptionAsUnhandled(err);
+        js.gc.prevStat.set(js_this, globalThis, jsvalue);
 
         this.scheduler.data.append(this);
     }
 
     pub fn initialStatErrorOnMainThread(this: *StatWatcher) void {
+        defer this.deref(); // Balance the ref from createAndSchedule().
         if (this.closed) {
             return;
         }
 
-        const jsvalue = statToJSStats(this.globalThis, &this.last_stat, this.bigint) catch |err| return this.globalThis.reportActiveExceptionAsUnhandled(err);
-        this.last_jsvalue = .create(jsvalue, this.globalThis);
+        const js_this = this.this_value.tryGet() orelse return;
+        const globalThis = this.globalThis;
+        const jsvalue = statToJSStats(globalThis, &this.getLastStat(), this.bigint) catch |err| return globalThis.reportActiveExceptionAsUnhandled(err);
+        js.gc.prevStat.set(js_this, globalThis, jsvalue);
 
-        _ = js.listenerGetCached(this.js_this).?.call(
-            this.globalThis,
+        _ = js.listenerGetCached(js_this).?.call(
+            globalThis,
             .js_undefined,
             &[2]jsc.JSValue{
                 jsvalue,
                 jsvalue,
             },
-        ) catch |err| this.globalThis.reportActiveExceptionAsUnhandled(err);
+        ) catch |err| globalThis.reportActiveExceptionAsUnhandled(err);
 
         if (this.closed) {
             return;
@@ -417,8 +444,8 @@ pub const StatWatcher = struct {
         else brk: {
             const result = bun.sys.stat(this.path);
             break :brk switch (result) {
-                .result => |r| bun.sys.Maybe(bun.sys.PosixStat){ .result = bun.sys.PosixStat.init(&r) },
-                .err => |e| bun.sys.Maybe(bun.sys.PosixStat){ .err = e },
+                .result => |r| .{ .result = .init(&r) },
+                .err => |e| .{ .err = e },
             };
         };
         const res = switch (stat) {
@@ -426,44 +453,50 @@ pub const StatWatcher = struct {
             .err => std.mem.zeroes(bun.sys.PosixStat),
         };
 
+        const last_stat = this.getLastStat();
+
         // Ignore atime changes when comparing stats
         // Compare field-by-field to avoid false positives from padding bytes
-        if (res.dev == this.last_stat.dev and
-            res.ino == this.last_stat.ino and
-            res.mode == this.last_stat.mode and
-            res.nlink == this.last_stat.nlink and
-            res.uid == this.last_stat.uid and
-            res.gid == this.last_stat.gid and
-            res.rdev == this.last_stat.rdev and
-            res.size == this.last_stat.size and
-            res.blksize == this.last_stat.blksize and
-            res.blocks == this.last_stat.blocks and
-            res.mtim.sec == this.last_stat.mtim.sec and
-            res.mtim.nsec == this.last_stat.mtim.nsec and
-            res.ctim.sec == this.last_stat.ctim.sec and
-            res.ctim.nsec == this.last_stat.ctim.nsec and
-            res.birthtim.sec == this.last_stat.birthtim.sec and
-            res.birthtim.nsec == this.last_stat.birthtim.nsec)
+        if (res.dev == last_stat.dev and
+            res.ino == last_stat.ino and
+            res.mode == last_stat.mode and
+            res.nlink == last_stat.nlink and
+            res.uid == last_stat.uid and
+            res.gid == last_stat.gid and
+            res.rdev == last_stat.rdev and
+            res.size == last_stat.size and
+            res.blksize == last_stat.blksize and
+            res.blocks == last_stat.blocks and
+            res.mtim.sec == last_stat.mtim.sec and
+            res.mtim.nsec == last_stat.mtim.nsec and
+            res.ctim.sec == last_stat.ctim.sec and
+            res.ctim.nsec == last_stat.ctim.nsec and
+            res.birthtim.sec == last_stat.birthtim.sec and
+            res.birthtim.nsec == last_stat.birthtim.nsec)
             return;
 
-        this.last_stat = res;
+        this.setLastStat(&res);
+        this.ref(); // Ensure it stays alive long enough to receive the callback.
         this.enqueueTaskConcurrent(jsc.ConcurrentTask.fromCallback(this, swapAndCallListenerOnMainThread));
     }
 
     /// After a restat found the file changed, this calls the listener function.
     pub fn swapAndCallListenerOnMainThread(this: *StatWatcher) void {
-        const prev_jsvalue = this.last_jsvalue.swap();
-        const current_jsvalue = statToJSStats(this.globalThis, &this.last_stat, this.bigint) catch return; // TODO: properly propagate exception upwards
-        this.last_jsvalue.set(this.globalThis, current_jsvalue);
+        defer this.deref(); // Balance the ref from restat().
+        const js_this = this.this_value.tryGet() orelse return;
+        const globalThis = this.globalThis;
+        const prev_jsvalue = js.gc.prevStat.get(js_this) orelse .js_undefined;
+        const current_jsvalue = statToJSStats(globalThis, &this.getLastStat(), this.bigint) catch return; // TODO: properly propagate exception upwards
+        js.gc.prevStat.set(js_this, globalThis, current_jsvalue);
 
-        _ = js.listenerGetCached(this.js_this).?.call(
-            this.globalThis,
+        _ = js.listenerGetCached(js_this).?.call(
+            globalThis,
             .js_undefined,
             &[2]jsc.JSValue{
                 current_jsvalue,
                 prev_jsvalue,
             },
-        ) catch |err| this.globalThis.reportActiveExceptionAsUnhandled(err);
+        ) catch |err| globalThis.reportActiveExceptionAsUnhandled(err);
     }
 
     pub fn init(args: Arguments) !*StatWatcher {
@@ -473,7 +506,7 @@ pub const StatWatcher = struct {
         defer bun.path_buffer_pool.put(buf);
         var slice = args.path.slice();
         if (bun.strings.startsWith(slice, "file://")) {
-            slice = slice[6..];
+            slice = slice["file://".len..];
         }
 
         var parts = [_]string{slice};
@@ -496,14 +529,13 @@ pub const StatWatcher = struct {
             .bigint = args.bigint,
             .interval = @max(5, args.interval),
             .globalThis = args.global_this,
-            .js_this = .zero,
+            .this_value = .empty(),
             .closed = false,
             .path = alloc_file_path,
             // Instant.now will not fail on our target platforms.
             .last_check = std.time.Instant.now() catch unreachable,
             // InitStatTask is responsible for setting this
-            .last_stat = std.mem.zeroes(bun.sys.PosixStat),
-            .last_jsvalue = .empty,
+            .#last_stat = .init(std.mem.zeroes(bun.sys.PosixStat)),
             .scheduler = vm.rareData().nodeFSStatWatcherScheduler(vm),
             .ref_count = .init(),
         };
@@ -514,7 +546,7 @@ pub const StatWatcher = struct {
         }
 
         const js_this = StatWatcher.toJS(this, this.globalThis);
-        this.js_this = js_this;
+        this.this_value = .initStrong(js_this, this.globalThis);
         js.listenerSetCached(js_this, this.globalThis, args.listener);
         InitialStatTask.createAndSchedule(this);
 

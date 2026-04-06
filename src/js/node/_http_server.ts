@@ -1,8 +1,13 @@
 // Hardcoded module "node:_http_server"
 const EventEmitter: typeof import("node:events").EventEmitter = require("node:events");
 const { Duplex, Stream } = require("node:stream");
-const { _checkInvalidHeaderChar: checkInvalidHeaderChar } = require("node:_http_common");
+const {
+  _checkInvalidHeaderChar: checkInvalidHeaderChar,
+  validateHeaderName,
+  validateHeaderValue,
+} = require("node:_http_common");
 const { validateObject, validateLinkHeaderValue, validateBoolean, validateInteger } = require("internal/validators");
+const { ConnResetException } = require("internal/shared");
 
 const { isPrimary } = require("internal/cluster/isPrimary");
 const { throwOnInvalidTLSArray } = require("internal/tls");
@@ -27,7 +32,6 @@ const {
   setIsNextIncomingMessageHTTPS,
   callCloseCallback,
   emitCloseNT,
-  ConnResetException,
   NodeHTTPResponseAbortEvent,
   STATUS_CODES,
   isTlsSymbol,
@@ -517,6 +521,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         isSocketNew,
         socket,
         isAncientHTTP: boolean,
+        connectHead?: Buffer,
       ) {
         const prevIsNextIncomingMessageHTTPS = getIsNextIncomingMessageHTTPS();
         setIsNextIncomingMessageHTTPS(isHTTPS);
@@ -537,7 +542,9 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
             socket[kEnableStreaming](true);
             const { promise, resolve } = $newPromiseCapability(Promise);
             socket.once("close", resolve);
-            server.emit("connect", http_req, socket, kEmptyBuffer);
+            // Pass the pipelined data (head buffer) if any was received with the CONNECT request
+            const head = connectHead ? connectHead : kEmptyBuffer;
+            server.emit("connect", http_req, socket, head);
             return promise;
           } else {
             // Node.js will close the socket and will NOT respond with 400 Bad Request
@@ -1281,7 +1288,10 @@ ServerResponse.prototype.writeEarlyHints = function (hints, cb) {
 
   for (const key of ObjectKeys(hints)) {
     if (key !== "link") {
-      head += key + ": " + hints[key] + "\r\n";
+      const value = hints[key];
+      validateHeaderName(key);
+      validateHeaderValue(key, value);
+      head += key + ": " + value + "\r\n";
     }
   }
 
@@ -1526,7 +1536,7 @@ ServerResponse.prototype._implicitHeader = function () {
 
 Object.defineProperty(ServerResponse.prototype, "writableNeedDrain", {
   get() {
-    return !this.destroyed && !this.finished && (this[kHandle]?.bufferedAmount ?? 1) !== 0;
+    return !this.destroyed && !this.finished && (this[kHandle]?.bufferedAmount ?? 0) !== 0;
   },
 });
 

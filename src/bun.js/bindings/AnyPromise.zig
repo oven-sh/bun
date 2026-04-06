@@ -7,24 +7,26 @@ pub const AnyPromise = union(enum) {
             inline else => |promise| promise.unwrap(vm, mode),
         };
     }
-    pub fn status(this: AnyPromise, vm: *VM) JSPromise.Status {
+    pub fn status(this: AnyPromise) JSPromise.Status {
         return switch (this) {
-            inline else => |promise| promise.status(vm),
+            inline else => |promise| promise.status(),
         };
     }
     pub fn result(this: AnyPromise, vm: *VM) JSValue {
         return switch (this) {
-            inline else => |promise| promise.result(vm),
+            .normal => |promise| promise.result(vm),
+            .internal => |promise| promise.result(),
         };
     }
-    pub fn isHandled(this: AnyPromise, vm: *VM) bool {
+    pub fn isHandled(this: AnyPromise) bool {
         return switch (this) {
-            inline else => |promise| promise.isHandled(vm),
+            inline else => |promise| promise.isHandled(),
         };
     }
     pub fn setHandled(this: AnyPromise, vm: *VM) void {
         switch (this) {
-            inline else => |promise| promise.setHandled(vm),
+            .normal => |promise| promise.setHandled(),
+            .internal => |promise| promise.setHandled(vm),
         }
     }
 
@@ -40,6 +42,24 @@ pub const AnyPromise = union(enum) {
         }
     }
 
+    /// Like `reject` but first attaches async stack frames from this promise's
+    /// await chain to the error. Use when rejecting from native code at the
+    /// top of the event loop. JSInternalPromise subclasses JSPromise in C++,
+    /// so both variants are handled.
+    pub fn rejectWithAsyncStack(this: AnyPromise, globalThis: *JSGlobalObject, value: JSValue) bun.JSTerminated!void {
+        value.attachAsyncStackFromPromise(globalThis, this.asJSPromise());
+        try this.reject(globalThis, value);
+    }
+
+    /// JSInternalPromise subclasses JSPromise in C++ — this cast is safe for
+    /// any C++ function taking JSPromise*.
+    pub fn asJSPromise(this: AnyPromise) *JSPromise {
+        return switch (this) {
+            .normal => |p| p,
+            .internal => |p| @ptrCast(p),
+        };
+    }
+
     pub fn rejectAsHandled(this: AnyPromise, globalThis: *JSGlobalObject, value: JSValue) bun.JSTerminated!void {
         switch (this) {
             inline else => |promise| promise.rejectAsHandled(globalThis, value),
@@ -53,7 +73,7 @@ pub const AnyPromise = union(enum) {
         };
     }
 
-    extern fn JSC__AnyPromise__wrap(*jsc.JSGlobalObject, JSValue, *anyopaque, *const fn (*anyopaque, *jsc.JSGlobalObject) callconv(.C) jsc.JSValue) void;
+    extern fn JSC__AnyPromise__wrap(*jsc.JSGlobalObject, JSValue, *anyopaque, *const fn (*anyopaque, *jsc.JSGlobalObject) callconv(.c) jsc.JSValue) void;
 
     pub fn wrap(
         this: AnyPromise,
@@ -71,7 +91,7 @@ pub const AnyPromise = union(enum) {
             }
         };
 
-        var scope: jsc.CatchScope = undefined;
+        var scope: jsc.TopExceptionScope = undefined;
         scope.init(globalObject, @src());
         defer scope.deinit();
         var ctx = Wrapper{ .args = args };

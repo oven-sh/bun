@@ -3,6 +3,7 @@ const ProxyTunnel = @This();
 const RefCount = bun.ptr.RefCount(@This(), "ref_count", ProxyTunnel.deinit, .{});
 pub const ref = ProxyTunnel.RefCount.ref;
 pub const deref = ProxyTunnel.RefCount.deref;
+pub const RefPtr = bun.ptr.RefPtr(@This());
 
 wrapper: ?ProxyTunnelWrapper = null,
 shutdown_err: anyerror = error.ConnectionClosed,
@@ -13,12 +14,26 @@ socket: union(enum) {
     none: void,
 } = .{ .none = {} },
 write_buffer: bun.io.StreamBuffer = .{},
+/// Property of the inner TLS session, not the owning client. Captured from
+/// the client in detachOwner() and restored to the next client in adopt()
+/// so the pool's did_have_handshaking_error_while_reject_unauthorized_is_false
+/// flag survives across reuse — otherwise a reject_unauthorized=false reuse
+/// would re-pool with the flag erased, letting a later reject_unauthorized=true
+/// request silently reuse a tunnel whose cert failed validation.
+did_have_handshaking_error: bool = false,
+/// Whether the inner TLS session was established with reject_unauthorized=true
+/// (and therefore hostname-verified via checkServerIdentity). A CA-valid but
+/// wrong-hostname cert produces error_no=0 so did_have_handshaking_error stays
+/// false; without this flag, a strict caller could reuse a tunnel where
+/// hostname was never checked.
+established_with_reject_unauthorized: bool = false,
 ref_count: RefCount,
 
 const ProxyTunnelWrapper = SSLWrapper(*HTTPClient);
 
 fn onOpen(this: *HTTPClient) void {
     log("ProxyTunnel onOpen", .{});
+    bun.analytics.Features.http_client_proxy += 1;
     this.state.response_stage = .proxy_handshake;
     this.state.request_stage = .proxy_handshake;
     if (this.proxy_tunnel) |proxy| {
@@ -191,7 +206,7 @@ fn onHandshake(this: *HTTPClient, handshake_success: bool, ssl_error: uws.us_bun
     }
 }
 
-pub fn write(this: *HTTPClient, encoded_data: []const u8) void {
+pub fn writeEncrypted(this: *HTTPClient, encoded_data: []const u8) void {
     if (this.proxy_tunnel) |proxy| {
         // Preserve TLS record ordering: if any encrypted bytes are buffered,
         // enqueue new bytes and flush them in FIFO via onWritable.
@@ -216,8 +231,32 @@ fn onClose(this: *HTTPClient) void {
     log("ProxyTunnel onClose {s}", .{if (this.proxy_tunnel == null) "tunnel is detached" else "tunnel exists"});
     if (this.proxy_tunnel) |proxy| {
         proxy.ref();
-        // defer the proxy deref the proxy tunnel may still be in use after triggering the close callback
-        defer bun.http.http_thread.scheduleProxyDeref(proxy);
+
+        // If a response is in progress, mirror HTTPClient.onClose semantics:
+        // treat connection close as end-of-body for identity transfer when no content-length.
+        const in_progress = this.state.stage != .done and this.state.stage != .fail and this.state.flags.is_redirect_pending == false;
+        if (in_progress) {
+            if (this.state.isChunkedEncoding()) {
+                switch (this.state.chunked_decoder._state) {
+                    .CHUNKED_IN_TRAILERS_LINE_HEAD, .CHUNKED_IN_TRAILERS_LINE_MIDDLE => {
+                        this.state.flags.received_last_chunk = true;
+                        progressUpdateForProxySocket(this, proxy);
+                        // Drop our temporary ref asynchronously to avoid freeing within callback
+                        bun.http.http_thread.scheduleProxyDeref(proxy);
+                        return;
+                    },
+                    else => {},
+                }
+            } else if (this.state.content_length == null and this.state.response_stage == .body) {
+                this.state.flags.received_last_chunk = true;
+                progressUpdateForProxySocket(this, proxy);
+                // Balance the ref we took asynchronously
+                bun.http.http_thread.scheduleProxyDeref(proxy);
+                return;
+            }
+        }
+
+        // Otherwise, treat as failure.
         const err = proxy.shutdown_err;
         switch (proxy.socket) {
             .ssl => |socket| {
@@ -229,6 +268,16 @@ fn onClose(this: *HTTPClient) void {
             .none => {},
         }
         proxy.detachSocket();
+        // Deref after returning to the event loop to avoid lifetime hazards.
+        bun.http.http_thread.scheduleProxyDeref(proxy);
+    }
+}
+
+fn progressUpdateForProxySocket(this: *HTTPClient, proxy: *ProxyTunnel) void {
+    switch (proxy.socket) {
+        .ssl => |socket| this.progressUpdate(true, &bun.http.http_thread.https_context, socket),
+        .tcp => |socket| this.progressUpdate(false, &bun.http.http_thread.http_context, socket),
+        .none => {},
     }
 }
 
@@ -237,16 +286,14 @@ pub fn start(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is
         .ref_count = .init(),
     });
 
-    var custom_options = ssl_options;
-    // we always request the cert so we can verify it and also we manually abort the connection if the hostname doesn't match
-    custom_options.reject_unauthorized = 0;
-    custom_options.request_cert = 1;
+    // We always request the cert so we can verify it and also we manually abort the connection if the hostname doesn't match
+    const custom_options = ssl_options.forClientVerification();
     proxy_tunnel.wrapper = SSLWrapper(*HTTPClient).init(custom_options, true, .{
         .onOpen = ProxyTunnel.onOpen,
         .onData = ProxyTunnel.onData,
         .onHandshake = ProxyTunnel.onHandshake,
         .onClose = ProxyTunnel.onClose,
-        .write = ProxyTunnel.write,
+        .write = ProxyTunnel.writeEncrypted,
         .ctx = this,
     }) catch |err| {
         if (err == error.OutOfMemory) {
@@ -306,7 +353,7 @@ pub fn onWritable(this: *ProxyTunnel, comptime is_ssl: bool, socket: NewHTTPCont
     }
 }
 
-pub fn receiveData(this: *ProxyTunnel, buf: []const u8) void {
+pub fn receive(this: *ProxyTunnel, buf: []const u8) void {
     this.ref();
     defer this.deref();
     if (this.wrapper) |*wrapper| {
@@ -314,7 +361,7 @@ pub fn receiveData(this: *ProxyTunnel, buf: []const u8) void {
     }
 }
 
-pub fn writeData(this: *ProxyTunnel, buf: []const u8) !usize {
+pub fn write(this: *ProxyTunnel, buf: []const u8) !usize {
     if (this.wrapper) |*wrapper| {
         return try wrapper.writeData(buf);
     }
@@ -328,6 +375,56 @@ pub fn detachSocket(this: *ProxyTunnel) void {
 pub fn detachAndDeref(this: *ProxyTunnel) void {
     this.detachSocket();
     this.deref();
+}
+
+/// Detach the tunnel from its current HTTPClient owner so it can be safely
+/// pooled for keepalive. The inner TLS session is preserved. The tunnel's
+/// refcount is NOT changed — the caller must ensure the ref is transferred
+/// to the pool (or dereffed on failure to pool).
+pub fn detachOwner(this: *ProxyTunnel, client: *const HTTPClient) void {
+    this.socket = .{ .none = {} };
+    // Capture the handshaking-error flag from the client — this is a property
+    // of the inner TLS session, not the client. adopt() restores it to the
+    // next client so re-pooling doesn't erase it.
+    this.did_have_handshaking_error = client.flags.did_have_handshaking_error;
+    // OR semantics — a lax client is allowed to reuse a strict tunnel (the
+    // existingSocket guard only blocks the reverse). When that lax client
+    // detaches, it must not downgrade a hostname-verified TLS session to
+    // lax-established; once true, stays true.
+    this.established_with_reject_unauthorized = this.established_with_reject_unauthorized or client.flags.reject_unauthorized;
+    // We intentionally leave wrapper.handlers.ctx stale here. The tunnel is
+    // idle in the pool and no callbacks will fire until adopt() reattaches
+    // a new owner and socket.
+}
+
+/// Reattach a pooled tunnel to a new HTTPClient and socket. The TLS session
+/// is reused as-is — no CONNECT and no new TLS handshake. The client's
+/// request/response stage is set to .proxy_headers so the next onWritable
+/// writes the HTTP request directly into the tunnel.
+pub fn adopt(this: *ProxyTunnel, client: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) void {
+    log("ProxyTunnel adopt (reusing pooled tunnel)", .{});
+    // Discard any stale encrypted bytes from the previous request. A clean
+    // request boundary should leave this empty, but an early server response
+    // (e.g. HTTP 413) with Connection: keep-alive before the full body was
+    // consumed could leave unsent bytes that would corrupt the next request.
+    this.write_buffer.reset();
+    if (this.wrapper) |*wrapper| {
+        wrapper.handlers.ctx = client;
+    }
+    if (is_ssl) {
+        this.socket = .{ .ssl = socket };
+    } else {
+        this.socket = .{ .tcp = socket };
+    }
+    client.proxy_tunnel = this;
+    client.flags.proxy_tunneling = false;
+    // Restore the cert-error flag captured in detachOwner() — no handshake
+    // runs here, so the client's own flag would otherwise stay false and
+    // re-pooling would erase the record.
+    client.flags.did_have_handshaking_error = this.did_have_handshaking_error;
+    client.state.request_stage = .proxy_headers;
+    client.state.response_stage = .proxy_headers;
+    client.state.request_sent_len = 0;
 }
 
 fn deinit(this: *ProxyTunnel) void {

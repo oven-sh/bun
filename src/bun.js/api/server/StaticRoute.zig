@@ -29,9 +29,11 @@ pub const InitFromBytesOptions = struct {
 /// Ownership of `blob` is transferred to this function.
 pub fn initFromAnyBlob(blob: *const AnyBlob, options: InitFromBytesOptions) *StaticRoute {
     var headers = bun.handleOom(Headers.from(options.headers, bun.default_allocator, .{ .body = blob }));
-    if (options.mime_type) |mime_type| {
-        if (headers.getContentType() == null) {
+    if (headers.getContentType() == null) {
+        if (options.mime_type) |mime_type| {
             bun.handleOom(headers.append("Content-Type", mime_type.value));
+        } else if (blob.hasContentTypeFromUser()) {
+            bun.handleOom(headers.append("Content-Type", blob.contentType()));
         }
     }
 
@@ -92,6 +94,7 @@ pub fn fromJS(globalThis: *jsc.JSGlobalObject, argument: jsc.JSValue) bun.JSErro
         // The user may want to pass in the same Response object multiple endpoints
         // Let's let them do that.
         const bodyValue = response.getBodyValue();
+        const was_string = bodyValue.wasString();
         bodyValue.toBlobIfPossible();
 
         const blob: AnyBlob = brk: {
@@ -103,7 +106,7 @@ pub fn fromJS(globalThis: *jsc.JSGlobalObject, argument: jsc.JSValue) bun.JSErro
                 .Null, .Empty => {
                     break :brk .{
                         .InternalBlob = .{
-                            .bytes = std.ArrayList(u8).init(bun.default_allocator),
+                            .bytes = std.array_list.Managed(u8).init(bun.default_allocator),
                         },
                     };
                 },
@@ -150,6 +153,10 @@ pub fn fromJS(globalThis: *jsc.JSGlobalObject, argument: jsc.JSValue) bun.JSErro
             .{
                 .allocator = bun.default_allocator,
             };
+
+        if (was_string and headers.getContentType() == null) {
+            bun.handleOom(headers.append("Content-Type", bun.http.MimeType.Table.@"text/plain; charset=utf-8".slice()));
+        }
 
         // Generate ETag if not already present
         if (headers.get("etag") == null) {

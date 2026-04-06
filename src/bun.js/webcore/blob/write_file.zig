@@ -301,7 +301,6 @@ pub const WriteFile = struct {
             if (remain.len > 0 and this.errno == null) {
                 var wrote: usize = 0;
                 const continue_writing = this.doWrite(remain, &wrote);
-                this.bytes_blob.offset += @truncate(wrote);
                 if (!continue_writing) {
                     // Stop writing, we errored
                     if (this.errno != null) {
@@ -442,12 +441,12 @@ pub const WriteFileWindows = struct {
         }
     }
 
-    pub fn onOpen(req: *uv.fs_t) callconv(.C) void {
+    pub fn onOpen(req: *uv.fs_t) callconv(.c) void {
         var this: *WriteFileWindows = @fieldParentPtr("io_request", req);
-        bun.assert(this == @as(*WriteFileWindows, @alignCast(@ptrCast(req.data.?))));
+        bun.assert(this == @as(*WriteFileWindows, @ptrCast(@alignCast(req.data.?))));
         const rc = this.io_request.result;
         if (comptime Environment.allow_assert)
-            log("onOpen({s}) = {}", .{ this.file_blob.store.?.data.file.pathlike.path.slice(), rc });
+            log("onOpen({s}) = {f}", .{ this.file_blob.store.?.data.file.pathlike.path.slice(), rc });
 
         if (rc.errEnum()) |err| {
             if (err == .NOENT and this.mkdirp_if_not_exists) {
@@ -518,9 +517,9 @@ pub const WriteFileWindows = struct {
         this.event_loop.enqueueTaskConcurrent(jsc.ConcurrentTask.create(jsc.ManagedTask.New(WriteFileWindows, onMkdirpComplete).init(this)));
     }
 
-    fn onWriteComplete(req: *uv.fs_t) callconv(.C) void {
+    fn onWriteComplete(req: *uv.fs_t) callconv(.c) void {
         var this: *WriteFileWindows = @fieldParentPtr("io_request", req);
-        bun.assert(this == @as(*WriteFileWindows, @alignCast(@ptrCast(req.data.?))));
+        bun.assert(this == @as(*WriteFileWindows, @ptrCast(@alignCast(req.data.?))));
         const rc = this.io_request.result;
         if (rc.errno()) |err| {
             switch (this.throw(.{
@@ -658,7 +657,7 @@ pub const WriteFilePromise = struct {
         value.ensureStillAlive();
         switch (count) {
             .err => |err| {
-                try promise.reject(globalThis, err.toErrorInstance(globalThis));
+                try promise.reject(globalThis, err.toErrorInstanceWithAsyncStack(globalThis, promise));
             },
             .result => |wrote| {
                 try promise.resolve(globalThis, .jsNumberFromUint64(wrote));
@@ -687,7 +686,7 @@ pub const WriteFileWaitFromLockedValueTask = struct {
                 _ = value.use();
                 this.promise.deinit();
                 bun.destroy(this);
-                try promise.reject(globalThis, err_ref.toJS(globalThis));
+                try promise.rejectWithAsyncStack(globalThis, err_ref.toJS(globalThis));
             },
             .Used => {
                 file_blob.detach();

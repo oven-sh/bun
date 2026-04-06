@@ -35,6 +35,7 @@
 #include "wtf/DebugHeap.h"
 #include "wtf/FastMalloc.h"
 #include <wtf/Function.h>
+#include <wtf/Lock.h>
 #include <wtf/Ref.h>
 #include <wtf/RefCounted.h>
 #include <wtf/WeakListHashSet.h>
@@ -95,7 +96,11 @@ public:
     CommonAbortReason commonReason() const { return m_commonReason; }
 
     void cleanNativeBindings(void* ref);
-    void addNativeCallback(NativeCallbackTuple callback) { m_native_callbacks.append(callback); }
+    void addNativeCallback(NativeCallbackTuple callback)
+    {
+        m_native_callbacks.append(callback);
+        eventListenersDidChange();
+    }
 
     bool hasActiveTimeoutTimer() const { return m_timeout != nullptr; }
     bool hasAbortEventListener() const { return m_flags & static_cast<uint8_t>(AbortSignalFlags::HasAbortEventListener); }
@@ -107,6 +112,8 @@ public:
     using Algorithm = Function<void(JSC::JSValue reason)>;
     uint32_t addAlgorithm(Algorithm&&);
     void removeAlgorithm(uint32_t);
+
+    template<typename Visitor> void visitAbortAlgorithms(Visitor&);
 
     bool isFollowingSignal() const { return !!m_followingSignal; }
 
@@ -123,6 +130,8 @@ public:
     bool isDependent() const { return m_flags & static_cast<uint8_t>(AbortSignalFlags::Dependent); }
 
     size_t memoryCost() const;
+
+    AbortSignalTimeout getTimeout() const { return m_timeout; }
 
 private:
     enum class Aborted : bool {
@@ -178,6 +187,12 @@ private:
     void eventListenersDidChange() final;
 
     Vector<std::pair<uint32_t, Algorithm>> m_algorithms;
+    // Kept separate from m_algorithms so the GC thread can visit the weak JS
+    // callbacks via visitAbortAlgorithms(). Erasing Ref<AbortAlgorithm> into
+    // an Algorithm lambda would hide it from the GC and reintroduce the
+    // Strong-ref cycle leak.
+    Vector<std::pair<uint32_t, Ref<AbortAlgorithm>>> m_abortAlgorithms WTF_GUARDED_BY_LOCK(m_abortAlgorithmsLock);
+    Lock m_abortAlgorithmsLock;
     WeakPtr<AbortSignal, WeakPtrImplWithEventTargetData> m_followingSignal;
     AbortSignalSet m_sourceSignals;
     AbortSignalSet m_dependentSignals;

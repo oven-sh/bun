@@ -74,6 +74,10 @@ pub const S3HttpSimpleTask = struct {
     result: bun.http.HTTPClientResult = .{},
     concurrent_task: jsc.ConcurrentTask = .{},
     range: ?[]const u8,
+    /// Owned dupe of the proxy URL. The env-derived proxy slice can be freed
+    /// by a concurrent process.env.HTTP_PROXY write while the HTTP thread is
+    /// in flight, so we must own our copy for the task's lifetime.
+    proxy_url: []const u8 = "",
     poll_ref: bun.Async.KeepAlive = bun.Async.KeepAlive.init(),
 
     pub const new = bun.TrivialNew(@This());
@@ -131,6 +135,9 @@ pub const S3HttpSimpleTask = struct {
         this.http.clearData();
         if (this.range) |range| {
             bun.default_allocator.free(range);
+        }
+        if (this.proxy_url.len > 0) {
+            bun.default_allocator.free(this.proxy_url);
         }
         if (this.result.metadata) |*metadata| {
             metadata.deinit(bun.default_allocator);
@@ -351,6 +358,7 @@ pub const S3SimpleRequestOptions = struct {
     search_params: ?[]const u8 = null,
     content_type: ?[]const u8 = null,
     content_disposition: ?[]const u8 = null,
+    content_encoding: ?[]const u8 = null,
 
     // http request options
     body: []const u8,
@@ -358,6 +366,7 @@ pub const S3SimpleRequestOptions = struct {
     range: ?[]const u8 = null,
     acl: ?ACL = null,
     storage_class: ?StorageClass = null,
+    request_payer: bool = false,
 };
 
 pub fn executeSimpleS3Request(
@@ -371,8 +380,10 @@ pub fn executeSimpleS3Request(
         .method = options.method,
         .search_params = options.search_params,
         .content_disposition = options.content_disposition,
+        .content_encoding = options.content_encoding,
         .acl = options.acl,
         .storage_class = options.storage_class,
+        .request_payer = options.request_payer,
     }, false, null) catch |sign_err| {
         if (options.range) |range_| bun.default_allocator.free(range_);
         const error_code_and_message = getSignErrorCodeAndMessage(sign_err);
@@ -381,7 +392,7 @@ pub fn executeSimpleS3Request(
     };
 
     const headers = brk: {
-        var header_buffer: [10]picohttp.Header = undefined;
+        var header_buffer: [S3Credentials.SignResult.MAX_HEADERS + 1]picohttp.Header = undefined;
         if (options.range) |range_| {
             const _headers = result.mixWithHeader(&header_buffer, .{ .name = "range", .value = range_ });
             break :brk bun.handleOom(bun.http.Headers.fromPicoHttpHeaders(_headers, bun.default_allocator));
@@ -409,6 +420,7 @@ pub fn executeSimpleS3Request(
 
     const url = bun.URL.parse(result.url);
     const proxy = options.proxy_url orelse "";
+    task.proxy_url = if (proxy.len > 0) bun.handleOom(bun.default_allocator.dupe(u8, proxy)) else "";
     task.http = bun.http.AsyncHTTP.init(
         bun.default_allocator,
         options.method,
@@ -423,7 +435,7 @@ pub fn executeSimpleS3Request(
         ).init(task),
         .follow,
         .{
-            .http_proxy = if (proxy.len > 0) bun.URL.parse(proxy) else null,
+            .http_proxy = if (task.proxy_url.len > 0) bun.URL.parse(task.proxy_url) else null,
             .verbose = task.vm.getVerboseFetch(),
             .reject_unauthorized = task.vm.getTLSRejectUnauthorized(),
         },

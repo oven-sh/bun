@@ -33,7 +33,7 @@ pub const BlobOrStringOrBuffer = union(enum) {
 
     pub fn deinitAndUnprotect(this: *BlobOrStringOrBuffer) void {
         switch (this.*) {
-            .string_or_buffer => |sob| {
+            .string_or_buffer => |*sob| {
                 sob.deinitAndUnprotect();
             },
             .blob => |*blob| {
@@ -46,12 +46,20 @@ pub const BlobOrStringOrBuffer = union(enum) {
         return this.slice().len;
     }
 
-    pub fn fromJSMaybeFile(global: *jsc.JSGlobalObject, allocator: std.mem.Allocator, value: jsc.JSValue, allow_file: bool) JSError!?BlobOrStringOrBuffer {
+    pub fn fromJSMaybeFileMaybeAsync(global: *jsc.JSGlobalObject, allocator: std.mem.Allocator, value: jsc.JSValue, allow_file: bool, is_async: bool) JSError!?BlobOrStringOrBuffer {
         // Check StringOrBuffer first because it's more common and cheaper.
-        const str = try StringOrBuffer.fromJS(global, allocator, value) orelse {
+        const str = try StringOrBuffer.fromJSMaybeAsync(global, allocator, value, is_async, true) orelse {
             const blob = value.as(jsc.WebCore.Blob) orelse return null;
             if (allow_file and blob.needsToReadFile()) {
                 return global.throwInvalidArguments("File blob cannot be used here", .{});
+            }
+
+            if (is_async) {
+                // For async/cross-thread usage, copy the blob data to an owned slice
+                // rather than referencing the store which isn't thread-safe
+                const blob_data = blob.sharedView();
+                const owned_data = allocator.dupe(u8, blob_data) catch return error.OutOfMemory;
+                return .{ .string_or_buffer = .{ .encoded_slice = jsc.ZigString.Slice.init(allocator, owned_data) } };
             }
 
             if (blob.store) |store| {
@@ -63,19 +71,23 @@ pub const BlobOrStringOrBuffer = union(enum) {
         return .{ .string_or_buffer = str };
     }
 
+    pub fn fromJSMaybeFile(global: *jsc.JSGlobalObject, allocator: std.mem.Allocator, value: jsc.JSValue, allow_file: bool) JSError!?BlobOrStringOrBuffer {
+        return fromJSMaybeFileMaybeAsync(global, allocator, value, allow_file, false);
+    }
+
     pub fn fromJS(global: *jsc.JSGlobalObject, allocator: std.mem.Allocator, value: jsc.JSValue) JSError!?BlobOrStringOrBuffer {
         return fromJSMaybeFile(global, allocator, value, true);
     }
 
+    pub fn fromJSAsync(global: *jsc.JSGlobalObject, allocator: std.mem.Allocator, value: jsc.JSValue) JSError!?BlobOrStringOrBuffer {
+        return fromJSMaybeFileMaybeAsync(global, allocator, value, true, true);
+    }
+
     pub fn fromJSWithEncodingValue(global: *jsc.JSGlobalObject, allocator: std.mem.Allocator, value: jsc.JSValue, encoding_value: jsc.JSValue) bun.JSError!?BlobOrStringOrBuffer {
-        return fromJSWithEncodingValueMaybeAsync(global, allocator, value, encoding_value, false);
+        return fromJSWithEncodingValueAllowRequestResponse(global, allocator, value, encoding_value, false);
     }
 
-    pub fn fromJSWithEncodingValueMaybeAsync(global: *jsc.JSGlobalObject, allocator: std.mem.Allocator, value: jsc.JSValue, encoding_value: jsc.JSValue, is_async: bool) bun.JSError!?BlobOrStringOrBuffer {
-        return fromJSWithEncodingValueMaybeAsyncAllowRequestResponse(global, allocator, value, encoding_value, is_async, false);
-    }
-
-    pub fn fromJSWithEncodingValueMaybeAsyncAllowRequestResponse(global: *jsc.JSGlobalObject, allocator: std.mem.Allocator, value: jsc.JSValue, encoding_value: jsc.JSValue, is_async: bool, allow_request_response: bool) bun.JSError!?BlobOrStringOrBuffer {
+    pub fn fromJSWithEncodingValueAllowRequestResponse(global: *jsc.JSGlobalObject, allocator: std.mem.Allocator, value: jsc.JSValue, encoding_value: jsc.JSValue, allow_request_response: bool) bun.JSError!?BlobOrStringOrBuffer {
         switch (value.jsType()) {
             .DOMWrapper => {
                 if (value.as(jsc.WebCore.Blob)) |blob| {
@@ -116,7 +128,7 @@ pub const BlobOrStringOrBuffer = union(enum) {
         }
 
         const allow_string_object = true;
-        return .{ .string_or_buffer = try StringOrBuffer.fromJSWithEncodingValueMaybeAsync(global, allocator, value, encoding_value, is_async, allow_string_object) orelse return null };
+        return .{ .string_or_buffer = try StringOrBuffer.fromJSWithEncodingValueAllowStringObject(global, allocator, value, encoding_value, allow_string_object) orelse return null };
     }
 };
 
@@ -132,8 +144,9 @@ pub const StringOrBuffer = union(enum) {
         switch (this.*) {
             .string => {
                 this.string.toThreadSafe();
+                const str = this.string;
                 this.* = .{
-                    .threadsafe_string = this.string,
+                    .threadsafe_string = str,
                 };
             },
             .threadsafe_string => {},
@@ -223,10 +236,9 @@ pub const StringOrBuffer = union(enum) {
                 if (!allow_string_object and str_type != .String) {
                     return null;
                 }
-                const str = try bun.String.fromJS(value, global);
-
+                var str = try bun.String.fromJS(value, global);
+                defer str.deref();
                 if (is_async) {
-                    defer str.deref();
                     var possible_clone = str;
                     var sliced = try possible_clone.toThreadSafeSlice(allocator);
                     sliced.reportExtraMemory(global.vm());
@@ -255,7 +267,15 @@ pub const StringOrBuffer = union(enum) {
             .BigInt64Array,
             .BigUint64Array,
             .DataView,
-            => .{ .buffer = Buffer.fromArrayBuffer(global, value) },
+            => {
+                const buffer = Buffer.fromArrayBuffer(global, value);
+
+                if (is_async) {
+                    buffer.buffer.value.protect();
+                }
+
+                return .{ .buffer = buffer };
+            },
             else => null,
         };
     }
@@ -270,7 +290,11 @@ pub const StringOrBuffer = union(enum) {
 
     pub fn fromJSWithEncodingMaybeAsync(global: *jsc.JSGlobalObject, allocator: std.mem.Allocator, value: jsc.JSValue, encoding: Encoding, is_async: bool, allow_string_object: bool) bun.JSError!?StringOrBuffer {
         if (value.isCell() and value.jsType().isArrayBufferLike()) {
-            return .{ .buffer = Buffer.fromTypedArray(global, value) };
+            const buffer = Buffer.fromArrayBuffer(global, value);
+            if (is_async) {
+                buffer.buffer.value.protect();
+            }
+            return .{ .buffer = buffer };
         }
 
         if (encoding == .utf8) {
@@ -303,13 +327,14 @@ pub const StringOrBuffer = union(enum) {
         return fromJSWithEncoding(global, allocator, value, encoding);
     }
 
-    pub fn fromJSWithEncodingValueMaybeAsync(global: *jsc.JSGlobalObject, allocator: std.mem.Allocator, value: jsc.JSValue, encoding_value: jsc.JSValue, maybe_async: bool, allow_string_object: bool) bun.JSError!?StringOrBuffer {
+    pub fn fromJSWithEncodingValueAllowStringObject(global: *jsc.JSGlobalObject, allocator: std.mem.Allocator, value: jsc.JSValue, encoding_value: jsc.JSValue, allow_string_object: bool) bun.JSError!?StringOrBuffer {
         const encoding: Encoding = brk: {
             if (!encoding_value.isCell())
                 break :brk .utf8;
             break :brk try Encoding.fromJS(encoding_value, global) orelse .utf8;
         };
-        return fromJSWithEncodingMaybeAsync(global, allocator, value, encoding, maybe_async, allow_string_object);
+        const is_async = false;
+        return fromJSWithEncodingMaybeAsync(global, allocator, value, encoding, is_async, allow_string_object);
     }
 };
 
@@ -383,7 +408,7 @@ pub const Encoding = enum(u8) {
     }
 
     pub fn throwEncodingError(globalObject: *jsc.JSGlobalObject, value: jsc.JSValue) bun.JSError {
-        return globalObject.ERR(.INVALID_ARG_VALUE, "encoding '{}' is an invalid encoding", .{value.fmtString(globalObject)}).throw();
+        return globalObject.ERR(.INVALID_ARG_VALUE, "encoding '{f}' is an invalid encoding", .{value.fmtString(globalObject)}).throw();
     }
 
     pub fn encodeWithSize(encoding: Encoding, globalObject: *jsc.JSGlobalObject, comptime size: usize, input: *const [size]u8) bun.JSError!jsc.JSValue {
@@ -403,8 +428,8 @@ pub const Encoding = enum(u8) {
                 var buf: [size * 4]u8 = undefined;
                 const out = std.fmt.bufPrint(
                     &buf,
-                    "{}",
-                    .{std.fmt.fmtSliceHexLower(input)},
+                    "{x}",
+                    .{input},
                 ) catch |err| switch (err) {
                     error.NoSpaceLeft => unreachable,
                 };
@@ -415,11 +440,7 @@ pub const Encoding = enum(u8) {
                 return jsc.ArrayBuffer.createBuffer(globalObject, input);
             },
             inline else => |enc| {
-                const res = jsc.WebCore.encoding.toStringComptime(input, globalObject, enc);
-                if (res.isError()) {
-                    return globalObject.throwValue(res);
-                }
-                return res;
+                return try jsc.WebCore.encoding.toStringComptime(input, globalObject, enc);
             },
         }
     }
@@ -436,7 +457,7 @@ pub const Encoding = enum(u8) {
                 const encoded_len = bun.base64.encode(&base64_buf, input);
                 var encoded, const bytes = bun.String.createUninitialized(.latin1, encoded_len);
                 @memcpy(@constCast(bytes), base64_buf[0..encoded_len]);
-                return encoded.transferToJS(globalObject);
+                return try encoded.transferToJS(globalObject);
             },
             .base64url => {
                 var buf: [std.base64.url_safe_no_pad.Encoder.calcSize(max_size * 4)]u8 = undefined;
@@ -448,8 +469,8 @@ pub const Encoding = enum(u8) {
                 var buf: [max_size * 4]u8 = undefined;
                 const out = std.fmt.bufPrint(
                     &buf,
-                    "{}",
-                    .{std.fmt.fmtSliceHexLower(input)},
+                    "{x}",
+                    .{input},
                 ) catch |err| switch (err) {
                     error.NoSpaceLeft => unreachable,
                 };
@@ -460,12 +481,7 @@ pub const Encoding = enum(u8) {
                 return jsc.ArrayBuffer.createBuffer(globalObject, input);
             },
             inline else => |enc| {
-                const res = jsc.WebCore.encoding.toStringComptime(input, globalObject, enc);
-                if (res.isError()) {
-                    return globalObject.throwValue(res);
-                }
-
-                return res;
+                return try jsc.WebCore.encoding.toStringComptime(input, globalObject, enc);
             },
         }
     }
@@ -536,9 +552,8 @@ pub const PathLike = union(enum) {
         switch (this.*) {
             .slice_with_underlying_string => {
                 this.slice_with_underlying_string.toThreadSafe();
-                this.* = .{
-                    .threadsafe_string = this.slice_with_underlying_string,
-                };
+                const slice_with_underlying_string = this.slice_with_underlying_string;
+                this.* = .{ .threadsafe_string = slice_with_underlying_string };
             },
             .buffer => {
                 this.buffer.buffer.value.protect();
@@ -572,12 +587,12 @@ pub const PathLike = union(enum) {
             if (std.fs.path.isAbsolute(sliced)) {
                 if (sliced.len > 2 and bun.path.isDriveLetter(sliced[0]) and sliced[1] == ':' and bun.path.isSepAny(sliced[2])) {
                     // Add the long path syntax. This affects most of node:fs
-                    const drive_resolve_buf = bun.path_buffer_pool.get();
-                    defer bun.path_buffer_pool.put(drive_resolve_buf);
-                    const rest = path_handler.PosixToWinNormalizer.resolveCWDWithExternalBufZ(drive_resolve_buf, sliced) catch @panic("Error while resolving path.");
+                    // Normalize the path directly into buf without an intermediate
+                    // buffer. The input (sliced) already has a drive letter, so
+                    // resolveCWDWithExternalBufZ would just memcpy it, making the
+                    // temporary allocation unnecessary.
                     buf[0..4].* = bun.windows.long_path_prefix_u8;
-                    // When long path syntax is used, the entire string should be normalized
-                    const n = bun.path.normalizeBuf(rest, buf[4..], .windows).len;
+                    const n = bun.path.normalizeBuf(sliced, buf[4..], .windows).len;
                     buf[4 + n] = 0;
                     return buf[0 .. 4 + n :0];
                 }
@@ -596,6 +611,14 @@ pub const PathLike = union(enum) {
             if (sliced[sliced.len - 1] == 0) {
                 return sliced[0 .. sliced.len - 1 :0];
             }
+        }
+
+        if (sliced.len >= buf.len) {
+            bun.Output.debugWarn("path too long: {d} bytes exceeds PathBuffer capacity of {d}\n", .{ sliced.len, buf.len });
+            if (comptime !force) return "";
+
+            buf[0] = 0;
+            return buf[0..0 :0];
         }
 
         @memcpy(buf[0..sliced.len], sliced);
@@ -624,10 +647,19 @@ pub const PathLike = union(enum) {
             const s = this.slice();
             const b = bun.path_buffer_pool.get();
             defer bun.path_buffer_pool.put(b);
+            // Device paths (\\.\, \\?\) and NT object paths (\??\) should not be normalized
+            // because the "." in \\.\pipe\name would be incorrectly stripped as a "current directory" component.
+            if (s.len >= 4 and bun.path.isSepAny(s[0]) and bun.path.isSepAny(s[1]) and (s[2] == '.' or s[2] == '?') and bun.path.isSepAny(s[3])) {
+                return strings.toKernel32Path(@alignCast(std.mem.bytesAsSlice(u16, buf)), s);
+            }
             if (s.len > 0 and bun.path.isSepAny(s[0])) {
                 const resolve = path_handler.PosixToWinNormalizer.resolveCWDWithExternalBuf(buf, s) catch @panic("Error while resolving path.");
                 const normal = path_handler.normalizeBuf(resolve, b, .windows);
                 return strings.toKernel32Path(@alignCast(std.mem.bytesAsSlice(u16, buf)), normal);
+            }
+            // Handle "." specially since normalizeStringBuf strips it to an empty string
+            if (s.len == 1 and s[0] == '.') {
+                return strings.toKernel32Path(@alignCast(std.mem.bytesAsSlice(u16, buf)), ".");
             }
             const normal = path_handler.normalizeStringBuf(s, b, true, .windows, false);
             return strings.toKernel32Path(@alignCast(std.mem.bytesAsSlice(u16, buf)), normal);
@@ -672,7 +704,7 @@ pub const PathLike = union(enum) {
 
                 arguments.eat();
 
-                return try fromBunString(ctx, str, arguments.will_be_async, allocator);
+                return try fromBunString(ctx, &str, arguments.will_be_async, allocator);
             },
             else => {
                 if (arg.as(jsc.DOMURL)) |domurl| {
@@ -693,7 +725,7 @@ pub const PathLike = union(enum) {
                     }
                     arguments.eat();
 
-                    return try fromBunString(ctx, str, arguments.will_be_async, allocator);
+                    return try fromBunString(ctx, &str, arguments.will_be_async, allocator);
                 }
 
                 return null;
@@ -701,13 +733,14 @@ pub const PathLike = union(enum) {
         }
     }
 
-    pub fn fromBunString(global: *jsc.JSGlobalObject, str: bun.String, will_be_async: bool, allocator: std.mem.Allocator) !PathLike {
-        try Valid.pathStringLength(str.length(), global);
-
+    pub fn fromBunString(global: *jsc.JSGlobalObject, str: *bun.String, will_be_async: bool, allocator: std.mem.Allocator) !PathLike {
         if (will_be_async) {
             var sliced = try str.toThreadSafeSlice(allocator);
             errdefer sliced.deinit();
 
+            // Validate the UTF-8 byte length after conversion, since the path
+            // will be stored in a fixed-size PathBuffer.
+            try Valid.pathStringLength(sliced.slice().len, global);
             try Valid.pathNullBytes(sliced.slice(), global);
 
             sliced.reportExtraMemory(global.vm());
@@ -718,13 +751,15 @@ pub const PathLike = union(enum) {
             return .{ .threadsafe_string = sliced };
         } else {
             var sliced = str.toSlice(allocator);
-            errdefer if (!sliced.isWTFAllocated()) sliced.deinit();
+            errdefer sliced.deinit();
 
+            // Validate the UTF-8 byte length after conversion, since the path
+            // will be stored in a fixed-size PathBuffer.
+            try Valid.pathStringLength(sliced.slice().len, global);
             try Valid.pathNullBytes(sliced.slice(), global);
 
             // Costs nothing to keep both around.
             if (sliced.isWTFAllocated()) {
-                str.ref();
                 return .{ .slice_with_underlying_string = sliced };
             }
 
@@ -783,14 +818,14 @@ pub const Valid = struct {
 
     pub fn pathNullBytes(slice: []const u8, global: *jsc.JSGlobalObject) bun.JSError!void {
         if (bun.strings.indexOfChar(slice, 0) != null) {
-            return global.ERR(.INVALID_ARG_VALUE, "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received {}", .{bun.fmt.quote(slice)}).throw();
+            return global.ERR(.INVALID_ARG_VALUE, "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received {f}", .{bun.fmt.quote(slice)}).throw();
         }
     }
 };
 
 pub const VectorArrayBuffer = struct {
     value: jsc.JSValue,
-    buffers: std.ArrayList(bun.PlatformIOVec),
+    buffers: std.array_list.Managed(bun.PlatformIOVec),
 
     pub fn toJS(this: VectorArrayBuffer, _: *jsc.JSGlobalObject) jsc.JSValue {
         return this.value;
@@ -801,7 +836,7 @@ pub const VectorArrayBuffer = struct {
             return globalObject.throwInvalidArguments("Expected ArrayBufferView[]", .{});
         }
 
-        var bufferlist = std.ArrayList(bun.PlatformIOVec).init(allocator);
+        var bufferlist = std.array_list.Managed(bun.PlatformIOVec).init(allocator);
         var i: usize = 0;
         const len = try val.getLength(globalObject);
         bun.handleOom(bufferlist.ensureTotalCapacityPrecise(len));
@@ -852,7 +887,7 @@ pub fn modeFromJS(ctx: *jsc.JSGlobalObject, value: jsc.JSValue) bun.JSError!?Mod
         break :brk std.fmt.parseInt(Mode, slice, 8) catch {
             var formatter = bun.jsc.ConsoleObject.Formatter{ .globalThis = ctx };
             defer formatter.deinit();
-            return ctx.throwValue(ctx.ERR(.INVALID_ARG_VALUE, "The argument 'mode' must be a 32-bit unsigned integer or an octal string. Received {}", .{value.toFmt(&formatter)}).toJS());
+            return ctx.throwValue(ctx.ERR(.INVALID_ARG_VALUE, "The argument 'mode' must be a 32-bit unsigned integer or an octal string. Received {f}", .{value.toFmt(&formatter)}).toJS());
         };
     };
 
@@ -900,10 +935,7 @@ pub const PathOrFileDescriptor = union(Tag) {
         };
     }
 
-    pub fn format(this: jsc.Node.PathOrFileDescriptor, comptime fmt: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        if (fmt.len != 0 and fmt[0] != 's') {
-            @compileError("Unsupported format argument: '" ++ fmt ++ "'.");
-        }
+    pub fn format(this: jsc.Node.PathOrFileDescriptor, writer: *std.Io.Writer) !void {
         switch (this) {
             .path => |p| try writer.writeAll(p.slice()),
             .fd => |fd| try writer.print("{}", .{fd}),
@@ -1021,7 +1053,15 @@ pub const FileSystemFlags = enum(c_int) {
                 return ctx.throwValue(ctx.ERR(.OUT_OF_RANGE, "The value of \"flags\" is out of range. It must be an integer. Received {d}", .{val.asNumber()}).toJS());
             }
             const number = try val.coerce(i32, ctx);
-            return @as(FileSystemFlags, @enumFromInt(@max(number, 0)));
+            const flags = @max(number, 0);
+            // On Windows, numeric flags from fs.constants (e.g. O_CREAT=0x100)
+            // use the platform's native MSVC/libuv values which differ from the
+            // internal bun.O representation. Convert them here so downstream
+            // code that operates on bun.O flags works correctly.
+            if (comptime bun.Environment.isWindows) {
+                return @as(FileSystemFlags, @enumFromInt(bun.windows.libuv.O.toBunO(flags)));
+            }
+            return @as(FileSystemFlags, @enumFromInt(flags));
         }
 
         const jsType = val.jsType();
@@ -1032,7 +1072,7 @@ pub const FileSystemFlags = enum(c_int) {
             }
             // it's definitely wrong when the string is super long
             else if (str.len > 12) {
-                return ctx.throwInvalidArguments("Invalid flag '{any}'. Learn more at https://nodejs.org/api/fs.html#fs_file_system_flags", .{str});
+                return ctx.throwInvalidArguments("Invalid flag '{f}'. Learn more at https://nodejs.org/api/fs.html#fs_file_system_flags", .{str});
             }
 
             const flags: i32 = brk: {
@@ -1056,7 +1096,7 @@ pub const FileSystemFlags = enum(c_int) {
 
                 break :brk map.getWithEql(str, jsc.ZigString.eqlComptime) orelse break :brk null;
             } orelse {
-                return ctx.throwInvalidArguments("Invalid flag '{any}'. Learn more at https://nodejs.org/api/fs.html#fs_file_system_flags", .{str});
+                return ctx.throwInvalidArguments("Invalid flag '{f}'. Learn more at https://nodejs.org/api/fs.html#fs_file_system_flags", .{str});
             };
 
             return @enumFromInt(flags);

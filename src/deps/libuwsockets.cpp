@@ -138,9 +138,12 @@ extern "C"
 
   extern "C" void uws_res_clear_corked_socket(us_loop_t *loop) {
     uWS::LoopData *loopData = uWS::Loop::data(loop);
-    void *corkedSocket = loopData->getCorkedSocket();
-    if (corkedSocket) {
-        if (loopData->isCorkedSSL()) {
+    /* Drain any leftover corks. Two slots max. */
+    for (int i = 0; i < 2; i++) {
+        bool ssl;
+        void *corkedSocket = loopData->getAnyCorkedSocket(&ssl);
+        if (!corkedSocket) break;
+        if (ssl) {
             ((uWS::AsyncSocket<true> *) corkedSocket)->uncork();
         } else {
             ((uWS::AsyncSocket<false> *) corkedSocket)->uncork();
@@ -1376,7 +1379,7 @@ extern "C"
     {
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
       if (*length < 16 * 1024 && *length > 0) {
-        if (uwsRes->canCork()) {
+        if (!uwsRes->uWS::AsyncSocket<true>::isCorked()) {
           uwsRes->uWS::AsyncSocket<true>::cork();
         }
       }
@@ -1384,7 +1387,7 @@ extern "C"
     }
     uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
     if (*length < 16 * 1024 && *length > 0) {
-        if (uwsRes->canCork()) {
+        if (!uwsRes->uWS::AsyncSocket<false>::isCorked()) {
           uwsRes->uWS::AsyncSocket<false>::cork();
         }
       }
@@ -1700,7 +1703,8 @@ size_t uws_req_get_header(uws_req_t *res, const char *lower_case_header,
   void us_socket_mark_needs_more_not_ssl(uws_res_r res)
   {
     us_socket_r s = (us_socket_t *)res;
-    s->context->loop->data.last_write_failed = 1;
+    if(us_socket_is_closed(s->flags.is_tls, s)) return;
+    s->flags.last_write_failed = 1;
     us_poll_change(&s->p, s->context->loop,
                    LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
   }
@@ -1864,7 +1868,8 @@ __attribute__((callback (corker, ctx)))
   }
 
   void us_socket_sendfile_needs_more(us_socket_r s) {
-    s->context->loop->data.last_write_failed = 1;
+    if(us_socket_is_closed(s->flags.is_tls, s)) return;
+    s->flags.last_write_failed = 1;
     us_poll_change(&s->p, s->context->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
   }
 

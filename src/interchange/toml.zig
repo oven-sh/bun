@@ -1,6 +1,6 @@
 const HashMapPool = struct {
     const HashMap = std.HashMap(u64, void, IdentityContext, 80);
-    const LinkedList = std.SinglyLinkedList(HashMap);
+    const LinkedList = bun.deprecated.SinglyLinkedList(HashMap);
     threadlocal var list: LinkedList = undefined;
     threadlocal var loaded: bool = false;
 
@@ -32,12 +32,14 @@ pub const TOML = struct {
     lexer: Lexer,
     log: *logger.Log,
     allocator: std.mem.Allocator,
+    stack_check: bun.StackCheck,
 
     pub fn init(allocator: std.mem.Allocator, source_: logger.Source, log: *logger.Log, redact_logs: bool) !TOML {
         return TOML{
             .lexer = try Lexer.init(log, source_, allocator, redact_logs),
             .allocator = allocator,
             .log = log,
+            .stack_check = bun.StackCheck.init(),
         };
     }
 
@@ -230,6 +232,10 @@ pub const TOML = struct {
     }
 
     pub fn parseValue(p: *TOML) anyerror!Expr {
+        if (!p.stack_check.isSafeToRecurse()) {
+            try bun.throwStackOverflow();
+        }
+
         const loc = p.lexer.loc();
 
         p.lexer.allow_double_bracket = true;

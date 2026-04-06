@@ -65,7 +65,7 @@ fn encodeLatin1(this: *TextEncoderStreamEncoder, globalObject: *JSGlobalObject, 
     // 278.00 ms   13.0%    278.00 ms           simdutf::arm64::implementation::utf8_length_from_latin1(char const*, unsigned long) const
     //
     //
-    var buffer = std.ArrayList(u8).initCapacity(bun.default_allocator, input.len + prepend_replacement_len) catch {
+    var buffer = std.array_list.Managed(u8).initCapacity(bun.default_allocator, input.len + prepend_replacement_len) catch {
         return globalObject.throwOutOfMemoryValue();
     };
     if (prepend_replacement_len > 0) {
@@ -101,7 +101,7 @@ fn encodeLatin1(this: *TextEncoderStreamEncoder, globalObject: *JSGlobalObject, 
 }
 
 fn encodeUTF16(this: *TextEncoderStreamEncoder, globalObject: *JSGlobalObject, input: []const u16) JSValue {
-    log("encodeUTF16: \"{}\"", .{bun.fmt.utf16(input)});
+    log("encodeUTF16: \"{f}\"", .{bun.fmt.utf16(input)});
 
     if (input.len == 0) return JSUint8Array.createEmpty(globalObject);
 
@@ -148,7 +148,7 @@ fn encodeUTF16(this: *TextEncoderStreamEncoder, globalObject: *JSGlobalObject, i
 
     const length = bun.simdutf.length.utf8.from.utf16.le(remain);
 
-    var buf = std.ArrayList(u8).initCapacity(
+    var buf = std.array_list.Managed(u8).initCapacity(
         bun.default_allocator,
         length + @as(usize, if (prepend) |pre| pre.len else 0),
     ) catch {

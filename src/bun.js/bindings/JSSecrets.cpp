@@ -246,13 +246,13 @@ void Bun__SecretsJobOptions__runTask(SecretsJobOptions* opts, JSGlobalObject* gl
         auto result = Secrets::getPassword(opts->service, opts->name, opts->error);
         if (result.has_value()) {
             // Store as String for main thread (String is thread-safe to construct from CString)
-            opts->resultPassword = WTFMove(result.value());
+            opts->resultPassword = WTF::move(result.value());
         }
         break;
     }
 
     case SecretsJobOptions::SET:
-        opts->error = Secrets::setPassword(opts->service, opts->name, WTFMove(opts->password), opts->allowUnrestrictedAccess);
+        opts->error = Secrets::setPassword(opts->service, opts->name, WTF::move(opts->password), opts->allowUnrestrictedAccess);
         break;
 
     case SecretsJobOptions::DELETE_OP:
@@ -273,22 +273,22 @@ void Bun__SecretsJobOptions__runFromJS(SecretsJobOptions* opts, JSGlobalObject* 
         if (opts->error.type == Secrets::ErrorType::NotFound) {
             if (opts->op == SecretsJobOptions::GET) {
                 // For GET operations, NotFound resolves with null
-                RELEASE_AND_RETURN(scope, promise->resolve(global, jsNull()));
+                RELEASE_AND_RETURN(scope, promise->resolve(global, vm, jsNull()));
             } else if (opts->op == SecretsJobOptions::DELETE_OP) {
                 // For DELETE_OP operations, NotFound means we return false
-                RELEASE_AND_RETURN(scope, promise->resolve(global, jsBoolean(false)));
+                RELEASE_AND_RETURN(scope, promise->resolve(global, vm, jsBoolean(false)));
             }
         }
         JSValue error = opts->error.toJS(vm, global);
         RETURN_IF_EXCEPTION(scope, );
-        RELEASE_AND_RETURN(scope, promise->reject(global, error));
+        RELEASE_AND_RETURN(scope, promise->reject(vm, global, error));
     } else {
         // Success cases
         JSValue result;
         switch (opts->op) {
         case SecretsJobOptions::GET:
             if (opts->resultPassword.has_value()) {
-                auto resultPassword = WTFMove(opts->resultPassword.value());
+                auto resultPassword = WTF::move(opts->resultPassword.value());
                 result = jsString(vm, String::fromUTF8(resultPassword.span()));
                 RETURN_IF_EXCEPTION(scope, );
                 memsetSpan(resultPassword.mutableSpan(), 0);
@@ -306,7 +306,7 @@ void Bun__SecretsJobOptions__runFromJS(SecretsJobOptions* opts, JSGlobalObject* 
             break;
         }
         RETURN_IF_EXCEPTION(scope, );
-        RELEASE_AND_RETURN(scope, promise->resolve(global, result));
+        RELEASE_AND_RETURN(scope, promise->resolve(global, vm, result));
     }
 }
 

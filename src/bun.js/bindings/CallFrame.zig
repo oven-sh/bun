@@ -102,7 +102,7 @@ pub const CallFrame = opaque {
             number: f64, // double
             integer: i64, // integer
         };
-        const registers: [*]const Register = @alignCast(@ptrCast(self));
+        const registers: [*]const Register = @ptrCast(@alignCast(self));
         // argumentCountIncludingThis takes the register at the defined offset, then
         // calls 'ALWAYS_INLINE int32_t Register::unboxedInt32() const',
         // which in turn calls 'ALWAYS_INLINE int32_t Register::payload() const'
@@ -150,7 +150,7 @@ pub const CallFrame = opaque {
         const slice = self.arguments();
         comptime bun.assert(max <= 15);
         return switch (@as(u4, @min(slice.len, max))) {
-            0 => .{ .ptr = undefined, .len = 0 },
+            0 => .{ .ptr = @splat(.zero), .len = 0 },
             inline 1...15 => |count| Arguments(max).init(comptime @min(count, max), slice.ptr),
         };
     }

@@ -102,6 +102,12 @@ enum {
     LIBUS_SOCKET_IPV6_ONLY = 8,
     LIBUS_LISTEN_REUSE_ADDR = 16,
     LIBUS_LISTEN_DISALLOW_REUSE_PORT_FAILURE = 32,
+    /* Ask the kernel to defer accept() until the client has sent data (TCP_DEFER_ACCEPT on
+     * Linux, SO_ACCEPTFILTER "dataready" on FreeBSD). When set, accepted sockets are
+     * dispatched as readable immediately, skipping a round-trip through the event loop.
+     * Safe for HTTP/TLS where the client always sends first; do not use for protocols where
+     * the server sends the first bytes. */
+    LIBUS_LISTEN_DEFER_ACCEPT = 64,
 };
 
 /* Library types publicly available */
@@ -125,6 +131,10 @@ struct us_cert_string_t {
 /* Peeks data and length of UDP payload */
 char *us_udp_packet_buffer_payload(struct us_udp_packet_buffer_t *buf, int index);
 int us_udp_packet_buffer_payload_length(struct us_udp_packet_buffer_t *buf, int index);
+
+/* Returns 1 if the received datagram was truncated (larger than recv buffer),
+ * 0 otherwise. Backed by MSG_TRUNC in msg_hdr.msg_flags on POSIX. */
+int us_udp_packet_buffer_truncated(struct us_udp_packet_buffer_t *buf, int index);
 
 /* Copies out local (received destination) ip (4 or 16 bytes) of received packet */
 int us_udp_packet_buffer_local_ip(struct us_udp_packet_buffer_t *buf, int index, char *ip);
@@ -155,7 +165,7 @@ struct us_udp_packet_buffer_t *us_create_udp_packet_buffer();
 
 //struct us_udp_socket_t *us_create_udp_socket(us_loop_r loop, void (*data_cb)(struct us_udp_socket_t *, struct us_udp_packet_buffer_t *, int), void (*drain_cb)(struct us_udp_socket_t *), char *host, unsigned short port);
 
-struct us_udp_socket_t *us_create_udp_socket(us_loop_r loop, void (*data_cb)(struct us_udp_socket_t *, void *, int), void (*drain_cb)(struct us_udp_socket_t *), void (*close_cb)(struct us_udp_socket_t *), const char *host, unsigned short port, int flags, int *err, void *user);
+struct us_udp_socket_t *us_create_udp_socket(us_loop_r loop, void (*data_cb)(struct us_udp_socket_t *, void *, int), void (*drain_cb)(struct us_udp_socket_t *), void (*close_cb)(struct us_udp_socket_t *), void (*recv_error_cb)(struct us_udp_socket_t *, int), const char *host, unsigned short port, int flags, int *err, void *user);
 
 void us_udp_socket_close(struct us_udp_socket_t *s);
 
@@ -349,7 +359,7 @@ struct us_loop_t *us_socket_context_loop(int ssl, us_socket_context_r context) n
 
 /* Invalidates passed socket, returning a new resized socket which belongs to a different socket context.
  * Used mainly for "socket upgrades" such as when transitioning from HTTP to WebSocket. */
-struct us_socket_t *us_socket_context_adopt_socket(int ssl, us_socket_context_r context, us_socket_r s, int ext_size);
+struct us_socket_t *us_socket_context_adopt_socket(int ssl, us_socket_context_r context, us_socket_r s, int old_ext_size, int ext_size);
 
 struct us_socket_t *us_socket_upgrade_to_tls(us_socket_r s, us_socket_context_r new_context, const char *sni);
 
@@ -411,7 +421,7 @@ void *us_poll_ext(us_poll_r p) nonnull_fn_decl;
 LIBUS_SOCKET_DESCRIPTOR us_poll_fd(us_poll_r p) nonnull_fn_decl;
 
 /* Resize an active poll */
-struct us_poll_t *us_poll_resize(us_poll_r p, us_loop_r loop, unsigned int ext_size) nonnull_fn_decl;
+struct us_poll_t *us_poll_resize(us_poll_r p, us_loop_r loop, unsigned int old_ext_size, unsigned int ext_size) nonnull_fn_decl;
 
 /* Public interfaces for sockets */
 
@@ -457,6 +467,12 @@ int us_socket_is_shut_down(int ssl, us_socket_r s) nonnull_fn_decl;
 /* Returns whether this socket has been closed. Only valid if memory has not yet been released. */
 int us_socket_is_closed(int ssl, us_socket_r s) nonnull_fn_decl;
 
+/* Returns 1 if the TLS handshake has completed, 0 otherwise. For non-SSL sockets, always returns 1. */
+int us_socket_is_ssl_handshake_finished(int ssl, us_socket_r s) nonnull_fn_decl;
+
+/* Returns 1 if the TLS handshake callback has been invoked, 0 otherwise. For non-SSL sockets, always returns 1. */
+int us_socket_ssl_handshake_callback_has_fired(int ssl, us_socket_r s) nonnull_fn_decl;
+
 /* Immediately closes the socket */
 struct us_socket_t *us_socket_close(int ssl, us_socket_r s, int code, void *reason) __attribute__((nonnull(2)));
 
@@ -470,7 +486,7 @@ void us_socket_local_address(int ssl, us_socket_r s, char *nonnull_arg buf, int 
 /* Bun extras */
 struct us_socket_t *us_socket_pair(struct us_socket_context_t *ctx, int socket_ext_size, LIBUS_SOCKET_DESCRIPTOR* fds);
 struct us_socket_t *us_socket_from_fd(struct us_socket_context_t *ctx, int socket_ext_size, LIBUS_SOCKET_DESCRIPTOR fd, int ipc);
-struct us_socket_t *us_socket_wrap_with_tls(int ssl, us_socket_r s, struct us_bun_socket_context_options_t options, struct us_socket_events_t events, int socket_ext_size);
+struct us_socket_t *us_socket_wrap_with_tls(int ssl, us_socket_r s, struct us_bun_socket_context_options_t options, struct us_socket_events_t events, int old_socket_ext_size, int socket_ext_size);
 int us_socket_raw_write(int ssl, us_socket_r s, const char *data, int length);
 struct us_socket_t* us_socket_open(int ssl, struct us_socket_t * s, int is_client, char* ip, int ip_length);
 int us_raw_root_certs(struct us_cert_string_t**out);

@@ -218,7 +218,7 @@ pub fn CowSliceZ(T: type, comptime sentinel: ?T) type {
             }
         }
 
-        pub fn format(str: Self, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(str: Self, writer: *std.Io.Writer) !void {
             return try writer.writeAll(str.slice());
         }
 

@@ -31,8 +31,10 @@ tree_shaking: bool = false,
 known_target: options.Target,
 module_type: options.ModuleType = .unknown,
 emit_decorator_metadata: bool = false,
+experimental_decorators: bool = false,
 ctx: *BundleV2,
 package_version: string = "",
+package_name: string = "",
 is_entry_point: bool = false,
 
 const ParseTaskStage = union(enum) {
@@ -83,6 +85,9 @@ pub const Result = struct {
         content_hash_for_additional_file: u64 = 0,
 
         loader: Loader,
+
+        /// The package name from package.json, used for barrel optimization.
+        package_name: string = "",
     };
 
     pub const Error = struct {
@@ -117,8 +122,10 @@ pub fn init(resolve_result: *const _resolver.Result, source_index: Index, ctx: *
         .jsx = resolve_result.jsx,
         .source_index = source_index,
         .module_type = resolve_result.module_type,
-        .emit_decorator_metadata = resolve_result.emit_decorator_metadata,
+        .emit_decorator_metadata = resolve_result.flags.emit_decorator_metadata,
+        .experimental_decorators = resolve_result.flags.experimental_decorators,
         .package_version = if (resolve_result.package_json) |package_json| package_json.version else "",
+        .package_name = if (resolve_result.package_json) |package_json| package_json.name else "",
         .known_target = ctx.transpiler.options.target,
     };
 }
@@ -360,12 +367,39 @@ fn getAST(
             const root = try YAML.parse(source, &temp_log, allocator);
             return JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, &temp_log, root, source, "")).?);
         },
+        .json5 => {
+            const trace = bun.perf.trace("Bundler.ParseJSON5");
+            defer trace.end();
+            var temp_log = bun.logger.Log.init(allocator);
+            defer {
+                bun.handleOom(temp_log.cloneToWithRecycled(log, true));
+                temp_log.msgs.clearAndFree();
+            }
+            const root = try JSON5.parse(source, &temp_log, allocator);
+            return JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, &temp_log, root, source, "")).?);
+        },
         .text => {
             const root = Expr.init(E.String, E.String{
                 .data = source.contents,
             }, Logger.Loc{ .start = 0 });
             var ast = JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, log, root, source, "")).?);
-            ast.addUrlForCss(allocator, source, "text/plain", null);
+            ast.addUrlForCss(allocator, source, "text/plain", null, transpiler.options.compile_to_standalone_html);
+            return ast;
+        },
+        .md => {
+            const html = bun.md.renderToHtml(source.contents, allocator) catch {
+                log.addError(
+                    source,
+                    Logger.Loc.Empty,
+                    "Failed to render markdown to HTML",
+                ) catch |err| bun.handleOom(err);
+                return error.ParserError;
+            };
+            const root = Expr.init(E.String, E.String{
+                .data = html,
+            }, Logger.Loc{ .start = 0 });
+            var ast = JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, log, root, source, "")).?);
+            ast.addUrlForCss(allocator, source, "text/html", null, transpiler.options.compile_to_standalone_html);
             return ast;
         },
 
@@ -382,7 +416,7 @@ fn getAST(
             const path_to_use = brk: {
                 // Implements embedded sqlite
                 if (loader == .sqlite_embedded) {
-                    const embedded_path = std.fmt.allocPrint(allocator, "{any}A{d:0>8}", .{ bun.fmt.hexIntLower(unique_key_prefix), source.index.get() }) catch unreachable;
+                    const embedded_path = std.fmt.allocPrint(allocator, "{f}A{d:0>8}", .{ bun.fmt.hexIntLower(unique_key_prefix), source.index.get() }) catch unreachable;
                     unique_key_for_additional_file.* = .{
                         .key = embedded_path,
                         .content_hash = ContentHasher.run(source.contents),
@@ -446,7 +480,7 @@ fn getAST(
                 return error.ParserError;
             }
 
-            const unique_key = std.fmt.allocPrint(allocator, "{any}A{d:0>8}", .{ bun.fmt.hexIntLower(unique_key_prefix), source.index.get() }) catch unreachable;
+            const unique_key = std.fmt.allocPrint(allocator, "{f}A{d:0>8}", .{ bun.fmt.hexIntLower(unique_key_prefix), source.index.get() }) catch unreachable;
             // This injects the following code:
             //
             // require(unique_key)
@@ -607,7 +641,7 @@ fn getAST(
             else
                 try std.fmt.allocPrint(
                     allocator,
-                    "{any}A{d:0>8}",
+                    "{f}A{d:0>8}",
                     .{ bun.fmt.hexIntLower(unique_key_prefix), source.index.get() },
                 );
             const root = Expr.init(E.String, .{ .data = unique_key }, .{ .start = 0 });
@@ -616,7 +650,7 @@ fn getAST(
                 .content_hash = content_hash,
             };
             var ast = JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, log, root, source, "")).?);
-            ast.addUrlForCss(allocator, source, null, unique_key);
+            ast.addUrlForCss(allocator, source, null, unique_key, transpiler.options.compile_to_standalone_html);
             return ast;
         },
     }
@@ -635,6 +669,16 @@ fn getCodeForParseTaskWithoutPlugins(
         .fd => |contents| brk: {
             const trace = bun.perf.trace("Bundler.readFile");
             defer trace.end();
+
+            // Check FileMap for in-memory files first
+            if (task.ctx.file_map) |file_map| {
+                if (file_map.get(file_path.text)) |file_contents| {
+                    break :brk .{
+                        .contents = file_contents,
+                        .fd = bun.invalid_fd,
+                    };
+                }
+            }
 
             if (strings.eqlComptime(file_path.namespace, "node")) lookup_builtin: {
                 if (task.ctx.framework) |f| {
@@ -675,7 +719,7 @@ fn getCodeForParseTaskWithoutPlugins(
                             source,
                             Logger.Loc.Empty,
                             allocator,
-                            "File not found {}",
+                            "File not found {f}",
                             .{bun.fmt.quote(file_path.text)},
                         ) catch {};
                         return error.FileNotFound;
@@ -685,7 +729,7 @@ fn getCodeForParseTaskWithoutPlugins(
                             source,
                             Logger.Loc.Empty,
                             allocator,
-                            "{s} reading file: {}",
+                            "{s} reading file: {f}",
                             .{ @errorName(err), bun.fmt.quote(file_path.text) },
                         ) catch {};
                     },
@@ -833,7 +877,6 @@ const OnBeforeParsePlugin = struct {
                 @max(this.column, -1),
                 @max(this.column_end - this.column, 0),
                 if (source_line_text.len > 0) bun.handleOom(allocator.dupe(u8, source_line_text)) else null,
-                null,
             );
             var msg = Logger.Msg{ .data = .{ .location = location, .text = bun.handleOom(allocator.dupe(u8, this.message())) } };
             switch (this.level) {
@@ -854,7 +897,7 @@ const OnBeforeParsePlugin = struct {
         pub fn logFn(
             args_: ?*OnBeforeParseArguments,
             log_options_: ?*BunLogOptions,
-        ) callconv(.C) void {
+        ) callconv(.c) void {
             const args = args_ orelse return;
             const log_options = log_options_ orelse return;
             log_options.append(args.context.log, args.context.file_path.namespace);
@@ -876,15 +919,15 @@ const OnBeforeParsePlugin = struct {
         source_len: usize = 0,
         loader: Loader,
 
-        fetch_source_code_fn: *const fn (*OnBeforeParseArguments, *OnBeforeParseResult) callconv(.C) i32 = &fetchSourceCode,
+        fetch_source_code_fn: *const fn (*OnBeforeParseArguments, *OnBeforeParseResult) callconv(.c) i32 = &fetchSourceCode,
 
         user_context: ?*anyopaque = null,
-        free_user_context: ?*const fn (?*anyopaque) callconv(.C) void = null,
+        free_user_context: ?*const fn (?*anyopaque) callconv(.c) void = null,
 
         log: *const fn (
             args_: ?*OnBeforeParseArguments,
             log_options_: ?*BunLogOptions,
-        ) callconv(.C) void = &BunLogOptions.logFn,
+        ) callconv(.c) void = &BunLogOptions.logFn,
 
         pub fn getWrapper(result: *OnBeforeParseResult) *OnBeforeParseResultWrapper {
             const wrapper: *OnBeforeParseResultWrapper = @fieldParentPtr("result", result);
@@ -893,7 +936,7 @@ const OnBeforeParsePlugin = struct {
         }
     };
 
-    pub fn fetchSourceCode(args: *OnBeforeParseArguments, result: *OnBeforeParseResult) callconv(.C) i32 {
+    pub fn fetchSourceCode(args: *OnBeforeParseArguments, result: *OnBeforeParseResult) callconv(.c) i32 {
         debug("fetchSourceCode", .{});
         const this = args.context;
         if (this.log.errors > 0 or this.deferred_error != null or this.should_continue_running.* != 1) {
@@ -1161,6 +1204,7 @@ fn runWithSourceCode(
     var opts = js_parser.Parser.Options.init(task.jsx, loader);
     opts.bundle = true;
     opts.warn_about_unbundled_modules = false;
+    opts.allow_unresolved = &transpiler.options.allow_unresolved;
     opts.macro_context = &transpiler.macro_context.?;
     opts.package_version = task.package_version;
 
@@ -1175,12 +1219,16 @@ fn runWithSourceCode(
     opts.features.minify_identifiers = transpiler.options.minify_identifiers;
     opts.features.minify_keep_names = transpiler.options.keep_names;
     opts.features.minify_whitespace = transpiler.options.minify_whitespace;
-    opts.features.emit_decorator_metadata = transpiler.options.emit_decorator_metadata;
+    opts.features.emit_decorator_metadata = task.emit_decorator_metadata;
+    // emitDecoratorMetadata implies legacy/experimental decorators, as it only
+    // makes sense with TypeScript's legacy decorator system (reflect-metadata).
+    // TC39 standard decorators have their own metadata mechanism.
+    opts.features.standard_decorators = !loader.isTypeScript() or !(task.experimental_decorators or task.emit_decorator_metadata);
     opts.features.unwrap_commonjs_packages = transpiler.options.unwrap_commonjs_packages;
+    opts.features.bundler_feature_flags = transpiler.options.bundler_feature_flags;
     opts.features.hot_module_reloading = output_format == .internal_bake_dev and !source.index.isRuntime();
     opts.features.auto_polyfill_require = output_format == .esm and !opts.features.hot_module_reloading;
-    opts.features.react_fast_refresh = target == .browser and
-        transpiler.options.react_fast_refresh and
+    opts.features.react_fast_refresh = transpiler.options.react_fast_refresh and
         loader.isJSX() and
         !source.path.isNodeModule();
 
@@ -1210,6 +1258,7 @@ fn runWithSourceCode(
     }
 
     opts.tree_shaking = if (source.index.isRuntime()) true else transpiler.options.tree_shaking;
+    opts.code_splitting = transpiler.options.code_splitting;
     opts.module_type = task.module_type;
 
     task.jsx.parse = loader.isJSX();
@@ -1254,6 +1303,7 @@ fn runWithSourceCode(
         .unique_key_for_additional_file = unique_key_for_additional_file.key,
         .side_effects = task.side_effects,
         .loader = loader,
+        .package_name = task.package_name,
 
         // Hash the files in here so that we do it in parallel.
         .content_hash_for_additional_file = if (loader.shouldCopyForBundling())
@@ -1418,6 +1468,7 @@ const default_allocator = bun.default_allocator;
 const js_parser = bun.js_parser;
 const strings = bun.strings;
 const BabyList = bun.collections.BabyList;
+const JSON5 = bun.interchange.json5.JSON5Parser;
 const TOML = bun.interchange.toml.TOML;
 const YAML = bun.interchange.yaml.YAML;
 

@@ -3,7 +3,7 @@
 
 pub fn Channel(
     comptime T: type,
-    comptime buffer_type: std.fifo.LinearFifoBufferType,
+    comptime buffer_type: bun.LinearFifoBufferType,
 ) type {
     return struct {
         mutex: Mutex,
@@ -13,7 +13,7 @@ pub fn Channel(
         is_closed: bool,
 
         const Self = @This();
-        const Buffer = std.fifo.LinearFifo(T, buffer_type);
+        const Buffer = bun.LinearFifo(T, buffer_type);
 
         pub const init = switch (buffer_type) {
             .Static => initStatic,

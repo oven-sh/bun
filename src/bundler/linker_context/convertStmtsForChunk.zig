@@ -128,15 +128,20 @@ pub fn convertStmtsForChunk(
                     }
 
                     // "export * from 'path'"
+                    const record = ast.import_records.at(s.import_record_index);
+
+                    // Barrel optimization: deferred export * records should be dropped
+                    if (record.flags.is_unused) {
+                        continue;
+                    }
+
                     if (!shouldStripExports) {
                         break :process_stmt;
                     }
 
-                    const record = ast.import_records.at(s.import_record_index);
-
                     // Is this export star evaluated at run time?
                     if (!record.source_index.isValid() and c.options.output_format.keepES6ImportExportSyntax()) {
-                        if (record.calls_runtime_re_export_fn) {
+                        if (record.flags.calls_runtime_re_export_fn) {
                             // Turn this statement into "import * as ns from 'path'"
                             stmt = Stmt.alloc(
                                 S.Import,
@@ -224,7 +229,7 @@ pub fn convertStmtsForChunk(
                             }
                         }
 
-                        if (record.calls_runtime_re_export_fn) {
+                        if (record.flags.calls_runtime_re_export_fn) {
                             const target: Expr = brk: {
                                 if (record.source_index.isValid() and c.graph.ast.items(.exports_kind)[record.source_index.get()].isESMWithDynamicFallback()) {
                                     // Prefix this module with "__reExport(exports, otherExports, module.exports)"
@@ -480,9 +485,8 @@ pub fn convertStmtsForChunk(
                                     },
 
                                     else => bun.unreachablePanic(
-                                        "Unexpected type {any} in source file {s}",
+                                        "Unexpected type in source file {s}",
                                         .{
-                                            stmt2.data,
                                             c.parse_graph.input_files.get(c.graph.files.get(source_index).input_file.get()).source.path.text,
                                         },
                                     ),

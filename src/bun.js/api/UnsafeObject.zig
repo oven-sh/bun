@@ -9,7 +9,7 @@ pub fn create(globalThis: *jsc.JSGlobalObject) jsc.JSValue {
         object.put(
             globalThis,
             comptime ZigString.static(name),
-            jsc.createCallback(globalThis, comptime ZigString.static(name), 1, comptime @field(fields, name)),
+            jsc.JSFunction.create(globalThis, name, @field(fields, name), 1, .{}),
         );
     }
     return object;

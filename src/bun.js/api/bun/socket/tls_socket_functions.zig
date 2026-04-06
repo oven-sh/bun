@@ -259,7 +259,7 @@ pub fn getSharedSigalgs(this: *This, globalObject: *jsc.JSGlobalObject, _: *jsc.
 pub fn getCipher(this: *This, globalObject: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!JSValue {
     const ssl_ptr = this.socket.ssl() orelse return .js_undefined;
     const cipher = BoringSSL.SSL_get_current_cipher(ssl_ptr);
-    var result = JSValue.createEmptyObject(globalObject, 3);
+    var result = JSValue.createEmptyObject(globalObject, 0);
 
     if (cipher == null) {
         result.put(globalObject, ZigString.static("name"), JSValue.jsNull());
@@ -383,9 +383,9 @@ pub fn getEphemeralKeyInfo(this: *This, globalObject: *jsc.JSGlobalObject, _: *j
     if (this.isServer()) {
         return JSValue.jsNull();
     }
-    var result = JSValue.createEmptyObject(globalObject, 3);
 
     const ssl_ptr = this.socket.ssl() orelse return JSValue.jsNull();
+    var result = JSValue.createEmptyObject(globalObject, 0);
 
     // TODO: investigate better option or compatible way to get the key
     // this implementation follows nodejs but for BoringSSL SSL_get_server_tmp_key will always return 0
@@ -404,7 +404,7 @@ pub fn getEphemeralKeyInfo(this: *This, globalObject: *jsc.JSGlobalObject, _: *j
 
     switch (kid) {
         BoringSSL.EVP_PKEY_DH => {
-            result.put(globalObject, ZigString.static("type"), bun.String.static("DH").toJS(globalObject));
+            result.put(globalObject, ZigString.static("type"), try bun.String.static("DH").toJS(globalObject));
             result.put(globalObject, ZigString.static("size"), JSValue.jsNumber(bits));
         },
 
@@ -427,7 +427,7 @@ pub fn getEphemeralKeyInfo(this: *This, globalObject: *jsc.JSGlobalObject, _: *j
                     curve_name = "";
                 }
             }
-            result.put(globalObject, ZigString.static("type"), bun.String.static("ECDH").toJS(globalObject));
+            result.put(globalObject, ZigString.static("type"), try bun.String.static("ECDH").toJS(globalObject));
             result.put(globalObject, ZigString.static("name"), ZigString.fromUTF8(curve_name).toJS(globalObject));
             result.put(globalObject, ZigString.static("size"), JSValue.jsNumber(bits));
         },
@@ -534,6 +534,11 @@ pub fn disableRenegotiation(this: *This, _: *jsc.JSGlobalObject, _: *jsc.CallFra
     return .js_undefined;
 }
 
+pub fn isSessionReused(this: *This, _: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!JSValue {
+    const ssl_ptr = this.socket.ssl() orelse return .false;
+    return JSValue.jsBoolean(BoringSSL.SSL_session_reused(ssl_ptr) == 1);
+}
+
 pub fn setVerifyMode(this: *This, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
     if (this.socket.isDetached()) {
         return .js_undefined;
@@ -551,7 +556,7 @@ pub fn setVerifyMode(this: *This, globalObject: *jsc.JSGlobalObject, callframe: 
     }
 
     const request_cert = request_cert_js.toBoolean();
-    const reject_unauthorized = request_cert_js.toBoolean();
+    const reject_unauthorized = reject_unauthorized_js.toBoolean();
     var verify_mode: c_int = BoringSSL.SSL_VERIFY_NONE;
     if (this.isServer()) {
         if (request_cert) {
@@ -566,7 +571,7 @@ pub fn setVerifyMode(this: *This, globalObject: *jsc.JSGlobalObject, callframe: 
     return .js_undefined;
 }
 
-fn alwaysAllowSSLVerifyCallback(_: c_int, _: ?*BoringSSL.X509_STORE_CTX) callconv(.C) c_int {
+fn alwaysAllowSSLVerifyCallback(_: c_int, _: ?*BoringSSL.X509_STORE_CTX) callconv(.c) c_int {
     return 1;
 }
 

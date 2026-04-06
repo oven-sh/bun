@@ -7,6 +7,8 @@
 const bun = @This();
 
 pub const Environment = @import("./env.zig");
+pub const env_var = @import("./env_var.zig");
+pub const feature_flag = env_var.feature_flag;
 
 pub const use_mimalloc = @import("build_options").use_mimalloc;
 pub const default_allocator: std.mem.Allocator = allocators.c_allocator;
@@ -16,7 +18,7 @@ pub const DefaultAllocator = allocators.Default;
 pub const z_allocator: std.mem.Allocator = allocators.z_allocator;
 
 pub const callmod_inline: std.builtin.CallModifier = if (builtin.mode == .Debug) .auto else .always_inline;
-pub const callconv_inline: std.builtin.CallingConvention = if (builtin.mode == .Debug) .Unspecified else .Inline;
+pub const callconv_inline: std.builtin.CallingConvention = if (builtin.mode == .Debug) .auto else .@"inline";
 
 /// In debug builds, this will catch memory leaks. In release builds, it is mimalloc.
 pub const debug_allocator: std.mem.Allocator = if (Environment.isDebug or Environment.enable_asan)
@@ -172,7 +174,7 @@ pub const JSTerminated = error{
 
 pub const JSOOM = OOM || JSError;
 
-pub const detectCI = @import("./ci_info.zig").detectCI;
+pub const ci = @import("./ci_info.zig");
 
 /// Cross-platform system APIs
 pub const sys = @import("./sys.zig");
@@ -189,6 +191,7 @@ pub const linux = @import("./linux.zig");
 
 /// Translated from `c-headers-for-zig.h` for the current platform.
 pub const c = @import("translated-c-headers");
+pub const tty = @import("./tty.zig");
 
 pub const sha = @import("./sha.zig");
 pub const FeatureFlags = @import("./feature_flags.zig");
@@ -232,6 +235,7 @@ pub const csrf = @import("./csrf.zig");
 pub const validators = @import("./bun.js/node/util/validators.zig");
 
 pub const shell = @import("./shell/shell.zig");
+pub const md = @import("./md/root.zig");
 
 pub const Output = @import("./output.zig");
 pub const Global = @import("./Global.zig");
@@ -478,6 +482,7 @@ pub fn clone(item: anytype, allocator: std.mem.Allocator) !@TypeOf(item) {
 }
 
 pub const LinearFifo = @import("./linear_fifo.zig").LinearFifo;
+pub const LinearFifoBufferType = @import("./linear_fifo.zig").LinearFifoBufferType;
 
 /// hash a string
 pub fn hash(content: []const u8) u64 {
@@ -494,11 +499,10 @@ pub fn fastRandom() u64 {
                 // and we only need to do it once per process
                 var value = seed_value.load(.monotonic);
                 while (value == 0) : (value = seed_value.load(.monotonic)) {
-                    if (comptime Environment.isDebug or Environment.is_canary) outer: {
-                        if (getenvZ("BUN_DEBUG_HASH_RANDOM_SEED")) |env| {
-                            value = std.fmt.parseInt(u64, env, 10) catch break :outer;
-                            seed_value.store(value, .monotonic);
-                            return value;
+                    if (comptime Environment.isDebug or Environment.is_canary) {
+                        if (bun.env_var.BUN_DEBUG_HASH_RANDOM_SEED.get()) |v| {
+                            seed_value.store(v, .monotonic);
+                            return v;
                         }
                     }
                     csprng(std.mem.asBytes(&value));
@@ -568,7 +572,7 @@ pub fn isReadable(fd: FileDescriptor) PollFlag {
         PollFlag.ready
     else
         PollFlag.not_ready;
-    global_scope_log("poll({}, .readable): {any} ({s}{s})", .{
+    global_scope_log("poll({f}, .readable): {} ({s}{s})", .{
         fd,
         result,
         @tagName(rc),
@@ -589,7 +593,7 @@ pub fn isWritable(fd: FileDescriptor) PollFlag {
         };
         const rc = std.os.windows.ws2_32.WSAPoll(&polls, 1, 0);
         const result = (if (rc != std.os.windows.ws2_32.SOCKET_ERROR) @as(usize, @intCast(rc)) else 0) != 0;
-        global_scope_log("poll({}) writable: {any} ({d})", .{ fd, result, polls[0].revents });
+        global_scope_log("poll({f}) writable: {f} ({d})", .{ fd, result, polls[0].revents });
         if (result and polls[0].revents & std.posix.POLL.WRNORM != 0) {
             return .hup;
         } else if (result) {
@@ -616,7 +620,7 @@ pub fn isWritable(fd: FileDescriptor) PollFlag {
         PollFlag.ready
     else
         PollFlag.not_ready;
-    global_scope_log("poll({}, .writable): {any} ({s}{s})", .{
+    global_scope_log("poll({f}, .writable): {} ({s}{s})", .{
         fd,
         result,
         @tagName(rc),
@@ -682,7 +686,6 @@ pub const MimallocArena = allocators.MimallocArena;
 pub const AllocationScope = allocators.AllocationScope;
 pub const NullableAllocator = allocators.NullableAllocator;
 pub const MaxHeapAllocator = allocators.MaxHeapAllocator;
-pub const MemoryReportingAllocator = allocators.MemoryReportingAllocator;
 
 pub const isSliceInBuffer = allocators.isSliceInBuffer;
 pub const isSliceInBufferT = allocators.isSliceInBufferT;
@@ -820,31 +823,11 @@ pub fn openDirAbsoluteNotForDeletingOrRenaming(path_: []const u8) !std.fs.Dir {
     return fd.stdDir();
 }
 
-pub fn getRuntimeFeatureFlag(comptime flag: FeatureFlags.RuntimeFeatureFlag) bool {
-    return struct {
-        const state = enum(u8) { idk, disabled, enabled };
-        var is_enabled: std.atomic.Value(state) = std.atomic.Value(state).init(.idk);
-        pub fn get() bool {
-            // .monotonic is okay because there are no side effects we need to observe from a thread that has
-            // written to this variable. This variable is simply a cache, and if its value is not ready yet, we
-            // compute it below. There are no correctness issues if multiple threads perform this computation
-            // simultaneously, as they will all store the same value.
-            return switch (is_enabled.load(.monotonic)) {
-                .enabled => true,
-                .disabled => false,
-                .idk => {
-                    const enabled = if (getenvZ(@tagName(flag))) |val|
-                        strings.eqlComptime(val, "1") or strings.eqlComptime(val, "true")
-                    else
-                        false;
-                    is_enabled.store(if (enabled) .enabled else .disabled, .monotonic);
-                    return enabled;
-                },
-            };
-        }
-    }.get();
-}
-
+/// Note: You likely do not need this function. See the pattern in env_var.zig for adding
+///       environment variables.
+/// TODO(markovejnovic): Sunset this function when its last usage is removed.
+/// This wrapper exists to avoid the call to sliceTo(0)
+/// Zig's sliceTo(0) is scalar
 pub fn getenvZAnyCase(key: [:0]const u8) ?[]const u8 {
     for (std.os.environ) |lineZ| {
         const line = sliceTo(lineZ, 0);
@@ -857,6 +840,9 @@ pub fn getenvZAnyCase(key: [:0]const u8) ?[]const u8 {
     return null;
 }
 
+/// Note: You likely do not need this function. See the pattern in env_var.zig for adding
+///       environment variables.
+/// TODO(markovejnovic): Sunset this function when its last usage is removed.
 /// This wrapper exists to avoid the call to sliceTo(0)
 /// Zig's sliceTo(0) is scalar
 pub fn getenvZ(key: [:0]const u8) ?[]const u8 {
@@ -872,6 +858,9 @@ pub fn getenvZ(key: [:0]const u8) ?[]const u8 {
     return sliceTo(pointer, 0);
 }
 
+/// Note: You likely do not need this function. See the pattern in env_var.zig for adding
+///       environment variables.
+/// TODO(markovejnovic): Sunset this function when its last usage is removed.
 pub fn getenvTruthy(key: [:0]const u8) bool {
     if (getenvZ(key)) |value| return std.mem.eql(u8, value, "true") or std.mem.eql(u8, value, "1");
     return false;
@@ -1083,129 +1072,7 @@ pub fn parseDouble(input: []const u8) !f64 {
     return jsc.wtf.parseDouble(input);
 }
 
-pub const SignalCode = enum(u8) {
-    SIGHUP = 1,
-    SIGINT = 2,
-    SIGQUIT = 3,
-    SIGILL = 4,
-    SIGTRAP = 5,
-    SIGABRT = 6,
-    SIGBUS = 7,
-    SIGFPE = 8,
-    SIGKILL = 9,
-    SIGUSR1 = 10,
-    SIGSEGV = 11,
-    SIGUSR2 = 12,
-    SIGPIPE = 13,
-    SIGALRM = 14,
-    SIGTERM = 15,
-    SIG16 = 16,
-    SIGCHLD = 17,
-    SIGCONT = 18,
-    SIGSTOP = 19,
-    SIGTSTP = 20,
-    SIGTTIN = 21,
-    SIGTTOU = 22,
-    SIGURG = 23,
-    SIGXCPU = 24,
-    SIGXFSZ = 25,
-    SIGVTALRM = 26,
-    SIGPROF = 27,
-    SIGWINCH = 28,
-    SIGIO = 29,
-    SIGPWR = 30,
-    SIGSYS = 31,
-    _,
-
-    // The `subprocess.kill()` method sends a signal to the child process. If no
-    // argument is given, the process will be sent the 'SIGTERM' signal.
-    pub const default = SignalCode.SIGTERM;
-    pub const Map = ComptimeEnumMap(SignalCode);
-    pub fn name(value: SignalCode) ?[]const u8 {
-        if (@intFromEnum(value) <= @intFromEnum(SignalCode.SIGSYS)) {
-            return asByteSlice(@tagName(value));
-        }
-
-        return null;
-    }
-
-    pub fn valid(value: SignalCode) bool {
-        return @intFromEnum(value) <= @intFromEnum(SignalCode.SIGSYS) and @intFromEnum(value) >= @intFromEnum(SignalCode.SIGHUP);
-    }
-
-    /// Shell scripts use exit codes 128 + signal number
-    /// https://tldp.org/LDP/abs/html/exitcodes.html
-    pub fn toExitCode(value: SignalCode) ?u8 {
-        return switch (@intFromEnum(value)) {
-            1...31 => 128 +% @intFromEnum(value),
-            else => null,
-        };
-    }
-
-    pub fn description(signal: SignalCode) ?[]const u8 {
-        // Description names copied from fish
-        // https://github.com/fish-shell/fish-shell/blob/00ffc397b493f67e28f18640d3de808af29b1434/fish-rust/src/signal.rs#L420
-        return switch (signal) {
-            .SIGHUP => "Terminal hung up",
-            .SIGINT => "Quit request",
-            .SIGQUIT => "Quit request",
-            .SIGILL => "Illegal instruction",
-            .SIGTRAP => "Trace or breakpoint trap",
-            .SIGABRT => "Abort",
-            .SIGBUS => "Misaligned address error",
-            .SIGFPE => "Floating point exception",
-            .SIGKILL => "Forced quit",
-            .SIGUSR1 => "User defined signal 1",
-            .SIGUSR2 => "User defined signal 2",
-            .SIGSEGV => "Address boundary error",
-            .SIGPIPE => "Broken pipe",
-            .SIGALRM => "Timer expired",
-            .SIGTERM => "Polite quit request",
-            .SIGCHLD => "Child process status changed",
-            .SIGCONT => "Continue previously stopped process",
-            .SIGSTOP => "Forced stop",
-            .SIGTSTP => "Stop request from job control (^Z)",
-            .SIGTTIN => "Stop from terminal input",
-            .SIGTTOU => "Stop from terminal output",
-            .SIGURG => "Urgent socket condition",
-            .SIGXCPU => "CPU time limit exceeded",
-            .SIGXFSZ => "File size limit exceeded",
-            .SIGVTALRM => "Virtual timefr expired",
-            .SIGPROF => "Profiling timer expired",
-            .SIGWINCH => "Window size change",
-            .SIGIO => "I/O on asynchronous file descriptor is possible",
-            .SIGSYS => "Bad system call",
-            .SIGPWR => "Power failure",
-            else => null,
-        };
-    }
-
-    pub fn from(value: anytype) SignalCode {
-        return @enumFromInt(std.mem.asBytes(&value)[0]);
-    }
-
-    // This wrapper struct is lame, what if bun's color formatter was more versatile
-    const Fmt = struct {
-        signal: SignalCode,
-        enable_ansi_colors: bool,
-        pub fn format(this: Fmt, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-            const signal = this.signal;
-            switch (this.enable_ansi_colors) {
-                inline else => |enable_ansi_colors| {
-                    if (signal.name()) |str| if (signal.description()) |desc| {
-                        try writer.print(Output.prettyFmt("{s} <d>({s})<r>", enable_ansi_colors), .{ str, desc });
-                        return;
-                    };
-                    try writer.print("code {d}", .{@intFromEnum(signal)});
-                },
-            }
-        }
-    };
-
-    pub fn fmt(signal: SignalCode, enable_ansi_colors: bool) Fmt {
-        return .{ .signal = signal, .enable_ansi_colors = enable_ansi_colors };
-    }
-};
+pub const SignalCode = @import("./SignalCode.zig").SignalCode;
 
 pub fn isMissingIOUring() bool {
     if (comptime !Environment.isLinux)
@@ -1330,7 +1197,7 @@ pub fn getFdPath(fd: FileDescriptor, buf: *bun.PathBuffer) ![]u8 {
 
         if (!ProcSelfWorkAroundForDebugging.has_checked) {
             ProcSelfWorkAroundForDebugging.has_checked = true;
-            needs_proc_self_workaround = strings.eql(getenvZ("BUN_NEEDS_PROC_SELF_WORKAROUND") orelse "0", "1");
+            needs_proc_self_workaround = bun.env_var.BUN_NEEDS_PROC_SELF_WORKAROUND.get();
         }
     } else if (comptime !Environment.isLinux) {
         return try std.os.getFdPath(fd.native(), buf);
@@ -1501,8 +1368,8 @@ pub fn concat(comptime T: type, dest: []T, src: []const []const T) void {
 }
 
 pub const renamer = @import("./renamer.zig");
-// TODO: Rename to SourceMap as this is a struct.
-pub const sourcemap = @import("./sourcemap/sourcemap.zig");
+
+pub const SourceMap = @import("./sourcemap/sourcemap.zig");
 
 /// Attempt to coerce some value into a byte slice.
 pub fn asByteSlice(buffer: anytype) []const u8 {
@@ -1757,6 +1624,15 @@ pub const StringSet = struct {
         };
     }
 
+    /// Initialize an empty StringSet at comptime (for use as a static constant).
+    /// WARNING: The resulting set must not be mutated. Any attempt to call insert(),
+    /// clone(), or other allocating methods will result in undefined behavior.
+    pub fn initComptime() StringSet {
+        return StringSet{
+            .map = Map.initContext(undefined, .{}),
+        };
+    }
+
     pub fn isEmpty(self: *const StringSet) bool {
         return self.count() == 0;
     }
@@ -1991,8 +1867,6 @@ pub const WTF = struct {
 
 pub const Wyhash11 = @import("./wyhash.zig").Wyhash11;
 
-pub const RegularExpression = @import("./bun.js/bindings/RegularExpression.zig").RegularExpression;
-
 const TODO_LOG = Output.scoped(.TODO, .visible);
 pub inline fn todo(src: std.builtin.SourceLocation, value: anytype) @TypeOf(value) {
     if (comptime Environment.allow_assert) {
@@ -2052,8 +1926,11 @@ pub const StatFS = switch (Environment.os) {
 };
 
 pub var argv: [][:0]const u8 = &[_][:0]const u8{};
+/// Number of arguments injected by BUN_OPTIONS environment variable.
+/// Used by standalone executables to include these in the parsed options window.
+pub var bun_options_argc: usize = 0;
 
-pub fn appendOptionsEnv(env: []const u8, args: *std.ArrayList([:0]const u8), allocator: std.mem.Allocator) !void {
+pub fn appendOptionsEnv(env: []const u8, comptime ArgType: type, args: *std.array_list.Managed(ArgType)) !void {
     var i: usize = 0;
     var offset_in_args: usize = 1;
     while (i < env.len) {
@@ -2072,6 +1949,7 @@ pub fn appendOptionsEnv(env: []const u8, args: *std.ArrayList([:0]const u8), all
             // Find the end of the option flag (--flag)
             while (j < env.len and !std.ascii.isWhitespace(env[j]) and env[j] != '=') : (j += 1) {}
 
+            const end_of_flag = j;
             var found_equals = false;
 
             // Check for equals sign
@@ -2095,12 +1973,25 @@ pub fn appendOptionsEnv(env: []const u8, args: *std.ArrayList([:0]const u8), all
             } else if (found_equals) {
                 // If we had --flag=value (no quotes), find next whitespace
                 while (j < env.len and !std.ascii.isWhitespace(env[j])) : (j += 1) {}
+            } else {
+                // No value found after flag (e.g., `--flag1 --flag2`).
+                // Reset j to end of flag name so we don't include trailing whitespace.
+                j = end_of_flag;
             }
 
             // Copy the entire argument including quotes
             const arg_len = j - start;
-            const arg = try allocator.allocSentinel(u8, arg_len, 0);
-            @memcpy(arg, env[start..j]);
+
+            const arg = switch (ArgType) {
+                bun.String => bun.String.cloneUTF8(env[start..j]),
+                [:0]const u8 => arg: {
+                    const arg = try bun.default_allocator.allocSentinel(u8, arg_len, 0);
+                    @memcpy(arg, env[start..j]);
+                    break :arg arg;
+                },
+                else => @compileError("unexpected arg type"),
+            };
+
             try args.insert(offset_in_args, arg);
             offset_in_args += 1;
 
@@ -2109,7 +2000,7 @@ pub fn appendOptionsEnv(env: []const u8, args: *std.ArrayList([:0]const u8), all
         }
 
         // Non-option arguments or standalone values
-        var buf = std.ArrayList(u8).init(allocator);
+        var buf = std.array_list.Managed(u8).init(bun.default_allocator);
 
         var in_single = false;
         var in_double = false;
@@ -2156,16 +2047,26 @@ pub fn appendOptionsEnv(env: []const u8, args: *std.ArrayList([:0]const u8), all
             }
         }
 
-        try buf.append(0);
-        const owned = try buf.toOwnedSlice();
-        try args.insert(offset_in_args, owned[0 .. owned.len - 1 :0]);
+        switch (ArgType) {
+            bun.String => {
+                defer buf.deinit();
+                try args.insert(offset_in_args, bun.String.cloneUTF8(buf.items));
+            },
+            [:0]const u8 => {
+                try buf.append(0);
+                const owned = try buf.toOwnedSlice();
+                try args.insert(offset_in_args, owned[0 .. owned.len - 1 :0]);
+            },
+            else => @compileError("unexpected arg type"),
+        }
+
         offset_in_args += 1;
     }
 }
 
-pub fn initArgv(allocator: std.mem.Allocator) !void {
+pub fn initArgv() !void {
     if (comptime Environment.isPosix) {
-        argv = try allocator.alloc([:0]const u8, std.os.argv.len);
+        argv = try bun.default_allocator.alloc([:0]const u8, std.os.argv.len);
         for (0..argv.len) |i| {
             argv[i] = std.mem.sliceTo(std.os.argv[i], 0);
         }
@@ -2200,7 +2101,7 @@ pub fn initArgv(allocator: std.mem.Allocator) !void {
         };
 
         const argvu16 = argvu16_ptr[0..@intCast(length)];
-        const out_argv = try allocator.alloc([:0]const u8, @intCast(length));
+        const out_argv = try bun.default_allocator.alloc([:0]const u8, @intCast(length));
         var string_builder = StringBuilder{};
 
         for (argvu16) |argraw| {
@@ -2208,7 +2109,7 @@ pub fn initArgv(allocator: std.mem.Allocator) !void {
             string_builder.count16Z(arg);
         }
 
-        try string_builder.allocate(allocator);
+        try string_builder.allocate(bun.default_allocator);
 
         for (argvu16, out_argv) |argraw, *out| {
             const arg = std.mem.span(argraw);
@@ -2220,13 +2121,15 @@ pub fn initArgv(allocator: std.mem.Allocator) !void {
 
         argv = out_argv;
     } else {
-        argv = try std.process.argsAlloc(allocator);
+        argv = try std.process.argsAlloc(bun.default_allocator);
     }
 
-    if (bun.getenvZ("BUN_OPTIONS")) |opts| {
-        var argv_list = std.ArrayList([:0]const u8).fromOwnedSlice(allocator, argv);
-        try appendOptionsEnv(opts, &argv_list, allocator);
+    if (bun.env_var.BUN_OPTIONS.get()) |opts| {
+        const original_len = argv.len;
+        var argv_list = std.array_list.Managed([:0]const u8).fromOwnedSlice(bun.default_allocator, argv);
+        try appendOptionsEnv(opts, [:0]const u8, &argv_list);
         argv = argv_list.items;
+        bun_options_argc = argv.len - original_len;
     }
 }
 
@@ -2470,7 +2373,7 @@ pub const MakePath = struct {
         }
     }
 
-    pub fn makeOpenPath(self: std.fs.Dir, sub_path: anytype, opts: std.fs.Dir.OpenDirOptions) !std.fs.Dir {
+    pub fn makeOpenPath(self: std.fs.Dir, sub_path: anytype, opts: std.fs.Dir.OpenOptions) !std.fs.Dir {
         if (comptime Environment.isWindows) {
             return makeOpenPathAccessMaskW(
                 self,
@@ -2648,6 +2551,64 @@ pub noinline fn outOfMemory() noreturn {
 }
 
 pub const handleOom = @import("./handle_oom.zig").handleOom;
+
+/// Like `std.heap.StackFallbackAllocator` but takes a runtime-provided buffer
+/// instead of a comptime-sized inline array. Use this when the "stack" buffer
+/// is heap-cached (e.g. in RareData) and you want the same try-fixed-then-fallback
+/// semantics without putting a large buffer on the actual call stack.
+pub const StackFallbackAllocator = struct {
+    fixed: std.heap.FixedBufferAllocator,
+    fallback: std.mem.Allocator,
+
+    pub fn init(buf: []u8, fallback: std.mem.Allocator) StackFallbackAllocator {
+        return .{
+            .fixed = std.heap.FixedBufferAllocator.init(buf),
+            .fallback = fallback,
+        };
+    }
+
+    pub fn get(self: *StackFallbackAllocator) std.mem.Allocator {
+        return .{
+            .ptr = self,
+            .vtable = &.{
+                .alloc = alloc,
+                .resize = resize,
+                .remap = remap,
+                .free = free,
+            },
+        };
+    }
+
+    fn alloc(ctx: *anyopaque, n: usize, alignment: std.mem.Alignment, ra: usize) ?[*]u8 {
+        const self: *StackFallbackAllocator = @ptrCast(@alignCast(ctx));
+        return std.heap.FixedBufferAllocator.alloc(&self.fixed, n, alignment, ra) orelse
+            self.fallback.rawAlloc(n, alignment, ra);
+    }
+
+    fn resize(ctx: *anyopaque, buf: []u8, alignment: std.mem.Alignment, new_len: usize, ra: usize) bool {
+        const self: *StackFallbackAllocator = @ptrCast(@alignCast(ctx));
+        if (self.fixed.ownsPtr(buf.ptr)) {
+            return std.heap.FixedBufferAllocator.resize(&self.fixed, buf, alignment, new_len, ra);
+        }
+        return self.fallback.rawResize(buf, alignment, new_len, ra);
+    }
+
+    fn remap(ctx: *anyopaque, mem: []u8, alignment: std.mem.Alignment, new_len: usize, ra: usize) ?[*]u8 {
+        const self: *StackFallbackAllocator = @ptrCast(@alignCast(ctx));
+        if (self.fixed.ownsPtr(mem.ptr)) {
+            return std.heap.FixedBufferAllocator.remap(&self.fixed, mem, alignment, new_len, ra);
+        }
+        return self.fallback.rawRemap(mem, alignment, new_len, ra);
+    }
+
+    fn free(ctx: *anyopaque, buf: []u8, alignment: std.mem.Alignment, ra: usize) void {
+        const self: *StackFallbackAllocator = @ptrCast(@alignCast(ctx));
+        if (self.fixed.ownsPtr(buf.ptr)) {
+            return std.heap.FixedBufferAllocator.free(&self.fixed, buf, alignment, ra);
+        }
+        return self.fallback.rawFree(buf, alignment, ra);
+    }
+};
 
 pub fn todoPanic(
     src: std.builtin.SourceLocation,
@@ -2849,23 +2810,6 @@ pub fn reinterpretSlice(comptime T: type, slice: anytype) ReinterpretSliceType(T
     return new_ptr[0..@divTrunc(bytes.len, @sizeOf(T))];
 }
 
-extern "kernel32" fn GetUserNameA(username: *u8, size: *u32) callconv(std.os.windows.WINAPI) c_int;
-
-pub fn getUserName(output_buffer: []u8) ?[]const u8 {
-    if (Environment.isWindows) {
-        var size: u32 = @intCast(output_buffer.len);
-        if (GetUserNameA(@ptrCast(@constCast(output_buffer.ptr)), &size) == 0) {
-            return null;
-        }
-        return output_buffer[0..size];
-    }
-    var env = std.process.getEnvMap(default_allocator) catch outOfMemory();
-    const user = env.get("USER") orelse return null;
-    const size = @min(output_buffer.len, user.len);
-    copy(u8, output_buffer[0..size], user[0..size]);
-    return output_buffer[0..size];
-}
-
 pub inline fn resolveSourcePath(
     comptime root: enum { codegen, src },
     comptime sub_path: []const u8,
@@ -2876,12 +2820,14 @@ pub inline fn resolveSourcePath(
         var fba = std.heap.FixedBufferAllocator.init(&buf);
         const resolved = (std.fs.path.resolve(fba.allocator(), &.{
             switch (root) {
-                .codegen => Environment.codegen_path,
-                .src => Environment.base_path ++ "/src",
+                .codegen,
+                => Environment.codegen_path,
+                .src,
+                => Environment.base_path ++ "/src",
             },
             sub_path,
         }) catch
-            @compileError(unreachable))[0..].*;
+            @compileError("unreachable"))[0..].*;
         break :path &resolved;
     };
 }
@@ -2925,7 +2871,7 @@ pub fn runtimeEmbedFile(
                 abs_path,
                 std.math.maxInt(usize),
                 null,
-                @alignOf(u8),
+                .fromByteUnits(@alignOf(u8)),
                 '\x00',
             ) catch |e| {
                 Output.panic(
@@ -2933,7 +2879,8 @@ pub fn runtimeEmbedFile(
                     \\
                     \\To improve iteration speed, some files are not embedded but
                     \\loaded at runtime, at the cost of making the binary non-portable.
-                    \\To fix this, pass -DCODEGEN_EMBED=ON to CMake
+                    \\To fix this, build with a release profile, or pass
+                    \\-Dcodegen_embed=true to zig build.
                 , .{ abs_path, e });
             };
         }
@@ -3164,10 +3111,12 @@ pub fn assertWithLocation(value: bool, src: std.builtin.SourceLocation) callconv
 pub inline fn assert_eql(a: anytype, b: anytype) void {
     if (a == b) return;
     if (@inComptime()) {
-        @compileError(std.fmt.comptimePrint("Assertion failure: {any} != {any}", .{ a, b }));
+        @compileError(std.fmt.comptimePrint("Assertion failure: {f} != {f}", .{ a, b }));
     }
     if (!Environment.allow_assert) return;
-    Output.panic("Assertion failure: {any} != {any}", .{ a, b });
+    // Output.panic("Assertion failure: " ++ bun.deprecated.autoFormatLabelFallback(@TypeOf(a), "{f}") ++ " != " ++ bun.deprecated.autoFormatLabelFallback(@TypeOf(b), "{f}"), .{ a, b });
+    // TODO
+    Output.panic("Assertion failure.", .{});
 }
 
 /// This has no effect on the real code but capturing 'a' and 'b' into
@@ -3183,7 +3132,13 @@ pub fn unsafeAssert(condition: bool) callconv(callconv_inline) void {
 
 pub const dns = @import("./dns.zig");
 
-pub fn getRoughTickCount() timespec {
+pub fn getRoughTickCount(comptime mock_mode: timespec.MockMode) timespec {
+    if (mock_mode == .allow_mocked_time) {
+        if (bun.jsc.Jest.bun_test.FakeTimers.current_time.getTimespecNow()) |fake_time| {
+            return fake_time;
+        }
+    }
+
     if (comptime Environment.isMac) {
         // https://opensource.apple.com/source/xnu/xnu-2782.30.5/libsyscall/wrappers/mach_approximate_time.c.auto.html
         // https://opensource.apple.com/source/Libc/Libc-1158.1.2/gen/clock_gettime.c.auto.html
@@ -3237,7 +3192,7 @@ pub fn getRoughTickCount() timespec {
     }
 
     if (comptime Environment.isWindows) {
-        const ms = getRoughTickCountMs();
+        const ms = getRoughTickCountMs(mock_mode);
         return timespec{
             .sec = @intCast(ms / 1000),
             .nsec = @intCast((ms % 1000) * 1_000_000),
@@ -3252,17 +3207,33 @@ pub fn getRoughTickCount() timespec {
 /// Requesting the current time frequently is somewhat expensive. So we can use a rough timestamp.
 ///
 /// This timestamp doesn't easily correlate to a specific time. It's only useful relative to other calls.
-pub fn getRoughTickCountMs() u64 {
+pub fn getRoughTickCountMs(comptime mock_mode: timespec.MockMode) u64 {
     if (Environment.isWindows) {
+        if (mock_mode == .allow_mocked_time) {
+            if (bun.jsc.Jest.bun_test.FakeTimers.current_time.getTimespecNow()) |fake_time| {
+                return fake_time.ns() / std.time.ns_per_ms;
+            }
+        }
         const GetTickCount64 = struct {
             pub extern "kernel32" fn GetTickCount64() std.os.windows.ULONGLONG;
         }.GetTickCount64;
         return GetTickCount64();
     }
 
-    const spec = getRoughTickCount();
+    const spec = getRoughTickCount(mock_mode);
     return spec.ns() / std.time.ns_per_ms;
 }
+
+pub const MaybeMockedTimespec = struct {
+    mocked: u64,
+    timespec: timespec,
+
+    pub const epoch = MaybeMockedTimespec{ .mocked = 0, .timespec = .epoch };
+
+    pub fn eql(this: *const MaybeMockedTimespec, other: *const MaybeMockedTimespec) bool {
+        return this.mocked == other.mocked and this.timespec.eql(&other.timespec);
+    }
+};
 
 pub const timespec = extern struct {
     sec: i64,
@@ -3270,22 +3241,13 @@ pub const timespec = extern struct {
 
     pub const epoch: timespec = .{ .sec = 0, .nsec = 0 };
 
+    pub const MockMode = enum {
+        allow_mocked_time,
+        force_real_time,
+    };
+
     pub fn eql(this: *const timespec, other: *const timespec) bool {
         return this.sec == other.sec and this.nsec == other.nsec;
-    }
-
-    pub fn toInstant(this: *const timespec) std.time.Instant {
-        if (comptime Environment.isPosix) {
-            return std.time.Instant{
-                .timestamp = @bitCast(this.*),
-            };
-        }
-
-        if (comptime Environment.isWindows) {
-            return std.time.Instant{
-                .timestamp = @intCast(this.sec * std.time.ns_per_s + this.nsec),
-            };
-        }
     }
 
     // TODO: this is wrong!
@@ -3352,12 +3314,12 @@ pub const timespec = extern struct {
         return a.order(b) == .gt;
     }
 
-    pub fn now() timespec {
-        return getRoughTickCount();
+    pub fn now(comptime mock_mode: MockMode) timespec {
+        return getRoughTickCount(mock_mode);
     }
 
-    pub fn sinceNow(start: *const timespec) u64 {
-        return now().duration(start).ns();
+    pub fn sinceNow(start: *const timespec, comptime mock_mode: MockMode) u64 {
+        return now(mock_mode).duration(start).ns();
     }
 
     pub fn addMs(this: *const timespec, interval: i64) timespec {
@@ -3376,9 +3338,43 @@ pub const timespec = extern struct {
 
         return new_timespec;
     }
+    pub fn addMsFloat(this: *const timespec, interval_ms: f64) timespec {
+        const ns_per_ms_f = @as(f64, @floatFromInt(std.time.ns_per_ms)); // 1_000_000
 
-    pub fn msFromNow(interval: i64) timespec {
-        return now().addMs(interval);
+        // Start from the current time
+        var new_timespec = this.*;
+
+        // Split into whole ms and sub-ms remainder (matches sinon/fake-timers logic)
+        // Use modulo to extract fractional milliseconds as nanoseconds
+        const ms_whole_f = @floor(interval_ms);
+        const ms_inc: i64 = std.math.lossyCast(i64, ms_whole_f);
+
+        // nanoRemainder: floor((msFloat * 1e6) % 1e6)
+        const ns_total_f = interval_ms * ns_per_ms_f;
+        const ns_remainder_f = @mod(ns_total_f, ns_per_ms_f);
+        const nsec_inc: i64 = @intFromFloat(@floor(ns_remainder_f));
+
+        // Convert milliseconds to seconds
+        const sec_inc = @divTrunc(ms_inc, std.time.ms_per_s);
+        const ms_remainder = @mod(ms_inc, std.time.ms_per_s);
+
+        new_timespec.sec +%= sec_inc;
+        new_timespec.nsec +%= ms_remainder * std.time.ns_per_ms + nsec_inc;
+
+        // Normalize nsec into [0, ns_per_s)
+        if (new_timespec.nsec >= std.time.ns_per_s) {
+            new_timespec.sec +%= 1;
+            new_timespec.nsec -%= std.time.ns_per_s;
+        } else if (new_timespec.nsec < 0) {
+            new_timespec.sec -%= 1;
+            new_timespec.nsec +%= std.time.ns_per_s;
+        }
+
+        return new_timespec;
+    }
+
+    pub fn msFromNow(comptime mock_mode: MockMode, interval: i64) timespec {
+        return now(mock_mode).addMs(interval);
     }
 
     pub fn min(a: timespec, b: timespec) timespec {
@@ -3528,10 +3524,8 @@ pub fn GenericIndex(backing_int: type, uid: anytype) type {
             return a.get() < b.get();
         }
 
-        pub fn format(this: @This(), comptime f: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
-            comptime if (strings.eql(f, "d") or strings.eql(f, "any"))
-                @compileError("Invalid format specifier: " ++ f ++ ". To use these, call .get() first");
-            try std.fmt.formatInt(@intFromEnum(this), 10, .lower, opts, writer);
+        pub fn format(this: @This(), writer: *std.Io.Writer) !void {
+            return writer.print("{d}", .{@intFromEnum(this)});
         }
 
         pub const Optional = enum(backing_int) {
@@ -3605,7 +3599,7 @@ pub fn getThreadCount() u16 {
             return null;
         }
         fn getThreadCountOnce() void {
-            cached_thread_count = @min(max_threads, @max(min_threads, getThreadCountFromUser() orelse std.Thread.getCpuCount() catch 0));
+            cached_thread_count = @min(max_threads, @max(min_threads, getThreadCountFromUser() orelse jsc.wtf.numberOfProcessorCores()));
         }
     };
     ThreadCount.cached_thread_count_once.call();
@@ -3770,6 +3764,7 @@ pub fn freeSensitive(allocator: std.mem.Allocator, slice: anytype) void {
 
 pub const macho = @import("./macho.zig");
 pub const pe = @import("./pe.zig");
+pub const elf = @import("./elf.zig");
 pub const valkey = @import("./valkey/index.zig");
 pub const highway = @import("./highway.zig");
 
@@ -3789,6 +3784,7 @@ pub fn contains(item: anytype, list: *const std.ArrayListUnmanaged(@TypeOf(item)
 }
 
 pub const safety = @import("./safety.zig");
+pub const deprecated = @import("./deprecated.zig");
 
 // Export function to check if --use-system-ca flag is set
 pub fn getUseSystemCA(globalObject: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame) error{ JSError, OutOfMemory }!jsc.JSValue {
@@ -3797,6 +3793,11 @@ pub fn getUseSystemCA(globalObject: *jsc.JSGlobalObject, callFrame: *jsc.CallFra
     const Arguments = @import("./cli/Arguments.zig");
     return jsc.JSValue.jsBoolean(Arguments.Bun__Node__UseSystemCA);
 }
+
+// Claude thinks its bun.JSC when we renamed it to bun.jsc months ago.
+pub const JSC = @compileError("Deprecated: Use @import(\"bun\").jsc instead");
+
+pub const ConfigVersion = @import("./ConfigVersion.zig").ConfigVersion;
 
 const CopyFile = @import("./copy_file.zig");
 const builtin = @import("builtin");

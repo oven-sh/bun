@@ -65,13 +65,13 @@ const no_watch_item: WatchItemIndex = std.math.maxInt(WatchItemIndex);
 pub fn init(comptime T: type, ctx: *T, fs: *bun.fs.FileSystem, allocator: std.mem.Allocator) !*Watcher {
     const wrapped = struct {
         fn onFileUpdateWrapped(ctx_opaque: *anyopaque, events: []WatchEvent, changed_files: []?[:0]u8, watchlist: WatchList) void {
-            T.onFileUpdate(@alignCast(@ptrCast(ctx_opaque)), events, changed_files, watchlist);
+            T.onFileUpdate(@ptrCast(@alignCast(ctx_opaque)), events, changed_files, watchlist);
         }
         fn onErrorWrapped(ctx_opaque: *anyopaque, err: bun.sys.Error) void {
             if (@hasDecl(T, "onWatchError")) {
-                T.onWatchError(@alignCast(@ptrCast(ctx_opaque)), err);
+                T.onWatchError(@ptrCast(@alignCast(ctx_opaque)), err);
             } else {
-                T.onError(@alignCast(@ptrCast(ctx_opaque)), err);
+                T.onError(@ptrCast(@alignCast(ctx_opaque)), err);
             }
         }
     };
@@ -144,7 +144,7 @@ const Platform = switch (Environment.os) {
     .linux => @import("./watcher/INotifyWatcher.zig"),
     .mac => @import("./watcher/KEventWatcher.zig"),
     .windows => WindowsWatcher,
-    else => @compileError("Unsupported platform"),
+    .wasm => @compileError("Unsupported platform"),
 };
 
 pub const WatchEvent = struct {
@@ -166,12 +166,7 @@ pub const WatchEvent = struct {
 
     pub fn merge(this: *WatchEvent, other: WatchEvent) void {
         this.name_len += other.name_len;
-        this.op = Op{
-            .delete = this.op.delete or other.op.delete,
-            .metadata = this.op.metadata or other.op.metadata,
-            .rename = this.op.rename or other.op.rename,
-            .write = this.op.write or other.op.write,
-        };
+        this.op = Op.merge(this.op, other.op);
     }
 
     pub const Op = packed struct(u8) {
@@ -180,7 +175,8 @@ pub const WatchEvent = struct {
         rename: bool = false,
         write: bool = false,
         move_to: bool = false,
-        _padding: u3 = 0,
+        create: bool = false,
+        _padding: u2 = 0,
 
         pub fn merge(before: Op, after: Op) Op {
             return .{
@@ -189,10 +185,11 @@ pub const WatchEvent = struct {
                 .metadata = before.metadata or after.metadata,
                 .rename = before.rename or after.rename,
                 .move_to = before.move_to or after.move_to,
+                .create = before.create or after.create,
             };
         }
 
-        pub fn format(op: Op, comptime _: []const u8, _: std.fmt.FormatOptions, w: anytype) !void {
+        pub fn format(op: Op, w: *std.Io.Writer) !void {
             try w.writeAll("{");
             var first = true;
             inline for (comptime std.meta.fieldNames(Op)) |name| {

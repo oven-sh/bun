@@ -27,7 +27,9 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
         ping_frame_bytes: [128 + 6]u8 = [_]u8{0} ** (128 + 6),
         ping_len: u8 = 0,
         ping_received: bool = false,
+        pong_received: bool = false,
         close_received: bool = false,
+        close_frame_buffering: bool = false,
 
         receive_frame: usize = 0,
         receive_body_remain: usize = 0,
@@ -53,6 +55,16 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
         // Track compression state of the entire message (across fragments)
         message_is_compressed: bool = false,
 
+        // Custom SSL context for per-connection TLS options (e.g., custom CA)
+        // This is set when the WebSocket is adopted from a connection that used a custom SSL context.
+        // Must be cleaned up when the WebSocket closes.
+        custom_ssl_ctx: ?*uws.SocketContext = null,
+
+        // Proxy tunnel for wss:// through HTTP proxy.
+        // When set, all I/O goes through the tunnel (TLS encryption/decryption).
+        // The tunnel handles the TLS layer, so this is used with ssl=false.
+        proxy_tunnel: ?*WebSocketProxyTunnel = null,
+
         const stack_frame_size = 1024;
         // Minimum message size to compress (RFC 7692 recommendation)
         const MIN_COMPRESS_SIZE = 860;
@@ -74,7 +86,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             return true;
         }
 
-        pub fn register(global: *jsc.JSGlobalObject, loop_: *anyopaque, ctx_: *anyopaque) callconv(.C) void {
+        pub fn register(global: *jsc.JSGlobalObject, loop_: *anyopaque, ctx_: *anyopaque) callconv(.c) void {
             const vm = global.bunVM();
             const loop = @as(*uws.Loop, @ptrCast(@alignCast(loop_)));
 
@@ -109,15 +121,33 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             this.clearReceiveBuffers(true);
             this.clearSendBuffers(true);
             this.ping_received = false;
+            this.pong_received = false;
             this.ping_len = 0;
+            this.close_frame_buffering = false;
             this.receive_pending_chunk_len = 0;
             this.receiving_compressed = false;
             this.message_is_compressed = false;
             if (this.deflate) |d| d.deinit();
             this.deflate = null;
+            // Clean up custom SSL context if we own one
+            if (this.custom_ssl_ctx) |ctx| {
+                ctx.deinit(ssl);
+                this.custom_ssl_ctx = null;
+            }
+            // Clean up proxy tunnel if we own one
+            // Set to null FIRST to prevent re-entrancy (shutdown can trigger callbacks)
+            if (this.proxy_tunnel) |tunnel| {
+                this.proxy_tunnel = null;
+                // Detach the websocket from the tunnel before shutdown so the
+                // tunnel's onClose callback doesn't dispatch a spurious 1006
+                // after we've already handled a clean close.
+                tunnel.clearConnectedWebSocket();
+                tunnel.shutdown();
+                tunnel.deref();
+            }
         }
 
-        pub fn cancel(this: *WebSocket) callconv(.C) void {
+        pub fn cancel(this: *WebSocket) callconv(.c) void {
             log("cancel", .{});
             this.clearData();
 
@@ -232,6 +262,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             deflate.decompress(data_, &decompressed) catch |err| {
                 const error_code = switch (err) {
                     error.InflateFailed => ErrorCode.invalid_compressed_data,
+                    error.TooLarge => ErrorCode.message_too_big,
                     error.OutOfMemory => ErrorCode.failed_to_allocate_memory,
                 };
                 this.terminate(error_code);
@@ -625,14 +656,38 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                         if (data.len == 0) break;
                     },
                     .pong => {
-                        const pong_len = @min(data.len, @min(receive_body_remain, this.ping_frame_bytes.len));
+                        if (!this.pong_received) {
+                            if (receive_body_remain > 125) {
+                                this.terminate(ErrorCode.invalid_control_frame);
+                                terminated = true;
+                                break;
+                            }
+                            this.ping_len = @truncate(receive_body_remain);
+                            receive_body_remain = 0;
+                            this.pong_received = true;
+                        }
+                        const pong_len = this.ping_len;
 
-                        this.dispatchData(data[0..pong_len], .Pong);
+                        if (data.len > 0) {
+                            const total_received = @min(pong_len, receive_body_remain + data.len);
+                            const slice = this.ping_frame_bytes[6..][receive_body_remain..total_received];
+                            @memcpy(slice, data[0..slice.len]);
+                            receive_body_remain = total_received;
+                            data = data[slice.len..];
+                        }
+                        const pending_body = pong_len - receive_body_remain;
+                        if (pending_body > 0) {
+                            // wait for more data - pong payload is fragmented across TCP segments
+                            break;
+                        }
 
-                        data = data[pong_len..];
+                        const pong_data = this.ping_frame_bytes[6..][0..pong_len];
+                        this.dispatchData(pong_data, .Pong);
+
                         receive_state = .need_header;
                         receive_body_remain = 0;
                         receiving_type = last_receive_data_type;
+                        this.pong_received = false;
 
                         if (data.len == 0) break;
                     },
@@ -652,39 +707,42 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                     },
 
                     .close => {
-                        this.close_received = true;
-
-                        // invalid close frame with 1 byte
-                        if (data.len == 1 and receive_body_remain == 1) {
+                        if (receive_body_remain == 1 or receive_body_remain > 125) {
                             this.terminate(ErrorCode.invalid_control_frame);
                             terminated = true;
                             break;
                         }
-                        // 2 byte close code and optional reason
-                        if (data.len >= 2 and receive_body_remain >= 2) {
-                            var code = std.mem.readInt(u16, data[0..2], .big);
-                            log("Received close with code {d}", .{code});
-                            if (code == 1001) {
-                                // going away actual sends 1000 (normal close)
-                                code = 1000;
-                            } else if ((code < 1000) or (code >= 1004 and code < 1007) or (code >= 1016 and code <= 2999)) {
-                                // invalid codes must clean close with 1002
-                                code = 1002;
+
+                        if (receive_body_remain > 0) {
+                            if (!this.close_frame_buffering) {
+                                this.ping_len = @truncate(receive_body_remain);
+                                receive_body_remain = 0;
+                                this.close_frame_buffering = true;
                             }
-                            const reason_len = receive_body_remain - 2;
-                            if (reason_len > 125) {
-                                this.terminate(ErrorCode.invalid_control_frame);
-                                terminated = true;
-                                break;
+                            const to_copy = @min(data.len, this.ping_len - receive_body_remain);
+                            @memcpy(this.ping_frame_bytes[6 + receive_body_remain ..][0..to_copy], data[0..to_copy]);
+                            receive_body_remain += to_copy;
+                            data = data[to_copy..];
+                            if (receive_body_remain < this.ping_len) break;
+
+                            this.close_received = true;
+                            const close_data = this.ping_frame_bytes[6..][0..this.ping_len];
+                            if (this.ping_len >= 2) {
+                                var code = std.mem.readInt(u16, close_data[0..2], .big);
+                                if (code == 1001) code = 1000;
+                                if ((code < 1000) or (code >= 1004 and code < 1007) or (code >= 1016 and code <= 2999)) code = 1002;
+                                var buf: [125]u8 = undefined;
+                                @memcpy(buf[0 .. this.ping_len - 2], close_data[2..this.ping_len]);
+                                this.sendCloseWithBody(socket, code, &buf, this.ping_len - 2);
+                            } else {
+                                this.sendClose();
                             }
-                            var close_reason_buf: [125]u8 = undefined;
-                            @memcpy(close_reason_buf[0..reason_len], data[2..receive_body_remain]);
-                            this.sendCloseWithBody(socket, code, &close_reason_buf, reason_len);
-                            data = data[receive_body_remain..];
+                            this.close_frame_buffering = false;
                             terminated = true;
                             break;
                         }
 
+                        this.close_received = true;
                         this.sendClose();
                         terminated = true;
                         break;
@@ -707,6 +765,19 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             socket: Socket,
             bytes: []const u8,
         ) bool {
+            // For tunnel mode, write through the tunnel instead of direct socket
+            if (this.proxy_tunnel) |tunnel| {
+                const wrote = tunnel.write(bytes) catch {
+                    this.terminate(ErrorCode.failed_to_write);
+                    return false;
+                };
+                // Buffer any data the tunnel couldn't accept
+                if (wrote < bytes.len) {
+                    _ = this.copyToSendBuffer(bytes[wrote..], false);
+                }
+                return true;
+            }
+
             // fast path: no backpressure, no queue, just send the bytes.
             if (!this.hasBackpressure()) {
                 // Do not set MSG_MORE, see https://github.com/oven-sh/bun/issues/4010
@@ -771,7 +842,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
 
                 {
                     // Compress the content
-                    var compressed = std.ArrayList(u8).init(allocator);
+                    var compressed = std.array_list.Managed(u8).init(allocator);
                     defer compressed.deinit();
 
                     this.deflate.?.compress(content_to_compress, &compressed) catch {
@@ -788,9 +859,11 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
 
                 if (do_write) {
                     if (comptime Environment.allow_assert) {
-                        bun.assert(!this.tcp.isShutdown());
-                        bun.assert(!this.tcp.isClosed());
-                        bun.assert(this.tcp.isEstablished());
+                        if (this.proxy_tunnel == null) {
+                            bun.assert(!this.tcp.isShutdown());
+                            bun.assert(!this.tcp.isClosed());
+                            bun.assert(this.tcp.isEstablished());
+                        }
                     }
                     return this.sendBuffer(this.send_buffer.readableSlice(0));
                 }
@@ -812,9 +885,11 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
 
             if (do_write) {
                 if (comptime Environment.allow_assert) {
-                    bun.assert(!this.tcp.isShutdown());
-                    bun.assert(!this.tcp.isClosed());
-                    bun.assert(this.tcp.isEstablished());
+                    if (this.proxy_tunnel == null) {
+                        bun.assert(!this.tcp.isShutdown());
+                        bun.assert(!this.tcp.isClosed());
+                        bun.assert(this.tcp.isEstablished());
+                    }
                 }
                 return this.sendBuffer(this.send_buffer.readableSlice(0));
             }
@@ -827,26 +902,34 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             out_buf: []const u8,
         ) bool {
             bun.assert(out_buf.len > 0);
-            // Do not set MSG_MORE, see https://github.com/oven-sh/bun/issues/4010
-            if (this.tcp.isClosed()) {
-                return false;
-            }
-            const wrote = this.tcp.write(out_buf);
-            if (wrote < 0) {
-                this.terminate(ErrorCode.failed_to_write);
-                return false;
-            }
-            const expected = @as(usize, @intCast(wrote));
+            // Do not use MSG_MORE, see https://github.com/oven-sh/bun/issues/4010
+            const wrote: usize = if (this.proxy_tunnel) |tunnel|
+                // In tunnel mode, route through the tunnel's TLS layer
+                // instead of the detached raw socket.
+                tunnel.write(out_buf) catch {
+                    this.terminate(ErrorCode.failed_to_write);
+                    return false;
+                }
+            else blk: {
+                if (this.tcp.isClosed()) {
+                    return false;
+                }
+                const w = this.tcp.write(out_buf);
+                if (w < 0) {
+                    this.terminate(ErrorCode.failed_to_write);
+                    return false;
+                }
+                break :blk @intCast(w);
+            };
             const readable = this.send_buffer.readableSlice(0);
             if (readable.ptr == out_buf.ptr) {
-                this.send_buffer.discard(expected);
+                this.send_buffer.discard(wrote);
             }
-
             return true;
         }
 
         fn sendPong(this: *WebSocket, socket: Socket) bool {
-            if (socket.isClosed() or socket.isShutdown()) {
+            if (!this.hasTCP()) {
                 this.dispatchAbruptClose(ErrorCode.ended);
                 return false;
             }
@@ -878,14 +961,17 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             body_len: usize,
         ) void {
             log("Sending close with code {d}", .{code});
-            if (socket.isClosed() or socket.isShutdown()) {
+            if (!this.hasTCP()) {
                 this.dispatchAbruptClose(ErrorCode.ended);
                 this.clearData();
                 return;
             }
             // we dont wanna shutdownRead when SSL, because SSL handshake can happen when writting
+            // For tunnel mode, shutdownRead on the detached socket is a no-op; skip it.
             if (comptime !ssl) {
-                socket.shutdownRead();
+                if (this.proxy_tunnel == null) {
+                    socket.shutdownRead();
+                }
             }
             var final_body_bytes: [128 + 8]u8 = undefined;
             var header = @as(WebsocketHeader, @bitCast(@as(u16, 0)));
@@ -952,7 +1038,9 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
         }
 
         pub fn hasBackpressure(this: *const WebSocket) bool {
-            return this.send_buffer.count > 0;
+            if (this.send_buffer.count > 0) return true;
+            if (this.proxy_tunnel) |tunnel| return tunnel.hasBackpressure();
+            return false;
         }
 
         pub fn writeBinaryData(
@@ -960,7 +1048,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             ptr: [*]const u8,
             len: usize,
             op: u8,
-        ) callconv(.C) void {
+        ) callconv(.c) void {
             if (!this.hasTCP() or op > 0xF) {
                 this.dispatchAbruptClose(ErrorCode.ended);
                 return;
@@ -981,6 +1069,8 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             _ = this.sendData(bytes, !this.hasBackpressure(), opcode);
         }
         fn hasTCP(this: *WebSocket) bool {
+            // For tunnel mode, we have an active connection through the tunnel
+            if (this.proxy_tunnel != null) return true;
             return !this.tcp.isClosed() and !this.tcp.isShutdown();
         }
 
@@ -988,7 +1078,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             this: *WebSocket,
             blob_value: jsc.JSValue,
             op: u8,
-        ) callconv(.C) void {
+        ) callconv(.c) void {
             if (!this.hasTCP() or op > 0xF) {
                 this.dispatchAbruptClose(ErrorCode.ended);
                 return;
@@ -1030,7 +1120,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             this: *WebSocket,
             str_: *const jsc.ZigString,
             op: u8,
-        ) callconv(.C) void {
+        ) callconv(.c) void {
             const str = str_.*;
             if (!this.hasTCP()) {
                 this.dispatchAbruptClose(ErrorCode.ended);
@@ -1094,7 +1184,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             this.deref();
         }
 
-        pub fn close(this: *WebSocket, code: u16, reason: ?*const jsc.ZigString) callconv(.C) void {
+        pub fn close(this: *WebSocket, code: u16, reason: ?*const jsc.ZigString) callconv(.c) void {
             if (!this.hasTCP())
                 return;
             const tcp = this.tcp;
@@ -1103,7 +1193,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                 inner: {
                     var fixed_buffer = std.heap.FixedBufferAllocator.init(&close_reason_buf);
                     const allocator = fixed_buffer.allocator();
-                    const wrote = std.fmt.allocPrint(allocator, "{}", .{str.*}) catch break :inner;
+                    const wrote = std.fmt.allocPrint(allocator, "{f}", .{str.*}) catch break :inner;
                     this.sendCloseWithBody(tcp, code, wrote.ptr[0..125], wrote.len);
                     return;
                 }
@@ -1128,7 +1218,9 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                 var ws = this.ws;
                 defer ws.unref();
 
-                if (this_socket.outgoing_websocket != null and !this_socket.tcp.isClosed()) {
+                // For tunnel mode, tcp is detached but connection is still active through the tunnel
+                const is_connected = !this_socket.tcp.isClosed() or this_socket.proxy_tunnel != null;
+                if (this_socket.outgoing_websocket != null and is_connected) {
                     this_socket.handleData(this_socket.tcp, this.slice);
                 }
             }
@@ -1152,7 +1244,8 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             buffered_data: [*]u8,
             buffered_data_len: usize,
             deflate_params: ?*const WebSocketDeflate.Params,
-        ) callconv(.C) ?*anyopaque {
+            custom_ssl_ctx_ptr: ?*anyopaque,
+        ) callconv(.c) ?*anyopaque {
             const tcp = @as(*uws.us_socket_t, @ptrCast(input_socket));
             const ctx = @as(*uws.SocketContext, @ptrCast(socket_ctx));
             var ws = bun.new(WebSocket, .{
@@ -1163,6 +1256,8 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                 .send_buffer = bun.LinearFifo(u8, .Dynamic).init(bun.default_allocator),
                 .receive_buffer = bun.LinearFifo(u8, .Dynamic).init(bun.default_allocator),
                 .event_loop = globalThis.bunVM().eventLoop(),
+                // Take ownership of custom SSL context if provided
+                .custom_ssl_ctx = if (custom_ssl_ctx_ptr) |ptr| @ptrCast(ptr) else null,
             });
 
             if (deflate_params) |params| {
@@ -1214,7 +1309,79 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             );
         }
 
-        pub fn finalize(this: *WebSocket) callconv(.C) void {
+        /// Initialize a WebSocket client that uses a proxy tunnel for I/O.
+        /// Used for wss:// through HTTP proxy where TLS is handled by the tunnel.
+        /// The tunnel takes ownership of socket I/O, and this client reads/writes through it.
+        pub fn initWithTunnel(
+            outgoing: *CppWebSocket,
+            tunnel_ptr: *anyopaque,
+            globalThis: *jsc.JSGlobalObject,
+            buffered_data: [*]u8,
+            buffered_data_len: usize,
+            deflate_params: ?*const WebSocketDeflate.Params,
+        ) callconv(.c) ?*anyopaque {
+            const tunnel: *WebSocketProxyTunnel = @ptrCast(@alignCast(tunnel_ptr));
+
+            var ws = bun.new(WebSocket, .{
+                .ref_count = .init(),
+                .tcp = .{ .socket = .{ .detached = {} } }, // No direct socket - using tunnel
+                .outgoing_websocket = outgoing,
+                .globalThis = globalThis,
+                .send_buffer = bun.LinearFifo(u8, .Dynamic).init(bun.default_allocator),
+                .receive_buffer = bun.LinearFifo(u8, .Dynamic).init(bun.default_allocator),
+                .event_loop = globalThis.bunVM().eventLoop(),
+                .proxy_tunnel = tunnel,
+            });
+
+            // Take ownership of the tunnel
+            tunnel.ref();
+
+            if (deflate_params) |params| {
+                if (WebSocketDeflate.init(bun.default_allocator, params.*, globalThis.bunVM().rareData())) |deflate| {
+                    ws.deflate = deflate;
+                } else |_| {
+                    ws.deflate = null;
+                }
+            }
+
+            bun.handleOom(ws.send_buffer.ensureTotalCapacity(2048));
+            bun.handleOom(ws.receive_buffer.ensureTotalCapacity(2048));
+            ws.poll_ref.ref(globalThis.bunVM());
+
+            const buffered_slice: []u8 = buffered_data[0..buffered_data_len];
+            if (buffered_slice.len > 0) {
+                const initial_data = InitialDataHandler.new(.{
+                    .adopted = ws,
+                    .slice = buffered_slice,
+                    .ws = outgoing,
+                });
+                globalThis.queueMicrotaskCallback(initial_data, InitialDataHandler.handle);
+                outgoing.ref();
+            }
+
+            ws.ref();
+
+            return @as(*anyopaque, @ptrCast(ws));
+        }
+
+        /// Handle data received from the proxy tunnel (already decrypted).
+        /// Called by the WebSocketProxyTunnel when it receives and decrypts data.
+        pub fn handleTunnelData(this: *WebSocket, data: []const u8) void {
+            // Process the decrypted data as if it came from the socket
+            // hasTCP() now returns true for tunnel mode, so this will work correctly
+            this.handleData(this.tcp, data);
+        }
+
+        /// Called by the WebSocketProxyTunnel when the underlying socket drains.
+        /// Flushes any buffered plaintext data through the tunnel.
+        pub fn handleTunnelWritable(this: *WebSocket) void {
+            if (this.close_received) return;
+            const send_buf = this.send_buffer.readableSlice(0);
+            if (send_buf.len == 0) return;
+            _ = this.sendBuffer(send_buf);
+        }
+
+        pub fn finalize(this: *WebSocket) callconv(.c) void {
             log("finalize", .{});
             this.clearData();
 
@@ -1241,7 +1408,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             bun.destroy(this);
         }
 
-        pub fn memoryCost(this: *WebSocket) callconv(.C) usize {
+        pub fn memoryCost(this: *WebSocket) callconv(.c) usize {
             var cost: usize = @sizeOf(WebSocket);
             cost += this.send_buffer.buf.len;
             cost += this.receive_buffer.buf.len;
@@ -1255,6 +1422,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                 @export(&close, .{ .name = "Bun__" ++ name ++ "__close" });
                 @export(&finalize, .{ .name = "Bun__" ++ name ++ "__finalize" });
                 @export(&init, .{ .name = "Bun__" ++ name ++ "__init" });
+                @export(&initWithTunnel, .{ .name = "Bun__" ++ name ++ "__initWithTunnel" });
                 @export(&memoryCost, .{ .name = "Bun__" ++ name ++ "__memoryCost" });
                 @export(&register, .{ .name = "Bun__" ++ name ++ "__register" });
                 @export(&writeBinaryData, .{ .name = "Bun__" ++ name ++ "__writeBinaryData" });
@@ -1298,6 +1466,11 @@ pub const ErrorCode = enum(i32) {
     tls_handshake_failed = 30,
     message_too_big = 31,
     protocol_error = 32,
+    // Proxy error codes
+    proxy_connect_failed = 33,
+    proxy_authentication_required = 34,
+    proxy_connection_refused = 35,
+    proxy_tunnel_failed = 36,
 };
 
 pub const Mask = struct {
@@ -1559,6 +1732,7 @@ const log = Output.scoped(.WebSocketClient, .visible);
 const string = []const u8;
 
 const WebSocketDeflate = @import("./websocket_client/WebSocketDeflate.zig");
+const WebSocketProxyTunnel = @import("./websocket_client/WebSocketProxyTunnel.zig");
 const std = @import("std");
 const CppWebSocket = @import("./websocket_client/CppWebSocket.zig").CppWebSocket;
 

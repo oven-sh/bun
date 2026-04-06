@@ -3,8 +3,8 @@ pub const String = extern struct {
     pub const max_inline_len: usize = 8;
     /// This is three different types of string.
     /// 1. Empty string. If it's all zeroes, then it's an empty string.
-    /// 2. If the final bit is set, then it's a string that is stored inline.
-    /// 3. If the final bit is not set, then it's a string that is stored in an external buffer.
+    /// 2. If the final bit is not set, then it's a string that is stored inline.
+    /// 3. If the final bit is set, then it's a string that is stored in an external buffer.
     bytes: [max_inline_len]u8 = [8]u8{ 0, 0, 0, 0, 0, 0, 0, 0 },
 
     pub const empty: String = .{};
@@ -135,7 +135,7 @@ pub const String = extern struct {
         str: *const String,
         buf: string,
 
-        pub fn format(formatter: Formatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) @TypeOf(writer).Error!void {
+        pub fn format(formatter: Formatter, writer: *std.Io.Writer) std.Io.Writer.Error!void {
             const str = formatter.str;
             try writer.writeAll(str.slice(formatter.buf));
         }
@@ -159,8 +159,8 @@ pub const String = extern struct {
             quote: bool = true,
         };
 
-        pub fn format(formatter: JsonFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) @TypeOf(writer).Error!void {
-            try writer.print("{}", .{bun.fmt.formatJSONStringUTF8(formatter.str.slice(formatter.buf), .{ .quote = formatter.opts.quote })});
+        pub fn format(formatter: JsonFormatter, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+            try writer.print("{f}", .{bun.fmt.formatJSONStringUTF8(formatter.str.slice(formatter.buf), .{ .quote = formatter.opts.quote })});
         }
     };
 
@@ -175,7 +175,7 @@ pub const String = extern struct {
         str: *const String,
         buf: string,
 
-        pub fn format(this: StorePathFormatter, comptime _: string, _: std.fmt.FormatOptions, writer: anytype) @TypeOf(writer).Error!void {
+        pub fn format(this: StorePathFormatter, writer: *std.Io.Writer) std.Io.Writer.Error!void {
             for (this.str.slice(this.buf)) |c| {
                 const n = switch (c) {
                     '/' => '+',

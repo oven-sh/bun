@@ -75,6 +75,7 @@ pub const PendingValue = struct {
     onStartBuffering: ?*const fn (ctx: *anyopaque) void = null,
     onStartStreaming: ?*const fn (ctx: *anyopaque) jsc.WebCore.DrainResult = null,
     onReadableStreamAvailable: ?*const fn (ctx: *anyopaque, globalThis: *jsc.JSGlobalObject, readable: jsc.WebCore.ReadableStream) void = null,
+    onStreamCancelled: ?*const fn (ctx: ?*anyopaque) void = null,
     size_hint: Blob.SizeType = 0,
 
     deinit: bool = false,
@@ -146,7 +147,7 @@ pub const PendingValue = struct {
         return null;
     }
 
-    pub fn setPromise(value: *PendingValue, globalThis: *jsc.JSGlobalObject, action: Action, owned_readable: ?jsc.WebCore.ReadableStream) JSValue {
+    pub fn setPromise(value: *PendingValue, globalThis: *jsc.JSGlobalObject, action: Action, owned_readable: ?jsc.WebCore.ReadableStream) bun.JSError!JSValue {
         value.action = action;
         if (owned_readable orelse value.readable.get(globalThis)) |readable| {
             switch (action) {
@@ -164,7 +165,7 @@ pub const PendingValue = struct {
                             }
 
                             break :brk globalThis.readableStreamToFormData(readable.value, switch (form_data.?.encoding) {
-                                .Multipart => |multipart| bun.String.init(multipart).toJS(globalThis),
+                                .Multipart => |multipart| try bun.String.init(multipart).toJS(globalThis),
                                 .URLEncoded => .js_undefined,
                             });
                         },
@@ -272,6 +273,14 @@ pub const Value = union(Tag) {
         };
     }
 
+    pub fn wasString(this: *const Value) bool {
+        return switch (this.*) {
+            .InternalBlob => |*blob| blob.was_string,
+            .WTFStringImpl => true,
+            else => false,
+        };
+    }
+
     pub const heap_breakdown_label = "BodyValue";
     pub const ValueError = union(enum) {
         AbortReason: jsc.CommonAbortReason,
@@ -299,6 +308,15 @@ pub const Value = union(Tag) {
                 .JSValue => |js_value| return js_value.get() orelse .js_undefined,
             };
             this.* = .{ .JSValue = .create(js_value, globalObject) };
+            return js_value;
+        }
+
+        /// Like `toJS` but populates the error's stack trace with async frames
+        /// from the given promise's await chain. Use when rejecting from a
+        /// fetch/body callback at the top of the event loop.
+        pub fn toJSWithAsyncStack(this: *@This(), globalObject: *jsc.JSGlobalObject, promise: *jsc.JSPromise) jsc.JSValue {
+            const js_value = this.toJS(globalObject);
+            js_value.attachAsyncStackFromPromise(globalObject, promise);
             return js_value;
         }
 
@@ -336,7 +354,7 @@ pub const Value = union(Tag) {
                 defer str.deref();
                 this.* = .{
                     .InternalBlob = InternalBlob{
-                        .bytes = std.ArrayList(u8).fromOwnedSlice(bun.default_allocator, @constCast(bytes.slice())),
+                        .bytes = std.array_list.Managed(u8).fromOwnedSlice(bun.default_allocator, @constCast(bytes.slice())),
                         .was_string = true,
                     },
                 };
@@ -413,7 +431,7 @@ pub const Value = union(Tag) {
 
         return Value{
             .InternalBlob = InternalBlob{
-                .bytes = std.ArrayList(u8).fromOwnedSlice(allocator, data),
+                .bytes = std.array_list.Managed(u8).fromOwnedSlice(allocator, data),
                 .was_string = was_string,
             },
         };
@@ -487,6 +505,13 @@ pub const Value = union(Tag) {
                     .globalThis = globalThis,
                 });
 
+                if (locked.onStreamCancelled) |onCancelled| {
+                    if (locked.task) |task| {
+                        reader.cancel_handler = onCancelled;
+                        reader.cancel_ctx = task;
+                    }
+                }
+
                 reader.context.setup();
 
                 if (drain_result == .estimated_size) {
@@ -553,7 +578,7 @@ pub const Value = union(Tag) {
 
                 return Body.Value{
                     .InternalBlob = .{
-                        .bytes = std.ArrayList(u8){
+                        .bytes = std.array_list.Managed(u8){
                             .items = bun.default_allocator.dupe(u8, bytes) catch {
                                 return globalThis.throwValue(ZigString.static("Failed to clone ArrayBufferView").toErrorInstance(globalThis));
                             },
@@ -807,16 +832,10 @@ pub const Value = union(Tag) {
     }
 
     pub fn tryUseAsAnyBlob(this: *Value) ?AnyBlob {
-        if (this.* == .WTFStringImpl) {
-            if (this.WTFStringImpl.canUseAsUTF8()) {
-                return AnyBlob{ .WTFStringImpl = this.WTFStringImpl };
-            }
-        }
-
         const any_blob: AnyBlob = switch (this.*) {
-            .Blob => AnyBlob{ .Blob = this.Blob },
-            .InternalBlob => AnyBlob{ .InternalBlob = this.InternalBlob },
-            // .InlineBlob => AnyBlob{ .InlineBlob = this.InlineBlob },
+            .Blob => .{ .Blob = this.Blob },
+            .InternalBlob => .{ .InternalBlob = this.InternalBlob },
+            .WTFStringImpl => |str| if (str.canUseAsUTF8()) .{ .WTFStringImpl = str } else return null,
             .Locked => this.Locked.toAnyBlobAllowPromise() orelse return null,
             else => return null,
         };
@@ -834,7 +853,7 @@ pub const Value = union(Tag) {
                     defer str.deref();
                     break :brk .{
                         .InternalBlob = InternalBlob{
-                            .bytes = std.ArrayList(u8).fromOwnedSlice(bun.default_allocator, @constCast(utf8.slice())),
+                            .bytes = std.array_list.Managed(u8).fromOwnedSlice(bun.default_allocator, @constCast(utf8.slice())),
                             .was_string = true,
                         },
                     };
@@ -888,8 +907,8 @@ pub const Value = union(Tag) {
                 defer promise_value.unprotect();
 
                 if (promise_value.asAnyPromise()) |promise| {
-                    if (promise.status(global.vm()) == .pending) {
-                        try promise.reject(global, this.Error.toJS(global));
+                    if (promise.status() == .pending) {
+                        try promise.rejectWithAsyncStack(global, this.Error.toJS(global));
                     }
                 }
             }
@@ -1105,7 +1124,7 @@ pub fn Mixin(comptime Type: type) type {
                         if (readable.isDisturbed(globalObject)) {
                             return handleBodyAlreadyUsed(globalObject);
                         }
-                        return value.Locked.setPromise(globalObject, .{ .getText = {} }, readable);
+                        return try value.Locked.setPromise(globalObject, .{ .getText = {} }, readable);
                     }
                 }
                 if (value.* == .Locked) {
@@ -1113,7 +1132,7 @@ pub fn Mixin(comptime Type: type) type {
                         return handleBodyAlreadyUsed(globalObject);
                     }
 
-                    return value.Locked.setPromise(globalObject, .{ .getText = {} }, null);
+                    return try value.Locked.setPromise(globalObject, .{ .getText = {} }, null);
                 }
             }
 
@@ -1185,7 +1204,7 @@ pub fn Mixin(comptime Type: type) type {
 
                         value.toBlobIfPossible();
                         if (value.* == .Locked) {
-                            return value.Locked.setPromise(globalObject, .{ .getJSON = {} }, readable);
+                            return try value.Locked.setPromise(globalObject, .{ .getJSON = {} }, readable);
                         }
                     }
                 }
@@ -1196,7 +1215,7 @@ pub fn Mixin(comptime Type: type) type {
 
                     value.toBlobIfPossible();
                     if (value.* == .Locked) {
-                        return value.Locked.setPromise(globalObject, .{ .getJSON = {} }, null);
+                        return try value.Locked.setPromise(globalObject, .{ .getJSON = {} }, null);
                     }
                 }
             }
@@ -1226,7 +1245,7 @@ pub fn Mixin(comptime Type: type) type {
                         }
                         value.toBlobIfPossible();
                         if (value.* == .Locked) {
-                            return value.Locked.setPromise(globalObject, .{ .getArrayBuffer = {} }, readable);
+                            return try value.Locked.setPromise(globalObject, .{ .getArrayBuffer = {} }, readable);
                         }
                     }
                 }
@@ -1237,7 +1256,7 @@ pub fn Mixin(comptime Type: type) type {
                     value.toBlobIfPossible();
 
                     if (value.* == .Locked) {
-                        return value.Locked.setPromise(globalObject, .{ .getArrayBuffer = {} }, null);
+                        return try value.Locked.setPromise(globalObject, .{ .getArrayBuffer = {} }, null);
                     }
                 }
             }
@@ -1263,7 +1282,7 @@ pub fn Mixin(comptime Type: type) type {
                         }
                         value.toBlobIfPossible();
                         if (value.* == .Locked) {
-                            return value.Locked.setPromise(globalObject, .{ .getBytes = {} }, readable);
+                            return try value.Locked.setPromise(globalObject, .{ .getBytes = {} }, readable);
                         }
                     }
                 }
@@ -1273,7 +1292,7 @@ pub fn Mixin(comptime Type: type) type {
                     }
                     value.toBlobIfPossible();
                     if (value.* == .Locked) {
-                        return value.Locked.setPromise(globalObject, .{ .getBytes = {} }, null);
+                        return try value.Locked.setPromise(globalObject, .{ .getBytes = {} }, null);
                     }
                 }
             }
@@ -1314,9 +1333,9 @@ pub fn Mixin(comptime Type: type) type {
 
             if (value.* == .Locked) {
                 if (@hasDecl(Type, "getBodyReadableStream")) {
-                    return value.Locked.setPromise(globalObject, .{ .getFormData = encoder }, this.getBodyReadableStream(globalObject));
+                    return try value.Locked.setPromise(globalObject, .{ .getFormData = encoder }, this.getBodyReadableStream(globalObject));
                 } else {
-                    return value.Locked.setPromise(globalObject, .{ .getFormData = encoder }, null);
+                    return try value.Locked.setPromise(globalObject, .{ .getFormData = encoder }, null);
                 }
             }
 
@@ -1366,7 +1385,7 @@ pub fn Mixin(comptime Type: type) type {
                         }
                         value.toBlobIfPossible();
                         if (value.* == .Locked) {
-                            return value.Locked.setPromise(globalObject, .{ .getBlob = {} }, readable);
+                            return try value.Locked.setPromise(globalObject, .{ .getBlob = {} }, readable);
                         }
                     }
                 }
@@ -1381,7 +1400,7 @@ pub fn Mixin(comptime Type: type) type {
                     value.toBlobIfPossible();
 
                     if (value.* == .Locked) {
-                        return value.Locked.setPromise(globalObject, .{ .getBlob = {} }, null);
+                        return try value.Locked.setPromise(globalObject, .{ .getBlob = {} }, null);
                     }
                 }
             }
@@ -1557,15 +1576,15 @@ pub const ValueBufferer = struct {
     }
 
     pub fn onResolveStream(_: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-        var args = callframe.arguments_old(2);
-        var sink: *@This() = args.ptr[args.len - 1].asPromisePtr(@This());
+        const args = callframe.arguments_old(2);
+        const sink = bun.api.NativePromiseContext.take(@This(), args.ptr[args.len - 1]) orelse return .js_undefined;
         sink.handleResolveStream(true);
         return .js_undefined;
     }
 
     pub fn onRejectStream(_: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
         const args = callframe.arguments_old(2);
-        var sink = args.ptr[args.len - 1].asPromisePtr(@This());
+        const sink = bun.api.NativePromiseContext.take(@This(), args.ptr[args.len - 1]) orelse return .js_undefined;
         const err = args.ptr[0];
         sink.handleRejectStream(err, true);
         return .js_undefined;
@@ -1635,14 +1654,15 @@ pub const ValueBufferer = struct {
             assignment_result.ensureStillAlive();
             // it returns a Promise when it goes through ReadableStreamDefaultReader
             if (assignment_result.asAnyPromise()) |promise| {
-                switch (promise.status(globalThis.vm())) {
+                switch (promise.status()) {
                     .Pending => {
-                        assignment_result.then(
+                        const cell = bun.api.NativePromiseContext.create(globalThis, sink);
+                        assignment_result.thenWithValue(
                             globalThis,
-                            sink,
+                            cell,
                             onResolveStream,
                             onRejectStream,
-                        );
+                        ) catch {};
                     },
                     .Fulfilled => {
                         defer stream.value.unprotect();

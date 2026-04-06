@@ -3,6 +3,8 @@ const types = require("node:util/types");
 const EventEmitter = require("node:events");
 const fs = $zig("node_fs_binding.zig", "createBinding") as $ZigGeneratedClasses.NodeJSFS;
 const { glob } = require("internal/fs/glob");
+const { validateInteger } = require("internal/validators");
+
 const constants = $processBindingConstants.fs;
 
 var PromisePrototypeFinally = $Promise.prototype.finally; //TODO
@@ -22,7 +24,7 @@ const kDeserialize = Symbol("kDeserialize");
 const kEmptyObject = ObjectFreeze(Object.create(null));
 const kFlag = Symbol("kFlag");
 
-const { validateInteger } = require("internal/validators");
+let Interface; // lazy value for require("node:readline").Interface.
 
 function watch(
   filename: string | Buffer | URL,
@@ -413,8 +415,12 @@ function asyncWrap(fn: any, name: string) {
       }
     }
 
-    readLines(_options = undefined) {
-      throw new Error("BUN TODO FileHandle.readLines");
+    readLines(options = undefined) {
+      if (Interface === undefined) Interface = require("node:readline").Interface;
+      return new Interface({
+        input: this.createReadStream(options),
+        crlfDelay: Infinity,
+      });
     }
 
     async stat(options) {
@@ -513,7 +519,7 @@ function asyncWrap(fn: any, name: string) {
       }
     }
 
-    close = () => {
+    async close() {
       const fd = this[kFd];
       if (fd === -1) {
         return Promise.$resolve();
@@ -544,7 +550,7 @@ function asyncWrap(fn: any, name: string) {
 
       this.emit("close");
       return this[kClosePromise];
-    };
+    }
 
     async [SymbolAsyncDispose]() {
       return this.close();

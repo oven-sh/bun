@@ -12,7 +12,6 @@ const { createConnection } = require('net');
 const server = createServer();
 
 server.on('connection', mustCall((socket) => {
-
   socket.on('error', expectsError({
     name: 'Error',
     message: 'Parse Error: Invalid method encountered',
@@ -38,11 +37,11 @@ server.listen(0, () => {
   });
 
   socket.on('end', mustCall(() => {
-
     const expected = Buffer.from(
       'HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n'
     );
     assert(Buffer.concat(chunks).equals(expected));
+
     server.close();
   }));
 });

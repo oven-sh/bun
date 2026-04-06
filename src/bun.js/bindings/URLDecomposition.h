@@ -35,6 +35,10 @@ namespace WebCore {
 
 class URLDecomposition {
 public:
+    // Parse a port string with optional protocol for default port detection
+    // Returns nullopt on parse error, or optional<uint16_t> (nullopt means empty/default port)
+    static std::optional<std::optional<uint16_t>> parsePort(StringView port, StringView protocol);
+
     String origin() const;
 
     WEBCORE_EXPORT String protocol() const;

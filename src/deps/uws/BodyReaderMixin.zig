@@ -12,7 +12,7 @@ pub fn BodyReaderMixin(
     onError: fn (*Wrap) void,
 ) type {
     return struct {
-        body: std.ArrayList(u8),
+        body: std.array_list.Managed(u8),
 
         pub fn init(allocator: std.mem.Allocator) @This() {
             return .{ .body = .init(allocator) };

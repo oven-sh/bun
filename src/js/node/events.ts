@@ -392,7 +392,9 @@ EventEmitterPrototype.removeAllListeners = function removeAllListeners(type) {
 
   // emit in LIFO order
   const listeners = events[type];
-  for (let i = listeners.length - 1; i >= 0; i--) this.removeListener(type, listeners[i]);
+  if (listeners !== undefined) {
+    for (let i = listeners.length - 1; i >= 0; i--) this.removeListener(type, listeners[i]);
+  }
   return this;
 };
 

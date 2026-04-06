@@ -161,16 +161,18 @@ pub fn NewResponse(ssl_flag: i32) type {
             user_data: UserDataType,
         ) void {
             const Wrapper = struct {
-                pub fn handle(this: *c.uws_res, amount: u64, data: ?*anyopaque) callconv(.C) bool {
+                pub fn handle(this: *c.uws_res, amount: u64, data: ?*anyopaque) callconv(.c) bool {
                     if (comptime UserDataType == void) {
                         return @call(bun.callmod_inline, handler, .{ {}, amount, castRes(this) });
-                    } else {
+                    } else if (data) |user_data_ptr| {
+                        // null should always be treated as a no-op, there's no case where it should have any effect.
                         return @call(bun.callmod_inline, handler, .{
-                            @as(UserDataType, @ptrCast(@alignCast(data.?))),
+                            @as(UserDataType, @ptrCast(@alignCast(user_data_ptr))),
                             amount,
                             castRes(this),
                         });
                     }
+                    return true;
                 }
             };
             c.uws_res_on_writable(ssl_flag, res.downcast(), Wrapper.handle, user_data);
@@ -186,11 +188,12 @@ pub fn NewResponse(ssl_flag: i32) type {
         }
         pub fn onAborted(res: *Response, comptime UserDataType: type, comptime handler: fn (UserDataType, *Response) void, optional_data: UserDataType) void {
             const Wrapper = struct {
-                pub fn handle(this: *c.uws_res, user_data: ?*anyopaque) callconv(.C) void {
+                pub fn handle(this: *c.uws_res, user_data: ?*anyopaque) callconv(.c) void {
                     if (comptime UserDataType == void) {
                         @call(bun.callmod_inline, handler, .{ {}, castRes(this), {} });
-                    } else {
-                        @call(bun.callmod_inline, handler, .{ @as(UserDataType, @ptrCast(@alignCast(user_data.?))), castRes(this) });
+                    } else if (user_data) |user_data_ptr| {
+                        // null should always be treated as a no-op, there's no case where it should have any effect.
+                        @call(bun.callmod_inline, handler, .{ @as(UserDataType, @ptrCast(@alignCast(user_data_ptr))), castRes(this) });
                     }
                 }
             };
@@ -202,11 +205,12 @@ pub fn NewResponse(ssl_flag: i32) type {
         }
         pub fn onTimeout(res: *Response, comptime UserDataType: type, comptime handler: fn (UserDataType, *Response) void, optional_data: UserDataType) void {
             const Wrapper = struct {
-                pub fn handle(this: *c.uws_res, user_data: ?*anyopaque) callconv(.C) void {
+                pub fn handle(this: *c.uws_res, user_data: ?*anyopaque) callconv(.c) void {
                     if (comptime UserDataType == void) {
                         @call(bun.callmod_inline, handler, .{ {}, castRes(this) });
-                    } else {
-                        @call(bun.callmod_inline, handler, .{ @as(UserDataType, @ptrCast(@alignCast(user_data.?))), castRes(this) });
+                    } else if (user_data) |user_data_ptr| {
+                        // null should always be treated as a no-op, there's no case where it should have any effect.
+                        @call(bun.callmod_inline, handler, .{ @as(UserDataType, @ptrCast(@alignCast(user_data_ptr))), castRes(this) });
                     }
                 }
             };
@@ -228,7 +232,7 @@ pub fn NewResponse(ssl_flag: i32) type {
         ) void {
             const Wrapper = struct {
                 const handler_fn = handler;
-                pub fn handle(this: *c.uws_res, chunk_ptr: [*c]const u8, len: usize, last: bool, user_data: ?*anyopaque) callconv(.C) void {
+                pub fn handle(this: *c.uws_res, chunk_ptr: [*c]const u8, len: usize, last: bool, user_data: ?*anyopaque) callconv(.c) void {
                     if (comptime UserDataType == void) {
                         @call(bun.callmod_inline, handler_fn, .{
                             {},
@@ -236,9 +240,10 @@ pub fn NewResponse(ssl_flag: i32) type {
                             if (len > 0) chunk_ptr[0..len] else "",
                             last,
                         });
-                    } else {
+                    } else if (user_data) |user_data_ptr| {
+                        // null should always be treated as a no-op, there's no case where it should have any effect.
                         @call(bun.callmod_inline, handler_fn, .{
-                            @as(UserDataType, @ptrCast(@alignCast(user_data.?))),
+                            @as(UserDataType, @ptrCast(@alignCast(user_data_ptr))),
                             castRes(this),
                             if (len > 0) chunk_ptr[0..len] else "",
                             last,
@@ -262,13 +267,13 @@ pub fn NewResponse(ssl_flag: i32) type {
             const Wrapper = struct {
                 const handler_fn = handler;
                 const Args = *@TypeOf(args_tuple);
-                pub fn handle(user_data: ?*anyopaque) callconv(.C) void {
-                    const args: Args = @alignCast(@ptrCast(user_data.?));
-                    @call(.always_inline, handler_fn, args.*);
+                pub fn handle(user_data: ?*anyopaque) callconv(.c) void {
+                    const args: Args = @ptrCast(@alignCast(user_data.?));
+                    @call(bun.callmod_inline, handler_fn, args.*);
                 }
             };
 
-            c.uws_res_cork(ssl_flag, res.downcast(), @constCast(@ptrCast(&args_tuple)), Wrapper.handle);
+            c.uws_res_cork(ssl_flag, res.downcast(), @ptrCast(@constCast(&args_tuple)), Wrapper.handle);
         }
 
         pub fn runCorkedWithType(
@@ -278,7 +283,7 @@ pub fn NewResponse(ssl_flag: i32) type {
             optional_data: UserDataType,
         ) void {
             const Wrapper = struct {
-                pub fn handle(user_data: ?*anyopaque) callconv(.C) void {
+                pub fn handle(user_data: ?*anyopaque) callconv(.c) void {
                     if (comptime UserDataType == void) {
                         @call(bun.callmod_inline, handler, .{
                             {},
@@ -422,7 +427,7 @@ pub const AnyResponse = union(enum) {
         return switch (@TypeOf(response)) {
             *uws.NewApp(true).Response => .{ .SSL = response },
             *uws.NewApp(false).Response => .{ .TCP = response },
-            else => @compileError(unreachable),
+            else => @compileError("unreachable"),
         };
     }
 
@@ -436,7 +441,7 @@ pub const AnyResponse = union(enum) {
         switch (this) {
             inline .SSL, .TCP => |resp, ssl| resp.onData(UserDataType, struct {
                 pub fn onDataCallback(user_data: UserDataType, _: *uws.NewApp(ssl == .SSL).Response, data: []const u8, last: bool) void {
-                    @call(.always_inline, handler, .{ user_data, data, last });
+                    @call(bun.callmod_inline, handler, .{ user_data, data, last });
                 }
             }.onDataCallback, optional_data),
         }
@@ -688,10 +693,10 @@ const c = struct {
     pub extern fn uws_res_get_write_offset(ssl: i32, res: *c.uws_res) u64;
     pub extern fn uws_res_override_write_offset(ssl: i32, res: *c.uws_res, u64) void;
     pub extern fn uws_res_has_responded(ssl: i32, res: *c.uws_res) bool;
-    pub extern fn uws_res_on_writable(ssl: i32, res: *c.uws_res, handler: ?*const fn (*c.uws_res, u64, ?*anyopaque) callconv(.C) bool, user_data: ?*anyopaque) void;
+    pub extern fn uws_res_on_writable(ssl: i32, res: *c.uws_res, handler: ?*const fn (*c.uws_res, u64, ?*anyopaque) callconv(.c) bool, user_data: ?*anyopaque) void;
     pub extern fn uws_res_clear_on_writable(ssl: i32, res: *c.uws_res) void;
-    pub extern fn uws_res_on_aborted(ssl: i32, res: *c.uws_res, handler: ?*const fn (*c.uws_res, ?*anyopaque) callconv(.C) void, optional_data: ?*anyopaque) void;
-    pub extern fn uws_res_on_timeout(ssl: i32, res: *c.uws_res, handler: ?*const fn (*c.uws_res, ?*anyopaque) callconv(.C) void, optional_data: ?*anyopaque) void;
+    pub extern fn uws_res_on_aborted(ssl: i32, res: *c.uws_res, handler: ?*const fn (*c.uws_res, ?*anyopaque) callconv(.c) void, optional_data: ?*anyopaque) void;
+    pub extern fn uws_res_on_timeout(ssl: i32, res: *c.uws_res, handler: ?*const fn (*c.uws_res, ?*anyopaque) callconv(.c) void, optional_data: ?*anyopaque) void;
     pub extern fn uws_res_try_end(
         ssl: i32,
         res: *c.uws_res,
@@ -708,7 +713,7 @@ const c = struct {
     pub extern fn uws_res_on_data(
         ssl: i32,
         res: *c.uws_res,
-        handler: ?*const fn (*c.uws_res, [*c]const u8, usize, bool, ?*anyopaque) callconv(.C) void,
+        handler: ?*const fn (*c.uws_res, [*c]const u8, usize, bool, ?*anyopaque) callconv(.c) void,
         optional_data: ?*anyopaque,
     ) void;
     pub extern fn uws_res_upgrade(
@@ -723,7 +728,7 @@ const c = struct {
         sec_web_socket_extensions_length: usize,
         ws: ?*uws.SocketContext,
     ) *Socket;
-    pub extern fn uws_res_cork(i32, res: *c.uws_res, ctx: *anyopaque, corker: *const (fn (?*anyopaque) callconv(.C) void)) void;
+    pub extern fn uws_res_cork(i32, res: *c.uws_res, ctx: *anyopaque, corker: *const (fn (?*anyopaque) callconv(.c) void)) void;
 };
 
 const std = @import("std");

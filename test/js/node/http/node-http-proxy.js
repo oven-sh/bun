@@ -4,7 +4,7 @@ import { createServer, request } from "node:http";
 
 export async function run() {
   const { promise, resolve, reject } = Promise.withResolvers();
-  using server = exampleSite("http");
+  await using server = exampleSite("http");
   const proxyServer = createServer(function (req, res) {
     // Use URL object instead of deprecated url.parse
     const parsedUrl = new URL(req.url, `http://${req.headers.host}`);

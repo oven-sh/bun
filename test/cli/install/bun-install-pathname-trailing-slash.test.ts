@@ -16,7 +16,7 @@ test("custom registry doesn't have multiple trailing slashes in pathname", async
     port: 0,
     async fetch(req) {
       urls.push(req.url);
-      return new Response("ok");
+      return Response.json({ broken: true, message: "This is a test response" });
     },
   });
   const { port, hostname } = server;
@@ -39,7 +39,7 @@ registry = "http://${hostname}:${port}/prefixed-route/"
     }),
   );
 
-  Bun.spawnSync({
+  await using proc = Bun.spawn({
     cmd: [bunExe(), "install", "--force"],
     env: bunEnv,
     cwd: package_dir,
@@ -47,6 +47,9 @@ registry = "http://${hostname}:${port}/prefixed-route/"
     stderr: "ignore",
     stdin: "ignore",
   });
+
+  // The install should fail, but we're just testing the request goes to the right route.
+  expect(await proc.exited).toBe(1);
 
   expect(urls.length).toBe(1);
   expect(urls).toEqual([`http://${hostname}:${port}/prefixed-route/react`]);

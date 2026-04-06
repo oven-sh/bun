@@ -120,11 +120,11 @@ pub const JSObject = opaque {
         return JSC__createStructure(global, owner.asCell(), length, names);
     }
 
-    const InitializeCallback = *const fn (ctx: *anyopaque, obj: *JSObject, global: *JSGlobalObject) callconv(.C) void;
+    const InitializeCallback = *const fn (ctx: *anyopaque, obj: *JSObject, global: *JSGlobalObject) callconv(.c) void;
 
     pub fn Initializer(comptime Ctx: type, comptime func: fn (*Ctx, obj: *JSObject, global: *JSGlobalObject) bun.JSError!void) type {
         return struct {
-            pub fn call(this: *anyopaque, obj: *JSObject, global: *JSGlobalObject) callconv(.C) void {
+            pub fn call(this: *anyopaque, obj: *JSObject, global: *JSGlobalObject) callconv(.c) void {
                 func(@ptrCast(@alignCast(this)), obj, global) catch |err| bun.jsc.host_fn.voidFromJSError(err, global);
             }
         };
@@ -140,7 +140,7 @@ pub const JSObject = opaque {
         // then the JSValue is zero. the function this ends up calling can return undefined
         // with an exception:
         // https://github.com/oven-sh/WebKit/blob/397dafc9721b8f8046f9448abb6dbc14efe096d3/Source/JavaScriptCore/runtime/JSObjectInlines.h#L112
-        var scope: jsc.CatchScope = undefined;
+        var scope: jsc.TopExceptionScope = undefined;
         scope.init(globalThis, @src());
         defer scope.deinit();
         const value = JSC__JSObject__getIndex(this, globalThis, i);

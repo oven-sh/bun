@@ -142,7 +142,7 @@ pub const EasingFunction = union(enum) {
         );
     }
 
-    pub fn toCss(this: *const EasingFunction, comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
+    pub fn toCss(this: *const EasingFunction, dest: *css.Printer) css.PrintErr!void {
         return switch (this.*) {
             .linear => try dest.writeStr("linear"),
             .ease => try dest.writeStr("ease"),
@@ -178,13 +178,13 @@ pub const EasingFunction = union(enum) {
                 switch (this.*) {
                     .cubic_bezier => |cb| {
                         try dest.writeStr("cubic-bezier(");
-                        try css.generic.toCss(CSSNumber, &cb.x1, W, dest);
+                        try css.generic.toCss(CSSNumber, &cb.x1, dest);
                         try dest.writeChar(',');
-                        try css.generic.toCss(CSSNumber, &cb.y1, W, dest);
+                        try css.generic.toCss(CSSNumber, &cb.y1, dest);
                         try dest.writeChar(',');
-                        try css.generic.toCss(CSSNumber, &cb.x2, W, dest);
+                        try css.generic.toCss(CSSNumber, &cb.x2, dest);
                         try dest.writeChar(',');
-                        try css.generic.toCss(CSSNumber, &cb.y2, W, dest);
+                        try css.generic.toCss(CSSNumber, &cb.y2, dest);
                         try dest.writeChar(')');
                     },
                     .steps => {
@@ -196,7 +196,7 @@ pub const EasingFunction = union(enum) {
                         }
                         try dest.writeFmt("steps({d}", .{this.steps.count});
                         try dest.delim(',', false);
-                        try this.steps.position.toCss(W, dest);
+                        try this.steps.position.toCss(dest);
                         return try dest.writeChar(')');
                     },
                     .linear, .ease, .ease_in, .ease_out, .ease_in_out => unreachable,

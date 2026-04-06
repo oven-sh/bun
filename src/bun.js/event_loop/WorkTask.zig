@@ -27,7 +27,7 @@ pub fn WorkTask(comptime Context: type) type {
         // This is a poll because we want it to enter the uSockets loop
         ref: Async.KeepAlive = .{},
 
-        pub fn createOnJSThread(allocator: std.mem.Allocator, globalThis: *jsc.JSGlobalObject, value: *Context) !*This {
+        pub fn createOnJSThread(allocator: std.mem.Allocator, globalThis: *jsc.JSGlobalObject, value: *Context) *This {
             var vm = globalThis.bunVM();
             var this = bun.new(This, .{
                 .event_loop = vm.eventLoop(),

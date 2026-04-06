@@ -60,7 +60,7 @@ pub fn toAnyBlob(this: *Store) ?Blob.Any {
     return null;
 }
 
-pub fn external(ptr: ?*anyopaque, _: ?*anyopaque, _: usize) callconv(.C) void {
+pub fn external(ptr: ?*anyopaque, _: ?*anyopaque, _: usize) callconv(.c) void {
     if (ptr == null) return;
     var this = bun.cast(*Store, ptr);
     this.deref();
@@ -263,7 +263,7 @@ pub const File = struct {
                 .path = .{
                     .encoded_slice = switch (path_like) {
                         .encoded_slice => |slice| try slice.toOwned(bun.default_allocator),
-                        else => try jsc.ZigString.init(path_like.slice()).toSliceClone(bun.default_allocator),
+                        else => try jsc.ZigString.fromUTF8(path_like.slice()).toSliceClone(bun.default_allocator),
                     },
                 },
             }, globalThis.bunVM()),
@@ -295,6 +295,7 @@ pub const S3 = struct {
     options: bun.S3.MultiPartUploadOptions = .{},
     acl: ?bun.S3.ACL = null,
     storage_class: ?bun.S3.StorageClass = null,
+    request_payer: bool = false,
 
     pub fn isSeekable(_: *const @This()) ?bool {
         return true;
@@ -306,7 +307,7 @@ pub const S3 = struct {
     }
 
     pub fn getCredentialsWithOptions(this: *const @This(), options: ?JSValue, globalObject: *JSGlobalObject) bun.JSError!bun.S3.S3CredentialsWithOptions {
-        return S3Credentials.getCredentialsWithOptions(this.getCredentials().*, this.options, options, this.acl, this.storage_class, globalObject);
+        return S3Credentials.getCredentialsWithOptions(this.getCredentials().*, this.options, options, this.acl, this.storage_class, this.request_payer, globalObject);
     }
 
     pub fn path(this: *@This()) []const u8 {
@@ -342,7 +343,7 @@ pub const S3 = struct {
                         try self.promise.resolve(globalObject, .true);
                     },
                     .not_found, .failure => |err| {
-                        try self.promise.reject(globalObject, err.toJS(globalObject, self.store.getPath()));
+                        try self.promise.reject(globalObject, err.toJSWithAsyncStack(globalObject, self.store.getPath(), self.promise.get()));
                     },
                 }
             }
@@ -355,7 +356,7 @@ pub const S3 = struct {
         };
         const promise = jsc.JSPromise.Strong.init(globalThis);
         const value = promise.value();
-        const proxy_url = globalThis.bunVM().transpiler.env.getHttpProxy(true, null);
+        const proxy_url = globalThis.bunVM().transpiler.env.getHttpProxy(true, null, null);
         const proxy = if (proxy_url) |url| url.href else null;
         var aws_options = try this.getCredentialsWithOptions(extra_options, globalThis);
         defer aws_options.deinit();
@@ -365,7 +366,7 @@ pub const S3 = struct {
             .promise = promise,
             .store = store, // store is needed in case of not found error
             .global = globalThis,
-        }), proxy);
+        }), proxy, aws_options.request_payer);
 
         return value;
     }
@@ -394,7 +395,7 @@ pub const S3 = struct {
                     },
 
                     inline .not_found, .failure => |err| {
-                        try self.promise.reject(globalObject, err.toJS(globalObject, self.store.getPath()));
+                        try self.promise.reject(globalObject, err.toJSWithAsyncStack(globalObject, self.store.getPath(), self.promise.get()));
                     },
                 }
             }
@@ -413,7 +414,7 @@ pub const S3 = struct {
 
         const promise = jsc.JSPromise.Strong.init(globalThis);
         const value = promise.value();
-        const proxy_url = globalThis.bunVM().transpiler.env.getHttpProxy(true, null);
+        const proxy_url = globalThis.bunVM().transpiler.env.getHttpProxy(true, null, null);
         const proxy = if (proxy_url) |url| url.href else null;
         var aws_options = try this.getCredentialsWithOptions(extra_options, globalThis);
         defer aws_options.deinit();
@@ -503,7 +504,7 @@ pub const Bytes = struct {
 
     pub fn toInternalBlob(this: *Bytes) Blob.Internal {
         const ptr = this.ptr orelse return .{
-            .bytes = std.ArrayList(u8){
+            .bytes = std.array_list.Managed(u8){
                 .items = &.{},
                 .capacity = 0,
                 .allocator = this.allocator,

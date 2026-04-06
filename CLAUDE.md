@@ -6,12 +6,31 @@ This is the Bun repository - an all-in-one JavaScript runtime & toolkit designed
 
 - **Build Bun**: `bun bd`
   - Creates a debug build at `./build/debug/bun-debug`
-  - **CRITICAL**: no need for a timeout, the build is really fast!
+  - **CRITICAL**: do not set a timeout when running `bun bd`
 - **Run tests with your debug build**: `bun bd test <test-file>`
   - **CRITICAL**: Never use `bun test` directly - it won't include your changes
 - **Run any command with debug build**: `bun bd <command>`
+- **Run with JavaScript exception scope verification**: `BUN_JSC_validateExceptionChecks=1
+BUN_JSC_dumpSimulatedThrows=1 bun bd <command>`
 
 Tip: Bun is already installed and in $PATH. The `bd` subcommand is a package.json script.
+
+**All build scripts support build-then-exec.** Any `bun run build*` command (and `bun bd`, and `bun scripts/build.ts` directly) accepts trailing args which are passed to the built executable after building. This is the recommended way to run your build — you never invoke `./build/debug/bun-debug` directly.
+
+```sh
+bun bd test foo.test.ts                    # debug build + quiet debug logs
+bun run build test foo.test.ts             # debug build
+bun run build:release -p 'Bun.version'     # release build
+bun run build:local run script.ts          # debug build with local WebKit
+```
+
+When exec args are present, build output is suppressed unless the build fails — you see only the binary's output. Build flags (e.g. `--asan=off`) go before the exec args; see `scripts/build.ts` header for the full arg routing rules.
+
+**Comparing builds:** normally use the default `build/<profile>/` dir. If you need to preserve a build as a comparison point (rare — e.g. benchmarking before/after a change), `--build-dir` parks it somewhere the next build won't overwrite:
+
+```sh
+bun run build:release --build-dir=build/baseline
+```
 
 ## Testing
 
@@ -38,16 +57,36 @@ If no valid issue number is provided, find the best existing file to modify inst
 
 ### Writing Tests
 
-Tests use Bun's Jest-compatible test runner with proper test fixtures:
+Tests use Bun's Jest-compatible test runner with proper test fixtures.
+
+- For **single-file tests**, prefer `-e` over `tempDir`.
+- For **multi-file tests**, prefer `tempDir` and `Bun.spawn`.
 
 ```typescript
 import { test, expect } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 
-test("my feature", async () => {
+test("(single-file test) my feature", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", "console.log('Hello, world!')"],
+    env: bunEnv,
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([
+    proc.stdout.text(),
+    proc.stderr.text(),
+    proc.exited,
+  ]);
+
+  expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`"Hello, world!"`);
+  expect(exitCode).toBe(0);
+});
+
+test("(multi-file test) my feature", async () => {
   // Create temp directory with test files
   using dir = tempDir("test-prefix", {
-    "index.js": `console.log("hello");`,
+    "index.js": `import { foo } from "./foo.ts"; foo();`,
+    "foo.ts": `export function foo() { console.log("foo"); }`,
   });
 
   // Spawn Bun process
@@ -74,9 +113,10 @@ test("my feature", async () => {
 
 - Always use `port: 0`. Do not hardcode ports. Do not use your own random port number function.
 - Use `normalizeBunSnapshot` to normalize snapshot output of the test.
-- NEVER write tests that check for no "panic" or "uncaught exception" or similar in the test output. That is NOT a valid test.
+- NEVER write tests that check for no "panic" or "uncaught exception" or similar in the test output. These tests will never fail in CI.
 - Use `tempDir` from `"harness"` to create a temporary directory. **Do not** use `tmpdirSync` or `fs.mkdtempSync` to create temporary directories.
-- When spawning processes, tests should assert the output BEFORE asserting the exit code. This gives you a more useful error message on test failure.
+- When spawning processes, tests should expect(stdout).toBe(...) BEFORE expect(exitCode).toBe(0). This gives you a more useful error message on test failure.
+- **CRITICAL**: Do not write flaky tests. Do not use `setTimeout` in tests. Instead, `await` the condition to be met. You are not testing the TIME PASSING, you are testing the CONDITION.
 - **CRITICAL**: Verify your test fails with `USE_SYSTEM_BUN=1 bun test <file>` and passes with `bun bd test <file>`. Your test is NOT VALID if it passes with `USE_SYSTEM_BUN=1`.
 
 ## Code Architecture
@@ -138,6 +178,31 @@ test("my feature", async () => {
 - `src/sql/` - SQL database integrations
 - `src/bake/` - Server-side rendering framework
 
+#### Vendored Dependencies (`vendor/`)
+
+Third-party C/C++ libraries are vendored locally and can be read from disk (these are not git submodules):
+
+- `vendor/boringssl/` - BoringSSL (TLS/crypto)
+- `vendor/brotli/` - Brotli compression
+- `vendor/cares/` - c-ares (async DNS)
+- `vendor/hdrhistogram/` - HdrHistogram (latency tracking)
+- `vendor/highway/` - Google Highway (SIMD)
+- `vendor/libarchive/` - libarchive (tar/zip)
+- `vendor/libdeflate/` - libdeflate (fast deflate)
+- `vendor/libuv/` - libuv (Windows event loop)
+- `vendor/lolhtml/` - lol-html (HTML rewriter)
+- `vendor/lshpack/` - ls-hpack (HTTP/2 HPACK)
+- `vendor/mimalloc/` - mimalloc (memory allocator)
+- `vendor/nodejs/` - Node.js headers (compatibility)
+- `vendor/picohttpparser/` - PicoHTTPParser (HTTP parsing)
+- `vendor/tinycc/` - TinyCC (FFI JIT compiler, fork: oven-sh/tinycc)
+- `vendor/WebKit/` - WebKit/JavaScriptCore (JS engine)
+- `vendor/zig/` - Zig compiler/stdlib
+- `vendor/zlib/` - zlib (compression, cloudflare fork)
+- `vendor/zstd/` - Zstandard (compression)
+
+Build configuration for these is in `scripts/build/deps/*.ts`.
+
 ### JavaScript Class Implementation (C++)
 
 When implementing JavaScript classes in C++:
@@ -188,3 +253,31 @@ Built-in JavaScript modules use special syntax and are organized as:
 12. **Branch names must start with `claude/`** - This is a requirement for the CI to work.
 
 **ONLY** push up changes after running `bun bd test <file>` and ensuring your tests pass.
+
+## Debugging CI Failures
+
+Requires the BuildKite CLI (`brew install buildkite/buildkite/bk`) and a read-scoped token in `BUILDKITE_API_TOKEN`. The repo's `.bk.yaml` sets the org/pipeline so `-p bun` is not needed.
+
+```bash
+# Show rendered test-failure output for the current branch's latest build,
+# tagged [new] vs [also on main]
+bun run ci:errors
+bun run ci:errors '#26173'          # or a PR number / URL / branch / build number
+
+# One-screen progress summary (job counts, failed jobs, failing tests so far)
+bun run ci:status
+
+# Save full logs for every failed job to ./tmp/ci-<build>/
+bun run ci:logs
+
+# Just the build number, for composing with raw `bk`
+bun run ci:find
+bk job log <job-uuid> -b $(bun run ci:find)
+
+# Watch the current branch's build until it finishes
+bun run ci:watch
+```
+
+For anything else, use `bk` directly — `bk build list`, `bk api`, `bk artifacts`, etc.
+
+If output from these commands looks wrong — mis-parsed annotation HTML, confusing wording, a field BuildKite changed shape on — fix `scripts/find-build.ts` directly rather than working around it. It's a thin presenter over `bk`; keep it accurate.

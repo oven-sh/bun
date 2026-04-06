@@ -65,7 +65,7 @@ pub fn enqueueDependencyList(
             false,
         ) catch |err| {
             const note = .{
-                .fmt = "error occurred while resolving {}",
+                .fmt = "error occurred while resolving {f}",
                 .args = .{bun.fmt.fmtPath(u8, lockfile.str(&dependency.realname()), .{
                     .path_sep = switch (dependency.version.tag) {
                         .folder => .auto,
@@ -126,6 +126,7 @@ pub fn enqueueTarballForDownload(
 pub fn enqueueTarballForReading(
     this: *PackageManager,
     dependency_id: DependencyID,
+    package_id: PackageID,
     alias: string,
     resolution: *const Resolution,
     task_context: TaskCallbackContext,
@@ -144,6 +145,8 @@ pub fn enqueueTarballForReading(
 
     if (task_queue.found_existing) return;
 
+    const integrity = this.lockfile.packages.items(.meta)[package_id].integrity;
+
     this.task_batch.push(ThreadPool.Batch.from(enqueueLocalTarball(
         this,
         task_id,
@@ -151,6 +154,7 @@ pub fn enqueueTarballForReading(
         alias,
         path,
         resolution.*,
+        integrity,
     )));
 }
 
@@ -621,6 +625,40 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
                                 }
                                 return;
                             },
+                            error.MissingPackageJSON => {
+                                if (dependency.behavior.isRequired()) {
+                                    if (failFn) |fail| {
+                                        fail(
+                                            this,
+                                            dependency,
+                                            id,
+                                            err,
+                                        );
+                                    } else if (version.tag == .folder) {
+                                        this.log.addErrorFmt(
+                                            null,
+                                            logger.Loc.Empty,
+                                            this.allocator,
+                                            "Could not find package.json for \"file:{s}\" dependency \"{s}\"",
+                                            .{
+                                                this.lockfile.str(&version.value.folder),
+                                                this.lockfile.str(&name),
+                                            },
+                                        ) catch unreachable;
+                                    } else {
+                                        this.log.addErrorFmt(
+                                            null,
+                                            logger.Loc.Empty,
+                                            this.allocator,
+                                            "Could not find package.json for dependency \"{s}\"",
+                                            .{
+                                                this.lockfile.str(&name),
+                                            },
+                                        ) catch unreachable;
+                                    }
+                                }
+                                return;
+                            },
                             else => {
                                 if (failFn) |fail| {
                                     fail(
@@ -643,7 +681,7 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
                             if (PackageManager.verbose_install) {
                                 const label: string = this.lockfile.str(&version.literal);
 
-                                Output.prettyErrorln("   -> \"{s}\": \"{s}\" -> {s}@{}", .{
+                                Output.prettyErrorln("   -> \"{s}\": \"{s}\" -> {s}@{f}", .{
                                     this.lockfile.str(&result.package.name),
                                     label,
                                     this.lockfile.str(&result.package.name),
@@ -728,7 +766,7 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
                                                     if (!loaded_manifest.?.shouldExcludeFromAgeFilter(this.options.minimum_release_age_excludes) and Npm.PackageManifest.isPackageVersionTooRecent(find_result.package, min_age_ms)) {
                                                         const package_name = this.lockfile.str(&name);
                                                         const min_age_seconds = min_age_ms / std.time.ms_per_s;
-                                                        this.log.addErrorFmt(null, logger.Loc.Empty, this.allocator, "Version \"{s}@{}\" was published within minimum release age of {d} seconds", .{ package_name, find_result.version.fmt(this.lockfile.buffers.string_bytes.items), min_age_seconds }) catch {};
+                                                        this.log.addErrorFmt(null, logger.Loc.Empty, this.allocator, "Version \"{s}@{f}\" was published within minimum release age of {d} seconds", .{ package_name, find_result.version.fmt(this.lockfile.buffers.string_bytes.items), min_age_seconds }) catch {};
                                                         return;
                                                     }
                                                 }
@@ -973,7 +1011,7 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
             const workspace_not_found_fmt =
                 \\Workspace dependency "{[name]s}" not found
                 \\
-                \\Searched in <b>{[search_path]}<r>
+                \\Searched in <b>{[search_path]f}<r>
                 \\
                 \\Workspace documentation: https://bun.com/docs/install/workspaces
                 \\
@@ -993,7 +1031,7 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
                     if (PackageManager.verbose_install) {
                         const label: string = this.lockfile.str(&version.literal);
 
-                        Output.prettyErrorln("   -> \"{s}\": \"{s}\" -> {s}@{}", .{
+                        Output.prettyErrorln("   -> \"{s}\": \"{s}\" -> {s}@{f}", .{
                             this.lockfile.str(&result.package.name),
                             label,
                             this.lockfile.str(&result.package.name),
@@ -1133,6 +1171,7 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
                         this.lockfile.str(&dependency.name),
                         url,
                         res,
+                        .{},
                     )));
                 },
                 .remote => {
@@ -1294,6 +1333,7 @@ fn enqueueLocalTarball(
     name: string,
     path: string,
     resolution: Resolution,
+    integrity: Integrity,
 ) *ThreadPool.Task {
     var task = this.preallocated_resolve_tasks.get();
     task.* = Task{
@@ -1313,6 +1353,7 @@ fn enqueueLocalTarball(
                     .cache_dir = this.getCacheDirectory(),
                     .temp_dir = this.getTemporaryDirectory().handle,
                     .dependency_id = dependency_id,
+                    .integrity = integrity,
                     .url = strings.StringOrTinyString.initAppendIfNeeded(
                         path,
                         *FileSystem.FilenameStore,
@@ -1523,7 +1564,7 @@ fn getOrPutResolvedPackage(
                                 null,
                                 logger.Loc.Empty,
                                 this.allocator,
-                                "incorrect peer dependency \"{}@{}\"",
+                                "incorrect peer dependency \"{f}@{f}\"",
                                 .{
                                     existing_package.name.fmt(this.lockfile.buffers.string_bytes.items),
                                     existing_package.resolution.fmt(this.lockfile.buffers.string_bytes.items, .auto),
@@ -1560,7 +1601,7 @@ fn getOrPutResolvedPackage(
                                 null,
                                 logger.Loc.Empty,
                                 this.allocator,
-                                "incorrect peer dependency \"{}@{}\"",
+                                "incorrect peer dependency \"{f}@{f}\"",
                                 .{
                                     existing_package.name.fmt(this.lockfile.buffers.string_bytes.items),
                                     existing_package.resolution.fmt(this.lockfile.buffers.string_bytes.items, .auto),
@@ -1641,7 +1682,7 @@ fn getOrPutResolvedPackage(
                             switch (version.tag) {
                                 .dist_tag => {
                                     const tag_str = this.lockfile.str(&version.value.dist_tag.tag);
-                                    Output.prettyErrorln("<d>[minimum-release-age]<r> <b>{s}@{s}<r> selected <green>{s}<r> instead of <yellow>{s}<r> due to {d}-second filter", .{
+                                    Output.prettyErrorln("<d>[minimum-release-age]<r> <b>{s}@{s}<r> selected <green>{f}<r> instead of <yellow>{f}<r> due to {d}-second filter", .{
                                         package_name,
                                         tag_str,
                                         filtered.result.version.fmt(manifest.string_buf),
@@ -1651,7 +1692,7 @@ fn getOrPutResolvedPackage(
                                 },
                                 .npm => {
                                     const version_str = version.value.npm.version.fmt(manifest.string_buf);
-                                    Output.prettyErrorln("<d>[minimum-release-age]<r> <b>{s}<r>@{s}<r> selected <green>{s}<r> instead of <yellow>{s}<r> due to {d}-second filter", .{
+                                    Output.prettyErrorln("<d>[minimum-release-age]<r> <b>{s}<r>@{f}<r> selected <green>{f}<r> instead of <yellow>{f}<r> due to {d}-second filter", .{
                                         package_name,
                                         version_str,
                                         filtered.result.version.fmt(manifest.string_buf),
@@ -1886,6 +1927,7 @@ const DependencyID = bun.install.DependencyID;
 const ExtractTarball = bun.install.ExtractTarball;
 const Features = bun.install.Features;
 const FolderResolution = bun.install.FolderResolution;
+const Integrity = bun.install.Integrity;
 const Npm = bun.install.Npm;
 const PackageID = bun.install.PackageID;
 const PackageNameHash = bun.install.PackageNameHash;

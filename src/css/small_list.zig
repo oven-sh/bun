@@ -67,10 +67,10 @@ pub fn SmallList(comptime T: type, comptime N: comptime_int) type {
             unreachable;
         }
 
-        pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
+        pub fn toCss(this: *const @This(), dest: *Printer) PrintErr!void {
             const length = this.len();
             for (this.slice(), 0..) |*val, idx| {
-                try val.toCss(W, dest);
+                try val.toCss(dest);
                 if (idx < length - 1) {
                     try dest.delim(',', false);
                 }
@@ -646,6 +646,8 @@ pub fn SmallList(comptime T: type, comptime N: comptime_int) type {
                     return new;
             }
         }
+
+        pub const looksLikeContainerTypeSmallList = T;
     };
 }
 

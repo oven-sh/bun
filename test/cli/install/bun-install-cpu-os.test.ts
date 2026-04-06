@@ -20,7 +20,7 @@ expect.extend({
 beforeAll(dummyBeforeAll);
 afterAll(dummyAfterAll);
 beforeEach(async () => {
-  await dummyBeforeEach();
+  await dummyBeforeEach({ linker: "hoisted" });
 });
 afterEach(dummyAfterEach);
 

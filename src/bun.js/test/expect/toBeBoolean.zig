@@ -17,11 +17,11 @@ pub fn toBeBoolean(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallF
 
     if (not) {
         const signature = comptime getSignature("toBeBoolean", "", true);
-        return this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{any}<r>\n", .{received});
+        return this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{f}<r>\n", .{received});
     }
 
     const signature = comptime getSignature("toBeBoolean", "", false);
-    return this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{any}<r>\n", .{received});
+    return this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{f}<r>\n", .{received});
 }
 
 const bun = @import("bun");

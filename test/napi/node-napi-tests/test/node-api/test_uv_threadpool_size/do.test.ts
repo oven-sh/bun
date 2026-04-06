@@ -6,7 +6,8 @@ test("build", async () => {
 });
 
 for (const file of Array.from(new Bun.Glob("*.js").scanSync(import.meta.dir))) {
-  test.todoIf(["test.js", "node-options.js"].includes(file))(file, () => {
+  // unsupported uv function: uv_sleep
+  test.todoIf(["test.js"].includes(file))(file, () => {
     run(dirname(import.meta.dir), basename(import.meta.dir) + sep + file);
   });
 }

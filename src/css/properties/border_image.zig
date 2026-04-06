@@ -124,8 +124,8 @@ pub const BorderImage = struct {
         return .{ .err = input.newCustomError(css.ParserError.invalid_declaration) };
     }
 
-    pub fn toCss(this: *const BorderImage, comptime W: type, dest: *css.Printer(W)) PrintErr!void {
-        return toCssInternal(&this.source, &this.slice, &this.width, &this.outset, &this.repeat, W, dest);
+    pub fn toCss(this: *const BorderImage, dest: *css.Printer) PrintErr!void {
+        return toCssInternal(&this.source, &this.slice, &this.width, &this.outset, &this.repeat, dest);
     }
 
     pub fn toCssInternal(
@@ -134,34 +134,33 @@ pub const BorderImage = struct {
         width: *const Rect(BorderImageSideWidth),
         outset: *const Rect(LengthOrNumber),
         repeat: *const BorderImageRepeat,
-        comptime W: type,
-        dest: *css.Printer(W),
+        dest: *css.Printer,
     ) PrintErr!void {
         if (!css.generic.eql(Image, source, &Image.default())) {
-            try source.toCss(W, dest);
+            try source.toCss(dest);
         }
         const has_slice = !css.generic.eql(BorderImageSlice, slice, &BorderImageSlice.default());
         const has_width = !css.generic.eql(Rect(BorderImageSideWidth), width, &Rect(BorderImageSideWidth).all(BorderImageSideWidth.default()));
         const has_outset = !css.generic.eql(Rect(LengthOrNumber), outset, &Rect(LengthOrNumber).all(LengthOrNumber{ .number = 0.0 }));
         if (has_slice or has_width or has_outset) {
             try dest.writeStr(" ");
-            try slice.toCss(W, dest);
+            try slice.toCss(dest);
             if (has_width or has_outset) {
                 try dest.delim('/', true);
             }
             if (has_width) {
-                try width.toCss(W, dest);
+                try width.toCss(dest);
             }
 
             if (has_outset) {
                 try dest.delim('/', true);
-                try outset.toCss(W, dest);
+                try outset.toCss(dest);
             }
         }
 
         if (!css.generic.eql(BorderImageRepeat, repeat, &BorderImageRepeat.default())) {
             try dest.writeStr(" ");
-            return repeat.toCss(W, dest);
+            return repeat.toCss(dest);
         }
 
         return;
@@ -222,11 +221,11 @@ pub const BorderImageRepeat = struct {
         } };
     }
 
-    pub fn toCss(this: *const BorderImageRepeat, comptime W: type, dest: *Printer(W)) PrintErr!void {
-        try this.horizontal.toCss(W, dest);
+    pub fn toCss(this: *const BorderImageRepeat, dest: *Printer) PrintErr!void {
+        try this.horizontal.toCss(dest);
         if (this.horizontal != this.vertical) {
             try dest.writeStr(" ");
-            try this.vertical.toCss(W, dest);
+            try this.vertical.toCss(dest);
         }
     }
 
@@ -355,8 +354,8 @@ pub const BorderImageSlice = struct {
         return .{ .result = BorderImageSlice{ .offsets = offsets, .fill = fill } };
     }
 
-    pub fn toCss(this: *const BorderImageSlice, comptime W: type, dest: *Printer(W)) PrintErr!void {
-        try this.offsets.toCss(W, dest);
+    pub fn toCss(this: *const BorderImageSlice, dest: *Printer) PrintErr!void {
+        try this.offsets.toCss(dest);
         if (this.fill) {
             try dest.writeStr(" fill");
         }

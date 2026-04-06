@@ -50,7 +50,7 @@ it("retries on 500", async () => {
     }),
   );
   const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "add", "BaR"],
+    cmd: [bunExe(), "add", "BaR", "--linker=hoisted"],
     cwd: package_dir,
     stdout: "pipe",
     stdin: "pipe",

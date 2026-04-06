@@ -170,6 +170,14 @@ struct us_socket_flags {
     unsigned char low_prio_state: 2;
     /* If true, the socket should be read using readmsg to support receiving file descriptors */
     bool is_ipc: 1;
+    /* If true, the socket has been closed */
+    bool is_closed: 1;
+    /* If true, the socket was reallocated during adoption */
+    bool adopted: 1;
+    /* If true, the socket is a TLS socket */
+    bool is_tls: 1;
+    /* If true, the last write to this socket failed (would block) */
+    bool last_write_failed: 1;
 
 } __attribute__((packed));
 
@@ -215,6 +223,10 @@ struct us_udp_socket_t {
     void (*on_data)(struct us_udp_socket_t *, void *, int);
     void (*on_drain)(struct us_udp_socket_t *);
     void (*on_close)(struct us_udp_socket_t *);
+    /* Called when recvmmsg returns an error (other than EAGAIN). The socket
+     * is NOT closed — caller decides whether to close. Used to surface ICMP
+     * errors delivered via IP_RECVERR on Linux (ECONNREFUSED, etc.). */
+    void (*on_recv_error)(struct us_udp_socket_t *, int err);
     void *user;
     struct us_loop_t *loop;
     /* An UDP socket can only ever be bound to one single port regardless of how
@@ -264,6 +276,10 @@ int us_internal_raw_root_certs(struct us_cert_string_t **out);
 struct us_listen_socket_t {
   alignas(LIBUS_EXT_ALIGNMENT) struct us_socket_t s;
   unsigned int socket_ext_size;
+  /* Set when TCP_DEFER_ACCEPT/SO_ACCEPTFILTER was successfully applied. Accepted sockets
+   * from this listener are guaranteed to have data ready, so the accept loop dispatches
+   * readable immediately instead of returning to epoll/kqueue. */
+  unsigned char deferred_accept;
 };
 
 /* Listen sockets are keps in their own list */
@@ -431,15 +447,17 @@ void *us_internal_ssl_socket_ext(us_internal_ssl_socket_r s);
 void *us_internal_connecting_ssl_socket_ext(struct us_connecting_socket_t *c);
 int us_internal_ssl_socket_is_shut_down(us_internal_ssl_socket_r s);
 int us_internal_ssl_socket_is_closed(us_internal_ssl_socket_r s);
+int us_internal_ssl_socket_is_handshake_finished(us_internal_ssl_socket_r s);
+int us_internal_ssl_socket_handshake_callback_has_fired(us_internal_ssl_socket_r s);
 void us_internal_ssl_socket_shutdown(us_internal_ssl_socket_r s);
 
 struct us_internal_ssl_socket_t *us_internal_ssl_socket_context_adopt_socket(
     us_internal_ssl_socket_context_r context,
-    us_internal_ssl_socket_r s, int ext_size);
+    us_internal_ssl_socket_r s, int old_ext_size, int ext_size);
 
 struct us_internal_ssl_socket_t *us_internal_ssl_socket_wrap_with_tls(
     us_socket_r s, struct us_bun_socket_context_options_t options,
-    struct us_socket_events_t events, int socket_ext_size);
+    struct us_socket_events_t events, int old_socket_ext_size, int socket_ext_size);
 struct us_internal_ssl_socket_context_t *
 us_internal_create_child_ssl_socket_context(
     us_internal_ssl_socket_context_r context, int context_ext_size);

@@ -13,6 +13,7 @@ namespace JSC {
 class Structure;
 class Identifier;
 class LazyClassStructure;
+class WebAssemblyCompileOptions;
 enum class JSPromiseRejectionOperation : unsigned;
 } // namespace JSC
 
@@ -40,9 +41,13 @@ class GlobalInternals;
 } // namespace shim
 } // namespace v8
 
+namespace node {
+struct node_module;
+} // namespace node
+
 #include "root.h"
 #include "headers-handwritten.h"
-#include <JavaScriptCore/CatchScope.h>
+#include <JavaScriptCore/TopExceptionScope.h>
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/JSTypeInfo.h>
 #include <JavaScriptCore/Structure.h>
@@ -54,6 +59,7 @@ class GlobalInternals;
 #include "headers-handwritten.h"
 #include "BunCommonStrings.h"
 #include "BunHttp2CommonStrings.h"
+#include "BunMarkdownTagStrings.h"
 #include "BunGlobalScope.h"
 #include <js_native_api.h>
 #include <node_api.h>
@@ -161,7 +167,7 @@ public:
     WebCore::DOMWrapperWorld& world() { return m_world.get(); }
 
     DECLARE_VISIT_CHILDREN;
-    template<typename Visitor> void visitAdditionalChildren(Visitor&);
+    template<typename Visitor> void visitAdditionalChildrenInGCThread(Visitor&);
     template<typename Visitor> static void visitOutputConstraints(JSCell*, Visitor&);
 
     bool worldIsNormal() const { return m_worldIsNormal; }
@@ -192,8 +198,8 @@ public:
     static JSC::JSInternalPromise* moduleLoaderFetch(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSValue key, JSC::JSValue parameters, JSC::JSValue script);
     static JSC::JSObject* moduleLoaderCreateImportMetaProperties(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSValue key, JSC::JSModuleRecord*, JSC::JSValue val);
     static JSC::JSValue moduleLoaderEvaluate(JSGlobalObject*, JSC::JSModuleLoader*, JSValue key, JSValue moduleRecordValue, JSValue scriptFetcher, JSValue sentValue, JSValue resumeMode);
-    static JSC::JSPromise* compileStreaming(JSGlobalObject*, JSC::JSValue source);
-    static JSC::JSPromise* instantiateStreaming(JSGlobalObject*, JSC::JSValue source, JSC::JSObject* importObject);
+    static JSC::JSPromise* compileStreaming(JSGlobalObject*, JSC::JSValue source, std::optional<JSC::WebAssemblyCompileOptions>&&);
+    static JSC::JSPromise* instantiateStreaming(JSGlobalObject*, JSC::JSValue source, JSC::JSObject* importObject, std::optional<JSC::WebAssemblyCompileOptions>&&);
 
     static ScriptExecutionStatus scriptExecutionStatus(JSGlobalObject*, JSObject*);
     static void promiseRejectionTracker(JSGlobalObject*, JSC::JSPromise*, JSC::JSPromiseRejectionOperation);
@@ -267,7 +273,6 @@ public:
 
     JSC::JSObject* performanceObject() const { return m_performanceObject.getInitializedOnMainThread(this); }
 
-    JSC::JSFunction* performMicrotaskFunction() const { return m_performMicrotaskFunction.getInitializedOnMainThread(this); }
     JSC::JSFunction* performMicrotaskVariadicFunction() const { return m_performMicrotaskVariadicFunction.getInitializedOnMainThread(this); }
 
     JSC::Structure* utilInspectOptionsStructure() const { return m_utilInspectOptionsStructure.getInitializedOnMainThread(this); }
@@ -297,6 +302,11 @@ public:
     JSObject* lazyTestModuleObject() const { return m_lazyTestModuleObject.getInitializedOnMainThread(this); }
     Structure* CommonJSModuleObjectStructure() const { return m_commonJSModuleObjectStructure.getInitializedOnMainThread(this); }
     Structure* JSSocketAddressDTOStructure() const { return m_JSSocketAddressDTOStructure.getInitializedOnMainThread(this); }
+    Structure* JSReactElementStructure() const { return m_JSReactElementStructure.getInitializedOnMainThread(this); }
+    Structure* JSMarkdownListItemMetaStructure() const { return m_JSMarkdownListItemMetaStructure.getInitializedOnMainThread(this); }
+    Structure* JSMarkdownListMetaStructure() const { return m_JSMarkdownListMetaStructure.getInitializedOnMainThread(this); }
+    Structure* JSMarkdownCellMetaStructure() const { return m_JSMarkdownCellMetaStructure.getInitializedOnMainThread(this); }
+    Structure* JSMarkdownLinkMetaStructure() const { return m_JSMarkdownLinkMetaStructure.getInitializedOnMainThread(this); }
     Structure* ImportMetaObjectStructure() const { return m_importMetaObjectStructure.getInitializedOnMainThread(this); }
     Structure* ImportMetaBakeObjectStructure() const { return m_importMetaBakeObjectStructure.getInitializedOnMainThread(this); }
     Structure* AsyncContextFrameStructure() const { return m_asyncBoundFunctionStructure.getInitializedOnMainThread(this); }
@@ -307,6 +317,7 @@ public:
     Structure* NapiPrototypeStructure() const { return m_NapiPrototypeStructure.getInitializedOnMainThread(this); }
     Structure* NapiHandleScopeImplStructure() const { return m_NapiHandleScopeImplStructure.getInitializedOnMainThread(this); }
     Structure* NapiTypeTagStructure() const { return m_NapiTypeTagStructure.getInitializedOnMainThread(this); }
+    Structure* NativePromiseContextStructure() const { return m_NativePromiseContextStructure.getInitializedOnMainThread(this); }
 
     Structure* JSSQLStatementStructure() const { return m_JSSQLStatementStructure.getInitializedOnMainThread(this); }
 
@@ -383,8 +394,10 @@ public:
         Bun__FileStreamWrapper__onResolveRequestStream,
         Bun__FileSink__onResolveStream,
         Bun__FileSink__onRejectStream,
+        Bun__CronJob__onPromiseResolve,
+        Bun__CronJob__onPromiseReject,
     };
-    static constexpr size_t promiseFunctionsSize = 36;
+    static constexpr size_t promiseFunctionsSize = 34;
 
     static PromiseFunctions promiseHandlerID(SYSV_ABI EncodedJSValue (*handler)(JSC::JSGlobalObject* arg0, JSC::CallFrame* arg1));
 
@@ -521,6 +534,7 @@ public:
     V(private, std::unique_ptr<WebCore::DOMConstructors>, m_constructors)                                    \
     V(private, Bun::CommonStrings, m_commonStrings)                                                          \
     V(private, Bun::Http2CommonStrings, m_http2CommonStrings)                                                \
+    V(private, Bun::MarkdownTagStrings, m_markdownTagStrings)                                                \
                                                                                                              \
     /* JSC's hashtable code-generator tries to access these properties, so we make them public. */           \
     /* However, we'd like it better if they could be protected. */                                           \
@@ -540,6 +554,7 @@ public:
     V(public, LazyClassStructure, m_NodeVMSourceTextModuleClassStructure)                                    \
     V(public, LazyClassStructure, m_NodeVMSyntheticModuleClassStructure)                                     \
     V(public, LazyClassStructure, m_JSX509CertificateClassStructure)                                         \
+    V(public, LazyClassStructure, m_JSWebViewClassStructure)                                                 \
     V(public, LazyClassStructure, m_JSSignClassStructure)                                                    \
     V(public, LazyClassStructure, m_JSVerifyClassStructure)                                                  \
     V(public, LazyClassStructure, m_JSDiffieHellmanClassStructure)                                           \
@@ -559,8 +574,9 @@ public:
     V(public, LazyClassStructure, m_JSConnectionsListClassStructure)                                         \
     V(public, LazyClassStructure, m_JSHTTPParserClassStructure)                                              \
                                                                                                              \
+    V(private, LazyPropertyOfGlobalObject<Structure>, m_jsonlParseResultStructure)                           \
+    V(private, LazyPropertyOfGlobalObject<Structure>, m_pathParsedObjectStructure)                           \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_pendingVirtualModuleResultStructure)                 \
-    V(private, LazyPropertyOfGlobalObject<JSFunction>, m_performMicrotaskFunction)                           \
     V(private, LazyPropertyOfGlobalObject<JSFunction>, m_nativeMicrotaskTrampoline)                          \
     V(private, LazyPropertyOfGlobalObject<JSFunction>, m_performMicrotaskVariadicFunction)                   \
     V(private, LazyPropertyOfGlobalObject<JSFunction>, m_utilInspectFunction)                                \
@@ -589,6 +605,11 @@ public:
     V(private, LazyPropertyOfGlobalObject<Structure>, m_cachedGlobalProxyStructure)                          \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_commonJSModuleObjectStructure)                       \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_JSSocketAddressDTOStructure)                         \
+    V(private, LazyPropertyOfGlobalObject<Structure>, m_JSReactElementStructure)                             \
+    V(private, LazyPropertyOfGlobalObject<Structure>, m_JSMarkdownListItemMetaStructure)                     \
+    V(private, LazyPropertyOfGlobalObject<Structure>, m_JSMarkdownListMetaStructure)                         \
+    V(private, LazyPropertyOfGlobalObject<Structure>, m_JSMarkdownCellMetaStructure)                         \
+    V(private, LazyPropertyOfGlobalObject<Structure>, m_JSMarkdownLinkMetaStructure)                         \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_memoryFootprintStructure)                            \
     V(private, LazyPropertyOfGlobalObject<JSObject>, m_requireFunctionUnbound)                               \
     V(private, LazyPropertyOfGlobalObject<JSObject>, m_requireResolveFunctionUnbound)                        \
@@ -609,6 +630,7 @@ public:
     V(private, LazyPropertyOfGlobalObject<Structure>, m_NapiPrototypeStructure)                              \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_NapiHandleScopeImplStructure)                        \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_NapiTypeTagStructure)                                \
+    V(private, LazyPropertyOfGlobalObject<Structure>, m_NativePromiseContextStructure)                       \
                                                                                                              \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_JSSQLStatementStructure)                             \
     V(private, LazyPropertyOfGlobalObject<v8::shim::GlobalInternals>, m_V8GlobalInternals)                   \
@@ -651,8 +673,17 @@ public:
     // We will add it to the resulting napi value.
     void* m_pendingNapiModuleDlopenHandle = nullptr;
 
-    // Store the napi module struct to defer calling nm_register_func until after dlopen completes
+    // Store ALL napi module structs to defer calling nm_register_func until after dlopen completes
+    // A single .node file can register multiple modules during static constructors
+    WTF::Vector<napi_module> m_pendingNapiModules;
+
+    // Temporary storage for current NAPI module being executed
+    // Used by executePendingNapiModule to execute one module at a time
     std::optional<napi_module> m_pendingNapiModule = {};
+
+    // Store ALL V8 C++ module pointers to defer execution until after dlopen completes
+    // A single .node file can register multiple V8 modules during static constructors
+    WTF::Vector<node::node_module*> m_pendingV8Modules;
 
     JSObject* nodeErrorCache() const { return m_nodeErrorCache.getInitializedOnMainThread(this); }
 
@@ -672,9 +703,6 @@ public:
     String agentClusterID() const;
     static String defaultAgentClusterID();
 
-    void trackFFIFunction(JSC::JSFunction* function);
-    bool untrackFFIFunction(JSC::JSFunction* function);
-
     BunPlugin::OnLoad onLoadPlugins {};
     BunPlugin::OnResolve onResolvePlugins {};
 
@@ -686,6 +714,8 @@ public:
 
     void reload();
 
+    JSC::Structure* jsonlParseResultStructure() { return m_jsonlParseResultStructure.get(this); }
+    JSC::Structure* pathParsedObjectStructure() { return m_pathParsedObjectStructure.get(this); }
     JSC::Structure* pendingVirtualModuleResultStructure() { return m_pendingVirtualModuleResultStructure.get(this); }
 
     // We need to know if the napi module registered itself or we registered it.
@@ -702,6 +732,7 @@ public:
 
     Bun::CommonStrings& commonStrings() { return m_commonStrings; }
     Bun::Http2CommonStrings& http2CommonStrings() { return m_http2CommonStrings; }
+    Bun::MarkdownTagStrings& markdownTagStrings() { return m_markdownTagStrings; }
 #include "ZigGeneratedClasses+lazyStructureHeader.h"
 
     void finishCreation(JSC::VM&);
@@ -724,8 +755,8 @@ public:
     // De-optimization once `require("module").runMain` is written to
     bool hasOverriddenModuleRunMain = false;
 
-    WTF::Vector<std::unique_ptr<napi_env__>> m_napiEnvs;
-    napi_env makeNapiEnv(const napi_module&);
+    WTF::Vector<WTF::Ref<NapiEnv>> m_napiEnvs;
+    Ref<NapiEnv> makeNapiEnv(const napi_module&);
     napi_env makeNapiEnvForFFI();
     bool hasNapiFinalizers() const;
 
@@ -734,7 +765,6 @@ private:
     WebCore::SubtleCrypto* m_subtleCrypto = nullptr;
 
     Bun::WriteBarrierList<JSC::JSPromise> m_aboutToBeNotifiedRejectedPromises;
-    Bun::WriteBarrierList<JSC::JSFunction> m_ffiFunctions;
 };
 
 class EvalGlobalObject : public GlobalObject {

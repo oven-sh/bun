@@ -37,7 +37,7 @@ pub const TransformList = struct {
         }
     }
 
-    pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
+    pub fn toCss(this: *const @This(), dest: *Printer) PrintErr!void {
         if (this.v.items.len == 0) {
             return dest.writeStr("none");
         }
@@ -45,13 +45,12 @@ pub const TransformList = struct {
         // TODO: Re-enable with a better solution
         //       See: https://github.com/parcel-bundler/lightningcss/issues/288
         if (dest.minify) {
-            var base = ArrayList(u8){};
-            const base_writer = base.writer(dest.allocator);
-            const WW = @TypeOf(base_writer);
+            var base = std.Io.Writer.Allocating.init(dest.allocator);
+            const base_writer = &base.writer;
 
-            var scratchbuf = std.ArrayList(u8).init(dest.allocator);
+            var scratchbuf = std.array_list.Managed(u8).init(dest.allocator);
             defer scratchbuf.deinit();
-            var p = Printer(WW).new(
+            var p = Printer.new(
                 dest.allocator,
                 scratchbuf,
                 base_writer,
@@ -62,17 +61,17 @@ pub const TransformList = struct {
             );
             defer p.deinit();
 
-            try this.toCssBase(WW, &p);
+            try this.toCssBase(&p);
 
-            return dest.writeStr(base.items);
+            return dest.writeStr(base.written());
         }
 
-        return this.toCssBase(W, dest);
+        return this.toCssBase(dest);
     }
 
-    fn toCssBase(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
+    fn toCssBase(this: *const @This(), dest: *Printer) PrintErr!void {
         for (this.v.items) |*item| {
-            try item.toCss(W, dest);
+            try item.toCss(dest);
         }
     }
 
@@ -535,59 +534,59 @@ pub const Transform = union(enum) {
         );
     }
 
-    pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
+    pub fn toCss(this: *const @This(), dest: *Printer) PrintErr!void {
         switch (this.*) {
             .translate => |t| {
                 if (dest.minify and t.x.isZero() and !t.y.isZero()) {
                     try dest.writeStr("translateY(");
-                    try t.y.toCss(W, dest);
+                    try t.y.toCss(dest);
                 } else {
                     try dest.writeStr("translate(");
-                    try t.x.toCss(W, dest);
+                    try t.x.toCss(dest);
                     if (!t.y.isZero()) {
                         try dest.delim(',', false);
-                        try t.y.toCss(W, dest);
+                        try t.y.toCss(dest);
                     }
                 }
                 try dest.writeChar(')');
             },
             .translate_x => |x| {
                 try dest.writeStr(if (dest.minify) "translate(" else "translateX(");
-                try x.toCss(W, dest);
+                try x.toCss(dest);
                 try dest.writeChar(')');
             },
             .translate_y => |y| {
                 try dest.writeStr("translateY(");
-                try y.toCss(W, dest);
+                try y.toCss(dest);
                 try dest.writeChar(')');
             },
             .translate_z => |z| {
                 try dest.writeStr("translateZ(");
-                try z.toCss(W, dest);
+                try z.toCss(dest);
                 try dest.writeChar(')');
             },
             .translate_3d => |t| {
                 if (dest.minify and !t.x.isZero() and t.y.isZero() and t.z.isZero()) {
                     try dest.writeStr("translate(");
-                    try t.x.toCss(W, dest);
+                    try t.x.toCss(dest);
                 } else if (dest.minify and t.x.isZero() and !t.y.isZero() and t.z.isZero()) {
                     try dest.writeStr("translateY(");
-                    try t.y.toCss(W, dest);
+                    try t.y.toCss(dest);
                 } else if (dest.minify and t.x.isZero() and t.y.isZero() and !t.z.isZero()) {
                     try dest.writeStr("translateZ(");
-                    try t.z.toCss(W, dest);
+                    try t.z.toCss(dest);
                 } else if (dest.minify and t.z.isZero()) {
                     try dest.writeStr("translate(");
-                    try t.x.toCss(W, dest);
+                    try t.x.toCss(dest);
                     try dest.delim(',', false);
-                    try t.y.toCss(W, dest);
+                    try t.y.toCss(dest);
                 } else {
                     try dest.writeStr("translate3d(");
-                    try t.x.toCss(W, dest);
+                    try t.x.toCss(dest);
                     try dest.delim(',', false);
-                    try t.y.toCss(W, dest);
+                    try t.y.toCss(dest);
                     try dest.delim(',', false);
-                    try t.z.toCss(W, dest);
+                    try t.z.toCss(dest);
                 }
                 try dest.writeChar(')');
             },
@@ -596,33 +595,33 @@ pub const Transform = union(enum) {
                 const y: f32 = s.y.intoF32();
                 if (dest.minify and x == 1.0 and y != 1.0) {
                     try dest.writeStr("scaleY(");
-                    try css.CSSNumberFns.toCss(&y, W, dest);
+                    try css.CSSNumberFns.toCss(&y, dest);
                 } else if (dest.minify and x != 1.0 and y == 1.0) {
                     try dest.writeStr("scaleX(");
-                    try css.CSSNumberFns.toCss(&x, W, dest);
+                    try css.CSSNumberFns.toCss(&x, dest);
                 } else {
                     try dest.writeStr("scale(");
-                    try css.CSSNumberFns.toCss(&x, W, dest);
+                    try css.CSSNumberFns.toCss(&x, dest);
                     if (y != x) {
                         try dest.delim(',', false);
-                        try css.CSSNumberFns.toCss(&y, W, dest);
+                        try css.CSSNumberFns.toCss(&y, dest);
                     }
                 }
                 try dest.writeChar(')');
             },
             .scale_x => |x| {
                 try dest.writeStr("scaleX(");
-                try css.CSSNumberFns.toCss(&x.intoF32(), W, dest);
+                try css.CSSNumberFns.toCss(&x.intoF32(), dest);
                 try dest.writeChar(')');
             },
             .scale_y => |y| {
                 try dest.writeStr("scaleY(");
-                try css.CSSNumberFns.toCss(&y.intoF32(), W, dest);
+                try css.CSSNumberFns.toCss(&y.intoF32(), dest);
                 try dest.writeChar(')');
             },
             .scale_z => |z| {
                 try dest.writeStr("scaleZ(");
-                try css.CSSNumberFns.toCss(&z.intoF32(), W, dest);
+                try css.CSSNumberFns.toCss(&z.intoF32(), dest);
                 try dest.writeChar(')');
             },
             .scale_3d => |s| {
@@ -631,150 +630,150 @@ pub const Transform = union(enum) {
                 const z: f32 = s.z.intoF32();
                 if (dest.minify and z == 1.0 and x == y) {
                     try dest.writeStr("scale(");
-                    try css.CSSNumberFns.toCss(&x, W, dest);
+                    try css.CSSNumberFns.toCss(&x, dest);
                 } else if (dest.minify and x != 1.0 and y == 1.0 and z == 1.0) {
                     try dest.writeStr("scaleX(");
-                    try css.CSSNumberFns.toCss(&x, W, dest);
+                    try css.CSSNumberFns.toCss(&x, dest);
                 } else if (dest.minify and x == 1.0 and y != 1.0 and z == 1.0) {
                     try dest.writeStr("scaleY(");
-                    try css.CSSNumberFns.toCss(&y, W, dest);
+                    try css.CSSNumberFns.toCss(&y, dest);
                 } else if (dest.minify and x == 1.0 and y == 1.0 and z != 1.0) {
                     try dest.writeStr("scaleZ(");
-                    try css.CSSNumberFns.toCss(&z, W, dest);
+                    try css.CSSNumberFns.toCss(&z, dest);
                 } else if (dest.minify and z == 1.0) {
                     try dest.writeStr("scale(");
-                    try css.CSSNumberFns.toCss(&x, W, dest);
+                    try css.CSSNumberFns.toCss(&x, dest);
                     try dest.delim(',', false);
-                    try css.CSSNumberFns.toCss(&y, W, dest);
+                    try css.CSSNumberFns.toCss(&y, dest);
                 } else {
                     try dest.writeStr("scale3d(");
-                    try css.CSSNumberFns.toCss(&x, W, dest);
+                    try css.CSSNumberFns.toCss(&x, dest);
                     try dest.delim(',', false);
-                    try css.CSSNumberFns.toCss(&y, W, dest);
+                    try css.CSSNumberFns.toCss(&y, dest);
                     try dest.delim(',', false);
-                    try css.CSSNumberFns.toCss(&z, W, dest);
+                    try css.CSSNumberFns.toCss(&z, dest);
                 }
                 try dest.writeChar(')');
             },
             .rotate => |angle| {
                 try dest.writeStr("rotate(");
-                try angle.toCssWithUnitlessZero(W, dest);
+                try angle.toCssWithUnitlessZero(dest);
                 try dest.writeChar(')');
             },
             .rotate_x => |angle| {
                 try dest.writeStr("rotateX(");
-                try angle.toCssWithUnitlessZero(W, dest);
+                try angle.toCssWithUnitlessZero(dest);
                 try dest.writeChar(')');
             },
             .rotate_y => |angle| {
                 try dest.writeStr("rotateY(");
-                try angle.toCssWithUnitlessZero(W, dest);
+                try angle.toCssWithUnitlessZero(dest);
                 try dest.writeChar(')');
             },
             .rotate_z => |angle| {
                 try dest.writeStr(if (dest.minify) "rotate(" else "rotateZ(");
-                try angle.toCssWithUnitlessZero(W, dest);
+                try angle.toCssWithUnitlessZero(dest);
                 try dest.writeChar(')');
             },
             .rotate_3d => |r| {
                 if (dest.minify and r.x == 1.0 and r.y == 0.0 and r.z == 0.0) {
                     try dest.writeStr("rotateX(");
-                    try r.angle.toCssWithUnitlessZero(W, dest);
+                    try r.angle.toCssWithUnitlessZero(dest);
                 } else if (dest.minify and r.x == 0.0 and r.y == 1.0 and r.z == 0.0) {
                     try dest.writeStr("rotateY(");
-                    try r.angle.toCssWithUnitlessZero(W, dest);
+                    try r.angle.toCssWithUnitlessZero(dest);
                 } else if (dest.minify and r.x == 0.0 and r.y == 0.0 and r.z == 1.0) {
                     try dest.writeStr("rotate(");
-                    try r.angle.toCssWithUnitlessZero(W, dest);
+                    try r.angle.toCssWithUnitlessZero(dest);
                 } else {
                     try dest.writeStr("rotate3d(");
-                    try css.CSSNumberFns.toCss(&r.x, W, dest);
+                    try css.CSSNumberFns.toCss(&r.x, dest);
                     try dest.delim(',', false);
-                    try css.CSSNumberFns.toCss(&r.y, W, dest);
+                    try css.CSSNumberFns.toCss(&r.y, dest);
                     try dest.delim(',', false);
-                    try css.CSSNumberFns.toCss(&r.z, W, dest);
+                    try css.CSSNumberFns.toCss(&r.z, dest);
                     try dest.delim(',', false);
-                    try r.angle.toCssWithUnitlessZero(W, dest);
+                    try r.angle.toCssWithUnitlessZero(dest);
                 }
                 try dest.writeChar(')');
             },
             .skew => |s| {
                 if (dest.minify and s.x.isZero() and !s.y.isZero()) {
                     try dest.writeStr("skewY(");
-                    try s.y.toCssWithUnitlessZero(W, dest);
+                    try s.y.toCssWithUnitlessZero(dest);
                 } else {
                     try dest.writeStr("skew(");
-                    try s.x.toCss(W, dest);
+                    try s.x.toCss(dest);
                     if (!s.y.isZero()) {
                         try dest.delim(',', false);
-                        try s.y.toCssWithUnitlessZero(W, dest);
+                        try s.y.toCssWithUnitlessZero(dest);
                     }
                 }
                 try dest.writeChar(')');
             },
             .skew_x => |angle| {
                 try dest.writeStr(if (dest.minify) "skew(" else "skewX(");
-                try angle.toCssWithUnitlessZero(W, dest);
+                try angle.toCssWithUnitlessZero(dest);
                 try dest.writeChar(')');
             },
             .skew_y => |angle| {
                 try dest.writeStr("skewY(");
-                try angle.toCssWithUnitlessZero(W, dest);
+                try angle.toCssWithUnitlessZero(dest);
                 try dest.writeChar(')');
             },
             .perspective => |len| {
                 try dest.writeStr("perspective(");
-                try len.toCss(W, dest);
+                try len.toCss(dest);
                 try dest.writeChar(')');
             },
             .matrix => |m| {
                 try dest.writeStr("matrix(");
-                try css.CSSNumberFns.toCss(&m.a, W, dest);
+                try css.CSSNumberFns.toCss(&m.a, dest);
                 try dest.delim(',', false);
-                try css.CSSNumberFns.toCss(&m.b, W, dest);
+                try css.CSSNumberFns.toCss(&m.b, dest);
                 try dest.delim(',', false);
-                try css.CSSNumberFns.toCss(&m.c, W, dest);
+                try css.CSSNumberFns.toCss(&m.c, dest);
                 try dest.delim(',', false);
-                try css.CSSNumberFns.toCss(&m.d, W, dest);
+                try css.CSSNumberFns.toCss(&m.d, dest);
                 try dest.delim(',', false);
-                try css.CSSNumberFns.toCss(&m.e, W, dest);
+                try css.CSSNumberFns.toCss(&m.e, dest);
                 try dest.delim(',', false);
-                try css.CSSNumberFns.toCss(&m.f, W, dest);
+                try css.CSSNumberFns.toCss(&m.f, dest);
                 try dest.writeChar(')');
             },
             .matrix_3d => |m| {
                 try dest.writeStr("matrix3d(");
-                try css.CSSNumberFns.toCss(&m.m11, W, dest);
+                try css.CSSNumberFns.toCss(&m.m11, dest);
                 try dest.delim(',', false);
-                try css.CSSNumberFns.toCss(&m.m12, W, dest);
+                try css.CSSNumberFns.toCss(&m.m12, dest);
                 try dest.delim(',', false);
-                try css.CSSNumberFns.toCss(&m.m13, W, dest);
+                try css.CSSNumberFns.toCss(&m.m13, dest);
                 try dest.delim(',', false);
-                try css.CSSNumberFns.toCss(&m.m14, W, dest);
+                try css.CSSNumberFns.toCss(&m.m14, dest);
                 try dest.delim(',', false);
-                try css.CSSNumberFns.toCss(&m.m21, W, dest);
+                try css.CSSNumberFns.toCss(&m.m21, dest);
                 try dest.delim(',', false);
-                try css.CSSNumberFns.toCss(&m.m22, W, dest);
+                try css.CSSNumberFns.toCss(&m.m22, dest);
                 try dest.delim(',', false);
-                try css.CSSNumberFns.toCss(&m.m23, W, dest);
+                try css.CSSNumberFns.toCss(&m.m23, dest);
                 try dest.delim(',', false);
-                try css.CSSNumberFns.toCss(&m.m24, W, dest);
+                try css.CSSNumberFns.toCss(&m.m24, dest);
                 try dest.delim(',', false);
-                try css.CSSNumberFns.toCss(&m.m31, W, dest);
+                try css.CSSNumberFns.toCss(&m.m31, dest);
                 try dest.delim(',', false);
-                try css.CSSNumberFns.toCss(&m.m32, W, dest);
+                try css.CSSNumberFns.toCss(&m.m32, dest);
                 try dest.delim(',', false);
-                try css.CSSNumberFns.toCss(&m.m33, W, dest);
+                try css.CSSNumberFns.toCss(&m.m33, dest);
                 try dest.delim(',', false);
-                try css.CSSNumberFns.toCss(&m.m34, W, dest);
+                try css.CSSNumberFns.toCss(&m.m34, dest);
                 try dest.delim(',', false);
-                try css.CSSNumberFns.toCss(&m.m41, W, dest);
+                try css.CSSNumberFns.toCss(&m.m41, dest);
                 try dest.delim(',', false);
-                try css.CSSNumberFns.toCss(&m.m42, W, dest);
+                try css.CSSNumberFns.toCss(&m.m42, dest);
                 try dest.delim(',', false);
-                try css.CSSNumberFns.toCss(&m.m43, W, dest);
+                try css.CSSNumberFns.toCss(&m.m43, dest);
                 try dest.delim(',', false);
-                try css.CSSNumberFns.toCss(&m.m44, W, dest);
+                try css.CSSNumberFns.toCss(&m.m44, dest);
                 try dest.writeChar(')');
             },
         }
@@ -944,17 +943,17 @@ pub const Translate = union(enum) {
         };
     }
 
-    pub fn toCss(this: *const @This(), comptime W: type, dest: *css.Printer(W)) PrintErr!void {
+    pub fn toCss(this: *const @This(), dest: *css.Printer) PrintErr!void {
         switch (this.*) {
             .none => try dest.writeStr("none"),
             .xyz => |xyz| {
-                try xyz.x.toCss(W, dest);
+                try xyz.x.toCss(dest);
                 if (!xyz.y.isZero() or !xyz.z.isZero()) {
                     try dest.writeChar(' ');
-                    try xyz.y.toCss(W, dest);
+                    try xyz.y.toCss(dest);
                     if (!xyz.z.isZero()) {
                         try dest.writeChar(' ');
-                        try xyz.z.toCss(W, dest);
+                        try xyz.z.toCss(dest);
                     }
                 }
             },
@@ -1063,7 +1062,7 @@ pub const Rotate = struct {
         } };
     }
 
-    pub fn toCss(this: *const @This(), comptime W: type, dest: *css.Printer(W)) PrintErr!void {
+    pub fn toCss(this: *const @This(), dest: *css.Printer) PrintErr!void {
         if (this.x == 0.0 and this.y == 0.0 and this.z == 1.0 and this.angle.isZero()) {
             try dest.writeStr("none");
             return;
@@ -1074,15 +1073,15 @@ pub const Rotate = struct {
         } else if (this.x == 0.0 and this.y == 1.0 and this.z == 0.0) {
             try dest.writeStr("y ");
         } else if (!(this.x == 0.0 and this.y == 0.0 and this.z == 1.0)) {
-            try css.CSSNumberFns.toCss(&this.x, W, dest);
+            try css.CSSNumberFns.toCss(&this.x, dest);
             try dest.writeChar(' ');
-            try css.CSSNumberFns.toCss(&this.y, W, dest);
+            try css.CSSNumberFns.toCss(&this.y, dest);
             try dest.writeChar(' ');
-            try css.CSSNumberFns.toCss(&this.z, W, dest);
+            try css.CSSNumberFns.toCss(&this.z, dest);
             try dest.writeChar(' ');
         }
 
-        try this.angle.toCss(W, dest);
+        try this.angle.toCss(dest);
     }
 
     /// Converts the rotation to a transform function.
@@ -1145,18 +1144,18 @@ pub const Scale = union(enum) {
         } } };
     }
 
-    pub fn toCss(this: *const @This(), comptime W: type, dest: *css.Printer(W)) PrintErr!void {
+    pub fn toCss(this: *const @This(), dest: *css.Printer) PrintErr!void {
         switch (this.*) {
             .none => try dest.writeStr("none"),
             .xyz => |xyz| {
-                try xyz.x.toCss(W, dest);
+                try xyz.x.toCss(dest);
                 const z_val = xyz.z.intoF32();
                 if (!xyz.y.eql(&xyz.x) or z_val != 1.0) {
                     try dest.writeChar(' ');
-                    try xyz.y.toCss(W, dest);
+                    try xyz.y.toCss(dest);
                     if (z_val != 1.0) {
                         try dest.writeChar(' ');
-                        try xyz.z.toCss(W, dest);
+                        try xyz.z.toCss(dest);
                     }
                 }
             },

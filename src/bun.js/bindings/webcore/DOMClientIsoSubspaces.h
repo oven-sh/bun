@@ -59,6 +59,7 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTTYWrapObject;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNapiHandleScopeImpl;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNapiTypeTag;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNativePromiseContext;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForObjectTemplate;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForInternalFieldObject;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSMIMEType;
@@ -73,6 +74,7 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSX509Certificate;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSNodePerformanceHooksHistogram;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForWasmStreamingCompiler;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSWebView;
 
 #include "ZigGeneratedClasses+DOMClientIsoSubspaces.h"
     /* --- bun --- */
@@ -81,6 +83,7 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForDOMFormData;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForDOMFormDataIterator;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForDOMURL;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForURLPattern;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForURLSearchParams;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForURLSearchParamsIterator;
 
@@ -283,6 +286,8 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForReadableStreamSource;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTransformStream;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTransformStreamDefaultController;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForCompressionStream;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForDecompressionStream;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForWritableStream;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForWritableStreamDefaultController;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForWritableStreamDefaultWriter;

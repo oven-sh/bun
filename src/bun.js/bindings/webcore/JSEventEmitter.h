@@ -17,7 +17,7 @@ public:
     using Base = JSDOMWrapper<EventEmitter>;
     static JSEventEmitter* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<EventEmitter>&& impl)
     {
-        JSEventEmitter* ptr = new (NotNull, JSC::allocateCell<JSEventEmitter>(globalObject->vm())) JSEventEmitter(structure, *globalObject, WTFMove(impl));
+        JSEventEmitter* ptr = new (NotNull, JSC::allocateCell<JSEventEmitter>(globalObject->vm())) JSEventEmitter(structure, *globalObject, WTF::move(impl));
         ptr->finishCreation(globalObject->vm());
         return ptr;
     }
@@ -46,7 +46,7 @@ public:
     }
     static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm);
     DECLARE_VISIT_CHILDREN;
-    template<typename Visitor> void visitAdditionalChildren(Visitor&);
+    template<typename Visitor> void visitAdditionalChildrenInGCThread(Visitor&);
 
     template<typename Visitor> static void visitOutputConstraints(JSCell*, Visitor&);
     static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);

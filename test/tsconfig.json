@@ -2,18 +2,21 @@
   "extends": "../tsconfig.base.json",
   "compilerOptions": {
     "lib": ["ESNext"],
-    // Path remapping
+    // baseUrl needed until resolver fix propagates to system Bun used during build
+    "ignoreDeprecations": "6.0",
     "baseUrl": ".",
     "paths": {
-      "harness": ["harness.ts"],
-      "mkfifo": ["mkfifo.ts"],
-      "node-harness": ["js/node/harness.ts"],
-      "deno:harness": ["js/deno/harness.ts"],
+      "harness": ["./harness.ts"],
+      "mkfifo": ["./mkfifo.ts"],
+      "node-harness": ["./js/node/harness.ts"],
+      "deno:harness": ["./js/deno/harness.ts"],
       "bun:internal-for-testing": ["../src/js/internal-for-testing.ts"],
-      "foo/bar": ["js/bun/resolve/baz.js"],
-      "@faasjs/*": ["js/bun/resolve/*.js", "js/bun/resolve/*/src/index.js"],
-      "@faasjs/larger/*": ["js/bun/resolve/*/larger-index.js"],
-      "bake/*": ["../src/bake/client/*"]
+      "foo/bar": ["./js/bun/resolve/baz.js"],
+      "@faasjs/*": ["./js/bun/resolve/*.js", "./js/bun/resolve/*/src/index.js"],
+      "@faasjs/larger/*": ["./js/bun/resolve/*/larger-index.js"],
+      "bake/*": ["../src/bake/client/*"],
+      "_util/*": ["./_util/*"],
+      "js/*": ["./js/*"]
     },
     "experimentalDecorators": true,
     "emitDecoratorMetadata": true,
@@ -26,6 +29,8 @@
     "**/*.mts",
     "**/*.cts",
     "../src/js/internal-for-testing.ts",
+    "../scripts/glob-sources.ts",
+    "../scripts/build/error.ts",
     "bake/exit-code-map.mjs",
     "../src/bake/client/**.ts"
   ],

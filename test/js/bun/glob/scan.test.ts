@@ -665,6 +665,78 @@ describe("absolute path pattern", async () => {
   });
 });
 
+// https://github.com/oven-sh/bun/issues/24936
+describe("glob scan should not escape cwd boundary", () => {
+  test("pattern .*/* should not match parent directory via ..", async () => {
+    // Create a directory structure where we can verify paths don't escape cwd
+    const tempdir = tempDirWithFiles("glob-cwd-escape", {
+      ".hidden": {
+        "file.txt": "hidden file content",
+      },
+      ".dotfile": "dot file",
+      "regular": {
+        "file.txt": "regular file",
+      },
+    });
+
+    const glob = new Glob(".*/*");
+    const entries = await Array.fromAsync(
+      glob.scan({
+        cwd: tempdir,
+        onlyFiles: false,
+        dot: true, // Need dot:true to match dotfiles/directories
+      }),
+    );
+
+    // All entries should be within the cwd - none should start with ../
+    for (const entry of entries) {
+      expect(entry.startsWith("../")).toBe(false);
+      expect(entry.startsWith("..\\")).toBe(false);
+      expect(entry.includes("/../")).toBe(false);
+      expect(entry.includes("\\..\\")).toBe(false);
+    }
+
+    // Should match .hidden/file.txt but not escape to parent
+    expect(entries.sort()).toEqual([`.hidden${path.sep}file.txt`].sort());
+  });
+
+  test("pattern .*/**/*.ts should not escape cwd", async () => {
+    const tempdir = tempDirWithFiles("glob-cwd-escape-ts", {
+      ".config": {
+        "settings.ts": "export default {}",
+        "nested": {
+          "deep.ts": "export const x = 1",
+        },
+      },
+      "src": {
+        "index.ts": "console.log('hi')",
+      },
+    });
+
+    const glob = new Glob(".*/**/*.ts");
+    const entries = await Array.fromAsync(
+      glob.scan({
+        cwd: tempdir,
+        onlyFiles: true,
+        dot: true, // Need dot:true to match dotfiles/directories
+      }),
+    );
+
+    // All entries should be within the cwd
+    for (const entry of entries) {
+      expect(entry.startsWith("../")).toBe(false);
+      expect(entry.startsWith("..\\")).toBe(false);
+      expect(entry.includes("/../")).toBe(false);
+      expect(entry.includes("\\..\\")).toBe(false);
+    }
+
+    // Should match files in .config but not escape to parent
+    expect(entries.sort()).toEqual(
+      [`.config${path.sep}settings.ts`, `.config${path.sep}nested${path.sep}deep.ts`].sort(),
+    );
+  });
+});
+
 describe("glob.scan wildcard fast path", async () => {
   test("works", async () => {
     const tempdir = tempDirWithFiles("glob-scan-wildcard-fast-path", {
@@ -741,4 +813,37 @@ describe("glob.scan wildcard fast path", async () => {
       ["hi.test!.js", "hello.test!.ts"],
     );
   });
+});
+
+// ComponentSet (AutoBitSet) stores up to 127 indices inline, then spills to
+// heap. Verify patterns past that threshold still match correctly.
+// Skipped on Windows: 130 levels × 2 chars + tmpdir prefix exceeds MAX_PATH (260).
+test.skipIf(process.platform === "win32")("patterns with many components", () => {
+  const depth = 130;
+  const files: Record<string, string> = {};
+  const parts: string[] = [];
+  for (let i = 0; i < depth; i++) parts.push("a");
+  files[parts.join("/") + "/hit.txt"] = "";
+  files[parts.slice(0, depth - 1).join("/") + "/miss.txt"] = "";
+
+  const dir = tempDirWithFiles("glob-deep", files);
+
+  // Exact-depth pattern: depth `*` components + literal tail
+  const star = Array(depth).fill("*").join("/") + "/hit.txt";
+  expect([...new Bun.Glob(star).scanSync({ cwd: dir })].length).toBe(1);
+
+  // `**` at the start with a deep literal prefix after it
+  const deepDouble = "**/" + Array(depth).fill("a").join("/") + "/*.txt";
+  expect([...new Bun.Glob(deepDouble).scanSync({ cwd: dir })].length).toBe(1);
+
+  // `**` sandwiched deep in the pattern (triggers merge at high index)
+  const half = Math.floor(depth / 2);
+  const sandwich =
+    Array(half).fill("*").join("/") +
+    "/**/" +
+    Array(depth - half)
+      .fill("a")
+      .join("/") +
+    "/*.txt";
+  expect([...new Bun.Glob(sandwich).scanSync({ cwd: dir })].length).toBe(1);
 });

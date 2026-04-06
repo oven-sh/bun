@@ -169,7 +169,7 @@ public:
     }
 
     JSCStackTrace(WTF::Vector<JSCStackFrame>&& frames)
-        : m_frames(WTFMove(frames))
+        : m_frames(WTF::move(frames))
     {
     }
 
@@ -177,7 +177,7 @@ public:
     bool isEmpty() const { return m_frames.isEmpty(); }
     JSCStackFrame& at(size_t i) { return m_frames.at(i); }
 
-    WTF::Vector<JSCStackFrame>&& frames() { return WTFMove(m_frames); }
+    WTF::Vector<JSCStackFrame>&& frames() { return WTF::move(m_frames); }
 
     static JSCStackTrace fromExisting(JSC::VM& vm, const WTF::Vector<JSC::StackFrame>& existingFrames);
 
@@ -203,7 +203,7 @@ public:
 
 private:
     JSCStackTrace(WTF::Vector<JSCStackFrame>& frames)
-        : m_frames(WTFMove(frames))
+        : m_frames(WTF::move(frames))
     {
     }
 };
@@ -220,6 +220,11 @@ String sourceURL(JSC::VM& vm, const JSC::StackFrame& frame);
 String sourceURL(JSC::StackVisitor& visitor);
 String sourceURL(JSC::VM& vm, JSC::JSFunction* function);
 
+enum class FinalizerSafety {
+    NotInFinalizer,
+    MustNotTriggerGC,
+};
+
 class FunctionNameFlags {
 public:
     static constexpr unsigned None = 0;
@@ -232,6 +237,6 @@ public:
 
 String functionName(JSC::VM& vm, JSC::CodeBlock* codeBlock);
 String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSObject* callee);
-String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, const JSC::StackFrame& frame, bool isInFinalizer, unsigned int* flags);
+String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, const JSC::StackFrame& frame, FinalizerSafety, unsigned int* flags);
 
 }

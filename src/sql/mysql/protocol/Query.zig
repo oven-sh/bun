@@ -37,7 +37,7 @@ pub const Execute = struct {
                 if (param.* == .empty or param_type.type == .MYSQL_TYPE_NULL) continue;
 
                 const value = param.slice();
-                debug("Write param type {s} len {d} hex {s}", .{ @tagName(param_type.type), value.len, std.fmt.fmtSliceHexLower(value) });
+                debug("Write param type {s} len {d} hex {x}", .{ @tagName(param_type.type), value.len, value });
                 if (param_type.type.isBinaryFormatSupported()) {
                     try writer.write(value);
                 } else {

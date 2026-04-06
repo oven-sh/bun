@@ -40,7 +40,7 @@ graph: *const Graph,
 chunks: []Chunk,
 linker_graph: *const LinkerGraph,
 
-pub fn format(this: HTMLImportManifest, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) bun.OOM!void {
+pub fn format(this: HTMLImportManifest, writer: *std.Io.Writer) bun.OOM!void {
     return write(this.index, this.graph, this.linker_graph, this.chunks, writer) catch |err| switch (err) {
         // We use std.fmt.count for this
         error.NoSpaceLeft => unreachable,
@@ -98,23 +98,23 @@ fn writeEntryItem(
 pub fn writeEscapedJSON(index: u32, graph: *const Graph, linker_graph: *const LinkerGraph, chunks: []const Chunk, writer: anytype) !void {
     var stack = std.heap.stackFallback(4096, bun.default_allocator);
     const allocator = stack.get();
-    var bytes = std.ArrayList(u8).init(allocator);
+    var bytes = std.array_list.Managed(u8).init(allocator);
     defer bytes.deinit();
     try write(index, graph, linker_graph, chunks, bytes.writer());
     try bun.js_printer.writePreQuotedString(bytes.items, @TypeOf(writer), writer, '"', false, true, .utf8);
 }
 
-fn escapedJSONFormatter(this: HTMLImportManifest, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) bun.OOM!void {
+fn escapedJSONFormatter(this: HTMLImportManifest, writer: *std.Io.Writer) std.Io.Writer.Error!void {
     return writeEscapedJSON(this.index, this.graph, this.linker_graph, this.chunks, writer) catch |err| switch (err) {
         // We use std.fmt.count for this
-        error.NoSpaceLeft => unreachable,
-        error.OutOfMemory => return error.OutOfMemory,
+        error.WriteFailed => unreachable,
+        error.OutOfMemory => return error.WriteFailed,
         else => unreachable,
     };
 }
 
-pub fn formatEscapedJSON(this: HTMLImportManifest) std.fmt.Formatter(escapedJSONFormatter) {
-    return std.fmt.Formatter(escapedJSONFormatter){ .data = this };
+pub fn formatEscapedJSON(this: HTMLImportManifest) std.fmt.Alt(HTMLImportManifest, escapedJSONFormatter) {
+    return .{ .data = this };
 }
 
 pub fn write(index: u32, graph: *const Graph, linker_graph: *const LinkerGraph, chunks: []const Chunk, writer: anytype) !void {
@@ -132,7 +132,7 @@ pub fn write(index: u32, graph: *const Graph, linker_graph: *const LinkerGraph, 
     const inject_compiler_filesystem_prefix = bv2.transpiler.options.compile;
     // Use the server-side public path here.
     const public_path = bv2.transpiler.options.public_path;
-    var temp_buffer = std.ArrayList(u8).init(bun.default_allocator);
+    var temp_buffer = std.array_list.Managed(u8).init(bun.default_allocator);
     defer temp_buffer.deinit();
 
     for (chunks) |*ch| {
@@ -166,8 +166,14 @@ pub fn write(index: u32, graph: *const Graph, linker_graph: *const LinkerGraph, 
     defer already_visited_output_file.deinit(bun.default_allocator);
 
     // Write all chunks that have files associated with this entry point.
+    // Also include browser chunks from server builds (lazy-loaded chunks from dynamic imports).
+    // When there's only one HTML import, all browser chunks belong to that manifest.
+    // When there are multiple HTML imports, only include chunks that intersect with this entry's bits.
+    const has_single_html_import = graph.html_imports.html_source_indices.len == 1;
     for (chunks) |*ch| {
-        if (ch.entryBits().hasIntersection(&entry_point_bits)) {
+        if (ch.entryBits().hasIntersection(&entry_point_bits) or
+            (has_single_html_import and ch.flags.is_browser_chunk_from_server_build))
+        {
             if (!first) try writer.writeAll(",");
             first = false;
 

@@ -49,12 +49,12 @@ pub const Bunfig = struct {
             // Token
             if (url.username.len == 0 and url.password.len > 0) {
                 registry.token = url.password;
-                registry.url = try std.fmt.allocPrint(this.allocator, "{s}://{}/{s}/", .{ url.displayProtocol(), url.displayHost(), std.mem.trim(u8, url.pathname, "/") });
+                registry.url = try std.fmt.allocPrint(this.allocator, "{s}://{f}/{s}/", .{ url.displayProtocol(), url.displayHost(), std.mem.trim(u8, url.pathname, "/") });
             } else if (url.username.len > 0 and url.password.len > 0) {
                 registry.username = url.username;
                 registry.password = url.password;
 
-                registry.url = try std.fmt.allocPrint(this.allocator, "{s}://{}/{s}/", .{ url.displayProtocol(), url.displayHost(), std.mem.trim(u8, url.pathname, "/") });
+                registry.url = try std.fmt.allocPrint(this.allocator, "{s}://{f}/{s}/", .{ url.displayProtocol(), url.displayHost(), std.mem.trim(u8, url.pathname, "/") });
             } else {
                 // Do not include a trailing slash. There might be parameters at the end.
                 registry.url = url.href;
@@ -129,7 +129,7 @@ pub const Bunfig = struct {
         ) !void {
             if (expr.asArray()) |array_| {
                 var array = array_;
-                var preloads = try std.ArrayList(string).initCapacity(allocator, array.array.items.len);
+                var preloads = try std.array_list.Managed(string).initCapacity(allocator, array.array.items.len);
                 errdefer preloads.deinit();
                 while (array.next()) |item| {
                     try this.expectString(item);
@@ -145,6 +145,43 @@ pub const Bunfig = struct {
                 }
             } else if (expr.data != .e_null) {
                 try this.addError(expr.loc, "Expected preload to be an array");
+            }
+        }
+
+        fn loadEnvConfig(this: *Parser, expr: js_ast.Expr) !void {
+            switch (expr.data) {
+                .e_null => {
+                    // env = null -> disable default .env files
+                    this.bunfig.disable_default_env_files = true;
+                },
+                .e_boolean => |boolean| {
+                    // env = false -> disable default .env files
+                    // env = true -> keep default behavior (load .env files)
+                    if (!boolean.value) {
+                        this.bunfig.disable_default_env_files = true;
+                    }
+                },
+                .e_object => |obj| {
+                    // env = { file: false } -> disable default .env files
+                    if (obj.get("file")) |file_expr| {
+                        switch (file_expr.data) {
+                            .e_null => {
+                                this.bunfig.disable_default_env_files = true;
+                            },
+                            .e_boolean => |boolean| {
+                                if (!boolean.value) {
+                                    this.bunfig.disable_default_env_files = true;
+                                }
+                            },
+                            else => {
+                                try this.addError(file_expr.loc, "Expected 'file' to be a boolean or null");
+                            },
+                        }
+                    }
+                },
+                else => {
+                    try this.addError(expr.loc, "Expected 'env' to be a boolean, null, or an object");
+                },
             }
         }
 
@@ -189,6 +226,10 @@ pub const Bunfig = struct {
             if (json.get("origin")) |expr| {
                 try this.expectString(expr);
                 this.bunfig.origin = try expr.data.e_string.string(allocator);
+            }
+
+            if (json.get("env")) |env_expr| {
+                try this.loadEnvConfig(env_expr);
             }
 
             if (comptime cmd == .RunCommand or cmd == .AutoCommand) {
@@ -358,7 +399,20 @@ pub const Bunfig = struct {
 
                     if (test_.get("rerunEach")) |expr| {
                         try this.expect(expr, .e_number);
+                        if (this.ctx.test_options.retry != 0) {
+                            try this.addError(expr.loc, "\"rerunEach\" cannot be used with \"retry\"");
+                            return;
+                        }
                         this.ctx.test_options.repeat_count = expr.data.e_number.toU32();
+                    }
+
+                    if (test_.get("retry")) |expr| {
+                        try this.expect(expr, .e_number);
+                        if (this.ctx.test_options.repeat_count != 0) {
+                            try this.addError(expr.loc, "\"retry\" cannot be used with \"rerunEach\"");
+                            return;
+                        }
+                        this.ctx.test_options.retry = expr.data.e_number.toU32();
                     }
 
                     if (test_.get("concurrentTestGlob")) |expr| {
@@ -425,6 +479,37 @@ pub const Bunfig = struct {
                             },
                             else => {
                                 try this.addError(expr.loc, "coveragePathIgnorePatterns must be a string or array of strings");
+                                return;
+                            },
+                        }
+                    }
+
+                    if (test_.get("pathIgnorePatterns")) |expr| brk: {
+                        // Only skip if --path-ignore-patterns was explicitly passed via CLI
+                        if (this.ctx.test_options.path_ignore_patterns_from_cli) break :brk;
+
+                        switch (expr.data) {
+                            .e_string => |str| {
+                                const pattern = try str.string(allocator);
+                                const patterns = try allocator.alloc(string, 1);
+                                patterns[0] = pattern;
+                                this.ctx.test_options.path_ignore_patterns = patterns;
+                            },
+                            .e_array => |arr| {
+                                if (arr.items.len == 0) break :brk;
+
+                                const patterns = try allocator.alloc(string, arr.items.len);
+                                for (arr.items.slice(), 0..) |item, i| {
+                                    if (item.data != .e_string) {
+                                        try this.addError(item.loc, "pathIgnorePatterns array must contain only strings");
+                                        return;
+                                    }
+                                    patterns[i] = try item.data.e_string.string(allocator);
+                                }
+                                this.ctx.test_options.path_ignore_patterns = patterns;
+                            },
+                            else => {
+                                try this.addError(expr.loc, "pathIgnorePatterns must be a string or array of strings");
                                 return;
                             },
                         }
@@ -700,12 +785,12 @@ pub const Bunfig = struct {
 
                     if (install_obj.get("minimumReleaseAge")) |min_age| {
                         switch (min_age.data) {
-                            .e_number => |days| {
-                                if (days.value < 0) {
+                            .e_number => |seconds| {
+                                if (seconds.value < 0) {
                                     try this.addError(min_age.loc, "Expected positive number of seconds for minimumReleaseAge");
                                     return;
                                 }
-                                install.minimum_release_age_ms = days.value * std.time.ms_per_s;
+                                install.minimum_release_age_ms = seconds.value * std.time.ms_per_s;
                             },
                             else => {
                                 try this.addError(min_age.loc, "Expected number of seconds for minimumReleaseAge");
@@ -730,6 +815,30 @@ pub const Bunfig = struct {
                                 try this.addError(exclusions.loc, "Expected array for minimumReleaseAgeExcludes");
                             },
                         }
+                    }
+
+                    if (install_obj.get("publicHoistPattern")) |public_hoist_pattern_expr| {
+                        install.public_hoist_pattern = bun.install.PnpmMatcher.fromExpr(
+                            allocator,
+                            public_hoist_pattern_expr,
+                            this.log,
+                            this.source,
+                        ) catch |err| switch (err) {
+                            error.OutOfMemory => |oom| return oom,
+                            error.UnexpectedExpr, error.InvalidRegExp => return error.@"Invalid Bunfig",
+                        };
+                    }
+
+                    if (install_obj.get("hoistPattern")) |hoist_pattern_expr| {
+                        install.hoist_pattern = bun.install.PnpmMatcher.fromExpr(
+                            allocator,
+                            hoist_pattern_expr,
+                            this.log,
+                            this.source,
+                        ) catch |err| switch (err) {
+                            error.OutOfMemory => |oom| return oom,
+                            error.UnexpectedExpr, error.InvalidRegExp => return error.@"Invalid Bunfig",
+                        };
                     }
                 }
 
@@ -1101,7 +1210,7 @@ pub const Bunfig = struct {
                 else => {
                     this.log.addErrorFmtOpts(
                         this.allocator,
-                        "expected string but received {}",
+                        "expected string but received {f}",
                         .{
                             @as(js_ast.Expr.Tag, expr.data),
                         },
@@ -1120,7 +1229,7 @@ pub const Bunfig = struct {
             if (@as(js_ast.Expr.Tag, expr.data) != token) {
                 this.log.addErrorFmtOpts(
                     this.allocator,
-                    "expected {} but received {}",
+                    "expected {f} but received {f}",
                     .{
                         token,
                         @as(js_ast.Expr.Tag, expr.data),

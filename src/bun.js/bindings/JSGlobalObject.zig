@@ -24,12 +24,38 @@ pub const JSGlobalObject = opaque {
     }
     pub fn gregorianDateTimeToMS(this: *jsc.JSGlobalObject, year: i32, month: i32, day: i32, hour: i32, minute: i32, second: i32, millisecond: i32) bun.JSError!f64 {
         jsc.markBinding(@src());
-        return bun.cpp.Bun__gregorianDateTimeToMS(this, year, month, day, hour, minute, second, millisecond);
+        return bun.cpp.Bun__gregorianDateTimeToMS(this, year, month, day, hour, minute, second, millisecond, true);
+    }
+
+    pub fn gregorianDateTimeToMSUTC(this: *jsc.JSGlobalObject, year: i32, month: i32, day: i32, hour: i32, minute: i32, second: i32, millisecond: i32) bun.JSError!f64 {
+        jsc.markBinding(@src());
+        return bun.cpp.Bun__gregorianDateTimeToMS(this, year, month, day, hour, minute, second, millisecond, false);
+    }
+
+    pub const GregorianDateTime = struct {
+        year: i32,
+        month: i32,
+        day: i32,
+        hour: i32,
+        minute: i32,
+        second: i32,
+        weekday: i32,
+    };
+
+    pub fn msToGregorianDateTimeUTC(this: *jsc.JSGlobalObject, ms: f64) GregorianDateTime {
+        jsc.markBinding(@src());
+        var dt: GregorianDateTime = undefined;
+        bun.cpp.Bun__msToGregorianDateTime(this, ms, false, &dt.year, &dt.month, &dt.day, &dt.hour, &dt.minute, &dt.second, &dt.weekday);
+        return dt;
     }
 
     pub fn throwTODO(this: *JSGlobalObject, msg: []const u8) bun.JSError {
         const err = this.createErrorInstance("{s}", .{msg});
-        err.put(this, ZigString.static("name"), bun.String.static("TODOError").toJS(this));
+        if (err == .zero) {
+            bun.assert(this.hasException());
+            return error.JSError;
+        }
+        err.put(this, ZigString.static("name"), (bun.String.static("TODOError").toJS(this)) catch return error.JSError);
         return this.throwValue(err);
     }
 
@@ -91,7 +117,7 @@ pub const JSGlobalObject = opaque {
     ) bun.JSError {
         const actual_string_value = try determineSpecificType(this, value);
         defer actual_string_value.deref();
-        return this.ERR(.INVALID_ARG_VALUE, "The \"{s}\" argument is invalid. Received {}", .{ argname, actual_string_value }).throw();
+        return this.ERR(.INVALID_ARG_VALUE, "The \"{s}\" argument is invalid. Received {f}", .{ argname, actual_string_value }).throw();
     }
 
     pub fn throwInvalidArgumentValueCustom(
@@ -102,7 +128,7 @@ pub const JSGlobalObject = opaque {
     ) bun.JSError {
         const actual_string_value = try determineSpecificType(this, value);
         defer actual_string_value.deref();
-        return this.ERR(.INVALID_ARG_VALUE, "The \"{s}\" argument {s}. Received {}", .{ argname, message, actual_string_value }).throw();
+        return this.ERR(.INVALID_ARG_VALUE, "The \"{s}\" argument {s}. Received {f}", .{ argname, message, actual_string_value }).throw();
     }
 
     /// Throw an `ERR_INVALID_ARG_VALUE` when the invalid value is a property of an object.
@@ -118,9 +144,9 @@ pub const JSGlobalObject = opaque {
         const actual_string_value = try determineSpecificType(this, value);
         defer actual_string_value.deref();
         if (comptime expected) |_expected| {
-            return this.ERR(.INVALID_ARG_VALUE, "The property \"{s}\" is invalid. Expected {s}, received {}", .{ argname, _expected, actual_string_value }).throw();
+            return this.ERR(.INVALID_ARG_VALUE, "The property \"{s}\" is invalid. Expected {s}, received {f}", .{ argname, _expected, actual_string_value }).throw();
         } else {
-            return this.ERR(.INVALID_ARG_VALUE, "The property \"{s}\" is invalid. Received {}", .{ argname, actual_string_value }).throw();
+            return this.ERR(.INVALID_ARG_VALUE, "The property \"{s}\" is invalid. Received {f}", .{ argname, actual_string_value }).throw();
         }
     }
 
@@ -165,7 +191,7 @@ pub const JSGlobalObject = opaque {
     ) bun.JSError {
         const actual_string_value = try determineSpecificType(this, value);
         defer actual_string_value.deref();
-        return this.ERR(.INVALID_ARG_TYPE, "The \"{s}\" argument must be of type {s}. Received {}", .{ argname, typename, actual_string_value }).throw();
+        return this.ERR(.INVALID_ARG_TYPE, "The \"{s}\" argument must be of type {s}. Received {f}", .{ argname, typename, actual_string_value }).throw();
     }
 
     pub fn throwInvalidArgumentTypeValue2(
@@ -176,7 +202,7 @@ pub const JSGlobalObject = opaque {
     ) JSError {
         const actual_string_value = try determineSpecificType(this, value);
         defer actual_string_value.deref();
-        return this.ERR(.INVALID_ARG_TYPE, "The \"{s}\" argument must be {s}. Received {}", .{ argname, typename, actual_string_value }).throw();
+        return this.ERR(.INVALID_ARG_TYPE, "The \"{s}\" argument must be {s}. Received {f}", .{ argname, typename, actual_string_value }).throw();
     }
 
     /// "The <argname> argument must be one of type <typename>. Received <value>"
@@ -188,7 +214,7 @@ pub const JSGlobalObject = opaque {
     ) bun.JSError {
         const actual_string_value = try determineSpecificType(this, value);
         defer actual_string_value.deref();
-        return this.ERR(.INVALID_ARG_TYPE, "The \"{s}\" argument must be one of type {s}. Received {}", .{ argname, typename, actual_string_value }).throw();
+        return this.ERR(.INVALID_ARG_TYPE, "The \"{s}\" argument must be one of type {s}. Received {f}", .{ argname, typename, actual_string_value }).throw();
     }
 
     pub fn throwInvalidArgumentRangeValue(
@@ -197,7 +223,7 @@ pub const JSGlobalObject = opaque {
         typename: []const u8,
         value: i64,
     ) bun.JSError {
-        return this.ERR(.OUT_OF_RANGE, "The \"{s}\" is out of range. {s}. Received {}", .{ argname, typename, value }).throw();
+        return this.ERR(.OUT_OF_RANGE, "The \"{s}\" is out of range. {s}. Received {f}", .{ argname, typename, value }).throw();
     }
 
     pub fn throwInvalidPropertyTypeValue(
@@ -261,15 +287,18 @@ pub const JSGlobalObject = opaque {
     pub fn createErrorInstance(this: *JSGlobalObject, comptime fmt: [:0]const u8, args: anytype) JSValue {
         if (comptime std.meta.fieldNames(@TypeOf(args)).len > 0) {
             var stack_fallback = std.heap.stackFallback(1024 * 4, this.allocator());
-            var buf = bun.MutableString.init2048(stack_fallback.get()) catch unreachable;
+            var buf = std.Io.Writer.Allocating.initCapacity(stack_fallback.get(), 2048) catch unreachable;
             defer buf.deinit();
-            var writer = buf.writer();
-            writer.print(fmt, args) catch
-                // if an exception occurs in the middle of formatting the error message, it's better to just return the formatting string than an error about an error
+            var writer = &buf.writer;
+            writer.print(fmt, args) catch {
+                // if an exception occurs in the middle of formatting the error message, it's better to just return the formatting string than an error about an error.
+                // Clear any pending JS exception (e.g. from Symbol.toPrimitive) so that throwValue doesn't hit assertNoException.
+                _ = this.clearExceptionExceptTermination();
                 return ZigString.static(fmt).toErrorInstance(this);
+            };
 
             // Ensure we clone it.
-            var str = ZigString.initUTF8(buf.slice());
+            var str = ZigString.initUTF8(buf.written());
 
             return str.toErrorInstance(this);
         } else {
@@ -287,7 +316,10 @@ pub const JSGlobalObject = opaque {
             var buf = bun.MutableString.init2048(stack_fallback.get()) catch unreachable;
             defer buf.deinit();
             var writer = buf.writer();
-            writer.print(fmt, args) catch return ZigString.static(fmt).toErrorInstance(this);
+            writer.print(fmt, args) catch {
+                _ = this.clearExceptionExceptTermination();
+                return ZigString.static(fmt).toTypeErrorInstance(this);
+            };
             var str = ZigString.fromUTF8(buf.slice());
             return str.toTypeErrorInstance(this);
         } else {
@@ -315,7 +347,10 @@ pub const JSGlobalObject = opaque {
             var buf = bun.MutableString.init2048(stack_fallback.get()) catch unreachable;
             defer buf.deinit();
             var writer = buf.writer();
-            writer.print(fmt, args) catch return ZigString.static(fmt).toErrorInstance(this);
+            writer.print(fmt, args) catch {
+                _ = this.clearExceptionExceptTermination();
+                return ZigString.static(fmt).toSyntaxErrorInstance(this);
+            };
             var str = ZigString.fromUTF8(buf.slice());
             return str.toSyntaxErrorInstance(this);
         } else {
@@ -329,7 +364,10 @@ pub const JSGlobalObject = opaque {
             var buf = bun.MutableString.init2048(stack_fallback.get()) catch unreachable;
             defer buf.deinit();
             var writer = buf.writer();
-            writer.print(fmt, args) catch return ZigString.static(fmt).toErrorInstance(this);
+            writer.print(fmt, args) catch {
+                _ = this.clearExceptionExceptTermination();
+                return ZigString.static(fmt).toRangeErrorInstance(this);
+            };
             var str = ZigString.fromUTF8(buf.slice());
             return str.toRangeErrorInstance(this);
         } else {
@@ -339,6 +377,10 @@ pub const JSGlobalObject = opaque {
 
     pub fn createRangeError(this: *JSGlobalObject, comptime fmt: [:0]const u8, args: anytype) JSValue {
         const err = createErrorInstance(this, fmt, args);
+        if (err == .zero) {
+            bun.assert(this.hasException());
+            return .zero;
+        }
         err.put(this, ZigString.static("code"), ZigString.static(@tagName(jsc.Node.ErrorCode.ERR_OUT_OF_RANGE)).toJS(this));
         return err;
     }
@@ -359,6 +401,10 @@ pub const JSGlobalObject = opaque {
         args: anytype,
     ) JSError {
         const err = createErrorInstance(this, message, args);
+        if (err == .zero) {
+            bun.assert(this.hasException());
+            return error.JSError;
+        }
         err.put(this, ZigString.static("code"), ZigString.init(@tagName(opts.code)).toJS(this));
         if (opts.name) |name| err.put(this, ZigString.static("name"), ZigString.init(name).toJS(this));
         if (opts.errno) |errno| err.put(this, ZigString.static("errno"), try .fromAny(this, i32, errno));
@@ -371,19 +417,25 @@ pub const JSGlobalObject = opaque {
     /// chances are you should be using `.ERR(...).throw()` instead.
     pub fn throw(this: *JSGlobalObject, comptime fmt: [:0]const u8, args: anytype) JSError {
         const instance = this.createErrorInstance(fmt, args);
-        bun.assert(instance != .zero);
+        if (instance == .zero) {
+            bun.assert(this.hasException());
+            return error.JSError;
+        }
         return this.throwValue(instance);
     }
 
     pub fn throwPretty(this: *JSGlobalObject, comptime fmt: [:0]const u8, args: anytype) bun.JSError {
-        const instance = switch (Output.enable_ansi_colors) {
+        const instance = switch (Output.enable_ansi_colors_stderr) {
             inline else => |enabled| this.createErrorInstance(Output.prettyFmt(fmt, enabled), args),
         };
-        bun.assert(instance != .zero);
+        if (instance == .zero) {
+            bun.assert(this.hasException());
+            return error.JSError;
+        }
         return this.throwValue(instance);
     }
 
-    extern fn JSC__JSGlobalObject__queueMicrotaskCallback(*JSGlobalObject, *anyopaque, Function: *const (fn (*anyopaque) callconv(.C) void)) void;
+    extern fn JSC__JSGlobalObject__queueMicrotaskCallback(*JSGlobalObject, *anyopaque, Function: *const (fn (*anyopaque) callconv(.c) void)) void;
     pub fn queueMicrotaskCallback(
         this: *JSGlobalObject,
         ctx_val: anytype,
@@ -393,7 +445,7 @@ pub const JSGlobalObject = opaque {
         const Fn = Function;
         const ContextType = @TypeOf(ctx_val);
         const Wrapper = struct {
-            pub fn call(p: *anyopaque) callconv(.C) void {
+            pub fn call(p: *anyopaque) callconv(.c) void {
                 Fn(bun.cast(ContextType, p));
             }
         };
@@ -420,6 +472,10 @@ pub const JSGlobalObject = opaque {
     }
 
     pub fn throwValue(this: *JSGlobalObject, value: jsc.JSValue) JSError {
+        // A termination exception (e.g. stack overflow) may already be
+        // pending. Don't try to override it — that would hit
+        // releaseAssertNoException in VM.throwError.
+        if (this.hasException()) return error.JSError;
         return this.vm().throwError(this, value);
     }
 
@@ -450,7 +506,7 @@ pub const JSGlobalObject = opaque {
         defer allocator_.free(buffer);
         const str = ZigString.initUTF8(buffer);
         const err_value = str.toErrorInstance(this);
-        return this.vm().throwError(this, err_value);
+        return this.throwValue(err_value);
     }
 
     // TODO: delete these two fns
@@ -479,7 +535,7 @@ pub const JSGlobalObject = opaque {
         return JSC__JSGlobalObject__generateHeapSnapshot(this);
     }
 
-    // DEPRECATED - use CatchScope to check for exceptions and signal exceptions by returning JSError
+    // DEPRECATED - use TopExceptionScope to check for exceptions and signal exceptions by returning JSError
     pub fn hasException(this: *JSGlobalObject) bool {
         return JSGlobalObject__hasException(this);
     }
@@ -666,7 +722,7 @@ pub const JSGlobalObject = opaque {
     }
 
     pub fn throwRangeError(this: *JSGlobalObject, value: anytype, options: bun.fmt.OutOfRangeOptions) bun.JSError {
-        return this.ERR(.OUT_OF_RANGE, "{}", .{bun.fmt.outOfRange(value, options)}).throw();
+        return this.ERR(.OUT_OF_RANGE, "{f}", .{bun.fmt.outOfRange(value, options)}).throw();
     }
 
     pub const IntegerRange = struct {
@@ -776,17 +832,6 @@ pub const JSGlobalObject = opaque {
         return default;
     }
 
-    pub inline fn createHostFunction(
-        global: *JSGlobalObject,
-        comptime display_name: [:0]const u8,
-        // when querying from JavaScript, 'func.name'
-        comptime function: anytype,
-        // when querying from JavaScript, 'func.len'
-        comptime argument_count: u32,
-    ) JSValue {
-        return jsc.host_fn.NewRuntimeFunction(global, ZigString.static(display_name), argument_count, jsc.toJSHostFn(function), false, false, null);
-    }
-
     /// Get a lazily-initialized `JSC::String` from `BunCommonStrings.h`.
     pub inline fn commonStrings(this: *jsc.JSGlobalObject) CommonStrings {
         jsc.markBinding(@src());
@@ -842,14 +887,14 @@ pub const JSGlobalObject = opaque {
         return Zig__GlobalObject__resetModuleRegistryMap(global, map);
     }
 
-    pub fn resolve(res: *ErrorableString, global: *JSGlobalObject, specifier: *bun.String, source: *bun.String, query: *ZigString) callconv(.C) void {
+    pub fn resolve(res: *ErrorableString, global: *JSGlobalObject, specifier: *bun.String, source: *bun.String, query: *ZigString) callconv(.c) void {
         jsc.markBinding(@src());
         return jsc.VirtualMachine.resolve(res, global, specifier.*, source.*, query, true) catch {
             bun.debugAssert(res.success == false);
         };
     }
 
-    pub fn reportUncaughtException(global: *JSGlobalObject, exception: *jsc.Exception) callconv(.C) JSValue {
+    pub fn reportUncaughtException(global: *JSGlobalObject, exception: *jsc.Exception) callconv(.c) JSValue {
         jsc.markBinding(@src());
         return jsc.VirtualMachine.reportUncaughtException(global, exception);
     }
@@ -859,7 +904,7 @@ pub const JSGlobalObject = opaque {
         _ = global.reportUncaughtException(global.takeException(proof).asException(global.vm()).?);
     }
 
-    pub fn onCrash() callconv(.C) void {
+    pub fn onCrash() callconv(.c) void {
         jsc.markBinding(@src());
         bun.Output.flush();
         @panic("A C++ exception occurred");
@@ -884,7 +929,7 @@ pub const JSGlobalObject = opaque {
             ZigString.static("null").*;
 
         if (!content_type.eqlComptime("application/wasm")) {
-            return this.ERR(.WEBASSEMBLY_RESPONSE, "WebAssembly response has unsupported MIME type '{}'", .{content_type}).throw();
+            return this.ERR(.WEBASSEMBLY_RESPONSE, "WebAssembly response has unsupported MIME type '{f}'", .{content_type}).throw();
         }
 
         if (!response.isOK()) {

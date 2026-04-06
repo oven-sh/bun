@@ -24,7 +24,7 @@ pub fn enable(this: *EventLoopDelayMonitor, vm: *VirtualMachine, histogram: jsc.
     this.enabled = true;
 
     // Schedule timer
-    const now = bun.timespec.now();
+    const now = bun.timespec.now(.force_real_time);
     this.event_loop_timer.next = now.addMs(@intCast(resolution_ms));
     vm.timer.insert(&this.event_loop_timer);
 }

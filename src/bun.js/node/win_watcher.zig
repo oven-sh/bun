@@ -95,7 +95,7 @@ pub const PathWatcher = struct {
     const Callback = *const fn (ctx: ?*anyopaque, event: Event, is_file: bool) void;
     const UpdateEndCallback = *const fn (ctx: ?*anyopaque) void;
 
-    fn uvEventCallback(event: *uv.uv_fs_event_t, filename: ?[*:0]const u8, events: c_int, status: uv.ReturnCode) callconv(.C) void {
+    fn uvEventCallback(event: *uv.uv_fs_event_t, filename: ?[*:0]const u8, events: c_int, status: uv.ReturnCode) callconv(.c) void {
         if (event.data == null) {
             Output.debugWarn("uvEventCallback called with null data", .{});
             return;
@@ -137,7 +137,7 @@ pub const PathWatcher = struct {
         var debug_count: if (bun.Environment.isDebug) usize else u0 = 0;
         for (this.handlers.values(), 0..) |*event, i| {
             if (event.emit(hash, timestamp, event_type)) {
-                const ctx: *FSWatcher = @alignCast(@ptrCast(this.handlers.keys()[i]));
+                const ctx: *FSWatcher = @ptrCast(@alignCast(this.handlers.keys()[i]));
                 onPathUpdateFn(ctx, event_type.toEvent(switch (ctx.encoding) {
                     .utf8 => .{ .string = bun.String.cloneUTF8(path) },
                     else => .{ .bytes_to_free = bun.handleOom(bun.default_allocator.dupeZ(u8, path)) },
@@ -186,15 +186,9 @@ pub const PathWatcher = struct {
             .manager = manager,
         });
 
-        errdefer {
-            _ = manager.watchers.swapRemove(event_path);
-            this.manager = null;
-            this.deinit();
-        }
-
-        if (uv.uv_fs_event_init(manager.vm.uvLoop(), &this.handle).toError(.watch)) |err| {
-            return .{ .err = err };
-        }
+        // uv_fs_event_init on Windows unconditionally returns 0 (vendor/libuv/src/win/fs-event.c).
+        // bun.assert evaluates its argument before the inline early-return, so this runs in release too.
+        bun.assert(uv.uv_fs_event_init(manager.vm.uvLoop(), &this.handle) == .zero);
         this.handle.data = this;
 
         // UV_FS_EVENT_RECURSIVE only works for Windows and OSX
@@ -204,6 +198,12 @@ pub const PathWatcher = struct {
             event_path.ptr,
             if (recursive) uv.UV_FS_EVENT_RECURSIVE else 0,
         ).toError(.watch)) |err| {
+            // `errdefer` doesn't fire on `return .{ .err = ... }` (that's a successful return of a
+            // Maybe(T), not an error-union return). Clean up the map entry and the half-initialized
+            // watcher inline. See #26254.
+            _ = manager.watchers.swapRemove(event_path);
+            this.manager = null; // prevent deinit() from re-entering unregisterWatcher
+            this.deinit();
             return .{ .err = err };
         }
         // we handle this in node_fs_watcher
@@ -215,7 +215,7 @@ pub const PathWatcher = struct {
         return .{ .result = this };
     }
 
-    fn uvClosedCallback(handler: *anyopaque) callconv(.C) void {
+    fn uvClosedCallback(handler: *anyopaque) callconv(.c) void {
         log("onClose", .{});
         const event = bun.cast(*uv.uv_fs_event_t, handler);
         const this = bun.cast(*PathWatcher, event.data);

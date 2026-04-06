@@ -39,6 +39,7 @@ if (common.isWindows) {
 
 switch (process.argv[2]) {
   case 'child':
+    console.log('child started');
     setTimeout(() => {
       debug('child fired');
       process.exit(1);

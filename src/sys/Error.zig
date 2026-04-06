@@ -43,7 +43,7 @@ pub fn fromCodeInt(errno: anytype, syscall_tag: sys.Tag) Error {
     };
 }
 
-pub fn format(self: Error, comptime fmt: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
+pub fn format(self: Error, writer: *std.Io.Writer) std.Io.Writer.Error!void {
     // We want to reuse the code from SystemError for formatting.
     // But, we do not want to call String.createUTF8 on the path/dest strings
     // because we're intending to pass them to writer.print()
@@ -56,7 +56,7 @@ pub fn format(self: Error, comptime fmt: []const u8, opts: std.fmt.FormatOptions
     bun.debugAssert(that.path.tag != .WTFStringImpl);
     bun.debugAssert(that.dest.tag != .WTFStringImpl);
 
-    return that.format(fmt, opts, writer);
+    return that.format(writer);
 }
 
 pub inline fn getErrno(this: Error) E {
@@ -322,8 +322,16 @@ pub inline fn todo() Error {
     return Error{ .errno = todo_errno, .syscall = .TODO };
 }
 
-pub fn toJS(this: Error, ptr: *jsc.JSGlobalObject) jsc.JSValue {
+pub fn toJS(this: Error, ptr: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
     return this.toSystemError().toErrorInstance(ptr);
+}
+
+/// Like `toJS` but populates the error's stack trace with async frames from the
+/// given promise's await chain. Use when rejecting a promise from native code
+/// at the top of the event loop (threadpool callback) — otherwise the error
+/// will have an empty stack trace.
+pub fn toJSWithAsyncStack(this: Error, ptr: *jsc.JSGlobalObject, promise: *jsc.JSPromise) bun.JSError!jsc.JSValue {
+    return this.toSystemError().toErrorInstanceWithAsyncStack(ptr, promise);
 }
 
 const std = @import("std");

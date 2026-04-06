@@ -4,6 +4,7 @@
 pub const Bun = @import("./api/BunObject.zig");
 
 pub const server = @import("./api/server.zig");
+pub const NativePromiseContext = @import("./api/NativePromiseContext.zig");
 pub const AnyRequestContext = server.AnyRequestContext;
 pub const AnyServer = server.AnyServer;
 pub const DebugHTTPSServer = server.DebugHTTPSServer;
@@ -24,9 +25,16 @@ pub const TLSSocket = @import("./api/bun/socket.zig").TLSSocket;
 pub const SocketHandlers = @import("./api/bun/socket.zig").Handlers;
 
 pub const Subprocess = @import("./api/bun/subprocess.zig");
+pub const cron = @import("./api/cron.zig");
+pub const Terminal = @import("./api/bun/Terminal.zig");
+pub const WebViewHostProcess = @import("./webview/HostProcess.zig");
+pub const ChromeProcess = @import("./webview/ChromeProcess.zig");
 pub const HashObject = @import("./api/HashObject.zig");
-pub const UnsafeObject = @import("./api/UnsafeObject.zig");
+pub const JSONCObject = @import("./api/JSONCObject.zig");
+pub const MarkdownObject = @import("./api/MarkdownObject.zig");
 pub const TOMLObject = @import("./api/TOMLObject.zig");
+pub const UnsafeObject = @import("./api/UnsafeObject.zig");
+pub const JSON5Object = @import("./api/JSON5Object.zig");
 pub const YAMLObject = @import("./api/YAMLObject.zig");
 pub const Timer = @import("./api/Timer.zig");
 pub const FFIObject = @import("./api/FFIObject.zig");
@@ -36,6 +44,7 @@ pub const dns = @import("./api/bun/dns.zig");
 pub const FFI = @import("./api/ffi.zig").FFI;
 pub const HTMLRewriter = @import("./api/html_rewriter.zig");
 pub const FileSystemRouter = @import("./api/filesystem_router.zig").FileSystemRouter;
+pub const Archive = @import("./api/Archive.zig");
 pub const Glob = @import("./api/glob.zig");
 pub const H2FrameParser = @import("./api/bun/h2_frame_parser.zig").H2FrameParser;
 pub const JSBundler = @import("./api/JSBundler.zig").JSBundler;

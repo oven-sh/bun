@@ -384,8 +384,8 @@ const Output = bun.Output;
 const js_printer = bun.js_printer;
 const logger = bun.logger;
 
-const SourceMap = bun.sourcemap;
-const BakeSourceProvider = bun.sourcemap.BakeSourceProvider;
-const DevServerSourceProvider = bun.sourcemap.DevServerSourceProvider;
+const SourceMap = bun.SourceMap;
+const BakeSourceProvider = bun.SourceMap.BakeSourceProvider;
+const DevServerSourceProvider = bun.SourceMap.DevServerSourceProvider;
 const ParsedSourceMap = SourceMap.ParsedSourceMap;
 const SourceProviderMap = SourceMap.SourceProviderMap;

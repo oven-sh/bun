@@ -23,13 +23,13 @@ pub const CustomMediaRule = struct {
         };
     }
 
-    pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
+    pub fn toCss(this: *const This, dest: *Printer) PrintErr!void {
         // #[cfg(feature = "sourcemap")]
         // dest.add_mapping(self.loc);
         try dest.writeStr("@custom-media ");
-        try css_values.ident.DashedIdentFns.toCss(&this.name, W, dest);
+        try css_values.ident.DashedIdentFns.toCss(&this.name, dest);
         try dest.writeChar(' ');
-        try this.query.toCss(W, dest);
+        try this.query.toCss(dest);
         try dest.writeChar(';');
     }
 };

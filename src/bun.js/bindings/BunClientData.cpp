@@ -25,6 +25,7 @@
 #include "NodeVM.h"
 #include "../../bake/BakeGlobalObject.h"
 #include "napi_handle_scope.h"
+#include "NativePromiseContext.h"
 
 namespace WebCore {
 using namespace JSC;
@@ -36,6 +37,7 @@ JSHeapData::JSHeapData(Heap& heap)
     , m_heapCellTypeForNodeVMGlobalObject(JSC::IsoHeapCellType::Args<Bun::NodeVMGlobalObject>())
     , m_heapCellTypeForBakeGlobalObject(JSC::IsoHeapCellType::Args<Bake::GlobalObject>())
     , m_heapCellTypeForNapiHandleScopeImpl(JSC::IsoHeapCellType::Args<Bun::NapiHandleScopeImpl>())
+    , m_heapCellTypeForNativePromiseContext(JSC::IsoHeapCellType::Args<Bun::NativePromiseContext>())
     , m_domBuiltinConstructorSpace ISO_SUBSPACE_INIT(heap, heap.cellHeapCellType, JSDOMBuiltinConstructorBase)
     , m_domConstructorSpace ISO_SUBSPACE_INIT(heap, heap.cellHeapCellType, JSDOMConstructorBase)
     , m_domNamespaceObjectSpace ISO_SUBSPACE_INIT(heap, heap.cellHeapCellType, JSDOMObject)
@@ -85,10 +87,10 @@ void JSVMClientData::create(VM* vm, void* bunVM)
     JSVMClientData* clientData = new JSVMClientData(*vm, provider);
     clientData->bunVM = bunVM;
     vm->deferredWorkTimer->onAddPendingWork = [clientData](Ref<JSC::DeferredWorkTimer::TicketData>&& ticket, JSC::DeferredWorkTimer::WorkType kind) -> void {
-        Bun::JSCTaskScheduler::onAddPendingWork(clientData, WTFMove(ticket), kind);
+        Bun::JSCTaskScheduler::onAddPendingWork(clientData, WTF::move(ticket), kind);
     };
     vm->deferredWorkTimer->onScheduleWorkSoon = [clientData](JSC::DeferredWorkTimer::Ticket ticket, JSC::DeferredWorkTimer::Task&& task) -> void {
-        Bun::JSCTaskScheduler::onScheduleWorkSoon(clientData, ticket, WTFMove(task));
+        Bun::JSCTaskScheduler::onScheduleWorkSoon(clientData, ticket, WTF::move(task));
     };
     vm->deferredWorkTimer->onCancelPendingWork = [clientData](JSC::DeferredWorkTimer::Ticket ticket) -> void {
         Bun::JSCTaskScheduler::onCancelPendingWork(clientData, ticket);

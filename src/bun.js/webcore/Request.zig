@@ -9,13 +9,19 @@ signal: ?*AbortSignal = null,
 #body: *Body.Value.HiveRef,
 #js_ref: jsc.JSRef = .empty(),
 method: Method = Method.GET,
-redirect: FetchRedirect = .follow,
+flags: Flags = .{},
 request_context: jsc.API.AnyRequestContext = jsc.API.AnyRequestContext.Null,
-https: bool = false,
 weak_ptr_data: WeakRef.Data = .empty,
 // We must report a consistent value for this
 reported_estimated_size: usize = 0,
 internal_event_callback: InternalJSEventCallback = .{},
+
+pub const Flags = packed struct(u8) {
+    redirect: FetchRedirect = .follow,
+    cache: FetchCacheMode = .default,
+    mode: FetchRequestMode = .cors,
+    https: bool = false,
+};
 
 pub const js = jsc.Codegen.JSRequest;
 // NOTE: toJS is overridden
@@ -120,7 +126,7 @@ pub fn init(
     return Request{
         .request_context = request_context,
         .method = method,
-        .https = https,
+        .flags = .{ .https = https },
         .signal = signal,
         .#body = body,
     };
@@ -222,8 +228,11 @@ pub inline fn detachReadableStream(this: *Request, globalObject: *jsc.JSGlobalOb
 
 pub fn toJS(this: *Request, globalObject: *JSGlobalObject) JSValue {
     this.calculateEstimatedByteSize();
+    const js_value = js.toJSUnchecked(globalObject, this);
+    this.#js_ref = .initWeak(js_value);
+
     this.checkBodyStreamRef(globalObject);
-    return js.toJSUnchecked(globalObject, this);
+    return js_value;
 }
 
 extern "C" fn Bun__JSRequest__createForBake(globalObject: *jsc.JSGlobalObject, requestPtr: *Request) callconv(jsc.conv) jsc.JSValue;
@@ -247,7 +256,7 @@ pub fn writeFormat(this: *Request, this_value: JSValue, comptime Formatter: type
         .zero => "Request",
         else => "BunRequest",
     };
-    try writer.print("{s} ({}) {{\n", .{ class_label, bun.fmt.size(this.#body.value.size(), .{}) });
+    try writer.print("{s} ({f}) {{\n", .{ class_label, bun.fmt.size(this.#body.value.size(), .{}) });
     {
         formatter.indent += 1;
         defer formatter.indent -|= 1;
@@ -263,7 +272,7 @@ pub fn writeFormat(this: *Request, this_value: JSValue, comptime Formatter: type
         try formatter.writeIndent(Writer, writer);
         try writer.writeAll(comptime Output.prettyFmt("<r>url<d>:<r> ", enable_ansi_colors));
         try this.ensureURL();
-        try writer.print(comptime Output.prettyFmt("\"<b>{}<r>\"", enable_ansi_colors), .{this.url});
+        try writer.print(comptime Output.prettyFmt("\"<b>{f}<r>\"", enable_ansi_colors), .{this.url});
         formatter.printComma(Writer, writer, enable_ansi_colors) catch unreachable;
         try writer.writeAll("\n");
 
@@ -329,10 +338,12 @@ pub fn mimeType(this: *const Request) string {
 }
 
 pub fn getCache(
-    _: *Request,
+    this: *Request,
     globalThis: *jsc.JSGlobalObject,
 ) jsc.JSValue {
-    return ZigString.init("default").toJS(globalThis);
+    return switch (this.flags.cache) {
+        inline else => |tag| ZigString.static(@tagName(tag)).toJS(globalThis),
+    };
 }
 pub fn getCredentials(
     _: *Request,
@@ -377,10 +388,12 @@ pub fn getMethod(
 }
 
 pub fn getMode(
-    _: *Request,
+    this: *Request,
     globalThis: *jsc.JSGlobalObject,
 ) jsc.JSValue {
-    return ZigString.init("navigate").toJS(globalThis);
+    return switch (this.flags.mode) {
+        inline else => |tag| ZigString.static(@tagName(tag)).toJS(globalThis),
+    };
 }
 
 pub fn finalizeWithoutDeinit(this: *Request) void {
@@ -412,7 +425,7 @@ pub fn getRedirect(
     this: *Request,
     globalThis: *jsc.JSGlobalObject,
 ) jsc.JSValue {
-    return switch (this.redirect) {
+    return switch (this.flags.redirect) {
         inline else => |tag| ZigString.static(@tagName(tag)).toJS(globalThis),
     };
 }
@@ -448,10 +461,10 @@ pub fn sizeOfURL(this: *const Request) usize {
         if (req_url.len > 0 and req_url[0] == '/') {
             if (req.header("host")) |host| {
                 const fmt = bun.fmt.HostFormatter{
-                    .is_https = this.https,
+                    .is_https = this.flags.https,
                     .host = host,
                 };
-                return this.getProtocol().len + req_url.len + std.fmt.count("{any}", .{fmt});
+                return this.getProtocol().len + req_url.len + std.fmt.count("{f}", .{fmt});
             }
         }
         return req_url.len;
@@ -461,7 +474,7 @@ pub fn sizeOfURL(this: *const Request) usize {
 }
 
 pub fn getProtocol(this: *const Request) []const u8 {
-    if (this.https)
+    if (this.flags.https)
         return "https://";
 
     return "http://";
@@ -475,10 +488,10 @@ pub fn ensureURL(this: *Request) bun.OOM!void {
         if (req_url.len > 0 and req_url[0] == '/') {
             if (req.header("host")) |host| {
                 const fmt = bun.fmt.HostFormatter{
-                    .is_https = this.https,
+                    .is_https = this.flags.https,
                     .host = host,
                 };
-                const url_bytelength = std.fmt.count("{s}{any}{s}", .{
+                const url_bytelength = std.fmt.count("{s}{f}{s}", .{
                     this.getProtocol(),
                     fmt,
                     req_url,
@@ -490,7 +503,7 @@ pub fn ensureURL(this: *Request) bun.OOM!void {
 
                 if (url_bytelength < 128) {
                     var buffer: [128]u8 = undefined;
-                    const url = std.fmt.bufPrint(&buffer, "{s}{any}{s}", .{
+                    const url = std.fmt.bufPrint(&buffer, "{s}{f}{s}", .{
                         this.getProtocol(),
                         fmt,
                         req_url,
@@ -518,7 +531,7 @@ pub fn ensureURL(this: *Request) bun.OOM!void {
 
                 if (strings.isAllASCII(host) and strings.isAllASCII(req_url)) {
                     this.url, const bytes = bun.String.createUninitialized(.latin1, url_bytelength);
-                    _ = std.fmt.bufPrint(bytes, "{s}{any}{s}", .{
+                    _ = std.fmt.bufPrint(bytes, "{s}{f}{s}", .{
                         this.getProtocol(),
                         fmt,
                         req_url,
@@ -527,7 +540,7 @@ pub fn ensureURL(this: *Request) bun.OOM!void {
                     };
                 } else {
                     // slow path
-                    const temp_url = try std.fmt.allocPrint(bun.default_allocator, "{s}{any}{s}", .{
+                    const temp_url = try std.fmt.allocPrint(bun.default_allocator, "{s}{f}{s}", .{
                         this.getProtocol(),
                         fmt,
                         req_url,
@@ -560,9 +573,10 @@ const Fields = enum {
     body,
     // referrer,
     // referrerPolicy,
-    // mode,
+    mode,
     // credentials,
     redirect,
+    cache,
     // integrity,
     // keepalive,
     signal,
@@ -657,8 +671,18 @@ pub fn constructInto(globalThis: *jsc.JSGlobalObject, arguments: []const jsc.JSV
                 }
 
                 if (!fields.contains(.redirect)) {
-                    req.redirect = request.redirect;
+                    req.flags.redirect = request.flags.redirect;
                     fields.insert(.redirect);
+                }
+
+                if (!fields.contains(.cache)) {
+                    req.flags.cache = request.flags.cache;
+                    fields.insert(.cache);
+                }
+
+                if (!fields.contains(.mode)) {
+                    req.flags.mode = request.flags.mode;
+                    fields.insert(.mode);
                 }
 
                 if (!fields.contains(.headers)) {
@@ -794,8 +818,24 @@ pub fn constructInto(globalThis: *jsc.JSGlobalObject, arguments: []const jsc.JSV
         // Extract redirect option
         if (!fields.contains(.redirect)) {
             if (try value.getOptionalEnum(globalThis, "redirect", FetchRedirect)) |redirect_value| {
-                req.redirect = redirect_value;
+                req.flags.redirect = redirect_value;
                 fields.insert(.redirect);
+            }
+        }
+
+        // Extract cache option
+        if (!fields.contains(.cache)) {
+            if (try value.getOptionalEnum(globalThis, "cache", FetchCacheMode)) |cache_value| {
+                req.flags.cache = cache_value;
+                fields.insert(.cache);
+            }
+        }
+
+        // Extract mode option
+        if (!fields.contains(.mode)) {
+            if (try value.getOptionalEnum(globalThis, "mode", FetchRequestMode)) |mode_value| {
+                req.flags.mode = mode_value;
+                fields.insert(.mode);
             }
         }
     }
@@ -813,7 +853,7 @@ pub fn constructInto(globalThis: *jsc.JSGlobalObject, arguments: []const jsc.JSV
         if (!globalThis.hasException()) {
             // globalThis.throw can cause GC, which could cause the above string to be freed.
             // so we must increment the reference count before calling it.
-            return globalThis.ERR(.INVALID_URL, "Failed to construct 'Request': Invalid URL \"{}\"", .{req.url}).throw();
+            return globalThis.ERR(.INVALID_URL, "Failed to construct 'Request': Invalid URL \"{f}\"", .{req.url}).throw();
         }
         return error.JSError;
     }
@@ -866,19 +906,23 @@ pub fn doClone(
 
     const js_wrapper = cloned.toJS(globalThis);
     if (js_wrapper != .zero) {
-        if (cloned.#body.value == .Locked) {
-            if (cloned.#body.value.Locked.readable.get(globalThis)) |readable| {
-                // If we are teed, then we need to update the cached .body
-                // value to point to the new readable stream
-                // We must do this on both the original and cloned request
-                // but especially the original request since it will have a stale .body value now.
-                js.bodySetCached(js_wrapper, globalThis, readable.value);
-                if (this.#body.value.Locked.readable.get(globalThis)) |other_readable| {
-                    js.bodySetCached(this_value, globalThis, other_readable.value);
-                }
-            }
+        // After toJS, checkBodyStreamRef has already moved the streams from
+        // Locked.readable to js.gc.stream. So we need to use js.gc.stream
+        // to get the streams and update the body cache.
+        if (js.gc.stream.get(js_wrapper)) |cloned_stream| {
+            js.bodySetCached(js_wrapper, globalThis, cloned_stream);
         }
     }
+
+    // Update the original request's body cache with the new teed stream.
+    // At this point, this.#body.value.Locked.readable still holds the teed stream
+    // because checkBodyStreamRef hasn't been called on the original request yet.
+    if (this.#body.value == .Locked) {
+        if (this.#body.value.Locked.readable.get(globalThis)) |readable| {
+            js.bodySetCached(this_value, globalThis, readable.value);
+        }
+    }
+
     this.checkBodyStreamRef(globalThis);
     return js_wrapper;
 }
@@ -1021,7 +1065,7 @@ pub fn cloneInto(
         .#body = body,
         .url = url,
         .method = this.method,
-        .redirect = this.redirect,
+        .flags = this.flags,
         .#headers = headers,
     };
 
@@ -1048,7 +1092,9 @@ const string = []const u8;
 
 const Environment = @import("../../env.zig");
 const std = @import("std");
+const FetchCacheMode = @import("../../http/FetchCacheMode.zig").FetchCacheMode;
 const FetchRedirect = @import("../../http/FetchRedirect.zig").FetchRedirect;
+const FetchRequestMode = @import("../../http/FetchRequestMode.zig").FetchRequestMode;
 const Method = @import("../../http/Method.zig").Method;
 
 const bun = @import("bun");

@@ -315,5 +315,5 @@ const options = js_parser.options;
 
 const std = @import("std");
 const List = std.ArrayListUnmanaged;
-const ListManaged = std.ArrayList;
 const Map = std.AutoHashMapUnmanaged;
+const ListManaged = std.array_list.Managed;

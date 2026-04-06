@@ -7,6 +7,7 @@ const Environment = bun.Environment;
 pub const panic = recover.panic;
 pub const std_options = std.Options{
     .enable_segfault_handler = false,
+    .cryptoRandomSeed = bun.csprng,
 };
 
 pub const io_mode = .blocking;
@@ -32,7 +33,7 @@ pub fn main() void {
         _environ = @ptrCast(std.os.environ.ptr);
     }
 
-    bun.initArgv(bun.default_allocator) catch |err| {
+    bun.initArgv() catch |err| {
         Output.panic("Failed to initialize argv: {s}\n", .{@errorName(err)});
     };
 
@@ -77,7 +78,7 @@ const Stats = struct {
 
 fn runTests() u8 {
     var stats = Stats.init();
-    var stderr = std.io.getStdErr();
+    var stderr = std.fs.File.stderr();
 
     namebuf = std.heap.page_allocator.alloc(u8, namebuf_size) catch {
         Output.panic("Failed to allocate name buffer", .{});

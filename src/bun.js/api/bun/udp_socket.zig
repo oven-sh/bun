@@ -8,7 +8,7 @@ extern fn htons(hshort: u16) u16;
 extern fn inet_ntop(af: c_int, src: ?*const anyopaque, dst: [*c]u8, size: c_int) ?[*:0]const u8;
 extern fn inet_pton(af: c_int, src: [*c]const u8, dst: ?*anyopaque) c_int;
 
-fn onClose(socket: *uws.udp.Socket) callconv(.C) void {
+fn onClose(socket: *uws.udp.Socket) callconv(.c) void {
     jsc.markBinding(@src());
 
     const this: *UDPSocket = bun.cast(*UDPSocket, socket.user().?);
@@ -18,7 +18,23 @@ fn onClose(socket: *uws.udp.Socket) callconv(.C) void {
     this.socket = null;
 }
 
-fn onDrain(socket: *uws.udp.Socket) callconv(.C) void {
+fn onRecvError(socket: *uws.udp.Socket, errno: c_int) callconv(.c) void {
+    jsc.markBinding(@src());
+
+    // Only called on Linux via IP_RECVERR — loop.c guards the recv-on-error
+    // path with #if defined(__linux__) to preserve the pre-existing
+    // close-on-error behavior on kqueue/Windows (where an error event is a
+    // fatal socket condition, not a drainable error queue). Builds a
+    // SystemError from the ICMP errno (ECONNREFUSED, EHOSTUNREACH,
+    // ENETUNREACH, EMSGSIZE, ...) and dispatches through the 'error' handler.
+    const this: *UDPSocket = bun.cast(*UDPSocket, socket.user().?);
+    const sys_err = bun.sys.Error.fromCodeInt(errno, .recv);
+    const globalThis = this.globalThis;
+    const err_value = sys_err.toJS(globalThis) catch return;
+    this.callErrorHandler(.zero, err_value);
+}
+
+fn onDrain(socket: *uws.udp.Socket) callconv(.c) void {
     jsc.markBinding(@src());
 
     const this: *UDPSocket = bun.cast(*UDPSocket, socket.user().?);
@@ -35,7 +51,7 @@ fn onDrain(socket: *uws.udp.Socket) callconv(.C) void {
     };
 }
 
-fn onData(socket: *uws.udp.Socket, buf: *uws.udp.PacketBuffer, packets: c_int) callconv(.C) void {
+fn onData(socket: *uws.udp.Socket, buf: *uws.udp.PacketBuffer, packets: c_int) callconv(.c) void {
     jsc.markBinding(@src());
 
     const udpSocket: *UDPSocket = bun.cast(*UDPSocket, socket.user().?);
@@ -76,6 +92,7 @@ fn onData(socket: *uws.udp.Socket, buf: *uws.udp.PacketBuffer, packets: c_int) c
         }
 
         const slice = buf.getPayload(i);
+        const truncated = buf.getTruncated(i);
 
         const span = std.mem.span(hostname.?);
         var hostname_string = if (scope_id) |id| blk: {
@@ -94,11 +111,15 @@ fn onData(socket: *uws.udp.Socket, buf: *uws.udp.PacketBuffer, packets: c_int) c
         defer loop.exit();
         defer thisValue.ensureStillAlive();
 
+        const flags = jsc.JSValue.createEmptyObject(globalThis, 1);
+        flags.put(globalThis, jsc.ZigString.static("truncated"), .jsBoolean(truncated));
+
         _ = callback.call(globalThis, thisValue, &.{
             thisValue,
-            udpSocket.config.binary_type.toJS(slice, globalThis) catch return, // TODO: properly propagate exception upwards
+            udpSocket.config.binary_type.toJS(slice, globalThis) catch return,
             .jsNumber(port),
-            hostname_string.transferToJS(globalThis),
+            hostname_string.transferToJS(globalThis) catch return,
+            flags,
         }) catch |err| {
             udpSocket.callErrorHandler(.zero, globalThis.takeException(err));
         };
@@ -295,6 +316,7 @@ pub const UDPSocket = struct {
             onData,
             onDrain,
             onClose,
+            onRecvError,
             hostname_z,
             this.config.port,
             this.config.flags,
@@ -307,10 +329,10 @@ pub const UDPSocket = struct {
                 const sys_err = jsc.SystemError{
                     .errno = err,
                     .code = bun.String.static(code),
-                    .message = bun.handleOom(bun.String.createFormat("bind {s} {}", .{ code, this.config.hostname })),
+                    .message = bun.handleOom(bun.String.createFormat("bind {s} {f}", .{ code, this.config.hostname })),
                 };
                 const error_value = sys_err.toErrorInstance(globalThis);
-                error_value.put(globalThis, "address", this.config.hostname.toJS(globalThis));
+                error_value.put(globalThis, "address", try this.config.hostname.toJS(globalThis));
 
                 return globalThis.throwValue(error_value);
             }
@@ -326,11 +348,11 @@ pub const UDPSocket = struct {
             const ret = this.socket.?.connect(address_z, connect.port);
             if (ret != 0) {
                 if (bun.sys.Maybe(void).errnoSys(ret, .connect)) |*sys_err| {
-                    return globalThis.throwValue(sys_err.err.toJS(globalThis));
+                    return globalThis.throwValue(try sys_err.err.toJS(globalThis));
                 }
 
                 if (bun.c_ares.Error.initEAI(ret)) |eai_err| {
-                    return globalThis.throwValue(eai_err.toJSWithSyscallAndHostname(globalThis, "connect", address_slice.slice()));
+                    return globalThis.throwValue(try eai_err.toJSWithSyscallAndHostname(globalThis, "connect", address_slice.slice()));
                 }
             }
             this.connect_info = .{ .port = connect.port };
@@ -822,7 +844,7 @@ pub const UDPSocket = struct {
         return JSValue.jsBoolean(this.closed);
     }
 
-    pub fn getHostname(this: *This, _: *JSGlobalObject) JSValue {
+    pub fn getHostname(this: *This, _: *JSGlobalObject) bun.JSError!JSValue {
         return this.config.hostname.toJS(this.globalThis);
     }
 
@@ -833,7 +855,7 @@ pub const UDPSocket = struct {
 
     fn createSockAddr(globalThis: *JSGlobalObject, address_bytes: []const u8, port: u16) JSValue {
         var sockaddr = SocketAddress.init(address_bytes, port) catch return .js_undefined;
-        return sockaddr.intoDTO(globalThis);
+        return sockaddr.intoDTO(globalThis) catch .js_undefined;
     }
 
     pub fn getAddress(this: *This, globalThis: *JSGlobalObject) JSValue {
@@ -861,7 +883,7 @@ pub const UDPSocket = struct {
     pub fn getBinaryType(
         this: *This,
         globalThis: *JSGlobalObject,
-    ) JSValue {
+    ) bun.JSError!JSValue {
         return switch (this.config.binary_type) {
             .Buffer => bun.String.static("buffer").toJS(globalThis),
             .Uint8Array => bun.String.static("uint8array").toJS(globalThis),

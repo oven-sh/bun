@@ -33,7 +33,7 @@ public:
     using DOMWrapped = CustomEvent;
     static JSCustomEvent* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<CustomEvent>&& impl)
     {
-        JSCustomEvent* ptr = new (NotNull, JSC::allocateCell<JSCustomEvent>(globalObject->vm())) JSCustomEvent(structure, *globalObject, WTFMove(impl));
+        JSCustomEvent* ptr = new (NotNull, JSC::allocateCell<JSCustomEvent>(globalObject->vm())) JSCustomEvent(structure, *globalObject, WTF::move(impl));
         ptr->finishCreation(globalObject->vm());
         return ptr;
     }
@@ -57,7 +57,7 @@ public:
     }
     static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm);
     DECLARE_VISIT_CHILDREN;
-    template<typename Visitor> void visitAdditionalChildren(Visitor&);
+    template<typename Visitor> void visitAdditionalChildrenInGCThread(Visitor&);
 
     template<typename Visitor> static void visitOutputConstraints(JSCell*, Visitor&);
     static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);

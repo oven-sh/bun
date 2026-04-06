@@ -7,6 +7,7 @@
 #include "HTTPParsers.h"
 #include "decodeURIComponentSIMD.h"
 #include "BunString.h"
+#include <wtf/HashSet.h>
 namespace WebCore {
 
 template<bool isSSL>
@@ -47,12 +48,12 @@ CookieMap::CookieMap()
 }
 
 CookieMap::CookieMap(Vector<Ref<Cookie>>&& cookies)
-    : m_modifiedCookies(WTFMove(cookies))
+    : m_modifiedCookies(WTF::move(cookies))
 {
 }
 
 CookieMap::CookieMap(Vector<KeyValuePair<String, String>>&& cookies)
-    : m_originalCookies(WTFMove(cookies))
+    : m_originalCookies(WTF::move(cookies))
 {
 }
 
@@ -68,7 +69,7 @@ ExceptionOr<Ref<CookieMap>> CookieMap::create(std::variant<Vector<Vector<String>
                     return Exception { TypeError, "Invalid cookie string: expected name=value pair"_s };
                 }
             }
-            return adoptRef(*new CookieMap(WTFMove(cookies)));
+            return adoptRef(*new CookieMap(WTF::move(cookies)));
         },
         [&](const HashMap<String, String>& pairs) -> ExceptionOr<Ref<CookieMap>> {
             Vector<KeyValuePair<String, String>> cookies;
@@ -76,7 +77,7 @@ ExceptionOr<Ref<CookieMap>> CookieMap::create(std::variant<Vector<Vector<String>
                 cookies.append(KeyValuePair<String, String>(entry.key, entry.value));
             }
 
-            return adoptRef(*new CookieMap(WTFMove(cookies)));
+            return adoptRef(*new CookieMap(WTF::move(cookies)));
         },
         [&](const String& cookieString) -> ExceptionOr<Ref<CookieMap>> {
             StringView forCookieHeader = cookieString;
@@ -121,7 +122,7 @@ ExceptionOr<Ref<CookieMap>> CookieMap::create(std::variant<Vector<Vector<String>
                 cookies.append(KeyValuePair<String, String>(name, value));
             }
 
-            return adoptRef(*new CookieMap(WTFMove(cookies)));
+            return adoptRef(*new CookieMap(WTF::move(cookies)));
         });
 
     return std::visit(visitor, variant);
@@ -181,7 +182,7 @@ void CookieMap::set(Ref<Cookie> cookie)
 {
     removeInternal(cookie->name());
     // Add the new cookie
-    m_modifiedCookies.append(WTFMove(cookie));
+    m_modifiedCookies.append(WTF::move(cookie));
 }
 
 ExceptionOr<void> CookieMap::remove(const CookieStoreDeleteOptions& options)
@@ -198,7 +199,7 @@ ExceptionOr<void> CookieMap::remove(const CookieStoreDeleteOptions& options)
         return cookie_exception.releaseException();
     }
     auto cookie = cookie_exception.releaseReturnValue();
-    m_modifiedCookies.append(WTFMove(cookie));
+    m_modifiedCookies.append(WTF::move(cookie));
     return {};
 }
 
@@ -231,10 +232,13 @@ JSC::JSValue CookieMap::toJSON(JSC::JSGlobalObject* globalObject) const
     auto* object = JSC::constructEmptyObject(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
+    HashSet<String> seenKeys;
+
     // Add modified cookies to the object
     for (const auto& cookie : m_modifiedCookies) {
         if (!cookie->value().isEmpty()) {
-            object->putDirect(vm, JSC::Identifier::fromString(vm, cookie->name()), JSC::jsString(vm, cookie->value()));
+            seenKeys.add(cookie->name());
+            object->putDirectMayBeIndex(globalObject, JSC::Identifier::fromString(vm, cookie->name()), JSC::jsString(vm, cookie->value()));
             RETURN_IF_EXCEPTION(scope, {});
         }
     }
@@ -242,8 +246,8 @@ JSC::JSValue CookieMap::toJSON(JSC::JSGlobalObject* globalObject) const
     // Add original cookies to the object
     for (const auto& cookie : m_originalCookies) {
         // Skip if this cookie name was already added from modified cookies
-        if (!object->hasProperty(globalObject, JSC::Identifier::fromString(vm, cookie.key))) {
-            object->putDirect(vm, JSC::Identifier::fromString(vm, cookie.key), JSC::jsString(vm, cookie.value));
+        if (seenKeys.add(cookie.key).isNewEntry) {
+            object->putDirectMayBeIndex(globalObject, JSC::Identifier::fromString(vm, cookie.key), JSC::jsString(vm, cookie.value));
             RETURN_IF_EXCEPTION(scope, {});
         }
     }

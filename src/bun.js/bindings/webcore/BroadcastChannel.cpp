@@ -54,9 +54,9 @@ namespace WebCore {
 WTF_MAKE_TZONE_ALLOCATED_IMPL(BroadcastChannel);
 
 static Lock allBroadcastChannelsLock;
-static UncheckedKeyHashMap<BroadcastChannelIdentifier, BroadcastChannel*>& allBroadcastChannels() WTF_REQUIRES_LOCK(allBroadcastChannelsLock)
+static UncheckedKeyHashMap<BroadcastChannelIdentifier, ThreadSafeWeakPtr<BroadcastChannel>>& allBroadcastChannels() WTF_REQUIRES_LOCK(allBroadcastChannelsLock)
 {
-    static NeverDestroyed<UncheckedKeyHashMap<BroadcastChannelIdentifier, BroadcastChannel*>> map;
+    static NeverDestroyed<UncheckedKeyHashMap<BroadcastChannelIdentifier, ThreadSafeWeakPtr<BroadcastChannel>>> map;
     return map;
 }
 
@@ -71,7 +71,7 @@ static UncheckedKeyHashMap<BroadcastChannelIdentifier, ScriptExecutionContextIde
 // {
 //     Ref securityOrigin { *context.securityOrigin() };
 //     Ref topOrigin { context.settingsValues().broadcastChannelOriginPartitioningEnabled ? context.topOrigin() : securityOrigin.get() };
-//     return { WTFMove(topOrigin), WTFMove(securityOrigin) };
+//     return { WTF::move(topOrigin), WTF::move(securityOrigin) };
 // }
 
 class BroadcastChannel::MainThreadBridge : public ThreadSafeRefCounted<MainThreadBridge, WTF::DestructionThread::Main>, public Identified<BroadcastChannelIdentifier> {
@@ -123,7 +123,7 @@ void BroadcastChannel::MainThreadBridge::ensureOnMainThread(Function<void(void*)
 
     Ref protectedThis { *this };
 
-    ScriptExecutionContext::ensureOnMainThread([protectedThis = WTFMove(protectedThis), task = WTFMove(task)](auto& context) {
+    ScriptExecutionContext::ensureOnMainThread([protectedThis = WTF::move(protectedThis), task = WTF::move(task)](auto& context) {
         task(nullptr);
     });
 }
@@ -132,7 +132,7 @@ void BroadcastChannel::MainThreadBridge::registerChannel(ScriptExecutionContext&
 {
     Ref protectedThis { *this };
 
-    ScriptExecutionContext::ensureOnMainThread([protectedThis = WTFMove(protectedThis), contextId = context.identifier()](auto& context) mutable {
+    ScriptExecutionContext::ensureOnMainThread([protectedThis = WTF::move(protectedThis), contextId = context.identifier()](auto& context) mutable {
         context.broadcastChannelRegistry().registerChannel(protectedThis->m_name, protectedThis->identifier());
         channelToContextIdentifier().add(protectedThis->identifier(), contextId);
     });
@@ -142,7 +142,7 @@ void BroadcastChannel::MainThreadBridge::unregisterChannel()
 {
     Ref protectedThis { *this };
 
-    ScriptExecutionContext::ensureOnMainThread([protectedThis = WTFMove(protectedThis)](auto& context) {
+    ScriptExecutionContext::ensureOnMainThread([protectedThis = WTF::move(protectedThis)](auto& context) {
         context.broadcastChannelRegistry().unregisterChannel(protectedThis->m_name, protectedThis->identifier());
         channelToContextIdentifier().remove(protectedThis->identifier());
     });
@@ -152,8 +152,8 @@ void BroadcastChannel::MainThreadBridge::postMessage(Ref<SerializedScriptValue>&
 {
     Ref protectedThis { *this };
 
-    ScriptExecutionContext::ensureOnMainThread([protectedThis = WTFMove(protectedThis), message = WTFMove(message)](auto& context) mutable {
-        context.broadcastChannelRegistry().postMessage(protectedThis->m_name, protectedThis->identifier(), WTFMove(message));
+    ScriptExecutionContext::ensureOnMainThread([protectedThis = WTF::move(protectedThis), message = WTF::move(message)](auto& context) mutable {
+        context.broadcastChannelRegistry().postMessage(protectedThis->m_name, protectedThis->identifier(), WTF::move(message));
     });
 }
 
@@ -165,7 +165,7 @@ BroadcastChannel::BroadcastChannel(ScriptExecutionContext& context, const String
 {
     {
         Locker locker { allBroadcastChannelsLock };
-        allBroadcastChannels().add(m_mainThreadBridge->identifier(), this);
+        allBroadcastChannels().add(m_mainThreadBridge->identifier(), *this);
     }
     m_mainThreadBridge->registerChannel(context);
     jsRef(context.jsGlobalObject());
@@ -237,14 +237,14 @@ void BroadcastChannel::dispatchMessageTo(BroadcastChannelIdentifier channelIdent
     if (!contextIdentifier)
         return;
 
-    ScriptExecutionContext::ensureOnContextThread(contextIdentifier, [channelIdentifier, message = WTFMove(message)](auto&) mutable {
+    ScriptExecutionContext::ensureOnContextThread(contextIdentifier, [channelIdentifier, message = WTF::move(message)](auto&) mutable {
         RefPtr<BroadcastChannel> channel;
         {
             Locker locker { allBroadcastChannelsLock };
-            channel = allBroadcastChannels().get(channelIdentifier);
+            channel = allBroadcastChannels().get(channelIdentifier).get();
         }
         if (channel)
-            channel->dispatchMessage(WTFMove(message));
+            channel->dispatchMessage(WTF::move(message));
     });
 }
 
@@ -256,7 +256,7 @@ void BroadcastChannel::dispatchMessage(Ref<SerializedScriptValue>&& message)
     if (m_isClosed)
         return;
 
-    ScriptExecutionContext::postTaskTo(contextIdForBroadcastChannelId(m_mainThreadBridge->identifier()), [this, message = WTFMove(message)](ScriptExecutionContext& context) mutable {
+    ScriptExecutionContext::postTaskTo(contextIdForBroadcastChannelId(m_mainThreadBridge->identifier()), [this, message = WTF::move(message)](ScriptExecutionContext& context) mutable {
         if (m_isClosed)
             return;
 
@@ -265,9 +265,9 @@ void BroadcastChannel::dispatchMessage(Ref<SerializedScriptValue>&& message)
             return;
 
         auto& vm = JSC::getVM(globalObject);
-        auto scope = DECLARE_CATCH_SCOPE(vm);
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         Vector<RefPtr<MessagePort>> dummyPorts;
-        auto event = MessageEvent::create(*globalObject, WTFMove(message), {}, {}, nullptr, WTFMove(dummyPorts));
+        auto event = MessageEvent::create(*globalObject, WTF::move(message), {}, {}, nullptr, WTF::move(dummyPorts));
         if (scope.exception()) [[unlikely]] {
             // Currently, we assume that the only way we can get here is if we have a termination.
             RELEASE_ASSERT(vm.hasPendingTerminationException());

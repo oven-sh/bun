@@ -47,10 +47,7 @@ flags: ConnectionFlags = .{},
 /// After being connected, this is an idle timeout timer.
 timer: bun.api.Timer.EventLoopTimer = .{
     .tag = .PostgresSQLConnectionTimeout,
-    .next = .{
-        .sec = 0,
-        .nsec = 0,
-    },
+    .next = .epoch,
 },
 
 /// This timer controls the maximum lifetime of a connection.
@@ -59,10 +56,7 @@ timer: bun.api.Timer.EventLoopTimer = .{
 max_lifetime_interval_ms: u32 = 0,
 max_lifetime_timer: bun.api.Timer.EventLoopTimer = .{
     .tag = .PostgresSQLConnectionMaxLifetime,
-    .next = .{
-        .sec = 0,
-        .nsec = 0,
-    },
+    .next = .epoch,
 },
 auto_flusher: AutoFlusher = .{},
 
@@ -135,7 +129,7 @@ pub fn resetConnectionTimeout(this: *PostgresSQLConnection) void {
         return;
     }
 
-    this.timer.next = bun.timespec.msFromNow(@intCast(interval));
+    this.timer.next = bun.timespec.msFromNow(.allow_mocked_time, @intCast(interval));
     this.vm.timer.insert(&this.timer);
 }
 
@@ -194,7 +188,7 @@ fn setupMaxLifetimeTimerIfNecessary(this: *PostgresSQLConnection) void {
     if (this.max_lifetime_interval_ms == 0) return;
     if (this.max_lifetime_timer.state == .ACTIVE) return;
 
-    this.max_lifetime_timer.next = bun.timespec.msFromNow(@intCast(this.max_lifetime_interval_ms));
+    this.max_lifetime_timer.next = bun.timespec.msFromNow(.allow_mocked_time, @intCast(this.max_lifetime_interval_ms));
     this.vm.timer.insert(&this.max_lifetime_timer);
 }
 
@@ -213,13 +207,13 @@ pub fn onConnectionTimeout(this: *PostgresSQLConnection) void {
 
     switch (this.status) {
         .connected => {
-            this.failFmt("ERR_POSTGRES_IDLE_TIMEOUT", "Idle timeout reached after {}", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.idle_timeout_interval_ms) *| std.time.ns_per_ms)});
+            this.failFmt("ERR_POSTGRES_IDLE_TIMEOUT", "Idle timeout reached after {f}", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.idle_timeout_interval_ms) *| std.time.ns_per_ms)});
         },
         else => {
-            this.failFmt("ERR_POSTGRES_CONNECTION_TIMEOUT", "Connection timeout after {}", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.connection_timeout_ms) *| std.time.ns_per_ms)});
+            this.failFmt("ERR_POSTGRES_CONNECTION_TIMEOUT", "Connection timeout after {f}", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.connection_timeout_ms) *| std.time.ns_per_ms)});
         },
         .sent_startup_message => {
-            this.failFmt("ERR_POSTGRES_CONNECTION_TIMEOUT", "Connection timeout after {} (sent startup message, but never received response)", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.connection_timeout_ms) *| std.time.ns_per_ms)});
+            this.failFmt("ERR_POSTGRES_CONNECTION_TIMEOUT", "Connection timeout after {f} (sent startup message, but never received response)", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.connection_timeout_ms) *| std.time.ns_per_ms)});
         },
     }
 }
@@ -228,7 +222,7 @@ pub fn onMaxLifetimeTimeout(this: *PostgresSQLConnection) void {
     debug("onMaxLifetimeTimeout", .{});
     this.max_lifetime_timer.state = .FIRED;
     if (this.status == .failed) return;
-    this.failFmt("ERR_POSTGRES_LIFETIME_TIMEOUT", "Max lifetime timeout reached after {}", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.max_lifetime_interval_ms) *| std.time.ns_per_ms)});
+    this.failFmt("ERR_POSTGRES_LIFETIME_TIMEOUT", "Max lifetime timeout reached after {f}", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.max_lifetime_interval_ms) *| std.time.ns_per_ms)});
 }
 
 fn start(this: *PostgresSQLConnection) void {
@@ -434,7 +428,7 @@ pub fn onHandshake(this: *PostgresSQLConnection, success: i32, ssl_error: uws.us
 
                 .verify_ca, .verify_full => {
                     if (ssl_error.error_no != 0) {
-                        this.failWithJSValue(ssl_error.toJS(this.globalObject));
+                        this.failWithJSValue(ssl_error.toJS(this.globalObject) catch return);
                         return;
                     }
 
@@ -442,7 +436,7 @@ pub fn onHandshake(this: *PostgresSQLConnection, success: i32, ssl_error: uws.us
                     if (BoringSSL.c.SSL_get_servername(ssl_ptr, 0)) |servername| {
                         const hostname = servername[0..bun.len(servername)];
                         if (!BoringSSL.checkServerIdentity(ssl_ptr, hostname)) {
-                            this.failWithJSValue(ssl_error.toJS(this.globalObject));
+                            this.failWithJSValue(ssl_error.toJS(this.globalObject) catch return);
                         }
                     }
                 },
@@ -453,7 +447,7 @@ pub fn onHandshake(this: *PostgresSQLConnection, success: i32, ssl_error: uws.us
     } else {
         // if we are here is because server rejected us, and the error_no is the cause of this
         // no matter if reject_unauthorized is false because we are disconnected by the server
-        this.failWithJSValue(ssl_error.toJS(this.globalObject));
+        this.failWithJSValue(ssl_error.toJS(this.globalObject) catch return);
     }
 }
 
@@ -624,12 +618,9 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
             return .zero;
         }
 
-        // we always request the cert so we can verify it and also we manually abort the connection if the hostname doesn't match
-        const original_reject_unauthorized = tls_config.reject_unauthorized;
-        tls_config.reject_unauthorized = 0;
-        tls_config.request_cert = 1;
+        // We always request the cert so we can verify it and also we manually abort the connection if the hostname doesn't match.
         // We create it right here so we can throw errors early.
-        const context_options = tls_config.asUSockets();
+        const context_options = tls_config.asUSocketsForClientVerification();
         var err: uws.create_bun_socket_error_t = .none;
         tls_ctx = uws.SocketContext.createSSLContext(vm.uwsLoop(), @sizeOf(*PostgresSQLConnection), context_options, &err) orelse {
             if (err != .none) {
@@ -638,8 +629,6 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
                 return globalObject.throwValue(err.toJS(globalObject));
             }
         };
-        // restore the original reject_unauthorized
-        tls_config.reject_unauthorized = original_reject_unauthorized;
         if (err != .none) {
             tls_config.deinit();
             if (tls_ctx) |ctx| {
@@ -690,6 +679,20 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
 
         break :brk b.allocatedSlice();
     };
+
+    // Reject null bytes in connection parameters to prevent Postgres startup
+    // message parameter injection (null bytes act as field terminators in the
+    // wire protocol's key\0value\0 format).
+    inline for (.{ .{ username, "username" }, .{ password, "password" }, .{ database, "database" }, .{ path, "path" } }) |entry| {
+        if (entry[0].len > 0 and std.mem.indexOfScalar(u8, entry[0], 0) != null) {
+            bun.default_allocator.free(options_buf);
+            tls_config.deinit();
+            if (tls_ctx) |tls| {
+                tls.deinit(true);
+            }
+            return globalObject.throwInvalidArguments(entry[1] ++ " must not contain null bytes", .{});
+        }
+    }
 
     const on_connect = arguments[9];
     const on_close = arguments[10];
@@ -984,7 +987,7 @@ pub fn hasQueryRunning(this: *PostgresSQLConnection) bool {
 }
 
 pub fn canPipeline(this: *PostgresSQLConnection) bool {
-    if (bun.getRuntimeFeatureFlag(.BUN_FEATURE_FLAG_DISABLE_SQL_AUTO_PIPELINING)) {
+    if (bun.feature_flag.BUN_FEATURE_FLAG_DISABLE_SQL_AUTO_PIPELINING.get()) {
         @branchHint(.unlikely);
         return false;
     }
@@ -1087,6 +1090,16 @@ pub fn canPrepareQuery(noalias this: *const @This()) bool {
     return this.flags.is_ready_for_query and !this.flags.waiting_to_prepare and this.pipelined_requests == 0;
 }
 
+/// Process pending requests and flush. Called from the enqueue path when
+/// unnamed prepared statements with params skip writeQuery+Sync and need
+/// advance() to send everything atomically on an idle connection.
+pub fn advanceAndFlush(this: *PostgresSQLConnection) void {
+    if (!this.flags.has_backpressure and this.flags.is_ready_for_query) {
+        this.advance();
+        this.flushData();
+    }
+}
+
 fn advance(this: *PostgresSQLConnection) void {
     var offset: usize = 0;
     debug("advance", .{});
@@ -1179,24 +1192,52 @@ fn advance(this: *PostgresSQLConnection) void {
                                 const binding_value = PostgresSQLQuery.js.bindingGetCached(thisValue) orelse .zero;
                                 const columns_value = PostgresSQLQuery.js.columnsGetCached(thisValue) orelse .zero;
                                 req.flags.binary = statement.fields.len > 0;
-                                debug("binding and executing stmt", .{});
-                                PostgresRequest.bindAndExecute(this.globalObject, statement, binding_value, columns_value, PostgresSQLConnection.Writer, this.writer()) catch |err| {
-                                    if (this.globalObject.tryTakeException()) |err_| {
-                                        req.onJSError(err_, this.globalObject);
-                                    } else {
-                                        req.onWriteFail(err, this.globalObject, this.getQueriesArray());
-                                    }
-                                    if (offset == 0) {
-                                        req.deref();
-                                        this.requests.discard(1);
-                                    } else {
-                                        // deinit later
-                                        req.status = .fail;
-                                        offset += 1;
-                                    }
-                                    debug("bind and execute failed: {s}", .{@errorName(err)});
-                                    continue;
-                                };
+
+                                if (this.flags.use_unnamed_prepared_statements) {
+                                    // For unnamed prepared statements, always include Parse
+                                    // before Bind+Execute. The unnamed statement may not exist
+                                    // on the current server connection when using PgBouncer or
+                                    // other connection poolers in transaction mode.
+                                    debug("parse, bind and execute unnamed stmt", .{});
+                                    var query_str = req.query.toUTF8(bun.default_allocator);
+                                    defer query_str.deinit();
+                                    PostgresRequest.parseAndBindAndExecute(this.globalObject, query_str.slice(), statement, binding_value, columns_value, false, PostgresSQLConnection.Writer, this.writer()) catch |err| {
+                                        if (this.globalObject.tryTakeException()) |err_| {
+                                            req.onJSError(err_, this.globalObject);
+                                        } else {
+                                            req.onWriteFail(err, this.globalObject, this.getQueriesArray());
+                                        }
+                                        if (offset == 0) {
+                                            req.deref();
+                                            this.requests.discard(1);
+                                        } else {
+                                            // deinit later
+                                            req.status = .fail;
+                                            offset += 1;
+                                        }
+                                        debug("parse, bind and execute failed: {s}", .{@errorName(err)});
+                                        continue;
+                                    };
+                                } else {
+                                    debug("binding and executing stmt", .{});
+                                    PostgresRequest.bindAndExecute(this.globalObject, statement, binding_value, columns_value, PostgresSQLConnection.Writer, this.writer()) catch |err| {
+                                        if (this.globalObject.tryTakeException()) |err_| {
+                                            req.onJSError(err_, this.globalObject);
+                                        } else {
+                                            req.onWriteFail(err, this.globalObject, this.getQueriesArray());
+                                        }
+                                        if (offset == 0) {
+                                            req.deref();
+                                            this.requests.discard(1);
+                                        } else {
+                                            // deinit later
+                                            req.status = .fail;
+                                            offset += 1;
+                                        }
+                                        debug("bind and execute failed: {s}", .{@errorName(err)});
+                                        continue;
+                                    };
+                                }
 
                                 this.flags.is_ready_for_query = false;
                                 req.status = .binding;
@@ -1265,6 +1306,49 @@ fn advance(this: *PostgresSQLConnection) void {
                                     return;
                                 }
 
+                                if (this.flags.use_unnamed_prepared_statements) {
+                                    // For unnamed prepared statements, send Parse+Describe+Bind+Execute
+                                    // atomically to prevent PgBouncer from splitting them across
+                                    // server connections. Uses signature field types for encoding
+                                    // (text format for unknowns); actual types will be cached from
+                                    // ParameterDescription for subsequent executions.
+                                    const thisValue = req.thisValue.tryGet() orelse {
+                                        bun.assertf(false, "query value was freed earlier than expected", .{});
+                                        bun.assert(offset == 0);
+                                        req.deref();
+                                        this.requests.discard(1);
+                                        continue;
+                                    };
+                                    const binding_value = PostgresSQLQuery.js.bindingGetCached(thisValue) orelse .zero;
+                                    const columns_value = PostgresSQLQuery.js.columnsGetCached(thisValue) orelse .zero;
+                                    debug("parseAndBindAndExecute (unnamed, first execution)", .{});
+                                    PostgresRequest.parseAndBindAndExecute(this.globalObject, query_str.slice(), statement, binding_value, columns_value, true, PostgresSQLConnection.Writer, this.writer()) catch |err| {
+                                        if (this.globalObject.tryTakeException()) |err_| {
+                                            req.onJSError(err_, this.globalObject);
+                                        } else {
+                                            statement.status = .failed;
+                                            statement.error_response = .{ .postgres_error = err };
+                                            req.onWriteFail(err, this.globalObject, this.getQueriesArray());
+                                        }
+                                        bun.assert(offset == 0);
+                                        req.deref();
+                                        this.requests.discard(1);
+                                        debug("parseAndBindAndExecute failed: {s}", .{@errorName(err)});
+                                        continue;
+                                    };
+                                    this.flags.is_ready_for_query = false;
+                                    this.flags.waiting_to_prepare = true;
+                                    req.status = .binding;
+                                    statement.status = .parsing;
+                                    req.flags.pipelined = true;
+                                    this.pipelined_requests += 1;
+                                    this.flushDataAndResetTimeout();
+                                    return;
+                                }
+
+                                // Named prepared statements: send Parse+Describe first, wait for
+                                // ParameterDescription, then send Bind+Execute in a second phase.
+                                // This is safe because named statements persist on the connection.
                                 const connection_writer = this.writer();
                                 debug("writing query", .{});
                                 // write query and wait for it to be prepared
@@ -1637,7 +1721,10 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
                     // This will usually start with "v="
                     const comparison_signature = final.data.slice();
 
-                    if (comparison_signature.len < 2 or !bun.strings.eqlLong(server_signature, comparison_signature[2..], true)) {
+                    if (comparison_signature.len < 2 or
+                        server_signature.len != comparison_signature.len - 2 or
+                        BoringSSL.c.CRYPTO_memcmp(server_signature.ptr, comparison_signature[2..].ptr, server_signature.len) != 0)
+                    {
                         debug("SASLFinal - SASL Server signature mismatch\nExpected: {s}\nActual: {s}", .{ server_signature, comparison_signature[2..] });
                         this.fail("The server did not return the correct signature", error.SASL_SIGNATURE_MISMATCH);
                     } else {
@@ -1681,14 +1768,14 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
                     first_hasher.update(this.password);
                     first_hasher.update(this.user);
                     first_hasher.final(&first_hash_buf);
-                    const first_hash_str_output = std.fmt.bufPrint(&first_hash_str, "{x}", .{std.fmt.fmtSliceHexLower(&first_hash_buf)}) catch unreachable;
+                    const first_hash_str_output = std.fmt.bufPrint(&first_hash_str, "{x}", .{&first_hash_buf}) catch unreachable;
 
                     // Second hash: md5(first_hash + salt)
                     var final_hasher = bun.sha.MD5.init();
                     final_hasher.update(first_hash_str_output);
                     final_hasher.update(&md5.salt);
                     final_hasher.final(&final_hash_buf);
-                    const final_hash_str_output = std.fmt.bufPrint(&final_hash_str, "{x}", .{std.fmt.fmtSliceHexLower(&final_hash_buf)}) catch unreachable;
+                    const final_hash_str_output = std.fmt.bufPrint(&final_hash_str, "{x}", .{&final_hash_buf}) catch unreachable;
 
                     // Format final password as "md5" + final_hash
                     const final_password = std.fmt.bufPrintZ(&final_password_buf, "md5{s}", .{final_hash_str_output}) catch unreachable;
@@ -1736,7 +1823,7 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
             }
 
             var request = this.current() orelse {
-                debug("ErrorResponse: {}", .{err});
+                debug("ErrorResponse: {f}", .{err});
                 return error.ExpectedRequest;
             };
             var is_error_owned = true;

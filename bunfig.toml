@@ -10,4 +10,5 @@ preload = "./test/preload.ts"
 
 [install]
 linker = "isolated"
-minimumReleaseAge = 1
+minimumReleaseAge = 259200 # three days
+minimumReleaseAgeExcludes = ["typescript"]

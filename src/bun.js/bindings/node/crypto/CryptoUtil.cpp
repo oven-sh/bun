@@ -82,7 +82,7 @@ EncodedJSValue encode(JSGlobalObject* lexicalGlobalObject, ThrowScope& scope, st
 
         memcpy(buffer->data(), bytes.data(), bytes.size());
 
-        return JSValue::encode(JSC::JSUint8Array::create(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), WTFMove(buffer), 0, bytes.size()));
+        return JSValue::encode(JSC::JSUint8Array::create(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), WTF::move(buffer), 0, bytes.size()));
     }
     default: {
         return jsBufferToStringFromBytes(lexicalGlobalObject, scope, bytes, encoding);
@@ -157,7 +157,7 @@ std::optional<ncrypto::EVPKeyPointer> keyFromString(JSGlobalObject* lexicalGloba
     };
     auto res = ncrypto::EVPKeyPointer::TryParsePrivateKey(config, ncryptoBuf);
     if (res) {
-        ncrypto::EVPKeyPointer keyPtr(WTFMove(res.value));
+        ncrypto::EVPKeyPointer keyPtr(WTF::move(res.value));
         return keyPtr;
     }
 
@@ -255,7 +255,7 @@ std::optional<ncrypto::DataPointer> passphraseFromBufferSource(JSC::JSGlobalObje
         auto span = utf8.span();
         if (auto ptr = ncrypto::DataPointer::Alloc(span.size())) {
             memcpy(ptr.get(), span.data(), span.size());
-            return WTFMove(ptr);
+            return WTF::move(ptr);
         }
 
         throwOutOfMemoryError(globalObject, scope);
@@ -271,7 +271,7 @@ std::optional<ncrypto::DataPointer> passphraseFromBufferSource(JSC::JSGlobalObje
         auto length = array->byteLength();
         if (auto ptr = ncrypto::DataPointer::Alloc(length)) {
             memcpy(ptr.get(), array->vector(), length);
-            return WTFMove(ptr);
+            return WTF::move(ptr);
         }
 
         throwOutOfMemoryError(globalObject, scope);
@@ -481,7 +481,7 @@ bool convertP1363ToDER(const ncrypto::Buffer<const unsigned char>& p1363Sig,
         return false;
     }
 
-    if (!asn1_sig.setParams(WTFMove(r), WTFMove(s))) {
+    if (!asn1_sig.setParams(WTF::move(r), WTF::move(s))) {
         return false;
     }
 

@@ -75,7 +75,7 @@ pub const Angle = union(Tag) {
         return Angle.parseInternal(input, true);
     }
 
-    pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
+    pub fn toCss(this: *const This, dest: *Printer) PrintErr!void {
         const value, const unit = switch (this.*) {
             .deg => |val| .{ val, "deg" },
             .grad => |val| .{ val, "grad" },
@@ -92,15 +92,15 @@ pub const Angle = union(Tag) {
             },
             .turn => |val| .{ val, "turn" },
         };
-        css.serializer.serializeDimension(value, unit, W, dest) catch return dest.addFmtError();
+        css.serializer.serializeDimension(value, unit, dest) catch return dest.addFmtError();
     }
 
-    pub fn toCssWithUnitlessZero(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
+    pub fn toCssWithUnitlessZero(this: *const This, dest: *Printer) PrintErr!void {
         if (this.isZero()) {
             const v: f32 = 0.0;
-            try CSSNumberFns.toCss(&v, W, dest);
+            try CSSNumberFns.toCss(&v, dest);
         } else {
-            return this.toCss(W, dest);
+            return this.toCss(dest);
         }
     }
 

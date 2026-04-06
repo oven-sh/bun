@@ -193,6 +193,9 @@ pub fn upgrade(this: *NodeHTTPResponse, data_value: JSValue, sec_websocket_proto
     if (this.raw_response) |raw_response| {
         this.raw_response = null;
         this.flags.upgraded = true;
+        // Unref the poll_ref since the socket is now upgraded to WebSocket
+        // and will have its own lifecycle management
+        this.poll_ref.unref(this.server.globalThis().bunVM());
         _ = raw_response.upgrade(*ServerWebSocket, ws, websocket_key, sec_websocket_protocol_value, sec_websocket_extensions_value, upgrade_ctx);
     }
     return true;
@@ -275,7 +278,7 @@ pub fn create(
     response_ptr: *anyopaque,
     upgrade_ctx: ?*anyopaque,
     node_response_ptr: *?*NodeHTTPResponse,
-) callconv(.C) jsc.JSValue {
+) callconv(.c) jsc.JSValue {
     const vm = globalObject.bunVM();
     const method = HTTP.Method.which(request.method()) orelse HTTP.Method.OPTIONS;
     // GET in node.js can have a body
@@ -463,6 +466,17 @@ pub fn writeHead(this: *NodeHTTPResponse, globalObject: *jsc.JSGlobalObject, cal
 
     if (state.isHttpStatusCalled()) {
         return globalObject.ERR(.HTTP_HEADERS_SENT, "Stream already started", .{}).throw();
+    }
+
+    // Validate status message does not contain invalid characters (defense-in-depth
+    // against HTTP response splitting). Matches Node.js checkInvalidHeaderChar:
+    // rejects any char not in [\t\x20-\x7e\x80-\xff].
+    if (status_message_slice.len > 0) {
+        for (status_message_slice.slice()) |c| {
+            if (c != '\t' and (c < 0x20 or c == 0x7f)) {
+                return globalObject.ERR(.INVALID_CHAR, "Invalid character in statusMessage", .{}).throw();
+            }
+        }
     }
 
     do_it: {

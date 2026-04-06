@@ -22,7 +22,7 @@ using namespace JSC;
 
 JSValue toJSNewlyCreated(JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<EventEmitter>&& value)
 {
-    return createWrapper<EventEmitter>(globalObject, WTFMove(value));
+    return createWrapper<EventEmitter>(globalObject, WTF::move(value));
 }
 
 EventEmitter* JSEventEmitter::toWrapped(VM& vm, JSValue value)
@@ -66,18 +66,18 @@ JSEventEmitter* jsEventEmitterCastFast(VM& vm, JSC::JSGlobalObject* lexicalGloba
     }
     // TODO: properly propagate exception upwards (^ getIfPropertyExists)
 
-    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto* globalObject = static_cast<Zig::GlobalObject*>(lexicalGlobalObject);
     auto impl = EventEmitter::create(*globalObject->scriptExecutionContext());
     impl->setThisObject(thisObject);
 
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto result = toJSNewlyCreated<IDLInterface<EventEmitter>>(*lexicalGlobalObject, *globalObject, throwScope, WTFMove(impl));
+    auto result = toJSNewlyCreated<IDLInterface<EventEmitter>>(*lexicalGlobalObject, *globalObject, throwScope, WTF::move(impl));
 
     thisObject->putDirect(vm, name, result, 0);
 
     if (scope.exception()) [[unlikely]] {
-        scope.clearException();
+        (void)scope.tryClearException();
         return nullptr;
     }
 
@@ -87,11 +87,11 @@ JSEventEmitter* jsEventEmitterCastFast(VM& vm, JSC::JSGlobalObject* lexicalGloba
 }
 
 template<typename Visitor>
-void JSEventEmitter::visitAdditionalChildren(Visitor& visitor)
+void JSEventEmitter::visitAdditionalChildrenInGCThread(Visitor& visitor)
 {
     wrapped().eventListenerMap().visitJSEventListeners(visitor);
 }
 
-DEFINE_VISIT_ADDITIONAL_CHILDREN(JSEventEmitter);
+DEFINE_VISIT_ADDITIONAL_CHILDREN_IN_GC_THREAD(JSEventEmitter);
 
 } // namespace WebCore

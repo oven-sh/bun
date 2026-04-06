@@ -6,8 +6,6 @@
 pub fn ResumableSink(
     comptime js: type,
     comptime Context: type,
-    comptime onWrite: fn (context: *Context, chunk: []const u8) ResumableSinkBackpressure,
-    comptime onEnd: fn (context: *Context, err: ?jsc.JSValue) void,
 ) type {
     return struct {
         const log = bun.Output.scoped(.ResumableSink, .visible);
@@ -16,6 +14,8 @@ pub fn ResumableSink(
         pub const fromJSDirect = js.fromJSDirect;
 
         const ThisSink = @This();
+        const onWrite = Context.writeRequestData;
+        const onEnd = Context.writeEndRequest;
 
         pub const new = bun.TrivialNew(@This());
         const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
@@ -355,8 +355,8 @@ pub const ResumableSinkBackpressure = enum {
     backpressure,
     done,
 };
-pub const ResumableFetchSink = ResumableSink(jsc.Codegen.JSResumableFetchSink, FetchTasklet, FetchTasklet.writeRequestData, FetchTasklet.writeEndRequest);
-pub const ResumableS3UploadSink = ResumableSink(jsc.Codegen.JSResumableS3UploadSink, S3UploadStreamWrapper, S3UploadStreamWrapper.writeRequestData, S3UploadStreamWrapper.writeEndRequest);
+pub const ResumableFetchSink = ResumableSink(jsc.Codegen.JSResumableFetchSink, FetchTasklet);
+pub const ResumableS3UploadSink = ResumableSink(jsc.Codegen.JSResumableS3UploadSink, S3UploadStreamWrapper);
 
 extern fn Bun__assignStreamIntoResumableSink(globalThis: *jsc.JSGlobalObject, stream: jsc.JSValue, sink: jsc.JSValue) jsc.JSValue;
 

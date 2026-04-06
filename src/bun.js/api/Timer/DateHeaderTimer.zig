@@ -49,7 +49,7 @@ pub fn enable(this: *DateHeaderTimer, vm: *VirtualMachine, now: *const bun.times
 pub fn run(this: *DateHeaderTimer, vm: *VirtualMachine) void {
     this.event_loop_timer.state = .FIRED;
     const loop = vm.uwsLoop();
-    const now = bun.timespec.now();
+    const now = bun.timespec.now(.allow_mocked_time);
 
     // Record when we last ran it.
     this.event_loop_timer.next = now;
@@ -65,7 +65,7 @@ pub fn run(this: *DateHeaderTimer, vm: *VirtualMachine) void {
     }
 }
 
-pub export fn Bun__internal_ensureDateHeaderTimerIsEnabled(loop: *uws.Loop) callconv(.C) void {
+pub export fn Bun__internal_ensureDateHeaderTimerIsEnabled(loop: *uws.Loop) callconv(.c) void {
     if (jsc.VirtualMachine.getOrNull()) |vm| {
         vm.timer.updateDateHeaderTimerIfNecessary(loop, vm);
     }

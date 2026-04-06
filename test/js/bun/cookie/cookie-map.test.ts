@@ -238,6 +238,24 @@ describe("Bun.Cookie and Bun.CookieMap", () => {
     `);
   });
 
+  test("CookieMap.toJSON() handles numeric cookie names", () => {
+    const map = new Bun.CookieMap("0=first; 1=second; 42=answer");
+    expect(map.toJSON()).toEqual({
+      "0": "first",
+      "1": "second",
+      "42": "answer",
+    });
+  });
+
+  test("CookieMap.toJSON() handles cookie names matching Object.prototype properties", () => {
+    const map = new Bun.CookieMap("toString=hello; constructor=world; valueOf=test");
+    expect(map.toJSON()).toEqual({
+      "toString": "hello",
+      "constructor": "world",
+      "valueOf": "test",
+    });
+  });
+
   test("CookieMap works with cookies with advanced attributes", () => {
     const map = new Bun.CookieMap();
 
@@ -329,5 +347,17 @@ describe("iterator", () => {
     c=d
     a=b"
   `);
+  });
+});
+
+describe("invalid delete usage", () => {
+  test("invalid usage does not crash", () => {
+    expect(() => {
+      const v1 = Bun.CookieMap;
+      // @ts-ignore
+      const v2 = new v1(v1, v1, Bun, v1);
+      // @ts-ignore
+      v2.delete(v2);
+    }).toThrow("Cookie name is required");
   });
 });

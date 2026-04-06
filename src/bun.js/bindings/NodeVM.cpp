@@ -146,7 +146,7 @@ JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, c
     EXCEPTION_ASSERT(!!throwScope.exception() == code.isNull());
 
     SourceCode sourceCode(
-        JSC::StringSourceProvider::create(code, sourceOrigin, WTFMove(options.filename), sourceTaintOrigin, position, SourceProviderSourceType::Program),
+        JSC::StringSourceProvider::create(code, sourceOrigin, WTF::move(options.filename), sourceTaintOrigin, position, SourceProviderSourceType::Program),
         position.m_line.oneBasedInt(), position.m_column.oneBasedInt());
 
     CodeCache* cache = vm.codeCache();
@@ -316,10 +316,10 @@ static JSInternalPromise* importModuleInner(JSGlobalObject* globalObject, JSStri
 
     RETURN_IF_EXCEPTION(scope, nullptr);
 
-    promise->fulfill(globalObject, result);
+    promise->fulfill(vm, globalObject, result);
     RETURN_IF_EXCEPTION(scope, nullptr);
 
-    promise = promise->then(globalObject, transformer, nullptr);
+    promise = promise->then(globalObject, transformer, globalObject->promiseEmptyOnRejectedFunction());
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     RELEASE_AND_RETURN(scope, promise);
@@ -703,6 +703,17 @@ void NodeVMSpecialSandbox::finishCreation(VM& vm)
 
 const JSC::ClassInfo NodeVMSpecialSandbox::s_info = { "NodeVMSpecialSandbox"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(NodeVMSpecialSandbox) };
 
+template<typename Visitor>
+void NodeVMSpecialSandbox::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    auto* thisObject = jsCast<NodeVMSpecialSandbox*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitChildren(thisObject, visitor);
+    visitor.append(thisObject->m_parentGlobal);
+}
+
+DEFINE_VISIT_CHILDREN(NodeVMSpecialSandbox);
+
 NodeVMGlobalObject::NodeVMGlobalObject(JSC::VM& vm, JSC::Structure* structure, NodeVMContextOptions contextOptions, JSValue importer)
     : Base(vm, structure, &globalObjectMethodTable())
     , m_dynamicImportCallback(vm, this, importer)
@@ -738,20 +749,27 @@ Structure* NodeVMGlobalObject::createStructure(JSC::VM& vm, JSC::JSValue prototy
 
 void unsafeEvalNoop(JSGlobalObject*, const WTF::String&) {}
 
+static void promiseRejectionTrackerForNodeVM(JSGlobalObject* globalObject, JSC::JSPromise* promise, JSC::JSPromiseRejectionOperation operation)
+{
+    // Delegate to the parent Zig::GlobalObject so that unhandled rejections
+    // in VM contexts are reported to the main process (matching Node.js behavior)
+    auto* zigGlobalObject = defaultGlobalObject(globalObject);
+    Zig::GlobalObject::promiseRejectionTracker(zigGlobalObject, promise, operation);
+}
+
 const JSC::GlobalObjectMethodTable& NodeVMGlobalObject::globalObjectMethodTable()
 {
     static const JSC::GlobalObjectMethodTable table {
         &supportsRichSourceInfo,
         &shouldInterruptScript,
         &javaScriptRuntimeFlags,
-        nullptr, // queueTaskToEventLoop
         nullptr, // shouldInterruptScriptBeforeTimeout,
         &moduleLoaderImportModule,
         nullptr, // moduleLoaderResolve
         nullptr, // moduleLoaderFetch
         nullptr, // moduleLoaderCreateImportMetaProperties
         nullptr, // moduleLoaderEvaluate
-        nullptr, // promiseRejectionTracker
+        &promiseRejectionTrackerForNodeVM,
         &reportUncaughtExceptionAtEventLoop,
         &currentScriptExecutionOwner,
         &scriptExecutionStatus,
@@ -772,7 +790,28 @@ void NodeVMGlobalObject::finishCreation(JSC::VM& vm)
     Base::finishCreation(vm);
     setEvalEnabled(m_contextOptions.allowStrings, "Code generation from strings disallowed for this context"_s);
     setWebAssemblyEnabled(m_contextOptions.allowWasm, "Wasm code generation disallowed by embedder"_s);
+
+    // Delete the internal Loader property from the VM global object.
+    // This is exposed by JSC when exposeInternalModuleLoader() is true,
+    // but it should not be visible in node:vm contexts.
+    JSC::DeletePropertySlot slot;
+    JSC::JSObject::deleteProperty(this, this, vm.propertyNames->Loader, slot);
+
     vm.ensureTerminationException();
+
+    // Share the async context data with the parent Zig::GlobalObject.
+    // This is necessary because AsyncLocalStorage methods (run, getStore, etc.) are defined
+    // in the parent realm and reference the parent's $asyncContext. However, microtask
+    // processing (JSMicrotask.cpp) operates on this NodeVMGlobalObject's m_asyncContextData.
+    // By sharing the same InternalFieldTuple, both the JS code and C++ microtask handling
+    // will operate on the same async context, ensuring proper AsyncLocalStorage behavior
+    // across await boundaries in VM contexts.
+    auto* parentGlobalObject = defaultGlobalObject(this);
+    if (parentGlobalObject && parentGlobalObject->m_asyncContextData) {
+        m_asyncContextData.set(vm, this, parentGlobalObject->m_asyncContextData.get());
+        if (parentGlobalObject->isAsyncContextTrackingEnabled())
+            setAsyncContextTrackingEnabled(true);
+    }
 }
 
 void NodeVMGlobalObject::destroy(JSCell* cell)
@@ -918,10 +957,12 @@ bool NodeVMGlobalObject::getOwnPropertySlot(JSObject* cell, JSGlobalObject* glob
         if (slot.internalMethodType() == JSC::PropertySlot::InternalMethodType::Get && contextifiedObject->type() == JSC::ProxyObjectType) {
             JSC::ProxyObject* proxyObject = jsCast<JSC::ProxyObject*>(contextifiedObject);
 
-            JSValue handlerValue = proxyObject->handler();
-            if (handlerValue.isNull())
+            if (proxyObject->isRevoked())
                 return throwTypeError(globalObject, scope, s_proxyAlreadyRevokedErrorMessage);
 
+            JSValue handlerValue = proxyObject->handler();
+            if (!handlerValue.isObject())
+                return throwTypeError(globalObject, scope, s_proxyAlreadyRevokedErrorMessage);
             JSObject* handler = jsCast<JSObject*>(handlerValue);
             CallData callData;
             JSObject* getHandler = proxyObject->getHandlerTrap(globalObject, handler, callData, vm.propertyNames->get, ProxyObject::HandlerTrap::Get);
@@ -1178,10 +1219,15 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleCompileFunction, (JSGlobalObject * globalObject
             return ERR::INVALID_ARG_INSTANCE(scope, globalObject, "params"_s, "Array"_s, paramsArg);
         }
 
-        auto* paramsArray = jsCast<JSArray*>(paramsArg);
+        auto* paramsArray = jsDynamicCast<JSArray*>(paramsArg);
+        if (!paramsArray) [[unlikely]] {
+            // isArray() accepts Proxy->Array, but jsDynamicCast returns null.
+            return ERR::INVALID_ARG_INSTANCE(scope, globalObject, "params"_s, "Array"_s, paramsArg);
+        }
         unsigned length = paramsArray->length();
         for (unsigned i = 0; i < length; i++) {
-            JSValue param = paramsArray->getIndexQuickly(i);
+            JSValue param = paramsArray->getIndex(globalObject, i);
+            RETURN_IF_EXCEPTION(scope, {});
             if (!param.isString()) {
                 return ERR::INVALID_ARG_TYPE(scope, globalObject, "params"_s, "Array<string>"_s, paramsArg);
             }
@@ -1225,8 +1271,8 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleCompileFunction, (JSGlobalObject * globalObject
     JSScope* functionScope = options.parsingContext ? options.parsingContext : globalObject;
 
     if (!options.contextExtensions.isUndefinedOrNull() && !options.contextExtensions.isEmpty() && options.contextExtensions.isObject() && isArray(globalObject, options.contextExtensions)) {
-        auto* contextExtensionsArray = jsCast<JSArray*>(options.contextExtensions);
-        unsigned length = contextExtensionsArray->length();
+        auto* contextExtensionsArray = jsDynamicCast<JSArray*>(options.contextExtensions);
+        unsigned length = contextExtensionsArray ? contextExtensionsArray->length() : 0;
 
         if (length > 0) {
             // Get the global scope from the parsing context
@@ -1234,7 +1280,8 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleCompileFunction, (JSGlobalObject * globalObject
 
             // Create JSWithScope objects for each context extension
             for (unsigned i = 0; i < length; i++) {
-                JSValue extension = contextExtensionsArray->getIndexQuickly(i);
+                JSValue extension = contextExtensionsArray->getIndex(globalObject, i);
+                RETURN_IF_EXCEPTION(scope, {});
                 if (extension.isObject()) {
                     JSObject* extensionObject = asObject(extension);
                     currentScope = JSWithScope::create(vm, options.parsingContext, currentScope, extensionObject);
@@ -1249,7 +1296,7 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleCompileFunction, (JSGlobalObject * globalObject
     options.parsingContext->setGlobalScopeExtension(functionScope);
 
     // Create the function using constructAnonymousFunction with the appropriate scope chain
-    JSFunction* function = constructAnonymousFunction(globalObject, ArgList(constructFunctionArgs), sourceOrigin, WTFMove(options), JSC::SourceTaintedOrigin::Untainted, functionScope);
+    JSFunction* function = constructAnonymousFunction(globalObject, ArgList(constructFunctionArgs), sourceOrigin, WTF::move(options), JSC::SourceTaintedOrigin::Untainted, functionScope);
     RETURN_IF_EXCEPTION(scope, {});
 
     if (!function) {
@@ -1382,7 +1429,7 @@ static JSInternalPromise* moduleLoaderImportModuleInner(NodeVMGlobalObject* glob
             return NodeVM::importModuleInner(globalObject, moduleName, parameters, sourceOrigin, globalObject->dynamicImportCallback(), JSValue {});
         }
 
-        promise->reject(globalObject, createError(globalObject, ErrorCode::ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING, "A dynamic import callback was not specified."_s));
+        promise->reject(vm, globalObject, createError(globalObject, ErrorCode::ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING, "A dynamic import callback was not specified."_s));
         return promise;
     }
 
@@ -1391,7 +1438,7 @@ static JSInternalPromise* moduleLoaderImportModuleInner(NodeVMGlobalObject* glob
     RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(globalObject, scope));
 
     scope.release();
-    promise->reject(globalObject, createError(globalObject, makeString("Could not import the module '"_s, moduleNameString.data, "'."_s)));
+    promise->reject(vm, globalObject, createError(globalObject, makeString("Could not import the module '"_s, moduleNameString.data, "'."_s)));
     return promise;
 }
 
@@ -1406,7 +1453,7 @@ JSInternalPromise* NodeVMGlobalObject::moduleLoaderImportModule(JSGlobalObject* 
     return moduleLoaderImportModuleInner(nodeVmGlobalObject, moduleLoader, moduleName, parameters, sourceOrigin);
 }
 
-void NodeVMGlobalObject::getOwnPropertyNames(JSObject* cell, JSGlobalObject* globalObject, JSC::PropertyNameArray& propertyNames, JSC::DontEnumPropertiesMode mode)
+void NodeVMGlobalObject::getOwnPropertyNames(JSObject* cell, JSGlobalObject* globalObject, JSC::PropertyNameArrayBuilder& propertyNames, JSC::DontEnumPropertiesMode mode)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1546,12 +1593,12 @@ void configureNodeVM(JSC::VM& vm, Zig::GlobalObject* globalObject)
 }
 
 BaseVMOptions::BaseVMOptions(String filename)
-    : filename(WTFMove(filename))
+    : filename(WTF::move(filename))
 {
 }
 
 BaseVMOptions::BaseVMOptions(String filename, OrdinalNumber lineOffset, OrdinalNumber columnOffset)
-    : filename(WTFMove(filename))
+    : filename(WTF::move(filename))
     , lineOffset(lineOffset)
     , columnOffset(columnOffset)
 {
@@ -1738,10 +1785,15 @@ bool CompileFunctionOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& 
                     return ERR::INVALID_ARG_TYPE(scope, globalObject, "options.contextExtensions"_s, "Array"_s, contextExtensionsValue);
 
                 // Validate that all items in the array are objects
-                auto* contextExtensionsArray = jsCast<JSArray*>(contextExtensionsValue);
+                auto* contextExtensionsArray = jsDynamicCast<JSArray*>(contextExtensionsValue);
+                if (!contextExtensionsArray) [[unlikely]] {
+                    // isArray() accepts Proxy->Array, but jsDynamicCast returns null.
+                    return ERR::INVALID_ARG_TYPE(scope, globalObject, "options.contextExtensions"_s, "Array"_s, contextExtensionsValue);
+                }
                 unsigned length = contextExtensionsArray->length();
                 for (unsigned i = 0; i < length; i++) {
-                    JSValue extension = contextExtensionsArray->getIndexQuickly(i);
+                    JSValue extension = contextExtensionsArray->getIndex(globalObject, i);
+                    RETURN_IF_EXCEPTION(scope, {});
                     if (!extension.isObject())
                         return ERR::INVALID_ARG_TYPE(scope, globalObject, "options.contextExtensions[0]"_s, "object"_s, extension);
                 }

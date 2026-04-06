@@ -145,12 +145,12 @@ pub fn processFileList(
     if (entry_points.set.count() == 0) {
         Output.debugWarn("nothing to bundle", .{});
         if (changed_file_paths.len > 0)
-            Output.debugWarn("modified files: {s}", .{
+            Output.debugWarn("modified files: {f}", .{
                 bun.fmt.fmtSlice(changed_file_paths, ", "),
             });
 
         if (event.dirs.count() > 0)
-            Output.debugWarn("modified dirs: {s}", .{
+            Output.debugWarn("modified dirs: {f}", .{
                 bun.fmt.fmtSlice(event.dirs.keys(), ", "),
             });
 

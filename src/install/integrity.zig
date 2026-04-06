@@ -159,7 +159,7 @@ pub const Integrity = extern struct {
         return this.value[0..this.tag.digestLen()];
     }
 
-    pub fn format(this: *const Integrity, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(this: *const Integrity, writer: *std.Io.Writer) !void {
         switch (this.tag) {
             .sha1 => try writer.writeAll("sha1-"),
             .sha256 => try writer.writeAll("sha256-"),
@@ -178,6 +178,14 @@ pub const Integrity = extern struct {
             .sha1 => try writer.writeAll("="),
             else => try writer.writeAll("=="),
         }
+    }
+
+    /// Compute a sha512 integrity hash from raw bytes (e.g. a downloaded tarball).
+    pub fn forBytes(bytes: []const u8) Integrity {
+        const len = std.crypto.hash.sha2.Sha512.digest_length;
+        var value: [digest_buf_len]u8 = empty_digest_buf;
+        Crypto.SHA512.hash(bytes, value[0..len]);
+        return .{ .tag = .sha512, .value = value };
     }
 
     pub fn verify(this: *const Integrity, bytes: []const u8) bool {

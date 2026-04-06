@@ -66,25 +66,25 @@ pub const Time = union(Tag) {
         }
     }
 
-    pub fn toCss(this: *const @This(), comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
+    pub fn toCss(this: *const @This(), dest: *css.Printer) css.PrintErr!void {
         // 0.1s is shorter than 100ms
         // anything smaller is longer
         switch (this.*) {
             .seconds => |s| {
                 if (s > 0.0 and s < 0.1) {
-                    try CSSNumberFns.toCss(&(s * 1000.0), W, dest);
+                    try CSSNumberFns.toCss(&(s * 1000.0), dest);
                     try dest.writeStr("ms");
                 } else {
-                    try CSSNumberFns.toCss(&s, W, dest);
+                    try CSSNumberFns.toCss(&s, dest);
                     try dest.writeStr("s");
                 }
             },
             .milliseconds => |ms| {
                 if (ms == 0.0 or ms >= 100.0) {
-                    try CSSNumberFns.toCss(&(ms / 1000.0), W, dest);
+                    try CSSNumberFns.toCss(&(ms / 1000.0), dest);
                     try dest.writeStr("s");
                 } else {
-                    try CSSNumberFns.toCss(&ms, W, dest);
+                    try CSSNumberFns.toCss(&ms, dest);
                     try dest.writeStr("ms");
                 }
             },

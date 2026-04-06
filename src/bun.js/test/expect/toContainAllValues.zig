@@ -57,13 +57,13 @@ pub fn toContainAllValues(
     const expected_fmt = expected.toFmt(&formatter);
     if (not) {
         const received_fmt = value.toFmt(&formatter);
-        const expected_line = "Expected to not contain all values: <green>{any}<r>\nReceived: <red>{any}<r>\n";
+        const expected_line = "Expected to not contain all values: <green>{f}<r>\nReceived: <red>{f}<r>\n";
         const fmt = "\n\n" ++ expected_line;
         return this.throw(globalObject, comptime getSignature("toContainAllValues", "<green>expected<r>", true), fmt, .{ expected_fmt, received_fmt });
     }
 
-    const expected_line = "Expected to contain all values: <green>{any}<r>\n";
-    const received_line = "Received: <red>{any}<r>\n";
+    const expected_line = "Expected to contain all values: <green>{f}<r>\n";
+    const received_line = "Received: <red>{f}<r>\n";
     const fmt = "\n\n" ++ expected_line ++ received_line;
     return this.throw(globalObject, comptime getSignature("toContainAllValues", "<green>expected<r>", false), fmt, .{ expected_fmt, value_fmt });
 }

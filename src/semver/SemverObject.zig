@@ -6,24 +6,24 @@ pub fn create(globalThis: *jsc.JSGlobalObject) jsc.JSValue {
     object.put(
         globalThis,
         jsc.ZigString.static("satisfies"),
-        jsc.host_fn.NewFunction(
+        jsc.JSFunction.create(
             globalThis,
-            jsc.ZigString.static("satisfies"),
-            2,
+            "satisfies",
             SemverObject.satisfies,
-            false,
+            2,
+            .{},
         ),
     );
 
     object.put(
         globalThis,
         jsc.ZigString.static("order"),
-        jsc.host_fn.NewFunction(
+        jsc.JSFunction.create(
             globalThis,
-            jsc.ZigString.static("order"),
-            2,
+            "order",
             SemverObject.order,
-            false,
+            2,
+            .{},
         ),
     );
 

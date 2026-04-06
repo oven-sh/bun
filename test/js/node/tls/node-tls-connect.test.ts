@@ -483,8 +483,8 @@ for (const { name, connect } of tests) {
       const socket = connect(
         {
           port: 443,
-          host: "bun.sh",
-          servername: "bun.sh",
+          host: "bun.com",
+          servername: "bun.com",
         },
         () => {
           let data = "";
@@ -495,13 +495,15 @@ for (const { name, connect } of tests) {
             if (data.indexOf("HTTP/1.1 200 OK") !== -1) {
               done();
             } else {
-              done(new Error("missing data"));
+              done(new Error(`missing expected HTTP response, got: ${data.slice(0, 200)}`));
             }
           });
           socket.write("GET / HTTP/1.1\r\n");
-          socket.write("Host: bun.sh\r\n");
+          socket.write("Host: bun.com\r\n");
+          socket.write("User-Agent: Bun/1.0\r\n");
+          socket.write("Accept: */*\r\n");
+          socket.write("Accept-Encoding: identity\r\n");
           socket.write("Connection: close\r\n");
-          socket.write("Content-Length: 0\r\n");
           socket.write("\r\n");
         },
       );

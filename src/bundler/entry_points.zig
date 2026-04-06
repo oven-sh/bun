@@ -150,6 +150,7 @@ pub const ClientEntryPoint = struct {
 
 pub const ServerEntryPoint = struct {
     source: logger.Source = undefined,
+    generated: bool = false,
 
     pub fn generate(
         entry: *ServerEntryPoint,
@@ -163,13 +164,16 @@ pub const ServerEntryPoint = struct {
                 break :brk try std.fmt.allocPrint(
                     allocator,
                     \\// @bun
-                    \\import * as start from '{}';
+                    \\import * as start from '{f}';
                     \\var hmrSymbol = Symbol("BunServerHMR");
                     \\var entryNamespace = start;
+                    \\function isServerConfig(def) {{
+                    \\   return def && def !== globalThis && (typeof def.fetch === 'function' || def.app != undefined) && typeof def.stop !== 'function';
+                    \\}}
                     \\if (typeof entryNamespace?.then === 'function') {{
                     \\   entryNamespace = entryNamespace.then((entryNamespace) => {{
                     \\      var def = entryNamespace?.default;
-                    \\      if (def && (typeof def.fetch === 'function' || def.app != undefined))  {{
+                    \\      if (isServerConfig(def))  {{
                     \\        var server = globalThis[hmrSymbol];
                     \\        if (server) {{
                     \\           server.reload(def);
@@ -180,7 +184,7 @@ pub const ServerEntryPoint = struct {
                     \\        }}
                     \\      }}
                     \\   }}, reportError);
-                    \\}} else if (typeof entryNamespace?.default?.fetch === 'function' || entryNamespace?.default?.app != undefined) {{
+                    \\}} else if (isServerConfig(entryNamespace?.default)) {{
                     \\   var server = globalThis[hmrSymbol];
                     \\   if (server) {{
                     \\      server.reload(entryNamespace.default);
@@ -200,16 +204,19 @@ pub const ServerEntryPoint = struct {
             break :brk try std.fmt.allocPrint(
                 allocator,
                 \\// @bun
-                \\import * as start from "{}";
+                \\import * as start from "{f}";
                 \\var entryNamespace = start;
+                \\function isServerConfig(def) {{
+                \\   return def && def !== globalThis && (typeof def.fetch === 'function' || def.app != undefined) && typeof def.stop !== 'function';
+                \\}}
                 \\if (typeof entryNamespace?.then === 'function') {{
                 \\   entryNamespace = entryNamespace.then((entryNamespace) => {{
-                \\      if (typeof entryNamespace?.default?.fetch === 'function')  {{
+                \\      if (isServerConfig(entryNamespace?.default))  {{
                 \\        const server = Bun.serve(entryNamespace.default);
                 \\        console.debug(`Started ${{server.development ? 'development ' : ''}}server: ${{server.protocol}}://${{server.hostname}}:${{server.port}}`);
                 \\      }}
                 \\   }}, reportError);
-                \\}} else if (typeof entryNamespace?.default?.fetch === 'function' || entryNamespace?.default?.app != null) {{
+                \\}} else if (isServerConfig(entryNamespace?.default)) {{
                 \\   const server = Bun.serve(entryNamespace.default);
                 \\   console.debug(`Started ${{server.development ? 'development ' : ''}}server: ${{server.protocol}}://${{server.hostname}}:${{server.port}}`);
                 \\}}
@@ -224,6 +231,7 @@ pub const ServerEntryPoint = struct {
         entry.source = logger.Source.initPathString(name, code);
         entry.source.path.text = name;
         entry.source.path.namespace = "server-entry";
+        entry.generated = true;
     }
 };
 
@@ -245,7 +253,7 @@ pub const MacroEntryPoint = struct {
         const hash = hasher.final();
         const fmt = bun.fmt.hexIntLower(hash);
 
-        const specifier = std.fmt.bufPrint(buf, js_ast.Macro.namespaceWithColon ++ "//{any}.js", .{fmt}) catch unreachable;
+        const specifier = std.fmt.bufPrint(buf, js_ast.Macro.namespaceWithColon ++ "//{f}.js", .{fmt}) catch unreachable;
         len.* = @as(u32, @truncate(specifier.len));
 
         return generateIDFromSpecifier(specifier);
@@ -299,13 +307,13 @@ pub const MacroEntryPoint = struct {
                 \\//Auto-generated file
                 \\var Macros;
                 \\try {{
-                \\  Macros = await import('{s}{s}');
+                \\  Macros = await import('{f}{f}');
                 \\}} catch (err) {{
                 \\   console.error("Error importing macro");
                 \\   throw err;
                 \\}}
                 \\if (!('{s}' in Macros)) {{
-                \\  throw new Error("Macro '{s}' not found in '{s}{s}'");
+                \\  throw new Error("Macro '{s}' not found in '{f}{f}'");
                 \\}}
                 \\
                 \\Bun.registerMacro({d}, Macros['{s}']);

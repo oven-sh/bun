@@ -21,9 +21,9 @@
   setInterval                     functionSetInterval                                  Function 1
   setTimeout                      functionSetTimeout                                   Function 1
   structuredClone                 WebCore::jsFunctionStructuredClone                    Function 2
-  
+
   global                          GlobalObject_getGlobalThis                           PropertyCallback
-  
+
   Bun                             GlobalObject::m_bunObject                            CellProperty|DontDelete|ReadOnly
   File                            GlobalObject::m_JSDOMFileConstructor                 CellProperty
   crypto                          GlobalObject::m_cryptoObject                         CellProperty
@@ -48,9 +48,11 @@
   BroadcastChannel                BroadcastChannelConstructorCallback                  PropertyCallback
   ByteLengthQueuingStrategy       ByteLengthQueuingStrategyConstructorCallback         PropertyCallback
   CloseEvent                      CloseEventConstructorCallback                        PropertyCallback
+  CompressionStream               CompressionStreamConstructorCallback                 PropertyCallback
   CountQueuingStrategy            CountQueuingStrategyConstructorCallback              PropertyCallback
   CryptoKey                       CryptoKeyConstructorCallback                         PropertyCallback
   CustomEvent                     CustomEventConstructorCallback                       PropertyCallback
+  DecompressionStream             DecompressionStreamConstructorCallback               PropertyCallback
   DOMException                    DOMExceptionConstructorCallback                      PropertyCallback
   ErrorEvent                      ErrorEventConstructorCallback                        PropertyCallback
   Event                           EventConstructorCallback                             PropertyCallback
@@ -82,6 +84,7 @@
   TransformStream                 TransformStreamConstructorCallback                   PropertyCallback
   TransformStreamDefaultController TransformStreamDefaultControllerConstructorCallback PropertyCallback
   URL                             DOMURLConstructorCallback                            DontEnum|PropertyCallback
+  URLPattern                      URLPatternConstructorCallback                        PropertyCallback
   URLSearchParams                 URLSearchParamsConstructorCallback                   DontEnum|PropertyCallback
   WebSocket                       WebSocketConstructorCallback                         PropertyCallback
   Worker                          WorkerConstructorCallback                            PropertyCallback

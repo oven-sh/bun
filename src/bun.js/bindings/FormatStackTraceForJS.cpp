@@ -6,7 +6,7 @@
 
 #include "JavaScriptCore/ArgList.h"
 #include "JavaScriptCore/CallData.h"
-#include "JavaScriptCore/CatchScope.h"
+#include "JavaScriptCore/TopExceptionScope.h"
 #include "JavaScriptCore/Error.h"
 #include "JavaScriptCore/ErrorInstance.h"
 #include "JavaScriptCore/ExceptionScope.h"
@@ -125,7 +125,7 @@ static JSValue formatStackTraceToJSValueWithoutPrepareStackTrace(JSC::VM& vm, Zi
             prepareStackTrace = prepare;
         }
     } else {
-        auto scope = DECLARE_CATCH_SCOPE(vm);
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
         auto* errorConstructor = lexicalGlobalObject->m_errorStructure.constructor(globalObject);
         prepareStackTrace = errorConstructor->getIfPropertyExists(lexicalGlobalObject, JSC::Identifier::fromString(vm, "prepareStackTrace"_s));
@@ -250,7 +250,7 @@ WTF::String formatStackTrace(
             }
         }
 
-        WTF::String functionName = Zig::functionName(vm, globalObjectForFrame, frame, !errorInstance, &flags);
+        WTF::String functionName = Zig::functionName(vm, globalObjectForFrame, frame, errorInstance ? Zig::FinalizerSafety::NotInFinalizer : Zig::FinalizerSafety::MustNotTriggerGC, &flags);
         OrdinalNumber originalLine = {};
         OrdinalNumber originalColumn = {};
         OrdinalNumber displayLine = {};
@@ -526,12 +526,12 @@ WTF::String computeErrorInfoWrapperToString(JSC::VM& vm, Vector<StackFrame>& sta
     OrdinalNumber line = OrdinalNumber::fromOneBasedInt(line_in);
     OrdinalNumber column = OrdinalNumber::fromOneBasedInt(column_in);
 
-    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     WTF::String result = computeErrorInfoToString(vm, stackTrace, line, column, sourceURL);
     if (scope.exception()) {
         // TODO: is this correct? vm.setOnComputeErrorInfo doesnt appear to properly handle a function that can throw
         // test/js/node/test/parallel/test-stream-writable-write-writev-finish.js is the one that trips the exception checker
-        scope.clearException();
+        (void)scope.tryClearException();
         result = WTF::emptyString();
     }
 
@@ -539,6 +539,30 @@ WTF::String computeErrorInfoWrapperToString(JSC::VM& vm, Vector<StackFrame>& sta
     column_in = column.oneBasedInt();
 
     return result;
+}
+
+void computeLineColumnWithSourcemap(JSC::VM& vm, JSC::SourceProvider* _Nonnull sourceProvider, JSC::LineColumn& lineColumn, WTF::String& remappedSourceURL)
+{
+    auto sourceURL = sourceProvider->sourceURL();
+    if (sourceURL.isEmpty()) {
+        return;
+    }
+
+    OrdinalNumber line = OrdinalNumber::fromOneBasedInt(lineColumn.line);
+    OrdinalNumber column = OrdinalNumber::fromOneBasedInt(lineColumn.column);
+
+    ZigStackFrame frame = {};
+    frame.position.line_zero_based = line.zeroBasedInt();
+    frame.position.column_zero_based = column.zeroBasedInt();
+    frame.source_url = Bun::toStringRef(sourceURL);
+
+    Bun__remapStackFramePositions(Bun::vm(vm), &frame, 1);
+
+    if (frame.remapped) {
+        lineColumn.line = frame.position.line().oneBasedInt();
+        lineColumn.column = frame.position.column().oneBasedInt();
+        remappedSourceURL = frame.source_url.toWTFString();
+    }
 }
 
 JSC::JSValue computeErrorInfoWrapperToJSValue(JSC::VM& vm, Vector<StackFrame>& stackTrace, unsigned int& line_in, unsigned int& column_in, String& sourceURL, JSObject* errorInstance, void* bunErrorData)
@@ -618,13 +642,16 @@ JSC_DEFINE_CUSTOM_GETTER(errorInstanceLazyStackCustomGetter, (JSGlobalObject * g
     OrdinalNumber column;
     String sourceURL;
     auto stackTrace = errorObject->stackTrace();
-    if (stackTrace == nullptr) {
-        return JSValue::encode(jsUndefined());
-    }
 
-    JSValue result = computeErrorInfoToJSValue(vm, *stackTrace, line, column, sourceURL, errorObject, nullptr);
-    stackTrace->clear();
-    errorObject->setStackFrames(vm, {});
+    JSValue result;
+    if (stackTrace == nullptr) {
+        WTF::Vector<JSC::StackFrame> emptyTrace;
+        result = computeErrorInfoToJSValue(vm, emptyTrace, line, column, sourceURL, errorObject, nullptr);
+    } else {
+        result = computeErrorInfoToJSValue(vm, *stackTrace, line, column, sourceURL, errorObject, nullptr);
+        stackTrace->clear();
+        errorObject->setStackFrames(vm, {});
+    }
     RETURN_IF_EXCEPTION(scope, {});
     errorObject->putDirect(vm, vm.propertyNames->stack, result, 0);
     return JSValue::encode(result);
@@ -664,12 +691,30 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
     JSCStackTrace::getFramesForCaller(vm, callFrame, errorObject, caller, stackTrace, stackTraceLimit);
 
     if (auto* instance = jsDynamicCast<JSC::ErrorInstance*>(errorObject)) {
-        instance->setStackFrames(vm, WTFMove(stackTrace));
         if (instance->hasMaterializedErrorInfo()) {
-            const auto& propertyName = vm.propertyNames->stack;
-            VM::DeletePropertyModeScope scope(vm, VM::DeletePropertyMode::IgnoreConfigurable);
-            DeletePropertySlot slot;
-            JSObject::deleteProperty(instance, globalObject, propertyName, slot);
+            // Error info was already materialized (e.g. .stack was previously accessed).
+            // Don't call setStackFrames — it would leave m_errorInfoMaterialized=true with
+            // a non-null m_stackTrace, causing ASSERT(!m_errorInfoMaterialized) in
+            // computeErrorInfo when GC's finalizeUnconditionally finds unmarked frames.
+            // Eagerly compute and set the .stack property instead.
+            OrdinalNumber line;
+            OrdinalNumber column;
+            String sourceURL;
+            JSValue result = computeErrorInfoToJSValue(vm, stackTrace, line, column, sourceURL, errorObject, nullptr);
+            RETURN_IF_EXCEPTION(scope, {});
+            errorObject->putDirect(vm, vm.propertyNames->stack, result, 0);
+        } else {
+            // Not yet materialized — safe to install new frames with a lazy getter.
+            instance->setStackFrames(vm, WTF::move(stackTrace));
+
+            {
+                const auto& propertyName = vm.propertyNames->stack;
+                VM::DeletePropertyModeScope deleteScope(vm, VM::DeletePropertyMode::IgnoreConfigurable);
+                DeletePropertySlot slot;
+                JSObject::deleteProperty(instance, globalObject, propertyName, slot);
+            }
+            RETURN_IF_EXCEPTION(scope, {});
+
             if (auto* zigGlobalObject = jsDynamicCast<Zig::GlobalObject*>(globalObject)) {
                 instance->putDirectCustomAccessor(vm, vm.propertyNames->stack, zigGlobalObject->m_lazyStackCustomGetterSetter.get(zigGlobalObject), JSC::PropertyAttribute::CustomAccessor | 0);
             } else {

@@ -133,7 +133,11 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             ctxLog("onResolve", .{});
 
             const arguments = callframe.arguments_old(2);
-            var ctx = arguments.ptr[1].asPromisePtr(@This());
+            const ctx = NativePromiseContext.take(RequestContext, arguments.ptr[1]) orelse {
+                // The cell's destructor already released the ref (the Promise
+                // was collected before a prior microtask turn reached us).
+                return .js_undefined;
+            };
             defer ctx.deref();
 
             const result = arguments.ptr[0];
@@ -150,7 +154,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 const globalThis: *jsc.JSGlobalObject = server.globalThis;
 
                 Output.enableBuffering();
-                var writer = Output.errorWriter();
+                const writer = Output.errorWriter();
 
                 if (bun.strings.eqlComptime(class_name, "Response")) {
                     Output.errGeneric("Expected a native Response object, but received a polyfilled Response object. Bun.serve() only supports native Response objects.", .{});
@@ -160,14 +164,14 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                         .quote_strings = true,
                     };
                     defer formatter.deinit();
-                    Output.errGeneric("Expected a Response object, but received '{}'", .{value.toFmt(&formatter)});
+                    Output.errGeneric("Expected a Response object, but received '{f}'", .{value.toFmt(&formatter)});
                 } else {
                     Output.errGeneric("Expected a Response object", .{});
                 }
 
                 Output.flush();
                 if (!globalThis.hasException()) {
-                    jsc.ConsoleObject.writeTrace(@TypeOf(&writer), &writer, globalThis);
+                    jsc.ConsoleObject.writeTrace(@TypeOf(writer), writer, globalThis);
                 }
                 Output.flush();
             }
@@ -308,9 +312,14 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             ctxLog("onReject", .{});
 
             const arguments = callframe.arguments_old(2);
-            const ctx = arguments.ptr[1].asPromisePtr(@This());
-            const err = arguments.ptr[0];
+            const ctx = NativePromiseContext.take(RequestContext, arguments.ptr[1]) orelse {
+                // The cell's destructor already released the ref (the Promise
+                // was collected before a prior microtask turn reached us).
+                return .js_undefined;
+            };
             defer ctx.deref();
+
+            const err = arguments.ptr[0];
             handleReject(ctx, if (!err.isEmptyOrUndefinedOrNull()) err else .js_undefined);
             return .js_undefined;
         }
@@ -428,7 +437,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             Output.flush();
 
             // Explicitly use `this.allocator` and *not* the arena
-            var bb = std.ArrayList(u8).init(this.allocator);
+            var bb = std.array_list.Managed(u8).init(this.allocator);
             const bb_writer = bb.writer();
 
             Fallback.renderBackend(
@@ -696,7 +705,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             const globalThis = this.server.?.globalThis;
 
             if (comptime Environment.isDebug) {
-                ctxLog("finalizeWithoutDeinit: has_finalized {any}", .{this.flags.has_finalized});
+                ctxLog("finalizeWithoutDeinit: has_finalized {}", .{this.flags.has_finalized});
                 this.flags.has_finalized = true;
             }
 
@@ -918,17 +927,26 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 file.pathlike.fd
             else switch (bun.sys.open(file.pathlike.path.sliceZ(&file_buf), bun.O.RDONLY | bun.O.NONBLOCK | bun.O.CLOEXEC, 0)) {
                 .result => |_fd| _fd,
-                .err => |err| return this.runErrorHandler(err.withPath(file.pathlike.path.slice()).toJS(globalThis)),
+                .err => |err| {
+                    const js_err = err.withPath(file.pathlike.path.slice()).toJS(globalThis) catch {
+                        return this.renderProductionError(500);
+                    };
+                    return this.runErrorHandler(js_err);
+                },
             };
 
             // stat only blocks if the target is a file descriptor
             const stat: bun.Stat = switch (bun.sys.fstat(fd)) {
                 .result => |result| result,
                 .err => |err| {
-                    this.runErrorHandler(err.withPathLike(file.pathlike).toJS(globalThis));
+                    // Close fd before toJS call, which might throw
                     if (auto_close) {
                         fd.close();
                     }
+                    const js_err = err.withPathLike(file.pathlike).toJS(globalThis) catch {
+                        return this.renderProductionError(500);
+                    };
+                    this.runErrorHandler(js_err);
                     return;
                 },
             };
@@ -945,9 +963,8 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     };
                     var sys = err.withPathLike(file.pathlike).toSystemError();
                     sys.message = bun.String.static("MacOS does not support sending non-regular files");
-                    this.runErrorHandler(sys.toErrorInstance(
-                        globalThis,
-                    ));
+                    const js_err = sys.toErrorInstance(globalThis);
+                    this.runErrorHandler(js_err);
                     return;
                 }
             }
@@ -964,7 +981,8 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     };
                     var sys = err.withPathLike(file.pathlike).toShellSystemError();
                     sys.message = bun.String.static("File must be regular or FIFO");
-                    this.runErrorHandler(sys.toErrorInstance(globalThis));
+                    const js_err = sys.toErrorInstance(globalThis);
+                    this.runErrorHandler(js_err);
                     return;
                 }
             }
@@ -1043,7 +1061,8 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 
             if (result == .err) {
                 if (this.server) |server| {
-                    this.runErrorHandler(result.err.toErrorInstance(server.globalThis));
+                    const js_err = result.err.toErrorInstance(server.globalThis);
+                    this.runErrorHandler(js_err);
                 }
                 return;
             }
@@ -1201,7 +1220,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     streamLog("returned a promise", .{});
                     this.drainMicrotasks();
 
-                    switch (promise.status(globalThis.vm())) {
+                    switch (promise.status()) {
                         .pending => {
                             streamLog("promise still Pending", .{});
                             if (!this.flags.has_written_status) {
@@ -1219,9 +1238,10 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                                 },
                             };
                             this.ref();
-                            assignment_result.then(
+                            const cell = NativePromiseContext.create(globalThis, this);
+                            assignment_result.thenWithValue(
                                 globalThis,
-                                this,
+                                cell,
                                 onResolveStream,
                                 onRejectStream,
                             ) catch {}; // TODO: properly propagate exception upwards
@@ -1479,7 +1499,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                         const path = blob.store.?.data.s3.path();
                         const env = globalThis.bunVM().transpiler.env;
 
-                        S3.stat(credentials, path, @ptrCast(&onS3SizeResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null) catch {}; // TODO: properly propagate exception upwards
+                        S3.stat(credentials, path, @ptrCast(&onS3SizeResolved), this, if (env.getHttpProxy(true, null, null)) |proxy| proxy.href else null, blob.store.?.data.s3.request_payer) catch {}; // TODO: properly propagate exception upwards
                         return;
                     }
                     this.renderMetadata();
@@ -1585,7 +1605,8 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 switch (promise.unwrap(vm.global.vm(), .mark_handled)) {
                     .pending => {
                         ctx.ref();
-                        response_value.then(this.globalThis, ctx, RequestContext.onResolve, RequestContext.onReject) catch {}; // TODO: properly propagate exception upwards
+                        const cell = NativePromiseContext.create(this.globalThis, ctx);
+                        response_value.thenWithValue(this.globalThis, cell, RequestContext.onResolve, RequestContext.onReject) catch {}; // TODO: properly propagate exception upwards
                         return;
                     },
                     .fulfilled => |fulfilled_value| {
@@ -1675,7 +1696,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 return;
             }
 
-            streamLog("onResolve({any})", .{wrote_anything});
+            streamLog("onResolve({})", .{wrote_anything});
             if (!req.flags.has_written_status) {
                 req.renderMetadata();
             }
@@ -1684,8 +1705,8 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 
         pub fn onResolveStream(_: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
             streamLog("onResolveStream", .{});
-            var args = callframe.arguments_old(2);
-            var req: *@This() = args.ptr[args.len - 1].asPromisePtr(@This());
+            const args = callframe.arguments_old(2);
+            const req = NativePromiseContext.take(RequestContext, args.ptr[args.len - 1]) orelse return .js_undefined;
             defer req.deref();
             req.handleResolveStream();
             return .js_undefined;
@@ -1693,7 +1714,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
         pub fn onRejectStream(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
             streamLog("onRejectStream", .{});
             const args = callframe.arguments_old(2);
-            var req = args.ptr[args.len - 1].asPromisePtr(@This());
+            const req = NativePromiseContext.take(RequestContext, args.ptr[args.len - 1]) orelse return .js_undefined;
             const err = args.ptr[0];
             defer req.deref();
 
@@ -1741,7 +1762,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             if (comptime debug_mode) {
                 if (req.server) |server| {
                     if (!err.isEmptyOrUndefinedOrNull()) {
-                        var exception_list: std.ArrayList(Api.JsException) = std.ArrayList(Api.JsException).init(req.allocator);
+                        var exception_list: std.array_list.Managed(Api.JsException) = std.array_list.Managed(Api.JsException).init(req.allocator);
                         defer exception_list.deinit();
                         server.vm.runErrorHandler(err, &exception_list);
 
@@ -1776,7 +1797,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                                 },
                             };
 
-                            var bb = std.ArrayList(u8).init(allocator);
+                            var bb = std.array_list.Managed(u8).init(allocator);
                             defer bb.clearAndFree();
                             const bb_writer = bb.writer();
 
@@ -1853,13 +1874,17 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                                 .message = bun.String.static("Stream already used, please create a new one"),
                             };
                             stream.value.unprotect();
-                            this.runErrorHandler(err.toErrorInstance(globalThis));
+                            const js_err = err.toErrorInstance(globalThis);
+                            this.runErrorHandler(js_err);
                             return;
                         }
 
                         switch (stream.ptr) {
                             .Invalid => {
                                 this.response_body_readable_stream_ref.deinit();
+                                // Stream is invalid, render empty body
+                                this.doRenderBlob();
+                                return;
                             },
                             // toBlobIfPossible will typically convert .Blob streams, or .File streams into a Blob object, but cannot always.
                             .Blob,
@@ -1896,6 +1921,9 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                                 }
                                 this.ref();
                                 byte_stream.pipe = jsc.WebCore.Pipe.Wrap(@This(), onPipe).init(this);
+                                // Deinit the old Strong reference before creating a new one
+                                // to avoid leaking the Strong.Impl memory
+                                this.response_body_readable_stream_ref.deinit();
                                 this.response_body_readable_stream_ref = jsc.WebCore.ReadableStream.Strong.init(stream, globalThis);
 
                                 this.byte_stream = byte_stream;
@@ -2039,11 +2067,11 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
         const PathnameFormatter = struct {
             ctx: *RequestContext,
 
-            pub fn format(formatter: @This(), comptime fmt: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
+            pub fn format(formatter: @This(), writer: *std.Io.Writer) !void {
                 var this = formatter.ctx;
 
                 if (!this.pathname.isEmpty()) {
-                    try this.pathname.format(fmt, opts, writer);
+                    try this.pathname.format(writer);
                     return;
                 }
 
@@ -2077,7 +2105,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 var arena = std.heap.ArenaAllocator.init(this.allocator);
                 defer arena.deinit();
                 const allocator = arena.allocator();
-                var exception_list: std.ArrayList(Api.JsException) = std.ArrayList(Api.JsException).init(allocator);
+                var exception_list: std.array_list.Managed(Api.JsException) = std.array_list.Managed(Api.JsException).init(allocator);
                 defer exception_list.deinit();
                 const prev_exception_list = vm.onUnhandledRejectionExceptionList;
                 vm.onUnhandledRejectionExceptionList = &exception_list;
@@ -2089,7 +2117,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     vm.log,
                     error.ExceptionOcurred,
                     exception_list.items,
-                    "<r><red>{s}<r> - <b>{}<r> failed",
+                    "<r><red>{s}<r> - <b>{f}<r> failed",
                     .{ @as(string, @tagName(this.method)), this.ensurePathname() },
                 );
             } else {
@@ -2149,9 +2177,10 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 .pending => {
                     ctx.flags.is_error_promise_pending = true;
                     ctx.ref();
-                    promise_js.then(
+                    const cell = NativePromiseContext.create(ctx.server.?.globalThis, ctx);
+                    promise_js.thenWithValue(
                         ctx.server.?.globalThis,
-                        ctx,
+                        cell,
                         RequestContext.onResolve,
                         RequestContext.onReject,
                     ) catch {}; // TODO: properly propagate exception upwards
@@ -2678,7 +2707,9 @@ const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
 const VirtualMachine = jsc.VirtualMachine;
+
 const AnyRequestContext = jsc.API.AnyRequestContext;
+const NativePromiseContext = jsc.API.NativePromiseContext;
 
 const WebCore = jsc.WebCore;
 const Blob = jsc.WebCore.Blob;

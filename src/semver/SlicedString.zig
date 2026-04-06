@@ -30,8 +30,14 @@ pub inline fn value(this: SlicedString) String {
 
 pub inline fn sub(this: SlicedString, input: string) SlicedString {
     if (Environment.allow_assert) {
-        if (!(@intFromPtr(this.buf.ptr) <= @intFromPtr(this.buf.ptr) and ((@intFromPtr(input.ptr) + input.len) <= (@intFromPtr(this.buf.ptr) + this.buf.len)))) {
-            @panic("SlicedString.sub input is not a substring of the slice");
+        if (!bun.isSliceInBuffer(input, this.buf)) {
+            const start_buf = @intFromPtr(this.buf.ptr);
+            const end_buf = @intFromPtr(this.buf.ptr) + this.buf.len;
+            const start_i = @intFromPtr(input.ptr);
+            const end_i = @intFromPtr(input.ptr) + input.len;
+
+            bun.Output.panic("SlicedString.sub input [{}, {}) is not a substring of the " ++
+                "slice [{}, {})", .{ start_i, end_i, start_buf, end_buf });
         }
     }
     return SlicedString{ .buf = this.buf, .slice = input };

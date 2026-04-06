@@ -1,6 +1,6 @@
 const ByteStream = @This();
 
-buffer: std.ArrayList(u8) = .{
+buffer: std.array_list.Managed(u8) = .{
     .allocator = bun.default_allocator,
     .items = &.{},
     .capacity = 0,
@@ -133,7 +133,7 @@ pub fn onData(
             if (this.buffer.capacity == 0 and stream == .owned_and_done) {
                 log("ByteStream.onData owned_and_done and action.fulfill()", .{});
 
-                this.buffer = std.ArrayList(u8).fromOwnedSlice(bun.default_allocator, @constCast(chunk));
+                this.buffer = std.array_list.Managed(u8).fromOwnedSlice(bun.default_allocator, @constCast(chunk));
                 var blob = this.toAnyBlob().?;
                 try action.fulfill(this.parent().globalThis, &blob);
                 return;
@@ -237,7 +237,7 @@ pub fn append(
                 this.offset += offset;
             },
             .temporary_and_done, .temporary => {
-                this.buffer = try std.ArrayList(u8).initCapacity(bun.default_allocator, chunk.len);
+                this.buffer = try std.array_list.Managed(u8).initCapacity(bun.default_allocator, chunk.len);
                 this.buffer.appendSliceAssumeCapacity(chunk);
             },
             .err => {

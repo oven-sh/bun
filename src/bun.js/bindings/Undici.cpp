@@ -1,3 +1,4 @@
+#include "Algo/Tuple.h"
 #include "root.h"
 
 #include "JSDOMURL.h"
@@ -20,6 +21,7 @@
 #include "JSCloseEvent.h"
 #include "JSErrorEvent.h"
 #include "JSMessageEvent.h"
+#include <tuple>
 
 namespace Bun {
 
@@ -31,43 +33,26 @@ JSC::JSValue createUndiciInternalBinding(Zig::GlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
 
-    auto* obj = constructEmptyObject(globalObject, globalObject->objectPrototype(), 11);
-    obj->putDirectIndex(
-        globalObject, 0,
-        globalObject->JSResponseConstructor());
-    obj->putDirectIndex(
-        globalObject, 1,
-        globalObject->JSRequestConstructor());
-    obj->putDirectIndex(
-        globalObject, 2,
-        WebCore::JSFetchHeaders::getConstructor(vm, globalObject));
-    obj->putDirectIndex(
-        globalObject, 3,
-        WebCore::JSDOMFormData::getConstructor(vm, globalObject));
-    obj->putDirectIndex(
-        globalObject, 4,
-        globalObject->JSDOMFileConstructor());
-    obj->putDirectIndex(
-        globalObject, 5,
-        JSDOMURL::getConstructor(vm, globalObject));
-    obj->putDirectIndex(
-        globalObject, 6,
-        JSAbortSignal::getConstructor(vm, globalObject));
-    obj->putDirectIndex(
-        globalObject, 7,
-        JSURLSearchParams::getConstructor(vm, globalObject));
-    obj->putDirectIndex(
-        globalObject, 8,
-        JSWebSocket::getConstructor(vm, globalObject));
-    obj->putDirectIndex(
-        globalObject, 9,
-        JSCloseEvent::getConstructor(vm, globalObject));
-    obj->putDirectIndex(
-        globalObject, 10,
-        JSErrorEvent::getConstructor(vm, globalObject));
-    obj->putDirectIndex(
-        globalObject, 11,
+    auto fields = std::make_tuple(
+        globalObject->JSResponseConstructor(),
+        globalObject->JSRequestConstructor(),
+        WebCore::JSFetchHeaders::getConstructor(vm, globalObject),
+        WebCore::JSDOMFormData::getConstructor(vm, globalObject),
+        globalObject->JSDOMFileConstructor(),
+        JSDOMURL::getConstructor(vm, globalObject),
+        JSAbortSignal::getConstructor(vm, globalObject),
+        JSURLSearchParams::getConstructor(vm, globalObject),
+        JSWebSocket::getConstructor(vm, globalObject),
+        JSCloseEvent::getConstructor(vm, globalObject),
+        JSErrorEvent::getConstructor(vm, globalObject),
         JSMessageEvent::getConstructor(vm, globalObject));
+
+    auto* obj = constructEmptyObject(globalObject, globalObject->objectPrototype(),
+        std::tuple_size_v<decltype(fields)>);
+
+    Bun::Algo::Tuple::forEachIndexed(std::move(fields), [&](std::size_t index, auto&& field) {
+        obj->putDirectIndex(globalObject, index, field);
+    });
 
     return obj;
 }

@@ -2,6 +2,8 @@
 #include "napi.h"
 
 #include "BunProcess.h"
+#include "DLHandleMap.h"
+#include "v8/node.h"
 
 // Include the CMake-generated dependency versions header
 #include "bun_dependency_versions.h"
@@ -13,7 +15,7 @@
 #include "ErrorCode+List.h"
 #include "JavaScriptCore/ArgList.h"
 #include "JavaScriptCore/CallData.h"
-#include "JavaScriptCore/CatchScope.h"
+#include "JavaScriptCore/TopExceptionScope.h"
 #include "JavaScriptCore/JSCJSValue.h"
 #include "JavaScriptCore/JSCast.h"
 #include "JavaScriptCore/JSMap.h"
@@ -444,7 +446,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
     if (filename.startsWith(StandaloneModuleGraph__base_path)) {
         BunString bunStr = Bun::toString(filename);
         if (Bun__resolveEmbeddedNodeFile(globalObject->bunVM(), &bunStr)) {
-            filename = bunStr.toWTFString(BunString::ZeroCopy);
+            filename = bunStr.transferToWTFString();
             deleteAfter = !filename.startsWith("/proc/"_s);
         }
     }
@@ -487,6 +489,16 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
 #endif
     };
 
+    // Handle known yet-to-be-working in Bun
+    {
+        static constexpr ASCIILiteral better_sqlite3_node = "better_sqlite3.node"_s;
+        static constexpr ASCIILiteral better_sqlite3_message = "'better-sqlite3' is not yet supported in Bun.\nTrack the status in https://github.com/oven-sh/bun/issues/4290\nIn the meantime, you could try bun:sqlite which has a similar API."_s;
+        if (filename.endsWith(better_sqlite3_node)) {
+            return throwError(globalObject, scope, ErrorCode::ERR_DLOPEN_FAILED,
+                better_sqlite3_message);
+        }
+    }
+
     {
         auto utf8_filename = filename.tryGetUTF8(ConversionMode::LenientConversion);
         if (!utf8_filename) [[unlikely]] {
@@ -495,6 +507,8 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
         }
         utf8 = *utf8_filename;
     }
+
+    Bun__process_dlopen_count++;
 
 #if OS(WINDOWS)
     BunString filename_str = Bun::toString(filename);
@@ -510,8 +524,6 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
 #endif
 
     globalObject->m_pendingNapiModuleDlopenHandle = handle;
-
-    Bun__process_dlopen_count++;
 
     if (!handle) {
 #if OS(WINDOWS)
@@ -557,14 +569,82 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
 #endif
 
     if (callCountAtStart != globalObject->napiModuleRegisterCallCount) {
-        // Module self-registered via static constructor
-        if (globalObject->m_pendingNapiModule) {
-            // Execute the stored registration function now that dlopen has completed
-            Napi::executePendingNapiModule(globalObject);
+        // Module self-registered via static constructor(s)
+        // Save ALL registrations to handle map before executing
 
-            // Clear the pending module
+        if (handle) {
+            // Save all NAPI module registrations
+            for (auto& mod : globalObject->m_pendingNapiModules) {
+                auto* heapModule = new napi_module(mod);
+                Bun::DLHandleMap::singleton().add(handle, heapModule);
+            }
+
+            // Save all V8 C++ module registrations
+            for (auto* mod : globalObject->m_pendingV8Modules) {
+                Bun::DLHandleMap::singleton().add(handle, mod);
+            }
+        }
+
+        // Execute all NAPI modules
+        for (auto& mod : globalObject->m_pendingNapiModules) {
+            // Restore dlopen handle for this module before execution
+            // executePendingNapiModule clears it, so we must set it for each module
+            globalObject->m_pendingNapiModuleDlopenHandle = handle;
+            globalObject->m_pendingNapiModule = mod;
+            Napi::executePendingNapiModule(globalObject);
             globalObject->m_pendingNapiModule = {};
         }
+
+        // Clear all pending registrations
+        globalObject->m_pendingNapiModules.clear();
+        globalObject->m_pendingV8Modules.clear();
+
+        JSValue resultValue = globalObject->m_pendingNapiModuleAndExports[0].get();
+        globalObject->napiModuleRegisterCallCount = 0;
+        globalObject->m_pendingNapiModuleAndExports[0].clear();
+        globalObject->m_pendingNapiModuleAndExports[1].clear();
+
+        RETURN_IF_EXCEPTION(scope, {});
+
+        if (resultValue && resultValue != strongModule.get()) {
+            if (resultValue.isCell() && resultValue.getObject()->isErrorInstance()) {
+                JSC::throwException(globalObject, scope, resultValue);
+                return {};
+            }
+        }
+
+        return JSValue::encode(jsUndefined());
+    }
+
+    // Module didn't self-register on this load. Check if we have cached registrations.
+    if (auto cachedModules = Bun::DLHandleMap::singleton().get(handle)) {
+        // Replay all registrations from this handle
+        // This will populate the vectors again via register functions
+        for (auto& registration : *cachedModules) {
+            std::visit([](auto&& mod) {
+                using T = std::decay_t<decltype(mod)>;
+                if constexpr (std::is_same_v<T, node::node_module*>) {
+                    node::node_module_register(mod);
+                } else if constexpr (std::is_same_v<T, napi_module*>) {
+                    napi_module_register(mod);
+                }
+            },
+                registration);
+        }
+
+        // Execute all NAPI modules that were just registered
+        for (auto& mod : globalObject->m_pendingNapiModules) {
+            // Restore dlopen handle for this module before execution
+            // executePendingNapiModule clears it, so we must set it for each module
+            globalObject->m_pendingNapiModuleDlopenHandle = handle;
+            globalObject->m_pendingNapiModule = mod;
+            Napi::executePendingNapiModule(globalObject);
+            globalObject->m_pendingNapiModule = {};
+        }
+
+        // Clear the vectors (no need to save again since already in DLHandleMap)
+        globalObject->m_pendingNapiModules.clear();
+        globalObject->m_pendingV8Modules.clear();
 
         JSValue resultValue = globalObject->m_pendingNapiModuleAndExports[0].get();
         globalObject->napiModuleRegisterCallCount = 0;
@@ -637,7 +717,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
     auto env = globalObject->makeNapiEnv(nmodule);
     env->filename = filename_cstr;
 
-    auto encoded = reinterpret_cast<EncodedJSValue>(napi_register_module_v1(env, reinterpret_cast<napi_value>(exportsValue)));
+    auto encoded = reinterpret_cast<EncodedJSValue>(napi_register_module_v1(env.ptr(), reinterpret_cast<napi_value>(exportsValue)));
     if (env->throwPendingException()) {
         return {};
     }
@@ -656,7 +736,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
             // TODO: think about the finalizer here
             // currently we do not dealloc napi modules so we don't have to worry about it right now
             auto* meta = new Bun::NapiModuleMeta(globalObject->m_pendingNapiModuleDlopenHandle);
-            Bun::NapiExternal* napi_external = Bun::NapiExternal::create(vm, globalObject->NapiExternalStructure(), meta, nullptr, env, nullptr);
+            Bun::NapiExternal* napi_external = Bun::NapiExternal::create(vm, globalObject->NapiExternalStructure(), meta, nullptr, nullptr, env.ptr());
             bool success = resultObject->putDirect(vm, WebCore::builtinNames(vm).napiDlopenHandlePrivateName(), napi_external, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
             ASSERT(success);
             RETURN_IF_EXCEPTION(scope, {});
@@ -952,6 +1032,7 @@ static void loadSignalNumberMap()
         signalNameToNumberMap->add(signalNames[2], SIGQUIT);
         signalNameToNumberMap->add(signalNames[9], SIGKILL);
         signalNameToNumberMap->add(signalNames[15], SIGTERM);
+        signalNameToNumberMap->add(signalNames[27], SIGWINCH);
 #else
         signalNameToNumberMap->add(signalNames[0], SIGHUP);
         signalNameToNumberMap->add(signalNames[1], SIGINT);
@@ -1071,7 +1152,8 @@ void signalHandler(uv_signal_t* signal, int signalNumber)
     auto* context = ScriptExecutionContext::getMainThreadScriptExecutionContext();
     if (!context) [[unlikely]]
         return;
-    // signal handlers can be run on any thread
+    // uv_signal_t callbacks fire on the uv_run thread (JS thread), but defer to avoid
+    // re-entering JS from inside the libuv poll loop
     context->postTaskConcurrently([signalNumber](ScriptExecutionContext& context) {
         Bun__onSignalForJS(signalNumber, jsCast<Zig::GlobalObject*>(context.jsGlobalObject()));
     });
@@ -1109,10 +1191,10 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
     // if there is an uncaughtExceptionCaptureCallback, call it and consider the exception handled
     auto capture = process->getUncaughtExceptionCaptureCallback();
     if (!capture.isEmpty() && !capture.isUndefinedOrNull()) {
-        auto scope = DECLARE_CATCH_SCOPE(vm);
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         (void)call(lexicalGlobalObject, capture, args, "uncaughtExceptionCaptureCallback"_s);
         if (auto ex = scope.exception()) {
-            scope.clearException();
+            (void)scope.tryClearException();
             // if an exception is thrown in the uncaughtException handler, we abort
             Bun__logUnhandledException(JSValue::encode(JSValue(ex)));
             Bun__Process__exit(lexicalGlobalObject, 1);
@@ -1173,7 +1255,7 @@ extern "C" JSC::EncodedJSValue Bun__noSideEffectsToString(JSC::VM& vm, JSC::JSGl
 extern "C" void Bun__promises__emitUnhandledRejectionWarning(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue reason, JSC::EncodedJSValue promise)
 {
     auto& vm = globalObject->vm();
-    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto warning = JSC::createError(globalObject, "Unhandled promise rejection. This error originated either by "
                                                   "throwing inside of an async function without a catch block, "
                                                   "or by rejecting a promise which was not handled with .catch(). "
@@ -1225,7 +1307,7 @@ extern "C" bool Bun__VM__allowRejectionHandledWarning(void* vm);
 
 extern "C" bool Bun__emitHandledPromiseEvent(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue promise)
 {
-    auto scope = DECLARE_CATCH_SCOPE(JSC::getVM(lexicalGlobalObject));
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(JSC::getVM(lexicalGlobalObject));
     if (!lexicalGlobalObject->inherits(Zig::GlobalObject::info()))
         return false;
     auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
@@ -1426,7 +1508,7 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
                         signalToContextIdsMap->set(signalNumber, signal_handle);
                     }
                 } else {
-                    if (signalToContextIdsMap->find(signalNumber) != signalToContextIdsMap->end()) {
+                    if (signalToContextIdsMap->find(signalNumber) != signalToContextIdsMap->end() && eventEmitter.listenerCount(eventName) == 0) {
 
 #if !OS(WINDOWS)
                         if (void (*oldHandler)(int) = signal(signalNumber, SIG_DFL); oldHandler != forwardSignal) {
@@ -2249,7 +2331,7 @@ extern "C" void Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(JSC::JSGl
 static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, JSC::JSObject* processObject, int fd)
 {
     auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     JSC::JSFunction* getStdioWriteStream = JSC::JSFunction::create(vm, globalObject, processObjectInternalsGetStdioWriteStreamCodeGenerator(vm), globalObject);
     JSC::MarkedArgumentBuffer args;
@@ -2264,7 +2346,7 @@ static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, JSC:
     auto result = JSC::profiledCall(globalObject, ProfilingReason::API, getStdioWriteStream, callData, globalObject->globalThis(), args);
     if (auto* exception = scope.exception()) {
         Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
-        scope.clearException();
+        (void)scope.tryClearException();
         return jsUndefined();
     }
 
@@ -2312,7 +2394,7 @@ static JSValue constructStderr(VM& vm, JSObject* processObject)
 static JSValue constructStdin(VM& vm, JSObject* processObject)
 {
     auto* globalObject = processObject->globalObject();
-    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSC::JSFunction* getStdinStream = JSC::JSFunction::create(vm, globalObject, processObjectInternalsGetStdinStreamCodeGenerator(vm), globalObject);
     JSC::MarkedArgumentBuffer args;
     args.append(processObject);
@@ -2325,7 +2407,7 @@ static JSValue constructStdin(VM& vm, JSObject* processObject)
     auto result = JSC::profiledCall(globalObject, ProfilingReason::API, getStdinStream, callData, globalObject, args);
     if (auto* exception = scope.exception()) {
         Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
-        scope.clearException();
+        (void)scope.tryClearException();
         return jsUndefined();
     }
     return result;
@@ -2731,7 +2813,11 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionsetgroups, (JSGlobalObject * globalObje
     auto groups = callFrame->argument(0);
     Bun::V::validateArray(scope, globalObject, groups, "groups"_s, jsUndefined());
     RETURN_IF_EXCEPTION(scope, {});
-    auto groupsArray = JSC::jsDynamicCast<JSC::JSArray*>(groups);
+    auto* groupsArray = JSC::jsDynamicCast<JSC::JSArray*>(groups);
+    if (!groupsArray) [[unlikely]] {
+        // validateArray uses JSC::isArray() which accepts Proxy->Array, but jsDynamicCast returns null.
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "groups"_s, "Array"_s, groups);
+    }
     auto count = groupsArray->length();
     gid_t groupsStack[64];
     if (count > 64) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, "groups.length"_s, 0, 64, groups);
@@ -3430,14 +3516,23 @@ void Process::queueNextTick(JSC::JSGlobalObject* globalObject, const ArgList& ar
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue nextTick;
     if (!this->m_nextTickFunction) {
-        this->get(globalObject, Identifier::fromString(vm, "nextTick"_s));
+        nextTick = this->get(globalObject, Identifier::fromString(vm, "nextTick"_s));
         RETURN_IF_EXCEPTION(scope, void());
     }
 
     ASSERT(!args.isEmpty());
     JSObject* nextTickFn = this->m_nextTickFunction.get();
-    ASSERT(nextTickFn);
+    if (!nextTickFn) [[unlikely]] {
+        if (nextTick && nextTick.isObject())
+            nextTickFn = asObject(nextTick);
+        else {
+            throwVMError(globalObject, scope, "Failed to call nextTick"_s);
+            return;
+        }
+    }
     ASSERT_WITH_MESSAGE(!args.at(0).inherits<AsyncContextFrame>(), "queueNextTick must not pass an AsyncContextFrame. This will cause a crash.");
     JSC::call(globalObject, nextTickFn, args, "Failed to call nextTick"_s);
     RELEASE_AND_RETURN(scope, void());
@@ -3501,6 +3596,24 @@ extern "C" void Bun__Process__queueNextTick2(GlobalObject* globalObject, Encoded
     JSValue function = JSValue::decode(func);
 
     process->queueNextTick<2>(globalObject, function, { JSValue::decode(arg1), JSValue::decode(arg2) });
+}
+
+// This does the equivalent of
+// return require.cache.get(Bun.main)
+static JSValue constructMainModuleProperty(VM& vm, JSObject* processObject)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* globalObject = defaultGlobalObject(processObject->globalObject());
+    auto* bun = globalObject->bunObject();
+    RETURN_IF_EXCEPTION(scope, {});
+    auto& builtinNames = Bun::builtinNames(vm);
+    JSValue mainValue = bun->get(globalObject, builtinNames.mainPublicName());
+    RETURN_IF_EXCEPTION(scope, {});
+    auto* requireMap = globalObject->requireMap();
+    RETURN_IF_EXCEPTION(scope, {});
+    JSValue mainModule = requireMap->get(globalObject, mainValue);
+    RETURN_IF_EXCEPTION(scope, {});
+    return mainModule;
 }
 
 JSValue Process::constructNextTickFn(JSC::VM& vm, Zig::GlobalObject* globalObject)
@@ -3622,7 +3735,7 @@ JSC_DEFINE_CUSTOM_GETTER(processTitle, (JSC::JSGlobalObject * globalObject, JSC:
     BunString str;
     Bun__Process__getTitle(globalObject, &str);
     auto value = str.transferToWTFString();
-    auto* result = jsString(globalObject->vm(), WTFMove(value));
+    auto* result = jsString(globalObject->vm(), WTF::move(value));
     RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(scope, JSValue::encode(result));
 #else
@@ -3899,7 +4012,7 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   hrtime                           constructProcessHrtimeObject                        PropertyCallback
   isBun                            constructIsBun                                      PropertyCallback
   kill                             Process_functionKill                                Function 2
-  mainModule                       processObjectInternalsMainModuleCodeGenerator       Builtin|Accessor
+  mainModule                       constructMainModuleProperty                         PropertyCallback
   memoryUsage                      constructMemoryUsage                                PropertyCallback
   moduleLoadList                   Process_stubEmptyArray                              PropertyCallback
   nextTick                         constructProcessNextTickFn                          PropertyCallback

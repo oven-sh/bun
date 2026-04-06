@@ -48,6 +48,16 @@ pub const SystemError = extern struct {
         return SystemError__toErrorInstance(this, global);
     }
 
+    /// Like `toErrorInstance` but populates the error's stack trace with async
+    /// frames from the given promise's await chain. Use when creating an error
+    /// from native code at the top of the event loop (threadpool callback) to
+    /// reject a promise — otherwise the error will have an empty stack.
+    pub fn toErrorInstanceWithAsyncStack(this: *const SystemError, global: *JSGlobalObject, promise: *jsc.JSPromise) JSValue {
+        const value = this.toErrorInstance(global);
+        value.attachAsyncStackFromPromise(global, promise);
+        return value;
+    }
+
     /// This constructs the ERR_SYSTEM_ERROR error object, which has an `info`
     /// property containing the details of the system error:
     ///
@@ -72,13 +82,13 @@ pub const SystemError = extern struct {
         return SystemError__toErrorInstanceWithInfoObject(this, global);
     }
 
-    pub fn format(self: SystemError, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(self: SystemError, writer: *std.Io.Writer) !void {
         if (!self.path.isEmpty()) {
             // TODO: remove this hardcoding
             switch (bun.Output.enable_ansi_colors_stderr) {
                 inline else => |enable_colors| try writer.print(
                     comptime bun.Output.prettyFmt(
-                        "<r><red>{}<r><d>:<r> <b>{s}<r>: {} <d>({}())<r>",
+                        "<r><red>{f}<r><d>:<r> <b>{f}<r>: {f} <d>({f}())<r>",
                         enable_colors,
                     ),
                     .{
@@ -94,7 +104,7 @@ pub const SystemError = extern struct {
         switch (bun.Output.enable_ansi_colors_stderr) {
             inline else => |enable_colors| try writer.print(
                 comptime bun.Output.prettyFmt(
-                    "<r><red>{}<r><d>:<r> {} <d>({}())<r>",
+                    "<r><red>{f}<r><d>:<r> {f} <d>({f}())<r>",
                     enable_colors,
                 ),
                 .{

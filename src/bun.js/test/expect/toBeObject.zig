@@ -17,11 +17,11 @@ pub fn toBeObject(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFr
 
     if (not) {
         const signature = comptime getSignature("toBeObject", "", true);
-        return this.throw(globalThis, signature, "\n\nExpected value <b>not<r> to be an object" ++ "\n\nReceived: <red>{any}<r>\n", .{received});
+        return this.throw(globalThis, signature, "\n\nExpected value <b>not<r> to be an object" ++ "\n\nReceived: <red>{f}<r>\n", .{received});
     }
 
     const signature = comptime getSignature("toBeObject", "", false);
-    return this.throw(globalThis, signature, "\n\nExpected value to be an object" ++ "\n\nReceived: <red>{any}<r>\n", .{received});
+    return this.throw(globalThis, signature, "\n\nExpected value to be an object" ++ "\n\nReceived: <red>{f}<r>\n", .{received});
 }
 
 const bun = @import("bun");

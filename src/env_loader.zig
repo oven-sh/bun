@@ -49,10 +49,15 @@ pub const Loader = struct {
     }
 
     pub fn getNodePath(this: *Loader, fs: *Fs.FileSystem, buf: *bun.PathBuffer) ?[:0]const u8 {
+        // Check NODE or npm_node_execpath env var, but only use it if the file actually exists
         if (this.get("NODE") orelse this.get("npm_node_execpath")) |node| {
-            @memcpy(buf[0..node.len], node);
-            buf[node.len] = 0;
-            return buf[0..node.len :0];
+            if (node.len > 0 and node.len < bun.MAX_PATH_BYTES) {
+                @memcpy(buf[0..node.len], node);
+                buf[node.len] = 0;
+                if (bun.sys.isExecutableFilePath(buf[0..node.len :0])) {
+                    return buf[0..node.len :0];
+                }
+            }
         }
 
         if (which(buf, this.get("PATH") orelse return null, fs.top_level_dir, "node")) |node| {
@@ -156,59 +161,129 @@ pub const Loader = struct {
     }
 
     pub fn getHttpProxyFor(this: *Loader, url: URL) ?URL {
-        return this.getHttpProxy(url.isHTTP(), url.hostname);
+        return this.getHttpProxy(url.isHTTP(), url.hostname, url.host);
     }
 
     pub fn hasHTTPProxy(this: *const Loader) bool {
         return this.has("http_proxy") or this.has("HTTP_PROXY") or this.has("https_proxy") or this.has("HTTPS_PROXY");
     }
 
-    pub fn getHttpProxy(this: *Loader, is_http: bool, hostname: ?[]const u8) ?URL {
+    /// Get proxy URL for HTTP/HTTPS requests, respecting NO_PROXY.
+    /// `hostname` is the host without port (e.g., "localhost")
+    /// `host` is the host with port if present (e.g., "localhost:3000")
+    pub fn getHttpProxy(this: *Loader, is_http: bool, hostname: ?[]const u8, host: ?[]const u8) ?URL {
         // TODO: When Web Worker support is added, make sure to intern these strings
         var http_proxy: ?URL = null;
 
+        // Treat empty-string lowercase as "absent" so it falls through to uppercase.
+        // CI environments often set `http_proxy=""` as a default; a runtime
+        // `process.env.HTTP_PROXY = "..."` must still be observed.
         if (is_http) {
-            if (this.get("http_proxy") orelse this.get("HTTP_PROXY")) |proxy| {
-                if (proxy.len > 0 and !strings.eqlComptime(proxy, "\"\"") and !strings.eqlComptime(proxy, "''")) {
-                    http_proxy = URL.parse(proxy);
+            const proxy: ?[]const u8 = blk: {
+                if (this.get("http_proxy")) |p| if (p.len > 0) break :blk p;
+                break :blk this.get("HTTP_PROXY");
+            };
+            if (proxy) |p| {
+                if (p.len > 0 and !strings.eqlComptime(p, "\"\"") and !strings.eqlComptime(p, "''")) {
+                    http_proxy = URL.parse(p);
                 }
             }
         } else {
-            if (this.get("https_proxy") orelse this.get("HTTPS_PROXY")) |proxy| {
-                if (proxy.len > 0 and !strings.eqlComptime(proxy, "\"\"") and !strings.eqlComptime(proxy, "''")) {
-                    http_proxy = URL.parse(proxy);
+            const proxy: ?[]const u8 = blk: {
+                if (this.get("https_proxy")) |p| if (p.len > 0) break :blk p;
+                break :blk this.get("HTTPS_PROXY");
+            };
+            if (proxy) |p| {
+                if (p.len > 0 and !strings.eqlComptime(p, "\"\"") and !strings.eqlComptime(p, "''")) {
+                    http_proxy = URL.parse(p);
                 }
             }
         }
 
-        // NO_PROXY filter
-        // See the syntax at https://about.gitlab.com/blog/2021/01/27/we-need-to-talk-no-proxy/
         if (http_proxy != null and hostname != null) {
-            if (this.get("no_proxy") orelse this.get("NO_PROXY")) |no_proxy_text| {
-                if (no_proxy_text.len == 0 or strings.eqlComptime(no_proxy_text, "\"\"") or strings.eqlComptime(no_proxy_text, "''")) {
-                    return http_proxy;
-                }
-
-                var no_proxy_list = std.mem.splitScalar(u8, no_proxy_text, ',');
-                var next = no_proxy_list.next();
-                while (next != null) {
-                    var host = strings.trim(next.?, &strings.whitespace_chars);
-                    if (strings.eql(host, "*")) {
-                        return null;
-                    }
-                    //strips .
-                    if (host[0] == '.') {
-                        host = host[1..];
-                    }
-                    //hostname ends with suffix
-                    if (strings.endsWith(hostname.?, host)) {
-                        return null;
-                    }
-                    next = no_proxy_list.next();
-                }
+            if (this.isNoProxy(hostname, host)) {
+                return null;
             }
         }
         return http_proxy;
+    }
+
+    /// Returns true if the given hostname/host should bypass the proxy
+    /// according to the NO_PROXY / no_proxy environment variable.
+    pub fn isNoProxy(this: *const Loader, hostname: ?[]const u8, host: ?[]const u8) bool {
+        // NO_PROXY filter
+        // See the syntax at https://about.gitlab.com/blog/2021/01/27/we-need-to-talk-no-proxy/
+        const hn = hostname orelse return false;
+
+        // Treat empty-string lowercase as "absent" so it falls through to uppercase.
+        const no_proxy_text: []const u8 = blk: {
+            if (this.get("no_proxy")) |p| if (p.len > 0) break :blk p;
+            break :blk this.get("NO_PROXY") orelse return false;
+        };
+        if (no_proxy_text.len == 0 or strings.eqlComptime(no_proxy_text, "\"\"") or strings.eqlComptime(no_proxy_text, "''")) {
+            return false;
+        }
+
+        var no_proxy_iter = std.mem.splitScalar(u8, no_proxy_text, ',');
+        while (no_proxy_iter.next()) |no_proxy_item| {
+            var no_proxy_entry = strings.trim(no_proxy_item, &strings.whitespace_chars);
+            if (no_proxy_entry.len == 0) {
+                continue;
+            }
+            if (strings.eql(no_proxy_entry, "*")) {
+                return true;
+            }
+            //strips .
+            if (strings.startsWithChar(no_proxy_entry, '.')) {
+                no_proxy_entry = no_proxy_entry[1..];
+                if (no_proxy_entry.len == 0) {
+                    continue;
+                }
+            }
+
+            // Determine if entry contains a port or is an IPv6 address
+            // IPv6 addresses contain multiple colons (e.g., "::1", "2001:db8::1")
+            // Bracketed IPv6 with port: "[::1]:8080"
+            // Host with port: "localhost:8080" (single colon)
+            const colon_count = std.mem.count(u8, no_proxy_entry, ":");
+            const is_bracketed_ipv6 = strings.startsWithChar(no_proxy_entry, '[');
+            const has_port = blk: {
+                if (is_bracketed_ipv6) {
+                    // Bracketed IPv6: check for "]:port" pattern
+                    if (std.mem.indexOf(u8, no_proxy_entry, "]:")) |_| {
+                        break :blk true;
+                    }
+                    break :blk false;
+                } else if (colon_count == 1) {
+                    // Single colon means host:port (not IPv6)
+                    break :blk true;
+                }
+                // Multiple colons without brackets = bare IPv6 literal (no port)
+                break :blk false;
+            };
+
+            if (has_port) {
+                // Entry has a port, do exact match against host:port
+                if (host) |h| {
+                    if (strings.eqlCaseInsensitiveASCII(h, no_proxy_entry, true)) {
+                        return true;
+                    }
+                }
+            } else {
+                // Entry is hostname/IPv6 only, match exact or dot-boundary suffix (case-insensitive)
+                const entry_len = no_proxy_entry.len;
+                if (hn.len == entry_len) {
+                    if (strings.eqlCaseInsensitiveASCII(hn, no_proxy_entry, true)) return true;
+                } else if (hn.len > entry_len and
+                    hn[hn.len - entry_len - 1] == '.' and
+                    strings.eqlCaseInsensitiveASCII(hn[hn.len - entry_len ..], no_proxy_entry, true))
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     var did_load_ccache_path: bool = false;
@@ -380,20 +455,23 @@ pub const Loader = struct {
             if (key_buf_len > 0) {
                 iter.reset();
                 key_buf = try allocator.alloc(u8, key_buf_len + key_count * "process.env.".len);
+                var key_writer = std.Io.Writer.fixed(key_buf);
                 const js_ast = bun.ast;
 
                 var e_strings = try allocator.alloc(js_ast.E.String, e_strings_to_allocate * 2);
                 errdefer allocator.free(e_strings);
                 errdefer allocator.free(key_buf);
-                var key_fixed_allocator = std.heap.FixedBufferAllocator.init(key_buf);
-                const key_allocator = key_fixed_allocator.allocator();
 
                 if (behavior == .prefix) {
                     while (iter.next()) |entry| {
                         const value: string = entry.value_ptr.value;
 
                         if (strings.startsWith(entry.key_ptr.*, prefix)) {
-                            const key_str = try std.fmt.allocPrint(key_allocator, "process.env.{s}", .{entry.key_ptr.*});
+                            key_writer.print("process.env.{s}", .{entry.key_ptr.*}) catch |err| switch (err) {
+                                error.WriteFailed => unreachable, // miscalculated length of key_buf above
+                            };
+                            const key_str = key_writer.buffered();
+                            key_writer = std.Io.Writer.fixed(key_writer.unusedCapacitySlice());
 
                             e_strings[0] = js_ast.E.String{
                                 .data = if (value.len > 0)
@@ -442,7 +520,12 @@ pub const Loader = struct {
                 } else {
                     while (iter.next()) |entry| {
                         const value: string = entry.value_ptr.value;
-                        const key = try std.fmt.allocPrint(key_allocator, "process.env.{s}", .{entry.key_ptr.*});
+
+                        key_writer.print("process.env.{s}", .{entry.key_ptr.*}) catch |err| switch (err) {
+                            error.WriteFailed => unreachable, // miscalculated length of key_buf above
+                        };
+                        const key_str = key_writer.buffered();
+                        key_writer = std.Io.Writer.fixed(key_writer.unusedCapacitySlice());
 
                         e_strings[0] = js_ast.E.String{
                             .data = if (entry.value_ptr.value.len > 0)
@@ -454,7 +537,7 @@ pub const Loader = struct {
                         const expr_data = js_ast.Expr.Data{ .e_string = &e_strings[0] };
 
                         _ = try to_string.getOrPutValue(
-                            key,
+                            key_str,
                             .init(.{
                                 .can_be_removed_if_unused = true,
                                 .call_can_be_unwrapped_if_unused = .if_unused,
@@ -508,7 +591,7 @@ pub const Loader = struct {
     // mostly for tests
     pub fn loadFromString(this: *Loader, str: string, comptime overwrite: bool, comptime expand: bool) OOM!void {
         const source = &logger.Source.initPathString("test", str);
-        var value_buffer = std.ArrayList(u8).init(this.allocator);
+        var value_buffer = std.array_list.Managed(u8).init(this.allocator);
         defer value_buffer.deinit();
         try Parser.parse(source, this.allocator, this.map, &value_buffer, overwrite, false, expand);
         std.mem.doNotOptimizeAway(&source);
@@ -525,7 +608,7 @@ pub const Loader = struct {
 
         // Create a reusable buffer with stack fallback for parsing multiple files
         var stack_fallback = std.heap.stackFallback(4096, this.allocator);
-        var value_buffer = std.ArrayList(u8).init(stack_fallback.get());
+        var value_buffer = std.array_list.Managed(u8).init(stack_fallback.get());
         defer value_buffer.deinit();
 
         if (env_files.len > 0) {
@@ -548,7 +631,7 @@ pub const Loader = struct {
     fn loadExplicitFiles(
         this: *Loader,
         env_files: []const []const u8,
-        value_buffer: *std.ArrayList(u8),
+        value_buffer: *std.array_list.Managed(u8),
     ) !void {
         // iterate backwards, so the latest entry in the latest arg instance assumes the highest priority
         var i: usize = env_files.len;
@@ -574,7 +657,7 @@ pub const Loader = struct {
         this: *Loader,
         dir: *Fs.FileSystem.DirEntry,
         comptime suffix: DotEnvFileSuffix,
-        value_buffer: *std.ArrayList(u8),
+        value_buffer: *std.array_list.Managed(u8),
     ) !void {
         const dir_handle: std.fs.Dir = std.fs.cwd();
 
@@ -703,7 +786,7 @@ pub const Loader = struct {
         dir: std.fs.Dir,
         comptime base: string,
         comptime override: bool,
-        value_buffer: *std.ArrayList(u8),
+        value_buffer: *std.array_list.Managed(u8),
     ) !void {
         if (@field(this, base) != null) {
             return;
@@ -792,7 +875,7 @@ pub const Loader = struct {
         this: *Loader,
         file_path: []const u8,
         comptime override: bool,
-        value_buffer: *std.ArrayList(u8),
+        value_buffer: *std.array_list.Managed(u8),
     ) !void {
         if (this.custom_files_loaded.contains(file_path)) {
             return;
@@ -865,7 +948,7 @@ pub const Loader = struct {
 const Parser = struct {
     pos: usize = 0,
     src: string,
-    value_buffer: *std.ArrayList(u8),
+    value_buffer: *std.array_list.Managed(u8),
 
     const whitespace_chars = "\t\x0B\x0C \xA0\n\r";
 
@@ -1110,7 +1193,7 @@ const Parser = struct {
         source: *const logger.Source,
         allocator: std.mem.Allocator,
         map: *Map,
-        value_buffer: *std.ArrayList(u8),
+        value_buffer: *std.array_list.Managed(u8),
         comptime override: bool,
         comptime is_process: bool,
         comptime expand: bool,
@@ -1331,8 +1414,6 @@ pub const Map = struct {
 };
 
 pub var instance: ?*Loader = null;
-
-pub const home_env = if (Environment.isWindows) "USERPROFILE" else "HOME";
 
 const string = []const u8;
 

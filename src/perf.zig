@@ -19,13 +19,13 @@ pub const Ctx = union(enum) {
 var is_enabled_once = std.once(isEnabledOnce);
 var is_enabled = std.atomic.Value(bool).init(false);
 fn isEnabledOnMacOSOnce() void {
-    if (bun.getenvZ("DYLD_ROOT_PATH") != null or bun.getRuntimeFeatureFlag(.BUN_INSTRUMENTS)) {
+    if (bun.env_var.DYLD_ROOT_PATH.get() != null or bun.feature_flag.BUN_INSTRUMENTS.get()) {
         is_enabled.store(true, .seq_cst);
     }
 }
 
 fn isEnabledOnLinuxOnce() void {
-    if (bun.getRuntimeFeatureFlag(.BUN_TRACE)) {
+    if (bun.feature_flag.BUN_TRACE.get()) {
         is_enabled.store(true, .seq_cst);
     }
 }
@@ -140,7 +140,7 @@ pub const Linux = struct {
 
     pub fn init(event: PerfEvent) @This() {
         return .{
-            .start_time = bun.timespec.now().ns(),
+            .start_time = bun.timespec.now(.force_real_time).ns(),
             .event = event,
         };
     }
@@ -148,7 +148,7 @@ pub const Linux = struct {
     pub fn end(this: *const @This()) void {
         if (!isSupported()) return;
 
-        const duration = bun.timespec.now().ns() -| this.start_time;
+        const duration = bun.timespec.now(.force_real_time).ns() -| this.start_time;
 
         _ = Bun__linux_trace_emit(@tagName(this.event).ptr, @intCast(duration));
     }

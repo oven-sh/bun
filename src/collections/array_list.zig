@@ -46,7 +46,7 @@ pub fn ArrayListAlignedDefault(comptime T: type, comptime alignment: ?u29) type 
 pub fn ArrayListAlignedIn(
     comptime T: type,
     comptime Allocator: type,
-    comptime alignment: ?u29,
+    comptime alignment: ?std.mem.Alignment,
 ) type {
     return struct {
         const Self = @This();
@@ -117,6 +117,10 @@ pub fn ArrayListAlignedIn(
                 .#unmanaged = .fromOwnedSliceSentinel(sentinel, slice),
                 .#allocator = allocator_,
             };
+        }
+
+        pub fn writer(self: *Self) Unmanaged.Writer {
+            return self.#unmanaged.writer(self.getStdAllocator());
         }
 
         /// Returns a borrowed version of the allocator.

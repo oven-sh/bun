@@ -51,4 +51,15 @@ describe("path.normalize", () => {
     assert.strictEqual(path.posix.normalize("../.../../foobar/../../../bar/../../baz"), "../../../../baz");
     assert.strictEqual(path.posix.normalize("foo/bar\\baz"), "foo/bar\\baz");
   });
+
+  test("very long paths", () => {
+    // Regression test: buffer overflow with paths longer than PATH_SIZE
+    // This used to panic with "index out of bounds" because the buffer
+    // didn't account for the null terminator
+    for (const len of [4096, 10000, 50000, 98340, 100000]) {
+      const longPath = "a".repeat(len);
+      assert.strictEqual(path.normalize(longPath), longPath);
+      assert.strictEqual(path.normalize(longPath).length, len);
+    }
+  });
 });

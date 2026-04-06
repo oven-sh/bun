@@ -65,13 +65,30 @@ async function performRouteReload() {
 // HMR payloads are script tags that call this internal function.
 // A previous version of this runtime used `eval`, but browser support around
 // mapping stack traces of eval'd frames is poor (the case the error overlay).
-const scriptTags = new Map<string, [script: HTMLScriptElement, size: number]>();
+const pendingScriptSymbol = Symbol.for("bun:hmr:pendingScripts");
+type PendingHmrScript = {
+  script: HTMLScriptElement;
+  size: number;
+  url: string;
+};
+type PendingHmrQueue = PendingHmrScript[];
+const scriptTags: Map<string, PendingHmrQueue> =
+  ((globalThis as any)[pendingScriptSymbol] as Map<string, PendingHmrQueue> | undefined) ??
+  new Map<string, PendingHmrQueue>();
+(globalThis as any)[pendingScriptSymbol] = scriptTags;
+
 globalThis[Symbol.for("bun:hmr")] = (modules: any, id: string) => {
-  const entry = scriptTags.get(id);
-  if (!entry) throw new Error("Unknown HMR script: " + id);
-  const [script, size] = entry;
-  scriptTags.delete(id);
-  const url = script.src;
+  const queue = scriptTags.get(id);
+  let entry = queue?.shift() ?? null;
+  if (queue && queue.length === 0) {
+    scriptTags.delete(id);
+  }
+
+  if (!entry) {
+    throw new Error("Unknown HMR script: " + id);
+  }
+
+  const { script, size, url } = entry;
   const map: SourceMapURL = {
     id,
     url,
@@ -184,7 +201,17 @@ const handlers = {
       const blob = new Blob([rest], { type: "application/javascript" });
       const url = URL.createObjectURL(blob);
       const script = document.createElement("script");
-      scriptTags.set(sourceMapId, [script, sourceMapSize]);
+      const pendingScripts = scriptTags.get(sourceMapId);
+      const entry: PendingHmrScript = {
+        script,
+        size: sourceMapSize,
+        url,
+      };
+      if (pendingScripts) {
+        pendingScripts.push(entry);
+      } else {
+        scriptTags.set(sourceMapId, [entry]);
+      }
       script.className = "bun-hmr-script";
       script.src = url;
       script.onerror = onHmrLoadError;
@@ -237,8 +264,18 @@ function onHmrLoadError(event: Event | string, source?: string, lineno?: number,
 }
 
 window.addEventListener("error", event => {
-  onRuntimeError(event.error, true, false);
+  // In rare cases the error property might be null
+  // but it's unlikely that both error and message are gone
+  const value = event.error || event.message;
+  if (!value) {
+    console.log(
+      "[Bun] The HMR client detected a runtime error, but no useful value was found. Below is the full error event:",
+    );
+    console.log(event);
+  }
+  onRuntimeError(value, true, false);
 });
+
 window.addEventListener("unhandledrejection", event => {
   onRuntimeError(event.reason, true, true);
 });

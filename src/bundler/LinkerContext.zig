@@ -4,13 +4,14 @@ pub const LinkerContext = struct {
 
     pub const OutputFileListBuilder = @import("./linker_context/OutputFileListBuilder.zig");
     pub const StaticRouteVisitor = @import("./linker_context/StaticRouteVisitor.zig");
+    pub const MetafileBuilder = @import("./linker_context/MetafileBuilder.zig");
 
     parse_graph: *Graph = undefined,
     graph: LinkerGraph = undefined,
     log: *Logger.Log = undefined,
 
     resolver: *Resolver = undefined,
-    cycle_detector: std.ArrayList(ImportTracker) = undefined,
+    cycle_detector: std.array_list.Managed(ImportTracker) = undefined,
 
     /// We may need to refer to the "__esm" and/or "__commonJS" runtime symbols
     cjs_runtime_ref: Ref = Ref.None,
@@ -67,8 +68,15 @@ pub const LinkerContext = struct {
         banner: []const u8 = "",
         footer: []const u8 = "",
         css_chunking: bool = false,
+        compile_to_standalone_html: bool = false,
         source_maps: options.SourceMapOption = .none,
         target: options.Target = .browser,
+        compile: bool = false,
+        metafile: bool = false,
+        /// Path to write JSON metafile (for Bun.build API)
+        metafile_json_path: []const u8 = "",
+        /// Path to write markdown metafile (for Bun.build API)
+        metafile_markdown_path: []const u8 = "",
 
         mode: Mode = .bundle,
 
@@ -129,7 +137,7 @@ pub const LinkerContext = struct {
 
         pub fn computeLineOffsets(this: *LinkerContext, alloc: std.mem.Allocator, source_index: Index.Int) void {
             debug("Computing LineOffsetTable: {d}", .{source_index});
-            const line_offset_table: *bun.sourcemap.LineOffsetTable.List = &this.graph.files.items(.line_offset_table)[source_index];
+            const line_offset_table: *bun.SourceMap.LineOffsetTable.List = &this.graph.files.items(.line_offset_table)[source_index];
 
             const source: *const Logger.Source = &this.parse_graph.input_files.items(.source)[source_index];
             const loader: options.Loader = this.parse_graph.input_files.items(.loader)[source_index];
@@ -142,7 +150,7 @@ pub const LinkerContext = struct {
 
             const approximate_line_count = this.graph.ast.items(.approximate_newline_count)[source_index];
 
-            line_offset_table.* = bun.sourcemap.LineOffsetTable.generate(
+            line_offset_table.* = bun.SourceMap.LineOffsetTable.generate(
                 alloc,
                 source.contents,
 
@@ -179,7 +187,7 @@ pub const LinkerContext = struct {
     pub fn shouldIncludePart(c: *LinkerContext, source_index: Index.Int, part: Part) bool {
         // As an optimization, ignore parts containing a single import statement to
         // an internal non-wrapped file. These will be ignored anyway and it's a
-        // performance hit to spin up a goroutine only to discover this later.
+        // performance hit to include the part only to discover it's unnecessary later.
         if (part.stmts.len == 1) {
             if (part.stmts[0].data == .s_import) {
                 const record = c.graph.ast.items(.import_records)[source_index].at(part.stmts[0].data.s_import.import_record_index);
@@ -207,7 +215,7 @@ pub const LinkerContext = struct {
         this.log = bundle.transpiler.log;
 
         this.resolver = &bundle.transpiler.resolver;
-        this.cycle_detector = std.ArrayList(ImportTracker).init(this.allocator());
+        this.cycle_detector = std.array_list.Managed(ImportTracker).init(this.allocator());
 
         this.graph.reachable_files = reachable;
 
@@ -503,7 +511,7 @@ pub const LinkerContext = struct {
                     const loader = loaders[record.source_index.get()];
 
                     switch (loader) {
-                        .jsx, .js, .ts, .tsx, .napi, .sqlite, .json, .jsonc, .yaml, .html, .sqlite_embedded => {
+                        .jsx, .js, .ts, .tsx, .napi, .sqlite, .json, .jsonc, .json5, .yaml, .html, .sqlite_embedded, .md => {
                             log.addErrorFmt(
                                 source,
                                 record.range.loc,
@@ -686,7 +694,7 @@ pub const LinkerContext = struct {
         results: std.MultiArrayList(CompileResultForSourceMap),
         chunk_abs_dir: string,
         can_have_shifts: bool,
-    ) !sourcemap.SourceMapPieces {
+    ) !SourceMap.SourceMapPieces {
         const trace = bun.perf.trace("Bundler.generateSourceMapForChunk");
         defer trace.end();
 
@@ -776,7 +784,7 @@ pub const LinkerContext = struct {
         );
 
         const mapping_start = j.len;
-        var prev_end_state = sourcemap.SourceMapState{};
+        var prev_end_state = SourceMap.SourceMapState{};
         var prev_column_offset: i32 = 0;
         const source_map_chunks = results.items(.source_map_chunk);
         const offsets = results.items(.generated_offset);
@@ -784,7 +792,7 @@ pub const LinkerContext = struct {
             const mapping_source_index = source_id_map.get(current_source_index) orelse
                 unreachable; // the pass above during printing of "sources" must add the index
 
-            var start_state = sourcemap.SourceMapState{
+            var start_state = SourceMap.SourceMapState{
                 .source_index = mapping_source_index,
                 .generated_line = offset.lines.zeroBased(),
                 .generated_column = offset.columns.zeroBased(),
@@ -794,7 +802,7 @@ pub const LinkerContext = struct {
                 start_state.generated_column += prev_column_offset;
             }
 
-            try sourcemap.appendSourceMapChunk(&j, worker.allocator, prev_end_state, start_state, chunk.buffer.list.items);
+            try SourceMap.appendSourceMapChunk(&j, worker.allocator, prev_end_state, start_state, chunk.buffer.list.items);
 
             prev_end_state = chunk.end_state;
             prev_end_state.source_index = mapping_source_index;
@@ -810,7 +818,7 @@ pub const LinkerContext = struct {
         if (comptime FeatureFlags.source_map_debug_id) {
             j.pushStatic("\",\n  \"debugId\": \"");
             j.push(
-                try std.fmt.allocPrint(worker.allocator, "{}", .{bun.sourcemap.DebugIDFormatter{ .id = isolated_hash }}),
+                try std.fmt.allocPrint(worker.allocator, "{f}", .{bun.SourceMap.DebugIDFormatter{ .id = isolated_hash }}),
                 worker.allocator,
             );
             j.pushStatic("\",\n  \"names\": []\n}");
@@ -821,7 +829,7 @@ pub const LinkerContext = struct {
         const done = try j.done(worker.allocator);
         bun.assert(done[0] == '{');
 
-        var pieces = sourcemap.SourceMapPieces.init(worker.allocator);
+        var pieces = SourceMap.SourceMapPieces.init(worker.allocator);
         if (can_have_shifts) {
             try pieces.prefix.appendSlice(done[0..mapping_start]);
             try pieces.mappings.appendSlice(done[mapping_start..mapping_end]);
@@ -885,7 +893,7 @@ pub const LinkerContext = struct {
         // any import to be considered different if the import's output path has changed.
         hasher.write(chunk.template.data);
 
-        const public_path = if (chunk.is_browser_chunk_from_server_build)
+        const public_path = if (chunk.flags.is_browser_chunk_from_server_build)
             @as(*bundler.BundleV2, @fieldParentPtr("linker", c)).transpilerForTarget(.browser).options.public_path
         else
             c.options.public_path;
@@ -979,7 +987,7 @@ pub const LinkerContext = struct {
 
                     // Require of a top-level await chain is forbidden
                     if (record.kind == .require) {
-                        var notes = std.ArrayList(Logger.Data).init(c.allocator());
+                        var notes = std.array_list.Managed(Logger.Data).init(c.allocator());
 
                         var tla_pretty_path: string = "";
                         var other_source_index = record.source_index.get();
@@ -1179,6 +1187,10 @@ pub const LinkerContext = struct {
         ast: *const JSAst,
     ) !bool {
         const record = ast.import_records.at(import_record_index);
+        // Barrel optimization: deferred import records should be dropped
+        if (record.flags.is_unused) {
+            return true;
+        }
         // Is this an external import?
         if (!record.source_index.isValid()) {
             // Keep the "import" statement if import statements are supported
@@ -1229,7 +1241,7 @@ pub const LinkerContext = struct {
         switch (other_flags.wrap) {
             .none => {},
             .cjs => {
-                // Replace the statement with a call to "require()" if this module is not wrapped
+                // Replace the statement with a call to "require()" since the other module is CJS-wrapped
                 try stmts.inside_wrapper_prefix.appendNonDependency(
                     Stmt.alloc(S.Local, .{
                         .decls = try G.Decl.List.fromSlice(
@@ -1411,7 +1423,7 @@ pub const LinkerContext = struct {
 
     const SubstituteChunkFinalPathResult = struct {
         j: StringJoiner,
-        shifts: []sourcemap.SourceMapShifts,
+        shifts: []SourceMap.SourceMapShifts,
     };
 
     pub fn mangleLocalCss(c: *LinkerContext) void {
@@ -1526,7 +1538,7 @@ pub const LinkerContext = struct {
     pub fn sortedCrossChunkExportItems(
         c: *LinkerContext,
         export_refs: ChunkMeta.Map,
-        list: *std.ArrayList(StableRef),
+        list: *std.array_list.Managed(StableRef),
     ) void {
         var result = list.*;
         defer list.* = result;
@@ -1686,6 +1698,25 @@ pub const LinkerContext = struct {
             return;
         }
 
+        // HTML files can reference non-JS/CSS assets (favicons, images, etc.)
+        // via .url kind import records. Follow all import records for HTML files
+        // so these assets are marked live and included in the manifest.
+        if (c.parse_graph.input_files.items(.loader)[source_index] == .html) {
+            for (import_records[source_index].slice()) |*record| {
+                if (record.source_index.isValid()) {
+                    c.markFileLiveForTreeShaking(
+                        record.source_index.get(),
+                        side_effects,
+                        parts,
+                        import_records,
+                        entry_point_kinds,
+                        css_reprs,
+                    );
+                }
+            }
+            return;
+        }
+
         for (parts[source_index].slice(), 0..) |part, part_index| {
             var can_be_removed_if_unused = part.can_be_removed_if_unused;
 
@@ -1723,7 +1754,7 @@ pub const LinkerContext = struct {
                         entry_point_kinds,
                         css_reprs,
                     );
-                } else if (record.is_external_without_side_effects) {
+                } else if (record.flags.is_external_without_side_effects) {
                     // This can be removed if it's unused
                     continue;
                 }
@@ -1824,13 +1855,13 @@ pub const LinkerContext = struct {
     pub fn matchImportWithExport(
         c: *LinkerContext,
         init_tracker: ImportTracker,
-        re_exports: *std.ArrayList(js_ast.Dependency),
+        re_exports: *std.array_list.Managed(js_ast.Dependency),
     ) MatchImport {
         const cycle_detector_top = c.cycle_detector.items.len;
         defer c.cycle_detector.shrinkRetainingCapacity(cycle_detector_top);
 
         var tracker = init_tracker;
-        var ambiguous_results = std.ArrayList(MatchImport).init(c.allocator());
+        var ambiguous_results = std.array_list.Managed(MatchImport).init(c.allocator());
         defer ambiguous_results.clearAndFree();
 
         var result: MatchImport = MatchImport{};
@@ -2314,6 +2345,14 @@ pub const LinkerContext = struct {
             };
         }
 
+        // Barrel optimization: deferred import records point to empty ASTs
+        if (record.flags.is_unused) {
+            return .{
+                .value = .{},
+                .status = .external,
+            };
+        }
+
         // Is this a disabled file?
         const other_source_index = record.source_index.get();
         const other_id = other_source_index;
@@ -2333,9 +2372,9 @@ pub const LinkerContext = struct {
         if (!named_import.alias_is_star and
             flags.has_lazy_export and
 
-            // CommonJS exports
-            !flags.uses_export_keyword and !strings.eqlComptime(named_import.alias orelse "", "default") and
             // ESM exports
+            !flags.uses_export_keyword and !strings.eqlComptime(named_import.alias orelse "", "default") and
+            // CommonJS exports
             !flags.uses_exports_ref and !flags.uses_module_ref)
         {
             // Just warn about it and replace the import with "undefined"
@@ -2448,7 +2487,7 @@ pub const LinkerContext = struct {
 
             const import_ref = ref;
 
-            var re_exports = std.ArrayList(js_ast.Dependency).init(c.allocator());
+            var re_exports = std.array_list.Managed(js_ast.Dependency).init(c.allocator());
             const result = c.matchImportWithExport(.{
                 .source_index = Index.source(source_index),
                 .import_ref = import_ref,
@@ -2569,7 +2608,7 @@ pub const LinkerContext = struct {
 
         var pieces = brk: {
             errdefer j.deinit();
-            break :brk try std.ArrayList(OutputPiece).initCapacity(alloc, count);
+            break :brk try std.array_list.Managed(OutputPiece).initCapacity(alloc, count);
         };
         errdefer pieces.deinit();
         const complete_output = try j.done(alloc);
@@ -2684,11 +2723,11 @@ const MultiArrayList = bun.MultiArrayList;
 const MutableString = bun.MutableString;
 const OOM = bun.OOM;
 const Output = bun.Output;
+const SourceMap = bun.SourceMap;
 const StringJoiner = bun.StringJoiner;
 const bake = bun.bake;
 const base64 = bun.base64;
 const renamer = bun.renamer;
-const sourcemap = bun.sourcemap;
 const strings = bun.strings;
 const sync = bun.threading;
 const AutoBitSet = bun.bit_set.AutoBitSet;

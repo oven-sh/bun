@@ -101,6 +101,12 @@ describe("Bun.Transpiler", () => {
   hideFromStackTrace(ts.expectPrinted);
   hideFromStackTrace(ts.expectParseError);
 
+  it("handles errors when parsing macros", () => {
+    expect(() => {
+      new Bun.Transpiler({ macro: "hi" });
+    }).toThrow("Unexpected hi");
+  });
+
   it("normalizes \\r\\n", () => {
     ts.expectPrinted_("console.log(`\r\n\r\n\r\n`)", "console.log(`\n\n\n`);\n");
   });

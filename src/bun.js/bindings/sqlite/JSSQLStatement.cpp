@@ -376,7 +376,7 @@ public:
             if (name == nullptr) {
                 indexedCount++;
                 if (hasLoadedBindingNames) {
-                    bindingNames[i] = Identifier(Identifier::EmptyIdentifier);
+                    bindingNames[i] = Identifier(Identifier::EmptyIdentifierFlag::EmptyIdentifier);
                 }
                 continue;
             }
@@ -443,7 +443,7 @@ public:
     }
     DECLARE_VISIT_CHILDREN;
     DECLARE_EXPORT_INFO;
-    template<typename Visitor> void visitAdditionalChildren(Visitor&);
+    template<typename Visitor> void visitAdditionalChildrenInGCThread(Visitor&);
     template<typename Visitor> static void visitOutputConstraints(JSCell*, Visitor&);
 
     size_t static estimatedSize(JSCell* cell, VM& vm)
@@ -467,7 +467,7 @@ public:
     // Tracks which columns are valid in the current result set. Used to handle duplicate column names.
     // The bit at index i is set if the column at index i is valid.
     WTF::BitVector validColumns;
-    std::unique_ptr<PropertyNameArray> columnNames;
+    std::unique_ptr<PropertyNameArrayBuilder> columnNames;
     mutable JSC::WriteBarrier<JSC::JSObject> _prototype;
     mutable JSC::WriteBarrier<JSC::Structure> _structure;
     mutable JSC::WriteBarrier<JSC::JSObject> userPrototype;
@@ -481,7 +481,7 @@ protected:
         : Base(globalObject.vm(), structure)
         , stmt(stmt)
         , version_db(version_db)
-        , columnNames(new PropertyNameArray(globalObject.vm(), PropertyNameMode::Strings, PrivateSymbolMode::Exclude))
+        , columnNames(new PropertyNameArrayBuilder(globalObject.vm(), PropertyNameMode::Strings, PrivateSymbolMode::Exclude))
         , extraMemorySize(memorySizeChange > 0 ? memorySizeChange : 0)
     {
     }
@@ -673,7 +673,7 @@ static void initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQ
         castedThis->hasExecuted = true;
     } else {
         // reinitialize column
-        castedThis->columnNames.reset(new PropertyNameArray(
+        castedThis->columnNames.reset(new PropertyNameArrayBuilder(
             castedThis->columnNames->vm(),
             castedThis->columnNames->propertyNameMode(),
             castedThis->columnNames->privateSymbolMode()));
@@ -749,7 +749,7 @@ static void initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQ
         } else {
             // If for any reason we do not have column names, disable the fast path.
             columnNames->releaseData();
-            castedThis->columnNames.reset(new PropertyNameArray(
+            castedThis->columnNames.reset(new PropertyNameArrayBuilder(
                 castedThis->columnNames->vm(),
                 castedThis->columnNames->propertyNameMode(),
                 castedThis->columnNames->privateSymbolMode()));
@@ -758,8 +758,6 @@ static void initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQ
     }
 
     // Slow path:
-
-    JSC::ObjectInitializationScope initializationScope(vm);
 
     // 64 is the maximum we can preallocate here
     // see https://github.com/oven-sh/bun/issues/987
@@ -955,7 +953,7 @@ static JSC::JSValue rebindObject(JSC::JSGlobalObject* globalObject, SQLiteBindin
             JSValue value = getValue(name, i);
             if (!value && !scope.exception()) {
                 if (throwOnMissing) {
-                    throwException(globalObject, scope, createError(globalObject, makeString("Missing parameter \""_s, reinterpret_cast<const unsigned char*>(name), "\""_s)));
+                    throwException(globalObject, scope, createError(globalObject, makeString("Missing parameter \""_s, WTF::String::fromUTF8ReplacingInvalidSequences({ reinterpret_cast<const unsigned char*>(name), strlen(name) }), "\""_s)));
                 } else {
                     continue;
                 }
@@ -1127,8 +1125,11 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementSetCustomSQLite, (JSC::JSGlobalObject * l
         return {};
     }
 
-    sqlite3_lib_path = sqliteStrValue.toWTFString(lexicalGlobalObject).utf8().data();
+    // Use a static CString to keep the string alive for the lifetime of the process
+    static CString sqlite3_lib_path_storage;
+    sqlite3_lib_path_storage = sqliteStrValue.toWTFString(lexicalGlobalObject).utf8();
     RETURN_IF_EXCEPTION(scope, {});
+    sqlite3_lib_path = sqlite3_lib_path_storage.data();
 
     if (lazyLoadSQLite() == -1) {
         sqlite3_handle = nullptr;
@@ -1322,9 +1323,11 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementLoadExtensionFunction, (JSC::JSGlobalObje
 
     auto entryPointStr = callFrame->argumentCount() > 2 && callFrame->argument(2).isString() ? callFrame->argument(2).toWTFString(lexicalGlobalObject) : String();
     RETURN_IF_EXCEPTION(scope, {});
-    const char* entryPoint = entryPointStr.length() == 0 ? NULL : entryPointStr.utf8().data();
+    auto entryPointUtf8 = entryPointStr.utf8();
+    const char* entryPoint = entryPointStr.length() == 0 ? NULL : entryPointUtf8.data();
+    auto extensionStringUtf8 = extensionString.utf8();
     char* error;
-    int rc = sqlite3_load_extension(db, extensionString.utf8().data(), entryPoint, &error);
+    int rc = sqlite3_load_extension(db, extensionStringUtf8.data(), entryPoint, &error);
 
     // TODO: can we disable loading extensions after this?
     if (rc != SQLITE_OK) {
@@ -1654,10 +1657,10 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementOpenStatementFunction, (JSC::JSGlobalObje
 #endif
     initializeSQLite();
 
-    auto catchScope = DECLARE_CATCH_SCOPE(vm);
+    auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     String path = pathValue.toWTFString(lexicalGlobalObject);
-    RETURN_IF_EXCEPTION(catchScope, JSValue::encode(jsUndefined()));
-    catchScope.clearException();
+    RETURN_IF_EXCEPTION(topExceptionScope, JSValue::encode(jsUndefined()));
+    (void)topExceptionScope.tryClearException();
     int openFlags = DEFAULT_SQLITE_FLAGS;
     if (callFrame->argumentCount() > 1) {
         JSValue flags = callFrame->argument(1);
@@ -2017,7 +2020,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementSetPrototypeFunction, (JSGlobalObject * l
             return {};
         }
 
-        castedThis->userPrototype.set(vm, classObject, prototype.getObject());
+        castedThis->userPrototype.set(vm, castedThis, prototype.getObject());
 
         // Force the prototypes to be re-created
         if (castedThis->version_db) {
@@ -2786,7 +2789,7 @@ void JSSQLStatement::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 DEFINE_VISIT_CHILDREN(JSSQLStatement);
 
 template<typename Visitor>
-void JSSQLStatement::visitAdditionalChildren(Visitor& visitor)
+void JSSQLStatement::visitAdditionalChildrenInGCThread(Visitor& visitor)
 {
     JSSQLStatement* thisObject = this;
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
@@ -2802,7 +2805,7 @@ void JSSQLStatement::visitOutputConstraints(JSCell* cell, Visitor& visitor)
     auto* thisObject = jsCast<JSSQLStatement*>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitOutputConstraints(thisObject, visitor);
-    thisObject->visitAdditionalChildren(visitor);
+    thisObject->visitAdditionalChildrenInGCThread(visitor);
 }
 
 template void JSSQLStatement::visitOutputConstraints(JSCell*, AbstractSlotVisitor&);

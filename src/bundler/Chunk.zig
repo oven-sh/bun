@@ -9,7 +9,9 @@ pub const Chunk = struct {
     /// for more info on this technique.
     unique_key: string = "",
 
-    files_with_parts_in_chunk: std.AutoArrayHashMapUnmanaged(Index.Int, void) = .{},
+    /// Maps source index to bytes contributed to this chunk's output (for metafile).
+    /// The value is updated during chunk generation to track bytesInOutput.
+    files_with_parts_in_chunk: std.AutoArrayHashMapUnmanaged(Index.Int, usize) = .{},
 
     /// We must not keep pointers to this type until all chunks have been allocated.
     entry_bits: AutoBitSet = undefined,
@@ -25,11 +27,7 @@ pub const Chunk = struct {
 
     entry_point: Chunk.EntryPoint = .{},
 
-    is_executable: bool = false,
-    has_html_chunk: bool = false,
-    is_browser_chunk_from_server_build: bool = false,
-
-    output_source_map: sourcemap.SourceMapPieces,
+    output_source_map: SourceMap.SourceMapPieces,
 
     intermediate_output: IntermediateOutput = .{ .empty = {} },
     isolated_hash: u64 = std.math.maxInt(u64),
@@ -38,8 +36,33 @@ pub const Chunk = struct {
 
     compile_results_for_chunk: []CompileResult = &.{},
 
+    /// Pre-built JSON fragment for this chunk's metafile output entry.
+    /// Generated during parallel chunk generation, joined at the end.
+    metafile_chunk_json: []const u8 = "",
+
+    /// Pack boolean flags to reduce padding overhead.
+    /// Previously 3 separate bool fields caused ~21 bytes of padding waste.
+    flags: Flags = .{},
+
+    pub const Flags = packed struct(u8) {
+        is_executable: bool = false,
+        has_html_chunk: bool = false,
+        is_browser_chunk_from_server_build: bool = false,
+        _padding: u5 = 0,
+    };
+
     pub inline fn isEntryPoint(this: *const Chunk) bool {
         return this.entry_point.is_entry_point;
+    }
+
+    /// Returns the HTML closing tag that must be escaped when this chunk's content
+    /// is inlined into a standalone HTML file (e.g. "</script" for JS, "</style" for CSS).
+    pub fn closingTagForContent(this: *const Chunk) []const u8 {
+        return switch (this.content) {
+            .javascript => "</script",
+            .css => "</style",
+            .html => unreachable,
+        };
     }
 
     pub fn getJSChunkForHTML(this: *const Chunk, chunks: []Chunk) ?*Chunk {
@@ -55,6 +78,16 @@ pub const Chunk = struct {
     }
 
     pub fn getCSSChunkForHTML(this: *const Chunk, chunks: []Chunk) ?*Chunk {
+        // Look up the CSS chunk via the JS chunk's css_chunks indices.
+        // This correctly handles deduplicated CSS chunks that are shared
+        // across multiple HTML entry points (see issue #23668).
+        if (this.getJSChunkForHTML(chunks)) |js_chunk| {
+            const css_chunk_indices = js_chunk.content.javascript.css_chunks;
+            if (css_chunk_indices.len > 0) {
+                return &chunks[css_chunk_indices[0]];
+            }
+        }
+        // Fallback: match by entry_point_id for cases without a JS chunk.
         const entry_point_id = this.entry_point.entry_point_id;
         for (chunks) |*other| {
             if (other.content == .css) {
@@ -114,9 +147,57 @@ pub const Chunk = struct {
                 return bun.default_allocator;
         }
 
+        /// Count occurrences of a closing HTML tag (e.g. `</script`, `</style`) in content.
+        /// Used to calculate the extra bytes needed when escaping `</` → `<\/`.
+        fn countClosingTags(content: []const u8, close_tag: []const u8) usize {
+            const tag_suffix = close_tag[2..];
+            var count: usize = 0;
+            var remaining = content;
+            while (strings.indexOf(remaining, "</")) |idx| {
+                remaining = remaining[idx + 2 ..];
+                if (remaining.len >= tag_suffix.len and
+                    strings.eqlCaseInsensitiveASCIIIgnoreLength(remaining[0..tag_suffix.len], tag_suffix))
+                {
+                    count += 1;
+                    remaining = remaining[tag_suffix.len..];
+                }
+            }
+            return count;
+        }
+
+        /// Copy `content` into `dest`, escaping occurrences of `close_tag` by
+        /// replacing `</` with `<\/`. Returns the number of bytes written.
+        /// Caller must ensure `dest` has room for `content.len + countClosingTags(...)` bytes.
+        fn memcpyEscapingClosingTags(dest: []u8, content: []const u8, close_tag: []const u8) usize {
+            const tag_suffix = close_tag[2..];
+            var remaining = content;
+            var dst: usize = 0;
+            while (strings.indexOf(remaining, "</")) |idx| {
+                @memcpy(dest[dst..][0..idx], remaining[0..idx]);
+                dst += idx;
+                remaining = remaining[idx + 2 ..];
+
+                if (remaining.len >= tag_suffix.len and
+                    strings.eqlCaseInsensitiveASCIIIgnoreLength(remaining[0..tag_suffix.len], tag_suffix))
+                {
+                    dest[dst] = '<';
+                    dest[dst + 1] = '\\';
+                    dest[dst + 2] = '/';
+                    dst += 3;
+                } else {
+                    dest[dst] = '<';
+                    dest[dst + 1] = '/';
+                    dst += 2;
+                }
+            }
+            @memcpy(dest[dst..][0..remaining.len], remaining);
+            dst += remaining.len;
+            return dst;
+        }
+
         pub const CodeResult = struct {
             buffer: []u8,
-            shifts: []sourcemap.SourceMapShifts,
+            shifts: []SourceMap.SourceMapShifts,
         };
 
         pub fn getSize(this: *const IntermediateOutput) usize {
@@ -156,6 +237,40 @@ pub const Chunk = struct {
                     display_size,
                     force_absolute_path,
                     source_map_shifts,
+                    null,
+                ),
+            };
+        }
+
+        /// Like `code()` but with standalone HTML support.
+        /// When `standalone_chunk_contents` is provided, chunk piece references are
+        /// resolved to inline code content instead of file paths. Asset references
+        /// are resolved to data: URIs from url_for_css.
+        pub fn codeStandalone(
+            this: *IntermediateOutput,
+            allocator_to_use: ?std.mem.Allocator,
+            parse_graph: *const Graph,
+            linker_graph: *const LinkerGraph,
+            import_prefix: []const u8,
+            chunk: *Chunk,
+            chunks: []Chunk,
+            display_size: ?*usize,
+            force_absolute_path: bool,
+            enable_source_map_shifts: bool,
+            standalone_chunk_contents: []const ?[]const u8,
+        ) bun.OOM!CodeResult {
+            return switch (enable_source_map_shifts) {
+                inline else => |source_map_shifts| this.codeWithSourceMapShifts(
+                    allocator_to_use,
+                    parse_graph,
+                    linker_graph,
+                    import_prefix,
+                    chunk,
+                    chunks,
+                    display_size,
+                    force_absolute_path,
+                    source_map_shifts,
+                    standalone_chunk_contents,
                 ),
             };
         }
@@ -171,6 +286,7 @@ pub const Chunk = struct {
             display_size: ?*usize,
             force_absolute_path: bool,
             comptime enable_source_map_shifts: bool,
+            standalone_chunk_contents: ?[]const ?[]const u8,
         ) bun.OOM!CodeResult {
             const additional_files = graph.input_files.items(.additional_files);
             const unique_key_for_additional_files = graph.input_files.items(.unique_key_for_additional_file);
@@ -181,12 +297,12 @@ pub const Chunk = struct {
                     const entry_point_chunks_for_scb = linker_graph.files.items(.entry_point_chunk_index);
 
                     var shift = if (enable_source_map_shifts)
-                        sourcemap.SourceMapShifts{
+                        SourceMap.SourceMapShifts{
                             .after = .{},
                             .before = .{},
                         };
                     var shifts = if (enable_source_map_shifts)
-                        try std.ArrayList(sourcemap.SourceMapShifts).initCapacity(bun.default_allocator, pieces.len + 1);
+                        try std.ArrayList(SourceMap.SourceMapShifts).initCapacity(bun.default_allocator, pieces.len + 1);
 
                     if (enable_source_map_shifts)
                         shifts.appendAssumeCapacity(shift);
@@ -196,12 +312,37 @@ pub const Chunk = struct {
                     if (strings.eqlComptime(from_chunk_dir, "."))
                         from_chunk_dir = "";
 
+                    const urls_for_css = if (standalone_chunk_contents != null) graph.ast.items(.url_for_css) else &[_][]const u8{};
+
                     for (pieces.slice()) |piece| {
                         count += piece.data_len;
 
                         switch (piece.query.kind) {
                             .chunk, .asset, .scb, .html_import => {
                                 const index = piece.query.index;
+
+                                // In standalone mode, inline chunk content and asset data URIs
+                                if (standalone_chunk_contents) |scc| {
+                                    switch (piece.query.kind) {
+                                        .chunk => {
+                                            if (scc[index]) |content| {
+                                                // Account for escaping </script or </style inside inline content.
+                                                // Each occurrence of the closing tag adds 1 byte (`</` → `<\/`).
+                                                count += content.len + countClosingTags(content, chunks[index].closingTagForContent());
+                                                continue;
+                                            }
+                                        },
+                                        .asset => {
+                                            // Use data: URI from url_for_css if available
+                                            if (index < urls_for_css.len and urls_for_css[index].len > 0) {
+                                                count += urls_for_css[index].len;
+                                                continue;
+                                            }
+                                        },
+                                        else => {},
+                                    }
+                                }
+
                                 const file_path = switch (piece.query.kind) {
                                     .asset => brk: {
                                         const files = additional_files[index];
@@ -216,7 +357,7 @@ pub const Chunk = struct {
                                     .chunk => chunks[index].final_rel_path,
                                     .scb => chunks[entry_point_chunks_for_scb[index]].final_rel_path,
                                     .html_import => {
-                                        count += std.fmt.count("{}", .{HTMLImportManifest.formatEscapedJSON(.{
+                                        count += std.fmt.count("{f}", .{HTMLImportManifest.formatEscapedJSON(.{
                                             .index = index,
                                             .graph = graph,
                                             .chunks = chunks,
@@ -245,7 +386,7 @@ pub const Chunk = struct {
                     }
 
                     const debug_id_len = if (enable_source_map_shifts and FeatureFlags.source_map_debug_id)
-                        std.fmt.count("\n//# debugId={}\n", .{bun.sourcemap.DebugIDFormatter{ .id = chunk.isolated_hash }})
+                        std.fmt.count("\n//# debugId={f}\n", .{bun.SourceMap.DebugIDFormatter{ .id = chunk.isolated_hash }})
                     else
                         0;
 
@@ -256,7 +397,7 @@ pub const Chunk = struct {
                         const data = piece.data();
 
                         if (enable_source_map_shifts) {
-                            var data_offset = sourcemap.LineColumnOffset{};
+                            var data_offset = SourceMap.LineColumnOffset{};
                             data_offset.advance(data);
                             shift.before.add(data_offset);
                             shift.after.add(data_offset);
@@ -270,6 +411,37 @@ pub const Chunk = struct {
                         switch (piece.query.kind) {
                             .asset, .chunk, .scb, .html_import => {
                                 const index = piece.query.index;
+
+                                // In standalone mode, inline chunk content and asset data URIs
+                                if (standalone_chunk_contents) |scc| {
+                                    const inline_content: ?[]const u8 = switch (piece.query.kind) {
+                                        .chunk => scc[index],
+                                        .asset => if (index < urls_for_css.len and urls_for_css[index].len > 0) urls_for_css[index] else null,
+                                        else => null,
+                                    };
+                                    if (inline_content) |content| {
+                                        if (enable_source_map_shifts) {
+                                            switch (piece.query.kind) {
+                                                .chunk => shift.before.advance(chunks[index].unique_key),
+                                                .asset => shift.before.advance(unique_key_for_additional_files[index]),
+                                                else => {},
+                                            }
+                                            shift.after.advance(content);
+                                            shifts.appendAssumeCapacity(shift);
+                                        }
+                                        // For chunk content, escape closing tags (</script, </style)
+                                        // that would prematurely terminate the inline tag.
+                                        if (piece.query.kind == .chunk) {
+                                            const written = memcpyEscapingClosingTags(remain, content, chunks[index].closingTagForContent());
+                                            remain = remain[written..];
+                                        } else {
+                                            @memcpy(remain[0..content.len], content);
+                                            remain = remain[content.len..];
+                                        }
+                                        continue;
+                                    }
+                                }
+
                                 const file_path = switch (piece.query.kind) {
                                     .asset => brk: {
                                         const files = additional_files[index];
@@ -352,8 +524,8 @@ pub const Chunk = struct {
                         // This comment must go before the //# sourceMappingURL comment
                         remain = remain[(std.fmt.bufPrint(
                             remain,
-                            "\n//# debugId={}\n",
-                            .{bun.sourcemap.DebugIDFormatter{ .id = chunk.isolated_hash }},
+                            "\n//# debugId={f}\n",
+                            .{bun.SourceMap.DebugIDFormatter{ .id = chunk.isolated_hash }},
                         ) catch |err| switch (err) {
                             error.NoSpaceLeft => std.debug.panic(
                                 "unexpected NoSpaceLeft error from bufPrint",
@@ -370,7 +542,7 @@ pub const Chunk = struct {
                         .shifts = if (enable_source_map_shifts)
                             shifts.items
                         else
-                            &[_]sourcemap.SourceMapShifts{},
+                            &[_]SourceMap.SourceMapShifts{},
                     };
                 },
                 .joiner => |*joiner| {
@@ -385,8 +557,8 @@ pub const Chunk = struct {
                             // This comment must go before the //# sourceMappingURL comment
                             const debug_id_fmt = std.fmt.allocPrint(
                                 graph.heap.allocator(),
-                                "\n//# debugId={}\n",
-                                .{bun.sourcemap.DebugIDFormatter{ .id = chunk.isolated_hash }},
+                                "\n//# debugId={f}\n",
+                                .{bun.SourceMap.DebugIDFormatter{ .id = chunk.isolated_hash }},
                             ) catch |err| bun.handleOom(err);
 
                             break :brk try joiner.doneWithEnd(allocator, debug_id_fmt);
@@ -397,12 +569,12 @@ pub const Chunk = struct {
 
                     return .{
                         .buffer = buffer,
-                        .shifts = &[_]sourcemap.SourceMapShifts{},
+                        .shifts = &[_]SourceMap.SourceMapShifts{},
                     };
                 },
                 .empty => return .{
                     .buffer = "",
-                    .shifts = &[_]sourcemap.SourceMapShifts{},
+                    .shifts = &[_]SourceMap.SourceMapShifts{},
                 },
             }
         }
@@ -489,6 +661,11 @@ pub const Chunk = struct {
         ///
         /// Mutated while sorting chunks in `computeChunks`
         css_chunks: []u32 = &.{},
+
+        /// Serialized ModuleInfo for ESM bytecode (--compile --bytecode --format=esm)
+        module_info_bytes: ?[]const u8 = null,
+        /// Unserialized ModuleInfo for deferred serialization (after chunk paths are resolved)
+        module_info: ?*analyze_transpiled_module.ModuleInfo = null,
     };
 
     pub const CssChunk = struct {
@@ -572,7 +749,7 @@ pub const Chunk = struct {
             inner: *const CssImportOrder,
             ctx: *LinkerContext,
 
-            pub fn format(this: *const CssImportOrderDebug, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            pub fn format(this: *const CssImportOrderDebug, writer: *std.Io.Writer) !void {
                 try writer.print("{s} = ", .{@tagName(this.inner.kind)});
                 switch (this.inner.kind) {
                     .layers => |layers| {
@@ -580,7 +757,7 @@ pub const Chunk = struct {
                         const l = layers.inner();
                         for (l.sliceConst(), 0..) |*layer, i| {
                             if (i > 0) try writer.print(", ", .{});
-                            try writer.print("\"{}\"", .{layer});
+                            try writer.print("\"{f}\"", .{layer});
                         }
 
                         try writer.print("]", .{});
@@ -641,6 +818,7 @@ pub const ParseTask = bun.bundle_v2.ParseTask;
 const string = []const u8;
 
 const HTMLImportManifest = @import("./HTMLImportManifest.zig");
+const analyze_transpiled_module = @import("../analyze_transpiled_module.zig");
 const std = @import("std");
 
 const options = @import("../options.zig");
@@ -651,10 +829,10 @@ const FeatureFlags = bun.FeatureFlags;
 const ImportKind = bun.ImportKind;
 const ImportRecord = bun.ImportRecord;
 const Output = bun.Output;
+const SourceMap = bun.SourceMap;
 const StringJoiner = bun.StringJoiner;
 const default_allocator = bun.default_allocator;
 const renamer = bun.renamer;
-const sourcemap = bun.sourcemap;
 const strings = bun.strings;
 const AutoBitSet = bun.bit_set.AutoBitSet;
 const BabyList = bun.collections.BabyList;

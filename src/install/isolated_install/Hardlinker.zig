@@ -15,12 +15,16 @@ pub fn init(
         .src_dir = folder_dir,
         .src = src,
         .dest = dest,
-        .walker = try .walk(
-            folder_dir,
-            bun.default_allocator,
-            &.{},
-            skip_dirnames,
-        ),
+        .walker = walker: {
+            var w = try Walker.walk(
+                folder_dir,
+                bun.default_allocator,
+                &.{},
+                skip_dirnames,
+            );
+            w.resolve_unknown_entry_types = true;
+            break :walker w;
+        },
     };
 }
 
@@ -31,7 +35,7 @@ pub fn deinit(this: *Hardlinker) void {
 pub fn link(this: *Hardlinker) OOM!sys.Maybe(void) {
     if (bun.install.PackageManager.verbose_install) {
         bun.Output.prettyErrorln(
-            \\Hardlinking {} to {}
+            \\Hardlinking {f} to {f}
         ,
             .{
                 bun.fmt.fmtOSPath(this.src.slice(), .{ .path_sep = .auto }),
@@ -84,7 +88,7 @@ pub fn link(this: *Hardlinker) OOM!sys.Maybe(void) {
                             => {
                                 if (bun.install.PackageManager.verbose_install) {
                                     bun.Output.prettyErrorln(
-                                        \\Hardlinking {} to a path that already exists: {}
+                                        \\Hardlinking {f} to a path that already exists: {f}
                                     ,
                                         .{
                                             bun.fmt.fmtOSPath(this.src.slice(), .{ .path_sep = .auto }),
@@ -112,7 +116,7 @@ pub fn link(this: *Hardlinker) OOM!sys.Maybe(void) {
                             => {
                                 if (bun.install.PackageManager.verbose_install) {
                                     bun.Output.prettyErrorln(
-                                        \\Hardlinking {} to a path that doesn't exist: {}
+                                        \\Hardlinking {f} to a path that doesn't exist: {f}
                                     ,
                                         .{
                                             bun.fmt.fmtOSPath(this.src.slice(), .{ .path_sep = .auto }),

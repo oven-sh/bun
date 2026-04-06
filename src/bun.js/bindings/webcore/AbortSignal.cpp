@@ -170,9 +170,17 @@ void AbortSignal::runAbortSteps()
     for (auto& algorithm : std::exchange(m_algorithms, {}))
         algorithm.second(reason);
 
-    // 3. Fire an event named abort at signal.
-    dispatchEvent(Event::create(eventNames().abortEvent, Event::CanBubble::No, Event::IsCancelable::No));
+    Vector<std::pair<uint32_t, Ref<AbortAlgorithm>>> abortAlgorithms;
+    {
+        Locker locker { m_abortAlgorithmsLock };
+        abortAlgorithms = std::exchange(m_abortAlgorithms, {});
+    }
+    for (auto& pair : abortAlgorithms)
+        pair.second->handleEvent(reason);
 
+    // 3. Fire an event named abort at signal.
+    if (hasEventListeners(eventNames().abortEvent))
+        dispatchEvent(Event::create(eventNames().abortEvent, Event::CanBubble::No, Event::IsCancelable::No));
     setIsFiringEventListeners(false);
 }
 
@@ -191,7 +199,7 @@ void AbortSignal::signalAbort(JSC::JSValue reason)
     for (Ref dependentSignal : std::exchange(m_dependentSignals, {})) {
         if (!dependentSignal->aborted()) {
             dependentSignal->markAborted(reason);
-            dependentSignalsToAbort.append(WTFMove(dependentSignal));
+            dependentSignalsToAbort.append(WTF::move(dependentSignal));
         }
     }
 
@@ -222,7 +230,7 @@ void AbortSignal::cleanNativeBindings(void* ref)
         return ctx == ref;
     });
 
-    std::exchange(m_native_callbacks, WTFMove(callbacks));
+    std::exchange(m_native_callbacks, WTF::move(callbacks));
     this->eventListenersDidChange();
 }
 
@@ -257,19 +265,23 @@ uint32_t AbortSignal::addAbortAlgorithmToSignal(AbortSignal& signal, Ref<AbortAl
         algorithm->handleEvent(signal.jsReason(*signal.scriptExecutionContext()->jsGlobalObject()));
         return 0;
     }
-    return signal.addAlgorithm([algorithm = WTFMove(algorithm)](JSC::JSValue value) mutable {
-        algorithm->handleEvent(value);
-    });
+    auto identifier = ++signal.m_algorithmIdentifier;
+    Locker locker { signal.m_abortAlgorithmsLock };
+    signal.m_abortAlgorithms.append(std::make_pair(identifier, WTF::move(algorithm)));
+    return identifier;
 }
 
 void AbortSignal::removeAbortAlgorithmFromSignal(AbortSignal& signal, uint32_t algorithmIdentifier)
 {
-    signal.removeAlgorithm(algorithmIdentifier);
+    Locker locker { signal.m_abortAlgorithmsLock };
+    signal.m_abortAlgorithms.removeFirstMatching([algorithmIdentifier](auto& pair) {
+        return pair.first == algorithmIdentifier;
+    });
 }
 
 uint32_t AbortSignal::addAlgorithm(Algorithm&& algorithm)
 {
-    m_algorithms.append(std::make_pair(++m_algorithmIdentifier, WTFMove(algorithm)));
+    m_algorithms.append(std::make_pair(++m_algorithmIdentifier, WTF::move(algorithm)));
     return m_algorithmIdentifier;
 }
 
@@ -297,7 +309,18 @@ WebCoreOpaqueRoot root(AbortSignal* signal)
 
 size_t AbortSignal::memoryCost() const
 {
-    return sizeof(AbortSignal) + m_native_callbacks.sizeInBytes() + m_algorithms.sizeInBytes() + m_sourceSignals.capacity() + m_dependentSignals.capacity();
+    return sizeof(AbortSignal) + m_native_callbacks.sizeInBytes() + m_algorithms.sizeInBytes() + m_abortAlgorithms.sizeInBytes() + m_sourceSignals.capacity() + m_dependentSignals.capacity();
 }
+
+template<typename Visitor>
+void AbortSignal::visitAbortAlgorithms(Visitor& visitor)
+{
+    Locker locker { m_abortAlgorithmsLock };
+    for (auto& pair : m_abortAlgorithms)
+        pair.second->visitJSFunction(visitor);
+}
+
+template void AbortSignal::visitAbortAlgorithms(JSC::AbstractSlotVisitor&);
+template void AbortSignal::visitAbortAlgorithms(JSC::SlotVisitor&);
 
 } // namespace WebCore

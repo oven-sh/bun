@@ -26,6 +26,7 @@ pub const RedisError = error{
     UnsupportedProtocol,
     ConnectionTimeout,
     IdleTimeout,
+    NestingDepthExceeded,
 };
 
 pub fn valkeyErrorToJS(globalObject: *jsc.JSGlobalObject, message: ?[]const u8, err: RedisError) jsc.JSValue {
@@ -55,6 +56,7 @@ pub fn valkeyErrorToJS(globalObject: *jsc.JSGlobalObject, message: ?[]const u8, 
         error.InvalidResponseType => .REDIS_INVALID_RESPONSE_TYPE,
         error.ConnectionTimeout => .REDIS_CONNECTION_TIMEOUT,
         error.IdleTimeout => .REDIS_IDLE_TIMEOUT,
+        error.NestingDepthExceeded => .REDIS_INVALID_RESPONSE,
         error.JSError => return globalObject.takeException(error.JSError),
         error.OutOfMemory => globalObject.throwOutOfMemory() catch return globalObject.takeException(error.JSError),
         error.JSTerminated => return globalObject.takeException(error.JSTerminated),
@@ -171,7 +173,7 @@ pub const RESPValue = union(RESPType) {
         }
     }
 
-    pub fn format(self: @This(), comptime _: []const u8, options: anytype, writer: anytype) !void {
+    pub fn format(self: @This(), writer: *std.Io.Writer) !void {
         switch (self) {
             .SimpleString => |str| try writer.writeAll(str),
             .Error => |str| try writer.writeAll(str),
@@ -187,7 +189,7 @@ pub const RESPValue = union(RESPType) {
                 try writer.writeAll("[");
                 for (array, 0..) |value, i| {
                     if (i > 0) try writer.writeAll(", ");
-                    try value.format("", options, writer);
+                    try value.format(writer);
                 }
                 try writer.writeAll("]");
             },
@@ -200,9 +202,9 @@ pub const RESPValue = union(RESPType) {
                 try writer.writeAll("{");
                 for (entries, 0..) |entry, i| {
                     if (i > 0) try writer.writeAll(", ");
-                    try entry.key.format("", options, writer);
+                    try entry.key.format(writer);
                     try writer.writeAll(": ");
-                    try entry.value.format("", options, writer);
+                    try entry.value.format(writer);
                 }
                 try writer.writeAll("}");
             },
@@ -210,7 +212,7 @@ pub const RESPValue = union(RESPType) {
                 try writer.writeAll("Set{");
                 for (set, 0..) |value, i| {
                     if (i > 0) try writer.writeAll(", ");
-                    try value.format("", options, writer);
+                    try value.format(writer);
                 }
                 try writer.writeAll("}");
             },
@@ -219,19 +221,19 @@ pub const RESPValue = union(RESPType) {
                 try writer.writeAll("{");
                 for (attribute.attributes, 0..) |entry, i| {
                     if (i > 0) try writer.writeAll(", ");
-                    try entry.key.format("", options, writer);
+                    try entry.key.format(writer);
                     try writer.writeAll(": ");
-                    try entry.value.format("", options, writer);
+                    try entry.value.format(writer);
                 }
                 try writer.writeAll("} => ");
-                try attribute.value.format("", options, writer);
+                try attribute.value.format(writer);
                 try writer.writeAll(")");
             },
             .Push => |push| {
                 try writer.print("Push({s}: [", .{push.kind});
                 for (push.data, 0..) |value, i| {
                     if (i > 0) try writer.writeAll(", ");
-                    try value.format("", options, writer);
+                    try value.format(writer);
                 }
                 try writer.writeAll("])");
             },
@@ -420,7 +422,16 @@ pub const ValkeyReader = struct {
         };
     }
 
+    /// Maximum allowed nesting depth for RESP aggregate types.
+    /// This limits recursion to prevent excessive stack usage from
+    /// deeply nested responses.
+    const max_nesting_depth = 128;
+
     pub fn readValue(self: *ValkeyReader, allocator: std.mem.Allocator) RedisError!RESPValue {
+        return self.readValueWithDepth(allocator, 0);
+    }
+
+    fn readValueWithDepth(self: *ValkeyReader, allocator: std.mem.Allocator, depth: usize) RedisError!RESPValue {
         const type_byte = try self.readByte();
 
         return switch (RESPType.fromByte(type_byte) orelse return error.InvalidResponseType) {
@@ -451,6 +462,7 @@ pub const ValkeyReader = struct {
                 return RESPValue{ .BulkString = owned };
             },
             .Array => {
+                if (depth >= max_nesting_depth) return error.NestingDepthExceeded;
                 const len = try self.readInteger();
                 if (len < 0) return RESPValue{ .Array = &[_]RESPValue{} };
                 const array = try allocator.alloc(RESPValue, @as(usize, @intCast(len)));
@@ -462,7 +474,7 @@ pub const ValkeyReader = struct {
                     }
                 }
                 while (i < len) : (i += 1) {
-                    array[i] = try self.readValue(allocator);
+                    array[i] = try self.readValueWithDepth(allocator, depth + 1);
                 }
                 return RESPValue{ .Array = array };
             },
@@ -495,6 +507,7 @@ pub const ValkeyReader = struct {
                 return RESPValue{ .VerbatimString = try self.readVerbatimString(allocator) };
             },
             .Map => {
+                if (depth >= max_nesting_depth) return error.NestingDepthExceeded;
                 const len = try self.readInteger();
                 if (len < 0) return error.InvalidMap;
 
@@ -508,11 +521,15 @@ pub const ValkeyReader = struct {
                 }
 
                 while (i < len) : (i += 1) {
-                    entries[i] = .{ .key = try self.readValue(allocator), .value = try self.readValue(allocator) };
+                    var key = try self.readValueWithDepth(allocator, depth + 1);
+                    errdefer key.deinit(allocator);
+                    const value = try self.readValueWithDepth(allocator, depth + 1);
+                    entries[i] = .{ .key = key, .value = value };
                 }
                 return RESPValue{ .Map = entries };
             },
             .Set => {
+                if (depth >= max_nesting_depth) return error.NestingDepthExceeded;
                 const len = try self.readInteger();
                 if (len < 0) return error.InvalidSet;
 
@@ -525,11 +542,12 @@ pub const ValkeyReader = struct {
                     }
                 }
                 while (i < len) : (i += 1) {
-                    set[i] = try self.readValue(allocator);
+                    set[i] = try self.readValueWithDepth(allocator, depth + 1);
                 }
                 return RESPValue{ .Set = set };
             },
             .Attribute => {
+                if (depth >= max_nesting_depth) return error.NestingDepthExceeded;
                 const len = try self.readInteger();
                 if (len < 0) return error.InvalidAttribute;
 
@@ -542,9 +560,9 @@ pub const ValkeyReader = struct {
                     }
                 }
                 while (i < len) : (i += 1) {
-                    var key = try self.readValue(allocator);
+                    var key = try self.readValueWithDepth(allocator, depth + 1);
                     errdefer key.deinit(allocator);
-                    const value = try self.readValue(allocator);
+                    const value = try self.readValueWithDepth(allocator, depth + 1);
                     attrs[i] = .{ .key = key, .value = value };
                 }
 
@@ -553,7 +571,7 @@ pub const ValkeyReader = struct {
                 errdefer {
                     allocator.destroy(value_ptr);
                 }
-                value_ptr.* = try self.readValue(allocator);
+                value_ptr.* = try self.readValueWithDepth(allocator, depth + 1);
 
                 return RESPValue{ .Attribute = .{
                     .attributes = attrs,
@@ -561,11 +579,13 @@ pub const ValkeyReader = struct {
                 } };
             },
             .Push => {
+                if (depth >= max_nesting_depth) return error.NestingDepthExceeded;
                 const len = try self.readInteger();
                 if (len < 0 or len == 0) return error.InvalidPush;
 
                 // First element is the push type
-                const push_type = try self.readValue(allocator);
+                var push_type = try self.readValueWithDepth(allocator, depth + 1);
+                defer push_type.deinit(allocator);
                 var push_type_str: []const u8 = "";
 
                 switch (push_type) {
@@ -594,7 +614,7 @@ pub const ValkeyReader = struct {
                     }
                 }
                 while (i < len - 1) : (i += 1) {
-                    data[i] = try self.readValue(allocator);
+                    data[i] = try self.readValueWithDepth(allocator, depth + 1);
                 }
 
                 return RESPValue{ .Push = .{

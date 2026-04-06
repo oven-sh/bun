@@ -63,7 +63,7 @@ pub const BorderRadius = struct {
         };
     }
 
-    pub fn toCss(this: *const BorderRadius, comptime W: type, dest: *Printer(W)) PrintErr!void {
+    pub fn toCss(this: *const BorderRadius, dest: *Printer) PrintErr!void {
         const widths = Rect(*const LengthPercentage){
             .top = &this.top_left.a,
             .right = &this.top_right.a,
@@ -78,11 +78,11 @@ pub const BorderRadius = struct {
             .left = &this.bottom_left.b,
         };
 
-        try widths.toCss(W, dest);
+        try widths.toCss(dest);
 
         if (!widths.eql(&heights)) {
             try dest.delim('/', true);
-            try heights.toCss(W, dest);
+            try heights.toCss(dest);
         }
     }
 
@@ -220,7 +220,7 @@ pub const BorderRadiusHandler = struct {
             if (logical_supported) {
                 bun.handleOom(d.append(ctx.allocator, v));
             } else {
-                const prefix = ctx.targets.prefixes(css.VendorPrefix{}, css.prefixes.Feature.border_radius);
+                const prefix = ctx.targets.prefixes(css.VendorPrefix{ .none = true }, css.prefixes.Feature.border_radius);
                 switch (v) {
                     .@"border-start-start-radius",
                     .@"border-start-end-radius",
@@ -236,8 +236,8 @@ pub const BorderRadiusHandler = struct {
                     .unparsed => |unparsed| {
                         ctx.addLogicalRule(
                             ctx.allocator,
-                            Property{ .unparsed = unparsed.withPropertyId(ctx.allocator, .{ .@"border-top-left-radius" = prefix }) },
-                            Property{ .unparsed = unparsed.withPropertyId(ctx.allocator, .{ .@"border-top-right-radius" = prefix }) },
+                            Property{ .unparsed = unparsed.withPropertyId(ctx.allocator, @unionInit(css.PropertyId, ltr, prefix)) },
+                            Property{ .unparsed = unparsed.withPropertyId(ctx.allocator, @unionInit(css.PropertyId, rtl, prefix)) },
                         );
                     },
                     else => {},

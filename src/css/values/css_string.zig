@@ -10,7 +10,7 @@ pub const CSSStringFns = struct {
         return input.expectString();
     }
 
-    pub fn toCss(this: *const []const u8, comptime W: type, dest: *Printer(W)) PrintErr!void {
+    pub fn toCss(this: *const []const u8, dest: *Printer) PrintErr!void {
         return css.serializer.serializeString(this.*, dest) catch return dest.addFmtError();
     }
 };

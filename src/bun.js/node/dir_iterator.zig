@@ -34,8 +34,8 @@ pub const Iterator = NewIterator(false);
 pub const IteratorW = NewIterator(true);
 
 pub fn NewIterator(comptime use_windows_ospath: bool) type {
-    return switch (builtin.os.tag) {
-        .macos, .ios, .freebsd, .netbsd, .dragonfly, .openbsd, .solaris => struct {
+    return switch (bun.Environment.os) {
+        .mac => struct {
             dir: FD,
             seek: i64,
             buf: [8192]u8 align(@alignOf(std.posix.system.dirent)),
@@ -162,7 +162,7 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
                         continue :start_over;
                     }
 
-                    const entry_kind = switch (linux_entry.type) {
+                    const entry_kind: Entry.Kind = switch (linux_entry.type) {
                         linux.DT.BLK => Entry.Kind.block_device,
                         linux.DT.CHR => Entry.Kind.character_device,
                         linux.DT.DIR => Entry.Kind.directory,
@@ -170,6 +170,9 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
                         linux.DT.LNK => Entry.Kind.sym_link,
                         linux.DT.REG => Entry.Kind.file,
                         linux.DT.SOCK => Entry.Kind.unix_domain_socket,
+                        // DT_UNKNOWN: Some filesystems (e.g., bind mounts, FUSE, NFS)
+                        // don't provide d_type. Callers should use lstatat() to determine
+                        // the type when needed (lazy stat pattern for performance).
                         else => Entry.Kind.unknown,
                     };
                     return .{
@@ -198,6 +201,10 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
             end_index: usize,
             first: bool,
             name_data: if (use_windows_ospath) [257]u16 else [513]u8,
+            /// Optional kernel-side wildcard filter passed to NtQueryDirectoryFile.
+            /// Evaluated by FsRtlIsNameInExpression (case-insensitive, supports `*` and `?`).
+            /// Only honored on the first call (RestartScan=TRUE); sticky for the handle lifetime.
+            name_filter: ?[]const u16 = null,
 
             const Self = @This();
 
@@ -217,6 +224,16 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
                             @memset(&self.buf, 0);
                         }
 
+                        var filter_us: w.UNICODE_STRING = undefined;
+                        const filter_ptr: ?*w.UNICODE_STRING = if (self.name_filter) |f| blk: {
+                            filter_us = .{
+                                .Length = @intCast(f.len * 2),
+                                .MaximumLength = @intCast(f.len * 2),
+                                .Buffer = @constCast(f.ptr),
+                            };
+                            break :blk &filter_us;
+                        } else null;
+
                         const rc = w.ntdll.NtQueryDirectoryFile(
                             self.dir.cast(),
                             null,
@@ -227,20 +244,20 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
                             self.buf.len,
                             .FileDirectoryInformation,
                             w.FALSE,
-                            null,
+                            filter_ptr,
                             if (self.first) @as(w.BOOLEAN, w.TRUE) else @as(w.BOOLEAN, w.FALSE),
                         );
 
                         self.first = false;
                         if (io.Information == 0) {
-                            bun.sys.syslog("NtQueryDirectoryFile({}) = 0", .{self.dir});
+                            bun.sys.syslog("NtQueryDirectoryFile({f}) = 0", .{self.dir});
                             return .{ .result = null };
                         }
                         self.index = 0;
                         self.end_index = io.Information;
                         // If the handle is not a directory, we'll get STATUS_INVALID_PARAMETER.
                         if (rc == .INVALID_PARAMETER) {
-                            bun.sys.syslog("NtQueryDirectoryFile({}) = {s}", .{ self.dir, @tagName(rc) });
+                            bun.sys.syslog("NtQueryDirectoryFile({f}) = {s}", .{ self.dir, @tagName(rc) });
                             return .{
                                 .err = .{
                                     .errno = @intFromEnum(bun.sys.SystemErrno.ENOTDIR),
@@ -249,14 +266,16 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
                             };
                         }
 
-                        if (rc == .NO_MORE_FILES) {
-                            bun.sys.syslog("NtQueryDirectoryFile({}) = {s}", .{ self.dir, @tagName(rc) });
+                        // NO_SUCH_FILE is returned on the first call when a FileName filter
+                        // matches nothing; NO_MORE_FILES on subsequent calls. Both mean "done".
+                        if (rc == .NO_MORE_FILES or rc == .NO_SUCH_FILE) {
+                            bun.sys.syslog("NtQueryDirectoryFile({f}) = {s}", .{ self.dir, @tagName(rc) });
                             self.end_index = self.index;
                             return .{ .result = null };
                         }
 
                         if (rc != .SUCCESS) {
-                            bun.sys.syslog("NtQueryDirectoryFile({}) = {s}", .{ self.dir, @tagName(rc) });
+                            bun.sys.syslog("NtQueryDirectoryFile({f}) = {s}", .{ self.dir, @tagName(rc) });
 
                             if ((bun.windows.Win32Error.fromNTStatus(rc).toSystemErrno())) |errno| {
                                 return .{
@@ -275,7 +294,7 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
                             };
                         }
 
-                        bun.sys.syslog("NtQueryDirectoryFile({}) = {d}", .{ self.dir, self.end_index });
+                        bun.sys.syslog("NtQueryDirectoryFile({f}) = {d}", .{ self.dir, self.end_index });
                     }
 
                     const dir_info: FILE_DIRECTORY_INFORMATION_PTR = @ptrCast(@alignCast(&self.buf[self.index]));
@@ -329,7 +348,7 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
                 }
             }
         },
-        .wasi => struct {
+        .wasm => struct {
             dir: FD,
             buf: [8192]u8, // TODO align(@alignOf(os.wasi.dirent_t)),
             cookie: u64,
@@ -393,7 +412,6 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
                 }
             }
         },
-        else => @compileError("unimplemented"),
     };
 }
 
@@ -414,14 +432,8 @@ pub fn NewWrappedIterator(comptime path_type: PathType) type {
 
         pub fn init(dir: FD) Self {
             return Self{
-                .iter = switch (builtin.os.tag) {
-                    .macos,
-                    .ios,
-                    .freebsd,
-                    .netbsd,
-                    .dragonfly,
-                    .openbsd,
-                    .solaris,
+                .iter = switch (bun.Environment.os) {
+                    .mac,
                     => IteratorType{
                         .dir = dir,
                         .seek = 0,
@@ -429,7 +441,7 @@ pub fn NewWrappedIterator(comptime path_type: PathType) type {
                         .end_index = 0,
                         .buf = undefined,
                     },
-                    .linux, .haiku => IteratorType{
+                    .linux => IteratorType{
                         .dir = dir,
                         .index = 0,
                         .end_index = 0,
@@ -443,16 +455,20 @@ pub fn NewWrappedIterator(comptime path_type: PathType) type {
                         .buf = undefined,
                         .name_data = undefined,
                     },
-                    .wasi => IteratorType{
+                    .wasm => IteratorType{
                         .dir = dir,
                         .cookie = posix.wasi.DIRCOOKIE_START,
                         .index = 0,
                         .end_index = 0,
                         .buf = undefined,
                     },
-                    else => @compileError("unimplemented"),
                 },
             };
+        }
+
+        pub fn setNameFilter(self: *Self, filter: ?[]const u16) void {
+            if (comptime !bun.Environment.isWindows) return;
+            self.iter.name_filter = filter;
         }
     };
 }

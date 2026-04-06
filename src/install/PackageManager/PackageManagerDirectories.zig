@@ -165,12 +165,12 @@ pub fn fetchCacheDirectoryPath(env: *DotEnv.Loader, options: ?*const Options) Ca
         return CacheDir{ .path = Fs.FileSystem.instance.abs(&parts), .is_node_modules = false };
     }
 
-    if (env.get("XDG_CACHE_HOME")) |dir| {
+    if (bun.env_var.XDG_CACHE_HOME.get()) |dir| {
         var parts = [_]string{ dir, ".bun/", "install/", "cache/" };
         return CacheDir{ .path = Fs.FileSystem.instance.abs(&parts), .is_node_modules = false };
     }
 
-    if (env.get(bun.DotEnv.home_env)) |dir| {
+    if (bun.env_var.HOME.get()) |dir| {
         var parts = [_]string{ dir, ".bun/", "install/", "cache/" };
         return CacheDir{ .path = Fs.FileSystem.instance.abs(&parts), .is_node_modules = false };
     }
@@ -180,7 +180,7 @@ pub fn fetchCacheDirectoryPath(env: *DotEnv.Loader, options: ?*const Options) Ca
 }
 
 pub fn cachedGitFolderNamePrint(buf: []u8, resolved: string, patch_hash: ?u64) stringZ {
-    return std.fmt.bufPrintZ(buf, "@G@{s}{}", .{ resolved, PatchHashFmt{ .hash = patch_hash } }) catch unreachable;
+    return std.fmt.bufPrintZ(buf, "@G@{s}{f}", .{ resolved, PatchHashFmt{ .hash = patch_hash } }) catch unreachable;
 }
 
 pub fn cachedGitFolderName(this: *const PackageManager, repository: *const Repository, patch_hash: ?u64) stringZ {
@@ -196,7 +196,7 @@ pub fn cachedGitFolderNamePrintAuto(this: *const PackageManager, repository: *co
         const string_buf = this.lockfile.buffers.string_bytes.items;
         return std.fmt.bufPrintZ(
             &PackageManager.cached_package_folder_name_buf,
-            "@G@{any}{}{}",
+            "@G@{f}{f}{f}",
             .{
                 repository.committish.fmt(string_buf),
                 CacheVersion.Formatter{ .version_number = CacheVersion.current },
@@ -209,7 +209,7 @@ pub fn cachedGitFolderNamePrintAuto(this: *const PackageManager, repository: *co
 }
 
 pub fn cachedGitHubFolderNamePrint(buf: []u8, resolved: string, patch_hash: ?u64) stringZ {
-    return std.fmt.bufPrintZ(buf, "@GH@{s}{}{}", .{
+    return std.fmt.bufPrintZ(buf, "@GH@{s}{f}{f}", .{
         resolved,
         CacheVersion.Formatter{ .version_number = CacheVersion.current },
         PatchHashFmt{ .hash = patch_hash },
@@ -249,14 +249,14 @@ pub fn cachedNPMPackageFolderNamePrint(this: *const PackageManager, buf: []u8, n
     var end: []u8 = undefined;
     if (scope.url.hostname.len > 32 or available.len < 64) {
         const visible_hostname = scope.url.hostname[0..@min(scope.url.hostname.len, 12)];
-        end = std.fmt.bufPrint(available, "@@{s}__{any}{}{}", .{
+        end = std.fmt.bufPrint(available, "@@{s}__{f}{f}{f}", .{
             visible_hostname,
             bun.fmt.hexIntLower(String.Builder.stringHash(scope.url.href)),
             CacheVersion.Formatter{ .version_number = CacheVersion.current },
             PatchHashFmt{ .hash = patch_hash },
         }) catch unreachable;
     } else {
-        end = std.fmt.bufPrint(available, "@@{s}{}{}", .{
+        end = std.fmt.bufPrint(available, "@@{s}{f}{f}", .{
             scope.url.hostname,
             CacheVersion.Formatter{ .version_number = CacheVersion.current },
             PatchHashFmt{ .hash = patch_hash },
@@ -271,7 +271,7 @@ pub fn cachedNPMPackageFolderNamePrint(this: *const PackageManager, buf: []u8, n
 fn cachedGitHubFolderNamePrintGuess(buf: []u8, string_buf: []const u8, repository: *const Repository, patch_hash: ?u64) stringZ {
     return std.fmt.bufPrintZ(
         buf,
-        "@GH@{any}-{any}-{any}{}{}",
+        "@GH@{f}-{f}-{f}{f}{f}",
         .{
             repository.owner.fmt(string_buf),
             repository.repo.fmt(string_buf),
@@ -297,7 +297,7 @@ pub fn cachedNPMPackageFolderPrintBasename(
         if (version.tag.hasBuild()) {
             return std.fmt.bufPrintZ(
                 buf,
-                "{s}@{d}.{d}.{d}-{any}+{any}{}{}",
+                "{s}@{d}.{d}.{d}-{f}+{f}{f}{f}",
                 .{
                     name,
                     version.major,
@@ -312,7 +312,7 @@ pub fn cachedNPMPackageFolderPrintBasename(
         }
         return std.fmt.bufPrintZ(
             buf,
-            "{s}@{d}.{d}.{d}-{any}{}{}",
+            "{s}@{d}.{d}.{d}-{f}{f}{f}",
             .{
                 name,
                 version.major,
@@ -327,7 +327,7 @@ pub fn cachedNPMPackageFolderPrintBasename(
     if (version.tag.hasBuild()) {
         return std.fmt.bufPrintZ(
             buf,
-            "{s}@{d}.{d}.{d}+{any}{}{}",
+            "{s}@{d}.{d}.{d}+{f}{f}{f}",
             .{
                 name,
                 version.major,
@@ -339,7 +339,7 @@ pub fn cachedNPMPackageFolderPrintBasename(
             },
         ) catch unreachable;
     }
-    return std.fmt.bufPrintZ(buf, "{s}@{d}.{d}.{d}{}{}", .{
+    return std.fmt.bufPrintZ(buf, "{s}@{d}.{d}.{d}{f}{f}", .{
         name,
         version.major,
         version.minor,
@@ -350,7 +350,7 @@ pub fn cachedNPMPackageFolderPrintBasename(
 }
 
 pub fn cachedTarballFolderNamePrint(buf: []u8, url: string, patch_hash: ?u64) stringZ {
-    return std.fmt.bufPrintZ(buf, "@T@{any}{}{}", .{
+    return std.fmt.bufPrintZ(buf, "@T@{f}{f}{f}", .{
         bun.fmt.hexIntLower(String.Builder.stringHash(url)),
         CacheVersion.Formatter{ .version_number = CacheVersion.current },
         PatchHashFmt{ .hash = patch_hash },
@@ -387,7 +387,7 @@ pub fn globalLinkDir(this: *PackageManager) std.fs.Dir {
         };
         this.global_dir = global_dir;
         this.global_link_dir = global_dir.makeOpenPath("node_modules", .{}) catch |err| {
-            Output.err(err, "failed to open global link dir node_modules at '{}'", .{FD.fromStdDir(global_dir)});
+            Output.err(err, "failed to open global link dir node_modules at '{f}'", .{FD.fromStdDir(global_dir)});
             Global.exit(1);
         };
         var buf: bun.PathBuffer = undefined;
@@ -697,7 +697,7 @@ pub fn writeYarnLock(this: *PackageManager) !void {
     var base64_bytes: [64]u8 = undefined;
     std.crypto.random.bytes(&base64_bytes);
 
-    const tmpname__ = std.fmt.bufPrint(tmpname_buf[8..], "{s}", .{std.fmt.fmtSliceHexLower(&base64_bytes)}) catch unreachable;
+    const tmpname__ = std.fmt.bufPrint(tmpname_buf[8..], "{x}", .{&base64_bytes}) catch unreachable;
     tmpname_buf[tmpname__.len + 8] = 0;
     const tmpname = tmpname_buf[0 .. tmpname__.len + 8 :0];
 
@@ -707,13 +707,11 @@ pub fn writeYarnLock(this: *PackageManager) !void {
     };
 
     var file = tmpfile.file();
-    const file_writer = file.writer();
-    var buffered_writer = std.io.BufferedWriter(std.heap.page_size_min, @TypeOf(file_writer)){
-        .unbuffered_writer = file_writer,
-    };
-    const writer = buffered_writer.writer();
+    var file_buffer: [4096]u8 = undefined;
+    var file_writer = file.writerStreaming(&file_buffer);
+    const writer = &file_writer.interface;
     try Lockfile.Printer.Yarn.print(&printer, @TypeOf(writer), writer);
-    try buffered_writer.flush();
+    try writer.flush();
 
     if (comptime Environment.isPosix) {
         _ = bun.c.fchmod(
@@ -731,7 +729,7 @@ const CacheVersion = struct {
     pub const Formatter = struct {
         version_number: ?usize = null,
 
-        pub fn format(this: *const @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(this: *const @This(), writer: *std.Io.Writer) !void {
             if (this.version_number) |version| {
                 try writer.print("@@@{d}", .{version});
             }
@@ -742,7 +740,7 @@ const CacheVersion = struct {
 const PatchHashFmt = struct {
     hash: ?u64 = null,
 
-    pub fn format(this: *const PatchHashFmt, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(this: *const PatchHashFmt, writer: *std.Io.Writer) !void {
         if (this.hash) |h| {
             try writer.print("_patch_hash={x}", .{h});
         }

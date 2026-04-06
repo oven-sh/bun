@@ -129,8 +129,8 @@ describe.if(!isWindows)("uv stubs", () => {
     expect(result.strerror).toBe("invalid argument");
     expect(result.errNameR).toBe("ENOENT");
     expect(result.strerrorR).toBe("no such file or directory");
-    // uv_translate_sys_error(EINVAL) returns -EINVAL which equals UV_EINVAL
-    expect(result.translated).toBeLessThan(0);
+    expect(result.translatedIsCorrect).toBe(true);
+    expect(result.unknownErrName).toBe("Unknown system error -123456");
   });
 
   test("osfhandle identity", () => {

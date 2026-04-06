@@ -185,6 +185,17 @@ UV_EXTERN uv_buf_t uv_buf_init(char* base, unsigned int len)
 // Errors
 //
 
+static const char* uv__unknown_err_code(int err)
+{
+    char buf[32];
+    char* copy;
+
+    snprintf(buf, sizeof(buf), "Unknown system error %d", err);
+    copy = strdup(buf);
+
+    return copy != NULL ? copy : "Unknown system error";
+}
+
 #define UV_ERR_NAME_GEN(name, _) \
     case UV_##name:              \
         return #name;
@@ -193,7 +204,7 @@ UV_EXTERN const char* uv_err_name(int err)
     switch (err) {
         UV_ERRNO_MAP(UV_ERR_NAME_GEN)
     }
-    return "Unknown system error";
+    return uv__unknown_err_code(err);
 }
 #undef UV_ERR_NAME_GEN
 
@@ -220,7 +231,7 @@ UV_EXTERN const char* uv_strerror(int err)
     switch (err) {
         UV_ERRNO_MAP(UV_STRERROR_GEN)
     }
-    return "Unknown system error";
+    return uv__unknown_err_code(err);
 }
 #undef UV_STRERROR_GEN
 

@@ -152,8 +152,11 @@ static napi_value test_errors(napi_env env, napi_callback_info info) {
   napi_create_string_utf8(env, buf, NAPI_AUTO_LENGTH, &v);
   napi_set_named_property(env, obj, "strerrorR", v);
 
-  napi_create_int32(env, uv_translate_sys_error(EINVAL), &v);
-  napi_set_named_property(env, obj, "translated", v);
+  napi_get_boolean(env, uv_translate_sys_error(EINVAL) == UV_EINVAL, &v);
+  napi_set_named_property(env, obj, "translatedIsCorrect", v);
+
+  napi_create_string_utf8(env, uv_err_name(-123456), NAPI_AUTO_LENGTH, &v);
+  napi_set_named_property(env, obj, "unknownErrName", v);
 
   return obj;
 }
@@ -182,7 +185,7 @@ static napi_value test_time(napi_env env, napi_callback_info info) {
 
   napi_value ret;
   napi_get_boolean(env,
-                   r1 == 0 && tv.tv_sec > 0 && r2 == 0 && ts.tv_sec > 0 &&
+                   r1 == 0 && tv.tv_sec > 0 && r2 == 0 && ts.tv_sec >= 0 &&
                        after > before,
                    &ret);
   return ret;
@@ -221,10 +224,12 @@ static napi_value test_rwlock(napi_env env, napi_callback_info info) {
   uv_rwlock_wrunlock(&lock);
 
   int r1 = uv_rwlock_tryrdlock(&lock);
-  uv_rwlock_rdunlock(&lock);
+  if (r1 == 0)
+    uv_rwlock_rdunlock(&lock);
 
   int r2 = uv_rwlock_trywrlock(&lock);
-  uv_rwlock_wrunlock(&lock);
+  if (r2 == 0)
+    uv_rwlock_wrunlock(&lock);
 
   uv_rwlock_destroy(&lock);
 

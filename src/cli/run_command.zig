@@ -1241,6 +1241,31 @@ pub const RunCommand = struct {
     /// http(s) image URL it finds to a temp file, and populate `out_map`
     /// with url → temp-path entries. Failures are silent — an image that
     /// can't be downloaded just falls back to alt-text rendering.
+    /// One pending remote-image download. Lives on the heap so its
+    /// `async_http.task` (embedded in ThreadPool.Task) has a stable
+    /// address — HTTPThread.schedule does @fieldParentPtr on that task,
+    /// so moving the struct would break the worker's callback.
+    const RemoteImageDownload = struct {
+        async_http: bun.http.AsyncHTTP = undefined,
+        response_buffer: bun.MutableString,
+        url: []const u8,
+        done: *DoneChannel,
+
+        const DoneChannel = bun.threading.Channel(u32, .{ .Static = 256 });
+
+        fn onDone(self: *RemoteImageDownload, async_http: *bun.http.AsyncHTTP, _: bun.http.HTTPClientResult) void {
+            // Mirror sendSyncCallback from AsyncHTTP.zig: the worker's
+            // ThreadlocalAsyncHTTP is about to be freed, so copy its
+            // mutated state back into our owned AsyncHTTP before writing
+            // to the channel.
+            async_http.real.?.* = async_http.*;
+            async_http.real.?.response_buffer = async_http.response_buffer;
+            // Channel payload is a placeholder tick — the main thread
+            // walks `downloads[]` to read per-task state after N wakeups.
+            self.done.writeItem(0) catch {};
+        }
+    };
+
     fn prefetchRemoteImages(
         contents: []const u8,
         md_opts: bun.md.Options,
@@ -1252,57 +1277,98 @@ pub const RunCommand = struct {
         bun.md.renderWithRenderer(contents, allocator, md_opts, collector.renderer()) catch return;
         if (collector.urls.items.len == 0) return;
 
-        // Only spawn the HTTP worker thread if at least one URL is remote.
-        // A doc with only local images (`![logo](./logo.png)`) would hit
-        // the scheme filter inside the loop and skip everything — no point
-        // paying thread-startup cost for that case.
-        var has_remote = false;
+        // Walk the collected URLs once, deduping and picking out the
+        // http(s) ones. If there are no remote URLs we never spawn the
+        // HTTP worker or allocate any Download structs.
+        var seen = bun.StringHashMapUnmanaged(void){};
+        defer seen.deinit(allocator);
+        var remote_urls = std.ArrayListUnmanaged([]const u8){};
+        defer remote_urls.deinit(allocator);
         for (collector.urls.items) |u| {
-            if (bun.strings.startsWith(u, "http://") or bun.strings.startsWith(u, "https://")) {
-                has_remote = true;
-                break;
-            }
+            if (!bun.strings.startsWith(u, "http://") and
+                !bun.strings.startsWith(u, "https://")) continue;
+            const gop = seen.getOrPut(allocator, u) catch continue;
+            if (gop.found_existing) continue;
+            remote_urls.append(allocator, u) catch continue;
         }
-        if (!has_remote) return;
+        if (remote_urls.items.len == 0) return;
 
         const HTTP = bun.http;
         HTTP.HTTPThread.init(&.{});
 
-        const tmpdir = bun.fs.FileSystem.RealFS.tmpdirPath();
-        // Guard against the same URL appearing twice: only download once.
-        var seen = bun.StringHashMapUnmanaged(void){};
-        defer seen.deinit(allocator);
+        // Heap-allocate each Download so AsyncHTTP.task has a stable
+        // address (see RemoteImageDownload doc comment).
+        var downloads = std.ArrayListUnmanaged(*RemoteImageDownload){};
+        defer {
+            for (downloads.items) |d| {
+                d.response_buffer.deinit();
+                allocator.destroy(d);
+            }
+            downloads.deinit(allocator);
+        }
 
-        for (collector.urls.items) |raw_url| {
-            if (!bun.strings.startsWith(raw_url, "http://") and
-                !bun.strings.startsWith(raw_url, "https://")) continue;
-            const gop = seen.getOrPut(allocator, raw_url) catch continue;
-            if (gop.found_existing) continue;
+        var done_channel = RemoteImageDownload.DoneChannel.init();
 
-            const parsed_url = bun.URL.parse(raw_url);
-            var response_buffer = bun.MutableString.init(allocator, 8 * 1024) catch continue;
-            defer response_buffer.deinit();
-
-            var async_http = HTTP.AsyncHTTP.initSync(
+        // Kick off every download in parallel. Accumulate tasks into a
+        // single ThreadPool.Batch, then ship the whole batch to the
+        // HTTP thread in one schedule() call — worker picks up and runs
+        // them concurrently.
+        var batch = bun.ThreadPool.Batch{};
+        for (remote_urls.items) |raw_url| {
+            const d = allocator.create(RemoteImageDownload) catch continue;
+            d.* = .{
+                .response_buffer = bun.MutableString.init(allocator, 8 * 1024) catch {
+                    allocator.destroy(d);
+                    continue;
+                },
+                .url = raw_url,
+                .done = &done_channel,
+            };
+            d.async_http = HTTP.AsyncHTTP.init(
                 allocator,
                 .GET,
-                parsed_url,
+                bun.URL.parse(raw_url),
                 .{},
                 "",
-                &response_buffer,
+                &d.response_buffer,
                 "",
-                null,
-                null,
+                HTTP.HTTPClientResult.Callback.New(*RemoteImageDownload, RemoteImageDownload.onDone).init(d),
                 HTTP.FetchRedirect.follow,
+                .{},
             );
-            const resp = async_http.sendSync() catch continue;
-            if (resp.status_code != 200) continue;
-            const bytes = response_buffer.slice();
+            downloads.append(allocator, d) catch {
+                d.response_buffer.deinit();
+                allocator.destroy(d);
+                continue;
+            };
+            d.async_http.schedule(allocator, &batch);
+        }
+        if (downloads.items.len == 0) return;
+        HTTP.http_thread.schedule(batch);
+
+        // Block the main thread on the channel until every scheduled
+        // download has reported back. readItem() uses a mutex+condvar,
+        // no busy loop. The payload value is unused — each wakeup just
+        // means "one more task finished".
+        var completed: usize = 0;
+        while (completed < downloads.items.len) : (completed += 1) {
+            _ = done_channel.readItem() catch break;
+        }
+
+        // Second pass: walk completed downloads, write successful
+        // bodies to temp files, populate out_map. All disk I/O is done
+        // AFTER every network request has settled.
+        const tmpdir = bun.fs.FileSystem.RealFS.tmpdirPath();
+        for (downloads.items) |d| {
+            if (d.async_http.err != null) continue;
+            const status = if (d.async_http.response) |r| r.status_code else 0;
+            if (status != 200) continue;
+            const bytes = d.response_buffer.slice();
             if (bytes.len == 0) continue;
 
             // Extension is best-effort from the URL path; Kitty inspects
             // the file's magic bytes regardless.
-            const ext: []const u8 = if (bun.strings.endsWith(raw_url, ".png")) ".png" else if (bun.strings.endsWith(raw_url, ".jpg") or bun.strings.endsWith(raw_url, ".jpeg")) ".jpg" else if (bun.strings.endsWith(raw_url, ".gif")) ".gif" else if (bun.strings.endsWith(raw_url, ".webp")) ".webp" else ".bin";
+            const ext: []const u8 = if (bun.strings.endsWith(d.url, ".png")) ".png" else if (bun.strings.endsWith(d.url, ".jpg") or bun.strings.endsWith(d.url, ".jpeg")) ".jpg" else if (bun.strings.endsWith(d.url, ".gif")) ".gif" else if (bun.strings.endsWith(d.url, ".webp")) ".webp" else ".bin";
             var name_buf: [64]u8 = undefined;
             const name = std.fmt.bufPrint(&name_buf, "bun-md-{x}{s}", .{ bun.fastRandom(), ext }) catch continue;
             const path = std.fmt.allocPrint(allocator, "{s}/{s}", .{ tmpdir, name }) catch continue;
@@ -1333,27 +1399,23 @@ pub const RunCommand = struct {
             }
             fd.close();
             if (!ok) {
-                // The file was created by openA + TRUNC, so even a
-                // zero-byte write leaves an orphan on disk. Unlink
-                // before dropping the path string. Uses a stack buffer
-                // for the null-terminated path so the unlink doesn't
-                // depend on a second allocation (which could also OOM).
+                // openA + TRUNC leaves an orphan even on zero-byte
+                // write failure. Unlink via stack buffer so cleanup
+                // can't fail for OOM reasons.
                 unlinkStagedPath(path);
                 allocator.free(path);
                 continue;
             }
-            // Dupe raw_url for the map key — `collector.urls.items`
-            // owns raw_url, and `defer collector.deinit()` frees it
-            // when this function returns, leaving out_map with dangling
-            // keys that emitImage() would later hash-compare.
-            const key = allocator.dupe(u8, raw_url) catch {
+            // Dupe d.url for the map key — `collector.urls.items` owns
+            // the backing bytes and gets freed by `defer collector.deinit()`
+            // when this function returns, which would leave out_map with
+            // dangling keys that emitImage() would later hash-compare.
+            const key = allocator.dupe(u8, d.url) catch {
                 unlinkStagedPath(path);
                 allocator.free(path);
                 continue;
             };
             out_map.put(allocator, key, path) catch {
-                // Map insert OOM'd after a successful write — unlink
-                // the now-orphaned temp file so it doesn't leak.
                 unlinkStagedPath(path);
                 allocator.free(key);
                 allocator.free(path);

@@ -183,6 +183,9 @@ JSC_DEFINE_HOST_FUNCTION(jsHashProtoFuncUpdate, (JSC::JSGlobalObject * globalObj
         RETURN_IF_EXCEPTION(scope, {});
 
         auto* convertedView = jsDynamicCast<JSC::JSArrayBufferView*>(converted);
+        if (!convertedView) {
+            return Bun::ERR::CRYPTO_HASH_UPDATE_FAILED(scope, globalObject);
+        }
 
         if (!hash->update(std::span { reinterpret_cast<const uint8_t*>(convertedView->vector()), convertedView->byteLength() })) {
             return Bun::ERR::CRYPTO_HASH_UPDATE_FAILED(scope, globalObject);

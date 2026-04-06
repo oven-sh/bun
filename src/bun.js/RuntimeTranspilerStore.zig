@@ -331,7 +331,7 @@ pub const RuntimeTranspilerStore = struct {
             transpiler.macro_context = null;
             transpiler.linker.resolver = &transpiler.resolver;
 
-            var fd: ?StoredFileDescriptorType = null;
+            var fd: ?FD = null;
             var package_json: ?*PackageJSON = null;
             const hash = bun.Watcher.getHash(path.text);
 
@@ -363,7 +363,7 @@ pub const RuntimeTranspilerStore = struct {
             //
             var should_close_input_file_fd = fd == null;
 
-            var input_file_fd: StoredFileDescriptorType = .invalid;
+            var input_file_fd: FD = .invalid;
 
             const is_main = vm.main.len == path.text.len and
                 vm.main_hash == hash and
@@ -628,7 +628,7 @@ const bun = @import("bun");
 const Async = bun.Async;
 const Environment = bun.Environment;
 const Output = bun.Output;
-const StoredFileDescriptorType = bun.StoredFileDescriptorType;
+const FD = bun.FD;
 const String = bun.String;
 const Transpiler = bun.Transpiler;
 const js_ast = bun.ast;

@@ -772,7 +772,7 @@ pub const SecurityScanSubprocess = struct {
     /// spawn machinery. The child's end is dup'd to fd 4 and closed in the
     /// parent by spawn's to_close_at_end list (process.zig:1460). The parent's
     /// end comes back via spawned.extra_pipes.
-    fn spawnPosix(this: *SecurityScanSubprocess, argv: *[5]?[*:0]const u8, ipc_output_fds: [2]bun.FileDescriptor) !void {
+    fn spawnPosix(this: *SecurityScanSubprocess, argv: *[5]?[*:0]const u8, ipc_output_fds: [2]bun.FD) !void {
         const extra_fds = [_]bun.spawn.SpawnOptions.Stdio{
             .{ .pipe = ipc_output_fds[1] }, // fd 3: child inherits write end
             .buffer, // fd 4: socketpair, parent's end in extra_pipes
@@ -804,7 +804,7 @@ pub const SecurityScanSubprocess = struct {
     /// parent's write end is overlapped. Child inherits the non-overlapped read
     /// end via .pipe (inherit_fd); parent wraps the overlapped write end in a
     /// uv.Pipe for IOCP-based async writes.
-    fn spawnWindows(this: *SecurityScanSubprocess, argv: *[5]?[*:0]const u8, ipc_output_fds: [2]bun.FileDescriptor) !void {
+    fn spawnWindows(this: *SecurityScanSubprocess, argv: *[5]?[*:0]const u8, ipc_output_fds: [2]bun.FD) !void {
         const uv = bun.windows.libuv;
 
         var json_fds: [2]uv.uv_file = undefined;
@@ -816,8 +816,8 @@ pub const SecurityScanSubprocess = struct {
         // Track ownership with optionals: null means the fd has been transferred
         // or closed, so the errdefer skips it. Prevents double-close on error paths
         // after pipe.open() takes ownership or after the explicit closes below.
-        var child_read_fd: ?bun.FileDescriptor = bun.FD.fromUV(json_fds[0]);
-        var parent_write_fd: ?bun.FileDescriptor = bun.FD.fromUV(json_fds[1]);
+        var child_read_fd: ?bun.FD = bun.FD.fromUV(json_fds[0]);
+        var parent_write_fd: ?bun.FD = bun.FD.fromUV(json_fds[1]);
         errdefer {
             if (child_read_fd) |fd| fd.close();
             if (parent_write_fd) |fd| fd.close();
@@ -862,7 +862,7 @@ pub const SecurityScanSubprocess = struct {
     fn finishSpawn(
         this: *SecurityScanSubprocess,
         spawned: anytype,
-        ipc_read_fd: bun.FileDescriptor,
+        ipc_read_fd: bun.FD,
         json_stdio_result: jsc.Subprocess.StdioResult,
     ) !void {
         // Allocate the blob copy before registering any event loop callbacks. If

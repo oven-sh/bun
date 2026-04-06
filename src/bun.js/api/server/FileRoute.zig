@@ -292,7 +292,7 @@ const StreamTransfer = struct {
 
     reader: bun.io.BufferedReader = bun.io.BufferedReader.init(StreamTransfer),
     ref_count: StreamTransferRefCount,
-    fd: bun.FileDescriptor,
+    fd: bun.FD,
     resp: AnyResponse,
     route: *FileRoute,
 
@@ -307,7 +307,7 @@ const StreamTransfer = struct {
     const log = Output.scoped(.StreamTransfer, .visible);
 
     pub fn create(
-        fd: bun.FileDescriptor,
+        fd: bun.FD,
         resp: AnyResponse,
         route: *FileRoute,
         pollable: bool,

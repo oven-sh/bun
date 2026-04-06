@@ -403,7 +403,7 @@ pub const StreamTag = enum(usize) {
     invalid = 0,
     _,
 
-    pub fn init(filedes: bun.FileDescriptor) StreamTag {
+    pub fn init(filedes: bun.FD) StreamTag {
         var bytes = [8]u8{ 1, 0, 0, 0, 0, 0, 0, 0 };
         const filedes_ = @as([8]u8, @bitCast(@as(usize, @as(u56, @truncate(@as(usize, @intCast(filedes)))))));
         bytes[1..8].* = filedes_[0..7].*;
@@ -411,14 +411,14 @@ pub const StreamTag = enum(usize) {
         return @as(StreamTag, @enumFromInt(@as(u64, @bitCast(bytes))));
     }
 
-    pub fn fd(this: StreamTag) bun.FileDescriptor {
+    pub fn fd(this: StreamTag) bun.FD {
         var bytes = @as([8]u8, @bitCast(@intFromEnum(this)));
         if (bytes[0] != 1) {
             return bun.invalid_fd;
         }
         const out: u64 = 0;
         @as([8]u8, @bitCast(out))[0..7].* = bytes[1..8].*;
-        return @as(bun.FileDescriptor, @intCast(out));
+        return @as(bun.FD, @intCast(out));
     }
 };
 

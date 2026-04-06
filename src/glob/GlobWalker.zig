@@ -95,7 +95,7 @@ fn dummyFilterFalse(val: []const u8) bool {
     return false;
 }
 
-pub fn statatWindows(fd: bun.FileDescriptor, path: [:0]const u8) Maybe(bun.Stat) {
+pub fn statatWindows(fd: bun.FD, path: [:0]const u8) Maybe(bun.Stat) {
     if (comptime !bun.Environment.isWindows) @compileError("oi don't use this");
     var buf: bun.PathBuffer = undefined;
     const dir = switch (Syscall.getFdPath(fd, &buf)) {
@@ -114,7 +114,7 @@ pub const SyscallAccessor = struct {
     const count_fds = true;
 
     const Handle = struct {
-        value: bun.FileDescriptor,
+        value: bun.FD,
 
         const empty: Handle = .{ .value = .invalid };
 

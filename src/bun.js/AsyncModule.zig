@@ -10,7 +10,7 @@ pub const AsyncModule = struct {
     specifier: string = "",
     referrer: string = "",
     string_buf: []u8 = &[_]u8{},
-    fd: ?StoredFileDescriptorType = null,
+    fd: ?FD = null,
     package_json: ?*PackageJSON = null,
     loader: api.Loader,
     hash: u32 = std.math.maxInt(u32),
@@ -767,7 +767,7 @@ const bun = @import("bun");
 const Async = bun.Async;
 const Environment = bun.Environment;
 const Output = bun.Output;
-const StoredFileDescriptorType = bun.StoredFileDescriptorType;
+const FD = bun.FD;
 const String = bun.String;
 const logger = bun.logger;
 const strings = bun.strings;

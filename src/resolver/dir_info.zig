@@ -58,7 +58,7 @@ pub fn hasParentPackage(this: *const DirInfo) bool {
     return !parent.isNodeModules();
 }
 
-pub fn getFileDescriptor(dirinfo: *const DirInfo) StoredFileDescriptorType {
+pub fn getFileDescriptor(dirinfo: *const DirInfo) FD {
     if (FeatureFlags.store_file_descriptors)
         if (dirinfo.getEntries(0)) |entries|
             return entries.fd;
@@ -124,5 +124,5 @@ const TSConfigJSON = @import("./tsconfig_json.zig").TSConfigJSON;
 
 const bun = @import("bun");
 const FeatureFlags = bun.FeatureFlags;
-const StoredFileDescriptorType = bun.StoredFileDescriptorType;
+const FD = bun.FD;
 const allocators = bun.allocators;

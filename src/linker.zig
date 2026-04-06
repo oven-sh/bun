@@ -409,7 +409,7 @@ const ResolverType = Resolver.Resolver;
 
 const bun = @import("bun");
 const Environment = bun.Environment;
-const FileDescriptorType = bun.FileDescriptor;
+const FileDescriptorType = bun.FD;
 const allocators = bun.allocators;
 const jsc = bun.jsc;
 const logger = bun.logger;

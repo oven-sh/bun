@@ -459,6 +459,7 @@ import path from "path";
 
         expect(fs.existsSync(path.join(temp, "AGENTS.md"))).toBe(true);
         const cursorRulePath = path.join(temp, ".cursor/rules/use-bun-instead-of-node-vite-npm-pnpm.mdc");
+        expect(fs.existsSync(cursorRulePath)).toBe(true);
         const cursorStat = fs.lstatSync(cursorRulePath);
         expect(cursorStat.isSymbolicLink()).toBe(false);
         expect(cursorStat.isFile()).toBe(true);

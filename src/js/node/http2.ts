@@ -2474,6 +2474,11 @@ class ServerHttp2Stream extends Http2Stream {
 
     const parser = session[bunHTTP2Native];
     const streamId = parser.sendPushPromise(this.id, pushHeaders, {});
+    if (streamId === -2) {
+      // Stream ID space exhausted — push is still enabled, we just ran out of IDs.
+      process.nextTick(callback, $ERR_HTTP2_OUT_OF_STREAMS());
+      return;
+    }
     if (streamId < 0) {
       process.nextTick(callback, $ERR_HTTP2_PUSH_DISABLED());
       return;

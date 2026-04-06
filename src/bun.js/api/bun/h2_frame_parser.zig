@@ -675,6 +675,12 @@ pub const H2FrameParser = struct {
     outStandingPings: u64 = 0,
     maxSendHeaderBlockLength: u32 = 0,
     lastStreamID: u32 = 0,
+    // RFC 7540 Section 6.10: CONTINUATION frames after PUSH_PROMISE carry the
+    // parent stream identifier, but the header block belongs to the promised
+    // stream. Track the promised stream ID so the next CONTINUATION arriving
+    // on the parent stream can route its decoded headers to the promised stream.
+    // 0 means no pending PUSH_PROMISE continuation.
+    continuation_promised_stream_id: u32 = 0,
     isServer: bool = false,
     prefaceReceivedLen: u8 = 0,
     // we buffer requests until we get the first settings ACK
@@ -2315,6 +2321,32 @@ pub const H2FrameParser = struct {
             this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "Continuation without headers", this.lastStreamID, true);
             return data.len;
         }
+
+        // RFC 7540 Section 6.10: If this CONTINUATION follows a PUSH_PROMISE,
+        // the decoded header block belongs to the promised stream, not the
+        // parent stream that the CONTINUATION frame is addressed to.
+        if (this.continuation_promised_stream_id != 0) {
+            const promised_entry = this.streams.getEntry(this.continuation_promised_stream_id);
+            if (promised_entry) |entry| {
+                const promised_stream = entry.value_ptr;
+                if (handleIncommingPayload(this, data, frame.streamIdentifier)) |content| {
+                    const payload = content.data;
+                    this.readBuffer.reset();
+                    _ = (try this.decodeHeaderBlock(payload[0..payload.len], promised_stream, frame.flags)) orelse {
+                        return content.end;
+                    };
+                    if (frame.flags & @intFromEnum(HeadersFrameFlags.END_HEADERS) != 0) {
+                        stream.isWaitingMoreHeaders = false;
+                        this.continuation_promised_stream_id = 0;
+                    }
+                    return content.end;
+                }
+                return data.len;
+            }
+            // Promised stream vanished; fall through to normal handling.
+            this.continuation_promised_stream_id = 0;
+        }
+
         if (handleIncommingPayload(this, data, frame.streamIdentifier)) |content| {
             const payload = content.data;
             this.readBuffer.reset();
@@ -2351,7 +2383,7 @@ pub const H2FrameParser = struct {
     /// Format: [Pad Length (1)?] [R + Promised Stream ID (4)] [Header Block Fragment (*)] [Padding (*)]
     pub fn handlePushPromiseFrame(this: *H2FrameParser, frame: FrameHeader, data: []const u8, stream_: ?*Stream) bun.JSError!usize {
         log("handlePushPromiseFrame {s}", .{if (this.isServer) "server" else "client"});
-        _ = stream_ orelse {
+        const parent_stream = stream_ orelse {
             this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "PUSH_PROMISE on connection stream", this.lastStreamID, true);
             return data.len;
         };
@@ -2362,8 +2394,10 @@ pub const H2FrameParser = struct {
             return data.len;
         }
 
-        // Check if push is enabled in local settings
-        if (this.localSettings.enablePush == 0) {
+        // Check if push is enabled. Per RFC 7540 Section 6.5.3, settings take
+        // effect only after being acknowledged by the peer, so we can only
+        // reject PUSH_PROMISE once our SETTINGS frame has been ACKed.
+        if (this.outstandingSettings == 0 and this.localSettings.enablePush == 0) {
             this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "Push is disabled", this.lastStreamID, true);
             return data.len;
         }
@@ -2422,11 +2456,21 @@ pub const H2FrameParser = struct {
             promised_stream.state = .RESERVED_REMOTE;
 
             // Decode the header block on the promised stream
-            const result_stream = (try this.decodeHeaderBlock(payload[offset..end], promised_stream, frame.flags)) orelse {
+            _ = (try this.decodeHeaderBlock(payload[offset..end], promised_stream, frame.flags)) orelse {
                 return content.end;
             };
-            // Track incomplete header blocks for CONTINUATION frame reassembly
-            result_stream.isWaitingMoreHeaders = frame.flags & @intFromEnum(HeadersFrameFlags.END_HEADERS) == 0;
+
+            // CONTINUATION frames after PUSH_PROMISE are keyed by the parent
+            // stream's identifier (RFC 7540 Section 6.10). Mark the parent
+            // stream as waiting so that the dispatch in handleContinuationFrame
+            // does not treat them as orphaned. We also record the promised
+            // stream so continuation header blocks are routed to it.
+            if (frame.flags & @intFromEnum(HeadersFrameFlags.END_HEADERS) == 0) {
+                parent_stream.isWaitingMoreHeaders = true;
+                this.continuation_promised_stream_id = promised_stream_id;
+            } else {
+                this.continuation_promised_stream_id = 0;
+            }
 
             return content.end;
         }
@@ -4648,10 +4692,12 @@ pub const H2FrameParser = struct {
         var name_buffer: [4096]u8 = undefined;
         @memset(&name_buffer, 0);
 
-        // Allocate the promised stream ID (even-numbered for server push)
+        // Allocate the promised stream ID (even-numbered for server push).
+        // Return -2 to signal stream ID exhaustion (distinct from -1 = push disabled)
+        // so the JS layer can report ERR_HTTP2_OUT_OF_STREAMS.
         const promised_stream_id = this.getNextStreamID();
         if (promised_stream_id > MAX_STREAM_ID) {
-            return jsc.JSValue.jsNumber(-1);
+            return jsc.JSValue.jsNumber(-2);
         }
 
         // Encode headers - pseudo-headers first, then regular headers

@@ -790,7 +790,9 @@ it("should not crash when reading .fd on a TLS listener", () => {
     tls: { passphrase: "foo" },
     socket: { data() {} },
   });
-  expect(typeof listener.fd).toBe("number");
+  const fd = listener.fd;
+  expect(typeof fd).toBe("number");
+  expect(fd).not.toBe(-1);
 });
 
 it("should throw on empty hostname from truthy non-string value", () => {

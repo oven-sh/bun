@@ -675,6 +675,12 @@ pub const H2FrameParser = struct {
     outStandingPings: u64 = 0,
     maxSendHeaderBlockLength: u32 = 0,
     lastStreamID: u32 = 0,
+    // RFC 7540 Section 5.1.1: server push stream IDs (even) are a separate
+    // monotonically-increasing namespace from client-initiated (odd) IDs.
+    // Track them independently so push allocation never collides with nor
+    // pollutes lastStreamID (which is used for GOAWAY Last-Stream-ID and for
+    // allocating the next client-initiated stream).
+    lastPushStreamID: u32 = 0,
     // RFC 7540 Section 6.10: CONTINUATION frames after PUSH_PROMISE carry the
     // parent stream identifier, but the header block belongs to the promised
     // stream. Track the promised stream ID so the next CONTINUATION arriving
@@ -2359,17 +2365,17 @@ pub const H2FrameParser = struct {
                 }
                 return data.len;
             }
-            // Promised stream vanished before data arrived. Consume the
-            // fragment, clear waiting state on the parent, and move on —
-            // the header block can't be routed anywhere meaningful.
+            // Promised stream vanished before the CONTINUATION arrived.
+            // We can't decode the header block into that stream, and
+            // silently dropping the bytes would desynchronize HPACK's
+            // connection-wide dynamic table against the remote encoder,
+            // corrupting every subsequent header block. Treat this as a
+            // connection-level compression error.
             this.continuation_promised_stream_id = 0;
             if (this.streams.getPtr(frame.streamIdentifier)) |p| {
                 p.isWaitingMoreHeaders = false;
             }
-            if (handleIncommingPayload(this, data, frame.streamIdentifier)) |content| {
-                this.readBuffer.reset();
-                return content.end;
-            }
+            this.sendGoAway(frame.streamIdentifier, ErrorCode.COMPRESSION_ERROR, "PUSH_PROMISE CONTINUATION for gone stream", this.lastStreamID, true);
             return data.len;
         }
 
@@ -4736,7 +4742,13 @@ pub const H2FrameParser = struct {
         }
         const orig_stream_id: u32 = orig_stream_id_arg.to(u32);
 
-        // Verify original stream exists
+        // Verify original stream exists and is client-initiated (odd id).
+        // RFC 7540 Section 6.6: PUSH_PROMISE MUST only be sent on a
+        // peer-initiated stream. A server's peer is the client, so the
+        // parent id must be odd.
+        if (orig_stream_id % 2 != 1) {
+            return globalObject.throw("PUSH_PROMISE must be sent on a client-initiated (odd) stream", .{});
+        }
         _ = this.streams.getPtr(orig_stream_id) orelse {
             return globalObject.throw("Invalid original stream id", .{});
         };
@@ -4767,10 +4779,20 @@ pub const H2FrameParser = struct {
         var name_buffer: [4096]u8 = undefined;
         @memset(&name_buffer, 0);
 
-        // Allocate the promised stream ID (even-numbered for server push).
-        // Return -2 to signal stream ID exhaustion (distinct from -1 = push disabled)
-        // so the JS layer can report ERR_HTTP2_OUT_OF_STREAMS.
-        const promised_stream_id = this.getNextStreamID();
+        // Allocate the next even-numbered push stream ID from the dedicated
+        // push counter so successive PUSH_PROMISEs get monotonically
+        // increasing ids (RFC 7540 Section 5.1.1) without touching
+        // lastStreamID (which tracks client-initiated streams and feeds
+        // GOAWAY Last-Stream-ID per Section 6.8).
+        // Return -2 to signal stream ID exhaustion (distinct from -1 = push
+        // disabled) so the JS layer can report ERR_HTTP2_OUT_OF_STREAMS.
+        const promised_stream_id: u32 = blk: {
+            var id: u32 = if (this.lastPushStreamID == 0) 2 else this.lastPushStreamID + 2;
+            // In case a PUSH_PROMISE was previously accepted through another
+            // code path, don't collide with any even id already registered.
+            while (this.streams.getEntry(id) != null) : (id += 2) {}
+            break :blk id;
+        };
         if (promised_stream_id > MAX_STREAM_ID) {
             return jsc.JSValue.jsNumber(-2);
         }
@@ -4876,20 +4898,20 @@ pub const H2FrameParser = struct {
         const encoded_size = encoded_data.len;
 
         // Create the promised stream in RESERVED_LOCAL state.
-        // IMPORTANT: handleReceivedStreamID unconditionally advances
-        // this.lastStreamID to any id larger than its current value. For
-        // server push we allocate even ids, but lastStreamID tracks the
-        // highest *peer-initiated* stream the session has seen (used as
-        // the Last-Stream-ID field in GOAWAY per RFC 7540 Section 6.8). If we
-        // let push ids bump it, GOAWAY would falsely claim we processed
-        // client streams up to the push id, leading clients to silently
-        // drop in-flight odd-numbered streams. Save and restore around the
-        // call so only the new stream gets registered.
+        // handleReceivedStreamID advances this.lastStreamID to any id larger
+        // than the current value; on the server side that field tracks the
+        // highest client-initiated (odd) stream and feeds GOAWAY Last-Stream-ID
+        // per RFC 7540 Section 6.8. Save/restore it so an even push id never
+        // pollutes the client-stream accounting. We still advance
+        // lastPushStreamID below so the next sendPushPromise picks the next
+        // even id instead of re-using the same one.
         const saved_last_stream_id = this.lastStreamID;
         const promised_stream = this.handleReceivedStreamID(promised_stream_id) orelse {
+            this.lastStreamID = saved_last_stream_id;
             return jsc.JSValue.jsNumber(-1);
         };
         this.lastStreamID = saved_last_stream_id;
+        this.lastPushStreamID = promised_stream_id;
         promised_stream.state = .RESERVED_LOCAL;
 
         // Build and send PUSH_PROMISE frame

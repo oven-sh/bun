@@ -301,3 +301,18 @@ it("should not leak memory", async () => {
   await expectMaxObjectTypeCount(expect, "Listener", 2);
   await expectMaxObjectTypeCount(expect, "TCPSocket", isWindows ? 3 : 2);
 });
+
+it("listener.fd should not crash on TLS listen socket", () => {
+  using server = Bun.listen({
+    hostname: "localhost",
+    port: 0,
+    socket: {
+      data() {},
+    },
+    tls: {
+      passphrase: "test",
+    },
+  });
+  const fd = server.fd;
+  expect(typeof fd === "number" || typeof fd === "bigint").toBe(true);
+});

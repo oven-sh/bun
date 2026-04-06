@@ -783,6 +783,16 @@ it("should not leak memory when connect() fails again", async () => {
   await expectMaxObjectTypeCount(expect, "TCPSocket", 5, 50);
 });
 
+it("should not crash when reading .fd on a TLS listener", () => {
+  using listener = Bun.listen({
+    hostname: "localhost",
+    port: 0,
+    tls: { passphrase: "foo" },
+    socket: { data() {} },
+  });
+  expect(typeof listener.fd).toBe("number");
+});
+
 it("should throw on empty hostname from truthy non-string value", () => {
   const socket = { data() {}, open() {}, close() {} };
   // A truthy value whose toString() returns "" should throw, not crash

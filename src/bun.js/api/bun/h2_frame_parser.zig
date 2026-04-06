@@ -2383,10 +2383,14 @@ pub const H2FrameParser = struct {
     /// Format: [Pad Length (1)?] [R + Promised Stream ID (4)] [Header Block Fragment (*)] [Padding (*)]
     pub fn handlePushPromiseFrame(this: *H2FrameParser, frame: FrameHeader, data: []const u8, stream_: ?*Stream) bun.JSError!usize {
         log("handlePushPromiseFrame {s}", .{if (this.isServer) "server" else "client"});
-        const parent_stream = stream_ orelse {
+        // NOTE: Do NOT hold on to the parent_stream pointer — calling
+        // handleReceivedStreamID() below can grow the streams HashMap and
+        // invalidate it. We re-fetch by id when we need to write to the parent.
+        _ = stream_ orelse {
             this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "PUSH_PROMISE on connection stream", this.lastStreamID, true);
             return data.len;
         };
+        const parent_stream_id = frame.streamIdentifier;
 
         // Servers must not receive PUSH_PROMISE frames
         if (this.isServer) {
@@ -2465,8 +2469,13 @@ pub const H2FrameParser = struct {
             // stream as waiting so that the dispatch in handleContinuationFrame
             // does not treat them as orphaned. We also record the promised
             // stream so continuation header blocks are routed to it.
+            // Re-fetch the parent stream by id because handleReceivedStreamID
+            // above may have grown the HashMap and invalidated any prior
+            // pointer we held.
             if (frame.flags & @intFromEnum(HeadersFrameFlags.END_HEADERS) == 0) {
-                parent_stream.isWaitingMoreHeaders = true;
+                if (this.streams.getPtr(parent_stream_id)) |p| {
+                    p.isWaitingMoreHeaders = true;
+                }
                 this.continuation_promised_stream_id = promised_stream_id;
             } else {
                 this.continuation_promised_stream_id = 0;

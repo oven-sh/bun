@@ -16,10 +16,11 @@ test("expect does not crash when expect value has a Proxy in its prototype chain
     `,
     ],
     env: bunEnv,
+    stderr: "pipe",
     stdout: "pipe",
   });
 
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stdout).toBe("");
   expect(exitCode).toBe(0);

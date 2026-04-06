@@ -4,6 +4,10 @@ buffer: MutableString,
 
 mappings_count: usize = 0,
 
+/// Original identifier names referenced by source map mappings.
+/// Populated when minification renames identifiers.
+names: ?[]const []const u8 = null,
+
 /// This end state will be used to rewrite the start of the following source
 /// map chunk so that the delta-encoded VLQ numbers are preserved.
 end_state: SourceMapState = .{},
@@ -81,7 +85,14 @@ pub fn printSourceMapContentsAtOffset(
 
     try mutable.append("],\n  \"mappings\": ");
     try JSPrinter.quoteForJSON(chunk.buffer.list.items[offset..], mutable, ascii_only);
-    try mutable.append(", \"names\": []\n}");
+    try mutable.append(", \"names\": [");
+    if (chunk.names) |names| {
+        for (names, 0..) |name, i| {
+            if (i > 0) try mutable.append(",");
+            try JSPrinter.quoteForJSON(name, mutable, ascii_only);
+        }
+    }
+    try mutable.append("]\n}");
 }
 
 // TODO: remove the indirection by having generic functions for SourceMapFormat and NewBuilder. Source maps are always VLQ
@@ -183,6 +194,11 @@ pub fn NewBuilder(comptime SourceMapFormatType: type) type {
         prev_loc: Logger.Loc = Logger.Loc.Empty,
         has_prev_state: bool = false,
 
+        /// Accumulated original identifier names for the source map names array.
+        names_list: std.ArrayListUnmanaged([]const u8) = .{},
+        names_map: std.StringHashMapUnmanaged(i32) = .{},
+        names_allocator: std.mem.Allocator = bun.default_allocator,
+
         line_offset_table_byte_offset_list: []const u32 = &.{},
 
         // This is a workaround for a bug in the popular "source-map" library:
@@ -203,6 +219,15 @@ pub fn NewBuilder(comptime SourceMapFormatType: type) type {
 
         pub const SourceMapper = SourceMapFormat(SourceMapFormatType);
 
+        /// Register a name and return its deduplicated index.
+        pub fn addName(b: *ThisBuilder, name: []const u8) i32 {
+            if (b.names_map.get(name)) |idx| return idx;
+            const idx: i32 = @intCast(b.names_list.items.len);
+            b.names_list.append(b.names_allocator, name) catch return -1;
+            b.names_map.put(b.names_allocator, name, idx) catch return -1;
+            return idx;
+        }
+
         pub noinline fn generateChunk(b: *ThisBuilder, output: []const u8) Chunk {
             b.updateGeneratedLineAndColumn(output);
             var buffer = b.source_map.getBuffer();
@@ -211,13 +236,21 @@ pub fn NewBuilder(comptime SourceMapFormatType: type) type {
                 buffer.list.items[8..16].* = @as([8]u8, @bitCast(b.source_map.getCount()));
                 buffer.list.items[16..24].* = @as([8]u8, @bitCast(b.approximate_input_line_count));
             }
-            return Chunk{
+            const chunk = Chunk{
                 .buffer = b.source_map.takeBuffer(),
                 .mappings_count = b.source_map.getCount(),
                 .end_state = b.prev_state,
                 .final_generated_column = b.generated_column,
                 .should_ignore = b.source_map.shouldIgnore(),
+                .names = if (b.names_list.items.len > 0) b.names_list.items else null,
             };
+            // Transfer ownership: reset Builder's list so it won't free the
+            // backing memory when the Builder goes out of scope. The Chunk
+            // now owns the names slice. Also free the dedup map (build-time only).
+            b.names_list = .{};
+            b.names_map.deinit(b.names_allocator);
+            b.names_map = .{};
+            return chunk;
         }
 
         // Scan over the printed text since the last source mapping and update the
@@ -264,6 +297,7 @@ pub fn NewBuilder(comptime SourceMapFormatType: type) type {
                                 .source_index = b.prev_state.source_index,
                                 .original_line = b.prev_state.original_line,
                                 .original_column = b.prev_state.original_column,
+                                .name_index = b.prev_state.name_index,
                             });
                         }
 
@@ -339,6 +373,7 @@ pub fn NewBuilder(comptime SourceMapFormatType: type) type {
                     .source_index = b.prev_state.source_index,
                     .original_line = b.prev_state.original_line,
                     .original_column = b.prev_state.original_column,
+                    .name_index = b.prev_state.name_index,
                 });
             }
 
@@ -351,6 +386,54 @@ pub fn NewBuilder(comptime SourceMapFormatType: type) type {
             });
 
             // This line now has a mapping on it, so don't insert another one
+            b.line_starts_with_mapping = true;
+        }
+
+        /// Like addSourceMapping but also records the original identifier name.
+        /// Does NOT dedup on prev_loc when name_index >= 0 — a named mapping
+        /// at the same position overrides the prior unnamed mapping. Source map
+        /// consumers use the last mapping at any position.
+        pub fn addSourceMappingWithName(b: *ThisBuilder, loc: Logger.Loc, output: []const u8, name_index: i32) void {
+            if (loc.start == Logger.Loc.Empty.start)
+                return;
+            // Skip dedup only for unnamed calls; named calls override prior mapping
+            if (name_index < 0 and b.prev_loc.eql(loc))
+                return;
+
+            b.prev_loc = loc;
+            const list = b.line_offset_tables;
+            if (list.len == 0) return;
+
+            const original_line = LineOffsetTable.findLine(b.line_offset_table_byte_offset_list, loc);
+            const line = list.get(@as(usize, @intCast(@max(original_line, 0))));
+
+            var original_column = loc.start - @as(i32, @intCast(line.byte_offset_to_start_of_line));
+            if (line.columns_for_non_ascii.len > 0 and original_column >= @as(i32, @intCast(line.byte_offset_to_first_non_ascii))) {
+                original_column = line.columns_for_non_ascii.slice()[@as(u32, @intCast(original_column)) - line.byte_offset_to_first_non_ascii];
+            }
+
+            b.updateGeneratedLineAndColumn(output);
+
+            if (b.cover_lines_without_mappings and !b.line_starts_with_mapping and b.generated_column > 0 and b.has_prev_state) {
+                b.appendMappingWithoutRemapping(.{
+                    .generated_line = b.prev_state.generated_line,
+                    .generated_column = 0,
+                    .source_index = b.prev_state.source_index,
+                    .original_line = b.prev_state.original_line,
+                    .original_column = b.prev_state.original_column,
+                    .name_index = b.prev_state.name_index,
+                });
+            }
+
+            b.appendMapping(.{
+                .generated_line = b.prev_state.generated_line,
+                .generated_column = @max(b.generated_column, 0),
+                .source_index = b.prev_state.source_index,
+                .original_line = @max(original_line, 0),
+                .original_column = @max(original_column, 0),
+                .name_index = name_index,
+            });
+
             b.line_starts_with_mapping = true;
         }
     };

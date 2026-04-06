@@ -626,6 +626,10 @@ fn NewPrinter(
         prev_stmt_tag: Stmt.Tag = .s_empty,
         source_map_builder: SourceMap.Chunk.Builder = undefined,
 
+        /// Last location passed to addSourceMapping, used by printSymbol
+        /// to retroactively attach a name to the most recent mapping.
+        last_mapping_loc: logger.Loc = logger.Loc.Empty,
+
         symbol_counter: u32 = 0,
 
         temporary_bindings: std.ArrayListUnmanaged(B.Property) = .{},
@@ -1336,20 +1340,25 @@ fn NewPrinter(
             if (comptime !generate_source_map) {
                 return;
             }
+            printer.last_mapping_loc = location;
             printer.source_map_builder.addSourceMapping(location, printer.writer.slice());
         }
 
-        pub inline fn addSourceMappingForName(printer: *Printer, location: logger.Loc, _: string, _: Ref) void {
+        pub inline fn addSourceMappingForName(printer: *Printer, location: logger.Loc, name: string, ref: Ref) void {
             if (comptime !generate_source_map) {
                 return;
             }
-            // TODO: esbuild does this to make the source map more accurate with E.NameOfSymbol
-            // if (printer.symbols().get(printer.symbols().follow(ref))) |original_symbol| {
-            //     if (!bun.strings.eql( original_symbol.original_name, name)) {
-            //         printer.source_map_builder.addSourceMapping(location, originalName);
-            //         return;
-            //     }
-            // }
+            // Record original name when it differs from the minified name
+            const followed = printer.symbols().follow(ref);
+            if (printer.symbols().get(followed)) |symbol| {
+                if (symbol.original_name.len > 0 and !bun.strings.eql(symbol.original_name, name)) {
+                    const name_idx = printer.source_map_builder.addName(symbol.original_name);
+                    if (name_idx >= 0) {
+                        printer.source_map_builder.addSourceMappingWithName(location, printer.writer.slice(), name_idx);
+                        return;
+                    }
+                }
+            }
             printer.addSourceMapping(location);
         }
 
@@ -1357,8 +1366,21 @@ fn NewPrinter(
             bun.assert(!ref.isNull()); // Invalid Symbol
             const name = p.renamer.nameForSymbol(ref);
 
+            // Record original name in source map when it differs from minified
+            if (comptime generate_source_map) {
+                if (p.symbols().get(p.symbols().follow(ref))) |symbol| {
+                    if (symbol.original_name.len > 0 and !bun.strings.eql(symbol.original_name, name)) {
+                        const name_idx = p.source_map_builder.addName(symbol.original_name);
+                        if (name_idx >= 0 and p.last_mapping_loc.start != logger.Loc.Empty.start) {
+                            p.source_map_builder.addSourceMappingWithName(p.last_mapping_loc, p.writer.slice(), name_idx);
+                        }
+                    }
+                }
+            }
+
             p.printIdentifier(name);
         }
+
         pub fn printClauseAlias(p: *Printer, alias: string) void {
             bun.assert(alias.len > 0);
 
@@ -3819,8 +3841,8 @@ fn NewPrinter(
                         p.printSpaceBeforeIdentifier();
                     }
 
-                    p.addSourceMapping(name.loc);
                     const local_name = p.renamer.nameForSymbol(nameRef);
+                    p.addSourceMappingForName(name.loc, local_name, nameRef);
                     p.printIdentifier(local_name);
                     p.printFunc(s.func);
 
@@ -3859,8 +3881,8 @@ fn NewPrinter(
                     }
 
                     p.print("class ");
-                    p.addSourceMapping(s.class.class_name.?.loc);
                     const nameStr = p.renamer.nameForSymbol(nameRef);
+                    p.addSourceMappingForName(s.class.class_name.?.loc, nameStr, nameRef);
                     p.printIdentifier(nameStr);
                     p.printClass(s.class);
 

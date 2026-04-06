@@ -1,5 +1,5 @@
-import { expect, test } from "bun:test";
 import { repositoryUrl } from "bun:internal-for-testing";
+import { expect, test } from "bun:test";
 
 // https://github.com/oven-sh/bun/issues/28897
 //
@@ -25,9 +25,7 @@ test("ssh:// URL with explicit port is not rewritten by trySSH", () => {
   );
   expect(repositoryUrl.trySSH("ssh://user@host:22/path/repo.git")).toBe("ssh://user@host:22/path/repo.git");
   // With a committish
-  expect(repositoryUrl.trySSH("ssh://git@host:9999/user/repo.git#main")).toBe(
-    "ssh://git@host:9999/user/repo.git#main",
-  );
+  expect(repositoryUrl.trySSH("ssh://git@host:9999/user/repo.git#main")).toBe("ssh://git@host:9999/user/repo.git#main");
 });
 
 test("ssh:// URL with explicit port skips the HTTPS attempt", () => {

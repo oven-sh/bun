@@ -1112,7 +1112,23 @@ const Template = enum {
         //         with the full YAML frontmatter intact. Cursor uses the
         //         `globs` field to decide when the rule activates; symlinking
         //         to `AGENTS.md` would strip that and break rule activation.
+        //
+        // Recover from a dangling cursor-rule symlink for the same reason as
+        // `CLAUDE.md` above: older versions of `bun init` symlinked
+        // `.cursor/rules/*.mdc -> ../../CLAUDE.md`, and if the user later
+        // deleted `CLAUDE.md` the link is now dangling. `existsZ` follows
+        // symlinks and reports the broken link as missing, but the dirent is
+        // still there — so `createNew` hits EEXIST and silently drops the
+        // cursor rule forever. `lstat` does not follow symlinks; lstat
+        // success + `existsZ` failure unambiguously means "dangling symlink".
         if (Template.getCursorRule()) |template_file| {
+            if (comptime !Environment.isWindows) {
+                if (bun.sys.lstat(template_file.path).unwrap()) |st| {
+                    if (!bun.sys.existsZ(template_file.path) and (st.mode & bun.S.IFMT) == bun.S.IFLNK) {
+                        _ = bun.sys.unlink(template_file.path);
+                    }
+                } else |_| {}
+            }
             if (bun.sys.existsZ(template_file.path)) return;
             bun.makePath(bun.FD.cwd().stdDir(), ".cursor/rules") catch {};
             InitCommand.Assets.createNew(template_file.path, template_file.contents) catch {};

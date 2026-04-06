@@ -77,10 +77,10 @@ import path from "path";
   }, 30_000);
 
   // These snapshot tests compare `readdirSync` against an inline list that
-  // does not include any agent rule files, so they have to run with
-  // Claude/Cursor detection disabled — otherwise a developer with Cursor
-  // installed (or `claude` on $PATH) would see `.cursor/` or `CLAUDE.md`
-  // sneak into the listing.
+  // includes `AGENTS.md` (always written) but excludes `CLAUDE.md` and
+  // `.cursor/`, so they have to run with Claude/Cursor detection disabled —
+  // otherwise a developer with Cursor installed (or `claude` on $PATH) would
+  // see `.cursor/` or `CLAUDE.md` sneak into the listing.
   const noAgentRulesEnv = {
     ...bunEnv,
     CLAUDE_CODE_AGENT_RULE_DISABLED: "1",
@@ -637,15 +637,23 @@ import path from "path";
       },
     );
 
-    test.skipIf(isWindows)("dangling CLAUDE.md symlink recovers on next init", async () => {
+    test.skipIf(isWindows)("dangling CLAUDE.md symlink is unlinked before re-create", async () => {
       // Regression: a previous `bun init` left `CLAUDE.md` as a symlink to
-      // `AGENTS.md`. The user then deleted `AGENTS.md`, so `CLAUDE.md` is
-      // now a dangling link. A fresh `bun init` must notice the broken
-      // link, unlink it, and re-create both files — otherwise both
-      // `symlinkat()` and `createNew()` hit EEXIST and the link stays dead.
-      const temp = tempDirWithFiles("bun-init-agents-dangling", {});
-      // Pre-stage a dangling `CLAUDE.md` symlink pointing at a non-existent
-      // `AGENTS.md`.
+      // `AGENTS.md`, the user then deleted `AGENTS.md`, so `CLAUDE.md` is
+      // now dangling. On the next `bun init`, `createNew` / `symlinkat`
+      // would hit EEXIST on the stale dirent and the link would stay dead.
+      // The lstat+unlink recovery must fire first.
+      //
+      // We force the test to actually exercise the recovery code by setting
+      // `BUN_AGENTS_MD_DISABLED=1`. Without that flag, Step 1 of
+      // `createAgentRule` would recreate `AGENTS.md` first, which passively
+      // heals the symlink so `!exists("CLAUDE.md")` is false and the
+      // unlink at the top of Step 2 never runs. With the flag set,
+      // `agents_md_available` stays false, the symlink remains dangling
+      // when Step 2 inspects it, and we fall through to the real-file
+      // CLAUDE.md write — which only succeeds if the stale dirent was
+      // actually unlinked first.
+      const temp = tempDirWithFiles("bun-init-agents-dangling-claude", {});
       fs.symlinkSync("AGENTS.md", path.join(temp, "CLAUDE.md"));
       expect(fs.lstatSync(path.join(temp, "CLAUDE.md")).isSymbolicLink()).toBe(true);
       expect(fs.existsSync(path.join(temp, "AGENTS.md"))).toBe(false);
@@ -657,22 +665,67 @@ import path from "path";
         env: {
           ...bunEnv,
           ...claudeEnv(temp, true),
+          BUN_AGENTS_MD_DISABLED: "1",
           CURSOR_AGENT_RULE_DISABLED: "1",
         },
       });
       const exitCode = await proc.exited;
 
-      // `AGENTS.md` was (re)created, and `CLAUDE.md` is a fresh symlink
-      // pointing at it — no longer dangling.
-      expect(fs.existsSync(path.join(temp, "AGENTS.md"))).toBe(true);
+      // `AGENTS.md` stays absent (disabled). `CLAUDE.md` is now a real
+      // file with the trimmed rule body — the dangling symlink was
+      // successfully unlinked and replaced.
+      expect(fs.existsSync(path.join(temp, "AGENTS.md"))).toBe(false);
       expect(fs.existsSync(path.join(temp, "CLAUDE.md"))).toBe(true);
-      expect(fs.lstatSync(path.join(temp, "CLAUDE.md")).isSymbolicLink()).toBe(true);
-      expect(fs.readlinkSync(path.join(temp, "CLAUDE.md"))).toBe("AGENTS.md");
-      expect(fs.readFileSync(path.join(temp, "CLAUDE.md"), "utf8")).toBe(
-        fs.readFileSync(path.join(temp, "AGENTS.md"), "utf8"),
+      const claudeStat = fs.lstatSync(path.join(temp, "CLAUDE.md"));
+      expect(claudeStat.isSymbolicLink()).toBe(false);
+      expect(claudeStat.isFile()).toBe(true);
+      expect(fs.readFileSync(path.join(temp, "CLAUDE.md"), "utf8").trimStart()).toStartWith(
+        AGENTS_MD_BODY_FIRST_LINE,
       );
       expect(exitCode).toBe(0);
     });
+
+    test.skipIf(isWindows)(
+      "dangling .cursor/rules/*.mdc symlink is unlinked before re-create",
+      async () => {
+        // Regression: older versions of `bun init` symlinked the cursor
+        // rule to `../../CLAUDE.md`. If the user later deleted `CLAUDE.md`
+        // the rule became a dangling link, and the subsequent `createNew`
+        // would silently drop the cursor rule forever. Mirrors the
+        // CLAUDE.md recovery above.
+        const temp = tempDirWithFiles("bun-init-agents-dangling-cursor", {});
+        const cursorRulePath = path.join(temp, ".cursor/rules/use-bun-instead-of-node-vite-npm-pnpm.mdc");
+        fs.mkdirSync(path.join(temp, ".cursor/rules"), { recursive: true });
+        // Pre-stage the old-style dangling symlink.
+        fs.symlinkSync("../../CLAUDE.md", cursorRulePath);
+        expect(fs.lstatSync(cursorRulePath).isSymbolicLink()).toBe(true);
+        expect(fs.existsSync(cursorRulePath)).toBe(false);
+
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "init", "-y"],
+          cwd: temp,
+          stdio: ["ignore", "pipe", "pipe"],
+          env: {
+            ...bunEnv,
+            ...claudeEnv(temp, false),
+            CLAUDE_CODE_AGENT_RULE_DISABLED: "1",
+            CURSOR_TRACE_ID: "test-trace-id",
+          },
+        });
+        const exitCode = await proc.exited;
+
+        // The cursor rule is now a real file with its full YAML
+        // frontmatter. The dangling symlink was unlinked and replaced.
+        expect(fs.existsSync(cursorRulePath)).toBe(true);
+        const cursorStat = fs.lstatSync(cursorRulePath);
+        expect(cursorStat.isSymbolicLink()).toBe(false);
+        expect(cursorStat.isFile()).toBe(true);
+        const cursorContents = fs.readFileSync(cursorRulePath, "utf8");
+        expect(cursorContents).toInclude(FRONTMATTER_LINE);
+        expect(cursorContents).toInclude("globs:");
+        expect(exitCode).toBe(0);
+      },
+    );
 
     test("BUN_AGENT_RULE_DISABLED=1: master kill switch — no agent files at all", async () => {
       const temp = tempDirWithFiles("bun-init-agents-master-off", {});

@@ -3,9 +3,7 @@
  * for local mode. Override via `--webkit-version=<hash>` to test a branch.
  * From https://github.com/oven-sh/WebKit releases.
  */
-// oven-sh/WebKit#179 — Fix UB in IntegralTypedArrayAdaptor::toNativeFromDouble()
-// (required for oven-sh/bun#28607 — scrypt non-determinism on Clang 22 builds).
-export const WEBKIT_VERSION = "preview-pr-179-3f10db79";
+export const WEBKIT_VERSION = "c2010c47d12c525d36adabe3a17b2eb6ec850960";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine.

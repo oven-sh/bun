@@ -121,4 +121,26 @@ describe("dns", () => {
     expect(result.length).toBeGreaterThan(0);
     expect(isIP(result[0].address)).toBeGreaterThan(0);
   });
+
+  describe("setServers", () => {
+    test("triple with non-int32 family (double) should not crash", () => {
+      // @ts-expect-error
+      expect(() => dns.setServers([[-9007199254740991, "8.8.8.8", 53]])).toThrow();
+    });
+
+    test("triple with missing port (undefined) should not crash", () => {
+      // undefined port coerces to 0, which is a valid int32
+      // @ts-expect-error
+      expect(() => dns.setServers([[4, "8.8.8.8"]])).not.toThrow();
+    });
+
+    test("triple with missing family (undefined) should not crash", () => {
+      // @ts-expect-error
+      expect(() => dns.setServers([["8.8.8.8"]])).toThrow();
+    });
+
+    test("valid triple should succeed", () => {
+      expect(() => dns.setServers([[4, "8.8.8.8", 53]])).not.toThrow();
+    });
+  });
 });

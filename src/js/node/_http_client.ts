@@ -372,7 +372,7 @@ function ClientRequest(input, options, cb) {
         this.emit("close");
         if (!isUpgradedSocket) this.socket?.emit?.("close");
       }
-      if (!res.aborted && res.readable) {
+      if (!res.aborted && res.readable && !res.complete) {
         res.push(null);
       }
     } else if (!this._closed) {
@@ -558,12 +558,8 @@ function ClientRequest(input, options, cb) {
             // Drain kBodyChunks — happy-eyeballs retries are impossible now
             // and leaving the pre-upgrade chunks there would trip the
             // fake-backpressure counter on subsequent req.write() calls.
-            if (this[kBodyChunks] && this[kBodyChunks].length > 0) {
-              this[kBodyChunks].length = 0;
-              // Unblock any caller that paused after write_() returned false
-              // due to cumulative chunk bytes crossing MAX_FAKE_BACKPRESSURE_SIZE.
-              this.emit("drain");
-            }
+            const shouldDrain = this[kBodyChunks] && this[kBodyChunks].length > 0;
+            if (shouldDrain) this[kBodyChunks].length = 0;
             const prevIsHTTPS = getIsNextIncomingMessageHTTPS();
             setIsNextIncomingMessageHTTPS(response.url.startsWith("https:"));
             const res = (this.res = new IncomingMessage(response, {
@@ -603,7 +599,8 @@ function ClientRequest(input, options, cb) {
             } else {
               // Emit outside the fetch promise chain so listener exceptions
               // aren't converted into promise rejections that would trigger
-              // spurious happy-eyeballs retries.
+              // spurious happy-eyeballs retries. The 'drain' emit (if any) is
+              // deferred the same way for the same reason.
               process.nextTick(() => {
                 // If the request was destroyed while waiting for this tick,
                 // 'close' already fired on the ClientRequest — don't then
@@ -614,6 +611,9 @@ function ClientRequest(input, options, cb) {
                   return;
                 }
                 try {
+                  // Unblock callers that paused after write_() returned false
+                  // from the fake-backpressure threshold.
+                  if (shouldDrain) this.emit("drain");
                   this.emit("upgrade", res, socket, kEmptyBuffer);
                 } finally {
                   // ClientRequest emits 'close' after a successful upgrade.

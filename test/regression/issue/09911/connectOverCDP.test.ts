@@ -66,7 +66,9 @@ describe.todoIf(!chromePath || isWindows)("playwright connectOverCDP via Chrome"
         env: bunEnv,
         cwd: String(dir),
         stdout: "ignore",
-        stderr: "pipe",
+        // ignore instead of pipe so large install output can't deadlock on a
+        // full pipe buffer while we await exited.
+        stderr: "ignore",
       });
       expect(await install.exited).toBe(0);
 

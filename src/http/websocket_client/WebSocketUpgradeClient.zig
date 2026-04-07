@@ -528,16 +528,6 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 body = this.body.items;
             }
 
-            const is_first = this.body.items.len == 0;
-            const http_101 = "HTTP/1.1 101 ";
-            if (is_first and body.len > http_101.len) {
-                // fail early if we receive a non-101 status code
-                if (!strings.hasPrefixComptime(body, http_101)) {
-                    this.terminate(ErrorCode.expected_101_status_code);
-                    return;
-                }
-            }
-
             const response = PicoHTTP.Response.parse(body, &this.headers_buf) catch |err| {
                 switch (err) {
                     error.Malformed_HTTP_Response => {
@@ -553,7 +543,36 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 }
             };
 
-            this.processResponse(response, body[@as(usize, @intCast(response.bytes_read))..]);
+            this.processWebSocketUpgradeResponse(response, body);
+        }
+
+        // Shared between the plain-TCP and proxy-tunnel paths. The 'handshake'
+        // event dispatch is synchronous — JS code in the handler can tear us
+        // down (ws.close() → cancel() → clearData()), which frees `this.body`
+        // out from under us. The `response` struct and `body` slice would
+        // then dangle before processResponse reads them. Copy `body` to a
+        // stable buffer, re-parse, and use the copy for processResponse so
+        // the dispatch is safe regardless of what JS does.
+        fn processWebSocketUpgradeResponse(this: *HTTPClient, response: PicoHTTP.Response, body: []const u8) void {
+            const head_len: usize = @intCast(response.bytes_read);
+            const status_code = std.math.cast(u16, response.status_code) orelse 0;
+            if (this.outgoing_websocket) |ws| {
+                const body_copy = bun.default_allocator.dupe(u8, body) catch {
+                    this.terminate(ErrorCode.failed_to_allocate_memory);
+                    return;
+                };
+                defer bun.default_allocator.free(body_copy);
+
+                ws.didReceiveHandshakeResponse(status_code, body_copy[0..head_len], body_copy[head_len..]);
+                if (this.outgoing_websocket == null) return;
+
+                // Re-parse from the stable copy so response.headers.list points
+                // at memory that outlives the dispatch.
+                const fresh = PicoHTTP.Response.parse(body_copy, &this.headers_buf) catch unreachable;
+                this.processResponse(fresh, body_copy[head_len..]);
+                return;
+            }
+            this.processResponse(response, body[head_len..]);
         }
 
         fn handleProxyResponse(this: *HTTPClient, socket: Socket, data: []const u8) void {
@@ -729,21 +748,17 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
         pub fn handleDecryptedData(this: *HTTPClient, data: []const u8) void {
             log("handleDecryptedData: {} bytes", .{data.len});
 
+            // Keep `this` alive through the synchronous JS dispatch in
+            // processWebSocketUpgradeResponse — JS may drop the last ref on
+            // us during that call (ws.close()).
+            this.ref();
+            defer this.deref();
+
             // Process as if it came directly from the socket
             var body = data;
             if (this.body.items.len > 0) {
                 bun.handleOom(this.body.appendSlice(bun.default_allocator, data));
                 body = this.body.items;
-            }
-
-            const is_first = this.body.items.len == 0;
-            const http_101 = "HTTP/1.1 101 ";
-            if (is_first and body.len > http_101.len) {
-                // fail early if we receive a non-101 status code
-                if (!strings.hasPrefixComptime(body, http_101)) {
-                    this.terminate(ErrorCode.expected_101_status_code);
-                    return;
-                }
             }
 
             const response = PicoHTTP.Response.parse(body, &this.headers_buf) catch |err| {
@@ -761,7 +776,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 }
             };
 
-            this.processResponse(response, body[@as(usize, @intCast(response.bytes_read))..]);
+            this.processWebSocketUpgradeResponse(response, body);
         }
 
         pub fn handleEnd(this: *HTTPClient, _: Socket) void {

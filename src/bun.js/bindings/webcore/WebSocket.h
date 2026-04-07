@@ -156,6 +156,7 @@ public:
     void didReceiveMessage(String&& message);
     void didReceiveData(const char* data, size_t length);
     void didReceiveBinaryData(const AtomString& eventName, const std::span<const uint8_t> binaryData);
+    void didReceiveHandshakeResponse(uint16_t statusCode, std::span<const uint8_t> head, std::span<const uint8_t> body);
 
     void updateHasPendingActivity();
     bool hasPendingActivity() const

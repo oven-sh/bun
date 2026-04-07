@@ -164,6 +164,9 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 }
             }
 
+            // buildRequestBody only returns Allocator.Error; crash on OOM per
+            // the contract, consistent with the other allocator-only catches
+            // in this function.
             const request_result = buildRequestBody(
                 vm,
                 pathname_slice.slice(),
@@ -173,7 +176,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 client_protocol_slice.slice(),
                 extra_headers,
                 if (target_authorization_slice) |s| s.slice() else null,
-            ) catch return null;
+            ) catch |err| bun.handleOom(err);
             const body = request_result.body;
 
             // Build proxy state if using proxy

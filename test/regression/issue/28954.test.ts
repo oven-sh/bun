@@ -39,22 +39,23 @@ test("Bun.serve receives MKADDRESSBOOK from a raw TCP request", async () => {
   // Write a raw HTTP request so the server-side method parser runs
   // independent of fetch()'s client-side method validation.
   const socket = connect(server.port, "127.0.0.1");
-  const { promise: connected, resolve: resolveConnect, reject: rejectConnect } = Promise.withResolvers<void>();
-  socket.once("connect", () => resolveConnect());
-  socket.once("error", rejectConnect);
-  await connected;
+  try {
+    const { promise: connected, resolve: resolveConnect, reject: rejectConnect } = Promise.withResolvers<void>();
+    socket.once("connect", () => resolveConnect());
+    socket.once("error", rejectConnect);
+    await connected;
 
-  // If the regression reappears the server drops the connection without ever
-  // calling fetch(), so wire the socket's post-connect lifecycle events to
-  // reject the method-observation promise — this fails fast instead of hanging
-  // on the global test timeout.
-  socket.once("error", reject);
-  socket.once("close", () => reject(new Error("server closed connection without invoking fetch handler")));
+    // Any post-connect socket error rejects the method-observation promise so
+    // we don't hang if something goes wrong on the wire. We deliberately don't
+    // hook `close` here — in the happy path the server replies and closes the
+    // keep-alive socket, which would race the fetch-handler resolve.
+    socket.once("error", reject);
+    socket.write(`MKADDRESSBOOK / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 0\r\n\r\n`);
 
-  socket.write(`MKADDRESSBOOK / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 0\r\n\r\n`);
-
-  // Wait for the server handler to observe the method, then tear the socket down.
-  const method = await promise;
-  socket.destroy();
-  expect(method).toBe("MKADDRESSBOOK");
+    // Wait for the server handler to observe the method.
+    const method = await promise;
+    expect(method).toBe("MKADDRESSBOOK");
+  } finally {
+    socket.destroy();
+  }
 });

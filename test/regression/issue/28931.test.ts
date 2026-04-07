@@ -110,6 +110,10 @@ describe.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
       ],
       { GNUPGHOME: gpgHome },
     );
+    // stderr first so an export failure (missing key, pinentry error,
+    // corrupt keyring) surfaces the real gpg message instead of a bare
+    // "expected 1 to equal 0".
+    expect(exp.stderr + exp.stdout).not.toContain("error");
     expect(exp.exitCode).toBe(0);
     gpgPrivateKey = exp.stdout;
     expect(gpgPrivateKey).toContain("-----BEGIN PGP PRIVATE KEY BLOCK-----");
@@ -309,10 +313,16 @@ describe.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
     expect(existsSync(join(dirStr, "SHASUMS256.txt.asc"))).toBe(false);
   });
 
-  test("full canary artifact set round-trips through validate-digests.ts checks", () => {
-    // End-to-end repro of the issue: running the helper over the
-    // canary archive list yields a manifest whose hashes match the real
-    // file bytes, so the user's validator script would pass.
+  test("representative archive set round-trips through validate-digests.ts checks", () => {
+    // End-to-end repro of the issue: running the helper over a set of
+    // canary-shaped archive basenames yields a manifest whose hashes
+    // match the real file bytes, so the user's validator script would
+    // pass. The authoritative list of canary targets lives in
+    // .buildkite/scripts/upload-release.sh; we don't mirror it here
+    // because the helper is agnostic to the specific archive names and
+    // parsing the shell array at test time would just create a new
+    // fragile coupling. Five cross-OS basenames are enough to exercise
+    // sorting, binary-mode separator, and the full round-trip.
     using dir = tempDir("bun-28931-e2e-", {
       "bun-linux-x64.zip": "linux",
       "bun-linux-aarch64.zip": "linux-aarch64",

@@ -165,16 +165,16 @@ pub const NativeSpan = struct {
         return bun.handleOom(self.alloc().dupe(u8, s));
     }
 
-    pub fn setAttrStatic(self: *NativeSpan, key: []const u8, value: []const u8) void {
-        bun.handleOom(self.attrs.append(self.alloc(), .{ .key = key, .value = .{ .string = value } }));
+    pub fn setAttrStatic(self: *NativeSpan, key: attrs.SemconvKey, value: []const u8) void {
+        bun.handleOom(self.attrs.append(self.alloc(), .semconv(key, .string(value))));
     }
 
-    pub fn setAttrStr(self: *NativeSpan, key: []const u8, value: []const u8) void {
-        bun.handleOom(self.attrs.append(self.alloc(), .{ .key = key, .value = .{ .string = self.dupe(value) } }));
+    pub fn setAttrStr(self: *NativeSpan, key: attrs.SemconvKey, value: []const u8) void {
+        bun.handleOom(self.attrs.append(self.alloc(), .semconv(key, .string(self.dupe(value)))));
     }
 
-    pub fn setAttrInt(self: *NativeSpan, key: []const u8, value: i64) void {
-        bun.handleOom(self.attrs.append(self.alloc(), .{ .key = key, .value = .{ .int = value } }));
+    pub fn setAttrInt(self: *NativeSpan, key: attrs.SemconvKey, value: i64) void {
+        bun.handleOom(self.attrs.append(self.alloc(), .semconv(key, .int(value))));
     }
 
     pub fn setStatus(self: *NativeSpan, code: model.StatusCode, message: []const u8) void {
@@ -193,16 +193,10 @@ pub const NativeSpan = struct {
             .kind = self.kind,
             .start_time_unix_nano = self.start_ns,
             .end_time_unix_nano = tracer.nowUnixNanos(),
-            .attributes = self.attrs.items,
+            .attributes = .from(self.attrs.items),
             .status = self.status,
         };
         self.provider.processor.onEnd(at_rest, self.provider.getOrCreateScope(self.scope.name()));
-        self.arena.deinit();
-        bun.destroy(self);
-    }
-
-    /// Discard without recording.
-    pub fn abandon(self: *NativeSpan) void {
         self.arena.deinit();
         bun.destroy(self);
     }
@@ -220,4 +214,5 @@ const JSGlobalObject = jsc.JSGlobalObject;
 
 const model = @import("./span.zig");
 const tracer = @import("./tracer.zig");
-const Attribute = @import("./attributes.zig").Attribute;
+const attrs = @import("./attributes.zig");
+const Attribute = attrs.Attribute;

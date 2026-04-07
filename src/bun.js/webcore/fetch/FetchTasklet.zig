@@ -976,7 +976,7 @@ pub const FetchTasklet = struct {
         this.is_waiting_body = this.result.has_more;
         if (this.otel_span) |span| {
             this.otel_span = null;
-            span.setAttrInt("http.response.status_code", @intCast(http_response.status_code));
+            span.setAttrInt(.@"http.response.status_code", @intCast(http_response.status_code));
             span.end();
         }
         return Response.init(
@@ -1149,9 +1149,9 @@ pub const FetchTasklet = struct {
         if (bun.otel.TracerProvider.get(jsc_vm) != null) {
             const parent = bun.otel.instrument.getActiveSpanContext(globalThis);
             if (bun.otel.NativeSpan.start(jsc_vm, .fetch, .client, @tagName(fetch_options.method), parent)) |span| {
-                span.setAttrStatic("http.request.method", @tagName(fetch_options.method));
-                span.setAttrStr("server.address", url.hostname);
-                span.setAttrStr("url.full", url.href);
+                span.setAttrStatic(.@"http.request.method", @tagName(fetch_options.method));
+                span.setAttrStr(.@"server.address", url.hostname);
+                span.setAttrStr(.@"url.full", url.href);
                 fetch_tasklet.otel_span = span;
                 var tp_buf: [bun.otel.propagation.traceparent_len]u8 = undefined;
                 bun.otel.propagation.formatTraceparent(span.ctx, &tp_buf);

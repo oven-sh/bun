@@ -42,7 +42,7 @@ pub const Status = struct {
 pub const Event = struct {
     time_unix_nano: u64,
     name: []const u8,
-    attributes: []const Attribute = attrs.empty,
+    attributes: attrs.AttrList = .{},
     dropped_attributes_count: u32 = 0,
 };
 
@@ -50,7 +50,7 @@ pub const Link = struct {
     trace_id: TraceId,
     span_id: SpanId,
     trace_state: []const u8 = "",
-    attributes: []const Attribute = attrs.empty,
+    attributes: attrs.AttrList = .{},
     dropped_attributes_count: u32 = 0,
     flags: u32 = 0,
 };
@@ -65,7 +65,7 @@ pub const Span = struct {
     kind: SpanKind = .internal,
     start_time_unix_nano: u64 = 0,
     end_time_unix_nano: u64 = 0,
-    attributes: []const Attribute = attrs.empty,
+    attributes: attrs.AttrList = .{},
     dropped_attributes_count: u32 = 0,
     events: []const Event = &.{},
     dropped_events_count: u32 = 0,
@@ -77,12 +77,12 @@ pub const Span = struct {
 pub const InstrumentationScope = struct {
     name: []const u8 = "",
     version: []const u8 = "",
-    attributes: []const Attribute = attrs.empty,
+    attributes: attrs.AttrList = .{},
     dropped_attributes_count: u32 = 0,
 };
 
 pub const Resource = struct {
-    attributes: []const Attribute = attrs.empty,
+    attributes: attrs.AttrList = .{},
     dropped_attributes_count: u32 = 0,
 };
 
@@ -100,4 +100,3 @@ pub const ResourceSpans = struct {
 
 const std = @import("std");
 const attrs = @import("./attributes.zig");
-const Attribute = attrs.Attribute;

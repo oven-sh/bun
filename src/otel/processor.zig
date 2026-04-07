@@ -232,25 +232,12 @@ const Batch = struct {
         return bun.handleOom(self.alloc().dupe(u8, s));
     }
 
-    fn cloneAttrs(self: *Batch, src: []const Attribute) []const Attribute {
-        if (src.len == 0) return &.{};
-        const dst = bun.handleOom(self.alloc().alloc(Attribute, src.len));
-        for (src, dst) |a, *d| d.* = .{ .key = self.dupeStr(a.key), .value = self.cloneAny(a.value) };
-        return dst;
-    }
-
-    fn cloneAny(self: *Batch, v: AnyValue) AnyValue {
-        return switch (v) {
-            .string => |s| .{ .string = self.dupeStr(s) },
-            .bytes => |b| .{ .bytes = self.dupeStr(b) },
-            .array => |arr| blk: {
-                const dst = bun.handleOom(self.alloc().alloc(AnyValue, arr.len));
-                for (arr, dst) |a, *d| d.* = self.cloneAny(a);
-                break :blk .{ .array = dst };
-            },
-            .kvlist => |kv| .{ .kvlist = self.cloneAttrs(kv) },
-            else => v,
-        };
+    fn cloneAttrs(self: *Batch, src: attributes.AttrList) attributes.AttrList {
+        const slice = src.slice();
+        if (slice.len == 0) return .{};
+        const dst = bun.handleOom(self.alloc().alloc(Attribute, slice.len));
+        for (slice, dst) |a, *d| d.* = a.cloneInto(self.alloc());
+        return attributes.AttrList.from(dst);
     }
 
     fn cloneEvents(self: *Batch, src: []const model.Event) []const model.Event {
@@ -288,5 +275,4 @@ const model = @import("./span.zig");
 const attributes = @import("./attributes.zig");
 const encode = @import("./otlp/encode.zig");
 const Attribute = attributes.Attribute;
-const AnyValue = attributes.AnyValue;
 const TracerProvider = @import("./tracer.zig").TracerProvider;

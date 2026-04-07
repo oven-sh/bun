@@ -101,23 +101,16 @@ pub const TracerProvider = struct {
 
     fn buildResource(self: *TracerProvider, extra: []const Attribute) !void {
         // service.name defaults to argv[0] basename via bun later; for now use "unknown_service:bun".
-        try self.appendResourceAttr("service.name", .{ .string = "unknown_service:bun" });
-        try self.appendResourceAttr("telemetry.sdk.name", .{ .string = "bun" });
-        try self.appendResourceAttr("telemetry.sdk.language", .{ .string = "zig" });
-        try self.appendResourceAttr("telemetry.sdk.version", .{ .string = bun.Environment.version_string });
-        for (extra) |a| {
-            try self.appendResourceAttr(a.key, a.value);
-        }
-        self.resource = .{ .attributes = self.resource_attrs.items };
+        try self.appendResourceAttr(.semconv(.@"service.name", .string("unknown_service:bun")));
+        try self.appendResourceAttr(.semconv(.@"telemetry.sdk.name", .string("bun")));
+        try self.appendResourceAttr(.semconv(.@"telemetry.sdk.language", .string("zig")));
+        try self.appendResourceAttr(.semconv(.@"telemetry.sdk.version", .string(bun.Environment.version_string)));
+        for (extra) |a| try self.appendResourceAttr(a);
+        self.resource = .{ .attributes = .from(self.resource_attrs.items) };
     }
 
-    fn appendResourceAttr(self: *TracerProvider, key: []const u8, value: AnyValue) !void {
-        const owned_key = try self.internString(key);
-        const owned_val: AnyValue = switch (value) {
-            .string => |s| .{ .string = try self.internString(s) },
-            else => value,
-        };
-        try self.resource_attrs.append(self.allocator, .{ .key = owned_key, .value = owned_val });
+    fn appendResourceAttr(self: *TracerProvider, a: Attribute) !void {
+        try self.resource_attrs.append(self.allocator, a.cloneInto(self.resource_storage.allocator()));
     }
 
     fn internString(self: *TracerProvider, s: []const u8) ![]const u8 {
@@ -406,15 +399,15 @@ pub const OtelSpan = struct {
         }
     }
 
-    fn appendAttr(this: *OtelSpan, key: []const u8, value: AnyValue) !void {
-        bun.handleOom(this.attrs.append(this.alloc(), .{ .key = key, .value = value }));
+    fn appendAttr(this: *OtelSpan, key: []const u8, value: attributes.Value) !void {
+        bun.handleOom(this.attrs.append(this.alloc(), Attribute.init(key, value)));
     }
 
     pub fn addEvent(this: *OtelSpan, global: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
         const args = callframe.arguments();
         if (this.provider == null or this.ended or args.len < 1) return callframe.this();
         const name = this.dupe(try jsStringSlice(global, args[0], &this.arena));
-        var ev_attrs: []const Attribute = &.{};
+        var ev_attrs: attributes.AttrList = .{};
         if (args.len > 1 and args[1].isObject()) {
             var list: std.ArrayListUnmanaged(Attribute) = .{};
             const jsobj = args[1].getObject().?;
@@ -423,9 +416,9 @@ pub const OtelSpan = struct {
             while (try iter.next()) |key| {
                 const k_slice = key.toUTF8(this.alloc());
                 const k = this.dupe(k_slice.slice());
-                bun.handleOom(list.append(this.alloc(), .{ .key = k, .value = try anyValueFromJS(global, iter.value, this.alloc()) }));
+                bun.handleOom(list.append(this.alloc(), Attribute.init(k, try anyValueFromJS(global, iter.value, this.alloc()))));
             }
-            ev_attrs = list.items;
+            ev_attrs = .from(list.items);
         }
         bun.handleOom(this.events.append(this.alloc(), .{
             .time_unix_nano = nowUnixNanos(),
@@ -473,7 +466,7 @@ pub const OtelSpan = struct {
             .kind = this.kind,
             .start_time_unix_nano = this.start_ns,
             .end_time_unix_nano = end_ns,
-            .attributes = this.attrs.items,
+            .attributes = .from(this.attrs.items),
             .events = this.events.items,
             .status = this.status,
         };
@@ -494,7 +487,7 @@ pub const OtelSpan = struct {
             .kind = this.kind,
             .start_time_unix_nano = this.start_ns,
             .end_time_unix_nano = nowUnixNanos(),
-            .attributes = this.attrs.items,
+            .attributes = .from(this.attrs.items),
             .events = this.events.items,
             .status = this.status,
         };
@@ -546,28 +539,28 @@ fn jsStringSlice(global: *JSGlobalObject, v: JSValue, arena: *std.heap.ArenaAllo
     return slice.slice();
 }
 
-fn anyValueFromJS(global: *JSGlobalObject, v: JSValue, gpa: std.mem.Allocator) bun.JSError!AnyValue {
+fn anyValueFromJS(global: *JSGlobalObject, v: JSValue, gpa: std.mem.Allocator) bun.JSError!attributes.Value {
     if (v.isString()) {
         const s = try v.toSlice(global, gpa);
-        return .{ .string = bun.handleOom(gpa.dupe(u8, s.slice())) };
+        return .string(bun.handleOom(gpa.dupe(u8, s.slice())));
     }
-    if (v.isBoolean()) return .{ .boolean = v.asBoolean() };
-    if (v.isBigInt()) return .{ .int = @bitCast(v.toUInt64NoTruncate()) };
+    if (v.isBoolean()) return .boolean(v.asBoolean());
+    if (v.isBigInt()) return .int(@bitCast(v.toUInt64NoTruncate()));
     if (v.isNumber()) {
         const n = v.asNumber();
         if (@trunc(n) == n and std.math.isFinite(n) and @abs(n) < @as(f64, @floatFromInt(@as(i64, 1) << 53))) {
-            return .{ .int = @intFromFloat(n) };
+            return .int(@intFromFloat(n));
         }
-        return .{ .double = n };
+        return .double(n);
     }
     if (v.asArrayBuffer(global)) |ab| {
-        return .{ .bytes = bun.handleOom(gpa.dupe(u8, ab.byteSlice())) };
+        return .bytesV(bun.handleOom(gpa.dupe(u8, ab.byteSlice())));
     }
     if (v.isUndefinedOrNull()) return .empty;
     // Fallback: stringify objects/arrays. Keeps the hot path branch-free; OTEL
     // spec only requires string|bool|int|double|bytes|array as attribute values.
     const s = try v.toSlice(global, gpa);
-    return .{ .string = bun.handleOom(gpa.dupe(u8, s.slice())) };
+    return .string(bun.handleOom(gpa.dupe(u8, s.slice())));
 }
 
 fn readSpanContext(global: *JSGlobalObject, v: JSValue) bun.JSError!?model.SpanContext {
@@ -606,6 +599,5 @@ const attributes = @import("./attributes.zig");
 const propagation = @import("./propagation.zig");
 const instrument = @import("./instrument.zig");
 const Attribute = attributes.Attribute;
-const AnyValue = attributes.AnyValue;
 const BatchProcessor = @import("./processor.zig").BatchProcessor;
 const OtlpHttpExporter = @import("./otlp/exporter.zig").OtlpHttpExporter;

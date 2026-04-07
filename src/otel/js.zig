@@ -204,10 +204,10 @@ const ReadCtx = struct {
         return s;
     }
 
-    fn readAttributes(ctx: *ReadCtx, obj: JSValue, comptime name: []const u8) bun.JSError![]const Attribute {
-        const arr = (try obj.get(ctx.global, name)) orelse return attrs.empty;
-        if (!arr.isArray()) return attrs.empty;
-        return ctx.readAttributesFromArray(arr, 0);
+    fn readAttributes(ctx: *ReadCtx, obj: JSValue, comptime name: []const u8) bun.JSError!attrs.AttrList {
+        const arr = (try obj.get(ctx.global, name)) orelse return .{};
+        if (!arr.isArray()) return .{};
+        return .from(try ctx.readAttributesFromArray(arr, 0));
     }
 
     fn readAttributesFromArray(ctx: *ReadCtx, arr: JSValue, depth: u8) bun.JSError![]const Attribute {
@@ -217,52 +217,52 @@ const ReadCtx = struct {
         while (try iter.next()) |item| {
             if (!item.isObject()) continue;
             const key = try ctx.str(item, "key");
-            var value: AnyValue = .empty;
+            var value = attrs.Value.empty;
             if (try item.get(ctx.global, "value")) |v| if (v.isObject()) {
                 value = try ctx.readAnyValue(v, depth + 1);
             };
-            list.appendAssumeCapacity(.{ .key = key, .value = value });
+            list.appendAssumeCapacity(Attribute.init(key, value));
         }
         return list.items;
     }
 
-    fn readAnyValue(ctx: *ReadCtx, obj: JSValue, depth: u8) bun.JSError!AnyValue {
+    fn readAnyValue(ctx: *ReadCtx, obj: JSValue, depth: u8) bun.JSError!attrs.Value {
         if (depth > max_any_value_depth) return ctx.global.throwInvalidArguments("attribute nesting too deep", .{});
         if (try obj.get(ctx.global, "stringValue")) |v| {
             const s = try v.toSlice(ctx.global, ctx.alloc);
-            return .{ .string = bun.handleOom(ctx.alloc.dupe(u8, s.slice())) };
+            return .string(bun.handleOom(ctx.alloc.dupe(u8, s.slice())));
         }
-        if (try obj.get(ctx.global, "boolValue")) |v| return .{ .boolean = v.toBoolean() };
+        if (try obj.get(ctx.global, "boolValue")) |v| return .boolean(v.toBoolean());
         if (try obj.get(ctx.global, "intValue")) |v| {
             const u = (try ctx.parseInt64(v, "intValue")) orelse 0;
-            return .{ .int = @bitCast(u) };
+            return .int(@bitCast(u));
         }
-        if (try obj.get(ctx.global, "doubleValue")) |v| if (v.isNumber()) return .{ .double = v.asNumber() };
+        if (try obj.get(ctx.global, "doubleValue")) |v| if (v.isNumber()) return .double(v.asNumber());
         if (try obj.get(ctx.global, "bytesValue")) |v| {
             const s = try v.toSlice(ctx.global, ctx.alloc);
             defer s.deinit();
             const slice = s.slice();
             const buf = bun.handleOom(ctx.alloc.alloc(u8, bun.base64.decodeLenUpperBound(slice.len)));
             const result = bun.base64.decode(buf, slice);
-            return .{ .bytes = buf[0..result.count] };
+            return .bytesV(buf[0..result.count]);
         }
         if (try obj.get(ctx.global, "arrayValue")) |av| if (av.isObject()) {
             if (try av.get(ctx.global, "values")) |arr| if (arr.isArray()) {
                 var iter = try arr.arrayIterator(ctx.global);
-                var list = bun.handleOom(std.ArrayList(AnyValue).initCapacity(ctx.alloc, iter.len));
+                var list = bun.handleOom(std.ArrayList(Attribute).initCapacity(ctx.alloc, iter.len));
                 while (try iter.next()) |item| {
                     if (!item.isObject()) continue;
-                    list.appendAssumeCapacity(try ctx.readAnyValue(item, depth + 1));
+                    list.appendAssumeCapacity(Attribute.valueOnly(try ctx.readAnyValue(item, depth + 1)));
                 }
-                return .{ .array = list.items };
+                return .arrayV(list.items);
             };
-            return .{ .array = &.{} };
+            return .arrayV(&.{});
         };
         if (try obj.get(ctx.global, "kvlistValue")) |kvl| if (kvl.isObject()) {
             if (try kvl.get(ctx.global, "values")) |arr| if (arr.isArray()) {
-                return .{ .kvlist = try ctx.readAttributesFromArray(arr, depth + 1) };
+                return .kvlistV(try ctx.readAttributesFromArray(arr, depth + 1));
             };
-            return .{ .kvlist = &.{} };
+            return .kvlistV(&.{});
         };
         return .empty;
     }
@@ -736,4 +736,3 @@ const tracer = @import("./tracer.zig");
 const propagation = @import("./propagation.zig");
 const instrument = @import("./instrument.zig");
 const Attribute = attrs.Attribute;
-const AnyValue = attrs.AnyValue;

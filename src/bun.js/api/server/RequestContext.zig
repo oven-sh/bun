@@ -749,7 +749,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             if (this.otel_span) |span| {
                 this.otel_span = null;
                 if (this.response_ptr) |resp| {
-                    span.setAttrInt("http.response.status_code", @intCast(resp.statusCode()));
+                    span.setAttrInt(.@"http.response.status_code", @intCast(resp.statusCode()));
                 }
                 if (this.flags.aborted) span.setStatus(.err, "aborted");
                 span.end();

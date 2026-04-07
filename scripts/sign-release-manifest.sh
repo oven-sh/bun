@@ -18,9 +18,11 @@
 # shipped on macOS — so it runs unmodified on stock macOS, Alpine, and
 # every modern Linux. It intentionally avoids bash 4+ features like
 # `${var,,}`, `declare -A`, and nounset (`set -u`) because those all
-# trip on empty-array expansion under 3.2; the `mktemp` calls use the
-# portable `mktemp -d 2>/dev/null || mktemp -d -t ...` fallback for
-# BSD mktemp, which rejects bare `-d`.
+# trip on empty-array expansion under 3.2. The only `mktemp` call
+# passes an explicit template (`mktemp -d "${dir}/..XXXXXXXX"`), which
+# every GNU and BSD mktemp accepts; every other scratch path lives
+# inside that root via plain `mkdir`, so we never need BSD's `-t`
+# fallback form.
 #
 # Inputs (env, optional):
 #   GPG_PRIVATE_KEY  ASCII-armored private key (required to sign)
@@ -223,7 +225,6 @@ unset -v artifact seen_artifacts
 # the final atomic rename.
 success=0
 gnupghome=""
-hash_dir=""
 scratch_dir=""
 backup_manifest=""
 backup_signed_manifest=""
@@ -293,9 +294,6 @@ cleanup() {
   if [ -d "${scratch_dir}" ]; then
     rm -rf "${scratch_dir}" || true
   fi
-  if [ -d "${hash_dir}" ]; then
-    rm -rf "${hash_dir}" || true
-  fi
   exit "${rc}"
 }
 trap cleanup EXIT
@@ -350,8 +348,10 @@ unset -v _bak_path
 # linux agent; parallelised across cores it drops to ~1-2 s. We write
 # each result to `${hash_dir}/${artifact}.digest` so the collation loop
 # can pick them up in sorted order without caring about which job
-# finished first. `${hash_dir}` is an isolated mktemp directory cleaned
-# up by the EXIT trap above.
+# finished first. `${hash_dir}` is a plain subdirectory of the scratch
+# root — the `rm -rf "${scratch_dir}"` in cleanup() tears it down along
+# with every other intermediate, so there's no separate mktemp (and no
+# need for a BSD mktemp fallback for this path).
 #
 # Manifest format:
 # - Each file by basename, not full path — the validator (and every
@@ -368,11 +368,8 @@ unset -v _bak_path
 #   parallel hash job) keeps the job a single exec and means the file
 #   on disk has enough context for a post-mortem if anything ever goes
 #   wrong reading it back.
-#
-# `mktemp -d 2>/dev/null || mktemp -d -t ...` is the portable form:
-# GNU mktemp accepts a bare `-d`, BSD mktemp (macOS) rejects it and
-# needs a `-t TEMPLATE` argument. Run GNU first, fall back to BSD form.
-hash_dir=$(mktemp -d 2>/dev/null || mktemp -d -t bun-sign-release-manifest)
+hash_dir="${scratch_dir}/hashes"
+mkdir "${hash_dir}"
 
 pids=()
 for artifact in "${artifacts[@]}"; do

@@ -35,7 +35,7 @@ pub fn loaderFromJS(global: *jsc.JSGlobalObject, loader: jsc.JSValue) bun.JSErro
     defer slice.deinit();
 
     return options.Loader.fromString(slice.slice()) orelse {
-        return global.throwInvalidArguments("invalid loader - must be js, jsx, tsx, ts, css, file, toml, yaml, wasm, bunsh, json, or md", .{});
+        return global.throwInvalidArguments("invalid loader - must be js, jsx, tsx, ts, css, file, url, toml, yaml, wasm, bunsh, json, or md", .{});
     };
 }
 

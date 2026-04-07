@@ -3303,7 +3303,18 @@ pub const BundleV2 = struct {
             }
 
             const import_record_loader = brk: {
-                const resolved_loader = import_record.loader orelse path.loader(&transpiler.options.loaders) orelse .file;
+                const user_loader = import_record.loader orelse path.loader(&transpiler.options.loaders);
+                // Unknown extension falls back to:
+                //   - `.url` when the import is a CSS `url(...)` reference, so
+                //     small assets can auto-inline as `data:` URIs while larger
+                //     assets still get emitted as physical files. The user can
+                //     opt out of inlining by explicitly configuring
+                //     `loader: { '.ext': 'file' }`, which always emits.
+                //   - `.file` otherwise (JS imports of binary assets, etc.).
+                const resolved_loader = user_loader orelse if (loader == .css and import_record.kind == .url)
+                    Loader.url
+                else
+                    Loader.file;
                 // When an HTML file references a URL asset (e.g. <link rel="manifest" href="./manifest.json" />),
                 // the file must be copied to the output directory as-is. If the resolved loader would
                 // parse/transform the file (e.g. .json, .toml) rather than copy it, force the .file loader

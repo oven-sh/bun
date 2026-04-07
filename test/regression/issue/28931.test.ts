@@ -173,14 +173,31 @@ describe.concurrent.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
       expect(hex).toBe(expected);
     }
 
-    // --- Identity check: signed body == raw manifest ---
-    // This is the exact transformation validate-digests.ts performs.
-    const afterHeader = signed.split("-----BEGIN PGP SIGNATURE-----")[0];
-    const body = afterHeader
-      .split("-----BEGIN PGP SIGNED MESSAGE-----")[1]
-      .replace(/^[\s\S]*?Hash: .*\r?\n\r?\n/, "")
-      .trim();
-    expect(body).toBe(manifest.trim());
+    // --- Identity check: signed body == raw manifest, byte-exact ---
+    // Parse the clearsign envelope rigorously instead of trimming both
+    // sides into agreement — coderabbit caught that a lax assertion would
+    // silently pass even if the helper regressed to GPG's default digest
+    // algorithm or if the .asc and .txt differed only by trailing
+    // whitespace. Both failure modes are real integrity regressions the
+    // downstream validator would catch, so assert them here.
+    //
+    // The regex captures two groups:
+    //  1. The `Hash: ...` value — pinned to SHA512 because the helper
+    //     explicitly passes `--digest-algo SHA512`, matching the
+    //     production .asc emitted by the daily cron. A regression that
+    //     dropped the flag would fall back to gpg's default (SHA256)
+    //     and be caught here.
+    //  2. The body bytes between the blank line after the Hash header
+    //     and the `-----BEGIN PGP SIGNATURE-----` marker — byte-exact,
+    //     no .trim(), no .replace(). Must equal the manifest file on
+    //     disk to satisfy the identity contract.
+    const clearsigned = signed.match(
+      /^-----BEGIN PGP SIGNED MESSAGE-----\r?\nHash: ([^\r\n]+)\r?\n\r?\n([\s\S]*?)-----BEGIN PGP SIGNATURE-----/m,
+    );
+    expect(clearsigned).not.toBeNull();
+    const [, hashHeader, body] = clearsigned!;
+    expect(hashHeader).toBe("SHA512");
+    expect(body).toBe(manifest);
 
     // --- Signature must verify against the signing key ---
     using verifyHomeDir = tempDir("bun-28931-verify-", {});

@@ -88,6 +88,14 @@ const SocketUnion = union(enum) {
             .none => true,
         };
     }
+
+    pub fn close(self: SocketUnion) void {
+        switch (self) {
+            .tcp => |s| s.close(.normal),
+            .ssl => |s| s.close(.normal),
+            .none => {},
+        }
+    }
 };
 
 const SSLWrapperType = SSLWrapper(*WebSocketProxyTunnel);
@@ -339,6 +347,13 @@ pub fn shutdown(this: *WebSocketProxyTunnel) void {
     if (this.#wrapper) |*wrapper| {
         _ = wrapper.shutdown(true); // Fast shutdown
     }
+    // Close the underlying proxy socket so the upgrade client's handleClose
+    // fires and releases its socket ref + proxy state. Take the socket out
+    // first so a re-entrant shutdown() (via handleClose → clearData →
+    // proxy.deinit → tunnel.shutdown) finds .none and is a no-op.
+    const sock = this.#socket;
+    this.#socket = .{ .none = {} };
+    sock.close();
 }
 
 /// Check if the tunnel has backpressure

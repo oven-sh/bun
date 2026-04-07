@@ -95,23 +95,26 @@ gnupghome=""
 hash_dir=""
 cleanup() {
   local rc=$?
+  # Every rm inside this trap ends in `|| true`. With `set -eo pipefail`
+  # in effect, a non-zero rm (permission error, NFS stale handle, etc.)
+  # would otherwise propagate out of the trap with rm's exit code instead
+  # of the captured `$rc`, making the caller think signing failed when it
+  # actually succeeded. The -f flag only suppresses ENOENT — it doesn't
+  # cover EACCES / EROFS / EIO / stale-NFS / SIGPIPE — so `|| true` is
+  # still required.
   if [ "$success" -ne 1 ]; then
-    rm -f "$tmp_manifest" "$manifest" "$signed_manifest"
+    rm -f "$tmp_manifest" "$manifest" "$signed_manifest" || true
   else
     # Belt and braces: if success=1 fired but the rename still somehow
     # left a .tmp on disk, wipe it so a subsequent run doesn't see stale
     # bytes from this invocation.
-    rm -f "$tmp_manifest"
+    rm -f "$tmp_manifest" || true
   fi
   if [ -n "$hash_dir" ]; then
     rm -rf "$hash_dir" || true
   fi
   if [ -n "$gnupghome" ]; then
     GNUPGHOME="$gnupghome" gpgconf --kill all >/dev/null 2>&1 || true
-    # `|| true` matches the gpgconf line above. With set -eo pipefail, a
-    # non-zero rm would otherwise propagate and return from this trap with
-    # the wrong exit code, making the caller think signing failed when it
-    # actually succeeded (success=1 already captured above).
     rm -rf "$gnupghome" || true
   fi
   exit "$rc"
@@ -214,10 +217,17 @@ if [ "$should_sign" -ne 1 ]; then
   # than leaving a stale one in place. The sibling .asc will still point at
   # the previous manifest body until the daily cron runs, so strict PGP
   # validators will see a temporary identity mismatch. Document the state.
+  #
+  # Set success=1 BEFORE the warn echoes for the same reason the signed
+  # path sets it before its "Signed" echo: the atomic mv above is the
+  # real success criterion, the warns are cosmetic. A SIGPIPE on stderr
+  # (Buildkite log aggregator dying mid-write) would otherwise fire
+  # set -e with success still 0, and cleanup() would delete the
+  # correctly-written $manifest.
+  success=1
   echo "warn: GPG_PRIVATE_KEY/GPG_PASSPHRASE not set; wrote SHASUMS256.txt" >&2
   echo "warn: without a signature. The daily release sign workflow will" >&2
   echo "warn: catch up with a matching SHASUMS256.txt.asc within 24h." >&2
-  success=1
   exit 0
 fi
 

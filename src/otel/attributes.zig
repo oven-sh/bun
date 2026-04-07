@@ -89,10 +89,12 @@ pub const Attribute = extern struct {
     }
 
     fn encodeKeyPtr(k: []const u8, t: ValueTag) u64 {
-        bun.assert(k.len <= KEY_LEN_MAX);
+        // Keys longer than KEY_LEN_MAX (4095) are truncated; real-world semconv
+        // keys are <100 chars, so this is purely defensive against hostile input.
+        const len: u64 = @min(k.len, KEY_LEN_MAX);
         const ptr: u64 = @intFromPtr(k.ptr);
         bun.assert(ptr <= PTR_MASK);
-        return (@as(u64, @intFromEnum(t)) << 61) | (@as(u64, @intCast(k.len)) << PTR_BITS) | ptr;
+        return (@as(u64, @intFromEnum(t)) << 61) | (len << PTR_BITS) | ptr;
     }
 
     // ── accessors ───────────────────────────────────────────────────────────
@@ -211,11 +213,17 @@ pub const AttrList = extern struct {
 
     pub const empty: AttrList = .{};
 
+    pub const max_len = 255;
+
     pub fn from(s: []const Attribute) AttrList {
-        const n: u8 = @intCast(@min(s.len, 255));
+        const n: u8 = @intCast(@min(s.len, max_len));
         if (n == 0) return .{};
         const ptr: u64 = @intFromPtr(s.ptr);
         return .{ .raw = (@as(u64, n) << 56) | (ptr & ((1 << 56) - 1)) };
+    }
+
+    pub fn droppedCount(full_len: usize) u32 {
+        return @intCast(full_len -| max_len);
     }
 
     pub fn slice(self: AttrList) []const Attribute {

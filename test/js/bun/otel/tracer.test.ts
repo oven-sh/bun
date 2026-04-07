@@ -50,6 +50,40 @@ describe("Bun.otel runtime", () => {
     expect(parent.isRecording).toBe(false);
   });
 
+  test("attribute packing caps: long key, long value, >255 attrs", () => {
+    otel.configure({ endpoint: "", sampler: "always_on" });
+    const tracer = otel.getTracer("caps");
+    // 5000-char key — was: process panic at attributes.zig encodeKeyPtr
+    expect(() => tracer.startSpan("a").setAttribute(Buffer.alloc(5000, "k").toString(), "v")).not.toThrow();
+    // 70KB string value — truncates at VAL_LEN_MAX (65535), must not crash
+    expect(() => tracer.startSpan("b").setAttribute("k", Buffer.alloc(70000, "x").toString())).not.toThrow();
+    // 300 attrs — first 255 sent, droppedAttributesCount=45 on the wire
+    const s = tracer.startSpan("c");
+    for (let i = 0; i < 300; i++) s.setAttribute(`k${i}`, i);
+    expect(() => s.end()).not.toThrow();
+    // POJO codec path with 5000-char key — was: same panic via Attribute.init
+    expect(() =>
+      otel.encodeTraces({
+        resourceSpans: [
+          {
+            scopeSpans: [
+              {
+                spans: [
+                  {
+                    traceId: "5b8aa5a2d2c872e8321cf37308d69df2",
+                    spanId: "051581bf3cb55c13",
+                    name: "x",
+                    attributes: [{ key: Buffer.alloc(5000, "k").toString(), value: { stringValue: "v" } }],
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      }),
+    ).not.toThrow();
+  });
+
   test("sampler ratio=0 produces non-recording spans", () => {
     otel.configure({ endpoint: "", sampler: 0 });
     const tracer = otel.getTracer("test");

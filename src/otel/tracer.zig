@@ -467,6 +467,7 @@ pub const OtelSpan = struct {
             .start_time_unix_nano = this.start_ns,
             .end_time_unix_nano = end_ns,
             .attributes = .from(this.attrs.items),
+            .dropped_attributes_count = attributes.AttrList.droppedCount(this.attrs.items.len),
             .events = this.events.items,
             .status = this.status,
         };
@@ -488,6 +489,7 @@ pub const OtelSpan = struct {
             .start_time_unix_nano = this.start_ns,
             .end_time_unix_nano = nowUnixNanos(),
             .attributes = .from(this.attrs.items),
+            .dropped_attributes_count = attributes.AttrList.droppedCount(this.attrs.items.len),
             .events = this.events.items,
             .status = this.status,
         };

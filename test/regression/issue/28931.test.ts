@@ -24,7 +24,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, isWindows, tempDir } from "harness";
 import { createHash } from "node:crypto";
-import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 const repoRoot = join(import.meta.dir, "..", "..", "..");
@@ -302,6 +302,53 @@ describe.concurrent.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
     // And the fresh .txt must reflect the rotated bytes.
     const manifest = readFileSync(join(dirStr, "SHASUMS256.txt"), "utf8").trim();
     const expected = createHash("sha256").update("fake-after-rotation").digest("hex");
+    expect(manifest).toBe(`${expected} *bun-linux-x64.zip`);
+  });
+
+  test("sweeps orphaned .sign-manifest-scratch.* dirs left by a SIGKILL'd prior run", async () => {
+    // tcely caught: the normal cleanup() trap fires on every exit path,
+    // but SIGKILL (OOM, agent restart, panic) skips it — leaving a
+    // stale scratch dir in ${dir}. In Buildkite's reused-workspace model
+    // those orphans accumulate until the workspace is wiped. The
+    // script sweeps ${dir}/${scratch_prefix}*/ on startup so each run
+    // inherits a clean slate. Simulate the SIGKILL case by planting
+    // an orphan directory with content inside, then invoke the helper
+    // and assert the orphan is gone afterward.
+    using dir = tempDir("bun-28931-stale-scratch-", {
+      "bun-linux-x64.zip": "artifact-bytes",
+    });
+    const dirStr = String(dir);
+
+    // Plant an orphan scratch dir with a recognizable marker file, plus
+    // a second orphan so we prove the sweep handles more than one.
+    const orphan1 = join(dirStr, ".sign-manifest-scratch.orphan01");
+    const orphan2 = join(dirStr, ".sign-manifest-scratch.orphan02");
+    mkdirSync(orphan1);
+    mkdirSync(orphan2);
+    writeFileSync(join(orphan1, "leftover.tmp"), "half-written-manifest");
+    writeFileSync(join(orphan2, "gnupghome.fake"), "stale-keyring-bytes");
+    expect(existsSync(orphan1)).toBe(true);
+    expect(existsSync(orphan2)).toBe(true);
+
+    const res = await sh([script, dirStr, "bun-linux-x64.zip"], {
+      GPG_PRIVATE_KEY: "",
+      GPG_PASSPHRASE: "",
+    });
+    expect(res.stderr).not.toContain("error:");
+    expect(res.exitCode).toBe(0);
+
+    // Both orphans must be gone — swept before the helper's own
+    // scratch_dir mktemp ran. The helper's own scratch dir was
+    // removed by its cleanup trap on a successful exit, so the only
+    // scratch-prefix directories left should be... none.
+    expect(existsSync(orphan1)).toBe(false);
+    expect(existsSync(orphan2)).toBe(false);
+    const leftovers = readdirSync(dirStr).filter(name => name.startsWith(".sign-manifest-scratch."));
+    expect(leftovers).toEqual([]);
+
+    // And the manifest is still correct for the real artifact.
+    const manifest = readFileSync(join(dirStr, "SHASUMS256.txt"), "utf8").trim();
+    const expected = createHash("sha256").update("artifact-bytes").digest("hex");
     expect(manifest).toBe(`${expected} *bun-linux-x64.zip`);
   });
 

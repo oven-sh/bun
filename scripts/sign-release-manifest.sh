@@ -298,6 +298,31 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# Sweep any orphaned scratch dirs from prior SIGKILL'd runs before
+# creating ours. In Buildkite's reused-workspace model (agent config
+# dependent), an OOM kill or agent restart can leave a prior run's
+# scratch_dir on disk with no cleanup trap having fired; without this
+# sweep, those orphans accumulate until the workspace itself is wiped.
+# Safe because the validator above already rejects the `scratch_prefix`
+# as a caller artifact name, so nothing inside
+# `${dir}/${scratch_prefix}*/` can belong to a caller — and the `-d`
+# guard handles the no-match case (glob expands literally without
+# `nullglob`, and a glob pattern is never a directory).
+#
+# Concurrency note: this intentionally blows away every matching dir,
+# including any that might belong to a currently-running sibling
+# invocation against the same `${dir}`. Both known callers — the
+# Buildkite upload step and this file's test suite, which uses a
+# fresh `tempDir` per test — only ever invoke the helper sequentially
+# against a given directory, so that tradeoff is academic. A future
+# parallel-caller use case would need a per-dir lock, not this sweep.
+for _stale in "${dir}/${scratch_prefix}"*/; do
+  if [ -d "${_stale}" ]; then
+    rm -rf "${_stale}" || true
+  fi
+done
+unset -v _stale
+
 # Create the per-invocation scratch directory inside ${dir}. Using
 # `mktemp -d "${dir}/.sign-manifest-scratch.XXXXXXXX"` gives us a name
 # that:

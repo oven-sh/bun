@@ -59,6 +59,13 @@ fi
 
 manifest="$dir/SHASUMS256.txt"
 signed_manifest="$manifest.asc"
+# We write hash lines into a .tmp sibling and rename to $manifest atomically
+# once every archive has been hashed. This keeps the final $manifest path
+# either whole or absent on disk even if the script is SIGKILL'd mid-loop
+# (the normal EXIT trap wouldn't fire for SIGKILL, so the `: > $manifest`
+# + append pattern would leave a partial file that the caller cannot tell
+# from a complete one).
+tmp_manifest="$manifest.tmp"
 
 # Set up cleanup BEFORE anything is written, so every failure path — the
 # missing-artifact check below, a gpg --import error, a gpg --clearsign
@@ -71,7 +78,12 @@ gnupghome=""
 cleanup() {
   local rc=$?
   if [ "$success" -ne 1 ]; then
-    rm -f "$manifest" "$signed_manifest"
+    rm -f "$tmp_manifest" "$manifest" "$signed_manifest"
+  else
+    # Belt and braces: if success=1 fired but the rename still somehow
+    # left a .tmp on disk, wipe it so a subsequent run doesn't see stale
+    # bytes from this invocation.
+    rm -f "$tmp_manifest"
   fi
   if [ -n "$gnupghome" ]; then
     GNUPGHOME="$gnupghome" gpgconf --kill all >/dev/null 2>&1 || true
@@ -103,7 +115,7 @@ done < <(printf '%s\n' "${artifacts[@]}" | LC_ALL=C sort)
 # there and a correctness fix in the unsigned branch.
 rm -f "$signed_manifest"
 
-: > "$manifest"
+: > "$tmp_manifest"
 for artifact in "${sorted[@]}"; do
   path="$dir/$artifact"
   if [ ! -f "$path" ]; then
@@ -119,9 +131,18 @@ for artifact in "${sorted[@]}"; do
   # Cygwin, msys). On POSIX systems this is equivalent to the two-space
   # text-mode separator; on Windows it's a correctness fix. The validator
   # regex in the issue already accepts both forms.
-  sha=$("${sha256_cmd[@]}" "$path" | awk '{print $1}')
-  printf '%s *%s\n' "$sha" "$artifact" >> "$manifest"
+  #
+  # Both sha256sum and shasum -a 256 print `HASH  FILENAME` with a known
+  # space separator, so `cut -d ' ' -f 1` is sufficient to extract the hex
+  # digest without pulling in awk.
+  sha=$("${sha256_cmd[@]}" "$path" | cut -d ' ' -f 1)
+  printf '%s *%s\n' "$sha" "$artifact" >> "$tmp_manifest"
 done
+
+# Atomic rename — the final $manifest only appears once every hash has
+# been written. Prior SIGKILL would leave a .tmp that cleanup() (or the
+# next run's cleanup() via rm -f) removes before the caller ever sees it.
+mv "$tmp_manifest" "$manifest"
 
 # Diagnostics go to stderr, matching the warn:/error: lines above. Writing
 # the cosmetic dump to stdout would let a broken stdout pipe (e.g. the

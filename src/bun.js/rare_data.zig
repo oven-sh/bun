@@ -13,6 +13,7 @@ postgresql_context: bun.api.Postgres.PostgresSQLContext = .{},
 entropy_cache: ?*EntropyCache = null,
 
 hot_map: ?HotMap = null,
+cron_jobs: std.ArrayListUnmanaged(*bun.api.cron.CronJob) = .{},
 
 // TODO: make this per JSGlobalObject instead of global
 // This does not handle ShadowRealm correctly!
@@ -28,7 +29,7 @@ mime_types: ?bun.http.MimeType.Map = null,
 
 node_fs_stat_watcher_scheduler: ?bun.ptr.RefPtr(StatWatcherScheduler) = null,
 
-listening_sockets_for_watch_mode: std.ArrayListUnmanaged(bun.FileDescriptor) = .{},
+listening_sockets_for_watch_mode: std.ArrayListUnmanaged(bun.FD) = .{},
 listening_sockets_for_watch_mode_lock: bun.Mutex = .{},
 
 temp_pipe_read_buffer: ?*PipeReadBuffer = null,
@@ -271,16 +272,16 @@ pub fn pipeReadBuffer(this: *RareData) *PipeReadBuffer {
     };
 }
 
-pub fn addListeningSocketForWatchMode(this: *RareData, socket: bun.FileDescriptor) void {
+pub fn addListeningSocketForWatchMode(this: *RareData, socket: bun.FD) void {
     this.listening_sockets_for_watch_mode_lock.lock();
     defer this.listening_sockets_for_watch_mode_lock.unlock();
     this.listening_sockets_for_watch_mode.append(bun.default_allocator, socket) catch {};
 }
 
-pub fn removeListeningSocketForWatchMode(this: *RareData, socket: bun.FileDescriptor) void {
+pub fn removeListeningSocketForWatchMode(this: *RareData, socket: bun.FD) void {
     this.listening_sockets_for_watch_mode_lock.lock();
     defer this.listening_sockets_for_watch_mode_lock.unlock();
-    if (std.mem.indexOfScalar(bun.FileDescriptor, this.listening_sockets_for_watch_mode.items, socket)) |i| {
+    if (std.mem.indexOfScalar(bun.FD, this.listening_sockets_for_watch_mode.items, socket)) |i| {
         _ = this.listening_sockets_for_watch_mode.swapRemove(i);
     }
 }
@@ -721,6 +722,8 @@ pub fn deinit(this: *RareData) void {
     }
 
     this.cleanup_hooks.clearAndFree(bun.default_allocator);
+    bun.debugAssert(this.cron_jobs.items.len == 0);
+    this.cron_jobs.deinit(bun.default_allocator);
     this.path_buf.deinit();
 
     if (this.websocket_deflate) |deflate| {

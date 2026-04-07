@@ -2099,7 +2099,7 @@ pub const JSValue = enum(i64) {
         return FFI.JSVALUE_TO_INT32(.{ .asJSValue = this });
     }
 
-    pub fn asFileDescriptor(this: JSValue) bun.FileDescriptor {
+    pub fn asFileDescriptor(this: JSValue) bun.FD {
         bun.assert(this.isNumber());
         return .fromUV(this.toInt32());
     }

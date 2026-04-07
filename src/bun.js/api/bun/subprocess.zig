@@ -17,7 +17,7 @@ process: *Process,
 stdin: Writable,
 stdout: Readable,
 stderr: Readable,
-stdio_pipes: if (Environment.isWindows) std.ArrayListUnmanaged(StdioResult) else std.ArrayListUnmanaged(bun.FileDescriptor) = .{},
+stdio_pipes: if (Environment.isWindows) std.ArrayListUnmanaged(StdioResult) else std.ArrayListUnmanaged(bun.FD) = .{},
 pid_rusage: ?Rusage = null,
 
 /// Terminal attached to this subprocess (if spawned with terminal option)
@@ -91,7 +91,7 @@ pub const StdioKind = enum {
     stdout,
     stderr,
 
-    pub fn toFd(this: @This()) bun.FileDescriptor {
+    pub fn toFd(this: @This()) bun.FD {
         return switch (this) {
             .stdin => .stdin(),
             .stdout => .stdout(),
@@ -913,7 +913,7 @@ pub fn getGlobalThis(this: *Subprocess) ?*jsc.JSGlobalObject {
 
 const IPClog = Output.scoped(.IPC, .visible);
 
-pub const StdioResult = if (Environment.isWindows) bun.spawn.WindowsSpawnResult.StdioResult else ?bun.FileDescriptor;
+pub const StdioResult = if (Environment.isWindows) bun.spawn.WindowsSpawnResult.StdioResult else ?bun.FD;
 pub const Writable = @import("./subprocess/Writable.zig").Writable;
 
 pub const MaxBuf = bun.io.MaxBuf;

@@ -7,11 +7,15 @@
 
 import { existsSync, readdirSync } from "node:fs";
 import { rm } from "node:fs/promises";
+import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { allDeps } from "./deps/index.ts";
 
 const cwd = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+// Machine-shared cache (ccache/zig/tarballs/webkit). Matches resolveConfig()'s
+// non-CI default. `clean` is a dev-machine tool so we don't branch on CI here.
+const sharedCacheDir = resolve(process.env.BUN_INSTALL || resolve(homedir(), ".bun"), "build-cache");
 
 const args = process.argv.slice(2);
 const dryRun = args.includes("--dry-run");
@@ -25,10 +29,12 @@ if (args.includes("--help") || args.includes("-h")) {
 presets:
   debug (default)  build/debug/
   release          build/release/
-  debug-local      build/debug-local/ + vendor/WebKit/WebKitBuild/Debug
-  release-local    build/release-local/ + vendor/WebKit/WebKitBuild/Release{,LTO}
+  debug-local      build/debug-local/
+  release-local    build/release-local/
   zig              zig caches + bun-zig.o across all profiles, .zig-cache, zig-out
   cpp              C++ obj/ + pch/ across all profiles
+  cache            machine-shared build cache (~/.bun/build-cache: ccache, zig,
+                   tarballs, prebuilt webkit) — affects ALL checkouts
   deep             build/, .zig-cache, zig-out, vendor/* (except manually
                    managed deps like WebKit)
 
@@ -47,28 +53,22 @@ function buildProfiles(): string[] {
     .map(e => resolve(build, e.name));
 }
 
-const profile =
-  (name: string, ...extra: string[]) =>
-  () => [resolve(cwd, "build", name), ...extra];
+const profile = (name: string) => () => [resolve(cwd, "build", name)];
 
 // Deps whose vendor/<name>/ dir is user-managed (manual clone, not fetched
 // by the build system). `deep` skips these; everything else in allDeps gets
 // its vendor dir nuked.
 const userManagedDeps = new Set(["WebKit"]);
 
-// build-jsc.ts writes to vendor/WebKit/WebKitBuild/{Debug,Release,ReleaseLTO}.
-// The -local profiles link against that output, so cleaning one without the
-// other leaves a stale WebKit around. `deep` clears the whole WebKitBuild tree.
-const wkBuild = (type?: string) => resolve(cwd, "vendor", "WebKit", "WebKitBuild", ...(type ? [type] : []));
-
 const presets: Record<string, () => string[]> = {
   "debug": profile("debug"),
   "release": profile("release"),
-  "debug-local": profile("debug-local", wkBuild("Debug")),
-  "release-local": profile("release-local", wkBuild("Release"), wkBuild("ReleaseLTO")),
+  "debug-local": profile("debug-local"),
+  "release-local": profile("release-local"),
 
   zig: () => [
     ...buildProfiles().flatMap(p => [resolve(p, "cache", "zig"), resolve(p, "bun-zig.o")]),
+    resolve(sharedCacheDir, "zig"),
     resolve(cwd, "build", "debug", "zig-check-cache"),
     resolve(cwd, ".zig-cache"),
     resolve(cwd, "zig-out"),
@@ -76,12 +76,13 @@ const presets: Record<string, () => string[]> = {
 
   cpp: () => buildProfiles().flatMap(p => [resolve(p, "obj"), resolve(p, "pch")]),
 
+  cache: () => [sharedCacheDir],
+
   deep: () => [
     resolve(cwd, "build"),
     resolve(cwd, "vendor", "zig"),
     resolve(cwd, ".zig-cache"),
     resolve(cwd, "zig-out"),
-    wkBuild(),
     ...allDeps.filter(d => !userManagedDeps.has(d.name)).map(d => resolve(cwd, "vendor", d.name)),
   ],
 };

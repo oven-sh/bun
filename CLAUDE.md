@@ -256,21 +256,52 @@ Built-in JavaScript modules use special syntax and are organized as:
 
 ## Debugging CI Failures
 
-Use `scripts/buildkite-failures.ts` to fetch and analyze CI build failures:
+Requires the BuildKite CLI (`brew install buildkite/buildkite/bk`) and a read-scoped token in `BUILDKITE_API_TOKEN`. The repo's `.bk.yaml` sets the org/pipeline so `-p bun` is not needed.
 
 ```bash
-# View failures for current branch
-bun run scripts/buildkite-failures.ts
+# Show rendered test-failure output for the current branch's latest build,
+# tagged [new] vs [also on main]
+bun run ci:errors
+bun run ci:errors '#26173'          # or a PR number / URL / branch / build number
 
-# View failures for a specific build number
-bun run scripts/buildkite-failures.ts 35051
+# One-screen progress summary (job counts, failed jobs, failing tests so far)
+bun run ci:status
 
-# View failures for a GitHub PR
-bun run scripts/buildkite-failures.ts #26173
-bun run scripts/buildkite-failures.ts https://github.com/oven-sh/bun/pull/26173
+# Save full logs for every failed job to ./tmp/ci-<build>/
+bun run ci:logs
 
-# Wait for build to complete (polls every 10s until pass/fail)
-bun run scripts/buildkite-failures.ts --wait
+# Just the build number, for composing with raw `bk`
+bun run ci:find
+bk job log <job-uuid> -b $(bun run ci:find)
+
+# Watch the current branch's build until it finishes
+bun run ci:watch
 ```
 
-The script fetches logs from BuildKite's public API and saves complete logs to `/tmp/bun-build-{number}-{platform}-{step}.log`. It displays a summary of errors and the file path for each failed job. Use `--wait` to poll continuously until the build completes or fails.
+For anything else, use `bk` directly — `bk build list`, `bk api`, `bk artifacts`, etc.
+
+If output from these commands looks wrong — mis-parsed annotation HTML, confusing wording, a field BuildKite changed shape on — fix `scripts/find-build.ts` directly rather than working around it. It's a thin presenter over `bk`; keep it accurate.
+
+## Reading PR Feedback
+
+`gh pr view --comments` is fine for a quick look at the Conversation tab, but it has a footgun worth knowing about: it only returns issue-stream comments and silently omits review summaries and line-level review comments. If a reviewer leaves an inline comment on a specific file line, it will not show up — no error, no hint that anything is missing.
+
+When you want the complete picture — especially when responding to a review or checking whether anyone requested changes — use `bun run pr:comments`. It fetches all three GitHub endpoints (`/issues/N/comments`, `/pulls/N/reviews`, `/pulls/N/comments`) and prints them in one chronological listing, each labelled with its actual type (issue comment, review verdict, line comment, reply, suggestion block).
+
+```bash
+bun run pr:comments                    # current branch's PR
+bun run pr:comments 28838              # by PR number
+bun run pr:comments '#28838'           # also works
+bun run pr:comments https://github.com/oven-sh/bun/pull/28838
+
+# Machine-readable output for jq pipelines — one object per entry with
+# { when, user, kind, location?, body, url?, resolved?, outdated? }.
+# resolved/outdated come from GraphQL reviewThreads and are present only
+# on line comments / replies whose thread state was successfully fetched
+# (omitted on issue comments, review verdicts, and on GraphQL fetch
+# failure), so `resolved == false` unambiguously means "confirmed open
+# thread". No header, no truncation. The PR is optional here too
+# (defaults to the current branch's PR).
+bun run pr:comments --json | jq '.[] | select(.user == "Jarred-Sumner")'
+bun run pr:comments --json | jq '[.[] | select(.resolved == false)]'   # still open
+```

@@ -752,6 +752,7 @@ pub fn reload(this: *VirtualMachine, _: *HotReloader.Task) void {
         Output.enableBuffering();
     }
 
+    jsc.API.cron.CronJob.clearAllForVM(this, .reload);
     this.global.reload() catch @panic("Failed to reload");
     this.hot_reload_counter += 1;
     this.pending_internal_promise = this.reloadEntryPoint(this.main) catch @panic("Failed to reload");
@@ -2001,6 +2002,7 @@ pub fn deinit(this: *VirtualMachine) void {
     }
     this.source_mappings.deinit();
     if (this.rare_data) |rare_data| {
+        jsc.API.cron.CronJob.clearAllForVM(this, .teardown);
         rare_data.deinit();
     }
     this.proxy_env_storage.deinit();
@@ -2345,14 +2347,14 @@ pub fn loadEntryPoint(this: *VirtualMachine, entry_path: string) anyerror!*JSInt
     return this.pending_internal_promise.?;
 }
 
-pub fn addListeningSocketForWatchMode(this: *VirtualMachine, socket: bun.FileDescriptor) void {
+pub fn addListeningSocketForWatchMode(this: *VirtualMachine, socket: bun.FD) void {
     if (this.hot_reload != .watch) {
         return;
     }
 
     this.rareData().addListeningSocketForWatchMode(socket);
 }
-pub fn removeListeningSocketForWatchMode(this: *VirtualMachine, socket: bun.FileDescriptor) void {
+pub fn removeListeningSocketForWatchMode(this: *VirtualMachine, socket: bun.FD) void {
     if (this.hot_reload != .watch) {
         return;
     }

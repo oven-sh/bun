@@ -75,6 +75,7 @@ tmp_manifest="$manifest.tmp"
 # integrity failure this script exists to prevent.
 success=0
 gnupghome=""
+hash_dir=""
 cleanup() {
   local rc=$?
   if [ "$success" -ne 1 ]; then
@@ -84,6 +85,9 @@ cleanup() {
     # left a .tmp on disk, wipe it so a subsequent run doesn't see stale
     # bytes from this invocation.
     rm -f "$tmp_manifest"
+  fi
+  if [ -n "$hash_dir" ]; then
+    rm -rf "$hash_dir" || true
   fi
   if [ -n "$gnupghome" ]; then
     GNUPGHOME="$gnupghome" gpgconf --kill all >/dev/null 2>&1 || true
@@ -115,27 +119,62 @@ done < <(printf '%s\n' "${artifacts[@]}" | LC_ALL=C sort)
 # there and a correctness fix in the unsigned branch.
 rm -f "$signed_manifest"
 
-: > "$tmp_manifest"
+# Validate every artifact exists BEFORE we spawn any hash jobs — fail-
+# fast with a clean error message, no orphaned background subshells.
 for artifact in "${sorted[@]}"; do
-  path="$dir/$artifact"
-  if [ ! -f "$path" ]; then
-    echo "error: missing artifact for signing: $path" >&2
+  if [ ! -f "$dir/$artifact" ]; then
+    echo "error: missing artifact for signing: $dir/$artifact" >&2
     exit 1
   fi
-  # The manifest lists each file by basename, not full path — the validator
-  # (and every downstream consumer) resolves them relative to the release.
-  #
-  # Binary-mode marker: ` *NAME` (space + asterisk) tells sha256sum -c to
-  # open the file in binary mode, preventing line-ending translation of
-  # .zip contents on platforms where O_TEXT vs O_BINARY differ (Windows,
-  # Cygwin, msys). On POSIX systems this is equivalent to the two-space
-  # text-mode separator; on Windows it's a correctness fix. The validator
-  # regex in the issue already accepts both forms.
-  #
-  # Both sha256sum and shasum -a 256 print `HASH  FILENAME` with a known
-  # space separator, so `cut -d ' ' -f 1` is sufficient to extract the hex
-  # digest without pulling in awk.
-  sha=$("${sha256_cmd[@]}" "$path" | cut -d ' ' -f 1)
+done
+
+# Hash every artifact in parallel. The canary set is 22 archives, each
+# roughly 30-150 MB — sequential sha256sum runs ~6-7 s on the buildkite
+# linux agent; parallelised across cores it drops to ~1-2 s. We write
+# each result to `$hash_dir/$artifact.digest` so the collation loop can
+# pick them up in sorted order without caring about which job finished
+# first. $hash_dir is an isolated mktemp directory cleaned up by the
+# EXIT trap above.
+#
+# Manifest format:
+# - Each file by basename, not full path — the validator (and every
+#   downstream consumer) resolves them relative to the release.
+# - Binary-mode marker: ` *NAME` (space + asterisk) tells sha256sum -c
+#   to open the file in binary mode, preventing line-ending translation
+#   of .zip contents on platforms where O_TEXT vs O_BINARY differ
+#   (Windows, Cygwin, msys). On POSIX systems this is equivalent to the
+#   two-space text-mode separator; on Windows it's a correctness fix.
+#   The validator regex in the issue already accepts both forms.
+# - Both sha256sum and shasum -a 256 print `HASH  FILENAME` with a known
+#   space separator, so `cut -d ' ' -f 1` extracts the hex digest.
+hash_dir=$(mktemp -d)
+
+pids=()
+for artifact in "${sorted[@]}"; do
+  (
+    "${sha256_cmd[@]}" "$dir/$artifact" | cut -d ' ' -f 1 > "$hash_dir/$artifact.digest"
+  ) &
+  pids+=("$!")
+done
+
+# Wait for every hash job and fail-fast on any non-zero exit. We wait on
+# each pid individually (rather than a bare `wait`) so pipefail failures
+# inside any one subshell propagate out with a meaningful error.
+for pid in "${pids[@]}"; do
+  if ! wait "$pid"; then
+    echo "error: sha256 failed for one or more artifacts" >&2
+    exit 1
+  fi
+done
+
+# Collate the per-artifact digests into the manifest in sorted order.
+: > "$tmp_manifest"
+for artifact in "${sorted[@]}"; do
+  sha=$(cat "$hash_dir/$artifact.digest")
+  if [ "${#sha}" -ne 64 ]; then
+    echo "error: malformed sha256 for $artifact: '$sha'" >&2
+    exit 1
+  fi
   printf '%s *%s\n' "$sha" "$artifact" >> "$tmp_manifest"
 done
 

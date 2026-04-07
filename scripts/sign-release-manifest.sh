@@ -38,13 +38,30 @@ if [ ! -d "$dir" ]; then
   exit 1
 fi
 
-# Pick a sha256 tool. macOS has shasum; Linux usually has both.
-if command -v sha256sum >/dev/null 2>&1; then
+# Pick a sha256 tool. Order of preference:
+#
+# 1. `cksum -a sha256 --untagged` — GNU coreutils ≥ 9.0's unified
+#    checksum tool. Upstream has been consolidating md5sum / sha*sum
+#    into `cksum -a`, so prefer it on hosts where it's available.
+#    `--untagged` forces the classic `HASH  FILENAME` output instead
+#    of the BSD-tagged `SHA256 (file) = HASH`, which is what our
+#    `cut -d ' ' -f 1` extraction below expects. Probed functionally
+#    (not by grepping --version) so BusyBox cksum (CRC32-only, doesn't
+#    recognise `-a`) and older GNU coreutils (pre-9.0, same) fall
+#    through to sha256sum instead of being silently misused.
+# 2. `sha256sum` — GNU coreutils classic, available on every Linux
+#    distro with coreutils regardless of version.
+# 3. `shasum -a 256` — Perl-based, ships in the base install on macOS,
+#    other BSDs, and git-for-windows.
+if command -v cksum >/dev/null 2>&1 && \
+   printf '' | cksum -a sha256 --untagged >/dev/null 2>&1; then
+  sha256_cmd=(cksum -a sha256 --untagged)
+elif command -v sha256sum >/dev/null 2>&1; then
   sha256_cmd=(sha256sum)
 elif command -v shasum >/dev/null 2>&1; then
   sha256_cmd=(shasum -a 256)
 else
-  echo "error: neither sha256sum nor shasum is installed" >&2
+  echo "error: no sha256 tool found (tried cksum -a sha256 --untagged, sha256sum, shasum -a 256)" >&2
   exit 1
 fi
 

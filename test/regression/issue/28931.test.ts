@@ -346,6 +346,16 @@ describe.concurrent.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
       GPG_PRIVATE_KEY: "not-a-valid-pgp-key",
       GPG_PASSPHRASE: passphrase,
     });
+    // stderr before exitCode (CLAUDE.md) so a surprise exit 0 gets a
+    // legible failure message instead of "expected 0 not to be 0".
+    // Also a positive assertion: the gpg --import failure must surface
+    // on stderr rather than get swallowed silently inside the helper.
+    // gpg always prefixes its diagnostics with "gpg:" (it's the program
+    // identifier, stable across every version from 2.x onward), and on
+    // this specific bad input it prints "gpg: no valid OpenPGP data
+    // found." The regex matches the prefix alone so future gpg wording
+    // drift doesn't flake the test.
+    expect(second.stderr).toMatch(/^gpg: /m);
     expect(second.exitCode).not.toBe(0);
 
     // Pre-existing state must be restored byte-for-byte. No half-written

@@ -224,7 +224,14 @@ function sign_and_upload_manifest() {
     || sign_exit=$?
 
   if [ "$sign_exit" -ne 0 ]; then
-    echo "error: failed to generate SHASUMS256.txt (exit $sign_exit)"
+    # `>&2 || true` matches the warn echoes above and the diagnostics
+    # inside sign-release-manifest.sh itself: without `>&2` the error
+    # goes to stdout and is swallowed if the caller captures it; without
+    # `|| true` a SIGPIPE on the echo (Buildkite log aggregator dying)
+    # makes bash exit 141 under `set -eo pipefail` BEFORE the
+    # `return "$sign_exit"` runs, so the caller sees 141 instead of the
+    # real signing-failure code.
+    echo "error: failed to generate SHASUMS256.txt (exit $sign_exit)" >&2 || true
     return "$sign_exit"
   fi
 

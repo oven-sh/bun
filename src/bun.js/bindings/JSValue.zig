@@ -974,6 +974,15 @@ pub const JSValue = enum(i64) {
         return res;
     }
 
+    extern fn Bun__attachAsyncStackFromPromise(global: *JSGlobalObject, err: JSValue, promise: *jsc.JSPromise) void;
+    /// If `this` is an Error instance with no stack trace (e.g. created from
+    /// native code at the top of the event loop), populate its stack with async
+    /// frames derived from the given promise's await chain. No-op if `this` is
+    /// not an Error instance or the promise has no awaiting generator.
+    pub fn attachAsyncStackFromPromise(this: JSValue, global: *JSGlobalObject, promise: *jsc.JSPromise) void {
+        Bun__attachAsyncStackFromPromise(global, this, promise);
+    }
+
     /// Returns true if
     /// - `" string literal"`
     /// - `new String("123")`
@@ -2090,7 +2099,7 @@ pub const JSValue = enum(i64) {
         return FFI.JSVALUE_TO_INT32(.{ .asJSValue = this });
     }
 
-    pub fn asFileDescriptor(this: JSValue) bun.FileDescriptor {
+    pub fn asFileDescriptor(this: JSValue) bun.FD {
         bun.assert(this.isNumber());
         return .fromUV(this.toInt32());
     }

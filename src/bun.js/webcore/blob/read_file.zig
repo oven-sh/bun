@@ -27,7 +27,7 @@ pub fn NewReadFileHandler(comptime Function: anytype) type {
                     try jsc.AnyPromise.wrap(.{ .normal = promise }, globalThis, WrappedFn.wrapped, .{ &blob, globalThis, bytes });
                 },
                 .err => |err| {
-                    try promise.reject(globalThis, err.toErrorInstance(globalThis));
+                    try promise.reject(globalThis, err.toErrorInstanceWithAsyncStack(globalThis, promise));
                 },
             }
         }
@@ -46,7 +46,7 @@ pub const ReadFile = struct {
     offset: SizeType = 0,
     max_length: SizeType = Blob.max_size,
     total_size: SizeType = Blob.max_size,
-    opened_fd: bun.FileDescriptor = invalid_fd,
+    opened_fd: bun.FD = invalid_fd,
     read_off: SizeType = 0,
     read_eof: bool = false,
     size: SizeType = 0,
@@ -309,7 +309,7 @@ pub const ReadFile = struct {
         }
     }
 
-    fn resolveSizeAndLastModified(this: *ReadFile, fd: bun.FileDescriptor) void {
+    fn resolveSizeAndLastModified(this: *ReadFile, fd: bun.FD) void {
         const stat: bun.Stat = switch (bun.sys.fstat(fd)) {
             .result => |result| result,
             .err => |err| {
@@ -362,7 +362,7 @@ pub const ReadFile = struct {
         }
     }
 
-    fn runAsyncWithFD(this: *ReadFile, fd: bun.FileDescriptor) void {
+    fn runAsyncWithFD(this: *ReadFile, fd: bun.FD) void {
         if (this.errno != null) {
             this.onFinish();
             return;
@@ -530,7 +530,7 @@ pub const ReadFileUV = struct {
     offset: SizeType = 0,
     max_length: SizeType = Blob.max_size,
     total_size: SizeType = Blob.max_size,
-    opened_fd: bun.FileDescriptor = invalid_fd,
+    opened_fd: bun.FD = invalid_fd,
     read_len: SizeType = 0,
     read_off: SizeType = 0,
     read_eof: bool = false,
@@ -607,7 +607,7 @@ pub const ReadFileUV = struct {
         this.finalize();
     }
 
-    pub fn onFileOpen(this: *ReadFileUV, opened_fd: bun.FileDescriptor) void {
+    pub fn onFileOpen(this: *ReadFileUV, opened_fd: bun.FD) void {
         log("ReadFileUV.onFileOpen", .{});
         if (this.errno != null) {
             this.onFinish();

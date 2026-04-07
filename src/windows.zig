@@ -3988,7 +3988,7 @@ pub extern fn windows_enable_stdio_inheritance() void;
 /// Extracted from standard library except this takes an open file descriptor
 ///
 /// NOTE: THE FILE MUST BE OPENED WITH ACCESS_MASK "DELETE" OR THIS WILL FAIL
-pub fn deleteOpenedFile(fd: bun.FileDescriptor) Maybe(void) {
+pub fn deleteOpenedFile(fd: bun.FD) Maybe(void) {
     comptime bun.assert(builtin.target.os.version_range.windows.min.isAtLeast(.win10_rs5));
     var info = w.FILE_DISPOSITION_INFORMATION_EX{
         .Flags = FILE_DISPOSITION_DELETE |
@@ -4020,8 +4020,8 @@ pub fn deleteOpenedFile(fd: bun.FileDescriptor) Maybe(void) {
 /// - source_fd must have been opened with access_mask=w.DELETE
 /// - new_path_w must be the name of a file. it cannot be a path relative to new_dir_fd. see moveOpenedFileAtLoose
 pub fn moveOpenedFileAt(
-    src_fd: bun.FileDescriptor,
-    new_dir_fd: bun.FileDescriptor,
+    src_fd: bun.FD,
+    new_dir_fd: bun.FD,
     new_file_name: []const u16,
     replace_if_exists: bool,
 ) Maybe(void) {
@@ -4080,8 +4080,8 @@ pub fn moveOpenedFileAt(
 ///
 /// Aka: moveOpenedFileAtLoose(fd, dir, ".\\a\\relative\\not-normalized-path.txt", false);
 pub fn moveOpenedFileAtLoose(
-    src_fd: bun.FileDescriptor,
-    new_dir_fd: bun.FileDescriptor,
+    src_fd: bun.FD,
+    new_dir_fd: bun.FD,
     new_path: []const u16,
     replace_if_exists: bool,
 ) Maybe(void) {
@@ -4111,9 +4111,9 @@ pub fn moveOpenedFileAtLoose(
 /// Derived from std.os.windows.renameAtW
 /// Allows more errors
 pub fn renameAtW(
-    old_dir_fd: bun.FileDescriptor,
+    old_dir_fd: bun.FD,
     old_path_w: []const u16,
-    new_dir_fd: bun.FileDescriptor,
+    new_dir_fd: bun.FD,
     new_path_w: []const u16,
     replace_if_exists: bool,
 ) Maybe(void) {

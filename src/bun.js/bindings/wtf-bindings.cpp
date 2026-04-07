@@ -4,6 +4,7 @@
 #include <wtf/StackCheck.h>
 #include <wtf/StackTrace.h>
 #include <wtf/dtoa.h>
+#include <wtf/NumberOfCores.h>
 #include <atomic>
 
 #include "wtf/SIMDUTF.h"
@@ -254,6 +255,11 @@ extern "C" [[ZIG_EXPORT(nothrow)]] void* Bun__StackCheck__getMaxStack()
 extern "C" void WTF__DumpStackTrace(void** stack, size_t stack_count)
 {
     WTFPrintBacktrace({ stack, stack_count });
+}
+
+extern "C" int WTF__numberOfProcessorCores()
+{
+    return WTF::numberOfProcessorCores();
 }
 
 extern "C" void WTF__releaseFastMallocFreeMemoryForThisThread()

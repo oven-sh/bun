@@ -1273,7 +1273,7 @@ fn enqueueGitClone(
 pub fn enqueueGitCheckout(
     this: *PackageManager,
     task_id: Task.Id,
-    dir: bun.FileDescriptor,
+    dir: bun.FD,
     dependency_id: DependencyID,
     name: string,
     resolution: Resolution,

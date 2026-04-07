@@ -215,12 +215,7 @@
 #include <dlfcn.h>
 #endif
 
-#ifdef __APPLE__
-#include <sys/sysctl.h>
-#elif defined(__linux__)
-// for sysconf
-#include <unistd.h>
-#endif
+#include <wtf/NumberOfCores.h>
 
 using namespace Bun;
 
@@ -1967,18 +1962,7 @@ void GlobalObject::finishCreation(VM& vm)
 
     m_navigatorObject.initLater(
         [](const Initializer<JSObject>& init) {
-            int cpuCount = 0;
-#ifdef __APPLE__
-            size_t count_len = sizeof(cpuCount);
-            sysctlbyname("hw.logicalcpu", &cpuCount, &count_len, NULL, 0);
-#elif OS(WINDOWS)
-            SYSTEM_INFO sysinfo;
-            GetSystemInfo(&sysinfo);
-            cpuCount = sysinfo.dwNumberOfProcessors;
-#else
-            // TODO: windows
-            cpuCount = sysconf(_SC_NPROCESSORS_ONLN);
-#endif
+            int cpuCount = WTF::numberOfProcessorCores();
 
             auto str = WTF::String::fromUTF8(Bun__userAgent);
             JSC::Identifier userAgentIdentifier = JSC::Identifier::fromString(init.vm, "userAgent"_s);
@@ -3545,6 +3529,10 @@ GlobalObject::PromiseFunctions GlobalObject::promiseHandlerID(Zig::FFIFunction h
         return GlobalObject::PromiseFunctions::Bun__FileSink__onResolveStream;
     } else if (handler == Bun__FileSink__onRejectStream) {
         return GlobalObject::PromiseFunctions::Bun__FileSink__onRejectStream;
+    } else if (handler == Bun__CronJob__onPromiseResolve) {
+        return GlobalObject::PromiseFunctions::Bun__CronJob__onPromiseResolve;
+    } else if (handler == Bun__CronJob__onPromiseReject) {
+        return GlobalObject::PromiseFunctions::Bun__CronJob__onPromiseReject;
     } else {
         RELEASE_ASSERT_NOT_REACHED();
     }

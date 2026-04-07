@@ -240,12 +240,59 @@ pub const OtelTracer = struct {
             return global.throwInvalidArguments("startSpan expects a span name string", .{});
         }
         const opts: JSValue = if (args.len > 1 and args[1].isObject()) args[1] else .js_undefined;
+        const span = try this.createSpan(global, args[0], opts);
+        return span.toJS(global);
+    }
 
+    pub fn startActiveSpan(this: *OtelTracer, global: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
+        const args = callframe.arguments();
+        if (args.len < 2 or !args[0].isString()) {
+            return global.throwInvalidArguments("startActiveSpan(name[, options], fn) expects a name and callback", .{});
+        }
+        // (name, fn) | (name, opts, fn)
+        var opts: JSValue = .js_undefined;
+        var func: JSValue = args[1];
+        if (args.len > 2 and args[1].isObject() and !args[1].isCallable()) {
+            opts = args[1];
+            func = args[2];
+        }
+        if (!func.isCallable()) {
+            return global.throwInvalidArguments("startActiveSpan callback is not a function", .{});
+        }
+
+        const span = try this.createSpan(global, args[0], opts);
+        const span_js = span.toJS(global);
+
+        const cell = OtelSpanContext.create(global, span.ctx, false);
+        const guard = instrument.SlotGuard.enter(global, cell);
+
+        var did_throw = false;
+        const result = func.call(global, .js_undefined, &.{span_js}) catch |err| blk: {
+            did_throw = true;
+            break :blk global.takeException(err);
+        };
+        guard.restore();
+
+        if (did_throw) {
+            span.endNowWithError(global, result);
+            return global.throwValue(result);
+        }
+        if (result.asAnyPromise()) |_| {
+            result.thenWithValue(global, span_js, OtelSpan.onActiveResolve, OtelSpan.onActiveReject) catch {};
+            return result;
+        }
+        span.endNow();
+        return result;
+    }
+
+    fn createSpan(this: *OtelTracer, global: *JSGlobalObject, name_js: JSValue, opts: JSValue) bun.JSError!*OtelSpan {
         var parent: ?model.SpanContext = null;
         var kind: model.SpanKind = .internal;
         var start_ns: u64 = 0;
+        var explicit_parent = false;
         if (opts != .js_undefined) {
             if (try opts.get(global, "parent")) |p| {
+                explicit_parent = true;
                 parent = try readSpanContext(global, p);
             }
             if (try opts.get(global, "kind")) |k| {
@@ -258,6 +305,7 @@ pub const OtelTracer = struct {
                 if (t.isBigInt()) start_ns = t.toUInt64NoTruncate();
             }
         }
+        if (!explicit_parent) parent = instrument.getActiveSpanContext(global);
 
         const trace_id: model.TraceId = if (parent) |p| p.trace_id else generateTraceId();
         const span_id = generateSpanId();
@@ -278,15 +326,14 @@ pub const OtelTracer = struct {
         });
 
         if (sampled) {
-            span.name = span.dupe(try jsStringSlice(global, args[0], &span.arena));
+            span.name = span.dupe(try jsStringSlice(global, name_js, &span.arena));
             if (opts != .js_undefined) {
                 if (try opts.get(global, "attributes")) |a| {
                     if (a.isObject()) try span.appendAttributesObject(global, a);
                 }
             }
         }
-
-        return span.toJS(global);
+        return span;
     }
 
     pub fn finalize(this: *OtelTracer) void {
@@ -434,6 +481,56 @@ pub const OtelSpan = struct {
         return .js_undefined;
     }
 
+    pub fn endNow(this: *OtelSpan) void {
+        if (this.ended) return;
+        this.ended = true;
+        const provider = this.provider orelse return;
+        const at_rest: model.Span = .{
+            .trace_id = this.ctx.trace_id,
+            .span_id = this.ctx.span_id,
+            .parent_span_id = this.parent_span_id,
+            .flags = @as(u32, this.ctx.flags) | 0x100,
+            .name = this.name,
+            .kind = this.kind,
+            .start_time_unix_nano = this.start_ns,
+            .end_time_unix_nano = nowUnixNanos(),
+            .attributes = this.attrs.items,
+            .events = this.events.items,
+            .status = this.status,
+        };
+        provider.processor.onEnd(at_rest, this.scope_index);
+    }
+
+    pub fn endNowWithError(this: *OtelSpan, global: *JSGlobalObject, err: JSValue) void {
+        if (this.provider != null and !this.ended) {
+            this.status.code = .err;
+            if (err.toError()) |e| {
+                if (e.fastGet(global, .message) catch null) |msg| {
+                    if (msg.isString()) {
+                        const s = msg.toSlice(global, this.alloc()) catch return this.endNow();
+                        this.status.message = this.dupe(s.slice());
+                    }
+                }
+            }
+        }
+        this.endNow();
+    }
+
+    pub fn onActiveResolve(_: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
+        const args = callframe.arguments_old(2);
+        if (OtelSpan.fromJS(args.ptr[1])) |span| span.endNow();
+        return .js_undefined;
+    }
+
+    pub fn onActiveReject(global: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
+        const args = callframe.arguments_old(2);
+        if (OtelSpan.fromJS(args.ptr[1])) |span| span.endNowWithError(global, args.ptr[0]);
+        return .js_undefined;
+    }
+
+    pub export const Bun__OtelSpan__onActiveResolve = jsc.toJSHostFn(onActiveResolve);
+    pub export const Bun__OtelSpan__onActiveReject = jsc.toJSHostFn(onActiveReject);
+
     pub fn finalize(this: *OtelSpan) void {
         this.arena.deinit();
         bun.destroy(this);
@@ -507,6 +604,7 @@ const JSValue = jsc.JSValue;
 const model = @import("./span.zig");
 const attributes = @import("./attributes.zig");
 const propagation = @import("./propagation.zig");
+const instrument = @import("./instrument.zig");
 const Attribute = attributes.Attribute;
 const AnyValue = attributes.AnyValue;
 const BatchProcessor = @import("./processor.zig").BatchProcessor;

@@ -48,6 +48,7 @@ export default [
     JSType: "0b11101110",
     proto: {
       startSpan: { fn: "startSpan", length: 1 },
+      startActiveSpan: { fn: "startActiveSpan", length: 2 },
     },
   }),
 ];

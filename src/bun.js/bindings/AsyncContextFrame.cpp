@@ -96,6 +96,22 @@ extern "C" JSC::EncodedJSValue AsyncContextFrame__withAsyncContextIfNeeded(JSGlo
     return JSValue::encode(AsyncContextFrame::withAsyncContextIfNeeded(globalObject, JSValue::decode(callback)));
 }
 
+extern "C" JSC::EncodedJSValue Bun__getAsyncContextSlot(JSGlobalObject* globalObject)
+{
+    return JSValue::encode(globalObject->m_asyncContextData.get()->getInternalField(0));
+}
+
+extern "C" void Bun__setAsyncContextSlot(JSGlobalObject* globalObject, JSC::EncodedJSValue value)
+{
+    auto& vm = globalObject->vm();
+    globalObject->m_asyncContextData.get()->putInternalField(vm, 0, JSValue::decode(value));
+}
+
+extern "C" void Bun__enableAsyncContextTracking(JSGlobalObject* globalObject)
+{
+    globalObject->setAsyncContextTrackingEnabled(true);
+}
+
 #define ASYNCCONTEXTFRAME_CALL_IMPL(...)                                     \
     if (!functionObject.isCell())                                            \
         return jsUndefined();                                                \

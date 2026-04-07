@@ -11,6 +11,7 @@ pub const tracer = @import("./tracer.zig");
 pub const propagation = @import("./propagation.zig");
 pub const processor = @import("./processor.zig");
 pub const exporter = @import("./otlp/exporter.zig");
+pub const instrument = @import("./instrument.zig");
 
 pub const Span = span.Span;
 pub const SpanContext = span.SpanContext;
@@ -23,6 +24,7 @@ pub const TracerProvider = tracer.TracerProvider;
 pub const OtelSpan = tracer.OtelSpan;
 pub const OtelSpanContext = tracer.OtelSpanContext;
 pub const OtelTracer = tracer.OtelTracer;
+pub const NativeSpan = instrument.NativeSpan;
 
 comptime {
     _ = js;

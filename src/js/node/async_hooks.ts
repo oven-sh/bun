@@ -22,6 +22,11 @@
 // each key is an AsyncLocalStorage object and the value is the associated value. There are a ton of
 // calls to $assert which will verify this invariant (only during bun-debug)
 //
+// The slot is shared with native OTEL span propagation: when only an OTEL span
+// is active the slot holds an OtelSpanContext cell directly (not an array). The
+// helpers below transparently upgrade that to `[null, spanCtx, ...]` when ALS
+// state is added, so the cell is preserved across ALS reads/writes.
+//
 const setAsyncHooksEnabled = $newCppFunction("NodeAsyncHooks.cpp", "jsSetAsyncHooksEnabled", 1);
 const cleanupLater = $newCppFunction("NodeAsyncHooks.cpp", "jsCleanupLater", 0);
 const { validateFunction, validateString, validateObject } = require("internal/validators");
@@ -30,19 +35,15 @@ const { validateFunction, validateString, validateObject } = require("internal/v
 function assertValidAsyncContextArray(array: unknown): array is ReadonlyArray<any> | undefined {
   // undefined is OK
   if (array === undefined) return true;
-  // Otherwise, it must be an array
-  $assert(
-    Array.isArray(array),
-    "AsyncContextData must be an array or undefined, got",
-    Bun.inspect(array, { depth: 1 }),
-  );
+  // Bare OtelSpanContext (no ALS data) is OK
+  if (!Array.isArray(array)) return true;
   // the array has to be even
   $assert(array.length % 2 === 0, "AsyncContextData should be even-length, got", Bun.inspect(array, { depth: 1 }));
   // if it is zero-length, use undefined instead
   $assert(array.length > 0, "AsyncContextData should be undefined if empty, got", Bun.inspect(array, { depth: 1 }));
   for (var i = 0; i < array.length; i += 2) {
     $assert(
-      array[i] instanceof AsyncLocalStorage,
+      array[i] instanceof AsyncLocalStorage || (i === 0 && array[i] === null),
       `Odd indexes in AsyncContextData should be an array of AsyncLocalStorage\nIndex %s was %s`,
       i,
       array[i],
@@ -54,9 +55,10 @@ function assertValidAsyncContextArray(array: unknown): array is ReadonlyArray<an
 // Only run during debug
 function debugFormatContextValue(value: ReadonlyArray<any> | undefined) {
   if (value === undefined) return "undefined";
+  if (!$isJSArray(value)) return "<otel-span>";
   let str = "{\n";
   for (var i = 0; i < value.length; i += 2) {
-    str += `  ${value[i].__id__}: typeof = ${typeof value[i + 1]}\n`;
+    str += value[i] === null ? `  <otel-span>\n` : `  ${value[i].__id__}: typeof = ${typeof value[i + 1]}\n`;
   }
   str += "}";
   return str;
@@ -117,6 +119,10 @@ class AsyncLocalStorage {
       set([this, store]);
       return;
     }
+    if (!$isJSArray(context)) {
+      set([null, context, this, store]);
+      return;
+    }
     var { length } = context;
     $assert(length > 0);
     $assert(length % 2 === 0);
@@ -145,12 +151,18 @@ class AsyncLocalStorage {
     var hasPrevious = false;
     var previous_value;
     var i = 0;
+    var carriedSpan;
+    if (context && !$isJSArray(context)) {
+      carriedSpan = context;
+      context = undefined as any;
+    }
     var contextWasAlreadyInit = !context;
     // we must renable it when asyncLocalStorage.run() is called https://nodejs.org/api/async_context.html#asynclocalstoragedisable
     const wasDisabled = this.#disabled;
     this.#disabled = false;
     if (contextWasAlreadyInit) {
-      set((context = [this, store_value]));
+      set((context = carriedSpan !== undefined ? [null, carriedSpan, this, store_value] : [this, store_value]));
+      i = carriedSpan !== undefined ? 2 : 0;
     } else {
       // it's safe to mutate context now that it was cloned
       context = context!.slice();
@@ -178,8 +190,7 @@ class AsyncLocalStorage {
       if (!wasDisabled) {
         var context2 = get()! as any[]; // we make sure to .slice() before mutating
         if (context2 === context && contextWasAlreadyInit) {
-          $assert(context2.length === 2, "context was mutated without copy");
-          set(undefined);
+          set(carriedSpan);
         } else {
           context2 = context2.slice(); // array is cloned here
           $assert(context2[i] === this);
@@ -210,7 +221,7 @@ class AsyncLocalStorage {
     if (this.#disabled) return;
     this.#disabled = true;
     var context = get() as any[];
-    if (context) {
+    if (context && $isJSArray(context)) {
       var { length } = context;
       for (var i = 0; i < length; i += 2) {
         if (context[i] === this) {
@@ -227,7 +238,7 @@ class AsyncLocalStorage {
     // disabled AsyncLocalStorage always returns undefined https://nodejs.org/api/async_context.html#asynclocalstoragedisable
     if (this.#disabled) return;
     var context = get();
-    if (!context) return;
+    if (!context || !$isJSArray(context)) return;
     var { length } = context;
     for (var i = 0; i < length; i += 2) {
       if (context[i] === this) return context[i + 1];

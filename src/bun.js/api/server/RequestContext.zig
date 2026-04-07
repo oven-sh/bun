@@ -78,6 +78,8 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 
         additional_on_abort: ?AdditionalOnAbortCallback = null,
 
+        otel_span: bun.otel.NativeSpan = .{},
+
         // TODO: support builtin compression
 
         pub fn setSignalAborted(this: *RequestContext, reason: bun.jsc.CommonAbortReason) void {
@@ -743,6 +745,14 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             }
 
             this.response_body_readable_stream_ref.deinit();
+
+            if (this.otel_span.isRecording()) {
+                if (this.response_ptr) |resp| {
+                    this.otel_span.setAttrInt("http.response.status_code", @intCast(resp.statusCode()));
+                }
+                if (this.flags.aborted) this.otel_span.setStatus(.err, "aborted");
+                this.otel_span.end();
+            }
 
             if (!this.pathname.isEmpty()) {
                 this.pathname.deref();

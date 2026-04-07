@@ -2052,6 +2052,24 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             return false;
         }
 
+        /// One-branch fast path when OTEL is off. Otherwise: parse incoming
+        /// `traceparent`, start a server span on the RequestContext, install
+        /// its SpanContext as the active async-context slot, and return the
+        /// guard so the caller can restore immediately after the JS handler
+        /// returns. The span is ended in `RequestContext.finalizeWithoutDeinit`.
+        fn beginOtelServerSpan(this: *ThisServer, ctx: *RequestContext, req: *uws.Request) ?bun.otel.instrument.SlotGuard {
+            if (bun.otel.TracerProvider.get(this.vm) == null) return null;
+            const parent = if (req.header("traceparent")) |h| bun.otel.propagation.parseTraceparent(h) else null;
+            const recording = ctx.otel_span.start(this.vm, .server, .server, @tagName(ctx.method), parent);
+            if (recording) {
+                ctx.otel_span.setAttrStatic("http.request.method", @tagName(ctx.method));
+                ctx.otel_span.setAttrStr("url.path", req.url());
+                ctx.otel_span.setAttrStatic("url.scheme", if (ssl_enabled) "https" else "http");
+            }
+            const cell = ctx.otel_span.createContextCell(this.globalThis);
+            return bun.otel.instrument.SlotGuard.enter(this.globalThis, cell);
+        }
+
         pub fn onUserRouteRequest(user_route: *UserRoute, req: *uws.Request, resp: *App.Response) void {
             const server = user_route.server;
             const index = user_route.id;
@@ -2062,8 +2080,10 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 .specific => |m| m,
             }) orelse return;
 
+            const otel_guard = server.beginOtelServerSpan(prepared.ctx, req);
             const server_request_list = js.routeListGetCached(server.jsValueAssertAlive()).?;
             const response_value = bun.jsc.fromJSHostCall(server.globalThis, @src(), Bun__ServerRouteList__callRoute, .{ server.globalThis, index, prepared.request_object, server.jsValueAssertAlive(), server_request_list, &prepared.js_request, req }) catch |err| server.globalThis.takeException(err);
+            if (otel_guard) |*g| g.restore();
 
             server.handleRequest(&should_deinit_context, prepared, req, response_value);
         }
@@ -2103,6 +2123,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
             bun.assert(this.config.onRequest != .zero);
 
+            const otel_guard = this.beginOtelServerSpan(prepared.ctx, req);
             const js_value = this.jsValueAssertAlive();
             const response_value = this.config.onRequest.call(
                 this.globalThis,
@@ -2110,6 +2131,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 &.{ prepared.js_request, js_value },
             ) catch |err|
                 this.globalThis.takeException(err);
+            if (otel_guard) |*g| g.restore();
 
             this.handleRequest(&should_deinit_context, prepared, req, response_value);
         }
@@ -2330,8 +2352,10 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             var should_deinit_context = false;
             var prepared = server.prepareJsRequestContext(req, resp, &should_deinit_context, .no, method) orelse return;
             prepared.ctx.upgrade_context = upgrade_ctx; // set the upgrade context
+            const otel_guard = server.beginOtelServerSpan(prepared.ctx, req);
             const server_request_list = js.routeListGetCached(server.jsValueAssertAlive()).?;
             const response_value = bun.jsc.fromJSHostCall(server.globalThis, @src(), Bun__ServerRouteList__callRoute, .{ server.globalThis, index, prepared.request_object, server.jsValueAssertAlive(), server_request_list, &prepared.js_request, req }) catch |err| server.globalThis.takeException(err);
+            if (otel_guard) |*g| g.restore();
 
             server.handleRequest(&should_deinit_context, prepared, req, response_value);
         }

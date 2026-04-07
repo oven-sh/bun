@@ -445,6 +445,7 @@ BUN_DECLARE_HOST_FUNCTION(Bun__otel__configure);
 BUN_DECLARE_HOST_FUNCTION(Bun__otel__getTracer);
 BUN_DECLARE_HOST_FUNCTION(Bun__otel__forceFlush);
 BUN_DECLARE_HOST_FUNCTION(Bun__otel__parseTraceparent);
+BUN_DECLARE_HOST_FUNCTION(Bun__otel__getActiveSpanContext);
 
 static JSValue constructOtelObject(VM& vm, JSObject* bunObject)
 {
@@ -460,6 +461,7 @@ static JSValue constructOtelObject(VM& vm, JSObject* bunObject)
     put("getTracer"_s, 1, Bun__otel__getTracer);
     put("forceFlush"_s, 0, Bun__otel__forceFlush);
     put("parseTraceparent"_s, 1, Bun__otel__parseTraceparent);
+    put("getActiveSpanContext"_s, 0, Bun__otel__getActiveSpanContext);
     return otelObject;
 }
 

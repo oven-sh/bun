@@ -660,6 +660,7 @@ pub fn jsConfigure(global: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSErr
         return global.throw("failed to configure OTEL: {s}", .{@errorName(err)});
     };
     vm.rareData().otel_tracer_provider = provider;
+    instrument.enableTracking(global);
     return .js_undefined;
 }
 
@@ -688,6 +689,11 @@ pub fn jsForceFlush(global: *JSGlobalObject, _: *jsc.CallFrame) bun.JSError!JSVa
     return provider.processor.forceFlush(global);
 }
 
+pub fn jsGetActiveSpanContext(global: *JSGlobalObject, _: *jsc.CallFrame) bun.JSError!JSValue {
+    const ctx = instrument.getActiveSpanContext(global) orelse return .js_undefined;
+    return tracer.OtelSpanContext.create(global, ctx, false);
+}
+
 pub fn jsParseTraceparent(global: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
     const args = callframe.arguments();
     if (args.len < 1 or !args[0].isString()) return .js_undefined;
@@ -711,6 +717,8 @@ comptime {
     @export(&js_forceFlush, .{ .name = "Bun__otel__forceFlush" });
     const js_parseTraceparent = jsc.toJSHostFn(jsParseTraceparent);
     @export(&js_parseTraceparent, .{ .name = "Bun__otel__parseTraceparent" });
+    const js_getActiveSpanContext = jsc.toJSHostFn(jsGetActiveSpanContext);
+    @export(&js_getActiveSpanContext, .{ .name = "Bun__otel__getActiveSpanContext" });
 }
 
 const std = @import("std");
@@ -726,5 +734,6 @@ const attrs = @import("./attributes.zig");
 const tags = @import("OtlpProtoTags");
 const tracer = @import("./tracer.zig");
 const propagation = @import("./propagation.zig");
+const instrument = @import("./instrument.zig");
 const Attribute = attrs.Attribute;
 const AnyValue = attrs.AnyValue;

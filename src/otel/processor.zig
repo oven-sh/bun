@@ -161,15 +161,13 @@ pub const BatchProcessor = struct {
         self.sending.reset();
         self.inflight = false;
         self.keep_alive.unref(self.provider.vm);
-        // If more spans arrived while we were sending, kick another flush so
-        // forceFlush() waiters see a fully-drained queue.
-        if (self.active.count > 0 and self.flush_waiters.items.len > 0) {
-            self.flush();
-        } else {
-            self.resolveWaiters();
-            if (self.active.count > 0) {
-                AutoFlusher.registerDeferredMicrotaskWithType(BatchProcessor, self, self.provider.vm);
-            }
+        // forceFlush() is satisfied once the batch that was pending at call
+        // time has been exported. Spans that arrived during the send (e.g.
+        // an auto-instrumented server span for the collector itself) are
+        // re-registered for the normal scheduled flush, not flushed inline.
+        self.resolveWaiters();
+        if (self.active.count > 0) {
+            AutoFlusher.registerDeferredMicrotaskWithType(BatchProcessor, self, self.provider.vm);
         }
     }
 
@@ -205,8 +203,10 @@ const Batch = struct {
     }
 
     fn reset(self: *Batch) void {
+        // Per-scope list buffers live in the arena; after arena.reset() the
+        // retained capacity would point at poisoned memory, so drop them.
         var it = self.per_scope.iterator();
-        while (it.next()) |e| e.value_ptr.clearRetainingCapacity();
+        while (it.next()) |e| e.value_ptr.* = .{};
         _ = self.arena.reset(.retain_capacity);
         self.count = 0;
     }

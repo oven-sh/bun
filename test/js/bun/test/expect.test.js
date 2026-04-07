@@ -3528,6 +3528,24 @@ describe("expect()", () => {
       expect(a1).not.toMatchObject({ 1: 1 });
       expect(a1).toMatchObject(a1);
     });
+
+    if (isBun) {
+      test("WeakMap/WeakSet with fake 'size' property does not crash diff formatting", () => {
+        // Regression: pretty formatting read the own `size` property of a
+        // WeakMap/WeakSet and then called forEach on it, which throws TypeError
+        // because weak collections are not iterable. In debug this tripped an
+        // ExceptionScope assertion; in release it produced broken diff output.
+        const wm = new WeakMap();
+        /** @type {any} */ (wm).size = 2836;
+        expect(Bun.inspect(wm)).toBe("WeakMap {}");
+        expect(() => expect(wm).toMatchObject(new Int16Array(2))).toThrow();
+
+        const ws = new WeakSet();
+        /** @type {any} */ (ws).size = 2836;
+        expect(Bun.inspect(ws)).toBe("WeakSet {}");
+        expect(() => expect(ws).toMatchObject(new Int16Array(2))).toThrow();
+      });
+    }
   });
 
   describe("toMatch()", () => {

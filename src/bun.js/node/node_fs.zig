@@ -5762,11 +5762,19 @@ pub const NodeFS = struct {
                     error.IsDir => .ISDIR,
                     error.NotDir => .NOTDIR,
                     error.AccessDenied => brk: {
-                        if (comptime Environment.isMac) {
-                            // Use `lstatat` so a symlink pointing at a
-                            // directory is NOT remapped — unlink on a
-                            // symlink is legal, so a real EACCES/EPERM
-                            // on the link itself must surface unchanged.
+                        // On macOS `unlink(2)` on a directory returns
+                        // EPERM; on Windows `DeleteFile()` on a
+                        // directory returns ERROR_ACCESS_DENIED. Both
+                        // surface as `error.AccessDenied`, so probe the
+                        // path before remapping — we must not clobber a
+                        // real EACCES/EPERM on a regular file.
+                        //
+                        // `lstatat` uses `AT_SYMLINK_NOFOLLOW`, so a
+                        // symlink pointing at a directory is NOT
+                        // remapped — unlink on a symlink is legal and
+                        // any permission error on the link itself must
+                        // surface unchanged.
+                        if (comptime Environment.isMac or Environment.isWindows) {
                             switch (bun.sys.lstatat(bun.invalid_fd, dest)) {
                                 .result => |stat_buf| if (bun.S.ISDIR(stat_buf.mode)) break :brk .ISDIR,
                                 .err => {},

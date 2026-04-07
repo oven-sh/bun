@@ -95,4 +95,32 @@ describe.skipIf(isWindows)("Glob path length", () => {
     // path into its fixed-size PathBuffer.
     expect(scanStdout.trim()).toBe("ERR:ENAMETOOLONG");
   });
+
+  for (const component of ["..", "."] as const) {
+    test(`pattern with many leading "${component}/" components does not overflow path buffer`, async () => {
+      const root = tmpdirSync("bun-glob-overflow-dots-");
+      // collapseDots() appends "/." or "/.." per leading Dot/DotBack pattern
+      // component into a fixed-size PathBuffer. With enough components the
+      // running length exceeds MAX_PATH_BYTES; the walker must report
+      // ENAMETOOLONG instead of panicking or writing past the buffer.
+      const repeats = 2200;
+      const pattern = `${component}/`.repeat(repeats) + "*";
+
+      await using scanProc = Bun.spawn({
+        cmd: [bunExe(), "-e", runScanFixture(pattern, { cwd: root, onlyFiles: false })],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [scanStdout, scanStderr, scanCode] = await Promise.all([
+        scanProc.stdout.text(),
+        scanProc.stderr.text(),
+        scanProc.exited,
+      ]);
+
+      expect(scanStderr).not.toContain("panic");
+      expect(scanStderr).not.toContain("Segmentation fault");
+      expect(scanStdout.trim()).toBe("ERR:ENAMETOOLONG");
+      expect(scanCode).toBe(0);
+    });
+  }
 });

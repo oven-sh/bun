@@ -630,7 +630,13 @@ pub fn GlobWalker_(
                 const active: ComponentSet = set: {
                     if (work_item.active.count() == 1) {
                         const single: u32 = @intCast(work_item.active.findFirstSet().?);
-                        const norm = this.walker.skipSpecialComponents(single, &dir_path, &this.iter_state.directory.path, &had_dot_dot);
+                        const norm = switch (this.walker.skipSpecialComponents(single, &dir_path, &this.iter_state.directory.path, &had_dot_dot)) {
+                            .err => |e| {
+                                if (work_item.fd) |fd| this.closeDisallowingCwd(fd);
+                                return .{ .err = e };
+                            },
+                            .result => |i| i,
+                        };
                         if (norm >= this.walker.patternComponents.items.len) {
                             if (work_item.fd) |fd| this.closeDisallowingCwd(fd);
                             this.iter_state = .get_next;
@@ -799,7 +805,10 @@ pub fn GlobWalker_(
                                     var has_dot_dot = false;
                                     const active: ComponentSet = if (work_item.active.count() == 1) blk: {
                                         const single: u32 = @intCast(work_item.active.findFirstSet().?);
-                                        const norm = this.walker.skipSpecialComponents(single, &symlink_full_path_z, scratch_path_buf, &has_dot_dot);
+                                        const norm = switch (this.walker.skipSpecialComponents(single, &symlink_full_path_z, scratch_path_buf, &has_dot_dot)) {
+                                            .err => |e| return .{ .err = e },
+                                            .result => |i| i,
+                                        };
                                         if (norm >= this.walker.patternComponents.items.len) {
                                             this.iter_state = .get_next;
                                             continue;
@@ -1193,14 +1202,16 @@ pub fn GlobWalker_(
             dir_path: *[:0]u8,
             path_buf: *bun.PathBuffer,
             encountered_dot_dot: *bool,
-        ) u32 {
+        ) Maybe(u32) {
             var component_idx = idx;
             var len = dir_path.len;
             while (component_idx < this.patternComponents.items.len) {
                 switch (this.patternComponents.items[component_idx].syntax_hint) {
                     .Dot => {
                         defer component_idx += 1;
-                        if (len + 2 >= bun.MAX_PATH_BYTES) @panic("Invalid path");
+                        if (len + 2 >= bun.MAX_PATH_BYTES) {
+                            return .{ .err = this.handleSysErrWithPath(Syscall.Error.fromCode(.NAMETOOLONG, .open), path_buf[0..len :0]) };
+                        }
                         if (len == 0) {
                             path_buf[len] = '.';
                             path_buf[len + 1] = 0;
@@ -1215,7 +1226,9 @@ pub fn GlobWalker_(
                     .DotBack => {
                         defer component_idx += 1;
                         encountered_dot_dot.* = true;
-                        if (dir_path.len + 3 >= bun.MAX_PATH_BYTES) @panic("Invalid path");
+                        if (len + 3 >= bun.MAX_PATH_BYTES) {
+                            return .{ .err = this.handleSysErrWithPath(Syscall.Error.fromCode(.NAMETOOLONG, .open), path_buf[0..len :0]) };
+                        }
                         if (len == 0) {
                             path_buf[len] = '.';
                             path_buf[len + 1] = '.';
@@ -1235,7 +1248,7 @@ pub fn GlobWalker_(
 
             dir_path.len = len;
 
-            return component_idx;
+            return .{ .result = component_idx };
         }
 
         // NOTE you must check that the pattern at `idx` has `syntax_hint == .Double` first
@@ -1256,24 +1269,21 @@ pub fn GlobWalker_(
             dir_path: *[:0]u8,
             scratch_path_buf: *bun.PathBuffer,
             encountered_dot_dot: *bool,
-        ) u32 {
+        ) Maybe(u32) {
             var component_idx = work_item_idx;
 
             if (component_idx < this.patternComponents.items.len) {
                 // Skip `.` and `..` while also appending them to `dir_path`
                 component_idx = switch (this.patternComponents.items[component_idx].syntax_hint) {
-                    .Dot => this.collapseDots(
+                    .Dot, .DotBack => switch (this.collapseDots(
                         component_idx,
                         dir_path,
                         scratch_path_buf,
                         encountered_dot_dot,
-                    ),
-                    .DotBack => this.collapseDots(
-                        component_idx,
-                        dir_path,
-                        scratch_path_buf,
-                        encountered_dot_dot,
-                    ),
+                    )) {
+                        .err => |e| return .{ .err = e },
+                        .result => |i| i,
+                    },
                     else => component_idx,
                 };
             }
@@ -1286,7 +1296,7 @@ pub fn GlobWalker_(
                 };
             }
 
-            return component_idx;
+            return .{ .result = component_idx };
         }
 
         fn matchPatternDir(

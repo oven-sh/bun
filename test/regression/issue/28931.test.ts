@@ -398,6 +398,44 @@ describe.concurrent.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
     expect(res.exitCode).toBe(1);
   });
 
+  test("rejects SHASUMS256.txt.tmp and preserves the caller's file contents byte-for-byte", async () => {
+    // claude[bot] caught: `tmp_manifest` is `${dir}/SHASUMS256.txt.tmp`
+    // and the collation phase does `: > "${tmp_manifest}"` followed by
+    // appending manifest lines into it. If a caller happens to pass a
+    // pre-existing file named `SHASUMS256.txt.tmp` as an artifact, the
+    // validation pass used to let it through (the reserved-name arm
+    // only checked `.txt` and `.asc`), the hash job would digest the
+    // original bytes into the temp dir, then `: >` would truncate the
+    // caller's file in place, the collation loop would overwrite its
+    // contents with manifest text, and the final `mv` would promote
+    // the corrupted file into SHASUMS256.txt — silent data loss. The
+    // fix adds the `.tmp` basename to the reserved-name arm. Exercise
+    // that the rejection fires AND the caller's file survives
+    // untouched.
+    const originalBytes = "CALLER_ORIGINAL_DATA_MUST_NOT_BE_CLOBBERED\n";
+    using dir = tempDir("bun-28931-tmp-collision-", {
+      "bun-linux-x64.zip": "present",
+      "SHASUMS256.txt.tmp": originalBytes,
+    });
+    const dirStr = String(dir);
+
+    const res = await sh([script, dirStr, "bun-linux-x64.zip", "SHASUMS256.txt.tmp"], {
+      GPG_PRIVATE_KEY: gpgPrivateKey,
+      GPG_PASSPHRASE: passphrase,
+    });
+    expect(res.stderr).toContain("reserved for manifest output");
+    expect(res.exitCode).toBe(1);
+
+    // The caller's SHASUMS256.txt.tmp file is byte-identical to what
+    // they passed in — this is the whole point of the rejection.
+    expect(readFileSync(join(dirStr, "SHASUMS256.txt.tmp"), "utf8")).toBe(originalBytes);
+    // No manifest was produced — validation fires before the cleanup
+    // trap even installs, so no SHASUMS256.txt / SHASUMS256.txt.asc
+    // exist in the directory.
+    expect(existsSync(join(dirStr, "SHASUMS256.txt"))).toBe(false);
+    expect(existsSync(join(dirStr, "SHASUMS256.txt.asc"))).toBe(false);
+  });
+
   test("rejects duplicate basenames in the artifact list", async () => {
     // A repeated basename would launch two parallel hash jobs writing
     // to the same `$hash_dir/$artifact.digest` path (last-write wins,
@@ -425,6 +463,7 @@ describe.concurrent.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
   test.each([
     ["reserved manifest name", "SHASUMS256.txt"],
     ["reserved signed-manifest name", "SHASUMS256.txt.asc"],
+    ["reserved tmp-manifest name", "SHASUMS256.txt.tmp"],
     ["embedded newline", "bun-linux\n-x64.zip"],
     ["embedded carriage return", "bun-linux\r-x64.zip"],
   ])("rejects malformed artifact %s", async (_label, badName) => {
@@ -432,6 +471,10 @@ describe.concurrent.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
     // - "SHASUMS256.txt"/"SHASUMS256.txt.asc" are the script's own
     //   output paths — including them as inputs would compute a hash
     //   for the previous run's manifest and then clobber it.
+    // - "SHASUMS256.txt.tmp" is the intermediate file the collation
+    //   phase truncates via `: > "$tmp_manifest"`; accepting it would
+    //   silently destroy the caller's file in place before the manifest
+    //   is written and promoted.
     // - A newline or carriage return in the name splits the
     //   newline-delimited sort into multiple entries and writes a
     //   multi-line manifest entry that downstream parsers reject.

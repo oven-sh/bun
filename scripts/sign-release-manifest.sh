@@ -100,11 +100,14 @@ if [ -n "${GPG_PRIVATE_KEY:-}" ] && [ -n "${GPG_PASSPHRASE:-}" ]; then
   fi
 fi
 
-# Output path derivations. The `_basename` values are the reserved-name
-# inputs the validation loop below rejects, and the full paths below
-# compose from them rather than repeating the SHASUMS256.txt literal.
+# Output path derivations. The three `_basename` values are the
+# reserved-name inputs the validation loop below rejects (including
+# the `.tmp` sibling — see comment #3 in the validation loop for why),
+# and the full paths compose from them rather than repeating the
+# SHASUMS256.txt literal.
 manifest_basename="SHASUMS256.txt"
 signed_manifest_basename="${manifest_basename}.asc"
+tmp_manifest_basename="${manifest_basename}.tmp"
 manifest="${dir}/${manifest_basename}"
 signed_manifest="${manifest}.asc"
 tmp_manifest="${manifest}.tmp"
@@ -124,10 +127,17 @@ tmp_manifest="${manifest}.tmp"
 #    manifest body as-is. A caller passing `dist/foo.zip` would miss
 #    a subdir; `../foo.zip` would escape `${hash_dir}` entirely; `"."`
 #    and `".."` break manifest parsing.
-# 3. The helper writes SHASUMS256.txt and SHASUMS256.txt.asc — accepting
-#    either as an input would compute a hash of the previous run's
-#    manifest output and then clobber it. Both are valid basenames so
-#    they slip past check #2, which is why this arm lives after it.
+# 3. The helper writes SHASUMS256.txt, SHASUMS256.txt.asc, and the
+#    intermediate SHASUMS256.txt.tmp — accepting any of the three as
+#    an input would compute a hash of the previous run's output and
+#    then clobber it. The `.tmp` case is especially destructive:
+#    `: > "${tmp_manifest}"` in the collation phase would truncate a
+#    caller-supplied artifact with that basename in place, then the
+#    collation loop would overwrite its bytes with manifest text, and
+#    the final `mv "${tmp_manifest}" "${manifest}"` would promote the
+#    corrupted file into SHASUMS256.txt — silent data loss. All three
+#    basenames are valid per check #2, which is why this arm lives
+#    after it.
 # 4. Duplicate basenames would launch two hash jobs writing the same
 #    `${hash_dir}/${artifact}.digest` path and the collation loop would
 #    emit the same archive twice. We track seen names in a single
@@ -142,9 +152,10 @@ tmp_manifest="${manifest}.tmp"
 seen_artifacts="/"
 for artifact in "${artifacts[@]}"; do
   # Collapse the syntactic checks into a single `case`. Patterns are
-  # tried in order; quoted `"${manifest_basename}"` / `"${signed_manifest_basename}"`
-  # are literal matches so the glob chars inside those values (if any)
-  # are not interpreted.
+  # tried in order; quoted `"${manifest_basename}"` /
+  # `"${signed_manifest_basename}"` / `"${tmp_manifest_basename}"` are
+  # literal matches so the glob chars inside those values (if any) are
+  # not interpreted.
   case "${artifact}" in
     *$'\n'*|*$'\r'*)
       echo "error: artifact name contains line break: $(printf '%q' "${artifact}")" >&2
@@ -154,7 +165,7 @@ for artifact in "${artifacts[@]}"; do
       echo "error: artifact names must be basenames (no slashes, not '.' or '..'): ${artifact}" >&2
       exit 1
       ;;
-    "${manifest_basename}"|"${signed_manifest_basename}")
+    "${manifest_basename}"|"${signed_manifest_basename}"|"${tmp_manifest_basename}")
       echo "error: artifact name is reserved for manifest output: ${artifact}" >&2
       exit 1
       ;;

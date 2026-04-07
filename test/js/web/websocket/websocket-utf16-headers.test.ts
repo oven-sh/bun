@@ -13,8 +13,8 @@
 // BunString and decodes every input with `bun.String.toUTF8(allocator)`.
 
 import { describe, expect, test } from "bun:test";
-import net from "node:net";
 import { once } from "node:events";
+import net from "node:net";
 
 describe("WebSocket upgrade with non-ASCII inputs", () => {
   test("Latin1 header value with high bytes is sent as UTF-8 without crashing", async () => {

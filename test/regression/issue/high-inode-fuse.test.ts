@@ -25,20 +25,11 @@
 // conversion path in CI.
 
 import { beforeAll, describe, expect, test } from "bun:test";
+import { isCI, isLinux } from "harness";
 import { spawnSync } from "node:child_process";
-import {
-  closeSync,
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  openSync,
-  readdirSync,
-  statSync,
-  writeFileSync,
-} from "node:fs";
+import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { isCI, isLinux } from "harness";
 
 // Near 2^63 — the original NFS-like inode from the bug report.
 const INODE_OFFSET = 9225185599684000000n;
@@ -139,11 +130,9 @@ server.main()
 `,
     );
 
-    const mount = spawnSync(
-      "python3",
-      [fuseScript, src, mnt, "-o", "use_ino,allow_other,auto_unmount", "-s"],
-      { stdio: "pipe" },
-    );
+    const mount = spawnSync("python3", [fuseScript, src, mnt, "-o", "use_ino,allow_other,auto_unmount", "-s"], {
+      stdio: "pipe",
+    });
     if (mount.status !== 0) {
       throw new Error(
         `python3-fuse mount failed: status=${mount.status}\n` +
@@ -211,4 +200,3 @@ server.main()
     expect(set.size).toBe(files.length);
   });
 });
-

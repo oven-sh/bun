@@ -24,7 +24,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, isWindows, tempDir } from "harness";
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 const repoRoot = join(import.meta.dir, "..", "..", "..");
@@ -340,17 +340,22 @@ describe.concurrent.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
     expect(second.exitCode).not.toBe(0);
 
     // Pre-existing state must be restored byte-for-byte. No half-written
-    // v2 manifest, no orphaned backup files left in the directory.
+    // v2 manifest, no orphaned scratch files left in the directory.
     expect(existsSync(join(dirStr, "SHASUMS256.txt"))).toBe(true);
     expect(existsSync(join(dirStr, "SHASUMS256.txt.asc"))).toBe(true);
     expect(readFileSync(join(dirStr, "SHASUMS256.txt"), "utf8")).toBe(originalTxt);
     expect(readFileSync(join(dirStr, "SHASUMS256.txt.asc"), "utf8")).toBe(originalAsc);
-    // No .tmp or .bak siblings left behind.
-    expect(existsSync(join(dirStr, "SHASUMS256.txt.tmp"))).toBe(false);
-    const backupLeftovers = Bun.spawnSync({
-      cmd: ["bash", "-c", `ls -1 "${dirStr}" | grep -c '\\.bak\\.' || true`],
-    });
-    expect(backupLeftovers.stdout.toString().trim()).toBe("0");
+
+    // No scratch leftovers: cleanup() removes the per-invocation
+    // `.sign-manifest-scratch.XXXXXXXX/` subdirectory (which contains
+    // every .tmp, .bak, and sorted-list file) on both success and
+    // failure paths, so the directory should contain exactly the
+    // originals. Filter in-process via readdirSync rather than
+    // shelling out to `ls | grep` — per the harness guideline and
+    // the describe.concurrent contract documented on sh() above, a
+    // Bun.spawnSync call in this test would block the event loop.
+    const leftovers = readdirSync(dirStr).filter(name => name.startsWith(".sign-manifest-scratch."));
+    expect(leftovers).toEqual([]);
   });
 
   test("fails loudly and cleans up a half-written manifest when an artifact is missing", async () => {
@@ -398,42 +403,43 @@ describe.concurrent.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
     expect(res.exitCode).toBe(1);
   });
 
-  test("rejects SHASUMS256.txt.tmp and preserves the caller's file contents byte-for-byte", async () => {
-    // claude[bot] caught: `tmp_manifest` is `${dir}/SHASUMS256.txt.tmp`
-    // and the collation phase does `: > "${tmp_manifest}"` followed by
-    // appending manifest lines into it. If a caller happens to pass a
-    // pre-existing file named `SHASUMS256.txt.tmp` as an artifact, the
-    // validation pass used to let it through (the reserved-name arm
-    // only checked `.txt` and `.asc`), the hash job would digest the
-    // original bytes into the temp dir, then `: >` would truncate the
-    // caller's file in place, the collation loop would overwrite its
-    // contents with manifest text, and the final `mv` would promote
-    // the corrupted file into SHASUMS256.txt — silent data loss. The
-    // fix adds the `.tmp` basename to the reserved-name arm. Exercise
-    // that the rejection fires AND the caller's file survives
-    // untouched.
+  test("accepts SHASUMS256.txt.tmp as a legitimate artifact and preserves its bytes", async () => {
+    // Historical regression: a previous iteration of the helper wrote
+    // its intermediate manifest to `${dir}/SHASUMS256.txt.tmp`, so
+    // accepting a caller file with that basename would have truncated
+    // it in place via `: > "${tmp_manifest}"` during collation. The
+    // scratch_dir refactor moves every intermediate (.tmp, .bak,
+    // sorted list) into `${dir}/.sign-manifest-scratch.XXXXXXXX/`, so
+    // `SHASUMS256.txt.tmp` is just a normal artifact now — the helper
+    // hashes it, lists it in the manifest, and leaves the file
+    // byte-for-byte unchanged.
     const originalBytes = "CALLER_ORIGINAL_DATA_MUST_NOT_BE_CLOBBERED\n";
-    using dir = tempDir("bun-28931-tmp-collision-", {
+    using dir = tempDir("bun-28931-tmp-artifact-", {
       "bun-linux-x64.zip": "present",
       "SHASUMS256.txt.tmp": originalBytes,
     });
     const dirStr = String(dir);
 
     const res = await sh([script, dirStr, "bun-linux-x64.zip", "SHASUMS256.txt.tmp"], {
-      GPG_PRIVATE_KEY: gpgPrivateKey,
-      GPG_PASSPHRASE: passphrase,
+      GPG_PRIVATE_KEY: "",
+      GPG_PASSPHRASE: "",
     });
-    expect(res.stderr).toContain("reserved for manifest output");
-    expect(res.exitCode).toBe(1);
+    expect(res.stderr).not.toContain("error:");
+    expect(res.exitCode).toBe(0);
 
     // The caller's SHASUMS256.txt.tmp file is byte-identical to what
-    // they passed in — this is the whole point of the rejection.
+    // they passed in.
     expect(readFileSync(join(dirStr, "SHASUMS256.txt.tmp"), "utf8")).toBe(originalBytes);
-    // No manifest was produced — validation fires before the cleanup
-    // trap even installs, so no SHASUMS256.txt / SHASUMS256.txt.asc
-    // exist in the directory.
-    expect(existsSync(join(dirStr, "SHASUMS256.txt"))).toBe(false);
-    expect(existsSync(join(dirStr, "SHASUMS256.txt.asc"))).toBe(false);
+    // And the generated manifest records both artifacts, with a hash
+    // of the original `SHASUMS256.txt.tmp` bytes (not some corrupted
+    // intermediate).
+    const manifest = readFileSync(join(dirStr, "SHASUMS256.txt"), "utf8").trim();
+    const expectedTmp = createHash("sha256").update(originalBytes).digest("hex");
+    expect(manifest).toContain(`${expectedTmp} *SHASUMS256.txt.tmp`);
+    expect(manifest).toContain("*bun-linux-x64.zip");
+    // No scratch leftovers.
+    const leftovers = readdirSync(dirStr).filter(name => name.startsWith(".sign-manifest-scratch."));
+    expect(leftovers).toEqual([]);
   });
 
   test("rejects duplicate basenames in the artifact list", async () => {
@@ -461,20 +467,24 @@ describe.concurrent.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
   });
 
   test.each([
-    ["reserved manifest name", "SHASUMS256.txt"],
-    ["reserved signed-manifest name", "SHASUMS256.txt.asc"],
-    ["reserved tmp-manifest name", "SHASUMS256.txt.tmp"],
-    ["embedded newline", "bun-linux\n-x64.zip"],
-    ["embedded carriage return", "bun-linux\r-x64.zip"],
-  ])("rejects malformed artifact %s", async (_label, badName) => {
+    ["reserved manifest name", "SHASUMS256.txt", /reserved for manifest output/],
+    ["reserved signed-manifest name", "SHASUMS256.txt.asc", /reserved for manifest output/],
+    ["scratch prefix", ".sign-manifest-scratch.foo", /reserved for scratch directory/],
+    ["scratch prefix (longer)", ".sign-manifest-scratch.ABCDEFGH/xyz", /must be basenames/],
+    ["embedded newline", "bun-linux\n-x64.zip", /contains line break/],
+    ["embedded carriage return", "bun-linux\r-x64.zip", /contains line break/],
+  ])("rejects malformed artifact %s", async (_label, badName, errorRe) => {
     // These names would each break the script if accepted:
     // - "SHASUMS256.txt"/"SHASUMS256.txt.asc" are the script's own
     //   output paths — including them as inputs would compute a hash
     //   for the previous run's manifest and then clobber it.
-    // - "SHASUMS256.txt.tmp" is the intermediate file the collation
-    //   phase truncates via `: > "$tmp_manifest"`; accepting it would
-    //   silently destroy the caller's file in place before the manifest
-    //   is written and promoted.
+    // - Any name starting with ".sign-manifest-scratch." is reserved
+    //   for the per-invocation scratch subdirectory the helper
+    //   creates under ${dir}. Accepting such a name as an artifact
+    //   basename would risk the scratch-dir mkdir colliding with (or
+    //   shadowing) the caller's file. The `/xyz` variant exercises
+    //   the independent slash-rejection path, which fires before the
+    //   reserved-name check.
     // - A newline or carriage return in the name splits the
     //   newline-delimited sort into multiple entries and writes a
     //   multi-line manifest entry that downstream parsers reject.
@@ -487,7 +497,7 @@ describe.concurrent.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
       GPG_PRIVATE_KEY: gpgPrivateKey,
       GPG_PASSPHRASE: passphrase,
     });
-    expect(res.stderr).toMatch(/reserved for manifest output|contains line break/);
+    expect(res.stderr).toMatch(errorRe);
     expect(existsSync(join(dirStr, "SHASUMS256.txt"))).toBe(false);
     expect(existsSync(join(dirStr, "SHASUMS256.txt.asc"))).toBe(false);
     expect(res.exitCode).toBe(1);

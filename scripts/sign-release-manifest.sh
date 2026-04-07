@@ -100,17 +100,18 @@ if [ -n "${GPG_PRIVATE_KEY:-}" ] && [ -n "${GPG_PASSPHRASE:-}" ]; then
   fi
 fi
 
-# Output path derivations. The three `_basename` values are the
-# reserved-name inputs the validation loop below rejects (including
-# the `.tmp` sibling — see comment #3 in the validation loop for why),
-# and the full paths compose from them rather than repeating the
-# SHASUMS256.txt literal.
+# Output path derivations. The `_basename` values are the reserved-name
+# inputs the validation loop below rejects, and the full paths below
+# compose from them rather than repeating the SHASUMS256.txt literal.
+# Scratch/rollback files (*.tmp, *.bak, sorted artifact list) live
+# inside `${scratch_dir}` — a per-invocation subdirectory under `${dir}`
+# created after validation — so they can never collide with a
+# caller-supplied artifact basename. See the scratch_dir block below.
 manifest_basename="SHASUMS256.txt"
 signed_manifest_basename="${manifest_basename}.asc"
-tmp_manifest_basename="${manifest_basename}.tmp"
+scratch_prefix=".sign-manifest-scratch."
 manifest="${dir}/${manifest_basename}"
 signed_manifest="${manifest}.asc"
-tmp_manifest="${manifest}.tmp"
 
 # Validate every artifact BEFORE we touch any output file or install
 # the cleanup trap — fail-fast with a clear error, no orphaned
@@ -127,18 +128,20 @@ tmp_manifest="${manifest}.tmp"
 #    manifest body as-is. A caller passing `dist/foo.zip` would miss
 #    a subdir; `../foo.zip` would escape `${hash_dir}` entirely; `"."`
 #    and `".."` break manifest parsing.
-# 3. The helper writes SHASUMS256.txt, SHASUMS256.txt.asc, and the
-#    intermediate SHASUMS256.txt.tmp — accepting any of the three as
-#    an input would compute a hash of the previous run's output and
-#    then clobber it. The `.tmp` case is especially destructive:
-#    `: > "${tmp_manifest}"` in the collation phase would truncate a
-#    caller-supplied artifact with that basename in place, then the
-#    collation loop would overwrite its bytes with manifest text, and
-#    the final `mv "${tmp_manifest}" "${manifest}"` would promote the
-#    corrupted file into SHASUMS256.txt — silent data loss. All three
-#    basenames are valid per check #2, which is why this arm lives
-#    after it.
-# 4. Duplicate basenames would launch two hash jobs writing the same
+# 3. The helper writes SHASUMS256.txt and SHASUMS256.txt.asc directly
+#    in `${dir}`. Accepting either as an artifact input would compute
+#    a hash of the previous run's output and then clobber it. Both
+#    names are valid per check #2, which is why this arm lives after
+#    it. Scratch/rollback files (.tmp, .bak) are NOT on this list —
+#    they live inside `${scratch_dir}` below, not alongside the
+#    artifacts, so a caller can legitimately ship a file named
+#    `SHASUMS256.txt.tmp`.
+# 4. Names starting with `${scratch_prefix}` (".sign-manifest-scratch.")
+#    are reserved for the per-invocation scratch subdirectory created
+#    after validation. Using that prefix as an artifact basename would
+#    cause the scratch-dir mkdir to collide with (or shadow) the
+#    artifact, corrupting both.
+# 5. Duplicate basenames would launch two hash jobs writing the same
 #    `${hash_dir}/${artifact}.digest` path and the collation loop would
 #    emit the same archive twice. We track seen names in a single
 #    `/`-delimited string so the dup check is one `case` glob instead
@@ -148,14 +151,13 @@ tmp_manifest="${manifest}.tmp"
 #    coupling. Leading and trailing `/` sentinels keep the glob
 #    symmetric and prevent prefix false-positives (e.g. `foo.zip`
 #    does not match inside `/foo.zip-profile/`).
-# 5. The file must exist inside `${dir}` so the hash job can read it.
+# 6. The file must exist inside `${dir}` so the hash job can read it.
 seen_artifacts="/"
 for artifact in "${artifacts[@]}"; do
   # Collapse the syntactic checks into a single `case`. Patterns are
   # tried in order; quoted `"${manifest_basename}"` /
-  # `"${signed_manifest_basename}"` / `"${tmp_manifest_basename}"` are
-  # literal matches so the glob chars inside those values (if any) are
-  # not interpreted.
+  # `"${signed_manifest_basename}"` are literal matches so the glob
+  # chars inside those values (if any) are not interpreted.
   case "${artifact}" in
     *$'\n'*|*$'\r'*)
       echo "error: artifact name contains line break: $(printf '%q' "${artifact}")" >&2
@@ -165,8 +167,12 @@ for artifact in "${artifacts[@]}"; do
       echo "error: artifact names must be basenames (no slashes, not '.' or '..'): ${artifact}" >&2
       exit 1
       ;;
-    "${manifest_basename}"|"${signed_manifest_basename}"|"${tmp_manifest_basename}")
+    "${manifest_basename}"|"${signed_manifest_basename}")
       echo "error: artifact name is reserved for manifest output: ${artifact}" >&2
+      exit 1
+      ;;
+    "${scratch_prefix}"*)
+      echo "error: artifact name is reserved for scratch directory: ${artifact}" >&2
       exit 1
       ;;
   esac
@@ -187,10 +193,11 @@ for artifact in "${artifacts[@]}"; do
 done
 unset -v artifact seen_artifacts
 
-# Now that the request is validated, install cleanup for the mutation
-# phase. Every failure below this point — a sha256 worker crash, a
-# gpg --import error, a gpg --clearsign error — must leave the directory
-# with at least as much valid state as it had on entry. Two invariants:
+# Now that the request is validated, install cleanup and create the
+# scratch directory. Every failure below this point — a sha256 worker
+# crash, a gpg --import error, a gpg --clearsign error — must leave the
+# directory with at least as much valid state as it had on entry. Two
+# invariants:
 #
 # - On success: only the outputs we promised exist (SHASUMS256.txt,
 #   and SHASUMS256.txt.asc in the signed path). Any pre-existing copies
@@ -203,14 +210,21 @@ unset -v artifact seen_artifacts
 #   failure this script exists to prevent, and so is *losing* a valid
 #   manifest the caller still owned because our own hash job failed.
 #
-# The rollback is implemented by renaming pre-existing outputs out of
-# the way into `.bak.$$` siblings before we mutate anything, then
-# either removing the backups on success or renaming them back on
-# failure. Using rename (not cp) keeps it atomic, zero-copy, and
-# leaves no half-formed bytes on disk in the interim.
+# Rollback strategy: the mutation phase keeps every intermediate
+# (.tmp, .bak, sorted list) inside a per-invocation scratch directory
+# `${scratch_dir}` created as a child of `${dir}`. Keeping it under
+# `${dir}` guarantees the scratch filesystem matches the output
+# filesystem, so every `mv` between them is an atomic rename. Cleanup
+# removes the scratch directory unconditionally on success OR failure
+# — on failure it also moves the backup copies inside scratch_dir
+# back into `${dir}` first. A caller can therefore legitimately ship a
+# file named `SHASUMS256.txt.tmp` as an artifact: nothing inside
+# `${dir}` itself (apart from the scratch subdir) is written to until
+# the final atomic rename.
 success=0
 gnupghome=""
 hash_dir=""
+scratch_dir=""
 backup_manifest=""
 backup_signed_manifest=""
 cleanup() {
@@ -224,21 +238,27 @@ cleanup() {
   # still required. Same reason for the `mv -f ... || true` on the restore
   # paths below.
   if [ "${success}" -ne 1 ]; then
-    # Roll back: wipe any partial outputs we produced, then restore the
-    # pre-existing copies from their .bak.$$ siblings. Net effect is the
-    # directory looks byte-identical to how we found it.
-    rm -f "${tmp_manifest}" "${manifest}" "${signed_manifest}" || true
+    # Roll back: wipe any partial outputs we produced in ${dir}, then
+    # restore the pre-existing copies from their backups inside
+    # scratch_dir. Net effect is the caller's directory looks
+    # byte-identical to how we found it (scratch_dir itself is removed
+    # below). The `mv` is atomic because scratch_dir is on the same
+    # filesystem as ${dir}.
+    rm -f "${manifest}" "${signed_manifest}" || true
     if [ -n "${backup_manifest}" ]; then
       mv -f "${backup_manifest}" "${manifest}" || true
     fi
     if [ -n "${backup_signed_manifest}" ]; then
       mv -f "${backup_signed_manifest}" "${signed_manifest}" || true
     fi
-  else
-    # Success: the new outputs are live. Drop the backups and any stray
-    # .tmp left behind by a partial rename (belt and braces — the atomic
-    # `mv` below should make .tmp invisible on this path).
-    rm -f "${tmp_manifest}" "${backup_manifest}" "${backup_signed_manifest}" || true
+  fi
+  # Success and failure both drop the entire scratch directory. On
+  # success it holds only cleanup-eligible state (the backups and the
+  # intermediate .tmp whose content is now live in ${manifest} via
+  # the atomic rename). On failure any partial state is wiped along
+  # with it. Single rm -rf handles both branches.
+  if [ -n "${scratch_dir}" ]; then
+    rm -rf "${scratch_dir}" || true
   fi
   if [ -n "${hash_dir}" ]; then
     rm -rf "${hash_dir}" || true
@@ -251,23 +271,50 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# Rename any pre-existing outputs out of the way via atomic `mv`. These
-# backups live next to the originals (same filesystem → rename is cheap
-# and atomic) and are either removed on success or moved back on failure
-# by cleanup() above. This replaces the earlier `rm -f` on the stale .asc
-# — the rename accomplishes the same "get the old .asc off disk" effect
-# in the unsigned-rollout case AND preserves it for restore on failure.
-# The `$$` in the suffix makes the backup path unique per invocation so
-# concurrent same-dir runs (unsupported but possible) can't collide on a
-# shared .bak path.
+# Create the per-invocation scratch directory inside ${dir}. Using
+# `mktemp -d "${dir}/.sign-manifest-scratch.XXXXXXXX"` gives us a name
+# that:
+#
+# - sits on the same filesystem as the outputs (atomic renames)
+# - is collision-resistant by construction (`mktemp -d`, not a manual
+#   `$$` suffix), so concurrent same-dir runs can't trip on each other
+# - shares the `${scratch_prefix}` namespace the validator above
+#   rejects, so the scratch directory can never shadow a caller's
+#   artifact
+#
+# Only the GNU `mktemp -d <template>` form is used here — every modern
+# coreutils and BSD mktemp accepts it (unlike the bare `mktemp -d`
+# which BSD rejects), so no portable fallback is needed.
+scratch_dir=$(mktemp -d "${dir}/${scratch_prefix}XXXXXXXX")
+tmp_manifest="${scratch_dir}/${manifest_basename}.tmp"
+
+# Rename any pre-existing outputs into scratch_dir via atomic `mv`.
+# These backups are either removed by cleanup() on success or moved
+# back into ${dir} on failure. Using rename (not cp) keeps it atomic,
+# zero-copy, and leaves no half-formed bytes on disk in the interim.
+# This replaces the earlier `rm -f` on the stale .asc — the rename
+# achieves the same "get the old .asc off disk" effect in the
+# unsigned-rollout case AND preserves it for restore on failure.
+#
+# Invariant: the `backup_*` variables are ONLY assigned after their
+# corresponding `mv` returns successfully. claude[bot] caught this —
+# setting the variable before the `mv` means a failed rename (EACCES,
+# EROFS, etc.) leaves the variable pointing at a file that doesn't
+# exist, and cleanup() would `rm -f "${manifest}"` (wiping the still-
+# present original) before the restore `mv` silently no-ops. Assigning
+# after the successful `mv` keeps the invariant "backup_* non-empty
+# iff the backup file exists" intact.
 if [ -f "${manifest}" ]; then
-  backup_manifest="${manifest}.bak.$$"
-  mv "${manifest}" "${backup_manifest}"
+  _bak_path="${scratch_dir}/${manifest_basename}.bak"
+  mv "${manifest}" "${_bak_path}"
+  backup_manifest="${_bak_path}"
 fi
 if [ -f "${signed_manifest}" ]; then
-  backup_signed_manifest="${signed_manifest}.bak.$$"
-  mv "${signed_manifest}" "${backup_signed_manifest}"
+  _bak_path="${scratch_dir}/${signed_manifest_basename}.bak"
+  mv "${signed_manifest}" "${_bak_path}"
+  backup_signed_manifest="${_bak_path}"
 fi
+unset -v _bak_path
 
 # Hash every artifact in parallel. The canary set is 22 archives, each
 # roughly 30-150 MB — sequential sha256sum runs ~6-7 s on the buildkite
@@ -318,9 +365,18 @@ done
 # Collate the per-artifact digests into the manifest in sorted order.
 # Sort the artifact list so the manifest is deterministic regardless of
 # the caller's ordering; LC_ALL=C matches packages/bun-release/scripts/upload-assets.ts
-# which localeCompare-sorts the same map. The while-read pulls directly
-# from the sorted process substitution, so there's no intermediate
-# `sorted` array to keep in sync with the artifact list.
+# which localeCompare-sorts the same map.
+#
+# We write the sorted list to a regular file inside scratch_dir and
+# then iterate the file. Feeding the `while read` loop from a process
+# substitution (`< <(printf | sort)`) would NOT propagate a non-zero
+# exit from the pipeline — `set -eo pipefail` does not cover process
+# substitution, so a `sort` that OOMs or gets SIGPIPE'd would leave
+# the loop reading a truncated stream and the resulting `tmp_manifest`
+# partial. Using a pipeline into a file IS covered by pipefail, so a
+# failure here surfaces before the collation loop even starts.
+sorted_list="${scratch_dir}/sorted"
+printf '%s\n' "${artifacts[@]}" | LC_ALL=C sort > "${sorted_list}"
 : > "${tmp_manifest}"
 while IFS= read -r artifact; do
   sha=$(cut -d ' ' -f 1 "${hash_dir}/${artifact}.digest")
@@ -329,7 +385,7 @@ while IFS= read -r artifact; do
     exit 1
   fi
   printf '%s *%s\n' "${sha}" "${artifact}" >> "${tmp_manifest}"
-done < <(printf '%s\n' "${artifacts[@]}" | LC_ALL=C sort)
+done < "${sorted_list}"
 
 # Atomic rename — the final `${manifest}` only appears once every hash
 # has been written. Prior SIGKILL would leave a .tmp that cleanup() (or

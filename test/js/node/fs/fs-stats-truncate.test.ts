@@ -3,8 +3,8 @@
 //  if (comptime (Big and @typeInfo(@TypeOf(value)) == .Int)) {
 //    return JSC.JSValue.fromInt64NoTruncate(globalObject, @intCast(value));
 //  }
-import { expect, test } from "bun:test";
 import { createStatsFromU64ForTesting } from "bun:internal-for-testing";
+import { expect, test } from "bun:test";
 import { Stats, statSync } from "node:fs";
 
 test("fs.stats truncate", async () => {

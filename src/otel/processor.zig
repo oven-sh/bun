@@ -21,6 +21,10 @@ pub const BatchProcessor = struct {
     active: Batch,
     sending: Batch,
     inflight: bool = false,
+    /// forceFlush() was called while an export was already in flight; chain
+    /// one more flush round before resolving waiters so spans pending at call
+    /// time are actually sent.
+    chain_flush: bool = false,
 
     /// Monotonic ns of the oldest span in `active`; 0 when empty.
     first_pending_ns: u64 = 0,
@@ -68,9 +72,9 @@ pub const BatchProcessor = struct {
             self.auto_flusher.registered = false;
             return false;
         }
-        const elapsed_ms = bun.timespec.now(.force_real_time).ns() -| self.first_pending_ns;
+        const elapsed_ns = bun.timespec.now(.force_real_time).ns() -| self.first_pending_ns;
         const due = self.active.count >= self.opts.max_export_batch_size or
-            elapsed_ms >= @as(u64, self.opts.scheduled_delay_ms) * std.time.ns_per_ms;
+            elapsed_ns >= @as(u64, self.opts.scheduled_delay_ms) * std.time.ns_per_ms;
         if (!due) return true;
 
         if (self.inflight) {
@@ -90,7 +94,11 @@ pub const BatchProcessor = struct {
             return value;
         }
         bun.handleOom(self.flush_waiters.append(bun.default_allocator, promise));
-        if (!self.inflight) self.flush();
+        if (self.inflight) {
+            if (self.active.count > 0) self.chain_flush = true;
+        } else {
+            self.flush();
+        }
         return value;
     }
 
@@ -161,8 +169,14 @@ pub const BatchProcessor = struct {
         self.sending.reset();
         self.inflight = false;
         self.keep_alive.unref(self.provider.vm);
-        // forceFlush() is satisfied once the batch that was pending at call
-        // time has been exported. Spans that arrived during the send (e.g.
+        if (self.chain_flush and self.active.count > 0) {
+            self.chain_flush = false;
+            self.flush();
+            return;
+        }
+        self.chain_flush = false;
+        // forceFlush() is satisfied once the spans that were pending at call
+        // time have been exported. Spans that arrived during the send (e.g.
         // an auto-instrumented server span for the collector itself) are
         // re-registered for the normal scheduled flush, not flushed inline.
         self.resolveWaiters();

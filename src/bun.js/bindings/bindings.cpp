@@ -2767,6 +2767,31 @@ void JSC__JSValue___then(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1
     }
 }
 
+extern "C" JSC::EncodedJSValue JSC__JSValue___thenReturning(JSC::EncodedJSValue promiseValue, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue ctx, Zig::FFIFunction onResolve, Zig::FFIFunction onReject)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto* cell = JSC::JSValue::decode(promiseValue).asCell();
+    JSC::JSPromise* promise = JSC::jsDynamicCast<JSC::JSPromise*>(cell);
+    if (!promise) return promiseValue;
+
+    auto* globalThis = static_cast<Zig::GlobalObject*>(globalObject);
+    JSFunction* performPromiseThenFunction = globalObject->performPromiseThenFunction();
+    auto callData = JSC::getCallData(performPromiseThenFunction);
+    ASSERT(callData.type != CallData::Type::None);
+
+    JSC::JSPromise* derived = JSC::JSPromise::create(vm, globalObject->promiseStructure());
+
+    MarkedArgumentBuffer arguments;
+    arguments.append(promise);
+    arguments.append(globalThis->thenable(onResolve));
+    arguments.append(globalThis->thenable(onReject));
+    arguments.append(derived);
+    arguments.append(JSValue::decode(ctx));
+    ASSERT(!arguments.hasOverflowed());
+    JSC::profiledCall(globalThis, JSC::ProfilingReason::Microtask, performPromiseThenFunction, callData, jsUndefined(), arguments);
+    return JSValue::encode(derived);
+}
+
 JSC::EncodedJSValue JSC__JSGlobalObject__getCachedObject(JSC::JSGlobalObject* globalObject, const ZigString* arg1)
 {
     auto& vm = JSC::getVM(globalObject);

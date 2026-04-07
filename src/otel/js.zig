@@ -38,9 +38,7 @@ const ReadCtx = struct {
         const v = (try obj.get(ctx.global, name)) orelse return "";
         if (v.isUndefinedOrNull()) return "";
         const slice = try v.toSlice(ctx.global, ctx.alloc);
-        // Arena owns any allocated copy; borrowed slices stay valid for the
-        // duration of the host call. Dupe so the encoder doesn't reach into
-        // potentially-ropey JSString internals after further JS allocation.
+        defer slice.deinit();
         return bun.handleOom(ctx.alloc.dupe(u8, slice.slice()));
     }
 
@@ -230,6 +228,7 @@ const ReadCtx = struct {
         if (depth > max_any_value_depth) return ctx.global.throwInvalidArguments("attribute nesting too deep", .{});
         if (try obj.get(ctx.global, "stringValue")) |v| {
             const s = try v.toSlice(ctx.global, ctx.alloc);
+            defer s.deinit();
             return .string(bun.handleOom(ctx.alloc.dupe(u8, s.slice())));
         }
         if (try obj.get(ctx.global, "boolValue")) |v| return .boolean(v.toBoolean());
@@ -608,7 +607,8 @@ pub fn jsConfigure(global: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSErr
     if (try arg.get(global, "endpoint")) |v| {
         if (v.isString()) {
             const s = try v.toSlice(global, tmp);
-            cfg.endpoint = s.slice();
+            defer s.deinit();
+            cfg.endpoint = bun.handleOom(tmp.dupe(u8, s.slice()));
         }
     }
     if (try arg.get(global, "scheduledDelayMillis")) |v| {
@@ -623,6 +623,7 @@ pub fn jsConfigure(global: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSErr
     if (try arg.get(global, "sampler")) |v| {
         if (v.isString()) {
             const s = try v.toSlice(global, tmp);
+            defer s.deinit();
             if (bun.strings.eqlComptime(s.slice(), "always_on")) cfg.sampler = .always_on;
             if (bun.strings.eqlComptime(s.slice(), "always_off")) cfg.sampler = .always_off;
         } else if (v.isNumber()) {
@@ -636,7 +637,9 @@ pub fn jsConfigure(global: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSErr
             defer iter.deinit();
             while (try iter.next()) |key| {
                 const k = key.toUTF8(tmp);
+                defer k.deinit();
                 const val = try iter.value.toSlice(global, tmp);
+                defer val.deinit();
                 bun.handleOom(list.append(tmp, .{
                     .name = bun.handleOom(tmp.dupe(u8, k.slice())),
                     .value = bun.handleOom(tmp.dupe(u8, val.slice())),
@@ -697,9 +700,8 @@ pub fn jsGetActiveSpanContext(global: *JSGlobalObject, _: *jsc.CallFrame) bun.JS
 pub fn jsParseTraceparent(global: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
     const args = callframe.arguments();
     if (args.len < 1 or !args[0].isString()) return .js_undefined;
-    var buf: [128]u8 = undefined;
-    var fba = std.heap.FixedBufferAllocator.init(&buf);
-    const s = try args[0].toSlice(global, fba.allocator());
+    const s = try args[0].toSlice(global, bun.default_allocator);
+    defer s.deinit();
     const ctx = propagation.parseTraceparent(s.slice()) orelse return .js_undefined;
     return tracer.OtelSpanContext.create(global, ctx, true);
 }

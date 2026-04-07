@@ -271,8 +271,7 @@ pub const OtelTracer = struct {
             return global.throwValue(result);
         }
         if (result.asAnyPromise()) |_| {
-            result.thenWithValue(global, span_js, OtelSpan.onActiveResolve, OtelSpan.onActiveReject) catch {};
-            return result;
+            return result.thenWithValueReturning(global, span_js, OtelSpan.onActiveResolve, OtelSpan.onActiveReject) catch result;
         }
         span.endNow();
         return result;
@@ -319,7 +318,7 @@ pub const OtelTracer = struct {
         });
 
         if (sampled) {
-            span.name = span.dupe(try jsStringSlice(global, name_js, &span.arena));
+            span.name = try jsStringSlice(global, name_js, &span.arena);
             if (opts != .js_undefined) {
                 if (try opts.get(global, "attributes")) |a| {
                     if (a.isObject()) try span.appendAttributesObject(global, a);
@@ -395,6 +394,7 @@ pub const OtelSpan = struct {
         defer iter.deinit();
         while (try iter.next()) |key| {
             const k_slice = key.toUTF8(this.alloc());
+            defer k_slice.deinit();
             try this.appendAttr(this.dupe(k_slice.slice()), try anyValueFromJS(global, iter.value, this.alloc()));
         }
     }
@@ -406,7 +406,7 @@ pub const OtelSpan = struct {
     pub fn addEvent(this: *OtelSpan, global: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
         const args = callframe.arguments();
         if (this.provider == null or this.ended or args.len < 1) return callframe.this();
-        const name = this.dupe(try jsStringSlice(global, args[0], &this.arena));
+        const name = try jsStringSlice(global, args[0], &this.arena);
         var ev_attrs: attributes.AttrList = .{};
         if (args.len > 1 and args[1].isObject()) {
             var list: std.ArrayListUnmanaged(Attribute) = .{};
@@ -415,6 +415,7 @@ pub const OtelSpan = struct {
             defer iter.deinit();
             while (try iter.next()) |key| {
                 const k_slice = key.toUTF8(this.alloc());
+                defer k_slice.deinit();
                 const k = this.dupe(k_slice.slice());
                 bun.handleOom(list.append(this.alloc(), Attribute.init(k, try anyValueFromJS(global, iter.value, this.alloc()))));
             }
@@ -434,7 +435,7 @@ pub const OtelSpan = struct {
         const code = args[0].toInt32();
         if (code >= 0 and code <= 2) this.status.code = @enumFromInt(@as(u8, @intCast(code)));
         if (args.len > 1 and args[1].isString()) {
-            this.status.message = this.dupe(try jsStringSlice(global, args[1], &this.arena));
+            this.status.message = try jsStringSlice(global, args[1], &this.arena);
         }
         return callframe.this();
     }
@@ -442,7 +443,7 @@ pub const OtelSpan = struct {
     pub fn updateName(this: *OtelSpan, global: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
         const args = callframe.arguments();
         if (this.provider == null or this.ended or args.len < 1) return callframe.this();
-        this.name = this.dupe(try jsStringSlice(global, args[0], &this.arena));
+        this.name = try jsStringSlice(global, args[0], &this.arena);
         return callframe.this();
     }
 
@@ -503,6 +504,7 @@ pub const OtelSpan = struct {
                 if (e.fastGet(global, .message) catch null) |msg| {
                     if (msg.isString()) {
                         const s = msg.toSlice(global, this.alloc()) catch return this.endNow();
+                        defer s.deinit();
                         this.status.message = this.dupe(s.slice());
                     }
                 }
@@ -514,13 +516,13 @@ pub const OtelSpan = struct {
     pub fn onActiveResolve(_: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
         const args = callframe.arguments_old(2);
         if (OtelSpan.fromJS(args.ptr[1])) |span| span.endNow();
-        return .js_undefined;
+        return args.ptr[0];
     }
 
     pub fn onActiveReject(global: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
         const args = callframe.arguments_old(2);
         if (OtelSpan.fromJS(args.ptr[1])) |span| span.endNowWithError(global, args.ptr[0]);
-        return .js_undefined;
+        return global.throwValue(args.ptr[0]);
     }
 
     pub export const Bun__OtelSpan__onActiveResolve = jsc.toJSHostFn(onActiveResolve);
@@ -538,12 +540,14 @@ pub const OtelSpan = struct {
 
 fn jsStringSlice(global: *JSGlobalObject, v: JSValue, arena: *std.heap.ArenaAllocator) bun.JSError![]const u8 {
     const slice = try v.toSlice(global, arena.allocator());
-    return slice.slice();
+    defer slice.deinit();
+    return bun.handleOom(arena.allocator().dupe(u8, slice.slice()));
 }
 
 fn anyValueFromJS(global: *JSGlobalObject, v: JSValue, gpa: std.mem.Allocator) bun.JSError!attributes.Value {
     if (v.isString()) {
         const s = try v.toSlice(global, gpa);
+        defer s.deinit();
         return .string(bun.handleOom(gpa.dupe(u8, s.slice())));
     }
     if (v.isBoolean()) return .boolean(v.asBoolean());
@@ -562,6 +566,7 @@ fn anyValueFromJS(global: *JSGlobalObject, v: JSValue, gpa: std.mem.Allocator) b
     // Fallback: stringify objects/arrays. Keeps the hot path branch-free; OTEL
     // spec only requires string|bool|int|double|bytes|array as attribute values.
     const s = try v.toSlice(global, gpa);
+    defer s.deinit();
     return .string(bun.handleOom(gpa.dupe(u8, s.slice())));
 }
 

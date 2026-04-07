@@ -2070,7 +2070,9 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 return null;
             };
             span.setAttrStatic(.@"http.request.method", @tagName(ctx.method));
-            span.setAttrStr(.@"url.path", req.url());
+            const full = req.url();
+            const path = if (bun.strings.indexOfChar(full, '?')) |i| full[0..i] else full;
+            span.setAttrStr(.@"url.path", path);
             span.setAttrStatic(.@"url.scheme", if (ssl_enabled) "https" else "http");
             ctx.otel_span = span;
             return bun.otel.instrument.SlotGuard.enter(this.globalThis, span.createContextCell(this.globalThis));

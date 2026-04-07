@@ -18,6 +18,9 @@ describe("Bun.otel runtime", () => {
     expect(otel.parseTraceparent("00-" + "0".repeat(32) + "-00f067aa0ba902b7-01")).toBeUndefined(); // all-zero trace id
     expect(otel.parseTraceparent("ff-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01")).toBeUndefined(); // version ff
     expect(otel.parseTraceparent("nope")).toBeUndefined();
+    // Was: process abort (FixedBufferAllocator OOM -> bun.handleOom). Now: undefined.
+    expect(otel.parseTraceparent(Buffer.alloc(200, "x").toString())).toBeUndefined();
+    expect(otel.parseTraceparent(Buffer.alloc(5000, "\u{1f600}").toString())).toBeUndefined();
   });
 
   test("reconfigure does not invalidate existing tracers/spans", () => {

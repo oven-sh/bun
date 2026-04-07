@@ -1463,6 +1463,19 @@ pub const JSValue = enum(i64) {
         try scope.assertNoExceptionExceptTermination();
     }
 
+    extern fn JSC__JSValue___thenReturning(this: JSValue, global: *JSGlobalObject, ctx: JSValue, resolve: *const jsc.JSHostFn, reject: *const jsc.JSHostFn) JSValue;
+    /// Like `thenWithValue`, but returns the derived promise (the result of
+    /// `performPromiseThen`). The handlers' return values become the derived
+    /// promise's settlement: return the value/throw the reason to forward.
+    pub fn thenWithValueReturning(this: JSValue, global: *JSGlobalObject, ctx: JSValue, resolve: jsc.JSHostFnZig, reject: jsc.JSHostFnZig) bun.JSTerminated!JSValue {
+        var scope: TopExceptionScope = undefined;
+        scope.init(global, @src());
+        defer scope.deinit();
+        const derived = JSC__JSValue___thenReturning(this, global, ctx, toJSHostFunction(resolve), toJSHostFunction(reject));
+        try scope.assertNoExceptionExceptTermination();
+        return derived;
+    }
+
     pub fn getDescription(this: JSValue, global: *JSGlobalObject) ZigString {
         var zig_str = ZigString.init("");
         getSymbolDescription(this, global, &zig_str);

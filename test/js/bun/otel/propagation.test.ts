@@ -77,6 +77,45 @@ describe("Bun.otel context propagation", () => {
     expect(otel.getActiveSpanContext()).toBeUndefined();
   });
 
+  test("startActiveSpan: async rejection propagates to awaiter", async () => {
+    otel.configure({ endpoint: "", sampler: "always_on" });
+    const tracer = otel.getTracer("test");
+
+    let caught: string | undefined;
+    try {
+      await tracer.startActiveSpan("op", async () => {
+        throw new Error("boom");
+      });
+    } catch (e) {
+      caught = (e as Error).message;
+    }
+    expect(caught).toBe("boom");
+
+    // Resolve value passes through the derived promise.
+    expect(await tracer.startActiveSpan("op3", async () => 42)).toBe(42);
+  });
+
+  test("startActiveSpan: unawaited rejection fires unhandledRejection", async () => {
+    // Subprocess: bun:test's own unhandledRejection handler interferes in-process.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `Bun.otel.configure({endpoint:"",sampler:"always_on"});
+         let u = "none";
+         process.on("unhandledRejection", e => u = e?.message);
+         Bun.otel.getTracer("t").startActiveSpan("op", async () => { throw new Error("boom"); });
+         await new Promise(r => setTimeout(r, 10));
+         console.log(u);`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toBe("boom");
+    expect(exitCode).toBe(0);
+  });
+
   test("ALS interop: span and AsyncLocalStorage coexist", async () => {
     otel.configure({ endpoint: "", sampler: "always_on" });
     const tracer = otel.getTracer("test");
@@ -109,6 +148,27 @@ describe("Bun.otel context propagation", () => {
       child.end();
     });
     expect(childTrace).toBe(parentTrace);
+  });
+
+  test("fetch: user-set traceparent header is preserved, not duplicated", async () => {
+    otel.configure({ endpoint: "", sampler: "always_on" });
+    let count = 0;
+    let value: string | null = null;
+    using upstream = Bun.serve({
+      port: 0,
+      fetch(req) {
+        // headers.get() concatenates duplicates with ", "; check raw count
+        for (const [k] of req.headers) if (k === "traceparent") count++;
+        value = req.headers.get("traceparent");
+        return new Response("ok");
+      },
+    });
+    const userTP = "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01";
+    await otel.getTracer("t").startActiveSpan("op", async () => {
+      await fetch(upstream.url, { headers: { traceparent: userTP } });
+    });
+    expect(count).toBe(1);
+    expect(value).toBe(userTP);
   });
 
   test("e2e: Bun.serve + fetch auto-instrumentation, traceparent propagation", async () => {

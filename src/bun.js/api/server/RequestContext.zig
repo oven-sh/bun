@@ -692,6 +692,15 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 this.flags.has_finalized = true;
             }
 
+            if (this.otel_span) |span| {
+                this.otel_span = null;
+                if (this.response_ptr) |resp| {
+                    span.setAttrInt(.@"http.response.status_code", @intCast(resp.statusCode()));
+                }
+                if (this.flags.aborted) span.setStatus(.err, "aborted");
+                span.end();
+            }
+
             if (this.response_jsvalue != .zero) {
                 ctxLog("finalizeWithoutDeinit: response_jsvalue != .zero", .{});
                 if (this.flags.response_protected) {
@@ -745,15 +754,6 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             }
 
             this.response_body_readable_stream_ref.deinit();
-
-            if (this.otel_span) |span| {
-                this.otel_span = null;
-                if (this.response_ptr) |resp| {
-                    span.setAttrInt(.@"http.response.status_code", @intCast(resp.statusCode()));
-                }
-                if (this.flags.aborted) span.setStatus(.err, "aborted");
-                span.end();
-            }
 
             if (!this.pathname.isEmpty()) {
                 this.pathname.deref();

@@ -1153,9 +1153,11 @@ pub const FetchTasklet = struct {
                 span.setAttrStr(.@"server.address", url.hostname);
                 span.setAttrStr(.@"url.full", url.href);
                 fetch_tasklet.otel_span = span;
-                var tp_buf: [bun.otel.propagation.traceparent_len]u8 = undefined;
-                bun.otel.propagation.formatTraceparent(span.ctx, &tp_buf);
-                fetch_tasklet.request_headers.append("traceparent", &tp_buf) catch {};
+                if (fetch_tasklet.request_headers.get("traceparent") == null) {
+                    var tp_buf: [bun.otel.propagation.traceparent_len]u8 = undefined;
+                    bun.otel.propagation.formatTraceparent(span.ctx, &tp_buf);
+                    fetch_tasklet.request_headers.append("traceparent", &tp_buf) catch {};
+                }
             }
         }
 

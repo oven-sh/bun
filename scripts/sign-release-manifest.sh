@@ -171,15 +171,31 @@ done
 unset artifact seen_artifacts
 
 # Now that the request is validated, install cleanup for the mutation
-# phase. Every failure below this point — `rm -f` on a stale .asc, a
+# phase. Every failure below this point — a sha256 worker crash, a
 # gpg --import error, a gpg --clearsign error — must leave the directory
-# in the same state: either the outputs we were supposed to produce
-# exist (success) or nothing new does (failure). A half-written unsigned
-# manifest alongside a stale .asc is exactly the integrity failure this
-# script exists to prevent.
+# with at least as much valid state as it had on entry. Two invariants:
+#
+# - On success: only the outputs we promised exist (SHASUMS256.txt,
+#   and SHASUMS256.txt.asc in the signed path). Any pre-existing copies
+#   are overwritten with the new bytes.
+# - On failure: no partially-written outputs remain, AND any
+#   pre-existing outputs we moved out of the way are restored
+#   byte-for-byte. The caller's directory is byte-identical to what
+#   it looked like when the script was invoked. A half-written
+#   unsigned manifest alongside a stale .asc is exactly the integrity
+#   failure this script exists to prevent, and so is *losing* a valid
+#   manifest the caller still owned because our own hash job failed.
+#
+# The rollback is implemented by renaming pre-existing outputs out of
+# the way into `.bak.$$` siblings before we mutate anything, then
+# either removing the backups on success or renaming them back on
+# failure. Using rename (not cp) keeps it atomic, zero-copy, and
+# leaves no half-formed bytes on disk in the interim.
 success=0
 gnupghome=""
 hash_dir=""
+backup_manifest=""
+backup_signed_manifest=""
 cleanup() {
   local rc=$?
   # Every rm inside this trap ends in `|| true`. With `set -eo pipefail`
@@ -188,14 +204,24 @@ cleanup() {
   # of the captured `$rc`, making the caller think signing failed when it
   # actually succeeded. The -f flag only suppresses ENOENT — it doesn't
   # cover EACCES / EROFS / EIO / stale-NFS / SIGPIPE — so `|| true` is
-  # still required.
+  # still required. Same reason for the `mv -f ... || true` on the restore
+  # paths below.
   if [ "$success" -ne 1 ]; then
+    # Roll back: wipe any partial outputs we produced, then restore the
+    # pre-existing copies from their .bak.$$ siblings. Net effect is the
+    # directory looks byte-identical to how we found it.
     rm -f "$tmp_manifest" "$manifest" "$signed_manifest" || true
+    if [ -n "$backup_manifest" ]; then
+      mv -f "$backup_manifest" "$manifest" || true
+    fi
+    if [ -n "$backup_signed_manifest" ]; then
+      mv -f "$backup_signed_manifest" "$signed_manifest" || true
+    fi
   else
-    # Belt and braces: if success=1 fired but the rename still somehow
-    # left a .tmp on disk, wipe it so a subsequent run doesn't see stale
-    # bytes from this invocation.
-    rm -f "$tmp_manifest" || true
+    # Success: the new outputs are live. Drop the backups and any stray
+    # .tmp left behind by a partial rename (belt and braces — the atomic
+    # `mv` below should make .tmp invisible on this path).
+    rm -f "$tmp_manifest" "$backup_manifest" "$backup_signed_manifest" || true
   fi
   if [ -n "$hash_dir" ]; then
     rm -rf "$hash_dir" || true
@@ -208,22 +234,23 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# Remove any stale .asc from a previous run BEFORE we start producing
-# output, regardless of which branch we'll take. If this directory was
-# previously signed and we're now running unsigned (e.g. secrets got
-# rotated or removed mid-rollout), the old .asc still refers to the
-# previous manifest body — uploading it alongside our fresh .txt would
-# recreate the exact identity mismatch this PR is fixing. The signed
-# branch overwrites via `gpg --output` anyway, so this rm is a no-op
-# there and a correctness fix in the unsigned branch.
-#
-# `|| true` matches the rest of the script (see the cleanup() comment
-# above): `-f` only suppresses ENOENT, not EACCES / EROFS / EIO /
-# stale-NFS. Without the guard, a permission error on the stale .asc
-# would fire `set -e` here with success=0, and cleanup() would delete
-# the pre-existing valid SHASUMS256.txt — strictly worse than leaving
-# everything alone.
-rm -f "$signed_manifest" || true
+# Rename any pre-existing outputs out of the way via atomic `mv`. These
+# backups live next to the originals (same filesystem → rename is cheap
+# and atomic) and are either removed on success or moved back on failure
+# by cleanup() above. This replaces the earlier `rm -f` on the stale .asc
+# — the rename accomplishes the same "get the old .asc off disk" effect
+# in the unsigned-rollout case AND preserves it for restore on failure.
+# The `$$` in the suffix makes the backup path unique per invocation so
+# concurrent same-dir runs (unsupported but possible) can't collide on a
+# shared .bak path.
+if [ -f "$manifest" ]; then
+  backup_manifest="$manifest.bak.$$"
+  mv "$manifest" "$backup_manifest"
+fi
+if [ -f "$signed_manifest" ]; then
+  backup_signed_manifest="$signed_manifest.bak.$$"
+  mv "$signed_manifest" "$backup_signed_manifest"
+fi
 
 # Hash every artifact in parallel. The canary set is 22 archives, each
 # roughly 30-150 MB — sequential sha256sum runs ~6-7 s on the buildkite

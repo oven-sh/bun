@@ -296,6 +296,63 @@ describe.concurrent.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
     expect(manifest).toBe(`${expected} *bun-linux-x64.zip`);
   });
 
+  test("restores pre-existing valid outputs when a later step fails mid-mutation", async () => {
+    // coderabbit caught: the cleanup() trap's own invariant comment
+    // promises "same state on failure", but the `rm -f "$signed_manifest"`
+    // + `mv tmp "$manifest"` sequence actually wipes pre-existing valid
+    // outputs if a later step (e.g. gpg --import on a bad key) fails.
+    // The fix renames pre-existing .txt/.asc to `.bak.$$` siblings before
+    // mutation and restores them from cleanup() when success stays 0.
+    // This test exercises that roll-back by running a successful signed
+    // first pass, then invoking the helper a second time with a bogus
+    // GPG key so gpg --import aborts mid-mutation. Both the .txt and
+    // .asc from the first run must be present and byte-identical after
+    // the failure.
+    using dir = tempDir("bun-28931-rollback-", {
+      "bun-linux-x64.zip": "v1 bytes",
+    });
+    const dirStr = String(dir);
+
+    // First run: signed. Produces the valid state we want preserved.
+    const first = await sh([script, dirStr, "bun-linux-x64.zip"], {
+      GPG_PRIVATE_KEY: gpgPrivateKey,
+      GPG_PASSPHRASE: passphrase,
+    });
+    expect(first.stderr).not.toContain("error:");
+    expect(first.exitCode).toBe(0);
+    const originalTxt = readFileSync(join(dirStr, "SHASUMS256.txt"), "utf8");
+    const originalAsc = readFileSync(join(dirStr, "SHASUMS256.txt.asc"), "utf8");
+    expect(originalTxt).toContain("bun-linux-x64.zip");
+    expect(originalAsc).toContain("-----BEGIN PGP SIGNED MESSAGE-----");
+
+    // Rewrite the artifact so a successful rerun WOULD produce different
+    // hashes — if the helper doesn't roll back, our assertion that the
+    // .txt is byte-identical will catch it.
+    writeFileSync(join(dirStr, "bun-linux-x64.zip"), "v2 bytes");
+
+    // Second run: a bogus GPG key makes `gpg --import <<< $GPG_PRIVATE_KEY`
+    // fail inside the mutation phase, AFTER the manifest has been written
+    // and backed up. The cleanup trap must restore the backups.
+    const second = await sh([script, dirStr, "bun-linux-x64.zip"], {
+      GPG_PRIVATE_KEY: "not-a-valid-pgp-key",
+      GPG_PASSPHRASE: passphrase,
+    });
+    expect(second.exitCode).not.toBe(0);
+
+    // Pre-existing state must be restored byte-for-byte. No half-written
+    // v2 manifest, no orphaned backup files left in the directory.
+    expect(existsSync(join(dirStr, "SHASUMS256.txt"))).toBe(true);
+    expect(existsSync(join(dirStr, "SHASUMS256.txt.asc"))).toBe(true);
+    expect(readFileSync(join(dirStr, "SHASUMS256.txt"), "utf8")).toBe(originalTxt);
+    expect(readFileSync(join(dirStr, "SHASUMS256.txt.asc"), "utf8")).toBe(originalAsc);
+    // No .tmp or .bak siblings left behind.
+    expect(existsSync(join(dirStr, "SHASUMS256.txt.tmp"))).toBe(false);
+    const backupLeftovers = Bun.spawnSync({
+      cmd: ["bash", "-c", `ls -1 "${dirStr}" | grep -c '\\.bak\\.' || true`],
+    });
+    expect(backupLeftovers.stdout.toString().trim()).toBe("0");
+  });
+
   test("fails loudly and cleans up a half-written manifest when an artifact is missing", async () => {
     using dir = tempDir("bun-28931-missing-", {
       "bun-linux-x64.zip": "present",

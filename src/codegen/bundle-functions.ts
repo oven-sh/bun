@@ -548,7 +548,7 @@ JSBuiltinInternalFunctions::JSBuiltinInternalFunctions(JSC::VM& vm) : m_vm(vm)
 
   bundledCPP += `
         };
-        globalObject.addStaticGlobals(staticGlobals, std::size(staticGlobals));
+        globalObject.addStaticGlobals(staticGlobals);
         UNUSED_PARAM(clientData);
     }
 

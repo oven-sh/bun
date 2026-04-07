@@ -56,6 +56,7 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForTTYWrapObject;
     std::unique_ptr<IsoSubspace> m_subspaceForNapiHandleScopeImpl;
     std::unique_ptr<IsoSubspace> m_subspaceForNapiTypeTag;
+    std::unique_ptr<IsoSubspace> m_subspaceForNativePromiseContext;
     std::unique_ptr<IsoSubspace> m_subspaceForObjectTemplate;
     std::unique_ptr<IsoSubspace> m_subspaceForInternalFieldObject;
     std::unique_ptr<IsoSubspace> m_subspaceForV8GlobalInternals;
@@ -70,6 +71,7 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForJSX509Certificate;
     std::unique_ptr<IsoSubspace> m_subspaceForJSNodePerformanceHooksHistogram;
     std::unique_ptr<IsoSubspace> m_subspaceForWasmStreamingCompiler;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSWebView;
 #include "ZigGeneratedClasses+DOMIsoSubspaces.h"
     /*-- BUN --*/
 

@@ -191,10 +191,20 @@ fn externRunCallback3(global: *jsc.JSGlobalObject, callback: jsc.JSValue, thisVa
     loop.runCallback(callback, global, thisValue, &.{ arg0, arg1, arg2 });
 }
 
+fn externEnter(global: *jsc.JSGlobalObject) callconv(.c) void {
+    global.bunVM().eventLoop().enter();
+}
+
+fn externExit(global: *jsc.JSGlobalObject) callconv(.c) void {
+    global.bunVM().eventLoop().exit();
+}
+
 comptime {
     @export(&externRunCallback1, .{ .name = "Bun__EventLoop__runCallback1" });
     @export(&externRunCallback2, .{ .name = "Bun__EventLoop__runCallback2" });
     @export(&externRunCallback3, .{ .name = "Bun__EventLoop__runCallback3" });
+    @export(&externEnter, .{ .name = "Bun__EventLoop__enter" });
+    @export(&externExit, .{ .name = "Bun__EventLoop__exit" });
 }
 
 /// Prefer `runCallbackWithResult` unless you really need to make sure that microtasks are drained.

@@ -117,7 +117,7 @@ const KQueueGenerationNumber = if (Environment.isMac and Environment.allow_asser
 pub const FilePoll = struct {
     var max_generation_number: KQueueGenerationNumber = 0;
 
-    fd: bun.FileDescriptor = invalid_fd,
+    fd: bun.FD = invalid_fd,
     flags: Flags.Set = Flags.Set{},
     owner: Owner = Owner.Null,
 
@@ -427,7 +427,6 @@ pub const FilePoll = struct {
                 var handler: *TerminalPoll = ptr.as(TerminalPoll);
                 handler.onPoll(size_or_offset, poll.flags.contains(.hup));
             },
-
             else => {
                 const possible_name = Owner.typeNameFromTag(@intFromEnum(ptr.tag()));
                 log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {f}) disconnected? (maybe: {s})", .{ poll.fd, possible_name orelse "<unknown>" });
@@ -692,7 +691,7 @@ pub const FilePoll = struct {
         }
     }
 
-    pub fn init(vm: anytype, fd: bun.FileDescriptor, flags: Flags.Struct, comptime Type: type, owner: *Type) *FilePoll {
+    pub fn init(vm: anytype, fd: bun.FD, flags: Flags.Struct, comptime Type: type, owner: *Type) *FilePoll {
         if (comptime @TypeOf(vm) == *bun.install.PackageManager) {
             return init(jsc.EventLoopHandle.init(&vm.event_loop), fd, flags, Type, owner);
         }
@@ -716,7 +715,7 @@ pub const FilePoll = struct {
         return initWithOwner(vm, fd, flags, Owner.init(owner));
     }
 
-    pub fn initWithOwner(vm_: anytype, fd: bun.FileDescriptor, flags: Flags.Struct, owner: Owner) *FilePoll {
+    pub fn initWithOwner(vm_: anytype, fd: bun.FD, flags: Flags.Struct, owner: Owner) *FilePoll {
         const vm = jsc.AbstractVM(vm_);
         var poll = vm.allocFilePoll();
         poll.fd = fd;
@@ -804,7 +803,7 @@ pub const FilePoll = struct {
         return registerWithFd(this, loop, flag, if (one_shot) .one_shot else .none, this.fd);
     }
 
-    pub fn registerWithFd(this: *FilePoll, loop: *Loop, flag: Flags, one_shot: OneShotFlag, fd: bun.FileDescriptor) bun.sys.Maybe(void) {
+    pub fn registerWithFd(this: *FilePoll, loop: *Loop, flag: Flags, one_shot: OneShotFlag, fd: bun.FD) bun.sys.Maybe(void) {
         const watcher_fd = loop.fd;
 
         log("register: FilePoll(0x{x}, generation_number={d}) {s} ({f})", .{ @intFromPtr(this), this.generation_number, @tagName(flag), fd });
@@ -952,7 +951,7 @@ pub const FilePoll = struct {
 
     const invalid_fd = bun.invalid_fd;
 
-    pub inline fn fileDescriptor(this: *FilePoll) bun.FileDescriptor {
+    pub inline fn fileDescriptor(this: *FilePoll) bun.FD {
         return @intCast(this.fd);
     }
 
@@ -960,7 +959,7 @@ pub const FilePoll = struct {
         return this.unregisterWithFd(loop, this.fd, force_unregister);
     }
 
-    pub fn unregisterWithFd(this: *FilePoll, loop: *Loop, fd: bun.FileDescriptor, force_unregister: bool) bun.sys.Maybe(void) {
+    pub fn unregisterWithFd(this: *FilePoll, loop: *Loop, fd: bun.FD, force_unregister: bool) bun.sys.Maybe(void) {
         if (Environment.allow_assert) {
             bun.assert(fd.native() >= 0 and fd != bun.invalid_fd);
         }
@@ -1107,17 +1106,17 @@ pub const Waker = switch (Environment.os) {
 };
 
 pub const LinuxWaker = struct {
-    fd: bun.FileDescriptor,
+    fd: bun.FD,
 
     pub fn init() !Waker {
         return initWithFileDescriptor(.fromNative(try std.posix.eventfd(0, 0)));
     }
 
-    pub fn getFd(this: *const Waker) bun.FileDescriptor {
+    pub fn getFd(this: *const Waker) bun.FD {
         return this.fd;
     }
 
-    pub fn initWithFileDescriptor(fd: bun.FileDescriptor) Waker {
+    pub fn initWithFileDescriptor(fd: bun.FD) Waker {
         return Waker{ .fd = fd };
     }
 
@@ -1155,7 +1154,7 @@ pub const KEventWaker = struct {
         this.has_pending_wake = true;
     }
 
-    pub fn getFd(this: *const Waker) bun.FileDescriptor {
+    pub fn getFd(this: *const Waker) bun.FD {
         return .fromNative(this.kq);
     }
 
@@ -1214,13 +1213,13 @@ pub const KEventWaker = struct {
 };
 
 pub const Closer = struct {
-    fd: bun.FileDescriptor,
+    fd: bun.FD,
     task: jsc.WorkPoolTask = .{ .callback = &onClose },
 
     pub const new = bun.TrivialNew(@This());
 
     pub fn close(
-        fd: bun.FileDescriptor,
+        fd: bun.FD,
         /// for compatibility with windows version
         _: void,
     ) void {

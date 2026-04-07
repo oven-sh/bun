@@ -41,7 +41,7 @@ pub const UnixOrHost = union(enum) {
         host: []const u8,
         port: u16,
     },
-    fd: bun.FileDescriptor,
+    fd: bun.FD,
 
     pub fn clone(this: UnixOrHost) UnixOrHost {
         switch (this) {
@@ -430,6 +430,9 @@ fn doStop(this: *Listener, force_close: bool) void {
     if (this.listener == .none) return;
     const listener = this.listener;
 
+    // Unlink before any close path (including ctx.deinit below) can release the fd.
+    if (listener == .uws) this.unlinkUnixSocketPath();
+
     defer switch (listener) {
         .uws => |socket| socket.close(this.ssl),
         .namedPipe => |namedPipe| if (Environment.isWindows) namedPipe.closePipeAndDeinit(),
@@ -463,11 +466,26 @@ pub fn finalize(this: *Listener) callconv(.c) void {
     const listener = this.listener;
     this.listener = .none;
     switch (listener) {
-        .uws => |socket| socket.close(this.ssl),
+        .uws => |socket| {
+            this.unlinkUnixSocketPath();
+            socket.close(this.ssl);
+        },
         .namedPipe => |namedPipe| if (Environment.isWindows) namedPipe.closePipeAndDeinit(),
         .none => {},
     }
     this.deinit();
+}
+
+/// Match Node.js/libuv: unlink the unix socket file before closing the listening fd.
+/// Unlinking after close would race with another process creating a socket at the same path.
+fn unlinkUnixSocketPath(this: *const Listener) void {
+    if (this.connection != .unix) return;
+    const path = this.connection.unix;
+    // Abstract sockets (Linux) start with a NUL byte and have no filesystem entry.
+    if (path.len == 0 or path[0] == 0) return;
+    const buf = bun.path_buffer_pool.get();
+    defer bun.path_buffer_pool.put(buf);
+    _ = bun.sys.unlink(bun.path.z(path, buf));
 }
 
 pub fn deinit(this: *Listener) void {

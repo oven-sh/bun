@@ -617,7 +617,7 @@ pub fn dirname(globalObject: *jsc.JSGlobalObject, isWindows: bool, args_ptr: [*]
 }
 
 /// Based on Node v21.6.1 path.posix.extname:
-/// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L1278
+/// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L1388
 pub fn extnamePosixT(comptime T: type, path: []const T) []const T {
     comptime validatePathT(T, "extnamePosixT");
 

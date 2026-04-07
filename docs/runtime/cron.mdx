@@ -3,19 +3,26 @@ title: Cron
 description: Schedule and parse cron jobs with Bun
 ---
 
-Bun has built-in support for registering OS-level cron jobs and parsing cron expressions.
+Bun has built-in support for cron — parse expressions, run a callback on a schedule inside your process, or register OS-level jobs that survive restarts.
 
 ## Quickstart
+
+**Run a callback on a schedule in the current process:**
+
+```ts
+Bun.cron("0 * * * *", async () => {
+  await cleanupTempFiles();
+});
+```
 
 **Parse a cron expression to find the next matching time:**
 
 ```ts
 // Next weekday at 9:30 AM UTC
 const next = Bun.cron.parse("30 9 * * MON-FRI");
-console.log(next); // => 2025-01-20T09:30:00.000Z
 ```
 
-**Register a cron job that runs a script on a schedule:**
+**Register an OS-level cron job that runs a script on a schedule:**
 
 ```ts
 await Bun.cron("./worker.ts", "30 2 * * MON", "weekly-report");
@@ -25,7 +32,7 @@ await Bun.cron("./worker.ts", "30 2 * * MON", "weekly-report");
 
 ## `Bun.cron.parse()`
 
-Parse a cron expression and return the next matching UTC `Date`.
+Parse a cron expression and return the next matching `Date` in UTC.
 
 ```ts
 const next = Bun.cron.parse("*/15 * * * *");
@@ -41,20 +48,18 @@ console.log(next); // => next quarter-hour boundary
 
 ### Returns
 
-`Date | null` — the next matching UTC time, or `null` if no match exists within ~4 years (e.g. February 30th).
+`Date | null` — the next matching time, or `null` if no match exists within 8 years (e.g. February 30th).
 
 ### Chaining calls
 
 Call `parse()` repeatedly to get a sequence of upcoming times:
 
 ```ts
-const from = Date.UTC(2025, 0, 15, 10, 0, 0);
-
-const first = Bun.cron.parse("0 * * * *", from);
-console.log(first); // => 2025-01-15T11:00:00.000Z
-
-const second = Bun.cron.parse("0 * * * *", first);
-console.log(second); // => 2025-01-15T12:00:00.000Z
+let cursor: Date | number = Date.now();
+for (let i = 0; i < 3; i++) {
+  cursor = Bun.cron.parse("0 * * * *", cursor)!;
+  console.log(cursor.toLocaleString()); // next three top-of-hour boundaries
+}
 ```
 
 ---
@@ -108,8 +113,14 @@ Both `0` and `7` mean Sunday in the weekday field.
 
 ```ts
 const next = Bun.cron.parse("@daily");
-console.log(next); // => next midnight UTC
+console.log(next); // => next UTC midnight
 ```
+
+### Time zone
+
+`Bun.cron.parse()` and the in-process `Bun.cron(schedule, handler)` interpret schedules in **UTC**. There is no DST to handle — `0 9 * * *` always means 9:00 UTC.
+
+The OS-level `Bun.cron(path, schedule, title)` uses the **system's local time zone**, because that's how crontab, launchd, and Windows Task Scheduler work. To make the two forms agree, run the process with `TZ=UTC`.
 
 ### Day-of-month and day-of-week interaction
 
@@ -124,7 +135,80 @@ When only one is specified (the other is `*`), only that field is used for match
 
 ---
 
-## `Bun.cron()`
+## `Bun.cron(schedule, handler)` — in-process
+
+Run a callback on a cron schedule inside the current process.
+
+```ts
+const job = Bun.cron("*/5 * * * *", async () => {
+  await syncToDatabase();
+});
+```
+
+This is the lightweight option for long-running servers and workers — no system cron daemon required, works the same on every platform, and shares state (database pools, caches, module-level variables) between invocations.
+
+|                              | In-process                       | [OS-level](#bun-cron-path-schedule-title-os-level) |
+| ---------------------------- | -------------------------------- | -------------------------------------------------- |
+| Survives process exit/reboot | No                               | Yes                                                |
+| Shared state between runs    | Yes                              | No (fresh process each time)                       |
+| Platform requirements        | None                             | crontab / launchd / Task Scheduler                 |
+| Windows expression limits    | None                             | [48-trigger cap](#trigger-limit)                   |
+| Return type                  | [`CronJob`](#the-cronjob-handle) | `Promise<void>`                                    |
+
+### Parameters
+
+| Parameter  | Type                         | Description                                                                                                                                                                  |
+| ---------- | ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `schedule` | `string`                     | A [cron expression](#cron-expression-syntax) or nickname like `"@hourly"`.                                                                                                   |
+| `handler`  | `(this: CronJob) => unknown` | Called on each fire. May return a Promise — the next fire is not scheduled until it settles. Inside a `function` callback, `this` is the `CronJob` (so `this.stop()` works). |
+
+Returns a [`CronJob`](#the-cronjob-handle) synchronously. Throws a `TypeError` if the expression is invalid or has no future occurrences (e.g. `"0 0 30 2 *"` — February 30th).
+
+### No-overlap guarantee
+
+The next fire time is computed only after the handler — including any returned `Promise` — settles. If your handler takes 90 seconds and the schedule is `* * * * *`, the second fire is the first minute boundary _after_ the handler finishes, not 60 seconds after the first fire. Invocations never stack.
+
+### Error handling
+
+Errors match `setTimeout` semantics:
+
+- A synchronous `throw` emits `process.on("uncaughtException")`.
+- A rejected returned `Promise` emits `process.on("unhandledRejection")`.
+
+Without a listener, the process exits with code `1`. With a listener, the job keeps running — it does not stop on the first failure.
+
+```ts
+process.on("unhandledRejection", err => log.error("cron failed:", err));
+
+Bun.cron("* * * * *", async () => {
+  await mightThrow(); // logged and retried next minute
+});
+```
+
+### `bun --hot`
+
+Under `bun --hot`, all in-process cron jobs are stopped immediately before the module graph re-evaluates. Every `Bun.cron()` call still in your source then re-registers. Editing the schedule, editing the handler, or deleting the line entirely all take effect on save without leaking timers.
+
+### The `CronJob` handle
+
+```ts
+using job = Bun.cron("0 * * * *", () => {});
+
+job.cron; // => "0 * * * *"
+job.stop(); // cancel — the handler will not fire again
+job.unref(); // allow the process to exit even while scheduled
+job.ref(); // keep the process alive (default)
+```
+
+`CronJob` is [`Disposable`](https://github.com/tc39/proposal-explicit-resource-management) — `using job = Bun.cron(...)` auto-stops at scope exit. `stop()`, `ref()`, and `unref()` all return the job for chaining.
+
+### Fake timers
+
+In-process cron is anchored to the real wall clock. `jest.useFakeTimers()`, `setSystemTime()`, `advanceTimersByTime()`, and `runAllTimers()` do not affect when it fires.
+
+---
+
+## `Bun.cron(path, schedule, title)` — OS-level
 
 Register an OS-level cron job that runs a JavaScript/TypeScript module on a schedule.
 
@@ -269,8 +353,14 @@ On headless servers and CI environments where the current user's [Security Ident
 
 #### Trigger limit
 
-:::caution
-Windows Task Scheduler enforces a limit of [48 triggers per task](https://learn.microsoft.com/en-us/windows/win32/taskschd/taskschedulerschema-triggers-tasktype-element) (the `CalendarTrigger` element has [`maxOccurs="48"`](https://learn.microsoft.com/en-us/windows/win32/taskschd/taskschedulerschema-calendartrigger-triggergroup-element)). Some cron expressions that work on Linux and macOS exceed this limit on Windows.
+<Warning>
+  Windows Task Scheduler enforces a limit of [48 triggers per
+  task](https://learn.microsoft.com/en-us/windows/win32/taskschd/taskschedulerschema-triggers-tasktype-element) (the
+  `CalendarTrigger` element has
+  [`maxOccurs="48"`](https://learn.microsoft.com/en-us/windows/win32/taskschd/taskschedulerschema-calendartrigger-triggergroup-element)).
+  Some cron expressions that work on Linux and macOS exceed this limit on Windows. When a pattern exceeds the limit,
+  `Bun.cron()` rejects it with an error message.
+</Warning>
 
 **Expressions that work on all platforms:**
 
@@ -296,7 +386,7 @@ Windows Task Scheduler enforces a limit of [48 triggers per task](https://learn.
 
 The key factor is whether the expression can use a [`Repetition`](https://learn.microsoft.com/en-us/windows/win32/taskschd/taskschedulerschema-repetition-triggerbasetype-element) interval (single trigger) or must expand to individual `CalendarTrigger` elements. Minute steps that **evenly divide 60** (`*/1`, `*/2`, `*/3`, `*/4`, `*/5`, `*/6`, `*/10`, `*/12`, `*/15`, `*/20`, `*/30`) use Repetition and work regardless of other fields. Steps that don't divide 60 (`*/7`, `*/8`, `*/9`, `*/11`, `*/13`, etc.) must be expanded, and with 24 hours active, the count quickly exceeds 48.
 
-When a pattern exceeds the limit, `Bun.cron()` rejects it with an error message. To work around it, simplify the expression or restrict the hour range:
+To work around it, simplify the expression or restrict the hour range:
 
 ```ts
 // ❌ Fails on Windows: */7 with all hours = 216 triggers
@@ -309,13 +399,12 @@ await Bun.cron("./job.ts", "*/7 9-13 * * *", "my-job");
 await Bun.cron("./job.ts", "*/5 * * * *", "my-job");
 ```
 
-:::
-
 #### Windows containers
 
-:::caution
-`Bun.cron()` is not supported in Windows Docker containers. The Task Scheduler service is not running in `servercore` or `nanoserver` images. Use an in-process scheduler for containerized workloads.
-:::
+<Warning>
+  `Bun.cron()` is not supported in Windows Docker containers. The Task Scheduler service is not running in `servercore`
+  or `nanoserver` images. Use an in-process scheduler for containerized workloads.
+</Warning>
 
 **Viewing registered jobs:**
 

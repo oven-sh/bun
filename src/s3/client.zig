@@ -204,6 +204,7 @@ pub fn listObjects(
 
     const url = bun.URL.parse(result.url);
     const proxy = proxy_url orelse "";
+    task.proxy_url = if (proxy.len > 0) bun.handleOom(bun.default_allocator.dupe(u8, proxy)) else "";
 
     task.http = bun.http.AsyncHTTP.init(
         bun.default_allocator,
@@ -219,7 +220,7 @@ pub fn listObjects(
         ).init(task),
         .follow,
         .{
-            .http_proxy = if (proxy.len > 0) bun.URL.parse(proxy) else null,
+            .http_proxy = if (task.proxy_url.len > 0) bun.URL.parse(task.proxy_url) else null,
             .verbose = task.vm.getVerboseFetch(),
             .reject_unauthorized = task.vm.getTLSRejectUnauthorized(),
         },

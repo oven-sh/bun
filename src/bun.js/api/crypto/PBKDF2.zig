@@ -71,7 +71,7 @@ pub const Job = struct {
         const globalThis = this.vm.global;
         const promise = this.promise.swap();
         if (this.err) |err| {
-            try promise.reject(globalThis, createCryptoError(globalThis, err));
+            try promise.rejectWithAsyncStack(globalThis, createCryptoError(globalThis, err));
             return;
         }
 

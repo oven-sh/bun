@@ -86,6 +86,8 @@ pub const ProcessExitHandler = struct {
             ProcessHandle,
             MultiRunProcessHandle,
             SecurityScanSubprocess,
+            WebViewHostProcess,
+            ChromeProcess,
             SyncProcess,
             CronRegisterJob,
             CronRemoveJob,
@@ -124,6 +126,14 @@ pub const ProcessExitHandler = struct {
             },
             @field(TaggedPointer.Tag, @typeName(SecurityScanSubprocess)) => {
                 const subprocess = this.ptr.as(SecurityScanSubprocess);
+                subprocess.onProcessExit(process, status, rusage);
+            },
+            @field(TaggedPointer.Tag, @typeName(WebViewHostProcess)) => {
+                const subprocess = this.ptr.as(WebViewHostProcess);
+                subprocess.onProcessExit(process, status, rusage);
+            },
+            @field(TaggedPointer.Tag, @typeName(ChromeProcess)) => {
+                const subprocess = this.ptr.as(ChromeProcess);
                 subprocess.onProcessExit(process, status, rusage);
             },
             @field(TaggedPointer.Tag, @typeName(CronRegisterJob)) => {
@@ -747,7 +757,7 @@ pub const WaiterThread = if (Environment.isPosix) WaiterThreadPosix else struct 
 // We use a single thread to call waitpid() in a loop.
 const WaiterThreadPosix = struct {
     started: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
-    eventfd: if (Environment.isLinux) bun.FileDescriptor else u0 = undefined,
+    eventfd: if (Environment.isLinux) bun.FD else u0 = undefined,
 
     js_process: ProcessQueue = .{},
 
@@ -988,7 +998,7 @@ pub const PosixSpawnOptions = struct {
     stdin: Stdio = .ignore,
     stdout: Stdio = .ignore,
     stderr: Stdio = .ignore,
-    ipc: ?bun.FileDescriptor = null,
+    ipc: ?bun.FD = null,
     extra_fds: []const Stdio = &.{},
     cwd: []const u8 = "",
     detached: bool = false,
@@ -1018,7 +1028,7 @@ pub const PosixSpawnOptions = struct {
         ignore: void,
         buffer: void,
         ipc: void,
-        pipe: bun.FileDescriptor,
+        pipe: bun.FD,
         // TODO: remove this entry, it doesn't seem to be used
         dup2: struct { out: bun.jsc.Subprocess.StdioKind, to: bun.jsc.Subprocess.StdioKind },
     };
@@ -1042,7 +1052,7 @@ pub const WindowsSpawnResult = struct {
         unavailable: void,
 
         buffer: *bun.windows.libuv.Pipe,
-        buffer_fd: bun.FileDescriptor,
+        buffer_fd: bun.FD,
     };
 
     pub fn toProcess(
@@ -1070,7 +1080,7 @@ pub const WindowsSpawnOptions = struct {
     stdin: Stdio = .ignore,
     stdout: Stdio = .ignore,
     stderr: Stdio = .ignore,
-    ipc: ?bun.FileDescriptor = null,
+    ipc: ?bun.FD = null,
     extra_fds: []const Stdio = &.{},
     cwd: []const u8 = "",
     detached: bool = false,
@@ -1093,7 +1103,7 @@ pub const WindowsSpawnOptions = struct {
         ignore: void,
         buffer: *bun.windows.libuv.Pipe,
         ipc: *bun.windows.libuv.Pipe,
-        pipe: bun.FileDescriptor,
+        pipe: bun.FD,
         dup2: struct { out: bun.jsc.Subprocess.StdioKind, to: bun.jsc.Subprocess.StdioKind },
 
         pub fn deinit(this: *const Stdio) void {
@@ -1118,11 +1128,11 @@ pub const WindowsSpawnOptions = struct {
 pub const PosixSpawnResult = struct {
     pid: pid_t = 0,
     pidfd: ?PidFDType = null,
-    stdin: ?bun.FileDescriptor = null,
-    stdout: ?bun.FileDescriptor = null,
-    stderr: ?bun.FileDescriptor = null,
-    ipc: ?bun.FileDescriptor = null,
-    extra_pipes: std.array_list.Managed(bun.FileDescriptor) = std.array_list.Managed(bun.FileDescriptor).init(bun.default_allocator),
+    stdin: ?bun.FD = null,
+    stdout: ?bun.FD = null,
+    stderr: ?bun.FD = null,
+    ipc: ?bun.FD = null,
+    extra_pipes: std.array_list.Managed(bun.FD) = std.array_list.Managed(bun.FD).init(bun.default_allocator),
 
     memfds: [3]bool = .{ false, false, false },
 
@@ -1285,12 +1295,12 @@ pub fn spawnProcessPosix(
         try actions.chdir(options.cwd);
     }
     var spawned = PosixSpawnResult{};
-    var extra_fds = std.array_list.Managed(bun.FileDescriptor).init(bun.default_allocator);
+    var extra_fds = std.array_list.Managed(bun.FD).init(bun.default_allocator);
     errdefer extra_fds.deinit();
     var stack_fallback = std.heap.stackFallback(2048, bun.default_allocator);
     const allocator = stack_fallback.get();
-    var to_close_at_end = std.array_list.Managed(bun.FileDescriptor).init(allocator);
-    var to_set_cloexec = std.array_list.Managed(bun.FileDescriptor).init(allocator);
+    var to_close_at_end = std.array_list.Managed(bun.FD).init(allocator);
+    var to_set_cloexec = std.array_list.Managed(bun.FD).init(allocator);
     defer {
         for (to_set_cloexec.items) |fd| {
             _ = bun.sys.setCloseOnExec(fd);
@@ -1303,7 +1313,7 @@ pub fn spawnProcessPosix(
         to_close_at_end.clearAndFree();
     }
 
-    var to_close_on_error = std.array_list.Managed(bun.FileDescriptor).init(allocator);
+    var to_close_on_error = std.array_list.Managed(bun.FD).init(allocator);
 
     errdefer {
         for (to_close_on_error.items) |fd| {
@@ -1321,7 +1331,7 @@ pub fn spawnProcessPosix(
     }
 
     const stdio_options: [3]PosixSpawnOptions.Stdio = .{ options.stdin, options.stdout, options.stderr };
-    const stdios: [3]*?bun.FileDescriptor = .{ &spawned.stdin, &spawned.stdout, &spawned.stderr };
+    const stdios: [3]*?bun.FD = .{ &spawned.stdin, &spawned.stdout, &spawned.stderr };
 
     var dup_stdout_to_stderr: bool = false;
 
@@ -1374,7 +1384,7 @@ pub fn spawnProcessPosix(
                     }
                 }
 
-                const fds: [2]bun.FileDescriptor = brk: {
+                const fds: [2]bun.FD = brk: {
                     const pair = if (!options.no_sigpipe) try bun.sys.socketpairForShell(
                         std.posix.AF.UNIX,
                         std.posix.SOCK.STREAM,
@@ -1450,7 +1460,7 @@ pub fn spawnProcessPosix(
                 try actions.open(fileno, path, bun.O.RDWR | bun.O.CREAT, 0o664);
             },
             .ipc, .buffer => {
-                const fds: [2]bun.FileDescriptor = try bun.sys.socketpair(
+                const fds: [2]bun.FD = try bun.sys.socketpair(
                     std.posix.AF.UNIX,
                     std.posix.SOCK.STREAM,
                     0,
@@ -1502,7 +1512,7 @@ pub fn spawnProcessPosix(
         .result => |pid| {
             spawned.pid = pid;
             spawned.extra_pipes = extra_fds;
-            extra_fds = std.array_list.Managed(bun.FileDescriptor).init(bun.default_allocator);
+            extra_fds = std.array_list.Managed(bun.FD).init(bun.default_allocator);
 
             if (comptime Environment.isLinux) {
                 // If it's spawnSync and we want to block the entire thread
@@ -1804,7 +1814,7 @@ pub const sync = struct {
         stdin: Stdio = .ignore,
         stdout: Stdio = .inherit,
         stderr: Stdio = .inherit,
-        ipc: ?bun.FileDescriptor = null,
+        ipc: ?bun.FD = null,
         cwd: []const u8 = "",
         detached: bool = false,
 
@@ -2124,7 +2134,7 @@ pub const sync = struct {
             std.array_list.Managed(u8).init(bun.default_allocator),
             std.array_list.Managed(u8).init(bun.default_allocator),
         };
-        var out_fds = [2]bun.FileDescriptor{ process.stdout orelse bun.invalid_fd, process.stderr orelse bun.invalid_fd };
+        var out_fds = [2]bun.FD{ process.stdout orelse bun.invalid_fd, process.stderr orelse bun.invalid_fd };
         var success = false;
         defer {
             // If we're going to return an error,
@@ -2150,7 +2160,7 @@ pub const sync = struct {
             }
         }
 
-        var out_fds_to_wait_for = [2]bun.FileDescriptor{
+        var out_fds_to_wait_for = [2]bun.FD{
             process.stdout orelse bun.invalid_fd,
             process.stderr orelse bun.invalid_fd,
         };
@@ -2268,6 +2278,9 @@ const PosixSpawn = bun.spawn;
 const Maybe = bun.sys.Maybe;
 const ShellSubprocess = bun.shell.ShellSubprocess;
 const uv = bun.windows.libuv;
+
+const ChromeProcess = bun.api.ChromeProcess;
+const WebViewHostProcess = bun.api.WebViewHostProcess;
 
 const LifecycleScriptSubprocess = bun.install.LifecycleScriptSubprocess;
 const SecurityScanSubprocess = bun.install.SecurityScanSubprocess;

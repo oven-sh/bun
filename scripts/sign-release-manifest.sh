@@ -113,11 +113,20 @@ GNUPGHOME="$gnupghome" gpg --batch --quiet --import <<< "$GPG_PRIVATE_KEY"
 
 # --clearsign emits the signed body plus a PGP SIGNATURE block. The body is
 # byte-identical to the input manifest, which is what the validator checks.
+#
+# --digest-algo SHA512 matches the algorithm the existing production
+# clearsigned manifest uses (the one uploaded by the daily cron via
+# packages/bun-release/scripts/upload-assets.ts). The 256 in SHASUMS256.txt
+# refers to the sha256 of each archive listed inside the body, not the
+# OpenPGP signature digest — they're independent, and the validator is
+# algorithm-agnostic (`Hash: .*`). Keeping the signature digest consistent
+# with production so nothing downstream that inspects the `Hash:` header
+# sees a change.
 GNUPGHOME="$gnupghome" gpg \
   --batch --yes --quiet \
   --pinentry-mode loopback \
   --passphrase-fd 0 \
-  --digest-algo SHA256 \
+  --digest-algo SHA512 \
   --clearsign \
   --output "$signed_manifest" \
   "$manifest" <<< "$GPG_PASSPHRASE"

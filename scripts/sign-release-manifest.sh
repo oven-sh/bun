@@ -524,7 +524,12 @@ done
 # by a later-successful job.
 for pid in "${pids[@]}"; do
   if ! wait "${pid}"; then
-    echo "error: sha256 failed for one or more artifacts" >&2
+    # `|| true` matches every other post-trap diagnostic echo in this
+    # file. A dead Buildkite log aggregator delivers SIGPIPE here; an
+    # unguarded echo under `set -eo pipefail` would exit 141 instead
+    # of 1, making the caller see a pipe error instead of the real
+    # sha256 failure.
+    echo "error: sha256 failed for one or more artifacts" >&2 || true
     exit 1
   fi
 done
@@ -548,7 +553,10 @@ printf '%s\n' "${artifacts[@]}" | LC_ALL=C sort > "${sorted_list}"
 while IFS= read -r artifact; do
   sha=$(cut -d ' ' -f 1 "${hash_dir}/${artifact}.digest")
   if [ "${#sha}" -ne 64 ]; then
-    echo "error: malformed sha256 for ${artifact}: '${sha}'" >&2
+    # `|| true` for the same SIGPIPE reason as the sha256-wait loop
+    # above: a dead log aggregator would turn the real 'malformed
+    # sha256' failure into a misleading exit 141 for the caller.
+    echo "error: malformed sha256 for ${artifact}: '${sha}'" >&2 || true
     exit 1
   fi
   printf '%s *%s\n' "${sha}" "${artifact}" >> "${tmp_manifest}"

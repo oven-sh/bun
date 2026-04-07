@@ -43,11 +43,49 @@ pub fn installIsolatedPackages(
         var dep_ids_sort_buf: std.ArrayListUnmanaged(DependencyID) = .empty;
         defer dep_ids_sort_buf.deinit(lockfile.allocator);
 
-        // Used by leaves and linked dependencies. They can be deduplicated early
-        // because peers won't change them.
-        //
-        // In the pnpm repo without this map: 772,471 nodes
-        //                 and with this map: 314,022 nodes
+        // Pre-compute which packages have peer dependencies anywhere in their
+        // transitive dependency closure. Packages without transitive peers will
+        // produce identical subtrees regardless of where they appear in the tree,
+        // so they can be safely deduplicated in the first pass.
+        var has_transitive_peers = try bun.bit_set.DynamicBitSetUnmanaged.initEmpty(lockfile.allocator, lockfile.packages.len);
+        defer has_transitive_peers.deinit(lockfile.allocator);
+
+        // Mark packages that directly have peer deps
+        for (0..lockfile.packages.len) |pkg_idx| {
+            const pkg_id: PackageID = @intCast(pkg_idx);
+            const deps = pkg_dependency_slices[pkg_id];
+            for (deps.begin()..deps.end()) |dep_idx| {
+                if (dependencies[dep_idx].behavior.isPeer()) {
+                    has_transitive_peers.set(pkg_id);
+                    break;
+                }
+            }
+        }
+
+        // Propagate: if any resolved dep has transitive peers, mark the parent too
+        {
+            var changed = true;
+            while (changed) {
+                changed = false;
+                for (0..lockfile.packages.len) |pkg_idx| {
+                    const pkg_id: PackageID = @intCast(pkg_idx);
+                    if (has_transitive_peers.isSet(pkg_id)) continue;
+                    const deps = pkg_dependency_slices[pkg_id];
+                    for (deps.begin()..deps.end()) |dep_idx| {
+                        const res_pkg = resolutions[dep_idx];
+                        if (res_pkg != invalid_package_id and has_transitive_peers.isSet(res_pkg)) {
+                            has_transitive_peers.set(pkg_id);
+                            changed = true;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Packages that are peer-free (no peers in transitive closure) can be
+        // deduplicated early because their subtrees are identical regardless of
+        // position in the tree.
         var early_dedupe: std.AutoHashMap(PackageID, Store.Node.Id) = .init(lockfile.allocator);
         defer early_dedupe.deinit();
 
@@ -113,7 +151,7 @@ pub fn installIsolatedPackages(
 
             if (entry.dep_id != invalid_dependency_id) {
                 const entry_dep = dependencies[entry.dep_id];
-                if (pkg_deps.len == 0 or entry_dep.version.tag == .workspace) dont_dedupe: {
+                if (pkg_deps.len == 0 or entry_dep.version.tag == .workspace or !has_transitive_peers.isSet(entry.pkg_id)) dont_dedupe: {
                     const dedupe_entry = try early_dedupe.getOrPut(entry.pkg_id);
                     if (dedupe_entry.found_existing) {
                         const dedupe_node_id = dedupe_entry.value_ptr.*;

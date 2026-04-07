@@ -4,7 +4,7 @@
 // stale version.
 import { spawn, spawnSync } from "bun";
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDirWithFiles } from "harness";
 import { join } from "node:path";
 
 async function run(cmd: string[], cwd: string) {
@@ -14,7 +14,7 @@ async function run(cmd: string[], cwd: string) {
 }
 
 test.concurrent("bun pm version updates bun.lock for workspace packages", async () => {
-  using dir = tempDir("issue-28935-minor", {
+  const dir = tempDirWithFiles("issue-28935-minor", {
     "package.json": JSON.stringify({
       name: "root",
       private: true,
@@ -76,7 +76,7 @@ test.concurrent("bun pm version updates bun.lock for workspace packages", async 
 test.concurrent("bun pm version updates bun.lock for prerelease with long tag", async () => {
   // Pre-release identifiers longer than 8 chars force the version into the
   // lockfile's string pool — exercises the StringBuilder code path.
-  using dir = tempDir("issue-28935-pre", {
+  const dir = tempDirWithFiles("issue-28935-pre", {
     "package.json": JSON.stringify({
       name: "root",
       private: true,
@@ -140,7 +140,7 @@ test.concurrent.skipIf(isWindows)(
     // `verifyGit` now walks up looking for `.git`, so `--git-tag-version`
     // (the default) actually runs and must stage the updated lockfile
     // together with `package.json`.
-    using dir = tempDir("issue-28935-git", {
+    const dir = tempDirWithFiles("issue-28935-git", {
       "package.json": JSON.stringify({
         name: "root",
         private: true,
@@ -259,7 +259,7 @@ test.concurrent("bun pm version in a non-workspace project with a lockfile does 
   // Regression guard: the updateLockfileWorkspaceVersion helper must no-op
   // when the bumped package isn't tracked in `workspace_versions` (here the
   // root of a plain, non-workspace project).
-  using dir = tempDir("issue-28935-root", {
+  const dir = tempDirWithFiles("issue-28935-root", {
     "package.json": JSON.stringify({
       name: "standalone",
       version: "1.0.0",
@@ -301,7 +301,7 @@ test.concurrent("bun pm version does not silently migrate yarn.lock / package-lo
   // A project that ships a `yarn.lock` (or `package-lock.json` /
   // `pnpm-lock.yaml`) and has no `bun.lock` should keep its lockfile
   // format untouched after `bun pm version`.
-  using dir = tempDir("issue-28935-no-migrate", {
+  const dir = tempDirWithFiles("issue-28935-no-migrate", {
     "package.json": JSON.stringify({
       name: "yarn-project",
       version: "1.0.0",

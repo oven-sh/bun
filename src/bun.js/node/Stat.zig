@@ -237,9 +237,9 @@ pub fn createStatsFromU64ForTesting(globalObject: *jsc.JSGlobalObject, callFrame
     const big = arguments[1].toBoolean();
 
     var posix_stat = std.mem.zeroes(Syscall.PosixStat);
-    // The `ino` field type varies by platform (`u64` on Linux and Windows'
-    // uv_stat_t, `u64` on macOS) but is always unsigned 64-bit, so an
-    // @intCast here is lossless.
+    // `@FieldType(bun.Stat, "ino")` is platform-dependent but resolves to
+    // an unsigned 64-bit integer on every supported target (Linux, macOS,
+    // and Windows via libuv's `uv_stat_t`), so this `@intCast` is lossless.
     posix_stat.ino = @intCast(ino_u64);
     posix_stat.mode = 0o100644;
     posix_stat.nlink = 1;

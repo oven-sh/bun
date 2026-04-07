@@ -65,17 +65,29 @@ pub fn StatType(comptime big: bool) type {
             return @intCast(@min(@max(value, 0), std.math.maxInt(i64)));
         }
 
+        /// Convert an unsigned 64-bit stat field (e.g. dev, ino, rdev on Linux
+        /// where they are `u64`) into a `f64` for the non-bigint stats object.
+        /// This mirrors Node.js, which fills a Float64Array directly from the
+        /// raw `uint64_t` field — precision is lost above 2^53, but values are
+        /// never clamped to INT64_MAX. Needed for filesystems with high 64-bit
+        /// inodes such as NFS mounts.
+        fn toF64(value: anytype) f64 {
+            const T = @TypeOf(value);
+            return switch (@typeInfo(T)) {
+                .int, .comptime_int => @floatFromInt(value),
+                .float, .comptime_float => @floatCast(value),
+                else => @compileError("toF64: unsupported type " ++ @typeName(T)),
+            };
+        }
+
         fn statToJS(stat_: *const Syscall.PosixStat, globalObject: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
             const aTime = stat_.atime();
             const mTime = stat_.mtime();
             const cTime = stat_.ctime();
-            const dev: i64 = clampedInt64(stat_.dev);
-            const ino: i64 = clampedInt64(stat_.ino);
             const mode: i64 = clampedInt64(stat_.mode);
             const nlink: i64 = clampedInt64(stat_.nlink);
             const uid: i64 = clampedInt64(stat_.uid);
             const gid: i64 = clampedInt64(stat_.gid);
-            const rdev: i64 = clampedInt64(stat_.rdev);
             const size: i64 = clampedInt64(stat_.size);
             const blksize: i64 = clampedInt64(stat_.blksize);
             const blocks: i64 = clampedInt64(stat_.blocks);
@@ -90,6 +102,11 @@ pub fn StatType(comptime big: bool) type {
             const birthtime_ns: u64 = if (big) toNanoseconds(bTime) else 0;
 
             if (big) {
+                // BigIntStats: pass dev/ino/rdev as u64 so the JS BigInt is
+                // the true 64-bit value rather than clamped to INT64_MAX.
+                const dev: u64 = @intCast(stat_.dev);
+                const ino: u64 = @intCast(stat_.ino);
+                const rdev: u64 = @intCast(stat_.rdev);
                 return bun.jsc.fromJSHostCall(globalObject, @src(), Bun__createJSBigIntStatsObject, .{
                     globalObject,
                     dev,
@@ -113,6 +130,12 @@ pub fn StatType(comptime big: bool) type {
                 });
             }
 
+            // Stats: pass dev/ino/rdev as f64 (matching Node's Float64Array),
+            // which preserves any value up to 2^53 exactly and gracefully
+            // rounds beyond that instead of clamping to INT64_MAX.
+            const dev: f64 = toF64(stat_.dev);
+            const ino: f64 = toF64(stat_.ino);
+            const rdev: f64 = toF64(stat_.rdev);
             return Bun__createJSStatsObject(
                 globalObject,
                 dev,
@@ -138,13 +161,13 @@ extern fn Bun__JSStatsObjectConstructor(*jsc.JSGlobalObject) jsc.JSValue;
 
 extern fn Bun__createJSStatsObject(
     globalObject: *jsc.JSGlobalObject,
-    dev: i64,
-    ino: i64,
+    dev: f64,
+    ino: f64,
     mode: i64,
     nlink: i64,
     uid: i64,
     gid: i64,
-    rdev: i64,
+    rdev: f64,
     size: i64,
     blksize: i64,
     blocks: i64,
@@ -156,13 +179,13 @@ extern fn Bun__createJSStatsObject(
 
 extern fn Bun__createJSBigIntStatsObject(
     globalObject: *jsc.JSGlobalObject,
-    dev: i64,
-    ino: i64,
+    dev: u64,
+    ino: u64,
     mode: i64,
     nlink: i64,
     uid: i64,
     gid: i64,
-    rdev: i64,
+    rdev: u64,
     size: i64,
     blksize: i64,
     blocks: i64,
@@ -178,6 +201,35 @@ extern fn Bun__createJSBigIntStatsObject(
 
 pub const StatsSmall = StatType(false);
 pub const StatsBig = StatType(true);
+
+/// Testing helper for the stat -> JS conversion. Takes a raw `ino` value (as
+/// BigInt) and returns a Stats or BigIntStats object produced by the exact
+/// same code path used by `fs.statSync`. This lets regression tests exercise
+/// the `u64 -> JS` conversion without having to mount a filesystem that hands
+/// out high 64-bit inodes (e.g. NFS).
+pub fn createStatsFromU64ForTesting(globalObject: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+    const arguments = callFrame.arguments_old(2).slice();
+    if (arguments.len < 2) {
+        return globalObject.throw("createStatsFromU64ForTesting expects (ino, big)", .{});
+    }
+    const ino_u64 = arguments[0].toUInt64NoTruncate();
+    const big = arguments[1].toBoolean();
+
+    var posix_stat = std.mem.zeroes(Syscall.PosixStat);
+    // The `ino` field type varies by platform (`u64` on Linux and Windows'
+    // uv_stat_t, `u64` on macOS) but is always unsigned 64-bit, so an
+    // @intCast here is lossless.
+    posix_stat.ino = @intCast(ino_u64);
+    posix_stat.mode = 0o100644;
+    posix_stat.nlink = 1;
+
+    if (big) {
+        const stats = StatsBig.init(&posix_stat);
+        return try stats.toJS(globalObject);
+    }
+    const stats = StatsSmall.init(&posix_stat);
+    return try stats.toJS(globalObject);
+}
 
 /// Union between `Stats` and `BigIntStats` where the type can be decided at runtime
 pub const Stats = union(enum) {

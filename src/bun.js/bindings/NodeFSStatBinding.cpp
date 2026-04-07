@@ -596,11 +596,11 @@ JSC::Structure* createJSBigIntStatsObjectStructure(JSC::VM& vm, JSC::JSGlobalObj
     return structure;
 }
 
-extern "C" JSC::EncodedJSValue Bun__createJSStatsObject(Zig::GlobalObject* globalObject, int64_t dev,
-    int64_t ino,
+extern "C" JSC::EncodedJSValue Bun__createJSStatsObject(Zig::GlobalObject* globalObject, double dev,
+    double ino,
     int64_t mode,
     int64_t nlink,
-    int64_t uid, int64_t gid, int64_t rdev, int64_t size, int64_t blksize, int64_t blocks, double atimeMs, double mtimeMs, double ctimeMs, double birthtimeMs)
+    int64_t uid, int64_t gid, double rdev, int64_t size, int64_t blksize, int64_t blocks, double atimeMs, double mtimeMs, double ctimeMs, double birthtimeMs)
 {
     auto& vm = globalObject->vm();
 
@@ -641,13 +641,13 @@ extern "C" JSC::EncodedJSValue Bun__createJSStatsObject(Zig::GlobalObject* globa
 }
 
 extern "C" JSC::EncodedJSValue Bun__createJSBigIntStatsObject(Zig::GlobalObject* globalObject,
-    int64_t dev,
-    int64_t ino,
+    uint64_t dev,
+    uint64_t ino,
     int64_t mode,
     int64_t nlink,
     int64_t uid,
     int64_t gid,
-    int64_t rdev,
+    uint64_t rdev,
     int64_t size,
     int64_t blksize,
     int64_t blocks,

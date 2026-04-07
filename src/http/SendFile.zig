@@ -1,6 +1,6 @@
 const SendFile = @This();
 
-fd: bun.FileDescriptor,
+fd: bun.FD,
 remain: usize = 0,
 offset: usize = 0,
 content_size: usize = 0,

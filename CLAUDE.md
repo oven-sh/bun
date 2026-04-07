@@ -281,3 +281,27 @@ bun run ci:watch
 For anything else, use `bk` directly — `bk build list`, `bk api`, `bk artifacts`, etc.
 
 If output from these commands looks wrong — mis-parsed annotation HTML, confusing wording, a field BuildKite changed shape on — fix `scripts/find-build.ts` directly rather than working around it. It's a thin presenter over `bk`; keep it accurate.
+
+## Reading PR Feedback
+
+`gh pr view --comments` is fine for a quick look at the Conversation tab, but it has a footgun worth knowing about: it only returns issue-stream comments and silently omits review summaries and line-level review comments. If a reviewer leaves an inline comment on a specific file line, it will not show up — no error, no hint that anything is missing.
+
+When you want the complete picture — especially when responding to a review or checking whether anyone requested changes — use `bun run pr:comments`. It fetches all three GitHub endpoints (`/issues/N/comments`, `/pulls/N/reviews`, `/pulls/N/comments`) and prints them in one chronological listing, each labelled with its actual type (issue comment, review verdict, line comment, reply, suggestion block).
+
+```bash
+bun run pr:comments                    # current branch's PR
+bun run pr:comments 28838              # by PR number
+bun run pr:comments '#28838'           # also works
+bun run pr:comments https://github.com/oven-sh/bun/pull/28838
+
+# Machine-readable output for jq pipelines — one object per entry with
+# { when, user, kind, location?, body, url?, resolved?, outdated? }.
+# resolved/outdated come from GraphQL reviewThreads and are present only
+# on line comments / replies whose thread state was successfully fetched
+# (omitted on issue comments, review verdicts, and on GraphQL fetch
+# failure), so `resolved == false` unambiguously means "confirmed open
+# thread". No header, no truncation. The PR is optional here too
+# (defaults to the current branch's PR).
+bun run pr:comments --json | jq '.[] | select(.user == "Jarred-Sumner")'
+bun run pr:comments --json | jq '[.[] | select(.resolved == false)]'   # still open
+```

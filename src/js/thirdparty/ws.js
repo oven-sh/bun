@@ -91,18 +91,24 @@ function makeHandshakeResponse(statusCode, head, body) {
   const headers = (res.headers = { __proto__: null });
   const rawHeaders = (res.rawHeaders = []);
   let statusMessage = "";
-  let i = head.indexOf("\r\n");
+  // `head` is the raw HTTP response-head Buffer (status line + header block
+  // + CRLFCRLF). Decode as latin1 — HTTP/1.1 header values are ISO-8859-1 per
+  // RFC 7230, and this matches how node:http surfaces headers on
+  // IncomingMessage. Cast via toString so the parser below works with string
+  // APIs (charCodeAt, slice returning string).
+  const headStr = typeof head === "string" ? head : head.toString("latin1");
+  let i = headStr.indexOf("\r\n");
   if (i !== -1) {
-    const sp = head.indexOf(" ");
+    const sp = headStr.indexOf(" ");
     if (sp !== -1) {
-      const sp2 = head.indexOf(" ", sp + 1);
-      statusMessage = sp2 !== -1 ? head.slice(sp2 + 1, i) : "";
+      const sp2 = headStr.indexOf(" ", sp + 1);
+      statusMessage = sp2 !== -1 ? headStr.slice(sp2 + 1, i) : "";
     }
   }
   while (i !== -1) {
     const start = i + 2;
-    i = head.indexOf("\r\n", start);
-    const line = i === -1 ? head.slice(start) : head.slice(start, i);
+    i = headStr.indexOf("\r\n", start);
+    const line = i === -1 ? headStr.slice(start) : headStr.slice(start, i);
     if (!line) break;
     const colon = line.indexOf(":");
     if (colon === -1) continue;

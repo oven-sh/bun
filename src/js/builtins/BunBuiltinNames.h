@@ -129,6 +129,7 @@ using namespace JSC;
     macro(getInternalWritableStream) \
     macro(handleEvent) \
     macro(hash) \
+    macro(head) \
     macro(header) \
     macro(headers) \
     macro(highWaterMark) \
@@ -246,6 +247,7 @@ using namespace JSC;
     macro(startedPromise) \
     macro(state) \
     macro(status) \
+    macro(statusCode) \
     macro(statusText) \
     macro(storedError) \
     macro(strategy) \

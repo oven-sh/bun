@@ -74,6 +74,7 @@
 #include <wtf/text/StringBuilder.h>
 
 #include "JSBuffer.h"
+#include "BunClientData.h"
 #include "ErrorEvent.h"
 #include "WebSocketDeflate.h"
 
@@ -1436,19 +1437,28 @@ void WebSocket::didReceiveHandshakeResponse(uint16_t statusCode, std::span<const
     auto* globalObject = context->jsGlobalObject();
     auto& vm = globalObject->vm();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto& builtinNames = WebCore::builtinNames(vm);
 
     auto* obj = JSC::constructEmptyObject(globalObject);
-    obj->putDirect(vm, JSC::Identifier::fromString(vm, "statusCode"_s), JSC::jsNumber(statusCode));
-    obj->putDirect(vm, JSC::Identifier::fromString(vm, "head"_s),
-        JSC::jsString(vm, WTF::String::fromUTF8({ head.data(), head.size() })));
-    if (body.size() > 0) {
-        JSC::JSUint8Array* buffer = createBuffer(globalObject, body);
-        if (!buffer || scope.exception()) [[unlikely]] {
-            scope.clearExceptionExceptTermination();
-            return;
-        }
-        obj->putDirect(vm, JSC::Identifier::fromString(vm, "body"_s), buffer);
+    obj->putDirect(vm, builtinNames.statusCodePublicName(), JSC::jsNumber(statusCode));
+
+    // `head` and `body` are both Buffers. HTTP headers are ASCII by spec, but
+    // keeping both as Buffer lets the JS shim parse them uniformly and avoids
+    // a UTF-8 round-trip on bytes that already came off the wire.
+    JSC::JSUint8Array* headBuffer = createBuffer(globalObject, head);
+    if (!headBuffer || scope.exception()) [[unlikely]] {
+        scope.clearExceptionExceptTermination();
+        return;
     }
+    obj->putDirect(vm, builtinNames.headPublicName(), headBuffer);
+
+    JSC::JSUint8Array* bodyBuffer = createBuffer(globalObject, body);
+    if (!bodyBuffer || scope.exception()) [[unlikely]] {
+        scope.clearExceptionExceptTermination();
+        return;
+    }
+    obj->putDirect(vm, builtinNames.bodyPublicName(), bodyBuffer);
+
     JSC::EnsureStillAliveScope ensureStillAlive(obj);
 
     MessageEvent::Init init;

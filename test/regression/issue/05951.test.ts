@@ -87,8 +87,10 @@ test("ws emits 'upgrade' with headers before 'open' on 101", async () => {
 
     const server = createServer(conn => {
       let buf = "";
-      conn.once("data", chunk => {
+      const onData = chunk => {
         buf += chunk.toString();
+        if (buf.indexOf("\\r\\n\\r\\n") === -1) return;
+        conn.off("data", onData);
         const key = /Sec-WebSocket-Key: (.+)\\r\\n/i.exec(buf)[1];
         const accept = createHash("sha1")
           .update(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")
@@ -97,7 +99,8 @@ test("ws emits 'upgrade' with headers before 'open' on 101", async () => {
           "HTTP/1.1 101 Switching Protocols\\r\\nUpgrade: websocket\\r\\nConnection: Upgrade\\r\\nSec-WebSocket-Accept: " +
             accept + "\\r\\n\\r\\n",
         );
-      });
+      };
+      conn.on("data", onData);
     }).listen(0, "127.0.0.1");
     await once(server, "listening");
 

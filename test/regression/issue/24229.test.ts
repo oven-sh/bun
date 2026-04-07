@@ -28,18 +28,23 @@ test("WebSocket 'handshake' event surfaces status/head/body on non-101", async (
   try {
     const ws = new WebSocket("ws://127.0.0.1:" + (server.address() as AddressInfo).port);
     ws.addEventListener("error", () => {}); // swallow the expected-101 error
-    const { promise, resolve } = Promise.withResolvers<{ statusCode: number; head: string; body: Uint8Array }>();
+    const { promise, resolve } = Promise.withResolvers<{ statusCode: number; head: Uint8Array; body: Uint8Array }>();
     // 'handshake' is a Bun extension consumed by the ws package shim.
     ws.addEventListener("handshake" as any, ((e: MessageEvent) => resolve(e.data as any)) as any);
     const { statusCode, head, body } = await promise;
 
+    // `head` and `body` are both Buffer/Uint8Array — HTTP headers are raw
+    // bytes and the ws shim parses them itself (see makeHandshakeResponse).
     expect(statusCode).toBe(503);
-    expect(head).toStartWith("HTTP/1.1 503 Service Unavailable\r\n");
-    expect(head).toContain("Content-Type: text/plain\r\n");
-    expect(head).toContain("Set-Cookie: a=1\r\n");
-    expect(head).toContain("Set-Cookie: b=2\r\n");
-    expect(head).toContain("X-Multi: foo  \r\n");
-    expect(head).toEndWith("\r\n\r\n");
+    expect(head).toBeInstanceOf(Uint8Array);
+    expect(body).toBeInstanceOf(Uint8Array);
+    const headStr = new TextDecoder("latin1").decode(head);
+    expect(headStr).toStartWith("HTTP/1.1 503 Service Unavailable\r\n");
+    expect(headStr).toContain("Content-Type: text/plain\r\n");
+    expect(headStr).toContain("Set-Cookie: a=1\r\n");
+    expect(headStr).toContain("Set-Cookie: b=2\r\n");
+    expect(headStr).toContain("X-Multi: foo  \r\n");
+    expect(headStr).toEndWith("\r\n\r\n");
     expect(new TextDecoder().decode(body)).toBe("workerd starting");
   } finally {
     server.close();

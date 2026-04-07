@@ -374,6 +374,14 @@ pub const BunxCommand = struct {
             update_request.name;
         debug("initial_bin_name: {s}", .{initial_bin_name});
 
+        // For scoped packages like `@scope/name`, the portion after `/` is not a reliable bin name —
+        // many scoped packages publish a bin with a completely different name (e.g. `@paretools/git`
+        // publishes `pare-git`). If we blindly search $PATH for that basename we can accidentally run
+        // an unrelated system command that happens to share the name (e.g. `bun x @paretools/git`
+        // running `/usr/bin/git`). Only trust the basename as a PATH-searchable bin name when the
+        // user explicitly specified the bin via `--package` or when the package isn't scoped.
+        const initial_bin_name_is_reliable_path_match = opts.binary_name != null or !strings.hasPrefixComptime(update_request.name, "@");
+
         // fast path: they're actually using this interchangeably with `bun run`
         // so we use Bun.which to check
         // SAFETY: initialized by Run.configureEnvForRun
@@ -551,8 +559,11 @@ pub const BunxCommand = struct {
         if (look_for_existing_bin) try_run_existing: {
             var destination_: ?[:0]const u8 = null;
 
-            // Only use the system-installed version if there is no version specified
-            if (update_request.version.literal.isEmpty()) {
+            // Only use the system-installed version if there is no version specified.
+            // For scoped packages whose bin name we derived from the basename, we skip
+            // this $PATH fast-path because the basename may collide with an unrelated
+            // system command (see `initial_bin_name_is_reliable_path_match` above).
+            if (initial_bin_name_is_reliable_path_match and update_request.version.literal.isEmpty()) {
                 destination_ = bun.which(
                     &path_buf,
                     PATH_FOR_BIN_DIRS,
@@ -636,16 +647,22 @@ pub const BunxCommand = struct {
             const root_dir_fd = root_dir_info.getFileDescriptor();
             bun.assert(root_dir_fd.isValid());
             if (opts.binary_name == null) {
-                if (getBinName(&this_transpiler, root_dir_fd, bunx_cache_dir, initial_bin_name)) |package_name_for_bin| {
+                // Use the full package name (e.g. `@scope/name`) to locate the installed
+                // `package.json`, not the bin-name basename — otherwise for scoped packages
+                // we'd look up `node_modules/name/package.json`, which doesn't exist.
+                if (getBinName(&this_transpiler, root_dir_fd, bunx_cache_dir, result_package_name)) |package_name_for_bin| {
                     // if we check the bin name and its actually the same, we don't need to check $PATH here again
                     if (!strings.eqlLong(package_name_for_bin, initial_bin_name, true)) {
                         absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, bun.pathLiteral("{s}/node_modules/.bin/{s}{s}"), .{ bunx_cache_dir, package_name_for_bin, bun.exe_suffix }) catch unreachable;
 
-                        // Only use the system-installed version if there is no version specified
+                        // Only use the system-installed version if there is no version specified.
+                        // This is safe to search $PATH with now because `package_name_for_bin`
+                        // comes from the target package's own `package.json`, so local node_modules
+                        // entries will point at the right binary (not an unrelated system command).
                         if (update_request.version.literal.isEmpty()) {
                             destination_ = bun.which(
                                 &path_buf,
-                                bunx_cache_dir,
+                                PATH_FOR_BIN_DIRS,
                                 if (ignore_cwd.len > 0) "" else this_transpiler.fs.top_level_dir,
                                 package_name_for_bin,
                             );

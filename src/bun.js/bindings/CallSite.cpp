@@ -130,16 +130,23 @@ void CallSite::formatAsString(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WT
             sb.append("new "_s);
         }
 
-        if (auto* object = thisValue.getObject()) {
-            auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-            auto className = object->calculatedClassName(object);
-            if (topExceptionScope.exception()) {
-                (void)topExceptionScope.tryClearException();
-            }
+        // If the resolved function name already has a class prefix attached
+        // (e.g. `MyClass.method`, derived from the enclosing class in source),
+        // don't prepend another class name here or we'd get `X.MyClass.method`.
+        bool alreadyPrefixed = functionName.find('.') != notFound;
 
-            if (className.length() > 0) {
-                sb.append(className);
-                sb.append('.');
+        if (!alreadyPrefixed) {
+            if (auto* object = thisValue.getObject()) {
+                auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+                auto className = object->calculatedClassName(object);
+                if (topExceptionScope.exception()) {
+                    (void)topExceptionScope.tryClearException();
+                }
+
+                if (className.length() > 0) {
+                    sb.append(className);
+                    sb.append('.');
+                }
             }
         }
 

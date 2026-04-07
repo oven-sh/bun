@@ -121,6 +121,13 @@ static void populateStackFrameMetadata(JSC::VM& vm, JSC::JSGlobalObject* globalO
                 functionName = Zig::functionName(vm, globalObject, callee);
         }
     }
+    // The callee lookup returns the bare `.name` for class methods
+    // (e.g. "method"). Prepend the enclosing class name so stack traces
+    // read as `ClassName.method`, matching V8/Node. Safe on both paths —
+    // `maybePrefixClassName` only reads source text from the code block's
+    // provider, no property access.
+    if (!functionName.isEmpty() && m_codeBlock)
+        functionName = Zig::maybePrefixClassName(m_codeBlock, functionName);
     if (!functionName.isEmpty())
         frame.function_name = Bun::toStringRef(functionName);
 

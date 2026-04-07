@@ -239,4 +239,10 @@ String functionName(JSC::VM& vm, JSC::CodeBlock* codeBlock);
 String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSObject* callee);
 String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, const JSC::StackFrame& frame, FinalizerSafety, unsigned int* flags);
 
+// Given a resolved function name and the CodeBlock that owns it, return the
+// name prefixed with its enclosing class name (`ClassName.method`), matching
+// V8/Node. Falls back to the input string unchanged when no enclosing class
+// can be recovered, or when the name already contains a `.`.
+WTF::String maybePrefixClassName(JSC::CodeBlock* codeBlock, const WTF::String& name);
+
 }

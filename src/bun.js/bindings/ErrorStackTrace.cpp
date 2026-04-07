@@ -10,7 +10,9 @@
 #include "JavaScriptCore/Error.h"
 #include "JavaScriptCore/ExecutableBase.h"
 #include "JavaScriptCore/JSType.h"
+#include "JavaScriptCore/ParserModes.h"
 #include "wtf/text/OrdinalNumber.h"
+#include "wtf/ASCIICType.h"
 
 #include <JavaScriptCore/TopExceptionScope.h>
 #include <JavaScriptCore/DebuggerPrimitives.h>
@@ -22,6 +24,8 @@
 #include <wtf/IterationStatus.h>
 #include <JavaScriptCore/CodeBlock.h>
 #include <JavaScriptCore/FunctionCodeBlock.h>
+#include <JavaScriptCore/FunctionExecutable.h>
+#include <JavaScriptCore/SourceProvider.h>
 
 #include "ErrorStackFrame.h"
 
@@ -29,6 +33,9 @@ using namespace JSC;
 using namespace WebCore;
 
 namespace Zig {
+
+// Forward declarations — definitions are further down in the file.
+WTF::String maybePrefixClassName(JSC::CodeBlock* codeBlock, const WTF::String& name);
 
 static ImplementationVisibility getImplementationVisibility(JSC::CodeBlock* codeBlock)
 {
@@ -465,7 +472,10 @@ ALWAYS_INLINE String JSCStackFrame::retrieveFunctionName()
     if (m_callee) {
         auto* calleeObject = m_callee->getObject();
         if (calleeObject) {
-            return Zig::functionName(m_vm, calleeObject->globalObject(), calleeObject);
+            auto name = Zig::functionName(m_vm, calleeObject->globalObject(), calleeObject);
+            if (m_codeBlock)
+                name = maybePrefixClassName(m_codeBlock, name);
+            return name;
         }
     }
 
@@ -601,6 +611,152 @@ String sourceURL(JSC::VM& vm, JSC::JSFunction* function)
     return Zig::sourceURL(jsExecutable->source());
 }
 
+// Returns true if the character can legally appear inside a JS identifier
+// (ASCII-only; good enough for recognising the `class` keyword and identifier
+// names in typical source text).
+static ALWAYS_INLINE bool isIdentifierChar(char16_t c)
+{
+    return WTF::isASCIIAlphanumeric(c) || c == '_' || c == '$';
+}
+
+// Forward declaration — the definition is below.
+static WTF::String findEnclosingClassName(JSC::FunctionExecutable*);
+
+// Given a resolved function name and a CodeBlock, return the name prefixed
+// with its enclosing class (`ClassName.method`), matching V8/Node. Returns
+// the original name unchanged if no enclosing class can be recovered, or if
+// the name already contains a `.` (e.g. because it already has a prefix).
+WTF::String maybePrefixClassName(JSC::CodeBlock* codeBlock, const WTF::String& name)
+{
+    if (name.isEmpty() || name.find('.') != notFound)
+        return name;
+    if (codeBlock->codeType() != JSC::FunctionCode)
+        return name;
+    auto* executable = codeBlock->ownerExecutable();
+    if (!executable)
+        return name;
+    auto* jsExecutable = jsDynamicCast<JSC::FunctionExecutable*>(executable);
+    if (!jsExecutable)
+        return name;
+    WTF::String className = findEnclosingClassName(jsExecutable);
+    if (className.isEmpty())
+        return name;
+    return makeString(className, '.', name);
+}
+
+// Best-effort scan of the source text preceding a function to find an
+// enclosing `class Name { ... }` declaration. Returns the class identifier,
+// or a null string if none could be determined.
+//
+// This matches V8's observable behaviour of prefixing class-method stack
+// frames with `ClassName.`, without requiring runtime `this` capture or JSC
+// parser changes. It walks backwards from the method's start offset, brace-
+// matches to locate the enclosing `{`, then scans back a bounded window for
+// the `class` keyword. Degrades to null for anonymous classes, minified code
+// with `class`/`{` inside string literals, and other pathological cases.
+static WTF::String findEnclosingClassName(JSC::FunctionExecutable* jsExecutable)
+{
+    // Class constructors already expose their own name via ecmaName — skip.
+    if (jsExecutable->isClass())
+        return WTF::String();
+
+    // Only prefix actual methods (method, get, set, async method, generator
+    // method, static block). Arrow functions and regular function expressions
+    // inside a class body are not "class methods" for stack-trace purposes.
+    JSC::SourceParseMode parseMode = jsExecutable->parseMode();
+    if (!JSC::isMethodParseMode(parseMode))
+        return WTF::String();
+
+    const JSC::SourceCode& source = jsExecutable->source();
+    auto* provider = source.provider();
+    if (!provider)
+        return WTF::String();
+
+    WTF::StringView sourceView = provider->source();
+    int len = static_cast<int>(sourceView.length());
+    int methodStart = source.startOffset();
+    if (methodStart <= 0 || methodStart >= len)
+        return WTF::String();
+
+    // Cap walk distance to avoid pathological cost on very large source files.
+    constexpr int maxBraceWalk = 65536;
+    constexpr int maxHeaderWalk = 512;
+
+    // Walk backwards, matching braces, until we find the enclosing `{`.
+    int depth = 0;
+    int bracePos = -1;
+    int walkEnd = std::max(0, methodStart - 1 - maxBraceWalk);
+    for (int i = methodStart - 1; i >= walkEnd; --i) {
+        char16_t c = sourceView[i];
+        if (c == '}') {
+            depth++;
+        } else if (c == '{') {
+            if (depth == 0) {
+                bracePos = i;
+                break;
+            }
+            depth--;
+        }
+    }
+    if (bracePos < 0)
+        return WTF::String();
+
+    // Walk backwards from the brace a bounded distance, looking for the
+    // `class` keyword at a word boundary. The class header between `class`
+    // and `{` is typically `IDENT` or `IDENT extends EXPR`, which is short.
+    int headerStart = std::max(0, bracePos - maxHeaderWalk);
+    int classPos = -1;
+    for (int i = bracePos - 5; i >= headerStart; --i) {
+        if (sourceView[i] != 'c')
+            continue;
+        if (sourceView[i + 1] != 'l' || sourceView[i + 2] != 'a'
+            || sourceView[i + 3] != 's' || sourceView[i + 4] != 's')
+            continue;
+        // Word boundary on both sides.
+        if (i > 0 && isIdentifierChar(sourceView[i - 1]))
+            continue;
+        if (i + 5 < len && isIdentifierChar(sourceView[i + 5]))
+            continue;
+        classPos = i;
+        break;
+    }
+    if (classPos < 0)
+        return WTF::String();
+
+    // Extract the identifier after `class`.
+    int j = classPos + 5;
+    while (j < len && WTF::isASCIIWhitespace(sourceView[j]))
+        j++;
+    int identStart = j;
+    while (j < len && isIdentifierChar(sourceView[j]))
+        j++;
+    int identEnd = j;
+    if (identStart == identEnd)
+        return WTF::String(); // anonymous class expression
+
+    // Anything other than whitespace / `extends EXPR` between the identifier
+    // and the brace means this isn't actually the enclosing class header.
+    // Cheap sanity check: next non-whitespace must be `{` or the `extends`
+    // keyword.
+    while (j < len && WTF::isASCIIWhitespace(sourceView[j]))
+        j++;
+    if (j >= len)
+        return WTF::String();
+    if (sourceView[j] != '{') {
+        // Must be `extends`.
+        if (j + 7 > len
+            || sourceView[j] != 'e' || sourceView[j + 1] != 'x'
+            || sourceView[j + 2] != 't' || sourceView[j + 3] != 'e'
+            || sourceView[j + 4] != 'n' || sourceView[j + 5] != 'd'
+            || sourceView[j + 6] != 's')
+            return WTF::String();
+        if (j + 7 < len && isIdentifierChar(sourceView[j + 7]))
+            return WTF::String();
+    }
+
+    return sourceView.substring(identStart, identEnd - identStart).toString();
+}
+
 String functionName(JSC::VM& vm, JSC::CodeBlock* codeBlock)
 {
     auto codeType = codeBlock->codeType();
@@ -616,7 +772,9 @@ String functionName(JSC::VM& vm, JSC::CodeBlock* codeBlock)
             return String();
         }
 
-        return jsExecutable->ecmaName().string();
+        // V8 prefixes class-method stack frames with `ClassName.`. Try to
+        // recover the enclosing class name from the source text.
+        return maybePrefixClassName(codeBlock, jsExecutable->ecmaName().string());
     }
 
     return String();
@@ -797,6 +955,11 @@ String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, const
 
             if (functionName.isEmpty()) {
                 functionName = Zig::functionName(vm, codeblock);
+            } else {
+                // The object lookup above returns the bare `.name` for class
+                // methods (e.g. "method"). Prepend the enclosing class name so
+                // stack traces read as `ClassName.method`, matching V8/Node.
+                functionName = maybePrefixClassName(codeblock, functionName);
             }
         }
     } else {

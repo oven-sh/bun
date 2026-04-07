@@ -18,9 +18,7 @@
 # shipped on macOS — so it runs unmodified on stock macOS, Alpine, and
 # every modern Linux. It intentionally avoids bash 4+ features like
 # `${var,,}`, `declare -A`, and nounset (`set -u`) because those all
-# trip on empty-array expansion under 3.2; the `mktemp` calls use the
-# portable `mktemp -d 2>/dev/null || mktemp -d -t ...` fallback for
-# BSD mktemp, which rejects bare `-d`.
+# trip on empty-array expansion under 3.2.
 #
 # Inputs (env, optional):
 #   GPG_PRIVATE_KEY  ASCII-armored private key (required to sign)
@@ -100,17 +98,15 @@ if [ -n "${GPG_PRIVATE_KEY:-}" ] && [ -n "${GPG_PASSPHRASE:-}" ]; then
   fi
 fi
 
-# Output path derivations. The three `_basename` values are the
-# reserved-name inputs the validation loop below rejects (including
-# the `.tmp` sibling — see comment #3 in the validation loop for why),
-# and the full paths compose from them rather than repeating the
-# SHASUMS256.txt literal.
+# Output path derivations. The two `_basename` values are the
+# reserved-name inputs the validation loop below rejects, and the full
+# paths compose from them rather than repeating the SHASUMS256.txt
+# literal. `tmp_manifest` is set later, after the scratch directory is
+# created, because it lives inside that directory.
 manifest_basename="SHASUMS256.txt"
 signed_manifest_basename="${manifest_basename}.asc"
-tmp_manifest_basename="${manifest_basename}.tmp"
 manifest="${dir}/${manifest_basename}"
 signed_manifest="${manifest}.asc"
-tmp_manifest="${manifest}.tmp"
 
 # Validate every artifact BEFORE we touch any output file or install
 # the cleanup trap — fail-fast with a clear error, no orphaned
@@ -127,17 +123,12 @@ tmp_manifest="${manifest}.tmp"
 #    manifest body as-is. A caller passing `dist/foo.zip` would miss
 #    a subdir; `../foo.zip` would escape `${hash_dir}` entirely; `"."`
 #    and `".."` break manifest parsing.
-# 3. The helper writes SHASUMS256.txt, SHASUMS256.txt.asc, and the
-#    intermediate SHASUMS256.txt.tmp — accepting any of the three as
-#    an input would compute a hash of the previous run's output and
-#    then clobber it. The `.tmp` case is especially destructive:
-#    `: > "${tmp_manifest}"` in the collation phase would truncate a
-#    caller-supplied artifact with that basename in place, then the
-#    collation loop would overwrite its bytes with manifest text, and
-#    the final `mv "${tmp_manifest}" "${manifest}"` would promote the
-#    corrupted file into SHASUMS256.txt — silent data loss. All three
-#    basenames are valid per check #2, which is why this arm lives
-#    after it.
+# 3. The helper writes SHASUMS256.txt and SHASUMS256.txt.asc — accepting
+#    either as an input would compute a hash of the previous run's
+#    output and then clobber it. Both basenames are valid per check #2,
+#    which is why this arm lives after it. (The intermediate .tmp file
+#    lives inside the scratch subdirectory, not in ${dir}, so it cannot
+#    collide with an artifact of the same name.)
 # 4. Duplicate basenames would launch two hash jobs writing the same
 #    `${hash_dir}/${artifact}.digest` path and the collation loop would
 #    emit the same archive twice. We track seen names in a single
@@ -152,10 +143,9 @@ tmp_manifest="${manifest}.tmp"
 seen_artifacts="/"
 for artifact in "${artifacts[@]}"; do
   # Collapse the syntactic checks into a single `case`. Patterns are
-  # tried in order; quoted `"${manifest_basename}"` /
-  # `"${signed_manifest_basename}"` / `"${tmp_manifest_basename}"` are
-  # literal matches so the glob chars inside those values (if any) are
-  # not interpreted.
+  # tried in order; quoted `"${manifest_basename}"` and
+  # `"${signed_manifest_basename}"` are literal matches so any glob
+  # chars inside those values (if any) are not interpreted.
   case "${artifact}" in
     *$'\n'*|*$'\r'*)
       echo "error: artifact name contains line break: $(printf '%q' "${artifact}")" >&2
@@ -165,7 +155,7 @@ for artifact in "${artifacts[@]}"; do
       echo "error: artifact names must be basenames (no slashes, not '.' or '..'): ${artifact}" >&2
       exit 1
       ;;
-    "${manifest_basename}"|"${signed_manifest_basename}"|"${tmp_manifest_basename}")
+    "${manifest_basename}"|"${signed_manifest_basename}")
       echo "error: artifact name is reserved for manifest output: ${artifact}" >&2
       exit 1
       ;;
@@ -209,8 +199,8 @@ unset -v artifact seen_artifacts
 # failure. Using rename (not cp) keeps it atomic, zero-copy, and
 # leaves no half-formed bytes on disk in the interim.
 success=0
+scratch_dir=""
 gnupghome=""
-hash_dir=""
 backup_manifest=""
 backup_signed_manifest=""
 cleanup() {
@@ -227,7 +217,7 @@ cleanup() {
     # Roll back: wipe any partial outputs we produced, then restore the
     # pre-existing copies from their .bak.$$ siblings. Net effect is the
     # directory looks byte-identical to how we found it.
-    rm -f "${tmp_manifest}" "${manifest}" "${signed_manifest}" || true
+    rm -f "${manifest}" "${signed_manifest}" || true
     if [ -n "${backup_manifest}" ]; then
       mv -f "${backup_manifest}" "${manifest}" || true
     fi
@@ -235,21 +225,32 @@ cleanup() {
       mv -f "${backup_signed_manifest}" "${signed_manifest}" || true
     fi
   else
-    # Success: the new outputs are live. Drop the backups and any stray
-    # .tmp left behind by a partial rename (belt and braces — the atomic
-    # `mv` below should make .tmp invisible on this path).
-    rm -f "${tmp_manifest}" "${backup_manifest}" "${backup_signed_manifest}" || true
+    # Success: the new outputs are live. Drop the backups.
+    rm -f "${backup_manifest}" "${backup_signed_manifest}" || true
   fi
-  if [ -n "${hash_dir}" ]; then
-    rm -rf "${hash_dir}" || true
-  fi
-  if [ -n "${gnupghome}" ]; then
-    GNUPGHOME="${gnupghome}" gpgconf --kill all >/dev/null 2>&1 || true
-    rm -rf "${gnupghome}" || true
+  if [ -n "${scratch_dir}" ]; then
+    # Kill any gpg-agent that was started inside our isolated GNUPGHOME
+    # before removing the directory — gpg-agent holds a socket lock and
+    # may leave stale files behind otherwise.
+    if [ -d "${scratch_dir}/gnupghome" ]; then
+      GNUPGHOME="${scratch_dir}/gnupghome" gpgconf --kill all >/dev/null 2>&1 || true
+    fi
+    rm -rf "${scratch_dir}" || true
   fi
   exit "${rc}"
 }
 trap cleanup EXIT
+
+# All scratch work (per-artifact digest files, GNUPGHOME, and the
+# SHASUMS256.txt.tmp collation file) lives inside a dedicated
+# subdirectory of ${dir}. Keeping scratch inside ${dir} guarantees that
+# every rename from scratch to ${dir} is atomic — both paths are on the
+# same filesystem, even when ${dir} is a network mount or a separate
+# tmpfs from the system /tmp. The directory is removed by the EXIT trap.
+# `$$` makes the name unique per invocation so concurrent same-dir
+# runs (unsupported but possible) cannot collide.
+scratch_dir="${dir}/.bun-sign-manifest.$$"
+mkdir "${scratch_dir}"
 
 # Rename any pre-existing outputs out of the way via atomic `mv`. These
 # backups live next to the originals (same filesystem → rename is cheap
@@ -269,13 +270,18 @@ if [ -f "${signed_manifest}" ]; then
   mv "${signed_manifest}" "${backup_signed_manifest}"
 fi
 
+# tmp_manifest lives inside the scratch directory so the final atomic
+# `mv "${tmp_manifest}" "${manifest}"` crosses from a subdirectory of
+# ${dir} to ${dir} itself — still the same filesystem, still atomic.
+tmp_manifest="${scratch_dir}/SHASUMS256.txt.tmp"
+
 # Hash every artifact in parallel. The canary set is 22 archives, each
 # roughly 30-150 MB — sequential sha256sum runs ~6-7 s on the buildkite
 # linux agent; parallelised across cores it drops to ~1-2 s. We write
 # each result to `${hash_dir}/${artifact}.digest` so the collation loop
 # can pick them up in sorted order without caring about which job
-# finished first. `${hash_dir}` is an isolated mktemp directory cleaned
-# up by the EXIT trap above.
+# finished first. `${hash_dir}` is a subdirectory of `${scratch_dir}`,
+# cleaned up by the EXIT trap above.
 #
 # Manifest format:
 # - Each file by basename, not full path — the validator (and every
@@ -292,11 +298,8 @@ fi
 #   parallel hash job) keeps the job a single exec and means the file
 #   on disk has enough context for a post-mortem if anything ever goes
 #   wrong reading it back.
-#
-# `mktemp -d 2>/dev/null || mktemp -d -t ...` is the portable form:
-# GNU mktemp accepts a bare `-d`, BSD mktemp (macOS) rejects it and
-# needs a `-t TEMPLATE` argument. Run GNU first, fall back to BSD form.
-hash_dir=$(mktemp -d 2>/dev/null || mktemp -d -t bun-sign-release-manifest)
+hash_dir="${scratch_dir}/hashes"
+mkdir "${hash_dir}"
 
 pids=()
 for artifact in "${artifacts[@]}"; do
@@ -332,9 +335,9 @@ while IFS= read -r artifact; do
 done < <(printf '%s\n' "${artifacts[@]}" | LC_ALL=C sort)
 
 # Atomic rename — the final `${manifest}` only appears once every hash
-# has been written. Prior SIGKILL would leave a .tmp that cleanup() (or
-# the next run's cleanup() via rm -f) removes before the caller ever
-# sees it.
+# has been written. A SIGKILL between here and the mv would leave a
+# partial .tmp inside the scratch subdirectory; cleanup() removes the
+# entire scratch_dir so it never surfaces in ${dir}.
 mv "${tmp_manifest}" "${manifest}"
 
 # Declare the unsigned-path success as early as possible: the atomic mv
@@ -374,7 +377,10 @@ if [ "${should_sign}" -ne 1 ]; then
 fi
 
 # Use an isolated GNUPGHOME so we never touch the agent's default keyring.
-gnupghome=$(mktemp -d 2>/dev/null || mktemp -d -t bun-sign-release-manifest-gpg)
+# The directory lives inside the scratch subdirectory so cleanup() can
+# reach it with a single `rm -rf "${scratch_dir}"`.
+gnupghome="${scratch_dir}/gnupghome"
+mkdir "${gnupghome}"
 chmod 700 "${gnupghome}"
 
 GNUPGHOME="${gnupghome}" gpg --batch --quiet --import <<< "${GPG_PRIVATE_KEY}"

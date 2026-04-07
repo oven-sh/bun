@@ -191,9 +191,19 @@ function sign_and_upload_manifest() {
   if [ -n "$gpg_private_key" ] && [ -n "$gpg_passphrase" ]; then
     assert_command "gpg" "gnupg" "https://gnupg.org/download/"
   else
-    echo "warn: GPG_PRIVATE_KEY/GPG_PASSPHRASE not set in Buildkite secrets;"
-    echo "warn: uploading SHASUMS256.txt unsigned. The daily sign workflow"
-    echo "warn: will catch up with a matching SHASUMS256.txt.asc within 24h."
+    # Each echo ends in `|| true` and writes to stderr, matching the
+    # same pattern applied to diagnostics inside the companion
+    # `scripts/sign-release-manifest.sh` helper. Buildkite multiplexes
+    # stdout/stderr through a single log-aggregator process, and if
+    # that process dies (OOM, agent restart) the kernel delivers
+    # SIGPIPE on every fd writing to it. Under `set -eo pipefail`
+    # bash would then exit 141 on the first affected echo — before
+    # sign-release-manifest.sh is ever invoked, which would leave
+    # SHASUMS256.txt ungenerated on that canary push and recreate the
+    # exact integrity gap this PR exists to close.
+    echo "warn: GPG_PRIVATE_KEY/GPG_PASSPHRASE not set in Buildkite secrets;" >&2 || true
+    echo "warn: uploading SHASUMS256.txt unsigned. The daily sign workflow" >&2 || true
+    echo "warn: will catch up with a matching SHASUMS256.txt.asc within 24h." >&2 || true
   fi
 
   local script_dir
@@ -213,9 +223,14 @@ function sign_and_upload_manifest() {
   fi
 
   upload_github_asset "$version" SHASUMS256.txt
-  # The helper only writes .asc when the GPG secrets were present. Upload
-  # it opportunistically so the unsigned fallback path stays a no-op here.
-  if [ -f SHASUMS256.txt.asc ]; then
+  # Only upload .asc when THIS run actually signed (gpg secrets present).
+  # A bare `[ -f SHASUMS256.txt.asc ]` would upload a stale .asc left
+  # behind by a previous run on a reused workspace — even if the helper
+  # rolled the new manifest in unsigned, the old signature would ride
+  # along and reintroduce the manifest/signature drift this PR closes.
+  # Gating on the secrets makes intent explicit and is defense-in-depth
+  # on top of the helper's own scratch-dir cleanup.
+  if [ -n "$gpg_private_key" ] && [ -n "$gpg_passphrase" ] && [ -f SHASUMS256.txt.asc ]; then
     upload_github_asset "$version" SHASUMS256.txt.asc
   fi
 }

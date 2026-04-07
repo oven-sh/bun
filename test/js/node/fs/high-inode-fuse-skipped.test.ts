@@ -183,9 +183,18 @@ server.main()
       await Bun.sleep(25);
     }
     if (!ready) {
+      // Capture the final state defensively — the most common reason we
+      // get here is the mount never coming up, in which case `readdirSync`
+      // itself throws and would otherwise clobber this error message.
+      let seen: number | string;
+      try {
+        seen = readdirSync(mnt).length;
+      } catch (e) {
+        seen = `(read error: ${(e as Error).message})`;
+      }
       throw new Error(
         `python3-fuse mount did not become ready within 3s at ${mnt}. ` +
-          `Expected ${files.length} entries; saw ${readdirSync(mnt).length} (or an error).`,
+          `Expected ${files.length} entries; saw ${seen}.`,
       );
     }
   });

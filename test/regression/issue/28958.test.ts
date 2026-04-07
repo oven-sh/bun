@@ -4,9 +4,9 @@
 // `recursive: false` must throw a Node.js-compatible `SystemError`
 // with code `ERR_FS_EISDIR`, not a raw `EFAULT`.
 import { expect, test } from "bun:test";
+import { tempDirWithFiles } from "harness";
 import fs from "node:fs";
 import path from "node:path";
-import { tempDirWithFiles } from "harness";
 
 test("fs.rmSync on a directory without recursive throws ERR_FS_EISDIR", () => {
   const dir = tempDirWithFiles("issue-28958-sync", { ".keep": "" });

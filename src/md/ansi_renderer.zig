@@ -329,7 +329,13 @@ pub const AnsiRenderer = struct {
                 self.writeIndent();
                 // columns == 0 is the "disable wrapping" sentinel, not a
                 // zero-width rule — fall back to 60 in that case.
-                const width: u32 = if (self.theme.columns == 0) 60 else @min(self.theme.columns, 60);
+                // Subtract the indent that writeIndent() just emitted so
+                // a rule inside a blockquote / list item doesn't overflow.
+                const indent_cols = self.currentIndent();
+                const width: u32 = if (self.theme.columns == 0)
+                    60 -| indent_cols
+                else
+                    @min(self.theme.columns, 60) -| indent_cols;
                 var i: u32 = 0;
                 const dash = if (self.theme.colors) "─" else "-";
                 self.writeStyled(color(.dim), "");
@@ -1181,10 +1187,14 @@ pub const AnsiRenderer = struct {
         if (level == 1 or level == 2) {
             self.writeIndent();
             const text_w = @max(visibleWidth(content), 3);
+            // Subtract the indent that writeIndent() just emitted so
+            // an underlined heading inside a blockquote / list item
+            // doesn't overflow the terminal width.
+            const indent_cols = self.currentIndent();
             const width = if (self.theme.columns == 0)
                 text_w
             else
-                @min(text_w, @as(usize, @intCast(self.theme.columns)));
+                @min(text_w, (@as(usize, @intCast(self.theme.columns))) -| @as(usize, indent_cols));
             if (self.theme.colors) self.out.write(color(.dim));
             const char = if (self.theme.colors) (if (level == 1) "═" else "─") else (if (level == 1) "=" else "-");
             var i: usize = 0;

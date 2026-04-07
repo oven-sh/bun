@@ -49,7 +49,7 @@ snapshots:
 
   await using proc = Bun.spawn({
     cmd: [bunExe(), "pm", "migrate"],
-    cwd: dir,
+    cwd: String(dir),
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",

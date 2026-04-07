@@ -227,9 +227,13 @@ pub const PmVersionCommand = struct {
     fn verifyGit(cwd: []const u8, pm: *PackageManager) !void {
         if (!pm.options.git_tag_version) return;
 
-        var path_buf: bun.PathBuffer = undefined;
-        const git_dir_path = bun.path.joinAbsStringBuf(cwd, &path_buf, &.{".git"}, .auto);
-        if (!bun.FD.cwd().directoryExistsAt(git_dir_path).isTrue()) {
+        // Walk up from `cwd` looking for a `.git` marker. Workspaces
+        // typically only have `.git` at the repo root, not in each package
+        // subdirectory — mirror git's own upward-search behavior so
+        // `bun pm version` called from `packages/foo` still picks up the
+        // surrounding repo. `.git` can be a file (git submodules / worktrees)
+        // as well as a directory, so check for "exists" not "is directory".
+        if (!findGitRoot(cwd)) {
             pm.options.git_tag_version = false;
             return;
         }
@@ -237,6 +241,24 @@ pub const PmVersionCommand = struct {
         if (!pm.options.force and !try isGitClean(cwd)) {
             Output.errGeneric("Git working directory not clean.", .{});
             Global.exit(1);
+        }
+    }
+
+    fn findGitRoot(start_dir: []const u8) bool {
+        var path_buf: bun.PathBuffer = undefined;
+        var current_dir = start_dir;
+
+        while (true) {
+            const git_path_z = bun.path.joinAbsStringBufZ(current_dir, &path_buf, &.{".git"}, .auto);
+            if (bun.FD.cwd().existsAt(git_path_z)) {
+                return true;
+            }
+
+            const parent = bun.path.dirname(current_dir, .auto);
+            if (strings.eql(parent, current_dir)) {
+                return false;
+            }
+            current_dir = parent;
         }
     }
 
@@ -599,17 +621,18 @@ pub const PmVersionCommand = struct {
 
         pm.lockfile.saveToDisk(&load_result, &pm.options);
 
-        // Build the absolute path of the lockfile so callers (the git commit
-        // step) can stage it regardless of which subdirectory we were invoked
-        // from.
+        // Build the absolute path of the saved lockfile so callers (the
+        // git commit step below) can stage it regardless of which
+        // subdirectory we were invoked from. `saveToDisk` writes the file
+        // next to the root `package.json` via `PackageManager`'s
+        // top-level dir, so mirror that exact location here rather than
+        // relying on whatever the process cwd happens to be.
         const save_format = load_result.saveFormat(&pm.options);
         const filename = save_format.filename();
-
-        var cwd_buf: bun.PathBuffer = undefined;
-        const cwd = bun.getcwd(&cwd_buf) catch return null;
+        const root_dir = bun.fs.FileSystem.instance.top_level_dir;
 
         var join_buf: bun.PathBuffer = undefined;
-        const abs = bun.path.joinAbsStringBufZ(cwd, &join_buf, &.{filename}, .auto);
+        const abs = bun.path.joinAbsStringBufZ(root_dir, &join_buf, &.{filename}, .auto);
         return ctx.allocator.dupeZ(u8, abs) catch null;
     }
 

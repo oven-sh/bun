@@ -3056,6 +3056,7 @@ const emojiMap = {
   release: ["🏆", "trophy"],
   gear: ["⚙️", "gear"],
   clipboard: ["📋", "clipboard"],
+  package: ["📦", "package"],
   rocket: ["🚀", "rocket"],
   openbsd: ["🐡", "openbsd"],
   netbsd: ["🚩", "netbsd"],

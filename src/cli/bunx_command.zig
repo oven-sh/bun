@@ -651,8 +651,13 @@ pub const BunxCommand = struct {
                 // `package.json`, not the bin-name basename — otherwise for scoped packages
                 // we'd look up `node_modules/name/package.json`, which doesn't exist.
                 if (getBinName(&this_transpiler, root_dir_fd, bunx_cache_dir, result_package_name)) |package_name_for_bin| {
-                    // if we check the bin name and its actually the same, we don't need to check $PATH here again
-                    if (!strings.eqlLong(package_name_for_bin, initial_bin_name, true)) {
+                    // If we already searched $PATH for `initial_bin_name` above and the resolved
+                    // bin name is the same, there's nothing new to look up. But for scoped packages
+                    // we skip that first $PATH probe (see `initial_bin_name_is_reliable_path_match`),
+                    // so an `@scope/foo` package that publishes a bin literally named `foo` still
+                    // needs this second probe — otherwise `bunx @scope/foo` would miss an already
+                    // installed `node_modules/.bin/foo`.
+                    if (!strings.eqlLong(package_name_for_bin, initial_bin_name, true) or !initial_bin_name_is_reliable_path_match) {
                         absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, bun.pathLiteral("{s}/node_modules/.bin/{s}{s}"), .{ bunx_cache_dir, package_name_for_bin, bun.exe_suffix }) catch unreachable;
 
                         // Only use the system-installed version if there is no version specified.

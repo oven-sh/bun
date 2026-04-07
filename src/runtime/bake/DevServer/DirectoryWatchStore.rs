@@ -110,6 +110,7 @@ impl DirectoryWatchStore {
             // Multiple parts of DevServer rely on the fact that these
             // loaders do not depend on importing other files.
             Loader::File
+            | Loader::Url
             | Loader::Json
             | Loader::Jsonc
             | Loader::Toml

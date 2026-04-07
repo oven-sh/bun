@@ -3090,6 +3090,7 @@ impl<'a> LinkerContext<'a> {
                         }
                         Loader::Css
                         | Loader::File
+                        | Loader::Url
                         | Loader::Toml
                         | Loader::Wasm
                         | Loader::Base64

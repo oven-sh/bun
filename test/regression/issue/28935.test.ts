@@ -4,7 +4,7 @@
 // stale version.
 import { spawn, spawnSync } from "bun";
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 
 async function run(cmd: string[], cwd: string) {
@@ -127,7 +127,12 @@ test.concurrent("bun pm version updates bun.lock for prerelease with long tag", 
   expect(packed.dependencies).toEqual({ first: "2.0.0-beta-super-long-tag.3" });
 });
 
-test.concurrent(
+// Skipped on Windows: the test spawns `git init`/`commit`/`tag` with
+// `HOME=""` / `XDG_CONFIG_HOME=""` / `USERPROFILE=""` to isolate from
+// system git config. Windows git requires a valid `USERPROFILE` for some
+// internal operations and the disposable tempDir cleanup races with
+// still-open git handles (rmdir on open files fails on NTFS).
+test.concurrent.skipIf(isWindows)(
   "bun pm version from a workspace subdir stages and commits bun.lock alongside package.json",
   async () => {
     // Exercises the `saved_lockfile_path` → `gitCommitAndTag()` plumbing

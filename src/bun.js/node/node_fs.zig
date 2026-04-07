@@ -5775,8 +5775,13 @@ pub const NodeFS = struct {
                         // any permission error on the link itself must
                         // surface unchanged.
                         if (comptime Environment.isMac or Environment.isWindows) {
+                            // Direct bit-test instead of `bun.S.ISDIR`:
+                            // on Windows `stat_buf.mode` is `u64`
+                            // (`uv_stat_t`) but `bun.S.ISDIR` takes an
+                            // `i32`, so the helper doesn't type-check
+                            // across platforms.
                             switch (bun.sys.lstatat(bun.invalid_fd, dest)) {
-                                .result => |stat_buf| if (bun.S.ISDIR(stat_buf.mode)) break :brk .ISDIR,
+                                .result => |stat_buf| if (stat_buf.mode & bun.S.IFMT == bun.S.IFDIR) break :brk .ISDIR,
                                 .err => {},
                             }
                         }

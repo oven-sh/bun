@@ -7,6 +7,7 @@ import { expect, test } from "bun:test";
 import { tempDir } from "harness";
 import fs from "node:fs";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 test("fs.rmSync on a directory without recursive throws ERR_FS_EISDIR", () => {
   using dir = tempDir("issue-28958-sync", { "subdir/.keep": "" });
@@ -72,7 +73,7 @@ test("fs.promises.rm on a directory without recursive throws ERR_FS_EISDIR", asy
 test("fs.rmSync with a URL path still throws ERR_FS_EISDIR on a directory", () => {
   using dir = tempDir("issue-28958-url", { "subdir/.keep": "" });
   const target = path.join(String(dir), "subdir");
-  const url = new URL(`file://${target}`);
+  const url = pathToFileURL(target);
 
   let err: any;
   try {

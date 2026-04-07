@@ -216,10 +216,13 @@ function sign_and_upload_manifest() {
   # difference between the two states manually.
   local gpg_private_key=""
   local gpg_passphrase=""
+  local _key_lookup_failed=0
+  local _pass_lookup_failed=0
   local _secret_err
   _secret_err=$(mktemp)
   if ! gpg_private_key=$(buildkite-agent secret get "GPG_PRIVATE_KEY" 2>"$_secret_err"); then
     gpg_private_key=""
+    _key_lookup_failed=1
     if [ -s "$_secret_err" ]; then
       echo "warn: buildkite-agent secret get GPG_PRIVATE_KEY failed (treating as unset):" >&2 || true
       sed 's/^/warn:   /' "$_secret_err" >&2 || true
@@ -228,12 +231,42 @@ function sign_and_upload_manifest() {
   : > "$_secret_err"
   if ! gpg_passphrase=$(buildkite-agent secret get "GPG_PASSPHRASE" 2>"$_secret_err"); then
     gpg_passphrase=""
+    _pass_lookup_failed=1
     if [ -s "$_secret_err" ]; then
       echo "warn: buildkite-agent secret get GPG_PASSPHRASE failed (treating as unset):" >&2 || true
       sed 's/^/warn:   /' "$_secret_err" >&2 || true
     fi
   fi
   rm -f "$_secret_err"
+
+  # If EITHER lookup failed (non-zero `buildkite-agent secret get` exit)
+  # while the OTHER succeeded, clear both to the unsigned-fallback state
+  # instead of letting the partial-config branch below hard-fail the
+  # canary run. The failure paths this protects:
+  #
+  #   - both secrets configured, one fetch hits a transient backend blip
+  #     (network, agent restart, token refresh window). The other fetch
+  #     returns real bytes, so the partial branch would fire → `return 1`
+  #     → entire release aborted for a flake that has nothing to do with
+  #     signing correctness.
+  #
+  #   - operator half-provisioned (only one secret set). The partial
+  #     branch would also fire here, which is the case the hard error
+  #     was designed for.
+  #
+  # The two cases are indistinguishable from a one-shot fetch exit code,
+  # so we trade strict partial-config detection for release resilience:
+  # a misconfigured secret still produces a clear `warn:` line above
+  # (stderr from the agent is echoed as `warn:   …`) AND a rollout-
+  # fallback warning below, so operators see BOTH events in the log
+  # even though we continue with an unsigned manifest. The daily sign
+  # cron catches up with the matching .asc within 24h, so nothing is
+  # permanently corrupted in either scenario.
+  if [ "${_key_lookup_failed}" -ne 0 ] || [ "${_pass_lookup_failed}" -ne 0 ]; then
+    gpg_private_key=""
+    gpg_passphrase=""
+  fi
+  unset -v _key_lookup_failed _pass_lookup_failed
 
   # Three-way state handling: both-set (sign), neither-set (unsigned
   # rollout fallback), exactly-one-set (hard error before the helper

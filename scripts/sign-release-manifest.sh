@@ -153,6 +153,25 @@ manifest="${dir}/${manifest_basename}"
 signed_manifest="${manifest}.asc"
 scratch_prefix=".sign-manifest-scratch."
 
+# Reject pre-existing non-regular output paths (directory, FIFO, device
+# node, symlink-to-non-regular, etc.) before the backup flow has a
+# chance to misinterpret them. The downstream logic uses `[ -f ]` to
+# decide whether to mv the existing output into a .bak — `-f` returns
+# false for every non-regular file, so without this guard a pre-
+# existing `SHASUMS256.txt` directory would be treated as "no backup
+# needed" and the final `mv tmp_manifest manifest` would then move the
+# temp file INTO the directory, escaping cleanup and breaking the
+# byte-identical rollback guarantee. In practice no caller is going
+# to create a directory at this path, but the cost of the guard is
+# one `-e + ! -f` check per output so the defensive posture is free.
+for _output in "${manifest}" "${signed_manifest}"; do
+  if [ -e "${_output}" ] && ! [ -f "${_output}" ]; then
+    echo "error: output path exists and is not a regular file: ${_output}" >&2
+    exit 1
+  fi
+done
+unset -v _output
+
 # Validate every artifact BEFORE we touch any output file or install
 # the cleanup trap — fail-fast with a clear error, no orphaned
 # background subshells, no half-written state, and no accidental

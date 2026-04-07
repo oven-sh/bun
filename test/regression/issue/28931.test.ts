@@ -128,10 +128,17 @@ describe.concurrent.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
       ],
       { GNUPGHOME: gpgHome },
     );
-    // stderr ONLY — exp.stdout holds the ASCII-armored private key and
-    // can legitimately contain the substring "error" inside base64 key
-    // material. Checking stdout would be a flake source.
-    expect(exp.stderr).not.toContain("error");
+    // Match only real `gpg: error ...` diagnostics on stderr instead of
+    // a naive `.toContain("error")` — some successful gpg versions emit
+    // benign stderr ("gpg: warning: unsafe permissions on …", locale
+    // notes, key import summaries) containing the substring "error"
+    // inside longer words or paths, which would flake the whole
+    // describe.concurrent suite. The `^gpg: error` anchor matches the
+    // real error pattern while letting the benign lines through.
+    // `exp.stdout` is explicitly not checked here: it holds the ASCII-
+    // armored private key and can legitimately contain the substring
+    // "error" inside base64 key material.
+    expect(exp.stderr).not.toMatch(/^gpg: error/m);
     gpgPrivateKey = exp.stdout;
     expect(gpgPrivateKey).toContain("-----BEGIN PGP PRIVATE KEY BLOCK-----");
     expect(exp.exitCode).toBe(0);

@@ -223,9 +223,14 @@ function sign_and_upload_manifest() {
   fi
 
   upload_github_asset "$version" SHASUMS256.txt
-  # The helper only writes .asc when the GPG secrets were present. Upload
-  # it opportunistically so the unsigned fallback path stays a no-op here.
-  if [ -f SHASUMS256.txt.asc ]; then
+  # Only upload .asc when THIS run actually signed (gpg secrets present).
+  # A bare `[ -f SHASUMS256.txt.asc ]` would upload a stale .asc left
+  # behind by a previous run on a reused workspace — even if the helper
+  # rolled the new manifest in unsigned, the old signature would ride
+  # along and reintroduce the manifest/signature drift this PR closes.
+  # Gating on the secrets makes intent explicit and is defense-in-depth
+  # on top of the helper's own scratch-dir cleanup.
+  if [ -n "$gpg_private_key" ] && [ -n "$gpg_passphrase" ] && [ -f SHASUMS256.txt.asc ]; then
     upload_github_asset "$version" SHASUMS256.txt.asc
   fi
 }

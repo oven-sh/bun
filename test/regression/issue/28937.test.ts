@@ -9,7 +9,7 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 
-async function setupLink(group: "dev" | "optional" | "peer" | "save") {
+async function setupLink(group: "dev" | "optional" | "peer" | "save" | "no-save") {
   // Isolate the "global" dir bun link uses so we don't touch the host.
   const globalRoot = tempDir(`issue-28937-global-${group}`, {});
   const installEnv = {
@@ -73,7 +73,6 @@ describe("bun link dependency group flags (issue #28937)", () => {
 
     expect(stderr).not.toContain("error:");
     expect(stdout).toContain("installed issue-28937-linked-pkg@link:issue-28937-linked-pkg");
-    expect(exitCode).toBe(0);
 
     const pkg = await file(join(String(consumer), "package.json")).json();
     expect(pkg).toEqual({
@@ -83,6 +82,7 @@ describe("bun link dependency group flags (issue #28937)", () => {
         "issue-28937-linked-pkg": "link:issue-28937-linked-pkg",
       },
     });
+    expect(exitCode).toBe(0);
   });
 
   test("-d (short form) writes to devDependencies", async () => {
@@ -101,13 +101,13 @@ describe("bun link dependency group flags (issue #28937)", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stderr).not.toContain("error:");
-    expect(exitCode).toBe(0);
 
     const pkg = await file(join(String(consumer), "package.json")).json();
     expect(pkg.devDependencies).toEqual({
       "issue-28937-linked-pkg": "link:issue-28937-linked-pkg",
     });
     expect(pkg.dependencies).toBeUndefined();
+    expect(exitCode).toBe(0);
   });
 
   test("--optional writes to optionalDependencies", async () => {
@@ -126,7 +126,6 @@ describe("bun link dependency group flags (issue #28937)", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stderr).not.toContain("error:");
-    expect(exitCode).toBe(0);
 
     const pkg = await file(join(String(consumer), "package.json")).json();
     expect(pkg.optionalDependencies).toEqual({
@@ -134,6 +133,7 @@ describe("bun link dependency group flags (issue #28937)", () => {
     });
     expect(pkg.dependencies).toBeUndefined();
     expect(pkg.devDependencies).toBeUndefined();
+    expect(exitCode).toBe(0);
   });
 
   test("--peer writes to peerDependencies", async () => {
@@ -152,7 +152,6 @@ describe("bun link dependency group flags (issue #28937)", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stderr).not.toContain("error:");
-    expect(exitCode).toBe(0);
 
     const pkg = await file(join(String(consumer), "package.json")).json();
     expect(pkg.peerDependencies).toEqual({
@@ -160,6 +159,7 @@ describe("bun link dependency group flags (issue #28937)", () => {
     });
     expect(pkg.dependencies).toBeUndefined();
     expect(pkg.devDependencies).toBeUndefined();
+    expect(exitCode).toBe(0);
   });
 
   test("--save still writes to dependencies (unchanged)", async () => {
@@ -178,12 +178,39 @@ describe("bun link dependency group flags (issue #28937)", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stderr).not.toContain("error:");
-    expect(exitCode).toBe(0);
 
     const pkg = await file(join(String(consumer), "package.json")).json();
     expect(pkg.dependencies).toEqual({
       "issue-28937-linked-pkg": "link:issue-28937-linked-pkg",
     });
     expect(pkg.devDependencies).toBeUndefined();
+    expect(exitCode).toBe(0);
+  });
+
+  test("explicit --no-save overrides the implied --save from --dev", async () => {
+    const { consumer, installEnv, globalRoot, linkable } = await setupLink("no-save");
+    using _g = globalRoot;
+    using _l = linkable;
+    using _c = consumer;
+
+    const originalPkg = await file(join(String(consumer), "package.json")).json();
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "link", "--dev", "--no-save", "issue-28937-linked-pkg"],
+      cwd: String(consumer),
+      env: installEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).not.toContain("error:");
+
+    // package.json must not have been mutated despite --dev implying save.
+    const pkg = await file(join(String(consumer), "package.json")).json();
+    expect(pkg).toEqual(originalPkg);
+    expect(pkg.dependencies).toBeUndefined();
+    expect(pkg.devDependencies).toBeUndefined();
+    expect(exitCode).toBe(0);
   });
 });

@@ -932,9 +932,10 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
     // link and unlink default to not saving, all others default to
     // saving. For `bun link`, passing --dev/--development/--optional/--peer
     // implies --save because the user is asking for the package to be
-    // recorded in a specific dependency group.
+    // recorded in a specific dependency group. An explicit --no-save still
+    // wins, so scripted callers can append it as a guard.
     if (comptime subcommand == .link) {
-        cli.no_save = !(args.flag("--save") or
+        cli.no_save = args.flag("--no-save") or !(args.flag("--save") or
             args.flag("--dev") or
             args.flag("--development") or
             args.flag("--optional") or

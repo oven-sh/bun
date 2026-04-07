@@ -10,7 +10,10 @@
 // the helper against a throwaway GPG key and re-implements the exact
 // checks from the user's validate-digests.ts:
 //
-//  1. Every manifest line matches /^[0-9a-f]{64}(  | \*)(.+)$/
+//  1. Every manifest line matches /^[0-9a-f]{64} \*(.+)$/ — the helper
+//     emits `hex *name` exclusively (binary-mode marker), so the test
+//     regex is pinned to that form rather than the permissive
+//     validator regex that also accepts the text-mode `hex  name`.
 //  2. The sha256 in the manifest equals the sha256 of the actual file
 //  3. The body of the clearsigned .asc is byte-identical to the .txt
 //  4. The PGP signature verifies against the signing key
@@ -24,11 +27,20 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, isWindows, tempDir } from "harness";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 const repoRoot = join(import.meta.dir, "..", "..", "..");
 const script = join(repoRoot, "scripts", "sign-release-manifest.sh");
+
+// Shared manifest-line regex. Pinned to `hex *name` (the only form
+// scripts/sign-release-manifest.sh ever emits — see its `printf '%s
+// *%s\n'` at the sha256 collation loop) rather than the validator
+// regex /^([a-f0-9]{64})(  | \*)(.+)$/ which also accepts text mode.
+// Pinning the test to the strict form means any future helper change
+// that drops the `*` marker or switches to text mode would be caught
+// here instead of silently passing under the permissive validator.
+const manifestLineRe = /^([a-f0-9]{64}) \*(.+)$/;
 
 async function sh(cmd: string[], env: Record<string, string> = {}) {
   // Async Bun.spawn (not spawnSync) so the wrapping describe.concurrent
@@ -149,15 +161,16 @@ describe.concurrent.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
     const manifest = readFileSync(join(dirStr, "SHASUMS256.txt"), "utf8");
     const signed = readFileSync(join(dirStr, "SHASUMS256.txt.asc"), "utf8");
 
-    // --- Line format check (mirrors validate-digests.ts) ---
+    // --- Line format check (stricter than validate-digests.ts on
+    // purpose — the helper always emits `hex *name`, so any drift
+    // away from the binary-mode marker fails here).
     const lines = manifest.trim().split(/\r?\n/);
-    const lineRe = /^([a-f0-9]{64})(  | \*)(.+)$/;
     const entries: { hex: string; name: string }[] = [];
     const seen = new Set<string>();
     for (const line of lines) {
-      const m = line.match(lineRe);
+      const m = line.match(manifestLineRe);
       expect(m).not.toBeNull();
-      const [, hex, , name] = m!;
+      const [, hex, name] = m!;
       expect(seen.has(name)).toBe(false);
       seen.add(name);
       entries.push({ hex, name });
@@ -261,7 +274,7 @@ describe.concurrent.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
     // test above.
     const names: string[] = [];
     for (const line of lines) {
-      const m = line.match(/^([a-f0-9]{64})(?:  | \*)(.+)$/);
+      const m = line.match(manifestLineRe);
       expect(m).not.toBeNull();
       const [, hex, name] = m!;
       names.push(name);
@@ -435,7 +448,7 @@ describe.concurrent.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
     mkdirSync(orphan);
     // Original (pre-SIGKILL) manifest and .asc bytes. Use distinctive
     // values so we can tell which ones the helper kept at the end.
-    const originalTxt = "deadbeef".repeat(8) + " *bun-linux-x64.zip\n";
+    const originalTxt = Buffer.alloc(64, "deadbeef").toString() + " *bun-linux-x64.zip\n";
     const originalAsc =
       "-----BEGIN PGP SIGNED MESSAGE-----\nHash: SHA512\n\nstashed-bytes\n-----BEGIN PGP SIGNATURE-----\nfake\n-----END PGP SIGNATURE-----\n";
     writeFileSync(join(orphan, "SHASUMS256.txt.bak"), originalTxt);
@@ -499,8 +512,8 @@ describe.concurrent.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
     mkdirSync(orphanOlder);
     mkdirSync(orphanNewer);
 
-    const olderTxt = "a".repeat(64) + " *bun-linux-x64.zip\n";
-    const newerTxt = "b".repeat(64) + " *bun-linux-x64.zip\n";
+    const olderTxt = Buffer.alloc(64, "a").toString() + " *bun-linux-x64.zip\n";
+    const newerTxt = Buffer.alloc(64, "b").toString() + " *bun-linux-x64.zip\n";
     const olderAsc =
       "-----BEGIN PGP SIGNED MESSAGE-----\nHash: SHA512\n\nolder\n-----BEGIN PGP SIGNATURE-----\nfake\n-----END PGP SIGNATURE-----\n";
     const newerAsc =
@@ -514,7 +527,6 @@ describe.concurrent.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
     // the filesystem may have given both files the same mtime due
     // to coarse timestamp resolution. 1000s gap is well above any
     // plausible filesystem granularity.
-    const { utimesSync } = await import("node:fs");
     const now = Math.floor(Date.now() / 1000);
     utimesSync(join(orphanOlder, "SHASUMS256.txt.bak"), now - 1000, now - 1000);
     utimesSync(join(orphanOlder, "SHASUMS256.txt.asc.bak"), now - 1000, now - 1000);
@@ -807,7 +819,7 @@ describe.concurrent.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
 
     // Validator: parse each line, resolve the file, compare sha256.
     const parsed = lines.map(line => {
-      const m = line.match(/^([a-f0-9]{64})(?:  | \*)(.+)$/);
+      const m = line.match(manifestLineRe);
       expect(m).not.toBeNull();
       return { hex: m![1], name: m![2] };
     });

@@ -9,7 +9,7 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
-test("real ws package (via node:http upgrade) connects and round-trips", async () => {
+test("real ws package (via node:http upgrade) connects and round-trips", { timeout: 60_000 }, async () => {
   using dir = tempDir("issue-09911-ws", {
     "package.json": JSON.stringify({ dependencies: { ws: "8.18.3" } }),
     "client.mjs": `

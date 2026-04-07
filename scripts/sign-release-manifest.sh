@@ -102,8 +102,14 @@ for artifact in "${sorted[@]}"; do
   printf '%s  %s\n' "$sha" "$artifact" >> "$manifest"
 done
 
-echo "Generated $manifest:"
-cat "$manifest"
+# Diagnostics go to stderr, matching the warn:/error: lines above. Writing
+# the cosmetic dump to stdout would let a broken stdout pipe (e.g. the
+# Buildkite log aggregator dying) SIGPIPE `cat`, fire set -e with the
+# success flag still 0, and cleanup() would delete the correctly-written
+# manifest before any signing has started. Stderr is diagnostic-only and
+# is captured by the build log just the same.
+echo "Generated $manifest:" >&2
+cat "$manifest" >&2
 
 if [ "$should_sign" -ne 1 ]; then
   # Fresh unsigned manifest is strictly more useful to `sha256sum -c` users
@@ -143,10 +149,10 @@ GNUPGHOME="$gnupghome" gpg \
   --output "$signed_manifest" \
   "$manifest" <<< "$GPG_PASSPHRASE"
 
-# Set success BEFORE the echo. A broken stdout pipe (e.g. Buildkite log
-# aggregator dying after gpg has already written $signed_manifest) would
-# SIGPIPE the echo, fire set -e, and cleanup() would delete an otherwise
-# valid signed manifest. gpg --clearsign returning successfully is the
-# real success criterion — the echo is cosmetic.
+# Set success BEFORE the echo, and write the echo to stderr so every
+# diagnostic in this script is on the same stream. The success flag
+# protects cleanup() from deleting the signed manifest even if a broken
+# stdout pipe SIGPIPE'd the echo — gpg --clearsign returning 0 is the
+# real success criterion, the echo is cosmetic.
 success=1
-echo "Signed $signed_manifest"
+echo "Signed $signed_manifest" >&2

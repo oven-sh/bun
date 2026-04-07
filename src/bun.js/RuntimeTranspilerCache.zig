@@ -168,7 +168,7 @@ pub const RuntimeTranspilerCache = struct {
         }
 
         pub fn save(
-            destination_dir: bun.FileDescriptor,
+            destination_dir: bun.FD,
             destination_path: bun.PathString,
             input_byte_length: u64,
             input_hash: u64,

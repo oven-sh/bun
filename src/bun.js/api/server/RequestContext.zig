@@ -2583,8 +2583,8 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 }
 
 const SendfileContext = struct {
-    fd: bun.FileDescriptor,
-    socket_fd: bun.FileDescriptor = bun.invalid_fd,
+    fd: bun.FD,
+    socket_fd: bun.FD = bun.invalid_fd,
     remain: Blob.SizeType = 0,
     offset: Blob.SizeType = 0,
     has_listener: bool = false,

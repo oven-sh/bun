@@ -41,8 +41,8 @@ dir="$1"
 shift
 artifacts=("$@")
 
-if ! [ -d "$dir" ]; then
-  echo "error: directory not found: $dir" >&2
+if ! [ -d "${dir}" ]; then
+  echo "error: directory not found: ${dir}" >&2
   exit 1
 fi
 
@@ -69,16 +69,16 @@ fi
 # string. We also reject any tool that prints uppercase hex — every
 # modern implementation emits lowercase, and a mismatch there is a
 # signal the tool is non-standard enough that we should skip it.
-empty_sha256="e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 probe_sha256() {
   local out
+  local empty_sha256="e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   if ! out=$(printf '' | "$@" 2>/dev/null); then
     return 1
   fi
   # GNU tools print `HASH  -` when hashing stdin (`-` is the stdin
   # marker). Strip from the first space onward and compare the digest.
   out="${out%% *}"
-  [ "$out" = "$empty_sha256" ]
+  [ "${out}" = "${empty_sha256}" ]
 }
 if probe_sha256 cksum -a sha256 --untagged; then
   sha256_cmd=(cksum -a sha256 --untagged)
@@ -100,11 +100,14 @@ if [ -n "${GPG_PRIVATE_KEY:-}" ] && [ -n "${GPG_PASSPHRASE:-}" ]; then
   fi
 fi
 
-manifest="$dir/SHASUMS256.txt"
-signed_manifest="$manifest.asc"
+# Output path derivations. The `_basename` values are the reserved-name
+# inputs the validation loop below rejects, and the full paths below
+# compose from them rather than repeating the SHASUMS256.txt literal.
 manifest_basename="SHASUMS256.txt"
-signed_manifest_basename="SHASUMS256.txt.asc"
-tmp_manifest="$manifest.tmp"
+signed_manifest_basename="${manifest_basename}.asc"
+manifest="${dir}/${manifest_basename}"
+signed_manifest="${manifest}.asc"
+tmp_manifest="${manifest}.tmp"
 
 # Validate every artifact BEFORE we touch any output file or install
 # the cleanup trap — fail-fast with a clear error, no orphaned
@@ -116,59 +119,62 @@ tmp_manifest="$manifest.tmp"
 # 1. Line-break characters (\n / \r) in a name would inject bogus
 #    extra lines into the manifest body and split the sort below into
 #    multiple entries.
-# 2. The helper writes SHASUMS256.txt and SHASUMS256.txt.asc — accepting
-#    either as an input would compute a hash of the previous run's
-#    manifest output and then clobber it.
-# 3. The helper's contract is basename-only: the name is interpolated
-#    into `$hash_dir/$artifact.digest` below and written into the
+# 2. The helper's contract is basename-only: the name is interpolated
+#    into `${hash_dir}/${artifact}.digest` below and written into the
 #    manifest body as-is. A caller passing `dist/foo.zip` would miss
-#    a subdir; `../foo.zip` would escape `$hash_dir` entirely; `"."`
+#    a subdir; `../foo.zip` would escape `${hash_dir}` entirely; `"."`
 #    and `".."` break manifest parsing.
+# 3. The helper writes SHASUMS256.txt and SHASUMS256.txt.asc — accepting
+#    either as an input would compute a hash of the previous run's
+#    manifest output and then clobber it. Both are valid basenames so
+#    they slip past check #2, which is why this arm lives after it.
 # 4. Duplicate basenames would launch two hash jobs writing the same
-#    `$hash_dir/$artifact.digest` path and the collation loop would
+#    `${hash_dir}/${artifact}.digest` path and the collation loop would
 #    emit the same archive twice. We track seen names in a single
 #    `/`-delimited string so the dup check is one `case` glob instead
-#    of a nested loop. `/` is the delimiter because check #3 above
+#    of a nested loop. `/` is the delimiter because check #2 above
 #    already rejects any artifact name containing `/` — so the
 #    delimiter is guaranteed not to appear in any name, with no extra
 #    coupling. Leading and trailing `/` sentinels keep the glob
 #    symmetric and prevent prefix false-positives (e.g. `foo.zip`
 #    does not match inside `/foo.zip-profile/`).
-# 5. The file must exist inside `$dir` so the hash job can read it.
+# 5. The file must exist inside `${dir}` so the hash job can read it.
 seen_artifacts="/"
 for artifact in "${artifacts[@]}"; do
-  case "$artifact" in
+  # Collapse the syntactic checks into a single `case`. Patterns are
+  # tried in order; quoted `"${manifest_basename}"` / `"${signed_manifest_basename}"`
+  # are literal matches so the glob chars inside those values (if any)
+  # are not interpreted.
+  case "${artifact}" in
     *$'\n'*|*$'\r'*)
-      echo "error: artifact name contains line break: $(printf '%q' "$artifact")" >&2
+      echo "error: artifact name contains line break: $(printf '%q' "${artifact}")" >&2
       exit 1
       ;;
-  esac
-  if [ "$artifact" = "$manifest_basename" ] || [ "$artifact" = "$signed_manifest_basename" ]; then
-    echo "error: artifact name is reserved for manifest output: $artifact" >&2
-    exit 1
-  fi
-  case "$artifact" in
     ""|.|..|*/*)
-      echo "error: artifact names must be basenames (no slashes, not '.' or '..'): $artifact" >&2
+      echo "error: artifact names must be basenames (no slashes, not '.' or '..'): ${artifact}" >&2
+      exit 1
+      ;;
+    "${manifest_basename}"|"${signed_manifest_basename}")
+      echo "error: artifact name is reserved for manifest output: ${artifact}" >&2
       exit 1
       ;;
   esac
-  # Quoted "$artifact" inside the case pattern is matched as a literal,
+  # Quoted "${artifact}" inside the case pattern is matched as a literal,
   # so any glob metacharacters in the name are compared byte-for-byte
   # (they can't confuse the dup check).
-  case "$seen_artifacts" in
-    */"$artifact"/*)
-      echo "error: duplicate artifact for signing: $artifact" >&2
+  case "${seen_artifacts}" in
+    */"${artifact}"/*)
+      echo "error: duplicate artifact for signing: ${artifact}" >&2
       exit 1
       ;;
   esac
-  seen_artifacts="$seen_artifacts$artifact/"
-  if [ ! -f "$dir/$artifact" ]; then
-    echo "error: missing artifact for signing: $dir/$artifact" >&2
+  seen_artifacts="${seen_artifacts}${artifact}/"
+  if ! [ -f "${dir}/${artifact}" ]; then
+    echo "error: missing artifact for signing: ${dir}/${artifact}" >&2
     exit 1
   fi
 done
-unset artifact seen_artifacts
+unset -v artifact seen_artifacts
 
 # Now that the request is validated, install cleanup for the mutation
 # phase. Every failure below this point — a sha256 worker crash, a
@@ -201,36 +207,36 @@ cleanup() {
   # Every rm inside this trap ends in `|| true`. With `set -eo pipefail`
   # in effect, a non-zero rm (permission error, NFS stale handle, etc.)
   # would otherwise propagate out of the trap with rm's exit code instead
-  # of the captured `$rc`, making the caller think signing failed when it
+  # of the captured `${rc}`, making the caller think signing failed when it
   # actually succeeded. The -f flag only suppresses ENOENT — it doesn't
   # cover EACCES / EROFS / EIO / stale-NFS / SIGPIPE — so `|| true` is
   # still required. Same reason for the `mv -f ... || true` on the restore
   # paths below.
-  if [ "$success" -ne 1 ]; then
+  if [ "${success}" -ne 1 ]; then
     # Roll back: wipe any partial outputs we produced, then restore the
     # pre-existing copies from their .bak.$$ siblings. Net effect is the
     # directory looks byte-identical to how we found it.
-    rm -f "$tmp_manifest" "$manifest" "$signed_manifest" || true
-    if [ -n "$backup_manifest" ]; then
-      mv -f "$backup_manifest" "$manifest" || true
+    rm -f "${tmp_manifest}" "${manifest}" "${signed_manifest}" || true
+    if [ -n "${backup_manifest}" ]; then
+      mv -f "${backup_manifest}" "${manifest}" || true
     fi
-    if [ -n "$backup_signed_manifest" ]; then
-      mv -f "$backup_signed_manifest" "$signed_manifest" || true
+    if [ -n "${backup_signed_manifest}" ]; then
+      mv -f "${backup_signed_manifest}" "${signed_manifest}" || true
     fi
   else
     # Success: the new outputs are live. Drop the backups and any stray
     # .tmp left behind by a partial rename (belt and braces — the atomic
     # `mv` below should make .tmp invisible on this path).
-    rm -f "$tmp_manifest" "$backup_manifest" "$backup_signed_manifest" || true
+    rm -f "${tmp_manifest}" "${backup_manifest}" "${backup_signed_manifest}" || true
   fi
-  if [ -n "$hash_dir" ]; then
-    rm -rf "$hash_dir" || true
+  if [ -n "${hash_dir}" ]; then
+    rm -rf "${hash_dir}" || true
   fi
-  if [ -n "$gnupghome" ]; then
-    GNUPGHOME="$gnupghome" gpgconf --kill all >/dev/null 2>&1 || true
-    rm -rf "$gnupghome" || true
+  if [ -n "${gnupghome}" ]; then
+    GNUPGHOME="${gnupghome}" gpgconf --kill all >/dev/null 2>&1 || true
+    rm -rf "${gnupghome}" || true
   fi
-  exit "$rc"
+  exit "${rc}"
 }
 trap cleanup EXIT
 
@@ -243,22 +249,22 @@ trap cleanup EXIT
 # The `$$` in the suffix makes the backup path unique per invocation so
 # concurrent same-dir runs (unsupported but possible) can't collide on a
 # shared .bak path.
-if [ -f "$manifest" ]; then
-  backup_manifest="$manifest.bak.$$"
-  mv "$manifest" "$backup_manifest"
+if [ -f "${manifest}" ]; then
+  backup_manifest="${manifest}.bak.$$"
+  mv "${manifest}" "${backup_manifest}"
 fi
-if [ -f "$signed_manifest" ]; then
-  backup_signed_manifest="$signed_manifest.bak.$$"
-  mv "$signed_manifest" "$backup_signed_manifest"
+if [ -f "${signed_manifest}" ]; then
+  backup_signed_manifest="${signed_manifest}.bak.$$"
+  mv "${signed_manifest}" "${backup_signed_manifest}"
 fi
 
 # Hash every artifact in parallel. The canary set is 22 archives, each
 # roughly 30-150 MB — sequential sha256sum runs ~6-7 s on the buildkite
 # linux agent; parallelised across cores it drops to ~1-2 s. We write
-# each result to `$hash_dir/$artifact.digest` so the collation loop can
-# pick them up in sorted order without caring about which job finished
-# first. $hash_dir is an isolated mktemp directory cleaned up by the
-# EXIT trap above.
+# each result to `${hash_dir}/${artifact}.digest` so the collation loop
+# can pick them up in sorted order without caring about which job
+# finished first. `${hash_dir}` is an isolated mktemp directory cleaned
+# up by the EXIT trap above.
 #
 # Manifest format:
 # - Each file by basename, not full path — the validator (and every
@@ -283,7 +289,7 @@ hash_dir=$(mktemp -d 2>/dev/null || mktemp -d -t bun-sign-release-manifest)
 
 pids=()
 for artifact in "${artifacts[@]}"; do
-  "${sha256_cmd[@]}" "$dir/$artifact" > "$hash_dir/$artifact.digest" &
+  "${sha256_cmd[@]}" "${dir}/${artifact}" > "${hash_dir}/${artifact}.digest" &
   pids+=("$!")
 done
 
@@ -292,7 +298,7 @@ done
 # one job propagates out with a meaningful error instead of being masked
 # by a later-successful job.
 for pid in "${pids[@]}"; do
-  if ! wait "$pid"; then
+  if ! wait "${pid}"; then
     echo "error: sha256 failed for one or more artifacts" >&2
     exit 1
   fi
@@ -304,20 +310,21 @@ done
 # which localeCompare-sorts the same map. The while-read pulls directly
 # from the sorted process substitution, so there's no intermediate
 # `sorted` array to keep in sync with the artifact list.
-: > "$tmp_manifest"
+: > "${tmp_manifest}"
 while IFS= read -r artifact; do
-  sha=$(cut -d ' ' -f 1 "$hash_dir/$artifact.digest")
+  sha=$(cut -d ' ' -f 1 "${hash_dir}/${artifact}.digest")
   if [ "${#sha}" -ne 64 ]; then
-    echo "error: malformed sha256 for $artifact: '$sha'" >&2
+    echo "error: malformed sha256 for ${artifact}: '${sha}'" >&2
     exit 1
   fi
-  printf '%s *%s\n' "$sha" "$artifact" >> "$tmp_manifest"
+  printf '%s *%s\n' "${sha}" "${artifact}" >> "${tmp_manifest}"
 done < <(printf '%s\n' "${artifacts[@]}" | LC_ALL=C sort)
 
-# Atomic rename — the final $manifest only appears once every hash has
-# been written. Prior SIGKILL would leave a .tmp that cleanup() (or the
-# next run's cleanup() via rm -f) removes before the caller ever sees it.
-mv "$tmp_manifest" "$manifest"
+# Atomic rename — the final `${manifest}` only appears once every hash
+# has been written. Prior SIGKILL would leave a .tmp that cleanup() (or
+# the next run's cleanup() via rm -f) removes before the caller ever
+# sees it.
+mv "${tmp_manifest}" "${manifest}"
 
 # Declare the unsigned-path success as early as possible: the atomic mv
 # above is the entire contract for the unsigned fallback, so flipping
@@ -327,7 +334,7 @@ mv "$tmp_manifest" "$manifest"
 # a crash between this line and the signing step would leave an unsigned
 # .txt alongside a stale .asc, exactly the integrity mismatch this PR
 # exists to prevent.
-if [ "$should_sign" -ne 1 ]; then
+if [ "${should_sign}" -ne 1 ]; then
   success=1
 fi
 
@@ -338,12 +345,12 @@ fi
 # and the bash SIGPIPE exit (141) would fire `set -e` here. In the
 # signed path `success` is still 0 at this point (we only flip it after
 # gpg succeeds below), so a `cleanup()` triggered here would delete the
-# correctly-written $manifest. Guarding the diagnostics suppresses that
-# edge without losing the log output on a healthy run.
-echo "Generated $manifest:" >&2 || true
-cat "$manifest" >&2 || true
+# correctly-written `${manifest}`. Guarding the diagnostics suppresses
+# that edge without losing the log output on a healthy run.
+echo "Generated ${manifest}:" >&2 || true
+cat "${manifest}" >&2 || true
 
-if [ "$should_sign" -ne 1 ]; then
+if [ "${should_sign}" -ne 1 ]; then
   # Fresh unsigned manifest is strictly more useful to `sha256sum -c` users
   # than leaving a stale one in place. The sibling .asc will still point at
   # the previous manifest body until the daily cron runs, so strict PGP
@@ -357,9 +364,9 @@ fi
 
 # Use an isolated GNUPGHOME so we never touch the agent's default keyring.
 gnupghome=$(mktemp -d 2>/dev/null || mktemp -d -t bun-sign-release-manifest-gpg)
-chmod 700 "$gnupghome"
+chmod 700 "${gnupghome}"
 
-GNUPGHOME="$gnupghome" gpg --batch --quiet --import <<< "$GPG_PRIVATE_KEY"
+GNUPGHOME="${gnupghome}" gpg --batch --quiet --import <<< "${GPG_PRIVATE_KEY}"
 
 # --clearsign emits the signed body plus a PGP SIGNATURE block. The body is
 # byte-identical to the input manifest, which is what the validator checks.
@@ -378,14 +385,14 @@ GNUPGHOME="$gnupghome" gpg --batch --quiet --import <<< "$GPG_PRIVATE_KEY"
 # status (naked `exit` uses the most-recent command's status). This
 # intentionally sidesteps the `set -e` exemption for the left side of
 # `&&`, which would otherwise silently fall through on gpg failure.
-GNUPGHOME="$gnupghome" gpg \
+GNUPGHOME="${gnupghome}" gpg \
   --batch --yes --quiet \
   --pinentry-mode loopback \
   --passphrase-fd 0 \
   --digest-algo SHA512 \
   --clearsign \
-  --output "$signed_manifest" \
-  "$manifest" <<< "$GPG_PASSPHRASE" && success=1 || exit
+  --output "${signed_manifest}" \
+  "${manifest}" <<< "${GPG_PASSPHRASE}" && success=1 || exit
 
 # Final diagnostic also guarded — same reasoning as the echo/cat above.
 # Here success=1 is already set, so a SIGPIPE would leave the .txt and
@@ -394,4 +401,4 @@ GNUPGHOME="$gnupghome" gpg \
 # non-zero exit from the helper as a signing failure and skips the
 # upload entirely — the exact canary-release integrity failure this PR
 # fixes. `|| true` turns a logging hiccup into a clean exit 0.
-echo "Signed $signed_manifest" >&2 || true
+echo "Signed ${signed_manifest}" >&2 || true

@@ -7,13 +7,12 @@
 // install eventually hangs.
 
 import { expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import fs from "node:fs";
 import { join } from "node:path";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 
 test("pnpm migration preserves resolution.tarball for GitHub Packages URLs", async () => {
-  const githubTarball =
-    "https://npm.pkg.github.com/download/@scope/pkg/0.2.0/0123456789abcdef0123456789abcdef01234567";
+  const githubTarball = "https://npm.pkg.github.com/download/@scope/pkg/0.2.0/0123456789abcdef0123456789abcdef01234567";
 
   const dir = tempDirWithFiles("issue-28959-pnpm-tarball", {
     "package.json": JSON.stringify({

@@ -690,7 +690,12 @@ pub const PmVersionCommand = struct {
             },
             .result => |result| {
                 if (!result.isOK()) {
-                    Output.errGeneric("Git add failed with exit code {d}", .{result.status.exited.code});
+                    // Match the `commit_proc` / `tag_proc` handlers below:
+                    // `result.status` is a tagged union and `isOK()` returns
+                    // false for `.signaled` / `.err` as well as non-zero
+                    // `.exited`, so unconditionally reading `.exited.code`
+                    // is a safety-checked UB in signaled / errored cases.
+                    Output.errGeneric("Git add failed", .{});
                     Global.exit(1);
                 }
             },

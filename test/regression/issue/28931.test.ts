@@ -15,9 +15,11 @@
 //  3. The body of the clearsigned .asc is byte-identical to the .txt
 //  4. The PGP signature verifies against the signing key
 //
-// The helper's skip sentinel (exit 2 with no files written when GPG env
-// vars are absent) is also exercised — that's the rollout fallback
-// before the Buildkite GPG secrets are provisioned.
+// The unsigned rollout fallback (exit 0 with a fresh SHASUMS256.txt and
+// no .asc when GPG env vars are absent) is also exercised, along with
+// the signed-then-unsigned-in-same-dir path where a stale .asc from a
+// previous signed run must be removed before the unsigned upload so a
+// caller running `ls SHASUMS256.txt.asc` cannot find one left behind.
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, isWindows, tempDir } from "harness";
@@ -234,6 +236,51 @@ describe.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
     // .asc must NOT exist — we intentionally upload an unsigned manifest
     // in this path. The daily cron handles re-signing.
     expect(existsSync(join(dirStr, "SHASUMS256.txt.asc"))).toBe(false);
+  });
+
+  test("unsigned fallback removes a stale .asc left by a previous signed run", () => {
+    // coderabbit caught: signed run writes .txt + .asc; if the same
+    // directory is later invoked unsigned (secrets rotated/removed,
+    // standalone manual re-run, etc.) the old .asc would survive and the
+    // buildkite wrapper's `[ -f SHASUMS256.txt.asc ]` check would upload
+    // a stale signature alongside the fresh .txt — exactly the identity
+    // mismatch this PR exists to fix. The helper must remove any preexisting
+    // .asc before the unsigned branch exits.
+    using dir = tempDir("bun-28931-stale-asc-", {
+      "bun-linux-x64.zip": "fake",
+    });
+    const dirStr = String(dir);
+
+    // First run: signed.
+    const firstRun = sh([script, dirStr, "bun-linux-x64.zip"], {
+      GPG_PRIVATE_KEY: gpgPrivateKey,
+      GPG_PASSPHRASE: passphrase,
+    });
+    expect(firstRun.stderr).not.toContain("error:");
+    expect(firstRun.exitCode).toBe(0);
+    expect(existsSync(join(dirStr, "SHASUMS256.txt"))).toBe(true);
+    expect(existsSync(join(dirStr, "SHASUMS256.txt.asc"))).toBe(true);
+
+    // Change the artifact bytes so the second run's manifest differs from
+    // the first — any stale .asc that survives would now reference the
+    // wrong hashes and be caught by a strict validator.
+    writeFileSync(join(dirStr, "bun-linux-x64.zip"), "fake-after-rotation");
+
+    // Second run: unsigned. The .asc from the first run must be gone.
+    const secondRun = sh([script, dirStr, "bun-linux-x64.zip"], {
+      GPG_PRIVATE_KEY: "",
+      GPG_PASSPHRASE: "",
+    });
+    expect(secondRun.stderr).toContain("wrote SHASUMS256.txt");
+    expect(secondRun.stderr).not.toContain("error:");
+    expect(secondRun.exitCode).toBe(0);
+    expect(existsSync(join(dirStr, "SHASUMS256.txt"))).toBe(true);
+    expect(existsSync(join(dirStr, "SHASUMS256.txt.asc"))).toBe(false);
+
+    // And the fresh .txt must reflect the rotated bytes.
+    const manifest = readFileSync(join(dirStr, "SHASUMS256.txt"), "utf8").trim();
+    const expected = createHash("sha256").update("fake-after-rotation").digest("hex");
+    expect(manifest).toBe(`${expected}  bun-linux-x64.zip`);
   });
 
   test("fails loudly and cleans up a half-written manifest when an artifact is missing", () => {

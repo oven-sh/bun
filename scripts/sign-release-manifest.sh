@@ -89,6 +89,16 @@ while IFS= read -r line; do
   sorted+=("$line")
 done < <(printf '%s\n' "${artifacts[@]}" | LC_ALL=C sort)
 
+# Remove any stale .asc from a previous run BEFORE we start producing
+# output, regardless of which branch we'll take. If this directory was
+# previously signed and we're now running unsigned (e.g. secrets got
+# rotated or removed mid-rollout), the old .asc still refers to the
+# previous manifest body — uploading it alongside our fresh .txt would
+# recreate the exact identity mismatch this PR is fixing. The signed
+# branch overwrites via `gpg --output` anyway, so this rm is a no-op
+# there and a correctness fix in the unsigned branch.
+rm -f "$signed_manifest"
+
 : > "$manifest"
 for artifact in "${sorted[@]}"; do
   path="$dir/$artifact"

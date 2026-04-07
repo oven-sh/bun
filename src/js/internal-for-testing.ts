@@ -111,10 +111,20 @@ export const memfd_create: (size: number) => number = $newZigFunction(
 // used by `fs.statSync`. Used by regression tests that need to exercise
 // `u64 -> JS` conversion for the `ino` field without mounting a filesystem
 // that hands out inodes above 2^63 (e.g. NFS).
-export const createStatsFromU64ForTesting: (
-  ino: bigint,
-  bigint: boolean,
-) => import("node:fs").Stats = $newZigFunction("Stat.zig", "createStatsFromU64ForTesting", 2);
+//
+// Returns a `Stats` (`.ino: number`) when `bigint` is `false`, or a
+// `BigIntStats` (`.ino: bigint`) when `bigint` is `true`. Overloads let
+// callers narrow the return type based on the literal flag.
+interface CreateStatsFromU64ForTesting {
+  (ino: bigint, bigint: false): import("node:fs").Stats;
+  (ino: bigint, bigint: true): import("node:fs").BigIntStats;
+  (ino: bigint, bigint: boolean): import("node:fs").Stats | import("node:fs").BigIntStats;
+}
+export const createStatsFromU64ForTesting: CreateStatsFromU64ForTesting = $newZigFunction(
+  "Stat.zig",
+  "createStatsFromU64ForTesting",
+  2,
+);
 
 export const setSyntheticAllocationLimitForTesting: (limit: number) => number = $newZigFunction(
   "virtual_machine_exports.zig",

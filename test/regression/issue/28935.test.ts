@@ -159,6 +159,14 @@ test.concurrent(
 
     const gitEnv = {
       ...bunEnv,
+      // Isolate from user/system git config so CI machines with
+      // `commit.gpgsign = true`, signing hooks, or other surprises don't
+      // break the test. Matches the pattern used in
+      // test/js/bun/patch/patch.test.ts.
+      GIT_CONFIG_NOSYSTEM: "1",
+      HOME: "",
+      XDG_CONFIG_HOME: "",
+      USERPROFILE: "",
       GIT_AUTHOR_NAME: "Test",
       GIT_AUTHOR_EMAIL: "test@example.com",
       GIT_COMMITTER_NAME: "Test",

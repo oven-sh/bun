@@ -11,7 +11,7 @@
 // its form (symlink vs. real directory) doesn't match the new resolution tag.
 
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir, tmpdirSync } from "harness";
 import { lstatSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -64,7 +64,12 @@ function startRegistry(tarballPath: string, version: string) {
   });
 }
 
-test.concurrent("bun install <pkg> after `bun link --save <pkg>` replaces the symlink in node_modules", async () => {
+// `bun link --save` creates directory junctions on Windows, whose POSIX stat
+// form (junction vs. symlink) trips up `lstatSync(...).isSymbolicLink()`. The
+// install code path being fixed here is platform-independent — the assertions
+// are the Windows-unfriendly piece — so skip on Windows rather than weaken the
+// checks everywhere.
+test.concurrent.skipIf(isWindows)("bun install <pkg> after `bun link --save <pkg>` replaces the symlink in node_modules", async () => {
   const globalDir = tmpdirSync();
 
   // The "linked" clone: a local directory that `bun link`s globally. It carries
@@ -127,7 +132,7 @@ test.concurrent("bun install <pkg> after `bun link --save <pkg>` replaces the sy
   expect(readFileSync(join(pkgPath, "marker.txt"), "utf8")).toBe("TARBALL");
 });
 
-test.concurrent("bun link --save <pkg> after an npm install replaces the real directory with a symlink", async () => {
+test.concurrent.skipIf(isWindows)("bun link --save <pkg> after an npm install replaces the real directory with a symlink", async () => {
   // The reverse direction: start with a real extracted package from the
   // registry, then switch to a `bun link`. Before the fix, verify() would see
   // the real directory with a matching package.json and skip the install —

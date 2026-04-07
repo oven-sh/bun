@@ -106,7 +106,12 @@ describe.concurrent.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
       ["gpg", "--batch", "--pinentry-mode", "loopback", "--passphrase", passphrase, "--gen-key", keyspecPath],
       { GNUPGHOME: gpgHome },
     );
-    expect(gen.stderr + gen.stdout).not.toContain("error");
+    // Exit code is the reliable success signal; the later secret-key
+    // export (which would fail loudly if no key exists) covers the
+    // "did gen actually produce a key" question. Don't probe stdout/
+    // stderr for an English "error" token — a diagnostic about a
+    // temp path that happens to contain that substring would flake
+    // the suite for no reason.
     expect(gen.exitCode).toBe(0);
 
     const exp = await sh(

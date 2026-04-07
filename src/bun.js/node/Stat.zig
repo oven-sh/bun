@@ -67,17 +67,33 @@ pub fn StatType(comptime big: bool) type {
 
         /// Convert a stat field (e.g. `dev`/`ino`/`rdev`, whose type varies by
         /// platform — `u64` on Linux, `i32` on macOS for `dev_t`) into a `f64`
-        /// for the non-bigint stats object. Mirrors Node.js, which fills a
-        /// `Float64Array` directly from the raw field via `static_cast<double>`
-        /// — precision is lost above 2^53, but values are never clamped to
-        /// INT64_MAX. Needed for filesystems with high 64-bit inodes (NFS).
+        /// for the non-bigint stats object. Mirrors Node.js, which copies the
+        /// native field into libuv's `uv_stat_t` (where every field is
+        /// `uint64_t`) via C's implicit signed-to-unsigned conversion, then
+        /// `static_cast<double>`s into a `Float64Array`. For signed platform
+        /// types (e.g. macOS `dev_t = i32`) a negative value like `-1` must
+        /// therefore come out as ~`1.844e19`, not `-1.0` — matching
+        /// `(uint64_t)(int32_t)(-1)` in C. Precision is lost above 2^53 but
+        /// values are never clamped to INT64_MAX.
         fn toF64(value: anytype) f64 {
             const T = @TypeOf(value);
-            return switch (@typeInfo(T)) {
-                .int, .comptime_int => @floatFromInt(value),
-                .float, .comptime_float => @floatCast(value),
+            switch (@typeInfo(T)) {
+                .int => |int_info| {
+                    if (int_info.signedness == .signed) {
+                        // Sign-extend to i64, then reinterpret as u64 — this is
+                        // what libuv does when it copies a signed `st_*` field
+                        // into `uv_stat_t`'s `uint64_t` slot via C's implicit
+                        // conversion rules.
+                        const sext: i64 = @intCast(value);
+                        const uext: u64 = @bitCast(sext);
+                        return @floatFromInt(uext);
+                    }
+                    return @floatFromInt(value);
+                },
+                .comptime_int => return @floatFromInt(value),
+                .float, .comptime_float => return @floatCast(value),
                 else => @compileError("toF64: unsupported type " ++ @typeName(T)),
-            };
+            }
         }
 
         /// Convert a stat field into an `i64` for the BigIntStats path,

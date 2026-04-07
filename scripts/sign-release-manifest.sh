@@ -22,7 +22,7 @@
 #   SHASUMS256.txt       Plain-text sha256 manifest, sorted by filename
 #   SHASUMS256.txt.asc   Clearsigned copy of the same body (only if signing)
 
-set -eo pipefail
+set -euo pipefail
 
 if [ "$#" -lt 2 ]; then
   echo "error: usage: $0 <dir> <artifact> [<artifact>...]" >&2
@@ -33,7 +33,7 @@ dir="$1"
 shift
 artifacts=("$@")
 
-if [ ! -d "$dir" ]; then
+if ! [ -d "$dir" ]; then
   echo "error: directory not found: $dir" >&2
   exit 1
 fi
@@ -45,23 +45,38 @@ fi
 #    into `cksum -a`, so prefer it on hosts where it's available.
 #    `--untagged` forces the classic `HASH  FILENAME` output instead
 #    of the BSD-tagged `SHA256 (file) = HASH`, which is what our
-#    `cut -d ' ' -f 1` extraction below expects. Probed functionally
-#    (not by grepping --version) so BusyBox cksum (CRC32-only, doesn't
-#    recognise `-a`) and older GNU coreutils (pre-9.0, same) fall
-#    through to sha256sum instead of being silently misused.
+#    collation loop below expects.
 # 2. `sha256sum` — GNU coreutils classic, available on every Linux
 #    distro with coreutils regardless of version.
 # 3. `shasum -a 256` — Perl-based, ships in the base install on macOS,
 #    other BSDs, and git-for-windows.
-if command -v cksum >/dev/null 2>&1 && \
-   printf '' | cksum -a sha256 --untagged >/dev/null 2>&1; then
+#
+# We don't trust the binary's presence alone: each candidate is
+# functionally probed by sha256'ing the empty string and comparing the
+# result to the known SHA-256(""). That rejects BusyBox `cksum`
+# (CRC32-only, doesn't recognise `-a`), older GNU cksum pre-9.0 (same),
+# and catches any future host where the tool's output format drifts
+# away from `HASH  FILENAME`. `printf ''` (not `<<<''`, which would
+# inject a trailing newline) so we hash the genuine empty string.
+empty_sha256="e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+probe_sha256() {
+  local out
+  if ! out=$(printf '' | "$@" 2>/dev/null); then
+    return 1
+  fi
+  # GNU tools print `HASH  -` when hashing stdin (`-` is the stdin
+  # marker). Strip from the first space onward and compare the digest.
+  out="${out%% *}"
+  [ "${out,,}" = "$empty_sha256" ]
+}
+if probe_sha256 cksum -a sha256 --untagged; then
   sha256_cmd=(cksum -a sha256 --untagged)
-elif command -v sha256sum >/dev/null 2>&1; then
+elif probe_sha256 sha256sum; then
   sha256_cmd=(sha256sum)
-elif command -v shasum >/dev/null 2>&1; then
+elif probe_sha256 shasum -a 256; then
   sha256_cmd=(shasum -a 256)
 else
-  echo "error: no sha256 tool found (tried cksum -a sha256 --untagged, sha256sum, shasum -a 256)" >&2
+  echo "error: no working sha256 tool found (tried cksum -a sha256 --untagged, sha256sum, shasum -a 256)" >&2
   exit 1
 fi
 
@@ -78,46 +93,75 @@ manifest="$dir/SHASUMS256.txt"
 signed_manifest="$manifest.asc"
 manifest_basename="SHASUMS256.txt"
 signed_manifest_basename="SHASUMS256.txt.asc"
+tmp_manifest="$manifest.tmp"
 
-# Early validation of the raw artifact array — BEFORE any sort, rm, or
-# output mutation. The sort below is newline-delimited so an artifact
-# name containing \n or \r would split into multiple entries; the
-# reserved manifest/signature basenames would get their own hashes
-# computed and then clobbered by the script's own output. Reject both
-# cases here with a clear error instead of producing a broken manifest.
-for _a in "${artifacts[@]}"; do
-  case "$_a" in
+# Validate every artifact BEFORE we touch any output file or install
+# the cleanup trap — fail-fast with a clear error, no orphaned
+# background subshells, no half-written state, and no accidental
+# removal of a pre-existing valid manifest the caller still owns.
+#
+# Checks applied in order:
+#
+# 1. Line-break characters (\n / \r) in a name would inject bogus
+#    extra lines into the manifest body and split the sort below into
+#    multiple entries.
+# 2. The helper writes SHASUMS256.txt and SHASUMS256.txt.asc — accepting
+#    either as an input would compute a hash of the previous run's
+#    manifest output and then clobber it.
+# 3. The helper's contract is basename-only: the name is interpolated
+#    into `$hash_dir/$artifact.digest` below and written into the
+#    manifest body as-is. A caller passing `dist/foo.zip` would miss
+#    a subdir; `../foo.zip` would escape `$hash_dir` entirely; `"."`
+#    and `".."` break manifest parsing.
+# 4. Duplicate basenames would launch two hash jobs writing the same
+#    `$hash_dir/$artifact.digest` path and the collation loop would
+#    emit the same archive twice. Detected via an associative set
+#    keyed on the unsorted name, so we don't depend on the manifest
+#    sort order happening up front.
+# 5. The file must exist inside `$dir` so the hash job can read it.
+declare -A _seen=()
+for artifact in "${artifacts[@]}"; do
+  case "$artifact" in
     *$'\n'*|*$'\r'*)
-      echo "error: artifact name contains line break: $(printf '%q' "$_a")" >&2
+      echo "error: artifact name contains line break: $(printf '%q' "$artifact")" >&2
       exit 1
       ;;
   esac
-  if [ "$_a" = "$manifest_basename" ] || [ "$_a" = "$signed_manifest_basename" ]; then
-    echo "error: artifact name is reserved for manifest output: $_a" >&2
+  if [ "$artifact" = "$manifest_basename" ] || [ "$artifact" = "$signed_manifest_basename" ]; then
+    echo "error: artifact name is reserved for manifest output: $artifact" >&2
+    exit 1
+  fi
+  case "$artifact" in
+    ""|.|..|*/*)
+      echo "error: artifact names must be basenames (no slashes, not '.' or '..'): $artifact" >&2
+      exit 1
+      ;;
+  esac
+  if [ -n "${_seen[$artifact]:-}" ]; then
+    echo "error: duplicate artifact for signing: $artifact" >&2
+    exit 1
+  fi
+  _seen[$artifact]=1
+  if [ ! -f "$dir/$artifact" ]; then
+    echo "error: missing artifact for signing: $dir/$artifact" >&2
     exit 1
   fi
 done
-unset _a
-# We write hash lines into a .tmp sibling and rename to $manifest atomically
-# once every archive has been hashed. This keeps the final $manifest path
-# either whole or absent on disk even if the script is SIGKILL'd mid-loop
-# (the normal EXIT trap wouldn't fire for SIGKILL, so the `: > $manifest`
-# + append pattern would leave a partial file that the caller cannot tell
-# from a complete one).
-tmp_manifest="$manifest.tmp"
+unset artifact _seen
 
-# Set up cleanup BEFORE anything is written, so every failure path — the
-# missing-artifact check below, a gpg --import error, a gpg --clearsign
-# error — leaves the directory in the same state: either the outputs we
-# were supposed to produce exist (success) or nothing does (failure). A
-# half-written unsigned manifest alongside a stale .asc is exactly the
-# integrity failure this script exists to prevent.
+# Now that the request is validated, install cleanup for the mutation
+# phase. Every failure below this point — `rm -f` on a stale .asc, a
+# gpg --import error, a gpg --clearsign error — must leave the directory
+# in the same state: either the outputs we were supposed to produce
+# exist (success) or nothing new does (failure). A half-written unsigned
+# manifest alongside a stale .asc is exactly the integrity failure this
+# script exists to prevent.
 success=0
 gnupghome=""
 hash_dir=""
 cleanup() {
   local rc=$?
-  # Every rm inside this trap ends in `|| true`. With `set -eo pipefail`
+  # Every rm inside this trap ends in `|| true`. With `set -euo pipefail`
   # in effect, a non-zero rm (permission error, NFS stale handle, etc.)
   # would otherwise propagate out of the trap with rm's exit code instead
   # of the captured `$rc`, making the caller think signing failed when it
@@ -143,14 +187,6 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# Sort the artifact list so the manifest is deterministic regardless of
-# the caller's ordering. This matches packages/bun-release/scripts/upload-assets.ts
-# which localeCompare-sorts the same map.
-sorted=()
-while IFS= read -r line; do
-  sorted+=("$line")
-done < <(printf '%s\n' "${artifacts[@]}" | LC_ALL=C sort)
-
 # Remove any stale .asc from a previous run BEFORE we start producing
 # output, regardless of which branch we'll take. If this directory was
 # previously signed and we're now running unsigned (e.g. secrets got
@@ -167,31 +203,6 @@ done < <(printf '%s\n' "${artifacts[@]}" | LC_ALL=C sort)
 # the pre-existing valid SHASUMS256.txt — strictly worse than leaving
 # everything alone.
 rm -f "$signed_manifest" || true
-
-# Validate every artifact BEFORE we spawn any hash jobs — fail-fast with
-# a clean error message, no orphaned background subshells. Two checks:
-#
-# 1. The helper's contract is basename-only artifacts: the name is
-#    interpolated into `"$hash_dir/$artifact.digest"` below and written
-#    into the manifest body as-is. A caller passing `dist/foo.zip` would
-#    try to write to a missing subdirectory; `../foo.zip` would escape
-#    `$hash_dir` entirely; `"."` and `".."` break manifest parsing. The
-#    canary caller (`.buildkite/scripts/upload-release.sh`) already only
-#    passes basenames, but the check guards against direct invocations
-#    and future callers that don't know the contract.
-# 2. The file must exist inside `$dir` so the hash job can read it.
-for artifact in "${sorted[@]}"; do
-  case "$artifact" in
-    ""|.|..|*/*)
-      echo "error: artifact names must be basenames (no slashes, not '.' or '..'): $artifact" >&2
-      exit 1
-      ;;
-  esac
-  if [ ! -f "$dir/$artifact" ]; then
-    echo "error: missing artifact for signing: $dir/$artifact" >&2
-    exit 1
-  fi
-done
 
 # Hash every artifact in parallel. The canary set is 22 archives, each
 # roughly 30-150 MB — sequential sha256sum runs ~6-7 s on the buildkite
@@ -210,21 +221,24 @@ done
 #   (Windows, Cygwin, msys). On POSIX systems this is equivalent to the
 #   two-space text-mode separator; on Windows it's a correctness fix.
 #   The validator regex in the issue already accepts both forms.
-# - Both sha256sum and shasum -a 256 print `HASH  FILENAME` with a known
-#   space separator, so `cut -d ' ' -f 1` extracts the hex digest.
+# - Each digest file contains the full `HASH  FILENAME\n` line as
+#   emitted by the sha256 tool. The collation loop extracts just the
+#   hash via `cut -d ' ' -f 1` — doing the cut there (not inside the
+#   parallel hash job) keeps the job a single exec and means the file
+#   on disk has enough context for a post-mortem if anything ever goes
+#   wrong reading it back.
 hash_dir=$(mktemp -d)
 
 pids=()
-for artifact in "${sorted[@]}"; do
-  (
-    "${sha256_cmd[@]}" "$dir/$artifact" | cut -d ' ' -f 1 > "$hash_dir/$artifact.digest"
-  ) &
+for artifact in "${artifacts[@]}"; do
+  "${sha256_cmd[@]}" "$dir/$artifact" > "$hash_dir/$artifact.digest" &
   pids+=("$!")
 done
 
 # Wait for every hash job and fail-fast on any non-zero exit. We wait on
-# each pid individually (rather than a bare `wait`) so pipefail failures
-# inside any one subshell propagate out with a meaningful error.
+# each pid individually (rather than a bare `wait`) so a failure in any
+# one job propagates out with a meaningful error instead of being masked
+# by a later-successful job.
 for pid in "${pids[@]}"; do
   if ! wait "$pid"; then
     echo "error: sha256 failed for one or more artifacts" >&2
@@ -232,10 +246,19 @@ for pid in "${pids[@]}"; do
   fi
 done
 
+# Sort the artifact list so the manifest is deterministic regardless of
+# the caller's ordering. This matches packages/bun-release/scripts/upload-assets.ts
+# which localeCompare-sorts the same map. We only need the sorted order
+# here at collation time, not for validation or hashing.
+sorted=()
+while IFS= read -r line; do
+  sorted+=("$line")
+done < <(printf '%s\n' "${artifacts[@]}" | LC_ALL=C sort)
+
 # Collate the per-artifact digests into the manifest in sorted order.
 : > "$tmp_manifest"
 for artifact in "${sorted[@]}"; do
-  sha=$(cat "$hash_dir/$artifact.digest")
+  sha=$(cut -d ' ' -f 1 "$hash_dir/$artifact.digest")
   if [ "${#sha}" -ne 64 ]; then
     echo "error: malformed sha256 for $artifact: '$sha'" >&2
     exit 1

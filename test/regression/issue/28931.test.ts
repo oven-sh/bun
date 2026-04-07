@@ -341,6 +341,30 @@ describe.concurrent.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
     expect(res.exitCode).toBe(1);
   });
 
+  test("rejects duplicate basenames in the artifact list", async () => {
+    // A repeated basename would launch two parallel hash jobs writing
+    // to the same `$hash_dir/$artifact.digest` path (last-write wins,
+    // racy) and the collation loop would emit the same archive twice,
+    // producing a manifest downstream `sha256sum -c` tooling would parse
+    // as two identical entries. Reject up front in the validation pass.
+    using dir = tempDir("bun-28931-dup-", {
+      "bun-linux-x64.zip": "present",
+    });
+    const dirStr = String(dir);
+
+    const res = await sh([script, dirStr, "bun-linux-x64.zip", "bun-linux-x64.zip"], {
+      GPG_PRIVATE_KEY: gpgPrivateKey,
+      GPG_PASSPHRASE: passphrase,
+    });
+    expect(res.stderr).toContain("duplicate artifact");
+    expect(res.exitCode).toBe(1);
+    // No partial state — validation fires before the mutation phase
+    // even installs its cleanup trap, so the caller's pre-existing
+    // state (or lack thereof) is strictly untouched.
+    expect(existsSync(join(dirStr, "SHASUMS256.txt"))).toBe(false);
+    expect(existsSync(join(dirStr, "SHASUMS256.txt.asc"))).toBe(false);
+  });
+
   test.each([
     ["reserved manifest name", "SHASUMS256.txt"],
     ["reserved signed-manifest name", "SHASUMS256.txt.asc"],

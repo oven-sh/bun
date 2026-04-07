@@ -197,16 +197,40 @@ describe.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
     expect(verify.exitCode).toBe(0);
   });
 
-  test("exits 2 and writes nothing when GPG env vars are empty (rollout skip path)", () => {
-    using dir = tempDir("bun-28931-skip-", {
-      "bun-linux-x64.zip": "x",
+  test("writes unsigned SHASUMS256.txt when GPG env vars are empty (rollout fallback)", () => {
+    // Before the Buildkite GPG secrets are provisioned, the helper still
+    // produces a fresh accurate SHASUMS256.txt — users running
+    // `sha256sum -c` get correct hashes immediately and the daily sign
+    // cron catches up with a matching .asc within 24h.
+    using dir = tempDir("bun-28931-unsigned-", {
+      "bun-linux-x64.zip": "fake-linux",
+      "bun-darwin-aarch64.zip": "fake-darwin",
     });
     const dirStr = String(dir);
 
-    const res = sh([script, dirStr, "bun-linux-x64.zip"], { GPG_PRIVATE_KEY: "", GPG_PASSPHRASE: "" });
-    expect(res.stderr).toContain("skipping SHASUMS256.txt signing");
-    expect(res.exitCode).toBe(2);
-    expect(existsSync(join(dirStr, "SHASUMS256.txt"))).toBe(false);
+    const res = sh([script, dirStr, "bun-linux-x64.zip", "bun-darwin-aarch64.zip"], {
+      GPG_PRIVATE_KEY: "",
+      GPG_PASSPHRASE: "",
+    });
+    expect(res.stderr).toContain("wrote SHASUMS256.txt");
+    expect(res.stderr).toContain("without a signature");
+    expect(res.stderr).not.toContain("error:");
+    expect(res.exitCode).toBe(0);
+
+    // Manifest must still be present and correct.
+    const manifest = readFileSync(join(dirStr, "SHASUMS256.txt"), "utf8").trim();
+    const lines = manifest.split(/\r?\n/);
+    expect(lines.length).toBe(2);
+    for (const line of lines) {
+      const m = line.match(/^([a-f0-9]{64})  (.+)$/);
+      expect(m).not.toBeNull();
+      const [, hex, name] = m!;
+      const expected = createHash("sha256").update(readFileSync(join(dirStr, name))).digest("hex");
+      expect(hex).toBe(expected);
+    }
+
+    // .asc must NOT exist — we intentionally upload an unsigned manifest
+    // in this path. The daily cron handles re-signing.
     expect(existsSync(join(dirStr, "SHASUMS256.txt.asc"))).toBe(false);
   });
 

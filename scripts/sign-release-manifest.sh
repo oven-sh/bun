@@ -1,24 +1,26 @@
 #!/bin/bash
 
-# Generate and clearsign SHASUMS256.txt for a bun release.
+# Generate (and optionally clearsign) SHASUMS256.txt for a bun release.
 #
 # Usage:
 #   sign-release-manifest.sh <dir> <artifact> [<artifact>...]
 #
-# The script walks the artifacts in <dir>, writes SHASUMS256.txt and
-# SHASUMS256.txt.asc next to them, and leaves them on disk for the caller
-# to upload. If GPG_PRIVATE_KEY / GPG_PASSPHRASE are not set, the script
-# exits 2 and writes nothing — this lets the canary pipeline roll out
-# before the buildkite secrets exist and fall back to the daily sign cron
-# until they do.
+# The script walks the artifacts in <dir> and writes SHASUMS256.txt next
+# to them. If GPG_PRIVATE_KEY / GPG_PASSPHRASE are set, it also clearsigns
+# the manifest into SHASUMS256.txt.asc. If they are not set, only the
+# unsigned manifest is written — fresh accurate checksums are still useful
+# to anyone running `sha256sum -c`, and a user who is not verifying the
+# PGP signature should not be penalised by the rollout state of the
+# Buildkite GPG secrets. The daily .github/workflows/release.yml sign
+# cron will catch up with a signed manifest within 24h.
 #
-# Inputs (env):
-#   GPG_PRIVATE_KEY  ASCII-armored private key (required for signing)
-#   GPG_PASSPHRASE   Passphrase for the private key (required for signing)
+# Inputs (env, optional):
+#   GPG_PRIVATE_KEY  ASCII-armored private key (required to sign)
+#   GPG_PASSPHRASE   Passphrase for the private key (required to sign)
 #
 # Outputs (in <dir>):
 #   SHASUMS256.txt       Plain-text sha256 manifest, sorted by filename
-#   SHASUMS256.txt.asc   Clearsigned copy of the same body
+#   SHASUMS256.txt.asc   Clearsigned copy of the same body (only if signing)
 
 set -eo pipefail
 
@@ -36,17 +38,6 @@ if [ ! -d "$dir" ]; then
   exit 1
 fi
 
-if [ -z "${GPG_PRIVATE_KEY:-}" ] || [ -z "${GPG_PASSPHRASE:-}" ]; then
-  echo "warn: GPG_PRIVATE_KEY/GPG_PASSPHRASE not set; skipping SHASUMS256.txt signing." >&2
-  echo "warn: The daily release sign workflow will regenerate the manifest later." >&2
-  exit 2
-fi
-
-if ! command -v gpg >/dev/null 2>&1; then
-  echo "error: gpg is not installed" >&2
-  exit 1
-fi
-
 # Pick a sha256 tool. macOS has shasum; Linux usually has both.
 if command -v sha256sum >/dev/null 2>&1; then
   sha256_cmd=(sha256sum)
@@ -57,15 +48,24 @@ else
   exit 1
 fi
 
+should_sign=0
+if [ -n "${GPG_PRIVATE_KEY:-}" ] && [ -n "${GPG_PASSPHRASE:-}" ]; then
+  should_sign=1
+  if ! command -v gpg >/dev/null 2>&1; then
+    echo "error: gpg is not installed" >&2
+    exit 1
+  fi
+fi
+
 manifest="$dir/SHASUMS256.txt"
 signed_manifest="$manifest.asc"
 
 # Set up cleanup BEFORE anything is written, so every failure path — the
 # missing-artifact check below, a gpg --import error, a gpg --clearsign
-# error — leaves the directory in the same state: either both files exist
-# (success) or neither does (failure). A half-written unsigned manifest
-# alongside a missing .asc file is exactly the integrity failure this
-# script exists to prevent.
+# error — leaves the directory in the same state: either the outputs we
+# were supposed to produce exist (success) or nothing does (failure). A
+# half-written unsigned manifest alongside a stale .asc is exactly the
+# integrity failure this script exists to prevent.
 success=0
 gnupghome=""
 cleanup() {
@@ -104,6 +104,18 @@ done
 
 echo "Generated $manifest:"
 cat "$manifest"
+
+if [ "$should_sign" -ne 1 ]; then
+  # Fresh unsigned manifest is strictly more useful to `sha256sum -c` users
+  # than leaving a stale one in place. The sibling .asc will still point at
+  # the previous manifest body until the daily cron runs, so strict PGP
+  # validators will see a temporary identity mismatch. Document the state.
+  echo "warn: GPG_PRIVATE_KEY/GPG_PASSPHRASE not set; wrote SHASUMS256.txt" >&2
+  echo "warn: without a signature. The daily release sign workflow will" >&2
+  echo "warn: catch up with a matching SHASUMS256.txt.asc within 24h." >&2
+  success=1
+  exit 0
+fi
 
 # Use an isolated GNUPGHOME so we never touch the agent's default keyring.
 gnupghome=$(mktemp -d)

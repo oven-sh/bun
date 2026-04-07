@@ -166,11 +166,17 @@ function update_github_release() {
 }
 
 function sign_and_upload_manifest() {
-  # Generate, clearsign and upload SHASUMS256.txt + SHASUMS256.txt.asc for
-  # the canonical artifact list in the current working directory. Skips
-  # signing (with a warning) when the GPG secrets are not yet present in
-  # Buildkite — the daily .github/workflows/release.yml sign job will
-  # regenerate the manifest in that case.
+  # Generate SHASUMS256.txt (always) and SHASUMS256.txt.asc (when the
+  # Buildkite GPG secrets exist) for the canonical artifact list in the
+  # current working directory, then upload both to the release.
+  #
+  # Rollout: before GPG_PRIVATE_KEY / GPG_PASSPHRASE are provisioned in
+  # Buildkite, the helper writes SHASUMS256.txt only and the wrapper
+  # uploads just that. Users running `sha256sum -c` get accurate hashes
+  # immediately; the daily .github/workflows/release.yml sign cron still
+  # regenerates the matching SHASUMS256.txt.asc within 24h. Once both
+  # secrets exist every canary push signs inline and the .asc stays
+  # byte-in-step with the .txt.
   #
   # See: https://github.com/oven-sh/bun/issues/28931
   local version="$1"
@@ -182,26 +188,19 @@ function sign_and_upload_manifest() {
   gpg_private_key=$(buildkite-agent secret get "GPG_PRIVATE_KEY" 2>/dev/null || true)
   gpg_passphrase=$(buildkite-agent secret get "GPG_PASSPHRASE" 2>/dev/null || true)
 
-  # Rollout fallback: until the Buildkite GPG secrets are provisioned, skip
-  # signing here and let the daily .github/workflows/release.yml sign job
-  # regenerate the manifest. Once both secrets exist this branch is never
-  # taken again — every canary push signs inline.
-  if [ -z "$gpg_private_key" ] || [ -z "$gpg_passphrase" ]; then
+  if [ -n "$gpg_private_key" ] && [ -n "$gpg_passphrase" ]; then
+    assert_command "gpg" "gnupg" "https://gnupg.org/download/"
+  else
     echo "warn: GPG_PRIVATE_KEY/GPG_PASSPHRASE not set in Buildkite secrets;"
-    echo "warn: skipping SHASUMS256.txt signing. The daily sign workflow"
-    echo "warn: will regenerate the manifest later."
-    return 0
+    echo "warn: uploading SHASUMS256.txt unsigned. The daily sign workflow"
+    echo "warn: will catch up with a matching SHASUMS256.txt.asc within 24h."
   fi
-
-  assert_command "gpg" "gnupg" "https://gnupg.org/download/"
 
   local script_dir
   script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
   # `set -e` would kill the pipeline on a non-zero exit, so capture the
-  # helper's exit via `|| sign_exit=$?`. The helper only exits non-zero
-  # for real failures here — the skip-sentinel path (exit 2) is gated by
-  # the early return above.
+  # helper's exit via `|| sign_exit=$?`.
   local sign_exit=0
   GPG_PRIVATE_KEY="$gpg_private_key" \
   GPG_PASSPHRASE="$gpg_passphrase" \
@@ -209,12 +208,16 @@ function sign_and_upload_manifest() {
     || sign_exit=$?
 
   if [ "$sign_exit" -ne 0 ]; then
-    echo "error: failed to sign SHASUMS256.txt (exit $sign_exit)"
+    echo "error: failed to generate SHASUMS256.txt (exit $sign_exit)"
     return "$sign_exit"
   fi
 
   upload_github_asset "$version" SHASUMS256.txt
-  upload_github_asset "$version" SHASUMS256.txt.asc
+  # The helper only writes .asc when the GPG secrets were present. Upload
+  # it opportunistically so the unsigned fallback path stays a no-op here.
+  if [ -f SHASUMS256.txt.asc ]; then
+    upload_github_asset "$version" SHASUMS256.txt.asc
+  fi
 }
 
 function upload_s3_file() {

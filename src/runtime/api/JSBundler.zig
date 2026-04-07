@@ -237,6 +237,7 @@ pub const JSBundler = struct {
         allow_unresolved: ?bun.StringSet = null,
         source_map: options.SourceMapOption = .none,
         public_path: OwnedString = OwnedString.initEmpty(bun.default_allocator),
+        asset_inline_limit: u32 = 128 * 1024,
         conditions: bun.StringSet = bun.StringSet.init(bun.default_allocator),
         packages: options.PackagesOption = .bundle,
         format: options.Format = .esm,
@@ -861,6 +862,13 @@ pub const JSBundler = struct {
             if (try config.getOptional(globalThis, "publicPath", ZigString.Slice)) |slice| {
                 defer slice.deinit();
                 try this.public_path.appendSliceExact(slice.slice());
+            }
+
+            if (try config.getOptional(globalThis, "assetInlineLimit", i64)) |limit| {
+                if (limit < 0 or limit > std.math.maxInt(u32)) {
+                    return globalThis.throwInvalidArguments("assetInlineLimit must be a non-negative integer of bytes (0 to 4 GiB)", .{});
+                }
+                this.asset_inline_limit = @intCast(limit);
             }
 
             if (try config.getTruthy(globalThis, "naming")) |naming| {

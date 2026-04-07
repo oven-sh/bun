@@ -139,7 +139,13 @@ function upload_github_asset() {
   local version="$1"
   local tag="$(release_tag "$version")"
   local file="$2"
-  local name="$(basename "$file")"
+  # Declared separately from the assignment so `set -e` can catch a
+  # basename(1) failure (SC2155). The combined `local name=$(...)` form
+  # masks the subshell's exit status behind `local`'s own always-zero
+  # return, which would silently leave `name` empty and make the
+  # exact-match retry check below false-negative.
+  local name
+  name="$(basename "$file")"
   run_command gh release upload "$tag" "$file" --clobber --repo "$BUILDKITE_REPO"
 
   # Sometimes the upload fails, maybe this is a race condition in the gh CLI?

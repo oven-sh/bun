@@ -14,12 +14,12 @@ describe("Bun.otel context propagation", () => {
     expect(otel.getActiveSpanContext()).toBeUndefined();
   });
 
-  test("startActiveSpan: context survives await and restores after", async () => {
+  test("start (callback):context survives await and restores after", async () => {
     otel.configure({ endpoint: "", sampler: "always_on" });
-    const tracer = otel.getTracer("test");
+    const tracer = otel.tracer("test");
     let inside: string | undefined;
     let afterAwait: string | undefined;
-    const result = await tracer.startActiveSpan("a", async span => {
+    const result = await tracer.start("a", async span => {
       inside = hex(otel.getActiveSpanContext().spanId);
       await Promise.resolve();
       afterAwait = hex(otel.getActiveSpanContext().spanId);
@@ -32,17 +32,17 @@ describe("Bun.otel context propagation", () => {
     expect(otel.getActiveSpanContext()).toBeUndefined();
   });
 
-  test("startActiveSpan: overlapping Promise.all each sees own span", async () => {
+  test("start (callback):overlapping Promise.all each sees own span", async () => {
     otel.configure({ endpoint: "", sampler: "always_on" });
-    const tracer = otel.getTracer("test");
+    const tracer = otel.tracer("test");
     const seen: Record<string, string> = {};
     await Promise.all([
-      tracer.startActiveSpan("a", async span => {
+      tracer.start("a", async span => {
         await Promise.resolve();
         seen.a = hex(otel.getActiveSpanContext().spanId);
         expect(seen.a).toBe(hex(span.spanContext.spanId));
       }),
-      tracer.startActiveSpan("b", async span => {
+      tracer.start("b", async span => {
         await Promise.resolve();
         seen.b = hex(otel.getActiveSpanContext().spanId);
         expect(seen.b).toBe(hex(span.spanContext.spanId));
@@ -52,38 +52,38 @@ describe("Bun.otel context propagation", () => {
     expect(otel.getActiveSpanContext()).toBeUndefined();
   });
 
-  test("startActiveSpan: nested child inherits parent traceId", async () => {
+  test("start (callback):nested child inherits parent traceId", async () => {
     otel.configure({ endpoint: "", sampler: "always_on" });
-    const tracer = otel.getTracer("test");
+    const tracer = otel.tracer("test");
     let outerTrace: string | undefined;
     let innerTrace: string | undefined;
-    await tracer.startActiveSpan("outer", async outer => {
+    await tracer.start("outer", async outer => {
       outerTrace = hex(outer.spanContext.traceId);
-      await tracer.startActiveSpan("inner", async inner => {
+      await tracer.start("inner", async inner => {
         innerTrace = hex(inner.spanContext.traceId);
       });
     });
     expect(innerTrace).toBe(outerTrace);
   });
 
-  test("startActiveSpan: sync throw ends span and rethrows", () => {
+  test("start (callback):sync throw ends span and rethrows", () => {
     otel.configure({ endpoint: "", sampler: "always_on" });
-    const tracer = otel.getTracer("test");
+    const tracer = otel.tracer("test");
     expect(() =>
-      tracer.startActiveSpan("boom", () => {
+      tracer.start("boom", () => {
         throw new Error("boom");
       }),
     ).toThrow("boom");
     expect(otel.getActiveSpanContext()).toBeUndefined();
   });
 
-  test("startActiveSpan: async rejection propagates to awaiter", async () => {
+  test("start (callback):async rejection propagates to awaiter", async () => {
     otel.configure({ endpoint: "", sampler: "always_on" });
-    const tracer = otel.getTracer("test");
+    const tracer = otel.tracer("test");
 
     let caught: string | undefined;
     try {
-      await tracer.startActiveSpan("op", async () => {
+      await tracer.start("op", async () => {
         throw new Error("boom");
       });
     } catch (e) {
@@ -92,10 +92,10 @@ describe("Bun.otel context propagation", () => {
     expect(caught).toBe("boom");
 
     // Resolve value passes through the derived promise.
-    expect(await tracer.startActiveSpan("op3", async () => 42)).toBe(42);
+    expect(await tracer.start("op3", async () => 42)).toBe(42);
   });
 
-  test("startActiveSpan: unawaited rejection fires unhandledRejection", async () => {
+  test("start (callback):unawaited rejection fires unhandledRejection", async () => {
     // Subprocess: bun:test's own unhandledRejection handler interferes in-process.
     await using proc = Bun.spawn({
       cmd: [
@@ -104,7 +104,7 @@ describe("Bun.otel context propagation", () => {
         `Bun.otel.configure({endpoint:"",sampler:"always_on"});
          let u = "none";
          process.on("unhandledRejection", e => u = e?.message);
-         Bun.otel.getTracer("t").startActiveSpan("op", async () => { throw new Error("boom"); });
+         Bun.otel.tracer("t").start("op", async () => { throw new Error("boom"); });
          await new Promise(r => setTimeout(r, 10));
          console.log(u);`,
       ],
@@ -118,11 +118,11 @@ describe("Bun.otel context propagation", () => {
 
   test("ALS interop: span and AsyncLocalStorage coexist", async () => {
     otel.configure({ endpoint: "", sampler: "always_on" });
-    const tracer = otel.getTracer("test");
+    const tracer = otel.tracer("test");
     const als = new AsyncLocalStorage<string>();
     let spanInAls: string | undefined;
     let storeInSpan: string | undefined;
-    await tracer.startActiveSpan("a", async () => {
+    await tracer.start("a", async () => {
       const beforeAls = hex(otel.getActiveSpanContext().spanId);
       als.run("hello", () => {
         storeInSpan = als.getStore();
@@ -136,16 +136,15 @@ describe("Bun.otel context propagation", () => {
     expect(storeInSpan).toBe("hello");
   });
 
-  test("startSpan with no explicit parent inherits active span", async () => {
+  test("start (using form) with no explicit parent inherits active span", async () => {
     otel.configure({ endpoint: "", sampler: "always_on" });
-    const tracer = otel.getTracer("test");
+    const tracer = otel.tracer("test");
     let childTrace: string | undefined;
     let parentTrace: string | undefined;
-    await tracer.startActiveSpan("parent", async parent => {
+    await tracer.start("parent", async parent => {
       parentTrace = hex(parent.spanContext.traceId);
-      const child = tracer.startSpan("child"); // no parent option
+      using child = tracer.start("child"); // no parent option
       childTrace = hex(child.spanContext.traceId);
-      child.end();
     });
     expect(childTrace).toBe(parentTrace);
   });
@@ -164,7 +163,7 @@ describe("Bun.otel context propagation", () => {
       },
     });
     const userTP = "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01";
-    await otel.getTracer("t").startActiveSpan("op", async () => {
+    await otel.tracer("t").start("op", async () => {
       await fetch(upstream.url, { headers: { traceparent: userTP } });
     });
     expect(count).toBe(1);

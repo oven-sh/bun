@@ -25,45 +25,53 @@ describe("Bun.otel runtime", () => {
 
   test("reconfigure does not invalidate existing tracers/spans", () => {
     otel.configure({ endpoint: "", sampler: "always_on" });
-    const tracer = otel.getTracer("scope-a");
-    const liveSpan = tracer.startSpan("live");
-    otel.configure({ endpoint: "", sampler: "always_off" });
-    // previously: ASAN use-after-poison
-    expect(() => tracer.startSpan("stale").end()).not.toThrow();
-    expect(() => liveSpan.end()).not.toThrow();
+    const tracer = otel.tracer("scope-a");
+    {
+      using liveSpan = tracer.start("live");
+      otel.configure({ endpoint: "", sampler: "always_off" });
+      // previously: ASAN use-after-poison
+      expect(() => {
+        using stale = tracer.start("stale");
+      }).not.toThrow();
+      expect(() => liveSpan.end()).not.toThrow();
+    }
     // sampler change is observed by the pre-existing tracer
-    expect(tracer.startSpan("after").isRecording).toBe(false);
+    using after = tracer.start("after");
+    expect(after.isRecording).toBe(false);
   });
 
-  test("startSpan inherits parent traceId and sets parentSpanId", () => {
+  test("start inherits parent traceId and sets parentSpanId", () => {
     otel.configure({ endpoint: "", sampler: "always_on" });
-    const tracer = otel.getTracer("test");
-    const parent = tracer.startSpan("parent");
+    const tracer = otel.tracer("test");
+    using parent = tracer.start("parent");
     const pctx = parent.spanContext;
-    const child = tracer.startSpan("child", { parent: pctx, kind: 3 });
+    using child = tracer.start("child", { parent: pctx, kind: 3 });
     const cctx = child.spanContext;
 
     expect(Buffer.from(cctx.traceId).equals(Buffer.from(pctx.traceId))).toBe(true);
     expect(Buffer.from(cctx.spanId).equals(Buffer.from(pctx.spanId))).toBe(false);
     expect(cctx.toTraceparent().slice(0, 35)).toBe(pctx.toTraceparent().slice(0, 35));
     expect(parent.isRecording).toBe(true);
-
-    parent.end();
-    child.end();
-    expect(parent.isRecording).toBe(false);
   });
 
   test("attribute packing caps: long key, long value, >255 attrs", () => {
     otel.configure({ endpoint: "", sampler: "always_on" });
-    const tracer = otel.getTracer("caps");
+    const tracer = otel.tracer("caps");
     // 5000-char key — was: process panic at attributes.zig encodeKeyPtr
-    expect(() => tracer.startSpan("a").setAttribute(Buffer.alloc(5000, "k").toString(), "v")).not.toThrow();
+    expect(() => {
+      using s = tracer.start("a");
+      s.set(Buffer.alloc(5000, "k").toString(), "v");
+    }).not.toThrow();
     // 70KB string value — truncates at VAL_LEN_MAX (65535), must not crash
-    expect(() => tracer.startSpan("b").setAttribute("k", Buffer.alloc(70000, "x").toString())).not.toThrow();
+    expect(() => {
+      using s = tracer.start("b");
+      s.set("k", Buffer.alloc(70000, "x").toString());
+    }).not.toThrow();
     // 300 attrs — first 255 sent, droppedAttributesCount=45 on the wire
-    const s = tracer.startSpan("c");
-    for (let i = 0; i < 300; i++) s.setAttribute(`k${i}`, i);
-    expect(() => s.end()).not.toThrow();
+    {
+      using s = tracer.start("c");
+      for (let i = 0; i < 300; i++) s.set(`k${i}`, i);
+    }
     // POJO codec path with 5000-char key — was: same panic via Attribute.init
     expect(() =>
       otel.encodeTraces({
@@ -87,14 +95,54 @@ describe("Bun.otel runtime", () => {
     ).not.toThrow();
   });
 
+  test("await using activates context and restores+ends on dispose", async () => {
+    otel.configure({ endpoint: "", sampler: "always_on" });
+    const tracer = otel.tracer("test");
+    expect(otel.getActiveSpanContext()).toBeUndefined();
+    let captured: any;
+    {
+      await using span = tracer.start("scoped");
+      span.set("k", 1);
+      captured = span;
+      const active = otel.getActiveSpanContext();
+      expect(active).toBeDefined();
+      expect(Buffer.from(active.spanId).equals(Buffer.from(span.spanContext.spanId))).toBe(true);
+    }
+    expect(captured.isRecording).toBe(false); // ended by dispose
+    expect(otel.getActiveSpanContext()).toBeUndefined(); // slot restored
+    // double dispose / explicit end after dispose is safe
+    expect(() => captured.end()).not.toThrow();
+    expect(() => captured[Symbol.dispose]()).not.toThrow();
+  });
+
+  test("span.ok() / span.error() set status; error(Error) records exception", () => {
+    otel.configure({ endpoint: "", sampler: "always_on" });
+    const tracer = otel.tracer("test");
+    {
+      using s = tracer.start("ok-span");
+      s.ok();
+    }
+    {
+      using s = tracer.start("err-string");
+      expect(() => s.error("bad thing")).not.toThrow();
+    }
+    {
+      using s = tracer.start("err-obj");
+      expect(() => s.error(new TypeError("boom"))).not.toThrow();
+    }
+    {
+      using s = tracer.start("err-empty");
+      expect(() => s.error()).not.toThrow();
+    }
+  });
+
   test("sampler ratio=0 produces non-recording spans", () => {
     otel.configure({ endpoint: "", sampler: 0 });
-    const tracer = otel.getTracer("test");
-    const span = tracer.startSpan("noop");
+    const tracer = otel.tracer("test");
+    using span = tracer.start("noop");
     expect(span.isRecording).toBe(false);
     expect(span.spanContext.traceFlags & 1).toBe(0);
-    span.setAttribute("k", 1); // no-op, must not throw
-    span.end();
+    span.set("k", 1); // no-op, must not throw
   });
 
   // End-to-end: span -> processor -> AsyncHTTP exporter -> Bun.serve collector.
@@ -122,16 +170,17 @@ describe("Bun.otel runtime", () => {
         endpoint: "http://127.0.0.1:" + server.port,
         scheduledDelayMillis: 60_000, // forceFlush drives the send
       });
-      const tracer = Bun.otel.getTracer("e2e-test");
-      const root = tracer.startSpan("GET /users", { kind: 2 });
-      root.setAttribute("http.status_code", 200);
-      root.setAttribute("http.method", "GET");
-      root.addEvent("dispatch", { route: "/users" });
-      root.setStatus(1);
+      const tracer = Bun.otel.tracer("e2e-test");
+      const root = tracer.start("GET /users", { kind: 2 });
+      root.set("http.status_code", 200);
+      root.set("http.method", "GET");
+      root.event("dispatch", { route: "/users" });
+      root.ok();
       root.end();
 
-      const child = tracer.startSpan("db.query", { parent: root.spanContext, kind: 3 });
-      child.setAttributes({ "db.system": "postgresql", rows: 7n });
+      const child = tracer.start("db.query", { parent: root.spanContext, kind: 3 });
+      child.set({ "db.system": "postgresql", rows: 7n });
+      child.error(new TypeError("connection reset"));
       child.end();
 
       await Bun.otel.forceFlush();
@@ -140,6 +189,7 @@ describe("Bun.otel runtime", () => {
 
       const spans = received.resourceSpans[0].scopeSpans[0].spans;
       const byName = Object.fromEntries(spans.map(s => [s.name, s]));
+      const exc = byName["db.query"].events.find(e => e.name === "exception");
       const checks = {
         scope: received.resourceSpans[0].scopeSpans[0].scope.name,
         spanCount: spans.length,
@@ -149,6 +199,11 @@ describe("Bun.otel runtime", () => {
         rootHasEvent: byName["GET /users"].events[0].name,
         rootStatusAttr: byName["GET /users"].attributes.find(a => a.key === "http.status_code").value.intValue,
         childParent: byName["db.query"].parentSpanId === Buffer.from(root.spanContext.spanId).toString("hex"),
+        childStatus: byName["db.query"].status.code,
+        childStatusMsg: byName["db.query"].status.message,
+        excType: exc.attributes.find(a => a.key === "exception.type").value.stringValue,
+        excMsg: exc.attributes.find(a => a.key === "exception.message").value.stringValue,
+        excHasStack: exc.attributes.some(a => a.key === "exception.stacktrace"),
         sameTrace: byName["db.query"].traceId === byName["GET /users"].traceId,
         traceIdLen: byName["GET /users"].traceId.length,
         timeMono: BigInt(byName["GET /users"].endTimeUnixNano) >= BigInt(byName["GET /users"].startTimeUnixNano),
@@ -175,6 +230,11 @@ describe("Bun.otel runtime", () => {
       rootHasEvent: "dispatch",
       rootStatusAttr: "200",
       childParent: true,
+      childStatus: 2,
+      childStatusMsg: "connection reset",
+      excType: "TypeError",
+      excMsg: "connection reset",
+      excHasStack: true,
       sameTrace: true,
       traceIdLen: 32,
       timeMono: true,
@@ -183,12 +243,12 @@ describe("Bun.otel runtime", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("non-recording getTracer when no provider configured", async () => {
+  test("non-recording tracer when no provider configured", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
-        `const s = Bun.otel.getTracer("x").startSpan("y"); console.log(s.isRecording, s.spanContext.toTraceparent().length); s.end();`,
+        `const s = Bun.otel.tracer("x").start("y"); console.log(s.isRecording, s.spanContext.toTraceparent().length); s.end();`,
       ],
       env: { ...bunEnv, OTEL_EXPORTER_OTLP_ENDPOINT: undefined },
       stdout: "pipe",

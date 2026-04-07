@@ -442,7 +442,7 @@ static JSValue constructDNSObject(VM& vm, JSObject* bunObject)
 BUN_DECLARE_HOST_FUNCTION(Bun__otel__encodeTraces);
 BUN_DECLARE_HOST_FUNCTION(Bun__otel__decodeTraces);
 BUN_DECLARE_HOST_FUNCTION(Bun__otel__configure);
-BUN_DECLARE_HOST_FUNCTION(Bun__otel__getTracer);
+BUN_DECLARE_HOST_FUNCTION(Bun__otel__tracer);
 BUN_DECLARE_HOST_FUNCTION(Bun__otel__forceFlush);
 BUN_DECLARE_HOST_FUNCTION(Bun__otel__parseTraceparent);
 BUN_DECLARE_HOST_FUNCTION(Bun__otel__getActiveSpanContext);
@@ -458,7 +458,7 @@ static JSValue constructOtelObject(VM& vm, JSObject* bunObject)
     put("encodeTraces"_s, 1, Bun__otel__encodeTraces);
     put("decodeTraces"_s, 1, Bun__otel__decodeTraces);
     put("configure"_s, 1, Bun__otel__configure);
-    put("getTracer"_s, 1, Bun__otel__getTracer);
+    put("tracer"_s, 1, Bun__otel__tracer);
     put("forceFlush"_s, 0, Bun__otel__forceFlush);
     put("parseTraceparent"_s, 1, Bun__otel__parseTraceparent);
     put("getActiveSpanContext"_s, 0, Bun__otel__getActiveSpanContext);

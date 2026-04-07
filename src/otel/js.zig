@@ -588,7 +588,7 @@ const ArrayPusher = struct {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Runtime: configure / getTracer / forceFlush / parseTraceparent
+// Runtime: configure / tracer / forceFlush / parseTraceparent
 // ─────────────────────────────────────────────────────────────────────────────
 
 pub fn jsConfigure(global: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
@@ -667,7 +667,7 @@ pub fn jsConfigure(global: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSErr
     return .js_undefined;
 }
 
-pub fn jsGetTracer(global: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
+pub fn jsTracer(global: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
     const vm = global.bunVM();
     const args = callframe.arguments();
     const name = if (args.len > 0 and args[0].isString()) blk: {
@@ -713,8 +713,8 @@ comptime {
     @export(&js_decode, .{ .name = "Bun__otel__decodeTraces" });
     const js_configure = jsc.toJSHostFn(jsConfigure);
     @export(&js_configure, .{ .name = "Bun__otel__configure" });
-    const js_getTracer = jsc.toJSHostFn(jsGetTracer);
-    @export(&js_getTracer, .{ .name = "Bun__otel__getTracer" });
+    const js_tracer = jsc.toJSHostFn(jsTracer);
+    @export(&js_tracer, .{ .name = "Bun__otel__tracer" });
     const js_forceFlush = jsc.toJSHostFn(jsForceFlush);
     @export(&js_forceFlush, .{ .name = "Bun__otel__forceFlush" });
     const js_parseTraceparent = jsc.toJSHostFn(jsParseTraceparent);

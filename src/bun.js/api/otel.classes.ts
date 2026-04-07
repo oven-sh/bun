@@ -26,15 +26,18 @@ export default [
     configurable: false,
     klass: {},
     JSType: "0b11101110",
+    values: ["savedSlot"],
     proto: {
       spanContext: { getter: "getSpanContext", cache: true },
       isRecording: { getter: "getIsRecording" },
-      setAttribute: { fn: "setAttribute", length: 2 },
-      setAttributes: { fn: "setAttributes", length: 1 },
-      addEvent: { fn: "addEvent", length: 1 },
-      setStatus: { fn: "setStatus", length: 1 },
+      set: { fn: "set", length: 1 },
+      event: { fn: "event", length: 1 },
+      ok: { fn: "ok", length: 0 },
+      error: { fn: "setError", length: 1 },
       updateName: { fn: "updateName", length: 1 },
       end: { fn: "end", length: 0 },
+      "@@dispose": { fn: "dispose", length: 0 },
+      "@@asyncDispose": { fn: "dispose", length: 0 },
     },
   }),
 
@@ -47,8 +50,7 @@ export default [
     klass: {},
     JSType: "0b11101110",
     proto: {
-      startSpan: { fn: "startSpan", length: 1 },
-      startActiveSpan: { fn: "startActiveSpan", length: 2 },
+      start: { fn: "start", length: 1 },
     },
   }),
 ];

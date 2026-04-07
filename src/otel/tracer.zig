@@ -227,37 +227,39 @@ pub const OtelTracer = struct {
 
     pub const new = bun.TrivialNew(@This());
 
-    pub fn startSpan(this: *OtelTracer, global: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
+    /// `start(name)` / `start(name, opts)` → span; activates context. The
+    ///   returned span has `[Symbol.dispose]` = restore + end (use with
+    ///   `await using`).
+    /// `start(name, fn)` / `start(name, opts, fn)` → callback form; activates
+    ///   for the duration of `fn`, sync-restores after `fn` returns, ends on
+    ///   settle. Handles overlapping async correctly.
+    pub fn start(this: *OtelTracer, global: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
         const args = callframe.arguments();
         if (args.len < 1 or !args[0].isString()) {
-            return global.throwInvalidArguments("startSpan expects a span name string", .{});
+            return global.throwInvalidArguments("tracer.start(name[, options][, fn]) expects a span name string", .{});
         }
-        const opts: JSValue = if (args.len > 1 and args[1].isObject()) args[1] else .js_undefined;
-        const span = try this.createSpan(global, args[0], opts);
-        return span.toJS(global);
-    }
 
-    pub fn startActiveSpan(this: *OtelTracer, global: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-        const args = callframe.arguments();
-        if (args.len < 2 or !args[0].isString()) {
-            return global.throwInvalidArguments("startActiveSpan(name[, options], fn) expects a name and callback", .{});
-        }
-        // (name, fn) | (name, opts, fn)
         var opts: JSValue = .js_undefined;
-        var func: JSValue = args[1];
-        if (args.len > 2 and args[1].isObject() and !args[1].isCallable()) {
-            opts = args[1];
-            func = args[2];
-        }
-        if (!func.isCallable()) {
-            return global.throwInvalidArguments("startActiveSpan callback is not a function", .{});
+        var func: JSValue = .js_undefined;
+        if (args.len > 1) {
+            if (args[args.len - 1].isCallable()) {
+                func = args[args.len - 1];
+                if (args.len > 2 and args[1].isObject()) opts = args[1];
+            } else if (args[1].isObject()) {
+                opts = args[1];
+            }
         }
 
         const span = try this.createSpan(global, args[0], opts);
         const span_js = span.toJS(global);
-
         const cell = OtelSpanContext.create(global, span.ctx, false);
         const guard = instrument.SlotGuard.enter(global, cell);
+
+        if (func == .js_undefined) {
+            // `using` form: stash the saved slot on the span; dispose restores it.
+            OtelSpan.js.savedSlotSetCached(span_js, global, guard.saved);
+            return span_js;
+        }
 
         var did_throw = false;
         const result = func.call(global, .js_undefined, &.{span_js}) catch |err| blk: {
@@ -373,18 +375,17 @@ pub const OtelSpan = struct {
         return JSValue.jsBoolean(this.provider != null and !this.ended);
     }
 
-    pub fn setAttribute(this: *OtelSpan, global: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
+    /// `set(key, value)` or `set({k1: v1, k2: v2, ...})`.
+    pub fn set(this: *OtelSpan, global: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
         const args = callframe.arguments();
-        if (this.provider == null or this.ended or args.len < 2) return callframe.this();
-        const key = try jsStringSlice(global, args[0], &this.arena);
-        try this.appendAttr(this.dupe(key), try anyValueFromJS(global, args[1], this.alloc()));
-        return callframe.this();
-    }
-
-    pub fn setAttributes(this: *OtelSpan, global: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-        const args = callframe.arguments();
-        if (this.provider == null or this.ended or args.len < 1 or !args[0].isObject()) return callframe.this();
-        try this.appendAttributesObject(global, args[0]);
+        if (this.provider == null or this.ended or args.len < 1) return callframe.this();
+        if (args[0].isString()) {
+            if (args.len < 2) return callframe.this();
+            const key = try jsStringSlice(global, args[0], &this.arena);
+            try this.appendAttr(key, try anyValueFromJS(global, args[1], this.alloc()));
+        } else if (args[0].isObject()) {
+            try this.appendAttributesObject(global, args[0]);
+        }
         return callframe.this();
     }
 
@@ -403,7 +404,7 @@ pub const OtelSpan = struct {
         bun.handleOom(this.attrs.append(this.alloc(), Attribute.init(key, value)));
     }
 
-    pub fn addEvent(this: *OtelSpan, global: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
+    pub fn event(this: *OtelSpan, global: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
         const args = callframe.arguments();
         if (this.provider == null or this.ended or args.len < 1) return callframe.this();
         const name = try jsStringSlice(global, args[0], &this.arena);
@@ -429,15 +430,51 @@ pub const OtelSpan = struct {
         return callframe.this();
     }
 
-    pub fn setStatus(this: *OtelSpan, global: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-        const args = callframe.arguments();
-        if (this.provider == null or this.ended or args.len < 1) return callframe.this();
-        const code = args[0].toInt32();
-        if (code >= 0 and code <= 2) this.status.code = @enumFromInt(@as(u8, @intCast(code)));
-        if (args.len > 1 and args[1].isString()) {
-            this.status.message = try jsStringSlice(global, args[1], &this.arena);
-        }
+    pub fn ok(this: *OtelSpan, _: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
+        if (this.provider == null or this.ended) return callframe.this();
+        this.status = .{ .code = .ok };
         return callframe.this();
+    }
+
+    /// `error()` / `error(message: string)` / `error(err: Error)`.
+    /// When given an `Error`, also records an `exception` event with semconv
+    /// attributes (type/message/stacktrace).
+    pub fn setError(this: *OtelSpan, global: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
+        if (this.provider == null or this.ended) return callframe.this();
+        this.status.code = .err;
+        const args = callframe.arguments();
+        if (args.len < 1 or args[0].isUndefinedOrNull()) return callframe.this();
+        if (args[0].isString()) {
+            this.status.message = try jsStringSlice(global, args[0], &this.arena);
+            return callframe.this();
+        }
+        try this.recordException(global, args[0]);
+        return callframe.this();
+    }
+
+    fn recordException(this: *OtelSpan, global: *JSGlobalObject, val: JSValue) bun.JSError!void {
+        var list: std.ArrayListUnmanaged(Attribute) = .{};
+        const err_obj = val.toError() orelse val;
+        if (err_obj.isObject()) {
+            if (try err_obj.fastGet(global, .name)) |n| if (n.isString()) {
+                const s = try jsStringSlice(global, n, &this.arena);
+                bun.handleOom(list.append(this.alloc(), .semconv(.@"exception.type", .string(s))));
+            };
+            if (try err_obj.fastGet(global, .message)) |m| if (m.isString()) {
+                const s = try jsStringSlice(global, m, &this.arena);
+                this.status.message = s;
+                bun.handleOom(list.append(this.alloc(), .semconv(.@"exception.message", .string(s))));
+            };
+            if (try err_obj.get(global, "stack")) |st| if (st.isString()) {
+                const s = try jsStringSlice(global, st, &this.arena);
+                bun.handleOom(list.append(this.alloc(), .semconv(.@"exception.stacktrace", .string(s))));
+            };
+        }
+        bun.handleOom(this.events.append(this.alloc(), .{
+            .time_unix_nano = nowUnixNanos(),
+            .name = "exception",
+            .attributes = .from(list.items),
+        }));
     }
 
     pub fn updateName(this: *OtelSpan, global: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
@@ -473,6 +510,22 @@ pub const OtelSpan = struct {
             .status = this.status,
         };
         provider.processor.onEnd(at_rest, this.scope_index);
+        return .js_undefined;
+    }
+
+    /// `[Symbol.dispose]` / `[Symbol.asyncDispose]`. Restores the active-context
+    /// slot to its pre-start value (if this span activated it via the `using`
+    /// form of `tracer.start()`) and ends the span. `using` declarations
+    /// dispose in LIFO order, so nested spans restore correctly. `.end()` does
+    /// NOT restore — slot management is the caller's responsibility when not
+    /// using `using` or the callback form.
+    pub fn dispose(this: *OtelSpan, global: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
+        const this_value = callframe.this();
+        if (js.savedSlotGetCached(this_value)) |saved| {
+            instrument.setSlot(global, saved);
+            js.savedSlotSetCached(this_value, global, .zero);
+        }
+        this.endNow();
         return .js_undefined;
     }
 

@@ -162,7 +162,13 @@ function upload_github_asset() {
   # asset name is a prefix of another — e.g. SHASUMS256.txt vs
   # SHASUMS256.txt.asc — and skip the retry even though the file is missing.
   while [ "$(gh release view "$tag" --repo "$BUILDKITE_REPO" --json assets --jq '.assets[].name' | grep -cFx -- "$name")" -eq 0 ]; do
-    echo "warn: Uploading $file to $tag failed, retrying..."
+    # `>&2 || true` matches the SIGPIPE-guarded diagnostic pattern
+    # used by sign_and_upload_manifest and scripts/sign-release-manifest.sh.
+    # Without it, a dead Buildkite log aggregator delivering SIGPIPE to
+    # this echo would exit 141 under `set -eo pipefail`, terminating
+    # the retry loop before the `sleep` and re-upload — potentially
+    # leaving the asset permanently missing from the release.
+    echo "warn: Uploading $file to $tag failed, retrying..." >&2 || true
     sleep "$((RANDOM % 5 + 1))"
     run_command gh release upload "$tag" "$file" --clobber --repo "$BUILDKITE_REPO"
   done
@@ -203,19 +209,36 @@ function sign_and_upload_manifest() {
   gpg_private_key=$(buildkite-agent secret get "GPG_PRIVATE_KEY" 2>/dev/null || true)
   gpg_passphrase=$(buildkite-agent secret get "GPG_PASSPHRASE" 2>/dev/null || true)
 
+  # Three-way state handling: both-set (sign), neither-set (unsigned
+  # rollout fallback), exactly-one-set (hard error before the helper
+  # runs). Without the explicit partial branch, the "uploading
+  # unsigned / cron will catch up" warnings below would also fire on
+  # the partial-config path — the operator would see a success-
+  # implying log line immediately followed by the helper's partial-
+  # config error and a "failed to generate SHASUMS256.txt" echo,
+  # which is confusing under time pressure during a canary push. The
+  # helper itself also rejects partial configuration with the same
+  # error code, but catching it here gives a single unambiguous line
+  # in the wrapper log instead of a contradictory pair.
+  #
+  # Every echo ends in `>&2 || true`, matching the SIGPIPE-guarded
+  # pattern applied to diagnostics inside the companion
+  # `scripts/sign-release-manifest.sh` helper. Buildkite multiplexes
+  # stdout/stderr through a single log-aggregator process, and if
+  # that process dies (OOM, agent restart) the kernel delivers
+  # SIGPIPE on every fd writing to it. Under `set -eo pipefail`
+  # bash would then exit 141 on the first affected echo — before
+  # sign-release-manifest.sh is ever invoked, which would leave
+  # SHASUMS256.txt ungenerated on that canary push and recreate the
+  # exact integrity gap this PR exists to close.
   if [ -n "$gpg_private_key" ] && [ -n "$gpg_passphrase" ]; then
     assert_command "gpg" "gnupg" "https://gnupg.org/download/"
+  elif [ -n "$gpg_private_key" ] || [ -n "$gpg_passphrase" ]; then
+    echo "error: only one of GPG_PRIVATE_KEY / GPG_PASSPHRASE is set in Buildkite secrets;" >&2 || true
+    echo "error: both are required to sign, or both unset to publish unsigned." >&2 || true
+    echo "error: partial configuration is almost always a typo in a secret name." >&2 || true
+    return 1
   else
-    # Each echo ends in `|| true` and writes to stderr, matching the
-    # same pattern applied to diagnostics inside the companion
-    # `scripts/sign-release-manifest.sh` helper. Buildkite multiplexes
-    # stdout/stderr through a single log-aggregator process, and if
-    # that process dies (OOM, agent restart) the kernel delivers
-    # SIGPIPE on every fd writing to it. Under `set -eo pipefail`
-    # bash would then exit 141 on the first affected echo — before
-    # sign-release-manifest.sh is ever invoked, which would leave
-    # SHASUMS256.txt ungenerated on that canary push and recreate the
-    # exact integrity gap this PR exists to close.
     echo "warn: GPG_PRIVATE_KEY/GPG_PASSPHRASE not set in Buildkite secrets;" >&2 || true
     echo "warn: uploading SHASUMS256.txt unsigned. The daily sign workflow" >&2 || true
     echo "warn: will catch up with a matching SHASUMS256.txt.asc within 24h." >&2 || true

@@ -225,7 +225,9 @@ describe.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
       const m = line.match(/^([a-f0-9]{64})  (.+)$/);
       expect(m).not.toBeNull();
       const [, hex, name] = m!;
-      const expected = createHash("sha256").update(readFileSync(join(dirStr, name))).digest("hex");
+      const expected = createHash("sha256")
+        .update(readFileSync(join(dirStr, name)))
+        .digest("hex");
       expect(hex).toBe(expected);
     }
 

@@ -24,7 +24,7 @@ const shared_params = [_]ParamType{
     clap.parseParam("-p, --production                      Don't install devDependencies") catch unreachable,
     clap.parseParam("-P, --prod") catch unreachable,
     clap.parseParam("--no-save                             Don't update package.json or save a lockfile") catch unreachable,
-    clap.parseParam("--save                                Save to package.json (true by default)") catch unreachable,
+    clap.parseParam("--save                                Save to package.json (default for add/install/update; opt-in for link)") catch unreachable,
     clap.parseParam("--ca <STR>...                         Provide a Certificate Authority signing certificate") catch unreachable,
     clap.parseParam("--cafile <STR>                        The same as `--ca`, but is a file path to the certificate") catch unreachable,
     clap.parseParam("--dry-run                             Perform a dry run without making changes") catch unreachable,

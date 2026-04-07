@@ -89,6 +89,31 @@ describe("bun link dependency group flags (issue #28937)", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("--development (long form) writes to devDependencies", async () => {
+    const { consumer, installEnv, globalRoot, linkable } = await setupLink("dev");
+    using _g = globalRoot;
+    using _l = linkable;
+    using _c = consumer;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "link", "--development", "issue-28937-linked-pkg"],
+      cwd: String(consumer),
+      env: installEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).not.toContain("error:");
+
+    const pkg = await file(join(String(consumer), "package.json")).json();
+    expect(pkg.devDependencies).toEqual({
+      "issue-28937-linked-pkg": "link:issue-28937-linked-pkg",
+    });
+    expect(pkg.dependencies).toBeUndefined();
+    expect(exitCode).toBe(0);
+  });
+
   test("-d (short form) writes to devDependencies", async () => {
     const { consumer, installEnv, globalRoot, linkable } = await setupLink("dev");
     using _g = globalRoot;
@@ -174,6 +199,31 @@ describe("bun link dependency group flags (issue #28937)", () => {
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), "link", "--save", "issue-28937-linked-pkg"],
+      cwd: String(consumer),
+      env: installEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).not.toContain("error:");
+
+    const pkg = await file(join(String(consumer), "package.json")).json();
+    expect(pkg.dependencies).toEqual({
+      "issue-28937-linked-pkg": "link:issue-28937-linked-pkg",
+    });
+    expect(pkg.devDependencies).toBeUndefined();
+    expect(exitCode).toBe(0);
+  });
+
+  test("--exact --save writes to dependencies", async () => {
+    const { consumer, installEnv, globalRoot, linkable } = await setupLink("save");
+    using _g = globalRoot;
+    using _l = linkable;
+    using _c = consumer;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "link", "--exact", "--save", "issue-28937-linked-pkg"],
       cwd: String(consumer),
       env: installEnv,
       stdout: "pipe",

@@ -59,7 +59,7 @@ async function setupLink(group: "dev" | "optional" | "peer" | "save" | "no-save"
   }
 }
 
-describe("bun link dependency group flags (issue #28937)", () => {
+describe.concurrent("bun link dependency group flags (issue #28937)", () => {
   test("--dev writes to devDependencies", async () => {
     const { consumer, installEnv, globalRoot, linkable } = await setupLink("dev");
     using _g = globalRoot;

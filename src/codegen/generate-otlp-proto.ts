@@ -1,0 +1,201 @@
+// Parses the vendored OTLP .proto files and emits Zig field-tag constants.
+// Output is consumed by src/otel/otlp/{encode,decode}.zig — it carries field
+// numbers and wire types only, no encoding logic, so a typo'd tag is a build
+// error rather than silent wire corruption.
+import fs from "node:fs";
+import path from "node:path";
+import { writeIfNotChanged } from "./helpers.ts";
+
+const outputDir = process.argv[2];
+if (!outputDir) throw new Error("Missing output directory");
+
+const protoDir = path.join(import.meta.dirname, "..", "otel", "proto");
+const protoFiles = ["common.proto", "resource.proto", "trace.proto", "trace_service.proto"];
+
+type WireType = "varint" | "i64" | "len" | "i32";
+
+interface Field {
+  name: string;
+  num: number;
+  protoType: string;
+  repeated: boolean;
+}
+
+interface Message {
+  name: string;
+  fields: Field[];
+}
+
+const wireOf: Record<string, WireType> = {
+  bool: "varint",
+  int32: "varint",
+  int64: "varint",
+  uint32: "varint",
+  uint64: "varint",
+  sint32: "varint",
+  sint64: "varint",
+  enum: "varint",
+  fixed64: "i64",
+  sfixed64: "i64",
+  double: "i64",
+  fixed32: "i32",
+  sfixed32: "i32",
+  float: "i32",
+  string: "len",
+  bytes: "len",
+};
+
+// Populated during parse so enum-typed fields get varint, not len.
+const enumNames = new Set<string>();
+
+function wireTypeFor(protoType: string): WireType {
+  if (wireOf[protoType]) return wireOf[protoType];
+  // strip package qualifiers and parent-message prefixes; we only need the leaf
+  const leaf = protoType.split(".").pop()!;
+  if (enumNames.has(leaf)) return "varint";
+  return "len"; // message types are length-delimited
+}
+
+// Minimal proto3 parser: handles `message Name { ... }` with nesting, `oneof`,
+// `enum` (skipped), `reserved` (skipped), and `[repeated] type name = N;` fields.
+function parseProto(src: string): Message[] {
+  // Strip comments.
+  src = src.replace(/\/\/[^\n]*/g, "").replace(/\/\*[\s\S]*?\*\//g, "");
+
+  const messages: Message[] = [];
+  let i = 0;
+
+  function skipBlock() {
+    let depth = 1;
+    while (depth > 0 && i < src.length) {
+      const c = src[i++];
+      if (c === "{") depth++;
+      else if (c === "}") depth--;
+    }
+  }
+
+  function parseMessage(prefix: string) {
+    const m = /^\s*(\w+)\s*\{/.exec(src.slice(i));
+    if (!m) throw new Error(`expected message name at offset ${i}`);
+    const name = prefix + m[1];
+    i += m[0].length;
+    const fields: Field[] = [];
+
+    while (i < src.length) {
+      // skip whitespace
+      while (i < src.length && /\s/.test(src[i])) i++;
+      if (src[i] === "}") {
+        i++;
+        break;
+      }
+      const rest = src.slice(i);
+
+      let mm: RegExpExecArray | null;
+      if ((mm = /^message\b/.exec(rest))) {
+        i += mm[0].length;
+        parseMessage(name + "_");
+      } else if ((mm = /^enum\s+(\w+)\s*\{/.exec(rest))) {
+        enumNames.add(mm[1]);
+        i += mm[0].length;
+        skipBlock();
+      } else if ((mm = /^oneof\s+\w+\s*\{/.exec(rest))) {
+        i += mm[0].length;
+        // oneof body is just fields; recurse-ish by re-entering the field loop
+        // until matching '}'. We can't call parseMessage because it would
+        // register a new message. Inline parse:
+        while (i < src.length) {
+          while (i < src.length && /\s/.test(src[i])) i++;
+          if (src[i] === "}") {
+            i++;
+            break;
+          }
+          const fm = /^([\w.]+)\s+(\w+)\s*=\s*(\d+)\s*;/.exec(src.slice(i));
+          if (!fm) throw new Error(`bad oneof field at offset ${i}: ${src.slice(i, i + 40)}`);
+          i += fm[0].length;
+          fields.push({
+            name: fm[2],
+            num: parseInt(fm[3], 10),
+            protoType: fm[1],
+            repeated: false,
+          });
+        }
+      } else if ((mm = /^reserved\b[^;]*;/.exec(rest))) {
+        i += mm[0].length;
+      } else if ((mm = /^option\b[^;]*;/.exec(rest))) {
+        i += mm[0].length;
+      } else if ((mm = /^(repeated\s+)?([\w.]+)\s+(\w+)\s*=\s*(\d+)\s*;/.exec(rest))) {
+        i += mm[0].length;
+        fields.push({
+          name: mm[3],
+          num: parseInt(mm[4], 10),
+          protoType: mm[2],
+          repeated: !!mm[1],
+        });
+      } else {
+        // unknown token; advance to next ; or } to avoid infinite loop
+        const semi = rest.search(/[;}]/);
+        if (semi < 0) throw new Error(`unparseable proto at offset ${i}`);
+        i += semi + 1;
+      }
+    }
+    messages.push({ name, fields });
+  }
+
+  while (i < src.length) {
+    const rest = src.slice(i);
+    const mm = /^message\b/.exec(rest);
+    if (mm) {
+      i += mm[0].length;
+      parseMessage("");
+    } else if (/^enum\s+(\w+)\s*\{/.exec(rest)) {
+      const em = /^enum\s+(\w+)\s*\{/.exec(rest)!;
+      enumNames.add(em[1]);
+      i += em[0].length;
+      skipBlock();
+    } else {
+      i++;
+    }
+  }
+
+  return messages;
+}
+
+let zig = `// Generated by src/codegen/generate-otlp-proto.ts from src/otel/proto/*.proto
+// Do not edit.
+
+pub const WireType = enum(u3) {
+    varint = 0,
+    i64 = 1,
+    len = 2,
+    i32 = 5,
+};
+
+pub const Tag = struct {
+    num: u32,
+    wire: WireType,
+};
+
+`;
+
+const allMessages: Message[] = [];
+for (const file of protoFiles) {
+  const src = fs.readFileSync(path.join(protoDir, file), "utf8");
+  allMessages.push(...parseProto(src));
+}
+
+const zigKeywords = new Set(["type", "error", "var", "const", "fn", "struct", "enum", "union", "pub", "align"]);
+function zigIdent(name: string): string {
+  return zigKeywords.has(name) ? `@"${name}"` : name;
+}
+
+for (const msg of allMessages) {
+  zig += `pub const ${msg.name} = struct {\n`;
+  for (const f of msg.fields) {
+    const wire = wireTypeFor(f.protoType);
+    const comment = `${f.repeated ? "repeated " : ""}${f.protoType}`;
+    zig += `    pub const ${zigIdent(f.name)}: Tag = .{ .num = ${f.num}, .wire = .${wire} }; // ${comment}\n`;
+  }
+  zig += `};\n\n`;
+}
+
+writeIfNotChanged(path.join(outputDir, "OtlpProtoTags.zig"), zig);

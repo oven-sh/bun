@@ -439,6 +439,20 @@ static JSValue constructDNSObject(VM& vm, JSObject* bunObject)
     return dnsObject;
 }
 
+BUN_DECLARE_HOST_FUNCTION(Bun__otel__encodeTraces);
+BUN_DECLARE_HOST_FUNCTION(Bun__otel__decodeTraces);
+
+static JSValue constructOtelObject(VM& vm, JSObject* bunObject)
+{
+    JSGlobalObject* globalObject = bunObject->globalObject();
+    JSC::JSObject* otelObject = JSC::constructEmptyObject(globalObject);
+    otelObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "encodeTraces"_s), 1, Bun__otel__encodeTraces, ImplementationVisibility::Public, NoIntrinsic,
+        JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | 0);
+    otelObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "decodeTraces"_s), 1, Bun__otel__decodeTraces, ImplementationVisibility::Public, NoIntrinsic,
+        JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | 0);
+    return otelObject;
+}
+
 JSC_DECLARE_HOST_FUNCTION(jsFunctionJSONLParse);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionJSONLParseChunk);
 
@@ -1008,6 +1022,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     nanoseconds                                    functionBunNanoseconds                                              DontDelete|Function 0
     openInEditor                                   BunObject_callback_openInEditor                                     DontDelete|Function 1
     origin                                         BunObject_lazyPropCb_wrap_origin                                    DontEnum|ReadOnly|DontDelete|PropertyCallback
+    otel                                           constructOtelObject                                                 ReadOnly|DontDelete|PropertyCallback
     version_with_sha                               constructBunVersionWithSha                                          DontEnum|ReadOnly|DontDelete|PropertyCallback
     password                                       constructPasswordObject                                             DontDelete|PropertyCallback
     pathToFileURL                                  functionPathToFileURL                                               DontDelete|Function 1

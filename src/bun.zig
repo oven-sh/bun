@@ -226,6 +226,7 @@ pub const ComptimeStringMap16 = comptime_string_map.ComptimeStringMap16;
 pub const ComptimeStringMapWithKeyType = comptime_string_map.ComptimeStringMapWithKeyType;
 
 pub const glob = @import("./glob.zig");
+pub const otel = @import("./otel/otel.zig");
 pub const patch = @import("./patch.zig");
 pub const ini = @import("./ini.zig");
 pub const bits = @import("./bits.zig");

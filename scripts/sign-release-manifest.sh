@@ -251,6 +251,12 @@ GNUPGHOME="$gnupghome" gpg --batch --quiet --import <<< "$GPG_PRIVATE_KEY"
 # algorithm-agnostic (`Hash: .*`). Keeping the signature digest consistent
 # with production so nothing downstream that inspects the `Hash:` header
 # sees a change.
+# `&& success=1 || exit` ties the success flip textually and atomically
+# to gpg's own exit code: gpg succeeds → success=1, continue; gpg fails
+# → skip success=1, fall into `|| exit` which propagates gpg's non-zero
+# status (naked `exit` uses the most-recent command's status). This
+# intentionally sidesteps the `set -e` exemption for the left side of
+# `&&`, which would otherwise silently fall through on gpg failure.
 GNUPGHOME="$gnupghome" gpg \
   --batch --yes --quiet \
   --pinentry-mode loopback \
@@ -258,12 +264,6 @@ GNUPGHOME="$gnupghome" gpg \
   --digest-algo SHA512 \
   --clearsign \
   --output "$signed_manifest" \
-  "$manifest" <<< "$GPG_PASSPHRASE"
+  "$manifest" <<< "$GPG_PASSPHRASE" && success=1 || exit
 
-# Set success BEFORE the echo, and write the echo to stderr so every
-# diagnostic in this script is on the same stream. The success flag
-# protects cleanup() from deleting the signed manifest even if a broken
-# stdout pipe SIGPIPE'd the echo — gpg --clearsign returning 0 is the
-# real success criterion, the echo is cosmetic.
-success=1
 echo "Signed $signed_manifest" >&2

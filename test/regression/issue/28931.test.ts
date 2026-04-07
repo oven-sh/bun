@@ -277,6 +277,42 @@ describe.concurrent.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
     expect(existsSync(join(dirStr, "SHASUMS256.txt.asc"))).toBe(false);
   });
 
+  test.each([
+    ["key only", "placeholder-key-material", "", /GPG_PRIVATE_KEY is set but GPG_PASSPHRASE is empty/],
+    ["passphrase only", "", passphrase, /GPG_PASSPHRASE is set but GPG_PRIVATE_KEY is empty/],
+  ])("rejects partial GPG secret configuration (%s)", async (_label, key, pass, errorRe) => {
+    // A lone GPG_PRIVATE_KEY or lone GPG_PASSPHRASE is almost always
+    // a typo in a secret name or a half-completed provisioning, not
+    // a legitimate rollout state. The helper must fail hard before
+    // any output mutation, so the buildkite wrapper treats it as a
+    // signing failure instead of silently degrading to the unsigned
+    // path and publishing an unsigned manifest that looks like an
+    // intentional rollout — which would silently recreate the exact
+    // .txt/.asc divergence this PR exists to eliminate.
+    using dir = tempDir("bun-28931-partial-", {
+      "bun-linux-x64.zip": "present",
+    });
+    const dirStr = String(dir);
+
+    const res = await sh([script, dirStr, "bun-linux-x64.zip"], {
+      // At least one of these is a nonempty placeholder; function of the
+      // test case selects which. Actual signing is never attempted.
+      GPG_PRIVATE_KEY: key,
+      GPG_PASSPHRASE: pass,
+    });
+    expect(res.stderr).toMatch(errorRe);
+    expect(res.stderr).toContain("both must be set to sign, or both unset");
+    expect(res.exitCode).toBe(1);
+
+    // No output mutation whatsoever — the rejection fires before the
+    // cleanup trap is installed and before any manifest is written.
+    expect(existsSync(join(dirStr, "SHASUMS256.txt"))).toBe(false);
+    expect(existsSync(join(dirStr, "SHASUMS256.txt.asc"))).toBe(false);
+    // And no scratch dir was created.
+    const leftovers = readdirSync(dirStr).filter(name => name.startsWith(".sign-manifest-scratch."));
+    expect(leftovers).toEqual([]);
+  });
+
   test("unsigned fallback removes a stale .asc left by a previous signed run", async () => {
     // A signed run writes .txt + .asc; if the same directory is later
     // invoked unsigned (secrets rotated/removed, standalone manual

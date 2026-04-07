@@ -93,14 +93,52 @@ else
   exit 1
 fi
 
+# GPG secrets: classify into one of three states.
+#
+# - BOTH SET: sign the manifest (`should_sign=1`). Verify `gpg` is on
+#   PATH; missing gpg is a hard error because we have signing material
+#   but no way to use it.
+#
+# - BOTH ABSENT/EMPTY: unsigned rollout fallback. Documented staged-
+#   deployment state — see the script header comment and the
+#   sign_and_upload_manifest() block in .buildkite/scripts/upload-release.sh.
+#   Users running `sha256sum -c` get accurate hashes immediately; the
+#   daily .github/workflows/release.yml sign cron regenerates the
+#   matching .asc within 24h. `should_sign` stays 0 and the run exits
+#   zero after publishing SHASUMS256.txt.
+#
+# - PARTIAL (exactly one set): hard error. A lone GPG_PRIVATE_KEY or
+#   lone GPG_PASSPHRASE is almost always a typo in a secret name
+#   (BUILDKITE GPG_PRIVATEKEY vs GPG_PRIVATE_KEY, missing alias, half-
+#   completed provisioning) or a secret store returning an empty value
+#   for one of the two. Failing here gives the operator an immediate,
+#   actionable error before any output mutation, instead of silently
+#   degrading to the unsigned path and publishing an unsigned manifest
+#   that looks like a successful rollout state. Exit code 1 with a
+#   specific error message so the buildkite wrapper treats it as a
+#   signing failure (see `sign_exit` branch in upload-release.sh).
 should_sign=0
-if [ -n "${GPG_PRIVATE_KEY:-}" ] && [ -n "${GPG_PASSPHRASE:-}" ]; then
+_key_set=""
+_pass_set=""
+[ -n "${GPG_PRIVATE_KEY:-}" ] && _key_set=1
+[ -n "${GPG_PASSPHRASE:-}" ] && _pass_set=1
+if [ -n "${_key_set}" ] && [ -n "${_pass_set}" ]; then
   should_sign=1
   if ! command -v gpg >/dev/null 2>&1; then
     echo "error: gpg is not installed" >&2
     exit 1
   fi
+elif [ -n "${_key_set}" ] || [ -n "${_pass_set}" ]; then
+  if [ -n "${_key_set}" ]; then
+    echo "error: GPG_PRIVATE_KEY is set but GPG_PASSPHRASE is empty/unset" >&2
+  else
+    echo "error: GPG_PASSPHRASE is set but GPG_PRIVATE_KEY is empty/unset" >&2
+  fi
+  echo "error: both must be set to sign, or both unset to publish unsigned" >&2
+  echo "error: partial configuration is almost always a typo in a secret name" >&2
+  exit 1
 fi
+unset -v _key_set _pass_set
 
 # Output path derivations. The `_basename` values are the reserved-name
 # inputs the validation loop below rejects, and the full paths below

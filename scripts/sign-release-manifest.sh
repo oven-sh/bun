@@ -383,61 +383,125 @@ trap cleanup EXIT
 # guard handles the no-match case (glob expands literally without
 # `nullglob`, and a glob pattern is never a directory).
 #
-# Rollback-preserving restore: before we `rm -rf` each orphan, probe it
-# for `.bak` backup files. If a prior run was SIGKILLed after moving
-# the pre-existing `${manifest}` / `${signed_manifest}` into its scratch
-# dir (see the backup block below) but before publishing new outputs,
-# the LIVE path is now empty and the only copy of the last-good file
-# sits inside the orphan. A naive sweep would delete it, leaving the
-# caller with neither the old nor the new manifest. Instead, check the
-# bak path inside the orphan and promote it back into place WHEN the
-# corresponding live file is missing — leaving any live file that
-# might already exist from a different run untouched. Only after that
-# restore (or confirmation that no restore is needed) do we `rm -rf`
-# the orphan.
+# Rollback-preserving restore: before we `rm -rf` the orphans, probe
+# each one for `.bak` backup files. If a prior run was SIGKILLed after
+# moving the pre-existing `${manifest}` / `${signed_manifest}` into its
+# scratch dir (see the backup block below) but before publishing new
+# outputs, the LIVE path is now empty and the only copy of the
+# last-good file sits inside the orphan. A naive sweep would delete
+# it, leaving the caller with neither the old nor the new manifest.
+#
+# Multi-orphan selection: in the rare case two or more orphans each
+# contain a `.bak` (two separate SIGKILLs before any sweep ran), we
+# want the NEWEST — an older run's `.bak` is strictly staler than the
+# newer run's, which observed it via this same restore-from-orphan
+# path and then re-backed it up on its own mutation. First-glob-wins
+# would silently discard the newer version if its mktemp suffix sorts
+# after an older one. Instead, do two passes:
+#
+#   1. Walk all orphans. For each `${manifest_basename}.bak` /
+#      `${signed_manifest_basename}.bak` found, track the path to the
+#      newest copy via POSIX `[ A -nt B ]` (modification-time
+#      comparison — POSIX test operator, works on bash 3.2 and every
+#      BSD/GNU shell, no `stat -c %Y` or `printf %()T` dependency).
+#   2. Restore only the newest of each, iff the corresponding live
+#      path is missing. Then rm -rf every orphan (including the ones
+#      whose .bak we skipped).
+#
+# Identical-mtime tiebreaker: `-nt` is false on ties, so the first
+# orphan wins — deterministic given a stable glob order. In practice
+# filesystem mtime resolution is at least 1s so this rarely matters.
+#
+# No `|| true` on the restore `mv` below. If the rename fails (for
+# example because ${dir} became read-only between the prior run and
+# this one), we must not remove the orphan scratch dir — doing so
+# would discard the last-good .bak and leave the caller with neither
+# the old nor the new file. Fail fast with a distinctive error and an
+# EX_TEMPFAIL (75) exit so the buildkite wrapper can distinguish a
+# filesystem problem from a signing failure.
 #
 # Concurrency note: this intentionally blows away every matching dir,
 # including any that might belong to a currently-running sibling
 # invocation against the same `${dir}`. Both known callers — the
 # Buildkite upload step and this file's test suite, which uses a
 # fresh `tempDir` per test — only ever invoke the helper sequentially
-# against a given directory, so that tradeoff is academic. A future
-# parallel-caller use case would need a per-dir lock, not this sweep.
+# against a given directory, so that tradeoff is academic.
+#
+# Future concurrent-caller support (sketched here so the next person
+# has a shape to work from — NOT implemented because no caller needs
+# it yet and YAGNI):
+#
+#   Inside each new scratch_dir, do `mkdir "${scratch_dir}/.lock"`
+#   immediately after the outer mktemp. `mkdir` is atomic on every
+#   POSIX filesystem (returns EEXIST if the directory already exists,
+#   no partial state), so it doubles as an advisory lock without
+#   touching `flock(1)` (which isn't portable to stock macOS). Stash
+#   the owning PID via `echo $$ > "${scratch_dir}/.lock/owner"` so
+#   stale locks can be detected via `kill -0 $(<.lock/owner)` on
+#   sweep.
+#
+#   Teach this sweep to skip any orphan whose `.lock` subdir still
+#   exists AND whose recorded PID is still alive. That preserves
+#   in-flight sibling invocations and only reaps truly-dead runs.
+#   cleanup() removes the `.lock` dir as part of the normal
+#   scratch_dir rm -rf, so the success path stays clean.
+#
+#   Preferring mkdir-based locks over time-based aging (e.g. "skip
+#   orphans younger than 3 hours") because `mkdir` is exact and
+#   portable, while aging needs bash 4.2's `printf '%(%s)T'` or GNU
+#   `stat -c %Z`, neither of which runs on macOS's default 3.2 bash.
+#   Also, a buildkite canary job that legitimately runs longer than
+#   any fixed threshold (aarch64-musl linker times spike on cold
+#   caches) would have its own scratch dir false-aged and swept by a
+#   sibling — a worse bug than the one the aging check was meant to
+#   fix.
+_newest_manifest_bak=""
+_newest_signed_bak=""
 for _stale in "${dir}/${scratch_prefix}"*/; do
   if [ -d "${_stale}" ]; then
     _stale_manifest_bak="${_stale}${manifest_basename}.bak"
     _stale_signed_bak="${_stale}${signed_manifest_basename}.bak"
-    # Restore .bak iff the live file is missing. If the live file
-    # already exists (either a prior completed run's output or a
-    # fresh manifest from another concurrent producer — hypothetical;
-    # see concurrency note above), don't clobber it with an older
-    # backup.
-    #
-    # No `|| true` on the restore `mv` below. If the rename fails (for
-    # example because ${dir} became read-only between the prior run
-    # and this one), we must not remove the orphan scratch dir — doing
-    # so would discard the last-good .bak and leave the caller with
-    # neither the old nor the new file. Fail fast with a distinctive
-    # error and an EX_TEMPFAIL (75) exit so the buildkite wrapper can
-    # distinguish a filesystem problem from a signing failure.
-    if [ -f "${_stale_manifest_bak}" ] && ! [ -e "${manifest}" ]; then
-      if ! mv -f "${_stale_manifest_bak}" "${manifest}"; then
-        echo "error: failed to restore ${manifest} from orphan ${_stale_manifest_bak}" >&2 || true
-        echo "error: orphan directory preserved for manual recovery: ${_stale}" >&2 || true
-        exit 75
+    if [ -f "${_stale_manifest_bak}" ]; then
+      if [ -z "${_newest_manifest_bak}" ] || [ "${_stale_manifest_bak}" -nt "${_newest_manifest_bak}" ]; then
+        _newest_manifest_bak="${_stale_manifest_bak}"
       fi
     fi
-    if [ -f "${_stale_signed_bak}" ] && ! [ -e "${signed_manifest}" ]; then
-      if ! mv -f "${_stale_signed_bak}" "${signed_manifest}"; then
-        echo "error: failed to restore ${signed_manifest} from orphan ${_stale_signed_bak}" >&2 || true
-        echo "error: orphan directory preserved for manual recovery: ${_stale}" >&2 || true
-        exit 75
+    if [ -f "${_stale_signed_bak}" ]; then
+      if [ -z "${_newest_signed_bak}" ] || [ "${_stale_signed_bak}" -nt "${_newest_signed_bak}" ]; then
+        _newest_signed_bak="${_stale_signed_bak}"
       fi
     fi
+  fi
+done
+# Restore the newest of each iff the live file is missing. If live
+# already exists (prior completed run's output or — hypothetically —
+# a concurrent producer; see concurrency note above), don't clobber
+# it with an older backup. The rm pass below still removes the
+# orphan directory, which is correct: the orphan held a stale copy
+# we no longer need.
+if [ -n "${_newest_manifest_bak}" ] && ! [ -e "${manifest}" ]; then
+  if ! mv -f "${_newest_manifest_bak}" "${manifest}"; then
+    echo "error: failed to restore ${manifest} from orphan ${_newest_manifest_bak}" >&2 || true
+    echo "error: orphan directory preserved for manual recovery" >&2 || true
+    exit 75
+  fi
+fi
+if [ -n "${_newest_signed_bak}" ] && ! [ -e "${signed_manifest}" ]; then
+  if ! mv -f "${_newest_signed_bak}" "${signed_manifest}"; then
+    echo "error: failed to restore ${signed_manifest} from orphan ${_newest_signed_bak}" >&2 || true
+    echo "error: orphan directory preserved for manual recovery" >&2 || true
+    exit 75
+  fi
+fi
+# Now safe to wipe every orphan. The `.bak` we promoted has already
+# been `mv`'d out of its orphan and into the live path, so no live
+# data is inside the scratch trees any more.
+for _stale in "${dir}/${scratch_prefix}"*/; do
+  if [ -d "${_stale}" ]; then
     rm -rf "${_stale}" || true
   fi
 done
-unset -v _stale _stale_manifest_bak _stale_signed_bak
+unset -v _stale _stale_manifest_bak _stale_signed_bak _newest_manifest_bak _newest_signed_bak
 
 # Create the per-invocation scratch directory inside ${dir}. Using
 # `mktemp -d "${dir}/.sign-manifest-scratch.XXXXXXXX"` gives us a name

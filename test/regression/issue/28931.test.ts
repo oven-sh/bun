@@ -469,6 +469,86 @@ describe.concurrent.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
     expect(leftovers).toEqual([]);
   });
 
+  test("sweep picks the newest .bak when multiple orphaned scratch dirs each hold one", async () => {
+    // Multi-orphan selection: two separate SIGKILL'd runs can each
+    // leave an orphan containing a `.bak`. Without mtime-aware
+    // selection the first-glob-match wins, which silently discards
+    // the newer version if its mktemp suffix sorts after an older
+    // one. The sweep must probe both, pick the newest via POSIX
+    // `[ A -nt B ]`, and restore that one — leaving the older
+    // orphan's .bak to be wiped with its directory.
+    //
+    // Plant two orphans with deliberately different mtimes (set via
+    // utimesSync) and distinctive .bak bytes. Run the helper with a
+    // bogus GPG key so it publishes a new manifest and then fails
+    // gpg --import, driving the full restore → re-backup → rollback
+    // chain. Final live bytes must be the NEWER orphan's content.
+    using dir = tempDir("bun-28931-multi-orphan-", {
+      "bun-linux-x64.zip": "fresh",
+    });
+    const dirStr = String(dir);
+
+    // Two orphans. Pick suffix names so sort order does NOT match
+    // time order — "orphan_zz" is alphabetically newer than
+    // "orphan_aa", but we make orphan_aa mtime-newer. If the sweep
+    // iterated in glob order and took first-wins, it would restore
+    // the older orphan_zz bytes; we want it to compare mtimes via
+    // -nt and pick orphan_aa.
+    const orphanOlder = join(dirStr, ".sign-manifest-scratch.orphan_zz");
+    const orphanNewer = join(dirStr, ".sign-manifest-scratch.orphan_aa");
+    mkdirSync(orphanOlder);
+    mkdirSync(orphanNewer);
+
+    const olderTxt = "a".repeat(64) + " *bun-linux-x64.zip\n";
+    const newerTxt = "b".repeat(64) + " *bun-linux-x64.zip\n";
+    const olderAsc =
+      "-----BEGIN PGP SIGNED MESSAGE-----\nHash: SHA512\n\nolder\n-----BEGIN PGP SIGNATURE-----\nfake\n-----END PGP SIGNATURE-----\n";
+    const newerAsc =
+      "-----BEGIN PGP SIGNED MESSAGE-----\nHash: SHA512\n\nnewer\n-----BEGIN PGP SIGNATURE-----\nfake\n-----END PGP SIGNATURE-----\n";
+    writeFileSync(join(orphanOlder, "SHASUMS256.txt.bak"), olderTxt);
+    writeFileSync(join(orphanOlder, "SHASUMS256.txt.asc.bak"), olderAsc);
+    writeFileSync(join(orphanNewer, "SHASUMS256.txt.bak"), newerTxt);
+    writeFileSync(join(orphanNewer, "SHASUMS256.txt.asc.bak"), newerAsc);
+
+    // Force mtimes so the sweep sees orphan_aa as newer even though
+    // the filesystem may have given both files the same mtime due
+    // to coarse timestamp resolution. 1000s gap is well above any
+    // plausible filesystem granularity.
+    const { utimesSync } = await import("node:fs");
+    const now = Math.floor(Date.now() / 1000);
+    utimesSync(join(orphanOlder, "SHASUMS256.txt.bak"), now - 1000, now - 1000);
+    utimesSync(join(orphanOlder, "SHASUMS256.txt.asc.bak"), now - 1000, now - 1000);
+    utimesSync(join(orphanNewer, "SHASUMS256.txt.bak"), now, now);
+    utimesSync(join(orphanNewer, "SHASUMS256.txt.asc.bak"), now, now);
+
+    // Live outputs missing — sweep must restore from orphans.
+    expect(existsSync(join(dirStr, "SHASUMS256.txt"))).toBe(false);
+    expect(existsSync(join(dirStr, "SHASUMS256.txt.asc"))).toBe(false);
+
+    const res = await sh([script, dirStr, "bun-linux-x64.zip"], {
+      GPG_PRIVATE_KEY: "not-a-valid-pgp-key",
+      GPG_PASSPHRASE: "unused",
+    });
+    expect(res.stderr).toMatch(/^gpg: /m);
+    expect(res.exitCode).not.toBe(0);
+
+    // The NEWER orphan's bytes must have won the restore, then been
+    // re-backed-up by the current run, then restored through the
+    // cleanup rollback when gpg --import failed.
+    expect(existsSync(join(dirStr, "SHASUMS256.txt"))).toBe(true);
+    expect(existsSync(join(dirStr, "SHASUMS256.txt.asc"))).toBe(true);
+    expect(readFileSync(join(dirStr, "SHASUMS256.txt"), "utf8")).toBe(newerTxt);
+    expect(readFileSync(join(dirStr, "SHASUMS256.txt.asc"), "utf8")).toBe(newerAsc);
+
+    // Both orphan directories are gone (the older one still had its
+    // .bak when it was rm'd — no manual recovery needed because the
+    // newer orphan's copy is what matters).
+    expect(existsSync(orphanOlder)).toBe(false);
+    expect(existsSync(orphanNewer)).toBe(false);
+    const leftovers = readdirSync(dirStr).filter(name => name.startsWith(".sign-manifest-scratch."));
+    expect(leftovers).toEqual([]);
+  });
+
   test("restores pre-existing valid outputs when a later step fails mid-mutation", async () => {
     // The cleanup() trap's own invariant promises "same state on
     // failure", but a naive `rm -f "$signed_manifest"` + `mv tmp

@@ -641,13 +641,13 @@ extern "C" JSC::EncodedJSValue Bun__createJSStatsObject(Zig::GlobalObject* globa
 }
 
 extern "C" JSC::EncodedJSValue Bun__createJSBigIntStatsObject(Zig::GlobalObject* globalObject,
-    uint64_t dev,
-    uint64_t ino,
+    int64_t dev,
+    int64_t ino,
     int64_t mode,
     int64_t nlink,
     int64_t uid,
     int64_t gid,
-    uint64_t rdev,
+    int64_t rdev,
     int64_t size,
     int64_t blksize,
     int64_t blocks,

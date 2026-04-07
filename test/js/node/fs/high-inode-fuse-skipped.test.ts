@@ -19,20 +19,20 @@
 //
 //   apt-get install python3-fuse fuse3   # Debian/Ubuntu
 //   # or:  pip3 install fusepy
-//   bun test test/regression/issue/high-inode-fuse.test.ts
+//   bun test test/js/node/fs/high-inode-fuse-skipped.test.ts
 //
 // The synthetic tests in `fs-stats-truncate.test.ts` still cover the
 // conversion path in CI.
 
-import { beforeAll, describe, expect, test } from "bun:test";
-import { isCI, isLinux } from "harness";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { isCI, isLinux, tempDir } from "harness";
 import { spawnSync } from "node:child_process";
-import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readdirSync, statSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { closeSync, existsSync, mkdirSync, openSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 // Near 2^63 — the original NFS-like inode from the bug report.
 const INODE_OFFSET = 9225185599684000000n;
+const files = ["file1.md", "file2.md", "file3.md", "file4.md"];
 
 function canRun(): string | null {
   if (!isLinux) return "FUSE is Linux-only";
@@ -48,15 +48,11 @@ function canRun(): string | null {
   }
 
   // Need python3 with a FUSE binding.
-  const probe = spawnSync("python3", ["-c", "import fuse; print(fuse.Fuse.__name__)"], {
-    stdio: "pipe",
-  });
+  const probe = spawnSync("python3", ["-c", "import fuse; print(fuse.Fuse.__name__)"], { stdio: "pipe" });
   if (probe.status !== 0) return "python3 FUSE bindings (python3-fuse or fusepy) not installed";
 
   // Need an unprivileged fusermount.
-  const fm = spawnSync("sh", ["-c", "command -v fusermount || command -v fusermount3"], {
-    stdio: "pipe",
-  });
+  const fm = spawnSync("sh", ["-c", "command -v fusermount || command -v fusermount3"], { stdio: "pipe" });
   if (fm.status !== 0) return "fusermount binary not found";
   return null;
 }
@@ -64,20 +60,29 @@ function canRun(): string | null {
 const skipReason = canRun();
 
 describe.skipIf(skipReason != null)("high-inode FUSE regression", () => {
-  const tmp = mkdtempSync(join(tmpdir(), "bun-highino-"));
-  const src = join(tmp, "src");
-  const mnt = join(tmp, "mnt");
-  const fuseScript = join(tmp, "highino_fuse.py");
-  const files = ["file1.md", "file2.md", "file3.md", "file4.md"];
+  // Allocated in beforeAll so nothing is created at collection time when the
+  // whole suite is skipped. Kept in outer-scope `let`s so the tests + afterAll
+  // cleanup can reach them.
+  let dir: ReturnType<typeof tempDir> | undefined;
+  let src: string;
+  let mnt: string;
+  let fuseScript: string;
 
   beforeAll(() => {
-    mkdirSync(src, { recursive: true });
+    const seed: Record<string, string> = {};
+    for (const f of files) seed[`src/${f}`] = `stub ${f}\n`;
+    dir = tempDir("high-inode-fuse-", seed);
+    const base = String(dir);
+    src = join(base, "src");
+    mnt = join(base, "mnt");
+    fuseScript = join(base, "highino_fuse.py");
     mkdirSync(mnt, { recursive: true });
-    for (const f of files) writeFileSync(join(src, f), `stub ${f}\n`);
 
-    // Minimal FUSE passthrough using python3-fuse (debian `python3-fuse`
-    // package). Reports every file's inode as `INODE_OFFSET + real_inode`,
-    // producing distinct values all well above 2^63.
+    // Minimal FUSE passthrough using python3-fuse. Reports every file's
+    // inode as `INODE_OFFSET + real_inode`, producing distinct values all
+    // well above 2^63. The source directory is baked in as a JSON literal
+    // so there's no risk of `sys.argv` index confusion with FUSE's own
+    // option parsing.
     writeFileSync(
       fuseScript,
       `
@@ -86,7 +91,7 @@ import fuse
 from fuse import Fuse, Stat, Direntry
 fuse.fuse_python_api = (0, 2)
 
-SRC = sys.argv[-2]
+SRC = ${JSON.stringify(src)}
 OFFSET = ${INODE_OFFSET}
 
 class HighIno(Fuse):
@@ -130,9 +135,11 @@ server.main()
 `,
     );
 
-    const mount = spawnSync("python3", [fuseScript, src, mnt, "-o", "use_ino,allow_other,auto_unmount", "-s"], {
-      stdio: "pipe",
-    });
+    // Mount without \`allow_other\` — that requires \`user_allow_other\`
+    // in /etc/fuse.conf which isn't set on default installs. \`use_ino\`
+    // keeps our synthetic inode numbers; \`-s\` forces single-threaded
+    // operation.
+    const mount = spawnSync("python3", [fuseScript, mnt, "-o", "use_ino", "-s"], { stdio: "pipe" });
     if (mount.status !== 0) {
       throw new Error(
         `python3-fuse mount failed: status=${mount.status}\n` +
@@ -140,13 +147,40 @@ server.main()
       );
     }
 
-    // Wait for the mount to become visible.
+    // Wait briefly for the mount to become visible. Fail loudly if it
+    // never does — the individual test bodies would otherwise fail with
+    // confusing ENOENT errors that don't mention the mount.
     const deadline = Date.now() + 3000;
+    let ready = false;
     while (Date.now() < deadline) {
       try {
-        if (readdirSync(mnt).length === files.length) break;
+        if (readdirSync(mnt).length === files.length) {
+          ready = true;
+          break;
+        }
       } catch {}
     }
+    if (!ready) {
+      throw new Error(
+        `python3-fuse mount did not become ready within 3s at ${mnt}. ` +
+          `Expected ${files.length} entries; saw ${readdirSync(mnt).length} (or an error).`,
+      );
+    }
+  });
+
+  afterAll(() => {
+    // Best-effort unmount + cleanup. We have to unmount the FUSE mount
+    // first or the `mnt` dir will be busy when `dir`'s dispose tries to
+    // `rm -rf` the temp root.
+    if (mnt) {
+      for (const bin of ["fusermount", "fusermount3"]) {
+        const r = spawnSync(bin, ["-u", mnt], { stdio: "pipe" });
+        if (r.status === 0) break;
+      }
+    }
+    try {
+      (dir as unknown as { [Symbol.dispose]?: () => void })?.[Symbol.dispose]?.();
+    } catch {}
   });
 
   test("fs.readdirSync sees every file", () => {
@@ -169,7 +203,7 @@ server.main()
     // to the same clamped value.
     expect(new Set(bunInos).size).toBe(files.length);
 
-    // Also cross-check with Node itself — Bun's output should match it
+    // Cross-check with Node itself — Bun's output should match it
     // bit-for-bit (both go via u64 -> double).
     const nodeOut = spawnSync(
       "node",
@@ -187,15 +221,15 @@ server.main()
     }
   });
 
-  test("fs.statSync with { bigint: true } preserves the exact u64 inode", () => {
+  test("fs.statSync with { bigint: true } preserves the u64 inode", () => {
+    // Node represents BigIntStats via BigInt64Array (signed int64), so
+    // u64 values above INT64_MAX wrap to negative. We match Node exactly.
     for (const f of files) {
       const s = statSync(join(mnt, f), { bigint: true });
       expect(typeof s.ino).toBe("bigint");
-      // Pre-fix, BigIntStats collapsed to `9223372036854775807n` for every
-      // file. Now it's the true `INODE_OFFSET + real_inode`.
-      expect(s.ino as bigint).toBeGreaterThan(1n << 63n);
+      // Not the old clamp sentinel.
+      expect(s.ino as bigint).not.toBe((1n << 63n) - 1n);
     }
-    // Distinct bigints across files.
     const set = new Set(files.map(f => (statSync(join(mnt, f), { bigint: true }).ino as bigint).toString()));
     expect(set.size).toBe(files.length);
   });

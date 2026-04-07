@@ -80,19 +80,22 @@ pub fn StatType(comptime big: bool) type {
             };
         }
 
-        /// Convert a stat field into a `u64` for the BigIntStats path. Signed
-        /// platform types (e.g. macOS `dev_t = i32`) are widened to `i64` then
-        /// reinterpreted bit-for-bit, preserving the original bit pattern
-        /// without panicking on negative values. Unsigned platform types
-        /// (e.g. Linux `dev_t`/`ino_t = u64`) are passed through unchanged.
-        fn toU64(value: anytype) u64 {
+        /// Convert a stat field into an `i64` for the BigIntStats path,
+        /// matching Node.js which fills a `BigInt64Array` via
+        /// `static_cast<int64_t>(...)`. Signed platform types (e.g. macOS
+        /// `dev_t = i32`) sign-extend, so negative device numbers appear as
+        /// negative JS BigInts (matching Node). Unsigned platform types
+        /// (e.g. Linux `dev_t`/`ino_t = u64`) are `@bitCast` to `i64`, so
+        /// values `> INT64_MAX` wrap to negative — identical to Node's
+        /// `static_cast<int64_t>(uint64_t)` behaviour. Never clamps.
+        fn toI64(value: anytype) i64 {
             const T = @TypeOf(value);
             const info = @typeInfo(T);
-            if (info != .int) @compileError("toU64: expected int, got " ++ @typeName(T));
+            if (info != .int) @compileError("toI64: expected int, got " ++ @typeName(T));
             if (info.int.signedness == .signed) {
-                return @bitCast(@as(i64, value));
+                return @intCast(value);
             }
-            return @intCast(value);
+            return @bitCast(@as(u64, @intCast(value)));
         }
 
         fn statToJS(stat_: *const Syscall.PosixStat, globalObject: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
@@ -117,11 +120,14 @@ pub fn StatType(comptime big: bool) type {
             const birthtime_ns: u64 = if (big) toNanoseconds(bTime) else 0;
 
             if (big) {
-                // BigIntStats: pass dev/ino/rdev as u64 so the JS BigInt is
-                // the true 64-bit value rather than clamped to INT64_MAX.
-                const dev: u64 = toU64(stat_.dev);
-                const ino: u64 = toU64(stat_.ino);
-                const rdev: u64 = toU64(stat_.rdev);
+                // BigIntStats: pass dev/ino/rdev as i64 matching Node.js's
+                // `BigInt64Array`. This preserves sign (so macOS negative
+                // `dev_t = -1i32` becomes `-1n`, not a huge positive BigInt)
+                // and matches Node bit-for-bit for u64 values above
+                // INT64_MAX (both wrap to negative via `static_cast`).
+                const dev: i64 = toI64(stat_.dev);
+                const ino: i64 = toI64(stat_.ino);
+                const rdev: i64 = toI64(stat_.rdev);
                 return bun.jsc.fromJSHostCall(globalObject, @src(), Bun__createJSBigIntStatsObject, .{
                     globalObject,
                     dev,
@@ -194,13 +200,13 @@ extern fn Bun__createJSStatsObject(
 
 extern fn Bun__createJSBigIntStatsObject(
     globalObject: *jsc.JSGlobalObject,
-    dev: u64,
-    ino: u64,
+    dev: i64,
+    ino: i64,
     mode: i64,
     nlink: i64,
     uid: i64,
     gid: i64,
-    rdev: u64,
+    rdev: i64,
     size: i64,
     blksize: i64,
     blocks: i64,

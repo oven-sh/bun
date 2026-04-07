@@ -45,16 +45,29 @@ test("fs.stats truncate (bigint)", async () => {
 
 // Regression: previously `Stat.zig` clamped `u64` stat fields to `INT64_MAX`
 // via `clampedInt64`, so filesystems with inodes near 2^63 (common on NFS)
-// collapsed every file to the same inode. Now `ino` is converted to a double
-// for `Stats` (matching Node's `Float64Array`) and left as the true `u64` for
-// `BigIntStats`.
+// collapsed every file to the same inode.
+//
+// After the fix the conversion matches Node.js exactly:
+//   * `Stats` fills via `static_cast<double>(uint64_t)` (precision lost above
+//     2^53, but never clamped). See `src/node_file-inl.h:85-116` upstream.
+//   * `BigIntStats` fills via `static_cast<int64_t>(uint64_t)` (a Node-side
+//     `BigInt64Array`), so values above 2^63 wrap to a negative BigInt.
+//     This matches Node; see `src/node_file.h:78-79` / `AliasedBigInt64Array`.
+
+// Helper: Node's `static_cast<int64_t>(uint64_t)` interpretation of a u64.
+function asSignedI64(value: bigint): bigint {
+  const mask = (1n << 64n) - 1n;
+  const v = value & mask;
+  return v < 1n << 63n ? v : v - (1n << 64n);
+}
+
 test("fs.stats preserves high 64-bit inodes (near 2^63)", () => {
   // Real-world NFS inode from the original bug report.
   const highIno = 9225185599684229422n;
 
-  // BigIntStats path: must preserve the full 64-bit value exactly.
+  // BigIntStats path: matches Node's BigInt64Array reinterpretation.
   const big = createStatsFromU64ForTesting(highIno, true);
-  expect(big.ino).toBe(highIno);
+  expect(big.ino).toBe(asSignedI64(highIno));
 
   // Stats path: Node represents `ino` as a `Number` (double), so precision is
   // lost above 2^53 — but the value must NOT be clamped to INT64_MAX.
@@ -85,8 +98,10 @@ test("fs.stats preserves u64 inodes across the boundary (Number path)", () => {
 });
 
 test("fs.stats preserves u64 inodes across the boundary (BigInt path)", () => {
-  // Every BigInt that fits in u64 must round-trip through the BigIntStats
-  // path without loss.
+  // Every u64 bit pattern should come back as the `int64_t` reinterpretation
+  // of itself — matching Node's `static_cast<int64_t>(uint64_t)`. In
+  // particular, values above 2^63 wrap to negative, they must NOT be clamped
+  // to `INT64_MAX` like Bun used to do.
   const cases = [
     0n,
     1n,
@@ -104,5 +119,12 @@ test("fs.stats preserves u64 inodes across the boundary (BigInt path)", () => {
   ];
 
   const observed = cases.map(ino => createStatsFromU64ForTesting(ino, true).ino);
-  expect(observed).toEqual(cases);
+  const expected = cases.map(asSignedI64);
+  expect(observed).toEqual(expected);
+
+  // Sanity-check the oracle: the collision with `INT64_MAX` that used to
+  // define the bug is only present for a single input (INT64_MAX itself),
+  // not for the entire `ino > INT64_MAX` upper half.
+  const max = (1n << 63n) - 1n;
+  expect(observed.filter(v => v === max).length).toBe(1);
 });

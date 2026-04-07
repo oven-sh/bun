@@ -39,7 +39,7 @@ pub const FetchTasklet = struct {
     signal: ?*jsc.WebCore.AbortSignal = null,
     signals: http.Signals = .{},
 
-    otel_span: bun.otel.NativeSpan = .{},
+    otel_span: ?*bun.otel.NativeSpan = null,
     signal_store: http.Signals.Store = .{},
     has_schedule_callback: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
 
@@ -200,9 +200,10 @@ pub const FetchTasklet = struct {
 
     fn clearData(this: *FetchTasklet) void {
         log("clearData ", .{});
-        if (this.otel_span.isRecording()) {
-            if (this.result.fail) |e| this.otel_span.setStatus(.err, @errorName(e));
-            this.otel_span.end();
+        if (this.otel_span) |span| {
+            this.otel_span = null;
+            if (this.result.fail) |e| span.setStatus(.err, @errorName(e));
+            span.end();
         }
         const allocator = bun.default_allocator;
         if (this.url_proxy_buffer.len > 0) {
@@ -973,9 +974,10 @@ pub const FetchTasklet = struct {
         const metadata = this.metadata.?;
         const http_response = metadata.response;
         this.is_waiting_body = this.result.has_more;
-        if (this.otel_span.isRecording()) {
-            this.otel_span.setAttrInt("http.response.status_code", @intCast(http_response.status_code));
-            this.otel_span.end();
+        if (this.otel_span) |span| {
+            this.otel_span = null;
+            span.setAttrInt("http.response.status_code", @intCast(http_response.status_code));
+            span.end();
         }
         return Response.init(
             .{
@@ -1146,12 +1148,13 @@ pub const FetchTasklet = struct {
 
         if (bun.otel.TracerProvider.get(jsc_vm) != null) {
             const parent = bun.otel.instrument.getActiveSpanContext(globalThis);
-            if (fetch_tasklet.otel_span.start(jsc_vm, .fetch, .client, @tagName(fetch_options.method), parent)) {
-                fetch_tasklet.otel_span.setAttrStatic("http.request.method", @tagName(fetch_options.method));
-                fetch_tasklet.otel_span.setAttrStr("server.address", url.hostname);
-                fetch_tasklet.otel_span.setAttrStr("url.full", url.href);
+            if (bun.otel.NativeSpan.start(jsc_vm, .fetch, .client, @tagName(fetch_options.method), parent)) |span| {
+                span.setAttrStatic("http.request.method", @tagName(fetch_options.method));
+                span.setAttrStr("server.address", url.hostname);
+                span.setAttrStr("url.full", url.href);
+                fetch_tasklet.otel_span = span;
                 var tp_buf: [bun.otel.propagation.traceparent_len]u8 = undefined;
-                bun.otel.propagation.formatTraceparent(fetch_tasklet.otel_span.ctx, &tp_buf);
+                bun.otel.propagation.formatTraceparent(span.ctx, &tp_buf);
                 fetch_tasklet.request_headers.append("traceparent", &tp_buf) catch {};
             }
         }

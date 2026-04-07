@@ -94,25 +94,27 @@ fn buildArrayWithSpanImpl(global: *JSGlobalObject, prev_array: JSValue, cell: JS
     return out;
 }
 
-/// Pure-Zig recording span for native instrumentation hooks. Lives inline on
-/// RequestContext / FetchTasklet — no heap allocation. Attribute keys and
-/// string values must outlive `end()` (use static strings or the embedded
-/// inline storage); BatchProcessor.onEnd deep-copies into its arena.
+/// Pure-Zig recording span for native instrumentation hooks. Heap-allocated
+/// only when the provider is configured AND the sampler accepts; the owning
+/// RequestContext/FetchTasklet holds a `?*NativeSpan = null` (8 bytes when
+/// OTEL is off). Strings are arena-owned; `end()` consumes and destroys.
 pub const NativeSpan = struct {
-    pub const max_attrs = 8;
-    pub const StrBuf = bun.BoundedArray(u8, 256);
-
-    provider: ?*tracer.TracerProvider = null,
-    scope: Scope = .server,
-    ctx: model.SpanContext = .{ .trace_id = model.zero_trace_id, .span_id = model.zero_span_id, .flags = 0 },
-    parent_span_id: model.SpanId = model.zero_span_id,
-    kind: model.SpanKind = .internal,
-    start_ns: u64 = 0,
-    name_buf: StrBuf = .{},
-    attrs: bun.BoundedArray(Attribute, max_attrs) = .{},
-    str_buf: StrBuf = .{},
+    provider: *tracer.TracerProvider,
+    scope: Scope,
+    ctx: model.SpanContext,
+    parent_span_id: model.SpanId,
+    kind: model.SpanKind,
+    start_ns: u64,
+    name: []const u8 = "",
+    attrs: std.ArrayListUnmanaged(Attribute) = .{},
+    arena: std.heap.ArenaAllocator,
     status: model.Status = .{},
-    ended: bool = false,
+
+    pub const new = bun.TrivialNew(@This());
+
+    comptime {
+        bun.assert(@sizeOf(NativeSpan) <= 192);
+    }
 
     pub const Scope = enum {
         server,
@@ -126,90 +128,85 @@ pub const NativeSpan = struct {
         }
     };
 
-    pub fn isRecording(self: *const NativeSpan) bool {
-        return self.provider != null and !self.ended;
-    }
-
-    /// Start a span if the provider is configured and the sampler accepts.
-    /// `parent` is typically the result of `getActiveSpanContext` or a parsed
-    /// incoming traceparent. Returns whether the span is recording.
+    /// Null when no provider is configured or the sampler rejects.
     pub fn start(
-        self: *NativeSpan,
         vm: *jsc.VirtualMachine,
         scope: Scope,
         kind: model.SpanKind,
         name: []const u8,
         parent: ?model.SpanContext,
-    ) bool {
-        const provider = tracer.TracerProvider.get(vm) orelse return false;
+    ) ?*NativeSpan {
+        const provider = tracer.TracerProvider.get(vm) orelse return null;
         const trace_id: model.TraceId = if (parent) |p| p.trace_id else tracer.generateTraceId();
-        const sampled = provider.sampler.shouldSample(trace_id);
-        self.* = .{
-            .provider = if (sampled) provider else null,
+        if (!provider.sampler.shouldSample(trace_id)) return null;
+        const self = NativeSpan.new(.{
+            .provider = provider,
             .scope = scope,
             .ctx = .{
                 .trace_id = trace_id,
                 .span_id = tracer.generateSpanId(),
-                .flags = if (sampled) 0x01 else 0x00,
+                .flags = 0x01,
             },
             .parent_span_id = if (parent) |p| p.span_id else model.zero_span_id,
             .kind = kind,
             .start_ns = tracer.nowUnixNanos(),
-        };
-        if (sampled) {
-            const n = @min(name.len, self.name_buf.buffer.len);
-            self.name_buf.appendSliceAssumeCapacity(name[0..n]);
-        }
-        return sampled;
+            .arena = std.heap.ArenaAllocator.init(bun.default_allocator),
+        });
+        self.name = self.dupe(name);
+        return self;
+    }
+
+    fn alloc(self: *NativeSpan) std.mem.Allocator {
+        return self.arena.allocator();
+    }
+
+    fn dupe(self: *NativeSpan, s: []const u8) []const u8 {
+        if (s.len == 0) return "";
+        return bun.handleOom(self.alloc().dupe(u8, s));
     }
 
     pub fn setAttrStatic(self: *NativeSpan, key: []const u8, value: []const u8) void {
-        if (!self.isRecording()) return;
-        self.attrs.append(.{ .key = key, .value = .{ .string = value } }) catch {};
+        bun.handleOom(self.attrs.append(self.alloc(), .{ .key = key, .value = .{ .string = value } }));
     }
 
-    /// Copies `value` into the span's bounded string buffer.
     pub fn setAttrStr(self: *NativeSpan, key: []const u8, value: []const u8) void {
-        if (!self.isRecording()) return;
-        const start_idx = self.str_buf.len;
-        self.str_buf.appendSlice(value) catch return;
-        self.attrs.append(.{
-            .key = key,
-            .value = .{ .string = self.str_buf.constSlice()[start_idx..] },
-        }) catch {};
+        bun.handleOom(self.attrs.append(self.alloc(), .{ .key = key, .value = .{ .string = self.dupe(value) } }));
     }
 
     pub fn setAttrInt(self: *NativeSpan, key: []const u8, value: i64) void {
-        if (!self.isRecording()) return;
-        self.attrs.append(.{ .key = key, .value = .{ .int = value } }) catch {};
+        bun.handleOom(self.attrs.append(self.alloc(), .{ .key = key, .value = .{ .int = value } }));
     }
 
     pub fn setStatus(self: *NativeSpan, code: model.StatusCode, message: []const u8) void {
-        if (!self.isRecording()) return;
         self.status = .{ .code = code, .message = message };
     }
 
+    /// Hands the span to the BatchProcessor (which deep-copies) and destroys
+    /// `self`. Caller must null its pointer.
     pub fn end(self: *NativeSpan) void {
-        if (self.ended) return;
-        self.ended = true;
-        const provider = self.provider orelse return;
         const at_rest: model.Span = .{
             .trace_id = self.ctx.trace_id,
             .span_id = self.ctx.span_id,
             .parent_span_id = self.parent_span_id,
             .flags = @as(u32, self.ctx.flags) | 0x100,
-            .name = self.name_buf.constSlice(),
+            .name = self.name,
             .kind = self.kind,
             .start_time_unix_nano = self.start_ns,
             .end_time_unix_nano = tracer.nowUnixNanos(),
-            .attributes = self.attrs.constSlice(),
+            .attributes = self.attrs.items,
             .status = self.status,
         };
-        provider.processor.onEnd(at_rest, provider.getOrCreateScope(self.scope.name()));
+        self.provider.processor.onEnd(at_rest, self.provider.getOrCreateScope(self.scope.name()));
+        self.arena.deinit();
+        bun.destroy(self);
     }
 
-    /// Create the JS-side `OtelSpanContext` cell for this span (one allocation
-    /// per request) so it can be installed in the async-context slot.
+    /// Discard without recording.
+    pub fn abandon(self: *NativeSpan) void {
+        self.arena.deinit();
+        bun.destroy(self);
+    }
+
     pub fn createContextCell(self: *const NativeSpan, global: *JSGlobalObject) JSValue {
         return tracer.OtelSpanContext.create(global, self.ctx, false);
     }

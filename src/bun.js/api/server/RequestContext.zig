@@ -78,7 +78,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 
         additional_on_abort: ?AdditionalOnAbortCallback = null,
 
-        otel_span: bun.otel.NativeSpan = .{},
+        otel_span: ?*bun.otel.NativeSpan = null,
 
         // TODO: support builtin compression
 
@@ -746,12 +746,13 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 
             this.response_body_readable_stream_ref.deinit();
 
-            if (this.otel_span.isRecording()) {
+            if (this.otel_span) |span| {
+                this.otel_span = null;
                 if (this.response_ptr) |resp| {
-                    this.otel_span.setAttrInt("http.response.status_code", @intCast(resp.statusCode()));
+                    span.setAttrInt("http.response.status_code", @intCast(resp.statusCode()));
                 }
-                if (this.flags.aborted) this.otel_span.setStatus(.err, "aborted");
-                this.otel_span.end();
+                if (this.flags.aborted) span.setStatus(.err, "aborted");
+                span.end();
             }
 
             if (!this.pathname.isEmpty()) {

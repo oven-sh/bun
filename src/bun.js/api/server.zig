@@ -2060,14 +2060,20 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
         fn beginOtelServerSpan(this: *ThisServer, ctx: *RequestContext, req: *uws.Request) ?bun.otel.instrument.SlotGuard {
             if (bun.otel.TracerProvider.get(this.vm) == null) return null;
             const parent = if (req.header("traceparent")) |h| bun.otel.propagation.parseTraceparent(h) else null;
-            const recording = ctx.otel_span.start(this.vm, .server, .server, @tagName(ctx.method), parent);
-            if (recording) {
-                ctx.otel_span.setAttrStatic("http.request.method", @tagName(ctx.method));
-                ctx.otel_span.setAttrStr("url.path", req.url());
-                ctx.otel_span.setAttrStatic("url.scheme", if (ssl_enabled) "https" else "http");
-            }
-            const cell = ctx.otel_span.createContextCell(this.globalThis);
-            return bun.otel.instrument.SlotGuard.enter(this.globalThis, cell);
+            const span = bun.otel.NativeSpan.start(this.vm, .server, .server, @tagName(ctx.method), parent) orelse {
+                // Unsampled: still propagate the incoming context so downstream
+                // fetch carries the same trace.
+                if (parent) |p| {
+                    const cell = bun.otel.OtelSpanContext.create(this.globalThis, p, true);
+                    return bun.otel.instrument.SlotGuard.enter(this.globalThis, cell);
+                }
+                return null;
+            };
+            span.setAttrStatic("http.request.method", @tagName(ctx.method));
+            span.setAttrStr("url.path", req.url());
+            span.setAttrStatic("url.scheme", if (ssl_enabled) "https" else "http");
+            ctx.otel_span = span;
+            return bun.otel.instrument.SlotGuard.enter(this.globalThis, span.createContextCell(this.globalThis));
         }
 
         pub fn onUserRouteRequest(user_route: *UserRoute, req: *uws.Request, resp: *App.Response) void {

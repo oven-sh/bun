@@ -129,13 +129,20 @@ if [ -n "${_key_set}" ] && [ -n "${_pass_set}" ]; then
     exit 1
   fi
 elif [ -n "${_key_set}" ] || [ -n "${_pass_set}" ]; then
+  # `|| true` on each echo matches the SIGPIPE-guarded pattern used by
+  # every other post-trap diagnostic in this file. The EXIT trap isn't
+  # installed yet at this point in the script, so a dead Buildkite log
+  # aggregator delivering SIGPIPE here would otherwise exit 141 before
+  # the operator-facing "which secret is misconfigured" message could
+  # reach the log — surfacing a confusing pipe error instead of the
+  # real configuration problem.
   if [ -n "${_key_set}" ]; then
-    echo "error: GPG_PRIVATE_KEY is set but GPG_PASSPHRASE is empty/unset" >&2
+    echo "error: GPG_PRIVATE_KEY is set but GPG_PASSPHRASE is empty/unset" >&2 || true
   else
-    echo "error: GPG_PASSPHRASE is set but GPG_PRIVATE_KEY is empty/unset" >&2
+    echo "error: GPG_PASSPHRASE is set but GPG_PRIVATE_KEY is empty/unset" >&2 || true
   fi
-  echo "error: both must be set to sign, or both unset to publish unsigned" >&2
-  echo "error: partial configuration is almost always a typo in a secret name" >&2
+  echo "error: both must be set to sign, or both unset to publish unsigned" >&2 || true
+  echo "error: partial configuration is almost always a typo in a secret name" >&2 || true
   exit 1
 fi
 unset -v _key_set _pass_set

@@ -413,14 +413,46 @@ function create_release() {
   function upload_artifact() {
     local artifact="$1"
     download_buildkite_artifact "$artifact"
+    # Capture each background job's PID so we can check its exit code
+    # individually. A bare `wait` (no PID argument) always returns 0
+    # regardless of whether any child failed, because POSIX + bash
+    # specify "wait with no arguments waits for all children and
+    # returns 0". That meant a failed `upload_github_asset` in the
+    # background subshell — e.g. `gh release upload` exhausting its
+    # retry loop on a persistent 4xx — would be silently discarded,
+    # the outer loop would move on to the next artifact, and then
+    # `sign_and_upload_manifest` below would hash the on-disk bytes
+    # for an artifact that was never actually published to the
+    # release. The signed manifest would attest to a hash the
+    # release doesn't serve — exactly the manifest/release skew
+    # this PR exists to eliminate.
+    #
+    # `wait $pid` (with an explicit PID) propagates that child's
+    # real exit status, so `set -e` terminates the script and the
+    # Buildkite job fails loudly. Collect all PIDs first, then wait
+    # on each individually; if any non-zero, propagate.
+    local pids=()
     if [ "$tag" == "canary" ]; then
       upload_s3_file "releases/$BUILDKITE_COMMIT-canary" "$artifact" &
     else
       upload_s3_file "releases/$BUILDKITE_COMMIT" "$artifact" &
     fi
+    pids+=("$!")
     upload_s3_file "releases/$tag" "$artifact" &
+    pids+=("$!")
     upload_github_asset "$tag" "$artifact" &
-    wait
+    pids+=("$!")
+    local pid
+    local fail=0
+    for pid in "${pids[@]}"; do
+      if ! wait "$pid"; then
+        fail=1
+      fi
+    done
+    if [ "$fail" -ne 0 ]; then
+      echo "error: one or more upload_artifact jobs for $artifact failed" >&2 || true
+      exit 1
+    fi
   }
 
   for artifact in "${artifacts[@]}"; do

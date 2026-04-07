@@ -369,6 +369,70 @@ describe.concurrent.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
     expect(manifest).toBe(`${expected} *bun-linux-x64.zip`);
   });
 
+  test("sweep restores .bak files from an orphaned scratch dir when live outputs are missing", async () => {
+    // Follow-up bug found on the original sweep: a prior run that was
+    // SIGKILLed AFTER renaming the live SHASUMS256.txt / .asc into
+    // its scratch dir (as `.bak` rollback copies) but BEFORE publishing
+    // new outputs would leave the directory with no live manifest and
+    // the only surviving copies sitting inside the orphan. A naive
+    // sweep would delete them; the fix makes the sweep probe each
+    // orphan for `.bak` files first, promote them back into the live
+    // paths if live is missing, and only then rm -rf the orphan.
+    //
+    // Drive the sweep's restore through the full rollback chain:
+    //   1. Plant orphan .bak files with distinctive bytes.
+    //   2. Invoke the helper with a valid artifact but a bogus GPG
+    //      key that fails gpg --import.
+    //   3. The helper must: validate artifact → install trap → sweep
+    //      and restore .bak → create scratch_dir → re-backup the just-
+    //      restored file → hash/collate/publish new manifest → try to
+    //      sign → gpg --import fails → cleanup rolls back: rm the new
+    //      manifest, restore the (just-re-backed-up) original bytes.
+    //   4. Final state: live SHASUMS256.txt/.asc exist and hold the
+    //      ORIGINAL .bak bytes, not the new ones.
+    using dir = tempDir("bun-28931-bak-restore-", {
+      "bun-linux-x64.zip": "fresh-bytes",
+    });
+    const dirStr = String(dir);
+
+    const orphan = join(dirStr, ".sign-manifest-scratch.orphanXX");
+    mkdirSync(orphan);
+    // Original (pre-SIGKILL) manifest and .asc bytes. Use distinctive
+    // values so we can tell which ones the helper kept at the end.
+    const originalTxt = "deadbeef".repeat(8) + " *bun-linux-x64.zip\n";
+    const originalAsc =
+      "-----BEGIN PGP SIGNED MESSAGE-----\nHash: SHA512\n\nstashed-bytes\n-----BEGIN PGP SIGNATURE-----\nfake\n-----END PGP SIGNATURE-----\n";
+    writeFileSync(join(orphan, "SHASUMS256.txt.bak"), originalTxt);
+    writeFileSync(join(orphan, "SHASUMS256.txt.asc.bak"), originalAsc);
+
+    // Live outputs are MISSING — simulating the exact SIGKILL window
+    // between "mv manifest → scratch_dir/.bak" and "mv tmp → manifest".
+    expect(existsSync(join(dirStr, "SHASUMS256.txt"))).toBe(false);
+    expect(existsSync(join(dirStr, "SHASUMS256.txt.asc"))).toBe(false);
+
+    // Valid artifact, bogus GPG key → helper runs the sweep, publishes
+    // a fresh manifest, then fails gpg --import and rolls back.
+    const res = await sh([script, dirStr, "bun-linux-x64.zip"], {
+      GPG_PRIVATE_KEY: "not-a-valid-pgp-key",
+      GPG_PASSPHRASE: "unused",
+    });
+    expect(res.stderr).toMatch(/^gpg: /m);
+    expect(res.exitCode).not.toBe(0);
+
+    // Final state: live files exist and hold the ORIGINAL bytes from
+    // the orphan. If the sweep had blindly rm -rf'd the orphan, these
+    // files would be missing entirely after the rollback (the cleanup
+    // trap would find empty backup_* vars and nothing to restore).
+    expect(existsSync(join(dirStr, "SHASUMS256.txt"))).toBe(true);
+    expect(existsSync(join(dirStr, "SHASUMS256.txt.asc"))).toBe(true);
+    expect(readFileSync(join(dirStr, "SHASUMS256.txt"), "utf8")).toBe(originalTxt);
+    expect(readFileSync(join(dirStr, "SHASUMS256.txt.asc"), "utf8")).toBe(originalAsc);
+    // Orphan directory itself is gone, and the current run's scratch
+    // dir was also torn down by cleanup().
+    const leftovers = readdirSync(dirStr).filter(name => name.startsWith(".sign-manifest-scratch."));
+    expect(leftovers).toEqual([]);
+  });
+
   test("restores pre-existing valid outputs when a later step fails mid-mutation", async () => {
     // The cleanup() trap's own invariant promises "same state on
     // failure", but a naive `rm -f "$signed_manifest"` + `mv tmp

@@ -310,6 +310,19 @@ trap cleanup EXIT
 # guard handles the no-match case (glob expands literally without
 # `nullglob`, and a glob pattern is never a directory).
 #
+# Rollback-preserving restore: before we `rm -rf` each orphan, probe it
+# for `.bak` backup files. If a prior run was SIGKILLed after moving
+# the pre-existing `${manifest}` / `${signed_manifest}` into its scratch
+# dir (see the backup block below) but before publishing new outputs,
+# the LIVE path is now empty and the only copy of the last-good file
+# sits inside the orphan. A naive sweep would delete it, leaving the
+# caller with neither the old nor the new manifest. Instead, check the
+# bak path inside the orphan and promote it back into place WHEN the
+# corresponding live file is missing — leaving any live file that
+# might already exist from a different run untouched. Only after that
+# restore (or confirmation that no restore is needed) do we `rm -rf`
+# the orphan.
+#
 # Concurrency note: this intentionally blows away every matching dir,
 # including any that might belong to a currently-running sibling
 # invocation against the same `${dir}`. Both known callers — the
@@ -319,10 +332,23 @@ trap cleanup EXIT
 # parallel-caller use case would need a per-dir lock, not this sweep.
 for _stale in "${dir}/${scratch_prefix}"*/; do
   if [ -d "${_stale}" ]; then
+    _stale_manifest_bak="${_stale}${manifest_basename}.bak"
+    _stale_signed_bak="${_stale}${signed_manifest_basename}.bak"
+    # Restore .bak iff the live file is missing. If the live file
+    # already exists (either a prior completed run's output or a
+    # fresh manifest from another concurrent producer — hypothetical;
+    # see concurrency note above), don't clobber it with an older
+    # backup.
+    if [ -f "${_stale_manifest_bak}" ] && ! [ -e "${manifest}" ]; then
+      mv -f "${_stale_manifest_bak}" "${manifest}" || true
+    fi
+    if [ -f "${_stale_signed_bak}" ] && ! [ -e "${signed_manifest}" ]; then
+      mv -f "${_stale_signed_bak}" "${signed_manifest}" || true
+    fi
     rm -rf "${_stale}" || true
   fi
 done
-unset -v _stale
+unset -v _stale _stale_manifest_bak _stale_signed_bak
 
 # Create the per-invocation scratch directory inside ${dir}. Using
 # `mktemp -d "${dir}/.sign-manifest-scratch.XXXXXXXX"` gives us a name

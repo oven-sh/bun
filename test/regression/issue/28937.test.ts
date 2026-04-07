@@ -216,14 +216,17 @@ describe.concurrent("bun link dependency group flags (issue #28937)", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("--exact --save writes to dependencies", async () => {
+  test("-E --save writes to dependencies", async () => {
     const { consumer, installEnv, globalRoot, linkable } = await setupLink("save");
     using _g = globalRoot;
     using _l = linkable;
     using _c = consumer;
 
+    // Use the short form -E so old clap rejects it with "Invalid Argument"
+    // (long --exact would be silently dropped as an unknown flag, making
+    // this pass identically on fixed and unfixed bun).
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "link", "--exact", "--save", "issue-28937-linked-pkg"],
+      cmd: [bunExe(), "link", "-E", "--save", "issue-28937-linked-pkg"],
       cwd: String(consumer),
       env: installEnv,
       stdout: "pipe",

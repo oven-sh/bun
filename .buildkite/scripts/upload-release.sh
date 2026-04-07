@@ -204,10 +204,36 @@ function sign_and_upload_manifest() {
   shift
   local artifacts=("$@")
 
-  local gpg_private_key
-  local gpg_passphrase
-  gpg_private_key=$(buildkite-agent secret get "GPG_PRIVATE_KEY" 2>/dev/null || true)
-  gpg_passphrase=$(buildkite-agent secret get "GPG_PASSPHRASE" 2>/dev/null || true)
+  # Fetch each GPG secret separately so a real backend failure (network
+  # down, auth error, agent crash, expired token) surfaces in the
+  # wrapper log instead of being silently swallowed into an empty
+  # string. The exit code alone can't reliably distinguish "secret
+  # genuinely not configured" (the expected rollout-fallback state)
+  # from "backend temporarily broken" — so we capture stderr on each
+  # call and echo it as a `warn:` line when the fetch fails. The value
+  # is still treated as unset either way (preserving rollout safety),
+  # but the operator now has a breadcrumb in the log to triage the
+  # difference between the two states manually.
+  local gpg_private_key=""
+  local gpg_passphrase=""
+  local _secret_err
+  _secret_err=$(mktemp)
+  if ! gpg_private_key=$(buildkite-agent secret get "GPG_PRIVATE_KEY" 2>"$_secret_err"); then
+    gpg_private_key=""
+    if [ -s "$_secret_err" ]; then
+      echo "warn: buildkite-agent secret get GPG_PRIVATE_KEY failed (treating as unset):" >&2 || true
+      sed 's/^/warn:   /' "$_secret_err" >&2 || true
+    fi
+  fi
+  : > "$_secret_err"
+  if ! gpg_passphrase=$(buildkite-agent secret get "GPG_PASSPHRASE" 2>"$_secret_err"); then
+    gpg_passphrase=""
+    if [ -s "$_secret_err" ]; then
+      echo "warn: buildkite-agent secret get GPG_PASSPHRASE failed (treating as unset):" >&2 || true
+      sed 's/^/warn:   /' "$_secret_err" >&2 || true
+    fi
+  fi
+  rm -f "$_secret_err"
 
   # Three-way state handling: both-set (sign), neither-set (unsigned
   # rollout fallback), exactly-one-set (hard error before the helper

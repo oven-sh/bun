@@ -2022,6 +2022,12 @@ pub const H2FrameParser = struct {
                     return data.len;
                 }
                 padding = payload[0];
+                if (padding >= frame.length) {
+                    // RFC 7540 §6.1: if the length of the padding is the length of the
+                    // frame payload or greater, treat as PROTOCOL_ERROR.
+                    this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "Data frame padding exceeds payload size", this.lastStreamID, true);
+                    return data.len;
+                }
                 stream.padding = payload[0];
             }
         }

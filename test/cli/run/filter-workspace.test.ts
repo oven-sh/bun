@@ -474,12 +474,10 @@ describe("bun", () => {
     elideLines,
     target_pattern,
     antipattern,
-    env = {},
   }: {
-    elideLines?: number;
+    elideLines: number;
     target_pattern: RegExp[];
     antipattern?: RegExp[];
-    env?: Record<string, string | undefined>;
   }) {
     const dir = tempDirWithFiles("testworkspace", {
       packages: {
@@ -502,20 +500,13 @@ describe("bun", () => {
     if (process.platform === "win32") {
       const { exitCode, stderr, stdout } = spawnSync({
         cwd: dir,
-        cmd: [
-          bunExe(),
-          "run",
-          "--filter",
-          "./packages/dep0",
-          ...(elideLines !== undefined ? ["--elide-lines", String(elideLines)] : []),
-          "script",
-        ],
-        env: { ...bunEnv, ...env, FORCE_COLOR: "1", NO_COLOR: "0" },
+        cmd: [bunExe(), "run", "--filter", "./packages/dep0", "--elide-lines", String(elideLines), "script"],
+        env: { ...bunEnv, FORCE_COLOR: "1", NO_COLOR: "0" },
         stdout: "pipe",
         stderr: "pipe",
       });
 
-      expect(stderr.toString()).toMatch(/elide-lines has no effect in non-terminal environments/);
+      expect(stderr.toString()).not.toContain("--elide-lines is only supported in terminal environments");
       expect(stdout.toString()).toMatch(/(?:log_line[\s\S]*?){20}/);
       expect(exitCode).toBe(0);
       return;
@@ -524,7 +515,7 @@ describe("bun", () => {
     runInCwdSuccess({
       cwd: dir,
       pattern: "./packages/dep0",
-      env: { ...env, FORCE_COLOR: "1", NO_COLOR: "0" },
+      env: { FORCE_COLOR: "1", NO_COLOR: "0" },
       target_pattern,
       antipattern,
       command: ["script"],
@@ -554,20 +545,27 @@ describe("bun", () => {
     });
   });
 
-  test("respects BUN_CONFIG_ELIDE_LINES environment variable", () => {
-    runElideLinesTest({
-      target_pattern: [/\[3 lines elided\]/, /(?:log_line[\s\S]*?){20}/],
-      antipattern: [/\[10 lines elided\]/],
-      env: { BUN_CONFIG_ELIDE_LINES: "17" },
+  test("--elide-lines is a no-op (not an error) when stdout is not a terminal", () => {
+    const dir = tempDirWithFiles("testworkspace", {
+      packages: {
+        dep0: {
+          "index.js": Array(20).fill("console.log('log_line');").join("\n"),
+          "package.json": JSON.stringify({ name: "dep0", scripts: { script: `${bunExe()} run index.js` } }),
+        },
+      },
+      "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/*"] }),
     });
-  });
 
-  test("command-line flag takes precedence over environment variable", () => {
-    runElideLinesTest({
-      elideLines: 12,
-      target_pattern: [/\[8 lines elided\]/, /(?:log_line[\s\S]*?){20}/],
-      antipattern: [/\[15 lines elided\]/],
-      env: { BUN_CONFIG_ELIDE_LINES: "5" },
+    const { exitCode, stderr, stdout } = spawnSync({
+      cwd: dir,
+      cmd: [bunExe(), "run", "--filter", "./packages/dep0", "--elide-lines", "0", "script"],
+      env: { ...bunEnv, FORCE_COLOR: undefined, NO_COLOR: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
     });
+
+    expect(stderr.toString()).not.toContain("--elide-lines is only supported in terminal environments");
+    expect(stdout.toString()).toMatch(/(?:log_line[\s\S]*?){20}/);
+    expect(exitCode).toBe(0);
   });
 });

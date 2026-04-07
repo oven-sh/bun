@@ -550,11 +550,6 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
         .env = this_transpiler.env,
     };
 
-    const stdout_is_terminal = if (Environment.isWindows) windowsIsTerminal() else Output.isStdoutTTY();
-    if (ctx.bundler_options.elide_lines != null and !stdout_is_terminal) {
-        Output.warn("elide-lines has no effect in non-terminal environments", .{});
-    }
-
     // initialize the handles
     var map = bun.StringHashMap(std.array_list.Managed(*ProcessHandle)).init(ctx.allocator);
     for (scripts.items, 0..) |*script, i| {

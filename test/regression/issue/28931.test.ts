@@ -184,8 +184,15 @@ describe.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
 
     const verify = sh(["gpg", "--batch", "--verify", join(dirStr, "SHASUMS256.txt.asc")], {
       GNUPGHOME: verifyHome,
+      // Pin the locale — gpg translates "Good signature" to the system
+      // language otherwise (e.g. "Korrekte Unterschrift" on a German dev
+      // box), which would make the substring match below fail even though
+      // the signature itself is cryptographically valid.
+      LANG: "C",
+      LC_ALL: "C",
+      LC_MESSAGES: "C",
     });
-    // gpg prints "Good signature" to stderr on success.
+    // gpg prints "Good signature" to stderr on success (locale pinned above).
     expect(verify.stderr).toContain("Good signature");
     expect(verify.exitCode).toBe(0);
   });

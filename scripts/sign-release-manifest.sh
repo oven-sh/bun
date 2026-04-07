@@ -131,5 +131,10 @@ GNUPGHOME="$gnupghome" gpg \
   --output "$signed_manifest" \
   "$manifest" <<< "$GPG_PASSPHRASE"
 
-echo "Signed $signed_manifest"
+# Set success BEFORE the echo. A broken stdout pipe (e.g. Buildkite log
+# aggregator dying after gpg has already written $signed_manifest) would
+# SIGPIPE the echo, fire set -e, and cleanup() would delete an otherwise
+# valid signed manifest. gpg --clearsign returning successfully is the
+# real success criterion — the echo is cosmetic.
 success=1
+echo "Signed $signed_manifest"

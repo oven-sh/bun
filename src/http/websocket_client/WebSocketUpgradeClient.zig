@@ -1203,7 +1203,9 @@ fn buildRequestBody(
     extra_headers: NonUTF8Headers,
     target_authorization: ?[]const u8,
 ) std.mem.Allocator.Error!BuildRequestResult {
-    const allocator = vm.allocator;
+    // body is later freed via bun.default_allocator (clearInput / error paths),
+    // and vm.allocator is a separate MimallocArena heap — keep alloc/free matched.
+    const allocator = bun.default_allocator;
 
     // Check for user overrides
     var user_host: ?jsc.ZigString = null;

@@ -2347,14 +2347,14 @@ pub fn loadEntryPoint(this: *VirtualMachine, entry_path: string) anyerror!*JSInt
     return this.pending_internal_promise.?;
 }
 
-pub fn addListeningSocketForWatchMode(this: *VirtualMachine, socket: bun.FileDescriptor) void {
+pub fn addListeningSocketForWatchMode(this: *VirtualMachine, socket: bun.FD) void {
     if (this.hot_reload != .watch) {
         return;
     }
 
     this.rareData().addListeningSocketForWatchMode(socket);
 }
-pub fn removeListeningSocketForWatchMode(this: *VirtualMachine, socket: bun.FileDescriptor) void {
+pub fn removeListeningSocketForWatchMode(this: *VirtualMachine, socket: bun.FD) void {
     if (this.hot_reload != .watch) {
         return;
     }

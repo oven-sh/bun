@@ -1,7 +1,7 @@
 pub const ContentsOrFd = union(enum) {
     fd: struct {
-        dir: StoredFileDescriptorType,
-        file: StoredFileDescriptorType,
+        dir: FD,
+        file: FD,
     },
     contents: string,
 
@@ -62,8 +62,8 @@ pub const Result = struct {
     };
 
     const WatcherData = struct {
-        fd: bun.StoredFileDescriptorType,
-        dir_fd: bun.StoredFileDescriptorType,
+        fd: bun.FD,
+        dir_fd: bun.FD,
 
         /// When no files to watch, this encoding is used.
         pub const none: WatcherData = .{
@@ -907,7 +907,7 @@ const OnBeforeParsePlugin = struct {
     const OnBeforeParseResultWrapper = extern struct {
         original_source: ?[*]const u8 = null,
         original_source_len: usize = 0,
-        original_source_fd: bun.FileDescriptor = bun.invalid_fd,
+        original_source_fd: bun.FD = bun.invalid_fd,
         loader: Loader,
         check: if (bun.Environment.isDebug) u32 else u0 = if (bun.Environment.isDebug) 42069 else 0, // Value to ensure OnBeforeParseResult is wrapped in this struct
         result: OnBeforeParseResult,
@@ -1456,10 +1456,10 @@ const Resolver = _resolver.Resolver;
 
 const bun = @import("bun");
 const Environment = bun.Environment;
+const FD = bun.FD;
 const FeatureFlags = bun.FeatureFlags;
 const ImportRecord = bun.ImportRecord;
 const Output = bun.Output;
-const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const ThreadPoolLib = bun.ThreadPool;
 const Transpiler = bun.Transpiler;
 const bake = bun.bake;

@@ -160,6 +160,17 @@ pub const PackageInstall = struct {
         resolution: *const Resolution,
         root_node_modules_dir: std.fs.Dir,
     ) bool {
+        // If the existing entry's form (symlink vs. real directory) doesn't match
+        // what the new resolution expects, force a reinstall. This catches cases
+        // like `bun link --save` followed by `bun install <pkg>`, where the
+        // existing `node_modules/<pkg>` is still a symlink into the linked clone
+        // but the new resolution points at an npm/tarball/git package that must
+        // be extracted on top. The reverse direction (real dir -> link) is also
+        // handled here.
+        if (!this.verifyEntryKindMatchesResolution(resolution.tag, root_node_modules_dir)) {
+            return false;
+        }
+
         const verified =
             switch (resolution.tag) {
                 .git => this.verifyGitResolution(&resolution.value.git, root_node_modules_dir),
@@ -177,6 +188,38 @@ pub const PackageInstall = struct {
             return this.verifyPatchHash(patch, root_node_modules_dir);
         }
         return verified;
+    }
+
+    /// Returns true if the existing `node_modules/<pkg>` entry (if any) is the
+    /// right kind for the given resolution tag — a symlink for link/workspace
+    /// resolutions, a real directory for npm/tarball/git resolutions. Missing
+    /// entries are treated as "matching" so the downstream verify steps can
+    /// report the miss through their normal path.
+    fn verifyEntryKindMatchesResolution(
+        this: *@This(),
+        tag: Resolution.Tag,
+        root_node_modules_dir: std.fs.Dir,
+    ) bool {
+        const expected_symlink = switch (tag) {
+            .symlink, .workspace, .root => true,
+            .folder => !this.lockfile.isWorkspaceTreeId(this.node_modules.tree_id),
+            else => false,
+        };
+
+        const entry_is_symlink = this.node_modules.entryIsSymlink(
+            root_node_modules_dir,
+            this.destination_dir_subpath,
+        );
+
+        // If the entry doesn't exist at all, entryIsSymlink returns false. For
+        // `expected_symlink == false` that still looks like a match; we let the
+        // existing verify steps (openFile on package.json / directoryExistsAt)
+        // report the miss and trigger reinstall. Only an actual mismatch — i.e.
+        // the entry exists but has the wrong form — forces an early reinstall.
+        if (entry_is_symlink == expected_symlink) return true;
+
+        // Mismatch: stale form on disk.
+        return false;
     }
 
     // Only check for destination directory in node_modules. We can't use package.json because

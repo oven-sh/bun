@@ -4,7 +4,7 @@
 // is called on a directory without `recursive: true`. Bun's native
 // binding surfaces the raw `EISDIR` from unlink(2), so we rewrap it here
 // to match Node.js's shape. See https://github.com/oven-sh/bun/issues/28958.
-export function maybeRemapRmEISDIR(err: any, path: any, options: any) {
+function maybeRemapRmEISDIR(err: any, path: any, options: any) {
   if (!err || err.code !== "EISDIR") return err;
   // If the caller passed `recursive: true`, an EISDIR here would be
   // unexpected — leave the original error alone.
@@ -32,3 +32,7 @@ export function maybeRemapRmEISDIR(err: any, path: any, options: any) {
   if (pathString !== undefined) wrapped.path = pathString;
   return wrapped;
 }
+
+export default {
+  maybeRemapRmEISDIR,
+};

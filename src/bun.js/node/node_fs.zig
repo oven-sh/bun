@@ -5763,8 +5763,12 @@ pub const NodeFS = struct {
                     error.NotDir => .NOTDIR,
                     error.AccessDenied => brk: {
                         if (comptime Environment.isMac) {
-                            switch (bun.sys.directoryExistsAt(bun.invalid_fd, dest)) {
-                                .result => |is_dir| if (is_dir) break :brk .ISDIR,
+                            // Use `lstatat` so a symlink pointing at a
+                            // directory is NOT remapped — unlink on a
+                            // symlink is legal, so a real EACCES/EPERM
+                            // on the link itself must surface unchanged.
+                            switch (bun.sys.lstatat(bun.invalid_fd, dest)) {
+                                .result => |stat_buf| if (bun.S.ISDIR(stat_buf.mode)) break :brk .ISDIR,
                                 .err => {},
                             }
                         }

@@ -69,6 +69,50 @@ test("fs.promises.rm on a directory without recursive throws ERR_FS_EISDIR", asy
   expect(fs.existsSync(target)).toBe(true);
 });
 
+test("fs.rmSync with a URL path still throws ERR_FS_EISDIR on a directory", () => {
+  using dir = tempDir("issue-28958-url", { "subdir/.keep": "" });
+  const target = path.join(String(dir), "subdir");
+  const url = new URL(`file://${target}`);
+
+  let err: any;
+  try {
+    fs.rmSync(url, { recursive: false, force: false });
+  } catch (e) {
+    err = e;
+  }
+  expect(err).toBeDefined();
+  expect(err.name).toBe("SystemError");
+  expect(err.code).toBe("ERR_FS_EISDIR");
+  expect(err.errno).toBe(21);
+  expect(err.syscall).toBe("rm");
+  // The helper resolves URL → path string so consumers get a stable
+  // `path` field regardless of the input type.
+  expect(err.path).toBe(target);
+  expect(err.message).toBe(`Path is a directory: rm returned EISDIR (is a directory) ${target}`);
+  expect(fs.existsSync(target)).toBe(true);
+});
+
+test("fs.promises.rm with a Buffer path still throws ERR_FS_EISDIR on a directory", async () => {
+  using dir = tempDir("issue-28958-buffer", { "subdir/.keep": "" });
+  const target = path.join(String(dir), "subdir");
+  const buf = Buffer.from(target);
+
+  let err: any;
+  try {
+    await fs.promises.rm(buf, { recursive: false, force: false });
+  } catch (e) {
+    err = e;
+  }
+  expect(err).toBeDefined();
+  expect(err.name).toBe("SystemError");
+  expect(err.code).toBe("ERR_FS_EISDIR");
+  expect(err.errno).toBe(21);
+  expect(err.syscall).toBe("rm");
+  expect(err.path).toBe(target);
+  expect(err.message).toBe(`Path is a directory: rm returned EISDIR (is a directory) ${target}`);
+  expect(fs.existsSync(target)).toBe(true);
+});
+
 test("fs.rmSync with recursive: true still removes a directory", () => {
   using dir = tempDir("issue-28958-recursive", { "subdir/file.txt": "hello" });
   const target = path.join(String(dir), "subdir");

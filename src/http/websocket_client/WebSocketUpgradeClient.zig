@@ -335,8 +335,11 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 bun.analytics.Features.WebSocket += 1;
 
                 if (comptime ssl) {
-                    if (!strings.isIPAddress(host_slice.slice())) {
-                        out.hostname = bun.default_allocator.dupeZ(u8, host_slice.slice()) catch "";
+                    // SNI for the outer TLS socket must use the host we actually
+                    // dialed. For HTTPS proxy connections, that's the proxy host,
+                    // not the wss:// target.
+                    if (!strings.isIPAddress(display_host_)) {
+                        out.hostname = bun.default_allocator.dupeZ(u8, display_host_) catch "";
                     }
                 }
 

@@ -76,6 +76,28 @@ fi
 
 manifest="$dir/SHASUMS256.txt"
 signed_manifest="$manifest.asc"
+manifest_basename="SHASUMS256.txt"
+signed_manifest_basename="SHASUMS256.txt.asc"
+
+# Early validation of the raw artifact array — BEFORE any sort, rm, or
+# output mutation. The sort below is newline-delimited so an artifact
+# name containing \n or \r would split into multiple entries; the
+# reserved manifest/signature basenames would get their own hashes
+# computed and then clobbered by the script's own output. Reject both
+# cases here with a clear error instead of producing a broken manifest.
+for _a in "${artifacts[@]}"; do
+  case "$_a" in
+    *$'\n'*|*$'\r'*)
+      echo "error: artifact name contains line break: $(printf '%q' "$_a")" >&2
+      exit 1
+      ;;
+  esac
+  if [ "$_a" = "$manifest_basename" ] || [ "$_a" = "$signed_manifest_basename" ]; then
+    echo "error: artifact name is reserved for manifest output: $_a" >&2
+    exit 1
+  fi
+done
+unset _a
 # We write hash lines into a .tmp sibling and rename to $manifest atomically
 # once every archive has been hashed. This keeps the final $manifest path
 # either whole or absent on disk even if the script is SIGKILL'd mid-loop
@@ -137,7 +159,14 @@ done < <(printf '%s\n' "${artifacts[@]}" | LC_ALL=C sort)
 # recreate the exact identity mismatch this PR is fixing. The signed
 # branch overwrites via `gpg --output` anyway, so this rm is a no-op
 # there and a correctness fix in the unsigned branch.
-rm -f "$signed_manifest"
+#
+# `|| true` matches the rest of the script (see the cleanup() comment
+# above): `-f` only suppresses ENOENT, not EACCES / EROFS / EIO /
+# stale-NFS. Without the guard, a permission error on the stale .asc
+# would fire `set -e` here with success=0, and cleanup() would delete
+# the pre-existing valid SHASUMS256.txt — strictly worse than leaving
+# everything alone.
+rm -f "$signed_manifest" || true
 
 # Validate every artifact BEFORE we spawn any hash jobs — fail-fast with
 # a clean error message, no orphaned background subshells. Two checks:

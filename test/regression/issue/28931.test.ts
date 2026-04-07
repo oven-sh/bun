@@ -30,8 +30,12 @@ import { join } from "node:path";
 const repoRoot = join(import.meta.dir, "..", "..", "..");
 const script = join(repoRoot, "scripts", "sign-release-manifest.sh");
 
-function sh(cmd: string[], env: Record<string, string> = {}) {
-  const res = Bun.spawnSync({
+async function sh(cmd: string[], env: Record<string, string> = {}) {
+  // Async Bun.spawn (not spawnSync) so the wrapping describe.concurrent
+  // below can actually run the five tests in parallel — a spawnSync
+  // in each would block the test runner's event loop and defeat the
+  // concurrency marker. Await the completion, then read stdout/stderr.
+  await using proc = Bun.spawn({
     cmd,
     // Pin cwd to the repo root so the helper is robust against whatever
     // directory the test runner happens to be invoked from. Every path
@@ -42,11 +46,12 @@ function sh(cmd: string[], env: Record<string, string> = {}) {
     stdout: "pipe",
     stderr: "pipe",
   });
-  return {
-    exitCode: res.exitCode,
-    stdout: res.stdout.toString(),
-    stderr: res.stderr.toString(),
-  };
+  const [stdout, stderr, exitCode] = await Promise.all([
+    proc.stdout.text(),
+    proc.stderr.text(),
+    proc.exited,
+  ]);
+  return { exitCode, stdout, stderr };
 }
 
 // The signing helper is a bash script (uses set -eo pipefail, here-strings,
@@ -65,8 +70,8 @@ let gpgPrivateKey = "";
 const passphrase = "test-passphrase-28931";
 const keyUid = "release-test-28931@example.invalid";
 
-describe.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
-  beforeAll(() => {
+describe.concurrent.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
+  beforeAll(async () => {
     // One keyring for the whole suite. We can't `using` this inside
     // beforeAll — the disposable would fire as soon as this callback
     // returns, wiping the keyring before any test runs. Stash the
@@ -89,14 +94,14 @@ describe.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
     const keyspecPath = join(gpgHome, "keyspec");
     writeFileSync(keyspecPath, keyspec);
 
-    const gen = sh(
+    const gen = await sh(
       ["gpg", "--batch", "--pinentry-mode", "loopback", "--passphrase", passphrase, "--gen-key", keyspecPath],
       { GNUPGHOME: gpgHome },
     );
     expect(gen.stderr + gen.stdout).not.toContain("error");
     expect(gen.exitCode).toBe(0);
 
-    const exp = sh(
+    const exp = await sh(
       [
         "gpg",
         "--batch",
@@ -110,13 +115,13 @@ describe.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
       ],
       { GNUPGHOME: gpgHome },
     );
-    // stderr first so an export failure (missing key, pinentry error,
-    // corrupt keyring) surfaces the real gpg message instead of a bare
-    // "expected 1 to equal 0".
-    expect(exp.stderr + exp.stdout).not.toContain("error");
-    expect(exp.exitCode).toBe(0);
+    // stderr ONLY — exp.stdout holds the ASCII-armored private key and
+    // can legitimately contain the substring "error" inside base64 key
+    // material. Checking stdout would be a flake source.
+    expect(exp.stderr).not.toContain("error");
     gpgPrivateKey = exp.stdout;
     expect(gpgPrivateKey).toContain("-----BEGIN PGP PRIVATE KEY BLOCK-----");
+    expect(exp.exitCode).toBe(0);
   });
 
   afterAll(() => {
@@ -126,7 +131,7 @@ describe.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
     keyringDir = undefined;
   });
 
-  test("writes deterministic, sorted SHASUMS256.txt and a matching clearsigned .asc", () => {
+  test("writes deterministic, sorted SHASUMS256.txt and a matching clearsigned .asc", async () => {
     using dir = tempDir("bun-28931-manifest-", {
       "bun-linux-x64.zip": "fake linux x64 contents",
       "bun-darwin-aarch64.zip": "fake darwin aarch64 contents",
@@ -134,7 +139,7 @@ describe.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
     });
     const dirStr = String(dir);
 
-    const res = sh(
+    const res = await sh(
       // Deliberately unsorted — the helper must sort for us.
       [script, dirStr, "bun-windows-x64.zip", "bun-linux-x64.zip", "bun-darwin-aarch64.zip"],
       { GPG_PRIVATE_KEY: gpgPrivateKey, GPG_PASSPHRASE: passphrase },
@@ -185,18 +190,18 @@ describe.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
     using verifyHomeDir = tempDir("bun-28931-verify-", {});
     const verifyHome = String(verifyHomeDir);
 
-    const pubRes = sh(["gpg", "--armor", "--export", keyUid], { GNUPGHOME: gpgHome });
+    const pubRes = await sh(["gpg", "--armor", "--export", keyUid], { GNUPGHOME: gpgHome });
     // stderr first so a key lookup failure surfaces the real gpg error.
     expect(pubRes.stderr).not.toContain("error:");
     expect(pubRes.exitCode).toBe(0);
     const pubPath = join(verifyHome, "pub.asc");
     writeFileSync(pubPath, pubRes.stdout);
 
-    const imp = sh(["gpg", "--batch", "--import", pubPath], { GNUPGHOME: verifyHome });
+    const imp = await sh(["gpg", "--batch", "--import", pubPath], { GNUPGHOME: verifyHome });
     expect(imp.stderr).not.toContain("error:");
     expect(imp.exitCode).toBe(0);
 
-    const verify = sh(["gpg", "--batch", "--verify", join(dirStr, "SHASUMS256.txt.asc")], {
+    const verify = await sh(["gpg", "--batch", "--verify", join(dirStr, "SHASUMS256.txt.asc")], {
       GNUPGHOME: verifyHome,
       // Pin the locale — gpg translates "Good signature" to the system
       // language otherwise (e.g. "Korrekte Unterschrift" on a German dev
@@ -211,7 +216,7 @@ describe.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
     expect(verify.exitCode).toBe(0);
   });
 
-  test("writes unsigned SHASUMS256.txt when GPG env vars are empty (rollout fallback)", () => {
+  test("writes unsigned SHASUMS256.txt when GPG env vars are empty (rollout fallback)", async () => {
     // Before the Buildkite GPG secrets are provisioned, the helper still
     // produces a fresh accurate SHASUMS256.txt — users running
     // `sha256sum -c` get correct hashes immediately and the daily sign
@@ -222,7 +227,7 @@ describe.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
     });
     const dirStr = String(dir);
 
-    const res = sh([script, dirStr, "bun-linux-x64.zip", "bun-darwin-aarch64.zip"], {
+    const res = await sh([script, dirStr, "bun-linux-x64.zip", "bun-darwin-aarch64.zip"], {
       GPG_PRIVATE_KEY: "",
       GPG_PASSPHRASE: "",
     });
@@ -250,7 +255,7 @@ describe.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
     expect(existsSync(join(dirStr, "SHASUMS256.txt.asc"))).toBe(false);
   });
 
-  test("unsigned fallback removes a stale .asc left by a previous signed run", () => {
+  test("unsigned fallback removes a stale .asc left by a previous signed run", async () => {
     // coderabbit caught: signed run writes .txt + .asc; if the same
     // directory is later invoked unsigned (secrets rotated/removed,
     // standalone manual re-run, etc.) the old .asc would survive and the
@@ -264,7 +269,7 @@ describe.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
     const dirStr = String(dir);
 
     // First run: signed.
-    const firstRun = sh([script, dirStr, "bun-linux-x64.zip"], {
+    const firstRun = await sh([script, dirStr, "bun-linux-x64.zip"], {
       GPG_PRIVATE_KEY: gpgPrivateKey,
       GPG_PASSPHRASE: passphrase,
     });
@@ -279,7 +284,7 @@ describe.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
     writeFileSync(join(dirStr, "bun-linux-x64.zip"), "fake-after-rotation");
 
     // Second run: unsigned. The .asc from the first run must be gone.
-    const secondRun = sh([script, dirStr, "bun-linux-x64.zip"], {
+    const secondRun = await sh([script, dirStr, "bun-linux-x64.zip"], {
       GPG_PRIVATE_KEY: "",
       GPG_PASSPHRASE: "",
     });
@@ -295,13 +300,13 @@ describe.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
     expect(manifest).toBe(`${expected} *bun-linux-x64.zip`);
   });
 
-  test("fails loudly and cleans up a half-written manifest when an artifact is missing", () => {
+  test("fails loudly and cleans up a half-written manifest when an artifact is missing", async () => {
     using dir = tempDir("bun-28931-missing-", {
       "bun-linux-x64.zip": "present",
     });
     const dirStr = String(dir);
 
-    const res = sh([script, dirStr, "bun-linux-x64.zip", "bun-windows-x64.zip"], {
+    const res = await sh([script, dirStr, "bun-linux-x64.zip", "bun-windows-x64.zip"], {
       GPG_PRIVATE_KEY: gpgPrivateKey,
       GPG_PASSPHRASE: passphrase,
     });
@@ -319,7 +324,7 @@ describe.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
     ["dot-dot", ".."],
     ["dot", "."],
     ["empty", ""],
-  ])("rejects non-basename artifact %s", (_label, badName) => {
+  ])("rejects non-basename artifact %s", async (_label, badName) => {
     // Helper contract is basename-only — a caller passing `dist/foo.zip`
     // would try to write its digest under a missing subdir, and
     // `../foo.zip` would escape the scratch dir entirely. Validate up
@@ -330,17 +335,45 @@ describe.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
     });
     const dirStr = String(dir);
 
-    const res = sh([script, dirStr, badName], {
+    const res = await sh([script, dirStr, badName], {
       GPG_PRIVATE_KEY: gpgPrivateKey,
       GPG_PASSPHRASE: passphrase,
     });
     expect(res.stderr).toContain("must be basenames");
-    expect(res.exitCode).toBe(1);
     expect(existsSync(join(dirStr, "SHASUMS256.txt"))).toBe(false);
     expect(existsSync(join(dirStr, "SHASUMS256.txt.asc"))).toBe(false);
+    expect(res.exitCode).toBe(1);
   });
 
-  test("representative archive set round-trips through validate-digests.ts checks", () => {
+  test.each([
+    ["reserved manifest name", "SHASUMS256.txt"],
+    ["reserved signed-manifest name", "SHASUMS256.txt.asc"],
+    ["embedded newline", "bun-linux\n-x64.zip"],
+    ["embedded carriage return", "bun-linux\r-x64.zip"],
+  ])("rejects malformed artifact %s", async (_label, badName) => {
+    // These names would each break the script if accepted:
+    // - "SHASUMS256.txt"/"SHASUMS256.txt.asc" are the script's own
+    //   output paths — including them as inputs would compute a hash
+    //   for the previous run's manifest and then clobber it.
+    // - A newline or carriage return in the name splits the
+    //   newline-delimited sort into multiple entries and writes a
+    //   multi-line manifest entry that downstream parsers reject.
+    using dir = tempDir("bun-28931-malformed-", {
+      "bun-linux-x64.zip": "present",
+    });
+    const dirStr = String(dir);
+
+    const res = await sh([script, dirStr, badName], {
+      GPG_PRIVATE_KEY: gpgPrivateKey,
+      GPG_PASSPHRASE: passphrase,
+    });
+    expect(res.stderr).toMatch(/reserved for manifest output|contains line break/);
+    expect(existsSync(join(dirStr, "SHASUMS256.txt"))).toBe(false);
+    expect(existsSync(join(dirStr, "SHASUMS256.txt.asc"))).toBe(false);
+    expect(res.exitCode).toBe(1);
+  });
+
+  test("representative archive set round-trips through validate-digests.ts checks", async () => {
     // End-to-end repro of the issue: running the helper over a set of
     // canary-shaped archive basenames yields a manifest whose hashes
     // match the real file bytes, so the user's validator script would
@@ -366,7 +399,7 @@ describe.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
       "bun-windows-x64.zip",
     ];
 
-    const res = sh([script, dirStr, ...artifacts], {
+    const res = await sh([script, dirStr, ...artifacts], {
       GPG_PRIVATE_KEY: gpgPrivateKey,
       GPG_PASSPHRASE: passphrase,
     });

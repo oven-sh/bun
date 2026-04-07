@@ -4,7 +4,7 @@
 // CalDAV) that was missing from Bun's HTTP method allowlist. Bun.serve would
 // drop the request entirely and fetch() would silently rewrite the method to
 // GET.
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { METHODS } from "node:http";
 import { connect } from "node:net";
 

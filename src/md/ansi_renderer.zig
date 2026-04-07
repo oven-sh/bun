@@ -759,15 +759,34 @@ pub const AnsiRenderer = struct {
             while (j < data.len and data[j] != ' ' and data[j] != '\n') : (j += 1) {}
             const word = data[i..j];
             const word_width = visibleWidth(word);
-            if (self.col != 0 and self.col + word_width > max and self.col > indent) {
-                self.writeRaw("\n");
-                self.last_was_newline = true;
-                self.col = 0;
-                self.writeIndent();
+            const avail = max -| indent;
+            if (avail > 0 and word_width > avail) {
+                // Word can never fit on a fresh line — hard-break from
+                // wherever the cursor is so we don't waste the tail of
+                // the current line.
+                var rest = word;
+                while (rest.len > 0) {
+                    const r = max -| self.col;
+                    if (r == 0) {
+                        self.wrapBreak();
+                        continue;
+                    }
+                    var cut = visibleIndexAt(rest, r);
+                    if (cut == 0) cut = @min(rest.len, @as(usize, bun.strings.wtf8ByteSequenceLengthWithInvalid(rest[0])));
+                    self.writeRaw(rest[0..cut]);
+                    self.col += @intCast(visibleWidth(rest[0..cut]));
+                    self.last_was_newline = false;
+                    rest = rest[cut..];
+                    if (rest.len > 0) self.wrapBreak();
+                }
+            } else {
+                if (self.col != 0 and self.col + word_width > max and self.col > indent) {
+                    self.wrapBreak();
+                }
+                self.writeRaw(word);
+                self.col += @intCast(word_width);
+                self.last_was_newline = (word.len == 0);
             }
-            self.writeRaw(word);
-            self.col += @intCast(word_width);
-            self.last_was_newline = (word.len == 0);
             i = j;
             if (i < data.len and data[i] == ' ') {
                 // Look ahead to the next word: if the space + next word
@@ -778,7 +797,11 @@ pub const AnsiRenderer = struct {
                 var m = k;
                 while (m < data.len and data[m] != ' ' and data[m] != '\n') : (m += 1) {}
                 const next_word_width = visibleWidth(data[k..m]);
-                if (self.col != 0 and self.col + 1 + next_word_width > max and self.col > indent) {
+                const next_avail = max -| indent;
+                // Only soft-wrap when the next word would fit on a fresh
+                // line; if it's wider than that it will hard-break, so
+                // emit the space and let the break start mid-line.
+                if (self.col != 0 and self.col + 1 + next_word_width > max and self.col > indent and next_word_width <= next_avail) {
                     self.writeRaw("\n");
                     self.last_was_newline = true;
                     self.col = 0;
@@ -852,19 +875,102 @@ pub const AnsiRenderer = struct {
     /// both the escape prefix and the text through the active buffer so
     /// spans inside cells/headings flush correctly.
     fn writeStyled(self: *AnsiRenderer, prefix: []const u8, text_: []const u8) void {
+        const in_main_flow = !self.in_cell and self.heading_level == 0 and
+            !self.in_code_block and self.image_depth == 0;
+
+        // Pre-wrap before opening the style: an atomic span (`.code`,
+        // `.latexmath`, link href fallback) is emitted in one piece via
+        // emitInline, so if it would overflow we must break to a fresh
+        // line first — otherwise the terminal hard-wraps mid-span.
+        if (in_main_flow and self.theme.columns > 0 and text_.len > 0) {
+            const tw = visibleWidth(text_);
+            if (tw > 0) {
+                const max = self.theme.columns;
+                const indent = self.currentIndent();
+                if (self.col > indent and self.col + tw > max) {
+                    self.wrapBreak();
+                }
+            }
+        }
+
         if (self.theme.colors and prefix.len > 0) {
             self.emitInline(prefix);
         }
-        if (text_.len > 0) {
+        if (text_.len == 0) return;
+
+        if (!in_main_flow) {
             self.emitInline(text_);
-            // `col` tracks the visible cursor on the main output only —
-            // bytes buffered into a cell / heading / image-alt / code
-            // block don't move the current line's cursor.
-            if (!self.in_cell and self.heading_level == 0 and !self.in_code_block and self.image_depth == 0) {
-                self.col += @intCast(visibleWidth(text_));
-                self.last_was_newline = false;
-            }
+            return;
         }
+
+        const max = self.theme.columns;
+        if (max == 0) {
+            self.emitInline(text_);
+            self.col += @intCast(visibleWidth(text_));
+            self.last_was_newline = false;
+            return;
+        }
+
+        var rest = text_;
+        while (rest.len > 0) {
+            const room = max -| self.col;
+            if (room == 0) {
+                if (self.col <= self.currentIndent()) {
+                    // Pathological: indent >= columns. Emit as-is to
+                    // avoid an infinite loop.
+                    self.emitInline(rest);
+                    self.col += @intCast(visibleWidth(rest));
+                    self.last_was_newline = false;
+                    return;
+                }
+                self.wrapBreak();
+                continue;
+            }
+            const cut = visibleIndexAt(rest, room);
+            if (cut == rest.len) {
+                self.emitInline(rest);
+                self.col += @intCast(visibleWidth(rest));
+                self.last_was_newline = false;
+                return;
+            }
+            // cut == 0 happens when the first codepoint is wider than
+            // `room` (e.g. one column left, next char is width-2 CJK).
+            // Wrap to a fresh line; the next iteration has full room.
+            if (cut == 0) {
+                if (self.col <= self.currentIndent()) {
+                    // Even a fresh line can't hold one codepoint —
+                    // emit one codepoint to make progress.
+                    const adv = visibleIndexAt(rest, 2);
+                    const one = if (adv == 0) @min(rest.len, @as(usize, bun.strings.wtf8ByteSequenceLengthWithInvalid(rest[0]))) else adv;
+                    self.emitInline(rest[0..one]);
+                    self.col += @intCast(visibleWidth(rest[0..one]));
+                    self.last_was_newline = false;
+                    rest = rest[one..];
+                    if (rest.len > 0) self.wrapBreak();
+                    continue;
+                }
+                self.wrapBreak();
+                continue;
+            }
+            self.emitInline(rest[0..cut]);
+            self.col += @intCast(visibleWidth(rest[0..cut]));
+            self.last_was_newline = false;
+            rest = rest[cut..];
+            self.wrapBreak();
+        }
+    }
+
+    /// Soft-wrap inside a styled span: clear bg/fg so the line tail and
+    /// indent stay clean, newline, re-emit indent, then reapply the
+    /// active span styles so the continuation keeps its color.
+    fn wrapBreak(self: *AnsiRenderer) void {
+        const has_style = self.span_flags != 0 or self.link_depth > 0;
+        if (self.theme.colors and has_style) self.out.write("\x1b[39m\x1b[49m");
+        self.out.writeByte('\n');
+        self.last_was_newline = true;
+        self.col = 0;
+        self.writeIndent();
+        if (has_style) self.reapplyStyles();
     }
 
     /// Emit raw text (typically a single char or newline). Routes through
@@ -1211,6 +1317,25 @@ pub const AnsiRenderer = struct {
             }
         }
 
+        // Clamp column widths so the rendered table fits the terminal.
+        // Each column contributes ` content │` = width+3; plus one
+        // leading `│` and the current indent.
+        if (self.theme.columns > 0) {
+            const indent = self.currentIndent();
+            var total: usize = indent + 1;
+            for (widths) |w| total += w + 3;
+            const budget = self.theme.columns;
+            while (total > budget) {
+                var widest: usize = 0;
+                for (widths, 0..) |w, i| {
+                    if (w > widths[widest]) widest = i;
+                }
+                if (widths[widest] <= 3) break;
+                widths[widest] -= 1;
+                total -= 1;
+            }
+        }
+
         const chars = self.boxChars();
 
         // Top border
@@ -1265,39 +1390,77 @@ pub const AnsiRenderer = struct {
         aligns: []const types.Align,
     ) void {
         const chars = self.boxChars();
-        self.writeIndent();
-        if (self.theme.colors) self.out.write(color(.dim));
-        self.out.write(chars.v);
-        if (self.theme.colors) self.out.write("\x1b[0m");
+
+        // Split each cell into visible-width-bounded segments so a wide
+        // cell wraps WITHIN its column instead of letting the terminal
+        // hard-wrap the whole row and shred the borders.
+        var segments = self.allocator.alloc(std.ArrayListUnmanaged([]const u8), widths.len) catch {
+            self.out.oom = true;
+            return;
+        };
+        defer {
+            for (segments) |*s| s.deinit(self.allocator);
+            self.allocator.free(segments);
+        }
+        @memset(segments, .{});
+
+        var lines: usize = 1;
         for (widths, 0..) |w, i| {
-            const cell: TableCell = if (i < row.cells.len) row.cells[i] else .{ .content = "", .alignment = .default };
-            self.out.writeByte(' ');
-            if (row.is_header and self.theme.colors) self.out.write("\x1b[1m");
-            const cw = visibleWidth(cell.content);
-            const alignment = if (cell.alignment != .default) cell.alignment else aligns[i];
-            switch (alignment) {
-                .right => {
-                    self.writePadding(w - cw);
-                    self.out.write(cell.content);
-                },
-                .center => {
-                    const pad = w - cw;
-                    self.writePadding(pad / 2);
-                    self.out.write(cell.content);
-                    self.writePadding(pad - pad / 2);
-                },
-                else => {
-                    self.out.write(cell.content);
-                    self.writePadding(w - cw);
-                },
+            const content = if (i < row.cells.len) row.cells[i].content else "";
+            var rest = content;
+            while (rest.len > 0) {
+                var cut = visibleIndexAt(rest, w);
+                if (cut < rest.len) {
+                    // Prefer breaking at the last space inside the cut so
+                    // words stay intact when there's room.
+                    if (bun.strings.lastIndexOfChar(rest[0..cut], ' ')) |sp| {
+                        if (sp > 0) cut = sp;
+                    }
+                }
+                if (cut == 0) cut = @min(rest.len, @as(usize, bun.strings.wtf8ByteSequenceLengthWithInvalid(rest[0])));
+                segments[i].append(self.allocator, rest[0..cut]) catch {
+                    self.out.oom = true;
+                    return;
+                };
+                rest = rest[cut..];
+                while (rest.len > 0 and rest[0] == ' ') rest = rest[1..];
             }
-            if (row.is_header and self.theme.colors) self.out.write("\x1b[0m");
-            self.out.writeByte(' ');
+            lines = @max(lines, segments[i].items.len);
+        }
+
+        var line: usize = 0;
+        while (line < lines) : (line += 1) {
+            self.writeIndent();
             if (self.theme.colors) self.out.write(color(.dim));
             self.out.write(chars.v);
             if (self.theme.colors) self.out.write("\x1b[0m");
+            for (widths, 0..) |w, i| {
+                const seg: []const u8 = if (line < segments[i].items.len) segments[i].items[line] else "";
+                self.out.writeByte(' ');
+                if (row.is_header and self.theme.colors) self.out.write("\x1b[1m");
+                const cw = visibleWidth(seg);
+                const cell_align = if (i < row.cells.len) row.cells[i].alignment else .default;
+                const alignment = if (cell_align != .default) cell_align else aligns[i];
+                const pad = w -| cw;
+                const left: usize, const right: usize = switch (alignment) {
+                    .right => .{ pad, 0 },
+                    .center => .{ pad / 2, pad - pad / 2 },
+                    else => .{ 0, pad },
+                };
+                self.writePadding(left);
+                self.out.write(seg);
+                // Clear any inline style from the segment so it doesn't
+                // bleed into the padding / border on this or the next
+                // physical line.
+                if (self.theme.colors) self.out.write("\x1b[0m");
+                self.writePadding(right);
+                self.out.writeByte(' ');
+                if (self.theme.colors) self.out.write(color(.dim));
+                self.out.write(chars.v);
+                if (self.theme.colors) self.out.write("\x1b[0m");
+            }
+            self.out.writeByte('\n');
         }
-        self.out.writeByte('\n');
         self.last_was_newline = true;
     }
 
@@ -1564,6 +1727,12 @@ fn codeSpanOpen(light: bool) []const u8 {
 /// sequences. Correctly handles multi-width graphemes (CJK, emoji).
 fn visibleWidth(s: []const u8) usize {
     return bun.strings.visible.width.exclude_ansi_colors.utf8(s);
+}
+
+/// Byte index of the longest prefix of `s` whose visible width is <=
+/// `max_cols`. ANSI escapes are zero-width and always included.
+fn visibleIndexAt(s: []const u8, max_cols: usize) usize {
+    return bun.strings.visible.width.exclude_ansi_colors.utf8IndexAtWidth(s, max_cols);
 }
 
 fn isJsLang(lang: []const u8) bool {

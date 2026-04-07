@@ -260,4 +260,52 @@ describe("bun <file.md>", () => {
     expect(stdout).toMatchSnapshot();
     expect(exitCode).toBe(0);
   });
+
+  // Every emitted line must fit the terminal — checked via Bun.stringWidth
+  // (visible width, ANSI-stripped) so escape sequences don't inflate the
+  // count.
+  function maxLineWidth(out: string): number {
+    return Math.max(0, ...out.split("\n").map(l => Bun.stringWidth(l)));
+  }
+
+  test("wraps inline code spans within COLUMNS, never mid-word", async () => {
+    const out = await runMd(
+      "After modifying `coreBeeps.ts`, `controlBoops.ts`, or `toolBoops.ts`, run " +
+        "`bun run build:boop` to regenerate. **Do not edit `*.generated.ts` files directly.**\n",
+      { COLUMNS: "45" },
+    );
+    expect(maxLineWidth(out)).toBeLessThanOrEqual(45);
+    expect(out).toMatchSnapshot();
+  });
+
+  test("hard-breaks an overlong CJK word at the visible-width boundary", async () => {
+    // 60 bytes = 20 CJK chars = 40 visible columns; must wrap at 30.
+    const out = await runMd("A " + Buffer.alloc(60, "测试").toString() + " wide.\n", { COLUMNS: "30" });
+    expect(out).not.toContain("\uFFFD");
+    expect(maxLineWidth(out)).toBeLessThanOrEqual(30);
+    expect(out).toMatchSnapshot();
+  });
+
+  test("shrinks table columns to fit COLUMNS and wraps cell content", async () => {
+    const out = await runMd(
+      [
+        "| Path | Scope |",
+        "| --- | --- |",
+        "| `src/CLAUDE.md` | Source architecture: module map, startup flow, state management |",
+        "| `src/components/design-system/CLAUDE.md` | Design system component API (Dialog, Tabs, StatusIcon, etc.) |",
+        "",
+      ].join("\n"),
+      { COLUMNS: "50" },
+    );
+    expect(maxLineWidth(out)).toBeLessThanOrEqual(50);
+    // Borders stay aligned: every non-blank line starts and ends with `│`.
+    for (const line of out.split("\n")) {
+      if (line.trim().length === 0) continue;
+      const stripped = Bun.stripANSI(line);
+      expect(
+        stripped.startsWith("│") || stripped.startsWith("┌") || stripped.startsWith("├") || stripped.startsWith("└"),
+      ).toBe(true);
+    }
+    expect(out).toMatchSnapshot();
+  });
 });

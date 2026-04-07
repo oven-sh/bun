@@ -1456,8 +1456,29 @@ pub const RunCommand = struct {
         // hyperlinks when colors are on. Light/dark detected from env.
         const colors = Output.enable_ansi_colors_stdout;
         const columns: u16 = brk: {
-            const c = Output.terminal_size.col;
-            break :brk if (c == 0) 80 else c;
+            // Output.terminal_size is never populated; query stdout
+            // directly. Honor COLUMNS so piped output and tests can
+            // pin a width.
+            if (bun.getenvZ("COLUMNS")) |env| {
+                if (std.fmt.parseInt(u16, env, 10) catch null) |n| {
+                    if (n > 0) break :brk n;
+                }
+            }
+            if (comptime bun.Environment.isPosix) {
+                var size: std.posix.winsize = undefined;
+                if (std.posix.system.ioctl(std.posix.STDOUT_FILENO, std.posix.T.IOCGWINSZ, @intFromPtr(&size)) == 0) {
+                    if (size.col > 0) break :brk size.col;
+                }
+            } else if (comptime bun.Environment.isWindows) {
+                if (windows.GetStdHandle(windows.STD_OUTPUT_HANDLE) catch null) |handle| {
+                    var csbi: windows.CONSOLE_SCREEN_BUFFER_INFO = undefined;
+                    if (windows.kernel32.GetConsoleScreenBufferInfo(handle, &csbi) != windows.FALSE) {
+                        const w = csbi.srWindow.Right - csbi.srWindow.Left + 1;
+                        if (w > 0) break :brk @intCast(w);
+                    }
+                }
+            }
+            break :brk 80;
         };
         const is_tty = Output.isStdoutTTY();
         const kitty_graphics = colors and is_tty and bun.md.detectKittyGraphics();

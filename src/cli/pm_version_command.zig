@@ -100,6 +100,16 @@ pub const PmVersionCommand = struct {
             break :brk_version null;
         };
 
+        const pkg_name: ?[]const u8 = brk_name: {
+            if (json.asProperty("name")) |n| {
+                switch (n.expr.data) {
+                    .e_string => |s| break :brk_name s.data,
+                    else => {},
+                }
+            }
+            break :brk_name null;
+        };
+
         const new_version_str = try calculateNewVersion(ctx.allocator, current_version orelse "0.0.0", version_type, new_version, pm.options.preid, package_json_dir);
         defer ctx.allocator.free(new_version_str);
 
@@ -140,6 +150,16 @@ pub const PmVersionCommand = struct {
             };
         }
 
+        // Propagate the new version into bun.lock so that workspace consumers
+        // (e.g. `bun pm pack` in sibling workspaces that depend on this one via
+        // `workspace:*`) see the updated version. Returns the absolute path of
+        // the saved lockfile so that the git commit below can stage it too.
+        const saved_lockfile_path: ?[:0]const u8 = if (pkg_name) |name|
+            updateLockfileWorkspaceVersion(ctx, pm, name, new_version_str)
+        else
+            null;
+        defer if (saved_lockfile_path) |p| ctx.allocator.free(p);
+
         if (scripts_obj) |s| {
             if (s.get("version")) |script| {
                 if (script.asString(ctx.allocator)) |script_command| {
@@ -159,7 +179,7 @@ pub const PmVersionCommand = struct {
         }
 
         if (pm.options.git_tag_version) {
-            try gitCommitAndTag(ctx.allocator, new_version_str, pm.options.message, package_json_dir);
+            try gitCommitAndTag(ctx.allocator, new_version_str, pm.options.message, package_json_dir, saved_lockfile_path);
         }
 
         if (scripts_obj) |s| {
@@ -526,15 +546,95 @@ pub const PmVersionCommand = struct {
         }
     }
 
-    fn gitCommitAndTag(allocator: std.mem.Allocator, version: []const u8, custom_message: ?[]const u8, cwd: []const u8) bun.OOM!void {
+    /// After writing the bumped `package.json` to disk, mirror the new version
+    /// into the lockfile so that `workspace:*` resolvers (pack, install, etc.)
+    /// pick up the bump. Silently no-ops when there's no lockfile yet or when
+    /// the package isn't tracked as a workspace (e.g. the root package, or a
+    /// non-workspace project). On success returns the absolute path of the
+    /// saved lockfile so the caller can include it in the version commit.
+    fn updateLockfileWorkspaceVersion(
+        ctx: Command.Context,
+        pm: *PackageManager,
+        pkg_name: []const u8,
+        new_version_str: []const u8,
+    ) ?[:0]const u8 {
+        const load_result = pm.lockfile.loadFromCwd(pm, ctx.allocator, ctx.log, true);
+        switch (load_result) {
+            .not_found => return null,
+            .err => |err| {
+                // Don't fail the version bump just because we couldn't update
+                // the lockfile — the `package.json` has already been written.
+                Output.warn("failed to update {s} after version bump: {s}", .{
+                    err.format.filename(),
+                    @errorName(err.value),
+                });
+                return null;
+            },
+            .ok => {},
+        }
+
+        const name_hash = Semver.String.Builder.stringHash(pkg_name);
+        const entry = pm.lockfile.workspace_versions.getPtr(name_hash) orelse {
+            // Root workspace or a package not tracked in `workspace_versions`.
+            // The root's version isn't currently serialized in bun.lock, so
+            // bumping it needs no lockfile update.
+            return null;
+        };
+
+        const sliced = Semver.SlicedString.init(new_version_str, new_version_str);
+        const parsed = Semver.Version.parse(sliced);
+        if (!parsed.valid) return null;
+        const parsed_version = parsed.version.min();
+
+        // Pre/build identifiers longer than 8 chars live in the lockfile's
+        // string pool; count+allocate into it before appending.
+        var string_builder = pm.lockfile.stringBuilder();
+        parsed_version.count(new_version_str, *Lockfile.StringBuilder, &string_builder);
+        string_builder.allocate() catch |err| {
+            Output.warn("failed to update bun.lock after version bump: {s}", .{@errorName(err)});
+            return null;
+        };
+        entry.* = parsed_version.append(new_version_str, *Lockfile.StringBuilder, &string_builder);
+        string_builder.clamp();
+
+        pm.lockfile.saveToDisk(&load_result, &pm.options);
+
+        // Build the absolute path of the lockfile so callers (the git commit
+        // step) can stage it regardless of which subdirectory we were invoked
+        // from.
+        const save_format = load_result.saveFormat(&pm.options);
+        const filename = save_format.filename();
+
+        var cwd_buf: bun.PathBuffer = undefined;
+        const cwd = bun.getcwd(&cwd_buf) catch return null;
+
+        var join_buf: bun.PathBuffer = undefined;
+        const abs = bun.path.joinAbsStringBufZ(cwd, &join_buf, &.{filename}, .auto);
+        return ctx.allocator.dupeZ(u8, abs) catch null;
+    }
+
+    fn gitCommitAndTag(allocator: std.mem.Allocator, version: []const u8, custom_message: ?[]const u8, cwd: []const u8, lockfile_path: ?[:0]const u8) bun.OOM!void {
         var path_buf: bun.PathBuffer = undefined;
         const git_path = bun.which(&path_buf, bun.env_var.PATH.get() orelse "", cwd, "git") orelse {
             Output.errGeneric("git must be installed to use `bun pm version --git-tag-version`", .{});
             Global.exit(1);
         };
 
+        // Stage package.json and, when we also updated the lockfile, the
+        // lockfile. Passing an absolute path lets git stage the lockfile even
+        // when the workspace package directory is a subdirectory of the repo
+        // root where the lockfile lives.
+        var stage_argv_buf: [4][]const u8 = undefined;
+        stage_argv_buf[0] = git_path;
+        stage_argv_buf[1] = "add";
+        stage_argv_buf[2] = "package.json";
+        const stage_argv: []const []const u8 = if (lockfile_path) |lp| blk: {
+            stage_argv_buf[3] = lp;
+            break :blk stage_argv_buf[0..4];
+        } else stage_argv_buf[0..3];
+
         const stage_proc = bun.spawnSync(&.{
-            .argv = &.{ git_path, "add", "package.json" },
+            .argv = stage_argv,
             .cwd = cwd,
             .stdout = .buffer,
             .stderr = .buffer,
@@ -643,4 +743,5 @@ const Semver = bun.Semver;
 const logger = bun.logger;
 const strings = bun.strings;
 const Command = bun.cli.Command;
+const Lockfile = bun.install.Lockfile;
 const PackageManager = bun.install.PackageManager;

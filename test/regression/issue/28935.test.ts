@@ -9,11 +9,7 @@ import { join } from "node:path";
 
 async function run(cmd: string[], cwd: string) {
   await using proc = spawn({ cmd, cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout, stderr, exitCode };
 }
 
@@ -101,13 +97,7 @@ test.concurrent("bun pm version updates bun.lock for prerelease with long tag", 
 
   {
     const { stdout, exitCode } = await run(
-      [
-        bunExe(),
-        "pm",
-        "version",
-        "2.0.0-beta-super-long-tag.3",
-        "--no-git-tag-version",
-      ],
+      [bunExe(), "pm", "version", "2.0.0-beta-super-long-tag.3", "--no-git-tag-version"],
       join(dir, "packages", "first"),
     );
     expect(stdout.trim().split("\n").at(-1)).toBe("v2.0.0-beta-super-long-tag.3");
@@ -116,9 +106,7 @@ test.concurrent("bun pm version updates bun.lock for prerelease with long tag", 
 
   const lockfile = await Bun.file(join(dir, "bun.lock")).text();
   const firstEntry = lockfile.slice(lockfile.indexOf('"packages/first"'));
-  expect(firstEntry).toMatch(
-    /"name":\s*"first"[\s\S]*?"version":\s*"2\.0\.0-beta-super-long-tag\.3"/,
-  );
+  expect(firstEntry).toMatch(/"name":\s*"first"[\s\S]*?"version":\s*"2\.0\.0-beta-super-long-tag\.3"/);
 
   const secondDir = join(dir, "packages", "second");
   {
@@ -133,48 +121,42 @@ test.concurrent("bun pm version updates bun.lock for prerelease with long tag", 
   expect(packed.dependencies).toEqual({ first: "2.0.0-beta-super-long-tag.3" });
 });
 
-test.concurrent(
-  "bun pm version in a non-workspace project with a lockfile does not crash",
-  async () => {
-    // Regression guard: the updateLockfileWorkspaceVersion helper must no-op
-    // when the bumped package isn't tracked in `workspace_versions` (here the
-    // root of a plain, non-workspace project).
-    const dir = tempDirWithFiles("issue-28935-root", {
-      "package.json": JSON.stringify({
-        name: "standalone",
-        version: "1.0.0",
-      }),
-    });
+test.concurrent("bun pm version in a non-workspace project with a lockfile does not crash", async () => {
+  // Regression guard: the updateLockfileWorkspaceVersion helper must no-op
+  // when the bumped package isn't tracked in `workspace_versions` (here the
+  // root of a plain, non-workspace project).
+  const dir = tempDirWithFiles("issue-28935-root", {
+    "package.json": JSON.stringify({
+      name: "standalone",
+      version: "1.0.0",
+    }),
+  });
 
-    {
-      const { exitCode } = await run([bunExe(), "install"], dir);
-      expect(exitCode).toBe(0);
-    }
-
-    // Some environments leave the lockfile out when there are no deps —
-    // create a stub that matches the on-disk text format so we can exercise
-    // the "root package, no workspace entry" code path.
-    await Bun.write(
-      join(dir, "bun.lock"),
-      JSON.stringify(
-        {
-          lockfileVersion: 1,
-          workspaces: { "": { name: "standalone" } },
-          packages: {},
-        },
-        null,
-        2,
-      ) + "\n",
-    );
-
-    const { stdout, exitCode } = await run(
-      [bunExe(), "pm", "version", "patch", "--no-git-tag-version"],
-      dir,
-    );
-    expect(stdout.trim().split("\n").at(-1)).toBe("v1.0.1");
+  {
+    const { exitCode } = await run([bunExe(), "install"], dir);
     expect(exitCode).toBe(0);
+  }
 
-    const pkg = await Bun.file(join(dir, "package.json")).json();
-    expect(pkg.version).toBe("1.0.1");
-  },
-);
+  // Some environments leave the lockfile out when there are no deps —
+  // create a stub that matches the on-disk text format so we can exercise
+  // the "root package, no workspace entry" code path.
+  await Bun.write(
+    join(dir, "bun.lock"),
+    JSON.stringify(
+      {
+        lockfileVersion: 1,
+        workspaces: { "": { name: "standalone" } },
+        packages: {},
+      },
+      null,
+      2,
+    ) + "\n",
+  );
+
+  const { stdout, exitCode } = await run([bunExe(), "pm", "version", "patch", "--no-git-tag-version"], dir);
+  expect(stdout.trim().split("\n").at(-1)).toBe("v1.0.1");
+  expect(exitCode).toBe(0);
+
+  const pkg = await Bun.file(join(dir, "package.json")).json();
+  expect(pkg.version).toBe("1.0.1");
+});

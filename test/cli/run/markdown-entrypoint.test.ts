@@ -298,12 +298,16 @@ describe("bun <file.md>", () => {
       { COLUMNS: "50" },
     );
     expect(maxLineWidth(out)).toBeLessThanOrEqual(50);
-    // Borders stay aligned: every non-blank line starts and ends with `│`.
+    // Borders stay aligned: every non-blank line starts and ends with `│`
+    // (or the matching corner/junction char for the top/bottom/separator).
     for (const line of out.split("\n")) {
       if (line.trim().length === 0) continue;
       const stripped = Bun.stripANSI(line);
       expect(
         stripped.startsWith("│") || stripped.startsWith("┌") || stripped.startsWith("├") || stripped.startsWith("└"),
+      ).toBe(true);
+      expect(
+        stripped.endsWith("│") || stripped.endsWith("┐") || stripped.endsWith("┤") || stripped.endsWith("┘"),
       ).toBe(true);
     }
     expect(out).toMatchSnapshot();

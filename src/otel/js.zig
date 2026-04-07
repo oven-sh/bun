@@ -650,9 +650,11 @@ pub fn jsConfigure(global: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSErr
         if (bun.env_var.OTEL_EXPORTER_OTLP_ENDPOINT.get()) |ep| cfg.endpoint = ep;
     }
 
-    if (vm.rareData().otel_tracer_provider) |old| {
-        old.deinit();
-        vm.rareData().otel_tracer_provider = null;
+    if (vm.rareData().otel_tracer_provider) |existing| {
+        existing.reconfigure(cfg) catch |err| {
+            return global.throw("failed to reconfigure OTEL: {s}", .{@errorName(err)});
+        };
+        return .js_undefined;
     }
     const provider = tracer.TracerProvider.init(vm, cfg) catch |err| {
         return global.throw("failed to configure OTEL: {s}", .{@errorName(err)});

@@ -20,6 +20,18 @@ describe("Bun.otel runtime", () => {
     expect(otel.parseTraceparent("nope")).toBeUndefined();
   });
 
+  test("reconfigure does not invalidate existing tracers/spans", () => {
+    otel.configure({ endpoint: "", sampler: "always_on" });
+    const tracer = otel.getTracer("scope-a");
+    const liveSpan = tracer.startSpan("live");
+    otel.configure({ endpoint: "", sampler: "always_off" });
+    // previously: ASAN use-after-poison
+    expect(() => tracer.startSpan("stale").end()).not.toThrow();
+    expect(() => liveSpan.end()).not.toThrow();
+    // sampler change is observed by the pre-existing tracer
+    expect(tracer.startSpan("after").isRecording).toBe(false);
+  });
+
   test("startSpan inherits parent traceId and sets parentSpanId", () => {
     otel.configure({ endpoint: "", sampler: "always_on" });
     const tracer = otel.getTracer("test");

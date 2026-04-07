@@ -64,7 +64,7 @@ pub const TracerProvider = struct {
     vm: *jsc.VirtualMachine,
     sampler: Sampler,
     resource: model.Resource,
-    resource_storage: std.ArrayListUnmanaged(u8) = .{},
+    resource_storage: std.heap.ArenaAllocator,
     resource_attrs: std.ArrayListUnmanaged(Attribute) = .{},
 
     scopes: std.StringArrayHashMapUnmanaged(model.InstrumentationScope) = .{},
@@ -85,6 +85,7 @@ pub const TracerProvider = struct {
             .vm = vm,
             .sampler = cfg.sampler,
             .resource = .{},
+            .resource_storage = std.heap.ArenaAllocator.init(allocator),
             .processor = undefined,
             .exporter = exporter,
         });
@@ -120,9 +121,7 @@ pub const TracerProvider = struct {
     }
 
     fn internString(self: *TracerProvider, s: []const u8) ![]const u8 {
-        const start = self.resource_storage.items.len;
-        try self.resource_storage.appendSlice(self.allocator, s);
-        return self.resource_storage.items[start..][0..s.len];
+        return self.resource_storage.allocator().dupe(u8, s);
     }
 
     pub fn getOrCreateScope(self: *TracerProvider, name: []const u8) u32 {
@@ -143,8 +142,20 @@ pub const TracerProvider = struct {
         while (it.next()) |entry| self.allocator.free(entry.key_ptr.*);
         self.scopes.deinit(self.allocator);
         self.resource_attrs.deinit(self.allocator);
-        self.resource_storage.deinit(self.allocator);
+        self.resource_storage.deinit();
         bun.destroy(self);
+    }
+
+    /// Mutate config in place so existing OtelTracer/OtelSpan pointers stay valid.
+    /// `deinit` is only called at VM shutdown.
+    pub fn reconfigure(self: *TracerProvider, cfg: Config) !void {
+        self.sampler = cfg.sampler;
+        self.processor.opts.scheduled_delay_ms = cfg.scheduled_delay_ms;
+        self.processor.opts.max_export_batch_size = cfg.max_export_batch_size;
+        self.processor.opts.max_queue_size = cfg.max_queue_size;
+        if (self.exporter == null and cfg.endpoint.len > 0) {
+            self.exporter = try OtlpHttpExporter.init(self.allocator, self.vm, cfg.endpoint, cfg.headers);
+        }
     }
 
     /// Get the per-VM provider, or null if `Bun.otel.configure` was never called

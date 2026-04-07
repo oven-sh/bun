@@ -4,8 +4,11 @@
 // CalDAV) that was missing from Bun's HTTP method allowlist. Bun.serve would
 // drop the request entirely and fetch() would silently rewrite the method to
 // GET.
+//
+// Note: node:http.METHODS intentionally excludes MKADDRESSBOOK — that list
+// is generated from llhttp's method enum for Node compatibility and Node's
+// llhttp doesn't know about MKADDRESSBOOK.
 import { expect, test } from "bun:test";
-import { METHODS } from "node:http";
 import { connect } from "node:net";
 
 test("Bun.serve receives MKADDRESSBOOK via fetch()", async () => {
@@ -45,8 +48,4 @@ test("Bun.serve receives MKADDRESSBOOK from a raw TCP request", async () => {
   const method = await promise;
   socket.destroy();
   expect(method).toBe("MKADDRESSBOOK");
-});
-
-test("http.METHODS includes MKADDRESSBOOK", () => {
-  expect(METHODS).toContain("MKADDRESSBOOK");
 });

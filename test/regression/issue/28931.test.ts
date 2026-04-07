@@ -236,15 +236,24 @@ describe.concurrent.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
     const manifest = readFileSync(join(dirStr, "SHASUMS256.txt"), "utf8").trim();
     const lines = manifest.split(/\r?\n/);
     expect(lines.length).toBe(2);
+    // Track the basenames so we can assert the exact set and order
+    // at the end of the loop — not just "some names that hash right".
+    // A helper that duplicated one artifact and omitted the other
+    // would still pass the hash check below but fail the basename
+    // assertion. Matches the explicit basename check in the signed
+    // test above.
+    const names: string[] = [];
     for (const line of lines) {
       const m = line.match(/^([a-f0-9]{64})(?:  | \*)(.+)$/);
       expect(m).not.toBeNull();
       const [, hex, name] = m!;
+      names.push(name);
       const expected = createHash("sha256")
         .update(readFileSync(join(dirStr, name)))
         .digest("hex");
       expect(hex).toBe(expected);
     }
+    expect(names).toEqual(["bun-darwin-aarch64.zip", "bun-linux-x64.zip"]);
 
     // .asc must NOT exist — we intentionally upload an unsigned manifest
     // in this path. The daily cron handles re-signing.

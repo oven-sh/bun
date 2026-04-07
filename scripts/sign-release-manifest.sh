@@ -227,6 +227,16 @@ hash_dir=""
 scratch_dir=""
 backup_manifest=""
 backup_signed_manifest=""
+# Per-output mutation flags. These are set immediately after a
+# successful write to the corresponding output path (or, for
+# signed_manifest, immediately BEFORE the gpg --output invocation that
+# may crash mid-write). cleanup() only `rm -f`'s an output if the
+# matching flag is set — so a failure path that never touched
+# `${manifest}` (e.g. mktemp fails, the backup `mv` fails, the hash
+# loop fails before the final mv) leaves the pre-existing file on
+# disk instead of deleting it.
+manifest_written=0
+signed_manifest_written=0
 cleanup() {
   local rc=$?
   # Every rm inside this trap ends in `|| true`. With `set -eo pipefail`
@@ -238,13 +248,22 @@ cleanup() {
   # still required. Same reason for the `mv -f ... || true` on the restore
   # paths below.
   if [ "${success}" -ne 1 ]; then
-    # Roll back: wipe any partial outputs we produced in ${dir}, then
-    # restore the pre-existing copies from their backups inside
-    # scratch_dir. Net effect is the caller's directory looks
-    # byte-identical to how we found it (scratch_dir itself is removed
-    # below). The `mv` is atomic because scratch_dir is on the same
-    # filesystem as ${dir}.
-    rm -f "${manifest}" "${signed_manifest}" || true
+    # Roll back: wipe any partial outputs we produced in ${dir} — but
+    # ONLY outputs we actually wrote to this invocation — then restore
+    # the pre-existing copies from their backups inside scratch_dir.
+    # The `manifest_written` / `signed_manifest_written` gate exists
+    # because the old unconditional `rm -f "${manifest}" "${signed_manifest}"`
+    # would destroy pre-existing files on any failure between trap
+    # installation and the final mv/gpg, even though those failures
+    # never touched the output paths. coderabbit caught this: failing
+    # mktemp, failing backup mv, failing hash job, failing collate —
+    # none of them should cost the caller their last good outputs.
+    if [ "${manifest_written}" -eq 1 ]; then
+      rm -f "${manifest}" || true
+    fi
+    if [ "${signed_manifest_written}" -eq 1 ]; then
+      rm -f "${signed_manifest}" || true
+    fi
     if [ -n "${backup_manifest}" ]; then
       mv -f "${backup_manifest}" "${manifest}" || true
     fi
@@ -390,8 +409,11 @@ done < "${sorted_list}"
 # Atomic rename — the final `${manifest}` only appears once every hash
 # has been written. Prior SIGKILL would leave a .tmp that cleanup() (or
 # the next run's cleanup() via rm -f) removes before the caller ever
-# sees it.
+# sees it. Flag the output as mutated AFTER the mv returns successfully:
+# rename(2) is atomic, so on failure the destination is unchanged and
+# we don't want cleanup() to rm it.
 mv "${tmp_manifest}" "${manifest}"
+manifest_written=1
 
 # Declare the unsigned-path success as early as possible: the atomic mv
 # above is the entire contract for the unsigned fallback, so flipping
@@ -452,6 +474,14 @@ GNUPGHOME="${gnupghome}" gpg --batch --quiet --import <<< "${GPG_PRIVATE_KEY}"
 # status (naked `exit` uses the most-recent command's status). This
 # intentionally sidesteps the `set -e` exemption for the left side of
 # `&&`, which would otherwise silently fall through on gpg failure.
+# Flag the signed manifest as about-to-be-written BEFORE gpg runs.
+# gpg --clearsign --output writes bytes to ${signed_manifest} before
+# exiting, so if gpg crashes mid-write the file on disk is partial and
+# must be removed on rollback. Setting the flag first guarantees
+# cleanup() sees it and rm's the partial bytes; on gpg success, the
+# `&& success=1` flip below makes cleanup skip the rollback branch
+# entirely, so the flag is harmless.
+signed_manifest_written=1
 GNUPGHOME="${gnupghome}" gpg \
   --batch --yes --quiet \
   --pinentry-mode loopback \

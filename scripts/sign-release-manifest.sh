@@ -126,12 +126,16 @@ tmp_manifest="$manifest.tmp"
 #    and `".."` break manifest parsing.
 # 4. Duplicate basenames would launch two hash jobs writing the same
 #    `$hash_dir/$artifact.digest` path and the collation loop would
-#    emit the same archive twice. We track seen names in a plain
-#    array with a linear scan — O(n²) but n≤22 for the canary set,
-#    and using `declare -A` here would break Bash 3.2 / stock macOS
-#    /bin/bash where this script's test suite also runs.
+#    emit the same archive twice. We track seen names in a single
+#    `/`-delimited string so the dup check is one `case` glob instead
+#    of a nested loop. `/` is the delimiter because check #3 above
+#    already rejects any artifact name containing `/` — so the
+#    delimiter is guaranteed not to appear in any name, with no extra
+#    coupling. Leading and trailing `/` sentinels keep the glob
+#    symmetric and prevent prefix false-positives (e.g. `foo.zip`
+#    does not match inside `/foo.zip-profile/`).
 # 5. The file must exist inside `$dir` so the hash job can read it.
-seen_artifacts=()
+seen_artifacts="/"
 for artifact in "${artifacts[@]}"; do
   case "$artifact" in
     *$'\n'*|*$'\r'*)
@@ -149,19 +153,22 @@ for artifact in "${artifacts[@]}"; do
       exit 1
       ;;
   esac
-  for seen in "${seen_artifacts[@]}"; do
-    if [ "$seen" = "$artifact" ]; then
+  # Quoted "$artifact" inside the case pattern is matched as a literal,
+  # so any glob metacharacters in the name are compared byte-for-byte
+  # (they can't confuse the dup check).
+  case "$seen_artifacts" in
+    */"$artifact"/*)
       echo "error: duplicate artifact for signing: $artifact" >&2
       exit 1
-    fi
-  done
-  seen_artifacts+=("$artifact")
+      ;;
+  esac
+  seen_artifacts="$seen_artifacts$artifact/"
   if [ ! -f "$dir/$artifact" ]; then
     echo "error: missing artifact for signing: $dir/$artifact" >&2
     exit 1
   fi
 done
-unset artifact seen seen_artifacts
+unset artifact seen_artifacts
 
 # Now that the request is validated, install cleanup for the mutation
 # phase. Every failure below this point — `rm -f` on a stale .asc, a

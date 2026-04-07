@@ -159,6 +159,57 @@ function update_github_release() {
   fi
 }
 
+function sign_and_upload_manifest() {
+  # Generate, clearsign and upload SHASUMS256.txt + SHASUMS256.txt.asc for
+  # the canonical artifact list in the current working directory. Skips
+  # signing (with a warning) when the GPG secrets are not yet present in
+  # Buildkite — the daily .github/workflows/release.yml sign job will
+  # regenerate the manifest in that case.
+  #
+  # See: https://github.com/oven-sh/bun/issues/28931
+  local version="$1"
+  shift
+  local artifacts=("$@")
+
+  local gpg_private_key
+  local gpg_passphrase
+  gpg_private_key=$(buildkite-agent secret get "GPG_PRIVATE_KEY" 2>/dev/null || true)
+  gpg_passphrase=$(buildkite-agent secret get "GPG_PASSPHRASE" 2>/dev/null || true)
+
+  if [ -z "$gpg_private_key" ] || [ -z "$gpg_passphrase" ]; then
+    echo "warn: GPG_PRIVATE_KEY/GPG_PASSPHRASE not set in Buildkite secrets;"
+    echo "warn: skipping SHASUMS256.txt signing. The daily sign workflow"
+    echo "warn: will regenerate the manifest later."
+    return 0
+  fi
+
+  assert_command "gpg" "gnupg" "https://gnupg.org/download/"
+
+  local script_dir
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+
+  # Don't let `set -e` kill the pipeline on the helper's own skip sentinel.
+  local sign_exit=0
+  GPG_PRIVATE_KEY="$gpg_private_key" \
+  GPG_PASSPHRASE="$gpg_passphrase" \
+    "$script_dir/scripts/sign-release-manifest.sh" "$PWD" "${artifacts[@]}" \
+    || sign_exit=$?
+
+  if [ "$sign_exit" -eq 2 ]; then
+    # Helper printed its own warning and wrote nothing — fall back to the
+    # daily cron sign job until the Buildkite GPG secrets are provisioned.
+    return 0
+  fi
+
+  if [ "$sign_exit" -ne 0 ]; then
+    echo "error: failed to sign SHASUMS256.txt (exit $sign_exit)"
+    return "$sign_exit"
+  fi
+
+  upload_github_asset "$version" SHASUMS256.txt
+  upload_github_asset "$version" SHASUMS256.txt.asc
+}
+
 function upload_s3_file() {
   local folder="$1"
   local file="$2"
@@ -246,6 +297,11 @@ function create_release() {
   for artifact in "${artifacts[@]}"; do
     upload_artifact "$artifact"
   done
+
+  # Hash and sign the canonical archive list in place, then upload the
+  # manifest. Must run after every archive has been uploaded so that the
+  # sha256 entries in SHASUMS256.txt match what GitHub now serves.
+  sign_and_upload_manifest "$tag" "${artifacts[@]}"
 
   update_github_release "$tag"
   create_sentry_release "$tag"

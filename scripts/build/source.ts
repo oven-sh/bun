@@ -1343,7 +1343,9 @@ function emitDirect(
   if (spec.codegen !== undefined) {
     const cg = spec.codegen;
     const toolSrc = resolve(srcDir, cg.tool);
-    const toolOut = resolve(buildDir, "codegen-tool");
+    // Host exe suffix: clang on Windows auto-appends .exe to `-o foo`, so
+    // the ninja output name must match or the edge is permanently dirty.
+    const toolOut = resolve(buildDir, `codegen-tool${cfg.host.exeSuffix}`);
 
     // Host tool: runs at build time to generate headers, so it must target
     // the BUILD host, not the bun target. cc()/link() add cfg's target/arch

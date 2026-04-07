@@ -5,10 +5,10 @@
 // we would derive `initial_bin_name` from the basename after `/` and
 // happily resolve it against $PATH, so e.g. `bun x @paretools/git` ran
 // `/usr/bin/git` instead of `pare-git`.
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { chmodSync } from "node:fs";
 import { join } from "node:path";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 
 test("bun x @scope/name runs the package's real bin, not a colliding system command", async () => {
   // The scoped package's "basename" (`collide`) intentionally matches the

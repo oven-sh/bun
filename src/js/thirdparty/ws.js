@@ -378,7 +378,12 @@ class BunWebSocket extends EventEmitter {
 
   #onHandshake(data) {
     const { statusCode, head, body } = data;
-    const res = makeHandshakeResponse(statusCode, head, body);
+    // On 101, any bytes arriving after the header block are the first
+    // WebSocket frame, not HTTP response body — node's http layer delivers
+    // them as the `head` buffer on the 'upgrade' event and the native
+    // WebSocket client forwards them to the protocol reader on didConnect.
+    // Don't leak them into the `upgrade` event's IncomingMessage stream.
+    const res = makeHandshakeResponse(statusCode, head, statusCode === 101 ? null : body);
     if (statusCode === 101) {
       // `upgrade` emits `(response)` per ws docs.
       this.emit("upgrade", res);

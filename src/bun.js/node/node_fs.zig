@@ -5750,7 +5750,26 @@ pub const NodeFS = struct {
 
             {
                 const code: E = switch (err1) {
-                    error.AccessDenied => .ACCES,
+                    // On Linux, unlink(2) on a directory returns EISDIR.
+                    // On macOS, unlink(2) on a directory returns EPERM,
+                    // which Zig maps to `error.AccessDenied`. We can't
+                    // tell that apart from a real EACCES/EPERM on a file,
+                    // so probe with a stat and only remap when the target
+                    // is actually a directory.
+                    //
+                    // Node.js throws `ERR_FS_EISDIR` in this case; the JS
+                    // wrapper in `src/js/node/fs.ts` remaps this.
+                    error.IsDir => .ISDIR,
+                    error.NotDir => .NOTDIR,
+                    error.AccessDenied => brk: {
+                        if (comptime Environment.isMac) {
+                            switch (bun.sys.directoryExistsAt(bun.invalid_fd, dest)) {
+                                .result => |is_dir| if (is_dir) break :brk .ISDIR,
+                                .err => {},
+                            }
+                        }
+                        break :brk .ACCES;
+                    },
                     error.SymLinkLoop => .LOOP,
                     error.NameTooLong => .NAMETOOLONG,
                     error.SystemResources => .NOMEM,
@@ -5759,11 +5778,6 @@ pub const NodeFS = struct {
                     error.InvalidUtf8 => .INVAL,
                     error.InvalidWtf8 => .INVAL,
                     error.BadPathName => .INVAL,
-                    // On Linux, unlink(2) on a directory returns EISDIR.
-                    // Node.js throws `ERR_FS_EISDIR` in this case; the JS
-                    // wrapper in `src/js/node/fs.ts` remaps this.
-                    error.IsDir => .ISDIR,
-                    error.NotDir => .NOTDIR,
                     error.FileNotFound => brk: {
                         if (args.force) {
                             return .success;

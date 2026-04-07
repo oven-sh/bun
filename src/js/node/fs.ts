@@ -654,38 +654,7 @@ defineCustomPromisifyArgs(writev, ["bytesWritten", "buffers"]);
 // the reason it's not done right now is because there isnt a great way to have multiple
 // listeners per StatWatcher with the current implementation in native code. the downside
 // of this means we need to do path validation in the js side of things
-// Node.js throws a SystemError with code `ERR_FS_EISDIR` when `fs.rm` /
-// `fs.rmSync` are called on a directory without `recursive: true`. Bun's
-// native binding just surfaces the raw `EISDIR` from unlink(2), so we
-// rewrap it here to match Node.js's shape. See #28958.
-function maybeRemapRmEISDIR(err: any, path: any, options: any) {
-  if (!err || err.code !== "EISDIR") return err;
-  // If the caller passed `recursive: true`, an EISDIR here would be
-  // unexpected — leave the original error alone.
-  if (options != null && typeof options === "object" && options.recursive) return err;
-  let pathString: string | undefined;
-  if (typeof path === "string") {
-    pathString = path;
-  } else if (path instanceof URL) {
-    try {
-      pathString = Bun.fileURLToPath(path as URL);
-    } catch {
-      pathString = undefined;
-    }
-  } else if (Buffer.isBuffer(path)) {
-    pathString = path.toString();
-  } else if (typeof err.path === "string") {
-    pathString = err.path;
-  }
-  const pathSuffix = pathString !== undefined ? " " + pathString : "";
-  const wrapped: any = new Error(`Path is a directory: rm returned EISDIR (is a directory)${pathSuffix}`);
-  wrapped.name = "SystemError";
-  wrapped.code = "ERR_FS_EISDIR";
-  wrapped.errno = 21;
-  wrapped.syscall = "rm";
-  if (pathString !== undefined) wrapped.path = pathString;
-  return wrapped;
-}
+const { maybeRemapRmEISDIR } = require("internal/fs/rm-utils");
 
 const statWatchers = new Map();
 function getValidatedPath(p: any) {

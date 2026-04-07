@@ -182,11 +182,15 @@ test.concurrent.skipIf(isWindows)(
       ["git", "add", "."],
       ["git", "commit", "-q", "-m", "init"],
     ]) {
+      // stdout is `ignore` (not `pipe`) because nothing in the loop reads
+      // it — git could otherwise fill the OS pipe buffer (~64KB) and block
+      // on its own stdout write while we await stderr/exited, deadlocking
+      // the test.
       await using gitProc = spawn({
         cmd: argv,
         cwd: dir,
         env: gitEnv,
-        stdout: "pipe",
+        stdout: "ignore",
         stderr: "pipe",
       });
       const stderr = await gitProc.stderr.text();

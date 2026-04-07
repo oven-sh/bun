@@ -109,6 +109,11 @@ pub const remove_params: []const ParamType = &(shared_params ++ [_]ParamType{
 });
 
 pub const link_params: []const ParamType = &(shared_params ++ [_]ParamType{
+    clap.parseParam("-d, --dev                 Add dependency to \"devDependencies\"") catch unreachable,
+    clap.parseParam("-D, --development") catch unreachable,
+    clap.parseParam("--optional                        Add dependency to \"optionalDependencies\"") catch unreachable,
+    clap.parseParam("--peer                        Add dependency to \"peerDependencies\"") catch unreachable,
+    clap.parseParam("-E, --exact                  Add the exact version instead of the ^range") catch unreachable,
     clap.parseParam("<POS> ...                         \"name\" install package as a link") catch unreachable,
 });
 
@@ -925,8 +930,16 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
     }
 
     // link and unlink default to not saving, all others default to
-    // saving.
-    if (comptime subcommand == .link or subcommand == .unlink) {
+    // saving. For `bun link`, passing --dev/--development/--optional/--peer
+    // implies --save because the user is asking for the package to be
+    // recorded in a specific dependency group.
+    if (comptime subcommand == .link) {
+        cli.no_save = !(args.flag("--save") or
+            args.flag("--dev") or
+            args.flag("--development") or
+            args.flag("--optional") or
+            args.flag("--peer"));
+    } else if (comptime subcommand == .unlink) {
         cli.no_save = !args.flag("--save");
     } else {
         cli.no_save = args.flag("--no-save");
@@ -1017,13 +1030,15 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
         cli.os = os_negatable.combine();
     }
 
-    if (comptime subcommand == .add or subcommand == .install) {
+    if (comptime subcommand == .add or subcommand == .install or subcommand == .link) {
         cli.development = args.flag("--development") or args.flag("--dev");
         cli.optional = args.flag("--optional");
         cli.peer = args.flag("--peer");
         cli.exact = args.flag("--exact");
-        cli.analyze = args.flag("--analyze");
-        cli.only_missing = args.flag("--only-missing");
+        if (comptime subcommand != .link) {
+            cli.analyze = args.flag("--analyze");
+            cli.only_missing = args.flag("--only-missing");
+        }
     }
 
     if (args.option("--concurrent-scripts")) |concurrency| {

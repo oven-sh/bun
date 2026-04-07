@@ -48,6 +48,8 @@ default_csrf_secret: []const u8 = "",
 
 valkey_context: ValkeyContext = .{},
 
+otel_tracer_provider: ?*bun.otel.TracerProvider = null,
+
 tls_default_ciphers: ?[:0]const u8 = null,
 
 // proxy_env_storage moved to VirtualMachine — see comment there on why

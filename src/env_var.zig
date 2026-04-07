@@ -105,6 +105,7 @@ pub const GITHUB_SERVER_URL = New(kind.string, "GITHUB_SERVER_URL", .{});
 pub const GITHUB_SHA = New(kind.string, "GITHUB_SHA", .{});
 pub const GITHUB_WORKSPACE = New(kind.string, "GITHUB_WORKSPACE", .{});
 pub const HOME = PlatformSpecificNew(kind.string, "HOME", "USERPROFILE", .{});
+pub const OTEL_EXPORTER_OTLP_ENDPOINT = New(kind.string, "OTEL_EXPORTER_OTLP_ENDPOINT", .{});
 pub const HYPERFINE_RANDOMIZED_ENVIRONMENT_OFFSET = New(kind.string, "HYPERFINE_RANDOMIZED_ENVIRONMENT_OFFSET", .{});
 pub const IS_BUN_AUTO_UPDATE = New(kind.boolean, "IS_BUN_AUTO_UPDATE", .{ .default = false });
 pub const JENKINS_URL = New(kind.string, "JENKINS_URL", .{});

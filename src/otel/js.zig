@@ -588,11 +588,127 @@ const ArrayPusher = struct {
     }
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Runtime: configure / getTracer / forceFlush / parseTraceparent
+// ─────────────────────────────────────────────────────────────────────────────
+
+pub fn jsConfigure(global: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
+    const vm = global.bunVM();
+    const arg = callframe.argument(0);
+    if (!arg.isObject()) {
+        return global.throwInvalidArguments("Bun.otel.configure expects an options object", .{});
+    }
+
+    var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
+    defer arena.deinit();
+    const tmp = arena.allocator();
+
+    var cfg: tracer.Config = .{ .endpoint = "" };
+
+    if (try arg.get(global, "endpoint")) |v| {
+        if (v.isString()) {
+            const s = try v.toSlice(global, tmp);
+            cfg.endpoint = s.slice();
+        }
+    }
+    if (try arg.get(global, "scheduledDelayMillis")) |v| {
+        if (v.isNumber()) cfg.scheduled_delay_ms = @intCast(@max(v.toInt32(), 0));
+    }
+    if (try arg.get(global, "maxExportBatchSize")) |v| {
+        if (v.isNumber()) cfg.max_export_batch_size = @intCast(@max(v.toInt32(), 1));
+    }
+    if (try arg.get(global, "maxQueueSize")) |v| {
+        if (v.isNumber()) cfg.max_queue_size = @intCast(@max(v.toInt32(), 1));
+    }
+    if (try arg.get(global, "sampler")) |v| {
+        if (v.isString()) {
+            const s = try v.toSlice(global, tmp);
+            if (bun.strings.eqlComptime(s.slice(), "always_on")) cfg.sampler = .always_on;
+            if (bun.strings.eqlComptime(s.slice(), "always_off")) cfg.sampler = .always_off;
+        } else if (v.isNumber()) {
+            cfg.sampler = tracer.Sampler.fromRatio(v.asNumber());
+        }
+    }
+    if (try arg.get(global, "headers")) |v| {
+        if (v.getObject()) |hobj| {
+            var list: std.ArrayListUnmanaged(tracer.Config.KV) = .{};
+            var iter = try jsc.JSPropertyIterator(.{ .include_value = true, .skip_empty_name = true }).init(global, hobj);
+            defer iter.deinit();
+            while (try iter.next()) |key| {
+                const k = key.toUTF8(tmp);
+                const val = try iter.value.toSlice(global, tmp);
+                bun.handleOom(list.append(tmp, .{
+                    .name = bun.handleOom(tmp.dupe(u8, k.slice())),
+                    .value = bun.handleOom(tmp.dupe(u8, val.slice())),
+                }));
+            }
+            cfg.headers = list.items;
+        }
+    }
+
+    if (cfg.endpoint.len == 0) {
+        if (bun.env_var.OTEL_EXPORTER_OTLP_ENDPOINT.get()) |ep| cfg.endpoint = ep;
+    }
+
+    if (vm.rareData().otel_tracer_provider) |old| {
+        old.deinit();
+        vm.rareData().otel_tracer_provider = null;
+    }
+    const provider = tracer.TracerProvider.init(vm, cfg) catch |err| {
+        return global.throw("failed to configure OTEL: {s}", .{@errorName(err)});
+    };
+    vm.rareData().otel_tracer_provider = provider;
+    return .js_undefined;
+}
+
+pub fn jsGetTracer(global: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
+    const vm = global.bunVM();
+    const args = callframe.arguments();
+    const name = if (args.len > 0 and args[0].isString()) blk: {
+        const s = try args[0].toSlice(global, bun.default_allocator);
+        defer s.deinit();
+        break :blk bun.handleOom(bun.default_allocator.dupe(u8, s.slice()));
+    } else bun.handleOom(bun.default_allocator.dupe(u8, "default"));
+    defer bun.default_allocator.free(name);
+
+    const provider = tracer.TracerProvider.getOrInitFromEnv(vm);
+    const scope_index: u32 = if (provider) |p| p.getOrCreateScope(name) else 0;
+
+    const t = tracer.OtelTracer.new(.{ .provider = provider, .scope_index = scope_index });
+    return t.toJS(global);
+}
+
+pub fn jsForceFlush(global: *JSGlobalObject, _: *jsc.CallFrame) bun.JSError!JSValue {
+    const vm = global.bunVM();
+    const provider = tracer.TracerProvider.get(vm) orelse {
+        return jsc.JSPromise.resolvedPromiseValue(global, .js_undefined);
+    };
+    return provider.processor.forceFlush(global);
+}
+
+pub fn jsParseTraceparent(global: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
+    const args = callframe.arguments();
+    if (args.len < 1 or !args[0].isString()) return .js_undefined;
+    var buf: [128]u8 = undefined;
+    var fba = std.heap.FixedBufferAllocator.init(&buf);
+    const s = try args[0].toSlice(global, fba.allocator());
+    const ctx = propagation.parseTraceparent(s.slice()) orelse return .js_undefined;
+    return tracer.OtelSpanContext.create(global, ctx, true);
+}
+
 comptime {
     const js_encode = jsc.toJSHostFn(jsEncodeTraces);
     @export(&js_encode, .{ .name = "Bun__otel__encodeTraces" });
     const js_decode = jsc.toJSHostFn(jsDecodeTraces);
     @export(&js_decode, .{ .name = "Bun__otel__decodeTraces" });
+    const js_configure = jsc.toJSHostFn(jsConfigure);
+    @export(&js_configure, .{ .name = "Bun__otel__configure" });
+    const js_getTracer = jsc.toJSHostFn(jsGetTracer);
+    @export(&js_getTracer, .{ .name = "Bun__otel__getTracer" });
+    const js_forceFlush = jsc.toJSHostFn(jsForceFlush);
+    @export(&js_forceFlush, .{ .name = "Bun__otel__forceFlush" });
+    const js_parseTraceparent = jsc.toJSHostFn(jsParseTraceparent);
+    @export(&js_parseTraceparent, .{ .name = "Bun__otel__parseTraceparent" });
 }
 
 const std = @import("std");
@@ -606,5 +722,7 @@ const encode = @import("./otlp/encode.zig");
 const span = @import("./span.zig");
 const attrs = @import("./attributes.zig");
 const tags = @import("OtlpProtoTags");
+const tracer = @import("./tracer.zig");
+const propagation = @import("./propagation.zig");
 const Attribute = attrs.Attribute;
 const AnyValue = attrs.AnyValue;

@@ -441,15 +441,25 @@ static JSValue constructDNSObject(VM& vm, JSObject* bunObject)
 
 BUN_DECLARE_HOST_FUNCTION(Bun__otel__encodeTraces);
 BUN_DECLARE_HOST_FUNCTION(Bun__otel__decodeTraces);
+BUN_DECLARE_HOST_FUNCTION(Bun__otel__configure);
+BUN_DECLARE_HOST_FUNCTION(Bun__otel__getTracer);
+BUN_DECLARE_HOST_FUNCTION(Bun__otel__forceFlush);
+BUN_DECLARE_HOST_FUNCTION(Bun__otel__parseTraceparent);
 
 static JSValue constructOtelObject(VM& vm, JSObject* bunObject)
 {
     JSGlobalObject* globalObject = bunObject->globalObject();
     JSC::JSObject* otelObject = JSC::constructEmptyObject(globalObject);
-    otelObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "encodeTraces"_s), 1, Bun__otel__encodeTraces, ImplementationVisibility::Public, NoIntrinsic,
-        JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | 0);
-    otelObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "decodeTraces"_s), 1, Bun__otel__decodeTraces, ImplementationVisibility::Public, NoIntrinsic,
-        JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | 0);
+    auto put = [&](ASCIILiteral name, unsigned argCount, NativeFunction fn) {
+        otelObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, name), argCount, fn, ImplementationVisibility::Public, NoIntrinsic,
+            JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | 0);
+    };
+    put("encodeTraces"_s, 1, Bun__otel__encodeTraces);
+    put("decodeTraces"_s, 1, Bun__otel__decodeTraces);
+    put("configure"_s, 1, Bun__otel__configure);
+    put("getTracer"_s, 1, Bun__otel__getTracer);
+    put("forceFlush"_s, 0, Bun__otel__forceFlush);
+    put("parseTraceparent"_s, 1, Bun__otel__parseTraceparent);
     return otelObject;
 }
 

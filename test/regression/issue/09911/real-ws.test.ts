@@ -6,10 +6,14 @@
 // bare "ws" specifier with a native shim, so this test installs the real
 // package locally and loads it by path to exercise the node:http upgrade path
 // the way Playwright does.
-import { expect, test } from "bun:test";
+import { expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
-test("real ws package (via node:http upgrade) connects and round-trips", { timeout: 60_000 }, async () => {
+// `bun install` of the real ws package can exceed the default 5s timeout on
+// slow CI workers.
+setDefaultTimeout(60_000);
+
+test("real ws package (via node:http upgrade) connects and round-trips", async () => {
   using dir = tempDir("issue-09911-ws", {
     "package.json": JSON.stringify({ dependencies: { ws: "8.18.3" } }),
     "client.mjs": `

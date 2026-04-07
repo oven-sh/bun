@@ -558,7 +558,12 @@ function ClientRequest(input, options, cb) {
             // Drain kBodyChunks — happy-eyeballs retries are impossible now
             // and leaving the pre-upgrade chunks there would trip the
             // fake-backpressure counter on subsequent req.write() calls.
-            if (this[kBodyChunks]) this[kBodyChunks].length = 0;
+            if (this[kBodyChunks] && this[kBodyChunks].length > 0) {
+              this[kBodyChunks].length = 0;
+              // Unblock any caller that paused after write_() returned false
+              // due to cumulative chunk bytes crossing MAX_FAKE_BACKPRESSURE_SIZE.
+              this.emit("drain");
+            }
             const prevIsHTTPS = getIsNextIncomingMessageHTTPS();
             setIsNextIncomingMessageHTTPS(response.url.startsWith("https:"));
             const res = (this.res = new IncomingMessage(response, {

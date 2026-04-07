@@ -3,8 +3,12 @@
 // Playwright's connectOverCDP() bundles the real `ws` package, which performs
 // its handshake via http.request() + req.on("upgrade"). This is an end-to-end
 // check against a real Chrome with --remote-debugging-port.
-import { describe, expect, test } from "bun:test";
+import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+
+// `bun install` of playwright-core and Chrome startup can exceed the 5s
+// default timeout on slow CI workers.
+setDefaultTimeout(60_000);
 import { accessSync, constants as fsConstants } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -54,53 +58,63 @@ describe.todoIf(!chromePath || isWindows)("playwright connectOverCDP via Chrome"
         await browser.close();
       `,
     });
+    let userDataDir: ReturnType<typeof tempDir> | undefined;
+    let chrome: ReturnType<typeof Bun.spawn> | undefined;
+    try {
+      const install = Bun.spawn({
+        cmd: [bunExe(), "install"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      expect(await install.exited).toBe(0);
 
-    const install = Bun.spawn({
-      cmd: [bunExe(), "install"],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "ignore",
-      stderr: "pipe",
-    });
-    expect(await install.exited).toBe(0);
+      userDataDir = tempDir("issue-09911-chrome-profile", {});
+      chrome = Bun.spawn({
+        cmd: [
+          chromePath!,
+          "--headless=new",
+          "--remote-debugging-port=0",
+          "--no-first-run",
+          "--no-default-browser-check",
+          "--user-data-dir=" + String(userDataDir),
+        ],
+        env: bunEnv,
+        stdout: "ignore",
+        stderr: "pipe",
+      });
 
-    const userDataDir = tempDir("issue-09911-chrome-profile", {});
-    const chrome = Bun.spawn({
-      cmd: [
-        chromePath!,
-        "--headless=new",
-        "--remote-debugging-port=0",
-        "--no-first-run",
-        "--no-default-browser-check",
-        "--user-data-dir=" + String(userDataDir),
-      ],
-      env: bunEnv,
-      stdout: "ignore",
-      stderr: "pipe",
-    });
-
-    let wsEndpoint = "";
-    for await (const chunk of chrome.stderr) {
-      const m = Buffer.from(chunk)
-        .toString()
-        .match(/DevTools listening on (ws:\/\/[\w.:/-]+)/);
-      if (m) {
-        wsEndpoint = m[1];
-        break;
+      let wsEndpoint = "";
+      for await (const chunk of chrome.stderr) {
+        const m = Buffer.from(chunk)
+          .toString()
+          .match(/DevTools listening on (ws:\/\/[\w.:/-]+)/);
+        if (m) {
+          wsEndpoint = m[1];
+          break;
+        }
       }
-    }
-    expect(wsEndpoint).not.toBe("");
+      expect(wsEndpoint).not.toBe("");
 
-    return {
-      dir,
-      chrome,
-      wsEndpoint,
-      [Symbol.dispose]() {
-        chrome.kill();
-        dir[Symbol.dispose]();
-        userDataDir[Symbol.dispose]();
-      },
-    };
+      const capturedUserDataDir = userDataDir;
+      const capturedChrome = chrome;
+      return {
+        dir,
+        chrome,
+        wsEndpoint,
+        [Symbol.dispose]() {
+          capturedChrome.kill();
+          dir[Symbol.dispose]();
+          capturedUserDataDir[Symbol.dispose]();
+        },
+      };
+    } catch (err) {
+      chrome?.kill();
+      userDataDir?.[Symbol.dispose]();
+      dir[Symbol.dispose]();
+      throw err;
+    }
   }
 
   async function connect(dir: ReturnType<typeof tempDir>, endpoint: string) {
@@ -120,5 +134,5 @@ describe.todoIf(!chromePath || isWindows)("playwright connectOverCDP via Chrome"
   test("connects with ws:// endpoint", async () => {
     using ctx = await setup();
     await connect(ctx.dir, ctx.wsEndpoint);
-  }, 30_000);
+  });
 });

@@ -161,17 +161,39 @@ signed_manifest="${manifest}.asc"
 scratch_prefix=".sign-manifest-scratch."
 
 # Reject pre-existing non-regular output paths (directory, FIFO, device
-# node, symlink-to-non-regular, etc.) before the backup flow has a
-# chance to misinterpret them. The downstream logic uses `[ -f ]` to
-# decide whether to mv the existing output into a .bak — `-f` returns
-# false for every non-regular file, so without this guard a pre-
-# existing `SHASUMS256.txt` directory would be treated as "no backup
-# needed" and the final `mv tmp_manifest manifest` would then move the
-# temp file INTO the directory, escaping cleanup and breaking the
-# byte-identical rollback guarantee. In practice no caller is going
-# to create a directory at this path, but the cost of the guard is
-# one `-e + ! -f` check per output so the defensive posture is free.
+# node, symlink-to-non-regular, dangling symlink, etc.) before the
+# backup flow has a chance to misinterpret them. The downstream logic
+# uses `[ -f ]` to decide whether to mv the existing output into a
+# .bak — `-f` returns false for every non-regular file, so without
+# this guard a pre-existing `SHASUMS256.txt` directory would be
+# treated as "no backup needed" and the final `mv tmp_manifest
+# manifest` would then move the temp file INTO the directory,
+# escaping cleanup and breaking the byte-identical rollback
+# guarantee.
+#
+# Two tests per output:
+#
+#   1. `[ -L ] && ! [ -e ]` catches dangling symlinks. A broken
+#      symlink is invisible to `[ -e ]` alone (which follows the
+#      link and sees ENOENT at the target) but `[ -L ]` tests the
+#      symlink itself — so a dangling `SHASUMS256.txt` symlink
+#      would otherwise slip past the `[ -e ] && ! [ -f ]` check and
+#      the backup block's `[ -f ]` check, and the final atomic mv
+#      would create the output at the symlink's target path instead
+#      of the caller's intended location.
+#
+#   2. `[ -e ] && ! [ -f ]` catches directories, FIFOs, device
+#      nodes, sockets, and symlinks to any of those — all cases
+#      where the final mv would do something unexpected.
+#
+# In practice no caller is going to create either of these at this
+# path, but the cost of both guards is two test syscalls per output
+# so the defensive posture is free.
 for _output in "${manifest}" "${signed_manifest}"; do
+  if [ -L "${_output}" ] && ! [ -e "${_output}" ]; then
+    echo "error: output path is a dangling symlink: ${_output}" >&2
+    exit 1
+  fi
   if [ -e "${_output}" ] && ! [ -f "${_output}" ]; then
     echo "error: output path exists and is not a regular file: ${_output}" >&2
     exit 1

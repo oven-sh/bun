@@ -50,6 +50,13 @@ pub enum Loader {
     Yaml = 18,
     Json5 = 19,
     Md = 20,
+    /// Emit as a physical file, but if the asset is referenced from a CSS
+    /// `url(...)` and its size is below `asset_inline_limit`, inline it as a
+    /// `data:` URI instead. This is the default fallback loader when the user
+    /// has not explicitly configured one for the extension and the file was
+    /// reached via a CSS `url()` reference. Explicit `loader: { '.ext': 'file' }`
+    /// continues to always emit a file.
+    Url = 21,
 }
 
 // Crosses FFI as `uint8_t default_loader` / `uint8_t loader` in
@@ -62,6 +69,7 @@ bun_core::assert_ffi_discr!(
     Jsx = 0, Js = 1, Ts = 2, Tsx = 3, Css = 4, File = 5, Json = 6,
     Jsonc = 7, Toml = 8, Wasm = 9, Napi = 10, Base64 = 11, Dataurl = 12,
     Text = 13, Bunsh = 14, Sqlite = 15, SqliteEmbedded = 16, Html = 17,
+    Url = 21,
 );
 
 /// `Loader.Optional` — `enum(u8) { none = 254, _ }` niche-packed optional.
@@ -102,6 +110,7 @@ impl LoaderOptional {
             18 => Some(Loader::Yaml),
             19 => Some(Loader::Json5),
             20 => Some(Loader::Md),
+            21 => Some(Loader::Url),
             254 => None,
             _ => {
                 debug_assert!(false, "LoaderOptional out of range: {}", self.0);
@@ -132,6 +141,7 @@ bun_core::comptime_string_map! {
         b"tsx" => Loader::Tsx,
         b"css" => Loader::Css,
         b"file" => Loader::File,
+        b"url" => Loader::Url,
         b"json" => Loader::Json,
         b"jsonc" => Loader::Jsonc,
         b"toml" => Loader::Toml,
@@ -168,6 +178,7 @@ impl Loader {
         matches!(
             self,
             Loader::File
+                | Loader::Url
                 | Loader::Napi
                 | Loader::Sqlite
                 | Loader::SqliteEmbedded
@@ -177,7 +188,7 @@ impl Loader {
     }
 
     pub fn handles_empty_file(self) -> bool {
-        matches!(self, Loader::Wasm | Loader::File | Loader::Text)
+        matches!(self, Loader::Wasm | Loader::File | Loader::Url | Loader::Text)
     }
 
     // `to_mime_type` / `from_mime_type` stay in bun_http_types as extension
@@ -289,6 +300,7 @@ impl Loader {
             | Loader::Yaml
             | Loader::Json5
             | Loader::File
+            | Loader::Url
             | Loader::Md => SideEffects::NoSideEffectsPureData,
             _ => SideEffects::HasSideEffects,
         }

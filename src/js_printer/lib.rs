@@ -6246,6 +6246,9 @@ pub mod __gated_printer {
                                 Loader::File => {
                                     self.print_whitespacer(ws!(b" with { type: \"file\" }"))
                                 }
+                                Loader::Url => {
+                                    self.print_whitespacer(ws!(b" with { type: \"url\" }"))
+                                }
                                 Loader::Json => {
                                     self.print_whitespacer(ws!(b" with { type: \"json\" }"))
                                 }
@@ -6313,6 +6316,7 @@ pub mod __gated_printer {
                                         Loader::Tsx => FP::host_defined(mi.str(b"tsx")),
                                         Loader::Css => FP::host_defined(mi.str(b"css")),
                                         Loader::File => FP::host_defined(mi.str(b"file")),
+                                        Loader::Url => FP::host_defined(mi.str(b"url")),
                                         Loader::Jsonc => FP::host_defined(mi.str(b"jsonc")),
                                         Loader::Toml => FP::host_defined(mi.str(b"toml")),
                                         Loader::Yaml => FP::host_defined(mi.str(b"yaml")),

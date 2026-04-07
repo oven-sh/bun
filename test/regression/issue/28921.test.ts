@@ -114,7 +114,6 @@ test("issue 28921: `assetInlineLimit: 0` forces all URL-loader assets to be emit
   const result = await Bun.build({
     entrypoints: [join(String(dir), "src/styles.css")],
     outdir: join(String(dir), "dist"),
-    // @ts-expect-error — assetInlineLimit is new in this PR
     assetInlineLimit: 0,
   });
 

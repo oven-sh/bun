@@ -1356,6 +1356,8 @@ pub struct BundleOptions<'a> {
     /// captures the last expression in { value: expr } for result extraction.
     pub repl_mode: bool,
     pub css_chunking: bool,
+    /// Threshold in bytes for auto-inlining small CSS `url(...)` assets.
+    pub asset_inline_limit: u32,
 
     pub ignore_dce_annotations: bool,
     pub emit_dce_annotations: bool,
@@ -1553,6 +1555,7 @@ impl<'a> BundleOptions<'a> {
             dead_code_elimination: self.dead_code_elimination,
             repl_mode: self.repl_mode,
             css_chunking: self.css_chunking,
+            asset_inline_limit: self.asset_inline_limit,
             ignore_dce_annotations: self.ignore_dce_annotations,
             emit_dce_annotations: self.emit_dce_annotations,
             bytecode: self.bytecode,
@@ -1757,6 +1760,7 @@ impl<'a> BundleOptions<'a> {
             env: Env::init(),
             transform_options: std::sync::Arc::clone(&transform),
             css_chunking: false,
+            asset_inline_limit: 128 * 1024,
             drop: transform.drop.clone().into_boxed_slice(),
             bundler_feature_flags,
 

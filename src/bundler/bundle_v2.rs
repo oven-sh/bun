@@ -6411,10 +6411,23 @@ pub mod bv2_impl {
                 }
 
                 let import_record_loader = 'brk: {
-                    let resolved_loader = import_record.loader.unwrap_or_else(|| {
-                        path.loader(&transpiler.options.loaders)
-                            .unwrap_or(Loader::File)
-                    });
+                    let user_loader = import_record
+                        .loader
+                        .or_else(|| path.loader(&transpiler.options.loaders));
+                    // Unknown extension falls back to:
+                    //   - `.url` when the import is a CSS `url(...)` reference, so
+                    //     small assets can auto-inline as `data:` URIs while larger
+                    //     assets still get emitted as physical files. The user can
+                    //     opt out of inlining by explicitly configuring
+                    //     `loader: { '.ext': 'file' }`, which always emits.
+                    //   - `.file` otherwise (JS imports of binary assets, etc.).
+                    let resolved_loader = user_loader.unwrap_or(
+                        if loader == Loader::Css && import_record.kind == ImportKind::Url {
+                            Loader::Url
+                        } else {
+                            Loader::File
+                        },
+                    );
                     // When an HTML file references a URL asset (e.g. <link rel="manifest" href="./manifest.json" />),
                     // the file must be copied to the output directory as-is. If the resolved loader would
                     // parse/transform the file (e.g. .json, .toml) rather than copy it, force the .file loader

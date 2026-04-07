@@ -497,6 +497,7 @@ fn api_loader_tag_name(l: bun_options_types::schema::api::Loader) -> &'static st
         L::yaml => "yaml",
         L::json5 => "json5",
         L::md => "md",
+        L::url => "url",
         L::_none => "_none",
     }
 }

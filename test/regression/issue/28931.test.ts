@@ -175,11 +175,11 @@ describe.concurrent.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
 
     // --- Identity check: signed body == raw manifest, byte-exact ---
     // Parse the clearsign envelope rigorously instead of trimming both
-    // sides into agreement — coderabbit caught that a lax assertion would
-    // silently pass even if the helper regressed to GPG's default digest
-    // algorithm or if the .asc and .txt differed only by trailing
-    // whitespace. Both failure modes are real integrity regressions the
-    // downstream validator would catch, so assert them here.
+    // sides into agreement: a lax assertion would silently pass if the
+    // helper regressed to GPG's default digest algorithm, or if the
+    // .asc and .txt differed only by trailing whitespace. Both failure
+    // modes are real integrity regressions the downstream validator
+    // would catch, so assert them here.
     //
     // The regex captures two groups:
     //  1. The `Hash: ...` value — pinned to SHA512 because the helper
@@ -278,13 +278,13 @@ describe.concurrent.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
   });
 
   test("unsigned fallback removes a stale .asc left by a previous signed run", async () => {
-    // coderabbit caught: signed run writes .txt + .asc; if the same
-    // directory is later invoked unsigned (secrets rotated/removed,
-    // standalone manual re-run, etc.) the old .asc would survive and the
-    // buildkite wrapper's `[ -f SHASUMS256.txt.asc ]` check would upload
-    // a stale signature alongside the fresh .txt — exactly the identity
-    // mismatch this PR exists to fix. The helper must remove any preexisting
-    // .asc before the unsigned branch exits.
+    // A signed run writes .txt + .asc; if the same directory is later
+    // invoked unsigned (secrets rotated/removed, standalone manual
+    // re-run, etc.) an old .asc surviving into the next run would let
+    // the buildkite wrapper's `[ -f SHASUMS256.txt.asc ]` check upload
+    // a stale signature alongside the fresh .txt — exactly the
+    // identity mismatch this PR exists to fix. The helper must remove
+    // any preexisting .asc before the unsigned branch exits.
     using dir = tempDir("bun-28931-stale-asc-", {
       "bun-linux-x64.zip": "fake",
     });
@@ -323,14 +323,14 @@ describe.concurrent.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
   });
 
   test("sweeps orphaned .sign-manifest-scratch.* dirs left by a SIGKILL'd prior run", async () => {
-    // tcely caught: the normal cleanup() trap fires on every exit path,
-    // but SIGKILL (OOM, agent restart, panic) skips it — leaving a
-    // stale scratch dir in ${dir}. In Buildkite's reused-workspace model
-    // those orphans accumulate until the workspace is wiped. The
-    // script sweeps ${dir}/${scratch_prefix}*/ on startup so each run
-    // inherits a clean slate. Simulate the SIGKILL case by planting
-    // an orphan directory with content inside, then invoke the helper
-    // and assert the orphan is gone afterward.
+    // The normal cleanup() trap fires on every exit path, but SIGKILL
+    // (OOM, agent restart, panic) skips it — leaving a stale scratch
+    // dir in ${dir}. In Buildkite's reused-workspace model those
+    // orphans would accumulate until the workspace itself is wiped.
+    // The script sweeps ${dir}/${scratch_prefix}*/ on startup so each
+    // run inherits a clean slate. Simulate the SIGKILL case by
+    // planting an orphan directory with content inside, then invoke
+    // the helper and assert the orphan is gone afterward.
     using dir = tempDir("bun-28931-stale-scratch-", {
       "bun-linux-x64.zip": "artifact-bytes",
     });
@@ -370,17 +370,17 @@ describe.concurrent.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
   });
 
   test("restores pre-existing valid outputs when a later step fails mid-mutation", async () => {
-    // coderabbit caught: the cleanup() trap's own invariant comment
-    // promises "same state on failure", but the `rm -f "$signed_manifest"`
-    // + `mv tmp "$manifest"` sequence actually wipes pre-existing valid
-    // outputs if a later step (e.g. gpg --import on a bad key) fails.
-    // The fix renames pre-existing .txt/.asc to `.bak.$$` siblings before
-    // mutation and restores them from cleanup() when success stays 0.
-    // This test exercises that roll-back by running a successful signed
-    // first pass, then invoking the helper a second time with a bogus
-    // GPG key so gpg --import aborts mid-mutation. Both the .txt and
-    // .asc from the first run must be present and byte-identical after
-    // the failure.
+    // The cleanup() trap's own invariant promises "same state on
+    // failure", but a naive `rm -f "$signed_manifest"` + `mv tmp
+    // "$manifest"` sequence would wipe pre-existing valid outputs if a
+    // later step (e.g. gpg --import on a bad key) fails. The helper
+    // renames any pre-existing .txt/.asc into the scratch dir as
+    // backups before mutation and restores them from cleanup() when
+    // success stays 0. This test exercises that rollback by running a
+    // successful signed first pass, then invoking the helper a second
+    // time with a bogus GPG key so gpg --import aborts mid-mutation.
+    // Both the .txt and .asc from the first run must be present and
+    // byte-identical after the failure.
     using dir = tempDir("bun-28931-rollback-", {
       "bun-linux-x64.zip": "v1 bytes",
     });

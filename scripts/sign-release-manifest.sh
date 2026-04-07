@@ -252,13 +252,13 @@ cleanup() {
     # Roll back: wipe any partial outputs we produced in ${dir} — but
     # ONLY outputs we actually wrote to this invocation — then restore
     # the pre-existing copies from their backups inside scratch_dir.
-    # The `manifest_written` / `signed_manifest_written` gate exists
-    # because the old unconditional `rm -f "${manifest}" "${signed_manifest}"`
+    # The `manifest_written` / `signed_manifest_written` gate matters
+    # because an unconditional `rm -f "${manifest}" "${signed_manifest}"`
     # would destroy pre-existing files on any failure between trap
     # installation and the final mv/gpg, even though those failures
-    # never touched the output paths. coderabbit caught this: failing
-    # mktemp, failing backup mv, failing hash job, failing collate —
-    # none of them should cost the caller their last good outputs.
+    # never touched the output paths. Failing mktemp, failing backup
+    # mv, failing hash job, failing collate — none of them should cost
+    # the caller their last good outputs.
     if [ "${manifest_written}" -eq 1 ]; then
       rm -f "${manifest}" || true
     fi
@@ -349,13 +349,13 @@ tmp_manifest="${scratch_dir}/${manifest_basename}.tmp"
 # unsigned-rollout case AND preserves it for restore on failure.
 #
 # Invariant: the `backup_*` variables are ONLY assigned after their
-# corresponding `mv` returns successfully. claude[bot] caught this —
-# setting the variable before the `mv` means a failed rename (EACCES,
-# EROFS, etc.) leaves the variable pointing at a file that doesn't
-# exist, and cleanup() would `rm -f "${manifest}"` (wiping the still-
-# present original) before the restore `mv` silently no-ops. Assigning
-# after the successful `mv` keeps the invariant "backup_* non-empty
-# iff the backup file exists" intact.
+# corresponding `mv` returns successfully. Setting the variable before
+# the `mv` would mean a failed rename (EACCES, EROFS, etc.) leaves the
+# variable pointing at a file that doesn't exist, and cleanup() would
+# `rm -f "${manifest}"` (wiping the still-present original) before the
+# restore `mv` silently no-ops. Assigning after the successful `mv`
+# keeps the invariant "backup_* non-empty iff the backup file exists"
+# intact.
 if [ -f "${manifest}" ]; then
   _bak_path="${scratch_dir}/${manifest_basename}.bak"
   mv "${manifest}" "${_bak_path}"

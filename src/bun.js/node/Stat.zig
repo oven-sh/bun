@@ -245,12 +245,12 @@ pub const StatsBig = StatType(true);
 /// the `u64 -> JS` conversion without having to mount a filesystem that hands
 /// out high 64-bit inodes (e.g. NFS).
 pub fn createStatsFromU64ForTesting(globalObject: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-    const arguments = callFrame.arguments_old(2).slice();
-    if (arguments.len < 2) {
+    if (callFrame.argumentsCount() < 2) {
         return globalObject.throw("createStatsFromU64ForTesting expects (ino, big)", .{});
     }
-    const ino_u64 = arguments[0].toUInt64NoTruncate();
-    const big = arguments[1].toBoolean();
+    const ino_arg, const big_arg = callFrame.argumentsAsArray(2);
+    const ino_u64 = ino_arg.toUInt64NoTruncate();
+    const big = big_arg.toBoolean();
 
     var posix_stat = std.mem.zeroes(Syscall.PosixStat);
     // `@FieldType(bun.Stat, "ino")` is platform-dependent but resolves to

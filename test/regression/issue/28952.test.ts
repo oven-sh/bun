@@ -33,10 +33,12 @@ test("fetch() body iterates with a buffered fast-path across an await (#28952)",
   }
 
   const body = await fetchStream();
-  // A setTimeout gap lets the native fetch task drain the response into
-  // the single-buffer fast path before iteration begins — which is what
-  // used to crash releaseLock() in the async-iterator's finally block.
-  await new Promise(resolve => setTimeout(resolve, 50));
+  // Yielding to the event loop once (via Bun.sleep, which suspends via an
+  // async task rather than a microtask) lets the native fetch task drain
+  // the response into the single-buffer fast path before iteration begins
+  // — which is what used to crash releaseLock() in the async-iterator's
+  // finally block.
+  await Bun.sleep(0);
 
   let total = 0;
   for await (const chunk of body) {
@@ -61,7 +63,7 @@ test("fetch() body iterates with a buffered fast-path for a large payload (#2895
   }
 
   const body = await fetchStream();
-  await new Promise(resolve => setTimeout(resolve, 50));
+  await Bun.sleep(0);
 
   const chunks: number[] = [];
   for await (const chunk of body) {

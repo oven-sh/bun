@@ -44,6 +44,7 @@ pub fn trackResolutionFailure(store: *DirectoryWatchStore, import_source: []cons
         // Multiple parts of DevServer rely on the fact that these
         // loaders do not depend on importing other files.
         .file,
+        .url,
         .json,
         .jsonc,
         .toml,

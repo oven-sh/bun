@@ -215,6 +215,7 @@ const METHODS = [
   "M-SEARCH",
   "MERGE",
   "MKACTIVITY",
+  "MKADDRESSBOOK",
   "MKCALENDAR",
   "MKCOL",
   "MOVE",

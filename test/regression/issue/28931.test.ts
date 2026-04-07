@@ -49,8 +49,7 @@ function sh(cmd: string[], env: Record<string, string> = {}) {
 // be found on PATH (git-for-windows ships one) but posix_spawn on a .sh
 // file fails outright.
 const canRun =
-  !isWindows &&
-  Bun.spawnSync({ cmd: ["gpg", "--version"], stdout: "ignore", stderr: "ignore" }).exitCode === 0;
+  !isWindows && Bun.spawnSync({ cmd: ["gpg", "--version"], stdout: "ignore", stderr: "ignore" }).exitCode === 0;
 
 // Throwaway GPG key material shared by every test below.
 let keyringDir: ReturnType<typeof tempDir> | undefined;

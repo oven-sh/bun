@@ -19,11 +19,7 @@ async function run(src: string) {
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   // The child must not throw. stderr may contain ASAN/JSC warnings in debug
   // builds, so don't require it to be empty — just check it doesn't contain
   // a TypeError from the code under test.
@@ -115,12 +111,7 @@ test("setDefaultResultOrder on dns.promises affects dns too", async () => {
     console.log(dns.getDefaultResultOrder());
     console.log(dns.promises.getDefaultResultOrder());
   `);
-  expect(stdout.trim().split("\n")).toEqual([
-    "ipv4first",
-    "ipv4first",
-    "verbatim",
-    "verbatim",
-  ]);
+  expect(stdout.trim().split("\n")).toEqual(["ipv4first", "ipv4first", "verbatim", "verbatim"]);
 });
 
 test("dns.promises.getServers is defined", async () => {
@@ -133,10 +124,5 @@ test("dns.promises.getServers is defined", async () => {
     console.log(Array.isArray(dns.promises.getServers()));
     console.log(Array.isArray(dnsp.getServers()));
   `);
-  expect(stdout.trim().split("\n")).toEqual([
-    "function",
-    "function",
-    "true",
-    "true",
-  ]);
+  expect(stdout.trim().split("\n")).toEqual(["function", "function", "true", "true"]);
 });

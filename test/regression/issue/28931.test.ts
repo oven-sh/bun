@@ -19,11 +19,11 @@
 // vars are absent) is also exercised — that's the rollout fallback
 // before the Buildkite GPG secrets are provisioned.
 
+import { beforeAll, describe, expect, test } from "bun:test";
+import { bunEnv, tempDir } from "harness";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, tempDir } from "harness";
 
 const repoRoot = join(import.meta.dir, "..", "..", "..");
 const script = join(repoRoot, "scripts", "sign-release-manifest.sh");
@@ -134,11 +134,7 @@ describe.skipIf(!gpgAvailable)("sign-release-manifest.sh (#28931)", () => {
     }
 
     // Sorted by filename (C-locale sort, matches `LC_ALL=C sort`).
-    expect(entries.map(e => e.name)).toEqual([
-      "bun-darwin-aarch64.zip",
-      "bun-linux-x64.zip",
-      "bun-windows-x64.zip",
-    ]);
+    expect(entries.map(e => e.name)).toEqual(["bun-darwin-aarch64.zip", "bun-linux-x64.zip", "bun-windows-x64.zip"]);
 
     // --- Hashes must match the actual file bytes ---
     for (const { name, hex } of entries) {
@@ -246,11 +242,11 @@ describe.skipIf(!gpgAvailable)("sign-release-manifest.sh (#28931)", () => {
 
     const expectedByName: Record<string, string> = {};
     for (const a of artifacts) {
-      expectedByName[a] = createHash("sha256").update(readFileSync(join(dirStr, a))).digest("hex");
+      expectedByName[a] = createHash("sha256")
+        .update(readFileSync(join(dirStr, a)))
+        .digest("hex");
     }
 
-    expect(
-      parsed.reduce<Record<string, string>>((acc, p) => ((acc[p.name] = p.hex), acc), {}),
-    ).toEqual(expectedByName);
+    expect(parsed.reduce<Record<string, string>>((acc, p) => ((acc[p.name] = p.hex), acc), {})).toEqual(expectedByName);
   });
 });

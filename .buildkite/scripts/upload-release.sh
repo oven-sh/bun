@@ -139,10 +139,16 @@ function upload_github_asset() {
   local version="$1"
   local tag="$(release_tag "$version")"
   local file="$2"
+  local name="$(basename "$file")"
   run_command gh release upload "$tag" "$file" --clobber --repo "$BUILDKITE_REPO"
 
   # Sometimes the upload fails, maybe this is a race condition in the gh CLI?
-  while [ "$(gh release view "$tag" --repo "$BUILDKITE_REPO" | grep -c "$file")" -eq 0 ]; do
+  #
+  # Query asset names one-per-line via --json so we can exact-match the full
+  # line. A plain substring `grep -c "$file"` would false-positive when one
+  # asset name is a prefix of another — e.g. SHASUMS256.txt vs
+  # SHASUMS256.txt.asc — and skip the retry even though the file is missing.
+  while [ "$(gh release view "$tag" --repo "$BUILDKITE_REPO" --json assets --jq '.assets[].name' | grep -cFx -- "$name")" -eq 0 ]; do
     echo "warn: Uploading $file to $tag failed, retrying..."
     sleep "$((RANDOM % 5 + 1))"
     run_command gh release upload "$tag" "$file" --clobber --repo "$BUILDKITE_REPO"
@@ -176,6 +182,10 @@ function sign_and_upload_manifest() {
   gpg_private_key=$(buildkite-agent secret get "GPG_PRIVATE_KEY" 2>/dev/null || true)
   gpg_passphrase=$(buildkite-agent secret get "GPG_PASSPHRASE" 2>/dev/null || true)
 
+  # Rollout fallback: until the Buildkite GPG secrets are provisioned, skip
+  # signing here and let the daily .github/workflows/release.yml sign job
+  # regenerate the manifest. Once both secrets exist this branch is never
+  # taken again — every canary push signs inline.
   if [ -z "$gpg_private_key" ] || [ -z "$gpg_passphrase" ]; then
     echo "warn: GPG_PRIVATE_KEY/GPG_PASSPHRASE not set in Buildkite secrets;"
     echo "warn: skipping SHASUMS256.txt signing. The daily sign workflow"
@@ -188,18 +198,15 @@ function sign_and_upload_manifest() {
   local script_dir
   script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
-  # Don't let `set -e` kill the pipeline on the helper's own skip sentinel.
+  # `set -e` would kill the pipeline on a non-zero exit, so capture the
+  # helper's exit via `|| sign_exit=$?`. The helper only exits non-zero
+  # for real failures here — the skip-sentinel path (exit 2) is gated by
+  # the early return above.
   local sign_exit=0
   GPG_PRIVATE_KEY="$gpg_private_key" \
   GPG_PASSPHRASE="$gpg_passphrase" \
     "$script_dir/scripts/sign-release-manifest.sh" "$PWD" "${artifacts[@]}" \
     || sign_exit=$?
-
-  if [ "$sign_exit" -eq 2 ]; then
-    # Helper printed its own warning and wrote nothing — fall back to the
-    # daily cron sign job until the Buildkite GPG secrets are provisioned.
-    return 0
-  fi
 
   if [ "$sign_exit" -ne 0 ]; then
     echo "error: failed to sign SHASUMS256.txt (exit $sign_exit)"

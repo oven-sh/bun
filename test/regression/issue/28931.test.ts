@@ -19,8 +19,8 @@
 // vars are absent) is also exercised — that's the rollout fallback
 // before the Buildkite GPG secrets are provisioned.
 
-import { beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, tempDir } from "harness";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { bunEnv, isWindows, tempDir } from "harness";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -42,19 +42,31 @@ function sh(cmd: string[], env: Record<string, string> = {}) {
   };
 }
 
-const gpgAvailable = Bun.spawnSync({ cmd: ["gpg", "--version"], stdout: "ignore", stderr: "ignore" }).exitCode === 0;
+// The signing helper is a bash script (uses set -eo pipefail, here-strings,
+// GNUPGHOME, POSIX sha256sum / shasum) that runs on the Linux buildkite
+// agent which performs the canary release upload. Nothing on Windows ever
+// runs it, so there's no value exercising it there — Windows' gpg would
+// be found on PATH (git-for-windows ships one) but posix_spawn on a .sh
+// file fails outright.
+const canRun =
+  !isWindows &&
+  Bun.spawnSync({ cmd: ["gpg", "--version"], stdout: "ignore", stderr: "ignore" }).exitCode === 0;
 
 // Throwaway GPG key material shared by every test below.
+let keyringDir: ReturnType<typeof tempDir> | undefined;
 let gpgHome = "";
 let gpgPrivateKey = "";
 const passphrase = "test-passphrase-28931";
 const keyUid = "release-test-28931@example.invalid";
 
-describe.skipIf(!gpgAvailable)("sign-release-manifest.sh (#28931)", () => {
+describe.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
   beforeAll(() => {
-    // One keyring for the whole suite.
-    const dir = tempDir("bun-28931-keyring-", {});
-    gpgHome = String(dir);
+    // One keyring for the whole suite. We can't `using` this inside
+    // beforeAll — the disposable would fire as soon as this callback
+    // returns, wiping the keyring before any test runs. Stash the
+    // handle and dispose it in afterAll instead.
+    keyringDir = tempDir("bun-28931-keyring-", {});
+    gpgHome = String(keyringDir);
 
     const keyspec = [
       "%echo Generating key",
@@ -95,6 +107,13 @@ describe.skipIf(!gpgAvailable)("sign-release-manifest.sh (#28931)", () => {
     expect(exp.exitCode).toBe(0);
     gpgPrivateKey = exp.stdout;
     expect(gpgPrivateKey).toContain("-----BEGIN PGP PRIVATE KEY BLOCK-----");
+  });
+
+  afterAll(() => {
+    // Dispose the shared keyring manually — see the beforeAll comment
+    // for why a `using` wouldn't work here.
+    keyringDir?.[Symbol.dispose]();
+    keyringDir = undefined;
   });
 
   test("writes deterministic, sorted SHASUMS256.txt and a matching clearsigned .asc", () => {
@@ -227,6 +246,9 @@ describe.skipIf(!gpgAvailable)("sign-release-manifest.sh (#28931)", () => {
       GPG_PRIVATE_KEY: gpgPrivateKey,
       GPG_PASSPHRASE: passphrase,
     });
+    // stdout/stderr first so a failure surfaces the real error, not exit code.
+    expect(res.stderr).not.toContain("error:");
+    expect(res.stdout).not.toContain("error:");
     expect(res.exitCode).toBe(0);
 
     const manifest = readFileSync(join(dirStr, "SHASUMS256.txt"), "utf8").trim();

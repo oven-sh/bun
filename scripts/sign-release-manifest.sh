@@ -60,6 +60,27 @@ fi
 manifest="$dir/SHASUMS256.txt"
 signed_manifest="$manifest.asc"
 
+# Set up cleanup BEFORE anything is written, so every failure path — the
+# missing-artifact check below, a gpg --import error, a gpg --clearsign
+# error — leaves the directory in the same state: either both files exist
+# (success) or neither does (failure). A half-written unsigned manifest
+# alongside a missing .asc file is exactly the integrity failure this
+# script exists to prevent.
+success=0
+gnupghome=""
+cleanup() {
+  local rc=$?
+  if [ "$success" -ne 1 ]; then
+    rm -f "$manifest" "$signed_manifest"
+  fi
+  if [ -n "$gnupghome" ]; then
+    GNUPGHOME="$gnupghome" gpgconf --kill all >/dev/null 2>&1 || true
+    rm -rf "$gnupghome"
+  fi
+  exit "$rc"
+}
+trap cleanup EXIT
+
 # Sort the artifact list so the manifest is deterministic regardless of
 # the caller's ordering. This matches packages/bun-release/scripts/upload-assets.ts
 # which localeCompare-sorts the same map.
@@ -73,7 +94,6 @@ for artifact in "${sorted[@]}"; do
   path="$dir/$artifact"
   if [ ! -f "$path" ]; then
     echo "error: missing artifact for signing: $path" >&2
-    rm -f "$manifest"
     exit 1
   fi
   # The manifest lists each file by basename, not full path — the validator
@@ -88,11 +108,6 @@ cat "$manifest"
 # Use an isolated GNUPGHOME so we never touch the agent's default keyring.
 gnupghome=$(mktemp -d)
 chmod 700 "$gnupghome"
-cleanup() {
-  GNUPGHOME="$gnupghome" gpgconf --kill all >/dev/null 2>&1 || true
-  rm -rf "$gnupghome"
-}
-trap cleanup EXIT
 
 GNUPGHOME="$gnupghome" gpg --batch --quiet --import <<< "$GPG_PRIVATE_KEY"
 
@@ -108,3 +123,4 @@ GNUPGHOME="$gnupghome" gpg \
   "$manifest" <<< "$GPG_PASSPHRASE"
 
 echo "Signed $signed_manifest"
+success=1

@@ -313,6 +313,33 @@ describe.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
     expect(existsSync(join(dirStr, "SHASUMS256.txt.asc"))).toBe(false);
   });
 
+  test.each([
+    ["with slash", "dist/bun-linux-x64.zip"],
+    ["parent traversal", "../bun-linux-x64.zip"],
+    ["dot-dot", ".."],
+    ["dot", "."],
+    ["empty", ""],
+  ])("rejects non-basename artifact %s", (_label, badName) => {
+    // Helper contract is basename-only — a caller passing `dist/foo.zip`
+    // would try to write its digest under a missing subdir, and
+    // `../foo.zip` would escape the scratch dir entirely. Validate up
+    // front so the error surfaces as "must be basenames" and no files
+    // are produced.
+    using dir = tempDir("bun-28931-basename-", {
+      "bun-linux-x64.zip": "present",
+    });
+    const dirStr = String(dir);
+
+    const res = sh([script, dirStr, badName], {
+      GPG_PRIVATE_KEY: gpgPrivateKey,
+      GPG_PASSPHRASE: passphrase,
+    });
+    expect(res.stderr).toContain("must be basenames");
+    expect(res.exitCode).toBe(1);
+    expect(existsSync(join(dirStr, "SHASUMS256.txt"))).toBe(false);
+    expect(existsSync(join(dirStr, "SHASUMS256.txt.asc"))).toBe(false);
+  });
+
   test("representative archive set round-trips through validate-digests.ts checks", () => {
     // End-to-end repro of the issue: running the helper over a set of
     // canary-shaped archive basenames yields a manifest whose hashes

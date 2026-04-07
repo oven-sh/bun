@@ -139,9 +139,25 @@ done < <(printf '%s\n' "${artifacts[@]}" | LC_ALL=C sort)
 # there and a correctness fix in the unsigned branch.
 rm -f "$signed_manifest"
 
-# Validate every artifact exists BEFORE we spawn any hash jobs — fail-
-# fast with a clean error message, no orphaned background subshells.
+# Validate every artifact BEFORE we spawn any hash jobs — fail-fast with
+# a clean error message, no orphaned background subshells. Two checks:
+#
+# 1. The helper's contract is basename-only artifacts: the name is
+#    interpolated into `"$hash_dir/$artifact.digest"` below and written
+#    into the manifest body as-is. A caller passing `dist/foo.zip` would
+#    try to write to a missing subdirectory; `../foo.zip` would escape
+#    `$hash_dir` entirely; `"."` and `".."` break manifest parsing. The
+#    canary caller (`.buildkite/scripts/upload-release.sh`) already only
+#    passes basenames, but the check guards against direct invocations
+#    and future callers that don't know the contract.
+# 2. The file must exist inside `$dir` so the hash job can read it.
 for artifact in "${sorted[@]}"; do
+  case "$artifact" in
+    ""|.|..|*/*)
+      echo "error: artifact names must be basenames (no slashes, not '.' or '..'): $artifact" >&2
+      exit 1
+      ;;
+  esac
   if [ ! -f "$dir/$artifact" ]; then
     echo "error: missing artifact for signing: $dir/$artifact" >&2
     exit 1

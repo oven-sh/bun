@@ -341,7 +341,7 @@ pub fn warm(self: *ThreadPool, count: u14) void {
             sync = @as(Sync, @bitCast(current));
             continue;
         }
-        const spawn_config = std.Thread.SpawnConfig{ .stack_size = default_thread_stack_size };
+        const spawn_config = std.Thread.SpawnConfig{ .stack_size = self.stack_size };
         const thread = std.Thread.spawn(spawn_config, Thread.run, .{self}) catch return self.unregister(null);
         thread.detach();
         sync = new_sync;
@@ -385,7 +385,7 @@ noinline fn notifySlow(self: *ThreadPool, is_waking: bool) void {
 
             // We signaled to spawn a new thread
             if (can_wake and sync.spawned < self.max_threads) {
-                const spawn_config = std.Thread.SpawnConfig{ .stack_size = default_thread_stack_size };
+                const spawn_config = std.Thread.SpawnConfig{ .stack_size = self.stack_size };
                 const thread = std.Thread.spawn(spawn_config, Thread.run, .{self}) catch return self.unregister(null);
                 // if (self.name.len > 0) thread.setName(self.name) catch {};
                 return thread.detach();

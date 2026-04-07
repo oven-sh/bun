@@ -26,7 +26,7 @@ test("Bun.serve receives MKADDRESSBOOK via fetch()", async () => {
 });
 
 test("Bun.serve receives MKADDRESSBOOK from a raw TCP request", async () => {
-  const { promise, resolve } = Promise.withResolvers<string>();
+  const { promise, resolve, reject } = Promise.withResolvers<string>();
 
   await using server = Bun.serve({
     port: 0,
@@ -43,6 +43,14 @@ test("Bun.serve receives MKADDRESSBOOK from a raw TCP request", async () => {
   socket.once("connect", () => resolveConnect());
   socket.once("error", rejectConnect);
   await connected;
+
+  // If the regression reappears the server drops the connection without ever
+  // calling fetch(), so wire the socket's post-connect lifecycle events to
+  // reject the method-observation promise — this fails fast instead of hanging
+  // on the global test timeout.
+  socket.once("error", reject);
+  socket.once("close", () => reject(new Error("server closed connection without invoking fetch handler")));
+
   socket.write(`MKADDRESSBOOK / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 0\r\n\r\n`);
 
   // Wait for the server handler to observe the method, then tear the socket down.

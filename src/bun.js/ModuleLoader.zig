@@ -477,13 +477,32 @@ pub fn transpileSourceCode(
             );
 
             // After linking, scan for bundle imports with config and store in VM map.
+            // The key must be the absolute path since the .bundle loader looks up
+            // by resolved absolute path.
             for (parse_result.ast.import_records.slice()) |*record| {
                 if (record.loader != null and record.loader.? == .bundle) {
                     if (record.bundle_config) |config| {
+                        const config_key = if (std.fs.path.isAbsolute(record.path.text))
+                            bun.handleOom(bun.default_allocator.dupe(u8, record.path.text))
+                        else brk: {
+                            // Resolve relative path against the importing file's directory
+                            break :brk bun.handleOom(bun.default_allocator.dupe(
+                                u8,
+                                bun.path.joinAbsString(path.name.dir, &.{record.path.text}, .auto),
+                            ));
+                        };
+                        // Dupe string slices that point into AST memory (freed after parse)
+                        var duped_config = config;
+                        if (config.env_prefix) |pfx| {
+                            duped_config.env_prefix = bun.handleOom(bun.default_allocator.dupe(u8, pfx));
+                        }
+                        if (config.naming) |n| {
+                            duped_config.naming = bun.handleOom(bun.default_allocator.dupe(u8, n));
+                        }
                         jsc_vm.bundle_import_configs.put(
                             bun.default_allocator,
-                            bun.handleOom(bun.default_allocator.dupe(u8, record.path.text)),
-                            config,
+                            config_key,
+                            duped_config,
                         ) catch bun.outOfMemory();
                     }
                 }
@@ -760,6 +779,15 @@ pub fn transpileSourceCode(
             if (jsc_vm.hot_reload == .hot) {
                 // HMR path: register with DevServer for incremental builds
                 const dev = try jsc_vm.getOrCreateSharedDevServer();
+                // Apply env substitution config from import attributes (e.g. `env: "VITE_*"`)
+                // to the client transpiler. Only applies once (when env was .disable).
+                if (bundle_config) |config| {
+                    if (config.env_behavior) |env_beh| {
+                        if (dev.client_transpiler.options.env.behavior == .disable) {
+                            dev.applyEnvConfig(env_beh, config.env_prefix);
+                        }
+                    }
+                }
                 const is_new = try dev.addStandaloneEntryPoint(path.text);
                 js_bundle.dev_server = dev;
                 // Register JSBundle as callback for build notifications
@@ -767,10 +795,17 @@ pub fn transpileSourceCode(
                 bun.handleOom(dev.standalone_callback_ctxs.append(bun.default_allocator, @ptrCast(js_bundle)));
 
                 if (is_new) {
-                    // Trigger the build and wait for the initial build to complete
-                    // so that bundle.files has content when user code runs.
-                    bun.handleOom(dev.startStandaloneBuild());
                     js_bundle.build_state = .building;
+                    if (dev.current_bundle != null) {
+                        // A build is already in progress (re-entrant module loading).
+                        // The file is likely already in the build as a dependency.
+                        // Flag for rebuild so it becomes a proper entry point later.
+                        dev.needs_standalone_rebuild = true;
+                    } else {
+                        bun.handleOom(dev.startStandaloneBuild());
+                    }
+                    // Wait for THIS bundle's build to complete. Don't also wait
+                    // for dev.current_bundle — follow-up rebuilds run async.
                     while (js_bundle.build_state == .building) {
                         jsc_vm.eventLoop().tick();
                     }

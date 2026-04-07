@@ -44,6 +44,7 @@ pub fn memoryCostDetailed(dev: *DevServer) MemoryCost {
         .standalone_app = {},
         .standalone_listen_socket = {},
         .standalone_client_bundle = {},
+        .needs_standalone_rebuild = {},
         .generation = {},
         .graph_safety_lock = {},
         .has_pre_crash_handler = {},

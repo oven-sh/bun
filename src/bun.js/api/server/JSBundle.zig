@@ -142,6 +142,12 @@ pub fn build(this: *JSBundle) !void {
     if (this.config.sourcemap) |s| config.source_map = s;
     if (this.config.target) |t| config.target = t;
     if (this.config.format) |f| config.format = f;
+    if (this.config.env_behavior) |env_beh| {
+        config.env_behavior = env_beh;
+        if (this.config.env_prefix) |pfx| {
+            try config.env_prefix.appendSlice(pfx);
+        }
+    }
     if (this.config.naming) |n| {
         try config.names.owned_entry_point.appendSliceExact(n);
         config.names.entry_point.data = config.names.owned_entry_point.list.items;
@@ -380,9 +386,17 @@ pub fn sourceMapId(this: *const JSBundle) bun.bake.DevServer.SourceMapStore.Key 
 }
 
 /// Called by DevServer after a build completes in standalone mode.
+/// This is invoked for ALL registered JSBundles, even those whose entry
+/// points may not be in the current build (e.g. during re-entrant loading
+/// where multiple ?bundle imports trigger sequential builds).
 pub fn onDevServerBuildComplete(ctx: *anyopaque, dev: *bun.bake.DevServer, success: bool) void {
     const this: *JSBundle = @ptrCast(@alignCast(ctx));
     if (!success) return;
+
+    // Skip if our entry point wasn't in this build's graph. This happens
+    // during re-entrant module loading when multiple ?bundle imports trigger
+    // sequential builds — the callback fires for ALL registered JSBundles.
+    _ = dev.client_graph.getFileIndex(this.path) orelse return;
 
     // Unref the previous generation's sourcemap and bump to a new generation
     if (this.source_map_generation > 0) {

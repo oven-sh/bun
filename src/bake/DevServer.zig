@@ -126,6 +126,9 @@ standalone_app: ?*uws.NewApp(false) = null,
 standalone_listen_socket: ?*uws.NewApp(false).ListenSocket = null,
 /// Cached client JS bundle for standalone mode. Invalidated on rebuild.
 standalone_client_bundle: ?*StaticRoute = null,
+/// Flag set when a new standalone entry point is discovered during a build.
+/// Checked by `startNextBundleIfPresent` to trigger a follow-up rebuild.
+needs_standalone_rebuild: bool = false,
 /// The Plugin API is missing a way to attach filesystem watchers (addWatchFile)
 /// This special case makes `bun-plugin-tailwind` work, which is a requirement
 /// to ship initial incremental bundling support for HTML files.
@@ -808,6 +811,13 @@ pub fn startStandaloneBuild(dev: *DevServer) bun.OOM!void {
         try entry_points.appendJs(temp_alloc, ep, .client);
     }
 
+    // Add react-refresh runtime as a client entry point so the bundler
+    // actually parses and generates code for it. Without this, the module
+    // is only inserted as a stale graph entry with no compiled code.
+    if (dev.framework.react_fast_refresh) |rfr| {
+        try entry_points.appendJs(temp_alloc, rfr.import_source, .client);
+    }
+
     try dev.startAsyncBundle(entry_points, false, std.time.Timer.start() catch @panic("timers unsupported"));
 }
 
@@ -1072,6 +1082,7 @@ pub fn deinit(dev: *DevServer) void {
         },
         .standalone_callback_fn = {},
         .standalone_entry_points = {},
+        .needs_standalone_rebuild = {},
         .standalone_entry_points_dynamic = {
             for (dev.standalone_entry_points_dynamic.items) |ep| {
                 bun.default_allocator.free(ep);
@@ -3515,6 +3526,14 @@ fn startNextBundleIfPresent(dev: *DevServer) void {
     assert(dev.current_bundle == null);
     dev.emitVisualizerMessageIfNeeded();
 
+    // New standalone entry points were added during the previous build.
+    // Start a fresh build with all entry points so these get built.
+    if (dev.needs_standalone_rebuild) {
+        dev.needs_standalone_rebuild = false;
+        bun.handleOom(dev.startStandaloneBuild());
+        return;
+    }
+
     // If there were pending requests, begin another bundle.
     if (dev.next_bundle.reload_event != null or dev.next_bundle.requests.first != null or dev.next_bundle.promise.strong.hasValue()) {
         var sfb = std.heap.stackFallback(4096, dev.allocator());
@@ -4718,6 +4737,53 @@ fn fromOpaqueFileId(comptime side: bake.Side, id: OpaqueFileId) IncrementalGraph
         return IncrementalGraph(side).FileIndex.init(safe.index);
     }
     return IncrementalGraph(side).FileIndex.init(@intCast(id.get()));
+}
+
+/// Apply env variable defines from import attributes (e.g. `env: "VITE_*"`)
+/// to the client transpiler. This adds `process.env.{KEY}` → `"value"` defines
+/// for all env vars matching the prefix, without replacing the existing define map
+/// (which preserves import.meta defines set up during init).
+pub fn applyEnvConfig(dev: *DevServer, env_beh: bun.schema.api.DotEnvBehavior, env_prefix: ?[]const u8) void {
+    if (env_beh == .disable or env_beh == .load_all_without_inlining) return;
+
+    // Iterate the OS process environment directly and add matching
+    // process.env.{KEY} defines to the client transpiler's define map.
+    const js_ast = bun.ast;
+    const prefix = env_prefix orelse "";
+    const define = dev.client_transpiler.options.define;
+    const alloc = dev.client_transpiler.allocator;
+    const environ = std.c.environ;
+    var i: usize = 0;
+    while (environ[i]) |env_entry| : (i += 1) {
+        const entry = std.mem.span(env_entry);
+        const eq_pos = std.mem.indexOfScalar(u8, entry, '=') orelse continue;
+        const key = entry[0..eq_pos];
+        const value = entry[eq_pos + 1 ..];
+        const should_include = switch (env_beh) {
+            .prefix => key.len > 0 and bun.strings.startsWith(key, prefix),
+            .load_all => key.len > 0,
+            else => false,
+        };
+        if (should_include) {
+            const define_key = std.fmt.allocPrint(alloc, "process.env.{s}", .{key}) catch continue;
+            const e_str = alloc.create(js_ast.E.String) catch continue;
+            e_str.* = .{
+                .data = bun.handleOom(alloc.dupe(u8, value)),
+            };
+            const define_data = bun.options.defines.DefineData{
+                .value = .{ .e_string = e_str },
+                .flags = .{ .can_be_removed_if_unused = true, .call_can_be_unwrapped_if_unused = .if_unused },
+            };
+            define.insert(alloc, define_key, define_data) catch continue;
+        }
+    }
+
+    // Mark all existing client graph files as stale so they get re-parsed
+    // with the new defines. Without this, files parsed in a previous build
+    // (before env defines were added) would use cached results.
+    if (dev.client_graph.stale_files.bit_length > 0) {
+        dev.client_graph.stale_files.setAll(true);
+    }
 }
 
 /// Returns posix style path, suitible for URLs and reproducible hashes.

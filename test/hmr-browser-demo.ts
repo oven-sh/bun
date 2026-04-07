@@ -23,7 +23,7 @@ const assetRoutes = Object.fromEntries(
       new Response(bundle.files.find((b: any) => b.name === f.name)!.file(), { headers: { "Content-Type": f.type } }),
   ]),
 );
-console.log(bundle)
+console.log(bundle);
 const server = Bun.serve({
   port: 0,
   routes: {
@@ -35,7 +35,7 @@ const server = Bun.serve({
           <head><title>HMR Test</title></head>
           <body>
             <div id="root"></div>
-            <script src="/assets/${basename(bundle.entrypoint.name)}"></script>
+            <script type="module" src="/assets/${basename(bundle.entrypoint.name)}"></script>
           </body>
           </html>`,
         { headers: { "Content-Type": "text/html" } },

@@ -5,13 +5,13 @@
 // check against a real Chrome with --remote-debugging-port.
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { accessSync, constants as fsConstants } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
 // `bun install` of playwright-core and Chrome startup can exceed the 5s
 // default timeout on slow CI workers.
 setDefaultTimeout(60_000);
-import { accessSync, constants as fsConstants } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
 
 function findChrome(): string | undefined {
   const ok = (p: string) => {

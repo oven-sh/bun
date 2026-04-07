@@ -18,11 +18,11 @@
 # shipped on macOS — so it runs unmodified on stock macOS, Alpine, and
 # every modern Linux. It intentionally avoids bash 4+ features like
 # `${var,,}`, `declare -A`, and nounset (`set -u`) because those all
-# trip on empty-array expansion under 3.2. The only `mktemp` call
-# passes an explicit template (`mktemp -d "${dir}/..XXXXXXXX"`), which
-# every GNU and BSD mktemp accepts; every other scratch path lives
-# inside that root via plain `mkdir`, so we never need BSD's `-t`
-# fallback form.
+# trip on empty-array expansion under 3.2. Every `mktemp` call passes
+# an explicit template (`mktemp -d "<prefix>/...XXXXXXXX"`) — the one
+# form accepted by every GNU and BSD mktemp — so we never need the
+# BSD `-t` fallback. The scratch_dir template is rooted in `${dir}`;
+# the gnupghome and hash_dir templates are rooted in `${scratch_dir}`.
 #
 # Inputs (env, optional):
 #   GPG_PRIVATE_KEY  ASCII-armored private key (required to sign)
@@ -373,10 +373,11 @@ unset -v _bak_path
 # linux agent; parallelised across cores it drops to ~1-2 s. We write
 # each result to `${hash_dir}/${artifact}.digest` so the collation loop
 # can pick them up in sorted order without caring about which job
-# finished first. `${hash_dir}` is a plain subdirectory of the scratch
-# root — the `rm -rf "${scratch_dir}"` in cleanup() tears it down along
-# with every other intermediate, so there's no separate mktemp (and no
-# need for a BSD mktemp fallback for this path).
+# finished first. `${hash_dir}` is a nested subdirectory of the scratch
+# root via the same `mktemp -d <template>` form used for `scratch_dir`
+# and `gnupghome` above — every GNU and BSD mktemp accepts that form,
+# and the `rm -rf "${scratch_dir}"` in cleanup() tears it down along
+# with every other intermediate, so there's no separate cleanup branch.
 #
 # Manifest format:
 # - Each file by basename, not full path — the validator (and every
@@ -393,8 +394,7 @@ unset -v _bak_path
 #   parallel hash job) keeps the job a single exec and means the file
 #   on disk has enough context for a post-mortem if anything ever goes
 #   wrong reading it back.
-hash_dir="${scratch_dir}/hashes"
-mkdir "${hash_dir}"
+hash_dir=$(mktemp -d "${scratch_dir}/hashes-XXXXXXXX")
 
 pids=()
 for artifact in "${artifacts[@]}"; do

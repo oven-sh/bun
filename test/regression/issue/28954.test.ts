@@ -5,9 +5,10 @@
 // drop the request entirely and fetch() would silently rewrite the method to
 // GET.
 //
-// Note: node:http.METHODS intentionally excludes MKADDRESSBOOK — that list
-// is generated from llhttp's method enum for Node compatibility and Node's
-// llhttp doesn't know about MKADDRESSBOOK.
+// Note: Bun's node:http.METHODS (a hand-maintained array in
+// src/js/internal/http.ts) intentionally mirrors Node.js's list for API
+// compatibility, and Node derives that list from llhttp which doesn't know
+// about MKADDRESSBOOK — so METHODS is deliberately left alone here.
 import { expect, test } from "bun:test";
 import { connect } from "node:net";
 

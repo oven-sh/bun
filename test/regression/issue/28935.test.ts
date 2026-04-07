@@ -198,7 +198,9 @@ test.concurrent.skipIf(isWindows)(
       if (code !== 0) throw new Error(`${argv.join(" ")} failed: ${stderr}`);
     }
 
-    // No --no-git-tag-version: should commit and tag.
+    // No --no-git-tag-version: should commit and tag. Drain stdout and
+    // stderr concurrently via `Promise.all` so neither pipe can fill and
+    // block the subprocess on its own write while we wait on the other.
     await using versionProc = spawn({
       cmd: [bunExe(), "pm", "version", "minor"],
       cwd: join(dir, "packages", "first"),
@@ -206,20 +208,24 @@ test.concurrent.skipIf(isWindows)(
       stdout: "pipe",
       stderr: "pipe",
     });
-    const stdout = await versionProc.stdout.text();
-    await versionProc.stderr.text();
-    const versionCode = await versionProc.exited;
-    expect(stdout.trim().split("\n").at(-1)).toBe("v1.1.0");
+    const [versionStdout, , versionCode] = await Promise.all([
+      versionProc.stdout.text(),
+      versionProc.stderr.text(),
+      versionProc.exited,
+    ]);
+    expect(versionStdout.trim().split("\n").at(-1)).toBe("v1.1.0");
     expect(versionCode).toBe(0);
 
     // Working tree must be clean — both package.json AND bun.lock were
-    // committed as part of the version bump.
+    // committed as part of the version bump. stderr is `ignore` on these
+    // three verification procs because nothing reads it, matching the
+    // pattern used for the git setup loop above.
     await using statusProc = spawn({
       cmd: ["git", "status", "--porcelain"],
       cwd: dir,
       env: gitEnv,
       stdout: "pipe",
-      stderr: "pipe",
+      stderr: "ignore",
     });
     expect(await statusProc.stdout.text()).toBe("");
     expect(await statusProc.exited).toBe(0);
@@ -230,7 +236,7 @@ test.concurrent.skipIf(isWindows)(
       cwd: dir,
       env: gitEnv,
       stdout: "pipe",
-      stderr: "pipe",
+      stderr: "ignore",
     });
     const changed = (await showProc.stdout.text()).trim().split("\n").filter(Boolean).sort();
     expect(changed).toEqual(["bun.lock", "packages/first/package.json"]);
@@ -242,7 +248,7 @@ test.concurrent.skipIf(isWindows)(
       cwd: dir,
       env: gitEnv,
       stdout: "pipe",
-      stderr: "pipe",
+      stderr: "ignore",
     });
     expect((await tagProc.stdout.text()).trim()).toBe("v1.1.0");
     expect(await tagProc.exited).toBe(0);

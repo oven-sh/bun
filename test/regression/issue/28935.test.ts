@@ -121,6 +121,111 @@ test.concurrent("bun pm version updates bun.lock for prerelease with long tag", 
   expect(packed.dependencies).toEqual({ first: "2.0.0-beta-super-long-tag.3" });
 });
 
+test.concurrent(
+  "bun pm version from a workspace subdir stages and commits bun.lock alongside package.json",
+  async () => {
+    // Exercises the `saved_lockfile_path` → `gitCommitAndTag()` plumbing
+    // from a workspace subdirectory where `.git` lives at the repo root.
+    // `verifyGit` now walks up looking for `.git`, so `--git-tag-version`
+    // (the default) actually runs and must stage the updated lockfile
+    // together with `package.json`.
+    const dir = tempDirWithFiles("issue-28935-git", {
+      "package.json": JSON.stringify({
+        name: "root",
+        private: true,
+        workspaces: ["packages/*"],
+      }),
+      "packages/first/package.json": JSON.stringify({
+        name: "first",
+        version: "1.0.0",
+      }),
+      "packages/second/package.json": JSON.stringify({
+        name: "second",
+        version: "1.0.0",
+        dependencies: { first: "workspace:*" },
+      }),
+    });
+
+    {
+      const { exitCode } = await run([bunExe(), "install"], dir);
+      expect(exitCode).toBe(0);
+    }
+
+    const gitEnv = {
+      ...bunEnv,
+      GIT_AUTHOR_NAME: "Test",
+      GIT_AUTHOR_EMAIL: "test@example.com",
+      GIT_COMMITTER_NAME: "Test",
+      GIT_COMMITTER_EMAIL: "test@example.com",
+    };
+    for (const argv of [
+      ["git", "init", "-q"],
+      ["git", "add", "."],
+      ["git", "commit", "-q", "-m", "init"],
+    ]) {
+      await using gitProc = spawn({
+        cmd: argv,
+        cwd: dir,
+        env: gitEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const stderr = await gitProc.stderr.text();
+      const code = await gitProc.exited;
+      if (code !== 0) throw new Error(`${argv.join(" ")} failed: ${stderr}`);
+    }
+
+    // No --no-git-tag-version: should commit and tag.
+    await using versionProc = spawn({
+      cmd: [bunExe(), "pm", "version", "minor"],
+      cwd: join(dir, "packages", "first"),
+      env: gitEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const stdout = await versionProc.stdout.text();
+    await versionProc.stderr.text();
+    const versionCode = await versionProc.exited;
+    expect(stdout.trim().split("\n").at(-1)).toBe("v1.1.0");
+    expect(versionCode).toBe(0);
+
+    // Working tree must be clean — both package.json AND bun.lock were
+    // committed as part of the version bump.
+    await using statusProc = spawn({
+      cmd: ["git", "status", "--porcelain"],
+      cwd: dir,
+      env: gitEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(await statusProc.stdout.text()).toBe("");
+    expect(await statusProc.exited).toBe(0);
+
+    // HEAD commit must include `packages/first/package.json` and `bun.lock`.
+    await using showProc = spawn({
+      cmd: ["git", "show", "--name-only", "--pretty=format:", "HEAD"],
+      cwd: dir,
+      env: gitEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const changed = (await showProc.stdout.text()).trim().split("\n").filter(Boolean).sort();
+    expect(changed).toEqual(["bun.lock", "packages/first/package.json"]);
+    expect(await showProc.exited).toBe(0);
+
+    // v1.1.0 tag must exist.
+    await using tagProc = spawn({
+      cmd: ["git", "tag", "-l", "v1.1.0"],
+      cwd: dir,
+      env: gitEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect((await tagProc.stdout.text()).trim()).toBe("v1.1.0");
+    expect(await tagProc.exited).toBe(0);
+  },
+);
+
 test.concurrent("bun pm version in a non-workspace project with a lockfile does not crash", async () => {
   // Regression guard: the updateLockfileWorkspaceVersion helper must no-op
   // when the bumped package isn't tracked in `workspace_versions` (here the

@@ -177,11 +177,14 @@ describe.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
     const verifyHome = String(verifyHomeDir);
 
     const pubRes = sh(["gpg", "--armor", "--export", keyUid], { GNUPGHOME: gpgHome });
+    // stderr first so a key lookup failure surfaces the real gpg error.
+    expect(pubRes.stderr).not.toContain("error:");
     expect(pubRes.exitCode).toBe(0);
     const pubPath = join(verifyHome, "pub.asc");
     writeFileSync(pubPath, pubRes.stdout);
 
     const imp = sh(["gpg", "--batch", "--import", pubPath], { GNUPGHOME: verifyHome });
+    expect(imp.stderr).not.toContain("error:");
     expect(imp.exitCode).toBe(0);
 
     const verify = sh(["gpg", "--batch", "--verify", join(dirStr, "SHASUMS256.txt.asc")], {
@@ -224,7 +227,7 @@ describe.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
     const lines = manifest.split(/\r?\n/);
     expect(lines.length).toBe(2);
     for (const line of lines) {
-      const m = line.match(/^([a-f0-9]{64})  (.+)$/);
+      const m = line.match(/^([a-f0-9]{64})(?:  | \*)(.+)$/);
       expect(m).not.toBeNull();
       const [, hex, name] = m!;
       const expected = createHash("sha256")
@@ -280,7 +283,7 @@ describe.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
     // And the fresh .txt must reflect the rotated bytes.
     const manifest = readFileSync(join(dirStr, "SHASUMS256.txt"), "utf8").trim();
     const expected = createHash("sha256").update("fake-after-rotation").digest("hex");
-    expect(manifest).toBe(`${expected}  bun-linux-x64.zip`);
+    expect(manifest).toBe(`${expected} *bun-linux-x64.zip`);
   });
 
   test("fails loudly and cleans up a half-written manifest when an artifact is missing", () => {
@@ -336,7 +339,7 @@ describe.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
 
     // Validator: parse each line, resolve the file, compare sha256.
     const parsed = lines.map(line => {
-      const m = line.match(/^([a-f0-9]{64})  (.+)$/);
+      const m = line.match(/^([a-f0-9]{64})(?:  | \*)(.+)$/);
       expect(m).not.toBeNull();
       return { hex: m![1], name: m![2] };
     });

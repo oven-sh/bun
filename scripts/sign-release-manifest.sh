@@ -75,7 +75,11 @@ cleanup() {
   fi
   if [ -n "$gnupghome" ]; then
     GNUPGHOME="$gnupghome" gpgconf --kill all >/dev/null 2>&1 || true
-    rm -rf "$gnupghome"
+    # `|| true` matches the gpgconf line above. With set -eo pipefail, a
+    # non-zero rm would otherwise propagate and return from this trap with
+    # the wrong exit code, making the caller think signing failed when it
+    # actually succeeded (success=1 already captured above).
+    rm -rf "$gnupghome" || true
   fi
   exit "$rc"
 }
@@ -108,8 +112,15 @@ for artifact in "${sorted[@]}"; do
   fi
   # The manifest lists each file by basename, not full path — the validator
   # (and every downstream consumer) resolves them relative to the release.
+  #
+  # Binary-mode marker: ` *NAME` (space + asterisk) tells sha256sum -c to
+  # open the file in binary mode, preventing line-ending translation of
+  # .zip contents on platforms where O_TEXT vs O_BINARY differ (Windows,
+  # Cygwin, msys). On POSIX systems this is equivalent to the two-space
+  # text-mode separator; on Windows it's a correctness fix. The validator
+  # regex in the issue already accepts both forms.
   sha=$("${sha256_cmd[@]}" "$path" | awk '{print $1}')
-  printf '%s  %s\n' "$sha" "$artifact" >> "$manifest"
+  printf '%s *%s\n' "$sha" "$artifact" >> "$manifest"
 done
 
 # Diagnostics go to stderr, matching the warn:/error: lines above. Writing

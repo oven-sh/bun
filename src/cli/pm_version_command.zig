@@ -580,7 +580,13 @@ pub const PmVersionCommand = struct {
         pkg_name: []const u8,
         new_version_str: []const u8,
     ) ?[:0]const u8 {
-        const load_result = pm.lockfile.loadFromCwd(pm, ctx.allocator, ctx.log, true);
+        // Pass `false` for `attempt_loading_from_other_lockfile`: if the
+        // project has no `bun.lock`/`bun.lockb` we want a clean no-op, not
+        // a silent migration from `package-lock.json` / `yarn.lock` /
+        // `pnpm-lock.yaml`. The `saveToDisk` call below would otherwise
+        // materialize a fresh `bun.lock` and effectively convert the
+        // project's lockfile format as a side effect of a version bump.
+        const load_result = pm.lockfile.loadFromCwd(pm, ctx.allocator, ctx.log, false);
         switch (load_result) {
             .not_found => return null,
             .err => |err| {
@@ -609,13 +615,14 @@ pub const PmVersionCommand = struct {
         const parsed_version = parsed.version.min();
 
         // Pre/build identifiers longer than 8 chars live in the lockfile's
-        // string pool; count+allocate into it before appending.
+        // string pool; count+allocate into it before appending. The only
+        // error either of these paths can return is `error.OutOfMemory` —
+        // escalate via `bun.handleOom` instead of swallowing it, otherwise
+        // we'd leave the caller in an inconsistent state (package.json
+        // bumped, bun.lock silently skipped).
         var string_builder = pm.lockfile.stringBuilder();
         parsed_version.count(new_version_str, *Lockfile.StringBuilder, &string_builder);
-        string_builder.allocate() catch |err| {
-            Output.warn("failed to update bun.lock after version bump: {s}", .{@errorName(err)});
-            return null;
-        };
+        bun.handleOom(string_builder.allocate());
         entry.* = parsed_version.append(new_version_str, *Lockfile.StringBuilder, &string_builder);
         string_builder.clamp();
 
@@ -633,7 +640,7 @@ pub const PmVersionCommand = struct {
 
         var join_buf: bun.PathBuffer = undefined;
         const abs = bun.path.joinAbsStringBufZ(root_dir, &join_buf, &.{filename}, .auto);
-        return ctx.allocator.dupeZ(u8, abs) catch null;
+        return bun.handleOom(ctx.allocator.dupeZ(u8, abs));
     }
 
     fn gitCommitAndTag(allocator: std.mem.Allocator, version: []const u8, custom_message: ?[]const u8, cwd: []const u8, lockfile_path: ?[:0]const u8) bun.OOM!void {

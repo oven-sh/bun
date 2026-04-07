@@ -622,17 +622,20 @@ pub const AnsiRenderer = struct {
                 if (self.image_depth > 0) self.image_depth -= 1;
             },
             .wikilink => {
-                self.writeStyled("", "]]");
+                // Use writeNoWrap so the closing delimiter stays attached
+                // to the content it closes — writeStyled would wrap `]]`
+                // to a new line when the inner text fills up to col-max.
+                self.writeNoWrap("]]");
                 self.writeStyled("\x1b[39m", "");
                 self.reapplyStyles();
             },
             .latexmath => {
-                self.writeStyled("", "$");
+                self.writeNoWrap("$");
                 self.writeStyled("\x1b[39m", "");
                 self.reapplyStyles();
             },
             .latexmath_display => {
-                self.writeStyled("", "$$");
+                self.writeNoWrap("$$");
                 self.writeStyled("\x1b[39m", "");
                 self.reapplyStyles();
             },
@@ -986,6 +989,20 @@ pub const AnsiRenderer = struct {
         if (data.len == 0) return;
         self.emitInline(data);
         self.last_was_newline = (data[data.len - 1] == '\n');
+    }
+
+    /// Emit a short text chunk through the active buffer and update col
+    /// WITHOUT the pre-wrap guard that writeStyled uses. This is the
+    /// right path for closing delimiters (`]]`, `$`, `$$`) that must
+    /// stay attached to whatever they close — otherwise a wrap can push
+    /// the closer onto a new line and orphan it.
+    fn writeNoWrap(self: *AnsiRenderer, text_: []const u8) void {
+        if (text_.len == 0) return;
+        self.emitInline(text_);
+        if (!self.in_cell and self.heading_level == 0 and !self.in_code_block and self.image_depth == 0) {
+            self.col += @intCast(visibleWidth(text_));
+            self.last_was_newline = false;
+        }
     }
 
     /// Emit raw bytes that must not appear in `image_alt`. Goes through

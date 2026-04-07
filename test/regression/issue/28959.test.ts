@@ -58,7 +58,6 @@ snapshots:
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
-  expect(exitCode).toBe(0);
 
   const bunLock = fs.readFileSync(join(String(dir), "bun.lock"), "utf8");
 
@@ -69,4 +68,6 @@ snapshots:
   // And bun must NOT have fabricated an npm-shaped URL that GitHub Packages
   // doesn't recognize.
   expect(bunLock).not.toContain("@scope/pkg/-/pkg-0.2.0.tgz");
+
+  expect(exitCode).toBe(0);
 });

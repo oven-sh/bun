@@ -191,10 +191,17 @@ pub const PackageInstall = struct {
     }
 
     /// Returns true if the existing `node_modules/<pkg>` entry (if any) is the
-    /// right kind for the given resolution tag — a symlink for link/workspace
-    /// resolutions, a real directory for npm/tarball/git resolutions. Missing
-    /// entries are treated as "matching" so the downstream verify steps can
-    /// report the miss through their normal path.
+    /// right kind for the given resolution tag — a top-level symlink for the
+    /// resolutions that `installFromLink` creates (`.symlink`, `.workspace`,
+    /// `.root`) and a real directory for everything else. Missing entries are
+    /// treated as "matching" so the downstream verify steps can report the
+    /// miss through their normal path.
+    ///
+    /// Note `.folder` installs (including transitive non-workspace `file:`
+    /// deps) go through `installWithSymlink` which creates a **real directory**
+    /// at `node_modules/<pkg>` and populates it with per-file symlinks — the
+    /// top-level entry is not itself a symlink, so `.folder` lands in the
+    /// `else` branch alongside npm/tarball/git.
     fn verifyEntryKindMatchesResolution(
         this: *@This(),
         tag: Resolution.Tag,
@@ -202,7 +209,6 @@ pub const PackageInstall = struct {
     ) bool {
         const expected_symlink = switch (tag) {
             .symlink, .workspace, .root => true,
-            .folder => !this.lockfile.isWorkspaceTreeId(this.node_modules.tree_id),
             else => false,
         };
 
@@ -216,10 +222,7 @@ pub const PackageInstall = struct {
         // existing verify steps (openFile on package.json / directoryExistsAt)
         // report the miss and trigger reinstall. Only an actual mismatch — i.e.
         // the entry exists but has the wrong form — forces an early reinstall.
-        if (entry_is_symlink == expected_symlink) return true;
-
-        // Mismatch: stale form on disk.
-        return false;
+        return entry_is_symlink == expected_symlink;
     }
 
     // Only check for destination directory in node_modules. We can't use package.json because

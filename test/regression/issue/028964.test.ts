@@ -64,7 +64,7 @@ function startRegistry(tarballPath: string, version: string) {
   });
 }
 
-test("bun install <pkg> after `bun link --save <pkg>` replaces the symlink in node_modules", async () => {
+test.concurrent("bun install <pkg> after `bun link --save <pkg>` replaces the symlink in node_modules", async () => {
   const globalDir = tmpdirSync();
 
   // The "linked" clone: a local directory that `bun link`s globally. It carries
@@ -127,7 +127,7 @@ test("bun install <pkg> after `bun link --save <pkg>` replaces the symlink in no
   expect(readFileSync(join(pkgPath, "marker.txt"), "utf8")).toBe("TARBALL");
 });
 
-test("bun link --save <pkg> after an npm install replaces the real directory with a symlink", async () => {
+test.concurrent("bun link --save <pkg> after an npm install replaces the real directory with a symlink", async () => {
   // The reverse direction: start with a real extracted package from the
   // registry, then switch to a `bun link`. Before the fix, verify() would see
   // the real directory with a matching package.json and skip the install —

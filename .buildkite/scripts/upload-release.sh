@@ -139,7 +139,13 @@ function upload_github_asset() {
   local version="$1"
   local tag="$(release_tag "$version")"
   local file="$2"
-  local name="$(basename "$file")"
+  # Declared separately from the assignment so `set -e` can catch a
+  # basename(1) failure (SC2155). The combined `local name=$(...)` form
+  # masks the subshell's exit status behind `local`'s own always-zero
+  # return, which would silently leave `name` empty and make the
+  # exact-match retry check below false-negative.
+  local name
+  name="$(basename "$file")"
   run_command gh release upload "$tag" "$file" --clobber --repo "$BUILDKITE_REPO"
 
   # Sometimes the upload fails, maybe this is a race condition in the gh CLI?
@@ -218,7 +224,14 @@ function sign_and_upload_manifest() {
     || sign_exit=$?
 
   if [ "$sign_exit" -ne 0 ]; then
-    echo "error: failed to generate SHASUMS256.txt (exit $sign_exit)"
+    # `>&2 || true` matches the warn echoes above and the diagnostics
+    # inside sign-release-manifest.sh itself: without `>&2` the error
+    # goes to stdout and is swallowed if the caller captures it; without
+    # `|| true` a SIGPIPE on the echo (Buildkite log aggregator dying)
+    # makes bash exit 141 under `set -eo pipefail` BEFORE the
+    # `return "$sign_exit"` runs, so the caller sees 141 instead of the
+    # real signing-failure code.
+    echo "error: failed to generate SHASUMS256.txt (exit $sign_exit)" >&2 || true
     return "$sign_exit"
   fi
 

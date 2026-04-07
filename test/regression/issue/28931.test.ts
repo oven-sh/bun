@@ -10,7 +10,10 @@
 // the helper against a throwaway GPG key and re-implements the exact
 // checks from the user's validate-digests.ts:
 //
-//  1. Every manifest line matches /^[0-9a-f]{64}(  | \*)(.+)$/
+//  1. Every manifest line matches /^[0-9a-f]{64} \*(.+)$/ — the helper
+//     emits `hex *name` exclusively (binary-mode marker), so the test
+//     regex is pinned to that form rather than the permissive
+//     validator regex that also accepts the text-mode `hex  name`.
 //  2. The sha256 in the manifest equals the sha256 of the actual file
 //  3. The body of the clearsigned .asc is byte-identical to the .txt
 //  4. The PGP signature verifies against the signing key
@@ -24,11 +27,20 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, isWindows, tempDir } from "harness";
 import { createHash } from "node:crypto";
-import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 const repoRoot = join(import.meta.dir, "..", "..", "..");
 const script = join(repoRoot, "scripts", "sign-release-manifest.sh");
+
+// Shared manifest-line regex. Pinned to `hex *name` (the only form
+// scripts/sign-release-manifest.sh ever emits — see its `printf '%s
+// *%s\n'` at the sha256 collation loop) rather than the validator
+// regex /^([a-f0-9]{64})(  | \*)(.+)$/ which also accepts text mode.
+// Pinning the test to the strict form means any future helper change
+// that drops the `*` marker or switches to text mode would be caught
+// here instead of silently passing under the permissive validator.
+const manifestLineRe = /^([a-f0-9]{64}) \*(.+)$/;
 
 async function sh(cmd: string[], env: Record<string, string> = {}) {
   // Async Bun.spawn (not spawnSync) so the wrapping describe.concurrent
@@ -149,15 +161,16 @@ describe.concurrent.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
     const manifest = readFileSync(join(dirStr, "SHASUMS256.txt"), "utf8");
     const signed = readFileSync(join(dirStr, "SHASUMS256.txt.asc"), "utf8");
 
-    // --- Line format check (mirrors validate-digests.ts) ---
+    // --- Line format check (stricter than validate-digests.ts on
+    // purpose — the helper always emits `hex *name`, so any drift
+    // away from the binary-mode marker fails here).
     const lines = manifest.trim().split(/\r?\n/);
-    const lineRe = /^([a-f0-9]{64})(  | \*)(.+)$/;
     const entries: { hex: string; name: string }[] = [];
     const seen = new Set<string>();
     for (const line of lines) {
-      const m = line.match(lineRe);
+      const m = line.match(manifestLineRe);
       expect(m).not.toBeNull();
-      const [, hex, , name] = m!;
+      const [, hex, name] = m!;
       expect(seen.has(name)).toBe(false);
       seen.add(name);
       entries.push({ hex, name });
@@ -173,14 +186,31 @@ describe.concurrent.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
       expect(hex).toBe(expected);
     }
 
-    // --- Identity check: signed body == raw manifest ---
-    // This is the exact transformation validate-digests.ts performs.
-    const afterHeader = signed.split("-----BEGIN PGP SIGNATURE-----")[0];
-    const body = afterHeader
-      .split("-----BEGIN PGP SIGNED MESSAGE-----")[1]
-      .replace(/^[\s\S]*?Hash: .*\r?\n\r?\n/, "")
-      .trim();
-    expect(body).toBe(manifest.trim());
+    // --- Identity check: signed body == raw manifest, byte-exact ---
+    // Parse the clearsign envelope rigorously instead of trimming both
+    // sides into agreement: a lax assertion would silently pass if the
+    // helper regressed to GPG's default digest algorithm, or if the
+    // .asc and .txt differed only by trailing whitespace. Both failure
+    // modes are real integrity regressions the downstream validator
+    // would catch, so assert them here.
+    //
+    // The regex captures two groups:
+    //  1. The `Hash: ...` value — pinned to SHA512 because the helper
+    //     explicitly passes `--digest-algo SHA512`, matching the
+    //     production .asc emitted by the daily cron. A regression that
+    //     dropped the flag would fall back to gpg's default (SHA256)
+    //     and be caught here.
+    //  2. The body bytes between the blank line after the Hash header
+    //     and the `-----BEGIN PGP SIGNATURE-----` marker — byte-exact,
+    //     no .trim(), no .replace(). Must equal the manifest file on
+    //     disk to satisfy the identity contract.
+    const clearsigned = signed.match(
+      /^-----BEGIN PGP SIGNED MESSAGE-----\r?\nHash: ([^\r\n]+)\r?\n\r?\n([\s\S]*?)-----BEGIN PGP SIGNATURE-----/m,
+    );
+    expect(clearsigned).not.toBeNull();
+    const [, hashHeader, body] = clearsigned!;
+    expect(hashHeader).toBe("SHA512");
+    expect(body).toBe(manifest);
 
     // --- Signature must verify against the signing key ---
     using verifyHomeDir = tempDir("bun-28931-verify-", {});
@@ -244,7 +274,7 @@ describe.concurrent.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
     // test above.
     const names: string[] = [];
     for (const line of lines) {
-      const m = line.match(/^([a-f0-9]{64})(?:  | \*)(.+)$/);
+      const m = line.match(manifestLineRe);
       expect(m).not.toBeNull();
       const [, hex, name] = m!;
       names.push(name);
@@ -260,14 +290,50 @@ describe.concurrent.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
     expect(existsSync(join(dirStr, "SHASUMS256.txt.asc"))).toBe(false);
   });
 
+  test.each([
+    ["key only", "placeholder-key-material", "", /GPG_PRIVATE_KEY is set but GPG_PASSPHRASE is empty/],
+    ["passphrase only", "", passphrase, /GPG_PASSPHRASE is set but GPG_PRIVATE_KEY is empty/],
+  ])("rejects partial GPG secret configuration (%s)", async (_label, key, pass, errorRe) => {
+    // A lone GPG_PRIVATE_KEY or lone GPG_PASSPHRASE is almost always
+    // a typo in a secret name or a half-completed provisioning, not
+    // a legitimate rollout state. The helper must fail hard before
+    // any output mutation, so the buildkite wrapper treats it as a
+    // signing failure instead of silently degrading to the unsigned
+    // path and publishing an unsigned manifest that looks like an
+    // intentional rollout — which would silently recreate the exact
+    // .txt/.asc divergence this PR exists to eliminate.
+    using dir = tempDir("bun-28931-partial-", {
+      "bun-linux-x64.zip": "present",
+    });
+    const dirStr = String(dir);
+
+    const res = await sh([script, dirStr, "bun-linux-x64.zip"], {
+      // At least one of these is a nonempty placeholder; function of the
+      // test case selects which. Actual signing is never attempted.
+      GPG_PRIVATE_KEY: key,
+      GPG_PASSPHRASE: pass,
+    });
+    expect(res.stderr).toMatch(errorRe);
+    expect(res.stderr).toContain("both must be set to sign, or both unset");
+    expect(res.exitCode).toBe(1);
+
+    // No output mutation whatsoever — the rejection fires before the
+    // cleanup trap is installed and before any manifest is written.
+    expect(existsSync(join(dirStr, "SHASUMS256.txt"))).toBe(false);
+    expect(existsSync(join(dirStr, "SHASUMS256.txt.asc"))).toBe(false);
+    // And no scratch dir was created.
+    const leftovers = readdirSync(dirStr).filter(name => name.startsWith(".sign-manifest-scratch."));
+    expect(leftovers).toEqual([]);
+  });
+
   test("unsigned fallback removes a stale .asc left by a previous signed run", async () => {
-    // coderabbit caught: signed run writes .txt + .asc; if the same
-    // directory is later invoked unsigned (secrets rotated/removed,
-    // standalone manual re-run, etc.) the old .asc would survive and the
-    // buildkite wrapper's `[ -f SHASUMS256.txt.asc ]` check would upload
-    // a stale signature alongside the fresh .txt — exactly the identity
-    // mismatch this PR exists to fix. The helper must remove any preexisting
-    // .asc before the unsigned branch exits.
+    // A signed run writes .txt + .asc; if the same directory is later
+    // invoked unsigned (secrets rotated/removed, standalone manual
+    // re-run, etc.) an old .asc surviving into the next run would let
+    // the buildkite wrapper's `[ -f SHASUMS256.txt.asc ]` check upload
+    // a stale signature alongside the fresh .txt — exactly the
+    // identity mismatch this PR exists to fix. The helper must remove
+    // any preexisting .asc before the unsigned branch exits.
     using dir = tempDir("bun-28931-stale-asc-", {
       "bun-linux-x64.zip": "fake",
     });
@@ -305,18 +371,208 @@ describe.concurrent.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
     expect(manifest).toBe(`${expected} *bun-linux-x64.zip`);
   });
 
+  test("sweeps orphaned .sign-manifest-scratch.* dirs left by a SIGKILL'd prior run", async () => {
+    // The normal cleanup() trap fires on every exit path, but SIGKILL
+    // (OOM, agent restart, panic) skips it — leaving a stale scratch
+    // dir in ${dir}. In Buildkite's reused-workspace model those
+    // orphans would accumulate until the workspace itself is wiped.
+    // The script sweeps ${dir}/${scratch_prefix}*/ on startup so each
+    // run inherits a clean slate. Simulate the SIGKILL case by
+    // planting an orphan directory with content inside, then invoke
+    // the helper and assert the orphan is gone afterward.
+    using dir = tempDir("bun-28931-stale-scratch-", {
+      "bun-linux-x64.zip": "artifact-bytes",
+    });
+    const dirStr = String(dir);
+
+    // Plant an orphan scratch dir with a recognizable marker file, plus
+    // a second orphan so we prove the sweep handles more than one.
+    const orphan1 = join(dirStr, ".sign-manifest-scratch.orphan01");
+    const orphan2 = join(dirStr, ".sign-manifest-scratch.orphan02");
+    mkdirSync(orphan1);
+    mkdirSync(orphan2);
+    writeFileSync(join(orphan1, "leftover.tmp"), "half-written-manifest");
+    writeFileSync(join(orphan2, "gnupghome.fake"), "stale-keyring-bytes");
+    expect(existsSync(orphan1)).toBe(true);
+    expect(existsSync(orphan2)).toBe(true);
+
+    const res = await sh([script, dirStr, "bun-linux-x64.zip"], {
+      GPG_PRIVATE_KEY: "",
+      GPG_PASSPHRASE: "",
+    });
+    expect(res.stderr).not.toContain("error:");
+    expect(res.exitCode).toBe(0);
+
+    // Both orphans must be gone — swept before the helper's own
+    // scratch_dir mktemp ran. The helper's own scratch dir was
+    // removed by its cleanup trap on a successful exit, so the only
+    // scratch-prefix directories left should be... none.
+    expect(existsSync(orphan1)).toBe(false);
+    expect(existsSync(orphan2)).toBe(false);
+    const leftovers = readdirSync(dirStr).filter(name => name.startsWith(".sign-manifest-scratch."));
+    expect(leftovers).toEqual([]);
+
+    // And the manifest is still correct for the real artifact.
+    const manifest = readFileSync(join(dirStr, "SHASUMS256.txt"), "utf8").trim();
+    const expected = createHash("sha256").update("artifact-bytes").digest("hex");
+    expect(manifest).toBe(`${expected} *bun-linux-x64.zip`);
+  });
+
+  test("sweep restores .bak files from an orphaned scratch dir when live outputs are missing", async () => {
+    // Follow-up bug found on the original sweep: a prior run that was
+    // SIGKILLed AFTER renaming the live SHASUMS256.txt / .asc into
+    // its scratch dir (as `.bak` rollback copies) but BEFORE publishing
+    // new outputs would leave the directory with no live manifest and
+    // the only surviving copies sitting inside the orphan. A naive
+    // sweep would delete them; the fix makes the sweep probe each
+    // orphan for `.bak` files first, promote them back into the live
+    // paths if live is missing, and only then rm -rf the orphan.
+    //
+    // Drive the sweep's restore through the full rollback chain:
+    //   1. Plant orphan .bak files with distinctive bytes.
+    //   2. Invoke the helper with a valid artifact but a bogus GPG
+    //      key that fails gpg --import.
+    //   3. The helper must: validate artifact → install trap → sweep
+    //      and restore .bak → create scratch_dir → re-backup the just-
+    //      restored file → hash/collate/publish new manifest → try to
+    //      sign → gpg --import fails → cleanup rolls back: rm the new
+    //      manifest, restore the (just-re-backed-up) original bytes.
+    //   4. Final state: live SHASUMS256.txt/.asc exist and hold the
+    //      ORIGINAL .bak bytes, not the new ones.
+    using dir = tempDir("bun-28931-bak-restore-", {
+      "bun-linux-x64.zip": "fresh-bytes",
+    });
+    const dirStr = String(dir);
+
+    const orphan = join(dirStr, ".sign-manifest-scratch.orphanXX");
+    mkdirSync(orphan);
+    // Original (pre-SIGKILL) manifest and .asc bytes. Use distinctive
+    // values so we can tell which ones the helper kept at the end.
+    const originalTxt = Buffer.alloc(64, "deadbeef").toString() + " *bun-linux-x64.zip\n";
+    const originalAsc =
+      "-----BEGIN PGP SIGNED MESSAGE-----\nHash: SHA512\n\nstashed-bytes\n-----BEGIN PGP SIGNATURE-----\nfake\n-----END PGP SIGNATURE-----\n";
+    writeFileSync(join(orphan, "SHASUMS256.txt.bak"), originalTxt);
+    writeFileSync(join(orphan, "SHASUMS256.txt.asc.bak"), originalAsc);
+
+    // Live outputs are MISSING — simulating the exact SIGKILL window
+    // between "mv manifest → scratch_dir/.bak" and "mv tmp → manifest".
+    expect(existsSync(join(dirStr, "SHASUMS256.txt"))).toBe(false);
+    expect(existsSync(join(dirStr, "SHASUMS256.txt.asc"))).toBe(false);
+
+    // Valid artifact, bogus GPG key → helper runs the sweep, publishes
+    // a fresh manifest, then fails gpg --import and rolls back.
+    const res = await sh([script, dirStr, "bun-linux-x64.zip"], {
+      GPG_PRIVATE_KEY: "not-a-valid-pgp-key",
+      GPG_PASSPHRASE: "unused",
+    });
+    expect(res.stderr).toMatch(/^gpg: /m);
+    expect(res.exitCode).not.toBe(0);
+
+    // Final state: live files exist and hold the ORIGINAL bytes from
+    // the orphan. If the sweep had blindly rm -rf'd the orphan, these
+    // files would be missing entirely after the rollback (the cleanup
+    // trap would find empty backup_* vars and nothing to restore).
+    expect(existsSync(join(dirStr, "SHASUMS256.txt"))).toBe(true);
+    expect(existsSync(join(dirStr, "SHASUMS256.txt.asc"))).toBe(true);
+    expect(readFileSync(join(dirStr, "SHASUMS256.txt"), "utf8")).toBe(originalTxt);
+    expect(readFileSync(join(dirStr, "SHASUMS256.txt.asc"), "utf8")).toBe(originalAsc);
+    // Orphan directory itself is gone, and the current run's scratch
+    // dir was also torn down by cleanup().
+    const leftovers = readdirSync(dirStr).filter(name => name.startsWith(".sign-manifest-scratch."));
+    expect(leftovers).toEqual([]);
+  });
+
+  test("sweep picks the newest .bak when multiple orphaned scratch dirs each hold one", async () => {
+    // Multi-orphan selection: two separate SIGKILL'd runs can each
+    // leave an orphan containing a `.bak`. Without mtime-aware
+    // selection the first-glob-match wins, which silently discards
+    // the newer version if its mktemp suffix sorts after an older
+    // one. The sweep must probe both, pick the newest via POSIX
+    // `[ A -nt B ]`, and restore that one — leaving the older
+    // orphan's .bak to be wiped with its directory.
+    //
+    // Plant two orphans with deliberately different mtimes (set via
+    // utimesSync) and distinctive .bak bytes. Run the helper with a
+    // bogus GPG key so it publishes a new manifest and then fails
+    // gpg --import, driving the full restore → re-backup → rollback
+    // chain. Final live bytes must be the NEWER orphan's content.
+    using dir = tempDir("bun-28931-multi-orphan-", {
+      "bun-linux-x64.zip": "fresh",
+    });
+    const dirStr = String(dir);
+
+    // Two orphans. Pick suffix names so sort order does NOT match
+    // time order — "orphan_zz" is alphabetically newer than
+    // "orphan_aa", but we make orphan_aa mtime-newer. If the sweep
+    // iterated in glob order and took first-wins, it would restore
+    // the older orphan_zz bytes; we want it to compare mtimes via
+    // -nt and pick orphan_aa.
+    const orphanOlder = join(dirStr, ".sign-manifest-scratch.orphan_zz");
+    const orphanNewer = join(dirStr, ".sign-manifest-scratch.orphan_aa");
+    mkdirSync(orphanOlder);
+    mkdirSync(orphanNewer);
+
+    const olderTxt = Buffer.alloc(64, "a").toString() + " *bun-linux-x64.zip\n";
+    const newerTxt = Buffer.alloc(64, "b").toString() + " *bun-linux-x64.zip\n";
+    const olderAsc =
+      "-----BEGIN PGP SIGNED MESSAGE-----\nHash: SHA512\n\nolder\n-----BEGIN PGP SIGNATURE-----\nfake\n-----END PGP SIGNATURE-----\n";
+    const newerAsc =
+      "-----BEGIN PGP SIGNED MESSAGE-----\nHash: SHA512\n\nnewer\n-----BEGIN PGP SIGNATURE-----\nfake\n-----END PGP SIGNATURE-----\n";
+    writeFileSync(join(orphanOlder, "SHASUMS256.txt.bak"), olderTxt);
+    writeFileSync(join(orphanOlder, "SHASUMS256.txt.asc.bak"), olderAsc);
+    writeFileSync(join(orphanNewer, "SHASUMS256.txt.bak"), newerTxt);
+    writeFileSync(join(orphanNewer, "SHASUMS256.txt.asc.bak"), newerAsc);
+
+    // Force mtimes so the sweep sees orphan_aa as newer even though
+    // the filesystem may have given both files the same mtime due
+    // to coarse timestamp resolution. 1000s gap is well above any
+    // plausible filesystem granularity.
+    const now = Math.floor(Date.now() / 1000);
+    utimesSync(join(orphanOlder, "SHASUMS256.txt.bak"), now - 1000, now - 1000);
+    utimesSync(join(orphanOlder, "SHASUMS256.txt.asc.bak"), now - 1000, now - 1000);
+    utimesSync(join(orphanNewer, "SHASUMS256.txt.bak"), now, now);
+    utimesSync(join(orphanNewer, "SHASUMS256.txt.asc.bak"), now, now);
+
+    // Live outputs missing — sweep must restore from orphans.
+    expect(existsSync(join(dirStr, "SHASUMS256.txt"))).toBe(false);
+    expect(existsSync(join(dirStr, "SHASUMS256.txt.asc"))).toBe(false);
+
+    const res = await sh([script, dirStr, "bun-linux-x64.zip"], {
+      GPG_PRIVATE_KEY: "not-a-valid-pgp-key",
+      GPG_PASSPHRASE: "unused",
+    });
+    expect(res.stderr).toMatch(/^gpg: /m);
+    expect(res.exitCode).not.toBe(0);
+
+    // The NEWER orphan's bytes must have won the restore, then been
+    // re-backed-up by the current run, then restored through the
+    // cleanup rollback when gpg --import failed.
+    expect(existsSync(join(dirStr, "SHASUMS256.txt"))).toBe(true);
+    expect(existsSync(join(dirStr, "SHASUMS256.txt.asc"))).toBe(true);
+    expect(readFileSync(join(dirStr, "SHASUMS256.txt"), "utf8")).toBe(newerTxt);
+    expect(readFileSync(join(dirStr, "SHASUMS256.txt.asc"), "utf8")).toBe(newerAsc);
+
+    // Both orphan directories are gone (the older one still had its
+    // .bak when it was rm'd — no manual recovery needed because the
+    // newer orphan's copy is what matters).
+    expect(existsSync(orphanOlder)).toBe(false);
+    expect(existsSync(orphanNewer)).toBe(false);
+    const leftovers = readdirSync(dirStr).filter(name => name.startsWith(".sign-manifest-scratch."));
+    expect(leftovers).toEqual([]);
+  });
+
   test("restores pre-existing valid outputs when a later step fails mid-mutation", async () => {
-    // coderabbit caught: the cleanup() trap's own invariant comment
-    // promises "same state on failure", but the `rm -f "$signed_manifest"`
-    // + `mv tmp "$manifest"` sequence actually wipes pre-existing valid
-    // outputs if a later step (e.g. gpg --import on a bad key) fails.
-    // The fix renames pre-existing .txt/.asc to `.bak.$$` siblings before
-    // mutation and restores them from cleanup() when success stays 0.
-    // This test exercises that roll-back by running a successful signed
-    // first pass, then invoking the helper a second time with a bogus
-    // GPG key so gpg --import aborts mid-mutation. Both the .txt and
-    // .asc from the first run must be present and byte-identical after
-    // the failure.
+    // The cleanup() trap's own invariant promises "same state on
+    // failure", but a naive `rm -f "$signed_manifest"` + `mv tmp
+    // "$manifest"` sequence would wipe pre-existing valid outputs if a
+    // later step (e.g. gpg --import on a bad key) fails. The helper
+    // renames any pre-existing .txt/.asc into the scratch dir as
+    // backups before mutation and restores them from cleanup() when
+    // success stays 0. This test exercises that rollback by running a
+    // successful signed first pass, then invoking the helper a second
+    // time with a bogus GPG key so gpg --import aborts mid-mutation.
+    // Both the .txt and .asc from the first run must be present and
+    // byte-identical after the failure.
     using dir = tempDir("bun-28931-rollback-", {
       "bun-linux-x64.zip": "v1 bytes",
     });
@@ -346,6 +602,16 @@ describe.concurrent.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
       GPG_PRIVATE_KEY: "not-a-valid-pgp-key",
       GPG_PASSPHRASE: passphrase,
     });
+    // stderr before exitCode (CLAUDE.md) so a surprise exit 0 gets a
+    // legible failure message instead of "expected 0 not to be 0".
+    // Also a positive assertion: the gpg --import failure must surface
+    // on stderr rather than get swallowed silently inside the helper.
+    // gpg always prefixes its diagnostics with "gpg:" (it's the program
+    // identifier, stable across every version from 2.x onward), and on
+    // this specific bad input it prints "gpg: no valid OpenPGP data
+    // found." The regex matches the prefix alone so future gpg wording
+    // drift doesn't flake the test.
+    expect(second.stderr).toMatch(/^gpg: /m);
     expect(second.exitCode).not.toBe(0);
 
     // Pre-existing state must be restored byte-for-byte. No half-written
@@ -553,7 +819,7 @@ describe.concurrent.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
 
     // Validator: parse each line, resolve the file, compare sha256.
     const parsed = lines.map(line => {
-      const m = line.match(/^([a-f0-9]{64})(?:  | \*)(.+)$/);
+      const m = line.match(manifestLineRe);
       expect(m).not.toBeNull();
       return { hex: m![1], name: m![2] };
     });

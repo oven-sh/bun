@@ -18,7 +18,11 @@
 # shipped on macOS — so it runs unmodified on stock macOS, Alpine, and
 # every modern Linux. It intentionally avoids bash 4+ features like
 # `${var,,}`, `declare -A`, and nounset (`set -u`) because those all
-# trip on empty-array expansion under 3.2.
+# trip on empty-array expansion under 3.2. Every `mktemp` call passes
+# an explicit template (`mktemp -d "<prefix>/...XXXXXXXX"`) — the one
+# form accepted by every GNU and BSD mktemp — so we never need the
+# BSD `-t` fallback. The scratch_dir template is rooted in `${dir}`;
+# the gnupghome and hash_dir templates are rooted in `${scratch_dir}`.
 #
 # Inputs (env, optional):
 #   GPG_PRIVATE_KEY  ASCII-armored private key (required to sign)
@@ -89,14 +93,52 @@ else
   exit 1
 fi
 
+# GPG secrets: classify into one of three states.
+#
+# - BOTH SET: sign the manifest (`should_sign=1`). Verify `gpg` is on
+#   PATH; missing gpg is a hard error because we have signing material
+#   but no way to use it.
+#
+# - BOTH ABSENT/EMPTY: unsigned rollout fallback. Documented staged-
+#   deployment state — see the script header comment and the
+#   sign_and_upload_manifest() block in .buildkite/scripts/upload-release.sh.
+#   Users running `sha256sum -c` get accurate hashes immediately; the
+#   daily .github/workflows/release.yml sign cron regenerates the
+#   matching .asc within 24h. `should_sign` stays 0 and the run exits
+#   zero after publishing SHASUMS256.txt.
+#
+# - PARTIAL (exactly one set): hard error. A lone GPG_PRIVATE_KEY or
+#   lone GPG_PASSPHRASE is almost always a typo in a secret name
+#   (BUILDKITE GPG_PRIVATEKEY vs GPG_PRIVATE_KEY, missing alias, half-
+#   completed provisioning) or a secret store returning an empty value
+#   for one of the two. Failing here gives the operator an immediate,
+#   actionable error before any output mutation, instead of silently
+#   degrading to the unsigned path and publishing an unsigned manifest
+#   that looks like a successful rollout state. Exit code 1 with a
+#   specific error message so the buildkite wrapper treats it as a
+#   signing failure (see `sign_exit` branch in upload-release.sh).
 should_sign=0
-if [ -n "${GPG_PRIVATE_KEY:-}" ] && [ -n "${GPG_PASSPHRASE:-}" ]; then
+_key_set=""
+_pass_set=""
+[ -n "${GPG_PRIVATE_KEY:-}" ] && _key_set=1
+[ -n "${GPG_PASSPHRASE:-}" ] && _pass_set=1
+if [ -n "${_key_set}" ] && [ -n "${_pass_set}" ]; then
   should_sign=1
   if ! command -v gpg >/dev/null 2>&1; then
     echo "error: gpg is not installed" >&2
     exit 1
   fi
+elif [ -n "${_key_set}" ] || [ -n "${_pass_set}" ]; then
+  if [ -n "${_key_set}" ]; then
+    echo "error: GPG_PRIVATE_KEY is set but GPG_PASSPHRASE is empty/unset" >&2
+  else
+    echo "error: GPG_PASSPHRASE is set but GPG_PRIVATE_KEY is empty/unset" >&2
+  fi
+  echo "error: both must be set to sign, or both unset to publish unsigned" >&2
+  echo "error: partial configuration is almost always a typo in a secret name" >&2
+  exit 1
 fi
+unset -v _key_set _pass_set
 
 # Output path derivations. The `_basename` values are the reserved-name
 # inputs the validation loop below rejects, and the full paths below
@@ -107,9 +149,9 @@ fi
 # caller-supplied artifact basename. See the scratch_dir block below.
 manifest_basename="SHASUMS256.txt"
 signed_manifest_basename="${manifest_basename}.asc"
-scratch_prefix=".sign-manifest-scratch."
 manifest="${dir}/${manifest_basename}"
 signed_manifest="${manifest}.asc"
+scratch_prefix=".sign-manifest-scratch."
 
 # Validate every artifact BEFORE we touch any output file or install
 # the cleanup trap — fail-fast with a clear error, no orphaned
@@ -220,18 +262,19 @@ unset -v artifact seen_artifacts
 # `${dir}` itself (apart from the scratch subdir) is written to until
 # the final atomic rename.
 success=0
-scratch_dir=""
 gnupghome=""
+scratch_dir=""
 backup_manifest=""
 backup_signed_manifest=""
-# Per-output mutation flags. These are set immediately after a
-# successful write to the corresponding output path (or, for
-# signed_manifest, immediately BEFORE the gpg --output invocation that
-# may crash mid-write). cleanup() only `rm -f`'s an output if the
-# matching flag is set — so a failure path that never touched
-# `${manifest}` (e.g. mktemp fails, the backup `mv` fails, the hash
-# loop fails before the final mv) leaves the pre-existing file on
-# disk instead of deleting it.
+# Per-output mutation flags. Both are set immediately AFTER a
+# successful atomic `mv` from the scratch-dir tmp into the final
+# output path — see the collation block (manifest_written) and the
+# signing block (signed_manifest_written) below for the exact sites.
+# cleanup() only `rm -f`'s an output if the matching flag is set, so
+# a failure path that never touched the output paths (e.g. mktemp
+# fails, the backup `mv` fails, the hash job fails, the collate
+# fails, gpg --clearsign fails before the tmp→final rename) leaves
+# any pre-existing file on disk instead of deleting it.
 manifest_written=0
 signed_manifest_written=0
 cleanup() {
@@ -242,49 +285,223 @@ cleanup() {
   # of the captured `${rc}`, making the caller think signing failed when it
   # actually succeeded. The -f flag only suppresses ENOENT — it doesn't
   # cover EACCES / EROFS / EIO / stale-NFS / SIGPIPE — so `|| true` is
-  # still required. Same reason for the `mv -f ... || true` on the restore
-  # paths below.
+  # still required on every rm.
+  #
+  # The restore `mv` paths below are the ONE exception: a failure there
+  # costs the caller their last-good manifest/.asc and must NOT be
+  # swallowed. If restore fails, we preserve the scratch directory as
+  # a manual recovery surface (so the .bak files the mv left behind
+  # remain reachable) and override the trap's exit code with 75
+  # (EX_TEMPFAIL from sysexits.h) so the buildkite wrapper can
+  # distinguish "transient filesystem problem — retry or page an
+  # operator" from ordinary signing failures.
+  local restore_failed=0
   if [ "${success}" -ne 1 ]; then
     # Roll back: wipe any partial outputs we produced in ${dir} — but
     # ONLY outputs we actually wrote to this invocation — then restore
     # the pre-existing copies from their backups inside scratch_dir.
-    # The `manifest_written` / `signed_manifest_written` gate exists
-    # because the old unconditional `rm -f "${manifest}" "${signed_manifest}"`
+    # The `manifest_written` / `signed_manifest_written` gate matters
+    # because an unconditional `rm -f "${manifest}" "${signed_manifest}"`
     # would destroy pre-existing files on any failure between trap
     # installation and the final mv/gpg, even though those failures
-    # never touched the output paths. coderabbit caught this: failing
-    # mktemp, failing backup mv, failing hash job, failing collate —
-    # none of them should cost the caller their last good outputs.
+    # never touched the output paths. Failing mktemp, failing backup
+    # mv, failing hash job, failing collate — none of them should cost
+    # the caller their last good outputs.
     if [ "${manifest_written}" -eq 1 ]; then
       rm -f "${manifest}" || true
     fi
     if [ "${signed_manifest_written}" -eq 1 ]; then
       rm -f "${signed_manifest}" || true
     fi
-    if [ -n "${backup_manifest}" ]; then
-      mv -f "${backup_manifest}" "${manifest}" || true
+    # `-f` (not `-n`): the backup invariant is "variable set iff backup
+    # exists", but checking the filesystem directly is defense-in-depth —
+    # if the backup file was somehow removed between its successful `mv`
+    # and this restore, we skip cleanly.
+    #
+    # No `|| true` here: if the restore `mv` fails, we set
+    # `restore_failed=1` and let the block below preserve scratch_dir
+    # so the .bak copy the `mv` didn't move remains reachable for
+    # manual recovery. Swallowing the failure here would combine with
+    # the unconditional `rm -rf "${scratch_dir}"` that used to live
+    # below to silently nuke the last-good file — exactly the data
+    # loss coderabbit flagged.
+    if [ -f "${backup_manifest}" ]; then
+      if ! mv -f "${backup_manifest}" "${manifest}"; then
+        echo "error: failed to restore ${manifest} from ${backup_manifest}" >&2 || true
+        restore_failed=1
+      fi
     fi
-    if [ -n "${backup_signed_manifest}" ]; then
-      mv -f "${backup_signed_manifest}" "${signed_manifest}" || true
+    if [ -f "${backup_signed_manifest}" ]; then
+      if ! mv -f "${backup_signed_manifest}" "${signed_manifest}"; then
+        echo "error: failed to restore ${signed_manifest} from ${backup_signed_manifest}" >&2 || true
+        restore_failed=1
+      fi
     fi
   fi
-  # Success and failure both drop the entire scratch directory. On
-  # success it holds only cleanup-eligible state (the backups and the
+  # Kill the gpg-agent BEFORE removing scratch_dir (or before leaving
+  # it in place for recovery): the agent's socket lives inside
+  # gnupghome/, which lives inside scratch_dir/, and a live agent with
+  # a deleted socket dir will crash noisily in the CI log. Done
+  # unconditionally (not gated on restore_failed) because we never
+  # want to leave a gpg-agent running after this script exits.
+  # `gpgconf --kill all` takes GNUPGHOME from the env, so export it
+  # inline for the one call.
+  if [ -d "${gnupghome}" ]; then
+    GNUPGHOME="${gnupghome}" gpgconf --kill all >/dev/null 2>&1 || true
+  fi
+  if [ "${restore_failed}" -eq 1 ]; then
+    # Preserve scratch_dir as a recovery surface. The .bak files sit
+    # inside it; an operator with write access to ${dir} can manually
+    # copy them back once the underlying filesystem issue is cleared.
+    # Using the EX_TEMPFAIL exit code (75) so the buildkite wrapper
+    # can distinguish this from a signing failure (exit 1).
+    echo "error: scratch directory preserved for manual recovery: ${scratch_dir}" >&2 || true
+    echo "error: manually copy .bak files back into ${dir} once the filesystem issue is resolved" >&2 || true
+    exit 75
+  fi
+  # On success (or a failure path where restore succeeded / wasn't
+  # needed) drop the entire scratch directory. On success it holds
+  # only cleanup-eligible state (the backups we just removed, the
   # intermediate .tmp whose content is now live in ${manifest} via
-  # the atomic rename). On failure any partial state is wiped along
-  # with it. Single rm -rf handles both branches.
-  if [ -n "${scratch_dir}" ]; then
-    # Kill any gpg-agent that was started inside our isolated GNUPGHOME
-    # before removing the directory — gpg-agent holds a socket lock and
-    # may leave stale files behind otherwise.
-    if [ -d "${scratch_dir}/gnupghome" ]; then
-      GNUPGHOME="${scratch_dir}/gnupghome" gpgconf --kill all >/dev/null 2>&1 || true
-    fi
+  # the atomic rename, and the gnupghome). A single rm -rf handles
+  # both branches.
+  if [ -d "${scratch_dir}" ]; then
     rm -rf "${scratch_dir}" || true
   fi
   exit "${rc}"
 }
 trap cleanup EXIT
+
+# Sweep any orphaned scratch dirs from prior SIGKILL'd runs before
+# creating ours. In Buildkite's reused-workspace model (agent config
+# dependent), an OOM kill or agent restart can leave a prior run's
+# scratch_dir on disk with no cleanup trap having fired; without this
+# sweep, those orphans accumulate until the workspace itself is wiped.
+# Safe because the validator above already rejects the `scratch_prefix`
+# as a caller artifact name, so nothing inside
+# `${dir}/${scratch_prefix}*/` can belong to a caller — and the `-d`
+# guard handles the no-match case (glob expands literally without
+# `nullglob`, and a glob pattern is never a directory).
+#
+# Rollback-preserving restore: before we `rm -rf` the orphans, probe
+# each one for `.bak` backup files. If a prior run was SIGKILLed after
+# moving the pre-existing `${manifest}` / `${signed_manifest}` into its
+# scratch dir (see the backup block below) but before publishing new
+# outputs, the LIVE path is now empty and the only copy of the
+# last-good file sits inside the orphan. A naive sweep would delete
+# it, leaving the caller with neither the old nor the new manifest.
+#
+# Multi-orphan selection: in the rare case two or more orphans each
+# contain a `.bak` (two separate SIGKILLs before any sweep ran), we
+# want the NEWEST — an older run's `.bak` is strictly staler than the
+# newer run's, which observed it via this same restore-from-orphan
+# path and then re-backed it up on its own mutation. First-glob-wins
+# would silently discard the newer version if its mktemp suffix sorts
+# after an older one. Instead, do two passes:
+#
+#   1. Walk all orphans. For each `${manifest_basename}.bak` /
+#      `${signed_manifest_basename}.bak` found, track the path to the
+#      newest copy via POSIX `[ A -nt B ]` (modification-time
+#      comparison — POSIX test operator, works on bash 3.2 and every
+#      BSD/GNU shell, no `stat -c %Y` or `printf %()T` dependency).
+#   2. Restore only the newest of each, iff the corresponding live
+#      path is missing. Then rm -rf every orphan (including the ones
+#      whose .bak we skipped).
+#
+# Identical-mtime tiebreaker: `-nt` is false on ties, so the first
+# orphan wins — deterministic given a stable glob order. In practice
+# filesystem mtime resolution is at least 1s so this rarely matters.
+#
+# No `|| true` on the restore `mv` below. If the rename fails (for
+# example because ${dir} became read-only between the prior run and
+# this one), we must not remove the orphan scratch dir — doing so
+# would discard the last-good .bak and leave the caller with neither
+# the old nor the new file. Fail fast with a distinctive error and an
+# EX_TEMPFAIL (75) exit so the buildkite wrapper can distinguish a
+# filesystem problem from a signing failure.
+#
+# Concurrency note: this intentionally blows away every matching dir,
+# including any that might belong to a currently-running sibling
+# invocation against the same `${dir}`. Both known callers — the
+# Buildkite upload step and this file's test suite, which uses a
+# fresh `tempDir` per test — only ever invoke the helper sequentially
+# against a given directory, so that tradeoff is academic.
+#
+# Future concurrent-caller support (sketched here so the next person
+# has a shape to work from — NOT implemented because no caller needs
+# it yet and YAGNI):
+#
+#   Inside each new scratch_dir, do `mkdir "${scratch_dir}/.lock"`
+#   immediately after the outer mktemp. `mkdir` is atomic on every
+#   POSIX filesystem (returns EEXIST if the directory already exists,
+#   no partial state), so it doubles as an advisory lock without
+#   touching `flock(1)` (which isn't portable to stock macOS). Stash
+#   the owning PID via `echo $$ > "${scratch_dir}/.lock/owner"` so
+#   stale locks can be detected via `kill -0 $(<.lock/owner)` on
+#   sweep.
+#
+#   Teach this sweep to skip any orphan whose `.lock` subdir still
+#   exists AND whose recorded PID is still alive. That preserves
+#   in-flight sibling invocations and only reaps truly-dead runs.
+#   cleanup() removes the `.lock` dir as part of the normal
+#   scratch_dir rm -rf, so the success path stays clean.
+#
+#   Preferring mkdir-based locks over time-based aging (e.g. "skip
+#   orphans younger than 3 hours") because `mkdir` is exact and
+#   portable, while aging needs bash 4.2's `printf '%(%s)T'` or GNU
+#   `stat -c %Z`, neither of which runs on macOS's default 3.2 bash.
+#   Also, a buildkite canary job that legitimately runs longer than
+#   any fixed threshold (aarch64-musl linker times spike on cold
+#   caches) would have its own scratch dir false-aged and swept by a
+#   sibling — a worse bug than the one the aging check was meant to
+#   fix.
+_newest_manifest_bak=""
+_newest_signed_bak=""
+for _stale in "${dir}/${scratch_prefix}"*/; do
+  if [ -d "${_stale}" ]; then
+    _stale_manifest_bak="${_stale}${manifest_basename}.bak"
+    _stale_signed_bak="${_stale}${signed_manifest_basename}.bak"
+    if [ -f "${_stale_manifest_bak}" ]; then
+      if [ -z "${_newest_manifest_bak}" ] || [ "${_stale_manifest_bak}" -nt "${_newest_manifest_bak}" ]; then
+        _newest_manifest_bak="${_stale_manifest_bak}"
+      fi
+    fi
+    if [ -f "${_stale_signed_bak}" ]; then
+      if [ -z "${_newest_signed_bak}" ] || [ "${_stale_signed_bak}" -nt "${_newest_signed_bak}" ]; then
+        _newest_signed_bak="${_stale_signed_bak}"
+      fi
+    fi
+  fi
+done
+# Restore the newest of each iff the live file is missing. If live
+# already exists (prior completed run's output or — hypothetically —
+# a concurrent producer; see concurrency note above), don't clobber
+# it with an older backup. The rm pass below still removes the
+# orphan directory, which is correct: the orphan held a stale copy
+# we no longer need.
+if [ -n "${_newest_manifest_bak}" ] && ! [ -e "${manifest}" ]; then
+  if ! mv -f "${_newest_manifest_bak}" "${manifest}"; then
+    echo "error: failed to restore ${manifest} from orphan ${_newest_manifest_bak}" >&2 || true
+    echo "error: orphan directory preserved for manual recovery" >&2 || true
+    exit 75
+  fi
+fi
+if [ -n "${_newest_signed_bak}" ] && ! [ -e "${signed_manifest}" ]; then
+  if ! mv -f "${_newest_signed_bak}" "${signed_manifest}"; then
+    echo "error: failed to restore ${signed_manifest} from orphan ${_newest_signed_bak}" >&2 || true
+    echo "error: orphan directory preserved for manual recovery" >&2 || true
+    exit 75
+  fi
+fi
+# Now safe to wipe every orphan. The `.bak` we promoted has already
+# been `mv`'d out of its orphan and into the live path, so no live
+# data is inside the scratch trees any more.
+for _stale in "${dir}/${scratch_prefix}"*/; do
+  if [ -d "${_stale}" ]; then
+    rm -rf "${_stale}" || true
+  fi
+done
+unset -v _stale _stale_manifest_bak _stale_signed_bak _newest_manifest_bak _newest_signed_bak
 
 # Create the per-invocation scratch directory inside ${dir}. Using
 # `mktemp -d "${dir}/.sign-manifest-scratch.XXXXXXXX"` gives us a name
@@ -312,13 +529,13 @@ tmp_manifest="${scratch_dir}/${manifest_basename}.tmp"
 # unsigned-rollout case AND preserves it for restore on failure.
 #
 # Invariant: the `backup_*` variables are ONLY assigned after their
-# corresponding `mv` returns successfully. claude[bot] caught this —
-# setting the variable before the `mv` means a failed rename (EACCES,
-# EROFS, etc.) leaves the variable pointing at a file that doesn't
-# exist, and cleanup() would `rm -f "${manifest}"` (wiping the still-
-# present original) before the restore `mv` silently no-ops. Assigning
-# after the successful `mv` keeps the invariant "backup_* non-empty
-# iff the backup file exists" intact.
+# corresponding `mv` returns successfully. Setting the variable before
+# the `mv` would mean a failed rename (EACCES, EROFS, etc.) leaves the
+# variable pointing at a file that doesn't exist, and cleanup() would
+# `rm -f "${manifest}"` (wiping the still-present original) before the
+# restore `mv` silently no-ops. Assigning after the successful `mv`
+# keeps the invariant "backup_* non-empty iff the backup file exists"
+# intact.
 if [ -f "${manifest}" ]; then
   _bak_path="${scratch_dir}/${manifest_basename}.bak"
   mv "${manifest}" "${_bak_path}"
@@ -336,8 +553,11 @@ unset -v _bak_path
 # linux agent; parallelised across cores it drops to ~1-2 s. We write
 # each result to `${hash_dir}/${artifact}.digest` so the collation loop
 # can pick them up in sorted order without caring about which job
-# finished first. `${hash_dir}` is a subdirectory of `${scratch_dir}`,
-# cleaned up by the EXIT trap above.
+# finished first. `${hash_dir}` is a nested subdirectory of the scratch
+# root via the same `mktemp -d <template>` form used for `scratch_dir`
+# and `gnupghome` above — every GNU and BSD mktemp accepts that form,
+# and the `rm -rf "${scratch_dir}"` in cleanup() tears it down along
+# with every other intermediate, so there's no separate cleanup branch.
 #
 # Manifest format:
 # - Each file by basename, not full path — the validator (and every
@@ -354,8 +574,7 @@ unset -v _bak_path
 #   parallel hash job) keeps the job a single exec and means the file
 #   on disk has enough context for a post-mortem if anything ever goes
 #   wrong reading it back.
-hash_dir="${scratch_dir}/hashes"
-mkdir "${hash_dir}"
+hash_dir=$(mktemp -d "${scratch_dir}/hashes-XXXXXXXX")
 
 pids=()
 for artifact in "${artifacts[@]}"; do
@@ -369,7 +588,12 @@ done
 # by a later-successful job.
 for pid in "${pids[@]}"; do
   if ! wait "${pid}"; then
-    echo "error: sha256 failed for one or more artifacts" >&2
+    # `|| true` matches every other post-trap diagnostic echo in this
+    # file. A dead Buildkite log aggregator delivers SIGPIPE here; an
+    # unguarded echo under `set -eo pipefail` would exit 141 instead
+    # of 1, making the caller see a pipe error instead of the real
+    # sha256 failure.
+    echo "error: sha256 failed for one or more artifacts" >&2 || true
     exit 1
   fi
 done
@@ -393,7 +617,10 @@ printf '%s\n' "${artifacts[@]}" | LC_ALL=C sort > "${sorted_list}"
 while IFS= read -r artifact; do
   sha=$(cut -d ' ' -f 1 "${hash_dir}/${artifact}.digest")
   if [ "${#sha}" -ne 64 ]; then
-    echo "error: malformed sha256 for ${artifact}: '${sha}'" >&2
+    # `|| true` for the same SIGPIPE reason as the sha256-wait loop
+    # above: a dead log aggregator would turn the real 'malformed
+    # sha256' failure into a misleading exit 141 for the caller.
+    echo "error: malformed sha256 for ${artifact}: '${sha}'" >&2 || true
     exit 1
   fi
   printf '%s *%s\n' "${sha}" "${artifact}" >> "${tmp_manifest}"
@@ -445,10 +672,13 @@ if [ "${should_sign}" -ne 1 ]; then
 fi
 
 # Use an isolated GNUPGHOME so we never touch the agent's default keyring.
-# The directory lives inside the scratch subdirectory so cleanup() can
-# reach it with a single `rm -rf "${scratch_dir}"`.
-gnupghome="${scratch_dir}/gnupghome"
-mkdir "${gnupghome}"
+# Nested inside `${scratch_dir}` (not /tmp) so a single `rm -rf scratch_dir`
+# in cleanup() tears down both the intermediates and the keyring in one
+# shot, and so the private-key material stays inside the release staging
+# directory — which buildkite wipes between jobs — rather than /tmp,
+# which on bare-metal agents outlives a single run. mktemp's template
+# guarantees a unique subdir under scratch_dir.
+gnupghome=$(mktemp -d "${scratch_dir}/.gnupg-XXXXXXXX")
 chmod 700 "${gnupghome}"
 
 GNUPGHOME="${gnupghome}" gpg --batch --quiet --import <<< "${GPG_PRIVATE_KEY}"
@@ -464,28 +694,35 @@ GNUPGHOME="${gnupghome}" gpg --batch --quiet --import <<< "${GPG_PRIVATE_KEY}"
 # algorithm-agnostic (`Hash: .*`). Keeping the signature digest consistent
 # with production so nothing downstream that inspects the `Hash:` header
 # sees a change.
-# `&& success=1 || exit` ties the success flip textually and atomically
-# to gpg's own exit code: gpg succeeds → success=1, continue; gpg fails
-# → skip success=1, fall into `|| exit` which propagates gpg's non-zero
-# status (naked `exit` uses the most-recent command's status). This
-# intentionally sidesteps the `set -e` exemption for the left side of
-# `&&`, which would otherwise silently fall through on gpg failure.
-# Flag the signed manifest as about-to-be-written BEFORE gpg runs.
-# gpg --clearsign --output writes bytes to ${signed_manifest} before
-# exiting, so if gpg crashes mid-write the file on disk is partial and
-# must be removed on rollback. Setting the flag first guarantees
-# cleanup() sees it and rm's the partial bytes; on gpg success, the
-# `&& success=1` flip below makes cleanup skip the rollback branch
-# entirely, so the flag is harmless.
-signed_manifest_written=1
+#
+# Structure:
+#   1. `gpg --output "${tmp_signed_manifest}" ... || exit` — gpg writes
+#      into a scratch-dir tmp path. The trailing `|| exit` is load-bearing:
+#      without it, `set -e` would still fire on a non-zero gpg exit, but
+#      the naked `exit` propagates gpg's own exit code (instead of whatever
+#      subsequent command ran) so the caller can tell sign failed vs. mv.
+#   2. `mv "${tmp_signed_manifest}" "${signed_manifest}"` — atomic rename
+#      into the final output path. A gpg crash between `--output` opening
+#      the target and the final bytes flushing cannot leave a partial .asc
+#      at `${signed_manifest}`, because the target only appears via this
+#      mv after gpg exits cleanly.
+#   3. `signed_manifest_written=1` — set AFTER the mv so cleanup() only
+#      rm's the output if we actually touched it, mirroring how
+#      `manifest_written` is set after its mv in the collation block above.
+#   4. `success=1` — entering the fully-signed path means every integrity
+#      invariant is satisfied; cleanup() skips the rollback branch.
+tmp_signed_manifest="${scratch_dir}/${signed_manifest_basename}.tmp"
 GNUPGHOME="${gnupghome}" gpg \
   --batch --yes --quiet \
   --pinentry-mode loopback \
   --passphrase-fd 0 \
   --digest-algo SHA512 \
   --clearsign \
-  --output "${signed_manifest}" \
-  "${manifest}" <<< "${GPG_PASSPHRASE}" && success=1 || exit
+  --output "${tmp_signed_manifest}" \
+  "${manifest}" <<< "${GPG_PASSPHRASE}" || exit
+mv "${tmp_signed_manifest}" "${signed_manifest}"
+signed_manifest_written=1
+success=1
 
 # Final diagnostic also guarded — same reasoning as the echo/cat above.
 # Here success=1 is already set, so a SIGPIPE would leave the .txt and

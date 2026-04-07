@@ -588,6 +588,16 @@ done
 # by a later-successful job.
 for pid in "${pids[@]}"; do
   if ! wait "${pid}"; then
+    # Reap the remaining background hashers before exiting. Without
+    # this kill, the N-1 siblings that are still reading 30-150 MB
+    # archives keep running as orphaned children of init after `exit
+    # 1` fires and cleanup() rm -rf's the hash_dir out from under
+    # their open fds — wasted CPU/IO on the buildkite agent for the
+    # next queued job. PIDs already wait(2)'d in earlier iterations
+    # are no longer in the shell's child list so `kill` returns
+    # ESRCH for them; `2>/dev/null || true` swallows both the ESRCH
+    # and any SIGPIPE we'd get from a dying log aggregator.
+    kill "${pids[@]}" 2>/dev/null || true
     # `|| true` matches every other post-trap diagnostic echo in this
     # file. A dead Buildkite log aggregator delivers SIGPIPE here; an
     # unguarded echo under `set -eo pipefail` would exit 141 instead

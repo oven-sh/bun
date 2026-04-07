@@ -137,7 +137,14 @@ function download_buildkite_artifact() {
 
 function upload_github_asset() {
   local version="$1"
-  local tag="$(release_tag "$version")"
+  # Declared separately from the assignment (same SC2155 rationale as
+  # the `local name` split further down): `local` masks the subshell's
+  # exit status behind its own always-zero return. `release_tag` is a
+  # pure-echo function today so the practical risk is nil, but keeping
+  # the pattern consistent prevents the anti-pattern from creeping back
+  # in a future caller-edit.
+  local tag
+  tag="$(release_tag "$version")"
   local file="$2"
   # Declared separately from the assignment so `set -e` can catch a
   # basename(1) failure (SC2155). The combined `local name=$(...)` form
@@ -163,7 +170,9 @@ function upload_github_asset() {
 
 function update_github_release() {
   local version="$1"
-  local tag="$(release_tag "$version")"
+  # SC2155 split — see upload_github_asset() above.
+  local tag
+  tag="$(release_tag "$version")"
   if [ "$tag" == "canary" ]; then
     sleep 5 # There is possibly a race condition where this overwrites artifacts?
     run_command gh release edit "$tag" --repo "$BUILDKITE_REPO" \

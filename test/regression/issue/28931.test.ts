@@ -137,7 +137,19 @@ describe.concurrent.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
     expect(exp.exitCode).toBe(0);
   });
 
-  afterAll(() => {
+  afterAll(async () => {
+    // Kill any gpg-agent bound to the throwaway GNUPGHOME before the
+    // tempDir removal. `gpg --gen-key` / `--export-secret-keys` can
+    // leave an agent running against this home whose socket lives
+    // inside the directory we're about to rm -rf; removing the
+    // directory out from under a live agent produces noisy "can't
+    // connect to agent" stderr on the next GNUPGHOME=... call and,
+    // on macOS, can leak the agent process past the test run. Mirrors
+    // the same `GNUPGHOME=... gpgconf --kill all` cleanup the helper
+    // itself performs before tearing down its per-run scratch dir.
+    if (gpgHome) {
+      await sh(["gpgconf", "--kill", "all"], { GNUPGHOME: gpgHome });
+    }
     // Dispose the shared keyring manually — see the beforeAll comment
     // for why a `using` wouldn't work here.
     keyringDir?.[Symbol.dispose]();
@@ -506,14 +518,20 @@ describe.concurrent.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
     });
     const dirStr = String(dir);
 
-    // Two orphans. Pick suffix names so sort order does NOT match
-    // time order — "orphan_zz" is alphabetically newer than
-    // "orphan_aa", but we make orphan_aa mtime-newer. If the sweep
-    // iterated in glob order and took first-wins, it would restore
-    // the older orphan_zz bytes; we want it to compare mtimes via
-    // -nt and pick orphan_aa.
-    const orphanOlder = join(dirStr, ".sign-manifest-scratch.orphan_zz");
-    const orphanNewer = join(dirStr, ".sign-manifest-scratch.orphan_aa");
+    // Two orphans whose alphabetical order is the OPPOSITE of their
+    // mtime order. The alphabetically-first orphan (`orphan_aa`) is
+    // mtime-OLDER; the alphabetically-last orphan (`orphan_zz`) is
+    // mtime-NEWER. This orientation is load-bearing for the regression
+    // signal: bash glob expansion walks orphan_aa first, so a broken
+    // first-glob-wins implementation would pick orphan_aa's (older)
+    // bytes and fail the final assertion; only an mtime-aware loop
+    // using `[ A -nt B ]` keeps walking and swaps to orphan_zz's
+    // (newer) bytes. A prior version of this test had the names
+    // swapped — `orphan_aa` alphabetically first AND mtime-newer —
+    // which a broken first-wins impl would ALSO pick correctly,
+    // making the test a silent false positive.
+    const orphanOlder = join(dirStr, ".sign-manifest-scratch.orphan_aa");
+    const orphanNewer = join(dirStr, ".sign-manifest-scratch.orphan_zz");
     mkdirSync(orphanOlder);
     mkdirSync(orphanNewer);
 
@@ -528,10 +546,10 @@ describe.concurrent.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
     writeFileSync(join(orphanNewer, "SHASUMS256.txt.bak"), newerTxt);
     writeFileSync(join(orphanNewer, "SHASUMS256.txt.asc.bak"), newerAsc);
 
-    // Force mtimes so the sweep sees orphan_aa as newer even though
-    // the filesystem may have given both files the same mtime due
-    // to coarse timestamp resolution. 1000s gap is well above any
-    // plausible filesystem granularity.
+    // Force mtimes to match the naming: `orphan_aa` gets the old
+    // timestamp, `orphan_zz` gets the fresh one. 1000s gap is well
+    // above any plausible filesystem mtime granularity so `-nt`
+    // always sees orphan_zz as strictly newer.
     const now = Math.floor(Date.now() / 1000);
     utimesSync(join(orphanOlder, "SHASUMS256.txt.bak"), now - 1000, now - 1000);
     utimesSync(join(orphanOlder, "SHASUMS256.txt.asc.bak"), now - 1000, now - 1000);
@@ -562,6 +580,66 @@ describe.concurrent.skipIf(!canRun)("sign-release-manifest.sh (#28931)", () => {
     // newer orphan's copy is what matters).
     expect(existsSync(orphanOlder)).toBe(false);
     expect(existsSync(orphanNewer)).toBe(false);
+    const leftovers = readdirSync(dirStr).filter(name => name.startsWith(".sign-manifest-scratch."));
+    expect(leftovers).toEqual([]);
+  });
+
+  test("sweep does not clobber live outputs with an orphaned .bak", async () => {
+    // Opposite branch of the orphan-restore tests above: when the live
+    // SHASUMS256.txt / .asc already exist (e.g. a prior run completed
+    // normally and cleanup() left the outputs in place), the sweep must
+    // treat orphaned `.bak` copies as stale and NOT copy them over the
+    // live files. The helper's `! [ -e "${manifest}" ]` guard on the
+    // restore `mv` enforces this; without the guard, an old orphan
+    // would silently overwrite a valid live manifest with obsolete
+    // bytes every time the helper ran.
+    //
+    // Setup: pre-populate live .txt/.asc with distinctive "live-wins"
+    // bytes, plant an orphan scratch dir whose .bak files hold
+    // different "should-not-win" bytes, then run the helper with a
+    // bogus GPG key so it exercises the sweep → mutation → rollback
+    // path without overwriting the live outputs. The assertion is
+    // that after the run, the live files still hold the original
+    // "live-wins" bytes and the orphan directory is gone.
+    using dir = tempDir("bun-28931-live-wins-", {
+      "bun-linux-x64.zip": "fresh-bytes",
+    });
+    const dirStr = String(dir);
+
+    const liveTxt = Buffer.alloc(64, "c").toString() + " *bun-linux-x64.zip\n";
+    const liveAsc =
+      "-----BEGIN PGP SIGNED MESSAGE-----\nHash: SHA512\n\nlive-wins\n-----BEGIN PGP SIGNATURE-----\nfake\n-----END PGP SIGNATURE-----\n";
+    writeFileSync(join(dirStr, "SHASUMS256.txt"), liveTxt);
+    writeFileSync(join(dirStr, "SHASUMS256.txt.asc"), liveAsc);
+
+    const orphan = join(dirStr, ".sign-manifest-scratch.orphanLL");
+    mkdirSync(orphan);
+    const staleTxt = Buffer.alloc(64, "d").toString() + " *bun-linux-x64.zip\n";
+    const staleAsc =
+      "-----BEGIN PGP SIGNED MESSAGE-----\nHash: SHA512\n\nshould-not-win\n-----BEGIN PGP SIGNATURE-----\nfake\n-----END PGP SIGNATURE-----\n";
+    writeFileSync(join(orphan, "SHASUMS256.txt.bak"), staleTxt);
+    writeFileSync(join(orphan, "SHASUMS256.txt.asc.bak"), staleAsc);
+
+    // Bogus GPG key so the helper:
+    //   1. runs the sweep (must NOT restore the orphan .bak over live)
+    //   2. renames live .txt/.asc into its own scratch dir as backups
+    //   3. publishes a fresh manifest
+    //   4. fails gpg --import
+    //   5. cleanup() rolls back: rm new manifest, restore backups
+    // Final live bytes must equal the original liveTxt/liveAsc — not
+    // the staleTxt/staleAsc bytes from the orphan.
+    const res = await sh([script, dirStr, "bun-linux-x64.zip"], {
+      GPG_PRIVATE_KEY: "not-a-valid-pgp-key",
+      GPG_PASSPHRASE: "unused",
+    });
+    expect(res.stderr).toMatch(/^gpg: /m);
+    expect(res.exitCode).not.toBe(0);
+
+    expect(readFileSync(join(dirStr, "SHASUMS256.txt"), "utf8")).toBe(liveTxt);
+    expect(readFileSync(join(dirStr, "SHASUMS256.txt.asc"), "utf8")).toBe(liveAsc);
+
+    // Orphan is gone, current run's scratch dir also torn down.
+    expect(existsSync(orphan)).toBe(false);
     const leftovers = readdirSync(dirStr).filter(name => name.startsWith(".sign-manifest-scratch."));
     expect(leftovers).toEqual([]);
   });

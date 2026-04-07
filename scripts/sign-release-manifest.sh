@@ -285,8 +285,17 @@ cleanup() {
   # of the captured `${rc}`, making the caller think signing failed when it
   # actually succeeded. The -f flag only suppresses ENOENT — it doesn't
   # cover EACCES / EROFS / EIO / stale-NFS / SIGPIPE — so `|| true` is
-  # still required. Same reason for the `mv -f ... || true` on the restore
-  # paths below.
+  # still required on every rm.
+  #
+  # The restore `mv` paths below are the ONE exception: a failure there
+  # costs the caller their last-good manifest/.asc and must NOT be
+  # swallowed. If restore fails, we preserve the scratch directory as
+  # a manual recovery surface (so the .bak files the mv left behind
+  # remain reachable) and override the trap's exit code with 75
+  # (EX_TEMPFAIL from sysexits.h) so the buildkite wrapper can
+  # distinguish "transient filesystem problem — retry or page an
+  # operator" from ordinary signing failures.
+  local restore_failed=0
   if [ "${success}" -ne 1 ]; then
     # Roll back: wipe any partial outputs we produced in ${dir} — but
     # ONLY outputs we actually wrote to this invocation — then restore
@@ -307,29 +316,55 @@ cleanup() {
     # `-f` (not `-n`): the backup invariant is "variable set iff backup
     # exists", but checking the filesystem directly is defense-in-depth —
     # if the backup file was somehow removed between its successful `mv`
-    # and this restore, we skip cleanly instead of attempting `mv` of a
-    # missing source and relying on `|| true` to swallow the error.
+    # and this restore, we skip cleanly.
+    #
+    # No `|| true` here: if the restore `mv` fails, we set
+    # `restore_failed=1` and let the block below preserve scratch_dir
+    # so the .bak copy the `mv` didn't move remains reachable for
+    # manual recovery. Swallowing the failure here would combine with
+    # the unconditional `rm -rf "${scratch_dir}"` that used to live
+    # below to silently nuke the last-good file — exactly the data
+    # loss coderabbit flagged.
     if [ -f "${backup_manifest}" ]; then
-      mv -f "${backup_manifest}" "${manifest}" || true
+      if ! mv -f "${backup_manifest}" "${manifest}"; then
+        echo "error: failed to restore ${manifest} from ${backup_manifest}" >&2 || true
+        restore_failed=1
+      fi
     fi
     if [ -f "${backup_signed_manifest}" ]; then
-      mv -f "${backup_signed_manifest}" "${signed_manifest}" || true
+      if ! mv -f "${backup_signed_manifest}" "${signed_manifest}"; then
+        echo "error: failed to restore ${signed_manifest} from ${backup_signed_manifest}" >&2 || true
+        restore_failed=1
+      fi
     fi
   fi
-  # Success and failure both drop the entire scratch directory. On
-  # success it holds only cleanup-eligible state (the backups, the
-  # intermediate .tmp whose content is now live in ${manifest} via
-  # the atomic rename, and the gnupghome). On failure any partial
-  # state is wiped along with it. Single rm -rf handles both branches.
-  #
-  # Kill the gpg-agent BEFORE removing scratch_dir: the agent's socket
-  # lives inside gnupghome/, which lives inside scratch_dir/, and a
-  # live agent with a deleted socket directory will crash noisily in
-  # the CI log. `gpgconf --kill all` takes GNUPGHOME from the env, so
-  # export it inline for the one call.
+  # Kill the gpg-agent BEFORE removing scratch_dir (or before leaving
+  # it in place for recovery): the agent's socket lives inside
+  # gnupghome/, which lives inside scratch_dir/, and a live agent with
+  # a deleted socket dir will crash noisily in the CI log. Done
+  # unconditionally (not gated on restore_failed) because we never
+  # want to leave a gpg-agent running after this script exits.
+  # `gpgconf --kill all` takes GNUPGHOME from the env, so export it
+  # inline for the one call.
   if [ -d "${gnupghome}" ]; then
     GNUPGHOME="${gnupghome}" gpgconf --kill all >/dev/null 2>&1 || true
   fi
+  if [ "${restore_failed}" -eq 1 ]; then
+    # Preserve scratch_dir as a recovery surface. The .bak files sit
+    # inside it; an operator with write access to ${dir} can manually
+    # copy them back once the underlying filesystem issue is cleared.
+    # Using the EX_TEMPFAIL exit code (75) so the buildkite wrapper
+    # can distinguish this from a signing failure (exit 1).
+    echo "error: scratch directory preserved for manual recovery: ${scratch_dir}" >&2 || true
+    echo "error: manually copy .bak files back into ${dir} once the filesystem issue is resolved" >&2 || true
+    exit 75
+  fi
+  # On success (or a failure path where restore succeeded / wasn't
+  # needed) drop the entire scratch directory. On success it holds
+  # only cleanup-eligible state (the backups we just removed, the
+  # intermediate .tmp whose content is now live in ${manifest} via
+  # the atomic rename, and the gnupghome). A single rm -rf handles
+  # both branches.
   if [ -d "${scratch_dir}" ]; then
     rm -rf "${scratch_dir}" || true
   fi
@@ -377,11 +412,27 @@ for _stale in "${dir}/${scratch_prefix}"*/; do
     # fresh manifest from another concurrent producer — hypothetical;
     # see concurrency note above), don't clobber it with an older
     # backup.
+    #
+    # No `|| true` on the restore `mv` below. If the rename fails (for
+    # example because ${dir} became read-only between the prior run
+    # and this one), we must not remove the orphan scratch dir — doing
+    # so would discard the last-good .bak and leave the caller with
+    # neither the old nor the new file. Fail fast with a distinctive
+    # error and an EX_TEMPFAIL (75) exit so the buildkite wrapper can
+    # distinguish a filesystem problem from a signing failure.
     if [ -f "${_stale_manifest_bak}" ] && ! [ -e "${manifest}" ]; then
-      mv -f "${_stale_manifest_bak}" "${manifest}" || true
+      if ! mv -f "${_stale_manifest_bak}" "${manifest}"; then
+        echo "error: failed to restore ${manifest} from orphan ${_stale_manifest_bak}" >&2 || true
+        echo "error: orphan directory preserved for manual recovery: ${_stale}" >&2 || true
+        exit 75
+      fi
     fi
     if [ -f "${_stale_signed_bak}" ] && ! [ -e "${signed_manifest}" ]; then
-      mv -f "${_stale_signed_bak}" "${signed_manifest}" || true
+      if ! mv -f "${_stale_signed_bak}" "${signed_manifest}"; then
+        echo "error: failed to restore ${signed_manifest} from orphan ${_stale_signed_bak}" >&2 || true
+        echo "error: orphan directory preserved for manual recovery: ${_stale}" >&2 || true
+        exit 75
+      fi
     fi
     rm -rf "${_stale}" || true
   fi

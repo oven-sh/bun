@@ -306,9 +306,9 @@ describe("bun <file.md>", () => {
       expect(
         stripped.startsWith("│") || stripped.startsWith("┌") || stripped.startsWith("├") || stripped.startsWith("└"),
       ).toBe(true);
-      expect(
-        stripped.endsWith("│") || stripped.endsWith("┐") || stripped.endsWith("┤") || stripped.endsWith("┘"),
-      ).toBe(true);
+      expect(stripped.endsWith("│") || stripped.endsWith("┐") || stripped.endsWith("┤") || stripped.endsWith("┘")).toBe(
+        true,
+      );
     }
     expect(out).toMatchSnapshot();
   });

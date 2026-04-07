@@ -203,12 +203,22 @@ done
 # next run's cleanup() via rm -f) removes before the caller ever sees it.
 mv "$tmp_manifest" "$manifest"
 
-# Diagnostics go to stderr, matching the warn:/error: lines above. Writing
-# the cosmetic dump to stdout would let a broken stdout pipe (e.g. the
-# Buildkite log aggregator dying) SIGPIPE `cat`, fire set -e with the
-# success flag still 0, and cleanup() would delete the correctly-written
-# manifest before any signing has started. Stderr is diagnostic-only and
-# is captured by the build log just the same.
+# Declare the unsigned-path success as early as possible: the atomic mv
+# above is the entire contract for the unsigned fallback, so flipping
+# success here protects every subsequent diagnostic (echo/cat/warn) from
+# tripping cleanup() on a stderr SIGPIPE. The signed path can't do this
+# — it needs gpg --clearsign to produce a matching .asc first, otherwise
+# a crash between this line and the signing step would leave an unsigned
+# .txt alongside a stale .asc, exactly the integrity mismatch this PR
+# exists to prevent.
+if [ "$should_sign" -ne 1 ]; then
+  success=1
+fi
+
+# Diagnostics go to stderr, matching the warn:/error: lines above. Stderr
+# is diagnostic-only and captured by the build log; writing to stdout
+# would let a broken stdout pipe (e.g. Buildkite log aggregator dying)
+# SIGPIPE `cat` and trip cleanup() in the signed path before gpg runs.
 echo "Generated $manifest:" >&2
 cat "$manifest" >&2
 
@@ -217,14 +227,7 @@ if [ "$should_sign" -ne 1 ]; then
   # than leaving a stale one in place. The sibling .asc will still point at
   # the previous manifest body until the daily cron runs, so strict PGP
   # validators will see a temporary identity mismatch. Document the state.
-  #
-  # Set success=1 BEFORE the warn echoes for the same reason the signed
-  # path sets it before its "Signed" echo: the atomic mv above is the
-  # real success criterion, the warns are cosmetic. A SIGPIPE on stderr
-  # (Buildkite log aggregator dying mid-write) would otherwise fire
-  # set -e with success still 0, and cleanup() would delete the
-  # correctly-written $manifest.
-  success=1
+  # success=1 was already set above.
   echo "warn: GPG_PRIVATE_KEY/GPG_PASSPHRASE not set; wrote SHASUMS256.txt" >&2
   echo "warn: without a signature. The daily release sign workflow will" >&2
   echo "warn: catch up with a matching SHASUMS256.txt.asc within 24h." >&2

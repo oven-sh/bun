@@ -1160,14 +1160,17 @@ const Headers8Bit = struct {
         const value_slices = try allocator.alloc([]const u8, len);
         errdefer allocator.free(value_slices);
 
-        // `bun.String.toUTF8` never returns an error — it panics on OOM via
-        // `bun.handleOom()` — so the loop body is infallible and no partial
-        // cleanup is needed. The three `try allocator.alloc()` calls above are
-        // the only error sites, and each has its own errdefer.
+        var decoded: usize = 0;
+        errdefer {
+            var j: usize = 0;
+            while (j < decoded) : (j += 1) slices[j].deinit();
+        }
         var i: usize = 0;
         while (i < len) : (i += 1) {
             slices[i * 2] = names_in[i].toUTF8(allocator);
+            decoded += 1;
             slices[i * 2 + 1] = values_in[i].toUTF8(allocator);
+            decoded += 1;
             name_slices[i] = slices[i * 2].slice();
             value_slices[i] = slices[i * 2 + 1].slice();
         }

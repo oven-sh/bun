@@ -1841,9 +1841,11 @@ extern "C" void WebSocket__didConnectWithTunnel(WebCore::WebSocket* webSocket, v
     webSocket->didConnectWithTunnel(tunnel, bufferedData, len, deflate_params);
 }
 
-extern "C" void WebSocket__didReceiveHandshakeResponse(WebCore::WebSocket* webSocket, uint16_t statusCode, const uint8_t* head, size_t headLen, const uint8_t* body, size_t bodyLen)
+extern "C" void WebSocket__didReceiveHandshakeResponse(WebCore::WebSocket* webSocket, uint16_t statusCode, const uint8_t* buffer, size_t bufferLen, size_t headLen)
 {
-    webSocket->didReceiveHandshakeResponse(statusCode, std::span(head, headLen), std::span(body, bodyLen));
+    ASSERT(headLen <= bufferLen);
+    auto full = std::span(buffer, bufferLen);
+    webSocket->didReceiveHandshakeResponse(statusCode, full.subspan(0, headLen), full.subspan(headLen));
 }
 
 extern "C" void WebSocket__didAbruptClose(WebCore::WebSocket* webSocket, Bun::WebSocketErrorCode errorCode)

@@ -546,32 +546,35 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             this.processWebSocketUpgradeResponse(response, body);
         }
 
-        // Shared between the plain-TCP and proxy-tunnel paths. The 'handshake'
-        // event dispatch is synchronous — JS code in the handler can tear us
-        // down (ws.close() → cancel() → clearData()), which frees `this.body`
-        // out from under us. The `response` struct and `body` slice would
-        // then dangle before processResponse reads them. Copy `body` to a
-        // stable buffer, re-parse, and use the copy for processResponse so
-        // the dispatch is safe regardless of what JS does.
+        // Shared between the plain-TCP and proxy-tunnel paths.
+        //
+        // The 'handshake' dispatch into JS is synchronous. JS in the listener
+        // can call `ws.close()` → `terminate()` → `clearData()`, which frees
+        // `this.body` out from under us — and `body` / `response.headers.list`
+        // point into that same allocation in the multi-chunk accumulation
+        // path. To keep the post-dispatch `processResponse` call safe without
+        // duplicating + re-parsing the response, move `this.body` out into a
+        // local so `clearData()` finds an empty ArrayList and the backing
+        // bytes outlive the dispatch.
+        //
+        // In the single-chunk fast path `body` points into `data` (owned by
+        // uSockets for the rest of `onData`) and `this.body` is already
+        // empty, so the transfer is a no-op.
         fn processWebSocketUpgradeResponse(this: *HTTPClient, response: PicoHTTP.Response, body: []const u8) void {
             const head_len: usize = @intCast(response.bytes_read);
             const status_code = std.math.cast(u16, response.status_code) orelse 0;
-            if (this.outgoing_websocket) |ws| {
-                const body_copy = bun.default_allocator.dupe(u8, body) catch {
-                    this.terminate(ErrorCode.failed_to_allocate_memory);
-                    return;
-                };
-                defer bun.default_allocator.free(body_copy);
 
-                ws.didReceiveHandshakeResponse(status_code, body_copy[0..head_len], body_copy[head_len..]);
-                if (this.outgoing_websocket == null) return;
-
-                // Re-parse from the stable copy so response.headers.list points
-                // at memory that outlives the dispatch.
-                const fresh = PicoHTTP.Response.parse(body_copy, &this.headers_buf) catch unreachable;
-                this.processResponse(fresh, body_copy[head_len..]);
+            const ws = this.outgoing_websocket orelse {
+                this.processResponse(response, body[head_len..]);
                 return;
-            }
+            };
+
+            var owned_body = this.body;
+            this.body = .{};
+            defer owned_body.deinit(bun.default_allocator);
+
+            ws.didReceiveHandshakeResponse(status_code, body, head_len);
+            if (this.outgoing_websocket == null) return;
             this.processResponse(response, body[head_len..]);
         }
 

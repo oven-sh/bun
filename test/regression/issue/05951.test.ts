@@ -38,7 +38,9 @@ test("ws emits 'unexpected-response' with status, headers and body on non-101", 
     let body = "";
     for await (const chunk of res) body += chunk;
     console.log(JSON.stringify({
-      req: req,
+      reqMethod: req?.method,
+      reqPath: req?.path,
+      reqGetHeader: typeof req?.getHeader === "function" ? req.getHeader("x-anything") ?? null : "missing",
       statusCode: res.statusCode,
       statusMessage: res.statusMessage,
       xReason: res.headers["x-reason"],
@@ -47,8 +49,12 @@ test("ws emits 'unexpected-response' with status, headers and body on non-101", 
     await once(ws, "close");
     server.close();
   `);
+  // ws emits 'unexpected-response' with (ClientRequest, IncomingMessage). We
+  // don't use node:http so the request is a minimal synthetic stub — assert
+  // its method/path/getHeader surface so code that inspects the request
+  // object doesn't crash.
   expect(stdout).toMatchInlineSnapshot(
-    `"{"req":null,"statusCode":503,"statusMessage":"Service Unavailable","xReason":"not-ready","body":"workerd starting"}"`,
+    `"{"reqMethod":"GET","reqPath":"/","reqGetHeader":null,"statusCode":503,"statusMessage":"Service Unavailable","xReason":"not-ready","body":"workerd starting"}"`,
   );
   expect(exitCode).toBe(0);
 });

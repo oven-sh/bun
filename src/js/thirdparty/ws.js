@@ -332,16 +332,62 @@ class BunWebSocket extends EventEmitter {
     this.#ws.addEventListener("handshake", event => this.#onHandshake(event.data), onceObject);
   }
 
+  // ws emits `'upgrade'` / `'unexpected-response'` with an `http.ClientRequest`
+  // as the first argument. We bypass node:http and talk to the native
+  // WebSocket directly, so there is no real ClientRequest to expose. Pass a
+  // minimal stub — `method`, `path`, and the no-op header helpers — so user
+  // code that inspects the request object (e.g. `req.getHeader(...)`) does
+  // not crash. Build it lazily on first emission to keep the common open/
+  // close path zero-cost.
+  #syntheticRequest;
+  #getSyntheticRequest() {
+    let req = this.#syntheticRequest;
+    if (req) return req;
+    const url = this.#ws?.url;
+    let path = "/";
+    try {
+      if (url) path = new URL(url).pathname || "/";
+    } catch {}
+    req = this.#syntheticRequest = {
+      __proto__: Object.create(EventEmitter.prototype),
+      method: "GET",
+      path,
+      url,
+      headers: { __proto__: null },
+      rawHeaders: [],
+      getHeader() {},
+      getHeaders() {
+        return { __proto__: null };
+      },
+      setHeader() {},
+      removeHeader() {},
+      hasHeader() {
+        return false;
+      },
+      abort() {},
+      end() {},
+      write() {},
+      writeHead() {},
+      headersSent: true,
+      finished: true,
+      socket: null,
+      [Symbol.toStringTag]: "ClientRequest",
+    };
+    return req;
+  }
+
   #onHandshake(data) {
     const { statusCode, head, body } = data;
     const res = makeHandshakeResponse(statusCode, head, body);
     if (statusCode === 101) {
+      // `upgrade` emits `(response)` per ws docs.
       this.emit("upgrade", res);
       return;
     }
     this.#unexpectedResponseEmitted = true;
     if (this.listenerCount("unexpected-response") > 0) {
-      this.emit("unexpected-response", null, res);
+      // `unexpected-response` emits `(request, response)` per ws docs.
+      this.emit("unexpected-response", this.#getSyntheticRequest(), res);
     } else {
       this.emit("error", new Error("Unexpected server response: " + statusCode));
     }

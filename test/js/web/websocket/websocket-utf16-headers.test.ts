@@ -12,7 +12,7 @@
 // The fix migrates the WebSocket upgrade client FFI from ZigString to
 // BunString and decodes every input with `bun.String.toUTF8(allocator)`.
 
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
 import net from "node:net";
@@ -22,13 +22,51 @@ import net from "node:net";
 const UTF16_PATH_SEGMENT = "path-\u{1F525}";
 const UTF16_SUBPROTOCOL_SENTINEL = "proto-\u{1F525}";
 
+// Track every server we spin up so afterEach cleans them up even if a test
+// throws before closing its own fixtures.
+const servers: net.Server[] = [];
+
+function track(server: net.Server) {
+  servers.push(server);
+  return server;
+}
+
+async function listenEphemeral(onConnection?: (socket: net.Socket) => void): Promise<{ port: number; server: net.Server }> {
+  const server = net.createServer(onConnection);
+  track(server);
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  return { port: (server.address() as net.AddressInfo).port, server };
+}
+
+// Returns an ephemeral port that is bound and then immediately released so
+// connections to it will be refused. We never use a hardcoded "reserved" port
+// like 127.0.0.1:1 because it is not guaranteed free on shared CI hosts.
+async function deadPort(): Promise<number> {
+  const probe = net.createServer();
+  await once(probe.listen(0, "127.0.0.1"), "listening");
+  const port = (probe.address() as net.AddressInfo).port;
+  await new Promise<void>(resolve => probe.close(() => resolve()));
+  return port;
+}
+
+beforeEach(() => {
+  servers.length = 0;
+});
+
+afterEach(async () => {
+  for (const server of servers.splice(0)) {
+    try {
+      if (server.listening) await new Promise<void>(r => server.close(() => r()));
+    } catch {}
+  }
+});
+
 describe("WebSocket upgrade with non-ASCII inputs", () => {
   test("Latin1 header value with high bytes is sent as UTF-8 without crashing", async () => {
-    // Spin up a trivial HTTP listener that captures the raw upgrade request
+    // Spin up a trivial TCP listener that captures the raw upgrade request
     // bytes and responds with a valid 101 Switching Protocols handshake.
-    const server = net.createServer();
     const receivedRequests: Buffer[] = [];
-    server.on("connection", socket => {
+    const { port, server } = await listenEphemeral(socket => {
       const chunks: Buffer[] = [];
       let sawUpgrade = false;
       socket.on("data", chunk => {
@@ -59,27 +97,26 @@ describe("WebSocket upgrade with non-ASCII inputs", () => {
         }
       });
     });
-    await once(server.listen(0, "127.0.0.1"), "listening");
-    const port = (server.address() as net.AddressInfo).port;
 
     const { promise, resolve, reject } = Promise.withResolvers<void>();
-
     // "vàlüé-ñ" contains U+00E0, U+00FC, U+00E9, U+00F1 — all in Latin1
     // range, so the underlying WTFStringImpl stays 8-bit.
     const latin1Value = "vàlüé-ñ";
-
-    const ws = new WebSocket(`ws://127.0.0.1:${port}/`, {
-      headers: {
-        "X-Latin1": latin1Value,
-      },
-    });
-    ws.onopen = () => {
-      ws.close();
-      resolve();
-    };
-    ws.onerror = e => reject(new Error(String((e as any).message ?? "error")));
-    await promise;
-    server.close();
+    try {
+      const ws = new WebSocket(`ws://127.0.0.1:${port}/`, {
+        headers: {
+          "X-Latin1": latin1Value,
+        },
+      });
+      ws.onopen = () => {
+        ws.close();
+        resolve();
+      };
+      ws.onerror = e => reject(new Error(String((e as any).message ?? "error")));
+      await promise;
+    } finally {
+      await new Promise<void>(r => server.close(() => r()));
+    }
 
     expect(receivedRequests.length).toBe(1);
     // Before the fix, the upgrade request buffer would either contain raw
@@ -94,35 +131,36 @@ describe("WebSocket upgrade with non-ASCII inputs", () => {
     // `new URL(...)` with a non-Latin1 path produces a 16-bit-backed
     // WTFStringImpl for the parsed URL. Before the fix, the Zig side called
     // `.slice()` on that and wrote raw UTF-16 bytes into the upgrade request.
-    // The URL parser percent-encodes non-ASCII, but the internal path
-    // traverses the 16-bit WTFStringImpl branch regardless.
+    // Target port is allocated and immediately released so the connect()
+    // fails quickly — we only care that the upgrade request build doesn't
+    // crash.
+    const port = await deadPort();
     const { promise, resolve } = Promise.withResolvers<void>();
-    const ws = new WebSocket(`ws://127.0.0.1:1/${UTF16_PATH_SEGMENT}`);
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/${UTF16_PATH_SEGMENT}`);
     ws.onerror = () => resolve();
     ws.onclose = () => resolve();
     await promise;
     expect(true).toBe(true);
   });
 
-  test("UTF-16 subprotocol is decoded to UTF-8 without crashing", () => {
+  test("UTF-16 subprotocol is rejected by the spec validator without crashing", async () => {
     // A subprotocol containing codepoints > U+00FF is rejected by the
     // WebSocket spec validator (which only allows HTTP tokens), so the
     // constructor throws a SyntaxError. The important thing is that the
     // validator runs before the Zig side sees the string and crashes.
+    const port = await deadPort();
     expect(
       () =>
-        new WebSocket("ws://127.0.0.1:1/", {
+        new WebSocket(`ws://127.0.0.1:${port}/`, {
           protocols: [UTF16_SUBPROTOCOL_SENTINEL],
         }),
     ).toThrow();
   });
 
-  test("does not crash when target URL path contains non-ASCII characters", async () => {
-    // Target port 1 is reserved — connection will fail quickly. The point is
-    // that the upgrade request build step must not crash regardless of what
-    // the URL parser produces for non-ASCII path segments.
+  test("does not crash when target URL path contains non-ASCII Latin1 characters", async () => {
+    const port = await deadPort();
     const { promise, resolve } = Promise.withResolvers<void>();
-    const ws = new WebSocket("ws://127.0.0.1:1/pâth/ünîcôdé");
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/pâth/ünîcôdé`);
     ws.onerror = () => resolve();
     ws.onclose = () => resolve();
     await promise;
@@ -133,13 +171,14 @@ describe("WebSocket upgrade with non-ASCII inputs", () => {
     // Proxy + custom TLS config + non-ASCII headers — this is the combination
     // that matched the original crash backtrace. Construct, let it fail to
     // connect, and make sure nothing heap-corrupts along the way.
+    const [targetPort, proxyPort] = await Promise.all([deadPort(), deadPort()]);
     const { promise, resolve } = Promise.withResolvers<void>();
-    const ws = new WebSocket("wss://127.0.0.1:1/", {
+    const ws = new WebSocket(`wss://127.0.0.1:${targetPort}/`, {
       headers: {
         "X-Latin1": "vàlüé-ñ",
         Authorization: "Bearer tökën",
       },
-      proxy: "http://127.0.0.1:2",
+      proxy: `http://127.0.0.1:${proxyPort}`,
       tls: {
         cert: "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----",
         key: "-----BEGIN PRIVATE KEY-----\nMIIE\n-----END PRIVATE KEY-----",
@@ -153,14 +192,15 @@ describe("WebSocket upgrade with non-ASCII inputs", () => {
   });
 
   test("does not crash with many Latin1 headers through proxy", async () => {
+    const [targetPort, proxyPort] = await Promise.all([deadPort(), deadPort()]);
     const { promise, resolve } = Promise.withResolvers<void>();
     const headers: Record<string, string> = {};
     for (let i = 0; i < 16; i++) {
       headers[`X-Hdr-${i}`] = `vàlüé-${i}-ñ`.repeat(4);
     }
-    const ws = new WebSocket("wss://127.0.0.1:1/", {
+    const ws = new WebSocket(`wss://127.0.0.1:${targetPort}/`, {
       headers,
-      proxy: "http://127.0.0.1:2",
+      proxy: `http://127.0.0.1:${proxyPort}`,
       tls: { rejectUnauthorized: false },
     });
     ws.onerror = () => resolve();
@@ -170,10 +210,11 @@ describe("WebSocket upgrade with non-ASCII inputs", () => {
   });
 
   test("does not crash with Latin1 proxy header values", async () => {
+    const [targetPort, proxyPort] = await Promise.all([deadPort(), deadPort()]);
     const { promise, resolve } = Promise.withResolvers<void>();
-    const ws = new WebSocket("ws://127.0.0.1:1/", {
+    const ws = new WebSocket(`ws://127.0.0.1:${targetPort}/`, {
       proxy: {
-        url: "http://127.0.0.1:2",
+        url: `http://127.0.0.1:${proxyPort}`,
         headers: {
           "X-Proxy": "prôxy-vàlüé",
         },

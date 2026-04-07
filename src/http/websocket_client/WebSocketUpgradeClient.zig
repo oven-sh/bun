@@ -135,12 +135,10 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             var pathname_slice = pathname.toUTF8(allocator);
             var client_protocol_slice = client_protocol.toUTF8(allocator);
 
-            const extra_headers = Headers8Bit.init(allocator, header_names, header_values, header_count) catch {
-                host_slice.deinit();
-                pathname_slice.deinit();
-                client_protocol_slice.deinit();
-                return null;
-            };
+            // Headers8Bit.init only returns Allocator.Error; handle OOM as a
+            // crash per the OOM contract instead of masking it as a connection
+            // failure.
+            const extra_headers = Headers8Bit.init(allocator, header_names, header_values, header_count) catch |err| bun.handleOom(err);
             defer extra_headers.deinit();
 
             defer host_slice.deinit();
@@ -198,36 +196,27 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 var proxy_hdrs: ?Headers = null;
                 defer if (proxy_hdrs) |*hdrs| hdrs.deinit();
 
-                const proxy_extra_headers = Headers8Bit.init(allocator, proxy_header_names, proxy_header_values, proxy_header_count) catch {
-                    allocator.free(body);
-                    return null;
-                };
+                // Headers8Bit.init / toHeaders only return Allocator.Error;
+                // OOM should crash, not silently become a connection failure.
+                const proxy_extra_headers = Headers8Bit.init(allocator, proxy_header_names, proxy_header_values, proxy_header_count) catch |err| bun.handleOom(err);
                 defer proxy_extra_headers.deinit();
 
                 if (proxy_header_count > 0) {
-                    proxy_hdrs = proxy_extra_headers.toHeaders(allocator) catch {
-                        allocator.free(body);
-                        return null;
-                    };
+                    proxy_hdrs = proxy_extra_headers.toHeaders(allocator) catch |err| bun.handleOom(err);
                 }
 
-                // Build CONNECT request (proxy_auth and proxy_hdrs are freed by defer after this)
+                // Build CONNECT request (proxy_auth and proxy_hdrs are freed by defer after this).
+                // buildConnectRequest only returns Allocator.Error; crash on OOM.
                 connect_request = buildConnectRequest(
                     host_slice.slice(),
                     port,
                     proxy_auth_slice,
                     proxy_hdrs,
-                ) catch {
-                    allocator.free(body);
-                    return null;
-                };
+                ) catch |err| bun.handleOom(err);
 
-                // Duplicate target_host (needed for SNI during TLS handshake)
-                const target_host_dup = allocator.dupe(u8, host_slice.slice()) catch {
-                    allocator.free(body);
-                    allocator.free(connect_request);
-                    return null;
-                };
+                // Duplicate target_host (needed for SNI during TLS handshake).
+                // allocator.dupe only returns Allocator.Error; crash on OOM.
+                const target_host_dup = allocator.dupe(u8, host_slice.slice()) catch |err| bun.handleOom(err);
 
                 proxy_state = WebSocketProxy.init(
                     target_host_dup,

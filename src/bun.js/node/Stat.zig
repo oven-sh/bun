@@ -65,12 +65,12 @@ pub fn StatType(comptime big: bool) type {
             return @intCast(@min(@max(value, 0), std.math.maxInt(i64)));
         }
 
-        /// Convert an unsigned 64-bit stat field (e.g. dev, ino, rdev on Linux
-        /// where they are `u64`) into a `f64` for the non-bigint stats object.
-        /// This mirrors Node.js, which fills a Float64Array directly from the
-        /// raw `uint64_t` field — precision is lost above 2^53, but values are
-        /// never clamped to INT64_MAX. Needed for filesystems with high 64-bit
-        /// inodes such as NFS mounts.
+        /// Convert a stat field (e.g. `dev`/`ino`/`rdev`, whose type varies by
+        /// platform — `u64` on Linux, `i32` on macOS for `dev_t`) into a `f64`
+        /// for the non-bigint stats object. Mirrors Node.js, which fills a
+        /// `Float64Array` directly from the raw field via `static_cast<double>`
+        /// — precision is lost above 2^53, but values are never clamped to
+        /// INT64_MAX. Needed for filesystems with high 64-bit inodes (NFS).
         fn toF64(value: anytype) f64 {
             const T = @TypeOf(value);
             return switch (@typeInfo(T)) {
@@ -78,6 +78,21 @@ pub fn StatType(comptime big: bool) type {
                 .float, .comptime_float => @floatCast(value),
                 else => @compileError("toF64: unsupported type " ++ @typeName(T)),
             };
+        }
+
+        /// Convert a stat field into a `u64` for the BigIntStats path. Signed
+        /// platform types (e.g. macOS `dev_t = i32`) are widened to `i64` then
+        /// reinterpreted bit-for-bit, preserving the original bit pattern
+        /// without panicking on negative values. Unsigned platform types
+        /// (e.g. Linux `dev_t`/`ino_t = u64`) are passed through unchanged.
+        fn toU64(value: anytype) u64 {
+            const T = @TypeOf(value);
+            const info = @typeInfo(T);
+            if (info != .int) @compileError("toU64: expected int, got " ++ @typeName(T));
+            if (info.int.signedness == .signed) {
+                return @bitCast(@as(i64, value));
+            }
+            return @intCast(value);
         }
 
         fn statToJS(stat_: *const Syscall.PosixStat, globalObject: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
@@ -104,9 +119,9 @@ pub fn StatType(comptime big: bool) type {
             if (big) {
                 // BigIntStats: pass dev/ino/rdev as u64 so the JS BigInt is
                 // the true 64-bit value rather than clamped to INT64_MAX.
-                const dev: u64 = @intCast(stat_.dev);
-                const ino: u64 = @intCast(stat_.ino);
-                const rdev: u64 = @intCast(stat_.rdev);
+                const dev: u64 = toU64(stat_.dev);
+                const ino: u64 = toU64(stat_.ino);
+                const rdev: u64 = toU64(stat_.rdev);
                 return bun.jsc.fromJSHostCall(globalObject, @src(), Bun__createJSBigIntStatsObject, .{
                     globalObject,
                     dev,

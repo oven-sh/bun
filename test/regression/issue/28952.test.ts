@@ -1,15 +1,7 @@
 // https://github.com/oven-sh/bun/issues/28952
-//
-// When fetch()'s native body stream delivered the full payload as a single
-// buffer, the JS wrapper installed a plain `{ start, pull }` underlying source
-// that was missing a `$resume` method. After the async-iterator finished and
-// called `reader.releaseLock()`, `readableStreamReaderGenericRelease` tried to
-// invoke `underlyingSource.$resume(false)` and threw
-// `TypeError: ... $resume is not a function`.
-//
-// The crash only reproduced when the caller inserted any delay between
-// receiving `res.body` and iterating it, because the gap let the native
-// buffered fast-path finish before the iterator started.
+// The `await Bun.sleep(0)` between `res.body` and iteration is load-bearing:
+// it lets the native fetch task drain the response into the single-buffer
+// fast path before the async-iterator starts, which is the regression signal.
 import { expect, test } from "bun:test";
 
 test("fetch() body iterates with a buffered fast-path across an await (#28952)", async () => {
@@ -33,11 +25,6 @@ test("fetch() body iterates with a buffered fast-path across an await (#28952)",
   }
 
   const body = await fetchStream();
-  // Yielding to the event loop once (via Bun.sleep, which suspends via an
-  // async task rather than a microtask) lets the native fetch task drain
-  // the response into the single-buffer fast path before iteration begins
-  // — which is what used to crash releaseLock() in the async-iterator's
-  // finally block.
   await Bun.sleep(0);
 
   let total = 0;

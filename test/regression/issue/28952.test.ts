@@ -8,12 +8,10 @@ test("fetch() body iterates with a buffered fast-path across an await (#28952)",
   using server = Bun.serve({
     port: 0,
     async fetch() {
-      const data = new Uint8Array(280 * 1024);
-      for (let i = 0; i < data.length; i++) data[i] = i & 0xff;
-      return new Response(data, {
+      return new Response(Buffer.alloc(280 * 1024, 0x41), {
         headers: {
           "Content-Type": "application/octet-stream",
-          "Content-Length": String(data.length),
+          "Content-Length": String(280 * 1024),
         },
       });
     },

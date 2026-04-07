@@ -4,7 +4,7 @@
 // fast path before the async-iterator starts, which is the regression signal.
 import { expect, test } from "bun:test";
 
-test("fetch() body iterates with a buffered fast-path across an await (#28952)", async () => {
+test.concurrent("fetch() body iterates with a buffered fast-path across an await (#28952)", async () => {
   using server = Bun.serve({
     port: 0,
     async fetch() {
@@ -32,7 +32,7 @@ test("fetch() body iterates with a buffered fast-path across an await (#28952)",
   expect(total).toBe(280 * 1024);
 });
 
-test("fetch() body iterates with a buffered fast-path for a large payload (#28952)", async () => {
+test.concurrent("fetch() body iterates with a buffered fast-path for a large payload (#28952)", async () => {
   using server = Bun.serve({
     port: 0,
     async fetch() {

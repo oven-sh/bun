@@ -109,9 +109,9 @@ fi
 # caller-supplied artifact basename. See the scratch_dir block below.
 manifest_basename="SHASUMS256.txt"
 signed_manifest_basename="${manifest_basename}.asc"
-scratch_prefix=".sign-manifest-scratch."
 manifest="${dir}/${manifest_basename}"
 signed_manifest="${manifest}.asc"
+scratch_prefix=".sign-manifest-scratch."
 
 # Validate every artifact BEFORE we touch any output file or install
 # the cleanup trap — fail-fast with a clear error, no orphaned
@@ -264,27 +264,37 @@ cleanup() {
     if [ "${signed_manifest_written}" -eq 1 ]; then
       rm -f "${signed_manifest}" || true
     fi
-    if [ -n "${backup_manifest}" ]; then
+    # `-f` (not `-n`): the backup invariant is "variable set iff backup
+    # exists", but checking the filesystem directly is defense-in-depth —
+    # if the backup file was somehow removed between its successful `mv`
+    # and this restore, we skip cleanly instead of attempting `mv` of a
+    # missing source and relying on `|| true` to swallow the error.
+    if [ -f "${backup_manifest}" ]; then
       mv -f "${backup_manifest}" "${manifest}" || true
     fi
-    if [ -n "${backup_signed_manifest}" ]; then
+    if [ -f "${backup_signed_manifest}" ]; then
       mv -f "${backup_signed_manifest}" "${signed_manifest}" || true
     fi
   fi
   # Success and failure both drop the entire scratch directory. On
-  # success it holds only cleanup-eligible state (the backups and the
+  # success it holds only cleanup-eligible state (the backups, the
   # intermediate .tmp whose content is now live in ${manifest} via
-  # the atomic rename). On failure any partial state is wiped along
-  # with it. Single rm -rf handles both branches.
-  if [ -n "${scratch_dir}" ]; then
+  # the atomic rename, and the gnupghome). On failure any partial
+  # state is wiped along with it. Single rm -rf handles both branches.
+  #
+  # Kill the gpg-agent BEFORE removing scratch_dir: the agent's socket
+  # lives inside gnupghome/, which lives inside scratch_dir/, and a
+  # live agent with a deleted socket directory will crash noisily in
+  # the CI log. `gpgconf --kill all` takes GNUPGHOME from the env, so
+  # export it inline for the one call.
+  if [ -d "${gnupghome}" ]; then
+    GNUPGHOME="${gnupghome}" gpgconf --kill all >/dev/null 2>&1 || true
+  fi
+  if [ -d "${scratch_dir}" ]; then
     rm -rf "${scratch_dir}" || true
   fi
-  if [ -n "${hash_dir}" ]; then
+  if [ -d "${hash_dir}" ]; then
     rm -rf "${hash_dir}" || true
-  fi
-  if [ -n "${gnupghome}" ]; then
-    GNUPGHOME="${gnupghome}" gpgconf --kill all >/dev/null 2>&1 || true
-    rm -rf "${gnupghome}" || true
   fi
   exit "${rc}"
 }
@@ -452,7 +462,13 @@ if [ "${should_sign}" -ne 1 ]; then
 fi
 
 # Use an isolated GNUPGHOME so we never touch the agent's default keyring.
-gnupghome=$(mktemp -d 2>/dev/null || mktemp -d -t bun-sign-release-manifest-gpg)
+# Nested inside `${scratch_dir}` (not /tmp) so a single `rm -rf scratch_dir`
+# in cleanup() tears down both the intermediates and the keyring in one
+# shot, and so the private-key material stays inside the release staging
+# directory — which buildkite wipes between jobs — rather than /tmp,
+# which on bare-metal agents outlives a single run. mktemp's template
+# guarantees a unique subdir under scratch_dir.
+gnupghome=$(mktemp -d "${scratch_dir}/.gnupg-XXXXXXXX")
 chmod 700 "${gnupghome}"
 
 GNUPGHOME="${gnupghome}" gpg --batch --quiet --import <<< "${GPG_PRIVATE_KEY}"
@@ -474,22 +490,27 @@ GNUPGHOME="${gnupghome}" gpg --batch --quiet --import <<< "${GPG_PRIVATE_KEY}"
 # status (naked `exit` uses the most-recent command's status). This
 # intentionally sidesteps the `set -e` exemption for the left side of
 # `&&`, which would otherwise silently fall through on gpg failure.
-# Flag the signed manifest as about-to-be-written BEFORE gpg runs.
-# gpg --clearsign --output writes bytes to ${signed_manifest} before
-# exiting, so if gpg crashes mid-write the file on disk is partial and
-# must be removed on rollback. Setting the flag first guarantees
-# cleanup() sees it and rm's the partial bytes; on gpg success, the
-# `&& success=1` flip below makes cleanup skip the rollback branch
-# entirely, so the flag is harmless.
-signed_manifest_written=1
+#
+# Write the signature to a scratch-dir tmp first, then atomic-rename it
+# into `${signed_manifest}` — mirrors how the unsigned manifest is
+# produced. A gpg crash between `--output` opening the target and the
+# final bytes being flushed cannot leave a partial .asc at
+# `${signed_manifest}`, because the target only appears via `mv` after
+# gpg exits cleanly. Flag signed_manifest_written AFTER the atomic
+# rename for the same reason manifest_written is flagged after its mv:
+# cleanup() only rm's a file this invocation actually touched.
+tmp_signed_manifest="${scratch_dir}/${signed_manifest_basename}.tmp"
 GNUPGHOME="${gnupghome}" gpg \
   --batch --yes --quiet \
   --pinentry-mode loopback \
   --passphrase-fd 0 \
   --digest-algo SHA512 \
   --clearsign \
-  --output "${signed_manifest}" \
-  "${manifest}" <<< "${GPG_PASSPHRASE}" && success=1 || exit
+  --output "${tmp_signed_manifest}" \
+  "${manifest}" <<< "${GPG_PASSPHRASE}" || exit
+mv "${tmp_signed_manifest}" "${signed_manifest}"
+signed_manifest_written=1
+success=1
 
 # Final diagnostic also guarded — same reasoning as the echo/cat above.
 # Here success=1 is already set, so a SIGPIPE would leave the .txt and

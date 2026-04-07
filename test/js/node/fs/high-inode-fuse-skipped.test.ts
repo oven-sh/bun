@@ -68,7 +68,7 @@ describe.skipIf(skipReason != null)("high-inode FUSE regression", () => {
   let mnt: string;
   let fuseScript: string;
 
-  beforeAll(() => {
+  beforeAll(async () => {
     const seed: Record<string, string> = {};
     for (const f of files) seed[`src/${f}`] = `stub ${f}\n`;
     dir = tempDir("high-inode-fuse-", seed);
@@ -79,10 +79,25 @@ describe.skipIf(skipReason != null)("high-inode FUSE regression", () => {
     mkdirSync(mnt, { recursive: true });
 
     // Minimal FUSE passthrough using python3-fuse. Reports every file's
-    // inode as `INODE_OFFSET + real_inode`, producing distinct values all
-    // well above 2^63. The source directory is baked in as a JSON literal
-    // so there's no risk of `sys.argv` index confusion with FUSE's own
-    // option parsing.
+    // inode as `INODE_OFFSET + file_index * STRIDE`, producing distinct
+    // values all well above 2^63.
+    //
+    // STRIDE has to be >= the IEEE-754 ULP at `INODE_OFFSET`. For values
+    // near 2^63 the ULP of a `double` is 2^11 = 2048, so two u64 inodes
+    // differing by less than 2048 collapse to the same `Number`. Real
+    // tmpfs/ext4 inodes are usually consecutive, so `OFFSET + real_ino`
+    // would produce inodes within a single ULP bucket and the distinct-
+    // -inode assertion further down would fail even after the fix. Use a
+    // per-file stride of 4096 (2 × ULP) so the distinct inodes survive
+    // the round-trip through `double`.
+    //
+    // The source directory and the file→inode map are baked in as Python
+    // literals so there's no risk of `sys.argv` index confusion with
+    // FUSE's own option parsing.
+    const inoMap: Record<string, string> = {};
+    files.forEach((f, i) => {
+      inoMap[f] = (INODE_OFFSET + BigInt(i) * 4096n).toString();
+    });
     writeFileSync(
       fuseScript,
       `
@@ -92,7 +107,9 @@ from fuse import Fuse, Stat, Direntry
 fuse.fuse_python_api = (0, 2)
 
 SRC = ${JSON.stringify(src)}
-OFFSET = ${INODE_OFFSET}
+INOS = {${Object.entries(inoMap)
+        .map(([k, v]) => `${JSON.stringify(k)}: ${v}`)
+        .join(", ")}}
 
 class HighIno(Fuse):
     def _full(self, p):
@@ -104,7 +121,8 @@ class HighIno(Fuse):
             return -e.errno
         s = Stat()
         s.st_mode = st.st_mode
-        s.st_ino = OFFSET + st.st_ino
+        name = os.path.basename(path.rstrip("/"))
+        s.st_ino = INOS.get(name, st.st_ino)
         s.st_nlink = st.st_nlink
         s.st_uid = st.st_uid
         s.st_gid = st.st_gid
@@ -149,7 +167,10 @@ server.main()
 
     // Wait briefly for the mount to become visible. Fail loudly if it
     // never does — the individual test bodies would otherwise fail with
-    // confusing ENOENT errors that don't mention the mount.
+    // confusing ENOENT errors that don't mention the mount. `Bun.sleep`
+    // between polls keeps the wait off the hot path while readdirSync
+    // would otherwise fail-fast with ENOENT/ENOTCONN at tens of thousands
+    // of iterations per second.
     const deadline = Date.now() + 3000;
     let ready = false;
     while (Date.now() < deadline) {
@@ -159,6 +180,7 @@ server.main()
           break;
         }
       } catch {}
+      await Bun.sleep(25);
     }
     if (!ready) {
       throw new Error(

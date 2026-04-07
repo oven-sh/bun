@@ -31,7 +31,9 @@ function track(server: net.Server) {
   return server;
 }
 
-async function listenEphemeral(onConnection?: (socket: net.Socket) => void): Promise<{ port: number; server: net.Server }> {
+async function listenEphemeral(
+  onConnection?: (socket: net.Socket) => void,
+): Promise<{ port: number; server: net.Server }> {
   const server = net.createServer(onConnection);
   track(server);
   await once(server.listen(0, "127.0.0.1"), "listening");

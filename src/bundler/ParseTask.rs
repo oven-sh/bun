@@ -859,6 +859,7 @@ pub mod parse_worker {
                     Some(b"text/plain"),
                     None,
                     topts.compile_to_standalone_html,
+                    topts.asset_inline_limit,
                 );
                 return Ok(ast);
             }
@@ -900,6 +901,7 @@ pub mod parse_worker {
                     Some(b"text/html"),
                     None,
                     topts.compile_to_standalone_html,
+                    topts.asset_inline_limit,
                 );
                 return Ok(ast);
             }
@@ -1252,7 +1254,7 @@ pub mod parse_worker {
             Loader::Dataurl | Loader::Base64 | Loader::Bunsh => {
                 return get_empty_ast::<E::String>(log, transpiler, opts, bump, source);
             }
-            Loader::File | Loader::Wasm => {
+            Loader::File | Loader::Url | Loader::Wasm => {
                 debug_assert!(loader.should_copy_for_bundling());
 
                 // Put a unique key in the AST to implement the URL loader. At the end
@@ -1313,13 +1315,23 @@ pub mod parse_worker {
                     )?
                     .unwrap(),
                 );
-                ast.add_url_for_css(
-                    bump,
-                    source,
-                    None,
-                    Some(unique_key),
-                    topts.compile_to_standalone_html,
-                );
+                // The `file` loader always emits a physical asset. The `url` loader
+                // inlines the contents as a `data:` URI when referenced from a CSS
+                // `url(...)` and the size is below `asset_inline_limit`, otherwise
+                // it falls back to emitting a file. Standalone HTML always inlines
+                // so every asset lives inside a single output file.
+                let force_inline = topts.compile_to_standalone_html;
+                let should_inline_for_css = force_inline || loader == Loader::Url;
+                if should_inline_for_css {
+                    ast.add_url_for_css(
+                        bump,
+                        source,
+                        None,
+                        Some(unique_key),
+                        force_inline,
+                        topts.asset_inline_limit,
+                    );
+                }
                 return Ok(ast);
             }
         }

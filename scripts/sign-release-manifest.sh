@@ -228,14 +228,15 @@ gnupghome=""
 scratch_dir=""
 backup_manifest=""
 backup_signed_manifest=""
-# Per-output mutation flags. These are set immediately after a
-# successful write to the corresponding output path (or, for
-# signed_manifest, immediately BEFORE the gpg --output invocation that
-# may crash mid-write). cleanup() only `rm -f`'s an output if the
-# matching flag is set — so a failure path that never touched
-# `${manifest}` (e.g. mktemp fails, the backup `mv` fails, the hash
-# loop fails before the final mv) leaves the pre-existing file on
-# disk instead of deleting it.
+# Per-output mutation flags. Both are set immediately AFTER a
+# successful atomic `mv` from the scratch-dir tmp into the final
+# output path — see the collation block (manifest_written) and the
+# signing block (signed_manifest_written) below for the exact sites.
+# cleanup() only `rm -f`'s an output if the matching flag is set, so
+# a failure path that never touched the output paths (e.g. mktemp
+# fails, the backup `mv` fails, the hash job fails, the collate
+# fails, gpg --clearsign fails before the tmp→final rename) leaves
+# any pre-existing file on disk instead of deleting it.
 manifest_written=0
 signed_manifest_written=0
 cleanup() {
@@ -506,21 +507,23 @@ GNUPGHOME="${gnupghome}" gpg --batch --quiet --import <<< "${GPG_PRIVATE_KEY}"
 # algorithm-agnostic (`Hash: .*`). Keeping the signature digest consistent
 # with production so nothing downstream that inspects the `Hash:` header
 # sees a change.
-# `&& success=1 || exit` ties the success flip textually and atomically
-# to gpg's own exit code: gpg succeeds → success=1, continue; gpg fails
-# → skip success=1, fall into `|| exit` which propagates gpg's non-zero
-# status (naked `exit` uses the most-recent command's status). This
-# intentionally sidesteps the `set -e` exemption for the left side of
-# `&&`, which would otherwise silently fall through on gpg failure.
 #
-# Write the signature to a scratch-dir tmp first, then atomic-rename it
-# into `${signed_manifest}` — mirrors how the unsigned manifest is
-# produced. A gpg crash between `--output` opening the target and the
-# final bytes being flushed cannot leave a partial .asc at
-# `${signed_manifest}`, because the target only appears via `mv` after
-# gpg exits cleanly. Flag signed_manifest_written AFTER the atomic
-# rename for the same reason manifest_written is flagged after its mv:
-# cleanup() only rm's a file this invocation actually touched.
+# Structure:
+#   1. `gpg --output "${tmp_signed_manifest}" ... || exit` — gpg writes
+#      into a scratch-dir tmp path. The trailing `|| exit` is load-bearing:
+#      without it, `set -e` would still fire on a non-zero gpg exit, but
+#      the naked `exit` propagates gpg's own exit code (instead of whatever
+#      subsequent command ran) so the caller can tell sign failed vs. mv.
+#   2. `mv "${tmp_signed_manifest}" "${signed_manifest}"` — atomic rename
+#      into the final output path. A gpg crash between `--output` opening
+#      the target and the final bytes flushing cannot leave a partial .asc
+#      at `${signed_manifest}`, because the target only appears via this
+#      mv after gpg exits cleanly.
+#   3. `signed_manifest_written=1` — set AFTER the mv so cleanup() only
+#      rm's the output if we actually touched it, mirroring how
+#      `manifest_written` is set after its mv in the collation block above.
+#   4. `success=1` — entering the fully-signed path means every integrity
+#      invariant is satisfied; cleanup() skips the rollback branch.
 tmp_signed_manifest="${scratch_dir}/${signed_manifest_basename}.tmp"
 GNUPGHOME="${gnupghome}" gpg \
   --batch --yes --quiet \

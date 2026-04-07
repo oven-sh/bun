@@ -1246,7 +1246,11 @@ pub const RunCommand = struct {
     /// address — HTTPThread.schedule does @fieldParentPtr on that task,
     /// so moving the struct would break the worker's callback.
     const RemoteImageDownload = struct {
-        async_http: bun.http.AsyncHTTP = undefined,
+        // Assigned immediately after the struct literal in
+        // prefetchRemoteImages (can't be set in the literal because
+        // AsyncHTTP.init needs a pointer to response_buffer, which only
+        // has a stable address once the owning struct is live).
+        async_http: bun.http.AsyncHTTP,
         response_buffer: bun.MutableString,
         url: []const u8,
         done: *DoneChannel,
@@ -1317,6 +1321,7 @@ pub const RunCommand = struct {
         for (remote_urls.items) |raw_url| {
             const d = allocator.create(RemoteImageDownload) catch continue;
             d.* = .{
+                .async_http = undefined,
                 .response_buffer = bun.MutableString.init(allocator, 8 * 1024) catch {
                     allocator.destroy(d);
                     continue;

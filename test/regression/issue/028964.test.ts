@@ -10,10 +10,10 @@
 // skipped. The fix is to lstat the existing entry and force a reinstall when
 // its form (symlink vs. real directory) doesn't match the new resolution tag.
 
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir, tmpdirSync } from "harness";
 import { lstatSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { bunEnv, bunExe, tempDir, tmpdirSync } from "harness";
 
 const PKG_NAME = "reg-28964-pkg";
 
@@ -25,15 +25,10 @@ async function run(cmd: string[], cwd: string, env: Record<string, string>) {
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   if (exitCode !== 0) {
     throw new Error(
-      `bun ${cmd.join(" ")} (cwd=${cwd}) exited with ${exitCode}\n` +
-        `STDOUT:\n${stdout}\nSTDERR:\n${stderr}`,
+      `bun ${cmd.join(" ")} (cwd=${cwd}) exited with ${exitCode}\n` + `STDOUT:\n${stdout}\nSTDERR:\n${stderr}`,
     );
   }
   return { stdout, stderr };
@@ -100,10 +95,7 @@ test("bun install <pkg> after `bun link --save <pkg>` replaces the symlink in no
   await using server = startRegistry(tarballPath, "1.0.0");
 
   const consumerDir = tmpdirSync();
-  await Bun.write(
-    join(consumerDir, "package.json"),
-    JSON.stringify({ name: "consumer", version: "0.0.0" }),
-  );
+  await Bun.write(join(consumerDir, "package.json"), JSON.stringify({ name: "consumer", version: "0.0.0" }));
   // Point bun at our local registry + isolate the install cache.
   await Bun.write(
     join(consumerDir, "bunfig.toml"),
@@ -186,10 +178,7 @@ test("bun link --save <pkg> after an npm install replaces the real directory wit
   });
 
   const consumerDir = tmpdirSync();
-  await Bun.write(
-    join(consumerDir, "package.json"),
-    JSON.stringify({ name: "consumer", version: "0.0.0" }),
-  );
+  await Bun.write(join(consumerDir, "package.json"), JSON.stringify({ name: "consumer", version: "0.0.0" }));
   await Bun.write(
     join(consumerDir, "bunfig.toml"),
     `[install]\ncache = false\nregistry = "http://localhost:${server.port}/"\nsaveTextLockfile = true\n`,

@@ -173,8 +173,11 @@ async function resolvePr(arg: string | undefined): Promise<{ repo: string; numbe
   const repo = repoResult.stdout.toString().trim();
 
   if (arg) {
+    // PR numbers are positive integers. `Number.isFinite` would accept 1.5,
+    // -1, and 0, all of which would just produce a confusing gh api error
+    // later. Require a positive integer up front for a clearer message.
     const n = Number(arg.replace(/^#/, ""));
-    if (!Number.isFinite(n)) {
+    if (!Number.isInteger(n) || n <= 0) {
       console.error(`Error: "${arg}" is not a PR number or URL.`);
       console.error(`Usage: bun run pr:comments [<number> | #<number> | <url>]`);
       process.exit(1);

@@ -1560,6 +1560,22 @@ it.if(isPosix)("realpathSync doesn't block on FIFO", () => {
   unlinkSync(path);
 });
 
+// Regression guard for realpathSync on POSIX hosts. On Linux, getFdPath has
+// a /dev/fd fallback for environments where /proc is broken (FreeBSD
+// Linuxulator) or absent (minimal containers).
+it.if(isPosix)("realpathSync resolves root, regular files, and symlinks", () => {
+  expect(realpathSync("/")).toBe("/");
+
+  const self = realpathSync(import.meta.path);
+  expect(self).toStartWith("/");
+  expect(existsSync(self)).toBe(true);
+
+  using dir = tempDir("fs-realpath-getfdpath", {});
+  const linkPath = join(String(dir), "link");
+  symlinkSync(import.meta.path, linkPath);
+  expect(realpathSync(linkPath)).toBe(self);
+});
+
 it("readlink", () => {
   const actual = join(tmpdirSync(), "fs-readlink.txt");
   try {
@@ -3302,10 +3318,11 @@ it("new Stats", () => {
   expectclose(BigInt(Math.floor(withoutBigInt.ctimeMs)), withBigInt.ctimeMs);
   expectclose(BigInt(Math.floor(withoutBigInt.birthtimeMs)), withBigInt.birthtimeMs);
 
-  expect(withBigInt.atime.getTime()).toEqual(withoutBigInt.atime.getTime());
-  expect(withBigInt.mtime.getTime()).toEqual(withoutBigInt.mtime.getTime());
-  expect(withBigInt.ctime.getTime()).toEqual(withoutBigInt.ctime.getTime());
-  expect(withBigInt.birthtime.getTime()).toEqual(withoutBigInt.birthtime.getTime());
+  // Allow ±1ms leeway: the non-bigint path goes through a float and can round differently.
+  expect(Math.abs(withBigInt.atime.getTime() - withoutBigInt.atime.getTime())).toBeLessThanOrEqual(1);
+  expect(Math.abs(withBigInt.mtime.getTime() - withoutBigInt.mtime.getTime())).toBeLessThanOrEqual(1);
+  expect(Math.abs(withBigInt.ctime.getTime() - withoutBigInt.ctime.getTime())).toBeLessThanOrEqual(1);
+  expect(Math.abs(withBigInt.birthtime.getTime() - withoutBigInt.birthtime.getTime())).toBeLessThanOrEqual(1);
 });
 
 it("test syscall errno, issue#4198", () => {

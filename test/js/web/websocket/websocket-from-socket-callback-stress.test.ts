@@ -4,7 +4,7 @@
 // Bun.connect onData callback with proxy env vars set at runtime.
 //
 // Run under ASAN: bun bd test test/js/web/websocket/websocket-from-socket-callback-stress.test.ts
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
 test("WebSocket created inside Bun.connect onData with runtime proxy env does not crash", async () => {

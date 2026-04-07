@@ -698,7 +698,7 @@ pub const Bin = extern struct {
             }
         }
 
-        fn createWindowsShim(this: *Linker, target: bun.FileDescriptor, abs_target: [:0]const u8, abs_dest: [:0]const u8, global: bool) void {
+        fn createWindowsShim(this: *Linker, target: bun.FD, abs_target: [:0]const u8, abs_dest: [:0]const u8, global: bool) void {
             const WinBinLinkingShim = @import("./windows-shim/BinLinkingShim.zig");
 
             var shim_buf: [65536]u8 = undefined;

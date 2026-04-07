@@ -150,6 +150,105 @@ test("rejects Transfer-Encoding + Content-Length", async () => {
   });
 });
 
+test("rejects conflicting duplicate Content-Length headers", async () => {
+  // RFC 9112 6.3: multiple Content-Length headers with differing values must be rejected
+  // to prevent request smuggling.
+  await using server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      return new Response("OK");
+    },
+  });
+
+  const client = net.connect(server.port, "127.0.0.1");
+
+  const maliciousRequest = [
+    "POST / HTTP/1.1",
+    "Host: localhost",
+    "Content-Length: 6",
+    "Content-Length: 5",
+    "",
+    "ABCDEF",
+  ].join("\r\n");
+
+  await new Promise<void>((resolve, reject) => {
+    client.on("error", reject);
+    client.on("data", data => {
+      const response = data.toString();
+      expect(response).toContain("HTTP/1.1 400");
+      client.end();
+      resolve();
+    });
+    client.write(maliciousRequest);
+  });
+});
+
+test("accepts duplicate Content-Length headers with identical values", async () => {
+  // RFC 9112 6.3 permits duplicate Content-Length headers if they carry the same value.
+  let receivedBody = "";
+  await using server = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      receivedBody = await req.text();
+      return new Response("OK");
+    },
+  });
+
+  const client = net.connect(server.port, "127.0.0.1");
+
+  const request = ["POST / HTTP/1.1", "Host: localhost", "Content-Length: 5", "Content-Length: 5", "", "Hello"].join(
+    "\r\n",
+  );
+
+  await new Promise<void>((resolve, reject) => {
+    client.on("error", reject);
+    client.on("data", data => {
+      const response = data.toString();
+      expect(response).toContain("HTTP/1.1 200");
+      expect(receivedBody).toBe("Hello");
+      client.end();
+      resolve();
+    });
+    client.write(request);
+  });
+});
+
+test("rejects empty-valued Content-Length followed by smuggled Content-Length", async () => {
+  // An empty first Content-Length value must be rejected so it cannot be used to bypass
+  // the duplicate-Content-Length check and smuggle a second request in the body.
+  const seen: string[] = [];
+  await using server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      seen.push(`${req.method} ${new URL(req.url).pathname}`);
+      return new Response("OK");
+    },
+  });
+
+  const client = net.connect(server.port, "127.0.0.1");
+  const smuggled = "GET /admin HTTP/1.1\r\nHost: x\r\n\r\n";
+  const payload =
+    "POST /api HTTP/1.1\r\n" +
+    "Host: target\r\n" +
+    "Content-Length:\r\n" +
+    `Content-Length: ${smuggled.length}\r\n` +
+    "\r\n" +
+    smuggled;
+
+  await new Promise<void>((resolve, reject) => {
+    client.on("error", reject);
+    client.on("data", data => {
+      const response = data.toString();
+      expect(response).toContain("HTTP/1.1 400");
+      client.end();
+      resolve();
+    });
+    client.write(payload);
+  });
+
+  expect(seen).not.toContain("GET /admin");
+});
+
 test("accepts valid Transfer-Encoding: chunked", async () => {
   let receivedBody = "";
 

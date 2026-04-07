@@ -191,10 +191,10 @@ pub const FD = packed struct(backing_int) {
         };
     }
     pub fn makeLibUVOwnedForSyscall(
-        maybe_windows_fd: bun.FileDescriptor,
+        maybe_windows_fd: bun.FD,
         comptime syscall_tag: bun.sys.Tag,
         comptime error_case: enum { close_on_fail, leak_fd_on_fail },
-    ) bun.sys.Maybe(bun.FileDescriptor) {
+    ) bun.sys.Maybe(bun.FD) {
         if (os != .windows) {
             return .{ .result = maybe_windows_fd };
         }

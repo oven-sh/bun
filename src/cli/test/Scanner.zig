@@ -21,7 +21,7 @@ search_count: usize = 0,
 const log = bun.Output.scoped(.jest, .hidden);
 const Fifo = bun.LinearFifo(ScanEntry, .Dynamic);
 const ScanEntry = struct {
-    relative_dir: bun.StoredFileDescriptorType,
+    relative_dir: bun.FD,
     dir_path: []const u8,
     name: StringOrTinyString,
 };
@@ -195,7 +195,7 @@ pub fn isTestFile(this: *Scanner, name: []const u8) bool {
     return this.couldBeTestFile(name, false) and this.doesPathMatchFilter(name) and !this.matchesPathIgnorePattern(name);
 }
 
-pub fn next(this: *Scanner, entry: *FileSystem.Entry, fd: bun.StoredFileDescriptorType) void {
+pub fn next(this: *Scanner, entry: *FileSystem.Entry, fd: bun.FD) void {
     const name = entry.base_lowercase();
     this.has_iterated = true;
     switch (entry.kind(&this.fs.fs, true)) {

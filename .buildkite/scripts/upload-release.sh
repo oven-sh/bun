@@ -191,9 +191,19 @@ function sign_and_upload_manifest() {
   if [ -n "$gpg_private_key" ] && [ -n "$gpg_passphrase" ]; then
     assert_command "gpg" "gnupg" "https://gnupg.org/download/"
   else
-    echo "warn: GPG_PRIVATE_KEY/GPG_PASSPHRASE not set in Buildkite secrets;"
-    echo "warn: uploading SHASUMS256.txt unsigned. The daily sign workflow"
-    echo "warn: will catch up with a matching SHASUMS256.txt.asc within 24h."
+    # Each echo ends in `|| true` and writes to stderr, matching the
+    # same pattern applied to diagnostics inside the companion
+    # `scripts/sign-release-manifest.sh` helper. Buildkite multiplexes
+    # stdout/stderr through a single log-aggregator process, and if
+    # that process dies (OOM, agent restart) the kernel delivers
+    # SIGPIPE on every fd writing to it. Under `set -eo pipefail`
+    # bash would then exit 141 on the first affected echo — before
+    # sign-release-manifest.sh is ever invoked, which would leave
+    # SHASUMS256.txt ungenerated on that canary push and recreate the
+    # exact integrity gap this PR exists to close.
+    echo "warn: GPG_PRIVATE_KEY/GPG_PASSPHRASE not set in Buildkite secrets;" >&2 || true
+    echo "warn: uploading SHASUMS256.txt unsigned. The daily sign workflow" >&2 || true
+    echo "warn: will catch up with a matching SHASUMS256.txt.asc within 24h." >&2 || true
   fi
 
   local script_dir

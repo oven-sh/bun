@@ -117,6 +117,37 @@ async function opendir(dir: string, options) {
   return new (require("node:fs").Dir)(1, dir, options);
 }
 
+// Node.js throws a SystemError with code `ERR_FS_EISDIR` when `fs.rm`
+// is called on a directory without `recursive: true`. Bun's native
+// binding surfaces the raw `EISDIR` from unlink(2), so we rewrap it here
+// to match Node.js's shape. See #28958.
+function maybeRemapRmEISDIR(err: any, path: any, options: any) {
+  if (!err || err.code !== "EISDIR") return err;
+  if (options != null && typeof options === "object" && options.recursive) return err;
+  let pathString: string | undefined;
+  if (typeof path === "string") {
+    pathString = path;
+  } else if (path instanceof URL) {
+    try {
+      pathString = Bun.fileURLToPath(path as URL);
+    } catch {
+      pathString = undefined;
+    }
+  } else if (Buffer.isBuffer(path)) {
+    pathString = path.toString();
+  } else if (typeof err.path === "string") {
+    pathString = err.path;
+  }
+  const pathSuffix = pathString !== undefined ? " " + pathString : "";
+  const wrapped: any = new Error(`Path is a directory: rm returned EISDIR (is a directory)${pathSuffix}`);
+  wrapped.name = "SystemError";
+  wrapped.code = "ERR_FS_EISDIR";
+  wrapped.errno = 21;
+  wrapped.syscall = "rm";
+  if (pathString !== undefined) wrapped.path = pathString;
+  return wrapped;
+}
+
 const private_symbols = {
   kRef,
   kUnref,
@@ -195,7 +226,13 @@ const exports = {
   unlink: asyncWrap(fs.unlink, "unlink"),
   utimes: asyncWrap(fs.utimes, "utimes"),
   lutimes: asyncWrap(fs.lutimes, "lutimes"),
-  rm: asyncWrap(fs.rm, "rm"),
+  rm: async function rm(path, options) {
+    try {
+      return await fs.rm(path, options);
+    } catch (err) {
+      throw maybeRemapRmEISDIR(err, path, options);
+    }
+  },
   rmdir: asyncWrap(fs.rmdir, "rmdir"),
   writev: async (fd, buffers, position) => {
     var bytesWritten = await fs.writev(fd, buffers, position);

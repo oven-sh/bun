@@ -5759,6 +5759,11 @@ pub const NodeFS = struct {
                     error.InvalidUtf8 => .INVAL,
                     error.InvalidWtf8 => .INVAL,
                     error.BadPathName => .INVAL,
+                    // On Linux, unlink(2) on a directory returns EISDIR.
+                    // Node.js throws `ERR_FS_EISDIR` in this case; the JS
+                    // wrapper in `src/js/node/fs.ts` remaps this.
+                    error.IsDir => .ISDIR,
+                    error.NotDir => .NOTDIR,
                     error.FileNotFound => brk: {
                         if (args.force) {
                             return .success;

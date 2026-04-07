@@ -33,6 +33,11 @@ const script = join(repoRoot, "scripts", "sign-release-manifest.sh");
 function sh(cmd: string[], env: Record<string, string> = {}) {
   const res = Bun.spawnSync({
     cmd,
+    // Pin cwd to the repo root so the helper is robust against whatever
+    // directory the test runner happens to be invoked from. Every path
+    // in this file is already absolute, so this is defensive rather than
+    // load-bearing, but it keeps the pattern consistent.
+    cwd: repoRoot,
     env: { ...bunEnv, ...env },
     stdout: "pipe",
     stderr: "pipe",

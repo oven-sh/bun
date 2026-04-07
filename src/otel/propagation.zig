@@ -72,5 +72,6 @@ fn hexDecode(src: []const u8, dst: []u8) bool {
 }
 
 const bun = @import("bun");
+
 const span_mod = @import("./span.zig");
 const SpanContext = span_mod.SpanContext;

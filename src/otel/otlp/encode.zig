@@ -141,11 +141,11 @@ fn encodeKeyValueList(w: pb.Writer, kvs: []const Attribute) OOM!void {
     for (kvs) |*kv| try w.writeSubmessage(tags.KeyValueList.values, kv, encodeKeyValue);
 }
 
-const std = @import("std");
-const bun = @import("bun");
 const pb = @import("./protobuf.zig");
 const span = @import("../span.zig");
-const attrs = @import("../attributes.zig");
+const std = @import("std");
 const tags = @import("OtlpProtoTags");
-const Attribute = attrs.Attribute;
 const OOM = std.mem.Allocator.Error;
+
+const attrs = @import("../attributes.zig");
+const Attribute = attrs.Attribute;

@@ -264,15 +264,17 @@ const Batch = struct {
     }
 };
 
+const encode = @import("./otlp/encode.zig");
+const model = @import("./span.zig");
 const std = @import("std");
+const TracerProvider = @import("./tracer.zig").TracerProvider;
+
+const attributes = @import("./attributes.zig");
+const Attribute = attributes.Attribute;
+
 const bun = @import("bun");
-const jsc = bun.jsc;
-const JSValue = jsc.JSValue;
 const Async = bun.Async;
 const AutoFlusher = bun.webcore.AutoFlusher;
 
-const model = @import("./span.zig");
-const attributes = @import("./attributes.zig");
-const encode = @import("./otlp/encode.zig");
-const Attribute = attributes.Attribute;
-const TracerProvider = @import("./tracer.zig").TracerProvider;
+const jsc = bun.jsc;
+const JSValue = jsc.JSValue;

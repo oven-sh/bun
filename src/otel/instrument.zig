@@ -12,8 +12,6 @@
 //! FetchTasklet so the auto-instrumented hot path never allocates a JS
 //! `OtelSpan` wrapper.
 
-const log = bun.Output.scoped(.otel, .visible);
-
 extern fn Bun__getAsyncContextSlot(global: *JSGlobalObject) JSValue;
 extern fn Bun__setAsyncContextSlot(global: *JSGlobalObject, value: JSValue) void;
 extern fn Bun__enableAsyncContextTracking(global: *JSGlobalObject) void;
@@ -206,13 +204,14 @@ pub const NativeSpan = struct {
     }
 };
 
-const std = @import("std");
 const bun = @import("bun");
-const jsc = bun.jsc;
-const JSValue = jsc.JSValue;
-const JSGlobalObject = jsc.JSGlobalObject;
-
 const model = @import("./span.zig");
+const std = @import("std");
 const tracer = @import("./tracer.zig");
+
 const attrs = @import("./attributes.zig");
 const Attribute = attrs.Attribute;
+
+const jsc = bun.jsc;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSValue = jsc.JSValue;

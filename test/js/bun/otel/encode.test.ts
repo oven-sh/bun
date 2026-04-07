@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 
 // @ts-expect-error TODO(@jarred): packages/bun-types
 const { encodeTraces, decodeTraces } = Bun.otel;

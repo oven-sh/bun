@@ -721,18 +721,19 @@ comptime {
     @export(&js_getActiveSpanContext, .{ .name = "Bun__otel__getActiveSpanContext" });
 }
 
-const std = @import("std");
 const bun = @import("bun");
-const jsc = bun.jsc;
-const JSValue = jsc.JSValue;
-const JSGlobalObject = jsc.JSGlobalObject;
-
-const pb = @import("./otlp/protobuf.zig");
 const encode = @import("./otlp/encode.zig");
+const instrument = @import("./instrument.zig");
+const pb = @import("./otlp/protobuf.zig");
+const propagation = @import("./propagation.zig");
 const span = @import("./span.zig");
-const attrs = @import("./attributes.zig");
+const std = @import("std");
 const tags = @import("OtlpProtoTags");
 const tracer = @import("./tracer.zig");
-const propagation = @import("./propagation.zig");
-const instrument = @import("./instrument.zig");
+
+const attrs = @import("./attributes.zig");
 const Attribute = attrs.Attribute;
+
+const jsc = bun.jsc;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSValue = jsc.JSValue;

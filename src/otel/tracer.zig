@@ -590,16 +590,17 @@ fn readSpanContext(global: *JSGlobalObject, v: JSValue) bun.JSError!?model.SpanC
     return null;
 }
 
-const std = @import("std");
 const bun = @import("bun");
+const instrument = @import("./instrument.zig");
+const model = @import("./span.zig");
+const propagation = @import("./propagation.zig");
+const std = @import("std");
+const BatchProcessor = @import("./processor.zig").BatchProcessor;
+const OtlpHttpExporter = @import("./otlp/exporter.zig").OtlpHttpExporter;
+
+const attributes = @import("./attributes.zig");
+const Attribute = attributes.Attribute;
+
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
-
-const model = @import("./span.zig");
-const attributes = @import("./attributes.zig");
-const propagation = @import("./propagation.zig");
-const instrument = @import("./instrument.zig");
-const Attribute = attributes.Attribute;
-const BatchProcessor = @import("./processor.zig").BatchProcessor;
-const OtlpHttpExporter = @import("./otlp/exporter.zig").OtlpHttpExporter;

@@ -296,7 +296,7 @@ test "submessage with backpatch >128 bytes" {
     try std.testing.expectEqualSlices(u8, big, got);
 }
 
-const std = @import("std");
 const bun = @import("bun");
+const std = @import("std");
 const tags = @import("OtlpProtoTags");
 const OOM = std.mem.Allocator.Error;

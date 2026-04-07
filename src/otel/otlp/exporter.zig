@@ -211,12 +211,12 @@ fn decodePartialSuccess(body: []const u8, rejected: *i64, msg: *[]const u8) void
     }
 }
 
-const std = @import("std");
-const bun = @import("bun");
-const jsc = bun.jsc;
-const http = bun.http;
-const ThreadPool = bun.ThreadPool;
-
 const pb = @import("./protobuf.zig");
+const std = @import("std");
 const tags = @import("OtlpProtoTags");
 const Config = @import("../tracer.zig").Config;
+
+const bun = @import("bun");
+const ThreadPool = bun.ThreadPool;
+const http = bun.http;
+const jsc = bun.jsc;

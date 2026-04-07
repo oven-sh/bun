@@ -249,5 +249,5 @@ pub const empty = AttrList.empty;
 // is `Attribute.val_word` interpreted via `tag()`.
 pub const AnyValue = Value;
 
-const std = @import("std");
 const bun = @import("bun");
+const std = @import("std");

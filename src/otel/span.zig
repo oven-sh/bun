@@ -98,5 +98,5 @@ pub const ResourceSpans = struct {
     schema_url: []const u8 = "",
 };
 
-const std = @import("std");
 const attrs = @import("./attributes.zig");
+const std = @import("std");

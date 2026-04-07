@@ -1,9 +1,4 @@
 // https://github.com/oven-sh/bun/issues/28937
-//
-// `bun link --dev <package>` should add the package to devDependencies.
-// Before the fix, `--dev` (and `--optional`/`--peer`) were silently dropped
-// by the CLI parser for the `link` subcommand, and nothing was written to
-// package.json.
 import { file } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
@@ -12,47 +7,56 @@ import { join } from "node:path";
 async function setupLink(group: "dev" | "optional" | "peer" | "save" | "no-save") {
   // Isolate the "global" dir bun link uses so we don't touch the host.
   const globalRoot = tempDir(`issue-28937-global-${group}`, {});
-  const installEnv = {
-    ...bunEnv,
-    BUN_INSTALL: String(globalRoot),
-    BUN_INSTALL_GLOBAL_DIR: join(String(globalRoot), "install", "global"),
-    BUN_INSTALL_BIN: join(String(globalRoot), "bin"),
-  };
+  try {
+    const installEnv = {
+      ...bunEnv,
+      BUN_INSTALL: String(globalRoot),
+      BUN_INSTALL_GLOBAL_DIR: join(String(globalRoot), "install", "global"),
+      BUN_INSTALL_BIN: join(String(globalRoot), "bin"),
+    };
 
-  const linkable = tempDir(`issue-28937-target-${group}`, {
-    "package.json": JSON.stringify({
-      name: "issue-28937-linked-pkg",
-      version: "1.0.0",
-    }),
-  });
+    const linkable = tempDir(`issue-28937-target-${group}`, {
+      "package.json": JSON.stringify({
+        name: "issue-28937-linked-pkg",
+        version: "1.0.0",
+      }),
+    });
+    try {
+      // Register the linkable package globally.
+      await using registerProc = Bun.spawn({
+        cmd: [bunExe(), "link"],
+        cwd: String(linkable),
+        env: installEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [registerStdout, registerStderr, registerExit] = await Promise.all([
+        registerProc.stdout.text(),
+        registerProc.stderr.text(),
+        registerProc.exited,
+      ]);
+      // Debug builds print an ASAN warning on stderr; assert only that no error
+      // was logged, not that stderr is completely empty.
+      expect(registerStderr).not.toContain("error:");
+      expect(registerStdout).toContain(`Registered "issue-28937-linked-pkg"`);
+      expect(registerExit).toBe(0);
 
-  // Register the linkable package globally.
-  await using registerProc = Bun.spawn({
-    cmd: [bunExe(), "link"],
-    cwd: String(linkable),
-    env: installEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [registerStdout, registerStderr, registerExit] = await Promise.all([
-    registerProc.stdout.text(),
-    registerProc.stderr.text(),
-    registerProc.exited,
-  ]);
-  // Debug builds print an ASAN warning on stderr; assert only that no error
-  // was logged, not that stderr is completely empty.
-  expect(registerStderr).not.toContain("error:");
-  expect(registerStdout).toContain(`Registered "issue-28937-linked-pkg"`);
-  expect(registerExit).toBe(0);
+      const consumer = tempDir(`issue-28937-consumer-${group}`, {
+        "package.json": JSON.stringify({
+          name: "issue-28937-consumer",
+          version: "1.0.0",
+        }),
+      });
 
-  const consumer = tempDir(`issue-28937-consumer-${group}`, {
-    "package.json": JSON.stringify({
-      name: "issue-28937-consumer",
-      version: "1.0.0",
-    }),
-  });
-
-  return { globalRoot, linkable, consumer, installEnv };
+      return { globalRoot, linkable, consumer, installEnv };
+    } catch (err) {
+      linkable[Symbol.dispose]();
+      throw err;
+    }
+  } catch (err) {
+    globalRoot[Symbol.dispose]();
+    throw err;
+  }
 }
 
 describe("bun link dependency group flags (issue #28937)", () => {

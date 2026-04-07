@@ -14,6 +14,14 @@
 # Buildkite GPG secrets. The daily .github/workflows/release.yml sign
 # cron will catch up with a signed manifest within 24h.
 #
+# Portability: this script is written against Bash 3.2 — the /bin/bash
+# shipped on macOS — so it runs unmodified on stock macOS, Alpine, and
+# every modern Linux. It intentionally avoids bash 4+ features like
+# `${var,,}`, `declare -A`, and nounset (`set -u`) because those all
+# trip on empty-array expansion under 3.2; the `mktemp` calls use the
+# portable `mktemp -d 2>/dev/null || mktemp -d -t ...` fallback for
+# BSD mktemp, which rejects bare `-d`.
+#
 # Inputs (env, optional):
 #   GPG_PRIVATE_KEY  ASCII-armored private key (required to sign)
 #   GPG_PASSPHRASE   Passphrase for the private key (required to sign)
@@ -22,7 +30,7 @@
 #   SHASUMS256.txt       Plain-text sha256 manifest, sorted by filename
 #   SHASUMS256.txt.asc   Clearsigned copy of the same body (only if signing)
 
-set -euo pipefail
+set -eo pipefail
 
 if [ "$#" -lt 2 ]; then
   echo "error: usage: $0 <dir> <artifact> [<artifact>...]" >&2
@@ -53,11 +61,14 @@ fi
 #
 # We don't trust the binary's presence alone: each candidate is
 # functionally probed by sha256'ing the empty string and comparing the
-# result to the known SHA-256(""). That rejects BusyBox `cksum`
-# (CRC32-only, doesn't recognise `-a`), older GNU cksum pre-9.0 (same),
-# and catches any future host where the tool's output format drifts
-# away from `HASH  FILENAME`. `printf ''` (not `<<<''`, which would
-# inject a trailing newline) so we hash the genuine empty string.
+# first whitespace-delimited word to the known SHA-256(""). That rejects
+# BusyBox `cksum` (CRC32-only, doesn't recognise `-a`), older GNU cksum
+# pre-9.0 (same), and catches any future host where the tool's output
+# format drifts away from `HASH  FILENAME`. `printf ''` (not `<<<''`,
+# which would inject a trailing newline) so we hash the genuine empty
+# string. We also reject any tool that prints uppercase hex — every
+# modern implementation emits lowercase, and a mismatch there is a
+# signal the tool is non-standard enough that we should skip it.
 empty_sha256="e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 probe_sha256() {
   local out
@@ -67,7 +78,7 @@ probe_sha256() {
   # GNU tools print `HASH  -` when hashing stdin (`-` is the stdin
   # marker). Strip from the first space onward and compare the digest.
   out="${out%% *}"
-  [ "${out,,}" = "$empty_sha256" ]
+  [ "$out" = "$empty_sha256" ]
 }
 if probe_sha256 cksum -a sha256 --untagged; then
   sha256_cmd=(cksum -a sha256 --untagged)
@@ -115,11 +126,12 @@ tmp_manifest="$manifest.tmp"
 #    and `".."` break manifest parsing.
 # 4. Duplicate basenames would launch two hash jobs writing the same
 #    `$hash_dir/$artifact.digest` path and the collation loop would
-#    emit the same archive twice. Detected via an associative set
-#    keyed on the unsorted name, so we don't depend on the manifest
-#    sort order happening up front.
+#    emit the same archive twice. We track seen names in a plain
+#    array with a linear scan — O(n²) but n≤22 for the canary set,
+#    and using `declare -A` here would break Bash 3.2 / stock macOS
+#    /bin/bash where this script's test suite also runs.
 # 5. The file must exist inside `$dir` so the hash job can read it.
-declare -A _seen=()
+seen_artifacts=()
 for artifact in "${artifacts[@]}"; do
   case "$artifact" in
     *$'\n'*|*$'\r'*)
@@ -137,17 +149,19 @@ for artifact in "${artifacts[@]}"; do
       exit 1
       ;;
   esac
-  if [ -n "${_seen[$artifact]:-}" ]; then
-    echo "error: duplicate artifact for signing: $artifact" >&2
-    exit 1
-  fi
-  _seen[$artifact]=1
+  for seen in "${seen_artifacts[@]}"; do
+    if [ "$seen" = "$artifact" ]; then
+      echo "error: duplicate artifact for signing: $artifact" >&2
+      exit 1
+    fi
+  done
+  seen_artifacts+=("$artifact")
   if [ ! -f "$dir/$artifact" ]; then
     echo "error: missing artifact for signing: $dir/$artifact" >&2
     exit 1
   fi
 done
-unset artifact _seen
+unset artifact seen seen_artifacts
 
 # Now that the request is validated, install cleanup for the mutation
 # phase. Every failure below this point — `rm -f` on a stale .asc, a
@@ -161,7 +175,7 @@ gnupghome=""
 hash_dir=""
 cleanup() {
   local rc=$?
-  # Every rm inside this trap ends in `|| true`. With `set -euo pipefail`
+  # Every rm inside this trap ends in `|| true`. With `set -eo pipefail`
   # in effect, a non-zero rm (permission error, NFS stale handle, etc.)
   # would otherwise propagate out of the trap with rm's exit code instead
   # of the captured `$rc`, making the caller think signing failed when it
@@ -227,7 +241,11 @@ rm -f "$signed_manifest" || true
 #   parallel hash job) keeps the job a single exec and means the file
 #   on disk has enough context for a post-mortem if anything ever goes
 #   wrong reading it back.
-hash_dir=$(mktemp -d)
+#
+# `mktemp -d 2>/dev/null || mktemp -d -t ...` is the portable form:
+# GNU mktemp accepts a bare `-d`, BSD mktemp (macOS) rejects it and
+# needs a `-t TEMPLATE` argument. Run GNU first, fall back to BSD form.
+hash_dir=$(mktemp -d 2>/dev/null || mktemp -d -t bun-sign-release-manifest)
 
 pids=()
 for artifact in "${artifacts[@]}"; do
@@ -246,25 +264,21 @@ for pid in "${pids[@]}"; do
   fi
 done
 
-# Sort the artifact list so the manifest is deterministic regardless of
-# the caller's ordering. This matches packages/bun-release/scripts/upload-assets.ts
-# which localeCompare-sorts the same map. We only need the sorted order
-# here at collation time, not for validation or hashing.
-sorted=()
-while IFS= read -r line; do
-  sorted+=("$line")
-done < <(printf '%s\n' "${artifacts[@]}" | LC_ALL=C sort)
-
 # Collate the per-artifact digests into the manifest in sorted order.
+# Sort the artifact list so the manifest is deterministic regardless of
+# the caller's ordering; LC_ALL=C matches packages/bun-release/scripts/upload-assets.ts
+# which localeCompare-sorts the same map. The while-read pulls directly
+# from the sorted process substitution, so there's no intermediate
+# `sorted` array to keep in sync with the artifact list.
 : > "$tmp_manifest"
-for artifact in "${sorted[@]}"; do
+while IFS= read -r artifact; do
   sha=$(cut -d ' ' -f 1 "$hash_dir/$artifact.digest")
   if [ "${#sha}" -ne 64 ]; then
     echo "error: malformed sha256 for $artifact: '$sha'" >&2
     exit 1
   fi
   printf '%s *%s\n' "$sha" "$artifact" >> "$tmp_manifest"
-done
+done < <(printf '%s\n' "${artifacts[@]}" | LC_ALL=C sort)
 
 # Atomic rename — the final $manifest only appears once every hash has
 # been written. Prior SIGKILL would leave a .tmp that cleanup() (or the
@@ -283,12 +297,17 @@ if [ "$should_sign" -ne 1 ]; then
   success=1
 fi
 
-# Diagnostics go to stderr, matching the warn:/error: lines above. Stderr
-# is diagnostic-only and captured by the build log; writing to stdout
-# would let a broken stdout pipe (e.g. Buildkite log aggregator dying)
-# SIGPIPE `cat` and trip cleanup() in the signed path before gpg runs.
-echo "Generated $manifest:" >&2
-cat "$manifest" >&2
+# Diagnostics go to stderr. Each one ends in `|| true` because on
+# Buildkite both stdout and stderr are multiplexed through a single
+# log-aggregator child process: if that aggregator dies (OOM, agent
+# restart, etc.) the kernel delivers SIGPIPE on fd 2 just like fd 1,
+# and the bash SIGPIPE exit (141) would fire `set -e` here. In the
+# signed path `success` is still 0 at this point (we only flip it after
+# gpg succeeds below), so a `cleanup()` triggered here would delete the
+# correctly-written $manifest. Guarding the diagnostics suppresses that
+# edge without losing the log output on a healthy run.
+echo "Generated $manifest:" >&2 || true
+cat "$manifest" >&2 || true
 
 if [ "$should_sign" -ne 1 ]; then
   # Fresh unsigned manifest is strictly more useful to `sha256sum -c` users
@@ -296,14 +315,14 @@ if [ "$should_sign" -ne 1 ]; then
   # the previous manifest body until the daily cron runs, so strict PGP
   # validators will see a temporary identity mismatch. Document the state.
   # success=1 was already set above.
-  echo "warn: GPG_PRIVATE_KEY/GPG_PASSPHRASE not set; wrote SHASUMS256.txt" >&2
-  echo "warn: without a signature. The daily release sign workflow will" >&2
-  echo "warn: catch up with a matching SHASUMS256.txt.asc within 24h." >&2
+  echo "warn: GPG_PRIVATE_KEY/GPG_PASSPHRASE not set; wrote SHASUMS256.txt" >&2 || true
+  echo "warn: without a signature. The daily release sign workflow will" >&2 || true
+  echo "warn: catch up with a matching SHASUMS256.txt.asc within 24h." >&2 || true
   exit 0
 fi
 
 # Use an isolated GNUPGHOME so we never touch the agent's default keyring.
-gnupghome=$(mktemp -d)
+gnupghome=$(mktemp -d 2>/dev/null || mktemp -d -t bun-sign-release-manifest-gpg)
 chmod 700 "$gnupghome"
 
 GNUPGHOME="$gnupghome" gpg --batch --quiet --import <<< "$GPG_PRIVATE_KEY"
@@ -334,4 +353,11 @@ GNUPGHOME="$gnupghome" gpg \
   --output "$signed_manifest" \
   "$manifest" <<< "$GPG_PASSPHRASE" && success=1 || exit
 
-echo "Signed $signed_manifest" >&2
+# Final diagnostic also guarded — same reasoning as the echo/cat above.
+# Here success=1 is already set, so a SIGPIPE would leave the .txt and
+# .asc on disk (cleanup() preserves them), but bash would still exit 141,
+# and the caller in .buildkite/scripts/upload-release.sh treats any
+# non-zero exit from the helper as a signing failure and skips the
+# upload entirely — the exact canary-release integrity failure this PR
+# fixes. `|| true` turns a logging hiccup into a clean exit 0.
+echo "Signed $signed_manifest" >&2 || true

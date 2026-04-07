@@ -291,8 +291,8 @@ describe("bun <file.md>", () => {
       [
         "| Path | Scope |",
         "| --- | --- |",
-        "| `src/CLAUDE.md` | Source architecture: module map, startup flow, state management |",
-        "| `src/components/design-system/CLAUDE.md` | Design system component API (Dialog, Tabs, StatusIcon, etc.) |",
+        "| `docs/guide.md` | Top-level architecture: module map, startup flow, state management |",
+        "| `docs/components/design-system/guide.md` | Design system component API (Dialog, Tabs, StatusIcon, etc.) |",
         "",
       ].join("\n"),
       { COLUMNS: "50" },

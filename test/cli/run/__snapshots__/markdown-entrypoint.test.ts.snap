@@ -204,11 +204,12 @@ exports[`bun <file.md> shrinks table columns to fit COLUMNS and wraps cell conte
 "\x1B[2m┌───────────────────────┬────────────────────────┐\x1B[0m
 \x1B[2m│\x1B[0m \x1B[1mPath\x1B[0m                  \x1B[2m│\x1B[0m \x1B[1mScope\x1B[0m                  \x1B[2m│\x1B[0m
 \x1B[2m├───────────────────────┼────────────────────────┤\x1B[0m
-\x1B[2m│\x1B[0m \x1B[48;5;236m\x1B[38;5;215msrc/CLAUDE.md\x1B[39m\x1B[49m\x1B[0m         \x1B[2m│\x1B[0m Source architecture:\x1B[0m   \x1B[2m│\x1B[0m
-\x1B[2m│\x1B[0m \x1B[0m                      \x1B[2m│\x1B[0m module map, startup\x1B[0m    \x1B[2m│\x1B[0m
-\x1B[2m│\x1B[0m \x1B[0m                      \x1B[2m│\x1B[0m flow, state management\x1B[0m \x1B[2m│\x1B[0m
-\x1B[2m│\x1B[0m \x1B[48;5;236m\x1B[38;5;215msrc/components/design\x1B[0m \x1B[2m│\x1B[0m Design system\x1B[0m          \x1B[2m│\x1B[0m
-\x1B[2m│\x1B[0m -system/CLAUDE.md\x1B[39m\x1B[49m\x1B[0m     \x1B[2m│\x1B[0m component API\x1B[0m          \x1B[2m│\x1B[0m
+\x1B[2m│\x1B[0m \x1B[48;5;236m\x1B[38;5;215mdocs/guide.md\x1B[39m\x1B[49m\x1B[0m         \x1B[2m│\x1B[0m Top-level\x1B[0m              \x1B[2m│\x1B[0m
+\x1B[2m│\x1B[0m \x1B[0m                      \x1B[2m│\x1B[0m architecture: module\x1B[0m   \x1B[2m│\x1B[0m
+\x1B[2m│\x1B[0m \x1B[0m                      \x1B[2m│\x1B[0m map, startup flow,\x1B[0m     \x1B[2m│\x1B[0m
+\x1B[2m│\x1B[0m \x1B[0m                      \x1B[2m│\x1B[0m state management\x1B[0m       \x1B[2m│\x1B[0m
+\x1B[2m│\x1B[0m \x1B[48;5;236m\x1B[38;5;215mdocs/components/desig\x1B[0m \x1B[2m│\x1B[0m Design system\x1B[0m          \x1B[2m│\x1B[0m
+\x1B[2m│\x1B[0m n-system/guide.md\x1B[39m\x1B[49m\x1B[0m     \x1B[2m│\x1B[0m component API\x1B[0m          \x1B[2m│\x1B[0m
 \x1B[2m│\x1B[0m \x1B[0m                      \x1B[2m│\x1B[0m (Dialog, Tabs,\x1B[0m         \x1B[2m│\x1B[0m
 \x1B[2m│\x1B[0m \x1B[0m                      \x1B[2m│\x1B[0m StatusIcon, etc.)\x1B[0m      \x1B[2m│\x1B[0m
 \x1B[2m└───────────────────────┴────────────────────────┘\x1B[0m

@@ -124,3 +124,57 @@ test("ws emits 'upgrade' with headers before 'open' on 101", async () => {
   expect(stdout).toMatchInlineSnapshot(`"upgrade:101:string,open"`);
   expect(exitCode).toBe(0);
 });
+
+// The non-101 body can span multiple TCP reads. Previously the shim dispatched
+// on the first read, truncating large error bodies. The native client now
+// buffers until Content-Length is satisfied (or EOF) before dispatching.
+test("ws 'unexpected-response' waits for full Content-Length body across multiple writes", async () => {
+  const { stdout, exitCode } = await run(/* js */ `
+    const { createServer } = require("net");
+    const { once } = require("events");
+    const { WebSocket } = require("ws");
+
+    // 8 kB JSON-ish payload, sent in three separate writes with a tick between
+    // each so the client sees multiple TCP reads (at least in the common case).
+    const CHUNK_SIZE = 2600;
+    const chunk1 = "a".repeat(CHUNK_SIZE);
+    const chunk2 = "b".repeat(CHUNK_SIZE);
+    const chunk3 = "c".repeat(CHUNK_SIZE);
+    const bodyLen = CHUNK_SIZE * 3;
+
+    const server = createServer(s => {
+      s.once("data", () => {
+        s.write(
+          "HTTP/1.1 503 Service Unavailable\\r\\n" +
+          "Content-Type: text/plain\\r\\n" +
+          "Content-Length: " + bodyLen + "\\r\\n\\r\\n" +
+          chunk1
+        );
+        setTimeout(() => s.write(chunk2), 10);
+        setTimeout(() => { s.write(chunk3); s.end(); }, 20);
+      });
+    }).listen(0, "127.0.0.1");
+    await once(server, "listening");
+
+    const ws = new WebSocket("ws://127.0.0.1:" + server.address().port);
+    ws.on("error", () => {});
+    const [req, res] = await new Promise(resolve =>
+      ws.once("unexpected-response", (req, res) => resolve([req, res])),
+    );
+    let body = "";
+    for await (const chunk of res) body += chunk;
+    console.log(JSON.stringify({
+      statusCode: res.statusCode,
+      contentLength: res.headers["content-length"],
+      bodyLength: body.length,
+      firstChar: body[0],
+      lastChar: body[body.length - 1],
+    }));
+    await once(ws, "close");
+    server.close();
+  `);
+  expect(stdout).toMatchInlineSnapshot(
+    `"{"statusCode":503,"contentLength":"7800","bodyLength":7800,"firstChar":"a","lastChar":"c"}"`,
+  );
+  expect(exitCode).toBe(0);
+});

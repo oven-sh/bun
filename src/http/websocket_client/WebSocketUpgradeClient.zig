@@ -58,6 +58,21 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
         // This is base64(SHA-1(Sec-WebSocket-Key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")).
         expected_accept: [28]u8 = .{0} ** 28,
 
+        /// Non-.none while buffering the body of a non-101 response that spans
+        /// multiple TCP reads. The 'handshake' event is deferred until we have
+        /// the full body so the `unexpected-response` consumer sees the
+        /// complete payload instead of just the bytes colocated with the
+        /// header block in the first read.
+        ///
+        /// `.waiting_for_length` tracks the total expected buffer length
+        /// (head_len + Content-Length). `.waiting_for_eof` is used when the
+        /// response has no Content-Length — accumulate until the peer closes.
+        deferred_handshake: union(enum) {
+            none: void,
+            waiting_for_length: usize,
+            waiting_for_eof: void,
+        } = .none,
+
         const State = enum {
             initializing,
             reading,
@@ -522,6 +537,27 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 }
             }
 
+            // If we're in the middle of buffering a non-101 response body
+            // (Content-Length > what arrived with the headers, or no
+            // Content-Length → read until EOF), keep appending and check
+            // for completion. See the deferred_handshake comment.
+            switch (this.deferred_handshake) {
+                .none => {},
+                .waiting_for_length => |target_len| {
+                    bun.handleOom(this.body.appendSlice(bun.default_allocator, data));
+                    if (this.body.items.len >= target_len) {
+                        const truncated = this.body.items[0..target_len];
+                        this.deferred_handshake = .none;
+                        this.flushDeferredHandshakeAndProcess(truncated);
+                    }
+                    return;
+                },
+                .waiting_for_eof => {
+                    bun.handleOom(this.body.appendSlice(bun.default_allocator, data));
+                    return;
+                },
+            }
+
             var body = data;
             if (this.body.items.len > 0) {
                 bun.handleOom(this.body.appendSlice(bun.default_allocator, data));
@@ -546,16 +582,33 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             this.processWebSocketUpgradeResponse(response, body);
         }
 
+        // Scan the response headers for Content-Length. Returns the parsed
+        // value or null if the header is absent or unparseable.
+        fn findContentLength(response: PicoHTTP.Response) ?usize {
+            for (response.headers.list) |h| {
+                if (h.name.len == "Content-Length".len and strings.eqlCaseInsensitiveASCII(h.name, "Content-Length", false)) {
+                    return std.fmt.parseInt(usize, std.mem.trim(u8, h.value, " \t"), 10) catch null;
+                }
+            }
+            return null;
+        }
+
         // Shared between the plain-TCP and proxy-tunnel paths.
         //
-        // The 'handshake' dispatch into JS is synchronous. JS in the listener
-        // can call `ws.close()` → `terminate()` → `clearData()`, which frees
-        // `this.body` out from under us — and `body` / `response.headers.list`
-        // point into that same allocation in the multi-chunk accumulation
-        // path. To keep the post-dispatch `processResponse` call safe without
-        // duplicating + re-parsing the response, move `this.body` out into a
-        // local so `clearData()` finds an empty ArrayList and the backing
-        // bytes outlive the dispatch.
+        // For non-101 responses whose body straddles multiple TCP reads, we
+        // defer the handshake dispatch until we have the complete body so
+        // the `unexpected-response` listener sees the full payload instead
+        // of a truncated prefix. See `deferred_handshake`.
+        //
+        // Once ready to dispatch: the 'handshake' event into JS is
+        // synchronous. JS in the listener can call `ws.close()` →
+        // `terminate()` → `clearData()`, which frees `this.body` out from
+        // under us — and `body` / `response.headers.list` point into that
+        // same allocation in the multi-chunk accumulation path. To keep
+        // the post-dispatch `processResponse` call safe without duplicating
+        // + re-parsing the response, move `this.body` out into a local so
+        // `clearData()` finds an empty ArrayList and the backing bytes
+        // outlive the dispatch.
         //
         // In the single-chunk fast path `body` points into `data` (owned by
         // uSockets for the rest of `onData`) and `this.body` is already
@@ -569,6 +622,72 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 return;
             };
 
+            if (status_code != 101) {
+                // Check if the full response body is present. If not, defer
+                // the dispatch until handleData / handleEnd flushes a
+                // complete buffer.
+                const content_length = findContentLength(response);
+                if (content_length) |cl| {
+                    const target_len = head_len +| cl;
+                    if (body.len < target_len) {
+                        // Make sure `this.body` owns the accumulated bytes
+                        // so subsequent handleData calls can append to it.
+                        // In the single-chunk case body points at `data`;
+                        // copy it into this.body.
+                        if (body.ptr != this.body.items.ptr) {
+                            bun.handleOom(this.body.appendSlice(bun.default_allocator, body));
+                        }
+                        this.deferred_handshake = .{ .waiting_for_length = target_len };
+                        return;
+                    }
+                    // Truncate at head_len + Content-Length — discard any
+                    // bytes beyond the declared body length (they belong
+                    // to the next pipelined response, or are garbage).
+                    this.flushDeferredHandshakeAndProcess(body[0..target_len]);
+                    return;
+                } else {
+                    // No Content-Length — RFC 7230 §3.3.3: read until the
+                    // peer closes the connection. Defer to handleEnd.
+                    if (body.ptr != this.body.items.ptr) {
+                        bun.handleOom(this.body.appendSlice(bun.default_allocator, body));
+                    }
+                    this.deferred_handshake = .waiting_for_eof;
+                    return;
+                }
+            }
+
+            // 101 fast path — dispatch with whatever body bytes are on hand
+            // (post-header bytes are the first WebSocket frame, not HTTP
+            // body — the shim drops them from the 'upgrade' response).
+            this.dispatchHandshakeAndProcess(ws, response, body, head_len, status_code);
+        }
+
+        // Called from handleData / handleEnd once `buffer` holds the complete
+        // accumulated (truncated to Content-Length, or read-until-EOF) response.
+        // Re-parses the headers from the owned buffer, dispatches, then runs
+        // processResponse (which will terminate for non-101).
+        fn flushDeferredHandshakeAndProcess(this: *HTTPClient, buffer: []const u8) void {
+            const response = PicoHTTP.Response.parse(buffer, &this.headers_buf) catch {
+                this.terminate(ErrorCode.invalid_response);
+                return;
+            };
+            const head_len: usize = @intCast(response.bytes_read);
+            const status_code = std.math.cast(u16, response.status_code) orelse 0;
+            const ws = this.outgoing_websocket orelse {
+                this.processResponse(response, buffer[head_len..]);
+                return;
+            };
+            this.dispatchHandshakeAndProcess(ws, response, buffer, head_len, status_code);
+        }
+
+        fn dispatchHandshakeAndProcess(
+            this: *HTTPClient,
+            ws: *CppWebSocket,
+            response: PicoHTTP.Response,
+            body: []const u8,
+            head_len: usize,
+            status_code: u16,
+        ) void {
             var owned_body = this.body;
             this.body = .{};
             defer owned_body.deinit(bun.default_allocator);
@@ -757,6 +876,24 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             this.ref();
             defer this.deref();
 
+            // Same deferred-body flushing as plain handleData.
+            switch (this.deferred_handshake) {
+                .none => {},
+                .waiting_for_length => |target_len| {
+                    bun.handleOom(this.body.appendSlice(bun.default_allocator, data));
+                    if (this.body.items.len >= target_len) {
+                        const truncated = this.body.items[0..target_len];
+                        this.deferred_handshake = .none;
+                        this.flushDeferredHandshakeAndProcess(truncated);
+                    }
+                    return;
+                },
+                .waiting_for_eof => {
+                    bun.handleOom(this.body.appendSlice(bun.default_allocator, data));
+                    return;
+                },
+            }
+
             // Process as if it came directly from the socket
             var body = data;
             if (this.body.items.len > 0) {
@@ -784,6 +921,22 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
 
         pub fn handleEnd(this: *HTTPClient, _: Socket) void {
             log("onEnd", .{});
+            // If we were waiting for the peer to close before dispatching a
+            // non-101 response body (Content-Length absent), flush now with
+            // whatever arrived. waiting_for_length also falls through here
+            // when the peer closes before sending Content-Length bytes —
+            // dispatch with the truncated body so the consumer sees what
+            // the server actually delivered.
+            switch (this.deferred_handshake) {
+                .none => {},
+                .waiting_for_length, .waiting_for_eof => {
+                    this.deferred_handshake = .none;
+                    if (this.body.items.len > 0) {
+                        this.flushDeferredHandshakeAndProcess(this.body.items);
+                        return;
+                    }
+                },
+            }
             this.terminate(ErrorCode.ended);
         }
 

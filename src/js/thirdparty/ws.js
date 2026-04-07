@@ -346,7 +346,13 @@ class BunWebSocket extends EventEmitter {
     const url = this.#ws?.url;
     let path = "/";
     try {
-      if (url) path = new URL(url).pathname || "/";
+      if (url) {
+        const parsed = new URL(url);
+        // Node's http.ClientRequest.path is pathname + search (no fragment)
+        // per RFC 7230 §5.3. Preserve the query string so handlers that log
+        // or reconstruct the failing URL see the full request target.
+        path = (parsed.pathname || "/") + (parsed.search || "");
+      }
     } catch {}
     req = this.#syntheticRequest = {
       __proto__: Object.create(EventEmitter.prototype),

@@ -244,7 +244,7 @@ describe.concurrent("bun link dependency group flags (issue #28937)", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("explicit --no-save overrides the implied --save from --dev", async () => {
+  test("explicit --no-save overrides the implied --save from -d", async () => {
     const { consumer, installEnv, globalRoot, linkable } = await setupLink("no-save");
     using _g = globalRoot;
     using _l = linkable;
@@ -252,8 +252,12 @@ describe.concurrent("bun link dependency group flags (issue #28937)", () => {
 
     const originalPkg = await file(join(String(consumer), "package.json")).json();
 
+    // Use the short form -d so old clap rejects it with "Invalid Argument".
+    // Long --dev would be silently dropped as an unknown flag on unfixed bun,
+    // and since old link already defaulted to no_save = true, the test would
+    // pass identically on both versions and fail to guard the regression.
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "link", "--dev", "--no-save", "issue-28937-linked-pkg"],
+      cmd: [bunExe(), "link", "-d", "--no-save", "issue-28937-linked-pkg"],
       cwd: String(consumer),
       env: installEnv,
       stdout: "pipe",
@@ -263,7 +267,7 @@ describe.concurrent("bun link dependency group flags (issue #28937)", () => {
 
     expect(stderr).not.toContain("error:");
 
-    // package.json must not have been mutated despite --dev implying save.
+    // package.json must not have been mutated despite -d implying save.
     const pkg = await file(join(String(consumer), "package.json")).json();
     expect(pkg).toEqual(originalPkg);
     expect(pkg.dependencies).toBeUndefined();

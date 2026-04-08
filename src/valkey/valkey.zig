@@ -809,6 +809,17 @@ pub const ValkeyClient = struct {
         // reply IS a subscription frame and we have to route it through `handleSubscribeResponse`.
         const subscription_frame: ?protocol.SubscriptionPushMessage.Frame = protocol.SubscriptionPushMessage.asFrame(value);
 
+        // A RESP3 `.Push` frame that is not a recognized pub/sub kind (e.g. a keyspace
+        // notification, a CLIENT TRACKING `invalidate`, or a sharded/pattern push kind
+        // the client doesn't route yet) is a server-initiated async notification — it is
+        // NOT a reply to any in-flight command. Drop it without consuming a promise pair,
+        // otherwise we'd corrupt an unrelated command's result.
+        if (value.* == .Push and subscription_frame == null) {
+            @branchHint(.cold);
+            debug("Dropping unrouted server push frame (kind={s})", .{value.Push.kind});
+            return;
+        }
+
         if (this.parent().isSubscriber()) {
             if (subscription_frame) |frame| {
                 switch (frame.kind) {
@@ -842,6 +853,18 @@ pub const ValkeyClient = struct {
             debug("This client is a subscriber. Handling as subscriber...", .{});
 
             if (value.* == .Error) {
+                // If we already popped a pair for this reply, reject ITS promise — otherwise
+                // `fail()` would reject everything else in the queue and orphan the caller that
+                // actually issued this command. Only call `fail()` when the error is
+                // unattributed (no in-flight pair to blame).
+                if (pair_maybe) |*pm| {
+                    const globalThis = this.globalObject();
+                    const loop = this.vm.eventLoop();
+                    loop.enter();
+                    defer loop.exit();
+                    try pm.promise.reject(globalThis, value.toJS(globalThis) catch |err| globalThis.takeError(err));
+                    return;
+                }
                 try this.fail(value.Error, protocol.RedisError.InvalidResponse);
                 return;
             }
@@ -850,9 +873,9 @@ pub const ValkeyClient = struct {
                 try this.handleSubscribeResponse(value, frame, if (pair_maybe) |*pm| pm else null);
                 return;
             }
-            // Fall through to the regular command handler. Subscribers can receive non-subscription
-            // responses (RESP3 push commands, or regular command replies on RESP2 subscribe-only
-            // connections that the user has sent outside the SUBSCRIBE workflow).
+            // Fall through to the regular command handler. Subscribers can receive regular
+            // command replies (for example a `+PONG\r\n` reply to `PING` issued outside the
+            // subscription workflow on a RESP2 subscribe-only connection).
 
             debug("Treating subscriber response as a regular command...", .{});
         }

@@ -501,6 +501,23 @@ pub const Bin = extern struct {
         return name;
     }
 
+    /// A Windows shim bin path is stored in the `.bunx` file and appended onto
+    /// the parent of `.bin` at runtime. To be usable it must be a relative
+    /// subpath — it cannot escape the walk-back position with `..`, and it
+    /// cannot be absolute (drive letter, UNC share, or leading separator).
+    fn isValidShimBinPath(rel: []const u8) bool {
+        if (rel.len == 0) return false;
+        // Escape outside the walk-back position.
+        if (strings.hasPrefixComptime(rel, "..\\")) return false;
+        if (strings.hasPrefixComptime(rel, "../")) return false;
+        if (std.mem.eql(u8, rel, "..")) return false;
+        // Absolute path (drive letter, e.g. "D:\...").
+        if (rel.len >= 2 and rel[1] == ':') return false;
+        // Rooted or UNC path.
+        if (rel[0] == '\\' or rel[0] == '/') return false;
+        return true;
+    }
+
     pub const Linker = struct {
         bin: Bin,
 
@@ -729,64 +746,68 @@ pub const Bin = extern struct {
             };
             defer bunx_file.close();
 
-            // Compute a path relative to the parent of the .bin directory — that's
-            // where the shim walks back to at runtime before appending this path.
-            // See src/install/windows-shim/bun_shim_impl.zig for the walk-back logic.
+            // At runtime the shim walks back two directory levels from its own
+            // image path (`.bin\foo.exe` → parent of `.bin`) and then appends
+            // the bin path stored in the `.bunx` file. So we need a path that
+            // resolves to `abs_target` when joined onto the parent of `.bin`.
+            // See `src/install/windows-shim/bun_shim_impl.zig` for the
+            // walk-back loop.
             //
-            // `abs_dest` and `abs_target` can be derived from different sources:
-            // `abs_dest` is built from `global_bin_path`, which `setupGlobalDir`
-            // canonicalizes via `GetFinalPathNameByHandle`. `abs_target` is built
-            // from `node_modules_path`, which comes from `top_level_dir` /
-            // `GetCurrentDirectoryW`. These two can disagree when the user profile
-            // sits behind a junction, OneDrive reparse point, `subst`'d drive, or
-            // a `\\?\Volume{GUID}\` mount, producing a relative path that does not
-            // start with `..\`. When that happens, re-resolve the target through
-            // its open handle so both sides share the same canonical form.
+            // A target that lives inside `.bin` itself (e.g. a package whose
+            // `bin` field resolves to `../.bin/foo.js`) yields `.bin\foo.js`
+            // here, which is a valid shim bin path — not something to reject.
+            //
+            // `abs_dest` and `abs_target` can also come from different
+            // canonicalisation sources: `abs_dest` from `global_bin_path`
+            // (which `setupGlobalDir` canonicalises via
+            // `GetFinalPathNameByHandle`), and `abs_target` from `top_level_dir`
+            // (`GetCurrentDirectoryW`). When the user profile sits behind a
+            // junction, OneDrive reparse point, `subst`'d drive, or
+            // `\\?\Volume{GUID}\` mount, the two views can disagree and
+            // produce an absolute or `..`-prefixed result that the shim can't
+            // represent. Retry with the target canonicalised through its open
+            // handle, then with the destination parent canonicalised via an
+            // opened directory handle, before failing gracefully.
+            const abs_dest_parent = path.dirname(path.dirname(abs_dest, .auto), .auto);
             const rel_target_for_shim = relTargetForShim: {
-                const rel_target = path.relativeBufZ(this.rel_buf, path.dirname(abs_dest, .auto), abs_target);
-                if (strings.hasPrefixComptime(rel_target, "..\\")) {
-                    break :relTargetForShim rel_target["..\\".len..];
-                }
+                const rel_target = path.relativeBufZ(this.rel_buf, abs_dest_parent, abs_target);
+                if (isValidShimBinPath(rel_target)) break :relTargetForShim rel_target;
 
-                // Retry with the canonical target path.
-                var canon_target_buf: bun.PathBuffer = undefined;
-                const canon_target = switch (bun.sys.getFdPath(target, &canon_target_buf)) {
+                // Retry with the target canonicalised via its open fd.
+                const canon_target_buf = bun.path_buffer_pool.get();
+                defer bun.path_buffer_pool.put(canon_target_buf);
+                const canon_target = switch (bun.sys.getFdPath(target, canon_target_buf)) {
                     .result => |slice| slice,
                     .err => {
                         this.err = error.CouldNotCreateShim;
                         return;
                     },
                 };
-                const canon_rel_target = path.relativeBufZ(this.rel_buf, path.dirname(abs_dest, .auto), canon_target);
-                if (strings.hasPrefixComptime(canon_rel_target, "..\\")) {
-                    break :relTargetForShim canon_rel_target["..\\".len..];
-                }
+                const canon_rel_target = path.relativeBufZ(this.rel_buf, abs_dest_parent, canon_target);
+                if (isValidShimBinPath(canon_rel_target)) break :relTargetForShim canon_rel_target;
 
-                // Canonicalizing the target did not help — likely the destination
-                // side is the one that needs canonicalization. Open the destination
-                // directory and try once more with its canonical path.
-                const abs_dest_dir = path.dirname(abs_dest, .auto);
-                const dest_dir_fd = bun.sys.openatWindowsA(bun.invalid_fd, abs_dest_dir, bun.O.RDONLY | bun.O.DIRECTORY, 0).unwrap() catch {
+                // Retry with the destination parent canonicalised too. Open
+                // it, call GetFinalPathNameByHandle, and recompute.
+                const dest_parent_fd = bun.sys.openatWindowsA(bun.invalid_fd, abs_dest_parent, bun.O.RDONLY | bun.O.DIRECTORY, 0).unwrap() catch {
                     this.err = error.CouldNotCreateShim;
                     return;
                 };
-                defer dest_dir_fd.close();
-                var canon_dest_dir_buf: bun.PathBuffer = undefined;
-                const canon_dest_dir = switch (bun.sys.getFdPath(dest_dir_fd, &canon_dest_dir_buf)) {
+                defer dest_parent_fd.close();
+                const canon_dest_parent_buf = bun.path_buffer_pool.get();
+                defer bun.path_buffer_pool.put(canon_dest_parent_buf);
+                const canon_dest_parent = switch (bun.sys.getFdPath(dest_parent_fd, canon_dest_parent_buf)) {
                     .result => |slice| slice,
                     .err => {
                         this.err = error.CouldNotCreateShim;
                         return;
                     },
                 };
-                const canon_rel_target_2 = path.relativeBufZ(this.rel_buf, canon_dest_dir, canon_target);
-                if (strings.hasPrefixComptime(canon_rel_target_2, "..\\")) {
-                    break :relTargetForShim canon_rel_target_2["..\\".len..];
-                }
+                const canon_rel_target_2 = path.relativeBufZ(this.rel_buf, canon_dest_parent, canon_target);
+                if (isValidShimBinPath(canon_rel_target_2)) break :relTargetForShim canon_rel_target_2;
 
-                // Truly cross-volume or otherwise unrepresentable in the shim's
-                // walk-back scheme. Surface an error rather than writing a broken
-                // shim or panicking.
+                // Truly cross-volume or otherwise unrepresentable in the
+                // shim's walk-back scheme. Surface an error rather than
+                // writing a broken shim or panicking.
                 this.err = error.CouldNotCreateShim;
                 return;
             };

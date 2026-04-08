@@ -1,20 +1,6 @@
-// Regression test for https://github.com/oven-sh/bun/issues/29005
-//
-// `bun install --global <pkg>` was panicking on Windows at
-// `src/install/bin.zig:733:83` with "Internal assertion failure". The
-// assertion there (and its non-Windows twin in `createSymlink`) assumed
-// that the relative path from the `.bin` directory to the target binary
-// always starts with `..\` (or `..` on POSIX). That doesn't hold when
-// the target lives inside the destination directory — which happens
-// with a package whose `bin` field points back into sibling `.bin`, or
-// on Windows when `abs_dest` and `abs_target` come from different
-// canonical-form sources (junctions, OneDrive reparse points, `subst`'d
-// drives).
-//
-// Both code paths now accept any relative form instead of panicking.
-// This test exercises the POSIX path with a local package whose `bin`
-// resolves inside the sibling `.bin` directory — the same relative
-// shape that fires the Windows assertion.
+// https://github.com/oven-sh/bun/issues/29005
+// Exercises the zero-`..` relative-path shape between `.bin` and its bin
+// target that fires the overly strict assertion in `Bin.Linker`.
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { existsSync, readlinkSync, statSync } from "node:fs";

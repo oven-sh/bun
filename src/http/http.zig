@@ -1065,19 +1065,16 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
         header_count += 1;
     }
 
-    // Refresh `request_body_has_framing` from the *finalized* header slice
+    // Compute `request_body_has_framing` from the *finalized* header slice
     // that will hit the wire — not from the raw user headers, which may
     // include entries past `max_user_headers` that have been dropped, or a
-    // `Transfer-Encoding` value that is not `chunked`. The caller may have
-    // already set this flag at setup time based on the same predicates (so
-    // the main thread can safely query it before `buildRequest()` runs); we
-    // recompute here as the source of truth once we know what actually
-    // survived.
+    // `Transfer-Encoding` value that is not `chunked`.
     //
-    // Used by `writeToStream()` to decide whether to drain a streaming body
-    // buffer during the pending-upgrade state, and by
-    // `FetchTasklet.skipChunkedFraming()` to decide whether chunk headers
-    // should wrap body data on the wire.
+    // Used by `writeToStream()` (below) to decide whether to drain a
+    // streaming request body buffer while the upgrade is pending.
+    // `FetchTasklet.skipChunkedFraming()` reads the user headers directly
+    // and does NOT consult this flag — the two code paths deliberately ask
+    // different questions (drain vs. chunk-wrap).
     {
         var has_framing = false;
         for (request_headers_buf[0..header_count]) |h| {

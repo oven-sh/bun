@@ -156,6 +156,12 @@ function createUpgradeSocket(req, res) {
       // Backpressure: wait for 'drain', but also tear down cleanly if `req`
       // errors or closes before drain fires — otherwise the callback is
       // orphaned and the writable side stays stuck in kWriting.
+      //
+      // A `'close'` before `'drain'` is a failure: the in-flight chunk is
+      // still buffered inside `req` and gets discarded when `req` tears
+      // down. We MUST surface this as an error so the Duplex consumer knows
+      // the write was lost (unlike `_final()` where a clean close after
+      // `req.end()` legitimately signals completion).
       let settled = false;
       const settle = (err?: Error) => {
         if (settled) return;
@@ -167,7 +173,7 @@ function createUpgradeSocket(req, res) {
       };
       const onDrain = () => settle();
       const onError = (err: Error) => settle(err);
-      const onClose = () => settle();
+      const onClose = () => settle(new ConnResetException("socket hang up"));
       req.once("drain", onDrain);
       req.once("error", onError);
       req.once("close", onClose);

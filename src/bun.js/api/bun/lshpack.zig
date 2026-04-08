@@ -53,6 +53,19 @@ pub const HPACK = extern struct {
     pub fn deinit(self: *HPACK) void {
         lshpack_wrapper_deinit(self);
     }
+
+    /// Called when the remote peer's SETTINGS_HEADER_TABLE_SIZE changes (RFC 9113 §6.5.2).
+    /// The encoder MUST NOT use a dynamic table larger than the peer permits, and must
+    /// emit an HPACK Dynamic Table Size Update (RFC 7541 §6.3) on the next header block.
+    pub fn setEncoderMaxCapacity(self: *HPACK, max_capacity: u32) void {
+        lshpack_wrapper_set_enc_max_capacity(self, max_capacity);
+    }
+
+    /// Called when our own SETTINGS_HEADER_TABLE_SIZE is acknowledged so the decoder
+    /// will accept Dynamic Table Size Update instructions up to the value we advertised.
+    pub fn setDecoderMaxCapacity(self: *HPACK, max_capacity: u32) void {
+        lshpack_wrapper_set_dec_max_capacity(self, max_capacity);
+    }
 };
 
 const lshpack_wrapper_alloc = ?*const fn (size: usize) callconv(.c) ?*anyopaque;
@@ -61,6 +74,8 @@ extern fn lshpack_wrapper_init(alloc: lshpack_wrapper_alloc, free: lshpack_wrapp
 extern fn lshpack_wrapper_deinit(self: *HPACK) void;
 extern fn lshpack_wrapper_decode(self: *HPACK, src: [*]const u8, src_len: usize, output: *lshpack_header) usize;
 extern fn lshpack_wrapper_encode(self: *HPACK, name: [*]const u8, name_len: usize, value: [*]const u8, value_len: usize, never_index: c_int, buffer: [*]u8, buffer_len: usize, buffer_offset: usize) usize;
+extern fn lshpack_wrapper_set_enc_max_capacity(self: *HPACK, max_capacity: c_uint) void;
+extern fn lshpack_wrapper_set_dec_max_capacity(self: *HPACK, max_capacity: c_uint) void;
 
 const bun = @import("bun");
 const mimalloc = bun.mimalloc;

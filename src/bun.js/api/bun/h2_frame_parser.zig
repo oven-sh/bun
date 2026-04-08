@@ -2500,6 +2500,12 @@ pub const H2FrameParser = struct {
             }
             this.readBuffer.reset();
             this.remoteSettings = remoteSettings;
+            // RFC 9113 §6.5.2 / RFC 7541 §4.2: the peer's SETTINGS_HEADER_TABLE_SIZE bounds
+            // OUR encoder's dynamic table. ls-hpack will emit the required Dynamic Table
+            // Size Update on the next header block once we propagate the new limit.
+            if (this.hpack) |hpack| {
+                hpack.setEncoderMaxCapacity(remoteSettings.headerTableSize);
+            }
             log("remoteSettings.initialWindowSize: {} {} {}", .{ remoteSettings.initialWindowSize, this.remoteUsedWindowSize, this.remoteWindowSize });
             if (remoteSettings.initialWindowSize >= this.remoteWindowSize) {
                 var it = this.streams.valueIterator();

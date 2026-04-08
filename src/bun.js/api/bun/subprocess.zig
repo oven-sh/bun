@@ -17,7 +17,7 @@ process: *Process,
 stdin: Writable,
 stdout: Readable,
 stderr: Readable,
-stdio_pipes: if (Environment.isWindows) std.ArrayListUnmanaged(StdioResult) else std.ArrayListUnmanaged(bun.FileDescriptor) = .{},
+stdio_pipes: if (Environment.isWindows) std.ArrayListUnmanaged(StdioResult) else std.ArrayListUnmanaged(bun.FD) = .{},
 pid_rusage: ?Rusage = null,
 
 /// Terminal attached to this subprocess (if spawned with terminal option)
@@ -91,7 +91,7 @@ pub const StdioKind = enum {
     stdout,
     stderr,
 
-    pub fn toFd(this: @This()) bun.FileDescriptor {
+    pub fn toFd(this: @This()) bun.FD {
         return switch (this) {
             .stdin => .stdin(),
             .stdout => .stdout(),
@@ -659,7 +659,9 @@ pub fn onProcessExit(this: *Subprocess, process: *Process, status: bun.spawn.Sta
 
                 switch (status) {
                     .exited => |exited| promise.asAnyPromise().?.resolve(globalThis, JSValue.jsNumber(exited.code)) catch {}, // TODO: properly propagate exception upwards
-                    .err => |err| promise.asAnyPromise().?.reject(globalThis, err.toJS(globalThis) catch return) catch {}, // TODO: properly propagate exception upwards
+                    .err => |err| {
+                        promise.asAnyPromise().?.rejectWithAsyncStack(globalThis, err.toJS(globalThis) catch return) catch {}; // TODO: properly propagate exception upwards
+                    },
                     .signaled => promise.asAnyPromise().?.resolve(globalThis, JSValue.jsNumber(128 +% @intFromEnum(status.signaled))) catch {}, // TODO: properly propagate exception upwards
                     else => {
                         // crash in debug mode
@@ -911,7 +913,7 @@ pub fn getGlobalThis(this: *Subprocess) ?*jsc.JSGlobalObject {
 
 const IPClog = Output.scoped(.IPC, .visible);
 
-pub const StdioResult = if (Environment.isWindows) bun.spawn.WindowsSpawnResult.StdioResult else ?bun.FileDescriptor;
+pub const StdioResult = if (Environment.isWindows) bun.spawn.WindowsSpawnResult.StdioResult else ?bun.FD;
 pub const Writable = @import("./subprocess/Writable.zig").Writable;
 
 pub const MaxBuf = bun.io.MaxBuf;

@@ -2,7 +2,7 @@ pub const OutKind = enum {
     stdout,
     stderr,
 
-    pub fn toFd(this: OutKind) bun.FileDescriptor {
+    pub fn toFd(this: OutKind) bun.FD {
         return switch (this) {
             .stdout => .stdout(),
             .stderr => .stderr(),

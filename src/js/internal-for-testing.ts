@@ -107,7 +107,11 @@ export const memfd_create: (size: number) => number = $newZigFunction(
   1,
 );
 
-export const createStatsForIno: (ino: bigint, big: boolean) => any = $newZigFunction("Stat.zig", "createStatsForIno", 2);
+export const createStatsForIno: (ino: bigint, big: boolean) => any = $newZigFunction(
+  "Stat.zig",
+  "createStatsForIno",
+  2,
+);
 
 export const setSyntheticAllocationLimitForTesting: (limit: number) => number = $newZigFunction(
   "virtual_machine_exports.zig",

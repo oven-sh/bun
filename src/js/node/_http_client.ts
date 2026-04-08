@@ -233,7 +233,16 @@ function createUpgradeSocket(req, res) {
   duplex.setNoDelay = () => duplex;
   duplex.setTimeout = (msecs: number, callback?: () => void) => {
     timeoutMs = msecs | 0;
-    if (callback) duplex.once("timeout", callback);
+    if (callback) {
+      // Match `net.Socket.setTimeout(0, cb)` semantics: passing 0 with a
+      // callback de-registers that specific listener rather than adding
+      // another one. Mirrors `ClientRequestPrototype.setTimeout` below.
+      if (timeoutMs === 0) {
+        duplex.removeListener("timeout", callback);
+      } else {
+        duplex.once("timeout", callback);
+      }
+    }
     armTimeout();
     return duplex;
   };
@@ -619,17 +628,26 @@ function ClientRequest(input, options, cb) {
             const upgradeSocket = createUpgradeSocket(this, res);
             process.nextTick(
               (self, res, socket) => {
-                try {
-                  if (self.aborted || self.listenerCount("upgrade") === 0) {
-                    // No handler for 'upgrade' — drop the hijacked socket so
-                    // we don't leak the underlying TCP connection.
-                    socket.destroy();
-                    res._dump?.();
-                  } else {
-                    self.emit("upgrade", res, socket, Buffer.alloc(0));
-                  }
-                } finally {
+                if (self.aborted || self.listenerCount("upgrade") === 0) {
+                  // No handler for 'upgrade' — drop the hijacked socket so
+                  // we don't leak the underlying TCP connection. The close
+                  // notification for `req` will follow from the socket
+                  // destruction path below.
+                  socket.destroy();
+                  res._dump?.();
                   maybeEmitClose();
+                } else {
+                  // Do NOT call `maybeEmitClose()` here. The ClientRequest
+                  // lifecycle is now owned by the hijacked socket — firing
+                  // `req.emit('close')` on the very next tick would race
+                  // the Duplex `_write` backpressure path, which watches
+                  // `req.once('close', …)` to detect real TCP drops and
+                  // would treat a routine lifecycle close as a spurious
+                  // `ConnResetException('socket hang up')`. The hijacked
+                  // socket's `_destroy` path calls `req.destroy()` when
+                  // the user is done, which emits `'close'` on `req` at
+                  // the correct time.
+                  self.emit("upgrade", res, socket, Buffer.alloc(0));
                 }
               },
               this,

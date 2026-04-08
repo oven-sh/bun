@@ -774,7 +774,7 @@ pub const H2FrameParser = struct {
         rstCode: u32 = 0,
         streamDependency: u32 = 0,
         exclusive: bool = false,
-        weight: u16 = 36,
+        weight: u16 = 16,
         // current window size for the stream
         windowSize: u64 = 65535,
         // used window size for the stream
@@ -1123,7 +1123,7 @@ pub const H2FrameParser = struct {
                 .windowSize = initialWindowSize,
                 .remoteWindowSize = remoteWindowSize,
                 .usedWindowSize = 0,
-                .weight = 36,
+                .weight = 16,
                 .dataFrameQueue = .{},
                 .paddingStrategy = paddingStrategy,
             };

@@ -2558,47 +2558,55 @@ pub const Arguments = struct {
             else
                 0;
 
-            // The `length === 0` short-circuit must not skip the `position`
-            // type check below — bun is stricter than Node here on purpose
-            // (see https://github.com/nodejs/node/issues/62638). We still
-            // need to validate `length` and `position` even when no bytes
-            // will be read.
-            var length_int: i64 = 0;
-            var length: u64 = 0;
-            if (length_float != 0) {
-                const buf_len = buffer.slice().len;
-                if (buf_len == 0) {
-                    return ctx.ERR(.INVALID_ARG_VALUE, "The argument 'buffer' is empty and cannot be written.", .{}).throw();
-                }
-                // validateOffsetLengthRead(offset, length, buffer.byteLength);
-                if (@mod(length_float, 1) != 0) {
-                    return ctx.throwRangeError(length_float, .{ .field_name = "length", .msg = "an integer" });
-                }
-                length_int = @intFromFloat(length_float);
-                if (length_int > buf_len) {
-                    return ctx.throwRangeError(
-                        length_float,
-                        .{ .field_name = "length", .max = @intCast(@min(buf_len, std.math.maxInt(i64))) },
-                    );
-                }
-                if (@as(i64, @intCast(offset)) +| length_int > buf_len) {
-                    return ctx.throwRangeError(
-                        length_float,
-                        .{ .field_name = "length", .max = @intCast(buf_len -| offset) },
-                    );
-                }
-                if (length_int < 0) {
-                    return ctx.throwRangeError(length_float, .{ .field_name = "length", .min = 0 });
-                }
-                length = @intCast(length_int);
+            // Peek the position argument so we can validate it even when
+            // `length == 0` short-circuits below. See
+            // https://github.com/oven-sh/bun/issues/29016 — bun used to
+            // skip this type check whenever no bytes would be read.
+            const position_value: jsc.JSValue = arguments.nextEat() orelse .null;
+            if (!position_value.isUndefinedOrNull() and !position_value.isNumber() and jsc.JSBigInt.fromJS(position_value) == null) {
+                return ctx.throwInvalidArgumentTypeValue("position", "number or bigint", position_value);
             }
+
+            //   if (length === 0) {
+            //     return process.nextTick(function tick() {
+            //       callback(null, 0, buffer);
+            //     });
+            //   }
+            if (length_float == 0) {
+                return .{ .fd = fd, .buffer = buffer, .length = 0, .offset = 0 };
+            }
+
+            const buf_len = buffer.slice().len;
+            if (buf_len == 0) {
+                return ctx.ERR(.INVALID_ARG_VALUE, "The argument 'buffer' is empty and cannot be written.", .{}).throw();
+            }
+            // validateOffsetLengthRead(offset, length, buffer.byteLength);
+            if (@mod(length_float, 1) != 0) {
+                return ctx.throwRangeError(length_float, .{ .field_name = "length", .msg = "an integer" });
+            }
+            const length_int: i64 = @intFromFloat(length_float);
+            if (length_int > buf_len) {
+                return ctx.throwRangeError(
+                    length_float,
+                    .{ .field_name = "length", .max = @intCast(@min(buf_len, std.math.maxInt(i64))) },
+                );
+            }
+            if (@as(i64, @intCast(offset)) +| length_int > buf_len) {
+                return ctx.throwRangeError(
+                    length_float,
+                    .{ .field_name = "length", .max = @intCast(buf_len -| offset) },
+                );
+            }
+            if (length_int < 0) {
+                return ctx.throwRangeError(length_float, .{ .field_name = "length", .min = 0 });
+            }
+            const length: u64 = @intCast(length_int);
 
             // if (position == null) {
             //   position = -1;
             // } else {
             //   validatePosition(position, 'position', length);
             // }
-            const position_value: jsc.JSValue = arguments.nextEat() orelse .null;
             const position_int: i64 = if (position_value.isUndefinedOrNull())
                 -1
             else if (position_value.isNumber())

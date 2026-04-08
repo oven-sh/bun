@@ -1,6 +1,6 @@
-import { test, expect } from "bun:test";
-import http2 from "node:http2";
+import { expect, test } from "bun:test";
 import { once } from "node:events";
+import http2 from "node:http2";
 
 test("server rejects request with non-zero content-length and END_STREAM per RFC 9113 8.6", async () => {
   const server = http2.createServer();

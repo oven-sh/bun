@@ -113,33 +113,36 @@ afterAll(() => {
 for (const proxy_tls of [false, true]) {
   for (const target_tls of [false, true]) {
     for (const body of [undefined, "Hello, World"]) {
-      test(`${body === undefined ? "GET" : "POST"} ${proxy_tls ? "TLS" : "non-TLS"} proxy -> ${target_tls ? "TLS" : "non-TLS"} body type ${typeof body}`, async () => {
-        const response = await fetch(target_tls ? httpsServer.url : httpServer.url, {
-          method: body === undefined ? "GET" : "POST",
-          proxy: proxy_tls ? httpsProxyServer.url : httpProxyServer.url,
-          headers: {
-            "Content-Type": "plain/text",
-          },
-          keepalive: false,
-          body: body,
-          tls: {
-            ca: tlsCert.cert,
-            rejectUnauthorized: false,
-          },
-        });
-        expect(response.ok).toBe(true);
-        expect(response.status).toBe(200);
-        expect(response.statusText).toBe("OK");
-        const result = await response.text();
+      test.concurrent(
+        `${body === undefined ? "GET" : "POST"} ${proxy_tls ? "TLS" : "non-TLS"} proxy -> ${target_tls ? "TLS" : "non-TLS"} body type ${typeof body}`,
+        async () => {
+          const response = await fetch(target_tls ? httpsServer.url : httpServer.url, {
+            method: body === undefined ? "GET" : "POST",
+            proxy: proxy_tls ? httpsProxyServer.url : httpProxyServer.url,
+            headers: {
+              "Content-Type": "plain/text",
+            },
+            keepalive: false,
+            body: body,
+            tls: {
+              ca: tlsCert.cert,
+              rejectUnauthorized: false,
+            },
+          });
+          expect(response.ok).toBe(true);
+          expect(response.status).toBe(200);
+          expect(response.statusText).toBe("OK");
+          const result = await response.text();
 
-        expect(result).toBe(body || "");
-      });
+          expect(result).toBe(body || "");
+        },
+      );
     }
   }
 }
 
 for (const server_tls of [false, true]) {
-  describe(`proxy can handle redirects with ${server_tls ? "TLS" : "non-TLS"} server`, () => {
+  describe.concurrent(`proxy can handle redirects with ${server_tls ? "TLS" : "non-TLS"} server`, () => {
     test("with empty body #12007", async () => {
       using server = Bun.serve({
         tls: server_tls ? tlsCert : undefined,
@@ -561,7 +564,7 @@ test("HTTPS origin close-delimited body via HTTP proxy does not ECONNRESET", asy
   }
 });
 
-describe("proxy object format with headers", () => {
+describe.concurrent("proxy object format with headers", () => {
   test("proxy object with url string works same as string proxy", async () => {
     const response = await fetch(httpServer.url, {
       method: "GET",

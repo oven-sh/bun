@@ -4186,7 +4186,8 @@ class Http2SecureServer extends tls.Server {
     closeAllSessions(this);
   }
 }
-Http2SecureServer.prototype[EventEmitter.captureRejectionSymbol] = Http2Server.prototype[EventEmitter.captureRejectionSymbol];
+Http2SecureServer.prototype[EventEmitter.captureRejectionSymbol] =
+  Http2Server.prototype[EventEmitter.captureRejectionSymbol];
 function createServer(options, onRequestHandler) {
   return new Http2Server(options, onRequestHandler);
 }

@@ -1,7 +1,7 @@
-import { test, expect } from "bun:test";
-import http2 from "node:http2";
-import { EventEmitter } from "node:events";
+import { expect, test } from "bun:test";
 import { tls } from "harness";
+import { EventEmitter } from "node:events";
+import http2 from "node:http2";
 
 test("Http2SecureServer has captureRejectionSymbol handler matching Http2Server", () => {
   const plain = http2.createServer();

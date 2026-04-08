@@ -117,11 +117,7 @@ test("res.on('close') / socket.on('close') / socket.on('end') fire after client 
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   const line = stdout
     .split("\n")

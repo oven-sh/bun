@@ -150,6 +150,11 @@ describe.if(!isWindows)("Bun.file on character devices", () => {
     // ReadFile.runAsyncWithFD and panic in debug builds. Also verifies that
     // OOM from the buffer allocation is propagated to JS rather than
     // silently returning an empty result.
-    expect(async () => await Bun.file("/dev/null").slice(0, 2 ** 52 - 15).bytes()).toThrow();
+    expect(
+      async () =>
+        await Bun.file("/dev/null")
+          .slice(0, 2 ** 52 - 15)
+          .bytes(),
+    ).toThrow();
   });
 });

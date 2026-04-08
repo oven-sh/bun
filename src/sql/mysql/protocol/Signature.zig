@@ -32,13 +32,9 @@ pub fn hash(this: *const Signature) u64 {
 
 pub fn generate(globalObject: *jsc.JSGlobalObject, query: []const u8, array_value: JSValue, columns: JSValue) !Signature {
     var fields = std.array_list.Managed(Param).init(bun.default_allocator);
-    var name = try std.array_list.Managed(u8).initCapacity(bun.default_allocator, query.len);
-
-    name.appendSliceAssumeCapacity(query);
 
     errdefer {
         fields.deinit();
-        name.deinit();
     }
 
     var iter = try QueryBindingIterator.init(array_value, columns, globalObject);
@@ -47,18 +43,10 @@ pub fn generate(globalObject: *jsc.JSGlobalObject, query: []const u8, array_valu
         if (value.isEmptyOrUndefinedOrNull()) {
             // Allow MySQL to decide the type
             try fields.append(.{ .type = .MYSQL_TYPE_NULL, .flags = .{} });
-            try name.appendSlice(".null");
             continue;
         }
         var unsigned = false;
         const tag = try types.FieldType.fromJS(globalObject, value, &unsigned);
-        if (unsigned) {
-            // 128 is more than enought right now
-            var tag_name_buf = [_]u8{0} ** 128;
-            try name.appendSlice(std.fmt.bufPrint(tag_name_buf[0..], "U{s}", .{@tagName(tag)}) catch @tagName(tag));
-        } else {
-            try name.appendSlice(@tagName(tag));
-        }
         // TODO: add flags if necessary right now the only relevant would be unsigned but is JS and is never unsigned
         try fields.append(.{ .type = tag, .flags = .{ .UNSIGNED = unsigned } });
     }
@@ -67,8 +55,19 @@ pub fn generate(globalObject: *jsc.JSGlobalObject, query: []const u8, array_valu
         return error.InvalidQueryBinding;
     }
 
+    // The statement cache key (`signature.name`) is just the SQL text — do not
+    // depend on the runtime null/type pattern of the bound values. Otherwise
+    // each distinct null pattern in a bulk insert allocates a fresh server-side
+    // prepared statement and leaks memory on the database for the life of the
+    // connection. See issue #28980.
+    //
+    // MySQL `COM_STMT_PREPARE` takes only the query text, and parameter types
+    // are carried in the type-header of each `COM_STMT_EXECUTE`, so the per-
+    // parameter tag does not need to be encoded into the cache key.
+    const name = try bun.default_allocator.dupe(u8, query);
+
     return Signature{
-        .name = name.items,
+        .name = name,
         .fields = fields.items,
         .query = try bun.default_allocator.dupe(u8, query),
     };

@@ -38,13 +38,9 @@ pub fn hash(this: *const Signature) u64 {
 
 pub fn generate(globalObject: *jsc.JSGlobalObject, query: []const u8, array_value: JSValue, columns: JSValue, prepared_statement_id: u64, unnamed: bool) !Signature {
     var fields = std.array_list.Managed(int4).init(bun.default_allocator);
-    var name = try std.array_list.Managed(u8).initCapacity(bun.default_allocator, query.len);
-
-    name.appendSliceAssumeCapacity(query);
 
     errdefer {
         fields.deinit();
-        name.deinit();
     }
 
     var iter = try QueryBindingIterator.init(array_value, columns, globalObject);
@@ -53,27 +49,10 @@ pub fn generate(globalObject: *jsc.JSGlobalObject, query: []const u8, array_valu
         if (value.isEmptyOrUndefinedOrNull()) {
             // Allow postgres to decide the type
             try fields.append(0);
-            try name.appendSlice(".null");
             continue;
         }
 
         const tag = try types.Tag.fromJS(globalObject, value);
-
-        switch (tag) {
-            .int8 => try name.appendSlice(".int8"),
-            .int4 => try name.appendSlice(".int4"),
-            // .int4_array => try name.appendSlice(".int4_array"),
-            .int2 => try name.appendSlice(".int2"),
-            .float8 => try name.appendSlice(".float8"),
-            .float4 => try name.appendSlice(".float4"),
-            .numeric => try name.appendSlice(".numeric"),
-            .json, .jsonb => try name.appendSlice(".json"),
-            .bool => try name.appendSlice(".bool"),
-            .timestamp => try name.appendSlice(".timestamp"),
-            .timestamptz => try name.appendSlice(".timestamptz"),
-            .bytea => try name.appendSlice(".bytea"),
-            else => try name.appendSlice(".string"),
-        }
 
         switch (tag) {
             .bool, .int4, .int8, .float8, .int2, .numeric, .float4, .bytea => {
@@ -90,12 +69,27 @@ pub fn generate(globalObject: *jsc.JSGlobalObject, query: []const u8, array_valu
     if (iter.anyFailed()) {
         return error.InvalidQueryBinding;
     }
+
+    // The statement cache key (`signature.name`) is just the SQL text — do not
+    // depend on the runtime null/type pattern of the bound values. Otherwise
+    // each distinct null pattern in a bulk insert allocates a fresh server-side
+    // prepared statement and leaks memory on the database for the life of the
+    // connection. See issue #28980.
+    //
+    // Subsequent `Bind` messages carry the per-row null flag (-1 length) in
+    // the wire format, and `statement.parameters` (populated from the server's
+    // `ParameterDescription`) is what picks the binary/text format on re-bind,
+    // so the parameter-type OIDs sent in the initial `Parse` do not need to
+    // be re-keyed per null pattern.
+    const name = try bun.default_allocator.dupe(u8, query);
+    errdefer bun.default_allocator.free(name);
+
     // max u64 length is 20, max prepared_statement_name length is 63
-    const prepared_statement_name = if (unnamed) "" else try std.fmt.allocPrint(bun.default_allocator, "P{s}${d}", .{ name.items[0..@min(40, name.items.len)], prepared_statement_id });
+    const prepared_statement_name = if (unnamed) "" else try std.fmt.allocPrint(bun.default_allocator, "P{s}${d}", .{ name[0..@min(40, name.len)], prepared_statement_id });
 
     return Signature{
         .prepared_statement_name = prepared_statement_name,
-        .name = name.items,
+        .name = name,
         .fields = fields.items,
         .query = try bun.default_allocator.dupe(u8, query),
     };

@@ -289,7 +289,7 @@ pub noinline fn next(this: *Rm) Yield {
     }
 
     switch (this.state) {
-        .done => return this.bltn().done(0),
+        .done => return this.bltn().done(this.state.done.exit_code),
         .err => return this.bltn().done(this.state.err),
         else => unreachable,
     }
@@ -430,7 +430,7 @@ pub fn onShellRmTaskDone(this: *Rm, task: *ShellRmTask) void {
     if (tasks_done >= this.state.exec.total_tasks and
         exec.getOutputCount(.output_done) >= exec.getOutputCount(.output_count))
     {
-        this.state = .{ .done = .{ .exit_code = if (exec.err) |theerr| theerr.errno else 0 } };
+        this.state = .{ .done = .{ .exit_code = if (exec.err != null) 1 else 0 } };
         this.next().run();
     }
 }
@@ -455,7 +455,7 @@ pub const ShellRmTask = struct {
     rm: *Rm,
     opts: Opts,
 
-    cwd: bun.FileDescriptor,
+    cwd: bun.FD,
     cwd_path: ?CwdPath = if (bun.Environment.isPosix) 0 else null,
 
     root_task: DirTask,
@@ -677,7 +677,7 @@ pub const ShellRmTask = struct {
         }
     };
 
-    pub fn create(root_path: bun.PathString, rm: *Rm, cwd: bun.FileDescriptor, error_signal: *std.atomic.Value(bool), is_absolute: bool) *ShellRmTask {
+    pub fn create(root_path: bun.PathString, rm: *Rm, cwd: bun.FD, error_signal: *std.atomic.Value(bool), is_absolute: bool) *ShellRmTask {
         const task = bun.handleOom(bun.default_allocator.create(ShellRmTask));
         task.* = ShellRmTask{
             .rm = rm,
@@ -747,7 +747,7 @@ pub const ShellRmTask = struct {
         jsc.WorkPool.schedule(&subtask.task);
     }
 
-    pub fn getcwd(this: *ShellRmTask) bun.FileDescriptor {
+    pub fn getcwd(this: *ShellRmTask) bun.FD {
         return this.cwd;
     }
 

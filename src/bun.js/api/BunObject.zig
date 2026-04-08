@@ -70,6 +70,7 @@ pub const BunObject = struct {
     pub const YAML = toJSLazyPropertyCallback(Bun.getYAMLObject);
     pub const Transpiler = toJSLazyPropertyCallback(Bun.getTranspilerConstructor);
     pub const argv = toJSLazyPropertyCallback(Bun.getArgv);
+    pub const cron = toJSLazyPropertyCallback(@import("./cron.zig").getCronObject);
     pub const cwd = toJSLazyPropertyCallback(Bun.getCWD);
     pub const embeddedFiles = toJSLazyPropertyCallback(Bun.getEmbeddedFiles);
     pub const enableANSIColors = toJSLazyPropertyCallback(Bun.enableANSIColors);
@@ -140,6 +141,7 @@ pub const BunObject = struct {
         @export(&BunObject.Glob, .{ .name = lazyPropertyCallbackName("Glob") });
         @export(&BunObject.Transpiler, .{ .name = lazyPropertyCallbackName("Transpiler") });
         @export(&BunObject.argv, .{ .name = lazyPropertyCallbackName("argv") });
+        @export(&BunObject.cron, .{ .name = lazyPropertyCallbackName("cron") });
         @export(&BunObject.cwd, .{ .name = lazyPropertyCallbackName("cwd") });
         @export(&BunObject.enableANSIColors, .{ .name = lazyPropertyCallbackName("enableANSIColors") });
         @export(&BunObject.hash, .{ .name = lazyPropertyCallbackName("hash") });
@@ -1437,6 +1439,70 @@ pub const EnvironmentVariables = struct {
         return false;
     }
 
+    /// BunString variant of Bun__getEnvValue. The returned value borrows from
+    /// the env map; caller must copy before the map can mutate.
+    pub export fn Bun__getEnvValueBunString(globalObject: *jsc.JSGlobalObject, name: *bun.String, value: *bun.String) bool {
+        const vm = globalObject.bunVM();
+        var name_slice = name.toUTF8(bun.default_allocator);
+        defer name_slice.deinit();
+        const val = vm.transpiler.env.get(name_slice.slice()) orelse return false;
+        value.* = bun.String.borrowUTF8(val);
+        return true;
+    }
+
+    /// Sync a process.env write back to the Zig-side env map so that Zig
+    /// consumers (e.g. fetch's proxy resolution via env.getHttpProxyFor)
+    /// observe the updated value. Used by custom setters for proxy-related
+    /// env vars (HTTP_PROXY, HTTPS_PROXY, NO_PROXY and lowercase variants).
+    ///
+    /// Values are ref-counted in RareData.proxy_env_storage so that
+    /// worker_threads share the parent's strings (refcount bumped at spawn)
+    /// rather than cloning. A worker only allocates its own value if it
+    /// writes to that var. Parent deref'ing on overwrite won't free the
+    /// bytes while a worker still holds a ref.
+    pub export fn Bun__setEnvValue(globalObject: *jsc.JSGlobalObject, name: *bun.String, value: *bun.String) void {
+        const vm = globalObject.bunVM();
+        var name_slice = name.toUTF8(bun.default_allocator);
+        defer name_slice.deinit();
+
+        const storage = &vm.proxy_env_storage;
+
+        // Synchronize the slot swap + env.map.put against a concurrently
+        // spawning worker's cloneFrom + env.map.cloneWithAllocator. Without
+        // this, the worker could load the slot pointer between our deref
+        // (refcount → 0 → free) and the null write below, then call ref()
+        // on freed memory.
+        storage.lock.lock();
+        defer storage.lock.unlock();
+
+        const slot = storage.slot(name_slice.slice()) orelse return;
+
+        // Deref our previous value. If a worker still holds a ref, the
+        // bytes stay alive; if not, they're freed now.
+        if (slot.ptr.*) |old| {
+            old.deref();
+            slot.ptr.* = null;
+        }
+
+        if (value.isEmpty()) {
+            // Store a static empty string rather than removing, so that
+            // process.env.X reads back as "" (Node.js semantics) instead
+            // of undefined. isNoProxy treats empty strings the same as
+            // absent — no bypass.
+            bun.handleOom(vm.transpiler.env.map.put(slot.key, ""));
+            return;
+        }
+
+        var value_slice = value.toUTF8(bun.default_allocator);
+        defer value_slice.deinit();
+        const new_val = jsc.RareData.RefCountedEnvValue.create(value_slice.slice());
+        slot.ptr.* = new_val;
+        // slot.key is a static-lifetime string literal (the struct field
+        // name); value bytes live in the ref-counted wrapper. map.put
+        // stores both slice headers without duping.
+        bun.handleOom(vm.transpiler.env.map.put(slot.key, new_val.bytes));
+    }
+
     pub fn getEnvNames(globalObject: *jsc.JSGlobalObject, names: []ZigString) usize {
         var vm = globalObject.bunVM();
         const keys = vm.transpiler.env.map.map.keys();
@@ -1465,6 +1531,8 @@ comptime {
     _ = EnvironmentVariables.Bun__getEnvCount;
     _ = EnvironmentVariables.Bun__getEnvKey;
     _ = EnvironmentVariables.Bun__getEnvValue;
+    _ = EnvironmentVariables.Bun__getEnvValueBunString;
+    _ = EnvironmentVariables.Bun__setEnvValue;
 }
 
 pub const JSZlib = struct {
@@ -1930,7 +1998,7 @@ pub const JSZstd = struct {
             const promise = this.promise.swap();
 
             if (this.error_message) |err_msg| {
-                try promise.reject(globalThis, globalThis.ERR(.ZSTD, "{s}", .{err_msg}).toJS());
+                try promise.rejectWithAsyncStack(globalThis, globalThis.ERR(.ZSTD, "{s}", .{err_msg}).toJS());
                 return;
             }
 

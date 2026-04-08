@@ -94,7 +94,7 @@ const socket = await Bun.udpSocket({});
 socket.sendMany(["Hello", 41234, "127.0.0.1", "foo", 53, "1.1.1.1"]);
 ```
 
-With a connected socket, `sendMany` simply takes an array, where each element represents the data to be sent to the peer.
+With a connected socket, `sendMany` takes an array, where each element represents the data to be sent to the peer.
 
 ```ts server.ts icon="/icons/typescript.svg"
 const socket = await Bun.udpSocket({

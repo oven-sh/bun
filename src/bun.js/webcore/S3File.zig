@@ -371,7 +371,7 @@ pub const S3BlobStatTask = struct {
                 try this.promise.resolve(this.global, .true);
             },
             .failure => |err| {
-                try this.promise.reject(this.global, err.toJS(this.global, this.store.data.s3.path()));
+                try this.promise.reject(this.global, err.toJSWithAsyncStack(this.global, this.store.data.s3.path(), this.promise.get()));
             },
         }
     }
@@ -384,7 +384,7 @@ pub const S3BlobStatTask = struct {
                 try this.promise.resolve(this.global, JSValue.jsNumber(stat_result.size));
             },
             .not_found, .failure => |err| {
-                try this.promise.reject(this.global, err.toJS(this.global, this.store.data.s3.path()));
+                try this.promise.reject(this.global, err.toJSWithAsyncStack(this.global, this.store.data.s3.path(), this.promise.get()));
             },
         }
     }
@@ -403,7 +403,7 @@ pub const S3BlobStatTask = struct {
                 )).toJS(globalThis));
             },
             .not_found, .failure => |err| {
-                try this.promise.reject(globalThis, err.toJS(globalThis, this.store.data.s3.path()));
+                try this.promise.reject(globalThis, err.toJSWithAsyncStack(globalThis, this.store.data.s3.path(), this.promise.get()));
             },
         }
     }

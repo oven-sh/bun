@@ -136,6 +136,12 @@ ref_strings_mutex: bun.Mutex = undefined,
 active_tasks: usize = 0,
 
 rare_data: ?*jsc.RareData = null,
+/// Owned storage for proxy env vars set via process.env at runtime. Not
+/// in RareData because lazy RareData creation races with worker spawn
+/// (worker thread needs to lock parent.proxy_env_storage.lock atomically
+/// with observing the env map; a null-check on rare_data can't be both
+/// lock-free and correct). ~56 bytes — negligible on VirtualMachine.
+proxy_env_storage: jsc.RareData.ProxyEnvStorage = .{},
 is_us_loop_entered: bool = false,
 pending_internal_promise: ?*JSInternalPromise = null,
 entry_point_result: struct {
@@ -171,6 +177,10 @@ debug_thread_id: if (Environment.allow_assert) std.Thread.Id else void,
 body_value_hive_allocator: webcore.Body.Value.HiveAllocator = undefined,
 
 is_inside_deferred_task_queue: bool = false,
+/// When true, drainMicrotasksWithGlobal is suppressed. Used by SpawnSyncEventLoop
+/// to prevent the isolated event loop from draining the shared JSC microtask queue
+/// (which would execute user JavaScript during spawnSync).
+suppress_microtask_drain: bool = false,
 
 // defaults off. .on("message") will set it to true unless overridden
 // process.channel.unref() will set it to false and mark it overridden
@@ -742,6 +752,7 @@ pub fn reload(this: *VirtualMachine, _: *HotReloader.Task) void {
         Output.enableBuffering();
     }
 
+    jsc.API.cron.CronJob.clearAllForVM(this, .reload);
     this.global.reload() catch @panic("Failed to reload");
     this.hot_reload_counter += 1;
     this.pending_internal_promise = this.reloadEntryPoint(this.main) catch @panic("Failed to reload");
@@ -1267,11 +1278,18 @@ fn configureDebugger(this: *VirtualMachine, cli_flag: bun.cli.Command.Debugger) 
         },
     }
 
-    if (this.isInspectorEnabled() and this.debugger.?.mode != .connect) {
-        this.transpiler.options.minify_identifiers = false;
-        this.transpiler.options.minify_syntax = false;
-        this.transpiler.options.minify_whitespace = false;
-        this.transpiler.options.debugger = true;
+    if (this.isInspectorEnabled()) {
+        // The runtime transpiler cache does not store inline source maps needed
+        // by the debugger frontend. Disable it so the printer always runs and
+        // generates the inline sourceMappingURL for the inspector.
+        jsc.RuntimeTranspilerCache.is_disabled = true;
+
+        if (this.debugger.?.mode != .connect) {
+            this.transpiler.options.minify_identifiers = false;
+            this.transpiler.options.minify_syntax = false;
+            this.transpiler.options.minify_whitespace = false;
+            this.transpiler.options.debugger = true;
+        }
     }
 }
 
@@ -1825,10 +1843,16 @@ pub fn resolveMaybeNeedsTrailingSlash(
     jsc_vm.log = &log;
     jsc_vm.transpiler.resolver.log = &log;
     jsc_vm.transpiler.linker.log = &log;
+    if (jsc_vm.transpiler.resolver.package_manager) |pm| {
+        pm.log = &log;
+    }
     defer {
         jsc_vm.log = old_log;
         jsc_vm.transpiler.linker.log = old_log;
         jsc_vm.transpiler.resolver.log = old_log;
+        if (jsc_vm.transpiler.resolver.package_manager) |pm| {
+            pm.log = old_log;
+        }
     }
     jsc_vm._resolve(&result, specifier_utf8.slice(), normalizeSource(source_utf8.slice()), is_esm, is_a_file_path) catch |err_| {
         var err = err_;
@@ -1978,8 +2002,10 @@ pub fn deinit(this: *VirtualMachine) void {
     }
     this.source_mappings.deinit();
     if (this.rare_data) |rare_data| {
+        jsc.API.cron.CronJob.clearAllForVM(this, .teardown);
         rare_data.deinit();
     }
+    this.proxy_env_storage.deinit();
     this.overridden_main.deinit();
     this.has_terminated = true;
 }
@@ -2321,14 +2347,14 @@ pub fn loadEntryPoint(this: *VirtualMachine, entry_path: string) anyerror!*JSInt
     return this.pending_internal_promise.?;
 }
 
-pub fn addListeningSocketForWatchMode(this: *VirtualMachine, socket: bun.FileDescriptor) void {
+pub fn addListeningSocketForWatchMode(this: *VirtualMachine, socket: bun.FD) void {
     if (this.hot_reload != .watch) {
         return;
     }
 
     this.rareData().addListeningSocketForWatchMode(socket);
 }
-pub fn removeListeningSocketForWatchMode(this: *VirtualMachine, socket: bun.FileDescriptor) void {
+pub fn removeListeningSocketForWatchMode(this: *VirtualMachine, socket: bun.FD) void {
     if (this.hot_reload != .watch) {
         return;
     }
@@ -3706,6 +3732,7 @@ pub const ExitHandler = struct {
     extern fn Process__dispatchOnBeforeExit(*JSGlobalObject, code: u8) void;
     extern fn Process__dispatchOnExit(*JSGlobalObject, code: u8) void;
     extern fn Bun__closeAllSQLiteDatabasesForTermination() void;
+    extern fn Bun__WebView__closeAllForTermination() void;
 
     pub fn dispatchOnExit(this: *ExitHandler) void {
         jsc.markBinding(@src());
@@ -3713,6 +3740,7 @@ pub const ExitHandler = struct {
         Process__dispatchOnExit(vm.global, this.exit_code);
         if (vm.isMainThread()) {
             Bun__closeAllSQLiteDatabasesForTermination();
+            Bun__WebView__closeAllForTermination();
         }
     }
 

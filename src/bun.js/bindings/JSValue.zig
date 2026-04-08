@@ -384,7 +384,6 @@ pub const JSValue = enum(i64) {
             @compileError("Unsupported key type in put(). Expected ZigString or bun.String, got " ++ @typeName(Key));
         }
     }
-    /// Note: key can't be numeric (if so, use putMayBeIndex instead)
     /// Same as `.put` but accepts both non-numeric and numeric keys.
     /// Prefer to use `.put` if the key is guaranteed to be non-numeric (e.g. known at comptime)
     pub fn putMayBeIndex(this: JSValue, globalObject: *JSGlobalObject, key: *const String, value: JSValue) bun.JSError!void {
@@ -858,8 +857,8 @@ pub const JSValue = enum(i64) {
     }
 
     /// Decimal values are truncated without rounding.
-    /// `-Infinity` and `NaN` coerce to -minInt(64)
-    /// `Infinity` coerces to maxInt(64)
+    /// `NaN` coerces to 0. `-Infinity` coerces to minInt(i64).
+    /// `Infinity` coerces to maxInt(i64).
     pub fn toInt64(this: JSValue) i64 {
         if (this.isInt32()) {
             return this.asInt32();
@@ -973,6 +972,15 @@ pub const JSValue = enum(i64) {
         if (res == .zero)
             return null;
         return res;
+    }
+
+    extern fn Bun__attachAsyncStackFromPromise(global: *JSGlobalObject, err: JSValue, promise: *jsc.JSPromise) void;
+    /// If `this` is an Error instance with no stack trace (e.g. created from
+    /// native code at the top of the event loop), populate its stack with async
+    /// frames derived from the given promise's await chain. No-op if `this` is
+    /// not an Error instance or the promise has no awaiting generator.
+    pub fn attachAsyncStackFromPromise(this: JSValue, global: *JSGlobalObject, promise: *jsc.JSPromise) void {
+        Bun__attachAsyncStackFromPromise(global, this, promise);
     }
 
     /// Returns true if
@@ -1246,14 +1254,14 @@ pub const JSValue = enum(i64) {
     }
 
     /// Call `toString()` on the JSValue and clone the result.
-    /// On exception or out of memory, this returns null.
+    /// On exception or out of memory, this returns a JSError.
     ///
     /// Remember that `Symbol` throws an exception when you call `toString()`.
     pub fn toSliceClone(this: JSValue, globalThis: *JSGlobalObject) bun.JSError!ZigString.Slice {
         return this.toSliceCloneWithAllocator(globalThis, bun.default_allocator);
     }
 
-    /// On exception or out of memory, this returns null, to make exception checks clearer.
+    /// On exception or out of memory, this returns a JSError.
     pub fn toSliceCloneWithAllocator(
         this: JSValue,
         globalThis: *JSGlobalObject,
@@ -1443,6 +1451,18 @@ pub const JSValue = enum(i64) {
         try scope.assertNoExceptionExceptTermination();
     }
 
+    /// Like `then`, but the context is a JSValue instead of a raw pointer.
+    /// Use this when the context should be GC-managed (e.g., a JSCell that
+    /// gets collected with the Promise's reaction if the Promise is GC'd
+    /// without settling).
+    pub fn thenWithValue(this: JSValue, global: *JSGlobalObject, ctx: JSValue, resolve: jsc.JSHostFnZig, reject: jsc.JSHostFnZig) bun.JSTerminated!void {
+        var scope: TopExceptionScope = undefined;
+        scope.init(global, @src());
+        defer scope.deinit();
+        this._then(global, ctx, resolve, reject);
+        try scope.assertNoExceptionExceptTermination();
+    }
+
     pub fn getDescription(this: JSValue, global: *JSGlobalObject) ZigString {
         var zig_str = ZigString.init("");
         getSymbolDescription(this, global, &zig_str);
@@ -1450,10 +1470,9 @@ pub const JSValue = enum(i64) {
     }
 
     /// Equivalent to `target[property]`. Calls userland getters/proxies.  Can
-    /// throw. Null indicates the property does not exist. JavaScript undefined
-    /// and JavaScript null can exist as a property and is different than zig
-    /// `null` (property does not exist), however javascript undefined will return
-    /// zig null.
+    /// throw. Zig null indicates the property does not exist OR its value is
+    /// JS undefined (the two are not distinguished). JS null passes through
+    /// as a value.
     ///
     /// `property` must be `[]const u8`. A comptime slice may defer to
     /// calling `fastGet`, which use a more optimal code path. This function is
@@ -1486,9 +1505,9 @@ pub const JSValue = enum(i64) {
     }
 
     /// Equivalent to `target[property]`. Calls userland getters/proxies.  Can
-    /// throw. Null indicates the property does not exist. JavaScript undefined
-    /// and JavaScript null can exist as a property and is different than zig
-    /// `null` (property does not exist).
+    /// throw. Zig null indicates the property does not exist OR its value is
+    /// JS undefined (the two are not distinguished). JS null passes through
+    /// as a value.
     ///
     /// Can handle numeric index property names.
     ///
@@ -1794,7 +1813,7 @@ pub const JSValue = enum(i64) {
     }
 
     /// Many Bun API are loose and simply want to check if a value is truthy
-    /// Missing value, null, and undefined return `null`
+    /// Missing value and undefined return zig `null`. JS null returns `false`.
     pub inline fn getBooleanLoose(this: JSValue, global: *JSGlobalObject, comptime property_name: []const u8) JSError!?bool {
         const prop = try this.get(global, property_name) orelse return null;
         return prop.toBoolean();
@@ -2080,7 +2099,7 @@ pub const JSValue = enum(i64) {
         return FFI.JSVALUE_TO_INT32(.{ .asJSValue = this });
     }
 
-    pub fn asFileDescriptor(this: JSValue) bun.FileDescriptor {
+    pub fn asFileDescriptor(this: JSValue) bun.FD {
         bun.assert(this.isNumber());
         return .fromUV(this.toInt32());
     }
@@ -2100,7 +2119,6 @@ pub const JSValue = enum(i64) {
     /// - Map (size)
     /// - WeakMap (size)
     /// - Set (size)
-    /// - WeakSet (size)
     /// - ArrayBuffer (byteLength)
     /// - anything with a .length property returning a number
     ///
@@ -2237,7 +2255,7 @@ pub const JSValue = enum(i64) {
         _padding: u6 = 0,
     };
 
-    /// Throws a JS exception and returns null if the serialization fails, otherwise returns a SerializedScriptValue.
+    /// Throws a JSError if serialization fails, otherwise returns a SerializedScriptValue.
     /// Must be freed when you are done with the bytes.
     pub inline fn serialize(this: JSValue, global: *JSGlobalObject, flags: SerializedFlags) bun.JSError!SerializedScriptValue {
         var flags_u8: u8 = 0;

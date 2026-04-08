@@ -23,9 +23,9 @@ const GlobWalker = bun.glob.GlobWalker(null, true);
 pub const SUBSHELL_TODO_ERROR = "Subshells are not implemented, please open GitHub issue!";
 
 /// Using these instead of the file descriptor decl literals to make sure we use LivUV fds on Windows
-pub const STDIN_FD: bun.FileDescriptor = .fromUV(0);
-pub const STDOUT_FD: bun.FileDescriptor = .fromUV(1);
-pub const STDERR_FD: bun.FileDescriptor = .fromUV(2);
+pub const STDIN_FD: bun.FD = .fromUV(0);
+pub const STDOUT_FD: bun.FD = .fromUV(1);
+pub const STDERR_FD: bun.FD = .fromUV(2);
 
 pub const POSIX_DEV_NULL: [:0]const u8 = "/dev/null";
 pub const WINDOWS_DEV_NULL: [:0]const u8 = "NUL";
@@ -152,7 +152,7 @@ fn setEnv(name: [*:0]const u8, value: [*:0]const u8) void {
 
 /// [0] => read end
 /// [1] => write end
-pub const Pipe = [2]bun.FileDescriptor;
+pub const Pipe = [2]bun.FD;
 
 const log = bun.Output.scoped(.SHELL, .hidden);
 
@@ -834,7 +834,7 @@ pub const AST = struct {
     /// - `2>>` = Redirect.Append | Redirect.Stderr
     /// - `&>>` = Redirect.Append | Redirect.Stdout | Redirect.Stderr
     ///
-    /// Multiple redirects and redirecting stdin is not supported yet.
+    /// Multiple redirects are not supported yet.
     pub const RedirectFlags = packed struct(u8) {
         stdin: bool = false,
         stdout: bool = false,
@@ -1020,6 +1020,9 @@ pub const AST = struct {
         Var: []const u8,
         VarArgv: u8,
         Text: []const u8,
+        /// An empty string from a quoted context (e.g. "", '', or ${''}). Preserved as an
+        /// explicit empty argument during expansion, unlike unquoted empty text which is dropped.
+        quoted_empty,
         asterisk,
         double_asterisk,
         brace_begin,
@@ -1042,6 +1045,7 @@ pub const AST = struct {
                 .Var => false,
                 .VarArgv => false,
                 .Text => false,
+                .quoted_empty => false,
                 .asterisk => true,
                 .double_asterisk => true,
                 .brace_begin => false,
@@ -1845,6 +1849,9 @@ pub const Parser = struct {
                             if (txt.len > 0) {
                                 try atoms.append(.{ .Text = txt });
                             }
+                        } else if (txt.len == 0 and (peeked == .SingleQuotedText or peeked == .DoubleQuotedText)) {
+                            // Preserve empty quoted strings ("", '') as explicit empty arguments
+                            try atoms.append(.quoted_empty);
                         } else {
                             try atoms.append(.{ .Text = txt });
                         }
@@ -2794,10 +2801,12 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                             comptime assertSpecialChar('\'');
 
                             if (self.chars.state == .Single) {
+                                try self.break_word(false);
                                 self.chars.state = .Normal;
                                 continue;
                             }
                             if (self.chars.state == .Normal) {
+                                try self.break_word(false);
                                 self.chars.state = .Single;
                                 continue;
                             }
@@ -2893,9 +2902,12 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
         }
 
         inline fn isImmediatelyEscapedQuote(self: *@This()) bool {
-            return (self.chars.state == .Double and
+            return ((self.chars.state == .Double and
                 (self.chars.current != null and !self.chars.current.?.escaped and self.chars.current.?.char == '"') and
-                (self.chars.prev != null and !self.chars.prev.?.escaped and self.chars.prev.?.char == '"'));
+                (self.chars.prev != null and !self.chars.prev.?.escaped and self.chars.prev.?.char == '"')) or
+                (self.chars.state == .Single and
+                    (self.chars.current != null and !self.chars.current.?.escaped and self.chars.current.?.char == '\'') and
+                    (self.chars.prev != null and !self.chars.prev.?.escaped and self.chars.prev.?.char == '\'')));
         }
 
         fn break_word_impl(self: *@This(), add_delimiter: bool, in_normal_space: bool, in_operator: bool) !void {
@@ -2976,7 +2988,7 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
         }
 
         /// Returns true if the operator is "double one": >> or <<
-        /// Returns null if it is invalid: <> ><
+        /// Returns false if not doubled or invalid (e.g. <> ><)
         fn eat_simple_redirect_operator(self: *@This(), dir: RedirectDirection) bool {
             if (self.peek()) |peeked| {
                 if (peeked.escaped) return false;
@@ -3234,6 +3246,15 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
         }
 
         fn handleJSStringRef(self: *@This(), bunstr: bun.String) !void {
+            if (bunstr.length() == 0) {
+                // Empty JS string ref: emit a zero-length DoubleQuotedText token directly.
+                // The parser converts this to a quoted_empty atom, preserving the empty arg.
+                // This works regardless of the lexer's current quote state (Normal/Single/Double)
+                // because the \x08 marker is processed before quote-state handling.
+                const pos = self.j;
+                try self.tokens.append(@unionInit(Token, "DoubleQuotedText", .{ .start = pos, .end = pos }));
+                return;
+            }
             try self.appendStringToStrPool(bunstr);
         }
 
@@ -4068,6 +4089,13 @@ pub const ShellSrcBuilder = struct {
     ) bun.OOM!bool {
         const invalid = (bunstr.isUTF16() and !bun.simdutf.validate.utf16le(bunstr.utf16())) or (bunstr.isUTF8() and !bun.simdutf.validate.utf8(bunstr.byteSlice()));
         if (invalid) return false;
+        // Empty interpolated values must still produce an argument (e.g. `${''}` should
+        // pass "" as an arg). Route through appendJSStrRef so the \x08 marker is recognized
+        // by the lexer regardless of quote context (e.g. inside single quotes).
+        if (allow_escape and bunstr.length() == 0) {
+            try this.appendJSStrRef(bunstr);
+            return true;
+        }
         if (allow_escape) {
             if (needsEscapeBunstr(bunstr)) {
                 try this.appendJSStrRef(bunstr);
@@ -4238,7 +4266,7 @@ pub fn needsEscapeUtf8AsciiLatin1(str: []const u8) bool {
     return false;
 }
 
-/// A list that can store its items inlined, and promote itself to a heap allocated bun.ByteList
+/// A list that can store its items inlined, and promote itself to a heap allocated bun.BabyList(T)
 pub fn SmolList(comptime T: type, comptime INLINED_MAX: comptime_int) type {
     return union(enum) {
         inlined: Inlined,

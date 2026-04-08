@@ -24,7 +24,7 @@ pub const ref = RefCount.ref;
 pub const deref = RefCount.deref;
 
 ref_count: RefCount,
-fd: bun.FileDescriptor = .invalid,
+fd: bun.FD = .invalid,
 size: usize = 0,
 
 var memfd_counter = std.atomic.Value(usize).init(0);

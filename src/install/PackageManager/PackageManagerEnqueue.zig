@@ -625,6 +625,40 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
                                 }
                                 return;
                             },
+                            error.MissingPackageJSON => {
+                                if (dependency.behavior.isRequired()) {
+                                    if (failFn) |fail| {
+                                        fail(
+                                            this,
+                                            dependency,
+                                            id,
+                                            err,
+                                        );
+                                    } else if (version.tag == .folder) {
+                                        this.log.addErrorFmt(
+                                            null,
+                                            logger.Loc.Empty,
+                                            this.allocator,
+                                            "Could not find package.json for \"file:{s}\" dependency \"{s}\"",
+                                            .{
+                                                this.lockfile.str(&version.value.folder),
+                                                this.lockfile.str(&name),
+                                            },
+                                        ) catch unreachable;
+                                    } else {
+                                        this.log.addErrorFmt(
+                                            null,
+                                            logger.Loc.Empty,
+                                            this.allocator,
+                                            "Could not find package.json for dependency \"{s}\"",
+                                            .{
+                                                this.lockfile.str(&name),
+                                            },
+                                        ) catch unreachable;
+                                    }
+                                }
+                                return;
+                            },
                             else => {
                                 if (failFn) |fail| {
                                     fail(
@@ -1239,7 +1273,7 @@ fn enqueueGitClone(
 pub fn enqueueGitCheckout(
     this: *PackageManager,
     task_id: Task.Id,
-    dir: bun.FileDescriptor,
+    dir: bun.FD,
     dependency_id: DependencyID,
     name: string,
     resolution: Resolution,

@@ -613,6 +613,14 @@ pub const PathLike = union(enum) {
             }
         }
 
+        if (sliced.len >= buf.len) {
+            bun.Output.debugWarn("path too long: {d} bytes exceeds PathBuffer capacity of {d}\n", .{ sliced.len, buf.len });
+            if (comptime !force) return "";
+
+            buf[0] = 0;
+            return buf[0..0 :0];
+        }
+
         @memcpy(buf[0..sliced.len], sliced);
         buf[sliced.len] = 0;
         return buf[0..sliced.len :0];
@@ -726,12 +734,13 @@ pub const PathLike = union(enum) {
     }
 
     pub fn fromBunString(global: *jsc.JSGlobalObject, str: *bun.String, will_be_async: bool, allocator: std.mem.Allocator) !PathLike {
-        try Valid.pathStringLength(str.length(), global);
-
         if (will_be_async) {
             var sliced = try str.toThreadSafeSlice(allocator);
             errdefer sliced.deinit();
 
+            // Validate the UTF-8 byte length after conversion, since the path
+            // will be stored in a fixed-size PathBuffer.
+            try Valid.pathStringLength(sliced.slice().len, global);
             try Valid.pathNullBytes(sliced.slice(), global);
 
             sliced.reportExtraMemory(global.vm());
@@ -744,6 +753,9 @@ pub const PathLike = union(enum) {
             var sliced = str.toSlice(allocator);
             errdefer sliced.deinit();
 
+            // Validate the UTF-8 byte length after conversion, since the path
+            // will be stored in a fixed-size PathBuffer.
+            try Valid.pathStringLength(sliced.slice().len, global);
             try Valid.pathNullBytes(sliced.slice(), global);
 
             // Costs nothing to keep both around.
@@ -883,7 +895,7 @@ pub fn modeFromJS(ctx: *jsc.JSGlobalObject, value: jsc.JSValue) bun.JSError!?Mod
 }
 
 pub const PathOrFileDescriptor = union(Tag) {
-    fd: bun.FileDescriptor,
+    fd: bun.FD,
     path: PathLike,
 
     pub const Tag = enum { fd, path };
@@ -1041,7 +1053,15 @@ pub const FileSystemFlags = enum(c_int) {
                 return ctx.throwValue(ctx.ERR(.OUT_OF_RANGE, "The value of \"flags\" is out of range. It must be an integer. Received {d}", .{val.asNumber()}).toJS());
             }
             const number = try val.coerce(i32, ctx);
-            return @as(FileSystemFlags, @enumFromInt(@max(number, 0)));
+            const flags = @max(number, 0);
+            // On Windows, numeric flags from fs.constants (e.g. O_CREAT=0x100)
+            // use the platform's native MSVC/libuv values which differ from the
+            // internal bun.O representation. Convert them here so downstream
+            // code that operates on bun.O flags works correctly.
+            if (comptime bun.Environment.isWindows) {
+                return @as(FileSystemFlags, @enumFromInt(bun.windows.libuv.O.toBunO(flags)));
+            }
+            return @as(FileSystemFlags, @enumFromInt(flags));
         }
 
         const jsType = val.jsType();

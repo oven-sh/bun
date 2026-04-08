@@ -30,11 +30,11 @@
 namespace WebCore {
 
 template<typename Visitor>
-void JSErrorEvent::visitAdditionalChildren(Visitor& visitor)
+void JSErrorEvent::visitAdditionalChildrenInGCThread(Visitor& visitor)
 {
     wrapped().originalError().visit(visitor);
 }
 
-DEFINE_VISIT_ADDITIONAL_CHILDREN(JSErrorEvent);
+DEFINE_VISIT_ADDITIONAL_CHILDREN_IN_GC_THREAD(JSErrorEvent);
 
 } // namespace WebCore

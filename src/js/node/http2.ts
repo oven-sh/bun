@@ -2065,7 +2065,12 @@ class Http2Stream extends Duplex {
   }
 
   get destroyed() {
-    return this[bunHTTP2Session] === null;
+    return this[bunHTTP2Session] === null || this._readableState?.destroyed === true;
+  }
+
+  set destroyed(value) {
+    if (this._readableState) this._readableState.destroyed = value;
+    if (this._writableState) this._writableState.destroyed = value;
   }
 
   get state() {

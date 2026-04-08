@@ -229,6 +229,22 @@ describe("Bun.otel codec", () => {
     expect(() => decodeTraces(bytes)).toThrow(/NestingTooDeep/);
   });
 
+  test("encodeTraces treats NaN in uint32 fields as 0 (no @intFromFloat panic)", () => {
+    const out = decodeTraces(
+      encodeTraces({
+        resourceSpans: [
+          {
+            scopeSpans: [
+              { spans: [{ traceId: TRACE_ID, spanId: SPAN_ID, name: "x", kind: NaN, droppedAttributesCount: NaN }] },
+            ],
+          },
+        ],
+      }),
+    );
+    // proto3 omits 0-valued fields; decoder may return 0 or leave undefined.
+    expect(out.resourceSpans[0].scopeSpans[0].spans[0].kind ?? 0).toBe(0);
+  });
+
   test("encodeTraces handles signed int64 attribute values", () => {
     const span = (intValue: unknown) => ({
       resourceSpans: [

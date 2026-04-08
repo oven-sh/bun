@@ -44,35 +44,89 @@ pub fn getActiveSpanContext(global: *JSGlobalObject) ?model.SpanContext {
     return null;
 }
 
-/// Swap the active span for the duration of a synchronous JS call. The caller
-/// must `restore()` after the call returns (before any sibling code runs); the
-/// per-reaction capture in PromiseOperations handles async continuation.
+/// Return the OtelSpanContext JSValue currently in the span position of the
+/// slot, or `.null` if no span is active.
+fn activeSpanCell(global: *JSGlobalObject) JSValue {
+    const slot = getSlot(global);
+    if (slot.isUndefinedOrNull()) return .null;
+    if (tracer.OtelSpanContext.fromJSDirect(slot)) |_| return slot;
+    if (slot.isCell() and slot.jsType().isArray()) {
+        const k0 = slot.getIndex(global, 0) catch return .null;
+        if (!k0.isNull()) return .null;
+        const v0 = slot.getIndex(global, 1) catch return .null;
+        if (tracer.OtelSpanContext.fromJSDirect(v0)) |_| return v0;
+    }
+    return .null;
+}
+
+/// Surgically replace the active-span position in the *current* slot with
+/// `prev_cell` (the span cell that was active before `span_id` was pushed, or
+/// `.null`). Only acts if `span_id` is the span currently on top — out-of-order
+/// dispose leaves the slot untouched. ALS pairs that were added between
+/// enter/restore are preserved.
+pub fn surgicalRestoreSpan(global: *JSGlobalObject, span_id: model.SpanId, prev_cell: JSValue) void {
+    const current = getSlot(global);
+    if (tracer.OtelSpanContext.fromJSDirect(current)) |sc| {
+        if (std.mem.eql(u8, &sc.ctx.span_id, &span_id)) setSlot(global, prev_cell);
+        return;
+    }
+    if (current.isCell() and current.jsType().isArray()) {
+        const len: u32 = @intCast(current.getLength(global) catch return);
+        if (len < 2) return;
+        const k0 = current.getIndex(global, 0) catch return;
+        if (!k0.isNull()) return;
+        const top = current.getIndex(global, 1) catch return;
+        const sc = tracer.OtelSpanContext.fromJSDirect(top) orelse return;
+        if (!std.mem.eql(u8, &sc.ctx.span_id, &span_id)) return;
+        const new_slot = rebuildArrayForRestore(global, current, len, prev_cell) catch return;
+        setSlot(global, new_slot);
+    }
+}
+
+fn rebuildArrayForRestore(global: *JSGlobalObject, arr: JSValue, len: u32, prev_cell: JSValue) bun.JSError!JSValue {
+    if (!prev_cell.isNull()) {
+        const out = try JSValue.createEmptyArray(global, len);
+        try out.putIndex(global, 0, .null);
+        try out.putIndex(global, 1, prev_cell);
+        var i: u32 = 2;
+        while (i < len) : (i += 1) try out.putIndex(global, i, try arr.getIndex(global, i));
+        return out;
+    }
+    if (len <= 2) return .null;
+    const out = try JSValue.createEmptyArray(global, len - 2);
+    var i: u32 = 2;
+    var j: u32 = 0;
+    while (i < len) : ({
+        i += 1;
+        j += 1;
+    }) try out.putIndex(global, j, try arr.getIndex(global, i));
+    return out;
+}
+
+/// Swap the active span for the duration of a synchronous JS call. `restore()`
+/// surgically removes only this span from whatever the slot has become, so ALS
+/// mutations made between enter/restore survive.
 pub const SlotGuard = struct {
     global: *JSGlobalObject,
+    /// Previous span cell that was active at `enter()`, or `.null`. NOT a full
+    /// slot snapshot — that would clobber interleaved ALS state on restore.
     saved: JSValue,
     cell: JSValue,
 
-    /// `cell` must be an OtelSpanContext JSValue. If `saved` is an ALS array,
-    /// the new slot value is a fresh `[null, cell, ...rest]` array so ALS reads
-    /// inside the call still work; otherwise we set the cell directly.
     pub fn enter(global: *JSGlobalObject, cell: JSValue) SlotGuard {
-        // JSMicrotask.cpp skips set/restore when captured asyncContext is
-        // `undefined`, so a later restore-to-undefined is overwritten by the
-        // wrapping continuation's own restore. Normalize to `null`, which is
-        // captured and restored like any other value. getActiveSpanContext()
-        // and async_hooks.ts both treat null as "no context".
-        var saved = getSlot(global);
-        if (saved.isUndefined()) saved = .null;
-        const new_slot = if (saved.isCell() and saved.jsType().isArray())
-            buildArrayWithSpan(global, saved, cell)
+        const prev_cell = activeSpanCell(global);
+        const slot = getSlot(global);
+        const new_slot = if (slot.isCell() and slot.jsType().isArray())
+            buildArrayWithSpan(global, slot, cell)
         else
             cell;
         setSlot(global, new_slot);
-        return .{ .global = global, .saved = saved, .cell = cell };
+        return .{ .global = global, .saved = prev_cell, .cell = cell };
     }
 
     pub fn restore(self: *const SlotGuard) void {
-        setSlot(self.global, self.saved);
+        const sc = tracer.OtelSpanContext.fromJSDirect(self.cell) orelse return;
+        surgicalRestoreSpan(self.global, sc.ctx.span_id, self.saved);
     }
 };
 

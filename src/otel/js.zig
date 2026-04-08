@@ -46,7 +46,7 @@ const ReadCtx = struct {
         const v = (try obj.get(ctx.global, name)) orelse return 0;
         if (!v.isNumber()) return 0;
         const n = v.asNumber();
-        if (n < 0 or n > @as(f64, std.math.maxInt(u32))) return 0;
+        if (!std.math.isFinite(n) or n < 0 or n > @as(f64, std.math.maxInt(u32))) return 0;
         return @intFromFloat(n);
     }
 

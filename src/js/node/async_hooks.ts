@@ -188,17 +188,19 @@ class AsyncLocalStorage {
       // Note: early `return` will prevent `throw` above from working. I think...
       // Set AsyncContextFrame to undefined if we are out of context values
       if (!wasDisabled) {
-        var context2 = get()! as any[]; // we make sure to .slice() before mutating
+        var context2 = get() as any;
         if (context2 === context && contextWasAlreadyInit) {
           set(carriedSpan);
-        } else {
+        } else if (context2 && $isJSArray(context2)) {
           context2 = context2.slice(); // array is cloned here
           // The array may have been rebuilt with a [null, span] sentinel
           // prepended (instrument.SlotGuard) since we recorded `i`, so re-find
           // ourselves rather than trusting the stale index.
           if (context2[i] !== this) i = context2.indexOf(this);
-          $assert(context2[i] === this);
-          if (hasPrevious) {
+          if (i === -1) {
+            // Our entry was already removed (e.g. disable() inside the callback).
+            set(context2.length ? context2 : undefined);
+          } else if (hasPrevious) {
             context2[i + 1] = previous_value;
             set(context2);
           } else {
@@ -207,6 +209,7 @@ class AsyncLocalStorage {
             set(context2.length ? context2 : undefined);
           }
         }
+        // else: slot was replaced with null or a bare span cell; nothing to remove.
         $assert(
           this.getStore() === previous_value,
           "run: previous_value",

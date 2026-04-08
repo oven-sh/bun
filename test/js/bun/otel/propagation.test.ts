@@ -160,6 +160,52 @@ describe("Bun.otel context propagation", () => {
     expect(otel.getActiveSpanContext()).toBeUndefined();
   });
 
+  test("ALS interop: als.enterWith between span start/dispose survives surgical restore", () => {
+    otel.configure({ endpoint: "", sampler: "always_on" });
+    const tracer = otel.tracer("test");
+    const als = new AsyncLocalStorage<string>();
+    {
+      using span = tracer.start("a");
+      expect(otel.getActiveSpanContext()).toBeDefined();
+      als.enterWith("kept");
+      expect(als.getStore()).toBe("kept");
+    }
+    // dispose removed only the span; ALS entry added between start/dispose is kept.
+    expect(otel.getActiveSpanContext()).toBeUndefined();
+    expect(als.getStore()).toBe("kept");
+    als.disable();
+    // And nested spans: inner dispose restores outer span without losing ALS.
+    const als2 = new AsyncLocalStorage<string>();
+    {
+      using outer = tracer.start("outer");
+      const outerId = hex(outer.spanContext.spanId);
+      {
+        using inner = tracer.start("inner");
+        als2.enterWith("v");
+      }
+      expect(hex(otel.getActiveSpanContext().spanId)).toBe(outerId);
+      expect(als2.getStore()).toBe("v");
+    }
+    expect(otel.getActiveSpanContext()).toBeUndefined();
+    als2.disable();
+  });
+
+  test("ALS: disable() inside run() does not corrupt other ALS entries", () => {
+    // Regression for the indexOf re-find: when disable() removes `this` from the
+    // array, run()'s finally must not splice(-1, 2).
+    const als1 = new AsyncLocalStorage<string>();
+    const als2 = new AsyncLocalStorage<string>();
+    als1.enterWith("A");
+    als2.run("B", () => {
+      expect(als2.getStore()).toBe("B");
+      als2.disable();
+      expect(als2.getStore()).toBeUndefined();
+    });
+    expect(als1.getStore()).toBe("A");
+    expect(als2.getStore()).toBeUndefined();
+    als1.disable();
+  });
+
   test("start (using form) with no explicit parent inherits active span", async () => {
     otel.configure({ endpoint: "", sampler: "always_on" });
     const tracer = otel.tracer("test");

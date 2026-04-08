@@ -146,7 +146,11 @@ pub const TracerProvider = struct {
         self.processor.opts.scheduled_delay_ms = cfg.scheduled_delay_ms;
         self.processor.opts.max_export_batch_size = cfg.max_export_batch_size;
         self.processor.opts.max_queue_size = cfg.max_queue_size;
-        if (self.exporter == null and cfg.endpoint.len > 0) {
+        if (self.exporter) |e| {
+            if (cfg.endpoint.len > 0 and !bun.strings.hasPrefix(e.traces_url_buf, cfg.endpoint)) {
+                log("Bun.otel.configure: endpoint cannot be changed after first configure (in-flight exports hold the exporter); still sending to {s}", .{e.traces_url_buf});
+            }
+        } else if (cfg.endpoint.len > 0) {
             self.exporter = try OtlpHttpExporter.init(self.allocator, self.vm, cfg.endpoint, cfg.headers);
         }
     }
@@ -256,7 +260,7 @@ pub const OtelTracer = struct {
         const guard = instrument.SlotGuard.enter(global, cell);
 
         if (func == .js_undefined) {
-            // `using` form: stash the saved slot on the span; dispose restores it.
+            // `using` form: stash the previous span cell; dispose surgically restores it.
             OtelSpan.js.savedSlotSetCached(span_js, global, guard.saved);
             return span_js;
         }
@@ -513,16 +517,15 @@ pub const OtelSpan = struct {
         return .js_undefined;
     }
 
-    /// `[Symbol.dispose]` / `[Symbol.asyncDispose]`. Restores the active-context
-    /// slot to its pre-start value (if this span activated it via the `using`
-    /// form of `tracer.start()`) and ends the span. `using` declarations
-    /// dispose in LIFO order, so nested spans restore correctly. `.end()` does
-    /// NOT restore — slot management is the caller's responsibility when not
-    /// using `using` or the callback form.
+    /// `[Symbol.dispose]` / `[Symbol.asyncDispose]`. Surgically removes this
+    /// span from the active-context slot (preserving any ALS state added since
+    /// `start()`), restores the previous span cell if there was one, and ends
+    /// the span. No-op for the slot if this span isn't currently on top
+    /// (out-of-order dispose). `.end()` does NOT touch the slot.
     pub fn dispose(this: *OtelSpan, global: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
         const this_value = callframe.this();
-        if (js.savedSlotGetCached(this_value)) |saved| {
-            instrument.setSlot(global, saved);
+        if (js.savedSlotGetCached(this_value)) |prev_cell| {
+            instrument.surgicalRestoreSpan(global, this.ctx.span_id, prev_cell);
             js.savedSlotSetCached(this_value, global, .zero);
         }
         this.endNow();

@@ -836,6 +836,18 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
     this.on("timeout", onNodeHTTPServerSocketTimeout);
   }
 
+  emit(event) {
+    // Mirrors ServerResponse.prototype.emit: when the internal
+    // assignSocket path (`setCloseCallback(socket, onServerResponseClose)`)
+    // is in use, we must drive that one-shot callback here instead of
+    // relying on a real 'close' event listener. Without this the internal
+    // path never propagates the socket close to `res.on('close')`.
+    if (event === "close") {
+      callCloseCallback(this);
+    }
+    return Stream.prototype.emit.$apply(this, arguments);
+  }
+
   get bytesWritten() {
     const handle = this[kHandle];
     return handle
@@ -896,6 +908,16 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
   #onClose() {
     this[kHandle] = null;
 
+    // End the readable side first so `socket.on('end')` fires on peer
+    // disconnect, regardless of whether the request body had been fully
+    // consumed at the time of the abort. Mirrors Node's net.Socket
+    // handling of UV_EOF: push(null) + read(0) to drain the state machine.
+    if (!this.destroyed && this.readable && !this.readableEnded) {
+      if (!this.push(null)) {
+        this.read(0);
+      }
+    }
+
     const message = this._httpMessage;
     const req = message?.req;
 
@@ -907,6 +929,15 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
       } else {
         req.destroy();
       }
+    }
+
+    // Ensure the Duplex socket emits its 'close' event when the native
+    // socket goes away. Without this, `res.on('close')` and
+    // `socket.on('close')` never fire after a peer abort if the request
+    // body was already fully consumed (req.complete === true), because
+    // the branch above is skipped and nothing else destroys the Duplex.
+    if (!this.destroyed) {
+      this.destroy();
     }
   }
   #onCloseForDestroy(closeCallback) {

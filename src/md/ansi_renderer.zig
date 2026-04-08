@@ -1458,11 +1458,14 @@ pub const AnsiRenderer = struct {
                 if (i + 1 >= bytes.len) return;
                 if (bytes[i + 1] == '[') {
                     // CSI ... m (SGR). Scan until final byte.
+                    // ECMA-48 final bytes are 0x40–0x7E; the parameter
+                    // separator ';' is 0x3B and is already excluded by
+                    // the range check.
                     const seq_start = i;
                     var j = i + 2;
                     while (j < bytes.len) : (j += 1) {
                         const c = bytes[j];
-                        if ((c >= 0x40 and c <= 0x7e) and c != ';') break;
+                        if (c >= 0x40 and c <= 0x7e) break;
                     }
                     if (j >= bytes.len) return;
                     if (bytes[j] == 'm') {

@@ -2455,10 +2455,33 @@ pub fn printErrorlikeObject(
     }
 
     if (value.isAggregateError(this.global)) {
+        // Print the main error message first
+        was_internal = this.printErrorFromMaybePrivateData(
+            value,
+            exception_list,
+            formatter,
+            Writer,
+            writer,
+            allow_ansi_color,
+            allow_side_effects,
+        );
+
+        // Print the [errors] label
+        if (comptime allow_ansi_color) {
+            writer.writeAll("\n  [errors]: ") catch {};
+        } else {
+            writer.writeAll("\n  [errors]: ") catch {};
+        }
+
+        // Print opening bracket
+        writer.writeAll("[\n") catch {};
+
+        // Iterate and print each error
         const AggregateErrorIterator = struct {
             writer: Writer,
             current_exception_list: ?*ExceptionList = null,
             formatter: *ConsoleObject.Formatter,
+            is_first: bool = true,
 
             pub fn iteratorWithColor(vm: *VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.c) void {
                 iterator(vm, globalObject, nextValue, ctx.?, true);
@@ -2468,6 +2491,11 @@ pub fn printErrorlikeObject(
             }
             fn iterator(_: *VM, _: *JSGlobalObject, nextValue: JSValue, ctx: ?*anyopaque, comptime color: bool) void {
                 const this_ = @as(*@This(), @ptrFromInt(@intFromPtr(ctx)));
+                if (!this_.is_first) {
+                    this_.writer.writeAll(",\n") catch {};
+                }
+                this_.is_first = false;
+                this_.writer.writeAll("    ") catch {};
                 VirtualMachine.get().printErrorlikeObject(nextValue, null, this_.current_exception_list, this_.formatter, Writer, this_.writer, color, allow_side_effects);
             }
         };
@@ -2477,6 +2505,9 @@ pub fn printErrorlikeObject(
         } else {
             value.getErrorsProperty(this.global).forEach(this.global, &iter, AggregateErrorIterator.iteratorWithOutColor) catch return; // TODO: properly propagate exception upwards
         }
+
+        // Print closing bracket
+        writer.writeAll("\n  ]") catch {};
         return;
     }
 

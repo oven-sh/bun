@@ -128,8 +128,11 @@ test("ws emits 'upgrade' with headers before 'open' on 101", { timeout: 30000 },
 // The non-101 body can span multiple TCP reads. Previously the shim dispatched
 // on the first read, truncating large error bodies. The native client now
 // buffers until Content-Length is satisfied (or EOF) before dispatching.
-test("ws 'unexpected-response' waits for full Content-Length body across multiple writes", { timeout: 30000 }, async () => {
-  const { stdout, exitCode } = await run(/* js */ `
+test(
+  "ws 'unexpected-response' waits for full Content-Length body across multiple writes",
+  { timeout: 30000 },
+  async () => {
+    const { stdout, exitCode } = await run(/* js */ `
     const { createServer } = require("net");
     const { once } = require("events");
     const { WebSocket } = require("ws");
@@ -173,11 +176,12 @@ test("ws 'unexpected-response' waits for full Content-Length body across multipl
     await once(ws, "close");
     server.close();
   `);
-  expect(stdout).toMatchInlineSnapshot(
-    `"{"statusCode":503,"contentLength":"7800","bodyLength":7800,"firstChar":"a","lastChar":"c"}"`,
-  );
-  expect(exitCode).toBe(0);
-});
+    expect(stdout).toMatchInlineSnapshot(
+      `"{"statusCode":503,"contentLength":"7800","bodyLength":7800,"firstChar":"a","lastChar":"c"}"`,
+    );
+    expect(exitCode).toBe(0);
+  },
+);
 
 // `on()` / `once()` are not the only EventEmitter registration APIs — ws
 // consumers also reach for `addListener` / `prependListener` /

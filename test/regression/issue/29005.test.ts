@@ -17,7 +17,7 @@
 // shape that fires the Windows assertion.
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
-import { readlinkSync, statSync } from "node:fs";
+import { existsSync, readlinkSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 test("bun install handles a bin target inside .bin without panicking", async () => {
@@ -48,22 +48,24 @@ test("bun install handles a bin target inside .bin without panicking", async () 
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // stdout/stderr captured for debug output on failure; we assert behaviour
+  // via on-disk artefacts + exit status rather than reporter text.
+  const [, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  // The install must complete successfully. Without the fix, `createSymlink`
-  // (POSIX) and `createWindowsShim` (Windows) both hit an assertion that
-  // panics the process and produces a non-zero exit code + empty stdout.
-  expect(stderr).toContain("Saved lockfile");
-  expect(stdout).toContain("weird@pkg");
-  expect(exitCode).toBe(0);
-
-  // The package must be extracted.
+  // The package itself must be extracted.
   const pkgJson = join(String(dir), "node_modules", "weird", "package.json");
   expect(statSync(pkgJson).isFile()).toBe(true);
 
+  // The lockfile must have been written to disk. Without the fix the install
+  // panics before saving the lockfile, so the file simply doesn't exist.
+  const lockfile = existsSync(join(String(dir), "bun.lock"))
+    ? join(String(dir), "bun.lock")
+    : join(String(dir), "bun.lockb");
+  expect(existsSync(lockfile)).toBe(true);
+
   // On POSIX the bin link is a symlink whose target is the `bin` path we
   // stored in package.json, normalized relative to `.bin`. On Windows it's
-  // a `.exe` + `.bunx` shim pair. Assert the relevant artefact exists.
+  // a `.exe` + `.bunx` shim pair.
   if (process.platform === "win32") {
     const exe = join(String(dir), "node_modules", ".bin", "weird.exe");
     const bunx = join(String(dir), "node_modules", ".bin", "weird.bunx");
@@ -73,4 +75,9 @@ test("bun install handles a bin target inside .bin without panicking", async () 
     const link = join(String(dir), "node_modules", ".bin", "weird");
     expect(readlinkSync(link)).toBe("foo.js");
   }
+
+  // Without the fix, `createSymlink`/`createWindowsShim` panics with "reached
+  // unreachable code" and exits non-zero before any of the above artefacts are
+  // produced. Assert exit status last for better failure messages.
+  expect(exitCode).toBe(0);
 });

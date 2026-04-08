@@ -193,15 +193,27 @@ pub const PackageInstall = struct {
     /// Returns true if the existing `node_modules/<pkg>` entry (if any) is the
     /// right kind for the given resolution tag — a top-level symlink for the
     /// resolutions that `installFromLink` creates (`.symlink`, `.workspace`,
-    /// `.root`) and a real directory for everything else. Missing entries are
-    /// treated as "matching" so the downstream verify steps can report the
-    /// miss through their normal path.
+    /// `.root`) and a real directory for everything else. On mismatch, returns
+    /// false and the caller forces a reinstall.
     ///
     /// Note `.folder` installs (including transitive non-workspace `file:`
     /// deps) go through `installWithSymlink` which creates a **real directory**
     /// at `node_modules/<pkg>` and populates it with per-file symlinks — the
     /// top-level entry is not itself a symlink, so `.folder` lands in the
     /// `else` branch alongside npm/tarball/git.
+    ///
+    /// Missing-entry behavior is asymmetric but reinstall is correct in both
+    /// cases:
+    ///   - `expected_symlink == false` (npm/git/tarball/folder): a missing
+    ///     entry also reports `entry_is_symlink == false`, so the kinds match
+    ///     and we fall through to the downstream verify steps (package.json
+    ///     check / directoryExistsAt), which report the miss and trigger the
+    ///     reinstall there.
+    ///   - `expected_symlink == true` (.symlink/.workspace/.root): a missing
+    ///     entry still reports false, so the mismatch check here returns
+    ///     false early and skips the downstream steps — reinstall still
+    ///     happens, just via this early exit rather than through package.json
+    ///     checks.
     fn verifyEntryKindMatchesResolution(
         this: *@This(),
         tag: Resolution.Tag,
@@ -217,11 +229,6 @@ pub const PackageInstall = struct {
             this.destination_dir_subpath,
         );
 
-        // If the entry doesn't exist at all, entryIsSymlink returns false. For
-        // `expected_symlink == false` that still looks like a match; we let the
-        // existing verify steps (openFile on package.json / directoryExistsAt)
-        // report the miss and trigger reinstall. Only an actual mismatch — i.e.
-        // the entry exists but has the wrong form — forces an early reinstall.
         return entry_is_symlink == expected_symlink;
     }
 

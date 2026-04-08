@@ -14,6 +14,9 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 
+// Cold auto-install + subprocess spawn + Worker IPC is tight against the
+// default 5s per-test budget on slower CI lanes — see timeout on the closing
+// paren.
 test("auto-install works inside a Worker thread", async () => {
   using dir = tempDir("issue-29018", {
     // No package.json, no node_modules — force auto-install.
@@ -64,4 +67,4 @@ test("auto-install works inside a Worker thread", async () => {
   expect(stdout).toContain("main:true");
   expect(stdout).toContain("message:worker:true");
   expect(exitCode).toBe(0);
-});
+}, 15_000);

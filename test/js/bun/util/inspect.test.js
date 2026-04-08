@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
-import { normalizeBunSnapshot, tmpdirSync } from "harness";
+import { writeFileSync } from "fs";
+import { bunEnv, bunExe, normalizeBunSnapshot, tmpdirSync } from "harness";
 import { join } from "path";
 import util from "util";
 it("prototype", () => {
@@ -739,4 +740,33 @@ it("CustomEvent", () => {
       BUBBLING_PHASE: 3,
     }"
   `);
+});
+
+it("formatting object with Proxy prototype does not crash", () => {
+  // Regression test for a crash in JSC__JSValue__forEachPropertyImpl's slow
+  // path: walking the prototype chain must not call .getObject() on an empty
+  // JSValue. Run in a child process so a segfault doesn't tear down the
+  // test runner.
+  const dir = tmpdirSync();
+  const script = join(dir, "repro.js");
+  writeFileSync(
+    script,
+    `import { expect } from "bun:test";
+const v = expect();
+Object.setPrototypeOf(v, new Proxy(Object.getPrototypeOf(v), {}));
+try { v.toBe(v); } catch {}
+Bun.inspect(v);
+`,
+  );
+  const result = Bun.spawnSync({
+    cmd: [bunExe(), script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const stderr = result.stderr?.toString() ?? "";
+  expect(result.signalCode).toBeUndefined();
+  expect(stderr).not.toContain("Segmentation fault");
+  expect(stderr).not.toContain("runtime error");
+  expect(stderr).not.toContain("panic");
 });

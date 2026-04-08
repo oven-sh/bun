@@ -54,6 +54,8 @@ const Socket = net.Socket;
 const EventEmitter = require("node:events");
 const { Duplex } = Stream;
 const { SafeArrayIterator, SafeSet } = require("internal/primordials");
+const { AsyncResource } = require("node:async_hooks");
+const kRequestAsyncResource = Symbol("kRequestAsyncResource");
 const { promisify } = require("internal/promisify");
 
 const RegExpPrototypeExec = RegExp.prototype.exec;
@@ -1900,6 +1902,7 @@ function streamErrorFromCode(code: number) {
 }
 hideFromStack(streamErrorFromCode);
 function sessionErrorFromCode(code: number) {
+  if (code === -2) return $ERR_HTTP2_TOO_MANY_INVALID_FRAMES("Too many invalid HTTP/2 frames");
   if (code === 0xe) {
     return $ERR_HTTP2_MAX_PENDING_SETTINGS_ACK();
   }
@@ -1914,6 +1917,15 @@ function assertSession(session) {
 }
 hideFromStack(assertSession);
 
+function emitResponseNT(self, stream, headers, flags, rawheaders) {
+  self.emit("stream", stream, headers, flags, rawheaders);
+  stream.emit("response", headers, flags, rawheaders);
+}
+function pushToStreamInScope(stream, data) {
+  const reqAsync = stream[kRequestAsyncResource];
+  if (reqAsync) reqAsync.runInAsyncScope(pushToStream, null, stream, data);
+  else pushToStream(stream, data);
+}
 function pushToStream(stream, data) {
   if (data && stream[bunHTTP2StreamStatus] & StreamState.Closed) {
     if (!stream._readableState.ended) {
@@ -3337,7 +3349,7 @@ class ClientHttp2Session extends Http2Session {
           }
           // Push a null so the stream can end whenever the client consumes
           // it completely.
-          pushToStream(stream, null);
+          pushToStreamInScope(stream, null);
           stream.read(0);
         }
       }
@@ -3357,7 +3369,7 @@ class ClientHttp2Session extends Http2Session {
     },
     streamData(self: ClientHttp2Session, stream: ClientHttp2Stream, data: Buffer) {
       if (!self || typeof stream !== "object" || !data) return;
-      pushToStream(stream, data);
+      pushToStreamInScope(stream, data);
     },
     streamHeaders(
       self: ClientHttp2Session,
@@ -3385,8 +3397,13 @@ class ClientHttp2Session extends Http2Session {
             // 421 Misdirected Request
             removeOriginFromSet(self, stream);
           }
-          self.emit("stream", stream, headers, flags, rawheaders);
-          stream.emit("response", headers, flags, rawheaders);
+          const reqAsync = stream[kRequestAsyncResource];
+          if (reqAsync) {
+            reqAsync.runInAsyncScope(process.nextTick, null, emitResponseNT, self, stream, headers, flags, rawheaders);
+          } else {
+            self.emit("stream", stream, headers, flags, rawheaders);
+            stream.emit("response", headers, flags, rawheaders);
+          }
         }
       }
     },
@@ -3887,6 +3904,7 @@ class ClientHttp2Session extends Http2Session {
         return req;
       }
       const req = new ClientHttp2Stream(stream_id, this, headers);
+      req[kRequestAsyncResource] = new AsyncResource("PendingRequest");
       req.authority = authority;
       req[kHeadRequest] = method === HTTP2_METHOD_HEAD;
       if (typeof options === "undefined") {

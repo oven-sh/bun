@@ -185,18 +185,21 @@ function injectFakeEmitter(Class) {
     return this;
   };
 
-  function EventClass(eventName) {
-    if (eventName === "error" || eventName === "messageerror") {
-      return ErrorEvent;
-    }
-
-    return MessageEvent;
-  }
-
   Class.prototype.emit = function (event, ...args) {
-    this.dispatchEvent(new (EventClass(event))(event, ...args));
-
-    return this;
+    // Node's EventEmitter.emit returns whether any listeners fired. Use the
+    // tracking map so callers can rely on the standard
+    // `if (!emitter.emit('error', err)) throw err;` idiom.
+    const hadListeners = Class.prototype.listenerCount.$call(this, event) > 0;
+    let ev;
+    if (event === "error" || event === "messageerror") {
+      ev = new ErrorEvent(event, { error: args[0] });
+    } else {
+      // MessageEvent's init dict takes the payload under `data`, which
+      // `messageEventHandler` unwraps for on()/once() callbacks.
+      ev = new MessageEvent(event, { data: args[0] });
+    }
+    this.dispatchEvent(ev);
+    return hadListeners;
   };
 
   Class.prototype.addListener = Class.prototype.on;

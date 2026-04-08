@@ -293,3 +293,35 @@ test("on() accepts an EventListener object with handleEvent", async () => {
     port2.close();
   }
 });
+
+test("emit() wraps payload in MessageEvent.data and returns hadListeners", () => {
+  // Two pre-existing bugs that this PR should fix since it ships emit() as
+  // part of the advertised EventEmitter surface:
+  //   (1) listeners must receive the payload via event.data / event.error
+  //   (2) emit() returns true/false (had listeners), matching Node so
+  //       `if (!emitter.emit('error', err)) throw err;` works.
+  const { port1, port2 } = new MessageChannel();
+  try {
+    let received: unknown;
+    port1.on("message", msg => {
+      received = msg;
+    });
+    expect(port1.emit("message", "hello")).toBe(true);
+    expect(received).toBe("hello");
+
+    // No listeners → false.
+    expect(port1.emit("messageerror", new Error("nope"))).toBe(false);
+
+    // Error event propagates via event.error.
+    let err: unknown;
+    port1.on("messageerror", e => {
+      err = e;
+    });
+    const boom = new Error("boom");
+    expect(port1.emit("messageerror", boom)).toBe(true);
+    expect(err).toBe(boom);
+  } finally {
+    port1.close();
+    port2.close();
+  }
+});

@@ -510,7 +510,7 @@ pub const Bin = extern struct {
         // Escape outside the walk-back position.
         if (strings.hasPrefixComptime(rel, "..\\")) return false;
         if (strings.hasPrefixComptime(rel, "../")) return false;
-        if (std.mem.eql(u8, rel, "..")) return false;
+        if (strings.eqlComptime(rel, "..")) return false;
         // Absolute path (drive letter, e.g. "D:\...").
         if (rel.len >= 2 and rel[1] == ':') return false;
         // Rooted or UNC path.

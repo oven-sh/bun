@@ -2558,40 +2558,40 @@ pub const Arguments = struct {
             else
                 0;
 
-            //   if (length === 0) {
-            //     return process.nextTick(function tick() {
-            //       callback(null, 0, buffer);
-            //     });
-            //   }
-            if (length_float == 0) {
-                return .{ .fd = fd, .buffer = buffer, .length = 0, .offset = 0 };
+            // The `length === 0` short-circuit must not skip the `position`
+            // type check below — bun is stricter than Node here on purpose
+            // (see https://github.com/nodejs/node/issues/62638). We still
+            // need to validate `length` and `position` even when no bytes
+            // will be read.
+            var length_int: i64 = 0;
+            var length: u64 = 0;
+            if (length_float != 0) {
+                const buf_len = buffer.slice().len;
+                if (buf_len == 0) {
+                    return ctx.ERR(.INVALID_ARG_VALUE, "The argument 'buffer' is empty and cannot be written.", .{}).throw();
+                }
+                // validateOffsetLengthRead(offset, length, buffer.byteLength);
+                if (@mod(length_float, 1) != 0) {
+                    return ctx.throwRangeError(length_float, .{ .field_name = "length", .msg = "an integer" });
+                }
+                length_int = @intFromFloat(length_float);
+                if (length_int > buf_len) {
+                    return ctx.throwRangeError(
+                        length_float,
+                        .{ .field_name = "length", .max = @intCast(@min(buf_len, std.math.maxInt(i64))) },
+                    );
+                }
+                if (@as(i64, @intCast(offset)) +| length_int > buf_len) {
+                    return ctx.throwRangeError(
+                        length_float,
+                        .{ .field_name = "length", .max = @intCast(buf_len -| offset) },
+                    );
+                }
+                if (length_int < 0) {
+                    return ctx.throwRangeError(length_float, .{ .field_name = "length", .min = 0 });
+                }
+                length = @intCast(length_int);
             }
-
-            const buf_len = buffer.slice().len;
-            if (buf_len == 0) {
-                return ctx.ERR(.INVALID_ARG_VALUE, "The argument 'buffer' is empty and cannot be written.", .{}).throw();
-            }
-            // validateOffsetLengthRead(offset, length, buffer.byteLength);
-            if (@mod(length_float, 1) != 0) {
-                return ctx.throwRangeError(length_float, .{ .field_name = "length", .msg = "an integer" });
-            }
-            const length_int: i64 = @intFromFloat(length_float);
-            if (length_int > buf_len) {
-                return ctx.throwRangeError(
-                    length_float,
-                    .{ .field_name = "length", .max = @intCast(@min(buf_len, std.math.maxInt(i64))) },
-                );
-            }
-            if (@as(i64, @intCast(offset)) +| length_int > buf_len) {
-                return ctx.throwRangeError(
-                    length_float,
-                    .{ .field_name = "length", .max = @intCast(buf_len -| offset) },
-                );
-            }
-            if (length_int < 0) {
-                return ctx.throwRangeError(length_float, .{ .field_name = "length", .min = 0 });
-            }
-            const length: u64 = @intCast(length_int);
 
             // if (position == null) {
             //   position = -1;

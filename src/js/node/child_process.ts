@@ -1484,15 +1484,20 @@ class ChildProcess extends EventEmitter {
 
     const handle = this.#handle;
     if (handle) {
-      if (handle.killed) {
-        this.killed = true;
-        return true;
-      }
-
       try {
-        handle.kill(signal);
-        this.killed = true;
-        return true;
+        // `handle.kill` returns `true` if the signal was delivered and
+        // `false` if the process was already gone (Bun observed the exit
+        // on our side or the OS reported ESRCH). Mirror Node, which
+        // returns `false` in the latter case so callers can tell them
+        // apart. Note that `handle.killed` is not useful here: Bun's
+        // Subprocess marks itself "killed" whenever the process has
+        // exited — even when it exited on its own without any signal.
+        const delivered = handle.kill(signal);
+        // `this.killed` tracks whether the user has asked us to kill
+        // (Node semantics). Only flip it when the signal was actually
+        // delivered; an already-dead process was never killed by *us*.
+        if (delivered) this.killed = true;
+        return delivered;
       } catch (e) {
         this.emit("error", e);
       }

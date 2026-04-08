@@ -39,6 +39,9 @@ pub const SemconvKey = enum(u8) {
     @"exception.type",
     @"exception.message",
     @"exception.stacktrace",
+    @"code.function",
+    @"fs.path",
+    @"messaging.message.body.size",
 
     pub fn slice(self: SemconvKey) []const u8 {
         return @tagName(self);

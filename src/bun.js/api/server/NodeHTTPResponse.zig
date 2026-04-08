@@ -35,6 +35,8 @@ upgrade_context: UpgradeCTX = .{},
 
 auto_flusher: AutoFlusher = .{},
 
+otel_span: ?*bun.otel.NativeSpan = null,
+
 pub const Flags = packed struct(u8) {
     socket_closed: bool = false,
     request_has_completed: bool = false,
@@ -251,6 +253,12 @@ fn markRequestAsDone(this: *NodeHTTPResponse) void {
     log("markRequestAsDone()", .{});
     defer this.deref();
     this.flags.is_request_pending = false;
+
+    if (this.otel_span) |span| {
+        this.otel_span = null;
+        if (this.flags.socket_closed and !this.flags.ended) span.setStatus(.err, "aborted");
+        span.end();
+    }
 
     this.clearOnDataCallback(this.getThisValue(), jsc.VirtualMachine.get().global);
     this.upgrade_context.deinit();
@@ -1209,6 +1217,10 @@ fn deinit(this: *NodeHTTPResponse) void {
     bun.debugAssert(!this.flags.is_request_pending);
     bun.debugAssert(this.flags.socket_closed or this.flags.request_has_completed);
 
+    if (this.otel_span) |span| {
+        this.otel_span = null;
+        span.end();
+    }
     this.buffered_request_body_data_during_pause.deinit(bun.default_allocator);
     this.poll_ref.unref(jsc.VirtualMachine.get());
     this.body_read_ref.unref(jsc.VirtualMachine.get());

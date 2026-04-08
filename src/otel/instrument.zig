@@ -177,24 +177,32 @@ pub const NativeSpan = struct {
     pub const Scope = enum {
         server,
         fetch,
+        node_http,
+        fs,
+        websocket,
 
         fn name(self: Scope) []const u8 {
             return switch (self) {
                 .server => "bun.serve",
                 .fetch => "bun.fetch",
+                .node_http => "node.http",
+                .fs => "node.fs",
+                .websocket => "bun.websocket",
             };
         }
     };
 
-    /// Null when no provider is configured or the sampler rejects.
+    /// Null when no provider is configured, the per-hook flag is off, or the
+    /// sampler rejects. `which` selects the `InstrumentFlags` bool to gate on.
     pub fn start(
         vm: *jsc.VirtualMachine,
+        comptime which: tracer.InstrumentFlags.FieldEnum,
         scope: Scope,
         kind: model.SpanKind,
         name: []const u8,
         parent: ?model.SpanContext,
     ) ?*NativeSpan {
-        const provider = tracer.TracerProvider.get(vm) orelse return null;
+        const provider = tracer.TracerProvider.getIfEnabled(vm, which) orelse return null;
         const trace_id: model.TraceId = if (parent) |p| p.trace_id else tracer.generateTraceId();
         if (!provider.sampler.shouldSample(trace_id)) return null;
         const self = NativeSpan.new(.{

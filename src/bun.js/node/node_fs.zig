@@ -337,6 +337,18 @@ pub const Async = struct {
         return struct {
             pub const Task = @This();
 
+            // OTEL `node.fs` instrumentation is opt-in (`instrument.fs`) and
+            // restricted to the heavy file-level ops. The field is `void` for
+            // every other op so the struct size is unchanged elsewhere.
+            const otel_op_name: ?[]const u8 = blk: {
+                if (ArgumentType == Arguments.ReadFile) break :blk "fs.readFile";
+                if (ArgumentType == Arguments.WriteFile) break :blk "fs.writeFile";
+                if (ArgumentType == Arguments.CopyFile) break :blk "fs.copyFile";
+                if (ArgumentType == Arguments.Rm) break :blk "fs.rm";
+                break :blk null;
+            };
+            const OtelSpanField = if (otel_op_name != null) ?*bun.otel.NativeSpan else void;
+
             promise: jsc.JSPromise.Strong,
             args: ArgumentType,
             globalObject: *jsc.JSGlobalObject,
@@ -344,6 +356,7 @@ pub const Async = struct {
             result: bun.sys.Maybe(ReturnType),
             ref: bun.Async.KeepAlive = .{},
             tracker: jsc.Debugger.AsyncTaskTracker,
+            otel_span: OtelSpanField = if (otel_op_name != null) null else {},
 
             /// NewAsyncFSTask supports cancelable operations via AbortSignal,
             /// so long as a "signal" field exists. The task wrapper will ensure
@@ -369,8 +382,33 @@ pub const Async = struct {
                 task.ref.ref(vm);
                 task.args.toThreadSafe();
                 task.tracker.didSchedule(globalObject);
+                if (comptime otel_op_name) |name| {
+                    if (bun.otel.TracerProvider.getIfEnabled(vm, .fs) != null) {
+                        const parent = bun.otel.instrument.getActiveSpanContext(globalObject);
+                        if (bun.otel.NativeSpan.start(vm, .fs, .fs, .internal, name, parent)) |span| {
+                            if (otelPath(&task.args)) |path| span.setAttrStr(.@"fs.path", path);
+                            task.otel_span = span;
+                        }
+                    }
+                }
                 jsc.WorkPool.schedule(&task.task);
                 return task.promise.value();
+            }
+
+            fn otelPath(a: *const ArgumentType) ?[]const u8 {
+                if (comptime ArgumentType == Arguments.ReadFile)
+                    return switch (a.path) {
+                        .path => |p| p.slice(),
+                        .fd => null,
+                    };
+                if (comptime ArgumentType == Arguments.WriteFile)
+                    return switch (a.file) {
+                        .path => |p| p.slice(),
+                        .fd => null,
+                    };
+                if (comptime ArgumentType == Arguments.CopyFile) return a.src.slice();
+                if (comptime ArgumentType == Arguments.Rm) return a.path.slice();
+                return null;
             }
 
             fn workPoolCallback(task: *jsc.WorkPoolTask) void {
@@ -396,6 +434,13 @@ pub const Async = struct {
                 defer tracker.didDispatch(globalObject);
 
                 const success = @as(bun.sys.Maybe(ReturnType).Tag, this.result) == .result;
+                if (comptime otel_op_name != null) {
+                    if (this.otel_span) |span| {
+                        this.otel_span = null;
+                        if (!success) span.setStatus(.err, "");
+                        span.end();
+                    }
+                }
                 var promise_value = this.promise.value();
                 var promise = this.promise.get();
                 const result = switch (this.result) {

@@ -1146,9 +1146,9 @@ pub const FetchTasklet = struct {
             fetch_tasklet.signals.cert_errors = null;
         }
 
-        if (bun.otel.TracerProvider.get(jsc_vm) != null) {
+        if (bun.otel.TracerProvider.getIfEnabled(jsc_vm, .fetch) != null) {
             const parent = bun.otel.instrument.getActiveSpanContext(globalThis);
-            if (bun.otel.NativeSpan.start(jsc_vm, .fetch, .client, @tagName(fetch_options.method), parent)) |span| {
+            if (bun.otel.NativeSpan.start(jsc_vm, .fetch, .fetch, .client, @tagName(fetch_options.method), parent)) |span| {
                 span.setAttrStatic(.@"http.request.method", @tagName(fetch_options.method));
                 span.setAttrStr(.@"server.address", url.hostname);
                 span.setAttrStr(.@"url.full", url.href);

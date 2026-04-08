@@ -96,7 +96,9 @@ pub fn onOpen(this: *ServerWebSocket, ws: uws.AnyWebSocket) void {
         .globalObject = globalObject,
         .callback = onOpenHandler,
     };
+    var otel = OtelWSGuard.begin(vm, globalObject, "ws open", null);
     ws.cork(&corker, Corker.run);
+    otel.end(corker.result);
     const result = corker.result;
     this.#flags.opened = true;
     if (result.toError()) |err_value| {
@@ -156,7 +158,9 @@ pub fn onMessage(
         .callback = onMessageHandler,
     };
 
+    var otel = OtelWSGuard.begin(vm, globalObject, "ws message", message.len);
     ws.cork(&corker, Corker.run);
+    otel.end(corker.result);
     const result = corker.result;
 
     if (result.isEmptyOrUndefinedOrNull()) return;
@@ -332,12 +336,14 @@ pub fn onClose(this: *ServerWebSocket, _: uws.AnyWebSocket, code: i32, message: 
             return;
         };
 
-        _ = handler.onClose.call(globalObject, .js_undefined, &[_]jsc.JSValue{ this.#this_value.tryGet() orelse .js_undefined, JSValue.jsNumber(code), message_js }) catch |e| {
+        var otel = OtelWSGuard.begin(vm, globalObject, "ws close", null);
+        const close_result = handler.onClose.call(globalObject, .js_undefined, &[_]jsc.JSValue{ this.#this_value.tryGet() orelse .js_undefined, JSValue.jsNumber(code), message_js }) catch |e| brk: {
             const err = globalObject.takeException(e);
             log("onClose error {}", .{this.#this_value.isNotEmpty()});
             handler.runErrorCallback(vm, globalObject, err);
-            return;
+            break :brk .js_undefined;
         };
+        otel.end(close_result);
     } else if (signal) |sig| {
         const loop = vm.eventLoop();
 
@@ -349,6 +355,34 @@ pub fn onClose(this: *ServerWebSocket, _: uws.AnyWebSocket, code: i32, message: 
         }
     }
 }
+
+/// Wraps a WebSocket handler invocation in a `bun.websocket` span and a
+/// SlotGuard so user code inside `message`/`open`/`close` sees the span as the
+/// active context. Span ends synchronously after the call returns.
+const OtelWSGuard = struct {
+    guard: ?bun.otel.instrument.SlotGuard,
+    span: ?*bun.otel.NativeSpan,
+
+    pub fn begin(vm: *jsc.VirtualMachine, global: *jsc.JSGlobalObject, name: []const u8, body_size: ?usize) OtelWSGuard {
+        if (bun.otel.TracerProvider.getIfEnabled(vm, .websocket) == null) return .{ .guard = null, .span = null };
+        const parent = bun.otel.instrument.getActiveSpanContext(global);
+        const span = bun.otel.NativeSpan.start(vm, .websocket, .websocket, .consumer, name, parent) orelse return .{ .guard = null, .span = null };
+        if (body_size) |sz| span.setAttrInt(.@"messaging.message.body.size", @intCast(sz));
+        return .{
+            .guard = bun.otel.instrument.SlotGuard.enter(global, span.createContextCell(global)),
+            .span = span,
+        };
+    }
+
+    pub fn end(self: *OtelWSGuard, result: jsc.JSValue) void {
+        if (self.guard) |*g| g.restore();
+        if (self.span) |s| {
+            self.span = null;
+            if (result.toError()) |_| s.setStatus(.err, "");
+            s.end();
+        }
+    }
+};
 
 pub fn behavior(comptime ServerType: type, comptime ssl: bool, opts: uws.WebSocketBehavior) uws.WebSocketBehavior {
     return uws.WebSocketBehavior.Wrap(ServerType, @This(), ssl).apply(opts);

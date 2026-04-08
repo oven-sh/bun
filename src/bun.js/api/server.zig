@@ -1900,6 +1900,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 }
             }
 
+            const otel_guard = this.beginOtelNodeHTTPSpan(req);
             const result: JSValue = bun.jsc.fromJSHostCall(globalThis, @src(), onNodeHTTPRequestFn, .{
                 @intFromPtr(AnyServer.from(this).ptr.ptr()),
                 globalThis,
@@ -1914,6 +1915,14 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 upgrade_ctx,
                 &node_http_response,
             }) catch globalThis.takeException(error.JSError);
+            if (otel_guard) |*g| {
+                g.guard.restore();
+                if (g.span) |s| {
+                    if (node_http_response) |r| {
+                        if (r.flags.is_request_pending) r.otel_span = s else s.end();
+                    } else s.end();
+                }
+            }
 
             const HTTPResult = union(enum) {
                 rejection: jsc.JSValue,
@@ -2022,6 +2031,39 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             onNodeHTTPRequestWithUpgradeCtx(this, req, resp, null);
         }
 
+        const OtelNodeHTTPGuard = struct {
+            guard: bun.otel.instrument.SlotGuard,
+            span: ?*bun.otel.NativeSpan,
+        };
+
+        /// Mirrors `beginOtelServerSpan` for the node:http compatibility path.
+        /// The span is parked on `NodeHTTPResponse` after the handler is invoked
+        /// and ended in `NodeHTTPResponse.markRequestAsDone` (or here if no
+        /// response object was created).
+        fn beginOtelNodeHTTPSpan(this: *ThisServer, req: *uws.Request) ?OtelNodeHTTPGuard {
+            if (bun.otel.TracerProvider.getIfEnabled(this.vm, .node_http) == null) return null;
+            const parent = if (req.header("traceparent")) |h| bun.otel.propagation.parseTraceparent(h) else null;
+            // uWS returns lowercase; semconv `http.request.method` is the canonical token (uppercase).
+            const raw_method = req.method();
+            const method_name = if (bun.http.Method.find(raw_method)) |m| @tagName(m) else raw_method;
+            const span = bun.otel.NativeSpan.start(this.vm, .node_http, .node_http, .server, method_name, parent) orelse {
+                if (parent) |p| {
+                    const cell = bun.otel.OtelSpanContext.create(this.globalThis, p, true);
+                    return .{ .guard = bun.otel.instrument.SlotGuard.enter(this.globalThis, cell), .span = null };
+                }
+                return null;
+            };
+            span.setAttrStr(.@"http.request.method", method_name);
+            const full = req.url();
+            const path = if (bun.strings.indexOfChar(full, '?')) |i| full[0..i] else full;
+            span.setAttrStr(.@"url.path", path);
+            span.setAttrStatic(.@"url.scheme", if (ssl_enabled) "https" else "http");
+            return .{
+                .guard = bun.otel.instrument.SlotGuard.enter(this.globalThis, span.createContextCell(this.globalThis)),
+                .span = span,
+            };
+        }
+
         const onNodeHTTPRequestFn = if (ssl_enabled)
             NodeHTTPServer__onRequest_https
         else
@@ -2058,9 +2100,9 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
         /// guard so the caller can restore immediately after the JS handler
         /// returns. The span is ended in `RequestContext.finalizeWithoutDeinit`.
         fn beginOtelServerSpan(this: *ThisServer, ctx: *RequestContext, req: *uws.Request) ?bun.otel.instrument.SlotGuard {
-            if (bun.otel.TracerProvider.get(this.vm) == null) return null;
+            if (bun.otel.TracerProvider.getIfEnabled(this.vm, .serve) == null) return null;
             const parent = if (req.header("traceparent")) |h| bun.otel.propagation.parseTraceparent(h) else null;
-            const span = bun.otel.NativeSpan.start(this.vm, .server, .server, @tagName(ctx.method), parent) orelse {
+            const span = bun.otel.NativeSpan.start(this.vm, .serve, .server, .server, @tagName(ctx.method), parent) orelse {
                 // Unsampled: still propagate the incoming context so downstream
                 // fetch carries the same trace.
                 if (parent) |p| {

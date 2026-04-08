@@ -46,10 +46,46 @@ pub fn generateSpanId() model.SpanId {
     }
 }
 
+/// Per-hook auto-instrumentation toggles. One bool load after the existing
+/// `TracerProvider.get(vm)` null-check; default-on for the wire-level surfaces
+/// users expect to "just work", default-off for the chatty ones.
+pub const InstrumentFlags = packed struct(u32) {
+    serve: bool = true,
+    fetch: bool = true,
+    node_http: bool = true,
+    sql: bool = true,
+    redis: bool = true,
+    fs: bool = false,
+    websocket: bool = false,
+    spawn: bool = false,
+    _: u24 = 0,
+
+    pub const FieldEnum = std.meta.FieldEnum(InstrumentFlags);
+
+    /// Clear flags named in a comma-separated list (for
+    /// `OTEL_BUN_DISABLED_INSTRUMENTATIONS`). Unknown names are ignored.
+    pub fn applyDisabledList(self: *InstrumentFlags, list: []const u8) void {
+        var it = std.mem.splitScalar(u8, list, ',');
+        while (it.next()) |raw| {
+            const name = bun.strings.trim(raw, " \t");
+            inline for (std.meta.fields(InstrumentFlags)) |f| {
+                if (comptime f.type != bool) continue;
+                if (bun.strings.eqlComptime(name, f.name)) {
+                    @field(self, f.name) = false;
+                    break;
+                }
+            }
+            // Accept the JS-side camelCase alias.
+            if (bun.strings.eqlComptime(name, "nodeHttp")) self.node_http = false;
+        }
+    }
+};
+
 pub const Config = struct {
     endpoint: []const u8,
     headers: []const KV = &.{},
     sampler: Sampler = .always_on,
+    instrument: InstrumentFlags = .{},
     scheduled_delay_ms: u32 = 5000,
     max_export_batch_size: u32 = 512,
     max_queue_size: u32 = 2048,
@@ -70,6 +106,7 @@ pub const TracerProvider = struct {
     scopes: std.StringArrayHashMapUnmanaged(model.InstrumentationScope) = .{},
     processor: BatchProcessor,
     exporter: ?*OtlpHttpExporter,
+    instrument: InstrumentFlags,
 
     pub const new = bun.TrivialNew(@This());
 
@@ -84,6 +121,7 @@ pub const TracerProvider = struct {
             .allocator = allocator,
             .vm = vm,
             .sampler = cfg.sampler,
+            .instrument = cfg.instrument,
             .resource = .{},
             .resource_storage = std.heap.ArenaAllocator.init(allocator),
             .processor = undefined,
@@ -143,6 +181,7 @@ pub const TracerProvider = struct {
     /// `deinit` is only called at VM shutdown.
     pub fn reconfigure(self: *TracerProvider, cfg: Config) !void {
         self.sampler = cfg.sampler;
+        self.instrument = cfg.instrument;
         self.processor.opts.scheduled_delay_ms = cfg.scheduled_delay_ms;
         self.processor.opts.max_export_batch_size = cfg.max_export_batch_size;
         self.processor.opts.max_queue_size = cfg.max_queue_size;
@@ -161,10 +200,20 @@ pub const TracerProvider = struct {
         return vm.rareData().otel_tracer_provider;
     }
 
+    /// Hot-path gate for native instrumentation hooks: returns the provider
+    /// only if it exists AND the named flag is set, so the call site is one
+    /// `if (getIfEnabled(vm, .serve)) |p| { ... }`.
+    pub fn getIfEnabled(vm: *jsc.VirtualMachine, comptime which: InstrumentFlags.FieldEnum) ?*TracerProvider {
+        const p = get(vm) orelse return null;
+        return if (@field(p.instrument, @tagName(which))) p else null;
+    }
+
     pub fn getOrInitFromEnv(vm: *jsc.VirtualMachine) ?*TracerProvider {
         if (get(vm)) |p| return p;
         const endpoint = bun.env_var.OTEL_EXPORTER_OTLP_ENDPOINT.get() orelse return null;
-        const provider = TracerProvider.init(vm, .{ .endpoint = endpoint }) catch |err| {
+        var instr: InstrumentFlags = .{};
+        if (bun.env_var.OTEL_BUN_DISABLED_INSTRUMENTATIONS.get()) |d| instr.applyDisabledList(d);
+        const provider = TracerProvider.init(vm, .{ .endpoint = endpoint, .instrument = instr }) catch |err| {
             log("failed to initialize from OTEL_EXPORTER_OTLP_ENDPOINT: {s}", .{@errorName(err)});
             return null;
         };

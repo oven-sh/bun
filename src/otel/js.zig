@@ -649,8 +649,23 @@ pub fn jsConfigure(global: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSErr
         }
     }
 
+    if (try arg.get(global, "instrument")) |v| {
+        if (v.isObject()) {
+            inline for (std.meta.fields(tracer.InstrumentFlags)) |f| {
+                if (comptime f.type != bool) continue;
+                const js_name = comptime if (bun.strings.eqlComptime(f.name, "node_http")) "nodeHttp" else f.name;
+                if (try v.get(global, js_name)) |fv| {
+                    if (fv.isBoolean()) @field(cfg.instrument, f.name) = fv.asBoolean();
+                }
+            }
+        }
+    }
+
     if (cfg.endpoint.len == 0) {
         if (bun.env_var.OTEL_EXPORTER_OTLP_ENDPOINT.get()) |ep| cfg.endpoint = ep;
+    }
+    if (bun.env_var.OTEL_BUN_DISABLED_INSTRUMENTATIONS.get()) |disabled| {
+        cfg.instrument.applyDisabledList(disabled);
     }
 
     if (vm.rareData().otel_tracer_provider) |existing| {

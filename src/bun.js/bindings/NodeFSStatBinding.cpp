@@ -784,14 +784,14 @@ inline JSValue callJSStatsFunction(JSC::JSGlobalObject* globalObject, JSC::CallF
     auto* object = JSC::JSFinalObject::create(vm, structure);
 
     object->putDirectOffset(vm, 0, dev);
-    object->putDirectOffset(vm, 1, mode);
-    object->putDirectOffset(vm, 2, nlink);
-    object->putDirectOffset(vm, 3, uid);
-    object->putDirectOffset(vm, 4, gid);
-    object->putDirectOffset(vm, 5, rdev);
-    object->putDirectOffset(vm, 6, blksize);
-    object->putDirectOffset(vm, 7, ino);
-    object->putDirectOffset(vm, 8, size);
+    object->putDirectOffset(vm, 1, ino);
+    object->putDirectOffset(vm, 2, mode);
+    object->putDirectOffset(vm, 3, nlink);
+    object->putDirectOffset(vm, 4, uid);
+    object->putDirectOffset(vm, 5, gid);
+    object->putDirectOffset(vm, 6, rdev);
+    object->putDirectOffset(vm, 7, size);
+    object->putDirectOffset(vm, 8, blksize);
     object->putDirectOffset(vm, 9, blocks);
 
     object->putDirectOffset(vm, static_cast<unsigned>(DateFieldType::atime), atimeMs);

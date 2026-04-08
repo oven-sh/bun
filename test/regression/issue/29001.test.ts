@@ -1,7 +1,7 @@
-import { spawn } from "node:child_process";
 import { spawn as bunSpawn } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isPosix } from "harness";
+import { spawn } from "node:child_process";
 import { once } from "node:events";
 
 // https://github.com/oven-sh/bun/issues/29001

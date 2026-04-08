@@ -917,6 +917,8 @@ pub const StandaloneModuleGraph = struct {
                 };
                 defer elf_file.deinit();
 
+                elf_file.normalizeInterpreter();
+
                 elf_file.writeBunSection(bytes) catch |err| {
                     Output.prettyErrorln("Error writing .bun section to ELF: {}", .{err});
                     cleanup(zname, cloned_executable_fd);

@@ -2181,7 +2181,13 @@ pub const Resolver = struct {
     ) !?*DirInfo {
         assert(r.package_manager != null);
 
-        const dir_path = strings.withoutTrailingSlashWindowsPath(dir_path_maybe_trail_slash);
+        // The caller typically passes a slice into a threadlocal scratch buffer
+        // (e.g. `bufs(.path_in_global_disk_cache)` via PackageManager.pathForResolution).
+        // `r.dir_cache` is a process-wide singleton shared by all Resolvers, so
+        // any slice we stash in `DirInfo.abs_path` must outlive this call on every
+        // thread — persist it into the shared `DirnameStore` first.
+        // See https://github.com/oven-sh/bun/issues/29018
+        const dir_path = bun.handleOom(Fs.FileSystem.DirnameStore.instance.append(string, strings.withoutTrailingSlashWindowsPath(dir_path_maybe_trail_slash)));
 
         assertValidCacheKey(dir_path);
         var dir_cache_info_result = bun.handleOom(r.dir_cache.getOrPut(dir_path));
@@ -2221,7 +2227,7 @@ pub const Resolver = struct {
         if (needs_iter) {
             const allocator = bun.default_allocator;
             var new_entry = Fs.FileSystem.DirEntry.init(
-                if (in_place) |existing| existing.dir else Fs.FileSystem.DirnameStore.instance.append(string, dir_path) catch unreachable,
+                if (in_place) |existing| existing.dir else dir_path,
                 r.generation,
             );
 

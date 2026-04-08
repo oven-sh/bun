@@ -1359,6 +1359,23 @@ pub fn initWorker(
     };
     vm.transpiler.resolver.standalone_module_graph = opts.graph;
 
+    // Inherit auto-install / install resolver settings from the parent VM so
+    // that `bun run` with auto-install continues to work inside Workers.
+    // Without this, the worker's resolver defaults to `global_cache = .disable`
+    // and bare specifiers that the parent resolved via auto-install will fail
+    // with "Cannot find package". See https://github.com/oven-sh/bun/issues/29018
+    {
+        const parent_transpiler = &worker.parent.transpiler;
+        vm.transpiler.resolver.opts.global_cache = parent_transpiler.resolver.opts.global_cache;
+        vm.transpiler.resolver.opts.prefer_offline_install = parent_transpiler.resolver.opts.prefer_offline_install;
+        vm.transpiler.resolver.opts.prefer_latest_install = parent_transpiler.resolver.opts.prefer_latest_install;
+        vm.transpiler.resolver.opts.install = parent_transpiler.resolver.opts.install;
+        vm.transpiler.options.global_cache = parent_transpiler.options.global_cache;
+        vm.transpiler.options.prefer_offline_install = parent_transpiler.options.prefer_offline_install;
+        vm.transpiler.options.prefer_latest_install = parent_transpiler.options.prefer_latest_install;
+        vm.transpiler.options.install = parent_transpiler.options.install;
+    }
+
     if (opts.graph == null) {
         vm.transpiler.configureLinker();
     } else {

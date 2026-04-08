@@ -1949,3 +1949,73 @@ test("matching workspace devDependency and npm peerDependency", async () => {
   expect(err).not.toContain("updated");
   expect(out).toContain("no changes");
 });
+
+// Regression test for https://github.com/oven-sh/bun/issues/19088
+// --frozen-lockfile was failing in workspace monorepos because lockfile-level
+// properties (trusted dependencies, overrides, patched dependencies) were
+// spuriously compared during recursive per-workspace diff calls.
+test("frozen lockfile succeeds in workspace monorepo with workspace: deps", async () => {
+  await Promise.all([
+    write(
+      packageJson,
+      JSON.stringify({
+        name: "my-monorepo",
+        workspaces: ["packages/*"],
+      }),
+    ),
+    write(
+      join(packageDir, "packages", "shared", "package.json"),
+      JSON.stringify({
+        name: "@test/shared",
+        version: "1.0.0",
+        dependencies: {
+          "no-deps": "1.0.0",
+        },
+      }),
+    ),
+    write(
+      join(packageDir, "packages", "app", "package.json"),
+      JSON.stringify({
+        name: "@test/app",
+        version: "1.0.0",
+        dependencies: {
+          "@test/shared": "workspace:*",
+          "no-deps": "1.0.0",
+        },
+      }),
+    ),
+  ]);
+
+  // First install generates the lockfile
+  var { exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdout: "ignore",
+    stderr: "pipe",
+    env,
+  });
+
+  expect(await exited).toBe(0);
+
+  // --frozen-lockfile must succeed immediately after
+  ({ exited } = spawn({
+    cmd: [bunExe(), "install", "--frozen-lockfile"],
+    cwd: packageDir,
+    stdout: "ignore",
+    stderr: "pipe",
+    env,
+  }));
+
+  expect(await exited).toBe(0);
+
+  // --production (which implies --frozen-lockfile) must also succeed
+  ({ exited } = spawn({
+    cmd: [bunExe(), "install", "--production"],
+    cwd: packageDir,
+    stdout: "ignore",
+    stderr: "pipe",
+    env,
+  }));
+
+  expect(await exited).toBe(0);
+});

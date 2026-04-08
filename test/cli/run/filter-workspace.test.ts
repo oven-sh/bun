@@ -506,8 +506,14 @@ describe("bun", () => {
         stderr: "pipe",
       });
 
+      const stdoutval = stdout.toString();
       expect(stderr.toString()).not.toContain("--elide-lines is only supported in terminal environments");
-      expect(stdout.toString()).toMatch(/(?:log_line[\s\S]*?){20}/);
+      expect(stdoutval).toMatch(/(?:log_line[\s\S]*?){20}/);
+      if (antipattern) {
+        for (const r of antipattern) {
+          expect(stdoutval).not.toMatch(r);
+        }
+      }
       expect(exitCode).toBe(0);
       return;
     }
@@ -567,9 +573,12 @@ describe("bun", () => {
       stderr: "pipe",
     });
 
+    const stdoutval = stdout.toString();
     expect(stderr.toString()).not.toContain("--elide-lines is only supported in terminal environments");
-    expect(stderr.toString()).not.toMatch(/lines elided/);
-    expect(stdout.toString()).toMatch(/(?:log_line[\s\S]*?){20}/);
+    // Elision text is written to stdout via std.fs.File.stdout().writeAll() in
+    // filter_run.zig's flushDrawBuf; guard the correct stream.
+    expect(stdoutval).not.toMatch(/lines elided/);
+    expect(stdoutval).toMatch(/(?:log_line[\s\S]*?){20}/);
     expect(exitCode).toBe(0);
   });
 });

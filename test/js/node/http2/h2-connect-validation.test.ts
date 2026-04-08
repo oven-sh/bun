@@ -1,6 +1,6 @@
-import { test, expect } from "bun:test";
-import http2 from "node:http2";
+import { expect, test } from "bun:test";
 import { once } from "node:events";
+import http2 from "node:http2";
 
 test("CONNECT method pseudo-header validation per RFC 9113 §8.5", async () => {
   const server = http2.createServer();

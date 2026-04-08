@@ -135,7 +135,10 @@ t("unsubscribe after HELLO 2 resolves its promise", async () => {
   await sub.send("HELLO", ["2"]);
 
   const channel = `bun-29042-${crypto.randomUUID()}`;
-  await withTimeout(sub.subscribe(channel, () => {}), "SUBSCRIBE confirmation (RESP2)");
+  await withTimeout(
+    sub.subscribe(channel, () => {}),
+    "SUBSCRIBE confirmation (RESP2)",
+  );
 
   // Without the fix the UNSUBSCRIBE confirmation frame (a RESP2 array) was
   // never matched in the subscriber dispatch, so this promise would hang.

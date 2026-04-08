@@ -91,19 +91,19 @@ describe.concurrent("fs.read position validation (issue #29016)", () => {
     const fd = openEmptyTempFile();
     try {
       const empty = new Uint8Array(0);
-      await new Promise<void>((resolve, reject) => {
-        try {
-          fs.read(fd, empty, 0, empty.length, { not: "a number" } as any, err => {
-            if (err?.code === "ERR_INVALID_ARG_TYPE") resolve();
-            else if (err) reject(err);
-            else reject(new Error("expected fs.read to error out"));
-          });
-        } catch (err: any) {
-          // Synchronously-thrown TypeError is also acceptable.
+      const { promise, resolve, reject } = Promise.withResolvers<void>();
+      try {
+        fs.read(fd, empty, 0, empty.length, { not: "a number" } as any, err => {
           if (err?.code === "ERR_INVALID_ARG_TYPE") resolve();
-          else reject(err);
-        }
-      });
+          else if (err) reject(err);
+          else reject(new Error("expected fs.read to error out"));
+        });
+      } catch (err: any) {
+        // Synchronously-thrown TypeError is also acceptable.
+        if (err?.code === "ERR_INVALID_ARG_TYPE") resolve();
+        else reject(err);
+      }
+      await promise;
     } finally {
       fs.closeSync(fd);
     }

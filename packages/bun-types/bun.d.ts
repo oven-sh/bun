@@ -7235,12 +7235,12 @@ declare module "bun" {
     readonly killed: boolean;
 
     /**
-     * Kill the process
-     * @param exitCode The exitCode to send to the process
+     * Kill the process by sending it a signal.
+     * @param signal The signal to send to the process. Defaults to `"SIGTERM"`.
      * @returns `true` if the signal was delivered, `false` if the process
      * had already exited (the OS reported `ESRCH`).
      */
-    kill(exitCode?: number | NodeJS.Signals): boolean;
+    kill(signal?: number | NodeJS.Signals): boolean;
 
     /**
      * This method will tell Bun to wait for this process to exit after you already

@@ -570,8 +570,14 @@ pub const Process = struct {
 
                         return .{ .result = false };
                     }
+
+                    return .{ .result = true };
                 },
-                else => {},
+                // `.detached` means we never armed the poller or we already
+                // called `detach()` from `onExit`. Either way there is no
+                // live child to signal — report "not delivered" rather than
+                // claiming success we didn't attempt.
+                .detached => return .{ .result = false },
             }
         } else if (comptime Environment.isWindows) {
             switch (this.poller) {
@@ -587,11 +593,11 @@ pub const Process = struct {
 
                     return .{ .result = true };
                 },
-                else => {},
+                .detached => return .{ .result = false },
             }
         }
 
-        return .{ .result = true };
+        return .{ .result = false };
     }
 };
 

@@ -16,9 +16,9 @@
 // resolves inside the sibling `.bin` directory — the same relative
 // shape that fires the Windows assertion.
 import { expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { readlinkSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { bunEnv, bunExe, tempDir } from "harness";
 
 test("bun install handles a bin target inside .bin without panicking", async () => {
   using dir = tempDir("issue-29005", {
@@ -48,11 +48,7 @@ test("bun install handles a bin target inside .bin without panicking", async () 
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   // The install must complete successfully. Without the fix, `createSymlink`
   // (POSIX) and `createWindowsShim` (Windows) both hit an assertion that

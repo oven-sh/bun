@@ -141,13 +141,9 @@ test("removeListener / off without a listener throws ERR_INVALID_ARG_TYPE", () =
   const { port1, port2 } = new MessageChannel();
   try {
     // @ts-expect-error - intentional missing argument
-    expect(() => port1.removeListener("message")).toThrow(
-      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
-    );
+    expect(() => port1.removeListener("message")).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
     // @ts-expect-error - intentional missing argument
-    expect(() => port1.off("message")).toThrow(
-      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
-    );
+    expect(() => port1.off("message")).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
   } finally {
     port1.close();
     port2.close();

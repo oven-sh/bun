@@ -10,10 +10,10 @@
 //
 // This test speaks raw HTTP/2 over a net.Socket so we can inspect the encoded
 // HEADERS bytes directly rather than relying on a lenient decoder.
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
+import { once } from "node:events";
 import http2 from "node:http2";
 import net from "node:net";
-import { once } from "node:events";
 
 const PREFACE = Buffer.from("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n");
 

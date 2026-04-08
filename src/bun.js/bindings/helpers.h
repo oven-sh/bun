@@ -380,7 +380,7 @@ static const WTF::String toStringStatic(ZigString str)
 
 static JSC::JSValue getErrorInstance(const ZigString* str, JSC::JSGlobalObject* globalObject)
 {
-    WTF::String message = toString(*str);
+    WTF::String message = toStringCopy(*str);
     if (message.isNull() && str->len > 0) [[unlikely]] {
         // pending exception while creating an error.
         return {};

@@ -4099,7 +4099,7 @@ fn fromJSWithoutDeferGC(
                             => {
                                 could_have_non_ascii = true;
                                 var buf = item.asArrayBuffer(global).?;
-                                joiner.pushStatic(buf.byteSlice());
+                                joiner.pushCloned(buf.byteSlice());
                                 continue;
                             },
                             .Array, .DerivedArray => {
@@ -4111,7 +4111,7 @@ fn fromJSWithoutDeferGC(
                             .DOMWrapper => {
                                 if (item.as(Blob)) |blob| {
                                     could_have_non_ascii = could_have_non_ascii or blob.charset != .all_ascii;
-                                    joiner.pushStatic(blob.sharedView());
+                                    joiner.pushCloned(blob.sharedView());
                                     continue;
                                 } else {
                                     const sliced = try current.toSliceClone(global);
@@ -4131,7 +4131,7 @@ fn fromJSWithoutDeferGC(
             .DOMWrapper => {
                 if (current.as(Blob)) |blob| {
                     could_have_non_ascii = could_have_non_ascii or blob.charset != .all_ascii;
-                    joiner.pushStatic(blob.sharedView());
+                    joiner.pushCloned(blob.sharedView());
                 } else {
                     const sliced = try current.toSliceClone(global);
                     const allocator = sliced.allocator.get();
@@ -4156,7 +4156,7 @@ fn fromJSWithoutDeferGC(
             .DataView,
             => {
                 var buf = current.asArrayBuffer(global).?;
-                joiner.pushStatic(buf.slice());
+                joiner.pushCloned(buf.slice());
                 could_have_non_ascii = true;
             },
 

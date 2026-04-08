@@ -140,6 +140,10 @@ function injectFakeEmitter(Class) {
 
   Class.prototype.on = function (event, listener) {
     validateListener(listener);
+    // Node's MessagePort (and the EventTarget spec) silently ignores
+    // null/undefined listeners — they don't get tracked, don't count toward
+    // listenerCount, and don't show up in eventNames.
+    if (listener == null) return this;
     // Node's MessagePort dedupes same (event, listener) pairs (see #20169).
     if (hasListener(this, event, listener)) return this;
     const wrapped = makeWrapped(listener, unwrapFor(event));
@@ -150,6 +154,7 @@ function injectFakeEmitter(Class) {
 
   Class.prototype.off = function (event, listener) {
     validateListener(listener);
+    if (listener == null) return this;
     const wrapped = untrackListener(this, event, listener);
     // If the listener was tracked, remove the wrapped version; otherwise
     // fall back to removing whatever matches directly (covers raw
@@ -160,6 +165,7 @@ function injectFakeEmitter(Class) {
 
   Class.prototype.once = function (event, listener) {
     validateListener(listener);
+    if (listener == null) return this;
     // Node's MessagePort dedupes here too — first registration wins.
     if (hasListener(this, event, listener)) return this;
     const unwrap = unwrapFor(event);
@@ -170,7 +176,7 @@ function injectFakeEmitter(Class) {
       if (typeof listener === "function") {
         return listener.$call(this, unwrap(e));
       }
-      if (listener != null && typeof listener.handleEvent === "function") {
+      if (typeof listener.handleEvent === "function") {
         return listener.handleEvent(unwrap(e));
       }
     };

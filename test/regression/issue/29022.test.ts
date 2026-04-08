@@ -240,6 +240,35 @@ test("once() deduplicates with itself and with on()", () => {
   }
 });
 
+test("on() / once() / off() silently ignore null and undefined listeners", () => {
+  // Node's MessagePort (following the EventTarget spec) accepts null and
+  // undefined but does NOT track them — they must not inflate listenerCount
+  // or show up in eventNames.
+  const { port1, port2 } = new MessageChannel();
+  try {
+    // @ts-expect-error - intentional null listener
+    expect(port1.on("message", null)).toBe(port1);
+    // @ts-expect-error - intentional undefined listener
+    expect(port1.on("message", undefined)).toBe(port1);
+    // @ts-expect-error
+    expect(port1.once("message", null)).toBe(port1);
+    // @ts-expect-error
+    expect(port1.once("message", undefined)).toBe(port1);
+
+    expect(port1.listenerCount("message")).toBe(0);
+    expect(port1.eventNames()).toEqual([]);
+
+    // off() is a no-op for null/undefined (not an error — matches Node).
+    // @ts-expect-error
+    expect(port1.off("message", null)).toBe(port1);
+    // @ts-expect-error
+    expect(port1.off("message", undefined)).toBe(port1);
+  } finally {
+    port1.close();
+    port2.close();
+  }
+});
+
 test("on() accepts an EventListener object with handleEvent", async () => {
   // Node's MessagePort routes dispatches through either a bare function or
   // the DOM EventListener `handleEvent` method.

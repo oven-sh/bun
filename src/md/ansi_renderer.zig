@@ -1574,6 +1574,56 @@ pub const AnsiRenderer = struct {
         }
     };
 
+    /// Find the last space byte in `bytes` that lies OUTSIDE any ANSI
+    /// escape sequence (CSI or OSC). The table wrapper uses this to pick
+    /// a word-break point without splitting an OSC 8 opener mid-URL —
+    /// `[text](<url with space>)` is valid CommonMark and produces an
+    /// OSC 8 href that literally contains a space byte, so a naive
+    /// byte scan would break the sequence in half and leave the
+    /// terminal stuck in persistent hyperlink mode.
+    fn lastWordBreakOutsideEscapes(bytes: []const u8) ?usize {
+        var last: ?usize = null;
+        var i: usize = 0;
+        while (i < bytes.len) {
+            const c = bytes[i];
+            if (c == 0x1b and i + 1 < bytes.len) {
+                const next = bytes[i + 1];
+                if (next == '[') {
+                    // CSI — skip to a final byte in 0x40–0x7E.
+                    i += 2;
+                    while (i < bytes.len) : (i += 1) {
+                        if (bytes[i] >= 0x40 and bytes[i] <= 0x7e) {
+                            i += 1;
+                            break;
+                        }
+                    }
+                    continue;
+                }
+                if (next == ']') {
+                    // OSC — skip to ST (ESC \) or BEL.
+                    i += 2;
+                    while (i < bytes.len) : (i += 1) {
+                        if (bytes[i] == 0x07) {
+                            i += 1;
+                            break;
+                        }
+                        if (bytes[i] == 0x1b and i + 1 < bytes.len and bytes[i + 1] == '\\') {
+                            i += 2;
+                            break;
+                        }
+                    }
+                    continue;
+                }
+                // Other ESC-<byte> two-byte sequences: skip the pair.
+                i += 2;
+                continue;
+            }
+            if (c == ' ') last = i;
+            i += 1;
+        }
+        return last;
+    }
+
     fn writeRowCells(
         self: *AnsiRenderer,
         row: TableRow,
@@ -1618,9 +1668,14 @@ pub const AnsiRenderer = struct {
             while (rest.len > 0) {
                 var cut = visibleIndexAt(rest, w);
                 if (cut < rest.len) {
-                    // Prefer breaking at the last space inside the cut so
-                    // words stay intact when there's room.
-                    if (bun.strings.lastIndexOfChar(rest[0..cut], ' ')) |sp| {
+                    // Prefer breaking at the last word boundary inside the
+                    // cut so words stay intact when there's room. Must use
+                    // an escape-aware scanner — a raw lastIndexOfChar(' ')
+                    // would find spaces inside an OSC 8 URL (valid via the
+                    // `[text](<url with space>)` angle-bracket syntax) and
+                    // truncate mid-sequence, leaving a never-terminated
+                    // hyperlink opener that corrupts the rest of the row.
+                    if (lastWordBreakOutsideEscapes(rest[0..cut])) |sp| {
                         if (sp > 0) cut = sp;
                     }
                 }

@@ -312,4 +312,39 @@ describe("bun <file.md>", () => {
     }
     expect(out).toMatchSnapshot();
   });
+
+  // Regression: the row-wrapper's word-break refinement used a raw byte
+  // scan for the last space inside the cut, which found spaces inside an
+  // OSC 8 URL (e.g. `[text](<https://host/my file.png>)`) and truncated
+  // the escape sequence mid-URL, corrupting every subsequent row.
+  //
+  // Triggering this needs the URL space to be the ONLY space in the
+  // refinement window: the link is the first content in the cell and is
+  // followed by unbreakable text (no literal spaces) that forces a wrap
+  // BEFORE any external space appears — so lastIndexOfChar(' ') has
+  // nothing else to return.
+  test("table link with space in URL keeps OSC 8 sequences intact", () => {
+    const source =
+      "| Col |\n" +
+      "|---|\n" +
+      "| [c](<https://host/my file.png>)longunbreakabletailtextxx |\n";
+    const out = Bun.markdown.ansi(source, { hyperlinks: true, columns: 25 });
+    // Full URL (including the space) must survive inside the opener.
+    expect(out).toContain("\x1b]8;;https://host/my file.png\x1b\\");
+    // Every OSC 8 opener must have its own ST before the next one starts
+    // — a truncation would leave an opener dangling.
+    let i = 0;
+    let openers = 0;
+    while (true) {
+      const open = out.indexOf("\x1b]8;;", i);
+      if (open === -1) break;
+      openers++;
+      const close = out.indexOf("\x1b\\", open);
+      expect(close).not.toBe(-1);
+      const nextOpen = out.indexOf("\x1b]8;;", open + 5);
+      if (nextOpen !== -1) expect(close).toBeLessThan(nextOpen);
+      i = close + 2;
+    }
+    expect(openers).toBeGreaterThanOrEqual(2);
+  });
 });

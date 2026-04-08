@@ -906,6 +906,28 @@ it("new Response(stream).bytes() (direct)", async () => {
   expect(new TextDecoder().decode(buffer)).toBe("abdefgh");
 });
 
+it("Blob stream .bytes() called after being drained does not crash", async () => {
+  const blob = new Blob(["hello"]);
+  const stream = blob.stream();
+  const first = await stream.bytes();
+  expect(new TextDecoder().decode(first)).toBe("hello");
+  // After the underlying source is drained/detached, a second bytes() call
+  // must not trigger an assertion failure ("Expected an exception to be thrown").
+  const second = await stream.bytes();
+  expect(second).toBeInstanceOf(Uint8Array);
+  expect(second.byteLength).toBe(0);
+});
+
+it("Response body .bytes() called after being drained does not crash", async () => {
+  const response = new Response("hello");
+  const body = response.body;
+  const first = await body.bytes();
+  expect(new TextDecoder().decode(first)).toBe("hello");
+  const second = await body.bytes();
+  expect(second).toBeInstanceOf(Uint8Array);
+  expect(second.byteLength).toBe(0);
+});
+
 it("new Response(stream).text() (bytes)", async () => {
   var queue = [Buffer.from("abdefgh")];
   var stream = new ReadableStream({

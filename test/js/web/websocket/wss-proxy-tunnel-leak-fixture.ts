@@ -1,7 +1,7 @@
 // Fixture for wss-proxy-tunnel-leak.test.ts.
 // Repeatedly opens+closes a wss:// WebSocket through an HTTP CONNECT proxy
-// (the tunnel-mode upgrade path in WebSocketUpgradeClient.zig), then reports
-// RSS growth so the test can assert the per-upgrade HTTPClient/tunnel are freed.
+// (the tunnel-mode upgrade path in WebSocketProxyTunnel.zig), then reports
+// RSS growth so the test can assert the per-upgrade tunnel resources are freed.
 // Servers run in a child process so server-side allocations don't pollute the
 // client RSS measurement.
 import net from "node:net";
@@ -64,8 +64,8 @@ if (process.argv[2] === "server") {
   await using child = Bun.spawn({
     cmd: [process.execPath, import.meta.path, "server"],
     env: process.env,
-    // Don't inherit — the parent test asserts stderr === "" on this process,
-    // and inherited fds would let server-side noise leak into that buffer.
+    // Don't inherit — the parent test reads this process's stderr, and
+    // inherited fds would let server-side noise leak into that buffer.
     stdout: "ignore",
     stderr: "ignore",
     ipc(msg) {

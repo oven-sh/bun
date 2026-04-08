@@ -285,17 +285,17 @@ export function getStdinStream(
   // listener is gone and nothing else is consuming, release fd 0 so a
   // stdio:'inherit' child can read it exclusively. Hooking the
   // 'removeListener' event (rather than overriding removeListener/off/
-  // removeAllListeners) catches every removal path.
+  // removeAllListeners) catches every removal path. Deferred to nextTick so
+  // once('readable', fn) cycles that synchronously re-subscribe don't thrash
+  // disown()/own().
   stream.on("removeListener", event => {
-    if (
-      event === "readable" &&
-      stream.listenerCount("readable") === 0 &&
-      stream.listenerCount("data") === 0 &&
-      !stream.readableFlowing
-    ) {
-      stream._readableState.reading = false;
-      disown();
-    }
+    if (event !== "readable") return;
+    process.nextTick(() => {
+      if (stream.listenerCount("readable") === 0 && stream.listenerCount("data") === 0 && !stream.readableFlowing) {
+        stream._readableState.reading = false;
+        disown();
+      }
+    });
   });
 
   stream.on("close", () => {

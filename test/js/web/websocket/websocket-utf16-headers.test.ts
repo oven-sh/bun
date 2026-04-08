@@ -13,7 +13,6 @@
 // BunString and decodes every input with `bun.String.toUTF8(allocator)`.
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { createHash } from "node:crypto";
 import { once } from "node:events";
 import net from "node:net";
 
@@ -64,65 +63,42 @@ afterEach(async () => {
 describe("WebSocket upgrade with non-ASCII inputs", () => {
   test("Latin1 header value with high bytes is sent as UTF-8 without crashing", async () => {
     // Spin up a trivial TCP listener that captures the raw upgrade request
-    // bytes and responds with a valid 101 Switching Protocols handshake.
-    const receivedRequests: Buffer[] = [];
-    const { port, server } = await listenEphemeral(socket => {
+    // bytes. We only need to inspect what the client *sent*; we don't need
+    // the WebSocket handshake to complete, so the server destroys the socket
+    // as soon as it has the full request headers.
+    const gotRequest = Promise.withResolvers<Buffer>();
+    const { port } = await listenEphemeral(socket => {
       const chunks: Buffer[] = [];
-      let sawUpgrade = false;
       socket.on("data", chunk => {
-        if (sawUpgrade) return;
         chunks.push(chunk);
         const joined = Buffer.concat(chunks);
         if (joined.includes("\r\n\r\n")) {
-          sawUpgrade = true;
-          receivedRequests.push(joined);
-          // Extract Sec-WebSocket-Key and compute Sec-WebSocket-Accept.
-          const text = joined.toString("latin1");
-          const match = text.match(/sec-websocket-key:\s*([^\r\n]+)/i);
-          if (!match) {
-            socket.destroy();
-            return;
-          }
-          const key = match[1];
-          const accept = createHash("sha1")
-            .update(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")
-            .digest("base64");
-          socket.write(
-            "HTTP/1.1 101 Switching Protocols\r\n" +
-              "Upgrade: websocket\r\n" +
-              "Connection: Upgrade\r\n" +
-              `Sec-WebSocket-Accept: ${accept}\r\n` +
-              "\r\n",
-          );
+          gotRequest.resolve(joined);
+          socket.destroy();
         }
       });
+      socket.on("error", () => {});
     });
 
-    const { promise, resolve, reject } = Promise.withResolvers<void>();
     // "vàlüé-ñ" contains U+00E0, U+00FC, U+00E9, U+00F1 — all in Latin1
     // range, so the underlying WTFStringImpl stays 8-bit.
     const latin1Value = "vàlüé-ñ";
-    try {
-      const ws = new WebSocket(`ws://127.0.0.1:${port}/`, {
-        headers: {
-          "X-Latin1": latin1Value,
-        },
-      });
-      ws.onopen = () => {
-        ws.close();
-        resolve();
-      };
-      ws.onerror = e => reject(new Error(String((e as any).message ?? "error")));
-      await promise;
-    } finally {
-      await new Promise<void>(r => server.close(() => r()));
-    }
+    const wsDone = Promise.withResolvers<void>();
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/`, {
+      headers: {
+        "X-Latin1": latin1Value,
+      },
+    });
+    ws.onerror = () => wsDone.resolve();
+    ws.onclose = () => wsDone.resolve();
 
-    expect(receivedRequests.length).toBe(1);
+    const request = await gotRequest.promise;
+    await wsDone.promise;
+
     // Before the fix, the upgrade request buffer would either contain raw
     // Latin1 bytes (0xE0, 0xFC, 0xE9, 0xF1) or be completely corrupted and
     // crash the runtime. With the fix, the header is emitted as proper UTF-8.
-    const body = receivedRequests[0].toString("utf8");
+    const body = request.toString("utf8");
     expect(body).toContain("X-Latin1:");
     expect(body).toContain(latin1Value);
   });

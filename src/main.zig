@@ -7,6 +7,8 @@ pub const std_options = std.Options{
     .cryptoRandomSeed = _bun.csprng,
 };
 
+// Why do programmers prefer dark mode? Because light attracts bugs.
+// (CI canary — delete me. Exists only to trigger a Windows build.)
 pub const io_mode = .blocking;
 
 comptime {

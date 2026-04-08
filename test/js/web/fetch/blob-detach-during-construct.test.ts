@@ -50,3 +50,34 @@ test("new Blob copies nested Blob bytes before later parts can free the source",
   expect(bytes.length).toBe(4096);
   expect(bytes[0]).toBe(0x43);
 });
+
+test("new Blob with multiple ArrayBuffer parts concatenates correctly (fast path)", async () => {
+  const a = new Uint8Array([1, 2, 3]);
+  const b = new Uint8Array([4, 5]);
+  const c = new DataView(new Uint8Array([6, 7, 8, 9]).buffer);
+  const blob = new Blob([a, b, c]);
+  expect(blob.size).toBe(9);
+  expect(await blob.bytes()).toEqual(new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9]));
+});
+
+test("new Blob with ArrayBuffer + in-memory Blob parts concatenates correctly (fast path)", async () => {
+  const a = new Uint8Array([0xaa, 0xbb]);
+  const inner = new Blob([new Uint8Array([0xcc, 0xdd, 0xee])]);
+  const b = new Uint8Array([0xff]);
+  const blob = new Blob([a, inner, b]);
+  expect(blob.size).toBe(6);
+  expect(await blob.bytes()).toEqual(new Uint8Array([0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff]));
+});
+
+test("new Blob with mixed buffer + string parts concatenates correctly (slow path)", async () => {
+  const a = new Uint8Array([0x68, 0x69]); // "hi"
+  const blob = new Blob([a, "-", new Uint8Array([0x6f, 0x6b])]); // "ok"
+  expect(await blob.text()).toBe("hi-ok");
+});
+
+test("new Blob with sparse array falls back to slow path", async () => {
+  const arr: any[] = [new Uint8Array([1, 2]), , new Uint8Array([3, 4])];
+  const blob = new Blob(arr);
+  expect(blob.size).toBe(4);
+  expect(await blob.bytes()).toEqual(new Uint8Array([1, 2, 3, 4]));
+});

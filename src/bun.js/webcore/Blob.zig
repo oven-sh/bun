@@ -4035,6 +4035,68 @@ fn fromJSWithoutDeferGC(
         }
     }
 
+    // Fast path: plain JSArray of only ArrayBuffer/TypedArray/DataView/in-memory Blob
+    // parts. getDirectIndex reads butterfly slots without invoking getters and the
+    // accepted item types don't run JS to extract bytes, so the recorded slices stay
+    // valid until the single allocation + memcpy below. Anything else falls through
+    // to the safe pushCloned joiner path.
+    if (arg.jsTypeLoose() == .Array) fast_path: {
+        const len64 = arg.getLength(global) catch break :fast_path;
+        if (len64 < 2 or len64 > std.math.maxInt(u32)) break :fast_path;
+        const len: u32 = @intCast(len64);
+
+        var sfb = std.heap.stackFallback(@sizeOf([]const u8) * 16, bun.default_allocator);
+        const slices_alloc = sfb.get();
+        var slices = std.array_list.Managed([]const u8).init(slices_alloc);
+        defer slices.deinit();
+        bun.handleOom(slices.ensureTotalCapacityPrecise(len));
+
+        var total: usize = 0;
+        var i: u32 = 0;
+        while (i < len) : (i += 1) {
+            const item = arg.getDirectIndex(global, i);
+            if (item == .zero) break :fast_path;
+            switch (item.jsTypeLoose()) {
+                .ArrayBuffer,
+                .Int8Array,
+                .Uint8Array,
+                .Uint8ClampedArray,
+                .Int16Array,
+                .Uint16Array,
+                .Int32Array,
+                .Uint32Array,
+                .Float16Array,
+                .Float32Array,
+                .Float64Array,
+                .BigInt64Array,
+                .BigUint64Array,
+                .DataView,
+                => {
+                    const buf = item.asArrayBuffer(global) orelse break :fast_path;
+                    const slice = buf.byteSlice();
+                    slices.appendAssumeCapacity(slice);
+                    total += slice.len;
+                },
+                .DOMWrapper => {
+                    const blob = item.as(Blob) orelse break :fast_path;
+                    if (blob.needsToReadFile() or blob.isS3()) break :fast_path;
+                    const view = blob.sharedView();
+                    slices.appendAssumeCapacity(view);
+                    total += view.len;
+                },
+                else => break :fast_path,
+            }
+        }
+
+        const joined = bun.handleOom(bun.default_allocator.alloc(u8, total));
+        var off: usize = 0;
+        for (slices.items) |slice| {
+            @memcpy(joined[off..][0..slice.len], slice);
+            off += slice.len;
+        }
+        return Blob.init(joined, bun.default_allocator, global);
+    }
+
     var stack_allocator = std.heap.stackFallback(1024, bun.default_allocator);
     const stack_mem_all = stack_allocator.get();
     var stack: std.array_list.Managed(JSValue) = std.array_list.Managed(JSValue).init(stack_mem_all);

@@ -302,8 +302,9 @@ fn alignUp(value: u64, alignment: u64) u64 {
     return (value + mask) & ~mask;
 }
 
-const bun = @import("bun");
 const log = bun.Output.scoped(.elf, .visible);
+
+const bun = @import("bun");
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;

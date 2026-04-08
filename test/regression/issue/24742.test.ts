@@ -5,9 +5,9 @@
 //
 // https://github.com/oven-sh/bun/issues/24742
 
-import { test, expect } from "bun:test";
-import { bunEnv, bunExe, tempDir, isLinux, isMusl } from "harness";
-import { cpSync, readFileSync, existsSync, chmodSync } from "fs";
+import { expect, test } from "bun:test";
+import { chmodSync, cpSync, existsSync, readFileSync } from "fs";
+import { bunEnv, bunExe, isLinux, isMusl, tempDir } from "harness";
 import { join } from "path";
 
 const patchelf = Bun.which("patchelf");

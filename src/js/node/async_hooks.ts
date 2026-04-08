@@ -193,12 +193,15 @@ class AsyncLocalStorage {
           set(carriedSpan);
         } else {
           context2 = context2.slice(); // array is cloned here
+          // The array may have been rebuilt with a [null, span] sentinel
+          // prepended (instrument.SlotGuard) since we recorded `i`, so re-find
+          // ourselves rather than trusting the stale index.
+          if (context2[i] !== this) i = context2.indexOf(this);
           $assert(context2[i] === this);
           if (hasPrevious) {
             context2[i + 1] = previous_value;
             set(context2);
           } else {
-            // i wonder if this is a fair assert to make
             context2.splice(i, 2);
             $assert(context2.length % 2 === 0);
             set(context2.length ? context2 : undefined);

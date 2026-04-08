@@ -36,6 +36,8 @@ pub fn parseTraceparent(header: []const u8) ?SpanContext {
     const v0 = hexDigit(header[0]) orelse return null;
     const v1 = hexDigit(header[1]) orelse return null;
     if (v0 == 0xf and v1 == 0xf) return null;
+    // W3C §3.2.2: version 00 must be exactly 55 chars; trailing data is for future versions only.
+    if (v0 == 0 and v1 == 0 and header.len != traceparent_len) return null;
 
     var ctx: SpanContext = .{
         .trace_id = undefined,

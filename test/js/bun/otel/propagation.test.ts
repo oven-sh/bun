@@ -136,6 +136,30 @@ describe("Bun.otel context propagation", () => {
     expect(storeInSpan).toBe("hello");
   });
 
+  test("ALS interop: tracer.start inside als.run does not corrupt ALS index", async () => {
+    // SlotGuard.enter prepends [null, span] to a sentinel-free ALS array. run()'s
+    // finally previously reused the pre-callback index `i`, splicing the wrong
+    // pair. Callback form is the safe ordering (sync-restore before run()'s
+    // finally fires); using-form-inside-als.run is a known overlap footgun.
+    otel.configure({ endpoint: "", sampler: "always_on" });
+    const tracer = otel.tracer("test");
+    const alsA = new AsyncLocalStorage<string>();
+    const alsB = new AsyncLocalStorage<string>();
+    let inner: [string?, string?, boolean?] = [];
+    await alsA.run("outer", () =>
+      alsB.run("inner", () =>
+        tracer.start("op", async span => {
+          inner = [alsA.getStore(), alsB.getStore(), !!otel.getActiveSpanContext()];
+          await 0;
+        }),
+      ),
+    );
+    expect(inner).toEqual(["outer", "inner", true]);
+    expect(alsA.getStore()).toBeUndefined();
+    expect(alsB.getStore()).toBeUndefined();
+    expect(otel.getActiveSpanContext()).toBeUndefined();
+  });
+
   test("start (using form) with no explicit parent inherits active span", async () => {
     otel.configure({ endpoint: "", sampler: "always_on" });
     const tracer = otel.tracer("test");

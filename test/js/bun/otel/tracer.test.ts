@@ -17,6 +17,9 @@ describe("Bun.otel runtime", () => {
 
     expect(otel.parseTraceparent("00-" + "0".repeat(32) + "-00f067aa0ba902b7-01")).toBeUndefined(); // all-zero trace id
     expect(otel.parseTraceparent("ff-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01")).toBeUndefined(); // version ff
+    // W3C: version 00 with trailing data must be rejected; future versions may extend.
+    expect(otel.parseTraceparent(tp + "-future")).toBeUndefined();
+    expect(otel.parseTraceparent("cc" + tp.slice(2) + "-future")).not.toBeUndefined();
     expect(otel.parseTraceparent("nope")).toBeUndefined();
     // Was: process abort (FixedBufferAllocator OOM -> bun.handleOom). Now: undefined.
     expect(otel.parseTraceparent(Buffer.alloc(200, "x").toString())).toBeUndefined();

@@ -1661,7 +1661,7 @@ pub const ESModule = struct {
                     const pattern_base = expansion.key[0..star];
                     // If patternBase is not null and matchKey starts with but is not equal
                     // to patternBase, then
-                    if (strings.startsWith(match_key, pattern_base)) {
+                    if (strings.startsWith(match_key, pattern_base) and match_key.len > pattern_base.len) {
                         // Let patternTrailer be the substring of expansionKey from the index
                         // after the first "*" character.
                         const pattern_trailer = expansion.key[star + 1 ..];

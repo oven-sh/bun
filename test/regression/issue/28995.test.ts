@@ -123,6 +123,36 @@ describe.concurrent("issue/28995 root-level wildcard subpath imports", () => {
     expect(exitCode).not.toBe(0);
   });
 
+  test("bare #/ does not match a #/* wildcard entry", async () => {
+    // Per PACKAGE_IMPORTS_EXPORTS_RESOLVE, a wildcard key like "#/*" only
+    // matches specifiers that start with AND are strictly longer than the
+    // pattern base. A bare "#/" equals the pattern base and must return
+    // PackageImportNotDefined rather than resolving to the package root.
+    using dir = tempDir("issue-28995-bare-hash-slash", {
+      "package.json": JSON.stringify({
+        name: "issue-28995-bare-hash-slash",
+        version: "1.0.0",
+        imports: {
+          "#/*": "./*",
+        },
+      }),
+      "index.ts": `export const x = 1;`,
+      "entry.ts": `import "#/";`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "entry.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("Cannot find");
+    expect(exitCode).not.toBe(0);
+  });
+
   test("#/* works when bundled", async () => {
     using dir = tempDir("issue-28995-bundle", {
       "package.json": JSON.stringify({

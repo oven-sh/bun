@@ -6,12 +6,12 @@
  * happens with sockets from http2-wrapper). Node.js does not validate
  * alpnProtocol on the client side; it simply records the value.
  */
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { tls as tlsCert } from "harness";
-import http2 from "node:http2";
-import tls from "node:tls";
 import { once } from "node:events";
+import http2 from "node:http2";
 import type { AddressInfo } from "node:net";
+import tls from "node:tls";
 
 test("http2.connect accepts TLSSocket via createConnection when alpnProtocol is undefined", async () => {
   const server = http2.createSecureServer({ key: tlsCert.key, cert: tlsCert.cert });

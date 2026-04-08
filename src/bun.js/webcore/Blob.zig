@@ -1424,8 +1424,8 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
                     // `onReceiveValue` would never fire and the WriteFileWait task
                     // would wait forever. Pump the stream directly.
                     if (response.getBodyReadableStream(globalThis) orelse bodyValue.Locked.readable.get(globalThis)) |readable| {
+                        defer destination_blob.detach();
                         if (readable.isDisturbed(globalThis)) {
-                            destination_blob.detach();
                             return globalThis.throwInvalidArguments("ReadableStream has already been used", .{});
                         }
                         return destination_blob.pipeReadableStreamToBlob(globalThis, readable, options.extra_options);
@@ -1498,8 +1498,8 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
                     // See matching comment in the Response branch above —
                     // onReceiveValue never fires once a ReadableStream exists.
                     if (request.getBodyReadableStream(globalThis) orelse bodyValue.Locked.readable.get(globalThis)) |readable| {
+                        defer destination_blob.detach();
                         if (readable.isDisturbed(globalThis)) {
-                            destination_blob.detach();
                             return globalThis.throwInvalidArguments("ReadableStream has already been used", .{});
                         }
                         return destination_blob.pipeReadableStreamToBlob(globalThis, readable, options.extra_options);

@@ -66,7 +66,6 @@ pub const Classes = struct {
     pub const HTTPSServer = api.HTTPSServer;
     pub const DebugHTTPServer = api.DebugHTTPServer;
     pub const DebugHTTPSServer = api.DebugHTTPSServer;
-    pub const CronJob = @import("../api/cron.zig").CronJob;
     pub const Crypto = webcore.Crypto;
     pub const FFI = api.FFI;
     pub const H2FrameParser = api.H2FrameParser;

@@ -1458,43 +1458,6 @@ fn makeTempPath(comptime prefix: []const u8, title: []const u8) ![:0]const u8 {
     return bun.default_allocator.dupeZ(u8, bun.path.joinAbsString(bun.fs.FileSystem.RealFS.platformTempDir(), &.{name}, .auto));
 }
 
-/// Minimal placeholder for the in-process `Bun.cron(schedule, callback)` JS
-/// class. The full implementation landed in main after this branch was cut;
-/// this stub exists so codegen (which reads `cron.classes.ts`) has valid Zig
-/// symbols to bind against. It is never handed out to user code on this
-/// branch and is unrelated to the `#/` subpath import fix; it only keeps the
-/// build green when `cron.classes.ts` is present in the worktree.
-pub const CronJob = struct {
-    pub const js = jsc.Codegen.JSCronJob;
-    pub const toJS = js.toJS;
-    pub const fromJS = js.fromJS;
-    pub const fromJSDirect = js.fromJSDirect;
-
-    pub fn finalize(this: *CronJob) void {
-        bun.destroy(this);
-    }
-
-    pub fn stop(this: *CronJob, _: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-        _ = this;
-        return .js_undefined;
-    }
-
-    pub fn doRef(this: *CronJob, _: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-        _ = this;
-        return .js_undefined;
-    }
-
-    pub fn doUnref(this: *CronJob, _: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-        _ = this;
-        return .js_undefined;
-    }
-
-    pub fn getCron(this: *CronJob, _: *jsc.JSGlobalObject) jsc.JSValue {
-        _ = this;
-        return .js_undefined;
-    }
-};
-
 const std = @import("std");
 const CronExpression = @import("./cron_parser.zig").CronExpression;
 

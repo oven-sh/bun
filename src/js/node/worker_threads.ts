@@ -350,6 +350,17 @@ function fakeParentPort() {
     value: self.removeEventListener.bind(self),
   });
 
+  // `fake` is `Object.create(MessagePort.prototype)` and has no native
+  // internal slots, so the native `MessagePort.prototype.dispatchEvent`
+  // throws "illegal invocation" when called with `fake` as `this`.
+  // `emit()` (added by injectFakeEmitter on the prototype) calls
+  // `this.dispatchEvent(...)`, which would otherwise crash in worker
+  // threads. Route it to the worker's global `self` EventTarget, the same
+  // target where `addEventListener` registers the tracked listeners.
+  Object.defineProperty(fake, "dispatchEvent", {
+    value: self.dispatchEvent.bind(self),
+  });
+
   // NOTE: addListener / removeListener deliberately left off the instance —
   // they're installed on MessagePort.prototype by injectFakeEmitter with
   // per-instance tracking, and go through the own addEventListener /

@@ -294,6 +294,33 @@ test("on() accepts an EventListener object with handleEvent", async () => {
   }
 });
 
+test("parentPort.emit() works inside a worker thread", async () => {
+  // fakeParentPort() is Object.create(MessagePort.prototype), which has no
+  // native internal slots, so calling the native dispatchEvent on it throws
+  // "illegal invocation". The fix installs an own dispatchEvent property
+  // that delegates to the worker's global self EventTarget.
+  const { Worker } = await import("node:worker_threads");
+  const source = `
+    const { parentPort } = require("node:worker_threads");
+    let received;
+    parentPort.on("message", msg => {
+      received = msg;
+    });
+    const ok = parentPort.emit("message", "from-emit");
+    parentPort.postMessage({ ok, received });
+  `;
+  const w = new Worker(source, { eval: true });
+  try {
+    const result: any = await new Promise((resolve, reject) => {
+      w.once("message", resolve);
+      w.once("error", reject);
+    });
+    expect(result).toEqual({ ok: true, received: "from-emit" });
+  } finally {
+    await w.terminate();
+  }
+});
+
 test("emit() wraps payload in MessageEvent.data and returns hadListeners", () => {
   // Two pre-existing bugs that this PR should fix since it ships emit() as
   // part of the advertised EventEmitter surface:

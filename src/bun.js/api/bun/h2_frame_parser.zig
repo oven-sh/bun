@@ -2258,7 +2258,11 @@ pub const H2FrameParser = struct {
             if (isNotACK) {
                 this.sendPing(true, payload);
             } else {
-                this.outStandingPings -|= 1;
+                if (this.outStandingPings == 0) {
+                    this.sendGoAway(0, ErrorCode.PROTOCOL_ERROR, "Unsolicited PING ACK", this.lastStreamID, true);
+                    return content.end;
+                }
+                this.outStandingPings -= 1;
             }
             const buffer = this.handlers.binary_type.toJS(payload, this.handlers.globalObject) catch .zero; // TODO: properly propagate exception upwards
             this.dispatchWithExtra(.onPing, buffer, jsc.JSValue.jsBoolean(!isNotACK));

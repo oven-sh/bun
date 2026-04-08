@@ -1,7 +1,7 @@
 import { setSyntheticAllocationLimitForTesting } from "bun:internal-for-testing";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { unlinkSync } from "fs";
-import { tempDirWithFiles } from "harness";
+import { isWindows, tempDirWithFiles } from "harness";
 import path from "path";
 describe("Memory", () => {
   beforeAll(() => {
@@ -140,5 +140,17 @@ describe("Bun.file", () => {
 
   test("arrayBuffer() should NOT throw an OOM.", () => {
     expect(async () => await Bun.file(tmpFile).arrayBuffer()).not.toThrow();
+  });
+});
+
+describe.if(!isWindows)("Bun.file on character devices", () => {
+  test("slice() with a very large max length does not crash", async () => {
+    // Regression test: reading a character device (e.g. /dev/null) with a
+    // max_length close to u52 max used to overflow `this.size + 16` in
+    // ReadFile.runAsyncWithFD and panic in debug builds.
+    const bytes = await Bun.file("/dev/null")
+      .slice(0, 2 ** 52 - 15)
+      .bytes();
+    expect(bytes.length).toBe(0);
   });
 });

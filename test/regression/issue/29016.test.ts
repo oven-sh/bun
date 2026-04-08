@@ -1,8 +1,4 @@
 // https://github.com/oven-sh/bun/issues/29016
-//
-// `fs.readSync` (and `fs.read`) used to skip `position` type validation
-// when the `length` argument was 0, because `Arguments.Read.fromJS`
-// short-circuited on `length === 0` before reaching the position check.
 import { describe, expect, test } from "bun:test";
 import { tempDirWithFiles } from "harness";
 import fs from "node:fs";
@@ -13,7 +9,7 @@ function openEmptyTempFile() {
   return fs.openSync(path.join(dir, "tempfile"), "r+");
 }
 
-describe("fs.readSync position validation (issue #29016)", () => {
+describe.concurrent("fs.readSync position validation (issue #29016)", () => {
   test("throws TypeError on object position with zero-length buffer", () => {
     const fd = openEmptyTempFile();
     try {
@@ -90,7 +86,7 @@ describe("fs.readSync position validation (issue #29016)", () => {
   });
 });
 
-describe("fs.read position validation (issue #29016)", () => {
+describe.concurrent("fs.read position validation (issue #29016)", () => {
   test("rejects object position with zero-length buffer (callback form)", async () => {
     const fd = openEmptyTempFile();
     try {
@@ -98,7 +94,8 @@ describe("fs.read position validation (issue #29016)", () => {
       await new Promise<void>((resolve, reject) => {
         try {
           fs.read(fd, empty, 0, empty.length, { not: "a number" } as any, err => {
-            if (err) resolve();
+            if (err?.code === "ERR_INVALID_ARG_TYPE") resolve();
+            else if (err) reject(err);
             else reject(new Error("expected fs.read to error out"));
           });
         } catch (err: any) {

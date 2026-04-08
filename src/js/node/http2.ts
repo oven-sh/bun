@@ -1902,7 +1902,6 @@ function streamErrorFromCode(code: number) {
 }
 hideFromStack(streamErrorFromCode);
 function sessionErrorFromCode(code: number) {
-  if (code === -2) return $ERR_HTTP2_TOO_MANY_INVALID_FRAMES("Too many invalid HTTP/2 frames");
   if (code === 0xe) {
     return $ERR_HTTP2_MAX_PENDING_SETTINGS_ACK();
   }

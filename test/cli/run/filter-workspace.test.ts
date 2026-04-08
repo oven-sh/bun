@@ -556,15 +556,19 @@ describe("bun", () => {
       "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/*"] }),
     });
 
+    // Use a non-zero value so the test would fail if elision ever leaked into
+    // the non-TTY code path. With `--elide-lines 5`, a broken implementation
+    // would only surface 5 log_line entries and the 20-match regex would fail.
     const { exitCode, stderr, stdout } = spawnSync({
       cwd: dir,
-      cmd: [bunExe(), "run", "--filter", "./packages/dep0", "--elide-lines", "0", "script"],
+      cmd: [bunExe(), "run", "--filter", "./packages/dep0", "--elide-lines", "5", "script"],
       env: { ...bunEnv, FORCE_COLOR: undefined, NO_COLOR: "1" },
       stdout: "pipe",
       stderr: "pipe",
     });
 
     expect(stderr.toString()).not.toContain("--elide-lines is only supported in terminal environments");
+    expect(stderr.toString()).not.toMatch(/lines elided/);
     expect(stdout.toString()).toMatch(/(?:log_line[\s\S]*?){20}/);
     expect(exitCode).toBe(0);
   });

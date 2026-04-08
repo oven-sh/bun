@@ -17,8 +17,9 @@ test("server rejects request with non-zero content-length and END_STREAM per RFC
   const client = http2.connect("http://127.0.0.1:" + port);
   try {
     const req = client.request({ ":method": "POST", "content-length": "10" }, { endStream: true });
+    const { promise: closed, resolve } = Promise.withResolvers<void>();
     req.on("error", () => {});
-    const closed = once(req, "close");
+    req.on("close", () => resolve());
     req.end();
     await closed;
 

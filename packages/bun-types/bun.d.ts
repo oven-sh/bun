@@ -7242,8 +7242,9 @@ declare module "bun" {
      * POSIX existence probe and does not terminate the child.
      * @param signal The signal to send to the process. Defaults to `"SIGTERM"`.
      * @returns `true` if the signal was sent (or, for `signal === 0`, the
-     * process is still alive); `false` if the process had already exited
-     * (the OS reported `ESRCH`).
+     * process is still alive); `false` if the child process could not be
+     * reached — either Bun already observed its exit on our side or the
+     * OS reported `ESRCH`.
      */
     kill(signal?: number | NodeJS.Signals): boolean;
 

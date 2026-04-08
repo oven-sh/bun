@@ -107,8 +107,8 @@ const azureVmSizes = {
     test: "Standard_D4ds_v6", // 4 vCPU, 16 GiB — test shards
   },
   "windows-aarch64": {
-    build: "Standard_D16ps_v6", // 16 vCPU, 64 GiB — C++ build, link
-    test: "Standard_D4ps_v6", // 4 vCPU, 16 GiB — test shards
+    build: "Standard_D16pds_v6", // 16 vCPU, 64 GiB, local NVMe — C++ build, link
+    test: "Standard_D4pds_v6", // 4 vCPU, 16 GiB, local NVMe — test shards
   },
 };
 

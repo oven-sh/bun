@@ -2668,15 +2668,14 @@ function emitConnectNT(self, socket) {
 function emitStreamErrorNT(self, stream, error, destroy, destroy_self) {
   if (stream) {
     let error_instance: Error | number | undefined = undefined;
-    if (stream.listenerCount("error") > 0) {
-      if (typeof error === "number") {
-        stream.rstCode = error;
-        if (error != 0) {
-          error_instance = streamErrorFromCode(error);
-        }
-      } else {
-        error_instance = error;
+    if (typeof error === "number") {
+      stream.rstCode = error;
+      // RFC 9113 §8.1: NO_ERROR and CANCEL are non-error closures.
+      if (error !== NGHTTP2_NO_ERROR && error !== NGHTTP2_CANCEL && stream.listenerCount("error") > 0) {
+        error_instance = streamErrorFromCode(error);
       }
+    } else if (stream.listenerCount("error") > 0) {
+      error_instance = error;
     }
     if (stream.readable) {
       stream.resume(); // we have a error we consume and close

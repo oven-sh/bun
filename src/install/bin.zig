@@ -729,10 +729,69 @@ pub const Bin = extern struct {
             };
             defer bunx_file.close();
 
-            const rel_target = path.relativeBufZ(this.rel_buf, path.dirname(abs_dest, .auto), abs_target);
-            bun.assertWithLocation(strings.hasPrefixComptime(rel_target, "..\\"), @src());
+            // Compute a path relative to the parent of the .bin directory — that's
+            // where the shim walks back to at runtime before appending this path.
+            // See src/install/windows-shim/bun_shim_impl.zig for the walk-back logic.
+            //
+            // `abs_dest` and `abs_target` can be derived from different sources:
+            // `abs_dest` is built from `global_bin_path`, which `setupGlobalDir`
+            // canonicalizes via `GetFinalPathNameByHandle`. `abs_target` is built
+            // from `node_modules_path`, which comes from `top_level_dir` /
+            // `GetCurrentDirectoryW`. These two can disagree when the user profile
+            // sits behind a junction, OneDrive reparse point, `subst`'d drive, or
+            // a `\\?\Volume{GUID}\` mount, producing a relative path that does not
+            // start with `..\`. When that happens, re-resolve the target through
+            // its open handle so both sides share the same canonical form.
+            const rel_target_for_shim = relTargetForShim: {
+                const rel_target = path.relativeBufZ(this.rel_buf, path.dirname(abs_dest, .auto), abs_target);
+                if (strings.hasPrefixComptime(rel_target, "..\\")) {
+                    break :relTargetForShim rel_target["..\\".len..];
+                }
 
-            const rel_target_w = strings.toWPathNormalized(&target_buf, rel_target["..\\".len..]);
+                // Retry with the canonical target path.
+                var canon_target_buf: bun.PathBuffer = undefined;
+                const canon_target = switch (bun.sys.getFdPath(target, &canon_target_buf)) {
+                    .result => |slice| slice,
+                    .err => {
+                        this.err = error.CouldNotCreateShim;
+                        return;
+                    },
+                };
+                const canon_rel_target = path.relativeBufZ(this.rel_buf, path.dirname(abs_dest, .auto), canon_target);
+                if (strings.hasPrefixComptime(canon_rel_target, "..\\")) {
+                    break :relTargetForShim canon_rel_target["..\\".len..];
+                }
+
+                // Canonicalizing the target did not help — likely the destination
+                // side is the one that needs canonicalization. Open the destination
+                // directory and try once more with its canonical path.
+                const abs_dest_dir = path.dirname(abs_dest, .auto);
+                const dest_dir_fd = bun.sys.openatWindowsA(bun.invalid_fd, abs_dest_dir, bun.O.RDONLY | bun.O.DIRECTORY, 0).unwrap() catch {
+                    this.err = error.CouldNotCreateShim;
+                    return;
+                };
+                defer dest_dir_fd.close();
+                var canon_dest_dir_buf: bun.PathBuffer = undefined;
+                const canon_dest_dir = switch (bun.sys.getFdPath(dest_dir_fd, &canon_dest_dir_buf)) {
+                    .result => |slice| slice,
+                    .err => {
+                        this.err = error.CouldNotCreateShim;
+                        return;
+                    },
+                };
+                const canon_rel_target_2 = path.relativeBufZ(this.rel_buf, canon_dest_dir, canon_target);
+                if (strings.hasPrefixComptime(canon_rel_target_2, "..\\")) {
+                    break :relTargetForShim canon_rel_target_2["..\\".len..];
+                }
+
+                // Truly cross-volume or otherwise unrepresentable in the shim's
+                // walk-back scheme. Surface an error rather than writing a broken
+                // shim or panicking.
+                this.err = error.CouldNotCreateShim;
+                return;
+            };
+
+            const rel_target_w = strings.toWPathNormalized(&target_buf, rel_target_for_shim);
 
             const shebang = shebang: {
                 const first_content_chunk = contents: {
@@ -798,8 +857,6 @@ pub const Bin = extern struct {
 
             const abs_dest_dir = path.dirname(abs_dest, .auto);
             const rel_target = path.relativeBufZ(this.rel_buf, abs_dest_dir, abs_target);
-
-            bun.assertWithLocation(strings.hasPrefixComptime(rel_target, ".."), @src());
 
             switch (bun.sys.symlinkRunningExecutable(rel_target, abs_dest)) {
                 .err => |err| {

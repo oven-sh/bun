@@ -41,11 +41,7 @@ describe.concurrent("issue/28995 root-level wildcard subpath imports", () => {
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(cleanStderr(stderr)).toBe("");
     expect(stdout).toBe("hello from logger\n");
@@ -76,11 +72,7 @@ describe.concurrent("issue/28995 root-level wildcard subpath imports", () => {
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(cleanStderr(stderr)).toBe("");
     expect(stdout).toBe("the button\n");
@@ -111,11 +103,7 @@ describe.concurrent("issue/28995 root-level wildcard subpath imports", () => {
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(cleanStderr(stderr)).toBe("");
     expect(stdout).toBe("literal works\n");
@@ -145,10 +133,7 @@ describe.concurrent("issue/28995 root-level wildcard subpath imports", () => {
       stderr: "pipe",
     });
 
-    const [stderr, exitCode] = await Promise.all([
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
     expect(stderr).toContain("Cannot find");
     expect(exitCode).not.toBe(0);
@@ -177,10 +162,7 @@ describe.concurrent("issue/28995 root-level wildcard subpath imports", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [buildStderr, buildExit] = await Promise.all([
-      build.stderr.text(),
-      build.exited,
-    ]);
+    const [buildStderr, buildExit] = await Promise.all([build.stderr.text(), build.exited]);
     expect(buildStderr).not.toContain("error");
     expect(buildExit).toBe(0);
 
@@ -191,11 +173,7 @@ describe.concurrent("issue/28995 root-level wildcard subpath imports", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(cleanStderr(stderr)).toBe("");
     expect(stdout).toBe("bundled util\n");
     expect(exitCode).toBe(0);

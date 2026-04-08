@@ -602,6 +602,18 @@ pub const Bin = extern struct {
 
             bun.analytics.Features.binlinks += 1;
 
+            // `this.err` is a sticky field on the Linker that persists across
+            // all bins of the current package (a `bin` map with several
+            // entries reuses the same Linker). A stale error from a prior
+            // iteration must not cause us to unlink the shim we create for a
+            // later entry, so clear it here and restore it on the success
+            // path so the enclosing install still surfaces the failure.
+            const prev_err = this.err;
+            this.err = null;
+            defer if (this.err == null and prev_err != null) {
+                this.err = prev_err;
+            };
+
             if (comptime !Environment.isWindows)
                 this.createSymlink(abs_target, abs_dest, global)
             else {

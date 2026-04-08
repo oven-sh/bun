@@ -1197,7 +1197,7 @@ const proxyCompatSocketHandler = {
         throw $ERR_HTTP2_NO_SOCKET_MANIPULATION();
       default: {
         const session = stream.session;
-    const ref = (session != null ? session[bunHTTP2Socket] : undefined) ?? stream;
+        const ref = (session != null ? session[bunHTTP2Socket] : undefined) ?? stream;
         const value = ref[prop];
         return typeof value === "function" ? value.bind(ref) : value;
       }
@@ -1233,7 +1233,7 @@ const proxyCompatSocketHandler = {
         throw $ERR_HTTP2_NO_SOCKET_MANIPULATION();
       default: {
         const session = stream.session;
-    const ref = (session != null ? session[bunHTTP2Socket] : undefined) ?? stream;
+        const ref = (session != null ? session[bunHTTP2Socket] : undefined) ?? stream;
         ref[prop] = value;
         return true;
       }

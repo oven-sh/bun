@@ -1,6 +1,6 @@
-import { test, expect } from "bun:test";
-import http2 from "node:http2";
+import { expect, test } from "bun:test";
 import { once } from "node:events";
+import http2 from "node:http2";
 
 test("compat req.socket access after stream finish does not throw", async () => {
   let captured: { bw: unknown; has: boolean; proto: unknown } | undefined;

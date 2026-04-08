@@ -7,7 +7,7 @@
  * closes on shutdown and the tunnel reaches refcount=0.
  */
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 import { join } from "node:path";
 
 test(
@@ -29,9 +29,12 @@ test(
     // Without the fix, the upgrade client + tunnel + SSLWrapper never free
     // and growth is ~2.5MB/iter. With the fix the tunnel reaches refcount=0;
     // a residual ~1MB/iter remains (per-connection SSL_CTX cost — separate
-    // from this leak). Threshold sits between the two so the test fails
-    // before the fix and passes after.
-    const threshold = iter * 1536 * 1024;
+    // from this leak). Threshold sits between the two on release so the test
+    // fails before the fix and passes after. ASAN shadow memory + red-zone
+    // padding + heap quarantine inflate per-connection RSS, so we scale the
+    // threshold the same way test/regression/issue/28632.test.ts does.
+    const perIterBytes = isASAN ? 3 * 1024 * 1024 : 1536 * 1024;
+    const threshold = iter * perIterBytes;
     if (growth >= threshold) {
       throw new Error(
         `RSS grew ${growth} bytes (${(growth / iter).toFixed(0)} B/iter) over ${iter} wss-via-proxy upgrades ` +

@@ -355,12 +355,15 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             }
         }
         pub fn cancel(this: *HTTPClient) callconv(.c) void {
-            this.clearData();
-
-            // Either of the below two operations - closing the TCP socket or clearing the C++ reference could trigger a deref
-            // Therefore, we need to make sure the `this` pointer is valid until the end of the function.
+            // Guard `this` for the whole function. clearData() can now
+            // synchronously close the proxy socket (via tunnel.shutdown →
+            // sock.close → handleClose → deref) and drop the refcount to 0
+            // before the TCP close / C++ ref clear below run, so the ref must
+            // be taken BEFORE clearData — not after.
             this.ref();
             defer this.deref();
+
+            this.clearData();
 
             // The C++ end of the socket is no longer holding a reference to this, so we must clear it.
             if (this.outgoing_websocket != null) {

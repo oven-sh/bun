@@ -67,6 +67,12 @@ ref_count: RefCount,
 #sni_hostname: ?[]const u8 = null,
 /// Whether to reject unauthorized certificates
 #reject_unauthorized: bool = true,
+/// True once shutdown() has begun running, so a re-entrant shutdown()
+/// (fired via wrapper.shutdown → triggerCloseCallback → onClose →
+/// upgrade_client.terminate → fail → tcp.close → handleClose → clearData
+/// → proxy.deinit → tunnel.shutdown) no-ops instead of running wrapper
+/// shutdown / sock close a second time.
+#shutdown_started: bool = false,
 
 const SocketUnion = union(enum) {
     tcp: uws.NewSocketHandler(false),
@@ -343,16 +349,30 @@ pub fn write(this: *WebSocketProxyTunnel, data: []const u8) !usize {
 
 /// Gracefully shutdown the TLS connection and close the underlying proxy
 /// socket so the upgrade client's handleClose fires and releases its socket
-/// ref + proxy state. Take the socket out first so a re-entrant shutdown()
-/// (via handleClose → clearData → proxy.deinit → tunnel.shutdown) finds .none
-/// and returns early without re-running wrapper.shutdown.
+/// ref + proxy state.
+///
+/// Ordering matters:
+///   1. Set #shutdown_started so a re-entrant shutdown() (via
+///      wrapper.shutdown → triggerCloseCallback → onClose → upgrade_client
+///      .terminate → fail → tcp.close → handleClose → clearData →
+///      proxy.deinit → tunnel.shutdown) no-ops.
+///   2. Call wrapper.shutdown(true) WHILE #socket still points at the real
+///      socket — SSLWrapper.writeEncrypted has to transmit close_notify
+///      through that socket; if we cleared #socket first, close_notify would
+///      be written to .none, buffered, then freed from #write_buffer without
+///      ever reaching the peer.
+///   3. Clear #socket and sock.close(). sock.close() is idempotent in
+///      uSockets (is_closed guard), so if the re-entrant chain in step 2
+///      already closed the underlying fd, this is a no-op.
 pub fn shutdown(this: *WebSocketProxyTunnel) void {
+    if (this.#shutdown_started) return;
+    this.#shutdown_started = true;
     const sock = this.#socket;
     if (sock == .none) return;
-    this.#socket = .{ .none = {} };
     if (this.#wrapper) |*wrapper| {
         _ = wrapper.shutdown(true); // Fast shutdown
     }
+    this.#socket = .{ .none = {} };
     sock.close();
 }
 

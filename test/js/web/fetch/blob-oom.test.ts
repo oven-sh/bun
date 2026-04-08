@@ -144,13 +144,12 @@ describe("Bun.file", () => {
 });
 
 describe.if(!isWindows)("Bun.file on character devices", () => {
-  test("slice() with a very large max length does not crash", async () => {
+  test("slice() with a very large max length throws OOM without crashing", async () => {
     // Regression test: reading a character device (e.g. /dev/null) with a
     // max_length close to u52 max used to overflow `this.size + 16` in
-    // ReadFile.runAsyncWithFD and panic in debug builds.
-    const bytes = await Bun.file("/dev/null")
-      .slice(0, 2 ** 52 - 15)
-      .bytes();
-    expect(bytes.length).toBe(0);
+    // ReadFile.runAsyncWithFD and panic in debug builds. Also verifies that
+    // OOM from the buffer allocation is propagated to JS rather than
+    // silently returning an empty result.
+    expect(async () => await Bun.file("/dev/null").slice(0, 2 ** 52 - 15).bytes()).toThrow();
   });
 });

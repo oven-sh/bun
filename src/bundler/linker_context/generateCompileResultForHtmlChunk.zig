@@ -33,6 +33,12 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
     const import_records = c.graph.ast.items(.import_records);
 
     const HTMLLoader = struct {
+        const TagAction = union(enum) {
+            keep,
+            remove,
+            set: []const u8,
+        };
+
         linker: *LinkerContext,
         source_index: Index.Int,
         import_records: []const ImportRecord,
@@ -60,7 +66,8 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
             Output.panic("Parsing HTML during replacement phase errored, which should never happen since the first pass succeeded: {s}", .{err});
         }
 
-        pub fn onTag(this: *@This(), element: *lol.Element, _: []const u8, url_attribute: []const u8, _: ImportKind) void {
+        // Determine what to do with the next tag import: keep it, remove it, or replace its attribute.
+        fn getTagAction(this: *@This()) TagAction {
             if (this.current_import_record_index >= this.import_records.len) {
                 Output.panic("Assertion failure in HTMLLoader.onTag: current_import_record_index ({d}) >= import_records.len ({d})", .{ this.current_import_record_index, this.import_records.len });
             }
@@ -71,59 +78,114 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
                 this.linker.parse_graph.input_files.items(.unique_key_for_additional_file)[import_record.source_index.get()]
             else
                 "";
-            const loader: Loader = if (import_record.source_index.isValid())
+            const loader = if (import_record.source_index.isValid())
                 this.linker.parse_graph.input_files.items(.loader)[import_record.source_index.get()]
             else
                 .file;
 
             if (import_record.flags.is_external_without_side_effects) {
                 debug("Leaving external import: {s}", .{import_record.path.text});
-                return;
+                return .keep;
             }
 
             if (this.linker.dev_server != null) {
                 if (unique_key_for_additional_files.len > 0) {
-                    element.setAttribute(url_attribute, unique_key_for_additional_files) catch {
-                        std.debug.panic("unexpected error from Element.setAttribute", .{});
-                    };
+                    return .{ .set = unique_key_for_additional_files };
                 } else if (import_record.path.is_disabled or loader.isJavaScriptLike() or loader.isCSS()) {
-                    element.remove();
+                    return .remove;
                 } else {
-                    element.setAttribute(url_attribute, import_record.path.pretty) catch {
-                        std.debug.panic("unexpected error from Element.setAttribute", .{});
-                    };
+                    return .{ .set = import_record.path.pretty };
                 }
-                return;
             }
 
             if (import_record.source_index.isInvalid()) {
                 debug("Leaving import with invalid source index: {s}", .{import_record.path.text});
-                return;
+                return .keep;
             }
 
             if (loader.isJavaScriptLike() or loader.isCSS()) {
                 // Remove the original non-external tags
-                element.remove();
-                return;
+                return .remove;
             }
 
             if (this.compile_to_standalone_html and import_record.source_index.isValid()) {
                 // In standalone HTML mode, inline assets as data: URIs
                 const url_for_css = this.linker.parse_graph.ast.items(.url_for_css)[import_record.source_index.get()];
                 if (url_for_css.len > 0) {
-                    element.setAttribute(url_attribute, url_for_css) catch {
-                        std.debug.panic("unexpected error from Element.setAttribute", .{});
-                    };
-                    return;
+                    return .{ .set = url_for_css };
                 }
             }
 
             if (unique_key_for_additional_files.len > 0) {
                 // Replace the external href/src with the unique key so that we later will rewrite it to the final URL or pathname
-                element.setAttribute(url_attribute, unique_key_for_additional_files) catch {
+                return .{ .set = unique_key_for_additional_files };
+            }
+
+            return .keep;
+        }
+
+        pub fn onTag(this: *@This(), element: *lol.Element, path: []const u8, url_attribute: []const u8, _: ImportKind) void {
+            if (strings.eqlComptime(url_attribute, "srcset")) {
+                var appender = std.heap.stackFallback(256, bun.default_allocator);
+                const allocator = appender.get();
+                var rewritten = std.array_list.Managed(u8).init(allocator);
+                defer rewritten.deinit();
+
+                var last_emit: usize = 0;
+                var i: usize = 0;
+                while (i < path.len) {
+                    // Skip leading whitespace
+                    while (i < path.len and std.ascii.isWhitespace(path[i])) : (i += 1) {}
+                    if (i >= path.len) break;
+                    const url_start = i;
+
+                    // data: URLs can contain commas, so only treat commas as terminators for non-data URLs.
+                    const is_data_url = strings.hasPrefix(path[url_start..], "data:");
+                    if (is_data_url) {
+                        while (i < path.len and !std.ascii.isWhitespace(path[i])) : (i += 1) {}
+                    } else {
+                        while (i < path.len and !std.ascii.isWhitespace(path[i]) and path[i] != ',') : (i += 1) {}
+                    }
+                    const url_end = i;
+
+                    const replacement = brk: {
+                        switch (this.getTagAction()) {
+                            .keep => break :brk path[url_start..url_end],
+                            .remove => {
+                                element.remove();
+                                return;
+                            },
+                            .set => |value| break :brk value,
+                        }
+                    };
+
+                    bun.handleOom(rewritten.appendSlice(path[last_emit..url_start]));
+                    bun.handleOom(rewritten.appendSlice(replacement));
+                    last_emit = url_end;
+
+                    while (i < path.len and path[i] != ',') : (i += 1) {}
+                    if (i < path.len) i += 1;
+                }
+
+                bun.handleOom(rewritten.appendSlice(path[last_emit..]));
+                element.setAttribute(url_attribute, rewritten.items) catch {
                     std.debug.panic("unexpected error from Element.setAttribute", .{});
                 };
                 return;
+            }
+
+            switch (this.getTagAction()) {
+                .keep => return,
+                .remove => {
+                    element.remove();
+                    return;
+                },
+                .set => |value| {
+                    element.setAttribute(url_attribute, value) catch {
+                        std.debug.panic("unexpected error from Element.setAttribute", .{});
+                    };
+                    return;
+                },
             }
         }
 

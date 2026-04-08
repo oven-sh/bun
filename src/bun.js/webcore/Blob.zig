@@ -2839,8 +2839,20 @@ pub fn getWriter(
     };
 
     if (arguments.len > 0 and arguments.ptr[0].isObject()) {
-        stream_start = try jsc.WebCore.streams.Start.fromJSWithTag(globalThis, arguments[0], .FileSink);
-        stream_start.FileSink.input_path = input_path;
+        // input_path always comes from the Blob's store (the file this is a
+        // writer for); JS options can only contribute highWaterMark. The
+        // old code assigned to `stream_start.FileSink.input_path` after
+        // `fromJSWithTag`, which assumed the `.FileSink` variant even when
+        // `.err` or `.chunk_size` was returned.
+        switch (try jsc.WebCore.streams.Start.fromJSWithTag(globalThis, arguments[0], .FileSink)) {
+            .FileSink => |fs| stream_start.FileSink.chunk_size = fs.chunk_size,
+            .chunk_size => |cs| stream_start.FileSink.chunk_size = cs,
+            .err => |err| {
+                sink.deref();
+                return globalThis.throwValue(try err.toJS(globalThis));
+            },
+            else => {},
+        }
     }
 
     switch (sink.start(stream_start)) {

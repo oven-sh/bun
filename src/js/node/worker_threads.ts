@@ -47,48 +47,94 @@ function injectFakeEmitter(Class) {
     return event.error;
   }
 
-  const wrappedListener = Symbol("wrappedListener");
-
-  function wrapped(run, listener) {
-    const callback = function (event) {
-      return listener(run(event));
-    };
-    listener[wrappedListener] = callback;
-    return callback;
+  function unwrapFor(event) {
+    return event === "error" || event === "messageerror" ? errorEventHandler : messageEventHandler;
   }
 
-  function functionForEventType(event, listener) {
-    switch (event) {
-      case "error":
-      case "messageerror": {
-        return wrapped(errorEventHandler, listener);
-      }
+  // Per-instance listener tracking: Map<event, Array<{ original, wrapped }>>.
+  // Stored via a non-enumerable symbol on the instance so that listenerCount,
+  // eventNames, removeAllListeners, listeners, rawListeners work correctly
+  // without a separate WeakMap (which would make the instance be kept alive
+  // only by the map entry, and vice versa).
+  const kListeners = Symbol("bun:worker_threads:listeners");
+  const kMaxListeners = Symbol("bun:worker_threads:maxListeners");
 
-      default: {
-        return wrapped(messageEventHandler, listener);
+  function getListeners(target) {
+    let map = target[kListeners];
+    if (!map) {
+      map = new Map();
+      Object.defineProperty(target, kListeners, {
+        value: map,
+        writable: true,
+        configurable: true,
+        enumerable: false,
+      });
+    }
+    return map;
+  }
+
+  function trackListener(target, event, original, wrapped) {
+    const map = getListeners(target);
+    let arr = map.get(event);
+    if (!arr) {
+      arr = [];
+      map.set(event, arr);
+    }
+    arr.push({ original, wrapped });
+  }
+
+  function untrackListener(target, event, original) {
+    const map = target[kListeners];
+    if (!map) return null;
+    const arr = map.get(event);
+    if (!arr) return null;
+    // Node's removeListener removes the LAST matching instance (FILO).
+    for (let i = arr.length - 1; i >= 0; i--) {
+      if (arr[i].original === original) {
+        const [entry] = arr.splice(i, 1);
+        if (arr.length === 0) map.delete(event);
+        return entry.wrapped;
       }
     }
+    return null;
   }
 
   Class.prototype.on = function (event, listener) {
-    this.addEventListener(event, functionForEventType(event, listener));
-
+    const unwrap = unwrapFor(event);
+    const wrapped = function (e) {
+      return listener.$call(this, unwrap(e));
+    };
+    this.addEventListener(event, wrapped);
+    trackListener(this, event, listener, wrapped);
     return this;
   };
 
   Class.prototype.off = function (event, listener) {
     if (listener) {
-      this.removeEventListener(event, listener[wrappedListener] || listener);
+      const wrapped = untrackListener(this, event, listener);
+      // If the listener was tracked, remove the wrapped version; otherwise
+      // fall back to removing whatever matches directly (covers raw
+      // addEventListener registrations).
+      this.removeEventListener(event, wrapped || listener);
     } else {
-      this.removeEventListener(event);
+      // No listener passed: Node's removeListener requires one, but the old
+      // off() accepted this as "remove everything for this event". Preserve
+      // that behavior via removeAllListeners.
+      Class.prototype.removeAllListeners.$call(this, event);
     }
-
     return this;
   };
 
   Class.prototype.once = function (event, listener) {
-    this.addEventListener(event, functionForEventType(event, listener), { once: true });
-
+    const unwrap = unwrapFor(event);
+    const self = this;
+    const wrapped = function (e) {
+      // Untrack before invoking so listenerCount inside the handler is accurate.
+      untrackListener(self, event, listener);
+      return listener.$call(this, unwrap(e));
+    };
+    this.addEventListener(event, wrapped, { once: true });
+    trackListener(this, event, listener, wrapped);
     return this;
   };
 
@@ -106,8 +152,73 @@ function injectFakeEmitter(Class) {
     return this;
   };
 
+  Class.prototype.addListener = Class.prototype.on;
+  Class.prototype.removeListener = Class.prototype.off;
   Class.prototype.prependListener = Class.prototype.on;
   Class.prototype.prependOnceListener = Class.prototype.once;
+
+  Class.prototype.removeAllListeners = function (event) {
+    const map = this[kListeners];
+    if (!map) return this;
+    if (event === undefined) {
+      for (const [name, arr] of map) {
+        for (const { wrapped } of arr) {
+          this.removeEventListener(name, wrapped);
+        }
+      }
+      map.clear();
+    } else {
+      const arr = map.get(event);
+      if (arr) {
+        for (const { wrapped } of arr) {
+          this.removeEventListener(event, wrapped);
+        }
+        map.delete(event);
+      }
+    }
+    return this;
+  };
+
+  Class.prototype.listenerCount = function (event) {
+    const map = this[kListeners];
+    if (!map) return 0;
+    const arr = map.get(event);
+    return arr ? arr.length : 0;
+  };
+
+  Class.prototype.listeners = function (event) {
+    const map = this[kListeners];
+    if (!map) return [];
+    const arr = map.get(event);
+    if (!arr) return [];
+    const out = new Array(arr.length);
+    for (let i = 0; i < arr.length; i++) out[i] = arr[i].original;
+    return out;
+  };
+
+  Class.prototype.rawListeners = function (event) {
+    return Class.prototype.listeners.$call(this, event);
+  };
+
+  Class.prototype.eventNames = function () {
+    const map = this[kListeners];
+    if (!map) return [];
+    return Array.from(map.keys());
+  };
+
+  Class.prototype.setMaxListeners = function (n) {
+    Object.defineProperty(this, kMaxListeners, {
+      value: n,
+      writable: true,
+      configurable: true,
+      enumerable: false,
+    });
+    return this;
+  };
+
+  Class.prototype.getMaxListeners = function () {
+    return this[kMaxListeners] ?? EventEmitter.defaultMaxListeners;
+  };
 }
 
 const _MessagePort = globalThis.MessagePort;

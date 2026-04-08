@@ -1,6 +1,6 @@
-import { test, expect } from "bun:test";
-import http2 from "node:http2";
+import { expect, test } from "bun:test";
 import { once } from "node:events";
+import http2 from "node:http2";
 
 test("Http2Stream.state.weight defaults to 16 per RFC 9113", async () => {
   const server = http2.createServer();

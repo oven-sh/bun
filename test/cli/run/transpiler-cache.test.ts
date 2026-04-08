@@ -77,8 +77,8 @@ describe("transpiler cache", () => {
     expect(b.stdout == "");
     expect(newCacheCount()).toBe(0);
   });
-  test("ignores files under 50kb", async () => {
-    writeFileSync(join(temp_dir, "a.js"), dummyFile(50 * 1024 - 1, "1", "a"));
+  test("ignores files under 4kb", async () => {
+    writeFileSync(join(temp_dir, "a.js"), dummyFile(4 * 1024 - 1, "1", "a"));
     const a = bunRun(join(temp_dir, "a.js"), env);
     expect(a.stdout == "a");
     expect(!existsSync(cache_dir)).toBeTrue();

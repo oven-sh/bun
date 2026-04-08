@@ -1839,7 +1839,7 @@ pub const TestCommand = struct {
                     for (files[0 .. files.len - 1], 0..) |file_name, i| {
                         TestCommand.run(reporter, vm, file_name.slice(), .{ .first = i == 0, .last = false }) catch |err| handleTopLevelTestErrorBeforeJavaScriptStart(err);
                         reporter.jest.default_timeout_override = std.math.maxInt(u32);
-                        Global.mimalloc_cleanup(false);
+                        if (i % 64 == 63) Global.mimalloc_cleanup(false);
                     }
                 }
 

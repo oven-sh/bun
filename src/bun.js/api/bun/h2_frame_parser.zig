@@ -2260,7 +2260,7 @@ pub const H2FrameParser = struct {
             } else {
                 if (this.outStandingPings == 0) {
                     this.sendGoAway(0, ErrorCode.PROTOCOL_ERROR, "Unsolicited PING ACK", this.lastStreamID, true);
-                    return content.end;
+                    return data.len;
                 }
                 this.outStandingPings -= 1;
             }

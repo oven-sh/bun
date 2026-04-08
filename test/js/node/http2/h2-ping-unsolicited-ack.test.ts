@@ -1,7 +1,7 @@
-import { expect, test } from "bun:test";
-import { once } from "node:events";
+import { test, expect } from "bun:test";
 import http2 from "node:http2";
 import net from "node:net";
+import { once } from "node:events";
 
 const kSettings = Buffer.from([0, 0, 0, 4, 0, 0, 0, 0, 0]);
 const kPingAck = Buffer.from([0, 0, 8, 6, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
@@ -19,16 +19,18 @@ test("server treats unsolicited PING ACK as a protocol error per RFC 9113 §6.7"
 
   const conn = net.connect(port);
   conn.on("error", () => {});
-  await once(conn, "connect");
-  conn.write(Buffer.from("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n", "ascii"));
-  conn.write(kSettings);
-  conn.write(kPingAck);
+  try {
+    await once(conn, "connect");
+    conn.write(Buffer.from("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n", "ascii"));
+    conn.write(kSettings);
+    conn.write(kPingAck);
 
-  const err = await errored;
-  expect(err).toBeInstanceOf(Error);
-  expect((err as NodeJS.ErrnoException).code).toMatch(/^ERR_HTTP2/);
-
-  conn.destroy();
-  server.close();
-  await once(server, "close");
+    const err = await errored;
+    expect(err).toBeInstanceOf(Error);
+    expect((err as NodeJS.ErrnoException).code).toMatch(/^ERR_HTTP2/);
+  } finally {
+    conn.destroy();
+    server.close();
+    await once(server, "close");
+  }
 });

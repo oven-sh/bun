@@ -532,9 +532,8 @@ private:
     }
 };
 
-JSC::Structure* createJSStatsObjectStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
+JSC::Structure* createJSStatsObjectStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSObject* prototype)
 {
-    auto* prototype = JSStatsPrototype::create(vm, globalObject, JSStatsPrototype::createStructure(vm, globalObject, globalObject->objectPrototype()));
     auto structure = JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::FinalObjectType, 0), JSFinalObject::info(), NonArray,
         14);
 
@@ -562,9 +561,8 @@ JSC::Structure* createJSStatsObjectStructure(JSC::VM& vm, JSC::JSGlobalObject* g
     return structure;
 }
 
-JSC::Structure* createJSBigIntStatsObjectStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
+JSC::Structure* createJSBigIntStatsObjectStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSObject* prototype)
 {
-    auto prototype = JSBigIntStatsPrototype::create(vm, globalObject, JSBigIntStatsPrototype::createStructure(vm, globalObject, globalObject->objectPrototype()));
     auto structure = JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::FinalObjectType, 0), JSFinalObject::info(), NonArray,
         18);
 
@@ -784,14 +782,14 @@ inline JSValue callJSStatsFunction(JSC::JSGlobalObject* globalObject, JSC::CallF
     auto* object = JSC::JSFinalObject::create(vm, structure);
 
     object->putDirectOffset(vm, 0, dev);
-    object->putDirectOffset(vm, 1, mode);
-    object->putDirectOffset(vm, 2, nlink);
-    object->putDirectOffset(vm, 3, uid);
-    object->putDirectOffset(vm, 4, gid);
-    object->putDirectOffset(vm, 5, rdev);
-    object->putDirectOffset(vm, 6, blksize);
-    object->putDirectOffset(vm, 7, ino);
-    object->putDirectOffset(vm, 8, size);
+    object->putDirectOffset(vm, 1, ino);
+    object->putDirectOffset(vm, 2, mode);
+    object->putDirectOffset(vm, 3, nlink);
+    object->putDirectOffset(vm, 4, uid);
+    object->putDirectOffset(vm, 5, gid);
+    object->putDirectOffset(vm, 6, rdev);
+    object->putDirectOffset(vm, 7, size);
+    object->putDirectOffset(vm, 8, blksize);
     object->putDirectOffset(vm, 9, blocks);
 
     object->putDirectOffset(vm, static_cast<unsigned>(DateFieldType::atime), atimeMs);
@@ -925,7 +923,7 @@ extern "C" JSC::EncodedJSValue Bun__JSStatsObjectConstructor(Zig::GlobalObject* 
 void initJSStatsClassStructure(JSC::LazyClassStructure::Initializer& init)
 {
     auto* prototype = JSStatsPrototype::create(init.vm, init.global, JSStatsPrototype::createStructure(init.vm, init.global, init.global->objectPrototype()));
-    auto* structure = createJSStatsObjectStructure(init.vm, init.global);
+    auto* structure = createJSStatsObjectStructure(init.vm, init.global, prototype);
     auto* constructor = JSStatsConstructor::create(init.vm, JSStatsConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype);
     init.setPrototype(prototype);
     init.setStructure(structure);
@@ -935,7 +933,7 @@ void initJSStatsClassStructure(JSC::LazyClassStructure::Initializer& init)
 void initJSBigIntStatsClassStructure(JSC::LazyClassStructure::Initializer& init)
 {
     auto* prototype = JSBigIntStatsPrototype::create(init.vm, init.global, JSBigIntStatsPrototype::createStructure(init.vm, init.global, init.global->objectPrototype()));
-    auto* structure = createJSBigIntStatsObjectStructure(init.vm, init.global);
+    auto* structure = createJSBigIntStatsObjectStructure(init.vm, init.global, prototype);
     auto* constructor = JSBigIntStatsConstructor::create(init.vm, JSBigIntStatsConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype);
     init.setPrototype(prototype);
     init.setStructure(structure);

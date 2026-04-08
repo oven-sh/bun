@@ -1424,6 +1424,7 @@ pub const AnsiRenderer = struct {
         const ITALIC: u8 = 1 << 1;
         const UNDERLINE: u8 = 1 << 2;
         const STRIKE: u8 = 1 << 3;
+        const DIM: u8 = 1 << 4;
 
         fn hasAny(self: CellAnsiState) bool {
             return self.flags != 0 or self.fg != null or self.bg != null or self.link != null;
@@ -1431,6 +1432,7 @@ pub const AnsiRenderer = struct {
 
         fn emitOpens(self: CellAnsiState, out: *OutputBuffer) void {
             if (self.flags & BOLD != 0) out.write("\x1b[1m");
+            if (self.flags & DIM != 0) out.write("\x1b[2m");
             if (self.flags & ITALIC != 0) out.write("\x1b[3m");
             if (self.flags & UNDERLINE != 0) out.write("\x1b[4m");
             if (self.flags & STRIKE != 0) out.write("\x1b[9m");
@@ -1486,7 +1488,7 @@ pub const AnsiRenderer = struct {
                         }
                     }
                     const seq = bytes[seq_start..j];
-                    if (seq.len >= 5 and std.mem.startsWith(u8, seq, "\x1b]8;")) {
+                    if (seq.len >= 5 and bun.strings.hasPrefixComptime(seq, "\x1b]8;")) {
                         // "\x1b]8;<params>;<URL>\x1b\\" — a close has an
                         // empty URL component.
                         const body = seq[4..]; // after "\x1b]8;"
@@ -1499,7 +1501,7 @@ pub const AnsiRenderer = struct {
                             break :blk body.len;
                         };
                         const body_stripped = body[0..body_end];
-                        if (std.mem.indexOfScalar(u8, body_stripped, ';')) |semi| {
+                        if (bun.strings.indexOfChar(body_stripped, ';')) |semi| {
                             const url = body_stripped[semi + 1 ..];
                             if (url.len == 0) {
                                 self.link = null;
@@ -1536,10 +1538,13 @@ pub const AnsiRenderer = struct {
                         self.bg = null;
                     },
                     1 => self.flags |= BOLD,
+                    2 => self.flags |= DIM,
                     3 => self.flags |= ITALIC,
                     4 => self.flags |= UNDERLINE,
                     9 => self.flags |= STRIKE,
-                    22 => self.flags &= ~BOLD,
+                    // ECMA-48 §8.3.117: SGR 22 = "normal intensity" —
+                    // clears BOTH bold (SGR 1) and faint/dim (SGR 2).
+                    22 => self.flags &= ~(BOLD | DIM),
                     23 => self.flags &= ~ITALIC,
                     24 => self.flags &= ~UNDERLINE,
                     29 => self.flags &= ~STRIKE,

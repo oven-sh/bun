@@ -7,7 +7,7 @@ const handler = () => {
 };
 process.stdin.on("readable", handler);
 
-setTimeout(() => {
+setImmediate(() => {
   process.stdin.removeListener("readable", handler);
 
   if (process.stdin.listenerCount("readable") !== 0) {
@@ -32,4 +32,4 @@ setTimeout(() => {
   child.on("close", code => {
     process.exit(code ?? 1);
   });
-}, 20);
+});

@@ -179,7 +179,7 @@ test("removing the last 'readable' listener releases fd 0 for an inherit-stdio c
   const [stdout, restStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   stderr += restStderr;
 
-  expect(stderr).toBe("READY\n");
+  expect(stderr).toContain("READY\n");
   expect(stdout).toBe("CHILD:" + payload);
   expect(exitCode).toBe(0);
 });

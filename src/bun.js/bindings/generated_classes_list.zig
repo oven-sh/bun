@@ -94,10 +94,11 @@ pub const Classes = struct {
     pub const SourceMap = bun.SourceMap.JSSourceMap;
 };
 
+const cron = @import("../api/cron.zig");
+
 const bun = @import("bun");
 const jsc = bun.jsc;
 const webcore = bun.webcore;
 
 const api = bun.api;
 const node = api.node;
-const cron = @import("../api/cron.zig");

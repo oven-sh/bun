@@ -532,9 +532,8 @@ private:
     }
 };
 
-JSC::Structure* createJSStatsObjectStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
+JSC::Structure* createJSStatsObjectStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSObject* prototype)
 {
-    auto* prototype = JSStatsPrototype::create(vm, globalObject, JSStatsPrototype::createStructure(vm, globalObject, globalObject->objectPrototype()));
     auto structure = JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::FinalObjectType, 0), JSFinalObject::info(), NonArray,
         14);
 
@@ -562,9 +561,8 @@ JSC::Structure* createJSStatsObjectStructure(JSC::VM& vm, JSC::JSGlobalObject* g
     return structure;
 }
 
-JSC::Structure* createJSBigIntStatsObjectStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
+JSC::Structure* createJSBigIntStatsObjectStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSObject* prototype)
 {
-    auto prototype = JSBigIntStatsPrototype::create(vm, globalObject, JSBigIntStatsPrototype::createStructure(vm, globalObject, globalObject->objectPrototype()));
     auto structure = JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::FinalObjectType, 0), JSFinalObject::info(), NonArray,
         18);
 
@@ -925,7 +923,7 @@ extern "C" JSC::EncodedJSValue Bun__JSStatsObjectConstructor(Zig::GlobalObject* 
 void initJSStatsClassStructure(JSC::LazyClassStructure::Initializer& init)
 {
     auto* prototype = JSStatsPrototype::create(init.vm, init.global, JSStatsPrototype::createStructure(init.vm, init.global, init.global->objectPrototype()));
-    auto* structure = createJSStatsObjectStructure(init.vm, init.global);
+    auto* structure = createJSStatsObjectStructure(init.vm, init.global, prototype);
     auto* constructor = JSStatsConstructor::create(init.vm, JSStatsConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype);
     init.setPrototype(prototype);
     init.setStructure(structure);
@@ -935,7 +933,7 @@ void initJSStatsClassStructure(JSC::LazyClassStructure::Initializer& init)
 void initJSBigIntStatsClassStructure(JSC::LazyClassStructure::Initializer& init)
 {
     auto* prototype = JSBigIntStatsPrototype::create(init.vm, init.global, JSBigIntStatsPrototype::createStructure(init.vm, init.global, init.global->objectPrototype()));
-    auto* structure = createJSBigIntStatsObjectStructure(init.vm, init.global);
+    auto* structure = createJSBigIntStatsObjectStructure(init.vm, init.global, prototype);
     auto* constructor = JSBigIntStatsConstructor::create(init.vm, JSBigIntStatsConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype);
     init.setPrototype(prototype);
     init.setStructure(structure);

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { Stats } from "node:fs";
+import { Stats, statSync } from "node:fs";
 
 // Node.js's Stats constructor signature (deprecated, DEP0180):
 //   Stats(dev, mode, nlink, uid, gid, rdev, blksize, ino, size, blocks, atimeMs, mtimeMs, ctimeMs, birthtimeMs)
@@ -32,4 +32,25 @@ test("Stats(...) without new assigns fields in Node's order", () => {
   // the mode argument etc.
   // @ts-expect-error DEP0180
   expect({ ...Stats(...args) }).toMatchObject(expected);
+});
+
+test("Stats instances share Stats.prototype", () => {
+  // Regression: initJSStatsClassStructure created two JSStatsPrototype objects,
+  // so Object.getPrototypeOf(instance) !== Stats.prototype and instanceof failed.
+  const fromSync = statSync(import.meta.path);
+  // @ts-expect-error DEP0180
+  const fromNew = new Stats(...args);
+  // @ts-expect-error DEP0180
+  const fromCall = Stats(...args);
+
+  expect(fromSync instanceof Stats).toBe(true);
+  expect(fromNew instanceof Stats).toBe(true);
+  expect(fromCall instanceof Stats).toBe(true);
+  expect(Object.getPrototypeOf(fromSync)).toBe(Stats.prototype);
+  expect(Object.getPrototypeOf(fromNew)).toBe(Stats.prototype);
+  expect(Object.getPrototypeOf(fromCall)).toBe(Stats.prototype);
+
+  const bigint = statSync(import.meta.path, { bigint: true });
+  expect(Object.getPrototypeOf(bigint).constructor.name).toBe("BigIntStats");
+  expect(bigint instanceof Object.getPrototypeOf(bigint).constructor).toBe(true);
 });

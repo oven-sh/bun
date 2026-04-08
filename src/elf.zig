@@ -43,6 +43,65 @@ pub const ElfFile = struct {
         self.allocator.destroy(self);
     }
 
+    /// If PT_INTERP points into a Nix/Guix store path, rewrite it to the
+    /// standard FHS path so `bun build --compile` output stays portable when
+    /// the bun binary itself was patchelf'd (NixOS autoPatchelfHook). See #24742.
+    ///
+    /// Store paths are always longer than the FHS path, so this is an in-place
+    /// shrink — no segment moves. No-op for any other interpreter.
+    pub fn normalizeInterpreter(self: *ElfFile) void {
+        const ehdr = readEhdr(self.data.items);
+        const phdr_size = @sizeOf(Elf64_Phdr);
+
+        for (0..ehdr.e_phnum) |i| {
+            const phdr_offset = @as(usize, @intCast(ehdr.e_phoff)) + i * phdr_size;
+            const phdr = std.mem.bytesAsValue(Elf64_Phdr, self.data.items[phdr_offset..][0..phdr_size]).*;
+            if (phdr.p_type != elf.PT_INTERP) continue;
+
+            const interp_offset: usize = @intCast(phdr.p_offset);
+            const interp_filesz: usize = @intCast(phdr.p_filesz);
+            if (interp_offset + interp_filesz > self.data.items.len) return;
+
+            const interp_region = self.data.items[interp_offset..][0..interp_filesz];
+            const current = std.mem.sliceTo(interp_region, 0);
+
+            if (!bun.strings.hasPrefixComptime(current, "/nix/store/") and
+                !bun.strings.hasPrefixComptime(current, "/gnu/store/"))
+            {
+                return;
+            }
+
+            const last_slash = std.mem.lastIndexOfScalar(u8, current, '/') orelse return;
+            const basename = current[last_slash + 1 ..];
+
+            const replacement: []const u8 = inline for (interp_map) |entry| {
+                if (bun.strings.eqlComptime(basename, entry[0])) break entry[1];
+            } else return;
+
+            // FHS path + NUL must fit in the existing segment (always true for
+            // store paths: 32-char hash + pname + "/lib/" alone exceeds any FHS path).
+            if (replacement.len + 1 > interp_filesz) return;
+
+            log("rewriting PT_INTERP {s} -> {s}", .{ current, replacement });
+
+            @memcpy(interp_region[0..replacement.len], replacement);
+            @memset(interp_region[replacement.len..], 0);
+
+            const new_size: u64 = replacement.len + 1;
+            // p_filesz @ +32, p_memsz @ +40 in Elf64_Phdr
+            std.mem.writeInt(u64, self.data.items[phdr_offset + 32 ..][0..8], new_size, .little);
+            std.mem.writeInt(u64, self.data.items[phdr_offset + 40 ..][0..8], new_size, .little);
+            return;
+        }
+    }
+
+    const interp_map = .{
+        .{ "ld-linux-x86-64.so.2", "/lib64/ld-linux-x86-64.so.2" },
+        .{ "ld-linux-aarch64.so.1", "/lib/ld-linux-aarch64.so.1" },
+        .{ "ld-musl-x86_64.so.1", "/lib/ld-musl-x86_64.so.1" },
+        .{ "ld-musl-aarch64.so.1", "/lib/ld-musl-aarch64.so.1" },
+    };
+
     /// Find the `.bun` section and write `payload` to the end of the ELF file,
     /// creating a new PT_LOAD segment (from PT_GNU_STACK) to map it. Stores the
     /// new segment's vaddr at the original BUN_COMPILED location so the runtime
@@ -244,6 +303,7 @@ fn alignUp(value: u64, alignment: u64) u64 {
 }
 
 const bun = @import("bun");
+const log = bun.Output.scoped(.elf, .visible);
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;

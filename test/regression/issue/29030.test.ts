@@ -67,4 +67,42 @@ describe("issue #29030 - deepStrictEqual prototype check", () => {
     expect(() => assert.deepEqual({}, Object.create(null))).not.toThrow();
     expect(() => assert.deepEqual(Object.create(null), {})).not.toThrow();
   });
+
+  test("array subclass vs plain array is not strict-deep-equal", () => {
+    class Sub extends Array {}
+    expect(() => assert.deepStrictEqual(new Sub(), [])).toThrow(assert.AssertionError);
+    expect(() => assert.deepStrictEqual(Sub.from([1, 2]), [1, 2])).toThrow(assert.AssertionError);
+    expect(isDeepStrictEqual(new Sub(), [])).toBe(false);
+    expect(isDeepStrictEqual(Sub.from([1, 2]), [1, 2])).toBe(false);
+  });
+
+  test("same-instance array subclass comparisons are still strict-deep-equal", () => {
+    class Sub extends Array {}
+    expect(() => assert.deepStrictEqual(Sub.from([1, 2]), Sub.from([1, 2]))).not.toThrow();
+    expect(isDeepStrictEqual(Sub.from([1, 2]), Sub.from([1, 2]))).toBe(true);
+  });
+
+  test("Map subclass vs plain Map is not strict-deep-equal", () => {
+    class MyMap extends Map {}
+    expect(() => assert.deepStrictEqual(new MyMap(), new Map())).toThrow(assert.AssertionError);
+    expect(isDeepStrictEqual(new MyMap(), new Map())).toBe(false);
+  });
+
+  test("Set subclass vs plain Set is not strict-deep-equal", () => {
+    class MySet extends Set {}
+    expect(() => assert.deepStrictEqual(new MySet([1]), new Set([1]))).toThrow(assert.AssertionError);
+    expect(isDeepStrictEqual(new MySet([1]), new Set([1]))).toBe(false);
+  });
+
+  test("Error subclass vs plain Error is not strict-deep-equal", () => {
+    class MyError extends Error {}
+    expect(() => assert.deepStrictEqual(new MyError("x"), new Error("x"))).toThrow(assert.AssertionError);
+    expect(isDeepStrictEqual(new MyError("x"), new Error("x"))).toBe(false);
+  });
+
+  test("same-prototype Map/Set/Error pairs are still strict-deep-equal", () => {
+    expect(() => assert.deepStrictEqual(new Map([[1, 2]]), new Map([[1, 2]]))).not.toThrow();
+    expect(() => assert.deepStrictEqual(new Set([1, 2]), new Set([1, 2]))).not.toThrow();
+    expect(() => assert.deepStrictEqual(new Error("x"), new Error("x"))).not.toThrow();
+  });
 });

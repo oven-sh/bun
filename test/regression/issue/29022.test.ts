@@ -181,31 +181,34 @@ test("once cleans up tracking after it fires", async () => {
 test("on() deduplicates same listener (matches Node's MessagePort)", async () => {
   const { port1, port2 } = new MessageChannel();
   try {
+    // Register the same listener three times; Node's MessagePort collapses
+    // this into a single registration, so only one call should happen.
     let fired = 0;
+    const first = Promise.withResolvers<void>();
     const onMessage = () => {
       fired++;
+      first.resolve();
     };
-
     port1.on("message", onMessage);
     port1.on("message", onMessage);
     port1.on("message", onMessage);
     expect(port1.listenerCount("message")).toBe(1);
 
     port2.postMessage("hi");
-    // Wait for the message to dispatch, bounded so a regression fails fast.
-    const deadline = Date.now() + 5000;
-    while (fired === 0) {
-      if (Date.now() > deadline) throw new Error("timed out waiting for first message");
-      await Bun.sleep(1);
-    }
+    await first.promise;
     expect(fired).toBe(1);
 
+    // off() should fully remove the tracked registration.
     port1.off("message", onMessage);
     expect(port1.listenerCount("message")).toBe(0);
 
-    // After off(), nothing should fire.
+    // Prove the removed listener doesn't fire by posting a second message
+    // that a *different* listener catches. If the original `onMessage` still
+    // fired, `fired` would be 2 before `probeFired` resolves.
+    const probe = Promise.withResolvers<void>();
+    port1.on("message", () => probe.resolve());
     port2.postMessage("hi again");
-    await Bun.sleep(20);
+    await probe.promise;
     expect(fired).toBe(1);
   } finally {
     port1.close();
@@ -231,6 +234,31 @@ test("once() deduplicates with itself and with on()", () => {
     const fn2 = () => {};
     port1.on("message", fn2);
     expect(port1.listenerCount("message")).toBe(2);
+  } finally {
+    port1.close();
+    port2.close();
+  }
+});
+
+test("on() accepts an EventListener object with handleEvent", async () => {
+  // Node's MessagePort routes dispatches through either a bare function or
+  // the DOM EventListener `handleEvent` method.
+  const { port1, port2 } = new MessageChannel();
+  try {
+    const { promise, resolve } = Promise.withResolvers<unknown>();
+    const listener = {
+      handleEvent(msg: unknown) {
+        resolve(msg);
+      },
+    };
+    port1.on("message", listener);
+    expect(port1.listenerCount("message")).toBe(1);
+
+    port2.postMessage("from handleEvent");
+    expect(await promise).toBe("from handleEvent");
+
+    port1.off("message", listener);
+    expect(port1.listenerCount("message")).toBe(0);
   } finally {
     port1.close();
     port2.close();

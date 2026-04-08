@@ -112,24 +112,37 @@ function injectFakeEmitter(Class) {
 
   // Node's MessagePort (which is an EventTarget underneath) throws
   // ERR_INVALID_ARG_TYPE for listener arguments that are primitives other
-  // than `undefined` / `null`. Functions and objects pass through (objects
-  // are treated by EventTarget as `EventListener` with a `handleEvent`
-  // method, or silently ignored if they don't implement one).
+  // than `undefined` / `null`. Functions and EventListener objects (with a
+  // `handleEvent` method) pass through.
   function validateListener(listener) {
     const t = typeof listener;
     if (t !== "function" && t !== "object" && t !== "undefined") {
-      throw $ERR_INVALID_ARG_TYPE("listener", "Function", listener);
+      throw $ERR_INVALID_ARG_TYPE("listener", "function", listener);
     }
+  }
+
+  // Build a wrapper that dispatches through either a bare function or the
+  // DOM EventListener `handleEvent` method. Matches Node's MessagePort
+  // behavior where `port.on('message', { handleEvent(m) { ... } })` is
+  // accepted and forwards the unwrapped payload.
+  function makeWrapped(listener, unwrap) {
+    return function (e) {
+      if (typeof listener === "function") {
+        return listener.$call(this, unwrap(e));
+      }
+      if (listener != null && typeof listener.handleEvent === "function") {
+        return listener.handleEvent(unwrap(e));
+      }
+      // Non-function, non-EventListener objects: silently drop (matches
+      // EventTarget's behavior of ignoring the dispatch).
+    };
   }
 
   Class.prototype.on = function (event, listener) {
     validateListener(listener);
     // Node's MessagePort dedupes same (event, listener) pairs (see #20169).
     if (hasListener(this, event, listener)) return this;
-    const unwrap = unwrapFor(event);
-    const wrapped = function (e) {
-      return listener.$call(this, unwrap(e));
-    };
+    const wrapped = makeWrapped(listener, unwrapFor(event));
     this.addEventListener(event, wrapped);
     trackListener(this, event, listener, wrapped);
     return this;
@@ -154,7 +167,12 @@ function injectFakeEmitter(Class) {
     const wrapped = function (e) {
       // Untrack before invoking so listenerCount inside the handler is accurate.
       untrackListener(self, event, listener);
-      return listener.$call(this, unwrap(e));
+      if (typeof listener === "function") {
+        return listener.$call(this, unwrap(e));
+      }
+      if (listener != null && typeof listener.handleEvent === "function") {
+        return listener.handleEvent(unwrap(e));
+      }
     };
     this.addEventListener(event, wrapped, { once: true });
     trackListener(this, event, listener, wrapped);

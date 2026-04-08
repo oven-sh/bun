@@ -244,8 +244,9 @@ pub fn onBuildComplete(this: *JSBundle, completion_task: *bun.BundleV2.JSBundleC
                 debug("onBuildComplete: success", .{});
 
             const globalThis = this.global;
-            // Only expose this bundle's own direct files, not nested sub-build outputs
-            const output_files = bundle.output_files.items[0..bundle.direct_file_count];
+            // Include ALL output files (direct + sub-build) so nested ?bundle
+            // outputs are accessible through .files on the JSBundle.
+            const output_files = bundle.output_files.items;
 
             // Log timing info
             const now = bun.getRoughTickCount(.allow_mocked_time).ns();
@@ -266,7 +267,7 @@ pub fn onBuildComplete(this: *JSBundle, completion_task: *bun.BundleV2.JSBundleC
             var bundle_file_index: u32 = 0;
             var entrypoint_js_value: ?JSValue = null;
 
-            for (output_files) |*output_file| {
+            for (output_files, 0..) |*output_file, file_idx| {
                 const blob = bun.handleOom(output_file.toBlob(bun.default_allocator, globalThis));
                 const content_type = blob.contentTypeOrMimeType() orelse brk: {
                     bun.debugAssert(false);
@@ -295,8 +296,11 @@ pub fn onBuildComplete(this: *JSBundle, completion_task: *bun.BundleV2.JSBundleC
                 );
                 const bundle_file_js = BundleFile.toJS(bundle_file, globalThis);
 
-                // Track entrypoint
-                if (output_file.output_kind == .@"entry-point" and (output_file.loader.isJavaScriptLike() or output_file.loader == .css)) {
+                // Track entrypoint — only from direct files, not sub-build outputs
+                if (file_idx < bundle.direct_file_count and
+                    output_file.output_kind == .@"entry-point" and
+                    (output_file.loader.isJavaScriptLike() or output_file.loader == .css))
+                {
                     entrypoint_js_value = bundle_file_js;
 
                     // Set actual entrypoint path
@@ -407,6 +411,34 @@ pub fn onDevServerBuildComplete(ctx: *anyopaque, dev: *bun.bake.DevServer, succe
     const script_id = this.sourceMapId();
     const payload = dev.generateStandaloneClientBundleForEntryPoint(this.path, script_id) catch |err| bun.handleOom(err);
     this.updateDevEntrypoint(payload, dev);
+
+    // Include sub-build output files (from nested ?bundle imports) in the
+    // files array so they're accessible through .files on the JSBundle.
+    const sub_files = dev.sub_build_files;
+    if (sub_files.count() > 0) {
+        const globalThis = this.global;
+        const total_files = 1 + sub_files.count();
+        const arr = jsc.JSValue.createEmptyArray(globalThis, total_files) catch return;
+
+        // Entry 0 = the main entrypoint
+        if (this.entrypoint_value.get()) |ep_js| {
+            arr.putIndex(globalThis, 0, ep_js) catch {};
+        }
+
+        // Remaining entries = sub-build output files
+        var idx: u32 = 1;
+        for (sub_files.keys(), sub_files.values()) |name, file| {
+            const mime = file.loader.toMimeType(&.{name}).value;
+            const blob = jsc.WebCore.Blob.create(file.content, bun.default_allocator, globalThis, false);
+            const bundle_file = BundleFile.init(name, .chunk, mime, file.content.len, blob);
+            const bf_js = BundleFile.toJS(bundle_file, globalThis);
+            arr.putIndex(globalThis, idx, bf_js) catch {};
+            idx += 1;
+        }
+
+        this.files_value.deinit();
+        this.files_value = .create(arr, globalThis);
+    }
 }
 
 const debug = bun.Output.scoped(.JSBundle, .hidden);

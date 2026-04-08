@@ -1503,8 +1503,9 @@ pub fn definesFromTransformOptions(
         }
 
         behavior = framework.behavior;
-        if (behavior == .load_all_without_inlining or behavior == .disable)
+        if (behavior == .load_all_without_inlining or behavior == .disable) {
             break :load_env;
+        }
 
         try env.copyForDefine(
             defines.RawDefines,

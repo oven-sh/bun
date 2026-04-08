@@ -114,11 +114,11 @@ standalone_callback_ctxs: std.ArrayListUnmanaged(*anyopaque) = .{},
 /// Zig callback invoked for each context in standalone_callback_ctxs
 /// after a build completes in standalone mode.
 standalone_callback_fn: ?*const fn (ctx: *anyopaque, dev: *DevServer, success: bool) void = null,
-/// Entry points for standalone mode builds.
-standalone_entry_points: []const []const u8 = &.{},
+/// Entry points for standalone mode builds (with per-entry config).
+standalone_entry_points: []const StandaloneEntryPoint = &.{},
 /// Dynamically added entry points (from import-time registration).
 /// When non-empty, `standalone_entry_points` points to this list's items.
-standalone_entry_points_dynamic: std.ArrayListUnmanaged([]const u8) = .{},
+standalone_entry_points_dynamic: std.ArrayListUnmanaged(StandaloneEntryPoint) = .{},
 /// Standalone uws app for the HMR WebSocket server (non-SSL, port 0).
 /// Used when dev.server is null (standalone mode without Bun.serve).
 standalone_app: ?*uws.NewApp(false) = null,
@@ -129,6 +129,10 @@ standalone_client_bundle: ?*StaticRoute = null,
 /// Flag set when a new standalone entry point is discovered during a build.
 /// Checked by `startNextBundleIfPresent` to trigger a follow-up rebuild.
 needs_standalone_rebuild: bool = false,
+/// Sub-build output files (from nested ?bundle imports within client builds).
+/// Keyed by dest_path (e.g., "frontend-abc.js"), value is the file content.
+/// These are served via HTTP at `/_bun/sub/<key>`.
+sub_build_files: bun.StringArrayHashMapUnmanaged(SubBuildFile) = .{},
 /// The Plugin API is missing a way to attach filesystem watchers (addWatchFile)
 /// This special case makes `bun-plugin-tailwind` work, which is a requirement
 /// to ship initial incremental bundling support for HTML files.
@@ -293,6 +297,8 @@ pub const asset_prefix = internal_prefix ++ "/asset";
 ///
 /// Example: `/_bun/client/index-00000000f209a20e.js`
 pub const client_prefix = internal_prefix ++ "/client";
+/// Sub-build output files (from nested ?bundle imports).
+pub const sub_build_prefix = internal_prefix ++ "/sub";
 
 pub const RouteBundle = @import("./DevServer/RouteBundle.zig");
 
@@ -639,7 +645,14 @@ pub fn initStandalone(opts: StandaloneOptions) bun.JSOOM!*DevServer {
         .has_pre_crash_handler = false,
         .frontend_only = true, // No routing → pure frontend bundler
         .standalone_mode = true,
-        .standalone_entry_points = opts.entry_points,
+        .standalone_entry_points = convertEntryPoints: {
+            if (opts.entry_points.len == 0) break :convertEntryPoints &.{};
+            const eps = bun.handleOom(bun.default_allocator.alloc(StandaloneEntryPoint, opts.entry_points.len));
+            for (opts.entry_points, eps) |path, *ep| {
+                ep.* = .{ .path = path };
+            }
+            break :convertEntryPoints eps;
+        },
         .client_graph = .empty,
         .server_graph = .empty,
         .incremental_result = .empty,
@@ -775,6 +788,7 @@ pub fn initStandalone(opts: StandaloneOptions) bun.JSOOM!*DevServer {
         // Register routes for serving bundled JS and assets
         app.get(client_prefix ++ "/:route", *DevServer, dev, wrapGenericRequestHandler(onStandaloneJsRequest, false));
         app.get(asset_prefix ++ "/:asset", *DevServer, dev, wrapGenericRequestHandler(onAssetRequest, false));
+        app.get(sub_build_prefix ++ "/:file", *DevServer, dev, wrapGenericRequestHandler(onSubBuildFileRequest, false));
 
         app.ws(
             internal_prefix ++ "/hmr",
@@ -807,8 +821,18 @@ pub fn startStandaloneBuild(dev: *DevServer) bun.OOM!void {
     var sfb = std.heap.stackFallback(4096, dev.allocator());
     const temp_alloc = sfb.get();
 
+    // Apply env config from entry points that have it. This ensures the
+    // client transpiler has the right env defines for HMR compilation.
+    // Each entry's config is also stored for sub-builds which get fresh transpilers.
     for (dev.standalone_entry_points) |ep| {
-        try entry_points.appendJs(temp_alloc, ep, .client);
+        try entry_points.appendJs(temp_alloc, ep.path, .client);
+        if (ep.config) |config| {
+            if (config.env_behavior) |env_beh| {
+                if (dev.client_transpiler.options.env.behavior == .disable) {
+                    dev.applyEnvConfig(env_beh, config.env_prefix);
+                }
+            }
+        }
     }
 
     // Add react-refresh runtime as a client entry point so the bundler
@@ -830,16 +854,19 @@ pub fn getStandaloneHmrPort(dev: *DevServer) ?u16 {
 
 /// Register a new entry point for standalone mode builds. Deduplicates by path.
 /// Returns true if the entry point was newly added, false if already registered.
-pub fn addStandaloneEntryPoint(dev: *DevServer, path: []const u8) bun.OOM!bool {
+pub fn addStandaloneEntryPoint(dev: *DevServer, path: []const u8, config: ?ImportRecord.BundleImportConfig) bun.OOM!bool {
     // Seed dynamic list with original entries on first dynamic addition
     if (dev.standalone_entry_points_dynamic.items.len == 0 and dev.standalone_entry_points.len > 0) {
         try dev.standalone_entry_points_dynamic.appendSlice(bun.default_allocator, dev.standalone_entry_points);
     }
     for (dev.standalone_entry_points_dynamic.items) |ep| {
-        if (bun.strings.eql(ep, path)) return false; // already registered
+        if (bun.strings.eql(ep.path, path)) return false; // already registered
     }
     const duped = try bun.default_allocator.dupe(u8, path);
-    try dev.standalone_entry_points_dynamic.append(bun.default_allocator, duped);
+    try dev.standalone_entry_points_dynamic.append(bun.default_allocator, .{
+        .path = duped,
+        .config = config,
+    });
     dev.standalone_entry_points = dev.standalone_entry_points_dynamic.items;
     return true;
 }
@@ -879,6 +906,22 @@ fn invokeStandaloneCallback(dev: *DevServer, bv2: *bun.bundle_v2.BundleV2) void 
     }
 }
 
+/// Store a sub-build output file for HTTP serving.
+/// Duplicates the key and content into the DevServer's allocator.
+pub fn addSubBuildFile(dev: *DevServer, dest_path: []const u8, content: []const u8, loader: bun.options.Loader) bun.OOM!void {
+    const alloc = dev.allocator();
+    const gop = try dev.sub_build_files.getOrPut(alloc, dest_path);
+    if (gop.found_existing) {
+        alloc.free(@constCast(gop.value_ptr.content));
+    } else {
+        gop.key_ptr.* = try alloc.dupe(u8, dest_path);
+    }
+    gop.value_ptr.* = .{
+        .content = try alloc.dupe(u8, content),
+        .loader = loader,
+    };
+}
+
 /// Generate a client bundle for standalone mode by tracing all entry point
 /// imports and concatenating them with the HMR runtime.
 pub fn generateStandaloneClientBundle(dev: *DevServer, script_id: SourceMapStore.Key) bun.OOM![]u8 {
@@ -894,7 +937,7 @@ pub fn generateStandaloneClientBundle(dev: *DevServer, script_id: SourceMapStore
     dev.client_graph.reset();
     var first_entry_index: ?IncrementalGraph(.client).FileIndex = null;
     for (dev.standalone_entry_points) |ep| {
-        if (dev.client_graph.getFileIndex(ep)) |file_index| {
+        if (dev.client_graph.getFileIndex(ep.path)) |file_index| {
             if (first_entry_index == null) first_entry_index = file_index;
             if (file_index.get() < dev.client_graph.stale_files.bit_length and
                 !dev.client_graph.stale_files.isSet(file_index.get()))
@@ -1058,6 +1101,21 @@ fn onStandaloneJsRequest(dev: *DevServer, req: *Request, resp: AnyResponse) void
     client_bundle.on(resp);
 }
 
+/// Handle GET /_bun/sub/:file — serve sub-build output files.
+fn onSubBuildFileRequest(dev: *DevServer, req: *Request, resp: AnyResponse) void {
+    const file_name = req.parameter(0);
+    if (dev.sub_build_files.get(file_name)) |file| {
+        const mime = file.loader.toMimeType(&.{file_name}).value;
+        req.setYield(false);
+        resp.writeStatus("200 OK");
+        resp.writeHeader("Content-Type", mime);
+        resp.writeHeader("Access-Control-Allow-Origin", "*");
+        resp.end(file.content, resp.shouldCloseConnection());
+    } else {
+        return notFound(resp);
+    }
+}
+
 pub fn deinit(dev: *DevServer) void {
     debug.log("deinit", .{});
     dev_server_deinit_count_for_testing +|= 1;
@@ -1085,7 +1143,7 @@ pub fn deinit(dev: *DevServer) void {
         .needs_standalone_rebuild = {},
         .standalone_entry_points_dynamic = {
             for (dev.standalone_entry_points_dynamic.items) |ep| {
-                bun.default_allocator.free(ep);
+                bun.default_allocator.free(@constCast(ep.path));
             }
             dev.standalone_entry_points_dynamic.deinit(bun.default_allocator);
         },
@@ -1099,6 +1157,13 @@ pub fn deinit(dev: *DevServer) void {
         .standalone_listen_socket = {},
         .standalone_client_bundle = {
             if (dev.standalone_client_bundle) |bundle| bundle.deref();
+        },
+        .sub_build_files = {
+            for (dev.sub_build_files.keys(), dev.sub_build_files.values()) |key, val| {
+                alloc.free(@constCast(key));
+                alloc.free(@constCast(val.content));
+            }
+            dev.sub_build_files.deinit(alloc);
         },
         .generation = {},
         .plugin_state = {},
@@ -1316,6 +1381,7 @@ pub fn setRoutes(dev: *DevServer, server: anytype) !bool {
     else
         app.get(client_prefix ++ "/:route", *DevServer, dev, wrapGenericRequestHandler(onJsRequest, is_ssl));
     app.get(asset_prefix ++ "/:asset", *DevServer, dev, wrapGenericRequestHandler(onAssetRequest, is_ssl));
+    app.get(sub_build_prefix ++ "/:file", *DevServer, dev, wrapGenericRequestHandler(onSubBuildFileRequest, is_ssl));
     app.get(internal_prefix ++ "/src/*", *DevServer, dev, wrapGenericRequestHandler(onSrcRequest, is_ssl));
     app.post(internal_prefix ++ "/report_error", *DevServer, dev, wrapGenericRequestHandler(ErrorReportRequest.run, is_ssl));
     app.post(internal_prefix ++ "/unref", *DevServer, dev, wrapGenericRequestHandler(UnrefSourceMapRequest.run, is_ssl));
@@ -4874,6 +4940,20 @@ const RouteIndexAndRecurseFlag = packed struct(u32) {
     should_recurse_when_visiting: bool,
 };
 
+/// An entry point for standalone mode builds, with optional per-entry config
+/// from import attributes (e.g. `env: "VITE_*"`, `minify: true`).
+pub const StandaloneEntryPoint = struct {
+    path: []const u8,
+    config: ?ImportRecord.BundleImportConfig = null,
+};
+
+/// A file produced by a sub-build (nested ?bundle import) that needs to be
+/// served via HTTP. Stored in `DevServer.sub_build_files`.
+pub const SubBuildFile = struct {
+    content: []const u8,
+    loader: bun.options.Loader,
+};
+
 /// Bake needs to specify which graph (client/server/ssr) each entry point is.
 /// File paths are always absolute paths. Files may be bundled for multiple
 /// targets.
@@ -5320,6 +5400,7 @@ const FrameworkRouter = bake.FrameworkRouter;
 const OpaqueFileId = FrameworkRouter.OpaqueFileId;
 const Route = FrameworkRouter.Route;
 
+const ImportRecord = bun.ImportRecord;
 const BundleV2 = bun.bundle_v2.BundleV2;
 const Chunk = bun.bundle_v2.Chunk;
 const ContentHasher = bun.bundle_v2.ContentHasher;

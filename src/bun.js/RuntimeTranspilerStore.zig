@@ -205,6 +205,14 @@ pub const RuntimeTranspilerStore = struct {
         resolved_source: ResolvedSource = ResolvedSource{},
         work_task: jsc.WorkPoolTask = .{ .callback = runFromWorkerThread },
         next: ?*TranspilerJob = null,
+        /// Bundle configs collected from import records during worker thread parsing.
+        /// Stored here and applied to VM.bundle_import_configs on the main thread.
+        bundle_configs: ?[]BundleConfigEntry = null,
+
+        const BundleConfigEntry = struct {
+            key: []const u8,
+            config: bun.ImportRecord.BundleImportConfig,
+        };
 
         pub const Store = bun.HiveArray(TranspilerJob, if (bun.heap_breakdown.enabled) 0 else 64).Fallback;
 
@@ -231,6 +239,13 @@ pub const RuntimeTranspilerStore = struct {
             this.log.deinit();
             this.promise.deinit();
             this.globalThis = undefined;
+            if (this.bundle_configs) |configs| {
+                for (configs) |entry| {
+                    bun.default_allocator.free(entry.key);
+                }
+                bun.default_allocator.free(configs);
+                this.bundle_configs = null;
+            }
         }
 
         threadlocal var ast_memory_store: ?*js_ast.ASTMemoryAllocator = null;
@@ -246,6 +261,19 @@ pub const RuntimeTranspilerStore = struct {
             const promise = this.promise.swap();
             const globalThis = this.globalThis;
             this.poll_ref.unref(vm);
+
+            // Store bundle configs collected during worker thread parsing
+            if (this.bundle_configs) |configs| {
+                for (configs) |entry| {
+                    vm.bundle_import_configs.put(
+                        bun.default_allocator,
+                        entry.key,
+                        entry.config,
+                    ) catch {};
+                }
+                bun.default_allocator.free(configs);
+                this.bundle_configs = null;
+            }
 
             const referrer = this.non_threadsafe_referrer;
             this.non_threadsafe_referrer = String.empty;
@@ -525,6 +553,39 @@ pub const RuntimeTranspilerStore = struct {
                     import_record.path = Fs.Path.init(import_record.path.text["bun:".len..]);
                     import_record.path.namespace = "bun";
                     import_record.flags.is_external_without_side_effects = true;
+                }
+            }
+
+            // Collect bundle configs from ?bundle import records.
+            // These are stored on the TranspilerJob and applied to VM.bundle_import_configs
+            // on the main thread in runFromJSThread().
+            {
+                var bundle_config_list: std.ArrayListUnmanaged(BundleConfigEntry) = .{};
+                for (parse_result.ast.import_records.slice()) |*record| {
+                    if (record.loader != null and record.loader.? == .bundle) {
+                        if (record.bundle_config) |config| {
+                            const config_key = if (std.fs.path.isAbsolute(record.path.text))
+                                bun.handleOom(bun.default_allocator.dupe(u8, record.path.text))
+                            else
+                                bun.handleOom(bun.default_allocator.dupe(
+                                    u8,
+                                    bun.path.joinAbsString(path.name.dir, &.{record.path.text}, .auto),
+                                ));
+                            var duped_config = config;
+                            if (config.env_prefix) |pfx| {
+                                duped_config.env_prefix = bun.handleOom(bun.default_allocator.dupe(u8, pfx));
+                            }
+                            if (config.naming) |n| {
+                                duped_config.naming = bun.handleOom(bun.default_allocator.dupe(u8, n));
+                            }
+                            bun.handleOom(bundle_config_list.append(bun.default_allocator, .{ .key = config_key, .config = duped_config }));
+                        }
+                    }
+                }
+                if (bundle_config_list.items.len > 0) {
+                    this.bundle_configs = bun.handleOom(bundle_config_list.toOwnedSlice(bun.default_allocator));
+                } else {
+                    bundle_config_list.deinit(bun.default_allocator);
                 }
             }
 

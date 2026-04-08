@@ -776,49 +776,12 @@ pub fn transpileSourceCode(
             const bundle_config = jsc_vm.bundle_import_configs.get(path.text);
             const js_bundle = try jsc.API.JSBundle.init(globalObject.?, path.text, bundle_config);
 
-            if (jsc_vm.hot_reload == .hot) {
-                // HMR path: register with DevServer for incremental builds
-                const dev = try jsc_vm.getOrCreateSharedDevServer();
-                // Apply env substitution config from import attributes (e.g. `env: "VITE_*"`)
-                // to the client transpiler. Only applies once (when env was .disable).
-                if (bundle_config) |config| {
-                    if (config.env_behavior) |env_beh| {
-                        if (dev.client_transpiler.options.env.behavior == .disable) {
-                            dev.applyEnvConfig(env_beh, config.env_prefix);
-                        }
-                    }
-                }
-                const is_new = try dev.addStandaloneEntryPoint(path.text);
-                js_bundle.dev_server = dev;
-                // Register JSBundle as callback for build notifications
-                dev.standalone_callback_fn = jsc.API.JSBundle.onDevServerBuildComplete;
-                bun.handleOom(dev.standalone_callback_ctxs.append(bun.default_allocator, @ptrCast(js_bundle)));
-
-                if (is_new) {
-                    js_bundle.build_state = .building;
-                    if (dev.current_bundle != null) {
-                        // A build is already in progress (re-entrant module loading).
-                        // The file is likely already in the build as a dependency.
-                        // Flag for rebuild so it becomes a proper entry point later.
-                        dev.needs_standalone_rebuild = true;
-                    } else {
-                        bun.handleOom(dev.startStandaloneBuild());
-                    }
-                    // Wait for THIS bundle's build to complete. Don't also wait
-                    // for dev.current_bundle — follow-up rebuilds run async.
-                    while (js_bundle.build_state == .building) {
-                        jsc_vm.eventLoop().tick();
-                    }
-                } else {
-                    // Hot reload re-evaluation: DevServer already has the bundle.
-                    // Use per-entry-point generation so each JSBundle gets its own content.
-                    const payload = dev.generateStandaloneClientBundleForEntryPoint(js_bundle.path, js_bundle.sourceMapId()) catch bun.outOfMemory();
-                    js_bundle.updateDevEntrypoint(payload, dev);
-                }
-            } else {
-                // Build now, blocking until complete
-                try js_bundle.build();
-            }
+            // Always use full BundleV2 builds for ?bundle imports.
+            // The DevServer's incremental graph can't properly handle files that
+            // are both entry points and ?bundle targets of other entry points —
+            // the ?bundle import creates a lazy-export stub that shadows the real
+            // module content, preventing dependencies from being traced.
+            try js_bundle.build();
 
             return ResolvedSource{
                 .allocator = &jsc_vm.allocator,

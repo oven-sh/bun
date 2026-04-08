@@ -3095,6 +3095,40 @@ pub const BundleV2 = struct {
     const sub_build_log = bun.Output.scoped(.sub_build, .hidden);
 
     /// Scans the link-phase graph for `.bundle` imports and returns descriptors.
+    /// Run sub-builds for the DevServer path, storing output files for HTTP serving.
+    /// Non-OOM errors from sub-builds are caught and logged — sub-build failures
+    /// shouldn't prevent the main incremental build from completing.
+    fn runDevServerSubBuilds(this: *BundleV2, dev_server: *bake.DevServer) bun.OOM!void {
+        const sub_builds = this.collectSubBuilds() catch |err| {
+            sub_build_log("collectSubBuilds failed: {s}", .{@errorName(err)});
+            return;
+        };
+        if (sub_builds.len == 0) return;
+
+        const sub_build_results = this.runSubBuilds(sub_builds) catch |err| {
+            sub_build_log("sub-build failed: {s}", .{@errorName(err)});
+            return;
+        };
+
+        // Patch the lazy export ASTs for .bundle sources with sub-build result metadata.
+        this.patchSubBuildExports(sub_builds, sub_build_results) catch |err| {
+            sub_build_log("patchSubBuildExports failed: {s}", .{@errorName(err)});
+        };
+
+        // Store sub-build output files on the DevServer for HTTP serving.
+        for (sub_build_results) |result| {
+            for (result.output_files.items) |of| {
+                const dest = bun.strings.trimPrefixComptime(u8, of.dest_path, "./");
+                switch (of.value) {
+                    .buffer => |buf| {
+                        try dev_server.addSubBuildFile(dest, buf.bytes, of.loader);
+                    },
+                    else => {},
+                }
+            }
+        }
+    }
+
     fn collectSubBuilds(this: *BundleV2) ![]SubBuild {
         var list = std.array_list.Managed(SubBuild).init(bun.default_allocator);
 
@@ -3460,6 +3494,17 @@ pub const BundleV2 = struct {
         this.graph.heap.helpCatchMemoryIssues();
 
         try this.cloneAST();
+
+        this.graph.heap.helpCatchMemoryIssues();
+
+        // Collect and run sub-builds (with { type: "bundle" } imports) before linking.
+        // This enables nested ?bundle imports (e.g. worker.ts importing frontend.tsx?bundle)
+        // to get real metadata instead of empty {} stubs.
+        // Non-OOM errors are caught and logged since sub-build failures shouldn't
+        // prevent the main build from completing.
+        this.runDevServerSubBuilds(dev_server) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+        };
 
         this.graph.heap.helpCatchMemoryIssues();
 

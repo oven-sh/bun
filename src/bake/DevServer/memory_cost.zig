@@ -45,6 +45,13 @@ pub fn memoryCostDetailed(dev: *DevServer) MemoryCost {
         .standalone_listen_socket = {},
         .standalone_client_bundle = {},
         .needs_standalone_rebuild = {},
+        .sub_build_files = {
+            other_bytes += memoryCostArrayHashMap(dev.sub_build_files);
+            for (dev.sub_build_files.keys(), dev.sub_build_files.values()) |key, val| {
+                other_bytes += key.len;
+                other_bytes += val.content.len;
+            }
+        },
         .generation = {},
         .graph_safety_lock = {},
         .has_pre_crash_handler = {},

@@ -2222,10 +2222,6 @@ pub const Resolver = struct {
         var open_dir_owned = true;
         defer if (open_dir_owned) open_dir.close();
 
-        // Cache miss — persist the path so stored DirEntry / DirInfo references
-        // remain valid across every thread that reads the shared caches.
-        const dir_path = bun.handleOom(Fs.FileSystem.DirnameStore.instance.append(string, dir_path_tmp));
-
         if (rfs.entries.atIndex(cached_dir_entry_result.index)) |cached_entry| {
             if (cached_entry.* == .entries) {
                 if (cached_entry.entries.generation >= r.generation) {
@@ -2237,10 +2233,20 @@ pub const Resolver = struct {
             }
         }
 
+        // Cache miss — persist the path so stored DirEntry / DirInfo references
+        // remain valid across every thread that reads the shared caches. On the
+        // generation-refresh path (`in_place != null`) the already-cached
+        // `DirEntry.dir` is itself a persistent slice in `DirnameStore`, so reuse
+        // it and skip the duplicate allocation.
+        const dir_path = if (in_place) |existing|
+            existing.dir
+        else
+            bun.handleOom(Fs.FileSystem.DirnameStore.instance.append(string, dir_path_tmp));
+
         if (needs_iter) {
             const allocator = bun.default_allocator;
             var new_entry = Fs.FileSystem.DirEntry.init(
-                if (in_place) |existing| existing.dir else dir_path,
+                dir_path,
                 r.generation,
             );
 

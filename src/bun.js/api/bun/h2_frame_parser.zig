@@ -768,6 +768,7 @@ pub const H2FrameParser = struct {
         waitForTrailers: bool = false,
         closeAfterDrain: bool = false,
         endAfterHeaders: bool = false,
+        contentLength: i64 = -1,
         isWaitingMoreHeaders: bool = false,
         padding: ?u8 = null,
         paddingStrategy: PaddingStrategy = .none,
@@ -1919,6 +1920,10 @@ pub const H2FrameParser = struct {
                 return null;
             }
 
+            if (this.isServer and strings.eqlComptime(header.name, "content-length")) {
+                stream.contentLength = std.fmt.parseInt(i64, header.value, 10) catch -1;
+            }
+
             // RFC 7540 Section 6.5.2: Calculate header list size
             // Size = name length + value length + HPACK entry overhead per header
             headerListSize += header.name.len + header.value.len + HPACK_ENTRY_OVERHEAD;
@@ -1979,6 +1984,12 @@ pub const H2FrameParser = struct {
             if (offset >= payload.len) {
                 break;
             }
+        }
+
+        if (this.isServer and stream.contentLength > 0 and (flags & @intFromEnum(HeadersFrameFlags.END_STREAM)) != 0) {
+            this.endStream(stream, ErrorCode.PROTOCOL_ERROR);
+            if (this.streams.getEntry(stream_id)) |entry| return entry.value_ptr;
+            return null;
         }
 
         this.dispatchWith3Extra(.onStreamHeaders, stream.getIdentifier(), headers, sensitiveHeaders, jsc.JSValue.jsNumber(flags));

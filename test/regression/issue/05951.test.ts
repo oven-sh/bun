@@ -225,7 +225,10 @@ test(
       ws.prependOnceListener("unexpected-response", (req, res) => done(res.statusCode)),
     );
     const d = await runOne((ws, done) =>
-      ws.addEventListener("unexpected-response", ev => done(ev.data[1].statusCode)),
+      // For upgrade/unexpected-response addEventListener is symmetric with
+      // removeEventListener (no DOM-style wrapping adapter) so handlers
+      // receive Node-style args.
+      ws.addEventListener("unexpected-response", (req, res) => done(res.statusCode)),
     );
     console.log(JSON.stringify({ a, b, c, d }));
     process.exit(0);

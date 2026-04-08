@@ -129,7 +129,6 @@ using namespace JSC;
     macro(getInternalWritableStream) \
     macro(handleEvent) \
     macro(hash) \
-    macro(head) \
     macro(header) \
     macro(headers) \
     macro(highWaterMark) \

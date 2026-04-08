@@ -84,6 +84,11 @@ const eventIds = {
   "unexpected-response": 8,
 };
 
+// Stable singleton used by `#armNativeBridge` to install the native-side
+// forwarder through `#onOrOnce` without pushing a user-visible listener. It
+// must be identity-stable so `super.off` can remove it later if needed.
+function noopBridgeListener() {}
+
 let lazyReadable;
 function makeHandshakeResponse(statusCode, statusMessage, rawHeaders, body) {
   lazyReadable ??= require("node:stream").Readable;
@@ -470,27 +475,45 @@ class BunWebSocket extends EventEmitter {
 
   // `on` is the conventional spelling, but ws / EventEmitter consumers also
   // reach for `addListener` / `prependListener` / `prependOnceListener`. Each
-  // needs to go through #onOrOnce so 'upgrade' / 'unexpected-response'
-  // subscribers lazily arm the native handshake listener — otherwise the
-  // handler is installed on the EventEmitter list but the native event that
-  // would trigger `emit('upgrade', ...)` is never wired up and the callback
-  // silently never fires.
+  // needs to arm the native bridge (the `#onOrOnce` path for standard events
+  // like 'open' / 'message', or `#ensureHandshakeListener()` for 'upgrade' /
+  // 'unexpected-response') — otherwise the handler sits on the EventEmitter
+  // list but the native event that would trigger `this.emit(...)` is never
+  // wired up, and the callback silently never fires.
   addListener(event, listener) {
     return this.#onOrOnce(event, listener, undefined);
   }
 
   prependListener(event, listener) {
-    if (event === "upgrade" || event === "unexpected-response") {
-      this.#ensureHandshakeListener();
-    }
+    this.#armNativeBridge(event);
     return super.prependListener(event, listener);
   }
 
   prependOnceListener(event, listener) {
+    this.#armNativeBridge(event);
+    return super.prependOnceListener(event, listener);
+  }
+
+  // Install the native-side listener that eventually calls `this.emit(event,
+  // …)`, without pushing a new EventEmitter listener onto the list — that
+  // part is the caller's job (e.g. `super.prependListener`). Mirrors the
+  // bridge-installation branch of `#onOrOnce` for the cases where we need
+  // the side effect but not the `super.on`/`super.once` call.
+  #armNativeBridge(event) {
     if (event === "upgrade" || event === "unexpected-response") {
       this.#ensureHandshakeListener();
+      return;
     }
-    return super.prependOnceListener(event, listener);
+    const mask = 1 << eventIds[event];
+    if (!mask) return;
+    const hasPersistentListener = (this.#eventId & mask) === mask;
+    if (hasPersistentListener) return;
+    // Register a persistent bridge listener once. A no-op noop callback
+    // goes into the EventEmitter list via `#onOrOnce` so the `#eventId` bit
+    // gets flipped and the native forwarder is installed; subsequent
+    // `prependListener` calls will then see `hasPersistentListener` and
+    // skip this branch.
+    this.#onOrOnce(event, noopBridgeListener, undefined);
   }
 
   send(data, opts, cb) {
@@ -560,24 +583,33 @@ class BunWebSocket extends EventEmitter {
 
   // deviation: this does not support `message` with `binaryType = "fragments"`
   addEventListener(type, listener, options) {
-    // 'upgrade' and 'unexpected-response' are only emitted on the JS-side
-    // EventEmitter (by #onHandshake), never by the native WebSocket, so
-    // register on `this` and arm the handshake listener like on/once do.
-    // A tiny adapter wraps the listener to mirror the DOM-style
-    // (event.data / event.type) shape the native addEventListener would
-    // have produced — close to what ws consumers expect from these events.
+    // 'upgrade' and 'unexpected-response' are Node-style events — they're
+    // emitted on the JS-side EventEmitter by `#onHandshake`, never by the
+    // native WebSocket. Register on `this` and arm the handshake listener.
+    // We deliberately don't wrap the handler in a DOM-style adapter: a
+    // wrapped closure would make `removeEventListener` fail to match the
+    // original listener, leaking the handler. Consumers that reach for
+    // `addEventListener` on a ws shim already accept a mixed API; for
+    // these two Node-only events they receive Node-style
+    // `(response)` / `(request, response)` args.
     if (type === "upgrade" || type === "unexpected-response") {
       this.#ensureHandshakeListener();
-      const wrapped = (...args) => listener({ type, target: this, data: args });
       if (options && options.once) {
-        return super.once(type, wrapped);
+        return super.once(type, listener);
       }
-      return super.on(type, wrapped);
+      return super.on(type, listener);
     }
     this.#ws.addEventListener(type, listener, options);
   }
 
   removeEventListener(type, listener) {
+    // Symmetric with addEventListener: upgrade/unexpected-response
+    // listeners live on `this` (the EventEmitter), not on the native
+    // WebSocket, so removing them means calling `super.off`.
+    if (type === "upgrade" || type === "unexpected-response") {
+      super.off(type, listener);
+      return;
+    }
     this.#ws.removeEventListener(type, listener);
   }
 

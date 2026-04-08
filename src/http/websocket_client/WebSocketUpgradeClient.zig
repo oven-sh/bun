@@ -418,6 +418,26 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
         }
 
         pub fn terminate(this: *HTTPClient, code: ErrorCode) void {
+            // If a non-101 response body was being accumulated when the
+            // transport ended cleanly (peer close), flush the deferred
+            // handshake first so the `unexpected-response` listener sees
+            // what the server actually delivered. `handleEnd` does this
+            // for the plain-TCP path, but the TLS-tunnel path
+            // (`WebSocketProxyTunnel.onClose`) calls `terminate` directly
+            // without going through `handleEnd`, so the flush must live
+            // here too.
+            if (code == ErrorCode.ended) {
+                switch (this.deferred_handshake) {
+                    .none => {},
+                    .waiting_for_length, .waiting_for_eof => {
+                        this.deferred_handshake = .none;
+                        if (this.body.items.len > 0) {
+                            this.flushDeferredHandshakeAndProcess(this.body.items);
+                            return;
+                        }
+                    },
+                }
+            }
             this.fail(code);
 
             // We cannot access the pointer after fail is called.
@@ -541,22 +561,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             // (Content-Length > what arrived with the headers, or no
             // Content-Length → read until EOF), keep appending and check
             // for completion. See the deferred_handshake comment.
-            switch (this.deferred_handshake) {
-                .none => {},
-                .waiting_for_length => |target_len| {
-                    bun.handleOom(this.body.appendSlice(bun.default_allocator, data));
-                    if (this.body.items.len >= target_len) {
-                        const truncated = this.body.items[0..target_len];
-                        this.deferred_handshake = .none;
-                        this.flushDeferredHandshakeAndProcess(truncated);
-                    }
-                    return;
-                },
-                .waiting_for_eof => {
-                    bun.handleOom(this.body.appendSlice(bun.default_allocator, data));
-                    return;
-                },
-            }
+            if (this.appendDeferredHandshakeBody(data)) return;
 
             var body = data;
             if (this.body.items.len > 0) {
@@ -580,6 +585,50 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             };
 
             this.processWebSocketUpgradeResponse(response, body);
+        }
+
+        /// Maximum bytes we'll buffer for a non-101 response body before
+        /// bailing out. Real error pages (workerd restart text, JSON API
+        /// errors, HTML) fit comfortably under this; the cap exists so a
+        /// malicious or misbehaving server can't make us accumulate
+        /// unbounded data — either via a giant `Content-Length` header
+        /// (saturating the `+|` add and never satisfying the length
+        /// check) or a keep-alive connection that never closes after a
+        /// no-Content-Length response.
+        const MAX_NON_101_BODY: usize = 64 * 1024 * 1024;
+
+        /// Returns true if `data` was consumed as part of a deferred non-101
+        /// handshake body (and the caller should stop processing this read).
+        /// Enforces `MAX_NON_101_BODY` so neither a giant Content-Length
+        /// nor a never-closing no-Content-Length stream can grow `this.body`
+        /// without bound.
+        fn appendDeferredHandshakeBody(this: *HTTPClient, data: []const u8) bool {
+            switch (this.deferred_handshake) {
+                .none => return false,
+                .waiting_for_length => |target_len| {
+                    if (this.body.items.len +| data.len > MAX_NON_101_BODY) {
+                        this.deferred_handshake = .none;
+                        this.terminate(ErrorCode.expected_101_status_code);
+                        return true;
+                    }
+                    bun.handleOom(this.body.appendSlice(bun.default_allocator, data));
+                    if (this.body.items.len >= target_len) {
+                        const truncated = this.body.items[0..target_len];
+                        this.deferred_handshake = .none;
+                        this.flushDeferredHandshakeAndProcess(truncated);
+                    }
+                    return true;
+                },
+                .waiting_for_eof => {
+                    if (this.body.items.len +| data.len > MAX_NON_101_BODY) {
+                        this.deferred_handshake = .none;
+                        this.terminate(ErrorCode.expected_101_status_code);
+                        return true;
+                    }
+                    bun.handleOom(this.body.appendSlice(bun.default_allocator, data));
+                    return true;
+                },
+            }
         }
 
         // Scan the response headers for Content-Length. Returns the parsed
@@ -628,7 +677,20 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 // complete buffer.
                 const content_length = findContentLength(response);
                 if (content_length) |cl| {
-                    const target_len = head_len +| cl;
+                    // Cap the Content-Length we'll buffer — a malicious
+                    // server could otherwise send `Content-Length:
+                    // 18446744073709551615` and make us accumulate every
+                    // byte of every subsequent TCP read forever
+                    // (`body.items.len >= usize_max` never holds,
+                    // `bun.handleOom` panics on allocation failure).
+                    // Reject as an invalid response so we surface a
+                    // normal `expected_101_status_code` error instead of
+                    // crashing.
+                    if (cl > MAX_NON_101_BODY) {
+                        this.terminate(ErrorCode.expected_101_status_code);
+                        return;
+                    }
+                    const target_len = head_len + cl;
                     if (body.len < target_len) {
                         // Make sure `this.body` owns the accumulated bytes
                         // so subsequent handleData calls can append to it.
@@ -648,6 +710,8 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 } else {
                     // No Content-Length — RFC 7230 §3.3.3: read until the
                     // peer closes the connection. Defer to handleEnd.
+                    // handleData enforces MAX_NON_101_BODY so a keep-alive
+                    // server that never closes can't buffer forever.
                     if (body.ptr != this.body.items.ptr) {
                         bun.handleOom(this.body.appendSlice(bun.default_allocator, body));
                     }
@@ -712,7 +776,15 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 };
             }
 
-            ws.didReceiveHandshakeResponse(status_code, response.status, raw_headers[0..response.headers.list.len], body[head_len..]);
+            // On 101 Switching Protocols, any bytes after the header block
+            // are the first WebSocket frame from the peer — not HTTP body.
+            // Node delivers them as the `head` buffer on its 'upgrade'
+            // event and ws.js passes them to the protocol reader via
+            // setSocket. Don't surface them to `'handshake'` listeners as
+            // if they were HTTP body; only `processResponse` (below) hands
+            // them to the connected WebSocket client as overflow.
+            const handshake_body: []const u8 = if (status_code == 101) &.{} else body[head_len..];
+            ws.didReceiveHandshakeResponse(status_code, response.status, raw_headers[0..response.headers.list.len], handshake_body);
             if (this.outgoing_websocket == null) return;
             this.processResponse(response, body[head_len..]);
         }
@@ -897,22 +969,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             defer this.deref();
 
             // Same deferred-body flushing as plain handleData.
-            switch (this.deferred_handshake) {
-                .none => {},
-                .waiting_for_length => |target_len| {
-                    bun.handleOom(this.body.appendSlice(bun.default_allocator, data));
-                    if (this.body.items.len >= target_len) {
-                        const truncated = this.body.items[0..target_len];
-                        this.deferred_handshake = .none;
-                        this.flushDeferredHandshakeAndProcess(truncated);
-                    }
-                    return;
-                },
-                .waiting_for_eof => {
-                    bun.handleOom(this.body.appendSlice(bun.default_allocator, data));
-                    return;
-                },
-            }
+            if (this.appendDeferredHandshakeBody(data)) return;
 
             // Process as if it came directly from the socket
             var body = data;

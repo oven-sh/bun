@@ -267,5 +267,7 @@ function fmtBytes(n: number): string {
   return `${(n / 1024 / 1024).toFixed(2)} MB`;
 }
 function fmtDelta(n: number): string {
-  return `${n >= 0 ? "+" : "-"}${(Math.abs(n) / 1024 / 1024).toFixed(2)} MB`;
+  const sign = n >= 0 ? "+" : "-";
+  const abs = Math.abs(n);
+  return abs >= 1024 * 1024 ? `${sign}${(abs / 1024 / 1024).toFixed(2)} MB` : `${sign}${(abs / 1024).toFixed(1)} KB`;
 }

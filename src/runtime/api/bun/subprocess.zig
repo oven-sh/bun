@@ -395,23 +395,27 @@ pub fn kill(
     if (globalThis.hasException()) return .zero;
 
     switch (this.tryKill(sig)) {
-        .result => {},
+        // `true` when the signal was sent, `false` when the process had
+        // already exited (nothing to signal). Node's `ChildProcess.kill()`
+        // needs to see `false` to return `false` to user code.
+        .result => |delivered| return JSValue.jsBoolean(delivered),
         .err => |err| {
             // EINVAL or ENOSYS means the signal is not supported in the current platform (most likely unsupported on windows)
             return globalThis.throwValue(try err.toJS(globalThis));
         },
     }
-
-    return .js_undefined;
 }
 
 pub fn hasKilled(this: *const Subprocess) bool {
     return this.process.hasKilled();
 }
 
-pub fn tryKill(this: *Subprocess, sig: SignalCode) bun.sys.Maybe(void) {
+/// Returns `.result = true` if `sig` was delivered to the child, or
+/// `.result = false` if the child had already exited (either because we
+/// already saw the exit on our side or the OS reported `ESRCH`).
+pub fn tryKill(this: *Subprocess, sig: SignalCode) bun.sys.Maybe(bool) {
     if (this.hasExited()) {
-        return .success;
+        return .{ .result = false };
     }
     return this.process.kill(@intFromEnum(sig));
 }

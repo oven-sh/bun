@@ -226,6 +226,34 @@ test("handles cyclic dependencies", async () => {
   });
 });
 
+test("cyclic dependencies link each other's bins", async () => {
+  const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "test-pkg-cyclic-bins",
+      dependencies: {
+        "cycle-bin-a": "1.0.0",
+      },
+    }),
+  );
+
+  // The race (cycle member proceeding past `check_if_blocked` before its cycle peer's
+  // files are on disk) is timing-dependent, so install several times.
+  for (let i = 0; i < 10; i++) {
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+    await runBunInstall(bunEnv, packageDir, { savesLockfile: i === 0 });
+
+    expect(
+      await readdirSorted(join(packageDir, "node_modules", ".bun", "cycle-bin-a@1.0.0", "node_modules", ".bin")),
+    ).toEqual(["cycle-bin-a", "cycle-bin-b"]);
+    expect(
+      await readdirSorted(join(packageDir, "node_modules", ".bun", "cycle-bin-b@1.0.0", "node_modules", ".bin")),
+    ).toEqual(["cycle-bin-a", "cycle-bin-b"]);
+  }
+});
+
 test("package with dependency on previous self works", async () => {
   const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
 

@@ -1,0 +1,25 @@
+{
+  "_id": "cycle-bin-a",
+  "name": "cycle-bin-a",
+  "dist-tags": {
+    "latest": "1.0.0"
+  },
+  "versions": {
+    "1.0.0": {
+      "name": "cycle-bin-a",
+      "version": "1.0.0",
+      "_id": "cycle-bin-a@1.0.0",
+      "bin": {
+        "cycle-bin-a": "./bin.js"
+      },
+      "dependencies": {
+        "cycle-bin-b": "1.0.0"
+      },
+      "dist": {
+        "integrity": "sha512-IMfBekZbDpVuBpLJ9LOnx+OWmYf/DiNsxfPsxKcEhjGaGCRLY2rFYanGuh3uof9YBFpJIZE21/VFL8J5ltoSow==",
+        "shasum": "d6118869ef33b2bc910eab3ae8d5d57c54139fdd",
+        "tarball": "http://localhost:4873/cycle-bin-a/-/cycle-bin-a-1.0.0.tgz"
+      }
+    }
+  }
+}

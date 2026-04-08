@@ -226,13 +226,23 @@ pub const Installer = struct {
 
         const deps = entry_deps[entry_id.get()];
         for (deps.slice()) |dep| {
-            if (entry_steps[dep.entry_id.get()].load(.acquire) != .done) {
-                parent_dedupe.clearRetainingCapacity();
-                if (this.store.isCycle(entry_id, dep.entry_id, parent_dedupe)) {
-                    continue;
-                }
+            const dep_step = entry_steps[dep.entry_id.get()].load(.acquire);
+            if (dep_step == .done) continue;
+
+            // `symlink_dependency_binaries` needs the dep's files on disk (i.e. the dep has
+            // finished `link_package`). Steps before `.check_if_blocked` never wait on another
+            // entry, so requiring every dep — cycle or not — to reach `.check_if_blocked`
+            // cannot deadlock. `.blocked` sorts after `.check_if_blocked` in the enum, so a
+            // dep that is itself waiting here still satisfies this check.
+            if (@intFromEnum(dep_step) < @intFromEnum(Task.Step.check_if_blocked)) {
                 return true;
             }
+
+            parent_dedupe.clearRetainingCapacity();
+            if (this.store.isCycle(entry_id, dep.entry_id, parent_dedupe)) {
+                continue;
+            }
+            return true;
         }
         return false;
     }

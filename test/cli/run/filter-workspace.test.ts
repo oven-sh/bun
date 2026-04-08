@@ -498,6 +498,15 @@ describe("bun", () => {
     });
 
     if (process.platform === "win32") {
+      // Windows spawnSync pipes stdout, so `windowsIsTerminal()` returns false,
+      // `state.pretty_output` is false, and `redraw()` short-circuits before
+      // ever emitting elision output. `target_pattern` is intentionally NOT
+      // iterated here: every caller bundles TTY-only regexes such as
+      // `/\[N lines elided\]/` that would never appear in piped Windows output
+      // and would fail the test for the wrong reason. The hardcoded log_line
+      // match covers the non-TTY subset of every caller's target_pattern.
+      // `antipattern` is iterated because absence-checks remain valid on either
+      // code path.
       const { exitCode, stderr, stdout } = spawnSync({
         cwd: dir,
         cmd: [bunExe(), "run", "--filter", "./packages/dep0", "--elide-lines", String(elideLines), "script"],

@@ -1,15 +1,18 @@
 // https://github.com/oven-sh/bun/issues/29022
+// https://github.com/oven-sh/bun/issues/20169
 //
 // MessagePort was missing Node's EventEmitter-style aliases and queries:
 // removeListener, addListener, removeAllListeners, listenerCount, eventNames,
-// listeners, rawListeners, setMaxListeners, getMaxListeners.
+// setMaxListeners, getMaxListeners. It also ignored Node's dedup semantics,
+// so `on(event, fn)` called multiple times with the same listener registered
+// it multiple times (vs Node's "first registration wins").
 import { expect, test } from "bun:test";
 import { MessageChannel, MessagePort } from "node:worker_threads";
 
 test("MessagePort exposes Node's EventEmitter surface", () => {
-  const { port1 } = new MessageChannel();
+  const { port1, port2 } = new MessageChannel();
   try {
-    const methods = [
+    const present = [
       "on",
       "off",
       "once",
@@ -19,23 +22,23 @@ test("MessagePort exposes Node's EventEmitter surface", () => {
       "removeAllListeners",
       "listenerCount",
       "eventNames",
-      "listeners",
-      "rawListeners",
       "setMaxListeners",
       "getMaxListeners",
     ] as const;
 
-    for (const name of methods) {
+    for (const name of present) {
       expect(name in port1).toBe(true);
       expect(typeof (port1 as any)[name]).toBe("function");
+      expect(name in MessagePort.prototype).toBe(true);
     }
 
-    // And they're grafted onto the prototype, not the instance.
-    for (const name of methods) {
-      expect(name in MessagePort.prototype).toBe(true);
+    // Node's MessagePort does not expose these; don't add them on Bun either.
+    for (const name of ["listeners", "rawListeners"] as const) {
+      expect(name in port1).toBe(false);
     }
   } finally {
     port1.close();
+    port2.close();
   }
 });
 
@@ -48,8 +51,7 @@ test("addListener / removeListener are aliases for on / off", async () => {
     expect(port1.listenerCount("message")).toBe(1);
 
     port2.postMessage("hello");
-    const received = await promise;
-    expect(received).toBe("hello");
+    expect(await promise).toBe("hello");
 
     port1.removeListener("message", handler);
     expect(port1.listenerCount("message")).toBe(0);
@@ -59,8 +61,8 @@ test("addListener / removeListener are aliases for on / off", async () => {
   }
 });
 
-test("listenerCount / eventNames / listeners track on/once/off", () => {
-  const { port1 } = new MessageChannel();
+test("listenerCount / eventNames track on/once/off", () => {
+  const { port1, port2 } = new MessageChannel();
   try {
     const a = () => {};
     const b = () => {};
@@ -75,29 +77,28 @@ test("listenerCount / eventNames / listeners track on/once/off", () => {
 
     expect(port1.listenerCount("message")).toBe(3);
     expect(port1.eventNames()).toEqual(["message"]);
-    expect(port1.listeners("message")).toEqual([a, b, c]);
-    expect(port1.rawListeners("message")).toEqual([a, b, c]);
 
-    // Node's removeListener removes the last matching instance (FILO).
-    port1.on("message", a);
-    expect(port1.listenerCount("message")).toBe(4);
-    port1.removeListener("message", a);
-    expect(port1.listeners("message")).toEqual([a, b, c]);
+    port1.removeListener("message", b);
+    expect(port1.listenerCount("message")).toBe(2);
 
     port1.removeListener("message", a);
-    expect(port1.listeners("message")).toEqual([b, c]);
+    port1.removeListener("message", c);
+    expect(port1.listenerCount("message")).toBe(0);
+    expect(port1.eventNames()).toEqual([]);
   } finally {
     port1.close();
+    port2.close();
   }
 });
 
 test("removeAllListeners with and without event name", () => {
-  const { port1 } = new MessageChannel();
+  const { port1, port2 } = new MessageChannel();
   try {
-    const noop = () => {};
-    port1.on("message", noop);
-    port1.on("message", noop);
-    port1.on("messageerror", noop);
+    const noop1 = () => {};
+    const noop2 = () => {};
+    port1.on("message", noop1);
+    port1.on("message", noop2);
+    port1.on("messageerror", noop1);
 
     expect(port1.listenerCount("message")).toBe(2);
     expect(port1.listenerCount("messageerror")).toBe(1);
@@ -107,24 +108,49 @@ test("removeAllListeners with and without event name", () => {
     expect(port1.listenerCount("messageerror")).toBe(1);
     expect(port1.eventNames()).toEqual(["messageerror"]);
 
-    port1.on("message", noop);
+    port1.on("message", noop1);
     port1.removeAllListeners();
     expect(port1.listenerCount("message")).toBe(0);
     expect(port1.listenerCount("messageerror")).toBe(0);
     expect(port1.eventNames()).toEqual([]);
   } finally {
     port1.close();
+    port2.close();
   }
 });
 
 test("getMaxListeners / setMaxListeners", () => {
-  const { port1 } = new MessageChannel();
+  const { port1, port2 } = new MessageChannel();
   try {
     expect(typeof port1.getMaxListeners()).toBe("number");
     expect(port1.setMaxListeners(42)).toBe(port1);
     expect(port1.getMaxListeners()).toBe(42);
+
+    // Matches EventEmitter.prototype.setMaxListeners validation.
+    expect(() => port1.setMaxListeners(-1)).toThrow(/out of range|must be/i);
+    expect(() => port1.setMaxListeners(NaN)).toThrow();
+    // @ts-expect-error - intentional bad input
+    expect(() => port1.setMaxListeners("10")).toThrow();
   } finally {
     port1.close();
+    port2.close();
+  }
+});
+
+test("removeListener / off without a listener throws ERR_INVALID_ARG_TYPE", () => {
+  const { port1, port2 } = new MessageChannel();
+  try {
+    // @ts-expect-error - intentional missing argument
+    expect(() => port1.removeListener("message")).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+    );
+    // @ts-expect-error - intentional missing argument
+    expect(() => port1.off("message")).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+    );
+  } finally {
+    port1.close();
+    port2.close();
   }
 });
 
@@ -141,6 +167,62 @@ test("once cleans up tracking after it fires", async () => {
     // Listener count must decrement after once fires.
     expect(port1.listenerCount("message")).toBe(0);
     expect(port1.eventNames()).toEqual([]);
+  } finally {
+    port1.close();
+    port2.close();
+  }
+});
+
+// https://github.com/oven-sh/bun/issues/20169
+test("on() deduplicates same listener (matches Node's MessagePort)", async () => {
+  const { port1, port2 } = new MessageChannel();
+  try {
+    let fired = 0;
+    const onMessage = () => {
+      fired++;
+    };
+
+    port1.on("message", onMessage);
+    port1.on("message", onMessage);
+    port1.on("message", onMessage);
+    expect(port1.listenerCount("message")).toBe(1);
+
+    port2.postMessage("hi");
+    // Wait for the message to dispatch.
+    while (fired === 0) await Bun.sleep(1);
+    expect(fired).toBe(1);
+
+    port1.off("message", onMessage);
+    expect(port1.listenerCount("message")).toBe(0);
+
+    // After off(), nothing should fire.
+    port2.postMessage("hi again");
+    await Bun.sleep(20);
+    expect(fired).toBe(1);
+  } finally {
+    port1.close();
+    port2.close();
+  }
+});
+
+test("once() deduplicates with itself and with on()", () => {
+  const { port1, port2 } = new MessageChannel();
+  try {
+    const fn = () => {};
+
+    port1.once("message", fn);
+    port1.once("message", fn);
+    port1.once("message", fn);
+    expect(port1.listenerCount("message")).toBe(1);
+
+    // Adding an on() with the same listener is a no-op (first wins).
+    port1.on("message", fn);
+    expect(port1.listenerCount("message")).toBe(1);
+
+    // Different listener adds a new slot.
+    const fn2 = () => {};
+    port1.on("message", fn2);
+    expect(port1.listenerCount("message")).toBe(2);
   } finally {
     port1.close();
     port2.close();

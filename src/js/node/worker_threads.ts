@@ -6,6 +6,7 @@ type WebWorker = InstanceType<typeof globalThis.Worker>;
 const EventEmitter = require("node:events");
 const Readable = require("internal/streams/readable");
 const { throwNotImplemented, warnNotImplementedOnce } = require("internal/shared");
+const { validateNumber } = require("internal/validators");
 
 const {
   MessageChannel,
@@ -53,9 +54,9 @@ function injectFakeEmitter(Class) {
 
   // Per-instance listener tracking: Map<event, Array<{ original, wrapped }>>.
   // Stored via a non-enumerable symbol on the instance so that listenerCount,
-  // eventNames, removeAllListeners, listeners, rawListeners work correctly
-  // without a separate WeakMap (which would make the instance be kept alive
-  // only by the map entry, and vice versa).
+  // eventNames, and removeAllListeners work correctly. Matches Node's
+  // MessagePort dedup semantics: adding the same (event, listener) pair more
+  // than once is a no-op — first registration wins and keeps its once-ness.
   const kListeners = Symbol("bun:worker_threads:listeners");
   const kMaxListeners = Symbol("bun:worker_threads:maxListeners");
 
@@ -73,12 +74,23 @@ function injectFakeEmitter(Class) {
     return map;
   }
 
+  function hasListener(target, event, original) {
+    const map = target[kListeners];
+    if (!map) return false;
+    const arr = map.$get(event);
+    if (!arr) return false;
+    for (let i = 0; i < arr.length; i++) {
+      if (arr[i].original === original) return true;
+    }
+    return false;
+  }
+
   function trackListener(target, event, original, wrapped) {
     const map = getListeners(target);
-    let arr = map.get(event);
+    let arr = map.$get(event);
     if (!arr) {
       arr = [];
-      map.set(event, arr);
+      map.$set(event, arr);
     }
     arr.push({ original, wrapped });
   }
@@ -86,13 +98,12 @@ function injectFakeEmitter(Class) {
   function untrackListener(target, event, original) {
     const map = target[kListeners];
     if (!map) return null;
-    const arr = map.get(event);
+    const arr = map.$get(event);
     if (!arr) return null;
-    // Node's removeListener removes the LAST matching instance (FILO).
-    for (let i = arr.length - 1; i >= 0; i--) {
+    for (let i = 0; i < arr.length; i++) {
       if (arr[i].original === original) {
         const [entry] = arr.splice(i, 1);
-        if (arr.length === 0) map.delete(event);
+        if (arr.length === 0) map.$delete(event);
         return entry.wrapped;
       }
     }
@@ -100,6 +111,8 @@ function injectFakeEmitter(Class) {
   }
 
   Class.prototype.on = function (event, listener) {
+    // Node's MessagePort dedupes same (event, listener) pairs (see #20169).
+    if (hasListener(this, event, listener)) return this;
     const unwrap = unwrapFor(event);
     const wrapped = function (e) {
       return listener.$call(this, unwrap(e));
@@ -110,22 +123,21 @@ function injectFakeEmitter(Class) {
   };
 
   Class.prototype.off = function (event, listener) {
-    if (listener) {
-      const wrapped = untrackListener(this, event, listener);
-      // If the listener was tracked, remove the wrapped version; otherwise
-      // fall back to removing whatever matches directly (covers raw
-      // addEventListener registrations).
-      this.removeEventListener(event, wrapped || listener);
-    } else {
-      // No listener passed: Node's removeListener requires one, but the old
-      // off() accepted this as "remove everything for this event". Preserve
-      // that behavior via removeAllListeners.
-      Class.prototype.removeAllListeners.$call(this, event);
+    // Node's removeListener / off require a function listener.
+    if (typeof listener !== "function") {
+      throw $ERR_INVALID_ARG_TYPE("listener", "Function", listener);
     }
+    const wrapped = untrackListener(this, event, listener);
+    // If the listener was tracked, remove the wrapped version; otherwise
+    // fall back to removing whatever matches directly (covers raw
+    // addEventListener registrations).
+    this.removeEventListener(event, wrapped || listener);
     return this;
   };
 
   Class.prototype.once = function (event, listener) {
+    // Node's MessagePort dedupes here too — first registration wins.
+    if (hasListener(this, event, listener)) return this;
     const unwrap = unwrapFor(event);
     const self = this;
     const wrapped = function (e) {
@@ -154,6 +166,8 @@ function injectFakeEmitter(Class) {
 
   Class.prototype.addListener = Class.prototype.on;
   Class.prototype.removeListener = Class.prototype.off;
+  // Node's MessagePort does not expose prependListener / prependOnceListener,
+  // but earlier Bun versions did — keep them as aliases for compatibility.
   Class.prototype.prependListener = Class.prototype.on;
   Class.prototype.prependOnceListener = Class.prototype.once;
 
@@ -161,19 +175,25 @@ function injectFakeEmitter(Class) {
     const map = this[kListeners];
     if (!map) return this;
     if (event === undefined) {
-      for (const [name, arr] of map) {
-        for (const { wrapped } of arr) {
-          this.removeEventListener(name, wrapped);
+      // Snapshot keys first so we're not iterating a Map we're about to clear.
+      const keys = [...map.$keys()];
+      for (let i = 0; i < keys.length; i++) {
+        const name = keys[i];
+        const arr = map.$get(name);
+        if (arr) {
+          for (let j = 0; j < arr.length; j++) {
+            this.removeEventListener(name, arr[j].wrapped);
+          }
         }
       }
-      map.clear();
+      map.$clear();
     } else {
-      const arr = map.get(event);
+      const arr = map.$get(event);
       if (arr) {
-        for (const { wrapped } of arr) {
-          this.removeEventListener(event, wrapped);
+        for (let i = 0; i < arr.length; i++) {
+          this.removeEventListener(event, arr[i].wrapped);
         }
-        map.delete(event);
+        map.$delete(event);
       }
     }
     return this;
@@ -182,31 +202,23 @@ function injectFakeEmitter(Class) {
   Class.prototype.listenerCount = function (event) {
     const map = this[kListeners];
     if (!map) return 0;
-    const arr = map.get(event);
+    const arr = map.$get(event);
     return arr ? arr.length : 0;
   };
 
-  Class.prototype.listeners = function (event) {
-    const map = this[kListeners];
-    if (!map) return [];
-    const arr = map.get(event);
-    if (!arr) return [];
-    const out = new Array(arr.length);
-    for (let i = 0; i < arr.length; i++) out[i] = arr[i].original;
-    return out;
-  };
-
-  Class.prototype.rawListeners = function (event) {
-    return Class.prototype.listeners.$call(this, event);
-  };
+  // Note: Node's MessagePort does NOT expose `listeners` or `rawListeners`,
+  // so we don't install them here either — matching the `in`-check surface
+  // exactly avoids library code that branches on their presence getting the
+  // wrong Node path.
 
   Class.prototype.eventNames = function () {
     const map = this[kListeners];
     if (!map) return [];
-    return Array.from(map.keys());
+    return [...map.$keys()];
   };
 
   Class.prototype.setMaxListeners = function (n) {
+    validateNumber(n, "n", 0);
     Object.defineProperty(this, kMaxListeners, {
       value: n,
       writable: true,
@@ -300,15 +312,11 @@ function fakeParentPort() {
     value: self.removeEventListener.bind(self),
   });
 
-  Object.defineProperty(fake, "removeListener", {
-    value: self.removeEventListener.bind(self),
-    enumerable: false,
-  });
-
-  Object.defineProperty(fake, "addListener", {
-    value: self.addEventListener.bind(self),
-    enumerable: false,
-  });
+  // NOTE: addListener / removeListener deliberately left off the instance —
+  // they're installed on MessagePort.prototype by injectFakeEmitter with
+  // per-instance tracking, and go through the own addEventListener /
+  // removeEventListener above. Shadowing them with raw bindings would skip
+  // tracking and leak wrapped closures on removeListener.
 
   return fake;
 }

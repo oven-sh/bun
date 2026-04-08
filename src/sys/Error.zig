@@ -16,7 +16,7 @@ pub const Int = u16;
 pub const oom = fromCode(E.NOMEM, .read);
 
 errno: Int = todo_errno,
-fd: bun.FileDescriptor = bun.invalid_fd,
+fd: bun.FD = bun.invalid_fd,
 from_libuv: if (Environment.isWindows) bool else void = if (Environment.isWindows) false else undefined,
 path: []const u8 = "",
 syscall: sys.Tag = sys.Tag.TODO,

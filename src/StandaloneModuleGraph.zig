@@ -668,7 +668,7 @@ pub const StandaloneModuleGraph = struct {
         }
     };
 
-    pub fn inject(bytes: []const u8, self_exe: [:0]const u8, inject_options: InjectOptions, target: *const CompileTarget) bun.FileDescriptor {
+    pub fn inject(bytes: []const u8, self_exe: [:0]const u8, inject_options: InjectOptions, target: *const CompileTarget) bun.FD {
         var buf: bun.PathBuffer = undefined;
         var zname: [:0]const u8 = bun.fs.FileSystem.tmpname("bun-build", &buf, @as(u64, @bitCast(std.time.milliTimestamp()))) catch |err| {
             Output.prettyErrorln("<r><red>error<r><d>:<r> failed to get temporary file name: {s}", .{@errorName(err)});
@@ -676,7 +676,7 @@ pub const StandaloneModuleGraph = struct {
         };
 
         const cleanup = struct {
-            pub fn toClean(name: [:0]const u8, fd: bun.FileDescriptor) void {
+            pub fn toClean(name: [:0]const u8, fd: bun.FD) void {
                 // Ensure we own the file
                 if (Environment.isPosix) {
                     // Make the file writable so we can delete it
@@ -687,7 +687,7 @@ pub const StandaloneModuleGraph = struct {
             }
         }.toClean;
 
-        const cloned_executable_fd: bun.FileDescriptor = brk: {
+        const cloned_executable_fd: bun.FD = brk: {
             if (comptime Environment.isWindows) {
                 // copy self and then open it for writing
 
@@ -776,7 +776,7 @@ pub const StandaloneModuleGraph = struct {
                 }
                 unreachable;
             };
-            const self_fd: bun.FileDescriptor = brk2: {
+            const self_fd: bun.FD = brk2: {
                 for (0..3) |retry| {
                     switch (Syscall.open(self_exe, bun.O.CLOEXEC | bun.O.RDONLY, 0)) {
                         .result => |res| break :brk2 res,

@@ -528,7 +528,7 @@ const Loader = @import("./options.zig").Loader;
 
 const bun = @import("bun");
 const Environment = bun.Environment;
-const FileDescriptorType = bun.FileDescriptor;
+const FileDescriptorType = bun.FD;
 const Fs = bun.fs;
 const jsc = bun.jsc;
 const Output = bun.Global.Output;

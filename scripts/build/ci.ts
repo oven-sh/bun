@@ -387,6 +387,8 @@ export function packageAndUpload(cfg: Config, output: BunOutput): void {
   // cmake: bunStripPath = string(REPLACE bun ${bunTriplet} bunStripPath bun) = bunTriplet.
   if (shouldStrip(cfg) && output.strippedExe !== undefined) {
     zipPaths.push(makeZip(cfg, bunTriplet, [basename(output.strippedExe)]));
+    const bytes = statSync(output.strippedExe).size;
+    run(["buildkite-agent", "meta-data", "set", `binary-size:${bunTriplet}`, String(bytes)], buildDir);
   }
 
   // ─── Upload ───

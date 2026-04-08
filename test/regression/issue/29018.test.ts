@@ -10,7 +10,7 @@
 // This test spins up a bun process with an auto-installable entry point,
 // creates a Worker from it, and asserts that both threads import the
 // package successfully.
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 test("auto-install works inside a Worker thread", async () => {
@@ -45,11 +45,7 @@ test("auto-install works inside a Worker thread", async () => {
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   // Don't fail the whole CI lane if the registry is unreachable — just skip.
   if (stderr.includes("ConnectionRefused") || stderr.includes("getaddrinfo")) {

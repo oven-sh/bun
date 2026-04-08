@@ -831,11 +831,18 @@ function getBinarySizeStep(releasePlatforms, options, { recordOnly = false } = {
   return {
     key: "binary-size",
     label: `${getBuildkiteEmoji("package")} binary-size`,
-    agents: { queue: "test-darwin" },
+    agents: getEc2Agent(
+      buildPlatforms.find(p => p.os === "linux" && p.arch === "aarch64" && p.distro === "amazonlinux"),
+      options,
+      { instanceType: "c8g.large" },
+    ),
     depends_on: releasePlatforms.map(p => `${getTargetKey(p)}-build-bun`),
     allow_dependency_failure: true,
     soft_fail: !!options.skipSizeCheck,
-    retry: getRetry(),
+    retry: {
+      manual: { permit_on_passed: true },
+      automatic: [{ exit_status: "*", limit: 2 }],
+    },
     cancel_on_build_failing: isMergeQueue(),
     command: `bun scripts/binary-size.ts ${args.join(" ")}`,
   };

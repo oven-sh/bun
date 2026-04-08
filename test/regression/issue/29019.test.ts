@@ -81,6 +81,19 @@ test("tty.WriteStream.prototype.constructor === tty.WriteStream", () => {
   });
 });
 
+test("tty.ReadStream.prototype.constructor === tty.ReadStream", () => {
+  // Same story as WriteStream: Object.create(fs.ReadStream.prototype) inherits
+  // `constructor` from fs.ReadStream.prototype unless we explicitly reset it.
+  expect(tty.ReadStream.prototype.constructor).toBe(tty.ReadStream);
+  const descriptor = Object.getOwnPropertyDescriptor(tty.ReadStream.prototype, "constructor");
+  expect(descriptor).toEqual({
+    value: tty.ReadStream,
+    writable: true,
+    enumerable: false,
+    configurable: true,
+  });
+});
+
 test("tty.WriteStream.prototype.isTTY does NOT leak to fs.WriteStream.prototype", () => {
   // Regression: if the fix mutated the shared fs.WriteStream.prototype,
   // fs.createWriteStream() instances would start claiming to be TTYs.
@@ -107,12 +120,20 @@ test("tty.WriteStream instance isTTY reflects the fd (not always true)", () => {
   // instance, even though the prototype says true. The instance own property
   // shadows the prototype.
   const fd = fs.openSync(process.execPath, "r");
-  const ws = new tty.WriteStream(fd);
   try {
-    expect(ws.isTTY).toBe(false);
-  } finally {
+    const ws = new tty.WriteStream(fd);
     try {
-      ws.destroy();
+      expect(ws.isTTY).toBe(false);
+    } finally {
+      try {
+        ws.destroy();
+      } catch {}
+    }
+  } finally {
+    // tty.WriteStream is constructed with autoClose: false, so ws.destroy()
+    // does NOT close the underlying fd — we own it and must close it.
+    try {
+      fs.closeSync(fd);
     } catch {}
   }
 });

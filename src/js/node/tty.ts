@@ -26,6 +26,17 @@ $toClass(ReadStream, "ReadStream", fs.ReadStream);
 Object.defineProperty(ReadStream, "prototype", {
   get() {
     const Prototype = Object.create(fs.ReadStream.prototype);
+    // Object.create above leaves `constructor` inherited from
+    // fs.ReadStream.prototype, so without this `new tty.ReadStream(0)
+    // .constructor === fs.ReadStream`. Node keeps it pointing at
+    // tty.ReadStream via the normal { writable, !enumerable, configurable }
+    // descriptor shape.
+    Object.defineProperty(Prototype, "constructor", {
+      value: ReadStream,
+      writable: true,
+      enumerable: false,
+      configurable: true,
+    });
 
     // Add ref/unref methods to make tty.ReadStream behave like Node.js
     // where TTY streams have socket-like behavior

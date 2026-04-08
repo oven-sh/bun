@@ -272,6 +272,15 @@ describe("Bun.stripANSI", () => {
     ["\x1b]8;;url本文末尾", "\x1b]8;;url本文末尾"], // unterminated OSC8 with JP payload: keep verbatim
     ["\x1b]0;ウィンドウ", "\x1b]0;ウィンドウ"], // unterminated OSC with JP title: keep verbatim
     ["\x1bあ\x1b[31mred\x1b[39m", "\x1bあred"], // partial-escape splice followed by valid CSI
+    ["\x1b[あm", "\x1b[あm"], // ESC[ + non-ASCII + downstream final byte: bail, keep verbatim
+    ["\x1b[31m\x1b[あm", "\x1b[あm"], // valid CSI chained into invalid CSI: strip the valid prefix only
+    ["\x1b[31m\x1b]0;noend", "\x1b]0;noend"], // valid CSI chained into unterminated OSC: same
+    ["\x1bPunterminated", "\x1bPunterminated"], // unterminated DCS (needSt EOF branch)
+    ["\x1b_unterminated", "\x1b_unterminated"], // unterminated APC (needSt EOF branch)
+    // Unterminated OSC whose payload contains an ESC. Preserved literal, but
+    // when the outer loop resumes after the leading ESC it re-tokenizes the
+    // inner `\x1bo` as a one-byte ESC sequence (SS3) — pre-existing behavior.
+    ["\x1b]2;test\x1bother", "\x1b]2;testther"],
 
     // Complex prefix combinations
     ["\x1b[[[31mtext", "[31mtext"], // [ terminates CSI

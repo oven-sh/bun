@@ -1494,9 +1494,11 @@ class ChildProcess extends EventEmitter {
         // exited — even when it exited on its own without any signal.
         const delivered = handle.kill(signal);
         // `this.killed` tracks whether the user has asked us to kill
-        // (Node semantics). Only flip it when the signal was actually
-        // delivered; an already-dead process was never killed by *us*.
-        if (delivered) this.killed = true;
+        // (Node semantics). Only flip it when an actual signal was sent:
+        // `kill(0)` is just an existence probe and never terminates the
+        // child, so it must not mark the process as killed even when
+        // the probe succeeds.
+        if (delivered && signal !== 0) this.killed = true;
         return delivered;
       } catch (e) {
         this.emit("error", e);

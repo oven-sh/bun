@@ -1,6 +1,6 @@
-import { test, expect } from "bun:test";
-import http2 from "node:http2";
+import { expect, test } from "bun:test";
 import { once } from "node:events";
+import http2 from "node:http2";
 import type { AddressInfo } from "node:net";
 
 test("session.destroy(error) propagates the error to in-flight streams", async () => {

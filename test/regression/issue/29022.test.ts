@@ -126,24 +126,32 @@ test("getMaxListeners / setMaxListeners", () => {
     expect(port1.setMaxListeners(42)).toBe(port1);
     expect(port1.getMaxListeners()).toBe(42);
 
-    // Matches EventEmitter.prototype.setMaxListeners validation.
-    expect(() => port1.setMaxListeners(-1)).toThrow(/out of range|must be/i);
-    expect(() => port1.setMaxListeners(NaN)).toThrow();
+    // Matches EventEmitter.prototype.setMaxListeners validation — the error
+    // message names the method (setMaxListeners), not the parameter.
+    expect(() => port1.setMaxListeners(-1)).toThrow(/setMaxListeners/);
+    expect(() => port1.setMaxListeners(NaN)).toThrow(/setMaxListeners/);
     // @ts-expect-error - intentional bad input
-    expect(() => port1.setMaxListeners("10")).toThrow();
+    expect(() => port1.setMaxListeners("10")).toThrow(/setMaxListeners/);
   } finally {
     port1.close();
     port2.close();
   }
 });
 
-test("removeListener / off without a listener throws ERR_INVALID_ARG_TYPE", () => {
+test("on / once / off throw ERR_INVALID_ARG_TYPE for primitive listeners", () => {
+  // Node's MessagePort throws for primitives other than null/undefined
+  // (via the underlying EventTarget). Function/object/null/undefined all pass.
   const { port1, port2 } = new MessageChannel();
   try {
-    // @ts-expect-error - intentional missing argument
-    expect(() => port1.removeListener("message")).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
-    // @ts-expect-error - intentional missing argument
-    expect(() => port1.off("message")).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
+    const err = expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" });
+    for (const method of ["on", "once", "off", "addListener", "removeListener"] as const) {
+      // @ts-expect-error - intentional bad listener type
+      expect(() => port1[method]("message", "notfn")).toThrow(err);
+      // @ts-expect-error - intentional bad listener type
+      expect(() => port1[method]("message", 42)).toThrow(err);
+      // @ts-expect-error - intentional bad listener type
+      expect(() => port1[method]("message", true)).toThrow(err);
+    }
   } finally {
     port1.close();
     port2.close();
@@ -184,8 +192,12 @@ test("on() deduplicates same listener (matches Node's MessagePort)", async () =>
     expect(port1.listenerCount("message")).toBe(1);
 
     port2.postMessage("hi");
-    // Wait for the message to dispatch.
-    while (fired === 0) await Bun.sleep(1);
+    // Wait for the message to dispatch, bounded so a regression fails fast.
+    const deadline = Date.now() + 5000;
+    while (fired === 0) {
+      if (Date.now() > deadline) throw new Error("timed out waiting for first message");
+      await Bun.sleep(1);
+    }
     expect(fired).toBe(1);
 
     port1.off("message", onMessage);

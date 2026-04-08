@@ -110,7 +110,20 @@ function injectFakeEmitter(Class) {
     return null;
   }
 
+  // Node's MessagePort (which is an EventTarget underneath) throws
+  // ERR_INVALID_ARG_TYPE for listener arguments that are primitives other
+  // than `undefined` / `null`. Functions and objects pass through (objects
+  // are treated by EventTarget as `EventListener` with a `handleEvent`
+  // method, or silently ignored if they don't implement one).
+  function validateListener(listener) {
+    const t = typeof listener;
+    if (t !== "function" && t !== "object" && t !== "undefined") {
+      throw $ERR_INVALID_ARG_TYPE("listener", "Function", listener);
+    }
+  }
+
   Class.prototype.on = function (event, listener) {
+    validateListener(listener);
     // Node's MessagePort dedupes same (event, listener) pairs (see #20169).
     if (hasListener(this, event, listener)) return this;
     const unwrap = unwrapFor(event);
@@ -123,10 +136,7 @@ function injectFakeEmitter(Class) {
   };
 
   Class.prototype.off = function (event, listener) {
-    // Node's removeListener / off require a function listener.
-    if (typeof listener !== "function") {
-      throw $ERR_INVALID_ARG_TYPE("listener", "Function", listener);
-    }
+    validateListener(listener);
     const wrapped = untrackListener(this, event, listener);
     // If the listener was tracked, remove the wrapped version; otherwise
     // fall back to removing whatever matches directly (covers raw
@@ -136,6 +146,7 @@ function injectFakeEmitter(Class) {
   };
 
   Class.prototype.once = function (event, listener) {
+    validateListener(listener);
     // Node's MessagePort dedupes here too — first registration wins.
     if (hasListener(this, event, listener)) return this;
     const unwrap = unwrapFor(event);
@@ -218,7 +229,7 @@ function injectFakeEmitter(Class) {
   };
 
   Class.prototype.setMaxListeners = function (n) {
-    validateNumber(n, "n", 0);
+    validateNumber(n, "setMaxListeners", 0);
     Object.defineProperty(this, kMaxListeners, {
       value: n,
       writable: true,

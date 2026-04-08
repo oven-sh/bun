@@ -1410,6 +1410,162 @@ pub const AnsiRenderer = struct {
         self.table_rows.clearRetainingCapacity();
     }
 
+    /// ANSI state active at a given byte offset inside a cell's buffer.
+    /// Tracked so a cell that wraps mid-span can re-emit the same opens
+    /// on the continuation segment AND close any open OSC 8 link before
+    /// the border character — `\x1b[0m` doesn't terminate OSC 8.
+    const CellAnsiState = struct {
+        flags: u8 = 0,
+        fg: ?[]const u8 = null,
+        bg: ?[]const u8 = null,
+        link: ?[]const u8 = null,
+
+        const BOLD: u8 = 1 << 0;
+        const ITALIC: u8 = 1 << 1;
+        const UNDERLINE: u8 = 1 << 2;
+        const STRIKE: u8 = 1 << 3;
+
+        fn hasAny(self: CellAnsiState) bool {
+            return self.flags != 0 or self.fg != null or self.bg != null or self.link != null;
+        }
+
+        fn emitOpens(self: CellAnsiState, out: *OutputBuffer) void {
+            if (self.flags & BOLD != 0) out.write("\x1b[1m");
+            if (self.flags & ITALIC != 0) out.write("\x1b[3m");
+            if (self.flags & UNDERLINE != 0) out.write("\x1b[4m");
+            if (self.flags & STRIKE != 0) out.write("\x1b[9m");
+            if (self.fg) |f| out.write(f);
+            if (self.bg) |b| out.write(b);
+            if (self.link) |l| out.write(l);
+        }
+
+        fn emitCloses(self: CellAnsiState, out: *OutputBuffer) void {
+            if (self.hasAny()) out.write("\x1b[0m");
+            if (self.link != null) out.write("\x1b]8;;\x1b\\");
+        }
+
+        /// Walk `bytes` forward, updating `self` to reflect any SGR and
+        /// OSC 8 toggles encountered. Unrecognized escapes are skipped.
+        fn scan(self: *CellAnsiState, bytes: []const u8) void {
+            var i: usize = 0;
+            while (i < bytes.len) {
+                if (bytes[i] != 0x1b) {
+                    i += 1;
+                    continue;
+                }
+                if (i + 1 >= bytes.len) return;
+                if (bytes[i + 1] == '[') {
+                    // CSI ... m (SGR). Scan until final byte.
+                    const seq_start = i;
+                    var j = i + 2;
+                    while (j < bytes.len) : (j += 1) {
+                        const c = bytes[j];
+                        if ((c >= 0x40 and c <= 0x7e) and c != ';') break;
+                    }
+                    if (j >= bytes.len) return;
+                    if (bytes[j] == 'm') {
+                        const seq = bytes[seq_start .. j + 1];
+                        const params = bytes[seq_start + 2 .. j];
+                        self.applySgr(seq, params);
+                    }
+                    i = j + 1;
+                    continue;
+                }
+                if (bytes[i + 1] == ']') {
+                    // OSC. Scan until ST (\x1b\\) or BEL (\x07).
+                    const seq_start = i;
+                    var j = i + 2;
+                    while (j < bytes.len) : (j += 1) {
+                        if (bytes[j] == 0x07) {
+                            j += 1;
+                            break;
+                        }
+                        if (bytes[j] == 0x1b and j + 1 < bytes.len and bytes[j + 1] == '\\') {
+                            j += 2;
+                            break;
+                        }
+                    }
+                    const seq = bytes[seq_start..j];
+                    if (seq.len >= 5 and std.mem.startsWith(u8, seq, "\x1b]8;")) {
+                        // "\x1b]8;<params>;<URL>\x1b\\" — a close has an
+                        // empty URL component.
+                        const body = seq[4..]; // after "\x1b]8;"
+                        // Strip terminator off the end for URL extraction.
+                        const body_end: usize = blk: {
+                            if (body.len >= 2 and body[body.len - 2] == 0x1b and body[body.len - 1] == '\\') {
+                                break :blk body.len - 2;
+                            }
+                            if (body.len >= 1 and body[body.len - 1] == 0x07) break :blk body.len - 1;
+                            break :blk body.len;
+                        };
+                        const body_stripped = body[0..body_end];
+                        if (std.mem.indexOfScalar(u8, body_stripped, ';')) |semi| {
+                            const url = body_stripped[semi + 1 ..];
+                            if (url.len == 0) {
+                                self.link = null;
+                            } else {
+                                self.link = seq;
+                            }
+                        }
+                    }
+                    i = j;
+                    continue;
+                }
+                i += 1;
+            }
+        }
+
+        fn applySgr(self: *CellAnsiState, seq: []const u8, params: []const u8) void {
+            // Empty param ("\x1b[m") is equivalent to "\x1b[0m".
+            if (params.len == 0) {
+                self.flags = 0;
+                self.fg = null;
+                self.bg = null;
+                return;
+            }
+            // Stateful parse: 38/48 consume 2 extra params for `5;N` or
+            // 4 extra for `2;R;G;B`. Snapshot the whole seq for fg/bg
+            // since we don't need to recompute it — just replay it.
+            var iter = std.mem.splitScalar(u8, params, ';');
+            while (iter.next()) |p| {
+                const n = std.fmt.parseInt(u32, p, 10) catch continue;
+                switch (n) {
+                    0 => {
+                        self.flags = 0;
+                        self.fg = null;
+                        self.bg = null;
+                    },
+                    1 => self.flags |= BOLD,
+                    3 => self.flags |= ITALIC,
+                    4 => self.flags |= UNDERLINE,
+                    9 => self.flags |= STRIKE,
+                    22 => self.flags &= ~BOLD,
+                    23 => self.flags &= ~ITALIC,
+                    24 => self.flags &= ~UNDERLINE,
+                    29 => self.flags &= ~STRIKE,
+                    30...37, 90...97 => self.fg = seq,
+                    38 => {
+                        self.fg = seq;
+                        // Consume remaining params since they're part of
+                        // the 38 encoding — don't misinterpret them as
+                        // standalone SGRs.
+                        while (iter.next()) |_| {}
+                        return;
+                    },
+                    39 => self.fg = null,
+                    40...47, 100...107 => self.bg = seq,
+                    48 => {
+                        self.bg = seq;
+                        while (iter.next()) |_| {}
+                        return;
+                    },
+                    49 => self.bg = null,
+                    else => {},
+                }
+            }
+        }
+    };
+
     fn writeRowCells(
         self: *AnsiRenderer,
         row: TableRow,
@@ -1431,10 +1587,26 @@ pub const AnsiRenderer = struct {
         }
         @memset(segments, .{});
 
+        // Per-cell ANSI state snapshotted at the START of each segment.
+        // `state_at[col][line]` is the SGR/OSC 8 state that was active
+        // when rendering reached the beginning of that segment. Needed
+        // so a cell that wraps mid-span can re-open the style on the
+        // continuation line.
+        var state_at = self.allocator.alloc(std.ArrayListUnmanaged(CellAnsiState), widths.len) catch {
+            self.out.oom = true;
+            return;
+        };
+        defer {
+            for (state_at) |*s| s.deinit(self.allocator);
+            self.allocator.free(state_at);
+        }
+        @memset(state_at, .{});
+
         var lines: usize = 1;
         for (widths, 0..) |w, i| {
             const content = if (i < row.cells.len) row.cells[i].content else "";
             var rest = content;
+            var state = CellAnsiState{};
             while (rest.len > 0) {
                 var cut = visibleIndexAt(rest, w);
                 if (cut < rest.len) {
@@ -1445,12 +1617,25 @@ pub const AnsiRenderer = struct {
                     }
                 }
                 if (cut == 0) cut = @min(rest.len, @as(usize, bun.strings.wtf8ByteSequenceLengthWithInvalid(rest[0])));
+                state_at[i].append(self.allocator, state) catch {
+                    self.out.oom = true;
+                    return;
+                };
                 segments[i].append(self.allocator, rest[0..cut]) catch {
                     self.out.oom = true;
                     return;
                 };
+                state.scan(rest[0..cut]);
                 rest = rest[cut..];
-                while (rest.len > 0 and rest[0] == ' ') rest = rest[1..];
+                // Skip spaces that led to the wrap so they don't start
+                // the continuation line; scan them too in case a padded
+                // ANSI sequence hides inside.
+                var skipped_start: usize = 0;
+                while (skipped_start < rest.len and rest[skipped_start] == ' ') skipped_start += 1;
+                if (skipped_start > 0) {
+                    state.scan(rest[0..skipped_start]);
+                    rest = rest[skipped_start..];
+                }
             }
             lines = @max(lines, segments[i].items.len);
         }
@@ -1463,8 +1648,13 @@ pub const AnsiRenderer = struct {
             if (self.theme.colors) self.out.write("\x1b[0m");
             for (widths, 0..) |w, i| {
                 const seg: []const u8 = if (line < segments[i].items.len) segments[i].items[line] else "";
+                const opens: CellAnsiState = if (line < state_at[i].items.len) state_at[i].items[line] else .{};
                 self.out.writeByte(' ');
                 if (row.is_header and self.theme.colors) self.out.write("\x1b[1m");
+                // Re-emit any SGR + OSC 8 that was active at the start
+                // of this segment (no-op on the first line because the
+                // opens are already embedded in `seg`).
+                if (self.theme.colors and line > 0) opens.emitOpens(&self.out);
                 const cw = visibleWidth(seg);
                 const cell_align = if (i < row.cells.len) row.cells[i].alignment else .default;
                 const alignment = if (cell_align != .default) cell_align else aligns[i];
@@ -1476,10 +1666,16 @@ pub const AnsiRenderer = struct {
                 };
                 self.writePadding(left);
                 self.out.write(seg);
-                // Clear any inline style from the segment so it doesn't
-                // bleed into the padding / border on this or the next
-                // physical line.
-                if (self.theme.colors) self.out.write("\x1b[0m");
+                // Close everything still open at the end of this segment
+                // — `\x1b[0m` for SGR and `\x1b]8;;\x1b\\` for OSC 8 so
+                // the padding, trailing space, and border are not part
+                // of an active hyperlink.
+                if (self.theme.colors) {
+                    var end_state = opens;
+                    end_state.scan(seg);
+                    end_state.emitCloses(&self.out);
+                    if (row.is_header) self.out.write("\x1b[0m");
+                }
                 self.writePadding(right);
                 self.out.writeByte(' ');
                 if (self.theme.colors) self.out.write(color(.dim));

@@ -72,6 +72,22 @@ pub const PackageInstaller = struct {
         }
 
         // Since the stack size of these functions are rather large, let's not let them be inlined.
+        noinline fn entryIsReparsePointWindows(this: *const NodeModulesFolder, root_node_modules_dir: std.fs.Dir, file_path: [:0]const u8) bool {
+            // On Windows `bun link --save` creates a directory *junction* when
+            // Developer Mode is off. libuv's fstat does not reliably set S_IFLNK
+            // for junctions, so an lstat-based check would miss them. Query
+            // `FILE_ATTRIBUTE_REPARSE_POINT` directly, which covers symlinks,
+            // junctions, and other reparse points alike.
+            var root_buf: bun.PathBuffer = undefined;
+            const root_path = bun.getFdPath(.fromStdDir(root_node_modules_dir), &root_buf) catch return false;
+            var full_buf: bun.PathBuffer = undefined;
+            const parts: [3][]const u8 = .{ root_path, this.path.items, file_path };
+            const full_path = bun.path.joinZBuf(&full_buf, &parts, .auto);
+            const attrs = bun.sys.getFileAttributes(full_path) orelse return false;
+            return attrs.is_reparse_point;
+        }
+
+        // Since the stack size of these functions are rather large, let's not let them be inlined.
         noinline fn entryIsSymlinkWithoutOpeningDirectories(this: *const NodeModulesFolder, root_node_modules_dir: std.fs.Dir, file_path: [:0]const u8) bool {
             var path_buf: bun.PathBuffer = undefined;
             const parts: [2][]const u8 = .{ this.path.items, file_path };
@@ -83,9 +99,13 @@ pub const PackageInstaller = struct {
         }
 
         /// Returns true if `<node_modules path>/<file_path>` exists and is a symlink
-        /// (as opposed to a real directory/file). Used to detect stale `bun link`
-        /// entries when a new install wants a real extracted package.
+        /// (or a directory junction on Windows) as opposed to a real directory/file.
+        /// Used to detect stale `bun link` entries when a new install wants a real
+        /// extracted package.
         pub fn entryIsSymlink(this: *const NodeModulesFolder, root_node_modules_dir: std.fs.Dir, file_path: [:0]const u8) bool {
+            if (comptime Environment.isWindows) {
+                return this.entryIsReparsePointWindows(root_node_modules_dir, file_path);
+            }
             if (file_path.len + this.path.items.len * 2 < bun.MAX_PATH_BYTES) {
                 return this.entryIsSymlinkWithoutOpeningDirectories(root_node_modules_dir, file_path);
             }

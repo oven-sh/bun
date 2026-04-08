@@ -340,7 +340,7 @@ pub const ReadFile = struct {
         }
 
         this.could_block = !bun.isRegularFile(stat.mode);
-        this.total_size = @truncate(@as(u64, @intCast(@max(stat.size, 0))));
+        this.total_size = @truncate(@as(SizeType, @intCast(@max(@as(i64, @intCast(stat.size)), 0))));
 
         if (stat.size > 0 and !this.could_block) {
             this.size = @min(this.total_size, this.max_length);
@@ -384,7 +384,7 @@ pub const ReadFile = struct {
 
         // add an extra 16 bytes to the buffer to avoid having to resize it for trailing extra data
         if (this.size != Blob.max_size and (!this.could_block or this.size > 0))
-            this.buffer = std.ArrayListUnmanaged(u8).initCapacity(bun.default_allocator, @as(usize, this.size) + 16) catch |err| {
+            this.buffer = std.ArrayListUnmanaged(u8).initCapacity(bun.default_allocator, @as(usize, @intCast(this.size)) + 16) catch |err| {
                 this.errno = err;
                 this.onFinish();
                 return;
@@ -659,7 +659,7 @@ pub const ReadFileUV = struct {
             this.onFinish();
             return;
         }
-        this.total_size = @truncate(@as(u64, @intCast(@max(stat.size, 0))));
+        this.total_size = @truncate(@as(SizeType, @intCast(@max(@as(i64, @intCast(stat.size)), 0))));
         this.is_regular_file = bun.isRegularFile(stat.mode);
 
         log("is_regular_file: {}", .{this.is_regular_file});

@@ -11,8 +11,8 @@
 // creates a Worker from it, and asserts that both threads import the
 // package successfully.
 import { expect, test } from "bun:test";
-import { join } from "node:path";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { join } from "node:path";
 
 test("auto-install works inside a Worker thread", async () => {
   using dir = tempDir("issue-29018", {

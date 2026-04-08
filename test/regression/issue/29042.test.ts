@@ -17,13 +17,15 @@ import { RedisClient } from "bun";
 import { expect, test } from "bun:test";
 
 async function redisReachable() {
+  let c: RedisClient | undefined;
   try {
-    const c = new RedisClient("redis://localhost:6379");
+    c = new RedisClient("redis://localhost:6379");
     await c.connect();
-    c.close();
     return true;
   } catch {
     return false;
+  } finally {
+    c?.close();
   }
 }
 

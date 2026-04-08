@@ -650,19 +650,18 @@ pub const ValkeyClient = struct {
         // If the loop finishes, the entire 'data' was processed without needing the buffer.
     }
 
-    /// Try handling this response as a subscriber-state response.
-    /// Returns `handled` if we handled it, `fallthrough` if we did not.
+    /// Handle a response that has already been classified as a subscription
+    /// frame by the caller (via `SubscriptionPushMessage.asFrame`).
     ///
-    /// `frame` is the parsed subscription frame, extracted by the caller so
-    /// that we don't have to re-discriminate on `.Push` vs. `.Array`. It works
-    /// uniformly for RESP3 push frames and RESP2 inline-array pub/sub frames.
+    /// `frame` is the parsed subscription frame. This abstracts over the two
+    /// wire shapes: RESP3 `.Push` frames and RESP2 inline-array pub/sub
+    /// frames; both reach this function via the same dispatch.
     fn handleSubscribeResponse(
         this: *ValkeyClient,
         value: *protocol.RESPValue,
         frame: protocol.SubscriptionPushMessage.Frame,
         pair: ?*ValkeyCommand.PromisePair,
-    ) bun.JSError!enum { handled, fallthrough } {
-        // Resolve the promise with the potentially transformed value
+    ) bun.JSError!void {
         const globalThis = this.globalObject();
         const loop = this.vm.eventLoop();
 
@@ -671,14 +670,17 @@ pub const ValkeyClient = struct {
         defer loop.exit();
 
         const p = this.parent();
-        const sub_count = try p._subscription_ctx.channelsSubscribedToCount(globalThis);
 
         switch (frame.kind) {
             .message => {
+                // Hot path during active pub/sub: skip the JS-side channel-count
+                // lookup entirely, since message frames don't resolve a promise.
                 this.onValkeyMessage(frame.data);
-                return .handled;
             },
             .subscribe => {
+                // `channelsSubscribedToCount` reads from a JSMap via the JS
+                // getter, so only touch it on the path that actually needs it.
+                const sub_count = try p._subscription_ctx.channelsSubscribedToCount(globalThis);
                 p.addSubscription();
                 this.onValkeySubscribe(value);
 
@@ -687,7 +689,6 @@ pub const ValkeyClient = struct {
                 if (pair) |req_pair| {
                     try req_pair.promise.promise.resolve(globalThis, .jsNumber(sub_count));
                 }
-                return .handled;
             },
             .unsubscribe => {
                 try this.onValkeyUnsubscribe();
@@ -698,7 +699,6 @@ pub const ValkeyClient = struct {
                 if (pair) |req_pair| {
                     try req_pair.promise.promise.resolve(globalThis, .js_undefined);
                 }
-                return .handled;
             },
         }
     }
@@ -847,9 +847,8 @@ pub const ValkeyClient = struct {
             }
 
             if (subscription_frame) |frame| {
-                if ((try this.handleSubscribeResponse(value, frame, if (pair_maybe) |*pm| pm else null)) == .handled) {
-                    return;
-                }
+                try this.handleSubscribeResponse(value, frame, if (pair_maybe) |*pm| pm else null);
+                return;
             }
             // Fall through to the regular command handler. Subscribers can receive non-subscription
             // responses (RESP3 push commands, or regular command replies on RESP2 subscribe-only

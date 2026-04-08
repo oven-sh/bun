@@ -286,7 +286,7 @@ export function getStdinStream(
   // stdio:'inherit' child can read it exclusively. Hooking the
   // 'removeListener' event (rather than overriding removeListener/off/
   // removeAllListeners) catches every removal path.
-  originalOn.$call(stream, "removeListener", event => {
+  stream.on("removeListener", event => {
     if (
       event === "readable" &&
       stream.listenerCount("readable") === 0 &&

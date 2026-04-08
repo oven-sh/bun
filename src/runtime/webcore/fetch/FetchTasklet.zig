@@ -1262,10 +1262,19 @@ pub const FetchTasklet = struct {
     /// Whether the request body should skip chunked transfer encoding framing.
     /// True for upgraded connections (e.g. WebSocket) or when the user explicitly
     /// set Content-Length without setting Transfer-Encoding.
+    ///
+    /// If the user explicitly set `Transfer-Encoding: chunked`, we honor that
+    /// and use chunked framing even for upgraded connections. This matches
+    /// Node.js behavior and is required by clients like dockerode which send
+    /// a chunked body alongside an `Upgrade` request for hijacked `docker exec`.
     fn skipChunkedFraming(this: *const FetchTasklet) bool {
+        const transfer_encoding = this.request_headers.get("transfer-encoding");
+        if (transfer_encoding) |value| {
+            if (std.ascii.eqlIgnoreCase(value, "chunked")) return false;
+        }
         return this.upgraded_connection or
             this.result.is_http2 or
-            (this.request_headers.get("content-length") != null and this.request_headers.get("transfer-encoding") == null);
+            (this.request_headers.get("content-length") != null and transfer_encoding == null);
     }
 
     pub fn writeRequestData(this: *FetchTasklet, data: []const u8) ResumableSinkBackpressure {

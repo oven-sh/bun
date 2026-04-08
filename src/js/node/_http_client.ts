@@ -56,6 +56,7 @@ const {
 const { globalAgent } = require("node:_http_agent");
 const { IncomingMessage } = require("node:_http_incoming");
 const { OutgoingMessage } = require("node:_http_outgoing");
+const { Duplex } = require("node:stream");
 
 const globalReportError = globalThis.reportError;
 const setTimeout = globalThis.setTimeout;
@@ -73,6 +74,91 @@ function emitErrorEventNT(self, err) {
   if (self.listenerCount("error") > 0) {
     self.emit("error", err);
   }
+}
+
+// Creates a Duplex stream that represents the hijacked socket for a
+// `Connection: Upgrade` response. Reads pull from the fetch Response body
+// (the post-upgrade bytes from the server); writes route through the
+// ClientRequest's existing `req.write()` path so that the upload half of
+// the HTTP/1.1 connection keeps flowing. Used for dockerode-style hijacked
+// `docker exec` sessions and similar `Upgrade: tcp` patterns.
+function createUpgradeSocket(req, response) {
+  const reader = response.body?.getReader?.() ?? null;
+  let reading = false;
+  let ended = false;
+
+  const duplex = new Duplex({
+    allowHalfOpen: true,
+    read() {
+      if (reading || ended || !reader) {
+        if (!reader && !ended) {
+          ended = true;
+          this.push(null);
+        }
+        return;
+      }
+      reading = true;
+      reader.read().then(
+        ({ value, done }) => {
+          reading = false;
+          if (done) {
+            ended = true;
+            this.push(null);
+            return;
+          }
+          this.push(Buffer.from(value.buffer, value.byteOffset, value.byteLength));
+        },
+        err => {
+          reading = false;
+          this.destroy(err);
+        },
+      );
+    },
+    write(chunk, encoding, callback) {
+      if (req.destroyed || req.finished) {
+        callback($ERR_STREAM_WRITE_AFTER_END());
+        return;
+      }
+      req.write(chunk, encoding, callback);
+    },
+    final(callback) {
+      if (!req.destroyed && !req.finished) {
+        try {
+          req.end();
+        } catch (_err) {
+          void _err;
+        }
+      }
+      callback();
+    },
+    destroy(err, callback) {
+      ended = true;
+      if (reader) {
+        try {
+          reader.cancel?.();
+        } catch (_err) {
+          void _err;
+        }
+      }
+      if (!req.destroyed) {
+        req.destroy(err || undefined);
+      }
+      callback(err);
+    },
+  });
+
+  // Surface common net.Socket fields so consumers that inspect the socket
+  // (e.g. dockerode-modem) see a sane shape.
+  duplex.setKeepAlive = () => duplex;
+  duplex.setNoDelay = () => duplex;
+  duplex.setTimeout = (msecs, callback) => {
+    if (callback) duplex.once("timeout", callback);
+    return duplex;
+  };
+  duplex.ref = () => duplex;
+  duplex.unref = () => duplex;
+
+  return duplex;
 }
 
 function ClientRequest(input, options, cb) {
@@ -397,6 +483,14 @@ function ClientRequest(input, options, cb) {
           return;
         }
 
+        // A `HTTP/1.1 101 Switching Protocols` response indicates the server
+        // has accepted an `Upgrade:` request (WebSocket, `docker exec` hijack,
+        // etc.). The ClientRequest must dispatch `'upgrade'` with the hijacked
+        // socket regardless of whether the caller ever calls `req.end()` — the
+        // upload half of the connection is deliberately left open for the
+        // hijacked protocol.
+        const isUpgrade = response.status === 101;
+
         handleResponse = () => {
           this[kFetchRequest] = null;
           this[kClearTimeout]();
@@ -411,6 +505,32 @@ function ClientRequest(input, options, cb) {
           setIsNextIncomingMessageHTTPS(prevIsHTTPS);
           res.req = this;
           res.setTimeout = clientResponseSetTimeout;
+
+          if (isUpgrade) {
+            this[kUpgradeOrConnect] = true;
+            const upgradeSocket = createUpgradeSocket(this, response);
+            process.nextTick(
+              (self, res, socket) => {
+                try {
+                  if (self.aborted || self.listenerCount("upgrade") === 0) {
+                    // No handler for 'upgrade' — drop the hijacked socket so
+                    // we don't leak the underlying TCP connection.
+                    socket.destroy();
+                    res._dump?.();
+                  } else {
+                    self.emit("upgrade", res, socket, Buffer.alloc(0));
+                  }
+                } finally {
+                  maybeEmitClose();
+                }
+              },
+              this,
+              res,
+              upgradeSocket,
+            );
+            return;
+          }
+
           process.nextTick(
             (self, res) => {
               // If the user did not listen for the 'response' event, then they
@@ -442,7 +562,7 @@ function ClientRequest(input, options, cb) {
           );
         };
 
-        if (!keepOpen) {
+        if (!keepOpen || isUpgrade) {
           handleResponse();
         }
 

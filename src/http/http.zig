@@ -887,6 +887,23 @@ pub fn headerStr(this: *const HTTPClient, ptr: api.StringPointer) string {
     return this.header_buf[ptr.offset..][0..ptr.length];
 }
 
+/// True if the user's request headers explicitly include either
+/// `Transfer-Encoding` or `Content-Length`, meaning they intend to send
+/// a request body with real HTTP framing rather than an empty body (as
+/// with WebSocket-style `Upgrade:` handshakes).
+pub fn hasExplicitBodyFraming(this: *const HTTPClient) bool {
+    const header_entries = this.header_entries.slice();
+    const header_names = header_entries.items(.name);
+    for (header_names) |head| {
+        const name = this.headerStr(head);
+        const hash = hashHeaderName(name);
+        if (hash == hashHeaderConst("Transfer-Encoding") or hash == hashHeaderConst("Content-Length")) {
+            return true;
+        }
+    }
+    return false;
+}
+
 pub const HeaderBuilder = @import("./HeaderBuilder.zig");
 
 pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
@@ -1532,8 +1549,13 @@ pub fn writeToStream(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPCo
     }
     var stream = &this.state.original_request_body.stream;
     const stream_buffer = stream.buffer orelse return;
-    if (this.flags.upgrade_state == .pending) {
-        // cannot drain yet, upgrade is waiting for upgrade
+    if (this.flags.upgrade_state == .pending and !this.hasExplicitBodyFraming()) {
+        // For upgrade requests with no explicit body framing (WebSocket-style),
+        // writes represent post-upgrade protocol data and must be held until
+        // the server responds 101. For requests that *do* have explicit framing
+        // (e.g. dockerode sends `Transfer-Encoding: chunked` with an `Upgrade:`
+        // header), the body is part of the HTTP request and must be drained so
+        // the server can parse it before deciding to switch protocols.
         return;
     }
     const buffer = stream_buffer.acquire();

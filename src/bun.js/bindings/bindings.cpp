@@ -837,6 +837,18 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
         if (!equal(JSObject::calculatedClassName(o1), JSObject::calculatedClassName(o2))) {
             return false;
         }
+
+        // Node's assert.deepStrictEqual compares prototypes with ===.
+        // `{}` and `Object.create(null)` share the same calculated class name
+        // ("Object") but have different prototypes (Object.prototype vs null)
+        // and must not be considered deep-strict-equal. See issue #29030.
+        JSValue proto1 = o1->getPrototype(globalObject);
+        RETURN_IF_EXCEPTION(scope, false);
+        JSValue proto2 = o2->getPrototype(globalObject);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (proto1 != proto2) {
+            return false;
+        }
     }
 
     JSC::Structure* o1Structure = o1->structure();

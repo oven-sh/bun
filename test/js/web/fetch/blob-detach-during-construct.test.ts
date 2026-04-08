@@ -81,3 +81,21 @@ test("new Blob with sparse array falls back to slow path", async () => {
   expect(blob.size).toBe(4);
   expect(await blob.bytes()).toEqual(new Uint8Array([1, 2, 3, 4]));
 });
+
+test("new Blob with indexed getter falls back to slow path (no UAF)", async () => {
+  const buf = new Uint8Array(4096).fill(0x41);
+  const buf2 = new Uint8Array(4).fill(0x42);
+  const arr = [buf, buf2];
+  Object.defineProperty(arr, 1, {
+    get() {
+      new Uint8Array(buf.buffer.transfer()).fill(0x43);
+      return buf2;
+    },
+  });
+  const blob = new Blob(arr);
+  const bytes = await blob.bytes();
+  expect(bytes.length).toBe(4100);
+  expect(bytes[0]).toBe(0x41);
+  expect(bytes[4095]).toBe(0x41);
+  expect(bytes[4096]).toBe(0x42);
+});

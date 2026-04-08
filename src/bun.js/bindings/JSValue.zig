@@ -67,6 +67,14 @@ pub const JSValue = enum(i64) {
         return JSC__JSValue__getDirectIndex(this, globalThis, i);
     }
 
+    extern fn JSC__JSValue__isArrayWithoutAccessors(JSValue) bool;
+    /// True if this is a JSArray whose indexing type has no indexed accessors
+    /// (i.e. not ArrayStorage / SlowPutArrayStorage). When true, getDirectIndex
+    /// reads butterfly slots only and never invokes JS.
+    pub fn isArrayWithoutAccessors(this: JSValue) bool {
+        return JSC__JSValue__isArrayWithoutAccessors(this);
+    }
+
     pub fn isFalsey(this: JSValue) bool {
         return !this.toBoolean();
     }

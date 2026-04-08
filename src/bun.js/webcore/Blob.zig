@@ -4036,11 +4036,12 @@ fn fromJSWithoutDeferGC(
     }
 
     // Fast path: plain JSArray of only ArrayBuffer/TypedArray/DataView/in-memory Blob
-    // parts. getDirectIndex reads butterfly slots without invoking getters and the
-    // accepted item types don't run JS to extract bytes, so the recorded slices stay
-    // valid until the single allocation + memcpy below. Anything else falls through
-    // to the safe pushCloned joiner path.
-    if (arg.jsTypeLoose() == .Array) fast_path: {
+    // parts. isArrayWithoutAccessors() guarantees no indexed accessors, so
+    // getDirectIndex reads butterfly slots only and never runs JS. The accepted item
+    // types don't run JS to extract bytes either, so recorded slices stay valid until
+    // the single allocation + memcpy below. Anything else falls through to the safe
+    // pushCloned joiner path.
+    if (arg.isArrayWithoutAccessors()) fast_path: {
         const len64 = arg.getLength(global) catch break :fast_path;
         if (len64 < 2 or len64 > std.math.maxInt(u32)) break :fast_path;
         const len: u32 = @intCast(len64);

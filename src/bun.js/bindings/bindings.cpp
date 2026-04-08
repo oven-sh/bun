@@ -3001,6 +3001,20 @@ JSC::EncodedJSValue JSC__JSValue__getDirectIndex(JSC::EncodedJSValue jsValue, JS
     return JSC::JSValue::encode(object->getDirectIndex(arg1, arg3));
 }
 
+extern "C" bool JSC__JSValue__isArrayWithoutAccessors(JSC::EncodedJSValue value)
+{
+    JSC::JSValue v = JSC::JSValue::decode(value);
+    if (!v.isCell())
+        return false;
+    auto* arr = JSC::jsDynamicCast<JSC::JSArray*>(v);
+    if (!arr)
+        return false;
+    // Arrays with indexed accessors transition to (SlowPut)ArrayStorage. The
+    // contiguous/Int32/Double/Undecided shapes have no indexed accessors, so
+    // getDirectIndex on them never invokes JS.
+    return !JSC::hasAnyArrayStorage(arr->indexingType());
+}
+
 JSC::EncodedJSValue JSC__JSObject__getDirect(JSC::JSObject* arg0, JSC::JSGlobalObject* arg1,
     const ZigString* arg2)
 {

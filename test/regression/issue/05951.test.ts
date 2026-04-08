@@ -17,7 +17,7 @@ async function run(script: string) {
   return { stdout: normalizeBunSnapshot(stdout), exitCode };
 }
 
-test("ws emits 'unexpected-response' with status, headers and body on non-101", async () => {
+test("ws emits 'unexpected-response' with status, headers and body on non-101", { timeout: 30000 }, async () => {
   const { stdout, exitCode } = await run(/* js */ `
     const { createServer } = require("net");
     const { once } = require("events");
@@ -63,7 +63,7 @@ test("ws emits 'unexpected-response' with status, headers and body on non-101", 
 // "Unexpected server response: 503". Bun's shim only registers the native
 // handshake listener when the user subscribes to 'upgrade'/'unexpected-response',
 // so the unmodified native error surfaces instead.
-test("ws emits native 'error' on non-101 when no 'unexpected-response' listener", async () => {
+test("ws emits native 'error' on non-101 when no 'unexpected-response' listener", { timeout: 30000 }, async () => {
   const { stdout, exitCode } = await run(/* js */ `
     const { createServer } = require("net");
     const { once } = require("events");
@@ -84,7 +84,7 @@ test("ws emits native 'error' on non-101 when no 'unexpected-response' listener"
   expect(exitCode).toBe(0);
 });
 
-test("ws emits 'upgrade' with headers before 'open' on 101", async () => {
+test("ws emits 'upgrade' with headers before 'open' on 101", { timeout: 30000 }, async () => {
   const { stdout, exitCode } = await run(/* js */ `
     const { createServer } = require("net");
     const { createHash } = require("crypto");
@@ -128,7 +128,7 @@ test("ws emits 'upgrade' with headers before 'open' on 101", async () => {
 // The non-101 body can span multiple TCP reads. Previously the shim dispatched
 // on the first read, truncating large error bodies. The native client now
 // buffers until Content-Length is satisfied (or EOF) before dispatching.
-test("ws 'unexpected-response' waits for full Content-Length body across multiple writes", async () => {
+test("ws 'unexpected-response' waits for full Content-Length body across multiple writes", { timeout: 30000 }, async () => {
   const { stdout, exitCode } = await run(/* js */ `
     const { createServer } = require("net");
     const { once } = require("events");
@@ -178,3 +178,55 @@ test("ws 'unexpected-response' waits for full Content-Length body across multipl
   );
   expect(exitCode).toBe(0);
 });
+
+// `on()` / `once()` are not the only EventEmitter registration APIs — ws
+// consumers also reach for `addListener` / `prependListener` /
+// `prependOnceListener` and (from DOM-style code) `addEventListener`. Each
+// must arm the native handshake listener, otherwise the 'upgrade' /
+// 'unexpected-response' handler is installed on the EventEmitter list but
+// the native event that would `emit('upgrade', ...)` is never wired up and
+// the callback silently never fires.
+test(
+  "ws 'unexpected-response' fires for addListener / prependListener / addEventListener",
+  { timeout: 30000 },
+  async () => {
+    const { stdout, exitCode } = await run(/* js */ `
+    const { createServer } = require("net");
+    const { once } = require("events");
+    const { WebSocket } = require("ws");
+
+    async function runOne(register) {
+      const server = createServer(s =>
+        s.once("data", () => s.end("HTTP/1.1 503 Service Unavailable\\r\\n\\r\\n")),
+      ).listen(0, "127.0.0.1");
+      await once(server, "listening");
+
+      const ws = new WebSocket("ws://127.0.0.1:" + server.address().port);
+      ws.on("error", () => {});
+      const { promise, resolve } = Promise.withResolvers();
+      register(ws, resolve);
+      const res = await promise;
+      server.close();
+      try { ws.terminate(); } catch {}
+      return res;
+    }
+
+    const a = await runOne((ws, done) =>
+      ws.addListener("unexpected-response", (req, res) => done(res.statusCode)),
+    );
+    const b = await runOne((ws, done) =>
+      ws.prependListener("unexpected-response", (req, res) => done(res.statusCode)),
+    );
+    const c = await runOne((ws, done) =>
+      ws.prependOnceListener("unexpected-response", (req, res) => done(res.statusCode)),
+    );
+    const d = await runOne((ws, done) =>
+      ws.addEventListener("unexpected-response", ev => done(ev.data[1].statusCode)),
+    );
+    console.log(JSON.stringify({ a, b, c, d }));
+    process.exit(0);
+  `);
+    expect(stdout).toMatchInlineSnapshot(`"{"a":503,"b":503,"c":503,"d":503}"`);
+    expect(exitCode).toBe(0);
+  },
+);

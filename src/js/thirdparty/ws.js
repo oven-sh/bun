@@ -496,6 +496,31 @@ class BunWebSocket extends EventEmitter {
     return this.#onOrOnce(event, listener, onceObject);
   }
 
+  // `on` is the conventional spelling, but ws / EventEmitter consumers also
+  // reach for `addListener` / `prependListener` / `prependOnceListener`. Each
+  // needs to go through #onOrOnce so 'upgrade' / 'unexpected-response'
+  // subscribers lazily arm the native handshake listener — otherwise the
+  // handler is installed on the EventEmitter list but the native event that
+  // would trigger `emit('upgrade', ...)` is never wired up and the callback
+  // silently never fires.
+  addListener(event, listener) {
+    return this.#onOrOnce(event, listener, undefined);
+  }
+
+  prependListener(event, listener) {
+    if (event === "upgrade" || event === "unexpected-response") {
+      this.#ensureHandshakeListener();
+    }
+    return super.prependListener(event, listener);
+  }
+
+  prependOnceListener(event, listener) {
+    if (event === "upgrade" || event === "unexpected-response") {
+      this.#ensureHandshakeListener();
+    }
+    return super.prependOnceListener(event, listener);
+  }
+
   send(data, opts, cb) {
     if ($isCallable(opts)) {
       cb = opts;
@@ -563,6 +588,20 @@ class BunWebSocket extends EventEmitter {
 
   // deviation: this does not support `message` with `binaryType = "fragments"`
   addEventListener(type, listener, options) {
+    // 'upgrade' and 'unexpected-response' are only emitted on the JS-side
+    // EventEmitter (by #onHandshake), never by the native WebSocket, so
+    // register on `this` and arm the handshake listener like on/once do.
+    // A tiny adapter wraps the listener to mirror the DOM-style
+    // (event.data / event.type) shape the native addEventListener would
+    // have produced — close to what ws consumers expect from these events.
+    if (type === "upgrade" || type === "unexpected-response") {
+      this.#ensureHandshakeListener();
+      const wrapped = (...args) => listener({ type, target: this, data: args });
+      if (options && options.once) {
+        return super.once(type, wrapped);
+      }
+      return super.on(type, wrapped);
+    }
     this.#ws.addEventListener(type, listener, options);
   }
 

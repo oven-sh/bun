@@ -688,6 +688,16 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             head_len: usize,
             status_code: u16,
         ) void {
+            // Keep `this` alive across the synchronous JS dispatch. JS in
+            // the handshake listener can call `ws.terminate()` →
+            // didAbruptClose → HTTPClient.terminate() → deinit, which would
+            // free us mid-function. handleData / handleDecryptedData ref
+            // around the whole parse loop, but handleEnd flushes deferred
+            // bodies here directly — do an additional ref so the guard
+            // holds regardless of caller.
+            this.ref();
+            defer this.deref();
+
             var owned_body = this.body;
             this.body = .{};
             defer owned_body.deinit(bun.default_allocator);

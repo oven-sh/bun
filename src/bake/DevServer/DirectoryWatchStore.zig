@@ -31,7 +31,7 @@ pub fn trackResolutionFailure(store: *DirectoryWatchStore, import_source: []cons
     if (!std.fs.path.isAbsolute(import_source)) return;
 
     switch (loader) {
-        .tsx, .ts, .jsx, .js => {
+        .tsx, .ts, .jsx, .js, .mdx => {
             if (!(bun.strings.startsWith(specifier, "./") or
                 bun.strings.startsWith(specifier, "../"))) return;
         },

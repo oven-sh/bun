@@ -1,0 +1,16 @@
+---
+title: Frontmatter Demo
+author: Test Author
+tags: [mdx, test]
+---
+
+import { Badge } from "./Badge";
+
+export const version = "1.0.0";
+export const meta = { category: "docs" };
+
+# {frontmatter.title}
+
+By **{frontmatter.author}**
+
+<Badge>v{version}</Badge>

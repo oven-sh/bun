@@ -9,8 +9,22 @@ const path = require("node:path");
 
 const env = Bun.env;
 
+function shouldUseMdxMode(args: string[]) {
+  for (let i = 1, length = args.length; i < length; i++) {
+    const arg = args[i];
+    if (arg.endsWith(".mdx")) return true;
+    if ((arg.includes("*") || arg.includes("{")) && arg.includes(".mdx")) return true;
+  }
+  return false;
+}
+
 // This function is called at startup.
 async function start() {
+  if (shouldUseMdxMode(argv)) {
+    const mdxInternal = require("internal/mdx");
+    return mdxInternal.start();
+  }
+
   let args: string[] = [];
   const cwd = process.cwd();
   let hostname = "localhost";
@@ -140,7 +154,7 @@ yourself with Bun.serve().
     return acc.slice(0, i);
   });
 
-  if (path.platform === "win32") {
+  if (process.platform === "win32") {
     longestCommonPath = longestCommonPath.replaceAll("\\", "/");
   }
 
@@ -258,7 +272,7 @@ yourself with Bun.serve().
               hostname,
 
               // Retry with a different port up to 4 times.
-              port: defaultPort++,
+              port: ++defaultPort,
 
               fetch(_req: Request) {
                 return new Response("Not found", { status: 404 });

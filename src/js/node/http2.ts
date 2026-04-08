@@ -2260,7 +2260,13 @@ class Http2Stream extends Duplex {
           }
         }
         const chunk = Buffer.concat(chunks || []);
-        native.writeStream(this.#id, chunk, undefined, false, callback);
+        let invoked = false;
+        const cb = err => {
+          if (invoked) return;
+          invoked = true;
+          process.nextTick(callback, err);
+        };
+        native.writeStream(this.#id, chunk, undefined, false, cb);
         return;
       }
     }
@@ -2273,7 +2279,13 @@ class Http2Stream extends Duplex {
     if (session) {
       const native = session[bunHTTP2Native];
       if (native) {
-        native.writeStream(this.#id, chunk, encoding, false, callback);
+        let invoked = false;
+        const cb = err => {
+          if (invoked) return;
+          invoked = true;
+          process.nextTick(callback, err);
+        };
+        native.writeStream(this.#id, chunk, encoding, false, cb);
         return;
       }
     }

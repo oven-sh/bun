@@ -2528,6 +2528,32 @@ pub const H2FrameParser = struct {
             return entry.value_ptr;
         }
 
+        // RFC 9113 Section 5.1.2: an endpoint that receives a HEADERS frame that
+        // causes its advertised concurrent stream limit to be exceeded MUST treat
+        // this as a stream error of type PROTOCOL_ERROR or REFUSED_STREAM. We use
+        // REFUSED_STREAM so the client may retry safely.
+        if (this.isServer and this.localSettings.maxConcurrentStreams != std.math.maxInt(u32)) {
+            var open: u32 = 0;
+            var it = this.streams.valueIterator();
+            while (it.next()) |s| {
+                if (s.state != .CLOSED) open += 1;
+            }
+            if (open >= this.localSettings.maxConcurrentStreams) {
+                if (streamIdentifier > this.lastStreamID) this.lastStreamID = streamIdentifier;
+                var buffer: [FrameHeader.byteSize + 4]u8 = undefined;
+                @memset(&buffer, 0);
+                var writerStream = std.io.fixedBufferStream(&buffer);
+                const writer = writerStream.writer();
+                var frame: FrameHeader = .{ .type = @intFromEnum(FrameType.HTTP_FRAME_RST_STREAM), .flags = 0, .streamIdentifier = streamIdentifier, .length = 4 };
+                _ = frame.write(@TypeOf(writer), writer);
+                var value: u32 = @intFromEnum(ErrorCode.REFUSED_STREAM);
+                value = @byteSwap(value);
+                _ = writer.write(std.mem.asBytes(&value)) catch 0;
+                _ = this.write(&buffer);
+                return null;
+            }
+        }
+
         if (streamIdentifier > this.lastStreamID) {
             this.lastStreamID = streamIdentifier;
         }

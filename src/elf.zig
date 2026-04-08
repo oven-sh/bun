@@ -53,6 +53,11 @@ pub const ElfFile = struct {
         const ehdr = readEhdr(self.data.items);
         const phdr_size = @sizeOf(Elf64_Phdr);
 
+        // Bounds-check the program header table up-front; --compile-executable-path
+        // accepts arbitrary files, so a corrupt e_phoff/e_phnum must not panic.
+        const phdr_table_end = @as(u64, ehdr.e_phoff) +| @as(u64, ehdr.e_phnum) *| @as(u64, phdr_size);
+        if (phdr_table_end > self.data.items.len) return;
+
         for (0..ehdr.e_phnum) |i| {
             const phdr_offset = @as(usize, @intCast(ehdr.e_phoff)) + i * phdr_size;
             const phdr = std.mem.bytesAsValue(Elf64_Phdr, self.data.items[phdr_offset..][0..phdr_size]).*;
@@ -91,6 +96,37 @@ pub const ElfFile = struct {
             // p_filesz @ +32, p_memsz @ +40 in Elf64_Phdr
             std.mem.writeInt(u64, self.data.items[phdr_offset + 32 ..][0..8], new_size, .little);
             std.mem.writeInt(u64, self.data.items[phdr_offset + 40 ..][0..8], new_size, .little);
+
+            self.updateInterpSectionSize(ehdr, new_size);
+            return;
+        }
+    }
+
+    /// Best-effort: keep the `.interp` section header's `sh_size` consistent with
+    /// the rewritten PT_INTERP so `readelf -S` shows accurate metadata. The kernel
+    /// only consults PT_INTERP, so any failure here is silently ignored.
+    fn updateInterpSectionSize(self: *ElfFile, ehdr: Elf64_Ehdr, new_size: u64) void {
+        const shdr_size = @sizeOf(Elf64_Shdr);
+        const shnum = ehdr.e_shnum;
+        if (shnum == 0 or ehdr.e_shstrndx >= shnum) return;
+
+        const shdr_table_end = @as(u64, ehdr.e_shoff) +| @as(u64, shnum) *| @as(u64, shdr_size);
+        if (shdr_table_end > self.data.items.len) return;
+
+        const strtab_shdr = self.readShdr(ehdr.e_shoff, ehdr.e_shstrndx);
+        const strtab_end = strtab_shdr.sh_offset +| strtab_shdr.sh_size;
+        if (strtab_end > self.data.items.len) return;
+        const strtab = self.data.items[@intCast(strtab_shdr.sh_offset)..][0..@intCast(strtab_shdr.sh_size)];
+
+        for (0..shnum) |i| {
+            const shdr = self.readShdr(ehdr.e_shoff, @intCast(i));
+            if (shdr.sh_name >= strtab.len) continue;
+            const name = std.mem.sliceTo(strtab[shdr.sh_name..], 0);
+            if (!bun.strings.eqlComptime(name, ".interp")) continue;
+
+            // sh_size @ +32 in Elf64_Shdr
+            const shdr_offset = @as(usize, @intCast(ehdr.e_shoff)) + i * shdr_size;
+            std.mem.writeInt(u64, self.data.items[shdr_offset + 32 ..][0..8], new_size, .little);
             return;
         }
     }

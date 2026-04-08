@@ -49,7 +49,7 @@ describe("2-arg form", () => {
 test("print size", () => {
   expect(normalizeBunSnapshot(Bun.inspect(new Response(Bun.file(import.meta.filename)))), import.meta.dir)
     .toMatchInlineSnapshot(`
-    "Response (5.83 KB) {
+    "Response (6.26 KB) {
       ok: true,
       url: "",
       status: 200,
@@ -177,16 +177,12 @@ describe("clone()", () => {
   });
 });
 
-test("HTMLRewriter transform error does not leave JS wrapper pointing at freed Response", async () => {
-  // HTMLRewriter.transform() manually finalizes the internal output Response
-  // when a handler throws. Before the fix, the JSResponse wrapper (held
-  // strongly by the sink) still pointed at the freed Zig Response, and a
-  // later GC would read poisoned memory inside Response.finalize.
+test("HTMLRewriter document end error does not leave JS wrapper pointing at freed Response", async () => {
   for (let i = 0; i < 50; i++) {
     expect(() =>
       new HTMLRewriter()
-        .on("div", {
-          element() {
+        .onDocument({
+          end() {
             throw new Error("boom " + i);
           },
         })

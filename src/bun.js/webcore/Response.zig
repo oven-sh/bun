@@ -454,7 +454,6 @@ fn destroy(this: *Response) void {
     this.#init.deinit(bun.default_allocator);
     this.#body.deinit(bun.default_allocator);
     this.#url.deref();
-    this.#js_ref.deinit();
 
     bun.destroy(this);
 }

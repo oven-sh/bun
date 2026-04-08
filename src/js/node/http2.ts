@@ -3489,15 +3489,8 @@ class ClientHttp2Session extends Http2Session {
     const socket = this[bunHTTP2Socket];
     if (!socket) return;
     this.#connected = true;
-    // check if h2 is supported only for TLSSocket
     if (socket instanceof TLSSocket) {
-      // client must check alpnProtocol
-      if (socket.alpnProtocol !== "h2") {
-        socket.end();
-        const error = $ERR_HTTP2_ERROR("h2 is not supported");
-        this.emit("error", error);
-      }
-      this.#alpnProtocol = "h2";
+      this.#alpnProtocol = socket.alpnProtocol;
     } else {
       this.#alpnProtocol = "h2c";
     }

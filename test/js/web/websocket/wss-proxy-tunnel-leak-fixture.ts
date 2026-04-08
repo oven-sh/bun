@@ -72,7 +72,14 @@ if (process.argv[2] === "server") {
       ready.resolve(msg);
     },
   });
-  const { wss: wssPort, proxy: proxyPort } = await ready.promise;
+  // Fail fast if the server child exits before sending the readiness IPC,
+  // instead of hanging until the test timeout.
+  const { wss: wssPort, proxy: proxyPort } = await Promise.race([
+    ready.promise,
+    child.exited.then(exitCode => {
+      throw new Error(`server fixture exited before readiness IPC (exitCode=${exitCode})`);
+    }),
+  ]);
   const wssUrl = `wss://localhost:${wssPort}/`;
   const proxyUrl = `http://127.0.0.1:${proxyPort}`;
 

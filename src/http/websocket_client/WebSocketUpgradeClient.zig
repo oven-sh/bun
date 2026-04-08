@@ -335,10 +335,14 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             this.clearInput();
             this.body.clearAndFree(bun.default_allocator);
 
-            // Clean up proxy state
+            // Clean up proxy state. Null the field BEFORE calling deinit so a
+            // re-entrant clearData() (via tunnel.shutdown() closing the socket
+            // synchronously, which fires handleClose → clearData) does not try
+            // to free the same WebSocketProxy a second time.
             if (this.proxy) |*p| {
-                p.deinit();
+                var local = p.*;
                 this.proxy = null;
+                local.deinit();
             }
             if (this.ssl_config) |config| {
                 config.deinit();

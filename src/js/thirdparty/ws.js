@@ -504,8 +504,12 @@ class BunWebSocket extends EventEmitter {
       this.#ensureHandshakeListener();
       return;
     }
+    // `1 << undefined` evaluates to `1` (ToInt32(undefined) = 0), so a
+    // naive `if (!mask) return` would silently fall through for unknown
+    // event names and install a spurious noopBridgeListener on bit 0.
+    // Guard explicitly against unknown events.
+    if (eventIds[event] === undefined) return;
     const mask = 1 << eventIds[event];
-    if (!mask) return;
     const hasPersistentListener = (this.#eventId & mask) === mask;
     if (hasPersistentListener) return;
     // Register a persistent bridge listener once. A no-op noop callback

@@ -410,6 +410,27 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
         pub fn handleClose(this: *HTTPClient, _: Socket, _: c_int, _: ?*anyopaque) void {
             log("onClose", .{});
             jsc.markBinding(@src());
+
+            // If a non-101 response body was mid-accumulation when the peer
+            // reset the socket, flush whatever arrived before tearing down
+            // — the peer may RST instead of FIN, so `handleEnd` never fires
+            // and the `unexpected-response` consumer would otherwise see
+            // the close event with no body at all. Do this BEFORE
+            // `clearData()` frees `this.body`.
+            flush: {
+                switch (this.deferred_handshake) {
+                    .none => break :flush,
+                    .waiting_for_length, .waiting_for_eof => {},
+                }
+                this.deferred_handshake = .none;
+                if (this.body.items.len == 0) break :flush;
+                this.flushDeferredHandshakeAndProcess(this.body.items);
+                // flushDeferredHandshakeAndProcess → processResponse →
+                // terminate for the non-101 status: `outgoing_websocket`
+                // is null by the time we fall through, so
+                // `dispatchAbruptClose` below becomes a no-op.
+            }
+
             this.clearData();
             this.tcp.detach();
             this.dispatchAbruptClose(ErrorCode.ended);
@@ -606,7 +627,16 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             switch (this.deferred_handshake) {
                 .none => return false,
                 .waiting_for_length => |target_len| {
-                    if (this.body.items.len +| data.len > MAX_NON_101_BODY) {
+                    // `target_len` was already bounded to
+                    // `head_len + MAX_NON_101_BODY` in
+                    // `processWebSocketUpgradeResponse` — cap against it
+                    // directly so a response with Content-Length equal to
+                    // exactly MAX_NON_101_BODY still completes (the
+                    // accumulated buffer includes `head_len` bytes of
+                    // headers so capping on `MAX_NON_101_BODY` alone would
+                    // terminate `head_len` bytes short of the Content-
+                    // Length target).
+                    if (this.body.items.len +| data.len > target_len) {
                         this.deferred_handshake = .none;
                         this.terminate(ErrorCode.expected_101_status_code);
                         return true;

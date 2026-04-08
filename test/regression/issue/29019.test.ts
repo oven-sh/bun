@@ -42,6 +42,12 @@ test("tty.WriteStream.prototype is distinct from fs.WriteStream.prototype", () =
 });
 
 test("tty-only methods are NOT on fs.WriteStream.prototype", () => {
+  // The leak would be caused by the lazy `tty.WriteStream.prototype` getter
+  // writing methods onto fs.WriteStream.prototype. Force the getter to run
+  // before asserting — otherwise a filtered or reordered test run could pass
+  // on buggy code because the getter never fired.
+  expect(tty.WriteStream.prototype.isTTY).toBe(true);
+
   // Regression: previously tty.ts installed hasColors/getColorDepth/... onto
   // fs.WriteStream.prototype itself, which was wrong. Symbol.asyncIterator is
   // included to cover the symbol-keyed leak path too.
@@ -84,7 +90,11 @@ test("tty.WriteStream.prototype.constructor === tty.WriteStream", () => {
 test("tty.ReadStream.prototype.constructor === tty.ReadStream", () => {
   // Same story as WriteStream: Object.create(fs.ReadStream.prototype) inherits
   // `constructor` from fs.ReadStream.prototype unless we explicitly reset it.
+  expect(tty.ReadStream.prototype).not.toBe(fs.ReadStream.prototype);
   expect(tty.ReadStream.prototype.constructor).toBe(tty.ReadStream);
+  // And the fix must NOT have touched fs.ReadStream.prototype itself — if a
+  // future refactor re-aliased the two prototypes, this would catch it.
+  expect(fs.ReadStream.prototype.constructor).toBe(fs.ReadStream);
   const descriptor = Object.getOwnPropertyDescriptor(tty.ReadStream.prototype, "constructor");
   expect(descriptor).toEqual({
     value: tty.ReadStream,
@@ -95,6 +105,10 @@ test("tty.ReadStream.prototype.constructor === tty.ReadStream", () => {
 });
 
 test("tty.WriteStream.prototype.isTTY does NOT leak to fs.WriteStream.prototype", () => {
+  // Materialize the lazy tty.WriteStream.prototype first so a filtered run
+  // of this one test still exercises the getter.
+  expect(tty.WriteStream.prototype.isTTY).toBe(true);
+
   // Regression: if the fix mutated the shared fs.WriteStream.prototype,
   // fs.createWriteStream() instances would start claiming to be TTYs.
   expect(Object.prototype.hasOwnProperty.call(fs.WriteStream.prototype, "isTTY")).toBe(false);
@@ -102,6 +116,10 @@ test("tty.WriteStream.prototype.isTTY does NOT leak to fs.WriteStream.prototype"
 });
 
 test("fs.createWriteStream() instances do not inherit isTTY === true", () => {
+  // Force the lazy tty.WriteStream.prototype getter so a filtered run still
+  // exercises it — otherwise the leak could never materialize on buggy code.
+  expect(tty.WriteStream.prototype.isTTY).toBe(true);
+
   const tmp = join(tmpdir(), `bun-29019-${randomUUID()}`);
   const ws = fs.createWriteStream(tmp);
   try {

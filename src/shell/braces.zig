@@ -59,7 +59,7 @@ pub fn expand(
     out: []std.array_list.Managed(u8),
     contains_nested: bool,
 ) ExpandError!void {
-    var out_key_counter: u16 = 1;
+    var out_key_counter: u32 = 1;
     if (!contains_nested) {
         var expansions_table = try buildExpansionTableAlloc(allocator, tokens);
 
@@ -74,8 +74,8 @@ pub fn expand(
 fn expandNested(
     root: *AST.Group,
     out: []std.array_list.Managed(u8),
-    out_key: u16,
-    out_key_counter: *u16,
+    out_key: u32,
+    out_key_counter: *u32,
     start: u32,
 ) ExpandError!void {
     if (root.atoms == .single) {
@@ -157,8 +157,8 @@ fn expandFlat(
     tokens: []const Token,
     expansion_table: []const ExpansionVariant,
     out: []std.array_list.Managed(u8),
-    out_key: u16,
-    out_key_counter: *u16,
+    out_key: u32,
+    out_key_counter: *u32,
     depth_: u8,
     start: usize,
     end: usize,
@@ -380,7 +380,9 @@ pub const Parser = struct {
 };
 
 pub fn calculateExpandedAmount(tokens: []const Token) u32 {
-    var nested_brace_stack = bun.SmallList(u8, MAX_NESTED_BRACES){};
+    // Use u32 per nesting level to avoid overflow when a single brace group
+    // has more than 255 comma-separated items.
+    var nested_brace_stack = bun.SmallList(u32, MAX_NESTED_BRACES){};
     defer nested_brace_stack.deinit(bun.default_allocator);
     var variant_count: u32 = 0;
     var prev_comma: bool = false;
@@ -405,7 +407,7 @@ pub fn calculateExpandedAmount(tokens: []const Token) u32 {
                 } else if (variant_count == 0) {
                     variant_count = variants;
                 } else {
-                    variant_count *= variants;
+                    variant_count = std.math.mul(u32, variant_count, variants) catch std.math.maxInt(u32);
                 }
             },
             else => {},

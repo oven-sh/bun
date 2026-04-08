@@ -56,7 +56,13 @@ pub const SlotGuard = struct {
     /// the new slot value is a fresh `[null, cell, ...rest]` array so ALS reads
     /// inside the call still work; otherwise we set the cell directly.
     pub fn enter(global: *JSGlobalObject, cell: JSValue) SlotGuard {
-        const saved = getSlot(global);
+        // JSMicrotask.cpp skips set/restore when captured asyncContext is
+        // `undefined`, so a later restore-to-undefined is overwritten by the
+        // wrapping continuation's own restore. Normalize to `null`, which is
+        // captured and restored like any other value. getActiveSpanContext()
+        // and async_hooks.ts both treat null as "no context".
+        var saved = getSlot(global);
+        if (saved.isUndefined()) saved = .null;
         const new_slot = if (saved.isCell() and saved.jsType().isArray())
             buildArrayWithSpan(global, saved, cell)
         else

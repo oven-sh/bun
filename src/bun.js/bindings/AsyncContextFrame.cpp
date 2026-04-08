@@ -38,8 +38,11 @@ JSValue AsyncContextFrame::withAsyncContextIfNeeded(JSGlobalObject* globalObject
 {
     JSValue context = globalObject->m_asyncContextData.get()->getInternalField(0);
 
-    // If there is no async context, do not snapshot the callback.
-    if (context.isUndefined()) {
+    // If there is no async context, do not snapshot the callback. `null` is the
+    // sentinel OTEL uses to mean "no active span" — unlike `undefined` it
+    // survives microtask save/restore (JSMicrotask.cpp), but it should still be
+    // treated as "no context" here so callbacks aren't needlessly wrapped.
+    if (context.isUndefinedOrNull()) {
         return callback;
     }
 

@@ -113,6 +113,37 @@ describe("Bun.otel runtime", () => {
     // double dispose / explicit end after dispose is safe
     expect(() => captured.end()).not.toThrow();
     expect(() => captured[Symbol.dispose]()).not.toThrow();
+
+    // Nested await using — was: outer span leaked after both scopes exited
+    // (JSMicrotask skips restore when captured asyncContext is `undefined`).
+    const sid = (c: any) => (c ? Buffer.from(c.spanId).toString("hex") : undefined);
+    let aId: string | undefined;
+    {
+      await using a = tracer.start("a");
+      aId = sid(a.spanContext);
+      {
+        await using b = tracer.start("b");
+        expect(sid(otel.getActiveSpanContext())).toBe(sid(b.spanContext));
+      }
+      expect(sid(otel.getActiveSpanContext())).toBe(aId);
+    }
+    expect(otel.getActiveSpanContext()).toBeUndefined();
+    // and again at one more depth, with an await between
+    {
+      await using a = tracer.start("a2");
+      await 0;
+      {
+        await using b = tracer.start("b2");
+        await 0;
+        {
+          await using c = tracer.start("c2");
+          expect(sid(otel.getActiveSpanContext())).toBe(sid(c.spanContext));
+        }
+        expect(sid(otel.getActiveSpanContext())).toBe(sid(b.spanContext));
+      }
+      expect(sid(otel.getActiveSpanContext())).toBe(sid(a.spanContext));
+    }
+    expect(otel.getActiveSpanContext()).toBeUndefined();
   });
 
   test("span.ok() / span.error() set status; error(Error) records exception", () => {

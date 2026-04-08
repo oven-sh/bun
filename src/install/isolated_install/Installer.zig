@@ -229,12 +229,10 @@ pub const Installer = struct {
             const dep_step = entry_steps[dep.entry_id.get()].load(.acquire);
             if (dep_step == .done) continue;
 
-            // `symlink_dependency_binaries` needs the dep's files on disk (i.e. the dep has
-            // finished `link_package`). Steps before `.check_if_blocked` never wait on another
-            // entry, so requiring every dep — cycle or not — to reach `.check_if_blocked`
-            // cannot deadlock. `.blocked` sorts after `.check_if_blocked` in the enum, so a
-            // dep that is itself waiting here still satisfies this check.
-            if (@intFromEnum(dep_step) < @intFromEnum(Task.Step.check_if_blocked)) {
+            // `symlink_dependency_binaries` needs the dep's files on disk. The steps that
+            // write those files never wait on another entry, so requiring every dep —
+            // cycle or not — to have them cannot deadlock.
+            if (!dep_step.hasFilesOnDisk()) {
                 return true;
             }
 
@@ -398,6 +396,26 @@ pub const Installer = struct {
             // only the main thread sets blocked, and only the main thread
             // sets a blocked task to symlink_dependency_binaries
             blocked,
+
+            /// True once `link_package` has completed — the package's files are on
+            /// disk and safe for another entry to read (e.g. for linking this
+            /// package's bin into a dependent's `.bin/`). The stored step is the
+            /// step *currently running*, so `.symlink_dependencies` already means
+            /// `link_package` finished.
+            pub fn hasFilesOnDisk(step: Step) bool {
+                return switch (step) {
+                    .link_package => false,
+                    .symlink_dependencies,
+                    .check_if_blocked,
+                    .symlink_dependency_binaries,
+                    .run_preinstall,
+                    .binaries,
+                    .@"run (post)install and (pre/post)prepare",
+                    .done,
+                    .blocked,
+                    => true,
+                };
+            }
         };
 
         /// Called from task thread
@@ -871,8 +889,10 @@ pub const Installer = struct {
                     continue :next_step this.nextStep(current_step);
                 },
                 inline .check_if_blocked => |current_step| {
-                    // preinstall scripts need to run before binaries can be linked. Block here if any dependencies
-                    // of this entry are not finished. Do not count cycles towards blocking.
+                    // Block here until every dependency's files are on disk, and until every
+                    // non-cycle dependency is fully `.done` (so later steps can use their
+                    // bins and script output). Cycle dependencies only need their files on
+                    // disk — waiting for `.done` would deadlock.
 
                     var parent_dedupe: std.AutoArrayHashMap(Store.Entry.Id, void) = .init(bun.default_allocator);
                     defer parent_dedupe.deinit();

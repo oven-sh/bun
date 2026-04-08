@@ -627,21 +627,22 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             switch (this.deferred_handshake) {
                 .none => return false,
                 .waiting_for_length => |target_len| {
-                    // `target_len` was already bounded to
-                    // `head_len + MAX_NON_101_BODY` in
-                    // `processWebSocketUpgradeResponse` — cap against it
-                    // directly so a response with Content-Length equal to
-                    // exactly MAX_NON_101_BODY still completes (the
-                    // accumulated buffer includes `head_len` bytes of
-                    // headers so capping on `MAX_NON_101_BODY` alone would
-                    // terminate `head_len` bytes short of the Content-
-                    // Length target).
-                    if (this.body.items.len +| data.len > target_len) {
-                        this.deferred_handshake = .none;
-                        this.terminate(ErrorCode.expected_101_status_code);
-                        return true;
-                    }
-                    bun.handleOom(this.body.appendSlice(bun.default_allocator, data));
+                    // `target_len` was bounded to `head_len +
+                    // MAX_NON_101_BODY` upstream in
+                    // `processWebSocketUpgradeResponse` (which rejects
+                    // Content-Length > MAX_NON_101_BODY), so the
+                    // accumulated buffer can never exceed that limit.
+                    //
+                    // If this read would carry us past `target_len`, take
+                    // only enough bytes to fill the declared body. The
+                    // rest belong to the next pipelined response or are
+                    // trailing garbage — same as the single-chunk fast
+                    // path in `processWebSocketUpgradeResponse` which
+                    // truncates via `body[0..target_len]` before
+                    // dispatching.
+                    const available = target_len - this.body.items.len;
+                    const take = @min(available, data.len);
+                    bun.handleOom(this.body.appendSlice(bun.default_allocator, data[0..take]));
                     if (this.body.items.len >= target_len) {
                         const truncated = this.body.items[0..target_len];
                         this.deferred_handshake = .none;

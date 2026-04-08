@@ -4073,9 +4073,11 @@ class Http2Server extends net.Server {
     return super.emit(event, ...args);
   }
   setTimeout(ms, callback) {
-    this.timeout = ms;
     if (callback !== undefined) {
       validateFunction(callback, "callback");
+    }
+    this.timeout = ms;
+    if (callback !== undefined) {
       this.on("timeout", callback);
     }
     return this;
@@ -4180,9 +4182,11 @@ class Http2SecureServer extends tls.Server {
     return super.emit(event, ...args);
   }
   setTimeout(ms, callback) {
-    this.timeout = ms;
     if (callback !== undefined) {
       validateFunction(callback, "callback");
+    }
+    this.timeout = ms;
+    if (callback !== undefined) {
       this.on("timeout", callback);
     }
     return this;

@@ -62,8 +62,8 @@ describe("issue #29030 - deepStrictEqual prototype check", () => {
   });
 
   test("non-strict deepEqual still ignores prototype differences", () => {
-    // The Node.js loose `assert.deepEqual` / `util.isDeepEqual` does NOT
-    // check prototypes. Verify we didn't regress the loose path.
+    // The Node.js loose `assert.deepEqual` does NOT check prototypes.
+    // Verify we didn't regress the loose path.
     expect(() => assert.deepEqual({}, Object.create(null))).not.toThrow();
     expect(() => assert.deepEqual(Object.create(null), {})).not.toThrow();
   });

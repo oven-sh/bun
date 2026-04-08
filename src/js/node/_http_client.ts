@@ -106,10 +106,10 @@ function createUpgradeSocket(req, res) {
     }
   };
 
-  let bridged = false;
-  const bridgeRes = () => {
-    if (bridged) return;
-    bridged = true;
+  let dataBridged = false;
+  const bridgeResData = () => {
+    if (dataBridged) return;
+    dataBridged = true;
     // Bridge the IncomingMessage's decoded body into the Duplex. The
     // IncomingMessage is the single consumer of the fetch response body
     // reader — avoiding a second `getReader()` call that would otherwise
@@ -121,15 +121,19 @@ function createUpgradeSocket(req, res) {
     res.once("end", () => {
       duplex.push(null);
     });
-    res.once("error", (err: Error) => {
-      duplex.destroy(err);
-    });
   };
 
   const duplex: any = new Duplex({
     allowHalfOpen: true,
     read() {
-      bridgeRes();
+      // If the underlying IncomingMessage was already destroyed (e.g. the
+      // request aborted before the user attached a 'data' listener), push
+      // EOF immediately so the readable side doesn't hang forever.
+      if (res.destroyed || res.readableEnded) {
+        duplex.push(null);
+        return;
+      }
+      bridgeResData();
       res.resume();
     },
     write(chunk, encoding, callback) {
@@ -147,9 +151,26 @@ function createUpgradeSocket(req, res) {
       const ok = req.write(chunk, encoding);
       if (ok) {
         callback();
-      } else {
-        req.once("drain", callback);
+        return;
       }
+      // Backpressure: wait for 'drain', but also tear down cleanly if `req`
+      // errors or closes before drain fires — otherwise the callback is
+      // orphaned and the writable side stays stuck in kWriting.
+      let settled = false;
+      const settle = (err?: Error) => {
+        if (settled) return;
+        settled = true;
+        req.removeListener("drain", onDrain);
+        req.removeListener("error", onError);
+        req.removeListener("close", onClose);
+        callback(err);
+      };
+      const onDrain = () => settle();
+      const onError = (err: Error) => settle(err);
+      const onClose = () => settle();
+      req.once("drain", onDrain);
+      req.once("error", onError);
+      req.once("close", onClose);
     },
     final(callback) {
       if (req.destroyed || req.finished) {
@@ -212,6 +233,28 @@ function createUpgradeSocket(req, res) {
   };
   duplex.ref = () => duplex;
   duplex.unref = () => duplex;
+
+  // Eagerly wire `res` error/close propagation — NOT inside the lazy
+  // `bridgeResData()` closure. Attaching these only on the first `_read()`
+  // leaves a race window between the `'upgrade'` event firing (scheduled on
+  // `process.nextTick`) and the user's handler subscribing to `'data'`: if
+  // the request aborts during that gap, `res` is destroyed with no listener
+  // and the duplex never learns about it. We also hook into req's error
+  // path for the same reason — network errors on the upload half should
+  // surface on the hijacked socket immediately.
+  res.once("error", (err: Error) => {
+    if (!duplex.destroyed) duplex.destroy(err);
+  });
+  res.once("close", () => {
+    if (!duplex.destroyed && !duplex.readableEnded) {
+      // Push EOF if nothing else has — ensures the readable side finishes
+      // even if no 'end' was emitted before the close (abort, reset, etc.).
+      duplex.push(null);
+    }
+  });
+  req.once("error", (err: Error) => {
+    if (!duplex.destroyed) duplex.destroy(err);
+  });
 
   return duplex;
 }

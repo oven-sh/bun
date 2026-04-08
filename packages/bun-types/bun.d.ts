@@ -7235,10 +7235,15 @@ declare module "bun" {
     readonly killed: boolean;
 
     /**
-     * Kill the process by sending it a signal.
+     * Send a signal to the process, or probe for its existence with `0`.
+     *
+     * When `signal` is `0` no signal is actually delivered; the call only
+     * reports whether the process is still reachable. This is the standard
+     * POSIX existence probe and does not terminate the child.
      * @param signal The signal to send to the process. Defaults to `"SIGTERM"`.
-     * @returns `true` if the signal was delivered, `false` if the process
-     * had already exited (the OS reported `ESRCH`).
+     * @returns `true` if the signal was sent (or, for `signal === 0`, the
+     * process is still alive); `false` if the process had already exited
+     * (the OS reported `ESRCH`).
      */
     kill(signal?: number | NodeJS.Signals): boolean;
 

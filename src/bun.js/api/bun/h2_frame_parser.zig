@@ -4068,6 +4068,9 @@ pub const H2FrameParser = struct {
                     const name_slice = name_str.toUTF8(bun.default_allocator);
                     defer name_slice.deinit();
                     const name = name_slice.slice();
+                    if (name.len > name_buffer.len) {
+                        return globalObject.ERR(.HTTP2_INVALID_HEADER_VALUE, "Header name is too long", .{}).throw();
+                    }
 
                     const validated_name = toValidHeaderName(name, name_buffer[0..name.len]) catch {
                         const exception = globalObject.toTypeError(.INVALID_HTTP_TOKEN, "The arguments Header name is invalid. Received \"{s}\"", .{name});
@@ -4123,7 +4126,7 @@ pub const H2FrameParser = struct {
                         stream.state = .CLOSED;
                         stream.rstCode = @intFromEnum(ErrorCode.COMPRESSION_ERROR);
                         this.dispatchWithExtra(.onStreamError, stream.getIdentifier(), jsc.JSValue.jsNumber(stream.rstCode));
-                        return .js_undefined;
+                        return jsc.JSValue.jsNumber(stream_id);
                     };
                 }
             }

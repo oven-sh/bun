@@ -63,6 +63,8 @@ const ObjectKeys = Object.keys;
 const FunctionPrototypeBind = Function.prototype.bind;
 const StringPrototypeTrim = String.prototype.trim;
 const ArrayPrototypePush = Array.prototype.push;
+const ArrayPrototypeSlice = Array.prototype.slice;
+const ArrayPrototypeUnshift = Array.prototype.unshift;
 const StringPrototypeToLowerCase = String.prototype.toLowerCase;
 const StringPrototypeIncludes = String.prototype.includes;
 const StringPrototypeStartsWith = String.prototype.startsWith;
@@ -2625,8 +2627,11 @@ class ServerHttp2Stream extends Http2Stream {
     if (headers == undefined) {
       headers = {};
     } else if (ArrayIsArray(headers)) {
+      if (headers.length % 2 !== 0) {
+        throw $ERR_INVALID_ARG_VALUE("headers", headers, "must have an even number of elements");
+      }
       sensitives = headers[sensitiveHeaders];
-      rawHeaders = headers;
+      rawHeaders = ArrayPrototypeSlice.$call(headers);
       headers = undefined;
     } else if (!$isObject(headers)) {
       throw $ERR_INVALID_ARG_TYPE("headers", "object", headers);
@@ -2654,10 +2659,9 @@ class ServerHttp2Stream extends Http2Stream {
         if (key === HTTP2_HEADER_STATUS) statusCode = rawHeaders[i + 1];
         else if (key === "date") hasDate = true;
       }
-      rawHeaders = rawHeaders.slice();
       if (statusCode === undefined) {
         statusCode = 200;
-        rawHeaders.unshift(HTTP2_HEADER_STATUS, statusCode);
+        ArrayPrototypeUnshift.$call(rawHeaders, HTTP2_HEADER_STATUS, statusCode);
       }
       const sendDate = options?.sendDate;
       if (!hasDate && (sendDate == null || sendDate)) {
@@ -3903,9 +3907,14 @@ class ClientHttp2Session extends Http2Session {
 
       let authority, method, scheme, path;
       if (rawHeaders !== undefined) {
+        let hasHost = false;
         for (let i = 0; i < rawHeaders.length; i += 2) {
-          if (rawHeaders[i][0] !== ":") continue;
-          const key = StringPrototypeToLowerCase.$call(rawHeaders[i]);
+          const rawKey = rawHeaders[i];
+          if (rawKey[0] !== ":") {
+            if (!hasHost && StringPrototypeToLowerCase.$call(rawKey) === "host") hasHost = true;
+            continue;
+          }
+          const key = StringPrototypeToLowerCase.$call(rawKey);
           const value = rawHeaders[i + 1];
           if (key === ":method") method = value;
           else if (key === ":scheme") scheme = value;
@@ -3917,7 +3926,7 @@ class ClientHttp2Session extends Http2Session {
           method = "GET";
           ArrayPrototypePush.$call(additional, ":method", method);
         }
-        if (authority === undefined) {
+        if (authority === undefined && !hasHost) {
           authority = this.#authority;
           ArrayPrototypePush.$call(additional, ":authority", authority);
         }
@@ -3929,7 +3938,10 @@ class ClientHttp2Session extends Http2Session {
         if (path === undefined) {
           ArrayPrototypePush.$call(additional, ":path", "/");
         }
-        rawHeaders = additional.length ? additional.concat(rawHeaders) : rawHeaders.slice();
+        if (additional.length) {
+          for (let i = 0; i < rawHeaders.length; i++) ArrayPrototypePush.$call(additional, rawHeaders[i]);
+          rawHeaders = additional;
+        }
         if (sensitives !== undefined) rawHeaders[sensitiveHeaders] = sensitives;
       } else {
         authority = headers[":authority"];

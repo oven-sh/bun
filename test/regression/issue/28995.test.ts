@@ -124,19 +124,24 @@ describe.concurrent("issue/28995 root-level wildcard subpath imports", () => {
   });
 
   test("bare #/ does not match a #/* wildcard entry", async () => {
-    // Per PACKAGE_IMPORTS_EXPORTS_RESOLVE, a wildcard key like "#/*" only
-    // matches specifiers that start with AND are strictly longer than the
-    // pattern base. A bare "#/" equals the pattern base and must return
-    // PackageImportNotDefined rather than resolving to the package root.
+    // Per PACKAGE_IMPORTS_EXPORTS_RESOLVE step 5c, a wildcard key like
+    // "#/*" only matches specifiers that start with AND are strictly longer
+    // than the pattern base ("#/"). Without the length guard in
+    // resolveImportsExports, `import "#/"` would substitute an empty
+    // subpath into the target and resolve to `./target.ts` — a real file
+    // — with exit code 0. The concrete target here ensures the test
+    // actually exercises the length guard: without the fix the import
+    // succeeds to target.ts; with the fix the match is skipped and the
+    // specifier is rejected with "Cannot find".
     using dir = tempDir("issue-28995-bare-hash-slash", {
       "package.json": JSON.stringify({
         name: "issue-28995-bare-hash-slash",
         version: "1.0.0",
         imports: {
-          "#/*": "./*",
+          "#/*": "./target.ts",
         },
       }),
-      "index.ts": `export const x = 1;`,
+      "target.ts": `console.log("should not load");`,
       "entry.ts": `import "#/";`,
     });
 

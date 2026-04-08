@@ -621,7 +621,12 @@ pub const Flags = packed struct(u32) {
     /// Set after the first H3 retry so a stale-session/GOAWAY race retries
     /// once on a fresh connection but never loops.
     h3_retried: bool = false,
-    _: u13 = 0,
+    /// Set by `buildRequest()` if the request on the wire carries explicit
+    /// body framing (either `Transfer-Encoding: chunked` that survived header
+    /// truncation, or `Content-Length`). Used by `writeToStream()` to decide
+    /// whether to drain the streaming request body before the 101 response.
+    request_body_has_framing: bool = false,
+    _: u12 = 0,
 };
 
 // TODO: reduce the size of this struct
@@ -887,23 +892,6 @@ pub fn headerStr(this: *const HTTPClient, ptr: api.StringPointer) string {
     return this.header_buf[ptr.offset..][0..ptr.length];
 }
 
-/// True if the user's request headers explicitly include either
-/// `Transfer-Encoding` or `Content-Length`, meaning they intend to send
-/// a request body with real HTTP framing rather than an empty body (as
-/// with WebSocket-style `Upgrade:` handshakes).
-pub fn hasExplicitBodyFraming(this: *const HTTPClient) bool {
-    const header_entries = this.header_entries.slice();
-    const header_names = header_entries.items(.name);
-    for (header_names) |head| {
-        const name = this.headerStr(head);
-        const hash = hashHeaderName(name);
-        if (hash == hashHeaderConst("Transfer-Encoding") or hash == hashHeaderConst("Content-Length")) {
-            return true;
-        }
-    }
-    return false;
-}
-
 pub const HeaderBuilder = @import("./HeaderBuilder.zig");
 
 pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
@@ -1042,6 +1030,10 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
         header_count += 1;
     }
 
+    // Reset. We recompute this on every buildRequest() because the request
+    // may be rebuilt on retry/redirect and the header set can change.
+    this.flags.request_body_has_framing = false;
+
     if (body_len > 0 or this.method.hasRequestBody()) {
         if (this.flags.is_streaming_request_body) {
             if (original_content_length) |content_length| {
@@ -1058,9 +1050,15 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
                 // If !add_transfer_encoding, the user explicitly set Transfer-Encoding,
                 // which was already added to request_headers_buf. We respect that and
                 // do not add Content-Length (they are mutually exclusive per HTTP/1.1).
-            } else if (add_transfer_encoding and this.flags.upgrade_state == .none) {
+                this.flags.request_body_has_framing = true;
+            } else if (!add_transfer_encoding) {
+                // User explicitly set Transfer-Encoding and it survived truncation
+                // (already in request_headers_buf via the user-headers loop).
+                this.flags.request_body_has_framing = true;
+            } else if (this.flags.upgrade_state == .none) {
                 request_headers_buf[header_count] = chunked_encoded_header;
                 header_count += 1;
+                this.flags.request_body_has_framing = true;
             }
         } else {
             request_headers_buf[header_count] = .{
@@ -1068,6 +1066,7 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
                 .value = std.fmt.bufPrint(&this.request_content_len_buf, "{d}", .{body_len}) catch "0",
             };
             header_count += 1;
+            this.flags.request_body_has_framing = true;
         }
     } else if (original_content_length) |content_length| {
         request_headers_buf[header_count] = .{
@@ -1075,6 +1074,7 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
             .value = content_length,
         };
         header_count += 1;
+        this.flags.request_body_has_framing = true;
     }
 
     return picohttp.Request{
@@ -1549,13 +1549,17 @@ pub fn writeToStream(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPCo
     }
     var stream = &this.state.original_request_body.stream;
     const stream_buffer = stream.buffer orelse return;
-    if (this.flags.upgrade_state == .pending and !this.hasExplicitBodyFraming()) {
+    if (this.flags.upgrade_state == .pending and !this.flags.request_body_has_framing) {
         // For upgrade requests with no explicit body framing (WebSocket-style),
         // writes represent post-upgrade protocol data and must be held until
         // the server responds 101. For requests that *do* have explicit framing
         // (e.g. dockerode sends `Transfer-Encoding: chunked` with an `Upgrade:`
         // header), the body is part of the HTTP request and must be drained so
         // the server can parse it before deciding to switch protocols.
+        //
+        // `request_body_has_framing` is set by `buildRequest()` from the header
+        // set that actually makes it to the wire, so a late/dropped
+        // `Transfer-Encoding` user header will not falsely enable draining.
         return;
     }
     const buffer = stream_buffer.acquire();

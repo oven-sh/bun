@@ -77,68 +77,121 @@ function emitErrorEventNT(self, err) {
 }
 
 // Creates a Duplex stream that represents the hijacked socket for a
-// `Connection: Upgrade` response. Reads pull from the fetch Response body
-// (the post-upgrade bytes from the server); writes route through the
-// ClientRequest's existing `req.write()` path so that the upload half of
-// the HTTP/1.1 connection keeps flowing. Used for dockerode-style hijacked
-// `docker exec` sessions and similar `Upgrade: tcp` patterns.
-function createUpgradeSocket(req, response) {
-  const reader = response.body?.getReader?.() ?? null;
-  let reading = false;
-  let ended = false;
+// `Connection: Upgrade` response. The readable side is fed from the
+// IncomingMessage `res` (which owns the fetch response body reader); the
+// writable side routes back through `req.write()` so the upload half of
+// the HTTP/1.1 connection keeps flowing. After the server sends `101`,
+// FetchTasklet.skipChunkedFraming() flips on `signals.upgraded`, so any
+// post-upgrade writes bypass chunked framing and the terminating 0-chunk —
+// matching the raw-bytes semantics of a real hijacked TCP socket.
+//
+// Used for dockerode-style hijacked `docker exec` sessions and similar
+// `Upgrade: tcp` patterns.
+function createUpgradeSocket(req, res) {
+  let socketDestroyed = false;
+  let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
+  let timeoutMs = 0;
 
-  const duplex = new Duplex({
+  const armTimeout = () => {
+    if (timeoutTimer !== undefined) {
+      clearTimeout(timeoutTimer);
+      timeoutTimer = undefined;
+    }
+    if (timeoutMs > 0 && !socketDestroyed) {
+      timeoutTimer = setTimeout(() => {
+        timeoutTimer = undefined;
+        if (!socketDestroyed) duplex.emit("timeout");
+      }, timeoutMs);
+      (timeoutTimer as any).unref?.();
+    }
+  };
+
+  let bridged = false;
+  const bridgeRes = () => {
+    if (bridged) return;
+    bridged = true;
+    // Bridge the IncomingMessage's decoded body into the Duplex. The
+    // IncomingMessage is the single consumer of the fetch response body
+    // reader — avoiding a second `getReader()` call that would otherwise
+    // throw "ReadableStream is already locked" on the next read.
+    res.on("data", (chunk: Buffer) => {
+      armTimeout();
+      if (!duplex.push(chunk)) res.pause();
+    });
+    res.once("end", () => {
+      duplex.push(null);
+    });
+    res.once("error", (err: Error) => {
+      duplex.destroy(err);
+    });
+  };
+
+  const duplex: any = new Duplex({
     allowHalfOpen: true,
     read() {
-      if (reading || ended || !reader) {
-        if (!reader && !ended) {
-          ended = true;
-          this.push(null);
-        }
-        return;
-      }
-      reading = true;
-      reader.read().then(
-        ({ value, done }) => {
-          reading = false;
-          if (done) {
-            ended = true;
-            this.push(null);
-            return;
-          }
-          this.push(Buffer.from(value.buffer, value.byteOffset, value.byteLength));
-        },
-        err => {
-          reading = false;
-          this.destroy(err);
-        },
-      );
+      bridgeRes();
+      res.resume();
     },
     write(chunk, encoding, callback) {
       if (req.destroyed || req.finished) {
         callback($ERR_STREAM_WRITE_AFTER_END());
         return;
       }
-      req.write(chunk, encoding, callback);
+      armTimeout();
+      // Honor backpressure: only ack this write once `req` reports that it
+      // actually has room for more. `req.write()` returns false when its
+      // internal body queue has crossed the fake-backpressure threshold; the
+      // `'drain'` event fires when the queued chunks have been consumed by
+      // the underlying fetch body generator. Post-upgrade, FetchTasklet
+      // writes the raw bytes directly (no chunk framing).
+      const ok = req.write(chunk, encoding);
+      if (ok) {
+        callback();
+      } else {
+        req.once("drain", callback);
+      }
     },
     final(callback) {
-      if (!req.destroyed && !req.finished) {
-        try {
-          req.end();
-        } catch (_err) {
-          void _err;
-        }
+      if (req.destroyed || req.finished) {
+        callback();
+        return;
       }
-      callback();
+      // Wait until the underlying request body has actually finished before
+      // acknowledging `_final`. `'finish'` fires after `send()` has completed;
+      // `'error'`/`'close'` surface abnormal termination. Post-upgrade,
+      // FetchTasklet skips the chunked terminator so `req.end()` just closes
+      // the upload half without injecting framing bytes.
+      let done = false;
+      const finish = (err?: Error) => {
+        if (done) return;
+        done = true;
+        req.removeListener("finish", onFinish);
+        req.removeListener("error", onError);
+        req.removeListener("close", onClose);
+        callback(err);
+      };
+      const onFinish = () => finish();
+      const onError = (err: Error) => finish(err);
+      const onClose = () => finish();
+      req.once("finish", onFinish);
+      req.once("error", onError);
+      req.once("close", onClose);
+      try {
+        req.end();
+      } catch (err) {
+        finish(err as Error);
+      }
     },
     destroy(err, callback) {
-      ended = true;
-      if (reader) {
-        try {
-          reader.cancel?.();
-        } catch (_err) {
-          void _err;
-        }
+      socketDestroyed = true;
+      if (timeoutTimer !== undefined) {
+        clearTimeout(timeoutTimer);
+        timeoutTimer = undefined;
+      }
+      try {
+        res.destroy?.(err || undefined);
+      } catch (_err) {
+        void _err;
       }
       if (!req.destroyed) {
         req.destroy(err || undefined);
@@ -151,8 +204,10 @@ function createUpgradeSocket(req, response) {
   // (e.g. dockerode-modem) see a sane shape.
   duplex.setKeepAlive = () => duplex;
   duplex.setNoDelay = () => duplex;
-  duplex.setTimeout = (msecs, callback) => {
+  duplex.setTimeout = (msecs: number, callback?: () => void) => {
+    timeoutMs = msecs | 0;
     if (callback) duplex.once("timeout", callback);
+    armTimeout();
     return duplex;
   };
   duplex.ref = () => duplex;
@@ -508,7 +563,11 @@ function ClientRequest(input, options, cb) {
 
           if (isUpgrade) {
             this[kUpgradeOrConnect] = true;
-            const upgradeSocket = createUpgradeSocket(this, response);
+            // The hijacked socket reads via the IncomingMessage `res` (the
+            // single owner of the fetch response body reader); this avoids
+            // the "ReadableStream is already locked" TypeError that would
+            // otherwise occur when the user touches `res`.
+            const upgradeSocket = createUpgradeSocket(this, res);
             process.nextTick(
               (self, res, socket) => {
                 try {

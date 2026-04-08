@@ -1263,11 +1263,18 @@ pub const FetchTasklet = struct {
     /// True for upgraded connections (e.g. WebSocket) or when the user explicitly
     /// set Content-Length without setting Transfer-Encoding.
     ///
+    /// Once the server has responded `101 Switching Protocols`, the connection
+    /// is in raw mode and all further writes must bypass chunked framing and
+    /// skip the terminating `0\r\n\r\n` — otherwise we'd inject chunk headers
+    /// into the hijacked protocol stream (e.g. corrupting dockerode stdin).
+    ///
     /// If the user explicitly set `Transfer-Encoding: chunked`, we honor that
-    /// and use chunked framing even for upgraded connections. This matches
-    /// Node.js behavior and is required by clients like dockerode which send
-    /// a chunked body alongside an `Upgrade` request for hijacked `docker exec`.
+    /// for the pre-upgrade body. This matches Node.js behavior and is required
+    /// by clients like dockerode which send a chunked body alongside an
+    /// `Upgrade` request for hijacked `docker exec`.
     fn skipChunkedFraming(this: *const FetchTasklet) bool {
+        // Post-upgrade: always raw bytes, no framing and no terminator.
+        if (this.signals.get(.upgraded)) return true;
         const transfer_encoding = this.request_headers.get("transfer-encoding");
         if (transfer_encoding) |value| {
             if (std.ascii.eqlIgnoreCase(value, "chunked")) return false;

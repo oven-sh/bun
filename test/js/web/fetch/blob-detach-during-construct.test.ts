@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 
 test("new Blob copies ArrayBuffer bytes before later parts can detach the buffer", async () => {
   const buf = new Uint8Array(4096).fill(0x41);

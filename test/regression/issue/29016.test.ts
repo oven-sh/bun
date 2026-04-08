@@ -4,9 +4,9 @@
 // when the `length` argument was 0, because `Arguments.Read.fromJS`
 // short-circuited on `length === 0` before reaching the position check.
 import { describe, expect, test } from "bun:test";
+import { tempDirWithFiles } from "harness";
 import fs from "node:fs";
 import path from "node:path";
-import { tempDirWithFiles } from "harness";
 
 function openEmptyTempFile() {
   const dir = tempDirWithFiles("issue-29016", { tempfile: "" });

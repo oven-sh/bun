@@ -16,9 +16,6 @@
 import { RedisClient } from "bun";
 import { expect, test } from "bun:test";
 
-// We spawn a sub-process for each test so a dropped message can't poison a
-// shared connection pool.
-
 async function redisReachable() {
   try {
     const c = new RedisClient("redis://localhost:6379");
@@ -33,6 +30,30 @@ async function redisReachable() {
 const isReachable = await redisReachable();
 const t = isReachable ? test : test.skip;
 
+// If the regression returns, the RESP2 subscribe path hangs forever rather
+// than throwing. Race every network-dependent await against an explicit
+// bounded timeout so failures are reported with a useful message instead of
+// an opaque 5s global-test-timeout.
+const REGRESSION_TIMEOUT_MS = 2_000;
+
+function withTimeout<T>(promise: Promise<T>, label: string, ms = REGRESSION_TIMEOUT_MS): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`#29042 regression? Timed out after ${ms}ms waiting for: ${label}`));
+    }, ms);
+    promise.then(
+      value => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      err => {
+        clearTimeout(timer);
+        reject(err);
+      },
+    );
+  });
+}
+
 t("subscribe() after HELLO 2 delivers messages to the JS handler", async () => {
   const pub = new RedisClient("redis://localhost:6379");
   await pub.connect();
@@ -46,20 +67,23 @@ t("subscribe() after HELLO 2 delivers messages to the JS handler", async () => {
   const channel = `bun-29042-${crypto.randomUUID()}`;
   const { promise, resolve, reject } = Promise.withResolvers<string>();
 
-  await sub.subscribe(channel, (message, ch) => {
-    if (ch !== channel) reject(new Error(`wrong channel: ${ch}`));
-    resolve(message);
-  });
+  await withTimeout(
+    sub.subscribe(channel, (message, ch) => {
+      if (ch !== channel) reject(new Error(`wrong channel: ${ch}`));
+      resolve(message);
+    }),
+    "SUBSCRIBE confirmation (RESP2)",
+  );
 
-  const numSubs = await pub.send("PUBLISH", [channel, "hello"]);
+  const numSubs = await withTimeout(pub.send("PUBLISH", [channel, "hello"]), "PUBLISH");
   // Sanity-check the regression shape: the server MUST see the subscriber,
   // otherwise the test is not exercising the bug.
   expect(numSubs).toBe(1);
 
-  const received = await promise;
+  const received = await withTimeout(promise, "subscribe() handler invocation (RESP2)");
   expect(received).toBe("hello");
 
-  await sub.unsubscribe(channel);
+  await withTimeout(sub.unsubscribe(channel), "UNSUBSCRIBE confirmation (RESP2)");
   sub.close();
   pub.close();
 });
@@ -79,15 +103,18 @@ t("multi-channel subscribe after HELLO 2 delivers every message", async () => {
   const received: Array<{ channel: string; message: string }> = [];
   const { promise, resolve } = Promise.withResolvers<void>();
 
-  await sub.subscribe(channels, (message, channel) => {
-    received.push({ channel, message });
-    if (received.length === 2) resolve();
-  });
+  await withTimeout(
+    sub.subscribe(channels, (message, channel) => {
+      received.push({ channel, message });
+      if (received.length === 2) resolve();
+    }),
+    "multi-channel SUBSCRIBE confirmation (RESP2)",
+  );
 
-  expect(await pub.send("PUBLISH", [channels[0], "hello-a"])).toBe(1);
-  expect(await pub.send("PUBLISH", [channels[1], "hello-b"])).toBe(1);
+  expect(await withTimeout(pub.send("PUBLISH", [channels[0], "hello-a"]), "PUBLISH channel 0")).toBe(1);
+  expect(await withTimeout(pub.send("PUBLISH", [channels[1], "hello-b"]), "PUBLISH channel 1")).toBe(1);
 
-  await promise;
+  await withTimeout(promise, "both multi-channel messages delivered (RESP2)");
 
   // Order between channels is not guaranteed, sort for stable comparison.
   received.sort((x, y) => x.channel.localeCompare(y.channel));
@@ -96,7 +123,7 @@ t("multi-channel subscribe after HELLO 2 delivers every message", async () => {
     { channel: channels[1], message: "hello-b" },
   ]);
 
-  await sub.unsubscribe(channels);
+  await withTimeout(sub.unsubscribe(channels), "multi-channel UNSUBSCRIBE (RESP2)");
   sub.close();
   pub.close();
 });
@@ -108,12 +135,12 @@ t("unsubscribe after HELLO 2 resolves its promise", async () => {
   await sub.send("HELLO", ["2"]);
 
   const channel = `bun-29042-${crypto.randomUUID()}`;
-  await sub.subscribe(channel, () => {});
+  await withTimeout(sub.subscribe(channel, () => {}), "SUBSCRIBE confirmation (RESP2)");
 
-  // If RESP2 unsubscribe confirmations are dropped, this promise hangs
-  // forever — the test harness will time it out rather than report a
-  // meaningful failure. So just call it and make sure we reach the next line.
-  await sub.unsubscribe(channel);
+  // Without the fix the UNSUBSCRIBE confirmation frame (a RESP2 array) was
+  // never matched in the subscriber dispatch, so this promise would hang.
+  // withTimeout turns that hang into a clear regression message.
+  await withTimeout(sub.unsubscribe(channel), "UNSUBSCRIBE confirmation (RESP2)");
 
   sub.close();
 });

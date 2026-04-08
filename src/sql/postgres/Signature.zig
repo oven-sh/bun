@@ -86,12 +86,15 @@ pub fn generate(globalObject: *jsc.JSGlobalObject, query: []const u8, array_valu
 
     // max u64 length is 20, max prepared_statement_name length is 63
     const prepared_statement_name = if (unnamed) "" else try std.fmt.allocPrint(bun.default_allocator, "P{s}${d}", .{ name[0..@min(40, name.len)], prepared_statement_id });
+    errdefer if (!unnamed) bun.default_allocator.free(prepared_statement_name);
+
+    const query_copy = try bun.default_allocator.dupe(u8, query);
 
     return Signature{
         .prepared_statement_name = prepared_statement_name,
         .name = name,
         .fields = fields.items,
-        .query = try bun.default_allocator.dupe(u8, query),
+        .query = query_copy,
     };
 }
 

@@ -65,11 +65,14 @@ pub fn generate(globalObject: *jsc.JSGlobalObject, query: []const u8, array_valu
     // are carried in the type-header of each `COM_STMT_EXECUTE`, so the per-
     // parameter tag does not need to be encoded into the cache key.
     const name = try bun.default_allocator.dupe(u8, query);
+    errdefer bun.default_allocator.free(name);
+
+    const query_copy = try bun.default_allocator.dupe(u8, query);
 
     return Signature{
         .name = name,
         .fields = fields.items,
-        .query = try bun.default_allocator.dupe(u8, query),
+        .query = query_copy,
     };
 }
 

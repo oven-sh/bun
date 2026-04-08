@@ -29,15 +29,15 @@
 
 namespace WebCore {
 
-#define DOM_EVENT_NAMES_FOR_EACH(macro)             \
-    macro(error)                                    \
-        macro(abort)                                \
-            macro(close)                            \
-                macro(open)                         \
-                    macro(rename)                   \
-                        macro(message)              \
-                            macro(change)           \
-                                macro(messageerror) \
+#define DOM_EVENT_NAMES_FOR_EACH(macro)              \
+    macro(error)                                     \
+        macro(abort)                                 \
+            macro(close)                             \
+                macro(open)                          \
+                    macro(rename)                    \
+                        macro(message)               \
+                            macro(change)            \
+                                macro(messageerror)  \
                                     macro(handshake) \
                                         macro(resourcetimingbufferfull)
 

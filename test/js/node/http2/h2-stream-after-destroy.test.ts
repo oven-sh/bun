@@ -1,6 +1,6 @@
-import { test, expect } from "bun:test";
-import http2 from "node:http2";
+import { expect, test } from "bun:test";
 import { once } from "node:events";
+import http2 from "node:http2";
 
 test("stream.session is undefined and stream.state is {} after session.destroy()", async () => {
   const server = http2.createServer();

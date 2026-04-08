@@ -57,8 +57,7 @@ test("#28980 — single-row inserts with alternating NULL reuse one prepared sta
     }
 
     const statementLike = `INSERT INTO "${table}"%`;
-    const prepared =
-      await sql`SELECT name FROM pg_prepared_statements WHERE statement LIKE ${statementLike}`;
+    const prepared = await sql`SELECT name FROM pg_prepared_statements WHERE statement LIKE ${statementLike}`;
 
     // Before the fix: the cache key encoded `.int4.null` vs `.int4.text`, so
     // each null pattern allocated a fresh server-side prepared statement.
@@ -98,8 +97,7 @@ test("#28980 — sql(rows) bulk insert with alternating NULL positions reuses on
     }
 
     const statementLike = `INSERT INTO "${table}"%`;
-    const prepared =
-      await sql`SELECT name FROM pg_prepared_statements WHERE statement LIKE ${statementLike}`;
+    const prepared = await sql`SELECT name FROM pg_prepared_statements WHERE statement LIKE ${statementLike}`;
 
     // Before the fix: a fresh server-side prepared statement was allocated
     // for every batch whose NULL pattern changed — so 20 batches could grow
@@ -128,8 +126,7 @@ test("#28980 — all-NULL and all-non-NULL rows share one prepared statement", a
     await sql`INSERT INTO ${sql(table)} VALUES (${4}, ${null}, ${"y"}, ${null})`;
 
     const statementLike = `INSERT INTO "${table}"%`;
-    const prepared =
-      await sql`SELECT name FROM pg_prepared_statements WHERE statement LIKE ${statementLike}`;
+    const prepared = await sql`SELECT name FROM pg_prepared_statements WHERE statement LIKE ${statementLike}`;
 
     expect(prepared.length).toBe(1);
 

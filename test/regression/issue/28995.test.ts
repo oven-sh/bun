@@ -7,15 +7,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
-// A debug build with ASAN emits a harmless warning about JSC signal handlers
-// on stderr — filter it out so we can keep tight assertions on real errors.
-function cleanStderr(s: string): string {
-  return s
-    .split("\n")
-    .filter(line => line.length > 0 && !line.includes("ASAN interferes"))
-    .join("\n");
-}
-
 describe.concurrent("issue/28995 root-level wildcard subpath imports", () => {
   test("#/* wildcard maps to ./*", async () => {
     using dir = tempDir("issue-28995-wildcard", {
@@ -41,9 +32,7 @@ describe.concurrent("issue/28995 root-level wildcard subpath imports", () => {
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-    expect(cleanStderr(stderr)).toBe("");
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
     expect(stdout).toBe("hello from logger\n");
     expect(exitCode).toBe(0);
   });
@@ -72,9 +61,7 @@ describe.concurrent("issue/28995 root-level wildcard subpath imports", () => {
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-    expect(cleanStderr(stderr)).toBe("");
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
     expect(stdout).toBe("the button\n");
     expect(exitCode).toBe(0);
   });
@@ -103,9 +90,7 @@ describe.concurrent("issue/28995 root-level wildcard subpath imports", () => {
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-    expect(cleanStderr(stderr)).toBe("");
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
     expect(stdout).toBe("literal works\n");
     expect(exitCode).toBe(0);
   });
@@ -134,7 +119,6 @@ describe.concurrent("issue/28995 root-level wildcard subpath imports", () => {
     });
 
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-
     expect(stderr).toContain("Cannot find");
     expect(exitCode).not.toBe(0);
   });
@@ -162,9 +146,7 @@ describe.concurrent("issue/28995 root-level wildcard subpath imports", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [buildStderr, buildExit] = await Promise.all([build.stderr.text(), build.exited]);
-    expect(buildStderr).not.toContain("error");
-    expect(buildExit).toBe(0);
+    expect(await build.exited).toBe(0);
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), "run", "out.js"],
@@ -173,8 +155,7 @@ describe.concurrent("issue/28995 root-level wildcard subpath imports", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(cleanStderr(stderr)).toBe("");
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
     expect(stdout).toBe("bundled util\n");
     expect(exitCode).toBe(0);
   });

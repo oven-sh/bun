@@ -339,7 +339,7 @@ class Debugger {
         return Response.json(versionInfo());
       case "/json":
       case "/json/list":
-      // TODO?
+        return Response.json(targetList(request, this.#url));
     }
 
     if (!this.#url!.protocol.includes("unix") && this.#url!.pathname !== pathname) {
@@ -516,6 +516,57 @@ function versionInfo(): unknown {
     "Bun-Version": Bun.version,
     "Bun-Revision": Bun.revision,
   };
+}
+
+// GET /json and /json/list — CDP target discovery. Node.js, Chrome DevTools
+// and JetBrains IDEs (WebStorm "Coding assistance for Node.js") hit this
+// endpoint to find the webSocketDebuggerUrl. Returning 404 here made those
+// integrations fail with "Cannot connect to VM". See #28984.
+function targetList(request: Request, inspectorUrl: URL | undefined): unknown[] {
+  if (!inspectorUrl) return [];
+
+  // Unix sockets don't have a useful ws:// URL for remote clients; JetBrains
+  // / Chrome DevTools only consume TCP inspector endpoints via /json anyway.
+  if (inspectorUrl.protocol.includes("unix")) return [];
+
+  // Echo whatever Host: header the client connected to so the returned
+  // webSocketDebuggerUrl works even when the inspector is listening on
+  // 0.0.0.0 or ::. Fall back to the URL's own host if no Host header.
+  const hostHeader = request.headers.get("Host");
+  const host = hostHeader || inspectorUrl.host || "localhost";
+  const wsPath = inspectorUrl.pathname || "/";
+  const id = wsPath.length > 1 ? wsPath.slice(1) : "bun";
+
+  // process.argv[1] is the script path if the user ran a file, empty for
+  // `bun -e`/REPL. Fall back to something sensible in both cases.
+  const script = typeof process.argv[1] === "string" && process.argv[1].length > 0 ? process.argv[1] : "";
+  const title = script || "bun";
+  const fileUrl = script ? pathToFileURL(script) : `file://${process.cwd()}/`;
+
+  return [
+    {
+      description: "bun instance",
+      devtoolsFrontendUrl: `https://debug.bun.sh/#${host}${wsPath}`,
+      faviconUrl: "https://bun.com/favicon.ico",
+      id,
+      title,
+      // JetBrains/Chrome DevTools match on type === "node". Anything else and
+      // they skip the entry, so we mirror what Node.js returns here.
+      type: "node",
+      url: fileUrl,
+      webSocketDebuggerUrl: `ws://${host}${wsPath}`,
+    },
+  ];
+}
+
+function pathToFileURL(path: string): string {
+  if (path.startsWith("file://")) return path;
+  // Windows: absolute path like C:\foo\bar → file:///C:/foo/bar
+  if (process.platform === "win32") {
+    const normalized = path.replace(/\\/g, "/");
+    return `file:///${normalized.startsWith("/") ? normalized.slice(1) : normalized}`;
+  }
+  return `file://${path.startsWith("/") ? path : `/${path}`}`;
 }
 
 function webSocketWriter(ws: ServerWebSocket<unknown>): Writer {

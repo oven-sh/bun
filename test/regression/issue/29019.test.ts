@@ -1,0 +1,95 @@
+// https://github.com/oven-sh/bun/issues/29019
+//
+// `tty.WriteStream.prototype.isTTY` must be a plain data property with value
+// `true`, matching Node.js. Previously Bun omitted it, so
+// `tty.WriteStream.prototype.isTTY` was `undefined`.
+
+import { expect, test } from "bun:test";
+import { randomUUID } from "node:crypto";
+import fs from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import tty from "node:tty";
+
+test("tty.WriteStream.prototype.isTTY is true", () => {
+  expect(tty.WriteStream.prototype.isTTY).toBe(true);
+});
+
+test("tty.WriteStream.prototype has isTTY as an own property", () => {
+  expect(Object.prototype.hasOwnProperty.call(tty.WriteStream.prototype, "isTTY")).toBe(true);
+});
+
+test("tty.WriteStream.prototype.isTTY descriptor matches Node", () => {
+  const descriptor = Object.getOwnPropertyDescriptor(tty.WriteStream.prototype, "isTTY");
+  expect(descriptor).toEqual({
+    value: true,
+    writable: true,
+    enumerable: true,
+    configurable: true,
+  });
+});
+
+test("tty.ReadStream.prototype does not define isTTY (Node parity)", () => {
+  // Node only puts isTTY on WriteStream.prototype, not ReadStream.prototype.
+  expect(Object.prototype.hasOwnProperty.call(tty.ReadStream.prototype, "isTTY")).toBe(false);
+});
+
+test("tty.WriteStream.prototype is distinct from fs.WriteStream.prototype", () => {
+  // They must be distinct so that tty-only members (isTTY, hasColors,
+  // getColorDepth, cursorTo, ...) don't leak onto every fs.createWriteStream
+  // instance.
+  expect(tty.WriteStream.prototype).not.toBe(fs.WriteStream.prototype);
+});
+
+test("tty-only methods are NOT on fs.WriteStream.prototype", () => {
+  // Regression: previously tty.ts installed hasColors/getColorDepth/... onto
+  // fs.WriteStream.prototype itself, which was wrong.
+  for (const name of [
+    "hasColors",
+    "getColorDepth",
+    "getWindowSize",
+    "clearLine",
+    "clearScreenDown",
+    "cursorTo",
+    "moveCursor",
+    "_refreshSize",
+  ]) {
+    expect(Object.prototype.hasOwnProperty.call(fs.WriteStream.prototype, name)).toBe(false);
+  }
+});
+
+test("tty.WriteStream.prototype.isTTY does NOT leak to fs.WriteStream.prototype", () => {
+  // Regression: if the fix mutated the shared fs.WriteStream.prototype,
+  // fs.createWriteStream() instances would start claiming to be TTYs.
+  expect(Object.prototype.hasOwnProperty.call(fs.WriteStream.prototype, "isTTY")).toBe(false);
+  expect(fs.WriteStream.prototype.isTTY).toBeUndefined();
+});
+
+test("fs.createWriteStream() instances do not inherit isTTY === true", () => {
+  const tmp = join(tmpdir(), `bun-29019-${randomUUID()}`);
+  const ws = fs.createWriteStream(tmp);
+  try {
+    // Must not be `true` (would be a tty leak).
+    expect(ws.isTTY).toBeUndefined();
+  } finally {
+    ws.destroy();
+    try {
+      fs.unlinkSync(tmp);
+    } catch {}
+  }
+});
+
+test("tty.WriteStream instance isTTY reflects the fd (not always true)", () => {
+  // Constructing with a non-tty fd should produce isTTY === false on the
+  // instance, even though the prototype says true. The instance own property
+  // shadows the prototype.
+  const fd = fs.openSync(process.execPath, "r");
+  const ws = new tty.WriteStream(fd);
+  try {
+    expect(ws.isTTY).toBe(false);
+  } finally {
+    try {
+      ws.destroy();
+    } catch {}
+  }
+});

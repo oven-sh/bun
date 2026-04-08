@@ -313,13 +313,15 @@ test("parentPort.emit() works inside a worker thread", async () => {
     const result: any = await new Promise((resolve, reject) => {
       w.once("message", resolve);
       w.once("error", reject);
+      // If the worker crashes before posting, surface that as a clear error
+      // instead of letting the default test timeout report only "timed out".
       w.once("exit", code => reject(new Error(`worker exited early with code ${code}`)));
     });
     expect(result).toEqual({ ok: true, received: "from-emit" });
   } finally {
     await w.terminate();
   }
-}, 20_000);
+});
 
 test("emit() wraps payload in MessageEvent.data and returns hadListeners", () => {
   // Two pre-existing bugs that this PR should fix since it ships emit() as

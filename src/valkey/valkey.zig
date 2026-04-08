@@ -809,12 +809,15 @@ pub const ValkeyClient = struct {
         // reply IS a subscription frame and we have to route it through `handleSubscribeResponse`.
         const subscription_frame: ?protocol.SubscriptionPushMessage.Frame = protocol.SubscriptionPushMessage.asFrame(value);
 
-        // A RESP3 `.Push` frame that is not a recognized pub/sub kind (e.g. a keyspace
-        // notification, a CLIENT TRACKING `invalidate`, or a sharded/pattern push kind
-        // the client doesn't route yet) is a server-initiated async notification — it is
-        // NOT a reply to any in-flight command. Drop it without consuming a promise pair,
-        // otherwise we'd corrupt an unrelated command's result.
-        if (value.* == .Push and subscription_frame == null) {
+        // A RESP3 `.Push` frame with an unrecognized kind (keyspace notification,
+        // CLIENT TRACKING `invalidate`, sharded/pattern push, etc.) is a server-initiated
+        // async notification ONLY when nothing is in flight. If a command is pending,
+        // the push is actually its reply (for example `psubscribe`/`pmessage` arrive as
+        // `.Push` on RESP3 and are the reply to a user-issued `PSUBSCRIBE`). Dropping
+        // those would leave the caller's promise hanging — fall through to the regular
+        // handler in that case and resolve the pair with the raw value, matching the
+        // pre-refactor behavior for unrouted kinds.
+        if (value.* == .Push and subscription_frame == null and this.in_flight.readableLength() == 0) {
             @branchHint(.cold);
             debug("Dropping unrouted server push frame (kind={s})", .{value.Push.kind});
             return;

@@ -1,7 +1,7 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
+import { once } from "node:events";
 import http2 from "node:http2";
 import net from "node:net";
-import { once } from "node:events";
 
 const kSettings = Buffer.from([0, 0, 0, 4, 0, 0, 0, 0, 0]);
 const kPingAck = Buffer.from([0, 0, 8, 6, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);

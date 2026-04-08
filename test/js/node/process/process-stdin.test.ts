@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
+import path from "node:path";
 
 test("pipe does the right thing", async () => {
   // Note: Bun.spawnSync uses memfd_create on Linux for pipe, which means we see
@@ -152,4 +153,33 @@ test("stdin should not allow process to exit when not paused", async () => {
   await proc.exited;
   expect(await proc.stdout.text()).toMatchInlineSnapshot(`""`);
   expect(await proc.stderr.text()).toMatchInlineSnapshot(`""`);
+});
+
+test("removing the last 'readable' listener releases fd 0 for an inherit-stdio child", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), path.join(import.meta.dir, "stdin", "remove-readable-releases-fd-fixture.js")],
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+
+  // Wait for the parent to remove its 'readable' listener and spawn the child.
+  let stderr = "";
+  for await (const chunk of proc.stderr) {
+    stderr += Buffer.from(chunk).toString();
+    if (stderr.includes("READY\n")) break;
+  }
+
+  // Everything written from here on should reach the child, not the parent.
+  const payload = Array.from({ length: 32 }, (_, i) => `line${i}`).join("\n") + "\n";
+  proc.stdin.write(payload);
+  await proc.stdin.end();
+
+  const [stdout, restStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  stderr += restStderr;
+
+  expect(stderr).toBe("READY\n");
+  expect(stdout).toBe("CHILD:" + payload);
+  expect(exitCode).toBe(0);
 });

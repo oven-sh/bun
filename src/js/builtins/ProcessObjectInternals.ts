@@ -186,6 +186,35 @@ export function getStdinStream(
     return originalOn.$call(this, event, listener);
   };
 
+  // Mirror the `on` override above: when the last `readable` listener is gone
+  // and nothing else is consuming, release fd 0 so a stdio:'inherit' child can
+  // read it exclusively. Without this, the native poll stays registered and the
+  // parent steals bytes meant for the child.
+  function maybeDisownAfterRemove(stream) {
+    if (stream.listenerCount("readable") === 0 && stream.listenerCount("data") === 0 && !stream.readableFlowing) {
+      stream._readableState.reading = false;
+      disown();
+    }
+  }
+
+  const originalRemoveListener = stream.removeListener;
+  stream.removeListener = stream.off = function (event, listener) {
+    const result = originalRemoveListener.$call(this, event, listener);
+    if (event === "readable") {
+      maybeDisownAfterRemove(this);
+    }
+    return result;
+  };
+
+  const originalRemoveAllListeners = stream.removeAllListeners;
+  stream.removeAllListeners = function (event) {
+    const result = originalRemoveAllListeners.$apply(this, arguments);
+    if (event === "readable" || event === undefined) {
+      maybeDisownAfterRemove(this);
+    }
+    return result;
+  };
+
   stream.fd = fd;
 
   // tty.ReadStream is supposed to extend from net.Socket.

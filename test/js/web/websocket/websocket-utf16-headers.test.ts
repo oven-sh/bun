@@ -40,14 +40,12 @@ async function listenEphemeral(
   return { port: (server.address() as net.AddressInfo).port, server };
 }
 
-// Returns an ephemeral port that is bound and then immediately released so
-// connections to it will be refused. We never use a hardcoded "reserved" port
-// like 127.0.0.1:1 because it is not guaranteed free on shared CI hosts.
+// Returns an ephemeral port whose server stays bound for the duration of the
+// test and immediately destroys any incoming connection. This avoids the
+// TOCTOU race of "bind → close → hope nothing else grabs the port" — the port
+// is held until afterEach() tears the server down.
 async function deadPort(): Promise<number> {
-  const probe = net.createServer();
-  await once(probe.listen(0, "127.0.0.1"), "listening");
-  const port = (probe.address() as net.AddressInfo).port;
-  await new Promise<void>(resolve => probe.close(() => resolve()));
+  const { port } = await listenEphemeral(socket => socket.destroy());
   return port;
 }
 
@@ -133,7 +131,7 @@ describe("WebSocket upgrade with non-ASCII inputs", () => {
     // `new URL(...)` with a non-Latin1 path produces a 16-bit-backed
     // WTFStringImpl for the parsed URL. Before the fix, the Zig side called
     // `.slice()` on that and wrote raw UTF-16 bytes into the upgrade request.
-    // Target port is allocated and immediately released so the connect()
+    // The target port immediately destroys any connection so the WebSocket
     // fails quickly — we only care that the upgrade request build doesn't
     // crash.
     const port = await deadPort();

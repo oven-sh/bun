@@ -167,7 +167,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             const request_result = buildRequestBody(
                 vm,
                 pathname_slice.slice(),
-                ssl,
+                target_is_secure,
                 host_slice.slice(),
                 port,
                 client_protocol_slice.slice(),
@@ -354,6 +354,11 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             this.subprotocols.clearAndFree();
             this.clearInput();
             this.body.clearAndFree(bun.default_allocator);
+
+            if (this.hostname.len > 0) {
+                bun.default_allocator.free(this.hostname);
+                this.hostname = "";
+            }
 
             // Clean up proxy state
             if (this.proxy) |*p| {

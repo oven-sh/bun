@@ -49,14 +49,27 @@ test("bun install handles a bin target inside .bin without panicking", async () 
     : join(String(dir), "bun.lockb");
   expect(existsSync(lockfile)).toBe(true);
 
-  // On POSIX the bin link is a symlink whose target is the `bin` path we
-  // stored in package.json, normalized relative to `.bin`. On Windows it's
-  // a `.exe` + `.bunx` shim pair.
+  // On POSIX the bin link is a symlink whose target is the bin path we stored
+  // in package.json, normalized relative to `.bin`. On Windows it's a `.exe`
+  // + `.bunx` shim pair, and the `.bunx` file embeds the bin path as a
+  // UTF-16LE prefix terminated by a `"\0` sequence — see the file format at
+  // the top of `src/install/windows-shim/BinLinkingShim.zig`.
   if (process.platform === "win32") {
     const exe = join(String(dir), "node_modules", ".bin", "weird.exe");
     const bunx = join(String(dir), "node_modules", ".bin", "weird.bunx");
     expect(statSync(exe).isFile()).toBe(true);
     expect(statSync(bunx).isFile()).toBe(true);
+
+    // Decode the stored bin_path from the .bunx header. The shim's walk-back
+    // logic lands at the parent of `.bin` at runtime and appends this string
+    // to build the absolute target path, so it must equal `.bin\foo.js` for
+    // our fixture — a weaker check wouldn't catch a regression where the
+    // retry loop stored the wrong relative form.
+    const bunxBytes = await Bun.file(bunx).bytes();
+    const decoded = new TextDecoder("utf-16le").decode(bunxBytes);
+    const terminator = decoded.indexOf('"\0');
+    expect(terminator).toBeGreaterThan(0);
+    expect(decoded.slice(0, terminator)).toBe(".bin\\foo.js");
   } else {
     const link = join(String(dir), "node_modules", ".bin", "weird");
     expect(readlinkSync(link)).toBe("foo.js");

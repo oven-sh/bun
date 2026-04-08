@@ -2234,12 +2234,15 @@ pub const Resolver = struct {
         }
 
         // Cache miss — persist the path so stored DirEntry / DirInfo references
-        // remain valid across every thread that reads the shared caches. On the
-        // generation-refresh path (`in_place != null`) the already-cached
-        // `DirEntry.dir` is itself a persistent slice in `DirnameStore`, so reuse
-        // it and skip the duplicate allocation.
+        // remain valid across every thread that reads the shared caches. Both
+        // the generation-refresh path (`in_place != null`) and the
+        // current-generation-hit path (`needs_iter == false`) already have a
+        // `DirEntry.dir` that is itself a persistent slice in `DirnameStore`,
+        // so reuse it and skip the duplicate allocation in those cases.
         const dir_path = if (in_place) |existing|
             existing.dir
+        else if (!needs_iter)
+            dir_entries_option.entries.dir
         else
             bun.handleOom(Fs.FileSystem.DirnameStore.instance.append(string, dir_path_tmp));
 

@@ -294,14 +294,12 @@ test("on() accepts an EventListener object with handleEvent", async () => {
   }
 });
 
-test(
-  "parentPort.emit() works inside a worker thread",
-  async () => {
-    // fakeParentPort() is Object.create(MessagePort.prototype), which has no
-    // native internal slots, so calling the native dispatchEvent on it throws
-    // "illegal invocation". The fix installs an own dispatchEvent property
-    // that delegates to the worker's global self EventTarget.
-    const source = `
+test("parentPort.emit() works inside a worker thread", async () => {
+  // fakeParentPort() is Object.create(MessagePort.prototype), which has no
+  // native internal slots, so calling the native dispatchEvent on it throws
+  // "illegal invocation". The fix installs an own dispatchEvent property
+  // that delegates to the worker's global self EventTarget.
+  const source = `
       const { parentPort } = require("node:worker_threads");
       let received;
       parentPort.on("message", msg => {
@@ -310,20 +308,18 @@ test(
       const ok = parentPort.emit("message", "from-emit");
       parentPort.postMessage({ ok, received });
     `;
-    const w = new Worker(source, { eval: true });
-    try {
-      const result: any = await new Promise((resolve, reject) => {
-        w.once("message", resolve);
-        w.once("error", reject);
-        w.once("exit", code => reject(new Error(`worker exited early with code ${code}`)));
-      });
-      expect(result).toEqual({ ok: true, received: "from-emit" });
-    } finally {
-      await w.terminate();
-    }
-  },
-  20_000,
-);
+  const w = new Worker(source, { eval: true });
+  try {
+    const result: any = await new Promise((resolve, reject) => {
+      w.once("message", resolve);
+      w.once("error", reject);
+      w.once("exit", code => reject(new Error(`worker exited early with code ${code}`)));
+    });
+    expect(result).toEqual({ ok: true, received: "from-emit" });
+  } finally {
+    await w.terminate();
+  }
+}, 20_000);
 
 test("emit() wraps payload in MessageEvent.data and returns hadListeners", () => {
   // Two pre-existing bugs that this PR should fix since it ships emit() as

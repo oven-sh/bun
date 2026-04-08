@@ -680,7 +680,7 @@ const std = @import("std");
 
 const bun = @import("bun");
 const Environment = bun.Environment;
-const FileDescriptorType = bun.FileDescriptor;
+const FileDescriptorType = bun.FD;
 const MutableString = bun.MutableString;
 const Output = bun.Output;
 const c = bun.c;

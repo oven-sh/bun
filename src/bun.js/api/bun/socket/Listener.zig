@@ -41,7 +41,7 @@ pub const UnixOrHost = union(enum) {
         host: []const u8,
         port: u16,
     },
-    fd: bun.FileDescriptor,
+    fd: bun.FD,
 
     pub fn clone(this: UnixOrHost) UnixOrHost {
         switch (this) {

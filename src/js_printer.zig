@@ -5622,7 +5622,7 @@ pub fn NewWriter(
             return comptime std.meta.hasFn(ContextType, "copyFileRange");
         }
 
-        pub fn copyFileRange(ctx: ContextType, in_file: StoredFileDescriptorType, start: usize, end: usize) !void {
+        pub fn copyFileRange(ctx: ContextType, in_file: FD, start: usize, end: usize) !void {
             ctx.sendfile(
                 in_file,
                 start,
@@ -6367,12 +6367,12 @@ const std = @import("std");
 
 const bun = @import("bun");
 const Environment = bun.Environment;
+const FD = bun.FD;
 const FeatureFlags = bun.FeatureFlags;
-const FileDescriptorType = bun.FileDescriptor;
+const FileDescriptorType = bun.FD;
 const ImportRecord = bun.ImportRecord;
 const MutableString = bun.MutableString;
 const Output = bun.Output;
-const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const assert = bun.assert;
 const default_allocator = bun.default_allocator;
 const js_lexer = bun.js_lexer;

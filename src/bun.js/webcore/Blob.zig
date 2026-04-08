@@ -1417,6 +1417,20 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
                         destination_blob.detach();
                         return globalThis.throwInvalidArguments("ReadableStream has already been used", .{});
                     }
+
+                    // If the body already has a ReadableStream (e.g. `res.body` was
+                    // accessed before calling Bun.write), data will flow to the
+                    // ByteStream instead of ever transitioning to .InternalBlob, so
+                    // `onReceiveValue` would never fire and the WriteFileWait task
+                    // would wait forever. Pump the stream directly.
+                    if (response.getBodyReadableStream(globalThis) orelse bodyValue.Locked.readable.get(globalThis)) |readable| {
+                        if (readable.isDisturbed(globalThis)) {
+                            destination_blob.detach();
+                            return globalThis.throwInvalidArguments("ReadableStream has already been used", .{});
+                        }
+                        return destination_blob.pipeReadableStreamToBlob(globalThis, readable, options.extra_options);
+                    }
+
                     var task = bun.new(WriteFileWaitFromLockedValueTask, .{
                         .globalThis = globalThis,
                         .file_blob = destination_blob,
@@ -1480,6 +1494,17 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
                         destination_blob.detach();
                         return globalThis.throwInvalidArguments("ReadableStream has already been used", .{});
                     }
+
+                    // See matching comment in the Response branch above —
+                    // onReceiveValue never fires once a ReadableStream exists.
+                    if (request.getBodyReadableStream(globalThis) orelse bodyValue.Locked.readable.get(globalThis)) |readable| {
+                        if (readable.isDisturbed(globalThis)) {
+                            destination_blob.detach();
+                            return globalThis.throwInvalidArguments("ReadableStream has already been used", .{});
+                        }
+                        return destination_blob.pipeReadableStreamToBlob(globalThis, readable, options.extra_options);
+                    }
+
                     var task = bun.new(WriteFileWaitFromLockedValueTask, .{
                         .globalThis = globalThis,
                         .file_blob = destination_blob,
@@ -2388,6 +2413,7 @@ pub const FileStreamWrapper = struct {
 pub fn onFileStreamResolveRequestStream(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     var args = callframe.arguments_old(2);
     var this = args.ptr[args.len - 1].asPromisePtr(FileStreamWrapper);
+    const written = this.sink.written;
     defer this.deinit();
     var strong = this.readable_stream_ref;
     defer strong.deinit();
@@ -2395,7 +2421,7 @@ pub fn onFileStreamResolveRequestStream(globalThis: *jsc.JSGlobalObject, callfra
     if (strong.get(globalThis)) |stream| {
         stream.done(globalThis);
     }
-    try this.promise.resolve(globalThis, jsc.JSValue.jsNumber(0));
+    try this.promise.resolve(globalThis, jsc.JSValue.jsNumber(written));
     return .js_undefined;
 }
 
@@ -2607,9 +2633,10 @@ pub fn pipeReadableStreamToBlob(this: *Blob, globalThis: *jsc.JSGlobalObject, re
                     return promise_value;
                 },
                 .fulfilled => {
+                    const written = file_sink.written;
                     file_sink.deref();
                     readable_stream.done(globalThis);
-                    return jsc.JSPromise.resolvedPromiseValue(globalThis, jsc.JSValue.jsNumber(0));
+                    return jsc.JSPromise.resolvedPromiseValue(globalThis, jsc.JSValue.jsNumber(written));
                 },
                 .rejected => {
                     file_sink.deref();
@@ -2627,9 +2654,10 @@ pub fn pipeReadableStreamToBlob(this: *Blob, globalThis: *jsc.JSGlobalObject, re
             return jsc.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, assignment_result);
         }
     }
+    const written = file_sink.written;
     file_sink.deref();
 
-    return jsc.JSPromise.resolvedPromiseValue(globalThis, jsc.JSValue.jsNumber(0));
+    return jsc.JSPromise.resolvedPromiseValue(globalThis, jsc.JSValue.jsNumber(written));
 }
 
 pub fn getWriter(

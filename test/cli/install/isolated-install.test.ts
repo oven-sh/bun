@@ -2,7 +2,7 @@ import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, lstatSync, readlinkSync } from "fs";
 import { mkdir, readlink, rm, symlink } from "fs/promises";
-import { VerdaccioRegistry, bunEnv, bunExe, readdirSorted, runBunInstall, tempDir } from "harness";
+import { VerdaccioRegistry, bunEnv, bunExe, isWindows, readdirSorted, runBunInstall, tempDir } from "harness";
 import { join } from "path";
 
 const registry = new VerdaccioRegistry();
@@ -239,6 +239,10 @@ test("cyclic dependencies link each other's bins", async () => {
     }),
   );
 
+  const binNames = isWindows
+    ? ["cycle-bin-a.bunx", "cycle-bin-a.exe", "cycle-bin-b.bunx", "cycle-bin-b.exe"]
+    : ["cycle-bin-a", "cycle-bin-b"];
+
   // The race (cycle member proceeding past `check_if_blocked` before its cycle peer's
   // files are on disk) is timing-dependent, so install several times.
   for (let i = 0; i < 10; i++) {
@@ -247,10 +251,10 @@ test("cyclic dependencies link each other's bins", async () => {
 
     expect(
       await readdirSorted(join(packageDir, "node_modules", ".bun", "cycle-bin-a@1.0.0", "node_modules", ".bin")),
-    ).toEqual(["cycle-bin-a", "cycle-bin-b"]);
+    ).toEqual(binNames);
     expect(
       await readdirSorted(join(packageDir, "node_modules", ".bun", "cycle-bin-b@1.0.0", "node_modules", ".bin")),
-    ).toEqual(["cycle-bin-a", "cycle-bin-b"]);
+    ).toEqual(binNames);
   }
 });
 

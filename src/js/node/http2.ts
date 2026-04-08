@@ -3151,7 +3151,8 @@ class ServerHttp2Session extends Http2Session {
     if (socket && typeof socket.ref === "function") return socket.ref();
   }
   setTimeout(msecs, callback) {
-    return this[bunHTTP2Socket]?.setTimeout(msecs, callback);
+    const socket = this[bunHTTP2Socket];
+    if (socket && typeof socket.setTimeout === "function") return socket.setTimeout(msecs, callback);
   }
 
   ping(payload, callback) {
@@ -3594,7 +3595,8 @@ class ClientHttp2Session extends Http2Session {
     this.#parser?.setNextStreamID(id);
   }
   setTimeout(msecs, callback) {
-    return this[bunHTTP2Socket]?.setTimeout(msecs, callback);
+    const socket = this[bunHTTP2Socket];
+    if (socket && typeof socket.setTimeout === "function") return socket.setTimeout(msecs, callback);
   }
   ping(payload, callback) {
     if (typeof payload === "function") {

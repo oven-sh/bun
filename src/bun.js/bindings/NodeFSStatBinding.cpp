@@ -596,11 +596,11 @@ JSC::Structure* createJSBigIntStatsObjectStructure(JSC::VM& vm, JSC::JSGlobalObj
     return structure;
 }
 
-extern "C" JSC::EncodedJSValue Bun__createJSStatsObject(Zig::GlobalObject* globalObject, int64_t dev,
-    int64_t ino,
-    int64_t mode,
-    int64_t nlink,
-    int64_t uid, int64_t gid, int64_t rdev, int64_t size, int64_t blksize, int64_t blocks, double atimeMs, double mtimeMs, double ctimeMs, double birthtimeMs)
+extern "C" JSC::EncodedJSValue Bun__createJSStatsObject(Zig::GlobalObject* globalObject, uint64_t dev,
+    uint64_t ino,
+    uint64_t mode,
+    uint64_t nlink,
+    uint64_t uid, uint64_t gid, uint64_t rdev, uint64_t size, uint64_t blksize, uint64_t blocks, double atimeMs, double mtimeMs, double ctimeMs, double birthtimeMs)
 {
     auto& vm = globalObject->vm();
 
@@ -641,16 +641,16 @@ extern "C" JSC::EncodedJSValue Bun__createJSStatsObject(Zig::GlobalObject* globa
 }
 
 extern "C" JSC::EncodedJSValue Bun__createJSBigIntStatsObject(Zig::GlobalObject* globalObject,
-    int64_t dev,
-    int64_t ino,
-    int64_t mode,
-    int64_t nlink,
-    int64_t uid,
-    int64_t gid,
-    int64_t rdev,
-    int64_t size,
-    int64_t blksize,
-    int64_t blocks,
+    uint64_t dev,
+    uint64_t ino,
+    uint64_t mode,
+    uint64_t nlink,
+    uint64_t uid,
+    uint64_t gid,
+    uint64_t rdev,
+    uint64_t size,
+    uint64_t blksize,
+    uint64_t blocks,
     int64_t atimeMs,
     int64_t mtimeMs,
     int64_t ctimeMs,
@@ -664,25 +664,26 @@ extern "C" JSC::EncodedJSValue Bun__createJSBigIntStatsObject(Zig::GlobalObject*
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* structure = getStructure<true>(globalObject);
-    JSC::JSValue js_dev = JSC::JSBigInt::createFrom(globalObject, dev);
+    // Node.js fills a BigInt64Array via static_cast<int64_t>(uint64_t).
+    JSC::JSValue js_dev = JSC::JSBigInt::createFrom(globalObject, static_cast<int64_t>(dev));
     RETURN_IF_EXCEPTION(scope, {});
-    JSC::JSValue js_ino = JSC::JSBigInt::createFrom(globalObject, ino);
+    JSC::JSValue js_ino = JSC::JSBigInt::createFrom(globalObject, static_cast<int64_t>(ino));
     RETURN_IF_EXCEPTION(scope, {});
-    JSC::JSValue js_mode = JSC::JSBigInt::createFrom(globalObject, mode);
+    JSC::JSValue js_mode = JSC::JSBigInt::createFrom(globalObject, static_cast<int64_t>(mode));
     RETURN_IF_EXCEPTION(scope, {});
-    JSC::JSValue js_nlink = JSC::JSBigInt::createFrom(globalObject, nlink);
+    JSC::JSValue js_nlink = JSC::JSBigInt::createFrom(globalObject, static_cast<int64_t>(nlink));
     RETURN_IF_EXCEPTION(scope, {});
-    JSC::JSValue js_uid = JSC::JSBigInt::createFrom(globalObject, uid);
+    JSC::JSValue js_uid = JSC::JSBigInt::createFrom(globalObject, static_cast<int64_t>(uid));
     RETURN_IF_EXCEPTION(scope, {});
-    JSC::JSValue js_gid = JSC::JSBigInt::createFrom(globalObject, gid);
+    JSC::JSValue js_gid = JSC::JSBigInt::createFrom(globalObject, static_cast<int64_t>(gid));
     RETURN_IF_EXCEPTION(scope, {});
-    JSC::JSValue js_rdev = JSC::JSBigInt::createFrom(globalObject, rdev);
+    JSC::JSValue js_rdev = JSC::JSBigInt::createFrom(globalObject, static_cast<int64_t>(rdev));
     RETURN_IF_EXCEPTION(scope, {});
-    JSC::JSValue js_size = JSC::JSBigInt::createFrom(globalObject, size);
+    JSC::JSValue js_size = JSC::JSBigInt::createFrom(globalObject, static_cast<int64_t>(size));
     RETURN_IF_EXCEPTION(scope, {});
-    JSC::JSValue js_blksize = JSC::JSBigInt::createFrom(globalObject, blksize);
+    JSC::JSValue js_blksize = JSC::JSBigInt::createFrom(globalObject, static_cast<int64_t>(blksize));
     RETURN_IF_EXCEPTION(scope, {});
-    JSC::JSValue js_blocks = JSC::JSBigInt::createFrom(globalObject, blocks);
+    JSC::JSValue js_blocks = JSC::JSBigInt::createFrom(globalObject, static_cast<int64_t>(blocks));
     RETURN_IF_EXCEPTION(scope, {});
     JSC::JSValue js_atimeMs = JSC::JSBigInt::createFrom(globalObject, atimeMs);
     RETURN_IF_EXCEPTION(scope, {});

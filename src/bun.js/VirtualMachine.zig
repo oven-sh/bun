@@ -1364,6 +1364,16 @@ pub fn initWorker(
     // Without this, the worker's resolver defaults to `global_cache = .disable`
     // and bare specifiers that the parent resolved via auto-install will fail
     // with "Cannot find package". See https://github.com/oven-sh/bun/issues/29018
+    //
+    // We also reuse the parent's already-initialized PackageManager pointer.
+    // `Resolver.getPackageManager` lazy-inits via `bun.once` (same singleton
+    // across all threads) and unconditionally assigns `pm.onWake =
+    // self.onWakePackageManager` on the first call for each resolver. If a
+    // worker resolver runs that branch while the parent has an in-flight async
+    // auto-install, it would overwrite the parent's wake handler and the
+    // parent's pending `import()` would never resolve. Pre-populating
+    // `package_manager` skips the orelse branch on worker resolvers so
+    // `pm.onWake` stays bound to the parent's `AsyncModule.Queue`.
     {
         const parent_transpiler = &worker.parent.transpiler;
         vm.transpiler.resolver.opts.global_cache = parent_transpiler.resolver.opts.global_cache;
@@ -1374,6 +1384,7 @@ pub fn initWorker(
         vm.transpiler.options.prefer_offline_install = parent_transpiler.options.prefer_offline_install;
         vm.transpiler.options.prefer_latest_install = parent_transpiler.options.prefer_latest_install;
         vm.transpiler.options.install = parent_transpiler.options.install;
+        vm.transpiler.resolver.package_manager = parent_transpiler.resolver.package_manager;
     }
 
     if (opts.graph == null) {

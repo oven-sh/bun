@@ -11,6 +11,7 @@
 // creates a Worker from it, and asserts that both threads import the
 // package successfully.
 import { expect, test } from "bun:test";
+import { join } from "node:path";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 test("auto-install works inside a Worker thread", async () => {
@@ -37,9 +38,15 @@ test("auto-install works inside a Worker thread", async () => {
     `,
   });
 
+  // Use a test-local install cache so pre-cached packages on the developer
+  // machine / CI host can't short-circuit the auto-install flow we're trying
+  // to exercise.
   await using proc = Bun.spawn({
     cmd: [bunExe(), "script.js"],
-    env: bunEnv,
+    env: {
+      ...bunEnv,
+      BUN_INSTALL_CACHE_DIR: join(String(dir), "install-cache"),
+    },
     cwd: String(dir),
     stdout: "pipe",
     stderr: "pipe",

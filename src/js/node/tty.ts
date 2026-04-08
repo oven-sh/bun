@@ -129,6 +129,16 @@ Object.defineProperty(WriteStream, "prototype", {
     // `isTTY = true` data property would leak onto `fs.WriteStream.prototype`
     // and every `fs.createWriteStream()` instance would claim to be a TTY.
     const Prototype = Object.create(fs.WriteStream.prototype);
+    // Restore the constructor link. Without this, instances would inherit
+    // `constructor` from fs.WriteStream.prototype and `new tty.WriteStream(1)
+    // .constructor === fs.WriteStream`, which is wrong. Node's descriptor is
+    // { value, writable: true, enumerable: false, configurable: true }.
+    Object.defineProperty(Prototype, "constructor", {
+      value: WriteStream,
+      writable: true,
+      enumerable: false,
+      configurable: true,
+    });
     Object.defineProperty(WriteStream, "prototype", { value: Prototype });
 
     Prototype._refreshSize = function () {

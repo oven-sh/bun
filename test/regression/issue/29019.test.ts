@@ -43,7 +43,8 @@ test("tty.WriteStream.prototype is distinct from fs.WriteStream.prototype", () =
 
 test("tty-only methods are NOT on fs.WriteStream.prototype", () => {
   // Regression: previously tty.ts installed hasColors/getColorDepth/... onto
-  // fs.WriteStream.prototype itself, which was wrong.
+  // fs.WriteStream.prototype itself, which was wrong. Symbol.asyncIterator is
+  // included to cover the symbol-keyed leak path too.
   for (const name of [
     "hasColors",
     "getColorDepth",
@@ -53,9 +54,31 @@ test("tty-only methods are NOT on fs.WriteStream.prototype", () => {
     "cursorTo",
     "moveCursor",
     "_refreshSize",
-  ]) {
+    Symbol.asyncIterator,
+  ] as (string | symbol)[]) {
     expect(Object.prototype.hasOwnProperty.call(fs.WriteStream.prototype, name)).toBe(false);
   }
+});
+
+test("tty.WriteStream.prototype owns Symbol.asyncIterator", () => {
+  // Sanity check: the symbol IS installed on tty.WriteStream.prototype, so the
+  // leak-check loop above is actually testing something (not a tautology).
+  expect(Object.prototype.hasOwnProperty.call(tty.WriteStream.prototype, Symbol.asyncIterator)).toBe(true);
+});
+
+test("tty.WriteStream.prototype.constructor === tty.WriteStream", () => {
+  // Creating the prototype via Object.create(fs.WriteStream.prototype) would
+  // otherwise leave `constructor` inherited from fs.WriteStream.prototype,
+  // making `new tty.WriteStream(1).constructor === fs.WriteStream`. Node keeps
+  // it pointing at tty.WriteStream.
+  expect(tty.WriteStream.prototype.constructor).toBe(tty.WriteStream);
+  const descriptor = Object.getOwnPropertyDescriptor(tty.WriteStream.prototype, "constructor");
+  expect(descriptor).toEqual({
+    value: tty.WriteStream,
+    writable: true,
+    enumerable: false,
+    configurable: true,
+  });
 });
 
 test("tty.WriteStream.prototype.isTTY does NOT leak to fs.WriteStream.prototype", () => {

@@ -1165,7 +1165,7 @@ function onServerStream(Http2ServerRequest, Http2ServerResponse, stream, headers
 const proxyCompatSocketHandler = {
   has(stream, prop) {
     const session = stream.session;
-        const ref = (session != null ? session[bunHTTP2Socket] : undefined) ?? stream;
+    const ref = (session != null ? session[bunHTTP2Socket] : undefined) ?? stream;
     return prop in stream || prop in ref;
   },
 
@@ -1205,7 +1205,7 @@ const proxyCompatSocketHandler = {
   },
   getPrototypeOf(stream) {
     const session = stream.session;
-        const ref = (session != null ? session[bunHTTP2Socket] : undefined) ?? stream;
+    const ref = (session != null ? session[bunHTTP2Socket] : undefined) ?? stream;
     return ReflectGetPrototypeOf(ref);
   },
   set(stream, prop, value) {

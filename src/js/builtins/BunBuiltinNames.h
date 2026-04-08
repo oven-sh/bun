@@ -208,6 +208,7 @@ using namespace JSC;
     macro(pulling) \
     macro(put) \
     macro(queue) \
+    macro(rawHeaders) \
     macro(read) \
     macro(readIntoRequests) \
     macro(readRequests) \
@@ -248,6 +249,7 @@ using namespace JSC;
     macro(state) \
     macro(status) \
     macro(statusCode) \
+    macro(statusMessage) \
     macro(statusText) \
     macro(storedError) \
     macro(strategy) \

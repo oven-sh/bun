@@ -85,47 +85,19 @@ const eventIds = {
 };
 
 let lazyReadable;
-function makeHandshakeResponse(statusCode, head, body) {
+function makeHandshakeResponse(statusCode, statusMessage, rawHeaders, body) {
   lazyReadable ??= require("node:stream").Readable;
   const res = new lazyReadable({ read() {} });
   const headers = (res.headers = { __proto__: null });
-  const rawHeaders = (res.rawHeaders = []);
-  let statusMessage = "";
-  // `head` is the raw HTTP response-head Buffer (status line + header block
-  // + CRLFCRLF). Decode as latin1 — HTTP/1.1 header values are ISO-8859-1 per
-  // RFC 7230, and this matches how node:http surfaces headers on
-  // IncomingMessage. Cast via toString so the parser below works with string
-  // APIs (charCodeAt, slice returning string).
-  const headStr = typeof head === "string" ? head : head.toString("latin1");
-  let i = headStr.indexOf("\r\n");
-  if (i !== -1) {
-    const sp = headStr.indexOf(" ");
-    if (sp !== -1) {
-      const sp2 = headStr.indexOf(" ", sp + 1);
-      statusMessage = sp2 !== -1 ? headStr.slice(sp2 + 1, i) : "";
-    }
-  }
-  while (i !== -1) {
-    const start = i + 2;
-    i = headStr.indexOf("\r\n", start);
-    const line = i === -1 ? headStr.slice(start) : headStr.slice(start, i);
-    if (!line) break;
-    const colon = line.indexOf(":");
-    if (colon === -1) continue;
-    const name = line.slice(0, colon);
-    let v = colon + 1;
-    while (line.charCodeAt(v) === 32 || line.charCodeAt(v) === 9) v++;
-    let end = line.length;
-    while (end > v && (line.charCodeAt(end - 1) === 32 || line.charCodeAt(end - 1) === 9)) end--;
-    const value = line.slice(v, end);
-    rawHeaders.push(name, value);
-    const lower = name.toLowerCase();
+  res.rawHeaders = rawHeaders;
+  for (let i = 0; i < rawHeaders.length; i += 2) {
+    const lower = rawHeaders[i].toLowerCase();
+    const value = rawHeaders[i + 1];
+    const prev = headers[lower];
     if (lower === "set-cookie") {
-      const prev = headers[lower];
       if (prev === undefined) headers[lower] = [value];
       else prev.push(value);
     } else {
-      const prev = headers[lower];
       headers[lower] = prev === undefined ? value : prev + ", " + value;
     }
   }
@@ -383,13 +355,13 @@ class BunWebSocket extends EventEmitter {
   }
 
   #onHandshake(data) {
-    const { statusCode, head, body } = data;
+    const { statusCode, statusMessage, rawHeaders, body } = data;
     // On 101, any bytes arriving after the header block are the first
     // WebSocket frame, not HTTP response body — node's http layer delivers
     // them as the `head` buffer on the 'upgrade' event and the native
     // WebSocket client forwards them to the protocol reader on didConnect.
     // Don't leak them into the `upgrade` event's IncomingMessage stream.
-    const res = makeHandshakeResponse(statusCode, head, statusCode === 101 ? null : body);
+    const res = makeHandshakeResponse(statusCode, statusMessage, rawHeaders, statusCode === 101 ? null : body);
     if (statusCode === 101) {
       // `upgrade` emits `(response)` per ws docs.
       this.emit("upgrade", res);

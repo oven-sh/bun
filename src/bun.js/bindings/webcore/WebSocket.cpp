@@ -1422,13 +1422,11 @@ void WebSocket::didReceiveBinaryData(const AtomString& eventName, const std::spa
     // });
 }
 
-void WebSocket::didReceiveHandshakeResponse(uint16_t statusCode, std::span<const uint8_t> head, std::span<const uint8_t> body)
+void WebSocket::didReceiveHandshakeResponse(uint16_t statusCode, std::span<const uint8_t> statusMessage, std::span<const HandshakeRawHeader> headers, std::span<const uint8_t> body)
 {
-    static NeverDestroyed<const AtomString> handshakeEventName("handshake"_s);
-
     // The only consumer is the `ws` package shim, which always registers a listener
     // before connecting. The browser-style `new WebSocket()` path skips this entirely.
-    if (!this->hasEventListeners(handshakeEventName))
+    if (!this->hasEventListeners(eventNames().handshakeEvent))
         return;
 
     auto* context = scriptExecutionContext();
@@ -1441,16 +1439,23 @@ void WebSocket::didReceiveHandshakeResponse(uint16_t statusCode, std::span<const
 
     auto* obj = JSC::constructEmptyObject(globalObject);
     obj->putDirect(vm, builtinNames.statusCodePublicName(), JSC::jsNumber(statusCode));
+    obj->putDirect(vm, builtinNames.statusMessagePublicName(),
+        JSC::jsString(vm, WTF::String({ statusMessage.data(), statusMessage.size() })));
 
-    // `head` and `body` are both Buffers. HTTP headers are ASCII by spec, but
-    // keeping both as Buffer lets the JS shim parse them uniformly and avoids
-    // a UTF-8 round-trip on bytes that already came off the wire.
-    JSC::JSUint8Array* headBuffer = createBuffer(globalObject, head);
-    if (!headBuffer || scope.exception()) [[unlikely]] {
+    // PicoHTTP already parsed the response head, so surface its header list as
+    // a flat [name, value, name, value, ...] rawHeaders array.
+    auto* rawHeaders = JSC::constructEmptyArray(globalObject, nullptr, headers.size() * 2);
+    if (!rawHeaders || scope.exception()) [[unlikely]] {
         scope.clearExceptionExceptTermination();
         return;
     }
-    obj->putDirect(vm, builtinNames.headPublicName(), headBuffer);
+    for (size_t i = 0; i < headers.size(); i++) {
+        rawHeaders->putDirectIndex(globalObject, i * 2,
+            JSC::jsString(vm, WTF::String({ headers[i].name_ptr, headers[i].name_len })));
+        rawHeaders->putDirectIndex(globalObject, i * 2 + 1,
+            JSC::jsString(vm, WTF::String({ headers[i].value_ptr, headers[i].value_len })));
+    }
+    obj->putDirect(vm, builtinNames.rawHeadersPublicName(), rawHeaders);
 
     JSC::JSUint8Array* bodyBuffer = createBuffer(globalObject, body);
     if (!bodyBuffer || scope.exception()) [[unlikely]] {
@@ -1466,7 +1471,7 @@ void WebSocket::didReceiveHandshakeResponse(uint16_t statusCode, std::span<const
     init.origin = m_url.string();
 
     this->incPendingActivityCount();
-    dispatchEvent(MessageEvent::create(handshakeEventName, WTF::move(init), EventIsTrusted::Yes));
+    dispatchEvent(MessageEvent::create(eventNames().handshakeEvent, WTF::move(init), EventIsTrusted::Yes));
     this->decPendingActivityCount();
 }
 
@@ -1841,11 +1846,9 @@ extern "C" void WebSocket__didConnectWithTunnel(WebCore::WebSocket* webSocket, v
     webSocket->didConnectWithTunnel(tunnel, bufferedData, len, deflate_params);
 }
 
-extern "C" void WebSocket__didReceiveHandshakeResponse(WebCore::WebSocket* webSocket, uint16_t statusCode, const uint8_t* buffer, size_t bufferLen, size_t headLen)
+extern "C" void WebSocket__didReceiveHandshakeResponse(WebCore::WebSocket* webSocket, uint16_t statusCode, const uint8_t* statusMessage, size_t statusMessageLen, const WebCore::WebSocket::HandshakeRawHeader* headers, size_t headersLen, const uint8_t* body, size_t bodyLen)
 {
-    ASSERT(headLen <= bufferLen);
-    auto full = std::span(buffer, bufferLen);
-    webSocket->didReceiveHandshakeResponse(statusCode, full.subspan(0, headLen), full.subspan(headLen));
+    webSocket->didReceiveHandshakeResponse(statusCode, std::span(statusMessage, statusMessageLen), std::span(headers, headersLen), std::span(body, bodyLen));
 }
 
 extern "C" void WebSocket__didAbruptClose(WebCore::WebSocket* webSocket, Bun::WebSocketErrorCode errorCode)

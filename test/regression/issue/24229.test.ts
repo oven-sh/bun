@@ -6,7 +6,7 @@ import { AddressInfo, createServer } from "net";
 // https://github.com/oven-sh/bun/issues/5951
 //
 // The native WebSocket client now surfaces the handshake response to JS via
-// a 'handshake' event (statusCode + head + body) so the `ws` package shim can
+// a 'handshake' event (statusCode + statusMessage + rawHeaders + body) so the `ws` package shim can
 // emit 'upgrade' / 'unexpected-response'. Previously non-101 responses were
 // silently discarded, which made miniflare's `dispatchFetch` hang forever.
 //
@@ -28,23 +28,29 @@ test("WebSocket 'handshake' event surfaces status/head/body on non-101", async (
   try {
     const ws = new WebSocket("ws://127.0.0.1:" + (server.address() as AddressInfo).port);
     ws.addEventListener("error", () => {}); // swallow the expected-101 error
-    const { promise, resolve } = Promise.withResolvers<{ statusCode: number; head: Uint8Array; body: Uint8Array }>();
+    const { promise, resolve } = Promise.withResolvers<{
+      statusCode: number;
+      statusMessage: string;
+      rawHeaders: string[];
+      body: Uint8Array;
+    }>();
     // 'handshake' is a Bun extension consumed by the ws package shim.
     ws.addEventListener("handshake" as any, ((e: MessageEvent) => resolve(e.data as any)) as any);
-    const { statusCode, head, body } = await promise;
+    const { statusCode, statusMessage, rawHeaders, body } = await promise;
 
-    // `head` and `body` are both Buffer/Uint8Array — HTTP headers are raw
-    // bytes and the ws shim parses them itself (see makeHandshakeResponse).
     expect(statusCode).toBe(503);
-    expect(head).toBeInstanceOf(Uint8Array);
+    expect(statusMessage).toBe("Service Unavailable");
+    expect(rawHeaders).toEqual([
+      "Content-Type",
+      "text/plain",
+      "Set-Cookie",
+      "a=1",
+      "Set-Cookie",
+      "b=2",
+      "X-Multi",
+      "foo",
+    ]);
     expect(body).toBeInstanceOf(Uint8Array);
-    const headStr = new TextDecoder("latin1").decode(head);
-    expect(headStr).toStartWith("HTTP/1.1 503 Service Unavailable\r\n");
-    expect(headStr).toContain("Content-Type: text/plain\r\n");
-    expect(headStr).toContain("Set-Cookie: a=1\r\n");
-    expect(headStr).toContain("Set-Cookie: b=2\r\n");
-    expect(headStr).toContain("X-Multi: foo  \r\n");
-    expect(headStr).toEndWith("\r\n\r\n");
     expect(new TextDecoder().decode(body)).toBe("workerd starting");
   } finally {
     server.close();

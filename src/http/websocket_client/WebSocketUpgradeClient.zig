@@ -702,7 +702,17 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             this.body = .{};
             defer owned_body.deinit(bun.default_allocator);
 
-            ws.didReceiveHandshakeResponse(status_code, body, head_len);
+            var raw_headers: [128]CppWebSocket.RawHeader = undefined;
+            for (response.headers.list, 0..) |h, i| {
+                raw_headers[i] = .{
+                    .name_ptr = h.name.ptr,
+                    .name_len = h.name.len,
+                    .value_ptr = h.value.ptr,
+                    .value_len = h.value.len,
+                };
+            }
+
+            ws.didReceiveHandshakeResponse(status_code, response.status, raw_headers[0..response.headers.list.len], body[head_len..]);
             if (this.outgoing_websocket == null) return;
             this.processResponse(response, body[head_len..]);
         }

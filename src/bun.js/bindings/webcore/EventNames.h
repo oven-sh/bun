@@ -38,7 +38,8 @@ namespace WebCore {
                         macro(message)              \
                             macro(change)           \
                                 macro(messageerror) \
-                                    macro(resourcetimingbufferfull)
+                                    macro(handshake) \
+                                        macro(resourcetimingbufferfull)
 
 struct EventNames {
     WTF_MAKE_NONCOPYABLE(EventNames);

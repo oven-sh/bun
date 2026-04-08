@@ -831,9 +831,11 @@ function getBinarySizeStep(releasePlatforms, options, { recordOnly = false } = {
   return {
     key: "binary-size",
     label: `${getBuildkiteEmoji("package")} binary-size`,
-    agents: getEc2Agent({ os: "linux", arch: "aarch64", distro: "amazonlinux", release: "2023" }, options, {
-      instanceType: "c8g.large",
-    }),
+    agents: getEc2Agent(
+      buildPlatforms.find(p => p.os === "linux" && p.arch === "aarch64" && p.distro === "amazonlinux"),
+      options,
+      { instanceType: "c8g.large" },
+    ),
     depends_on: releasePlatforms.map(p => `${getTargetKey(p)}-build-bun`),
     allow_dependency_failure: true,
     soft_fail: !!options.skipSizeCheck,

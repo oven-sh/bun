@@ -471,6 +471,9 @@ pub fn unref(this: *Response) void {
 pub fn finalize(
     this: *Response,
 ) callconv(.c) void {
+    if (this.#js_ref.tryGet()) |js_value| {
+        _ = js.dangerouslySetPtr(js_value, null);
+    }
     this.#js_ref.finalize();
     this.unref();
 }

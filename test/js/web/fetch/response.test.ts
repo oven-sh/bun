@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { normalizeBunSnapshot } from "harness";
+import { gcTick, normalizeBunSnapshot } from "harness";
 
 test("zero args returns an otherwise empty 200 response", () => {
   const response = new Response();
@@ -175,4 +175,24 @@ describe("clone()", () => {
     expect(originalText).toBe("Hello, world!");
     expect(clonedText).toBe("Hello, world!");
   });
+});
+
+test("HTMLRewriter transform error does not leave JS wrapper pointing at freed Response", async () => {
+  // HTMLRewriter.transform() manually finalizes the internal output Response
+  // when a handler throws. Before the fix, the JSResponse wrapper (held
+  // strongly by the sink) still pointed at the freed Zig Response, and a
+  // later GC would read poisoned memory inside Response.finalize.
+  for (let i = 0; i < 50; i++) {
+    expect(() =>
+      new HTMLRewriter()
+        .on("div", {
+          element() {
+            throw new Error("boom " + i);
+          },
+        })
+        .transform(new Response("<div>hello " + i + "</div>")),
+    ).toThrow("boom " + i);
+  }
+  await gcTick();
+  await gcTick();
 });

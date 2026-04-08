@@ -55,9 +55,11 @@ describe.concurrent("issue #29001 — kill() reports failure after exit", () => 
   });
 
   // The Bun.spawn exit-path tests exercise the platform-agnostic
-  // `hasExited()` fast path inside `Subprocess.tryKill` and the
-  // Windows-specific `ESRCH` branch in `Process.kill`, so they run on
-  // every platform.
+  // `hasExited()` fast path inside `Subprocess.tryKill` — by the time
+  // `await proc.exited` resolves, `tryKill` short-circuits before ever
+  // reaching `Process.kill`, so the OS-level `ESRCH` branch is *not*
+  // covered here. These tests still run on every platform because the
+  // fast path itself is cross-platform.
   test("Bun.spawn subprocess.kill() returns false after exit", async () => {
     await using proc = bunSpawn({
       cmd: [bunExe(), "-e", "process.exit(0)"],

@@ -447,6 +447,10 @@ pub fn getStatus(
 }
 
 fn destroy(this: *Response) void {
+    if (this.#js_ref.tryGet()) |js_value| {
+        _ = js.dangerouslySetPtr(js_value, null);
+    }
+    this.#js_ref.finalize();
     this.#init.deinit(bun.default_allocator);
     this.#body.deinit(bun.default_allocator);
     this.#url.deref();

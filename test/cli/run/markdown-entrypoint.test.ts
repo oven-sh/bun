@@ -324,10 +324,7 @@ describe("bun <file.md>", () => {
   // BEFORE any external space appears — so lastIndexOfChar(' ') has
   // nothing else to return.
   test("table link with space in URL keeps OSC 8 sequences intact", () => {
-    const source =
-      "| Col |\n" +
-      "|---|\n" +
-      "| [c](<https://host/my file.png>)longunbreakabletailtextxx |\n";
+    const source = "| Col |\n" + "|---|\n" + "| [c](<https://host/my file.png>)longunbreakabletailtextxx |\n";
     const out = Bun.markdown.ansi(source, { hyperlinks: true, columns: 25 });
     // Full URL (including the space) must survive inside the opener.
     expect(out).toContain("\x1b]8;;https://host/my file.png\x1b\\");

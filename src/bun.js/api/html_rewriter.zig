@@ -583,7 +583,12 @@ pub const HTMLRewriter = struct {
             };
 
             sink.rewriter.?.end() catch {
-                if (!is_async) response.finalize();
+                if (!is_async) {
+                    if (sink.response_value.get()) |js_value| {
+                        _ = Response.js.dangerouslySetPtr(js_value, null);
+                    }
+                    response.finalize();
+                }
                 sink.response = undefined;
                 if (is_async) {
                     response.getBodyValue().toErrorInstance(.{ .Message = createLOLHTMLStringError() }, global) catch {}; // TODO: properly propagate exception upwards

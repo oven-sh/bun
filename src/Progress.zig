@@ -319,27 +319,20 @@ fn refreshWithHeldLock(self: *Progress) void {
             const eti = @atomicLoad(usize, &node.unprotected_estimated_total_items, .monotonic);
             const completed_items = @atomicLoad(usize, &node.unprotected_completed_items, .monotonic);
             const current_item = completed_items + 1;
-            if (node.name.len != 0 or eti > 0) {
-                if (node.name.len != 0) {
+            const has_counter = eti > 0 or completed_items != 0;
+            if (has_counter) {
+                switch (node.unit) {
+                    .none => if (eti > 0) self.bufWrite(&end, "[{d}/{d}] ", .{ current_item, eti }) else self.bufWrite(&end, "[{d}] ", .{current_item}),
+                    .files => if (eti > 0) self.bufWrite(&end, "[{d}/{d} files] ", .{ current_item, eti }) else self.bufWrite(&end, "[{d} files] ", .{current_item}),
+                    .bytes => if (eti > 0) self.bufWrite(&end, "[{Bi:.2}/{Bi:.2}] ", .{ current_item, eti }) else self.bufWrite(&end, "[{Bi:.2}] ", .{current_item}),
+                }
+            }
+            if (node.name.len != 0) {
+                if (has_counter) {
+                    self.bufWrite(&end, "{s} ", .{node.name});
+                } else {
                     self.bufWrite(&end, "{s}", .{node.name});
                     need_ellipse = true;
-                }
-                if (eti > 0) {
-                    if (need_ellipse) self.bufWrite(&end, " ", .{});
-                    switch (node.unit) {
-                        .none => self.bufWrite(&end, "[{d}/{d}] ", .{ current_item, eti }),
-                        .files => self.bufWrite(&end, "[{d}/{d} files] ", .{ current_item, eti }),
-                        .bytes => self.bufWrite(&end, "[{Bi:.2}/{Bi:.2}] ", .{ current_item, eti }),
-                    }
-                    need_ellipse = false;
-                } else if (completed_items != 0) {
-                    if (need_ellipse) self.bufWrite(&end, " ", .{});
-                    switch (node.unit) {
-                        .none => self.bufWrite(&end, "[{d}] ", .{current_item}),
-                        .files => self.bufWrite(&end, "[{d} files] ", .{current_item}),
-                        .bytes => self.bufWrite(&end, "[{Bi:.2}] ", .{current_item}),
-                    }
-                    need_ellipse = false;
                 }
             }
             maybe_node = @atomicLoad(?*Node, &node.recently_updated_child, .acquire);

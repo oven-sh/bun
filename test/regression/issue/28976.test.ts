@@ -111,28 +111,24 @@ setTimeout(() => {
 }, 15_000);
 `;
 
-test(
-  "res.on('close') / socket.on('close') / socket.on('end') fire after client abort on POST with body (#28976)",
-  async () => {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", SCRIPT],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+test("res.on('close') / socket.on('close') / socket.on('end') fire after client abort on POST with body (#28976)", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", SCRIPT],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
 
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    const line = stdout
-      .split("\n")
-      .map(l => l.trim())
-      .find(l => l.startsWith("EVENTS="));
+  const line = stdout
+    .split("\n")
+    .map(l => l.trim())
+    .find(l => l.startsWith("EVENTS="));
 
-    expect({ exitCode, line, stderr }).toEqual({
-      exitCode: 0,
-      line: "EVENTS=res close,socket close,socket end",
-      stderr: expect.any(String),
-    });
-  },
-  30_000,
-);
+  expect({ exitCode, line, stderr }).toEqual({
+    exitCode: 0,
+    line: "EVENTS=res close,socket close,socket end",
+    stderr: expect.any(String),
+  });
+}, 30_000);

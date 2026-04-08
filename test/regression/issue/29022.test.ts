@@ -7,7 +7,7 @@
 // so `on(event, fn)` called multiple times with the same listener registered
 // it multiple times (vs Node's "first registration wins").
 import { expect, test } from "bun:test";
-import { MessageChannel, MessagePort } from "node:worker_threads";
+import { MessageChannel, MessagePort, Worker } from "node:worker_threads";
 
 test("MessagePort exposes Node's EventEmitter surface", () => {
   const { port1, port2 } = new MessageChannel();
@@ -299,7 +299,6 @@ test("parentPort.emit() works inside a worker thread", async () => {
   // native internal slots, so calling the native dispatchEvent on it throws
   // "illegal invocation". The fix installs an own dispatchEvent property
   // that delegates to the worker's global self EventTarget.
-  const { Worker } = await import("node:worker_threads");
   const source = `
     const { parentPort } = require("node:worker_threads");
     let received;

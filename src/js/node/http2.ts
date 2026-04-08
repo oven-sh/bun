@@ -3873,7 +3873,7 @@ class ClientHttp2Session extends Http2Session {
           headers[":path"] = "/";
         }
       } else {
-        if (authority === undefined) throw $ERR_HTTP2_CONNECT_AUTHORITY();
+        if (!authority) throw $ERR_HTTP2_CONNECT_AUTHORITY();
         if (headers[":scheme"] !== undefined) throw $ERR_HTTP2_CONNECT_SCHEME();
         if (headers[":path"] !== undefined) throw $ERR_HTTP2_CONNECT_PATH();
       }

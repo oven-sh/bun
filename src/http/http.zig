@@ -1030,10 +1030,6 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
         header_count += 1;
     }
 
-    // Reset. We recompute this on every buildRequest() because the request
-    // may be rebuilt on retry/redirect and the header set can change.
-    this.flags.request_body_has_framing = false;
-
     if (body_len > 0 or this.method.hasRequestBody()) {
         if (this.flags.is_streaming_request_body) {
             if (original_content_length) |content_length| {
@@ -1050,15 +1046,9 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
                 // If !add_transfer_encoding, the user explicitly set Transfer-Encoding,
                 // which was already added to request_headers_buf. We respect that and
                 // do not add Content-Length (they are mutually exclusive per HTTP/1.1).
-                this.flags.request_body_has_framing = true;
-            } else if (!add_transfer_encoding) {
-                // User explicitly set Transfer-Encoding and it survived truncation
-                // (already in request_headers_buf via the user-headers loop).
-                this.flags.request_body_has_framing = true;
-            } else if (this.flags.upgrade_state == .none) {
+            } else if (add_transfer_encoding and this.flags.upgrade_state == .none) {
                 request_headers_buf[header_count] = chunked_encoded_header;
                 header_count += 1;
-                this.flags.request_body_has_framing = true;
             }
         } else {
             request_headers_buf[header_count] = .{
@@ -1066,7 +1056,6 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
                 .value = std.fmt.bufPrint(&this.request_content_len_buf, "{d}", .{body_len}) catch "0",
             };
             header_count += 1;
-            this.flags.request_body_has_framing = true;
         }
     } else if (original_content_length) |content_length| {
         request_headers_buf[header_count] = .{
@@ -1074,7 +1063,37 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
             .value = content_length,
         };
         header_count += 1;
-        this.flags.request_body_has_framing = true;
+    }
+
+    // Refresh `request_body_has_framing` from the *finalized* header slice
+    // that will hit the wire — not from the raw user headers, which may
+    // include entries past `max_user_headers` that have been dropped, or a
+    // `Transfer-Encoding` value that is not `chunked`. The caller may have
+    // already set this flag at setup time based on the same predicates (so
+    // the main thread can safely query it before `buildRequest()` runs); we
+    // recompute here as the source of truth once we know what actually
+    // survived.
+    //
+    // Used by `writeToStream()` to decide whether to drain a streaming body
+    // buffer during the pending-upgrade state, and by
+    // `FetchTasklet.skipChunkedFraming()` to decide whether chunk headers
+    // should wrap body data on the wire.
+    {
+        var has_framing = false;
+        for (request_headers_buf[0..header_count]) |h| {
+            const hash = hashHeaderName(h.name);
+            if (hash == hashHeaderConst(content_length_header_name)) {
+                has_framing = true;
+                break;
+            }
+            if (hash == hashHeaderConst(chunked_encoded_header.name) and
+                bun.strings.containsCaseInsensitiveASCII(h.value, "chunked"))
+            {
+                has_framing = true;
+                break;
+            }
+        }
+        this.flags.request_body_has_framing = has_framing;
     }
 
     return picohttp.Request{

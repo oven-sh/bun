@@ -329,16 +329,21 @@ pub const TablePrinter = struct {
     /// Whether a string cell value should be rendered in quoted/escaped form.
     /// Bun normally prints plain strings in `console.table` cells without
     /// surrounding quotes, but that breaks the row layout if the string
-    /// contains a C0 control character (0x00–0x1F). \n and \r move the
-    /// cursor out of the cell entirely; \v and \f can move the cursor
-    /// down; \t expands to a terminal-dependent width; other C0 chars
-    /// are emitted as zero bytes that the width calculator counts as
-    /// zero but the terminal may interpret (issue #29082). Promoting the
-    /// cell to the quoted form has `writeJSONString` escape the whole
-    /// string so the table stays rectangular.
+    /// contains a C0 control character whose rendered width doesn't match
+    /// what the writer emits: \n and \r move the cursor out of the cell
+    /// entirely, \v and \f move it down, \t expands to a terminal-dependent
+    /// width, and other C0 chars are counted as zero width but emitted as
+    /// literal bytes (issue #29082). Promoting the cell to the quoted form
+    /// has `writeJSONString` escape the whole string so the table stays
+    /// rectangular.
     ///
-    /// 0x7F (DEL) is intentionally NOT included: both width calculation
-    /// and rendering agree it's zero width, so it doesn't break layout.
+    /// Intentionally NOT included:
+    /// - 0x1B (ESC): starts ANSI color sequences. `VisibleCharacterCounter`
+    ///   already strips those from the width calculation, and the formatter
+    ///   emits the bytes raw — both agree, so layout is preserved and
+    ///   colors survive. Quoting them would destroy chalk/picocolors output.
+    /// - 0x7F (DEL): both sides count it as zero width, so it doesn't
+    ///   break layout either.
     fn shouldQuoteStringCell(this: *TablePrinter, value: JSValue, tag: ConsoleObject.Formatter.Tag.Result) bun.JSError!bool {
         if (!(tag.tag == .String or tag.tag == .StringPossiblyFormatted)) return true;
         if (!value.isString()) return false;
@@ -346,18 +351,25 @@ pub const TablePrinter = struct {
         defer str.deref();
         if (str.isUTF16()) {
             for (str.utf16()) |c| {
-                if (c < 0x20) return true;
+                if (c < 0x20 and c != 0x1B) return true;
             }
         } else {
             for (str.byteSlice()) |b| {
-                if (b < 0x20) return true;
+                if (b < 0x20 and b != 0x1B) return true;
             }
         }
         return false;
     }
 
-    /// Compute how much horizontal space will take a JSValue when printed
-    fn getWidthForValue(this: *TablePrinter, value: JSValue) bun.JSError!u32 {
+    /// Compute how much horizontal space a JSValue will take when printed,
+    /// using the already-decided `quote_strings` flag so both width and
+    /// render agree without repeating the `shouldQuoteStringCell` scan.
+    fn getWidthForValueWithTag(
+        this: *TablePrinter,
+        value: JSValue,
+        tag: ConsoleObject.Formatter.Tag.Result,
+        quote_strings: bool,
+    ) bun.JSError!u32 {
         var width: usize = 0;
         var old_writer = VisibleCharacterCounter.Writer{
             .context = .{
@@ -368,8 +380,7 @@ pub const TablePrinter = struct {
         var adapted_writer = old_writer.adaptToNewApi(&discard_buf);
         var value_formatter = this.value_formatter;
 
-        const tag = try ConsoleObject.Formatter.Tag.get(value, this.globalObject);
-        value_formatter.quote_strings = try this.shouldQuoteStringCell(value, tag);
+        value_formatter.quote_strings = quote_strings;
         value_formatter.format(
             tag,
             *std.Io.Writer,
@@ -384,6 +395,16 @@ pub const TablePrinter = struct {
         };
 
         return @truncate(width);
+    }
+
+    /// Compute how much horizontal space will take a JSValue when printed.
+    /// Resolves the tag and `quote_strings` flag internally — callers that
+    /// also need to render the value should use `getWidthForValueWithTag`
+    /// to avoid computing them twice.
+    fn getWidthForValue(this: *TablePrinter, value: JSValue) bun.JSError!u32 {
+        const tag = try ConsoleObject.Formatter.Tag.get(value, this.globalObject);
+        const quote_strings = try this.shouldQuoteStringCell(value, tag);
+        return this.getWidthForValueWithTag(value, tag, quote_strings);
     }
 
     /// Update the sizes of the columns for the values of a given row, and create any additional columns as needed
@@ -510,13 +531,18 @@ pub const TablePrinter = struct {
             if (value == .zero) {
                 try writer.splatByteAll(' ', col.width + (PADDING * 2));
             } else {
-                const len: u32 = try this.getWidthForValue(value);
+                // Resolve tag + quote_strings once per cell and reuse for
+                // both the width calculation and the actual render — the
+                // `bun.String.fromJS` + byte scan inside `shouldQuoteStringCell`
+                // is non-trivial and shouldn't run twice.
+                const tag = try ConsoleObject.Formatter.Tag.get(value, this.globalObject);
+                const quote_strings = try this.shouldQuoteStringCell(value, tag);
+                const len: u32 = try this.getWidthForValueWithTag(value, tag, quote_strings);
                 const needed = col.width -| len;
                 try writer.splatByteAll(' ', PADDING);
-                const tag = try ConsoleObject.Formatter.Tag.get(value, this.globalObject);
                 var value_formatter = this.value_formatter;
 
-                value_formatter.quote_strings = try this.shouldQuoteStringCell(value, tag);
+                value_formatter.quote_strings = quote_strings;
 
                 defer {
                     if (value_formatter.map_node) |node| {

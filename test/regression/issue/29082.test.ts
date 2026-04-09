@@ -56,11 +56,30 @@ describe.concurrent("console.table quotes cells containing control characters", 
   test("other C0 control chars (vertical tab, form feed, NUL)", async () => {
     // \v (0x0B), \f (0x0C), and \0 (NUL) also move the cursor or mismatch
     // the visible-width calculation — the fix covers the full C0 range
-    // (0x00–0x1F), not just \n/\r/\t.
+    // (0x00–0x1F except ESC), not just \n/\r/\t.
     const { stdout, exitCode } = await runTable(`console.table([{ bar: "a\\vb\\fc\\x00d" }]);`);
     assertRectangular(stdout);
-    // writeJSONString escapes each C0 char — none survive raw.
-    expect(stdout).not.toMatch(/[\x00-\x08\x0B\x0C\x0E-\x1F]/);
+    // Positive: cell rendered in its JSON-escaped form — \v/\f as short
+    // escapes, NUL as \u0000.
+    expect(stdout).toContain(`"a\\vb\\fc\\u0000d"`);
+    // Negative: no C0 char survives raw (ESC 0x1B excluded — see ANSI test).
+    expect(stdout).not.toMatch(/[\x00-\x08\x0B\x0C\x0E-\x1A\x1C-\x1F]/);
+    expect(exitCode).toBe(0);
+  });
+
+  test("ANSI escape sequences (ESC) pass through unescaped so colors survive", async () => {
+    // 0x1B is the first byte of every ANSI color sequence. VisibleCharacterCounter
+    // already strips ANSI from the width calculation, so quoting these strings
+    // would destroy chalk/picocolors output without fixing any layout bug.
+    const { stdout, exitCode } = await runTable(
+      `console.table([{ status: "\\x1b[31mFAIL\\x1b[0m" }, { status: "\\x1b[32mOK\\x1b[0m" }]);`,
+    );
+    assertRectangular(stdout);
+    // Cells contain the raw ESC bytes, NOT the JSON-escaped form.
+    expect(stdout).toContain("\x1b[31mFAIL\x1b[0m");
+    expect(stdout).toContain("\x1b[32mOK\x1b[0m");
+    expect(stdout).not.toContain("\\u001b");
+    expect(stdout).not.toContain("\\u001B");
     expect(exitCode).toBe(0);
   });
 

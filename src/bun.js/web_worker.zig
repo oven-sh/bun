@@ -611,11 +611,14 @@ pub fn notifyNeedTermination(this: *WebWorker) callconv(.c) void {
 
     if (this.vm) |vm| {
         vm.eventLoop().wakeup();
-        // TODO(@190n) notifyNeedTermination
     }
 
-    // TODO(@190n) delete
-    this.setRefInternal(false);
+    // Note: we deliberately do NOT unref the parent poll here. The parent
+    // event loop must stay alive until the worker thread dispatches the
+    // "close" event back to it, otherwise `worker.terminate().then(...)`
+    // never resolves because the parent exits first. The parent poll is
+    // released later in `deinit()` (on the worker thread, after the close
+    // event has been posted) or by `onUnhandledRejection`.
 }
 
 /// This handles cleanup, emitting the "close" event, and deinit.

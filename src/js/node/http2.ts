@@ -3261,6 +3261,12 @@ class ServerHttp2Session extends Http2Session {
     if (callback !== undefined && typeof callback !== "function") {
       throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
     }
+    // RFC 9113 §7.2.2: a server MUST NOT advertise SETTINGS_ENABLE_PUSH != 0.
+    // Force-override whatever the caller passes so a mid-connection SETTINGS
+    // frame stays compliant (the initial SETTINGS frame already clamps this
+    // in ServerHttp2Session's constructor). Clients still accept `enablePush`
+    // via their own `settings()` method.
+    settings = { ...settings, enablePush: false };
     validateSettings(settings);
     this.#pendingSettingsAck = true;
     this.#parser?.settings(settings);

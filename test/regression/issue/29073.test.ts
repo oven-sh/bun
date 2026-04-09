@@ -195,6 +195,50 @@ test("http2.createServer forces enablePush=0 even when caller requests true (#29
   }
 });
 
+// RFC 9113 §7.2.2 is unconditional for BOTH the initial SETTINGS frame AND
+// any subsequent SETTINGS updates the server sends mid-connection. A caller
+// that passes `enablePush: true` to session.settings(...) on a server
+// session must not re-enable push on the wire. ServerHttp2Session.settings
+// force-overrides the value before forwarding to the parser.
+test("ServerHttp2Session.settings forces enablePush=0 mid-connection (#29073)", async () => {
+  const server = http2.createServer((req, res) => {
+    res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
+    res.end("ok");
+  });
+  // Attempt to re-enable push mid-connection as soon as the session comes up.
+  server.on("session", session => {
+    try {
+      session.settings({ enablePush: true });
+    } catch {
+      // Node throws on invalid settings; Bun may or may not — either way,
+      // the wire assertion below is the real guarantee.
+    }
+  });
+  await once(server.listen(0), "listening");
+  try {
+    const port = (server.address() as net.AddressInfo).port;
+    const frames = await rawH2cRequest(port);
+
+    // Check EVERY non-ACK SETTINGS frame the server sent: initial + any
+    // updates. None may advertise ENABLE_PUSH != 0.
+    const serverSettings = frames.filter(f => f.type === 4 && (f.flags & 0x1) === 0);
+    expect(serverSettings.length).toBeGreaterThanOrEqual(1);
+    for (const frame of serverSettings) {
+      const payload = frame.payload;
+      for (let i = 0; i + 6 <= payload.length; i += 6) {
+        const id = payload.readUInt16BE(i);
+        const value = payload.readUInt32BE(i + 2);
+        if (id === 0x02) {
+          // SETTINGS_ENABLE_PUSH
+          expect(value).toBe(0);
+        }
+      }
+    }
+  } finally {
+    server.close();
+  }
+});
+
 // Exercise the exact client→server path from the issue (curl prior
 // knowledge succeeds, so Node's http2 client should too against Bun).
 test("http2.connect client can read h2c response from http2.createServer (#29073)", async () => {

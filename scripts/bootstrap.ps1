@@ -1,4 +1,4 @@
-# Version: 15
+# Version: 16
 # A script that installs the dependencies needed to build and test Bun on Windows.
 # Supports both x64 and ARM64 using Scoop for package management.
 # Used by Azure [build images] pipeline.
@@ -647,6 +647,7 @@ Install-Scoop-Package perl
 
 # x64-only packages (not needed on ARM64)
 if (-not $script:IsARM64) {
+  Install-Scoop-Package nasm
   Install-Scoop-Package mingw -Command gcc
 }
 

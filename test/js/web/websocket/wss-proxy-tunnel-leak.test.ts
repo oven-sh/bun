@@ -23,6 +23,16 @@ test(
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+    // Check exitCode and stderr BEFORE parsing stdout — a fixture crash
+    // (SIGSEGV/SIGABRT under ASAN, empty stdout) should fail with a clear
+    // "expected 0 but received 139" instead of a confusing
+    // "JSON Parse error: Unexpected end of input" masking the real cause.
+    // ASAN/debug builds emit benign stderr noise, so don't assert empty —
+    // just verify the fixture didn't surface a leak/error.
+    expect(stderr).not.toContain("leak");
+    expect(stderr).not.toContain("Error:");
+    expect(exitCode).toBe(0);
+
     const { baseline, after, growth, iter } = JSON.parse(stdout.trim());
     expect(iter).toBe(ITER);
 
@@ -38,12 +48,6 @@ test(
           `(baseline=${baseline}, after=${after}, threshold=${threshold})`,
       );
     }
-
-    // ASAN/debug builds emit benign stderr noise, so don't assert empty —
-    // just verify the fixture didn't surface a leak/error.
-    expect(stderr).not.toContain("leak");
-    expect(stderr).not.toContain("Error:");
-    expect(exitCode).toBe(0);
   },
   isDebug ? 120_000 : 60_000,
 );

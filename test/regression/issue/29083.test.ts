@@ -137,6 +137,17 @@ async function runLeakFixture(method: Method, contentType: string, bodyLiteral: 
       // Cap the JS heap so the leak must show up on the native side as
       // RSS growth rather than getting absorbed by an oversized JS heap.
       BUN_JSC_gcMaxHeapSize: "134217728",
+      // Bun's S3 client calls getHttpProxy(true, null, null) — passing
+      // null hostname bypasses NO_PROXY — so even a localhost endpoint
+      // is routed through $HTTP_PROXY. Unset every proxy env var the
+      // child might inherit so the mock server at 127.0.0.1:port is
+      // reached directly.
+      HTTP_PROXY: "",
+      HTTPS_PROXY: "",
+      http_proxy: "",
+      https_proxy: "",
+      NO_PROXY: "*",
+      no_proxy: "*",
     },
     stdout: "pipe",
     stderr: "pipe",

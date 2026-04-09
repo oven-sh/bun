@@ -1008,6 +1008,17 @@ fn getOriginTimestamp() u64 {
 pub inline fn isLoaded() bool {
     return VMHolder.vm != null;
 }
+
+/// Bun's runtime has no URL-fetching module loader, so every runtime VM
+/// init path must disable the resolver's implicit `http(s)://`/`//`
+/// external behavior. Previously this caused `import * as x from
+/// "https://..."` to produce a bogus `{ default: "<url>" }` namespace and
+/// `await import("https://...")` to hang on retry (see #29076, #22743).
+inline fn disableRuntimeURLExternals(vm: *VirtualMachine) void {
+    vm.transpiler.resolver.opts.allow_url_externals = false;
+    vm.transpiler.options.allow_url_externals = false;
+}
+
 pub fn initWithModuleGraph(
     opts: Options,
 ) !*VirtualMachine {
@@ -1060,9 +1071,7 @@ pub fn initWithModuleGraph(
     vm.transpiler.macro_context = null;
     vm.transpiler.resolver.store_fd = false;
     vm.transpiler.resolver.prefer_module_field = false;
-    // The runtime has no URL-fetching module loader — see #29076.
-    vm.transpiler.resolver.opts.allow_url_externals = false;
-    vm.transpiler.options.allow_url_externals = false;
+    disableRuntimeURLExternals(vm);
 
     vm.transpiler.resolver.onWakePackageManager = .{
         .context = &vm.modules,
@@ -1195,9 +1204,7 @@ pub fn init(opts: Options) !*VirtualMachine {
     vm.transpiler.resolver.store_fd = opts.store_fd;
     vm.transpiler.resolver.prefer_module_field = false;
     vm.transpiler.resolver.opts.preserve_symlinks = opts.args.preserve_symlinks orelse false;
-    // The runtime has no URL-fetching module loader — see #29076.
-    vm.transpiler.resolver.opts.allow_url_externals = false;
-    vm.transpiler.options.allow_url_externals = false;
+    disableRuntimeURLExternals(vm);
 
     vm.transpiler.resolver.onWakePackageManager = .{
         .context = &vm.modules,
@@ -1365,9 +1372,7 @@ pub fn initWorker(
     vm.transpiler.macro_context = null;
     vm.transpiler.resolver.store_fd = opts.store_fd;
     vm.transpiler.resolver.prefer_module_field = false;
-    // The runtime has no URL-fetching module loader — see #29076.
-    vm.transpiler.resolver.opts.allow_url_externals = false;
-    vm.transpiler.options.allow_url_externals = false;
+    disableRuntimeURLExternals(vm);
     vm.transpiler.resolver.onWakePackageManager = .{
         .context = &vm.modules,
         .handler = ModuleLoader.AsyncModule.Queue.onWakeHandler,
@@ -1470,9 +1475,7 @@ pub fn initBake(opts: Options) anyerror!*VirtualMachine {
     vm.transpiler.macro_context = null;
     vm.transpiler.resolver.store_fd = opts.store_fd;
     vm.transpiler.resolver.prefer_module_field = false;
-    // The runtime has no URL-fetching module loader — see #29076.
-    vm.transpiler.resolver.opts.allow_url_externals = false;
-    vm.transpiler.options.allow_url_externals = false;
+    disableRuntimeURLExternals(vm);
 
     vm.transpiler.resolver.onWakePackageManager = .{
         .context = &vm.modules,

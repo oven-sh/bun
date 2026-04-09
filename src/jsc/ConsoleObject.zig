@@ -326,6 +326,36 @@ pub const TablePrinter = struct {
         }
     };
 
+    /// Whether a string cell value should be rendered in quoted/escaped form.
+    /// Bun normally prints plain strings in `console.table` cells without
+    /// surrounding quotes, but that breaks the row layout if the string
+    /// contains a C0 control character (0x00–0x1F). \n and \r move the
+    /// cursor out of the cell entirely; \v and \f can move the cursor
+    /// down; \t expands to a terminal-dependent width; other C0 chars
+    /// are emitted as zero bytes that the width calculator counts as
+    /// zero but the terminal may interpret (issue #29082). Promoting the
+    /// cell to the quoted form has `writeJSONString` escape the whole
+    /// string so the table stays rectangular.
+    ///
+    /// 0x7F (DEL) is intentionally NOT included: both width calculation
+    /// and rendering agree it's zero width, so it doesn't break layout.
+    fn shouldQuoteStringCell(this: *TablePrinter, value: JSValue, tag: ConsoleObject.Formatter.Tag.Result) bun.JSError!bool {
+        if (!(tag.tag == .String or tag.tag == .StringPossiblyFormatted)) return true;
+        if (!value.isString()) return false;
+        var str: bun.String = try bun.String.fromJS(value, this.globalObject);
+        defer str.deref();
+        if (str.isUTF16()) {
+            for (str.utf16()) |c| {
+                if (c < 0x20) return true;
+            }
+        } else {
+            for (str.byteSlice()) |b| {
+                if (b < 0x20) return true;
+            }
+        }
+        return false;
+    }
+
     /// Compute how much horizontal space will take a JSValue when printed
     fn getWidthForValue(this: *TablePrinter, value: JSValue) bun.JSError!u32 {
         var width: usize = 0;
@@ -339,7 +369,7 @@ pub const TablePrinter = struct {
         var value_formatter = this.value_formatter;
 
         const tag = try ConsoleObject.Formatter.Tag.get(value, this.globalObject);
-        value_formatter.quote_strings = !(tag.tag == .String or tag.tag == .StringPossiblyFormatted);
+        value_formatter.quote_strings = try this.shouldQuoteStringCell(value, tag);
         value_formatter.format(
             tag,
             *std.Io.Writer,
@@ -486,7 +516,7 @@ pub const TablePrinter = struct {
                 const tag = try ConsoleObject.Formatter.Tag.get(value, this.globalObject);
                 var value_formatter = this.value_formatter;
 
-                value_formatter.quote_strings = !(tag.tag == .String or tag.tag == .StringPossiblyFormatted);
+                value_formatter.quote_strings = try this.shouldQuoteStringCell(value, tag);
 
                 defer {
                     if (value_formatter.map_node) |node| {

@@ -187,7 +187,6 @@ void us_connecting_socket_close(int ssl, struct us_connecting_socket_t *c) {
         c->error = ECONNABORTED;
     }
     struct us_socket_context_t *context = c->context;
-    context->on_connect_error(c, c->error);
 
     if (c->pending_resolve_callback) {
         // The DNS callback has not been drained. Try to remove c from the
@@ -203,11 +202,13 @@ void us_connecting_socket_close(int ssl, struct us_connecting_socket_t *c) {
             c->pending_resolve_callback = 0;
             Bun__addrinfo_freeRequest(c->addrinfo_req, 0);
             c->addrinfo_req = 0;
+            context->on_connect_error(c, c->error);
             us_connecting_socket_free(ssl, c);
             /* drop the ref us_socket_context_connect took alongside
              * pending_resolve_callback = 1; after_resolve will not run for c */
             us_socket_context_unref(ssl, context);
-            return;
+        } else {
+            context->on_connect_error(c, c->error);
         }
         return;
     }
@@ -216,6 +217,7 @@ void us_connecting_socket_close(int ssl, struct us_connecting_socket_t *c) {
         Bun__addrinfo_freeRequest(c->addrinfo_req, c->error == ECONNREFUSED);
         c->addrinfo_req = 0;
     }
+    context->on_connect_error(c, c->error);
     us_connecting_socket_free(ssl, c);
 }
 

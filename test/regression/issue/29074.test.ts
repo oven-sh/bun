@@ -26,13 +26,16 @@ describe("Response body from Array coerces via ToString", () => {
   });
 
   test("nested arrays", async () => {
-    expect(await new Response([[1, 2], [3, 4]]).text()).toBe("1,2,3,4");
+    expect(
+      await new Response([
+        [1, 2],
+        [3, 4],
+      ]).text(),
+    ).toBe("1,2,3,4");
   });
 
   test("objects in array", async () => {
-    expect(await new Response([{ a: 1 }, { b: 2 }]).text()).toBe(
-      "[object Object],[object Object]",
-    );
+    expect(await new Response([{ a: 1 }, { b: 2 }]).text()).toBe("[object Object],[object Object]");
   });
 
   test("mixed types", async () => {

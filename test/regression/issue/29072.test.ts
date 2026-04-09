@@ -11,9 +11,9 @@
 // matching libuv (and therefore Node.js).
 
 import { expect, test } from "bun:test";
+import { isLinux } from "harness";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { freemem, totalmem } from "node:os";
-import { isLinux } from "harness";
 
 function parseMeminfo(): Record<string, number> {
   const text = readFileSync("/proc/meminfo", "utf8");

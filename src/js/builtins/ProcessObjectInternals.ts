@@ -166,21 +166,54 @@ export function getStdinStream(
   const ReadStream = isTTY ? require("node:tty").ReadStream : require("node:fs").ReadStream;
   const stream = new ReadStream(null, { fd, autoClose: false });
 
+  const originalOn = stream.on;
+
   let stream_destroyed = false;
   let stream_endEmitted = false;
-
-  // Readable.prototype.{on,removeListener,off,removeAllListeners} call this
-  // $-private hook with whether any 'readable' or 'data' listener remains.
-  // Because the dispatch is prototype-level and the property is a JSC private
-  // name, the hook survives removeAllListeners() and isn't reachable from
-  // user code.
-  stream.$onReadableStateUpdate = function (wantsRead) {
-    if (wantsRead) {
+  stream.addListener = stream.on = function (event, listener) {
+    // Streams don't generally required to present any data when only
+    // `readable` events are present, i.e. `readableFlowing === false`
+    //
+    // However, Node.js has a this quirk whereby `process.stdin.read()`
+    // blocks under TTY mode, thus looping `.read()` in this particular
+    // case would not result in truncation.
+    //
+    // Therefore the following hack is only specific to `process.stdin`
+    // and does not apply to the underlying Stream implementation.
+    if (event === "readable") {
       own();
-    } else {
-      stream._readableState.reading = false;
-      disown();
     }
+    return originalOn.$call(this, event, listener);
+  };
+
+  // Mirror the `on` override above: when the last 'readable'/'data' listener
+  // is gone and nothing else is consuming, release fd 0 so a stdio:'inherit'
+  // child can read it exclusively. Node achieves the equivalent for TTY via
+  // highWaterMark:0 on tty.ReadStream + push()===false → readStop() in
+  // onStreamRead; Bun's reader is async so we check after listener removal
+  // instead. Deferred to nextTick so once('readable', fn) cycles that
+  // synchronously re-subscribe don't thrash disown()/own().
+  function scheduleDisownCheck() {
+    process.nextTick(() => {
+      if (stream.listenerCount("readable") === 0 && stream.listenerCount("data") === 0) {
+        stream._readableState.reading = false;
+        disown();
+      }
+    });
+  }
+
+  const originalRemoveListener = stream.removeListener;
+  stream.removeListener = stream.off = function (event, listener) {
+    const result = originalRemoveListener.$call(this, event, listener);
+    if (event === "readable" || event === "data") scheduleDisownCheck();
+    return result;
+  };
+
+  const originalRemoveAllListeners = stream.removeAllListeners;
+  stream.removeAllListeners = function (event) {
+    const result = originalRemoveAllListeners.$apply(this, arguments);
+    if (event === "readable" || event === "data" || event === undefined) scheduleDisownCheck();
+    return result;
   };
 
   stream.fd = fd;
@@ -200,6 +233,12 @@ export function getStdinStream(
       return this;
     };
   }
+
+  const originalResume = stream.resume;
+  stream.resume = function () {
+    own();
+    return originalResume.$call(this);
+  };
 
   async function internalRead(stream) {
     $debug("internalRead();");
@@ -250,9 +289,12 @@ export function getStdinStream(
   stream.on("resume", () => {
     if (stream.isPaused()) return; // fake resume
     $debug('on("resume");');
-    own();
     stream._undestroy();
     stream_destroyed = false;
+    // updateReadableListening can spuriously resume() when kDataListening is
+    // stale after removeAllListeners('data'); don't re-own in that case.
+    if (stream.listenerCount("readable") === 0 && stream.listenerCount("data") === 0) return;
+    own();
   });
 
   stream._readableState.reading = false;

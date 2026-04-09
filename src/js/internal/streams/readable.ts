@@ -1056,8 +1056,6 @@ Readable.prototype.on = function (ev, fn) {
     }
   }
 
-  if (ev === "data" || ev === "readable") this.$onReadableStateUpdate?.(true);
-
   return res;
 };
 Readable.prototype.addListener = Readable.prototype.on;
@@ -1077,7 +1075,6 @@ Readable.prototype.removeListener = function (ev, fn) {
     process.nextTick(updateReadableListening, this);
   } else if (ev === "data" && this.listenerCount("data") === 0) {
     state[kState] &= ~kDataListening;
-    if (this.$onReadableStateUpdate) process.nextTick(notifyReadableStateUpdate, this);
   }
 
   return res;
@@ -1087,14 +1084,6 @@ Readable.prototype.off = Readable.prototype.removeListener;
 Readable.prototype.removeAllListeners = function (ev) {
   const res = Stream.prototype.removeAllListeners.$apply(this, arguments);
 
-  // EventEmitter.removeAllListeners can take a fast path that bypasses
-  // Readable.prototype.removeListener, leaving kDataListening stale. Gated on
-  // $onReadableStateUpdate so generic Readable streams keep Node's (also-stale)
-  // behavior; only streams that opt into the hook get the corrected bit.
-  if (this.$onReadableStateUpdate && (ev === "data" || ev === undefined) && this.listenerCount("data") === 0) {
-    this._readableState[kState] &= ~kDataListening;
-  }
-
   if (ev === "readable" || ev === undefined) {
     // We need to check if there is someone still listening to
     // readable and reset the state. However this needs to happen
@@ -1103,17 +1092,10 @@ Readable.prototype.removeAllListeners = function (ev) {
     // resume within the same tick will have no
     // effect.
     process.nextTick(updateReadableListening, this);
-  } else if (ev === "data" && this.$onReadableStateUpdate) {
-    process.nextTick(notifyReadableStateUpdate, this);
   }
 
   return res;
 };
-
-function notifyReadableStateUpdate(self) {
-  const hook = self.$onReadableStateUpdate;
-  if (hook) hook.$call(self, self.listenerCount("readable") > 0 || self.listenerCount("data") > 0);
-}
 
 function updateReadableListening(self) {
   const state = self._readableState;
@@ -1135,8 +1117,6 @@ function updateReadableListening(self) {
   } else if ((state[kState] & kReadableListening) === 0) {
     state[kState] &= ~(kHasFlowing | kFlowing);
   }
-
-  notifyReadableStateUpdate(self);
 }
 
 function nReadingNextTick(self) {

@@ -412,6 +412,22 @@ pub fn AstMaybe(
 
                     // Inline import.meta properties for Bake
                     if (p.options.framework != null or (p.options.bundle and p.options.output_format == .cjs)) {
+                        // For `--compile`, avoid embedding the build machine's absolute
+                        // file path into the standalone executable. The CJS entry chunk
+                        // is wrapped in `(function(exports, require, module, __filename,
+                        // __dirname) {...})`, and those parameters are populated at
+                        // runtime with the virtual `/$bunfs/root/...` path, so rewrite
+                        // `import.meta.dir` / `.dirname` / `.path` to reference them
+                        // instead of inlining a string literal.
+                        if (p.options.compile) {
+                            if (strings.eqlComptime(name, "dir") or strings.eqlComptime(name, "dirname")) {
+                                p.recordUsage(p.dirname_ref);
+                                return p.newExpr(E.Identifier{ .ref = p.dirname_ref }, name_loc);
+                            } else if (strings.eqlComptime(name, "path")) {
+                                p.recordUsage(p.filename_ref);
+                                return p.newExpr(E.Identifier{ .ref = p.filename_ref }, name_loc);
+                            }
+                        }
                         if (strings.eqlComptime(name, "dir") or strings.eqlComptime(name, "dirname")) {
                             // Inline import.meta.dir
                             return p.newExpr(E.String.init(p.source.path.name.dir), name_loc);

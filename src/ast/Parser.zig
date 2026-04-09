@@ -37,6 +37,11 @@ pub const Parser = struct {
         import_meta_main_value: ?bool = null,
         lower_import_meta_main_for_node_js: bool = false,
 
+        /// Set when bundling for `--compile`. Affects how `__dirname`, `__filename`,
+        /// and inlined `import.meta.*` paths are emitted so that the build machine's
+        /// absolute file paths are not embedded in the standalone executable.
+        compile: bool = false,
+
         /// When using react fast refresh or server components, the framework is
         /// able to customize what import sources are used.
         framework: ?*bun.bake.Framework = null,
@@ -662,6 +667,22 @@ pub const Parser = struct {
         //    var __dirname = "foo/bar"
         //    var __filename = "foo/bar/baz.js"
         //
+        // For `--compile`, we do not want to embed the build machine's absolute
+        // file path into the standalone executable. Instead we defer to
+        // `import.meta.dir` / `import.meta.path` which at runtime resolve to the
+        // virtual `/$bunfs/root/...` path of the containing chunk (matching the
+        // behavior of `import.meta.url`).
+        //
+        // For `--compile --format=cjs` we cannot use `import.meta` (the chunk is
+        // wrapped in a function expression and evaluated as a Script, where
+        // `import.meta` is a syntax error), so we skip emitting the declaration
+        // and let references fall through to the `__filename` / `__dirname`
+        // parameters of the outer wrapper, which Bun's runtime populates with the
+        // virtual path.
+        if (p.options.compile and p.options.output_format == .cjs) {
+            uses_dirname = false;
+            uses_filename = false;
+        }
         if (p.options.bundle or !p.options.features.commonjs_at_runtime) {
             if (uses_dirname or uses_filename) {
                 const count = @as(usize, @intFromBool(uses_dirname)) + @as(usize, @intFromBool(uses_filename));
@@ -670,24 +691,46 @@ pub const Parser = struct {
                 if (uses_dirname) {
                     decls[0] = .{
                         .binding = p.b(B.Identifier{ .ref = p.dirname_ref }, logger.Loc.Empty),
-                        .value = p.newExpr(
-                            E.String{
-                                .data = p.source.path.name.dir,
-                            },
-                            logger.Loc.Empty,
-                        ),
+                        .value = if (p.options.compile)
+                            p.newExpr(
+                                E.Dot{
+                                    .name = "dir",
+                                    .name_loc = logger.Loc.Empty,
+                                    .target = p.newExpr(E.ImportMeta{}, logger.Loc.Empty),
+                                    .can_be_removed_if_unused = true,
+                                },
+                                logger.Loc.Empty,
+                            )
+                        else
+                            p.newExpr(
+                                E.String{
+                                    .data = p.source.path.name.dir,
+                                },
+                                logger.Loc.Empty,
+                            ),
                     };
                     declared_symbols.appendAssumeCapacity(.{ .ref = p.dirname_ref, .is_top_level = true });
                 }
                 if (uses_filename) {
                     decls[@as(usize, @intFromBool(uses_dirname))] = .{
                         .binding = p.b(B.Identifier{ .ref = p.filename_ref }, logger.Loc.Empty),
-                        .value = p.newExpr(
-                            E.String{
-                                .data = p.source.path.text,
-                            },
-                            logger.Loc.Empty,
-                        ),
+                        .value = if (p.options.compile)
+                            p.newExpr(
+                                E.Dot{
+                                    .name = "path",
+                                    .name_loc = logger.Loc.Empty,
+                                    .target = p.newExpr(E.ImportMeta{}, logger.Loc.Empty),
+                                    .can_be_removed_if_unused = true,
+                                },
+                                logger.Loc.Empty,
+                            )
+                        else
+                            p.newExpr(
+                                E.String{
+                                    .data = p.source.path.text,
+                                },
+                                logger.Loc.Empty,
+                            ),
                     };
                     declared_symbols.appendAssumeCapacity(.{ .ref = p.filename_ref, .is_top_level = true });
                 }

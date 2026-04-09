@@ -407,6 +407,83 @@ describe("bundler", () => {
       setCwd: true,
     },
   });
+  // `__dirname` / `__filename` must not be inlined as the build machine's
+  // absolute file path when producing a standalone executable. They should
+  // resolve to the same virtual `/$bunfs/root/...` path that `import.meta.dir`
+  // and `import.meta.path` return at runtime.
+  itBundled("compile/DirnameFilenameUsesVirtualPath", {
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        import "./nested.cjs";
+        console.log("entry __dirname:", __dirname);
+        console.log("entry __filename:", __filename);
+        if (__dirname !== import.meta.dir) throw new Error("__dirname !== import.meta.dir");
+        if (__filename !== import.meta.path) throw new Error("__filename !== import.meta.path");
+      `,
+      "/nested.cjs": /* js */ `
+        console.log("nested __dirname:", __dirname);
+        console.log("nested __filename:", __filename);
+        module.exports = 1;
+      `,
+    },
+    run: {
+      stdout:
+        process.platform !== "win32"
+          ? [
+              "nested __dirname: /$bunfs/root",
+              "nested __filename: /$bunfs/root/out",
+              "entry __dirname: /$bunfs/root",
+              "entry __filename: /$bunfs/root/out",
+            ].join("\n")
+          : [
+              "nested __dirname: B:\\~BUN\\root",
+              "nested __filename: B:\\~BUN\\root\\out",
+              "entry __dirname: B:\\~BUN\\root",
+              "entry __filename: B:\\~BUN\\root\\out",
+            ].join("\n"),
+    },
+  });
+  itBundled("compile/DirnameFilenameUsesVirtualPathCJS", {
+    compile: true,
+    format: "cjs",
+    files: {
+      "/entry.ts": /* js */ `
+        require("./nested.cjs");
+        console.log("entry __dirname:", __dirname);
+        console.log("entry __filename:", __filename);
+        console.log("entry import.meta.dir:", import.meta.dir);
+        console.log("entry import.meta.path:", import.meta.path);
+        if (__dirname !== import.meta.dir) throw new Error("__dirname !== import.meta.dir");
+        if (__filename !== import.meta.path) throw new Error("__filename !== import.meta.path");
+      `,
+      "/nested.cjs": /* js */ `
+        console.log("nested __dirname:", __dirname);
+        console.log("nested __filename:", __filename);
+        module.exports = 1;
+      `,
+    },
+    run: {
+      stdout:
+        process.platform !== "win32"
+          ? [
+              "nested __dirname: /$bunfs/root",
+              "nested __filename: /$bunfs/root/out",
+              "entry __dirname: /$bunfs/root",
+              "entry __filename: /$bunfs/root/out",
+              "entry import.meta.dir: /$bunfs/root",
+              "entry import.meta.path: /$bunfs/root/out",
+            ].join("\n")
+          : [
+              "nested __dirname: B:\\~BUN\\root",
+              "nested __filename: B:\\~BUN\\root\\out",
+              "entry __dirname: B:\\~BUN\\root",
+              "entry __filename: B:\\~BUN\\root\\out",
+              "entry import.meta.dir: B:\\~BUN\\root",
+              "entry import.meta.path: B:\\~BUN\\root\\out",
+            ].join("\n"),
+    },
+  });
   itBundled("compile/VariousBunAPIs", {
     todo: isWindows, // TODO(@paperclover)
     compile: true,

@@ -58,7 +58,11 @@ async function runLeakFixture(method: Method, contentType: string, bodyLiteral: 
         endpoint: \`http://localhost:\${server.port}\`,
       });
 
-      const file = s3.file("leak.bin");
+      // Pass the content type explicitly. The S3 download task does not
+      // copy the server's Content-Type header back onto the blob, so
+      // without this option blob.content_type is empty and
+      // toFormDataWithBytes would immediately return "Invalid encoding".
+      const file = s3.file("leak.bin", { type: ${JSON.stringify(contentType)} });
 
       async function pullOnce() {
         const value = await file.${method}();

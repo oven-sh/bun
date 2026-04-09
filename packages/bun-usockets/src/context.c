@@ -572,6 +572,7 @@ void *us_socket_context_connect(int ssl, struct us_socket_context_t *context, co
      * us_internal_socket_after_resolve always sees a live context, even if c is
      * unlinked/relinked between now and the drain */
     us_socket_context_ref(ssl, context);
+    c->addrinfo_req = ai_req;
     c->port = port;
     us_internal_socket_context_link_connecting_socket(ssl, context, c);
 

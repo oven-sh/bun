@@ -845,9 +845,10 @@ pub fn cleanWithLogger(
             const entry = manager.updating_packages.get(dep_name) orelse continue;
 
             const version_fmt = resolution.value.npm.version.fmt(cur_string_buf);
+            var temp_buf: [513]u8 = undefined;
             const new_version = new_version: {
                 if (exact_versions) {
-                    break :new_version try std.fmt.allocPrint(new.allocator, "{f}", .{version_fmt});
+                    break :new_version std.fmt.bufPrint(&temp_buf, "{f}", .{version_fmt}) catch continue;
                 }
 
                 const version_literal = version_literal: {
@@ -859,26 +860,38 @@ pub fn cleanWithLogger(
                 };
 
                 const pinned_version = Semver.Version.whichVersionIsPinned(version_literal);
-                break :new_version try switch (pinned_version) {
-                    .patch => std.fmt.allocPrint(new.allocator, "{f}", .{version_fmt}),
-                    .minor => std.fmt.allocPrint(new.allocator, "~{f}", .{version_fmt}),
-                    .major => std.fmt.allocPrint(new.allocator, "^{f}", .{version_fmt}),
+                break :new_version switch (pinned_version) {
+                    .patch => std.fmt.bufPrint(&temp_buf, "{f}", .{version_fmt}) catch continue,
+                    .minor => std.fmt.bufPrint(&temp_buf, "~{f}", .{version_fmt}) catch continue,
+                    .major => std.fmt.bufPrint(&temp_buf, "^{f}", .{version_fmt}) catch continue,
                 };
             };
 
+            var alias_tmp: [1025]u8 = undefined;
             const full_version = if (entry.is_alias) full: {
                 const alias_string_buf = new.buffers.string_bytes.items;
                 const dep_literal = ws_dep.version.literal.slice(alias_string_buf);
                 if (strings.lastIndexOfChar(dep_literal, '@')) |at_index| {
-                    break :full try std.fmt.allocPrint(new.allocator, "{s}@{s}", .{
+                    break :full std.fmt.bufPrint(&alias_tmp, "{s}@{s}", .{
                         dep_literal[0..at_index],
                         new_version,
-                    });
+                    }) catch continue;
                 }
                 break :full new_version;
             } else new_version;
 
-            ws_dep.version.literal = try string_buf_alloc.append(full_version);
+            const appended = try string_buf_alloc.append(full_version);
+            // Re-read string_bytes after append (may have reallocated)
+            const sliced = appended.sliced(new.buffers.string_bytes.items);
+            ws_dep.version = Dependency.parse(
+                new.allocator,
+                ws_dep.name,
+                ws_dep.name_hash,
+                sliced.slice,
+                &sliced,
+                null,
+                manager,
+            ) orelse Dependency.Version{};
         }
     }
 

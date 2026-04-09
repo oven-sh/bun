@@ -1778,6 +1778,15 @@ pub const BundleOptions = struct {
 
     trim_unused_imports: ?bool = null,
     mark_builtins_as_external: bool = false,
+    /// When `true`, the resolver auto-marks `http://`, `https://`, and
+    /// `//protocol-relative` specifiers as implicitly external. This is
+    /// the default because `bun build` emits such imports verbatim (see
+    /// the `default/AutoExternal` bundler test). The runtime VM sets this
+    /// to `false` — Bun's runtime has no URL-fetching module loader, and
+    /// returning a synthetic `{ default: "<url>" }` namespace for URL
+    /// imports is confusing (see #29076). With the flag off, the runtime
+    /// falls through to normal resolution and reports an error.
+    allow_url_externals: bool = true,
     server_components: bool = false,
     hot_module_reloading: bool = false,
     react_fast_refresh: bool = false,

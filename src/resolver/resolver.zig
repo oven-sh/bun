@@ -700,20 +700,27 @@ pub const Resolver = struct {
         }
 
         // Certain types of URLs default to being external for convenience,
-        // while these rules should not be applied to the entrypoint as it is never external (#12734)
+        // while these rules should not be applied to the entrypoint as it is never external (#12734).
+        //
+        // `http://`, `https://`, and `//protocol-relative` specifiers are only
+        // auto-externalized when `opts.allow_url_externals` is set (the default
+        // for `bun build`). The runtime VM turns this off — Bun's runtime has
+        // no URL-fetching module loader, so silently marking a JS URL import
+        // external previously caused `import * as x from "https://..."` to
+        // produce a bogus `{ default: "<url>" }` namespace instead of an error
+        // (see #29076). With the flag off, the runtime falls through to normal
+        // resolution and surfaces a proper module-not-found error.
         if (kind != .entry_point_build and kind != .entry_point_run and
             (r.isExternalPattern(import_path) or
                 // "fill: url(#filter);"
                 (kind.isFromCSS() and strings.startsWith(import_path, "#")) or
-
-                // "background: url(http://example.com/images/image.png);"
-                strings.startsWith(import_path, "http://") or
-
-                // "background: url(https://example.com/images/image.png);"
-                strings.startsWith(import_path, "https://") or
-
-                // "background: url(//example.com/images/image.png);"
-                strings.startsWith(import_path, "//")))
+                (r.opts.allow_url_externals and
+                    // "background: url(http://example.com/images/image.png);"
+                    (strings.startsWith(import_path, "http://") or
+                        // "background: url(https://example.com/images/image.png);"
+                        strings.startsWith(import_path, "https://") or
+                        // "background: url(//example.com/images/image.png);"
+                        strings.startsWith(import_path, "//")))))
         {
             if (r.debug_logs) |*debug| {
                 debug.addNote("Marking this path as implicitly external");

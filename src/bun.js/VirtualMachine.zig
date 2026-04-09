@@ -1060,6 +1060,9 @@ pub fn initWithModuleGraph(
     vm.transpiler.macro_context = null;
     vm.transpiler.resolver.store_fd = false;
     vm.transpiler.resolver.prefer_module_field = false;
+    // The runtime has no URL-fetching module loader — see #29076.
+    vm.transpiler.resolver.opts.allow_url_externals = false;
+    vm.transpiler.options.allow_url_externals = false;
 
     vm.transpiler.resolver.onWakePackageManager = .{
         .context = &vm.modules,
@@ -1192,6 +1195,9 @@ pub fn init(opts: Options) !*VirtualMachine {
     vm.transpiler.resolver.store_fd = opts.store_fd;
     vm.transpiler.resolver.prefer_module_field = false;
     vm.transpiler.resolver.opts.preserve_symlinks = opts.args.preserve_symlinks orelse false;
+    // The runtime has no URL-fetching module loader — see #29076.
+    vm.transpiler.resolver.opts.allow_url_externals = false;
+    vm.transpiler.options.allow_url_externals = false;
 
     vm.transpiler.resolver.onWakePackageManager = .{
         .context = &vm.modules,
@@ -1359,6 +1365,9 @@ pub fn initWorker(
     vm.transpiler.macro_context = null;
     vm.transpiler.resolver.store_fd = opts.store_fd;
     vm.transpiler.resolver.prefer_module_field = false;
+    // The runtime has no URL-fetching module loader — see #29076.
+    vm.transpiler.resolver.opts.allow_url_externals = false;
+    vm.transpiler.options.allow_url_externals = false;
     vm.transpiler.resolver.onWakePackageManager = .{
         .context = &vm.modules,
         .handler = ModuleLoader.AsyncModule.Queue.onWakeHandler,
@@ -1461,6 +1470,9 @@ pub fn initBake(opts: Options) anyerror!*VirtualMachine {
     vm.transpiler.macro_context = null;
     vm.transpiler.resolver.store_fd = opts.store_fd;
     vm.transpiler.resolver.prefer_module_field = false;
+    // The runtime has no URL-fetching module loader — see #29076.
+    vm.transpiler.resolver.opts.allow_url_externals = false;
+    vm.transpiler.options.allow_url_externals = false;
 
     vm.transpiler.resolver.onWakePackageManager = .{
         .context = &vm.modules,

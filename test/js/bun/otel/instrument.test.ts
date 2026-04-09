@@ -120,6 +120,107 @@ describe("Bun.otel instrument flags", () => {
     });
   });
 
+  test.concurrent(
+    "HTTP semconv attrs: route, query, user-agent, server.port, status_code, client.address",
+    async () => {
+      const result = await runWithCollector(
+        /* js */ `
+        Bun.otel.configure({ endpoint: "http://127.0.0.1:" + __collectorPort, scheduledDelayMillis: 60_000, instrument: { fetch: true } });
+        using app = Bun.serve({
+          port: 0,
+          routes: { "/u/:id": (req) => new Response("ok", { status: 201 }) },
+        });
+        await fetch(app.url + "u/42?k=v&x=1", { headers: { "user-agent": "probe/1.0" } });
+
+        const http = require("node:http");
+        const srv = http.createServer((req, res) => { res.writeHead(503); res.end("err"); });
+        await new Promise(r => srv.listen(0, r));
+        const nport = srv.address().port;
+        await fetch("http://127.0.0.1:" + nport + "/hp?q=1").then(r => r.text());
+        await new Promise(r => srv.close(r));
+      `,
+        `(() => {
+        const sv = allSpans.find(s => s.scope === "bun.serve");
+        const nh = allSpans.find(s => s.scope === "node.http");
+        const fc = allSpans.filter(s => s.scope === "bun.fetch");
+        return {
+          serve: {
+            route: attr(sv, "http.route")?.stringValue,
+            path: attr(sv, "url.path")?.stringValue,
+            query: attr(sv, "url.query")?.stringValue,
+            ua: attr(sv, "user_agent.original")?.stringValue,
+            hasPort: typeof attr(sv, "server.port")?.intValue === "string",
+            hasClientAddr: typeof attr(sv, "client.address")?.stringValue === "string",
+            status: attr(sv, "http.response.status_code")?.intValue,
+          },
+          nodeHttp: {
+            status: attr(nh, "http.response.status_code")?.intValue,
+            errType: attr(nh, "error.type")?.stringValue,
+            query: attr(nh, "url.query")?.stringValue,
+            hasPort: typeof attr(nh, "server.port")?.intValue === "string",
+          },
+          fetch: {
+            allHavePort: fc.every(s => typeof attr(s, "server.port")?.intValue === "string"),
+            errStatuses: fc.map(s => attr(s, "error.type")?.stringValue).filter(Boolean),
+          },
+        };
+      })()`,
+      );
+      expect(result).toEqual({
+        serve: {
+          route: "/u/:id",
+          path: "/u/42",
+          query: "k=v&x=1",
+          ua: "probe/1.0",
+          hasPort: true,
+          hasClientAddr: true,
+          status: "201",
+        },
+        nodeHttp: { status: "503", errType: "503", query: "q=1", hasPort: true },
+        fetch: { allHavePort: true, errStatuses: ["503"] },
+      });
+    },
+  );
+
+  test.concurrent("WebSocket client message span", async () => {
+    const result = await runWithCollector(
+      /* js */ `
+        Bun.otel.configure({ endpoint: "http://127.0.0.1:" + __collectorPort, scheduledDelayMillis: 60_000, instrument: { websocket: true, fetch: false, serve: false } });
+        let done; const doneP = new Promise(r => done = r);
+        using app = Bun.serve({
+          port: 0,
+          fetch(req, server) { return server.upgrade(req) ? undefined : new Response("no", { status: 400 }); },
+          websocket: { message(ws, msg) { ws.send("echo:" + msg); } },
+        });
+        const ws = new WebSocket("ws://127.0.0.1:" + app.port);
+        let n = 0;
+        ws.onmessage = (ev) => { if (++n === 2) { ws.close(); } };
+        ws.onclose = () => done();
+        await new Promise(r => { ws.onopen = r; });
+        ws.send("aa");
+        ws.send("bbb");
+        await doneP;
+      `,
+      `(() => {
+        const cli = allSpans.filter(s => s.scope === "websocket.client" && s.name === "ws message");
+        const open = allSpans.find(s => s.scope === "websocket.client" && s.name === "ws open");
+        return {
+          clientMsgCount: cli.length,
+          gotClientOpen: !!open,
+          sizes: cli.map(m => Number(attr(m, "messaging.message.body.size")?.intValue ?? -1)).sort(),
+          // server-side echoes: 2 server message spans too
+          serverMsgCount: allSpans.filter(s => s.scope === "bun.websocket" && s.name === "ws message").length,
+        };
+      })()`,
+    );
+    expect(result).toEqual({
+      clientMsgCount: 2,
+      gotClientOpen: true,
+      sizes: [7, 8], // "echo:aa".length=7, "echo:bbb".length=8
+      serverMsgCount: 2,
+    });
+  });
+
   test.concurrent("node:fs readFile span (opt-in via instrument.fs)", async () => {
     using dir = tempDir("otel-fs", { "f.txt": "hello" });
     const p = String(dir) + "/f.txt";

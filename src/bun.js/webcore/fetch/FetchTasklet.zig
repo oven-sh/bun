@@ -202,7 +202,10 @@ pub const FetchTasklet = struct {
         log("clearData ", .{});
         if (this.otel_span) |span| {
             this.otel_span = null;
-            if (this.result.fail) |e| span.setStatus(.err, @errorName(e));
+            if (this.result.fail) |e| {
+                span.setStatus(.err, @errorName(e));
+                span.setAttrStatic(.@"error.type", @errorName(e));
+            }
             span.end();
         }
         const allocator = bun.default_allocator;
@@ -976,7 +979,15 @@ pub const FetchTasklet = struct {
         this.is_waiting_body = this.result.has_more;
         if (this.otel_span) |span| {
             this.otel_span = null;
-            span.setAttrInt(.@"http.response.status_code", @intCast(http_response.status_code));
+            const code = http_response.status_code;
+            span.setAttrInt(.@"http.response.status_code", @intCast(code));
+            if (code >= 500) {
+                span.setStatus(.err, "");
+                var buf: [3]u8 = undefined;
+                span.setAttrStr(.@"error.type", std.fmt.bufPrint(&buf, "{d}", .{code}) catch "5xx");
+            }
+            // TODO(otel): network.protocol.version — http.HTTPClientResult does
+            // not currently surface negotiated HTTP version.
             span.end();
         }
         return Response.init(
@@ -1151,6 +1162,7 @@ pub const FetchTasklet = struct {
             if (bun.otel.NativeSpan.start(jsc_vm, .fetch, .fetch, .client, @tagName(fetch_options.method), parent)) |span| {
                 span.setAttrStatic(.@"http.request.method", @tagName(fetch_options.method));
                 span.setAttrStr(.@"server.address", url.hostname);
+                span.setAttrInt(.@"server.port", @intCast(url.getPortAuto()));
                 span.setAttrStr(.@"url.full", url.href);
                 fetch_tasklet.otel_span = span;
                 if (fetch_tasklet.request_headers.get("traceparent") == null) {

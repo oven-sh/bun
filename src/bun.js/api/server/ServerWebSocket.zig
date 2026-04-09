@@ -356,31 +356,17 @@ pub fn onClose(this: *ServerWebSocket, _: uws.AnyWebSocket, code: i32, message: 
     }
 }
 
-/// Wraps a WebSocket handler invocation in a `bun.websocket` span and a
-/// SlotGuard so user code inside `message`/`open`/`close` sees the span as the
-/// active context. Span ends synchronously after the call returns.
+/// Thin alias so existing call sites stay `OtelWSGuard.begin(...)`; the
+/// implementation is shared with the client in `bun.otel.instrument.WSGuard`.
 const OtelWSGuard = struct {
-    guard: ?bun.otel.instrument.SlotGuard,
-    span: ?*bun.otel.NativeSpan,
+    inner: bun.otel.instrument.WSGuard,
 
     pub fn begin(vm: *jsc.VirtualMachine, global: *jsc.JSGlobalObject, name: []const u8, body_size: ?usize) OtelWSGuard {
-        if (bun.otel.TracerProvider.getIfEnabled(vm, .websocket) == null) return .{ .guard = null, .span = null };
-        const parent = bun.otel.instrument.getActiveSpanContext(global);
-        const span = bun.otel.NativeSpan.start(vm, .websocket, .websocket, .consumer, name, parent) orelse return .{ .guard = null, .span = null };
-        if (body_size) |sz| span.setAttrInt(.@"messaging.message.body.size", @intCast(sz));
-        return .{
-            .guard = bun.otel.instrument.SlotGuard.enter(global, span.createContextCell(global)),
-            .span = span,
-        };
+        return .{ .inner = bun.otel.instrument.WSGuard.begin(vm, global, .websocket, name, body_size) };
     }
 
     pub fn end(self: *OtelWSGuard, result: jsc.JSValue) void {
-        if (self.guard) |*g| g.restore();
-        if (self.span) |s| {
-            self.span = null;
-            if (result.toError()) |_| s.setStatus(.err, "");
-            s.end();
-        }
+        self.inner.endWithResult(result);
     }
 };
 

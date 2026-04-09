@@ -180,6 +180,7 @@ pub const NativeSpan = struct {
         node_http,
         fs,
         websocket,
+        websocket_client,
 
         fn name(self: Scope) []const u8 {
             return switch (self) {
@@ -188,6 +189,7 @@ pub const NativeSpan = struct {
                 .node_http => "node.http",
                 .fs => "node.fs",
                 .websocket => "bun.websocket",
+                .websocket_client => "websocket.client",
             };
         }
     };
@@ -269,6 +271,48 @@ pub const NativeSpan = struct {
 
     pub fn createContextCell(self: *const NativeSpan, global: *JSGlobalObject) JSValue {
         return tracer.OtelSpanContext.create(global, self.ctx, false);
+    }
+};
+
+/// Shared guard for WebSocket server (`ServerWebSocket.zig`) and client
+/// (`CppWebSocket.zig`) handler invocations: span + active-context slot for
+/// the duration of the JS call.
+pub const WSGuard = struct {
+    guard: ?SlotGuard,
+    span: ?*NativeSpan,
+
+    pub const none: WSGuard = .{ .guard = null, .span = null };
+
+    pub fn begin(
+        vm: *jsc.VirtualMachine,
+        global: *JSGlobalObject,
+        comptime scope: NativeSpan.Scope,
+        name: []const u8,
+        body_size: ?usize,
+    ) WSGuard {
+        if (tracer.TracerProvider.getIfEnabled(vm, .websocket) == null) return none;
+        const parent = getActiveSpanContext(global);
+        const span = NativeSpan.start(vm, .websocket, scope, .consumer, name, parent) orelse return none;
+        if (body_size) |sz| span.setAttrInt(.@"messaging.message.body.size", @intCast(sz));
+        return .{
+            .guard = SlotGuard.enter(global, span.createContextCell(global)),
+            .span = span,
+        };
+    }
+
+    pub fn end(self: *WSGuard) void {
+        if (self.guard) |*g| g.restore();
+        if (self.span) |s| {
+            self.span = null;
+            s.end();
+        }
+    }
+
+    pub fn endWithResult(self: *WSGuard, result: JSValue) void {
+        if (self.span) |s| {
+            if (result.toError()) |_| s.setStatus(.err, "");
+        }
+        self.end();
     }
 };
 

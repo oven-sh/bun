@@ -36,6 +36,26 @@ upgrade_context: UpgradeCTX = .{},
 auto_flusher: AutoFlusher = .{},
 
 otel_span: ?*bun.otel.NativeSpan = null,
+otel_status_code: u16 = 0,
+
+/// Finalize and consume an OTEL server span. Called from `markRequestAsDone`
+/// (async-complete) and from `server.zig` directly when the handler completed
+/// synchronously before the span could be parked here.
+pub fn endOtelSpan(this: *NodeHTTPResponse, span: *bun.otel.NativeSpan) void {
+    if (this.otel_status_code != 0) {
+        span.setAttrInt(.@"http.response.status_code", @intCast(this.otel_status_code));
+        if (this.otel_status_code >= 500) {
+            span.setStatus(.err, "");
+            var buf: [3]u8 = undefined;
+            span.setAttrStr(.@"error.type", std.fmt.bufPrint(&buf, "{d}", .{this.otel_status_code}) catch "5xx");
+        }
+    }
+    if (this.flags.socket_closed and !this.flags.ended) {
+        span.setStatus(.err, "aborted");
+        span.setAttrStatic(.@"error.type", "aborted");
+    }
+    span.end();
+}
 
 pub const Flags = packed struct(u8) {
     socket_closed: bool = false,
@@ -256,8 +276,7 @@ fn markRequestAsDone(this: *NodeHTTPResponse) void {
 
     if (this.otel_span) |span| {
         this.otel_span = null;
-        if (this.flags.socket_closed and !this.flags.ended) span.setStatus(.err, "aborted");
-        span.end();
+        this.endOtelSpan(span);
     }
 
     this.clearOnDataCallback(this.getThisValue(), jsc.VirtualMachine.get().global);
@@ -459,6 +478,9 @@ pub fn writeHead(this: *NodeHTTPResponse, globalObject: *jsc.JSGlobalObject, cal
 
         break :brk 200;
     };
+    // Stash unconditionally: the span is parked on `otel_span` only after the
+    // handler returns, but `writeHead` runs inside the handler.
+    this.otel_status_code = @intCast(status_code);
 
     var stack_fallback = std.heap.stackFallback(256, bun.default_allocator);
     const allocator = stack_fallback.get();

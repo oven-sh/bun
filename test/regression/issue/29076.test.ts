@@ -72,6 +72,27 @@ describe.concurrent("URL imports at runtime are rejected (not silently stubbed)"
     expect(exitCode).not.toBe(0);
   });
 
+  // The resolver gate covers `http://`, `https://`, AND `//` (protocol-
+  // relative) — if the `//` branch were accidentally dropped, nothing else
+  // in this file would catch it, so keep an explicit test for it.
+  //
+  // Use a specifier with NO file extension: with the pre-fix behavior the
+  // resolver marks it `is_external = true`, the runtime loader defaults to
+  // `.file`, and we get the same `{ __esModule, default: "<url>" }` stub
+  // signature as the https:// tests above. With a `.js` extension the path
+  // would instead fall through to filesystem resolution (ENOENT) which
+  // isn't a reliable regression signal. Use a nonsense host that can't
+  // exist anywhere on any filesystem.
+  test("import * from // (protocol-relative) errors at load time", async () => {
+    const { stdout, exitCode } = await runCode(`
+      import * as ns from "//bun-issue-29076-nonexistent.invalid";
+      console.log("keys=" + JSON.stringify(Object.keys(ns)));
+      console.log("default=" + typeof ns.default + ":" + ns.default);
+    `);
+    expect(stdout).toBe("");
+    expect(exitCode).not.toBe(0);
+  });
+
   test("export * from https:// errors at load time", async () => {
     const { stdout, exitCode } = await runCode(`
       export * from "https://esm.sh/d3@7.9.0";

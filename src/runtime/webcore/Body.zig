@@ -559,7 +559,12 @@ pub const Value = union(Tag) {
 
         const js_type = value.jsType();
 
-        if (js_type.isStringLike()) {
+        if (js_type.isStringLike() or js_type == .Array or js_type == .DerivedArray) {
+            // Per the Fetch spec, `BodyInit` is a union of ReadableStream,
+            // Blob, BufferSource, FormData, URLSearchParams, and USVString.
+            // A plain Array is not part of that union, so it falls through
+            // to USVString and gets coerced via ToString — matching Node and
+            // browsers (e.g. `new Response([1,2,3]).text()` → "1,2,3").
             var str = try value.toBunString(globalThis);
             if (str.length() == 0) {
                 return Body.Value{

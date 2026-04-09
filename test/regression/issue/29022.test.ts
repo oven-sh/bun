@@ -7,6 +7,7 @@
 // so `on(event, fn)` called multiple times with the same listener registered
 // it multiple times (vs Node's "first registration wins").
 import { expect, test } from "bun:test";
+import events from "node:events";
 import { MessageChannel, MessagePort, Worker } from "node:worker_threads";
 
 test("MessagePort exposes Node's EventEmitter surface", () => {
@@ -132,6 +133,20 @@ test("getMaxListeners / setMaxListeners", () => {
     expect(() => port1.setMaxListeners(NaN)).toThrow(/setMaxListeners/);
     // @ts-expect-error - intentional bad input
     expect(() => port1.setMaxListeners("10")).toThrow(/setMaxListeners/);
+  } finally {
+    port1.close();
+    port2.close();
+  }
+});
+
+test("setMaxListeners shares storage with events.setMaxListeners", () => {
+  // Node's MessagePort.getMaxListeners() and events.setMaxListeners(n, port)
+  // both read/write the same `kMaxEventTargetListeners` slot. A cross-API
+  // round-trip from the static setter through the instance getter must land.
+  const { port1, port2 } = new MessageChannel();
+  try {
+    events.setMaxListeners(99, port1);
+    expect(port1.getMaxListeners()).toBe(99);
   } finally {
     port1.close();
     port2.close();

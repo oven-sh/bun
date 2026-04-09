@@ -58,7 +58,11 @@ function injectFakeEmitter(Class) {
   // MessagePort dedup semantics: adding the same (event, listener) pair more
   // than once is a no-op — first registration wins and keeps its once-ness.
   const kListeners = Symbol("bun:worker_threads:listeners");
-  const kMaxListeners = Symbol("bun:worker_threads:maxListeners");
+  // Share the same storage slot that `events.setMaxListeners(n, target)`
+  // writes to when `target` is an EventTarget, so cross-API round-trips
+  // (e.g. `events.setMaxListeners(99, port); port.getMaxListeners()`) stay
+  // consistent with Node's MessagePort behavior.
+  const kMaxListeners = EventEmitter.kMaxEventTargetListeners;
 
   function getListeners(target) {
     let map = target[kListeners];

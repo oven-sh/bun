@@ -1056,6 +1056,8 @@ Readable.prototype.on = function (ev, fn) {
     }
   }
 
+  if (ev === "data" || ev === "readable") this.$onReadableStateUpdate?.(true);
+
   return res;
 };
 Readable.prototype.addListener = Readable.prototype.on;
@@ -1117,6 +1119,8 @@ function updateReadableListening(self) {
   } else if ((state[kState] & kReadableListening) === 0) {
     state[kState] &= ~(kHasFlowing | kFlowing);
   }
+
+  self.$onReadableStateUpdate?.((state[kState] & (kReadableListening | kDataListening | kFlowing)) !== 0);
 }
 
 function nReadingNextTick(self) {

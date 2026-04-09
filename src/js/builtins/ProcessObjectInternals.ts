@@ -166,24 +166,23 @@ export function getStdinStream(
   const ReadStream = isTTY ? require("node:tty").ReadStream : require("node:fs").ReadStream;
   const stream = new ReadStream(null, { fd, autoClose: false });
 
-  const originalOn = stream.on;
-
   let stream_destroyed = false;
   let stream_endEmitted = false;
-  stream.addListener = stream.on = function (event, listener) {
-    // Streams don't generally required to present any data when only
-    // `readable` events are present, i.e. `readableFlowing === false`
-    //
-    // However, Node.js has a this quirk whereby `process.stdin.read()`
-    // blocks under TTY mode, thus looping `.read()` in this particular
-    // case would not result in truncation.
-    //
-    // Therefore the following hack is only specific to `process.stdin`
-    // and does not apply to the underlying Stream implementation.
-    if (event === "readable") {
+
+  // Readable.prototype.on/removeListener/removeAllListeners maintain the
+  // kReadableListening/kDataListening/kFlowing bits in _readableState. That is
+  // the source of truth for "does anything want to consume stdin?". The stream
+  // calls this $-private hook whenever those bits change, so own()/disown()
+  // track every add/remove path (.off, .removeListener, .removeAllListeners)
+  // without instance method overrides and without an event listener that user
+  // code could strip via removeAllListeners().
+  stream.$onReadableStateUpdate = function (wantsRead) {
+    if (wantsRead) {
       own();
+    } else {
+      stream._readableState.reading = false;
+      disown();
     }
-    return originalOn.$call(this, event, listener);
   };
 
   stream.fd = fd;
@@ -207,12 +206,6 @@ export function getStdinStream(
   const originalPause = stream.pause;
   stream.pause = function () {
     return originalPause.$call(this);
-  };
-
-  const originalResume = stream.resume;
-  stream.resume = function () {
-    own();
-    return originalResume.$call(this);
   };
 
   async function internalRead(stream) {
@@ -275,23 +268,6 @@ export function getStdinStream(
     process.nextTick(() => {
       // Only disown if the stream is still paused (not resumed in the meantime)
       if (!stream.readableFlowing) {
-        stream._readableState.reading = false;
-        disown();
-      }
-    });
-  });
-
-  // Mirror the `on('readable')` override above: once the last 'readable'
-  // listener is gone and nothing else is consuming, release fd 0 so a
-  // stdio:'inherit' child can read it exclusively. Hooking the
-  // 'removeListener' event (rather than overriding removeListener/off/
-  // removeAllListeners) catches every removal path. Deferred to nextTick so
-  // once('readable', fn) cycles that synchronously re-subscribe don't thrash
-  // disown()/own().
-  stream.on("removeListener", event => {
-    if (event !== "readable") return;
-    process.nextTick(() => {
-      if (stream.listenerCount("readable") === 0 && stream.listenerCount("data") === 0 && !stream.readableFlowing) {
         stream._readableState.reading = false;
         disown();
       }

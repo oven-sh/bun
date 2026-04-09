@@ -175,6 +175,7 @@ using namespace JSC;
     macro(nextTick) \
     macro(normalize) \
     macro(on) \
+    macro(onReadableStateUpdate) \
     macro(once) \
     macro(options) \
     macro(origin) \

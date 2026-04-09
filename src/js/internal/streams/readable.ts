@@ -1077,6 +1077,7 @@ Readable.prototype.removeListener = function (ev, fn) {
     process.nextTick(updateReadableListening, this);
   } else if (ev === "data" && this.listenerCount("data") === 0) {
     state[kState] &= ~kDataListening;
+    if (this.$onReadableStateUpdate) process.nextTick(notifyReadableStateUpdate, this);
   }
 
   return res;
@@ -1094,10 +1095,17 @@ Readable.prototype.removeAllListeners = function (ev) {
     // resume within the same tick will have no
     // effect.
     process.nextTick(updateReadableListening, this);
+  } else if (ev === "data" && this.$onReadableStateUpdate) {
+    process.nextTick(notifyReadableStateUpdate, this);
   }
 
   return res;
 };
+
+function notifyReadableStateUpdate(self) {
+  const hook = self.$onReadableStateUpdate;
+  if (hook) hook.$call(self, self.listenerCount("readable") > 0 || self.listenerCount("data") > 0);
+}
 
 function updateReadableListening(self) {
   const state = self._readableState;
@@ -1120,7 +1128,7 @@ function updateReadableListening(self) {
     state[kState] &= ~(kHasFlowing | kFlowing);
   }
 
-  self.$onReadableStateUpdate?.((state[kState] & (kReadableListening | kDataListening | kFlowing)) !== 0);
+  notifyReadableStateUpdate(self);
 }
 
 function nReadingNextTick(self) {

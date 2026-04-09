@@ -155,16 +155,23 @@ test("stdin should not allow process to exit when not paused", async () => {
   expect(await proc.stderr.text()).toMatchInlineSnapshot(`""`);
 });
 
-test("removing the last 'readable' listener releases fd 0 for an inherit-stdio child", async () => {
+test.each([
+  ["readable", "removeListener"],
+  ["readable", "removeAllListeners"],
+  ["readable", "removeAllListenersNoArg"],
+  ["data", "removeListener"],
+  ["data", "removeAllListeners"],
+  ["data", "removeAllListenersNoArg"],
+])("removing the last '%s' listener via %s releases fd 0 for an inherit-stdio child", async (event, remover) => {
   await using proc = Bun.spawn({
-    cmd: [bunExe(), path.join(import.meta.dir, "stdin", "remove-readable-releases-fd-fixture.js")],
+    cmd: [bunExe(), path.join(import.meta.dir, "stdin", "remove-readable-releases-fd-fixture.js"), event, remover],
     stdin: "pipe",
     stdout: "pipe",
     stderr: "pipe",
     env: bunEnv,
   });
 
-  // Wait for the parent to remove its 'readable' listener and spawn the child.
+  // Wait for the parent to remove its listener and spawn the child.
   let stderr = "";
   for await (const chunk of proc.stderr) {
     stderr += Buffer.from(chunk).toString();

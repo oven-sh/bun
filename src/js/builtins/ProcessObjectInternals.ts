@@ -169,13 +169,11 @@ export function getStdinStream(
   let stream_destroyed = false;
   let stream_endEmitted = false;
 
-  // Readable.prototype.on and updateReadableListening (the convergence point
-  // for removeListener/off/removeAllListeners on 'readable') call this
-  // $-private hook with whether any consumer remains. Because the dispatch is
-  // prototype-level and the property is a JSC private name, the hook survives
-  // removeAllListeners() and isn't reachable from user code. Note: matching
-  // Node, removing a 'data' listener does not run updateReadableListening, so
-  // disown() for the 'data' path still goes through the 'pause' handler below.
+  // Readable.prototype.{on,removeListener,off,removeAllListeners} call this
+  // $-private hook with whether any 'readable' or 'data' listener remains.
+  // Because the dispatch is prototype-level and the property is a JSC private
+  // name, the hook survives removeAllListeners() and isn't reachable from
+  // user code.
   stream.$onReadableStateUpdate = function (wantsRead) {
     if (wantsRead) {
       own();

@@ -587,21 +587,19 @@ pub const Value = union(Tag) {
             // for already-string inputs — ToString on an Array may
             // legitimately return a different tag on some platforms.
             var sliced = try value.toSliceClone(globalThis);
-            defer sliced.deinit();
-            const bytes = sliced.slice();
-            if (bytes.len == 0) {
-                return Body.Value{ .Empty = {} };
-            }
-            const owned = bun.default_allocator.dupe(u8, bytes) catch {
+            // `toSliceClone` already allocated on `bun.default_allocator`, and
+            // `intoOwnedSlice` transfers that buffer into our ownership without
+            // a second copy when the allocators match (which they do here).
+            const bytes = sliced.intoOwnedSlice(bun.default_allocator) catch {
                 return globalThis.throwValue(ZigString.static("Failed to clone array body").toErrorInstance(globalThis));
             };
+            if (bytes.len == 0) {
+                bun.default_allocator.free(bytes);
+                return Body.Value{ .Empty = {} };
+            }
             return Body.Value{
                 .InternalBlob = .{
-                    .bytes = std.array_list.Managed(u8){
-                        .items = owned,
-                        .capacity = bytes.len,
-                        .allocator = bun.default_allocator,
-                    },
+                    .bytes = std.array_list.Managed(u8).fromOwnedSlice(bun.default_allocator, @constCast(bytes)),
                     .was_string = true,
                 },
             };

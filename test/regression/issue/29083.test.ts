@@ -1,5 +1,5 @@
-import { expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { describe, expect, setDefaultTimeout, test } from "bun:test";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import path from "node:path";
 
 // https://github.com/oven-sh/bun/issues/29083
@@ -22,9 +22,9 @@ import path from "node:path";
 // times against a local Bun.serve() mock, and fails if RSS growth
 // exceeds the budget.
 
-// Child builds 1 GiB of cumulative traffic over localhost — well under
-// a debug ASAN build's 2-minute budget in practice but far above the
-// 5-second bun:test default.
+// Child builds ~512 MiB of cumulative traffic over localhost (64 × 8
+// MiB). Well under a debug ASAN build's 2-minute budget in practice
+// but far above the 5-second bun:test default.
 setDefaultTimeout(120_000);
 
 type Method = "arrayBuffer" | "text" | "json" | "formData";
@@ -168,33 +168,39 @@ async function runLeakFixture(method: Method, contentType: string, bodyLiteral: 
   expect(exitCode).toBe(0);
 }
 
-test("S3File.arrayBuffer() does not leak native download body", async () => {
-  await runLeakFixture("arrayBuffer", "application/octet-stream", "Buffer.alloc(8 * 1024 * 1024, 0x41)");
-});
+// The reported bug is Linux-specific (OOM in a capped Linux container).
+// On Windows the child-process RSS sampling is flakier (different memory
+// model, larger page granularity) and localhost port 0 + process.env
+// HTTP_PROXY semantics diverge from POSIX, so keep the regression scoped
+// to POSIX where the original issue actually reproduces.
+describe.skipIf(isWindows)("S3File body read lifetimes (#29083)", () => {
+  test("arrayBuffer() does not leak native download body", async () => {
+    await runLeakFixture("arrayBuffer", "application/octet-stream", "Buffer.alloc(8 * 1024 * 1024, 0x41)");
+  });
 
-test("S3File.text() does not leak or UAF native download body", async () => {
-  // Pure ASCII content exercises the toStringWithBytes(.temporary) ASCII
-  // branch that creates a JSC external string pointing into the
-  // downloaded buffer without copying and transfers ownership via
-  // free_global_string. ASAN catches any lifetime mismatch once the
-  // child process touches the returned string.
-  await runLeakFixture("text", "text/plain", "Buffer.alloc(8 * 1024 * 1024, 0x41).toString()");
-});
+  test("text() does not leak or UAF native download body", async () => {
+    // Pure ASCII content exercises the toStringWithBytes(.temporary)
+    // ASCII branch that creates a JSC external string pointing into
+    // the downloaded buffer without copying and transfers ownership
+    // via free_global_string. ASAN catches any lifetime mismatch once
+    // the child process touches the returned string.
+    await runLeakFixture("text", "text/plain", "Buffer.alloc(8 * 1024 * 1024, 0x41).toString()");
+  });
 
-test("S3File.json() does not leak native download body", async () => {
-  await runLeakFixture(
-    "json",
-    "application/json",
-    "JSON.stringify({ data: Buffer.alloc(8 * 1024 * 1024 - 32, 0x41).toString() })",
-  );
-});
+  test("json() does not leak native download body", async () => {
+    await runLeakFixture(
+      "json",
+      "application/json",
+      "JSON.stringify({ data: Buffer.alloc(8 * 1024 * 1024 - 32, 0x41).toString() })",
+    );
+  });
 
-test("S3File.formData() does not leak native download body", async () => {
-  // Exercises the synchronous parse-and-free codepath in
-  // toFormDataWithBytes(). The bodyLiteral builds a single
-  // multipart/form-data field whose value is an 8 MiB ASCII block.
-  const boundary = "bun29083";
-  const bodyLiteral = `(() => {
+  test("formData() does not leak native download body", async () => {
+    // Exercises the synchronous parse-and-free codepath in
+    // toFormDataWithBytes(). The bodyLiteral builds a single
+    // multipart/form-data field whose value is an 8 MiB ASCII block.
+    const boundary = "bun29083";
+    const bodyLiteral = `(() => {
     const boundary = ${JSON.stringify(boundary)};
     const value = Buffer.alloc(8 * 1024 * 1024, 0x41).toString();
     return (
@@ -205,5 +211,6 @@ test("S3File.formData() does not leak native download body", async () => {
       "--" + boundary + "--\\r\\n"
     );
   })()`;
-  await runLeakFixture("formData", `multipart/form-data; boundary=${boundary}`, bodyLiteral);
+    await runLeakFixture("formData", `multipart/form-data; boundary=${boundary}`, bodyLiteral);
+  });
 });

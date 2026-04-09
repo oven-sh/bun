@@ -82,6 +82,34 @@ test("new Blob with sparse array falls back to slow path", async () => {
   expect(await blob.bytes()).toEqual(new Uint8Array([1, 2, 3, 4]));
 });
 
+test("new Blob with all zero-length parts (fast path)", async () => {
+  const blob = new Blob([new Uint8Array(0), new Uint8Array(0), new ArrayBuffer(0)]);
+  expect(blob.size).toBe(0);
+  expect(await blob.bytes()).toEqual(new Uint8Array(0));
+});
+
+test("new Blob with large sparse array length does not over-allocate", async () => {
+  // fast path caps the slice-list pre-allocation and bails at the first hole,
+  // so an inflated .length cannot drive an upfront buffer sized by it.
+  const arr: any[] = [new Uint8Array([1, 2, 3])];
+  arr.length = 1 << 14;
+  const blob = new Blob(arr);
+  expect(blob.size).toBe(3);
+  expect(await blob.bytes()).toEqual(new Uint8Array([1, 2, 3]));
+});
+
+test("new Blob propagates errors thrown from part toString after pushing large buffer", () => {
+  // errdefer cleanup path: a large buffer has already been cloned into the
+  // joiner when the next part's toString throws; the joiner must free it.
+  const buf = new Uint8Array(1 << 18).fill(0x41);
+  const evil = {
+    toString() {
+      throw new Error("oops");
+    },
+  };
+  expect(() => new Blob([buf, evil])).toThrow("oops");
+});
+
 test("new Blob with indexed getter falls back to slow path (no UAF)", async () => {
   const buf = new Uint8Array(4096).fill(0x41);
   const buf2 = new Uint8Array(4).fill(0x42);

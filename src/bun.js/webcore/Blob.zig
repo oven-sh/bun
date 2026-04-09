@@ -4050,7 +4050,10 @@ fn fromJSWithoutDeferGC(
         const slices_alloc = sfb.get();
         var slices = std.array_list.Managed([]const u8).init(slices_alloc);
         defer slices.deinit();
-        bun.handleOom(slices.ensureTotalCapacityPrecise(len));
+        // Don't pre-size by `len`: a sparse array can report a huge length
+        // with few real elements. Grow per real element so the upfront cost
+        // is bounded by the stack buffer and we bail at the first hole.
+        bun.handleOom(slices.ensureTotalCapacityPrecise(@min(len, 16)));
 
         var total: usize = 0;
         var i: u32 = 0;
@@ -4075,19 +4078,21 @@ fn fromJSWithoutDeferGC(
                 => {
                     const buf = item.asArrayBuffer(global) orelse break :fast_path;
                     const slice = buf.byteSlice();
-                    slices.appendAssumeCapacity(slice);
+                    bun.handleOom(slices.append(slice));
                     total += slice.len;
                 },
                 .DOMWrapper => {
                     const blob = item.as(Blob) orelse break :fast_path;
                     if (blob.needsToReadFile() or blob.isS3()) break :fast_path;
                     const view = blob.sharedView();
-                    slices.appendAssumeCapacity(view);
+                    bun.handleOom(slices.append(view));
                     total += view.len;
                 },
                 else => break :fast_path,
             }
         }
+
+        if (total == 0) return Blob{ .globalThis = global };
 
         const joined = bun.handleOom(bun.default_allocator.alloc(u8, total));
         var off: usize = 0;
@@ -4102,6 +4107,7 @@ fn fromJSWithoutDeferGC(
     const stack_mem_all = stack_allocator.get();
     var stack: std.array_list.Managed(JSValue) = std.array_list.Managed(JSValue).init(stack_mem_all);
     var joiner = StringJoiner{ .allocator = stack_mem_all };
+    errdefer joiner.deinit();
     var could_have_non_ascii = false;
 
     defer if (stack_allocator.fixed_buffer_allocator.end_index >= 1024) stack.deinit();
@@ -4177,10 +4183,11 @@ fn fromJSWithoutDeferGC(
                                     joiner.pushCloned(blob.sharedView());
                                     continue;
                                 } else {
-                                    const sliced = try current.toSliceClone(global);
+                                    const sliced = try item.toSliceClone(global);
                                     const allocator = sliced.allocator.get();
                                     could_have_non_ascii = could_have_non_ascii or allocator != null;
                                     joiner.push(sliced.slice(), allocator);
+                                    continue;
                                 }
                             },
                             else => {},

@@ -101,6 +101,10 @@ pub fn done(this: *StringJoiner, allocator: Allocator) ![]u8 {
 
     bun.assert(remaining.len == 0);
 
+    this.head = null;
+    this.tail = null;
+    this.len = 0;
+
     return slice;
 }
 
@@ -116,6 +120,10 @@ pub fn deinit(this: *StringJoiner) void {
         current = node.next;
         prev.deinit(this.allocator);
     }
+
+    this.head = null;
+    this.tail = null;
+    this.len = 0;
 }
 
 /// Same as `.done`, but appends extra slice `end`
@@ -145,6 +153,10 @@ pub fn doneWithEnd(this: *StringJoiner, allocator: Allocator, end: []const u8) !
 
     bun.assert(remaining.len == end.len);
     @memcpy(remaining, end);
+
+    this.head = null;
+    this.tail = null;
+    this.len = 0;
 
     return slice;
 }

@@ -17,10 +17,7 @@ async function runTable(code: string): Promise<string> {
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.exited,
-  ]);
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
   expect(exitCode).toBe(0);
   return stdout;
 }
@@ -74,18 +71,14 @@ test("console.table leaves plain strings unquoted", async () => {
 });
 
 test("console.table handles multiple newline cells in the same table", async () => {
-  const out = await runTable(
-    `console.table([{ a: 1, b: "a\\nb\\nc" }, { a: 2, b: "plain" }]);`,
-  );
+  const out = await runTable(`console.table([{ a: 1, b: "a\\nb\\nc" }, { a: 2, b: "plain" }]);`);
   assertRectangular(out);
   expect(out).toContain(`"a\\nb\\nc"`);
   expect(out).toContain("plain");
 });
 
 test("console.table escapes newlines in Map values", async () => {
-  const out = await runTable(
-    `console.table(new Map([["k1", "v1"], ["k2", "v\\n2"]]));`,
-  );
+  const out = await runTable(`console.table(new Map([["k1", "v1"], ["k2", "v\\n2"]]));`);
   assertRectangular(out);
   expect(out).toContain(`"v\\n2"`);
 });
@@ -107,9 +100,7 @@ test("console.table escapes newlines in primitive arrays", async () => {
 });
 
 test("console.table with properties arg respects newline escaping", async () => {
-  const out = await runTable(
-    `console.table([{a:1, b:"x\\ny"}, {a:2, b:"normal"}], ["b"]);`,
-  );
+  const out = await runTable(`console.table([{a:1, b:"x\\ny"}, {a:2, b:"normal"}], ["b"]);`);
   assertRectangular(out);
   expect(out).toContain(`"x\\ny"`);
   expect(out).toContain("normal");

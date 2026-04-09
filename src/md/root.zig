@@ -52,6 +52,18 @@ pub const Options = struct {
         .tag_filter = true,
     };
 
+    pub const terminal: Options = .{
+        .tables = true,
+        .strikethrough = true,
+        .tasklists = true,
+        .permissive_url_autolinks = true,
+        .permissive_www_autolinks = true,
+        .permissive_email_autolinks = true,
+        .wiki_links = true,
+        .underline = true,
+        .latex_math = true,
+    };
+
     pub fn toFlags(self: Options) Flags {
         return .{
             .tables = self.tables,

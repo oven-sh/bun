@@ -156,12 +156,26 @@ pub const AnsiRenderer = struct {
         is_header: bool,
     };
 
-    // Span flags
     const SPAN_EM: u32 = 1 << 0;
     const SPAN_STRONG: u32 = 1 << 1;
     const SPAN_DEL: u32 = 1 << 2;
     const SPAN_U: u32 = 1 << 3;
     const SPAN_CODE: u32 = 1 << 4;
+
+    const InlineStyle = struct {
+        flag: u32,
+        on: []const u8,
+        off: []const u8,
+        fn of(span_type: SpanType) ?InlineStyle {
+            return switch (span_type) {
+                .em => .{ .flag = SPAN_EM, .on = style(.italic), .off = "\x1b[23m" },
+                .strong => .{ .flag = SPAN_STRONG, .on = style(.bold), .off = "\x1b[22m" },
+                .u => .{ .flag = SPAN_U, .on = style(.underline), .off = "\x1b[24m" },
+                .del => .{ .flag = SPAN_DEL, .on = style(.strikethrough), .off = "\x1b[29m" },
+                else => null,
+            };
+        }
+    };
 
     pub const OutputBuffer = struct {
         list: std.ArrayListUnmanaged(u8),
@@ -184,12 +198,14 @@ pub const AnsiRenderer = struct {
     };
 
     pub fn init(allocator: Allocator, src_text: []const u8, theme: Theme) AnsiRenderer {
-        return .{
+        var r: AnsiRenderer = .{
             .out = .{ .list = .{}, .allocator = allocator, .oom = false },
             .allocator = allocator,
             .src_text = src_text,
             .theme = theme,
         };
+        r.out.list.ensureTotalCapacity(allocator, src_text.len + src_text.len / 2) catch {};
+        return r;
     }
 
     pub fn deinit(self: *AnsiRenderer) void {
@@ -292,34 +308,27 @@ pub const AnsiRenderer = struct {
                     entry.index = list.index;
                     list.index += 1;
                 }
-                var marker_width: u32 = 0;
-                if (task_mark != 0) {
-                    const checked = types.isTaskChecked(task_mark);
-                    const glyph = if (self.theme.colors)
-                        (if (checked) "☒ " else "☐ ")
-                    else
-                        (if (checked) "[x] " else "[ ] ");
-                    const c = if (checked) color(.green) else color(.dim);
-                    self.writeStyled(c, glyph);
-                    self.writeStyled(reset(), "");
-                    marker_width = @intCast(visibleWidth(glyph));
-                } else if (parent_list != null and parent_list.?.kind == .ol) {
-                    const start = parent_list.?.data;
-                    const num = start + entry.index;
-                    var buf: [12]u8 = undefined;
-                    const s = std.fmt.bufPrint(&buf, "{d}. ", .{num}) catch "? ";
-                    self.writeStyled(color(.cyan), s);
-                    self.writeStyled(reset(), "");
-                    marker_width = @intCast(visibleWidth(s));
-                } else {
-                    const bullet = if (self.theme.colors) "• " else "* ";
-                    self.writeStyled(color(.cyan), bullet);
-                    self.writeStyled(reset(), "");
-                    marker_width = @intCast(visibleWidth(bullet));
-                }
+                var num_buf: [12]u8 = undefined;
+                const glyph: []const u8, const glyph_color: []const u8 = blk: {
+                    if (task_mark != 0) {
+                        const checked = types.isTaskChecked(task_mark);
+                        const g = if (self.theme.colors)
+                            (if (checked) "☒ " else "☐ ")
+                        else
+                            (if (checked) "[x] " else "[ ] ");
+                        break :blk .{ g, if (checked) color(.green) else color(.dim) };
+                    }
+                    if (parent_list != null and parent_list.?.kind == .ol) {
+                        const num = parent_list.?.data + entry.index;
+                        break :blk .{ std.fmt.bufPrint(&num_buf, "{d}. ", .{num}) catch "? ", color(.cyan) };
+                    }
+                    break :blk .{ if (self.theme.colors) "• " else "* ", color(.cyan) };
+                };
+                self.writeStyled(glyph_color, glyph);
+                self.writeStyled(reset(), "");
                 // Wrapped continuation lines need to land under the item's
                 // content (past the marker), so record the marker width.
-                entry.indent = marker_width;
+                entry.indent = @intCast(visibleWidth(glyph));
                 self.block_stack.append(self.allocator, entry) catch {
                     self.out.oom = true;
                 };
@@ -409,18 +418,10 @@ pub const AnsiRenderer = struct {
         }
     }
 
-    pub fn leaveBlock(self: *AnsiRenderer, block_type: BlockType, data: u32) void {
+    pub fn leaveBlock(self: *AnsiRenderer, block_type: BlockType, _: u32) void {
         switch (block_type) {
             .doc => {},
-            .quote => {
-                _ = self.block_stack.pop();
-                self.ensureNewline();
-            },
-            .ul, .ol => {
-                _ = self.block_stack.pop();
-                self.ensureNewline();
-            },
-            .li => {
+            .quote, .ul, .ol, .li => {
                 _ = self.block_stack.pop();
                 self.ensureNewline();
             },
@@ -485,7 +486,6 @@ pub const AnsiRenderer = struct {
                 };
             },
         }
-        _ = data;
     }
 
     // ========================================
@@ -494,21 +494,10 @@ pub const AnsiRenderer = struct {
 
     pub fn enterSpan(self: *AnsiRenderer, span_type: SpanType, detail: SpanDetail) void {
         switch (span_type) {
-            .em => {
-                self.span_flags |= SPAN_EM;
-                self.writeStyled(style(.italic), "");
-            },
-            .strong => {
-                self.span_flags |= SPAN_STRONG;
-                self.writeStyled(style(.bold), "");
-            },
-            .u => {
-                self.span_flags |= SPAN_U;
-                self.writeStyled(style(.underline), "");
-            },
-            .del => {
-                self.span_flags |= SPAN_DEL;
-                self.writeStyled(style(.strikethrough), "");
+            .em, .strong, .u, .del => {
+                const s = InlineStyle.of(span_type).?;
+                self.span_flags |= s.flag;
+                self.writeStyled(s.on, "");
             },
             .code => {
                 self.span_flags |= SPAN_CODE;
@@ -552,26 +541,12 @@ pub const AnsiRenderer = struct {
 
     pub fn leaveSpan(self: *AnsiRenderer, span_type: SpanType) void {
         switch (span_type) {
-            .em => {
-                self.span_flags &= ~SPAN_EM;
-                self.writeStyled("\x1b[23m", "");
+            .em, .strong, .u, .del => {
+                const s = InlineStyle.of(span_type).?;
+                self.span_flags &= ~s.flag;
+                self.writeStyled(s.off, "");
                 // An off-code can turn off a heading's own bold/italic —
                 // reapply if we're inside a heading buffer.
-                if (self.heading_level > 0) self.reapplyStyles();
-            },
-            .strong => {
-                self.span_flags &= ~SPAN_STRONG;
-                self.writeStyled("\x1b[22m", "");
-                if (self.heading_level > 0) self.reapplyStyles();
-            },
-            .u => {
-                self.span_flags &= ~SPAN_U;
-                self.writeStyled("\x1b[24m", "");
-                if (self.heading_level > 0) self.reapplyStyles();
-            },
-            .del => {
-                self.span_flags &= ~SPAN_DEL;
-                self.writeStyled("\x1b[29m", "");
                 if (self.heading_level > 0) self.reapplyStyles();
             },
             .code => {
@@ -621,21 +596,13 @@ pub const AnsiRenderer = struct {
                 }
                 if (self.image_depth > 0) self.image_depth -= 1;
             },
-            .wikilink => {
-                // Use writeNoWrap so the closing delimiter stays attached
-                // to the content it closes — writeStyled would wrap `]]`
-                // to a new line when the inner text fills up to col-max.
-                self.writeNoWrap("]]");
-                self.writeStyled("\x1b[39m", "");
-                self.reapplyStyles();
-            },
-            .latexmath => {
-                self.writeNoWrap("$");
-                self.writeStyled("\x1b[39m", "");
-                self.reapplyStyles();
-            },
-            .latexmath_display => {
-                self.writeNoWrap("$$");
+            .wikilink, .latexmath, .latexmath_display => {
+                self.writeNoWrap(switch (span_type) {
+                    .wikilink => "]]",
+                    .latexmath => "$",
+                    .latexmath_display => "$$",
+                    else => unreachable,
+                });
                 self.writeStyled("\x1b[39m", "");
                 self.reapplyStyles();
             },
@@ -759,11 +726,9 @@ pub const AnsiRenderer = struct {
                 self.col = 0;
                 self.writeIndent();
                 i += 1;
-                // collapse repeated spaces
                 while (i < data.len and data[i] == ' ') i += 1;
                 continue;
             }
-            // find next break boundary
             var j = i;
             while (j < data.len and data[j] != ' ' and data[j] != '\n') : (j += 1) {}
             const word = data[i..j];
@@ -1365,7 +1330,6 @@ pub const AnsiRenderer = struct {
 
         const chars = self.boxChars();
 
-        // Top border
         self.writeIndent();
         if (self.theme.colors) self.out.write(color(.dim));
         self.out.write(chars.tl);
@@ -1378,7 +1342,6 @@ pub const AnsiRenderer = struct {
         self.out.writeByte('\n');
         self.last_was_newline = true;
 
-        // Rows
         var has_separated_header = false;
         for (self.table_rows.items) |row| {
             self.writeRowCells(row, widths, aligns);
@@ -1388,7 +1351,6 @@ pub const AnsiRenderer = struct {
             }
         }
 
-        // Bottom border
         self.writeIndent();
         if (self.theme.colors) self.out.write(color(.dim));
         self.out.write(chars.bl);
@@ -1402,7 +1364,6 @@ pub const AnsiRenderer = struct {
         self.last_was_newline = true;
         self.col = 0;
 
-        // Free rows
         for (self.table_rows.items) |row| {
             for (row.cells) |cell| self.allocator.free(cell.content);
             self.allocator.free(row.cells);

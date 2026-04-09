@@ -1237,10 +1237,6 @@ pub const RunCommand = struct {
         Output.flush();
     }
 
-    /// Parse `contents` once with an ImageUrlCollector, download every
-    /// http(s) image URL it finds to a temp file, and populate `out_map`
-    /// with url → temp-path entries. Failures are silent — an image that
-    /// can't be downloaded just falls back to alt-text rendering.
     /// One pending remote-image download. Lives on the heap so its
     /// `async_http.task` (embedded in ThreadPool.Task) has a stable
     /// address — HTTPThread.schedule does @fieldParentPtr on that task,
@@ -1270,6 +1266,10 @@ pub const RunCommand = struct {
         }
     };
 
+    /// Parse `contents` once with an ImageUrlCollector, download every
+    /// http(s) image URL it finds to a temp file, and populate `out_map`
+    /// with url → temp-path entries. Failures are silent — an image that
+    /// can't be downloaded just falls back to alt-text rendering.
     fn prefetchRemoteImages(
         contents: []const u8,
         md_opts: bun.md.Options,
@@ -1289,8 +1289,8 @@ pub const RunCommand = struct {
         var remote_urls = std.ArrayListUnmanaged([]const u8){};
         defer remote_urls.deinit(allocator);
         for (collector.urls.items) |u| {
-            if (!bun.strings.startsWith(u, "http://") and
-                !bun.strings.startsWith(u, "https://")) continue;
+            if (!bun.strings.hasPrefixComptime(u, "http://") and
+                !bun.strings.hasPrefixComptime(u, "https://")) continue;
             const gop = seen.getOrPut(allocator, u) catch continue;
             if (gop.found_existing) continue;
             remote_urls.append(allocator, u) catch continue;
@@ -1385,23 +1385,7 @@ pub const RunCommand = struct {
                     continue;
                 },
             };
-            var written: usize = 0;
-            var ok = true;
-            while (written < bytes.len) {
-                switch (bun.sys.write(fd, bytes[written..])) {
-                    .result => |n| {
-                        if (n == 0) {
-                            ok = false;
-                            break;
-                        }
-                        written += n;
-                    },
-                    .err => {
-                        ok = false;
-                        break;
-                    },
-                }
-            }
+            const ok = (bun.sys.File{ .handle = fd }).writeAll(bytes) == .result;
             fd.close();
             if (!ok) {
                 // openA + TRUNC leaves an orphan even on zero-byte
@@ -1429,17 +1413,10 @@ pub const RunCommand = struct {
         }
     }
 
-    /// Null-terminate `path` on the stack and unlink it. Never allocates,
-    /// so temp-file cleanup can't fail for OOM reasons. Silently skips
-    /// paths too long to fit in PathBuffer — `prefetchRemoteImages`
-    /// generates paths of the form `{tmpdir}/bun-md-{hex8}{ext}` so this
-    /// bound is never hit in practice.
+    /// Null-terminate `path` on the stack and unlink it. Never allocates.
     fn unlinkStagedPath(path: []const u8) void {
         var buf: bun.PathBuffer = undefined;
-        if (path.len + 1 > buf.len) return;
-        @memcpy(buf[0..path.len], path);
-        buf[path.len] = 0;
-        _ = bun.sys.unlink(buf[0..path.len :0]);
+        _ = bun.sys.unlink(bun.path.z(path, &buf));
     }
 
     /// Read a markdown file, render it to ANSI, print to stdout, and exit.
@@ -1488,19 +1465,7 @@ pub const RunCommand = struct {
         const is_tty = Output.isStdoutTTY();
         const kitty_graphics = colors and is_tty and bun.md.detectKittyGraphics();
 
-        // Terminal rendering enables every syntax we can display nicely —
-        // GFM baseline plus wikilinks, underline, and LaTeX math passthrough.
-        const md_opts: bun.md.Options = .{
-            .tables = true,
-            .strikethrough = true,
-            .tasklists = true,
-            .permissive_url_autolinks = true,
-            .permissive_www_autolinks = true,
-            .permissive_email_autolinks = true,
-            .wiki_links = true,
-            .underline = true,
-            .latex_math = true,
-        };
+        const md_opts: bun.md.Options = .terminal;
 
         // Pre-scan for http(s) image URLs so Kitty can display them
         // inline. Only runs when kitty_graphics is on and the document

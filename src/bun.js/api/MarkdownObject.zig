@@ -66,20 +66,7 @@ pub fn renderToAnsi(
         }
     }
 
-    // Terminal rendering needs all the markdown syntax enabled by default.
-    const opts: md.Options = .{
-        .tables = true,
-        .strikethrough = true,
-        .tasklists = true,
-        .permissive_url_autolinks = true,
-        .permissive_www_autolinks = true,
-        .permissive_email_autolinks = true,
-        .wiki_links = true,
-        .underline = true,
-        .latex_math = true,
-    };
-
-    const result = md.renderToAnsi(input, arena.allocator(), opts, theme) catch |err| switch (err) {
+    const result = md.renderToAnsi(input, arena.allocator(), .terminal, theme) catch |err| switch (err) {
         error.OutOfMemory => return globalThis.throwOutOfMemory(),
         error.StackOverflow => return globalThis.throwStackOverflow(),
     } orelse {

@@ -1972,11 +1972,17 @@ async function getExecPathFromBuildKite(target, buildId) {
       args.push("--build", buildId);
     }
 
-    await spawnSafe({
+    const { error } = await spawnSafe({
       command: "buildkite-agent",
       args,
-      timeout: 60000,
+      timeout: 120000,
     });
+    if (error === "timeout") {
+      throw new Error(
+        `buildkite-agent artifact download timed out after 120s for step '${target}'. ` +
+          `Refusing to continue with a partial download (would silently fall back to the wrong binary).`,
+      );
+    }
 
     zipPath = readdirSync(releasePath, { recursive: true, encoding: "utf-8" })
       .filter(filename => /^bun.*\.zip$/i.test(filename))

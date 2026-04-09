@@ -215,7 +215,7 @@ pub fn create(globalThis: *jsc.JSGlobalObject, socket: SocketType) *WindowsNamed
     return this;
 }
 
-pub fn open(globalThis: *jsc.JSGlobalObject, fd: bun.FileDescriptor, ssl_config: ?jsc.API.ServerConfig.SSLConfig, socket: SocketType) !*uws.WindowsNamedPipe {
+pub fn open(globalThis: *jsc.JSGlobalObject, fd: bun.FD, ssl_config: ?jsc.API.ServerConfig.SSLConfig, socket: SocketType) !*uws.WindowsNamedPipe {
     // TODO: reuse the same context for multiple connections when possibles
 
     const this = WindowsNamedPipeContext.create(globalThis, socket);

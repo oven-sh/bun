@@ -212,7 +212,7 @@ pub const WatchItem = struct {
     // filepath hash for quick comparison
     hash: u32,
     loader: options.Loader,
-    fd: bun.FileDescriptor,
+    fd: bun.FD,
     count: u32,
     parent_hash: u32,
     kind: Kind,
@@ -318,7 +318,7 @@ fn watchLoop(this: *Watcher) bun.sys.Maybe(void) {
 ///
 /// Note: This function does not propagate kevent registration errors.
 /// If registration fails, the file will not be watched but no error is returned.
-pub fn addFileDescriptorToKQueueWithoutChecks(this: *Watcher, fd: bun.FileDescriptor, watchlist_id: usize) void {
+pub fn addFileDescriptorToKQueueWithoutChecks(this: *Watcher, fd: bun.FD, watchlist_id: usize) void {
     const KEvent = std.c.Kevent;
 
     // https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/kqueue.2.html
@@ -353,7 +353,7 @@ pub fn addFileDescriptorToKQueueWithoutChecks(this: *Watcher, fd: bun.FileDescri
 
 fn appendFileAssumeCapacity(
     this: *Watcher,
-    fd: bun.FileDescriptor,
+    fd: bun.FD,
     file_path: string,
     hash: HashType,
     loader: options.Loader,
@@ -408,7 +408,7 @@ fn appendFileAssumeCapacity(
 }
 fn appendDirectoryAssumeCapacity(
     this: *Watcher,
-    stored_fd: bun.FileDescriptor,
+    stored_fd: bun.FD,
     file_path: string,
     hash: HashType,
     comptime clone_file_path: bool,
@@ -515,11 +515,11 @@ fn appendDirectoryAssumeCapacity(
 
 pub fn appendFileMaybeLock(
     this: *Watcher,
-    fd: bun.FileDescriptor,
+    fd: bun.FD,
     file_path: string,
     hash: HashType,
     loader: options.Loader,
-    dir_fd: bun.FileDescriptor,
+    dir_fd: bun.FD,
     package_json: ?*PackageJSON,
     comptime clone_file_path: bool,
     comptime lock: bool,
@@ -539,7 +539,7 @@ pub fn appendFileMaybeLock(
 
         if (dir_fd.isValid()) {
             const fds = watchlist_slice.items(.fd);
-            if (std.mem.indexOfScalar(bun.FileDescriptor, fds, dir_fd)) |i| {
+            if (std.mem.indexOfScalar(bun.FD, fds, dir_fd)) |i| {
                 parent_watch_item = @as(WatchItemIndex, @truncate(i));
             }
         }
@@ -592,11 +592,11 @@ inline fn isEligibleDirectory(this: *Watcher, dir: string) bool {
 
 pub fn appendFile(
     this: *Watcher,
-    fd: bun.FileDescriptor,
+    fd: bun.FD,
     file_path: string,
     hash: HashType,
     loader: options.Loader,
-    dir_fd: bun.FileDescriptor,
+    dir_fd: bun.FD,
     package_json: ?*PackageJSON,
     comptime clone_file_path: bool,
 ) bun.sys.Maybe(void) {
@@ -605,7 +605,7 @@ pub fn appendFile(
 
 pub fn addDirectory(
     this: *Watcher,
-    fd: bun.FileDescriptor,
+    fd: bun.FD,
     file_path: string,
     hash: HashType,
     comptime clone_file_path: bool,
@@ -653,7 +653,7 @@ pub fn addFileByPathSlow(
     }
 
     // Only open fd if we might need it
-    var fd: bun.FileDescriptor = bun.invalid_fd;
+    var fd: bun.FD = bun.invalid_fd;
     if (Environment.isMac) {
         const path_z = std.posix.toPosixPath(file_path) catch return false;
         switch (bun.sys.open(&path_z, bun.c.O_EVTONLY, 0)) {
@@ -696,11 +696,11 @@ pub fn addFileByPathSlow(
 
 pub fn addFile(
     this: *Watcher,
-    fd: bun.FileDescriptor,
+    fd: bun.FD,
     file_path: string,
     hash: HashType,
     loader: options.Loader,
-    dir_fd: bun.FileDescriptor,
+    dir_fd: bun.FD,
     package_json: ?*PackageJSON,
     comptime clone_file_path: bool,
 ) bun.sys.Maybe(void) {
@@ -759,7 +759,7 @@ pub fn getResolveWatcher(watcher: *Watcher) bun.resolver.AnyResolveWatcher {
     return bun.resolver.ResolveWatcher(*@This(), onMaybeWatchDirectory).init(watcher);
 }
 
-pub fn onMaybeWatchDirectory(watch: *Watcher, file_path: string, dir_fd: bun.StoredFileDescriptorType) void {
+pub fn onMaybeWatchDirectory(watch: *Watcher, file_path: string, dir_fd: bun.FD) void {
     // We don't want to watch:
     // - Directories outside the root directory
     // - Directories inside node_modules

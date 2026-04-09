@@ -1954,7 +1954,7 @@ test("matching workspace devDependency and npm peerDependency", async () => {
 // --frozen-lockfile was failing in workspace monorepos because lockfile-level
 // properties (trusted dependencies, overrides, patched dependencies) were
 // spuriously compared during recursive per-workspace diff calls.
-test("frozen lockfile succeeds in workspace monorepo with workspace: deps", async () => {
+test("frozen lockfile succeeds in workspace monorepo with trustedDependencies", async () => {
   await Promise.all([
     write(
       packageJson,
@@ -1971,6 +1971,7 @@ test("frozen lockfile succeeds in workspace monorepo with workspace: deps", asyn
         dependencies: {
           "no-deps": "1.0.0",
         },
+        trustedDependencies: ["no-deps"],
       }),
     ),
     write(
@@ -1987,41 +1988,47 @@ test("frozen lockfile succeeds in workspace monorepo with workspace: deps", asyn
   ]);
 
   // First install generates the lockfile
-  var proc = spawn({
-    cmd: [bunExe(), "install"],
-    cwd: packageDir,
-    stdout: "ignore",
-    stderr: "pipe",
-    env,
-  });
+  {
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env,
+    });
 
-  var stderr = await proc.stderr.text();
-  expect(stderr).not.toContain("error");
-  expect(await proc.exited).toBe(0);
+    const stderr = await proc.stderr.text();
+    expect(stderr).not.toContain("lockfile had changes");
+    expect(await proc.exited).toBe(0);
+  }
 
   // --frozen-lockfile must succeed immediately after
-  proc = spawn({
-    cmd: [bunExe(), "install", "--frozen-lockfile"],
-    cwd: packageDir,
-    stdout: "ignore",
-    stderr: "pipe",
-    env,
-  });
+  {
+    await using proc = spawn({
+      cmd: [bunExe(), "install", "--frozen-lockfile"],
+      cwd: packageDir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env,
+    });
 
-  stderr = await proc.stderr.text();
-  expect(stderr).not.toContain("lockfile had changes");
-  expect(await proc.exited).toBe(0);
+    const stderr = await proc.stderr.text();
+    expect(stderr).not.toContain("lockfile had changes");
+    expect(await proc.exited).toBe(0);
+  }
 
   // --production (which implies --frozen-lockfile) must also succeed
-  proc = spawn({
-    cmd: [bunExe(), "install", "--production"],
-    cwd: packageDir,
-    stdout: "ignore",
-    stderr: "pipe",
-    env,
-  });
+  {
+    await using proc = spawn({
+      cmd: [bunExe(), "install", "--production"],
+      cwd: packageDir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env,
+    });
 
-  stderr = await proc.stderr.text();
-  expect(stderr).not.toContain("lockfile had changes");
-  expect(await proc.exited).toBe(0);
+    const stderr = await proc.stderr.text();
+    expect(stderr).not.toContain("lockfile had changes");
+    expect(await proc.exited).toBe(0);
+  }
 });

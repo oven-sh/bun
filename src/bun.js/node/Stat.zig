@@ -61,70 +61,52 @@ pub fn StatType(comptime big: bool) type {
             return if (big) Bun__JSBigIntStatsObjectConstructor(globalObject) else Bun__JSStatsObjectConstructor(globalObject);
         }
 
-        fn clampedInt64(value: anytype) i64 {
-            return @intCast(@min(@max(value, 0), std.math.maxInt(i64)));
-        }
-
         fn statToJS(stat_: *const Syscall.PosixStat, globalObject: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
             const aTime = stat_.atime();
             const mTime = stat_.mtime();
             const cTime = stat_.ctime();
-            const dev: i64 = clampedInt64(stat_.dev);
-            const ino: i64 = clampedInt64(stat_.ino);
-            const mode: i64 = clampedInt64(stat_.mode);
-            const nlink: i64 = clampedInt64(stat_.nlink);
-            const uid: i64 = clampedInt64(stat_.uid);
-            const gid: i64 = clampedInt64(stat_.gid);
-            const rdev: i64 = clampedInt64(stat_.rdev);
-            const size: i64 = clampedInt64(stat_.size);
-            const blksize: i64 = clampedInt64(stat_.blksize);
-            const blocks: i64 = clampedInt64(stat_.blocks);
             const bTime = getBirthtime(stat_);
             const atime_ms: Float = toTimeMS(aTime);
             const mtime_ms: Float = toTimeMS(mTime);
             const ctime_ms: Float = toTimeMS(cTime);
             const birthtime_ms: Float = toTimeMS(bTime);
-            const atime_ns: u64 = if (big) toNanoseconds(aTime) else 0;
-            const mtime_ns: u64 = if (big) toNanoseconds(mTime) else 0;
-            const ctime_ns: u64 = if (big) toNanoseconds(cTime) else 0;
-            const birthtime_ns: u64 = if (big) toNanoseconds(bTime) else 0;
 
             if (big) {
                 return bun.jsc.fromJSHostCall(globalObject, @src(), Bun__createJSBigIntStatsObject, .{
                     globalObject,
-                    dev,
-                    ino,
-                    mode,
-                    nlink,
-                    uid,
-                    gid,
-                    rdev,
-                    size,
-                    blksize,
-                    blocks,
+                    stat_.dev,
+                    stat_.ino,
+                    stat_.mode,
+                    stat_.nlink,
+                    stat_.uid,
+                    stat_.gid,
+                    stat_.rdev,
+                    stat_.size,
+                    stat_.blksize,
+                    stat_.blocks,
                     atime_ms,
                     mtime_ms,
                     ctime_ms,
                     birthtime_ms,
-                    atime_ns,
-                    mtime_ns,
-                    ctime_ns,
-                    birthtime_ns,
+                    toNanoseconds(aTime),
+                    toNanoseconds(mTime),
+                    toNanoseconds(cTime),
+                    toNanoseconds(bTime),
                 });
             }
 
             return Bun__createJSStatsObject(
                 globalObject,
-                dev,
-                ino,
-                mode,
-                nlink,
-                uid,
-                gid,
-                rdev,
-                size,
-                blksize,
-                blocks,
+                stat_.dev,
+                stat_.ino,
+                stat_.mode,
+                stat_.nlink,
+                stat_.uid,
+                stat_.gid,
+                stat_.rdev,
+                stat_.size,
+                stat_.blksize,
+                stat_.blocks,
                 atime_ms,
                 mtime_ms,
                 ctime_ms,
@@ -138,16 +120,16 @@ extern fn Bun__JSStatsObjectConstructor(*jsc.JSGlobalObject) jsc.JSValue;
 
 extern fn Bun__createJSStatsObject(
     globalObject: *jsc.JSGlobalObject,
-    dev: i64,
-    ino: i64,
-    mode: i64,
-    nlink: i64,
-    uid: i64,
-    gid: i64,
-    rdev: i64,
-    size: i64,
-    blksize: i64,
-    blocks: i64,
+    dev: u64,
+    ino: u64,
+    mode: u64,
+    nlink: u64,
+    uid: u64,
+    gid: u64,
+    rdev: u64,
+    size: u64,
+    blksize: u64,
+    blocks: u64,
     atimeMs: f64,
     mtimeMs: f64,
     ctimeMs: f64,
@@ -156,16 +138,16 @@ extern fn Bun__createJSStatsObject(
 
 extern fn Bun__createJSBigIntStatsObject(
     globalObject: *jsc.JSGlobalObject,
-    dev: i64,
-    ino: i64,
-    mode: i64,
-    nlink: i64,
-    uid: i64,
-    gid: i64,
-    rdev: i64,
-    size: i64,
-    blksize: i64,
-    blocks: i64,
+    dev: u64,
+    ino: u64,
+    mode: u64,
+    nlink: u64,
+    uid: u64,
+    gid: u64,
+    rdev: u64,
+    size: u64,
+    blksize: u64,
+    blocks: u64,
     atimeMs: i64,
     mtimeMs: i64,
     ctimeMs: i64,
@@ -178,6 +160,16 @@ extern fn Bun__createJSBigIntStatsObject(
 
 pub const StatsSmall = StatType(false);
 pub const StatsBig = StatType(true);
+
+/// Test-only: build a Stats/BigIntStats from a raw u64 ino via the real
+/// statToJS path, so regression tests can exercise high-inode values without
+/// a filesystem that hands them out.
+pub fn createStatsForIno(globalObject: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+    const ino_arg, const big_arg = callFrame.argumentsAsArray(2);
+    var stat_ = std.mem.zeroes(Syscall.PosixStat);
+    stat_.ino = ino_arg.toUInt64NoTruncate();
+    return try Stats.init(&stat_, big_arg.toBoolean()).toJSNewlyCreated(globalObject);
+}
 
 /// Union between `Stats` and `BigIntStats` where the type can be decided at runtime
 pub const Stats = union(enum) {

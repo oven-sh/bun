@@ -215,9 +215,9 @@ void us_internal_handle_low_priority_sockets(struct us_loop_t *loop) {
 // Called when DNS resolution completes
 // Does not wake up the loop.
 void us_internal_dns_callback(struct us_connecting_socket_t *c, void* addrinfo_req) {
+    (void)addrinfo_req; /* already stored on c by us_socket_context_connect */
     struct us_loop_t *loop = c->context->loop;
     Bun__lock(&loop->data.mutex);
-    c->addrinfo_req = addrinfo_req;
     c->next = loop->data.dns_ready_head;
     loop->data.dns_ready_head = c;
     Bun__unlock(&loop->data.mutex);

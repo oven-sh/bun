@@ -315,6 +315,7 @@ const bunHTTP2Native = Symbol.for("::bunhttp2native::");
 const bunHTTP2Socket = Symbol.for("::bunhttp2socket::");
 const bunHTTP2OriginSet = Symbol("::bunhttp2originset::");
 const bunHTTP2StreamFinal = Symbol.for("::bunHTTP2StreamFinal::");
+const bunHTTP2WaitForTrailers = Symbol("::bunhttp2waitfortrailers::");
 
 const bunHTTP2StreamStatus = Symbol.for("::bunhttp2StreamStatus::");
 
@@ -2050,7 +2051,17 @@ class Http2Stream extends Duplex {
         sensitiveNames[sensitives[i]] = true;
       }
     }
-    session[bunHTTP2Native]?.sendTrailers(this.#id, headers, sensitiveNames);
+    // RFC 7540 §8.1: a trailer HEADERS frame must carry a valid header block.
+    // If the user asked to send an empty trailer object (which the compat
+    // Http2ServerResponse does unconditionally from onStreamTrailersReady),
+    // emit an empty DATA frame with END_STREAM instead — this matches how
+    // Node terminates the stream and avoids a zero-length HEADERS frame that
+    // strict peers (nghttp2/curl) reject as a callback failure.
+    if (ObjectKeys(headers).length === 0) {
+      session[bunHTTP2Native]?.noTrailers(this.#id);
+    } else {
+      session[bunHTTP2Native]?.sendTrailers(this.#id, headers, sensitiveNames);
+    }
     this.#sentTrailers = headers;
   }
 
@@ -2198,6 +2209,27 @@ class Http2Stream extends Duplex {
       const native = session[bunHTTP2Native];
       if (native) {
         this[bunHTTP2StreamStatus] |= StreamState.FinalCalled;
+        // When waitForTrailers is active, writing an empty DATA frame with
+        // close=true emits a bare empty DATA frame (flags=0) to the wire
+        // before the trailer/noTrailers path runs, which then emits ANOTHER
+        // empty DATA (with END_STREAM). Two consecutive empty DATA frames
+        // confuse strict peers (nghttp2 callback failure). Skip the empty
+        // writeStream and drive the wantTrailers path directly — the
+        // eventual `sendTrailers({})` → `noTrailers` call terminates the
+        // stream with a single empty DATA END_STREAM frame, matching Node.
+        if (this[bunHTTP2WaitForTrailers]) {
+          this[bunHTTP2WaitForTrailers] = false;
+          if ((this[bunHTTP2StreamStatus] & StreamState.WantTrailer) === 0) {
+            this[bunHTTP2StreamStatus] |= StreamState.WantTrailer;
+            if (this.listenerCount("wantTrailers") === 0) {
+              native.noTrailers(this.#id);
+            } else {
+              this.emit("wantTrailers");
+            }
+          }
+          callback();
+          return;
+        }
         native.writeStream(this.#id, "", "ascii", true, callback);
         return;
       }
@@ -2643,6 +2675,9 @@ class ServerHttp2Stream extends Http2Stream {
       session[bunHTTP2Native]?.request(this.id, undefined, headers, sensitiveNames);
     } else {
       session[bunHTTP2Native]?.request(this.id, undefined, headers, sensitiveNames, options);
+      if (options.waitForTrailers) {
+        this[bunHTTP2WaitForTrailers] = true;
+      }
     }
     this.headersSent = true;
     this[bunHTTP2Headers] = headers;
@@ -3069,7 +3104,11 @@ class ServerHttp2Session extends Http2Session {
     this.#parser = new H2FrameParser({
       native: nativeSocket,
       context: this,
-      settings: { ...options, ...options?.settings },
+      // RFC 9113 §7.2.2: a server MUST NOT send SETTINGS_ENABLE_PUSH with a
+      // value other than 0 — any non-zero value is treated by a client as a
+      // PROTOCOL_ERROR (nghttp2 reports this as callback failure). Default
+      // to `enablePush: false` for the server, overridable by user settings.
+      settings: { enablePush: false, ...options, ...options?.settings },
       type: 0, // server type
       handlers: ServerHttp2Session.#Handlers,
     });

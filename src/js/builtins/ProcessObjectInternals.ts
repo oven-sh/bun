@@ -169,13 +169,13 @@ export function getStdinStream(
   let stream_destroyed = false;
   let stream_endEmitted = false;
 
-  // Readable.prototype.on/removeListener/removeAllListeners maintain the
-  // kReadableListening/kDataListening/kFlowing bits in _readableState. That is
-  // the source of truth for "does anything want to consume stdin?". The stream
-  // calls this $-private hook whenever those bits change, so own()/disown()
-  // track every add/remove path (.off, .removeListener, .removeAllListeners)
-  // without instance method overrides and without an event listener that user
-  // code could strip via removeAllListeners().
+  // Readable.prototype.on and updateReadableListening (the convergence point
+  // for removeListener/off/removeAllListeners on 'readable') call this
+  // $-private hook with whether any consumer remains. Because the dispatch is
+  // prototype-level and the property is a JSC private name, the hook survives
+  // removeAllListeners() and isn't reachable from user code. Note: matching
+  // Node, removing a 'data' listener does not run updateReadableListening, so
+  // disown() for the 'data' path still goes through the 'pause' handler below.
   stream.$onReadableStateUpdate = function (wantsRead) {
     if (wantsRead) {
       own();

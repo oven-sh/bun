@@ -30,8 +30,20 @@ import { streamPath } from "./stream.ts";
  * Zig compiler commit — determines compiler download + bundled stdlib.
  * Override via `--zig-commit=<hash>` to test a new compiler.
  * From https://github.com/oven-sh/zig releases.
+ *
+ * TEMPORARY SPLIT: local dev uses a newer compiler with parallel sema +
+ * sharded LLVM codegen (big speedup, still being proven correct). CI
+ * stays on the last known-good commit so release builds aren't affected
+ * by compiler bugs we haven't shaken out yet. Once the parallel compiler
+ * is trusted, collapse both back to one constant.
  */
 export const ZIG_COMMIT = "365343af4fc5a1a632e6b54aadd0b87be30edd81";
+export const ZIG_COMMIT_LOCAL = "6093f9372660953a6b95532e45373037174fa76c";
+
+/** Which zig commit to download by default — see TEMPORARY SPLIT note above. */
+export function defaultZigCommit(ci: boolean): string {
+  return ci ? ZIG_COMMIT : ZIG_COMMIT_LOCAL;
+}
 
 // ───────────────────────────────────────────────────────────────────────────
 // Target/optimize/CPU computation

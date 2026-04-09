@@ -8,11 +8,7 @@
 
 import type { CargoBuild, Dependency } from "../source.ts";
 
-// When bumping: emitCargo passes --locked, so the new commit's
-// c-api/Cargo.lock must be in sync with its Cargo.toml. Upstream has
-// shipped release tags with a stale lockfile before (e.g. 2.7.2 at
-// e3aa547, fixed in 77127cd) — verify with `cargo metadata --locked`
-// in c-api/ before pinning a release commit.
+// When bumping: verify `cargo metadata --locked` passes in c-api/.
 const LOLHTML_COMMIT = "77127cd2b8545998756e8d64e36ee2313c4bb312";
 
 export const lolhtml: Dependency = {

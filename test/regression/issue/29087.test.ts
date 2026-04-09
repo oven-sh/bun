@@ -63,7 +63,7 @@ function createTarball(name: string, version: string, binName: string, script: s
   return Bun.gzipSync(Buffer.concat(entries, tarSize));
 }
 
-describe("issue #29087", () => {
+describe.concurrent("issue #29087", () => {
   const pkgName = "create-bun-issue29087-argv-printer";
   const binName = "create-bun-issue29087-argv-printer";
   // Intentionally uses process.argv.slice(2): the script should only see args
@@ -165,5 +165,10 @@ describe("issue #29087", () => {
   test("does not leak `--bun` (consumed by wrapper) into forwarded argv", async () => {
     const { argv } = await runCreate("bun-issue29087-argv-printer", "--bun", "--", "-t", "v3");
     expect(argv).toEqual(["-t", "v3"]);
+  });
+
+  test("preserves `--bun` after separator as a literal arg for the create script", async () => {
+    const { argv } = await runCreate("bun-issue29087-argv-printer", "--", "--bun", "-t", "v3");
+    expect(argv).toEqual(["--bun", "-t", "v3"]);
   });
 });

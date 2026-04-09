@@ -414,20 +414,31 @@ pub const TablePrinter = struct {
         return this.getWidthForValueWithTag(value, tag, quote_strings);
     }
 
-    /// Width a `RowKey` will take in the index column. Quoted row keys
-    /// (string keys containing layout-breaking control chars) account for
-    /// the JSON-escaped rendering so width matches what `writeRowKey`
-    /// emits.
-    fn rowKeyWidth(row_key: RowKey) u32 {
+    /// Width a `RowKey` will take in the index column when rendered.
+    /// `quote` is the already-decided flag from
+    /// `stringHasLayoutBreakingControlChar` — only meaningful for the
+    /// `.str` variant — so callers that also need to render the key
+    /// scan the string only once. Mirrors the `getWidthForValueWithTag`
+    /// pattern used for data cells.
+    fn rowKeyWidthWithQuote(row_key: RowKey, quote: bool) u32 {
         return switch (row_key) {
-            .str => |value| blk: {
-                if (stringHasLayoutBreakingControlChar(value)) {
-                    break :blk jsonQuotedStringWidth(value);
-                }
-                break :blk @intCast(value.visibleWidthExcludeANSIColors(false));
-            },
+            .str => |value| if (quote)
+                jsonQuotedStringWidth(value)
+            else
+                @intCast(value.visibleWidthExcludeANSIColors(false)),
             .num => |value| @truncate(bun.fmt.fastDigitCount(value)),
         };
+    }
+
+    /// Thin wrapper for callers that only need the width (e.g. the
+    /// first pass in `updateColumnsForRow`) — resolves `quote`
+    /// internally.
+    fn rowKeyWidth(row_key: RowKey) u32 {
+        const quote = switch (row_key) {
+            .str => |value| stringHasLayoutBreakingControlChar(value),
+            .num => false,
+        };
+        return rowKeyWidthWithQuote(row_key, quote);
     }
 
     /// Compute the width of a `bun.String` when rendered via
@@ -441,33 +452,35 @@ pub const TablePrinter = struct {
         var discard_buf: [512]u8 = undefined;
         var adapted_writer = old_writer.adaptToNewApi(&discard_buf);
         const w = &adapted_writer.new_interface;
+        writeQuotedBunString(*std.Io.Writer, w, str) catch {};
+        w.flush() catch {};
+        return @truncate(width);
+    }
+
+    /// Render a `bun.String` as a JSON-quoted + escaped literal — picks
+    /// the right `writeJSONString` encoding branch for 8-bit vs UTF-16.
+    fn writeQuotedBunString(comptime Writer: type, writer: Writer, str: bun.String) !void {
         if (str.is8Bit()) {
-            JSPrinter.writeJSONString(str.byteSlice(), *std.Io.Writer, w, .latin1) catch {};
+            try JSPrinter.writeJSONString(str.byteSlice(), Writer, writer, .latin1);
         } else {
             // UTF-16 → writeJSONString reads `[]const u8` but accepts an
             // `.utf16` encoding and reinterprets the bytes as u16.
             const u16_slice = str.utf16();
             const byte_ptr = @as([*]const u8, @ptrCast(u16_slice.ptr));
-            JSPrinter.writeJSONString(byte_ptr[0 .. u16_slice.len * 2], *std.Io.Writer, w, .utf16) catch {};
+            try JSPrinter.writeJSONString(byte_ptr[0 .. u16_slice.len * 2], Writer, writer, .utf16);
         }
-        w.flush() catch {};
-        return @truncate(width);
     }
 
     /// Render a `RowKey` into the index column, quoting + JSON-escaping
-    /// string keys that contain layout-breaking control chars (mirrors
-    /// `shouldQuoteStringCell` for the data columns).
-    fn writeRowKey(comptime Writer: type, writer: Writer, row_key: RowKey) !void {
+    /// string keys that contain layout-breaking control chars. `quote`
+    /// is the already-decided flag from the width computation so this
+    /// doesn't re-scan the string — mirrors the data-cell dedup from
+    /// `getWidthForValueWithTag`.
+    fn writeRowKeyWithQuote(comptime Writer: type, writer: Writer, row_key: RowKey, quote: bool) !void {
         switch (row_key) {
             .str => |value| {
-                if (stringHasLayoutBreakingControlChar(value)) {
-                    if (value.is8Bit()) {
-                        try JSPrinter.writeJSONString(value.byteSlice(), Writer, writer, .latin1);
-                    } else {
-                        const u16_slice = value.utf16();
-                        const byte_ptr = @as([*]const u8, @ptrCast(u16_slice.ptr));
-                        try JSPrinter.writeJSONString(byte_ptr[0 .. u16_slice.len * 2], Writer, writer, .utf16);
-                    }
+                if (quote) {
+                    try writeQuotedBunString(Writer, writer, value);
                 } else {
                     try writer.print("{f}", .{value});
                 }
@@ -561,12 +574,19 @@ pub const TablePrinter = struct {
     ) !void {
         try writer.writeAll("│");
         {
-            const len: u32 = rowKeyWidth(row_key);
+            // Scan the string row key once for layout-breaking control
+            // chars and reuse the flag for both width + render so we
+            // don't walk the bytes twice per row.
+            const quote_row_key = switch (row_key) {
+                .str => |value| stringHasLayoutBreakingControlChar(value),
+                .num => false,
+            };
+            const len: u32 = rowKeyWidthWithQuote(row_key, quote_row_key);
             const needed = columns.items[0].width -| len;
 
             // Right-align the number column
             try writer.splatByteAll(' ', needed + PADDING);
-            try writeRowKey(Writer, writer, row_key);
+            try writeRowKeyWithQuote(Writer, writer, row_key, quote_row_key);
             try writer.splatByteAll(' ', PADDING);
         }
 

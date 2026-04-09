@@ -160,10 +160,11 @@ int us_socket_is_established(int ssl, struct us_socket_t *s) {
 void us_connecting_socket_free(int ssl, struct us_connecting_socket_t *c) {
     // we can't just free c immediately, as it may be enqueued in the dns_ready_head list
     // instead, we move it to a close list and free it after the iteration
+    struct us_loop_t *loop = c->context->loop;
     us_internal_socket_context_unlink_connecting_socket(ssl, c->context, c);
 
-    c->next = c->context->loop->data.closed_connecting_head;
-    c->context->loop->data.closed_connecting_head = c;
+    c->next = loop->data.closed_connecting_head;
+    loop->data.closed_connecting_head = c;
 }
 
 void us_connecting_socket_close(int ssl, struct us_connecting_socket_t *c) {

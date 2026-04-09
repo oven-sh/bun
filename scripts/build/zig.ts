@@ -217,8 +217,11 @@ export function registerZigRules(n: Ninja, cfg: Config): void {
   // our fork (upstream added Feb 2026, not backported).
   const interleave = false;
   const consoleMode = !interleave || hostWin;
+  // Parallel sema: local-only while the parallel compiler is being proven
+  // out — CI stays on the stable compiler which ignores this env var anyway.
+  const parallelSema = cfg.ci ? "" : " --env=ZIG_PARALLEL_SEMA=1";
   n.rule("zig_build", {
-    command: `${stream} ${consoleMode ? "--console" : "--zig-progress"} --env=ZIG_LOCAL_CACHE_DIR=$zig_local_cache --env=ZIG_GLOBAL_CACHE_DIR=$zig_global_cache --env=ZIG_PARALLEL_SEMA=1 $zig build $step $args`,
+    command: `${stream} ${consoleMode ? "--console" : "--zig-progress"} --env=ZIG_LOCAL_CACHE_DIR=$zig_local_cache --env=ZIG_GLOBAL_CACHE_DIR=$zig_global_cache${parallelSema} $zig build $step $args`,
     description: "zig $step → $out",
     ...(consoleMode && { pool: "console" }),
     restat: true,
@@ -377,10 +380,11 @@ function zigBuildArgs(cfg: Config): string[] {
     // Always ON — bun uses mimalloc as its default allocator. The flag
     // exists for experimentation; in practice it's never OFF.
     `-Duse_mimalloc=true`,
-    // Sharded LLVM codegen — one shard per host core. Zig has no
-    // "auto" value (0 = single-threaded), so we compute it here. No-op
-    // on the stable compiler (build.zig's @hasField guard drops it).
-    `-Dllvm_codegen_threads=${availableParallelism()}`,
+    // Sharded LLVM codegen — one shard per host core locally, disabled
+    // in CI. Zig has no "auto" value (0 = single-threaded). CI MUST stay
+    // at 0: the stable compiler's sharder emits N separate .o files
+    // without merging, which would break our single-output ninja edge.
+    `-Dllvm_codegen_threads=${cfg.ci ? 0 : availableParallelism()}`,
 
     // Versioning
     `-Dversion=${cfg.version}`,

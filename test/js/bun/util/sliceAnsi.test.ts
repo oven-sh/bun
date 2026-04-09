@@ -560,9 +560,18 @@ describe("Bun.sliceAnsi", () => {
       expect(Bun.sliceAnsi(input, 0, 1)).toBe("A");
     });
 
-    test("treats truncated CSI tails as non-visible control codes", () => {
-      expect(Bun.sliceAnsi("\u001B[31", 0, 1)).toBe("");
-      expect(Bun.sliceAnsi("\u009B31", 0, 1)).toBe("");
+    test("preserves unterminated CSI as literal text (matches Bun.stripANSI)", () => {
+      // parseCsi returns nullptr for unterminated CSI (same as
+      // parseControlString does for unterminated OSC/DCS), so the introducer
+      // becomes a width-0 char and the rest is visible text — not silently
+      // swallowed as a zero-width control token.
+      expect(Bun.sliceAnsi("\u001B[31", 0, 1)).toBe("\u001B[");
+      expect(Bun.sliceAnsi("\u001B[31", 0, 3)).toBe("\u001B[31");
+      expect(Bun.sliceAnsi("\u009B31", 0, 1)).toBe("\u009B3");
+      expect(Bun.sliceAnsi("\u009B31", 0, 2)).toBe("\u009B31");
+      // Consistency: stripANSI on the slice == stripANSI on the original
+      // (both preserve the unterminated bytes literal).
+      expect(Bun.stripANSI(Bun.sliceAnsi("\u001B[31", 0, 5))).toBe(Bun.stripANSI("\u001B[31"));
     });
 
     test("does not swallow visible text after malformed CSI bytes", () => {

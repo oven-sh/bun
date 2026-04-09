@@ -1,14 +1,4 @@
 // https://github.com/oven-sh/bun/issues/29074
-//
-// Per the Fetch spec, `BodyInit` is a union of ReadableStream, Blob,
-// BufferSource, FormData, URLSearchParams, and USVString. A plain Array
-// is not part of that union, so it falls through to USVString and gets
-// coerced via ToString — matching Node and browsers
-// (e.g. `new Response([1,2,3]).text()` → "1,2,3").
-//
-// Bun previously routed arrays through `Blob.get`, which treats them as
-// `BlobPart[]` (correct for `new Blob([1,2,3])` → "123") — that's wrong
-// for Response/Request body init.
 
 import { expect, test } from "bun:test";
 

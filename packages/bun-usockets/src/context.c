@@ -634,6 +634,8 @@ int start_connections(struct us_connecting_socket_t *c, int count) {
 
 void us_internal_socket_after_resolve(struct us_connecting_socket_t *c) {
     int ssl = c->ssl;
+    /* us_socket_context_connect took a context ref alongside
+     * pending_resolve_callback = 1; every return below drops it */
     struct us_socket_context_t *context = c->context;
 
     // make sure to decrement the active_handles counter, no matter what

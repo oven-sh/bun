@@ -750,7 +750,7 @@ fn configureObj(b: *Build, opts: *BunBuildOptions, obj: *Compile) void {
 
     // Object options
     obj.use_llvm = !opts.no_llvm;
-    obj.use_lld = if (opts.os == .mac or opts.os == .linux) false else !opts.no_llvm;
+    obj.use_lld = if (opts.os == .mac) false else !opts.no_llvm;
 
     if (@hasField(std.meta.Child(@TypeOf(obj)), "llvm_codegen_threads"))
         obj.llvm_codegen_threads = opts.llvm_codegen_threads orelse 0;

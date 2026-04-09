@@ -12,9 +12,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
-async function runCode(
-  src: string,
-): Promise<{ stdout: string; stderr: string; exitCode: number | null }> {
+async function runCode(src: string): Promise<{ stdout: string; stderr: string; exitCode: number | null }> {
   using dir = tempDir("issue-29076", {
     "entry.mjs": src,
   });
@@ -28,11 +26,7 @@ async function runCode(
   // Drain stderr alongside stdout: if the child writes more than the pipe
   // buffer (~64 KB) and no one reads, the child blocks on write() and
   // proc.exited never resolves.
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout, stderr, exitCode };
 }
 

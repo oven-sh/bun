@@ -1234,6 +1234,41 @@ describe("readSync", () => {
     expect(readSync(2147483640, Buffer.alloc(0))).toBe(0);
     expect(readSync(2147483640, Buffer.alloc(10), 0, 0, 0)).toBe(0);
   });
+
+  it("throws TypeError when position is an object", () => {
+    // Matches Node.js `validatePosition` (lib/internal/fs/utils.js):
+    // non-null `position` must be a number or bigint, never a plain object.
+    const dest = join(tmpdir(), "readSync-invalid-position.txt");
+    rmSync(dest, { force: true });
+    writeFileSync(dest, "");
+    const fd = openSync(dest, "r+");
+    try {
+      const buf = new Uint8Array(0);
+      expect(() => readSync(fd, buf, 0, buf.length, { not: "a number" } as any)).toThrow(TypeError);
+      expect(() => readSync(fd, buf, 0, buf.length, "0" as any)).toThrow(TypeError);
+      expect(() => readSync(fd, buf, 0, buf.length, true as any)).toThrow(TypeError);
+    } finally {
+      closeSync(fd);
+      rmSync(dest, { force: true });
+    }
+  });
+
+  it("accepts null, undefined, number, and bigint for position", () => {
+    const dest = join(tmpdir(), "readSync-valid-position.txt");
+    rmSync(dest, { force: true });
+    writeFileSync(dest, "Hello");
+    const fd = openSync(dest, "r");
+    try {
+      const buf = Buffer.alloc(5);
+      expect(() => readSync(fd, buf, 0, 5, null)).not.toThrow();
+      expect(() => readSync(fd, buf, 0, 5, undefined)).not.toThrow();
+      expect(() => readSync(fd, buf, 0, 5, 0)).not.toThrow();
+      expect(() => readSync(fd, buf, 0, 5, 0n as any)).not.toThrow();
+    } finally {
+      closeSync(fd);
+      rmSync(dest, { force: true });
+    }
+  });
 });
 
 it("writevSync", () => {

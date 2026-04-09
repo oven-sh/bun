@@ -820,6 +820,68 @@ pub fn cleanWithLogger(
         }
     }
 
+    // Handle `bun update --latest` without specific packages:
+    // Update dependency version literals from "latest" to actual resolved versions
+    // so the lockfile records e.g. "^19.0.0" instead of "latest".
+    if (manager.subcommand == .update and manager.options.do.update_to_latest and updates.len == 0 and manager.updating_packages.count() > 0) {
+        const slice = new.packages.slice();
+        const resolutions_all = slice.items(.resolution);
+        const workspace_package_id = manager.root_package_id.get(new, manager.workspace_name_hash);
+        const dep_list = slice.items(.dependencies)[workspace_package_id];
+        const res_list = slice.items(.resolutions)[workspace_package_id];
+        const workspace_deps = dep_list.mut(new.buffers.dependencies.items);
+        const resolved_ids = res_list.get(new.buffers.resolutions.items);
+        var string_buf_alloc = new.stringBuf();
+
+        for (workspace_deps, resolved_ids) |*ws_dep, package_id| {
+            if (package_id == invalid_package_id) continue;
+
+            const resolution = resolutions_all[package_id];
+            if (resolution.tag != .npm) continue;
+
+            // Re-read string_buf each iteration since appends may reallocate
+            const cur_string_buf = new.buffers.string_bytes.items;
+            const dep_name = ws_dep.name.slice(cur_string_buf);
+            const entry = manager.updating_packages.get(dep_name) orelse continue;
+
+            const version_fmt = resolution.value.npm.version.fmt(cur_string_buf);
+            const new_version = new_version: {
+                if (exact_versions) {
+                    break :new_version try std.fmt.allocPrint(new.allocator, "{f}", .{version_fmt});
+                }
+
+                const version_literal = version_literal: {
+                    if (!entry.is_alias) break :version_literal entry.original_version_literal;
+                    if (strings.lastIndexOfChar(entry.original_version_literal, '@')) |at_index| {
+                        break :version_literal entry.original_version_literal[at_index + 1 ..];
+                    }
+                    break :version_literal entry.original_version_literal;
+                };
+
+                const pinned_version = Semver.Version.whichVersionIsPinned(version_literal);
+                break :new_version try switch (pinned_version) {
+                    .patch => std.fmt.allocPrint(new.allocator, "{f}", .{version_fmt}),
+                    .minor => std.fmt.allocPrint(new.allocator, "~{f}", .{version_fmt}),
+                    .major => std.fmt.allocPrint(new.allocator, "^{f}", .{version_fmt}),
+                };
+            };
+
+            const full_version = if (entry.is_alias) full: {
+                const alias_string_buf = new.buffers.string_bytes.items;
+                const dep_literal = ws_dep.version.literal.slice(alias_string_buf);
+                if (strings.lastIndexOfChar(dep_literal, '@')) |at_index| {
+                    break :full try std.fmt.allocPrint(new.allocator, "{s}@{s}", .{
+                        dep_literal[0..at_index],
+                        new_version,
+                    });
+                }
+                break :full new_version;
+            } else new_version;
+
+            ws_dep.version.literal = try string_buf_alloc.append(full_version);
+        }
+    }
+
     if (log_level.isVerbose()) {
         Output.prettyErrorln("Clean lockfile: {d} packages -> {d} packages in {f}\n", .{
             old.packages.len,

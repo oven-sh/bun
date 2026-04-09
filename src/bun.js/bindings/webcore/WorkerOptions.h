@@ -23,6 +23,11 @@ struct WorkerOptions {
     // true, then we need to make sure that `process.argv` contains "[worker eval]" instead of the
     // Blob URL.
     bool evalMode { false };
+    // Stdio capture options for node:worker_threads (Node.js compatibility)
+    // When true, capture the respective stream and expose it to the parent
+    bool captureStdout { false };
+    bool captureStderr { false };
+    bool captureStdin { false };
     Kind kind { Kind::Web };
     // Serialized array containing [workerData, environmentData]
     // (environmentData is always a Map)

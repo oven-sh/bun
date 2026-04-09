@@ -43,7 +43,7 @@ async function runCode(src: string): Promise<{ stdout: string; stderr: string; e
 // between ESM-loader and CJS-loader paths.
 
 describe.concurrent("URL imports at runtime are rejected (not silently stubbed)", () => {
-  test("import * as from https:// does not produce a { default: <url> } stub", async () => {
+  test("import * as ns from https:// does not produce a { default: <url> } stub", async () => {
     const { stdout, exitCode } = await runCode(`
       import * as ns from "https://esm.sh/d3@7.9.0";
       console.log("keys=" + JSON.stringify(Object.keys(ns)));
@@ -63,10 +63,17 @@ describe.concurrent("URL imports at runtime are rejected (not silently stubbed)"
     expect(exitCode).not.toBe(0);
   });
 
+  // NB: use a specifier with no recognised file extension, otherwise the
+  // pre-fix runtime loader selects the .js/.jsx loader, tries to read the
+  // URL as a filesystem path, and fails with ENOENT — which gives the same
+  // empty-stdout + non-zero-exit outcome as the post-fix behaviour and so
+  // wouldn't distinguish the regression. No extension hits the .file
+  // loader and produces the { __esModule, default: "<url>" } stub pre-fix.
   test("import from http:// errors at load time", async () => {
     const { stdout, exitCode } = await runCode(`
-      import x from "http://example.com/code.js";
-      console.log(x);
+      import * as ns from "http://bun-issue-29076-nonexistent.invalid";
+      console.log("keys=" + JSON.stringify(Object.keys(ns)));
+      console.log("default=" + typeof ns.default + ":" + ns.default);
     `);
     expect(stdout).toBe("");
     expect(exitCode).not.toBe(0);
@@ -147,17 +154,9 @@ describe.concurrent("URL imports at runtime are rejected (not silently stubbed)"
     expect(exitCode).toBe(0);
   });
 
-  test("require() of https:// throws", async () => {
-    const { stdout, exitCode } = await runCode(`
-      try {
-        const x = require("https://esm.sh/d3@7.9.0");
-        console.log("LOADED:" + typeof x);
-      } catch (e) {
-        console.log("THREW");
-      }
-    `);
-    expect(stdout).toContain("THREW");
-    expect(stdout).not.toContain("LOADED");
-    expect(exitCode).toBe(0);
-  });
+  // `require()` of a URL is not a meaningful regression gate: both pre- and
+  // post-fix it throws (pre-fix: external branch + CJS file read → ENOENT;
+  // post-fix: normal resolve → module-not-found). The test would pass on
+  // system bun for the wrong reason. See the http:// test above for the
+  // rationale on the `.file`-loader / extension trick.
 });

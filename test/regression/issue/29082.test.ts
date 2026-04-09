@@ -75,9 +75,7 @@ describe.concurrent("console.table quotes cells containing control characters", 
   });
 
   test("multiple newline cells in the same table", async () => {
-    const { stdout, exitCode } = await runTable(
-      `console.table([{ a: 1, b: "a\\nb\\nc" }, { a: 2, b: "plain" }]);`,
-    );
+    const { stdout, exitCode } = await runTable(`console.table([{ a: 1, b: "a\\nb\\nc" }, { a: 2, b: "plain" }]);`);
     assertRectangular(stdout);
     expect(stdout).toContain(`"a\\nb\\nc"`);
     expect(stdout).toContain("plain");
@@ -110,9 +108,7 @@ describe.concurrent("console.table quotes cells containing control characters", 
   });
 
   test("properties arg respects newline escaping", async () => {
-    const { stdout, exitCode } = await runTable(
-      `console.table([{a:1, b:"x\\ny"}, {a:2, b:"normal"}], ["b"]);`,
-    );
+    const { stdout, exitCode } = await runTable(`console.table([{a:1, b:"x\\ny"}, {a:2, b:"normal"}], ["b"]);`);
     assertRectangular(stdout);
     expect(stdout).toContain(`"x\\ny"`);
     expect(stdout).toContain("normal");

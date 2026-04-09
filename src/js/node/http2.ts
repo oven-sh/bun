@@ -2675,7 +2675,14 @@ class ServerHttp2Stream extends Http2Stream {
       session[bunHTTP2Native]?.request(this.id, undefined, headers, sensitiveNames);
     } else {
       session[bunHTTP2Native]?.request(this.id, undefined, headers, sensitiveNames, options);
-      if (options.waitForTrailers) {
+      // Only track waitForTrailers when the HEADERS frame above did NOT end
+      // the stream. Status codes 204/205/304 and HEAD requests force
+      // endStream=true earlier in this method, which means the native
+      // request() already wrote END_STREAM on the HEADERS frame — driving
+      // the wantTrailers path from `_final` on such a stream would call
+      // `noTrailers`/`emit("wantTrailers")` on an already-half-closed
+      // stream and corrupt state.
+      if (options.waitForTrailers && !endStream) {
         this[bunHTTP2WaitForTrailers] = true;
       }
     }
@@ -3106,9 +3113,11 @@ class ServerHttp2Session extends Http2Session {
       context: this,
       // RFC 9113 §7.2.2: a server MUST NOT send SETTINGS_ENABLE_PUSH with a
       // value other than 0 — any non-zero value is treated by a client as a
-      // PROTOCOL_ERROR (nghttp2 reports this as callback failure). Default
-      // to `enablePush: false` for the server, overridable by user settings.
-      settings: { enablePush: false, ...options, ...options?.settings },
+      // PROTOCOL_ERROR (nghttp2 reports this as callback failure). This is
+      // unconditional at the protocol level, so `enablePush: false` is
+      // spread LAST to override any user-supplied setting and keep the
+      // server compliant regardless of caller configuration.
+      settings: { ...options, ...options?.settings, enablePush: false },
       type: 0, // server type
       handlers: ServerHttp2Session.#Handlers,
     });

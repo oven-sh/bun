@@ -43,6 +43,14 @@ function parseFrames(buf: Buffer) {
 // Send a minimal HTTP/2 request over a raw TCP socket (prior-knowledge h2c)
 // so we can inspect the exact bytes the server writes. This is what curl
 // does with --http2-prior-knowledge.
+//
+// HTTP/2 keeps the TCP connection open after a stream ends — only the stream
+// half-closes via END_STREAM on the final DATA (or trailer HEADERS) frame.
+// So we can't wait for socket "close"; instead, parse frames as they arrive
+// and resolve as soon as we see the stream's terminating frame. This also
+// catches the bug case where Bun used to emit an empty trailer HEADERS with
+// END_STREAM — that path also ends the stream, so the test is driven by the
+// actual wire behaviour rather than a timeout backstop.
 async function rawH2cRequest(port: number) {
   const preface = Buffer.from("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n");
   // SETTINGS frame (empty payload)
@@ -70,14 +78,30 @@ async function rawH2cRequest(port: number) {
   sock.write(settings);
   sock.write(headersFrame);
 
-  const chunks: Buffer[] = [];
-  sock.on("data", chunk => chunks.push(chunk));
-  // Wait for the server to close the connection (after END_STREAM trailer /
-  // final DATA frame).
-  const timer = setTimeout(() => sock.destroy(), 3000);
-  await once(sock, "close");
-  clearTimeout(timer);
-  return parseFrames(Buffer.concat(chunks));
+  const { promise, resolve, reject } = Promise.withResolvers<ReturnType<typeof parseFrames>>();
+  let buf = Buffer.alloc(0);
+  sock.on("data", chunk => {
+    buf = Buffer.concat([buf, chunk]);
+    // Scan for stream 1's terminating frame: DATA or HEADERS with END_STREAM.
+    let offset = 0;
+    while (offset + 9 <= buf.length) {
+      const len = buf.readUIntBE(offset, 3);
+      if (offset + 9 + len > buf.length) break;
+      const type = buf[offset + 3];
+      const flags = buf[offset + 4];
+      const sid = buf.readUInt32BE(offset + 5) & 0x7fffffff;
+      if (sid === 1 && (type === 0 || type === 1) && (flags & 0x1) === 0x1) {
+        const frames = parseFrames(buf);
+        sock.destroy();
+        resolve(frames);
+        return;
+      }
+      offset += 9 + len;
+    }
+  });
+  sock.on("error", reject);
+  sock.on("close", () => resolve(parseFrames(buf)));
+  return promise;
 }
 
 test("http2.createServer serves h2c response with well-formed frames (#29073)", async () => {
@@ -164,6 +188,48 @@ test("http2.connect client can read h2c response from http2.createServer (#29073
 
       const result = await promise;
       expect(result).toEqual({ status: 200, body: "ok" });
+    } finally {
+      client.close();
+    }
+  } finally {
+    server.close();
+  }
+});
+
+// `stream.respond()` forces endStream=true for 204/205/304 and HEAD.
+// The HEADERS frame carries END_STREAM, so the stream is already
+// half-closed when `_final` fires. If the compat layer's waitForTrailers
+// path runs on such a stream, it would call `noTrailers` (or emit
+// `wantTrailers` and then `sendTrailers`) on an already-ended stream,
+// corrupting state. The guard in `respond()` gates the trailer tracking
+// on `!endStream` to keep 204/304/HEAD handlers safe.
+test("http2.createServer responds with 204 without corrupting stream state (#29073)", async () => {
+  const server = http2.createServer((req, res) => {
+    res.writeHead(204);
+    res.end();
+  });
+  await once(server.listen(0), "listening");
+  try {
+    const port = (server.address() as net.AddressInfo).port;
+    const client = http2.connect(`http://127.0.0.1:${port}`);
+    try {
+      const { promise, resolve, reject } = Promise.withResolvers<{ status: number; body: string }>();
+      const req = client.request({ ":path": "/" });
+      req.setEncoding("utf8");
+      let body = "";
+      let status = 0;
+      req.on("response", headers => {
+        status = headers[":status"] as number;
+      });
+      req.on("data", chunk => {
+        body += chunk;
+      });
+      req.on("end", () => resolve({ status, body }));
+      req.on("error", reject);
+      req.end();
+
+      const result = await promise;
+      expect(result).toEqual({ status: 204, body: "" });
     } finally {
       client.close();
     }

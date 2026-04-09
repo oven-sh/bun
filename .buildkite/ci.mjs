@@ -224,12 +224,12 @@ function getImageLabel(platform) {
  * @returns {string}
  */
 function getImageName(platform, options) {
-  const { os } = platform;
-  const { buildImages, publishImages } = options;
+  const { os, distro } = platform;
+  const { buildImages, publishImages, imageFilter } = options;
 
   const name = getImageKey(platform);
 
-  if (buildImages && !publishImages) {
+  if (buildImages && !publishImages && (!imageFilter || os === imageFilter || distro === imageFilter)) {
     return `${name}-build-${getBuildNumber()}`;
   }
 

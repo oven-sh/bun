@@ -2400,17 +2400,35 @@ const S3BlobDownloadTask = struct {
         switch (result) {
             .success => |response| {
                 // The S3DownloadResult.success.body MutableString owns its
-                // buffer. The handler below copies the bytes into the JS
-                // heap (via .clone), so we must free the native buffer once
-                // the handler returns — otherwise every arrayBuffer() /
-                // text() / json() call leaks the entire downloaded payload.
+                // buffer and must be freed, otherwise every arrayBuffer() /
+                // text() / json() call leaks the downloaded payload
+                // (see #29083).
+                //
+                // We can't just free the buffer after the handler returns:
+                // `toStringWithBytes(.clone)` hands the raw pointer to JSC
+                // as an external string (via `ZigString.external`) without
+                // copying — its finalizer is `Store.external`, which only
+                // derefs the associated Blob.Store. So to stay correct for
+                // both arrayBuffer (copy) and text/json (external) we wrap
+                // the downloaded bytes in a temporary Blob.Store.bytes,
+                // point the task's blob at it during the handler call, and
+                // let the normal ref/deref dance reclaim the buffer when
+                // either the handler's direct deref or JSC's external
+                // string finalizer drops the last reference.
                 var body = response.body;
-                defer body.deinit();
-                const bytes = body.list.items;
+                const owned = body.toOwnedSlice();
+                const bytes_store = Store.init(owned, bun.default_allocator);
+                // Store.init starts at ref_count = 1 (this ref).
+                defer bytes_store.deref();
+
+                const saved_store = this.blob.store;
+                this.blob.store = bytes_store;
+                defer this.blob.store = saved_store;
+
                 if (this.blob.size == Blob.max_size) {
-                    this.blob.size = @truncate(bytes.len);
+                    this.blob.size = @truncate(owned.len);
                 }
-                try jsc.AnyPromise.wrap(.{ .normal = this.promise.get() }, this.globalThis, S3BlobDownloadTask.callHandler, .{ this, bytes });
+                try jsc.AnyPromise.wrap(.{ .normal = this.promise.get() }, this.globalThis, S3BlobDownloadTask.callHandler, .{ this, owned });
             },
             inline .not_found, .failure => |err| {
                 try this.promise.reject(this.globalThis, err.toJSWithAsyncStack(this.globalThis, this.blob.store.?.getPath(), this.promise.get()));

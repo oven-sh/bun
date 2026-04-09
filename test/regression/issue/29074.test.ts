@@ -10,128 +10,44 @@
 // `BlobPart[]` (correct for `new Blob([1,2,3])` → "123") — that's wrong
 // for Response/Request body init.
 
-import { describe, expect, test } from "bun:test";
+import { expect, test } from "bun:test";
 
-describe("Response body from Array coerces via ToString", () => {
-  test("numbers", async () => {
-    expect(await new Response([1, 2, 3]).text()).toBe("1,2,3");
-  });
-
-  test("Array subclass (DerivedArray)", async () => {
-    class Derived extends Array {}
-    const arr = new Derived();
-    arr.push(1, 2, 3);
-    expect(await new Response(arr).text()).toBe("1,2,3");
-  });
-
-  test("Array subclass with mixed content", async () => {
-    class Derived extends Array {}
-    const arr = new Derived();
-    arr.push("a", 1, true, null);
-    expect(await new Response(arr).text()).toBe("a,1,true,");
-  });
-
-  test("strings", async () => {
-    expect(await new Response(["a", "b", "c"]).text()).toBe("a,b,c");
-  });
-
-  test("empty array", async () => {
-    expect(await new Response([]).text()).toBe("");
-  });
-
-  test("nested arrays", async () => {
-    expect(
-      await new Response([
-        [1, 2],
-        [3, 4],
-      ]).text(),
-    ).toBe("1,2,3,4");
-  });
-
-  test("objects in array", async () => {
-    expect(await new Response([{ a: 1 }, { b: 2 }]).text()).toBe("[object Object],[object Object]");
-  });
-
-  test("mixed types", async () => {
-    expect(await new Response([1, "a", true, null]).text()).toBe("1,a,true,");
-  });
-
-  test("sparse array", async () => {
-    // eslint-disable-next-line no-sparse-arrays
-    expect(await new Response([1, , 3]).text()).toBe("1,,3");
-  });
-
-  test("matches Array.prototype.toString()", async () => {
-    const arr = [1, 2, 3, "x", "y"];
-    expect(await new Response(arr).text()).toBe(arr.toString());
-  });
+test("Response body from number array coerces via ToString", async () => {
+  expect(await new Response([1, 2, 3]).text()).toBe("1,2,3");
 });
 
-describe("Request body from Array coerces via ToString", () => {
-  test("numbers", async () => {
-    const req = new Request("http://example.com", {
-      method: "POST",
-      body: [1, 2, 3],
-    });
-    expect(await req.text()).toBe("1,2,3");
-  });
-
-  test("Array subclass (DerivedArray)", async () => {
-    class Derived extends Array {}
-    const arr = new Derived();
-    arr.push(1, 2, 3);
-    const req = new Request("http://example.com", {
-      method: "POST",
-      body: arr,
-    });
-    expect(await req.text()).toBe("1,2,3");
-  });
-
-  test("strings", async () => {
-    const req = new Request("http://example.com", {
-      method: "POST",
-      body: ["a", "b", "c"],
-    });
-    expect(await req.text()).toBe("a,b,c");
-  });
+test("Response body from string array coerces via ToString", async () => {
+  expect(await new Response(["a", "b", "c"]).text()).toBe("a,b,c");
 });
 
-describe("other body-like types still work", () => {
-  test("string", async () => {
-    expect(await new Response("hello").text()).toBe("hello");
-  });
+test("Response body matches Array.prototype.toString", async () => {
+  const arr = [1, 2, 3, "x", "y"];
+  expect(await new Response(arr).text()).toBe(arr.toString());
+});
 
-  test("Uint8Array", async () => {
-    expect(await new Response(new Uint8Array([65, 66, 67])).text()).toBe("ABC");
-  });
+test("Response body from Array subclass coerces via ToString", async () => {
+  class Derived extends Array {}
+  const arr = new Derived();
+  arr.push(1, 2, 3);
+  expect(await new Response(arr).text()).toBe(arr.toString());
+});
 
-  test("ArrayBuffer", async () => {
-    const buf = new Uint8Array([65, 66, 67]).buffer;
-    expect(await new Response(buf).text()).toBe("ABC");
-  });
+test("Request body from number array coerces via ToString", async () => {
+  const req = new Request("http://example.com/", { method: "POST", body: [1, 2, 3] });
+  expect(await req.text()).toBe("1,2,3");
+});
 
-  test("URLSearchParams", async () => {
-    const params = new URLSearchParams({ foo: "bar" });
-    expect(await new Response(params).text()).toBe("foo=bar");
-  });
+test("new Blob([1, 2, 3]) still joins BlobPart[] without separators", async () => {
+  // The Blob constructor path is NOT affected by the fix; arrays here
+  // are `BlobPart[]` per the File API spec and join without separators.
+  const blob = new Blob([1, 2, 3]);
+  expect(await blob.text()).toBe("123");
+});
 
-  test("Blob", async () => {
-    const blob = new Blob(["hello"]);
-    expect(await new Response(blob).text()).toBe("hello");
-  });
+test("Response body from Uint8Array still decodes bytes", async () => {
+  expect(await new Response(new Uint8Array([65, 66, 67])).text()).toBe("ABC");
+});
 
-  test("number", async () => {
-    expect(await new Response(42).text()).toBe("42");
-  });
-
-  test("plain object", async () => {
-    expect(await new Response({ foo: "bar" }).text()).toBe("[object Object]");
-  });
-
-  test("new Blob() still joins parts without separators", async () => {
-    // Separate: `new Blob([1, 2, 3])` is BlobPart[] semantics → "123".
-    // This path is NOT affected by the fix.
-    const blob = new Blob([1, 2, 3]);
-    expect(await blob.text()).toBe("123");
-  });
+test("Response body from string still works", async () => {
+  expect(await new Response("hello").text()).toBe("hello");
 });

@@ -668,12 +668,8 @@ pub const Value = union(Tag) {
         }
 
         return Body.Value{
-            .Blob = Blob.get(globalThis, value, true, false) catch |err| {
+            .Blob = Blob.get(globalThis, value, true, false) catch {
                 if (!globalThis.hasException()) {
-                    if (err == error.InvalidArguments) {
-                        return globalThis.throwInvalidArguments("Expected an Array", .{});
-                    }
-
                     return globalThis.throwInvalidArguments("Invalid Body object", .{});
                 }
 

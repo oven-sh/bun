@@ -17,6 +17,7 @@
 
 import { existsSync, readFileSync, symlinkSync } from "node:fs";
 import { mkdir, readdir, rename, rm, writeFile } from "node:fs/promises";
+import { availableParallelism } from "node:os";
 import { resolve } from "node:path";
 import type { Config } from "./config.ts";
 import { downloadWithRetry, extractZip } from "./download.ts";
@@ -376,8 +377,10 @@ function zigBuildArgs(cfg: Config): string[] {
     // Always ON — bun uses mimalloc as its default allocator. The flag
     // exists for experimentation; in practice it's never OFF.
     `-Duse_mimalloc=true`,
-    // Not using threaded codegen — always 0.
-    `-Dllvm_codegen_threads=16`,
+    // Sharded LLVM codegen — one shard per host core. Zig has no
+    // "auto" value (0 = single-threaded), so we compute it here. No-op
+    // on the stable compiler (build.zig's @hasField guard drops it).
+    `-Dllvm_codegen_threads=${availableParallelism()}`,
 
     // Versioning
     `-Dversion=${cfg.version}`,

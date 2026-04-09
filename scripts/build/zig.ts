@@ -205,7 +205,7 @@ export function registerZigRules(n: Ninja, cfg: Config): void {
   const interleave = false;
   const consoleMode = !interleave || hostWin;
   n.rule("zig_build", {
-    command: `${stream} ${consoleMode ? "--console" : "--zig-progress"} --env=ZIG_LOCAL_CACHE_DIR=$zig_local_cache --env=ZIG_GLOBAL_CACHE_DIR=$zig_global_cache $zig build $step $args`,
+    command: `${stream} ${consoleMode ? "--console" : "--zig-progress"} --env=ZIG_LOCAL_CACHE_DIR=$zig_local_cache --env=ZIG_GLOBAL_CACHE_DIR=$zig_global_cache --env=ZIG_PARALLEL_SEMA=1 $zig build $step $args`,
     description: "zig $step → $out",
     ...(consoleMode && { pool: "console" }),
     restat: true,
@@ -365,7 +365,7 @@ function zigBuildArgs(cfg: Config): string[] {
     // exists for experimentation; in practice it's never OFF.
     `-Duse_mimalloc=true`,
     // Not using threaded codegen — always 0.
-    `-Dllvm_codegen_threads=0`,
+    `-Dllvm_codegen_threads=16`,
 
     // Versioning
     `-Dversion=${cfg.version}`,

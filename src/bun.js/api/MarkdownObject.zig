@@ -1,9 +1,14 @@
 pub fn create(globalThis: *jsc.JSGlobalObject) jsc.JSValue {
-    const object = JSValue.createEmptyObject(globalThis, 3);
+    const object = JSValue.createEmptyObject(globalThis, 4);
     object.put(
         globalThis,
         ZigString.static("html"),
         jsc.JSFunction.create(globalThis, "html", renderToHTML, 1, .{}),
+    );
+    object.put(
+        globalThis,
+        ZigString.static("ansi"),
+        jsc.JSFunction.create(globalThis, "ansi", renderToAnsi, 2, .{}),
     );
     object.put(
         globalThis,
@@ -16,6 +21,62 @@ pub fn create(globalThis: *jsc.JSGlobalObject) jsc.JSValue {
         jsc.JSFunction.create(globalThis, "react", renderReact, 3, .{}),
     );
     return object;
+}
+
+/// `Bun.markdown.ansi(text, theme?)` — render markdown to an ANSI-colored
+/// terminal string. `theme` is an optional object: `{ colors?, hyperlinks?,
+/// light?, columns? }`. By default colors are enabled, hyperlinks are
+/// disabled (the caller doesn't know if stdout is a TTY), and columns is 80.
+pub fn renderToAnsi(
+    globalThis: *jsc.JSGlobalObject,
+    callframe: *jsc.CallFrame,
+) bun.JSError!jsc.JSValue {
+    const input_value, const theme_value = callframe.argumentsAsArray(2);
+
+    if (input_value.isEmptyOrUndefinedOrNull()) {
+        return globalThis.throwInvalidArguments("Expected a string or buffer to render", .{});
+    }
+
+    var arena: bun.ArenaAllocator = .init(bun.default_allocator);
+    defer arena.deinit();
+
+    const buffer = try jsc.Node.StringOrBuffer.fromJS(globalThis, arena.allocator(), input_value) orelse {
+        return globalThis.throwInvalidArguments("Expected a string or buffer to render", .{});
+    };
+
+    const input = buffer.slice();
+
+    var theme: md.AnsiTheme = .{
+        .colors = true,
+        .hyperlinks = false,
+        .kitty_graphics = false,
+        .light = md.detectLightBackground(),
+        .columns = 80,
+    };
+    if (theme_value.isObject()) {
+        if (try theme_value.getBooleanLoose(globalThis, "colors")) |v| theme.colors = v;
+        if (try theme_value.getBooleanLoose(globalThis, "hyperlinks")) |v| theme.hyperlinks = v;
+        if (try theme_value.getBooleanLoose(globalThis, "kittyGraphics")) |v| theme.kitty_graphics = v;
+        if (try theme_value.getBooleanLoose(globalThis, "light")) |v| theme.light = v;
+        if (try theme_value.get(globalThis, "columns")) |cols| {
+            if (cols.isNumber()) {
+                const n = cols.toInt32();
+                theme.columns = if (n <= 0) 0 else @intCast(@min(n, std.math.maxInt(u16)));
+            }
+        }
+    }
+
+    const result = md.renderToAnsi(input, arena.allocator(), .terminal, theme) catch |err| switch (err) {
+        error.OutOfMemory => return globalThis.throwOutOfMemory(),
+        error.StackOverflow => return globalThis.throwStackOverflow(),
+    } orelse {
+        // The parser can only return null via JSError / JSTerminated
+        // from a renderer callback; the ANSI renderer has none, so this
+        // path is unreachable but handle it safely.
+        return globalThis.throwOutOfMemory();
+    };
+
+    return bun.String.createUTF8ForJS(globalThis, result);
 }
 
 pub fn renderToHTML(

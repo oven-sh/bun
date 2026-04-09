@@ -17,6 +17,7 @@
 
 import { existsSync, readFileSync, symlinkSync } from "node:fs";
 import { mkdir, readdir, rename, rm, writeFile } from "node:fs/promises";
+import { availableParallelism } from "node:os";
 import { resolve } from "node:path";
 import type { Config } from "./config.ts";
 import { downloadWithRetry, extractZip } from "./download.ts";
@@ -30,8 +31,20 @@ import { streamPath } from "./stream.ts";
  * Zig compiler commit — determines compiler download + bundled stdlib.
  * Override via `--zig-commit=<hash>` to test a new compiler.
  * From https://github.com/oven-sh/zig releases.
+ *
+ * TEMPORARY SPLIT: local dev uses a newer compiler with parallel sema +
+ * sharded LLVM codegen (big speedup, still being proven correct). CI
+ * stays on the last known-good commit so release builds aren't affected
+ * by compiler bugs we haven't shaken out yet. Once the parallel compiler
+ * is trusted, collapse both back to one constant.
  */
 export const ZIG_COMMIT = "365343af4fc5a1a632e6b54aadd0b87be30edd81";
+export const ZIG_COMMIT_LOCAL = "6093f9372660953a6b95532e45373037174fa76c";
+
+/** Which zig commit to download by default — see TEMPORARY SPLIT note above. */
+export function defaultZigCommit(ci: boolean): string {
+  return ci ? ZIG_COMMIT : ZIG_COMMIT_LOCAL;
+}
 
 // ───────────────────────────────────────────────────────────────────────────
 // Target/optimize/CPU computation
@@ -204,8 +217,11 @@ export function registerZigRules(n: Ninja, cfg: Config): void {
   // our fork (upstream added Feb 2026, not backported).
   const interleave = false;
   const consoleMode = !interleave || hostWin;
+  // Parallel sema: local-only while the parallel compiler is being proven
+  // out — CI stays on the stable compiler which ignores this env var anyway.
+  const parallelSema = cfg.ci ? "" : " --env=ZIG_PARALLEL_SEMA=1";
   n.rule("zig_build", {
-    command: `${stream} ${consoleMode ? "--console" : "--zig-progress"} --env=ZIG_LOCAL_CACHE_DIR=$zig_local_cache --env=ZIG_GLOBAL_CACHE_DIR=$zig_global_cache $zig build $step $args`,
+    command: `${stream} ${consoleMode ? "--console" : "--zig-progress"} --env=ZIG_LOCAL_CACHE_DIR=$zig_local_cache --env=ZIG_GLOBAL_CACHE_DIR=$zig_global_cache${parallelSema} $zig build $step $args`,
     description: "zig $step → $out",
     ...(consoleMode && { pool: "console" }),
     restat: true,
@@ -364,8 +380,11 @@ function zigBuildArgs(cfg: Config): string[] {
     // Always ON — bun uses mimalloc as its default allocator. The flag
     // exists for experimentation; in practice it's never OFF.
     `-Duse_mimalloc=true`,
-    // Not using threaded codegen — always 0.
-    `-Dllvm_codegen_threads=0`,
+    // Sharded LLVM codegen — one shard per host core locally, disabled
+    // in CI. Zig has no "auto" value (0 = single-threaded). CI MUST stay
+    // at 0: the stable compiler's sharder emits N separate .o files
+    // without merging, which would break our single-output ninja edge.
+    `-Dllvm_codegen_threads=${cfg.ci ? 0 : availableParallelism()}`,
 
     // Versioning
     `-Dversion=${cfg.version}`,

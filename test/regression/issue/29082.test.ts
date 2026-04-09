@@ -133,4 +133,16 @@ describe.concurrent("console.table quotes cells containing control characters", 
     expect(stdout).toContain("normal");
     expect(exitCode).toBe(0);
   });
+
+  test("object property keys with newlines are escaped in the index column", async () => {
+    // When `console.table(obj)` is called with a plain object, the keys
+    // populate the index column. A key containing \n used to emit a
+    // literal newline in the index column and break the row layout the
+    // same way data cells did before the fix.
+    const { stdout, exitCode } = await runTable(`console.table({ ["a\\nb"]: 1, normal: 2 });`);
+    assertRectangular(stdout);
+    expect(stdout).toContain(`"a\\nb"`);
+    expect(stdout).toContain("normal");
+    expect(exitCode).toBe(0);
+  });
 });

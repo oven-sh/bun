@@ -349,6 +349,13 @@ pub const TablePrinter = struct {
         if (!value.isString()) return false;
         var str: bun.String = try bun.String.fromJS(value, this.globalObject);
         defer str.deref();
+        return stringHasLayoutBreakingControlChar(str);
+    }
+
+    /// Same as `shouldQuoteStringCell` but operates directly on a
+    /// `bun.String` — used for the index column, whose row key is a
+    /// pre-resolved string rather than a `JSValue`.
+    fn stringHasLayoutBreakingControlChar(str: bun.String) bool {
         if (str.isUTF16()) {
             for (str.utf16()) |c| {
                 if (c < 0x20 and c != 0x1B) return true;
@@ -407,13 +414,72 @@ pub const TablePrinter = struct {
         return this.getWidthForValueWithTag(value, tag, quote_strings);
     }
 
+    /// Width a `RowKey` will take in the index column. Quoted row keys
+    /// (string keys containing layout-breaking control chars) account for
+    /// the JSON-escaped rendering so width matches what `writeRowKey`
+    /// emits.
+    fn rowKeyWidth(row_key: RowKey) u32 {
+        return switch (row_key) {
+            .str => |value| blk: {
+                if (stringHasLayoutBreakingControlChar(value)) {
+                    break :blk jsonQuotedStringWidth(value);
+                }
+                break :blk @intCast(value.visibleWidthExcludeANSIColors(false));
+            },
+            .num => |value| @truncate(bun.fmt.fastDigitCount(value)),
+        };
+    }
+
+    /// Compute the width of a `bun.String` when rendered via
+    /// `writeJSONString` (i.e. surrounded by `"`, with C0 control chars
+    /// JSON-escaped). Measured by feeding the formatted bytes through
+    /// `VisibleCharacterCounter`, matching how `getWidthForValueWithTag`
+    /// measures data-cell widths.
+    fn jsonQuotedStringWidth(str: bun.String) u32 {
+        var width: usize = 0;
+        var old_writer = VisibleCharacterCounter.Writer{ .context = .{ .width = &width } };
+        var discard_buf: [512]u8 = undefined;
+        var adapted_writer = old_writer.adaptToNewApi(&discard_buf);
+        const w = &adapted_writer.new_interface;
+        if (str.is8Bit()) {
+            JSPrinter.writeJSONString(str.byteSlice(), *std.Io.Writer, w, .latin1) catch {};
+        } else {
+            // UTF-16 → writeJSONString reads `[]const u8` but accepts an
+            // `.utf16` encoding and reinterprets the bytes as u16.
+            const u16_slice = str.utf16();
+            const byte_ptr = @as([*]const u8, @ptrCast(u16_slice.ptr));
+            JSPrinter.writeJSONString(byte_ptr[0 .. u16_slice.len * 2], *std.Io.Writer, w, .utf16) catch {};
+        }
+        w.flush() catch {};
+        return @truncate(width);
+    }
+
+    /// Render a `RowKey` into the index column, quoting + JSON-escaping
+    /// string keys that contain layout-breaking control chars (mirrors
+    /// `shouldQuoteStringCell` for the data columns).
+    fn writeRowKey(comptime Writer: type, writer: Writer, row_key: RowKey) !void {
+        switch (row_key) {
+            .str => |value| {
+                if (stringHasLayoutBreakingControlChar(value)) {
+                    if (value.is8Bit()) {
+                        try JSPrinter.writeJSONString(value.byteSlice(), Writer, writer, .latin1);
+                    } else {
+                        const u16_slice = value.utf16();
+                        const byte_ptr = @as([*]const u8, @ptrCast(u16_slice.ptr));
+                        try JSPrinter.writeJSONString(byte_ptr[0 .. u16_slice.len * 2], Writer, writer, .utf16);
+                    }
+                } else {
+                    try writer.print("{f}", .{value});
+                }
+            },
+            .num => |value| try writer.print("{d}", .{value}),
+        }
+    }
+
     /// Update the sizes of the columns for the values of a given row, and create any additional columns as needed
     fn updateColumnsForRow(this: *TablePrinter, columns: *std.array_list.Managed(Column), row_key: RowKey, row_value: JSValue) bun.JSError!void {
         // update size of "(index)" column
-        const row_key_len: u32 = switch (row_key) {
-            .str => |value| @intCast(value.visibleWidthExcludeANSIColors(false)),
-            .num => |value| @truncate(bun.fmt.fastDigitCount(value)),
-        };
+        const row_key_len: u32 = rowKeyWidth(row_key);
         columns.items[0].width = @max(columns.items[0].width, row_key_len);
 
         // special handling for Map: column with idx=1 is "Keys"
@@ -495,18 +561,12 @@ pub const TablePrinter = struct {
     ) !void {
         try writer.writeAll("│");
         {
-            const len: u32 = switch (row_key) {
-                .str => |value| @truncate(value.visibleWidthExcludeANSIColors(false)),
-                .num => |value| @truncate(bun.fmt.fastDigitCount(value)),
-            };
+            const len: u32 = rowKeyWidth(row_key);
             const needed = columns.items[0].width -| len;
 
             // Right-align the number column
             try writer.splatByteAll(' ', needed + PADDING);
-            switch (row_key) {
-                .str => |value| try writer.print("{f}", .{value}),
-                .num => |value| try writer.print("{d}", .{value}),
-            }
+            try writeRowKey(Writer, writer, row_key);
             try writer.splatByteAll(' ', PADDING);
         }
 

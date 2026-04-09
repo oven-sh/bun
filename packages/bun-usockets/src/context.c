@@ -649,8 +649,9 @@ void us_internal_socket_after_resolve(struct us_connecting_socket_t *c) {
     c->pending_resolve_callback = 0;
     // if the socket was closed while we were resolving the address, free it
     if (c->closed) {
-        // close() ran before the DNS callback set addrinfo_req, so it could not
-        // have released the request ref taken by Bun__addrinfo_get; do it here
+        // us_connecting_socket_close could not cancel the pending callback (the
+        // result was already set), so the request ref taken by Bun__addrinfo_get
+        // is released here instead
         if (c->addrinfo_req) {
             Bun__addrinfo_freeRequest(c->addrinfo_req, 0);
             c->addrinfo_req = 0;

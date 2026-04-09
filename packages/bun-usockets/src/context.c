@@ -629,22 +629,30 @@ int start_connections(struct us_connecting_socket_t *c, int count) {
 }
 
 void us_internal_socket_after_resolve(struct us_connecting_socket_t *c) {
+    int ssl = c->ssl;
+    struct us_socket_context_t *context = c->context;
+    /* make sure the context is alive until the callback ends; on_connect_error
+     * (via close) or unlink (via free) can otherwise drop the last ref */
+    us_socket_context_ref(ssl, context);
+
     // make sure to decrement the active_handles counter, no matter what
 #ifdef _WIN32
-    c->context->loop->uv_loop->active_handles--;
+    context->loop->uv_loop->active_handles--;
 #else
-    c->context->loop->num_polls--;
+    context->loop->num_polls--;
 #endif
 
     c->pending_resolve_callback = 0;
     // if the socket was closed while we were resolving the address, free it
     if (c->closed) {
-        us_connecting_socket_free(c->ssl, c);
+        us_connecting_socket_free(ssl, c);
+        us_socket_context_unref(ssl, context);
         return;
     }
     struct addrinfo_result *result = Bun__addrinfo_getRequestResult(c->addrinfo_req);
     if (result->error) {
-        us_connecting_socket_close(c->ssl, c);
+        us_connecting_socket_close(ssl, c);
+        us_socket_context_unref(ssl, context);
         return;
     }
 
@@ -652,9 +660,9 @@ void us_internal_socket_after_resolve(struct us_connecting_socket_t *c) {
 
     int opened = start_connections(c, CONCURRENT_CONNECTIONS);
     if (opened == 0) {
-        us_connecting_socket_close(c->ssl, c);
-        return;
+        us_connecting_socket_close(ssl, c);
     }
+    us_socket_context_unref(ssl, context);
 }
 
 void us_internal_socket_after_open(struct us_socket_t *s, int error) {

@@ -58,7 +58,10 @@ describe("tls.connect hostname verification without explicit servername", () => 
         });
         socket.destroy();
       });
-      socket.on("error", reject);
+      socket.on("error", err => {
+        socket.destroy();
+        reject(err);
+      });
       const result = await promise;
       assert.strictEqual(result.authorized, false);
       assert.match(result.authorizationError, /ERR_TLS_CERT_ALTNAME_INVALID/);
@@ -84,7 +87,10 @@ describe("tls.connect hostname verification without explicit servername", () => 
         if (calledWith === undefined) reject(new Error("checkServerIdentity was never called"));
         else resolve(calledWith);
       });
-      socket.on("error", reject);
+      socket.on("error", err => {
+        socket.destroy();
+        reject(err);
+      });
       assert.strictEqual(await promise, "localhost");
     });
   });

@@ -132,6 +132,57 @@ test("all worker_threads worker instance properties are present", async () => {
   await worker.terminate();
 });
 
+test("MessagePort exposes full EventEmitter alias surface", () => {
+  // Regression test for oven-sh/bun#29022. MessagePort.prototype was missing
+  // `addListener`/`removeListener` aliases, so code that does
+  // `if ("removeListener" in port)` (e.g. undici, node-fetch) would
+  // incorrectly skip the cleanup path.
+  const { port1, port2 } = new MessageChannel();
+  try {
+    for (const name of [
+      "on",
+      "off",
+      "once",
+      "emit",
+      "addListener",
+      "removeListener",
+      "prependListener",
+      "prependOnceListener",
+    ] as const) {
+      expect(name in port1).toBe(true);
+      expect(typeof port1[name]).toBe("function");
+    }
+
+    // `addListener`/`removeListener` must be live aliases of `on`/`off`, as in
+    // Node.js EventEmitter, so a listener attached via one name can be removed
+    // via the other.
+    let received = 0;
+    const handler = () => {
+      received++;
+    };
+    port1.addListener("message", handler);
+    port2.postMessage("hello");
+    // Give the event loop a tick so the message is delivered.
+    return new Promise<void>(resolve => {
+      setTimeout(() => {
+        expect(received).toBe(1);
+        port1.removeListener("message", handler);
+        port2.postMessage("world");
+        setTimeout(() => {
+          expect(received).toBe(1);
+          port1.close();
+          port2.close();
+          resolve();
+        }, 10);
+      }, 10);
+    });
+  } catch (err) {
+    port1.close();
+    port2.close();
+    throw err;
+  }
+});
+
 test("threadId module and worker property is consistent", async () => {
   const worker1 = new Worker(new URL("./worker-thread-id.ts", import.meta.url).href);
   expect(threadId).toBe(0);

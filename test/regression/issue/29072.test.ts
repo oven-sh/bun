@@ -1,20 +1,19 @@
 // https://github.com/oven-sh/bun/issues/29072
 //
 // On Linux, os.freemem() used sysinfo.freeram which excludes reclaimable
-// page cache. On any system with a non-trivial page cache (which is
-// essentially every Linux host after doing real work) this returned a
-// number much smaller than what Node.js returns — Node uses /proc/meminfo's
-// MemAvailable, which includes reclaimable page cache/slab and is the
-// kernel's own estimate of memory available for new allocations.
+// page cache. On any system that's done real work it returned a number
+// much smaller than Node.js — Node uses /proc/meminfo's MemAvailable,
+// the kernel's own estimate of memory available for new allocations,
+// which counts reclaimable cache/slab.
 //
-// Fixed: Bun__Os__getFreeMemory on Linux now reads MemAvailable first and
+// Fix: Bun__Os__getFreeMemory on Linux now reads MemAvailable first and
 // only falls back to sysinfo.freeram when /proc/meminfo is unreadable,
 // matching libuv (and therefore Node.js).
 
 import { expect, test } from "bun:test";
-import { isLinux } from "harness";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { freemem, totalmem } from "node:os";
+import { isLinux } from "harness";
 
 function parseMeminfo(): Record<string, number> {
   const text = readFileSync("/proc/meminfo", "utf8");
@@ -28,19 +27,29 @@ function parseMeminfo(): Record<string, number> {
   return out;
 }
 
-test.skipIf(!isLinux)("os.freemem() uses MemAvailable, not MemFree", () => {
-  // Populate the page cache so MemAvailable is meaningfully larger than
-  // MemFree. Reading a handful of large, well-known files pushes their
-  // pages into the cache; those pages count towards MemAvailable (they
-  // are reclaimable) but NOT towards MemFree.
-  try {
-    readFileSync("/proc/kallsyms");
-  } catch {}
-  try {
-    // /proc/meminfo itself is tiny; prefer something bulkier that every
-    // Linux system has.
-    readFileSync("/proc/self/maps");
-  } catch {}
+// Read a large real on-disk file so its pages land in the Linux page
+// cache. Unlike /proc/* pseudo-files, disk-backed pages are reclaimable
+// and contribute to the MemAvailable–MemFree gap. This makes the bug
+// observable even on otherwise-cold CI hosts.
+function warmPageCache(): void {
+  const candidates = [
+    "/usr/lib/locale/locale-archive",
+    "/usr/lib/x86_64-linux-gnu/libc.so.6",
+    "/usr/lib/aarch64-linux-gnu/libc.so.6",
+    "/usr/bin/bash",
+    "/bin/bash",
+  ];
+  for (const path of candidates) {
+    try {
+      if (existsSync(path) && statSync(path).size > 64 * 1024) {
+        readFileSync(path);
+      }
+    } catch {}
+  }
+}
+
+test.skipIf(!isLinux)("os.freemem() uses MemAvailable, not MemFree (#29072)", () => {
+  warmPageCache();
 
   const info = parseMeminfo();
   expect(info.MemAvailable).toBeGreaterThan(0);
@@ -53,20 +62,24 @@ test.skipIf(!isLinux)("os.freemem() uses MemAvailable, not MemFree", () => {
   expect(free).toBeGreaterThan(0);
   expect(free).toBeLessThanOrEqual(total);
 
-  // The core of the regression: freemem() must be close to MemAvailable,
-  // NOT MemFree. Memory fluctuates between reads, so allow a generous
-  // tolerance. Before the fix freemem() returned sysinfo.freeram (≈ MemFree),
-  // which on any system with a populated page cache differs from
-  // MemAvailable by far more than this tolerance.
-  const tolerance = Math.max(info.MemAvailable * 0.15, 256 * 1024 * 1024);
-  expect(Math.abs(free - info.MemAvailable)).toBeLessThan(tolerance);
+  // The core assertion: os.freemem() must return MemAvailable (what Node
+  // returns via libuv), not MemFree / sysinfo.freeram.
+  //
+  // Memory values fluctuate slightly between the two kernel reads, so
+  // allow a small absolute tolerance. 64 MiB is comfortably larger than
+  // typical inter-read drift on a busy system and comfortably smaller
+  // than the MemAvailable–MemFree gap on any host with a populated
+  // page cache (which every CI runner has by the time a test runs).
+  const tolerance = 64 * 1024 * 1024;
+  expect(Math.abs(free - info.MemAvailable)).toBeLessThanOrEqual(tolerance);
 
-  // When MemAvailable is significantly larger than MemFree (the common
-  // case — any machine that's been running long enough to cache files),
-  // freemem() must report much more than MemFree. This is the direct
-  // assertion that Bun is not returning the sysinfo.freeram value.
-  if (info.MemAvailable > info.MemFree + 512 * 1024 * 1024) {
-    // free should be closer to MemAvailable than to MemFree
+  // Additionally, when the gap between MemAvailable and MemFree is
+  // clearly larger than the fluctuation tolerance (the overwhelming
+  // common case on Linux), assert that `free` is closer to MemAvailable
+  // than to MemFree. This is the direct proof the fix is in effect:
+  // the pre-fix implementation returned ~MemFree, which would fail here.
+  const gap = info.MemAvailable - info.MemFree;
+  if (gap > tolerance * 2) {
     const distToAvailable = Math.abs(free - info.MemAvailable);
     const distToFree = Math.abs(free - info.MemFree);
     expect(distToAvailable).toBeLessThan(distToFree);

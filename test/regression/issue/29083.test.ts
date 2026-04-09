@@ -77,13 +77,14 @@ async function runLeakFixture(method: Method, contentType: string, bodyLiteral: 
         // external string / ArrayBuffer copy. Without this, a
         // use-after-free in the downloaded buffer might be hidden
         // because no JS code ever reads the memory.
-        ${method === "arrayBuffer"
-          ? "new Uint8Array(value).at(-1);"
-          : method === "text"
-            ? "value.charCodeAt(value.length - 1); value.length;"
-            : method === "json"
-              ? "void JSON.stringify(value).length;"
-              : "const fd_entry = value.get('payload'); if (typeof fd_entry === 'string') { fd_entry.charCodeAt(fd_entry.length - 1); } else { void fd_entry.size; }"
+        ${
+          method === "arrayBuffer"
+            ? "new Uint8Array(value).at(-1);"
+            : method === "text"
+              ? "value.charCodeAt(value.length - 1); value.length;"
+              : method === "json"
+                ? "void JSON.stringify(value).length;"
+                : "const fd_entry = value.get('payload'); if (typeof fd_entry === 'string') { fd_entry.charCodeAt(fd_entry.length - 1); } else { void fd_entry.size; }"
         }
       }
 
@@ -153,11 +154,7 @@ async function runLeakFixture(method: Method, contentType: string, bodyLiteral: 
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   if (exitCode !== 0) {
     console.log("stdout:", stdout);
@@ -172,11 +169,7 @@ async function runLeakFixture(method: Method, contentType: string, bodyLiteral: 
 }
 
 test("S3File.arrayBuffer() does not leak native download body", async () => {
-  await runLeakFixture(
-    "arrayBuffer",
-    "application/octet-stream",
-    'Buffer.alloc(8 * 1024 * 1024, 0x41)',
-  );
+  await runLeakFixture("arrayBuffer", "application/octet-stream", "Buffer.alloc(8 * 1024 * 1024, 0x41)");
 });
 
 test("S3File.text() does not leak or UAF native download body", async () => {
@@ -185,11 +178,7 @@ test("S3File.text() does not leak or UAF native download body", async () => {
   // downloaded buffer without copying and transfers ownership via
   // free_global_string. ASAN catches any lifetime mismatch once the
   // child process touches the returned string.
-  await runLeakFixture(
-    "text",
-    "text/plain",
-    "Buffer.alloc(8 * 1024 * 1024, 0x41).toString()",
-  );
+  await runLeakFixture("text", "text/plain", "Buffer.alloc(8 * 1024 * 1024, 0x41).toString()");
 });
 
 test("S3File.json() does not leak native download body", async () => {
@@ -216,9 +205,5 @@ test("S3File.formData() does not leak native download body", async () => {
       "--" + boundary + "--\\r\\n"
     );
   })()`;
-  await runLeakFixture(
-    "formData",
-    `multipart/form-data; boundary=${boundary}`,
-    bodyLiteral,
-  );
+  await runLeakFixture("formData", `multipart/form-data; boundary=${boundary}`, bodyLiteral);
 });

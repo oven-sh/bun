@@ -451,6 +451,36 @@ const fixture = [
         },
       },
     ),
+  () => {
+    const o = {};
+    Object.setPrototypeOf(
+      o,
+      new Proxy(
+        { a: 1 },
+        {
+          getPrototypeOf() {
+            throw new Error("oops");
+          },
+        },
+      ),
+    );
+    return o;
+  },
+  () => {
+    const o = {};
+    Object.setPrototypeOf(
+      o,
+      new Proxy(
+        {
+          get foo() {
+            throw new Error("oops");
+          },
+        },
+        {},
+      ),
+    );
+    return o;
+  },
 ];
 
 describe("crash testing", () => {
@@ -739,4 +769,38 @@ it("CustomEvent", () => {
       BUBBLING_PHASE: 3,
     }"
   `);
+});
+
+it("Proxy prototype with throwing getPrototypeOf trap", () => {
+  const o = {};
+  Object.setPrototypeOf(
+    o,
+    new Proxy(
+      { a: 1, b: 2 },
+      {
+        getPrototypeOf() {
+          throw new Error("oops");
+        },
+      },
+    ),
+  );
+  expect(Bun.inspect(o)).toBe("{\n  a: 1,\n  b: 2,\n}");
+});
+
+it("Proxy prototype with throwing getter on target", () => {
+  const o = {};
+  Object.setPrototypeOf(
+    o,
+    new Proxy(
+      {
+        get foo() {
+          throw new Error("oops");
+        },
+        bar: 2,
+      },
+      {},
+    ),
+  );
+  const result = Bun.inspect(o);
+  expect(result).toContain("bar: 2");
 });

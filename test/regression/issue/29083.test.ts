@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import path from "node:path";
 
 // https://github.com/oven-sh/bun/issues/29083
@@ -17,7 +17,7 @@ import path from "node:path";
 // stays bounded.
 
 test("S3File.arrayBuffer() does not leak native download body", async () => {
-  using dir = tempDirWithFiles("issue-29083", {
+  using dir = tempDir("issue-29083", {
     "fixture.ts": /* ts */ `
       // Chunk size and iteration count picked so that a full-download leak
       // makes RSS climb well above the baseline, while staying cheap enough
@@ -128,6 +128,10 @@ test("S3File.arrayBuffer() does not leak native download body", async () => {
     console.log("stdout:", stdout);
     console.log("stderr:", stderr);
   }
-  expect(stderr).toBe("");
+  // The fixture prints a JSON line with baseline/final/growth RSS on
+  // success — its presence is the actual "the loop finished within
+  // budget" signal. Don't assert stderr is empty because ASAN-enabled
+  // debug builds can emit warnings there that aren't failures.
   expect(exitCode).toBe(0);
+  expect(stdout).toContain('"growthMib"');
 });

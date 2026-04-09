@@ -1087,6 +1087,14 @@ Readable.prototype.off = Readable.prototype.removeListener;
 Readable.prototype.removeAllListeners = function (ev) {
   const res = Stream.prototype.removeAllListeners.$apply(this, arguments);
 
+  // EventEmitter.removeAllListeners can take a fast path that bypasses
+  // Readable.prototype.removeListener, leaving kDataListening stale. Gated on
+  // $onReadableStateUpdate so generic Readable streams keep Node's (also-stale)
+  // behavior; only streams that opt into the hook get the corrected bit.
+  if (this.$onReadableStateUpdate && (ev === "data" || ev === undefined) && this.listenerCount("data") === 0) {
+    this._readableState[kState] &= ~kDataListening;
+  }
+
   if (ev === "readable" || ev === undefined) {
     // We need to check if there is someone still listening to
     // readable and reset the state. However this needs to happen

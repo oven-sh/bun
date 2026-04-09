@@ -190,3 +190,45 @@ test.each([
   expect(stdout).toBe("CHILD:" + payload);
   expect(exitCode).toBe(0);
 });
+
+test("removeAllListeners('data') then on/removeListener('readable') releases fd 0 (no spurious resume)", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const{spawn}=require("child_process");
+       process.stdin.on("data",()=>{});
+       setImmediate(()=>{
+         process.stdin.removeAllListeners("data");
+         setImmediate(()=>{
+           const hr=()=>{while(process.stdin.read()!==null){}};
+           process.stdin.on("readable",hr);
+           setImmediate(()=>{
+             process.stdin.removeListener("readable",hr);
+             setImmediate(()=>setImmediate(()=>{
+               const c=spawn(process.execPath,["-e",'let b="";process.stdin.setEncoding("utf8");process.stdin.on("data",d=>b+=d);process.stdin.on("end",()=>process.stdout.write("CHILD:"+b))'],{stdio:["inherit","inherit","inherit"]});
+               process.stderr.write("READY\\n");
+               c.on("close",x=>process.exit(x??1));
+             }));
+           });
+         });
+       });`,
+    ],
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+
+  let stderr = "";
+  for await (const chunk of proc.stderr) {
+    stderr += Buffer.from(chunk).toString();
+    if (stderr.includes("READY\n")) break;
+  }
+  proc.stdin.write("payload\n");
+  await proc.stdin.end();
+
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("CHILD:payload\n");
+  expect(exitCode).toBe(0);
+});

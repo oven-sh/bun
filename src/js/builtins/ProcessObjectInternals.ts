@@ -201,11 +201,6 @@ export function getStdinStream(
     };
   }
 
-  const originalPause = stream.pause;
-  stream.pause = function () {
-    return originalPause.$call(this);
-  };
-
   async function internalRead(stream) {
     $debug("internalRead();");
     try {

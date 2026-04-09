@@ -1669,6 +1669,13 @@ pub const Command = struct {
             }
         }
 
+        // Skip the "--" separator — it should not be forwarded to the create script
+        if (template_name_start < args.len and
+            strings.eqlComptime(std.mem.trim(u8, bun.asByteSlice(args[template_name_start]), " \t\n"), "--"))
+        {
+            template_name_start += 1;
+        }
+
         if (print_help or
             // "bun create --"
             // "bun create -abc --"

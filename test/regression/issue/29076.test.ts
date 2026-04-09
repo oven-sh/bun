@@ -23,7 +23,11 @@ async function runCode(src: string): Promise<{ stdout: string; exitCode: number 
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  // Drain stderr alongside stdout: if the child writes more than the pipe
+  // buffer (~64 KB) and no one reads, the child blocks on write() and
+  // proc.exited never resolves. We don't assert on stderr content (ASAN
+  // warnings make exact checks flaky) but we still have to consume it.
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout, exitCode };
 }
 
@@ -120,7 +124,7 @@ describe.concurrent("URL imports at runtime are rejected (not silently stubbed)"
     `);
     expect(stdout.trim().split("\n")).toEqual(["error 1", "error 2", "error 3", "done"]);
     expect(exitCode).toBe(0);
-  }, 15000);
+  });
 
   test("require() of https:// throws", async () => {
     const { stdout, exitCode } = await runCode(`

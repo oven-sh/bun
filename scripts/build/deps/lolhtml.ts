@@ -8,7 +8,6 @@
 
 import type { CargoBuild, Dependency } from "../source.ts";
 
-// When bumping: verify `cargo metadata --locked` passes in c-api/.
 const LOLHTML_COMMIT = "77127cd2b8545998756e8d64e36ee2313c4bb312";
 
 export const lolhtml: Dependency = {

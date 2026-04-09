@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 
 // Regression: Bun.inspect crashed with a null deref when walking a prototype
 // chain through a Proxy whose getPrototypeOf trap throws, because

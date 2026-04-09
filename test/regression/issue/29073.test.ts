@@ -14,10 +14,10 @@
 //      layer sets `waitForTrailers: true` and then unconditionally calls
 //      `sendTrailers({})` — Bun was emitting a zero-length trailer block
 //      instead of the single empty DATA with END_STREAM that Node sends.
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
+import { once } from "node:events";
 import http2 from "node:http2";
 import net from "node:net";
-import { once } from "node:events";
 
 function parseFrames(buf: Buffer) {
   const frames: { length: number; type: number; flags: number; streamId: number; payload: Buffer }[] = [];

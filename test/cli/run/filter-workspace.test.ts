@@ -474,10 +474,12 @@ describe("bun", () => {
     elideLines,
     target_pattern,
     antipattern,
+    env = {},
   }: {
-    elideLines: number;
+    elideLines?: number;
     target_pattern: RegExp[];
     antipattern?: RegExp[];
+    env?: Record<string, string | undefined>;
   }) {
     const dir = tempDirWithFiles("testworkspace", {
       packages: {
@@ -509,8 +511,15 @@ describe("bun", () => {
       // code path.
       const { exitCode, stderr, stdout } = spawnSync({
         cwd: dir,
-        cmd: [bunExe(), "run", "--filter", "./packages/dep0", "--elide-lines", String(elideLines), "script"],
-        env: { ...bunEnv, FORCE_COLOR: "1", NO_COLOR: "0" },
+        cmd: [
+          bunExe(),
+          "run",
+          "--filter",
+          "./packages/dep0",
+          ...(elideLines !== undefined ? ["--elide-lines", String(elideLines)] : []),
+          "script",
+        ],
+        env: { ...bunEnv, ...env, FORCE_COLOR: "1", NO_COLOR: "0" },
         stdout: "pipe",
         stderr: "pipe",
       });
@@ -530,7 +539,7 @@ describe("bun", () => {
     runInCwdSuccess({
       cwd: dir,
       pattern: "./packages/dep0",
-      env: { FORCE_COLOR: "1", NO_COLOR: "0" },
+      env: { ...env, FORCE_COLOR: "1", NO_COLOR: "0" },
       target_pattern,
       antipattern,
       command: ["script"],
@@ -589,5 +598,86 @@ describe("bun", () => {
     expect(stdoutval).not.toMatch(/lines elided/);
     expect(stdoutval).toMatch(/(?:log_line[\s\S]*?){20}/);
     expect(exitCode).toBe(0);
+  });
+
+  test("respects BUN_CONFIG_ELIDE_LINES environment variable", () => {
+    runElideLinesTest({
+      target_pattern: [/\[3 lines elided\]/, /(?:log_line[\s\S]*?){20}/],
+      antipattern: [/\[10 lines elided\]/],
+      env: { BUN_CONFIG_ELIDE_LINES: "17" },
+    });
+  });
+
+  test("command-line flag takes precedence over environment variable", () => {
+    runElideLinesTest({
+      elideLines: 12,
+      target_pattern: [/\[8 lines elided\]/, /(?:log_line[\s\S]*?){20}/],
+      antipattern: [/\[15 lines elided\]/],
+      env: { BUN_CONFIG_ELIDE_LINES: "5" },
+    });
+  });
+
+  test("empty --elide-lines value falls back to BUN_CONFIG_ELIDE_LINES", () => {
+    // Mimics `--elide-lines "$MAYBE_UNSET"` expanding to `--elide-lines ""`:
+    // the empty flag value must not shadow the env var, since neither was
+    // an explicit user choice.
+    const dir = tempDirWithFiles("testworkspace", {
+      packages: {
+        dep0: {
+          "index.js": Array(20).fill("console.log('log_line');").join("\n"),
+          "package.json": JSON.stringify({
+            name: "dep0",
+            scripts: { script: `${bunExe()} run index.js` },
+          }),
+        },
+      },
+      "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/*"] }),
+    });
+
+    const { exitCode, stdout } = spawnSync({
+      cwd: dir,
+      cmd: [bunExe(), "run", "--filter", "./packages/dep0", "--elide-lines", "", "script"],
+      env: { ...bunEnv, BUN_CONFIG_ELIDE_LINES: "17", FORCE_COLOR: "1", NO_COLOR: "0" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    if (process.platform !== "win32") {
+      expect(stdout.toString()).toMatch(/\[3 lines elided\]/);
+      expect(stdout.toString()).not.toMatch(/\[10 lines elided\]/);
+    }
+    expect(exitCode).toBe(0);
+  });
+
+  test("run.elide-lines in bunfig.toml rejects fractional values", () => {
+    const dir = tempDirWithFiles("testworkspace", {
+      packages: {
+        dep0: {
+          "index.js": `console.log('hi');`,
+          "package.json": JSON.stringify({
+            name: "dep0",
+            scripts: { script: `${bunExe()} run index.js` },
+          }),
+        },
+      },
+      "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/*"] }),
+      // `0.7` would otherwise silently `@intFromFloat` to `0`, which
+      // disables elision entirely — the opposite of what the error
+      // message suggests. `-c ./bunfig.toml` is passed so `bun run`
+      // actually loads the bunfig (the auto-load path skips it for
+      // `run`).
+      "bunfig.toml": `[run]\nelide-lines = 0.7\n`,
+    });
+
+    const { exitCode, stderr } = spawnSync({
+      cwd: dir,
+      cmd: [bunExe(), "-c", "./bunfig.toml", "run", "--filter", "./packages/dep0", "script"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    expect(stderr.toString()).toMatch(/Expected a non-negative integer/);
+    expect(exitCode).not.toBe(0);
   });
 });

@@ -3798,7 +3798,13 @@ pub fn toStringWithBytes(this: *Blob, global: *JSGlobalObject, raw_bytes: []cons
     if (could_be_all_ascii == null or !could_be_all_ascii.?) {
         // if toUTF16Alloc returns null, it means there are no non-ASCII characters
         // instead of erroring, invalid characters will become a U+FFFD replacement character
-        if (strings.toUTF16Alloc(bun.default_allocator, buf, false, false) catch return global.throwOutOfMemory()) |external| {
+        const maybe_external = strings.toUTF16Alloc(bun.default_allocator, buf, false, false) catch {
+            // Free the owned S3/ReadFile buffer on the OOM path too —
+            // otherwise the leak we are fixing just moves here (see #29083).
+            if (comptime lifetime == .temporary) bun.default_allocator.free(raw_bytes);
+            return global.throwOutOfMemory();
+        };
+        if (maybe_external) |external| {
             if (lifetime != .temporary)
                 this.setIsASCIIFlag(false);
 

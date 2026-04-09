@@ -157,6 +157,44 @@ test("http2.createServer serves h2c response with well-formed frames (#29073)", 
   }
 });
 
+// RFC 9113 §7.2.2 is unconditional: a server MUST NOT advertise
+// SETTINGS_ENABLE_PUSH != 0. The override must apply even when the
+// caller explicitly passes `enablePush: true` in createServer settings —
+// the spread order inside ServerHttp2Session puts `enablePush: false`
+// last so user-supplied settings can't re-enable push.
+test("http2.createServer forces enablePush=0 even when caller requests true (#29073)", async () => {
+  const server = http2.createServer({ settings: { enablePush: true } }, (req, res) => {
+    res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
+    res.end("ok");
+  });
+  await once(server.listen(0), "listening");
+  try {
+    const port = (server.address() as net.AddressInfo).port;
+    const frames = await rawH2cRequest(port);
+
+    const serverSettings = frames.find(f => f.type === 4 && (f.flags & 0x1) === 0);
+    expect(serverSettings).toBeDefined();
+    const settingsPayload = serverSettings!.payload;
+    for (let i = 0; i + 6 <= settingsPayload.length; i += 6) {
+      const id = settingsPayload.readUInt16BE(i);
+      const value = settingsPayload.readUInt32BE(i + 2);
+      if (id === 0x02) {
+        // SETTINGS_ENABLE_PUSH must be 0 regardless of caller input.
+        expect(value).toBe(0);
+      }
+    }
+
+    // And the response still arrives intact.
+    const stream1Data = frames.filter(f => f.type === 0 && f.streamId === 1);
+    const bodyBytes = Buffer.concat(stream1Data.map(f => f.payload));
+    expect(bodyBytes.toString("utf8")).toBe("ok");
+    const lastData = stream1Data[stream1Data.length - 1];
+    expect(lastData.flags & 0x1).toBe(0x1);
+  } finally {
+    server.close();
+  }
+});
+
 // Exercise the exact client→server path from the issue (curl prior
 // knowledge succeeds, so Node's http2 client should too against Bun).
 test("http2.connect client can read h2c response from http2.createServer (#29073)", async () => {

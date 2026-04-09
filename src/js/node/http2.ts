@@ -2223,6 +2223,13 @@ class Http2Stream extends Duplex {
             this[bunHTTP2StreamStatus] |= StreamState.WantTrailer;
             if (this.listenerCount("wantTrailers") === 0) {
               native.noTrailers(this.#id);
+              // Mark trailers as "sent" so a later stream.sendTrailers()
+              // call hits the ERR_HTTP2_TRAILERS_ALREADY_SENT guard instead
+              // of invoking native noTrailers() a second time on an
+              // already-half-closed stream. The emit("wantTrailers") path
+              // below reaches the same result via sendTrailers({}) which
+              // assigns #sentTrailers itself.
+              this.#sentTrailers = {};
             } else {
               this.emit("wantTrailers");
             }

@@ -1014,6 +1014,11 @@ pub inline fn isLoaded() bool {
 /// external behavior. Previously this caused `import * as x from
 /// "https://..."` to produce a bogus `{ default: "<url>" }` namespace and
 /// `await import("https://...")` to hang on retry (see #29076, #22743).
+///
+/// Both fields below MUST be set. `RuntimeTranspilerStore.zig` reassigns
+/// `transpiler.resolver.opts = transpiler.options` on every .ts/.tsx/.jsx
+/// transpilation, so setting only `resolver.opts` would be silently reset
+/// back to the default for every transpiled file.
 inline fn disableRuntimeURLExternals(vm: *VirtualMachine) void {
     vm.transpiler.resolver.opts.allow_url_externals = false;
     vm.transpiler.options.allow_url_externals = false;

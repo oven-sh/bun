@@ -17,6 +17,20 @@ describe("Response body from Array coerces via ToString", () => {
     expect(await new Response([1, 2, 3]).text()).toBe("1,2,3");
   });
 
+  test("Array subclass (DerivedArray)", async () => {
+    class Derived extends Array {}
+    const arr = new Derived();
+    arr.push(1, 2, 3);
+    expect(await new Response(arr).text()).toBe("1,2,3");
+  });
+
+  test("Array subclass with mixed content", async () => {
+    class Derived extends Array {}
+    const arr = new Derived();
+    arr.push("a", 1, true, null);
+    expect(await new Response(arr).text()).toBe("a,1,true,");
+  });
+
   test("strings", async () => {
     expect(await new Response(["a", "b", "c"]).text()).toBe("a,b,c");
   });
@@ -58,6 +72,17 @@ describe("Request body from Array coerces via ToString", () => {
     const req = new Request("http://example.com", {
       method: "POST",
       body: [1, 2, 3],
+    });
+    expect(await req.text()).toBe("1,2,3");
+  });
+
+  test("Array subclass (DerivedArray)", async () => {
+    class Derived extends Array {}
+    const arr = new Derived();
+    arr.push(1, 2, 3);
+    const req = new Request("http://example.com", {
+      method: "POST",
+      body: arr,
     });
     expect(await req.text()).toBe("1,2,3");
   });

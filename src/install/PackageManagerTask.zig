@@ -323,7 +323,7 @@ pub const Status = enum {
 pub const Data = union {
     package_manifest: Npm.PackageManifest,
     extract: ExtractData,
-    git_clone: bun.FileDescriptor,
+    git_clone: bun.FD,
     git_checkout: ExtractData,
 };
 
@@ -346,7 +346,7 @@ pub const Request = union {
         res: Resolution,
     },
     git_checkout: struct {
-        repo_dir: bun.FileDescriptor,
+        repo_dir: bun.FD,
         dependency_id: DependencyID,
         name: strings.StringOrTinyString,
         url: strings.StringOrTinyString,

@@ -23,6 +23,11 @@ extern "C" JSC::EncodedJSValue JSUint8Array__fromDefaultAllocator(JSC::JSGlobalO
     return JSC::JSValue::encode(uint8Array);
 }
 
+extern "C" bool JSUint8Array__isShared(JSC::JSUint8Array* array)
+{
+    return array->isShared();
+}
+
 extern "C" JSC::EncodedJSValue JSArrayBuffer__fromDefaultAllocator(JSC::JSGlobalObject* lexicalGlobalObject, uint8_t* ptr, size_t length)
 {
 

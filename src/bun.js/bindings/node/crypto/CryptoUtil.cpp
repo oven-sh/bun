@@ -85,7 +85,7 @@ EncodedJSValue encode(JSGlobalObject* lexicalGlobalObject, ThrowScope& scope, st
         return JSValue::encode(JSC::JSUint8Array::create(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), WTF::move(buffer), 0, bytes.size()));
     }
     default: {
-        return jsBufferToStringFromBytes(lexicalGlobalObject, scope, bytes, encoding);
+        return jsBufferToStringFromBytes(lexicalGlobalObject, scope, bytes, encoding, false);
     }
     }
 }

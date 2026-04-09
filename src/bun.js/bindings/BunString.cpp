@@ -397,6 +397,9 @@ extern "C" [[ZIG_EXPORT(nothrow)]] BunString BunString__fromLatin1Unitialized(si
     return { BunStringTag::WTFStringImpl, { .wtf = impl.leakRef() } };
 }
 
+// `bytes` must remain stable for the duration of this call. Callers holding a
+// JS ArrayBufferView must snapshot when isShared() before passing it here; the
+// simdutf length+convert path will overflow if the input mutates between passes.
 extern "C" BunString BunString__fromUTF8(const char* bytes, size_t length)
 {
     ASSERT(length > 0);

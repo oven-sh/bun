@@ -127,6 +127,12 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_execute, (JSGlobalObject * globalObject, C
             throwTypeError(globalObject, scope, "Buffer is detached"_s);
             return {};
         }
+        if (buffer->isShared()) [[unlikely]] {
+            // StringPtr stores raw pointers into this buffer and later passes them to
+            // WTF::String::fromUTF8, which requires stable input.
+            throwTypeError(globalObject, scope, "Buffer must not be backed by a SharedArrayBuffer"_s);
+            return {};
+        }
 
         JSValue result = parser->impl()->execute(globalObject, reinterpret_cast<const char*>(buffer->vector()), buffer->byteLength());
         RETURN_IF_EXCEPTION(scope, {});

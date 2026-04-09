@@ -1082,6 +1082,9 @@ pub fn nonASCIISequenceLength(first_byte: u8) u3_fast {
 /// Convert a UTF-8 string to a UTF-16 string IF there are any non-ascii characters
 /// If there are no non-ascii characters, this returns null
 /// This is intended to be used for strings that go to JavaScript
+/// `bytes` must remain stable for the duration of this call. Callers holding a
+/// JS ArrayBufferView must snapshot when `isShared()` before passing it here;
+/// the simdutf length+convert path will overflow if the input mutates between passes.
 pub fn toUTF16Alloc(allocator: std.mem.Allocator, bytes: []const u8, comptime fail_if_invalid: bool, comptime sentinel: bool) !if (sentinel) ?[:0]u16 else ?[]u16 {
     if (strings.firstNonASCII(bytes)) |i| {
         const output_: ?std.array_list.Managed(u16) = if (comptime bun.FeatureFlags.use_simdutf) simd: {
@@ -1203,6 +1206,9 @@ pub fn toUTF16AllocForReal(allocator: std.mem.Allocator, bytes: []const u8, comp
     };
 }
 
+/// `bytes` must remain stable for the duration of this call. Callers holding a
+/// JS ArrayBufferView must snapshot when `isShared()` before passing it here;
+/// the simdutf length+convert path will overflow if the input mutates between passes.
 pub fn toUTF16AllocMaybeBuffered(
     allocator: std.mem.Allocator,
     bytes: []const u8,

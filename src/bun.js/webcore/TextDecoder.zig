@@ -158,13 +158,24 @@ pub fn decodeUTF16(
 pub fn decode(this: *TextDecoder, globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
     const arguments = callframe.arguments_old(2).slice();
 
-    const input_slice = input_slice: {
+    var owned_input: ?[]u8 = null;
+    defer if (owned_input) |owned| bun.default_allocator.free(owned);
+
+    const input_slice: []const u8 = input_slice: {
         if (arguments.len == 0 or arguments[0].isUndefined()) {
             break :input_slice "";
         }
 
         if (arguments[0].asArrayBuffer(globalThis)) |array_buffer| {
-            break :input_slice array_buffer.slice();
+            const raw = array_buffer.slice();
+            // decodeSlice's UTF-8 path sizes its output from a first pass over the
+            // input and then converts in a second pass. SharedArrayBuffer bytes can
+            // change between passes, so snapshot them into owned memory first.
+            if (array_buffer.shared) {
+                owned_input = bun.default_allocator.dupe(u8, raw) catch return globalThis.throwOutOfMemory();
+                break :input_slice owned_input.?;
+            }
+            break :input_slice raw;
         }
 
         return globalThis.throwInvalidArguments("TextDecoder.decode expects an ArrayBuffer or TypedArray", .{});
@@ -186,7 +197,13 @@ pub fn decode(this: *TextDecoder, globalThis: *jsc.JSGlobalObject, callframe: *j
 }
 
 pub fn decodeWithoutTypeChecks(this: *TextDecoder, globalThis: *jsc.JSGlobalObject, uint8array: *jsc.JSUint8Array) bun.JSError!JSValue {
-    return this.decodeSlice(globalThis, uint8array.slice(), false);
+    const raw = uint8array.slice();
+    if (uint8array.isShared()) {
+        const owned = bun.default_allocator.dupe(u8, raw) catch return globalThis.throwOutOfMemory();
+        defer bun.default_allocator.free(owned);
+        return this.decodeSlice(globalThis, owned, false);
+    }
+    return this.decodeSlice(globalThis, raw, false);
 }
 
 fn decodeSlice(this: *TextDecoder, globalThis: *jsc.JSGlobalObject, buffer_slice: []const u8, comptime flush: bool) bun.JSError!JSValue {

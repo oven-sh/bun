@@ -11,6 +11,11 @@ pub const JSUint8Array = opaque {
         return this.ptr()[0..this.len()];
     }
 
+    extern fn JSUint8Array__isShared(this: *JSUint8Array) bool;
+    pub fn isShared(this: *JSUint8Array) bool {
+        return JSUint8Array__isShared(this);
+    }
+
     extern fn JSUint8Array__fromDefaultAllocator(*jsc.JSGlobalObject, ptr: [*]u8, len: usize) jsc.JSValue;
     /// *bytes* must come from bun.default_allocator
     pub fn fromBytes(globalThis: *JSGlobalObject, bytes: []u8) jsc.JSValue {

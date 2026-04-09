@@ -141,9 +141,7 @@ describe("issue #29087", () => {
 
     const match = stdout.match(/ARGV:(.+)/);
     if (!match) {
-      throw new Error(
-        `Could not find ARGV line in stdout (exit ${exitCode}).\nstdout:\n${stdout}\nstderr:\n${stderr}`,
-      );
+      throw new Error(`Could not find ARGV line in stdout (exit ${exitCode}).\nstdout:\n${stdout}\nstderr:\n${stderr}`);
     }
     return { argv: JSON.parse(match[1]!), stdout, stderr };
   }

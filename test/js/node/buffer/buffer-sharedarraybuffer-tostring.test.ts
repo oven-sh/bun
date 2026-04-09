@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { StringDecoder } from "node:string_decoder";
 
 // UTF-8 → UTF-16 conversion sizes its output buffer from a first pass over the

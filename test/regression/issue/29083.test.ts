@@ -27,7 +27,7 @@ import path from "node:path";
 // 5-second bun:test default.
 setDefaultTimeout(120_000);
 
-type Method = "arrayBuffer" | "text" | "json";
+type Method = "arrayBuffer" | "text" | "json" | "formData";
 
 async function runLeakFixture(method: Method, contentType: string, bodyLiteral: string) {
   using dir = tempDir(`issue-29083-${method}`, {
@@ -62,7 +62,15 @@ async function runLeakFixture(method: Method, contentType: string, bodyLiteral: 
 
       async function pullOnce() {
         const value = await file.${method}();
-        if (${method === "arrayBuffer" ? "value.byteLength" : method === "text" ? "value.length" : "JSON.stringify(value).length"} === 0) {
+        if (${
+          method === "arrayBuffer"
+            ? "value.byteLength"
+            : method === "text"
+              ? "value.length"
+              : method === "json"
+                ? "JSON.stringify(value).length"
+                : "[...value.keys()].length"
+        } === 0) {
           throw new Error("empty ${method}() result");
         }
         // Touch the contents to force JSC to materialise the lazy
@@ -73,7 +81,9 @@ async function runLeakFixture(method: Method, contentType: string, bodyLiteral: 
           ? "new Uint8Array(value).at(-1);"
           : method === "text"
             ? "value.charCodeAt(value.length - 1); value.length;"
-            : "void JSON.stringify(value).length;"
+            : method === "json"
+              ? "void JSON.stringify(value).length;"
+              : "const fd_entry = value.get('payload'); if (typeof fd_entry === 'string') { fd_entry.charCodeAt(fd_entry.length - 1); } else { void fd_entry.size; }"
         }
       }
 
@@ -176,5 +186,28 @@ test("S3File.json() does not leak native download body", async () => {
     "json",
     "application/json",
     "JSON.stringify({ data: Buffer.alloc(8 * 1024 * 1024 - 32, 0x41).toString() })",
+  );
+});
+
+test("S3File.formData() does not leak native download body", async () => {
+  // Exercises the synchronous parse-and-free codepath in
+  // toFormDataWithBytes(). The bodyLiteral builds a single
+  // multipart/form-data field whose value is an 8 MiB ASCII block.
+  const boundary = "bun29083";
+  const bodyLiteral = `(() => {
+    const boundary = ${JSON.stringify(boundary)};
+    const value = Buffer.alloc(8 * 1024 * 1024, 0x41).toString();
+    return (
+      "--" + boundary + "\\r\\n" +
+      'Content-Disposition: form-data; name="payload"\\r\\n' +
+      "\\r\\n" +
+      value + "\\r\\n" +
+      "--" + boundary + "--\\r\\n"
+    );
+  })()`;
+  await runLeakFixture(
+    "formData",
+    `multipart/form-data; boundary=${boundary}`,
+    bodyLiteral,
   );
 });

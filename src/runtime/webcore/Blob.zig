@@ -3891,16 +3891,20 @@ pub fn toJSON(this: *Blob, global: *JSGlobalObject, comptime lifetime: Lifetime)
 }
 
 pub fn toJSONWithBytes(this: *Blob, global: *JSGlobalObject, raw_bytes: []const u8, comptime lifetime: Lifetime) bun.JSError!JSValue {
+    // Free the ORIGINAL `raw_bytes` allocation on `.temporary`. The
+    // defer must run on EVERY return path — including the empty-body
+    // syntax error below — otherwise an empty or BOM-only body leaks
+    // the owned buffer (pre-existing bug surfaced by #29083).
+    // Also: free `raw_bytes`, not the post-BOM `buf` slice, because
+    // a UTF-8 BOM would make `buf.ptr == raw_bytes.ptr + 3` and
+    // passing a mid-allocation pointer to mimalloc is UB.
+    defer if (comptime lifetime == .temporary) bun.default_allocator.free(@constCast(raw_bytes));
+
     const bom, const buf = strings.BOM.detectAndSplit(raw_bytes);
-    if (buf.len == 0) {
-        // If all it contained was the bom, we still need to free the bytes
-        if (lifetime == .temporary) bun.default_allocator.free(raw_bytes);
-        return global.createSyntaxErrorInstance("Unexpected end of JSON input", .{});
-    }
+    if (buf.len == 0) return global.createSyntaxErrorInstance("Unexpected end of JSON input", .{});
 
     if (bom == .utf16_le) {
         var out = bun.String.cloneUTF16(bun.reinterpretSlice(u16, buf));
-        defer if (lifetime == .temporary) bun.default_allocator.free(raw_bytes);
         defer if (lifetime == .transfer) this.detach();
         defer out.deref();
         return out.toJSByParseJSON(global);
@@ -3908,9 +3912,6 @@ pub fn toJSONWithBytes(this: *Blob, global: *JSGlobalObject, raw_bytes: []const 
     // null == unknown
     // false == can't be
     const could_be_all_ascii = this.isAllASCII() orelse this.store.?.is_all_ascii;
-    // When a BOM is present `buf` is an interior slice of `raw_bytes`; we must
-    // free the original allocation, not the offset pointer.
-    defer if (comptime lifetime == .temporary) bun.default_allocator.free(raw_bytes);
 
     if (could_be_all_ascii == null or !could_be_all_ascii.?) {
         var stack_fallback = std.heap.stackFallback(4096, bun.default_allocator);
@@ -4076,7 +4077,13 @@ pub fn toFormData(this: *Blob, global: *JSGlobalObject, comptime lifetime: Lifet
     if (view_.len == 0)
         return jsc.DOMFormData.create(global);
 
-    return toFormDataWithBytes(this, global, @constCast(view_), lifetime);
+    // `sharedView()` returns memory owned by `this.store`, not a fresh
+    // allocation. Always hand it to `toFormDataWithBytes` as `.share`
+    // so its `.temporary` defer-free (added in #29083 for the
+    // ReadFile / S3 paths) does not free store-backed bytes — even
+    // though `getFormData` invokes `toFormData` with `.temporary`.
+    _ = lifetime;
+    return toFormDataWithBytes(this, global, @constCast(view_), .share);
 }
 
 pub inline fn get(

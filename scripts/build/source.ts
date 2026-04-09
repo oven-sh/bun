@@ -294,12 +294,6 @@ export interface PreBuildSpec {
   outputs: string[];
 }
 
-/**
- * Built with `cargo build --locked`, so the dep's tarball must ship a
- * Cargo.lock in `manifestDir`. If it doesn't, the build fails (intentionally
- * — unlocked cargo deps would re-resolve transitive crates against crates.io
- * on every build, breaking reproducibility).
- */
 export interface CargoBuild {
   kind: "cargo";
   /**
@@ -1229,10 +1223,6 @@ function emitCargo(n: Ninja, cfg: Config, name: string, spec: CargoBuild, input:
   const lib = resolve(targetDir, outSubdir, `${cfg.libPrefix}${spec.libName}${cfg.libSuffix}`);
 
   // ─── Build args ───
-  // --locked: the dep's tarball ships a Cargo.lock (e.g. lolhtml's
-  // c-api/Cargo.lock). Without --locked, a yanked crate or upstream
-  // lockfile/Cargo.toml drift would silently re-resolve against crates.io,
-  // breaking build reproducibility. With it, that case fails loud.
   const args: string[] = ["--locked", "--target-dir", targetDir];
   if (cfg.release) args.push("--release");
   if (spec.rustTarget) args.push("--target", spec.rustTarget);

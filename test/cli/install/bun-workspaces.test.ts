@@ -1987,7 +1987,7 @@ test("frozen lockfile succeeds in workspace monorepo with workspace: deps", asyn
   ]);
 
   // First install generates the lockfile
-  var { exited } = spawn({
+  var proc = spawn({
     cmd: [bunExe(), "install"],
     cwd: packageDir,
     stdout: "ignore",
@@ -1995,27 +1995,33 @@ test("frozen lockfile succeeds in workspace monorepo with workspace: deps", asyn
     env,
   });
 
-  expect(await exited).toBe(0);
+  var stderr = await proc.stderr.text();
+  expect(stderr).not.toContain("error");
+  expect(await proc.exited).toBe(0);
 
   // --frozen-lockfile must succeed immediately after
-  ({ exited } = spawn({
+  proc = spawn({
     cmd: [bunExe(), "install", "--frozen-lockfile"],
     cwd: packageDir,
     stdout: "ignore",
     stderr: "pipe",
     env,
-  }));
+  });
 
-  expect(await exited).toBe(0);
+  stderr = await proc.stderr.text();
+  expect(stderr).not.toContain("lockfile had changes");
+  expect(await proc.exited).toBe(0);
 
   // --production (which implies --frozen-lockfile) must also succeed
-  ({ exited } = spawn({
+  proc = spawn({
     cmd: [bunExe(), "install", "--production"],
     cwd: packageDir,
     stdout: "ignore",
     stderr: "pipe",
     env,
-  }));
+  });
 
-  expect(await exited).toBe(0);
+  stderr = await proc.stderr.text();
+  expect(stderr).not.toContain("lockfile had changes");
+  expect(await proc.exited).toBe(0);
 });

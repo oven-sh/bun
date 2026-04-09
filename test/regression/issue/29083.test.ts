@@ -10,22 +10,17 @@ import path from "node:path";
 // MutableString after handing the bytes to the JS handler. Every call
 // leaked the entire downloaded payload on the native side.
 //
-// Freeing naively (defer body.deinit() on the MutableString) introduces
-// a use-after-free for the text()/json() ASCII path, because
-// toStringWithBytes(.clone) creates a JSC external string that points
-// directly into the buffer without copying — its finalizer
-// (Store.external) only derefs the associated Blob.Store. The fix
-// wraps the download bytes in a transient Store.bytes and retargets the
-// task's blob at it for the handler call, so the normal .clone
-// ref/deref dance reclaims the buffer once both the handler-site deref
-// and the external-string finalizer (if any) have fired.
+// The fix takes ownership of the downloaded body as a default_allocator
+// slice and passes it to the handler with the `.temporary` lifetime —
+// matching how ReadFile feeds local files through the same handler
+// chain. Each handler then transfers ownership to JSC via a
+// mimalloc-backed external string / ArrayBuffer (zero-copy) or frees
+// the slice after synchronous consumption (JSON.parse, FormData).
 //
 // Each test spawns a child process with a capped JS heap so the leak
 // cannot be absorbed by bun's heap, loops one of the read methods many
 // times against a local Bun.serve() mock, and fails if RSS growth
-// exceeds the budget. The text() case additionally exercises ASCII
-// content specifically, which would UAF under ASAN with a naive
-// defer-free fix.
+// exceeds the budget.
 
 // Child builds 1 GiB of cumulative traffic over localhost — well under
 // a debug ASAN build's 2-minute budget in practice but far above the
@@ -164,15 +159,15 @@ test("S3File.arrayBuffer() does not leak native download body", async () => {
 });
 
 test("S3File.text() does not leak or UAF native download body", async () => {
-  // Pure ASCII content hits the toStringWithBytes(.clone) branch that
-  // creates a JSC external string pointing into the downloaded buffer
-  // without copying. A naive defer-free of the body would dangle that
-  // pointer; ASAN would then trip when the external string's contents
-  // are read below.
+  // Pure ASCII content exercises the toStringWithBytes(.temporary) ASCII
+  // branch that creates a JSC external string pointing into the
+  // downloaded buffer without copying and transfers ownership via
+  // free_global_string. ASAN catches any lifetime mismatch once the
+  // child process touches the returned string.
   await runLeakFixture(
     "text",
     "text/plain",
-    '"A".repeat(8 * 1024 * 1024)',
+    "Buffer.alloc(8 * 1024 * 1024, 0x41).toString()",
   );
 });
 
@@ -180,6 +175,6 @@ test("S3File.json() does not leak native download body", async () => {
   await runLeakFixture(
     "json",
     "application/json",
-    'JSON.stringify({ data: "A".repeat(8 * 1024 * 1024 - 32) })',
+    "JSON.stringify({ data: Buffer.alloc(8 * 1024 * 1024 - 32, 0x41).toString() })",
   );
 });

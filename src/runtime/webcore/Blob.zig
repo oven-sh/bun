@@ -114,9 +114,13 @@ pub fn isBunFile(this: *const Blob) bool {
 pub fn doReadFromS3(this: *Blob, comptime Function: anytype, global: *JSGlobalObject) bun.JSTerminated!JSValue {
     debug("doReadFromS3", .{});
 
+    // The downloaded body is a transient buffer owned by onS3DownloadResolved,
+    // not by any Blob.Store, so we pass it with `.temporary` — the handler
+    // transfers ownership to JSC (ArrayBuffer/string external) or frees it
+    // after synchronous consumption (JSON.parse, FormData). See #29083.
     const WrappedFn = struct {
         pub fn wrapped(b: *Blob, g: *JSGlobalObject, by: []u8) jsc.JSValue {
-            return jsc.toJSHostCall(g, @src(), Function, .{ b, g, by, .clone });
+            return jsc.toJSHostCall(g, @src(), Function, .{ b, g, by, .temporary });
         }
     };
     return S3BlobDownloadTask.init(global, this, WrappedFn.wrapped);
@@ -2399,32 +2403,15 @@ const S3BlobDownloadTask = struct {
         defer this.deinit();
         switch (result) {
             .success => |response| {
-                // The S3DownloadResult.success.body MutableString owns its
-                // buffer and must be freed, otherwise every arrayBuffer() /
-                // text() / json() call leaks the downloaded payload
-                // (see #29083).
-                //
-                // We can't just free the buffer after the handler returns:
-                // `toStringWithBytes(.clone)` hands the raw pointer to JSC
-                // as an external string (via `ZigString.external`) without
-                // copying — its finalizer is `Store.external`, which only
-                // derefs the associated Blob.Store. So to stay correct for
-                // both arrayBuffer (copy) and text/json (external) we wrap
-                // the downloaded bytes in a temporary Blob.Store.bytes,
-                // point the task's blob at it during the handler call, and
-                // let the normal ref/deref dance reclaim the buffer when
-                // either the handler's direct deref or JSC's external
-                // string finalizer drops the last reference.
+                // Take ownership of the response MutableString's buffer as a
+                // plain default_allocator slice (toOwnedSlice shrinks capacity
+                // to length so default_allocator.free works) and hand it to
+                // the handler with `.temporary` lifetime. Each handler then
+                // transfers ownership to JSC via a mimalloc-backed external
+                // string / ArrayBuffer (zero-copy) or frees the slice after
+                // synchronous consumption (JSON.parse, FormData). See #29083.
                 var body = response.body;
                 const owned = body.toOwnedSlice();
-                const bytes_store = Store.init(owned, bun.default_allocator);
-                // Store.init starts at ref_count = 1 (this ref).
-                defer bytes_store.deref();
-
-                const saved_store = this.blob.store;
-                this.blob.store = bytes_store;
-                defer this.blob.store = saved_store;
-
                 if (this.blob.size == Blob.max_size) {
                     this.blob.size = @truncate(owned.len);
                 }
@@ -3942,7 +3929,11 @@ pub fn toJSONWithBytes(this: *Blob, global: *JSGlobalObject, raw_bytes: []const 
     return ZigString.init(buf).toJSONObject(global);
 }
 
-pub fn toFormDataWithBytes(this: *Blob, global: *JSGlobalObject, buf: []u8, comptime _: Lifetime) JSValue {
+pub fn toFormDataWithBytes(this: *Blob, global: *JSGlobalObject, buf: []u8, comptime lifetime: Lifetime) JSValue {
+    // `.temporary` means we own `buf` and must free it before returning;
+    // `bun.FormData.toJS` parses the bytes synchronously so we can safely
+    // drop them on the way out. See #29083.
+    defer if (comptime lifetime == .temporary) bun.default_allocator.free(buf);
     var encoder = this.getFormDataEncoding() orelse return {
         return ZigString.init("Invalid encoding").toErrorInstance(global);
     };

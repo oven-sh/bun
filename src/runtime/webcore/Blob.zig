@@ -2399,7 +2399,14 @@ const S3BlobDownloadTask = struct {
         defer this.deinit();
         switch (result) {
             .success => |response| {
-                const bytes = response.body.list.items;
+                // The S3DownloadResult.success.body MutableString owns its
+                // buffer. The handler below copies the bytes into the JS
+                // heap (via .clone), so we must free the native buffer once
+                // the handler returns — otherwise every arrayBuffer() /
+                // text() / json() call leaks the entire downloaded payload.
+                var body = response.body;
+                defer body.deinit();
+                const bytes = body.list.items;
                 if (this.blob.size == Blob.max_size) {
                     this.blob.size = @truncate(bytes.len);
                 }

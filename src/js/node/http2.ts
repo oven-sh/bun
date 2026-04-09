@@ -2940,9 +2940,15 @@ class ServerHttp2Session extends Http2Session {
       if ((status & StreamState.StreamResponded) !== 0) {
         stream.emit("trailers", headers, flags, rawheaders);
       } else {
+        // Set the StreamResponded bit BEFORE dispatching the 'stream' event
+        // synchronously to user code. The user handler may call
+        // stream.respond()/stream.end() which set other bits (WantTrailer,
+        // FinalCalled, EndedCalled, WritableClosed). If we captured `status`
+        // and wrote it back AFTER the emit, we'd clobber any bits set by the
+        // user handler — in particular, losing WantTrailer/FinalCalled breaks
+        // any later `sendTrailers()` with ERR_HTTP2_TRAILERS_NOT_READY.
+        stream[bunHTTP2StreamStatus] |= StreamState.StreamResponded;
         self[kServer].emit("stream", stream, headers, flags, rawheaders);
-
-        stream[bunHTTP2StreamStatus] = status | StreamState.StreamResponded;
         self.emit("stream", stream, headers, flags, rawheaders);
       }
     },
@@ -3441,7 +3447,11 @@ class ClientHttp2Session extends Http2Session {
         if (header_status >= 100 && header_status < 200) {
           stream.emit("headers", headers, flags, rawheaders);
         } else {
-          stream[bunHTTP2StreamStatus] = status | StreamState.StreamResponded;
+          // Set the bit BEFORE dispatching synchronously to user code — a
+          // 'response' handler that mutates stream state would otherwise be
+          // clobbered by a stale read-modify-write (see the server-side note
+          // at the stream handler above).
+          stream[bunHTTP2StreamStatus] |= StreamState.StreamResponded;
           if (header_status === 421) {
             // 421 Misdirected Request
             removeOriginFromSet(self, stream);

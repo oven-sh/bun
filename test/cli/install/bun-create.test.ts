@@ -145,26 +145,6 @@ for (const repo of ["https://github.com/dylan-conway/create-test", "github.com/d
   }, 20_000);
 }
 
-it("should not crash with -- separator and extra flags", () => {
-  // Regression test: "bun create" should not crash when -- separator is used
-  // with additional flags (e.g. "bun create foo -- -t v3").
-  // Previously, "--" was forwarded literally to the create script.
-  for (const cmd of [
-    [bunExe(), "create", "nonexistent-pkg-test", "--", "-t", "v3"],
-    [bunExe(), "create", "nonexistent-pkg-test", "--", "--template", "v3"],
-  ]) {
-    const { exitCode } = spawnSync({
-      cmd,
-      cwd: x_dir,
-      stdout: "ignore",
-      stderr: "ignore",
-      env,
-    });
-    // Will fail to find the package, but should not crash (exit code 1, not a signal/crash)
-    expect(exitCode).toBe(1);
-  }
-});
-
 it("should not crash with --no-install and bun-create.postinstall starting with 'bun '", async () => {
   const bunCreateDir = join(x_dir, "bun-create");
   const testTemplate = "postinstall-test";

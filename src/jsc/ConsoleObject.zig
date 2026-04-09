@@ -326,23 +326,6 @@ pub const TablePrinter = struct {
         }
     };
 
-    /// Whether a string cell value should be rendered in quoted/escaped form.
-    /// Bun normally prints plain strings in `console.table` cells without
-    /// surrounding quotes, but that breaks the row layout if the string
-    /// contains control characters whose rendered width doesn't match the
-    /// computed cell width (issue #29082). In that case, force the quoted
-    /// form so the formatter JSON-escapes those characters and the table
-    /// stays intact.
-    fn shouldQuoteStringCell(this: *TablePrinter, value: JSValue, tag: ConsoleObject.Formatter.Tag.Result) bun.JSError!bool {
-        if (!(tag.tag == .String or tag.tag == .StringPossiblyFormatted)) return true;
-        if (!value.isString()) return false;
-        var str: bun.String = try bun.String.fromJS(value, this.globalObject);
-        defer str.deref();
-        return str.indexOfAsciiChar('\n') != null or
-            str.indexOfAsciiChar('\r') != null or
-            str.indexOfAsciiChar('\t') != null;
-    }
-
     /// Compute how much horizontal space will take a JSValue when printed
     fn getWidthForValue(this: *TablePrinter, value: JSValue) bun.JSError!u32 {
         var width: usize = 0;
@@ -356,7 +339,7 @@ pub const TablePrinter = struct {
         var value_formatter = this.value_formatter;
 
         const tag = try ConsoleObject.Formatter.Tag.get(value, this.globalObject);
-        value_formatter.quote_strings = try this.shouldQuoteStringCell(value, tag);
+        value_formatter.quote_strings = !(tag.tag == .String or tag.tag == .StringPossiblyFormatted);
         value_formatter.format(
             tag,
             *std.Io.Writer,
@@ -503,7 +486,7 @@ pub const TablePrinter = struct {
                 const tag = try ConsoleObject.Formatter.Tag.get(value, this.globalObject);
                 var value_formatter = this.value_formatter;
 
-                value_formatter.quote_strings = try this.shouldQuoteStringCell(value, tag);
+                value_formatter.quote_strings = !(tag.tag == .String or tag.tag == .StringPossiblyFormatted);
 
                 defer {
                     if (value_formatter.map_node) |node| {

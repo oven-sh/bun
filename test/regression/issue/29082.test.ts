@@ -1,16 +1,8 @@
 // https://github.com/oven-sh/bun/issues/29082
-//
-// `console.table` was writing string cell values unquoted. If the string
-// contained `\n`, `\r`, or `\t`, the embedded control character landed in
-// the middle of the row and broke the table border. For each such case,
-// Bun now promotes the cell to the JSON-escaped (quoted) form — matching
-// how inspect() already prints top-level strings — so the table stays
-// intact.
-
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
-async function runTable(code: string): Promise<string> {
+async function runTable(code: string): Promise<{ stdout: string; exitCode: number }> {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", code],
     env: bunEnv,
@@ -18,18 +10,16 @@ async function runTable(code: string): Promise<string> {
     stderr: "pipe",
   });
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-  expect(exitCode).toBe(0);
-  return stdout;
+  return { stdout, exitCode };
 }
 
-// The table border is made of repeating ─ characters. After the fix, every
-// `│`-delimited row must contain exactly the same number of `│` separators
-// as the header — if any cell leaked an embedded newline, the row count
-// would increase.
+// Every `│`-delimited row must have the same number of separators as the
+// header — if any cell leaked an embedded newline, the count would differ.
 function assertRectangular(out: string) {
-  const lines = out.split("\n").filter(l => l.trim().length > 0);
-  // Collect only lines that are table-interior rows (start with `│`).
-  const rows = lines.filter(l => l.startsWith("│"));
+  const rows = out
+    .split("\n")
+    .filter(l => l.trim().length > 0)
+    .filter(l => l.startsWith("│"));
   expect(rows.length).toBeGreaterThan(0);
   const expectedBars = rows[0]!.split("│").length;
   for (const row of rows) {
@@ -38,70 +28,76 @@ function assertRectangular(out: string) {
 }
 
 test("console.table escapes embedded newlines so the row stays on one line", async () => {
-  const out = await runTable(`console.table([{ foo: 123, bar: "Hello\\nWorld" }]);`);
-  assertRectangular(out);
-  expect(out).toContain(`"Hello\\nWorld"`);
-  // And importantly, the literal newline must NOT be present inside a cell.
-  // Count lines between the top border `┌...┐` and the bottom `└...┘`:
-  // there should be exactly 3 (header row, separator, one data row).
-  const body = out.split("\n").slice(1, -2); // strip top border + trailing
-  const dataRows = body.filter(l => l.startsWith("│"));
-  expect(dataRows.length).toBe(2); // header + single data row
+  const { stdout, exitCode } = await runTable(`console.table([{ foo: 123, bar: "Hello\\nWorld" }]);`);
+  assertRectangular(stdout);
+  expect(stdout).toContain(`"Hello\\nWorld"`);
+  // One data row only — no extra line from a leaked `\n`.
+  const dataRows = stdout.split("\n").filter(l => l.startsWith("│"));
+  expect(dataRows.length).toBe(2); // header + one data row
+  expect(exitCode).toBe(0);
 });
 
 test("console.table escapes embedded carriage returns", async () => {
-  const out = await runTable(`console.table([{ bar: "Line1\\rLine2" }]);`);
-  assertRectangular(out);
-  expect(out).toContain(`"Line1\\rLine2"`);
+  const { stdout, exitCode } = await runTable(`console.table([{ bar: "Line1\\rLine2" }]);`);
+  assertRectangular(stdout);
+  expect(stdout).toContain(`"Line1\\rLine2"`);
+  expect(exitCode).toBe(0);
 });
 
 test("console.table escapes embedded tabs", async () => {
-  const out = await runTable(`console.table([{ bar: "tab\\there" }]);`);
-  assertRectangular(out);
-  expect(out).toContain(`"tab\\there"`);
+  const { stdout, exitCode } = await runTable(`console.table([{ bar: "tab\\there" }]);`);
+  assertRectangular(stdout);
+  expect(stdout).toContain(`"tab\\there"`);
+  expect(exitCode).toBe(0);
 });
 
 test("console.table leaves plain strings unquoted", async () => {
-  const out = await runTable(`console.table([{ foo: 123, bar: "Hello World" }]);`);
-  assertRectangular(out);
-  expect(out).toContain("Hello World");
+  const { stdout, exitCode } = await runTable(`console.table([{ foo: 123, bar: "Hello World" }]);`);
+  assertRectangular(stdout);
+  expect(stdout).toContain("Hello World");
   // Plain strings are NOT promoted to the quoted form.
-  expect(out).not.toContain(`"Hello World"`);
-  expect(out).not.toContain(`'Hello World'`);
+  expect(stdout).not.toContain(`"Hello World"`);
+  expect(stdout).not.toContain(`'Hello World'`);
+  expect(exitCode).toBe(0);
 });
 
 test("console.table handles multiple newline cells in the same table", async () => {
-  const out = await runTable(`console.table([{ a: 1, b: "a\\nb\\nc" }, { a: 2, b: "plain" }]);`);
-  assertRectangular(out);
-  expect(out).toContain(`"a\\nb\\nc"`);
-  expect(out).toContain("plain");
+  const { stdout, exitCode } = await runTable(`console.table([{ a: 1, b: "a\\nb\\nc" }, { a: 2, b: "plain" }]);`);
+  assertRectangular(stdout);
+  expect(stdout).toContain(`"a\\nb\\nc"`);
+  expect(stdout).toContain("plain");
+  expect(exitCode).toBe(0);
 });
 
 test("console.table escapes newlines in Map values", async () => {
-  const out = await runTable(`console.table(new Map([["k1", "v1"], ["k2", "v\\n2"]]));`);
-  assertRectangular(out);
-  expect(out).toContain(`"v\\n2"`);
+  const { stdout, exitCode } = await runTable(`console.table(new Map([["k1", "v1"], ["k2", "v\\n2"]]));`);
+  assertRectangular(stdout);
+  expect(stdout).toContain(`"v\\n2"`);
+  expect(exitCode).toBe(0);
 });
 
 test("console.table escapes newlines in Set values", async () => {
-  const out = await runTable(`console.table(new Set(["a", "b\\nc"]));`);
-  assertRectangular(out);
-  expect(out).toContain(`"b\\nc"`);
+  const { stdout, exitCode } = await runTable(`console.table(new Set(["a", "b\\nc"]));`);
+  assertRectangular(stdout);
+  expect(stdout).toContain(`"b\\nc"`);
+  expect(exitCode).toBe(0);
 });
 
 test("console.table escapes newlines in primitive arrays", async () => {
-  const out = await runTable(`console.table(["hi", "a\\nb", "foo"]);`);
-  assertRectangular(out);
-  expect(out).toContain(`"a\\nb"`);
-  // Plain entries should stay unquoted.
-  const rows = out.split("\n").filter(l => l.startsWith("│"));
+  const { stdout, exitCode } = await runTable(`console.table(["hi", "a\\nb", "foo"]);`);
+  assertRectangular(stdout);
+  expect(stdout).toContain(`"a\\nb"`);
+  // Plain entries stay unquoted.
+  const rows = stdout.split("\n").filter(l => l.startsWith("│"));
   expect(rows.some(r => r.includes(" hi "))).toBe(true);
   expect(rows.some(r => r.includes(" foo "))).toBe(true);
+  expect(exitCode).toBe(0);
 });
 
 test("console.table with properties arg respects newline escaping", async () => {
-  const out = await runTable(`console.table([{a:1, b:"x\\ny"}, {a:2, b:"normal"}], ["b"]);`);
-  assertRectangular(out);
-  expect(out).toContain(`"x\\ny"`);
-  expect(out).toContain("normal");
+  const { stdout, exitCode } = await runTable(`console.table([{a:1, b:"x\\ny"}, {a:2, b:"normal"}], ["b"]);`);
+  assertRectangular(stdout);
+  expect(stdout).toContain(`"x\\ny"`);
+  expect(stdout).toContain("normal");
+  expect(exitCode).toBe(0);
 });

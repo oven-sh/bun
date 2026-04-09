@@ -559,12 +559,7 @@ pub const Value = union(Tag) {
 
         const js_type = value.jsType();
 
-        if (js_type.isStringLike() or js_type == .Array or js_type == .DerivedArray) {
-            // Per the Fetch spec, `BodyInit` is a union of ReadableStream,
-            // Blob, BufferSource, FormData, URLSearchParams, and USVString.
-            // A plain Array is not part of that union, so it falls through
-            // to USVString and gets coerced via ToString — matching Node and
-            // browsers (e.g. `new Response([1,2,3]).text()` → "1,2,3").
+        if (js_type.isStringLike()) {
             var str = try value.toBunString(globalThis);
             if (str.length() == 0) {
                 return Body.Value{
@@ -576,6 +571,39 @@ pub const Value = union(Tag) {
 
             return Body.Value{
                 .WTFStringImpl = str.value.WTFStringImpl,
+            };
+        }
+
+        if (js_type == .Array or js_type == .DerivedArray) {
+            // Per the Fetch spec, `BodyInit` is a union of ReadableStream,
+            // Blob, BufferSource, FormData, URLSearchParams, and USVString.
+            // A plain Array is not part of that union, so it falls through
+            // to USVString and gets coerced via ToString — matching Node and
+            // browsers (e.g. `new Response([1,2,3]).text()` → "1,2,3").
+            //
+            // Materialize to UTF-8 bytes directly rather than reusing the
+            // string-like branch above: that branch asserts the returned
+            // `bun.String` has tag `.WTFStringImpl`, which is only guaranteed
+            // for already-string inputs — ToString on an Array may
+            // legitimately return a different tag on some platforms.
+            var sliced = try value.toSliceClone(globalThis);
+            defer sliced.deinit();
+            const bytes = sliced.slice();
+            if (bytes.len == 0) {
+                return Body.Value{ .Empty = {} };
+            }
+            const owned = bun.default_allocator.dupe(u8, bytes) catch {
+                return globalThis.throwValue(ZigString.static("Failed to clone array body").toErrorInstance(globalThis));
+            };
+            return Body.Value{
+                .InternalBlob = .{
+                    .bytes = std.array_list.Managed(u8){
+                        .items = owned,
+                        .capacity = bytes.len,
+                        .allocator = bun.default_allocator,
+                    },
+                    .was_string = true,
+                },
             };
         }
 

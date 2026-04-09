@@ -685,16 +685,17 @@ TLSSocket.prototype.getX509Certificate = function getX509Certificate() {
 };
 
 TLSSocket.prototype[buntls] = function (port, host) {
+  const ctx = this[ksecureContext];
   return {
     socket: this._handle,
     ALPNProtocols: this.ALPNProtocols,
-    serverName: this.servername || host || "localhost",
     checkServerIdentity: this[kcheckServerIdentity],
     session: this[ksession],
     rejectUnauthorized: this._rejectUnauthorized,
     requestCert: this._requestCert,
     ciphers: this.ciphers,
-    ...this[ksecureContext],
+    ...ctx,
+    servername: this.servername || ctx?.servername || host || "localhost",
   };
 };
 

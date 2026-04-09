@@ -25,12 +25,15 @@ test("auto-install works inside a Worker thread", async () => {
         const worker = new Worker(import.meta.url);
         worker.addEventListener("error", e => {
           console.error("worker-error:" + (e.message ?? String(e)));
-          process.exit(1);
+          process.exitCode = 1;
+          worker.terminate();
         });
         worker.addEventListener("message", e => {
           console.log("message:" + e.data);
-          worker.terminate();
-          process.exit(0);
+          // Let the event loop drain naturally. Calling process.exit
+          // here races in-flight PackageManager tasks and panics on ASAN
+          // lanes with "EventLoop.enqueueTaskConcurrent: VM has terminated".
+          worker.unref();
         });
       } else {
         postMessage("worker:" + isNumber(7));

@@ -186,7 +186,12 @@ test("os.availableParallelism() under taskset reports the restricted count (#291
     { encoding: "utf8" },
   );
 
-  if (result.status !== 0) {
+  // spawnSync returns result.status === null both when the process
+  // failed to launch (result.error is set, e.g. ENOENT / ENOMEM) and
+  // when it was killed by a signal (result.signal is set, e.g.
+  // SIGSEGV). Include that in the error message so a CI failure
+  // points at the real cause instead of a confusing "exited with null".
+  if (result.error || result.status !== 0) {
     const stderr = result.stderr || "";
     // taskset itself can fail before the subprocess starts when
     // sched_setaffinity is blocked by a seccomp profile (GKE
@@ -195,12 +200,17 @@ test("os.availableParallelism() under taskset reports the restricted count (#291
     // Operation not permitted". Treat permission denials as a
     // graceful skip in the same spirit as the missing-binary guard
     // above: this sub-test is extra coverage, not the primary
-    // assertion. Any OTHER non-zero exit is a real failure worth
+    // assertion. Any OTHER failure is a real regression worth
     // surfacing.
     if (stderr.includes("Operation not permitted") || stderr.includes("Permission denied")) {
       return;
     }
-    throw new Error(`taskset subprocess exited with ${result.status}\nstderr:\n${stderr}`);
+    const reason = result.error
+      ? `failed to launch: ${result.error.message}`
+      : result.signal
+        ? `killed by signal ${result.signal}`
+        : `exited with ${result.status}`;
+    throw new Error(`taskset subprocess ${reason}\nstderr:\n${stderr}`);
   }
 
   const [availableStr, hardwareStr] = (result.stdout || "").trim().split("|");

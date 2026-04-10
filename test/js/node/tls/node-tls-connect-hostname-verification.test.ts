@@ -26,6 +26,15 @@ async function withServer<T>(fn: (port: number) => Promise<T>): Promise<T> {
 }
 
 describe("tls.connect hostname verification without explicit servername", () => {
+  test("rejects an IP address as options.servername", () => {
+    assert.throws(() => tls.connect({ host: "localhost", port: 1, servername: "127.0.0.1" }), {
+      code: "ERR_INVALID_ARG_VALUE",
+    });
+    assert.throws(() => tls.connect({ host: "localhost", port: 1, servername: "::1" }), {
+      code: "ERR_INVALID_ARG_VALUE",
+    });
+  });
+
   test("rejects a CA-trusted cert whose CN does not match host", async () => {
     await withServer(async port => {
       const { promise, resolve, reject } = Promise.withResolvers<NodeJS.ErrnoException>();

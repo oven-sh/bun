@@ -392,7 +392,9 @@ JSWebView* JSWebView::createChrome(JSGlobalObject* g, Structure* structure,
             ok = t.ensureConnected(zig,
                 WTF::String::fromUTF8(std::span<const char>(buf, len)),
                 autoDetectedFallback, userDataDir, stdoutInherit, stderrInherit);
-            if (!ok) setFailure(ChromeCreateFailure::ConnectFailed);
+            // AutoDetectConnectFailed (not ConnectFailed) — the user
+            // never set backend.url, so the error must not hint at it.
+            if (!ok) setFailure(ChromeCreateFailure::AutoDetectConnectFailed);
         } else {
             ok = trySpawn();
         }

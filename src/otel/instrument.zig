@@ -447,13 +447,13 @@ pub const WSGuard = struct {
     }
 };
 
+pub const Attribute = attrs.Attribute;
+
+const attrs = @import("./attributes.zig");
 const bun = @import("bun");
 const model = @import("./span.zig");
 const std = @import("std");
 const tracer = @import("./tracer.zig");
-
-const attrs = @import("./attributes.zig");
-pub const Attribute = attrs.Attribute;
 
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;

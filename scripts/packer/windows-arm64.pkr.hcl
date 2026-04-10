@@ -14,7 +14,7 @@ source "azure-arm" "windows-arm64" {
 
   // Build VM — only used during image creation, not for CI runners.
   // CI runner VM sizes are set in ci.mjs (azureVmSizes).
-  vm_size         = "Standard_D4ps_v6"
+  vm_size         = "Standard_D4pds_v6"
 
   // Use existing resource group instead of creating a temp one
   build_resource_group_name = var.resource_group

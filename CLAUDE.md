@@ -32,6 +32,16 @@ When exec args are present, build output is suppressed unless the build fails �
 bun run build:release --build-dir=build/baseline
 ```
 
+### Changes that don't require a build
+
+Edits to **TypeScript type declarations** (`packages/bun-types/**/*.d.ts`) do not touch any compiled code, so `bun bd` is unnecessary. The types test just packs the `.d.ts` files and runs `tsc` against fixtures — it never executes your build. Run it directly with the system Bun:
+
+```sh
+bun test test/integration/bun-types/bun-types.test.ts
+```
+
+This is an explicit exception to the "never use `bun test` directly" rule. There are no native changes for a debug build to pick up, so don't wait on one.
+
 ## Testing
 
 ### Running Tests
@@ -236,6 +246,12 @@ Built-in JavaScript modules use special syntax and are organized as:
 - `thirdparty/` - NPM modules we replace (like `ws`)
 - `internal/` - Internal modules not exposed to users
 - `builtins/` - Core JavaScript builtins (streams, console, etc.)
+
+## Code Review Self-Check
+
+- Before writing code that makes a non-obvious choice, pre-emptively ask "why this and not the alternative?" If you can't answer, research until you can — don't write first and justify later.
+- Don't take a bug report's suggested fix at face value; verify it's the right layer.
+- If neighboring code does something differently than you're about to, find out _why_ before deviating — its choices are often load-bearing, not stylistic.
 
 ## Important Development Notes
 

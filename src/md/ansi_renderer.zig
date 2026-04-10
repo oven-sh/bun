@@ -1852,7 +1852,11 @@ pub const AnsiRenderer = struct {
         // Also skip when we're inside an enclosing link span
         // (`[![alt](img)](url)`) — emitting our own OSC 8 would overwrite
         // the outer link destination for subsequent text on that line.
-        const is_data_url = has_src and bun.strings.startsWith(src.?, "data:");
+        // Case-insensitive: the data: scheme is matched without regard to
+        // case per RFC 3986 §3.1, and a lowercase-only check would let
+        // `![alt](DATA:image/png;base64,…)` slip through into the URL
+        // fallback or OSC 8 and dump a megabyte of base64 into the output.
+        const is_data_url = has_src and bun.strings.startsWithCaseInsensitiveAscii(src.?, "data:");
         const link_ok = self.theme.colors and self.theme.hyperlinks and has_src and
             self.link_depth == 0 and !is_data_url;
         if (link_ok) {

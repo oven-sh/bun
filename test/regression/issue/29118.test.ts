@@ -64,6 +64,18 @@ test("data: URI does not get expanded in fallback parens", () => {
   expect(out).not.toContain("(data:");
 });
 
+test("uppercase DATA: URI is also suppressed in the fallback parens", () => {
+  // Case-insensitive per RFC 3986 §3.1. Previously `DATA:` slipped the
+  // lowercase-only check and dumped the payload via the URL fallback.
+  const out = Bun.markdown.ansi("![alt](DATA:image/jpeg;base64,/9j/4AAQSkZJRg==)\n", {
+    colors: true,
+    hyperlinks: false,
+  });
+  expect(out).toContain("alt");
+  expect(out).not.toContain("DATA:");
+  expect(out).not.toContain("/9j/4AAQSkZJRg==");
+});
+
 test("image inside a link keeps the enclosing link URL (no nested parens)", () => {
   // `[![alt](img.jpg)](https://outer.example.com/)` — the outer link's
   // URL is already shown in parens via the link-fallback path. The inner
